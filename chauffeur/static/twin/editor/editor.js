@@ -10,6 +10,7 @@ import { createPauses, applyRegistration, invertRegistration } from './pauses.js
 import { createTimeline } from './timeline.js';
 import { createPlace } from './place.js';
 import { createRoofTools } from './roof_tools.js';
+import { createLotTools } from './lot_tools.js';
 
 const el = id => document.getElementById(id);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
@@ -22,7 +23,7 @@ export async function boot() {
   let resuming = false, stopping = false;
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
   let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, previewing = false, lastSummary = '';
-  let roofTools = null;
+  let roofTools = null, lot = null;
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
@@ -52,13 +53,22 @@ export async function boot() {
     lastSummary = result.summary;
     return result;
   }
-  async function applyOpNow(operation, saved) {
+  // `saved` runs as soon as the round is saved, before the scene rebuild (the
+  // roof tools select the new piece then). `settle: false` returns once the
+  // round is saved and read back; the scene rebuild follows. The lot tools
+  // already show the building where it landed.
+  async function applyOpNow(operation, { saved, settle = true } = {}) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
     const result = await api.op(operation);
     snapshot = { ...snapshot, plan: result.plan, model: result.model };
     saved?.(result);
     const line = document.createElement('li'); line.textContent = plain(result.words); el('editor-log').append(line);
     lastSummary = result.words;
+    if (!settle) {
+      await polling.refreshState(); timeline?.sync(currentBuild);
+      renderScene().catch(report);
+      return result;
+    }
     await renderScene();
     await polling.refreshState(); timeline?.sync(currentBuild);
     return result;
@@ -126,7 +136,7 @@ export async function boot() {
     return plan;
   }
   async function renderScene() {
-    if (tools?.dragging()) return;
+    if (tools?.dragging() || lot?.dragging()) return;
     const plan = timeline?.preview() || previewPlan(), signature = JSON.stringify(plan);
     if (view && signature !== lastScene) {
       await view.rebuild(plan);
@@ -217,7 +227,7 @@ export async function boot() {
 
   place = createPlace({ request, getSheets: () => sheets,
     reload: async () => { await polling.pollNow(true); await loadSheets(); },
-    follow: id => polling.follow(id), canEdit: () => canEdit() && !resuming && !stopping, panel });
+    follow: id => polling.follow(id), canEdit: () => canEdit() && !resuming && !stopping, panel, lotTools: () => lot });
 
   listen(el('editor-resume'), 'click', async () => {
     if (!canEdit() || resuming || !['stopped', 'checkpoint'].includes(currentBuild?.state)) return;
@@ -411,18 +421,25 @@ export async function boot() {
       refresh: async () => { draw?.cancel(); await polling.refreshState(); await renderScene(); } });
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getSheets: () => sheets,
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, addDormer: () => roofTools?.addDormer() });
-    draw = createDraw({ view, tools, getPlan: () => snapshot.plan, op: applyOpNow,
+    draw = createDraw({ view, tools, getPlan: () => snapshot.plan, op: operation => applyOpNow(operation),
       gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract });
     roofTools = createRoofTools({ view, tools, getPlan: () => snapshot.plan,
-      op: (operation, saved) => history.perform(() => applyOpNow(operation, saved)),
+      op: (operation, options) => history.perform(() => applyOpNow(operation, options)),
       canEdit, panel, signal: lifecycle.signal, onInteract, cancelDrawing: draw.cancel });
     pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
       getSheets: () => sheets, refresh: () => polling.pollNow(true), preview: () => renderScene().catch(report),
       visibilityChanged: syncBuildButton, canEdit, signal: lifecycle.signal });
+    lot = createLotTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getSheets: () => sheets,
+      getSelection: tools.selection, select: tools.select, pauses, signal: lifecycle.signal,
+      canEdit: () => canEdit() && (!active(currentBuild) || !!pauses.lotPlacement()),
+      op: operations => history.perform(async () => { for (const operation of operations) await applyOpNow(operation, { settle: false }); }),
+      // The lot card frees itself once the place rows are fresh; the scene
+      // rebuild (seconds for a refitted house) follows on the poll's tick.
+      reload: async () => { await loadSheets(); polling.pollNow(true).catch(report); } });
     tools.delegate({
-      pointerDown: event => pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event),
-      pointerMove: event => pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event),
-      pointerUp: (event, cancel) => pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel),
+      pointerDown: event => lot.pointerDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event),
+      pointerMove: event => lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event),
+      pointerUp: (event, cancel) => lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel),
       floorChanged() { roofTools.cancel(); draw.floorChanged(); }, cancel() { roofTools.cancel(); draw.cancel(); },
     });
     timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
@@ -446,7 +463,8 @@ export async function boot() {
       buildingCentre: tools.buildingCentre, clearLastAnswer: pauses.clearLastAnswer, dragPauseGhost: pauses.dragPauseGhost,
     });
     if (new URLSearchParams(location.search).get('test') === '1') window.__twinEditor = {
-      selection: tools.selection, handles: tools.handles, op: applyOp,
+      selection: tools.selection, handles: () => [...tools.handles(), ...lot.handles()], op: applyOp,
+      underlay: lot.underlay, lotHandles: lot.lotHandles, lotSuggestions: lot.lotSuggestions,
       get lastDragFrameMs() { return tools.lastDragFrameMs; },
     };
     // The editor uses the mockup's dark work surface; the shared preview keeps

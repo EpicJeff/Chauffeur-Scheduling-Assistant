@@ -70,7 +70,7 @@ export function createRoofTools({ view, tools, getPlan, op, canEdit, panel, sign
       const added = getPlan().buildings.find(b => b.id === operation.building)[list]?.find(p => !before.has(p.id));
       if (added) tools.select({ pieceId: added.id, buildingId: operation.building });
     };
-    try { await op(operation, saved); saved(); }
+    try { await op(operation, { saved }); saved(); }
     finally { busy = false; }
   }
   function snap(p) {

@@ -22,19 +22,29 @@ function select(options, value, attrs = {}) {
 function labelled(text, control) {
   const label = node('label', text); label.append(control); return label;
 }
-function svgNode(tag, attrs) {
-  const result = document.createElementNS('http://www.w3.org/2000/svg', tag);
-  for (const [key, value] of Object.entries(attrs)) result.setAttribute(key, value);
-  return result;
-}
-const points = outline => outline.map(p => p.join(',')).join(' ');
 const cleanRow = row => Object.fromEntries(['source', 'page', 'role', 'level', 'box', 'building'].map(k => [k, row[k] ?? null]));
 
-export function createPlace({ request, getSheets, reload, follow, canEdit, panel }) {
-  const host = el('place-view'), map = el('place-map');
-  let sheets = getSheets(), snapshot = {}, rows = [], saved = [], busy = false, signature = '', returnFocus = null;
-  let footprints = new Map(), savedFootprints = new Map(), streetEdge = null, lotSignature = '';
-  let selected = null, drawing = null, drag = null;
+// Both the scene and Your place use the same suggestion controls and payload.
+export function plotSuggestionCard({ read, suggestion, buildings, kinds, draft, answer }) {
+  const card = node('section', undefined, { class: 'editor-page', 'data-place-suggestion': suggestion.id });
+  card.append(node('h3', suggestion.name || 'Building footprint'), node('p', `${(suggestion.size_ft || []).map(n => Number(n).toFixed(1)).join(' by ')} feet · ${suggestion.where || ''}`));
+  const name = node('input', undefined, { type: 'text', maxlength: '100', 'data-suggestion-name': '' }); name.value = draft.name;
+  name.addEventListener('input', () => { draft.name = name.value; });
+  const kind = select(kinds, draft.kind, { 'data-suggestion-kind': '' }); kind.addEventListener('change', () => { draft.kind = kind.value; });
+  const match = select([['', 'New building'], ...buildings.map(b => [b.id, b.name])], draft.building, { 'data-suggestion-match': '' });
+  match.addEventListener('change', () => { draft.building = match.value; });
+  const send = action => answer(`place/plot/suggestions/${encodeURIComponent(suggestion.id)}`, {
+    action, read: read.id, ...(draft.building ? { building: draft.building } : { name: draft.name.trim(), kind: draft.kind }) });
+  const accept = node('button', 'Accept', { type: 'button', 'data-suggestion-accept': '' }); accept.addEventListener('click', () => send('accept'));
+  const dismiss = node('button', 'Dismiss', { type: 'button', 'data-suggestion-dismiss': '' }); dismiss.addEventListener('click', () => send('dismiss'));
+  card.append(labelled('Match to', match), labelled('Name', name), labelled('Kind', kind), accept, dismiss);
+  return card;
+}
+
+export function createPlace({ request, getSheets, reload, follow, canEdit, panel, lotTools }) {
+  const host = el('place-view');
+  let sheets = getSheets(), snapshot = {}, rows = [], saved = [], busy = false, working = null, signature = '', returnFocus = null;
+  let footprints = new Map();
   const suggestionDrafts = new Map();
   const place = () => sheets.place || { buildings: [], lot: {}, photo_tags: {} };
   const parts = () => [{ id: 'lot', name: 'Lot' }, ...place().buildings];
@@ -81,15 +91,17 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     el('place-read-plot').disabled = blocked || !plotConfirmed();
     el('place-suggest-photos').disabled = blocked || !(sheets.sources || []).some(s => s.kind === 'photo');
     el('place-confirm-placement').disabled = blocked || !place().lot?.read;
-    el('place-turn').disabled = blocked || !selected;
     host.setAttribute('aria-busy', String(busy));
   }
   async function work(action, duringBuild = false) {
     if (stopped(duringBuild)) return;
     busy = true; controls();
-    try { await action(); }
-    catch (error) { report(error); }
-    finally { busy = false; controls(); }
+    working = (async () => {
+      try { await action(); }
+      catch (error) { report(error); }
+      finally { busy = false; working = null; controls(); }
+    })();
+    return working;
   }
   async function mutate(path, method, body) {
     const result = await request(path, method, body);
@@ -111,8 +123,8 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
       : 'This reads your documents and adds to the running cost. Continue?', 'Continue', 'Cancel')) await action();
   }
   function close() {
-    host.hidden = true; drawing = null; drag = null;
-    delete map.dataset.drawing;
+    host.hidden = true;
+    el('place-suggestions').replaceChildren();
     for (const child of document.querySelector('.editor-shell').children) if (child !== host) child.inert = false;
     if (returnFocus?.isConnected && !returnFocus.closest('[hidden]')) returnFocus.focus();
     else el('editor-menu').querySelector('summary').focus();
@@ -227,9 +239,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     if (place().lot?.read || place().lot?.placement) {
       const draw = node('button', 'Draw on the lot', { type: 'button', 'data-place-draw': '' });
       draw.addEventListener('click', () => {
-        drawing = building.id; selected = building.id; map.dataset.drawing = 'true';
-        el('place-map-note').textContent = `Drag a rectangle on the lot for ${building.name}.`;
-        map.scrollIntoView({ block: 'center', behavior: 'smooth' }); controls();
+        close(); lotTools()?.drawFootprint(building.id);
       }); shell.append(draw);
     }
     return shell;
@@ -241,6 +251,8 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     if (!lot) head.append(node('span', sheets.kinds.find(k => k.id === part.kind)?.label || 'Other'));
     card.append(head);
     if (!lot) {
+      const locate = node('button', 'Place on the lot', { type: 'button' });
+      locate.addEventListener('click', () => { close(); lotTools()?.focusBuilding(part.id); }); card.append(locate);
       const details = node('details'); details.append(node('summary', 'Name and kind'));
       const name = node('input', undefined, { type: 'text', maxlength: '100' }); name.value = part.name;
       name.addEventListener('change', () => work(() => patch(part.id, { name: name.value.trim() })));
@@ -254,8 +266,10 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
       })); details.append(remove); card.append(details);
     }
     const upload = node('input', undefined, { type: 'file', multiple: '', accept: 'application/pdf,image/jpeg,image/png', 'data-place-upload': part.id });
-    upload.addEventListener('change', event => {
+    upload.addEventListener('change', async event => {
       const files = Array.from(event.target.files);
+      // Chosen files are never dropped: they wait for a change still saving.
+      while (busy && working) await working;
       work(async () => {
         const errors = []; let added = 0;
         for (const file of files) {
@@ -311,21 +325,11 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     const read = place().lot?.read;
     for (const suggestion of read?.suggestions || []) {
       if (suggestion.state !== 'open') continue;
-      const card = node('section', undefined, { class: 'editor-page', 'data-place-suggestion': suggestion.id });
-      card.append(node('h3', suggestion.name || 'Building footprint'), node('p', `${suggestion.size_ft.map(n => Number(n).toFixed(1)).join(' by ')} feet · ${suggestion.where}`));
       const draftKey = `${read.id}:${suggestion.id}`;
       if (!suggestionDrafts.has(draftKey)) suggestionDrafts.set(draftKey, { name: suggestion.name || '', kind: 'other', building: '' });
       const draft = suggestionDrafts.get(draftKey);
-      const name = node('input', undefined, { type: 'text', maxlength: '100', 'data-suggestion-name': '' }); name.value = draft.name;
-      name.addEventListener('input', () => { draft.name = name.value; });
-      const kind = select(kinds(), draft.kind, { 'data-suggestion-kind': '' }); kind.addEventListener('change', () => { draft.kind = kind.value; });
-      const match = select([['', 'New building'], ...place().buildings.map(b => [b.id, b.name])], draft.building, { 'data-suggestion-match': '' });
-      match.addEventListener('change', () => { draft.building = match.value; });
-      const answer = action => work(() => mutate(`place/plot/suggestions/${encodeURIComponent(suggestion.id)}`, 'POST', {
-        action, read: read.id, ...(draft.building ? { building: draft.building } : { name: draft.name.trim(), kind: draft.kind }) }));
-      const accept = node('button', 'Accept', { type: 'button', 'data-suggestion-accept': '' }); accept.addEventListener('click', () => answer('accept'));
-      const dismiss = node('button', 'Dismiss', { type: 'button', 'data-suggestion-dismiss': '' }); dismiss.addEventListener('click', () => answer('dismiss'));
-      card.append(labelled('Match to', match), labelled('Name', name), labelled('Kind', kind), accept, dismiss); host.append(card);
+      host.append(plotSuggestionCard({ read, suggestion, buildings: place().buildings, kinds: kinds(), draft,
+        answer: (path, body) => work(() => mutate(path, 'POST', body)) }));
     }
   }
   function photoSuggestions() {
@@ -351,67 +355,6 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
       use.addEventListener('click', () => work(() => patch(building.id, { shell, shell_from: 'photos' }))); row.append(use); host.append(row);
     }
   }
-  function drawMap() {
-    const lot = place().lot, read = lot?.read;
-    const outline = read?.lot || lot?.placement?.outline;
-    el('place-placement').hidden = !outline?.length;
-    map.replaceChildren();
-    if (!outline?.length) return;
-    const all = [...outline, ...[...footprints.values()].flat()];
-    const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
-    const x = Math.min(...xs), y = Math.min(...ys), w = Math.max(...xs) - x, h = Math.max(...ys) - y;
-    const pad = Math.max(w, h) * .08 || 10;
-    map.setAttribute('viewBox', `${x - pad} ${y - pad} ${w + 2 * pad} ${h + 2 * pad}`);
-    if (read?.matrix) map.append(svgNode('image', { href: sheetURL(read.source, read.page), x: 0, y: 0, width: 1, height: 1,
-      preserveAspectRatio: 'none', transform: `matrix(${read.matrix.join(' ')})`, opacity: '.38' }));
-    map.append(svgNode('polygon', { points: points(outline), class: 'place-lot-outline' }));
-    outline.forEach((a, i) => {
-      const b = outline[(i + 1) % outline.length];
-      const edge = svgNode('g', { 'data-place-edge': i, tabindex: 0, role: 'button', 'aria-label': `Make lot edge ${i + 1} the street` });
-      edge.append(svgNode('line', { x1: a[0], y1: a[1], x2: b[0], y2: b[1],
-        class: streetEdge?.includes(i) && streetEdge?.includes((i + 1) % outline.length) ? 'place-street' : 'place-edge' }));
-      // Give even horizontal and vertical edges a real, tappable bounding box.
-      const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, thickness = Math.max(w, h) * .015;
-      const dx = (b[1] - a[1]) / length * thickness, dy = -(b[0] - a[0]) / length * thickness;
-      edge.append(svgNode('polygon', { points: points([[a[0] + dx, a[1] + dy], [b[0] + dx, b[1] + dy],
-        [b[0] - dx, b[1] - dy], [a[0] - dx, a[1] - dy]]), fill: 'transparent', class: 'place-edge-hit' }));
-      const choose = () => { if (stopped()) return; streetEdge = [i, (i + 1) % outline.length]; drawMap(); };
-      edge.addEventListener('click', choose);
-      edge.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); choose(); } }); map.append(edge);
-    });
-    const scale = Math.min(map.clientWidth / (w + 2 * pad), map.clientHeight / (h + 2 * pad)) || 1;
-    const fontSize = 13 / scale;
-    for (const [id, outline] of footprints) {
-      const name = place().buildings.find(b => b.id === id)?.name || 'Building';
-      const group = svgNode('g', { class: 'place-map-footprint' });
-      const polygon = svgNode('polygon', { points: points(outline), 'data-place-footprint': id, tabindex: 0, role: 'button',
-        'aria-label': `Place ${name}`,
-        class: selected === id ? 'place-footprint place-selected' : 'place-footprint' });
-      const title = svgNode('title', {}); title.textContent = name; polygon.append(title);
-      polygon.addEventListener('focus', () => selectFootprint(id));
-      // Arrow keys move one foot; the same confirmation saves keyboard and pointer changes.
-      polygon.addEventListener('keydown', event => {
-        const by = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
-        if (!by || stopped()) return;
-        event.preventDefault(); footprints.set(id, footprints.get(id).map(p => p.map((v, i) => v + by[i])));
-        drawMap(); map.querySelector(`[data-place-footprint="${CSS.escape(id)}"]`)?.focus();
-      });
-      const centre = [0, 1].map(i => outline.reduce((n, p) => n + p[i], 0) / outline.length);
-      const width = Math.max(...outline.map(p => p[0])) - Math.min(...outline.map(p => p[0]));
-      const height = Math.max(...outline.map(p => p[1])) - Math.min(...outline.map(p => p[1]));
-      const small = width < fontSize * (name.length * .65 + 1) || height < fontSize * 1.5;
-      const text = svgNode('text', { x: centre[0], y: centre[1],
-        class: `place-map-label${small ? ' place-map-label-small' : ''}`, 'font-size': fontSize });
-      text.textContent = name; group.append(polygon, text); map.append(group);
-    }
-  }
-  function selectFootprint(id) {
-    selected = id;
-    map.querySelectorAll('[data-place-footprint]').forEach(polygon => {
-      polygon.classList.toggle('place-selected', polygon.dataset.placeFootprint === id);
-    });
-    controls();
-  }
   function render() {
     const addKind = el('place-add-kind'), chosenKind = addKind.value;
     addKind.replaceChildren(...kinds().map(([value, label]) => node('option', label, { value })));
@@ -419,7 +362,9 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     el('place-cards').replaceChildren(...parts().map(partCard));
     for (const [id, title, key] of [['place-read-plot', 'Read the plot plan', 'plot'], ['place-suggest-photos', 'Suggest from photos', 'photos']])
       el(id).textContent = `${title} · about $${Number(sheets.estimates?.[key] || 0).toFixed(2)}`;
-    plotSuggestions(); photoSuggestions(); drawMap(); controls();
+    if (!host.hidden) plotSuggestions(); else el('place-suggestions').replaceChildren();
+    photoSuggestions();
+    el('place-placement').hidden = !place().lot?.read && !place().lot?.placement; controls();
   }
   function sync(nextSheets, nextSnapshot) {
     const nextSignature = JSON.stringify([nextSheets, nextSnapshot.build, nextSnapshot.buildState?.state, canEdit()]);
@@ -439,20 +384,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
       }
     }
     rows = nextRows;
-    const latest = new Map();
-    for (const building of place().buildings) {
-      latest.set(building.id, copy(building.footprint));
-      if (!same(savedFootprints.get(building.id), building.footprint)) {
-        if (building.footprint) footprints.set(building.id, copy(building.footprint)); else footprints.delete(building.id);
-      }
-    }
-    for (const id of footprints.keys()) if (!latest.has(id)) footprints.delete(id);
-    if (selected && !latest.has(selected)) selected = null;
-    savedFootprints = latest;
-    const lot = place().lot, nextLot = JSON.stringify([lot?.read?.id, lot?.read?.matrix, lot?.placement]);
-    if (nextLot !== lotSignature) {
-      streetEdge = copy(lot?.read?.street_edge || lot?.placement?.street_edge || null); lotSignature = nextLot;
-    }
+    footprints = new Map(place().buildings.filter(b => b.footprint).map(b => [b.id, copy(b.footprint)]));
     render();
   }
   el('place-close').addEventListener('click', close);
@@ -482,59 +414,9 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
   })));
   el('place-build').addEventListener('click', () => work(() => buildPart('place')));
   el('place-confirm-placement').addEventListener('click', () => work(async () => {
-    // When the street changes the server reprojects untouched plot footprints.
-    const changed = [...footprints].filter(([id, outline]) => !same(outline, savedFootprints.get(id)));
-    await mutate('place/lot/placement', 'PUT', { street_edge: streetEdge, footprints: changed.map(([building, outline]) => ({ building, outline })) });
+    await mutate('place/lot/placement', 'PUT', { street_edge: place().lot?.read?.street_edge, footprints: [] });
     status('Placement confirmed.');
   }));
-  el('place-turn').addEventListener('click', () => {
-    if (stopped() || !selected || !footprints.has(selected)) return;
-    const outline = footprints.get(selected), centre = [0, 1].map(i => outline.reduce((sum, p) => sum + p[i], 0) / outline.length);
-    footprints.set(selected, outline.map(([x, y]) => [centre[0] - (y - centre[1]), centre[1] + (x - centre[0])])); drawMap();
-  });
-  const world = event => {
-    const point = new DOMPoint(event.clientX, event.clientY); return point.matrixTransform(map.getScreenCTM().inverse());
-  };
-  map.addEventListener('pointerdown', event => {
-    if (stopped() || event.button !== 0) return;
-    const id = event.target.closest('[data-place-footprint]')?.dataset.placeFootprint;
-    if (!drawing && !id) return;
-    event.preventDefault();
-    const p = world(event); selectFootprint(drawing || id);
-    drag = { id: selected, start: [p.x, p.y], outline: copy(footprints.get(selected) || []), pointer: event.pointerId, drawing: !!drawing };
-    map.setPointerCapture(event.pointerId); controls();
-  });
-  map.addEventListener('pointermove', event => {
-    if (!drag || drag.pointer !== event.pointerId) return;
-    const p = world(event), [x, y] = drag.start;
-    const outline = drag.drawing ? [[Math.min(x, p.x), Math.min(y, p.y)], [Math.max(x, p.x), Math.min(y, p.y)],
-      [Math.max(x, p.x), Math.max(y, p.y)], [Math.min(x, p.x), Math.max(y, p.y)]]
-      : drag.outline.map(q => [q[0] + p.x - x, q[1] + p.y - y]);
-    footprints.set(drag.id, outline);
-    let polygon = [...map.querySelectorAll('[data-place-footprint]')].find(n => n.dataset.placeFootprint === drag.id);
-    if (!polygon) { polygon = svgNode('polygon', { 'data-place-footprint': drag.id, class: 'place-footprint place-selected' }); map.append(polygon); }
-    polygon.setAttribute('points', points(outline));
-  });
-  function endDrag(event) {
-    if (!drag || drag.pointer !== event.pointerId) return;
-    const start = drag; drag = null;
-    if (map.hasPointerCapture(event.pointerId)) map.releasePointerCapture(event.pointerId);
-    if (event.type === 'pointercancel') {
-      if (start.outline.length) footprints.set(start.id, start.outline); else footprints.delete(start.id);
-    } else if (start.drawing) {
-      const outline = footprints.get(start.id);
-      if (outline?.length) work(async () => {
-        try { await patch(start.id, { footprint: outline, footprint_from: 'drawn' }); }
-        catch (error) {
-          if (start.outline.length) footprints.set(start.id, start.outline); else footprints.delete(start.id);
-          drawMap(); throw error;
-        }
-      });
-      drawing = null; delete map.dataset.drawing;
-    }
-    el('place-map-note').textContent = 'Tap a lot edge for the street. Drag a building to place it, or select it and use the arrow keys.';
-    drawMap(); controls();
-  }
-  map.addEventListener('pointerup', endDrag); map.addEventListener('pointercancel', endDrag);
+  el('place-in-scene').addEventListener('click', () => { close(); lotTools()?.showLot(); });
   return { open, close, isOpen: () => !host.hidden, sync };
 }

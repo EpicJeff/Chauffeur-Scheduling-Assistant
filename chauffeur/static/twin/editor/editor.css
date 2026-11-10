@@ -162,19 +162,12 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #place-suggestions:empty, #place-photo-suggestions:empty { display: none; }
 #place-suggestions .editor-page > button { margin: 8px 6px 0 0; }
 .editor-shell .place-primary { background: #119e50; border-color: #119e50; font-weight: 600; }
-#place-map { display: block; width: 100%; height: 350px; background: #1c2531; border: 1px solid var(--editor-line); border-radius: 10px; touch-action: none; }
-#place-map[data-drawing] { cursor: crosshair; }
-#place-map polygon, #place-map line { vector-effect: non-scaling-stroke; }
-.place-lot-outline { fill: #52ccff0c; stroke: var(--editor-muted); stroke-width: 1; pointer-events: none; }
-.place-edge, .place-street { stroke: #a0afc180; stroke-width: 10; cursor: pointer; }
-.place-street { stroke: #52ccff; stroke-width: 14; }
-.place-edge-hit { cursor: pointer; pointer-events: all; }
-.place-footprint { fill: #104e6bbd; stroke: #52ccff; stroke-width: 2; cursor: grab; }
-.place-selected { fill: #52ccff55; stroke-width: 3; }
-.place-map-label { fill: #dce4ef; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
-.place-map-label-small { opacity: 0; }
-.place-map-footprint:hover .place-map-label-small, .place-map-footprint:focus-within .place-map-label-small,
-.place-selected + .place-map-label-small { opacity: 1; }
+/* Placement uses the existing page cards and screen-handle treatment. */
+.editor-lot-card { position: fixed; z-index: 4; right: 14px; top: calc(var(--editor-floor-height) + 88px); width: var(--editor-side); max-height: calc(100dvh - var(--editor-floor-height) - 314px); overflow-y: auto; }
+.editor-lot-card label { display: block; }
+.editor-lot-card input, .editor-lot-card select { width: 100%; min-width: 0; }
+.editor-lot-card .editor-page > button { margin: 8px 6px 0 0; }
+.editor-lot-handle { width: 28px; height: 28px; display: grid; place-items: center; color: var(--editor-accent); font-size: 20px; }
 @media (max-width: 1150px) { #place-cards { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 700px) {
   .place-header, .place-footer { padding: 12px; gap: 10px; flex-wrap: wrap; }
@@ -204,6 +197,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   #editor-cameras { left: 76px; bottom: calc(49% + 96px); }
   #editor-cameras button { padding: 5px 8px; }
   #piece-card { top: calc(52% + 134px); right: 8px; width: calc(100vw - 16px); max-height: calc(48dvh - 224px); }
+  .editor-lot-card { top: calc(52% + 134px); right: 8px; width: calc(100vw - 16px); max-height: calc(48dvh - 224px); }
   #pause-card { max-height: calc(52dvh - 150px); width: min(280px, calc(100vw - 96px)); }
   #draw-tools, #roof-tools { left: 76px; right: 8px; top: 75px; }
   #draw-tools button, #roof-tools button { font-size: 11px; padding: 5px; }

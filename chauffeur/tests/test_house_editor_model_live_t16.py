@@ -246,6 +246,13 @@ def _seed():
     STATE['plot_source'] = source
     STATE['photo'] = twin_store.save_source('photo', 'yard.png', _photo_png(), part='lot')
 
+    def unflag(model):
+        # Ruling R50: a needs-checking roof opens its own card, so the pool house roof's flag is cleared before a click selects the building.
+        pool_model = H.building(model, POOL)
+        pool_model['flags'] = [f for f in pool_model.get('flags', []) if f.get('block_rect') != [0, 0, 31, 22]]
+        return model
+    twin_store.update_model(unflag, 'edit', 'Test: the pool house roof has been checked (Ruling R50).')
+
 
 def _serve():
     """The harness's served app, seeded with the household plus this file's plot read."""
