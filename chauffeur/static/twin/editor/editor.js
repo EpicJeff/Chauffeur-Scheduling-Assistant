@@ -9,6 +9,7 @@ import { createHistory } from './history.js';
 import { createPauses, applyRegistration, invertRegistration } from './pauses.js';
 import { createTimeline } from './timeline.js';
 import { createPlace } from './place.js';
+import { createRoofTools } from './roof_tools.js';
 
 const el = id => document.getElementById(id);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
@@ -21,6 +22,7 @@ export async function boot() {
   let resuming = false, stopping = false;
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
   let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, previewing = false, lastSummary = '';
+  let roofTools = null;
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
@@ -50,10 +52,11 @@ export async function boot() {
     lastSummary = result.summary;
     return result;
   }
-  async function applyOpNow(operation) {
+  async function applyOpNow(operation, saved) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
     const result = await api.op(operation);
     snapshot = { ...snapshot, plan: result.plan, model: result.model };
+    saved?.(result);
     const line = document.createElement('li'); line.textContent = plain(result.words); el('editor-log').append(line);
     lastSummary = result.words;
     await renderScene();
@@ -407,25 +410,28 @@ export async function boot() {
       canEdit, signal: lifecycle.signal,
       refresh: async () => { draw?.cancel(); await polling.refreshState(); await renderScene(); } });
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getSheets: () => sheets,
-      edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract });
+      edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, addDormer: () => roofTools?.addDormer() });
     draw = createDraw({ view, tools, getPlan: () => snapshot.plan, op: applyOpNow,
       gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract });
+    roofTools = createRoofTools({ view, tools, getPlan: () => snapshot.plan,
+      op: (operation, saved) => history.perform(() => applyOpNow(operation, saved)),
+      canEdit, panel, signal: lifecycle.signal, onInteract, cancelDrawing: draw.cancel });
     pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
       getSheets: () => sheets, refresh: () => polling.pollNow(true), preview: () => renderScene().catch(report),
       visibilityChanged: syncBuildButton, canEdit, signal: lifecycle.signal });
     tools.delegate({
-      pointerDown: event => pauses.pointerDown(event) || draw.pointerDown(event),
-      pointerMove: event => pauses.pointerMove(event) || draw.pointerMove(event),
-      pointerUp: (event, cancel) => pauses.pointerUp(event, cancel) || draw.pointerUp(event, cancel),
-      floorChanged: draw.floorChanged, cancel: draw.cancel,
+      pointerDown: event => pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event),
+      pointerMove: event => pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event),
+      pointerUp: (event, cancel) => pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel),
+      floorChanged() { roofTools.cancel(); draw.floorChanged(); }, cancel() { roofTools.cancel(); draw.cancel(); },
     });
     timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
       canScrub: () => !menuBusy && !directing,
       log(summary) { const line = document.createElement('li'); line.textContent = summary; el('editor-log').append(line); lastSummary = summary; },
       onPreview(value) {
-        previewing = value; draw.cancel(); tools.select(null); pauses.dismiss(); panel.readOnly(value);
+        previewing = value; roofTools.cancel(); draw.cancel(); tools.select(null); pauses.dismiss(); panel.readOnly(value);
         tools.refreshCard(); syncBuildButton();
-        for (const id of ['move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-level', 'delete']) el(`rail-${id}`).disabled = value;
+        for (const id of ['move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-level', 'delete', 'roof']) el(`rail-${id}`).disabled = value;
         if (!value) pauses.resume();
       },
     });

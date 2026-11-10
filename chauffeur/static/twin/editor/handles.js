@@ -2,6 +2,7 @@ import { contains } from '../twin_generator.js';
 import * as THREE from 'three';
 import { hostPoint } from '../twin_hosts.js';
 import { groundAt } from '../twin_ground.js';
+import { roofEdge } from './roof_tools.js';
 
 const FT = .3048;
 const inch = value => Math.round(value * 12) / 12;
@@ -12,7 +13,7 @@ const basis = wall => {
 
 // Screen affordances and hit testing share the same model points. Structural
 // previews stay in drag.js; the server alone decides whether a release fits.
-export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCommit, onPreview, signal }) {
+export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCommit, onPreview, onClick, signal }) {
   const canvas = view.renderer3.domElement, host = canvas.parentElement;
   const layer = document.createElement('div'); layer.className = 'editor-handles'; host.append(layer);
   const raycaster = new THREE.Raycaster();
@@ -52,9 +53,9 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     if (!canEdit()) return [];
     const selected = getSelection(), building = plan()?.buildings.find(b => b.id === selected.building);
     if (!building) return [];
-    const result = [], add = (kind, id, at, level) => {
+    const result = [], add = (kind, id, at, level, extra = {}) => {
       if (view.groups?.levels[`${building.id}:${level}`]?.visible === false) return;
-      result.push({ kind, id, at, building: building.id, level });
+      result.push({ kind, id, at, building: building.id, level, ...extra });
     };
     const room = building.rooms.find(r => r.id === selected.room || selected.kind === 'room' && r.id === selected.id);
     if (room && room.state !== 'ghost') {
@@ -84,6 +85,21 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
         addOpening('opening_edge_top', opening.at, opening.head);
         addOpening('opening_edge_bottom', opening.at, opening.sill);
       }
+    }
+    const roof = building.roofs?.find(r => selected.kind === 'roof' && r.id === selected.id);
+    if (roof && roof.state !== 'ghost') roof.edges.forEach((edge, index) => {
+      const { a, b } = roofEdge(roof, index);
+      add('roof_edge', roof.id, [...a.map((v, i) => (v + b[i]) / 2), roof.plate], roof.level, { edge: index });
+    });
+    const dormer = building.dormers?.find(d => selected.kind === 'dormer' && d.id === selected.id);
+    const parent = dormer && building.roofs?.find(r => r.id === dormer.roof);
+    if (parent && dormer.state !== 'ghost') {
+      const { a, axis } = roofEdge(parent, dormer.edge), z = parent.plate + (dormer.plate_offset || 0);
+      const addDormer = (kind, offset, side) => add(kind, dormer.id,
+        [...a.map((v, i) => v + axis[i] * (dormer.at + offset)), z], parent.level, { side });
+      addDormer('dormer_middle', 0);
+      addDormer('dormer_edge', -dormer.width / 2, -1);
+      addDormer('dormer_edge', dormer.width / 2, 1);
     }
     const hosted = ['anchors', 'items'].flatMap(list => building[list] || []).find(p => p.id === selected.id);
     if (hosted && hosted.state !== 'ghost') {
@@ -147,6 +163,15 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       if (!drag.begin({ ...getSelection(), ...handle }, start)) return false;
       gesture = { handle, source, building }; return true;
     }
+    if (handle.kind === 'roof_edge' || handle.kind.startsWith('dormer_')) {
+      // Start from the shown plan: a released drag is still held while it saves.
+      const shown = plan(), building = shown.buildings.find(b => b.id === handle.building);
+      const list = handle.kind === 'roof_edge' ? 'roofs' : 'dormers', piece = building[list].find(p => p.id === handle.id);
+      const roof = list === 'roofs' ? piece : building.roofs.find(r => r.id === piece.roof);
+      const normal = [0, 0, 1], start = onPlane(event, building, handle.at, normal);
+      if (!start) return false;
+      gesture = { handle, source: shown, building, piece, list, roof, normal, start, operation: null }; return true;
+    }
     const list = handle.kind === 'hosted' ? ['anchors', 'items'].find(list => building[list]?.some(p => p.id === handle.id)) : 'openings';
     const piece = building[list].find(p => p.id === handle.id), wall = building.walls.find(w => w.id === (piece.wall || piece.host?.wall));
     const normal = wall ? basis(wall).normal : [0, 0, 1];
@@ -184,6 +209,41 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       drag.update(view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`)); return;
     }
     const point = onPlane(event, building, handle.at, g.normal); if (!point) return;
+    if (handle.kind === 'roof_edge' || handle.kind.startsWith('dormer_')) {
+      const edge = handle.kind === 'roof_edge' ? handle.edge : piece.edge, frame = roofEdge(g.roof, edge);
+      const change = point.slice(0, 2).map((v, i) => v - g.start[i]);
+      let operation;
+      if (handle.kind === 'roof_edge') {
+        const by = inch(change.reduce((n, v, i) => n + v * frame.normal[i], 0));
+        const attachment = piece.edges[edge], wall = building.walls.find(w => w.id === attachment.wall);
+        let detach = false;
+        if (wall) {
+          const axis = Math.abs(frame.axis[0]) < .5 ? 0 : 1;
+          detach = Math.abs(frame.a[axis] + frame.normal[axis] * by - wall.from[axis]) > 1 + 1e-6;
+        }
+        operation = { op: 'move_roof_edge', building: building.id, roof: piece.id, edge, by, detach };
+      } else {
+        const along = inch(change.reduce((n, v, i) => n + v * frame.axis[i], 0));
+        operation = { op: 'move_dormer', building: building.id, id: piece.id,
+          at: piece.at + along / (handle.kind === 'dormer_middle' ? 1 : 2) };
+        if (handle.kind === 'dormer_edge') operation.width = piece.width + handle.side * along;
+      }
+      g.operation = operation; preview = structuredClone(g.source);
+      const nextBuilding = preview.buildings.find(b => b.id === building.id), next = nextBuilding[g.list].find(p => p.id === piece.id);
+      if (handle.kind === 'roof_edge') {
+        for (const index of [edge, (edge + 1) % next.area.length])
+          next.area[index] = next.area[index].map((v, i) => v + frame.normal[i] * operation.by);
+      } else { next.at = operation.at; if ('width' in operation && operation.width > 0) next.width = operation.width; }
+      // Preview the edited boundary without rebuilding the yard and roof union
+      // on every pointer event. The committed model rebuilds the roof planes.
+      const boundary = handle.kind === 'roof_edge' ? next.area : [
+        frame.a.map((v, i) => v + frame.axis[i] * (next.at - next.width / 2)),
+        frame.a.map((v, i) => v + frame.axis[i] * (next.at + next.width / 2))];
+      document.getElementById('editor-drag-outline')?.setAttribute('points', boundary.map(p => project(building, [...p, handle.at[2]]))
+        .filter(Boolean).map(p => p.join(',')).join(' '));
+      onPreview?.(preview, getSelection()); refresh();
+      lastFrameMs = Math.max(.001, performance.now() - started); return;
+    }
     const operation = { op: handle.kind.startsWith('opening_edge') ? 'resize_opening' : 'move_hosted', building: building.id, id: piece.id };
     if (handle.kind.startsWith('opening')) {
       const { axis } = basis(g.wall), along = inch((point[0] - g.start[0]) * axis[0] + (point[1] - g.start[1]) * axis[1]);
@@ -225,9 +285,23 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     onPreview?.(preview, getSelection()); refresh();
     lastFrameMs = Math.max(.001, performance.now() - started);
   }
-  async function finish(cancel = false) {
-    const g = gesture; gesture = null; preview = null;
+  async function finish(cancel = false, clicked = false) {
+    const g = gesture, released = preview; gesture = null; preview = null;
     if (!g) return;
+    if (g.handle.kind === 'roof_edge' || g.handle.kind.startsWith('dormer_')) {
+      document.getElementById('editor-drag-outline')?.setAttribute('points', '');
+      if (clicked && g.handle.kind === 'roof_edge') onClick?.(g.handle);
+      const saving = !cancel && g.operation;
+      // Handles stay where they were released until the save answers;
+      // a refusal drops the held plan and they return to the stored piece.
+      if (saving) preview = released;
+      try { if (saving) await onCommit(g.operation); }
+      finally {
+        if (saving && preview === released) preview = null;
+        onPreview?.(plan(), getSelection()); refresh();
+      }
+      return;
+    }
     if (['wall', 'joint', 'room'].includes(g.handle.kind)) {
       try { await drag.finish(cancel); }
       finally { preview = null; refresh(); }
@@ -245,6 +319,13 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   signal.addEventListener('abort', () => { view.controls.removeEventListener('change', refresh); layer.remove(); }, { once: true });
   return { begin, update, finish, refresh, active: () => !!gesture,
     show(value) { preview = value; refresh(); },
-    handles() { refresh(); return rows.map(({ handle }) => ({ kind: handle.kind, id: handle.id, at: [...handle.at] })); },
+    handles() {
+      refresh();
+      // Roof edges can span more than the current camera frame. Keep their
+      // model points discoverable so looking at an edge reveals its handle.
+      const all = descriptors(), roof = all.filter(h => h.kind === 'roof_edge' || h.kind.startsWith('dormer_'));
+      return [...rows.map(({ handle }) => handle).filter(h => h.kind !== 'roof_edge' && !h.kind.startsWith('dormer_')), ...roof]
+        .map(handle => ({ kind: handle.kind, id: handle.id, at: [...handle.at] }));
+    },
     get lastDragFrameMs() { return lastFrameMs ?? drag.lastDragFrameMs; } };
 }

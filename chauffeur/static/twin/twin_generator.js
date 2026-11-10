@@ -338,7 +338,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         positions: new Float32Array([...roofMesh(own).positions, ...envelope.positions]) }];
     }));
     let activePiece = null;
-    const records = new Map();
+    const records = new Map(), wallProfiles = new Map();
     const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || fallback, kind, buildingId: b.id, ghost: piece.state === 'ghost' }; };
     const mesh = (group, geometry, material) => {
       const data = activePiece || { pieceId: 'structure', kind: 'building', buildingId: b.id };
@@ -627,6 +627,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         holes.push(opening({ ...o, sill: o.sill + section.plate - l.elevation, head: o.head + section.plate - l.elevation }, at));
       }
       wall(local[w.level], w.from, w.to, l.elevation, w.thickness, top, holes, w.exterior, null, true, profile);
+      wallProfiles.set(w.id, { panels: profile.panels, elevation: l.elevation });
       if (w.exterior && w.state !== 'ghost') supportingWalls.push({ w, l, outward, dx, dy, panels: profile.panels });
       if (w.exterior && l.elevation > 0 && w.level === first.id) wall(local[w.level], w.from, w.to, 0, w.thickness + 0.12, () => l.elevation, [], false, 'base', false, profile);
     }
@@ -1045,7 +1046,16 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
         const wall = b.walls.find(w => w.id === data.pieceId);
         let geometry;
-        if (wall) {
+        const profile = wall && wallProfiles.get(wall.id), panels = profile?.panels.filter(([a, c]) => c > a);
+        if (panels?.length) {
+          // Follow the wall's drawn top (gables, dormer cheeks, steps), so a
+          // tall wall's pick never stands above the roof that covers it.
+          const bottom = box.min.y - profile.elevation, depth = wall.thickness + 0.2;
+          const outline = [[panels[0][0], bottom], [panels.at(-1)[1], bottom]];
+          for (const [a, c, ta, tc] of [...panels].reverse()) outline.push([c, Math.max(bottom, tc)], [a, Math.max(bottom, ta)]);
+          geometry = new THREE.ExtrudeGeometry(new THREE.Shape(outline.map(p => new THREE.Vector2(...p))), { depth, bevelEnabled: false, steps: 1 })
+            .translate(0, 0, -depth / 2).applyMatrix4(wallBasis(wall.from, wall.to, profile.elevation).matrix);
+        } else if (wall) {
           const basis = wallBasis(wall.from, wall.to, box.min.y);
           geometry = boxGeometry(basis.length, size.y, wall.thickness + 0.2).translate(basis.length / 2, size.y / 2, 0).applyMatrix4(basis.matrix);
         } else if (data.kind === 'roof') {

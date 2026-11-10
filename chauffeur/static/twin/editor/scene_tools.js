@@ -6,16 +6,18 @@ import { createSelection } from './selection.js';
 import { createDrag } from './drag.js';
 import { createDimensions } from './dimensions.js';
 import { createHandles } from './handles.js';
+import { contains } from '../twin_generator.js';
 
 const rotatePoint = (p, angle) => {
   const a = angle * Math.PI / 180;
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
 
-export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op, panel, canEdit, signal, onInteract }) {
+export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let selection = null, tool = 'select', levelKey = null, sheetOn = false, gesture = null, delegate = null, pointerId = null;
   let ownsGesture = false, handles = null;
+  let roofRooms = new Set(), roofRoomBuilding = null;
   const pointers = new Set();
   const dimensions = createDimensions({ view, onCommit: op, canEdit, signal, getHandles: () => handles?.handles() || [] });
   function drawDimensions(plan = getPlan(), state = roomSelection.current()) {
@@ -35,6 +37,9 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
   } });
   const getLabel = item => getSheets().piece_labels?.find(p => p.piece === item.pieceId && p.building === item.buildingId)?.label || 'this piece';
   const roomSelection = createSelection({ view, getModel, onChange(state) {
+    if (!state.room || state.building !== roofRoomBuilding || !roofRooms.has(state.room)) {
+      roofRooms = new Set(state.room ? [state.room] : []); roofRoomBuilding = state.building;
+    }
     selection = state.id ? { pieceId: state.id, buildingId: state.building, kind: state.kind, room: state.room } : null;
     if (!selection) panel.clearSelection();
     if (state.level) levelKey = `${state.building}:${state.level}`;
@@ -44,11 +49,11 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
   } });
   const cards = createCards({ getPlan, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    canEdit, select, ask: item => panel.focusSelection(item, getLabel(item)) });
+    op, addDormer, canEdit, select, ask: item => panel.focusSelection(item, getLabel(item)) });
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: op,
-    onPreview: drawDimensions, signal });
+    onPreview: drawDimensions, onClick: cards.edge, signal });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'
-    && (['wall', 'joint', 'room'].includes(kind)
+    && (['wall', 'joint', 'room', 'roof', 'dormer'].includes(kind)
       || kind === 'opening' && building.walls.some(w => w.id === piece.wall)
       || ['anchor', 'item'].includes(kind) && !!piece.host);
   const listen = (node, event, fn, options = {}) => node.addEventListener(event, fn, { ...options, signal });
@@ -69,10 +74,18 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     if (!record) return;
     const level = record.kind === 'level' ? record.piece.id : record.piece.level
       || record.building.walls.find(w => w.id === (record.piece.wall || record.piece.host?.wall))?.level;
+    if (['roof', 'dormer'].includes(record.kind) && roomSelection.current().room) roomSelection.clear();
     roomSelection.select({ kind: record.kind, id: record.piece.id, building: record.building.id, level });
   }
   function pick(x, y) {
-    const item = view.pick(x, y);
+    let item = view.pick(x, y);
+    if (item?.kind === 'roof') {
+      const building = getPlan()?.buildings.find(b => b.id === item.building);
+      const section = building?.roof?.sections.find(s => s.id === item.id);
+      const dormer = building?.dormers?.find(d => d.id === item.id);
+      if (dormer) return { ...item, kind: 'dormer', level: section?.level };
+      if (section?.roof) item = { ...item, id: section.roof, pieceId: section.roof, level: section.level };
+    }
     const record = item?.kind === 'roof' && findPiece(getPlan(), item.id, item.building);
     const markedRoof = record && (record.piece.state === 'ghost' || record.piece.block
       && record.building.roof.flags?.some(flag => flag.block_rect?.length === 4
@@ -135,7 +148,9 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
       }
       const all = document.createElement('button'); all.type = 'button'; all.textContent = 'All floors';
       all.addEventListener('click', () => {
-        onInteract?.(); roomSelection.clear(); view.setView('ext'); view.showLevels(null);
+        onInteract?.();
+        if (!['roof', 'dormer'].includes(roomSelection.current().kind)) roomSelection.clear();
+        view.setView('ext'); view.showLevels(null);
         view.setEditableLevel(null).catch(report); drawFloors();
       }); host.append(all);
       for (const kind of ['Floor', 'Building']) {
@@ -205,6 +220,9 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     if (event.button !== 0 || !canEdit()) return;
     pointerId = event.pointerId;
     if (delegate?.pointerDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
+    if (event.shiftKey && tool === 'select') {
+      gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true, addRoom: true }; return;
+    }
     if (handles.begin(event)) {
       gesture = { x: event.clientX, y: event.clientY, pointerId, dragging: true, enabled: view.controls.enabled };
       ownsGesture = true; onInteract?.(); view.controls.enabled = false;
@@ -272,10 +290,22 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     if (g.dragging) {
       view.controls.enabled = g.enabled;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-      handles.finish(cancel || !g.moved).catch(report); return;
+      handles.finish(cancel || !g.moved, !cancel && !g.moved).catch(report); return;
     }
     if (g.selecting) {
-      if (!cancel && Math.hypot(event.clientX - g.x, event.clientY - g.y) < 3) { onInteract?.(); roomSelection.select(pick(event.clientX, event.clientY)); }
+      if (!cancel && Math.hypot(event.clientX - g.x, event.clientY - g.y) < 3) {
+        onInteract?.();
+        if (g.addRoom) {
+          const target = floor(), p = target && view.floorAt(event.clientX, event.clientY, target.key);
+          const room = p && target.building.rooms.find(r => r.level === target.level.id && r.state !== 'ghost' && contains(r.polygon, p));
+          if (room) {
+            if (roofRoomBuilding !== target.building.id || !roofRooms.size) roomSelection.focusRoom(room.id, target.building.id);
+            roofRooms.add(room.id); roofRoomBuilding = target.building.id;
+          }
+        } else {
+          roofRooms.clear(); roomSelection.select(pick(event.clientX, event.clientY));
+        }
+      }
       return;
     }
     el('editor-drag-outline').setAttribute('points', '');
@@ -313,6 +343,7 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
   return {
     select, selected: () => selection, selection: roomSelection.current, dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,
     handles: handles.handles,
+    selectedRooms: () => roofRooms.size ? [...roofRooms] : null,
     get lastDragFrameMs() { return handles.lastDragFrameMs; }, dragging: handles.active,
     buildingCentre(id) { const b = getPlan()?.buildings.find(b => b.id === id); return b && rotatePoint(localCentre(b), b.rotation || 0).map((v, i) => v + (b.position?.[i] || 0)); },
     delegate(value) { delegate = value; },
