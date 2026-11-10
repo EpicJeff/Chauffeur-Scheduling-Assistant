@@ -33,6 +33,66 @@ import types
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def _install_bounded_socketpair(tries=5, step_timeout=5.0):
+    """Windows loopback here intermittently loses TCP handshakes, and CPython's
+    socket._fallback_socketpair then blocks forever in accept(). asyncio's
+    proactor loop calls socket.socketpair() for its self-pipe, so replace it
+    with the same construction but bounded and retried."""
+    if sys.platform != 'win32' or getattr(socket.socketpair, '_chauffeur_bounded', False):
+        return
+
+    def socketpair(family=socket.AF_INET, type=socket.SOCK_STREAM, proto=0):
+        if family != socket.AF_INET or type != socket.SOCK_STREAM or proto != 0:
+            raise ValueError("Only AF_INET, SOCK_STREAM, protocol zero are supported")
+        last = None
+        for _ in range(tries):
+            lsock = socket.socket(family, type, proto)
+            csock = ssock = None
+            try:
+                lsock.bind(('127.0.0.1', 0))
+                lsock.listen()
+                addr, port = lsock.getsockname()[:2]
+                lsock.settimeout(step_timeout)
+                csock = socket.socket(family, type, proto)
+                csock.settimeout(step_timeout)
+                csock.connect((addr, port))
+                ssock, _ = lsock.accept()
+                if (ssock.getsockname() != csock.getpeername()
+                        or csock.getsockname() != ssock.getpeername()):
+                    raise ConnectionError("Unexpected peer connection")
+                ssock.setblocking(True)
+                csock.setblocking(True)
+                lsock.close()
+                return ssock, csock
+            except (socket.timeout, OSError) as e:
+                last = e
+                for x in (ssock, csock):
+                    if x is not None:
+                        x.close()
+            finally:
+                lsock.close()
+        raise last
+
+    socketpair._chauffeur_bounded = True
+    socket.socketpair = socketpair
+
+
+_install_bounded_socketpair()
+
+_RETRY_NAV = ('ERR_CONNECTION_TIMED_OUT', 'ERR_CONNECTION_RESET', 'ERR_CONNECTION_REFUSED')
+
+
+def goto_retry(page, url, tries=3, **kw):
+    """page.goto that retries only on transient loopback connection errors."""
+    for i in range(tries):
+        try:
+            return page.goto(url, **kw)
+        except Exception as e:  # playwright Error
+            if i == tries - 1 or not any(m in str(e) for m in _RETRY_NAV):
+                raise
+            time.sleep(1.0 + i)
+
+
 def _free_port():
     sock = socket.socket()
     sock.bind(('127.0.0.1', 0))
@@ -41,11 +101,31 @@ def _free_port():
     return port
 
 
+def _patch_page_goto():
+    """Make every Page.goto in the live suites retry transient loopback errors."""
+    from playwright.sync_api import Page
+    if getattr(Page.goto, '_chauffeur_retry', False):
+        return
+    orig = Page.goto
+
+    def goto(self, url, **kw):
+        for i in range(3):
+            try:
+                return orig(self, url, **kw)
+            except Exception as e:
+                if i == 2 or not any(m in str(e) for m in _RETRY_NAV):
+                    raise
+                time.sleep(1.0 + i)
+    goto._chauffeur_retry = True
+    Page.goto = goto
+
+
 def live_app(seed=None, boot_timeout=50.0):
     """Serve the app on a free port. Returns None (having said why) when
     playwright is not installed."""
     try:
         from playwright.sync_api import sync_playwright
+        _patch_page_goto()
     except ImportError:
         print("  skip  playwright not installed — the app was not served")
         return None
