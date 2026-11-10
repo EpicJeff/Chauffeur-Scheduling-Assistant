@@ -37,13 +37,16 @@ from services import storage, voice_tools, ha_api, agent_tools_v2
 
 SHARED = ('get_drive_digest', 'get_run_sheet', 'get_household_tasks', 'get_kid_tasks', 'get_routine_status',
           'get_week_dinners', 'get_tonights_plate', 'list_chores', 'get_household_status', 'get_errands',
-          'get_eating_plan', 'list_projects', 'get_project', 'program_progress', 'get_household_load',
-          'get_assist_coverage', 'get_point_balances', 'adjust_points', 'get_family_goals', 'get_travel_time',
+          'get_eating_plan', 'list_projects', 'get_project', 'get_household_load',
+          'get_point_balances', 'adjust_points', 'get_family_goals', 'get_travel_time',
           'get_calendar_events', 'get_shopping_list_items', 'research_question', 'get_weather')
 PERSONAL = ('read_mail', 'search_mail', 'get_family_messages', 'list_threads', 'get_requests', 'answer_request',
             'list_insights', 'list_open_findings', 'find_in_chauffeur', 'get_current_state', 'start_ask',
             'draft_thread_message', 'suggest_gift_ideas', 'add_occasion_gift_list', 'get_occasion',
-            'manage_car')   # manage_car locate says where a family car, so a person, is
+            'manage_car',   # manage_car locate says where a family car, so a person, is
+            # Branch review 2026-11-10: these speak calendar or program titles with no
+            # per-row check (a private appointment, a restricted program): held.
+            'get_assist_coverage', 'negotiate_day', 'list_programs', 'program_progress')
 
 
 def forecast(days=10, start=None):
@@ -90,6 +93,30 @@ class ScheduleOnTheSatellite(unittest.TestCase):
         self.assertNotEqual(speech, base.QUESTION)
         self.assertEqual(self.vp._held, {})
 
+    def _digest_with(self, event_ids, events, errands=()):
+        from services import access
+        self.reply = 'Jeff drives to Dr. Patel at 3.'
+        with patch.object(agent_tools_v2, 'get_drive_digest',
+                          base.fake({'status': 'success', 'message': self.reply,
+                                     'events': [{'id': i} for i in event_ids]})),                 patch.object(access, 'cached_schedule',
+                             return_value={'events': events, 'scheduled_errands': list(errands)}):
+            return self.say("What's next on the schedule for today?", base.JEFF,
+                            call={'name': 'get_drive_digest', 'arguments': {'target_date': 'today'}})[0]
+
+    def test_digest_with_a_private_appointment_asks(self):
+        # Branch review C1: the digest named private calendar titles aloud.
+        speech = self._digest_with(['e1'], [{'id': 'e1', 'title': 'Dr. Patel', 'visibility': 'private'}])
+        self.assertEqual(speech, base.QUESTION)
+
+    def test_digest_with_a_sensitive_event_asks(self):
+        speech = self._digest_with(['e1'], [{'id': 'e1', 'title': 'Therapy', 'sensitivity': 'sensitive'}])
+        self.assertEqual(speech, base.QUESTION)
+
+    def test_digest_of_shared_events_and_errands_is_spoken(self):
+        speech = self._digest_with(['e2', 'errand-1'], [{'id': 'e2', 'title': 'Soccer'}],
+                                   errands=[{'id': 'errand-1', 'title': 'Pick up dry cleaning'}])
+        self.assertNotEqual(speech, base.QUESTION)
+
     def test_mail_still_asks(self):
         speech, _ = base.PrivateAnswerTests.hold_mail(self)
         self.assertEqual(speech, base.QUESTION)
@@ -132,6 +159,13 @@ class Weather(unittest.TestCase):
         self.data = forecast(start=datetime.date.today() - datetime.timedelta(days=2))
         res = agent_tools_v2.get_weather(days=3)
         self.assertEqual(res['days'][0]['date'], datetime.date.today().isoformat())
+
+    def test_days_missing_means_a_week(self):
+        self.assertEqual(len(agent_tools_v2.get_weather(days=None)['days']), 7)
+
+    def test_weather_is_a_proposal_read(self):
+        from services import agent_router
+        self.assertIn('get_weather', agent_router.PROPOSE_ONLY_READS)
 
     def test_configured_entity_used(self):
         self.settings['weather_entity'] = 'weather.backyard'

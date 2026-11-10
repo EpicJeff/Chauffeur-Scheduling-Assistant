@@ -31,7 +31,8 @@ from services import ha_api, house
 
 ATV = 'media_player.living_room_apple_tv'
 ATV_APPS = ['ABC', 'AMC', 'App\xa0Store', 'Arlo', 'Bravo', 'DIRECTV', 'Disney+', 'ESPN', 'FaceTime',
-            'Fitness', 'FOX NOW', 'Fubo', 'Netflix', 'YouTube']
+            'Fitness', 'FOX NOW', 'Fubo', 'Max', 'Music', 'Netflix', 'YouTube']
+HOMEPOD = 'media_player.kitchen_homepod'
 
 
 class AppleTvApps(unittest.TestCase):
@@ -47,6 +48,12 @@ class AppleTvApps(unittest.TestCase):
             {'entity_id': ATV, 'name': None, 'original_name': 'Living Room Apple TV', 'aliases': [],
              'area_id': 'living_room', 'device_id': 'dev_apple_tv', 'hidden_by': None, 'disabled_by': None,
              'platform': 'apple_tv'}]
+        # A HomePod is apple_tv platform too, but it has no app list: never a TV.
+        self.states.append({'entity_id': HOMEPOD, 'state': 'unavailable', 'last_changed': '2026-11-10T09:00:00+00:00',
+                            'attributes': {'friendly_name': 'Kitchen HomePod'}})
+        registry.append({'entity_id': HOMEPOD, 'name': None, 'original_name': 'Kitchen HomePod', 'aliases': [],
+                         'area_id': None, 'device_id': 'dev_homepod', 'hidden_by': None, 'disabled_by': None,
+                         'platform': 'apple_tv'})
         exposed = {**base.EXPOSED, ATV: True}
         services = {**base.SERVICES, 'media_player': {'turn_off', 'turn_on', 'select_source'}}
         inner = ha_api.call_service
@@ -99,6 +106,20 @@ class AppleTvApps(unittest.TestCase):
             res = self.open(spoken)
             self.assertEqual(res['status'], 'success', (spoken, res))
             self.assertEqual(self.calls[-1], ('media_player', 'select_source', {'entity_id': ATV, 'source': listed}))
+
+    def test_known_app_nicknames_land_on_the_listed_name(self):
+        for spoken, listed in (('hbo max', 'Max'), ('apple music', 'Music')):
+            self.calls.clear()
+            res = self.open(spoken)
+            self.assertEqual(res['status'], 'success', (spoken, res))
+            self.assertEqual(self.calls[-1], ('media_player', 'select_source', {'entity_id': ATV, 'source': listed}))
+
+    def test_a_homepod_is_never_a_tv(self):
+        res = self.open('ESPN', query='kitchen homepod')
+        self.assertEqual(res['status'], 'error')
+        self.assertNotIn('offline', res['message'])
+        self.assertNotIn('Kitchen HomePod', res['message'].split('TVs that can open apps:')[-1])
+        self.assertEqual(self.calls, [])
 
     def test_an_apple_tv_that_is_off_is_woken_first(self):
         self.atv()['state'] = 'off'
