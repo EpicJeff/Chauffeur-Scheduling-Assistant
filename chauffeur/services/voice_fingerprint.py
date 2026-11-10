@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 
-from services import storage, voice_identity as identity
+from services import storage, voice_conversation, voice_identity as identity
 
 MODEL = 'wespeaker_en_voxceleb_resnet34.onnx'
 MODEL_SHA = '5ef208a9da1453335308a6b6f4e6dfbd7e183a38b604de0a57664f45d257fe94'
@@ -729,7 +729,8 @@ def apply(ctx, evidence):
                     row['generation'], row['level'], row['member_id'], row['expires_at'], ctx.service_revision, ctx.paired)
         # Listening continuity is stricter than retaining an identity: a long,
         # uncertain sample spends the conversation cap even if the session stays.
-        recognized = bool(matched or (not usable and row.get('recognized') and row.get('member_id'))
+        recognized = bool(matched or (not usable and row.get('recognized') and row.get('member_id')
+                                     and voice_conversation.in_conversation(ctx))
                           or (usable and row['level'] == 'verified' and anchor
                               and score(vector, anchor) >= CONTINUITY and not contradiction))
         return replace(refreshed, fingerprint=vector, greeting=greeting, recognized_this_turn=recognized)

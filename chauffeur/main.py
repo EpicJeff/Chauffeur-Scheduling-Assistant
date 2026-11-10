@@ -3953,6 +3953,8 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
             speech = ctx.greeting + ' ' + speech
         from services import voice_conversation
         keep_listening = voice_conversation.continue_conversation(ctx, req.text)
+        if voice_conversation.is_sign_off(req.text):
+            voice_identity.end_session(ctx.ha_instance_id, ctx.satellite_id)
         return _voice_response(speech, req.language, voice_identity.expects_reply(ctx) or keep_listening)
 
     def perform_and_speak():

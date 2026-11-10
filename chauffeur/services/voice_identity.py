@@ -161,6 +161,15 @@ def _new_session(device=None):
             'role': None, 'pin_revision': None, 'pin_pending': False, 'name_pending': False}
 
 
+def end_session(ha_instance_id, satellite_id) -> None:
+    """End this satellite's identity while allowing recognition next time."""
+    with _lock:
+        key = (ha_instance_id, satellite_id)
+        row = _sessions.get(key)
+        if row is not None:
+            _sessions[key] = _new_session(row.get('device_id'))
+
+
 def voice_names(member):
     aliases = member.get('voice_aliases') or []
     if isinstance(aliases, str):

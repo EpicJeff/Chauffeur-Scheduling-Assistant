@@ -52,6 +52,16 @@ def is_sign_off(text):
     return found
 
 
+def in_conversation(ctx) -> bool:
+    """Read whether this satellite's previous turn left the mic open recently."""
+    if not ctx.satellite_id:
+        return False
+    key = (ctx.ha_instance_id, ctx.satellite_id)
+    with _lock:
+        previous = _turns.get(key)
+        return previous is not None and time.monotonic() - previous[1] < GAP_SECONDS
+
+
 def continue_conversation(ctx, text):
     """Count once, inside voice_identity.once, after an ordinary model answer."""
     if not ctx.satellite_id:
