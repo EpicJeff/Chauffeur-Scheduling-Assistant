@@ -224,11 +224,12 @@ def _clear_ghost(piece):
             piece.pop('why', None)
 
 
-def _clear_flags(building, piece):
+def _clear_flags(building, piece, *, checked=True):
     texts = _texts(piece)
-    if 'flags' in building:
-        building['flags'] = [f for f in building['flags']
-                             if not (f.get('piece') == piece['id'] and f.get('text') in texts)]
+    for name in ('flags', 'checked_flags') if checked else ('flags',):
+        if name in building:
+            building[name] = [f for f in building[name]
+                              if not (f.get('piece') == piece['id'] and f.get('text') in texts)]
 
 
 def _lost(building, piece, host, before, notes, *, fits=True):
@@ -245,7 +246,7 @@ def _lost(building, piece, host, before, notes, *, fits=True):
             level = surface.get('level') if surface else None
         else:
             at, level = [0, 0], None
-        _clear_flags(building, piece)
+        _clear_flags(building, piece, checked=False)
         building['flags'].append({'level': level, 'at': list(at), 'text': text, 'piece': piece['id']})
         notes.append(text)
     # A reader's ghost and explanation belong to the reader. A normalize ghost

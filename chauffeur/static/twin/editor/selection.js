@@ -50,9 +50,9 @@ export function createSelection({ view, getModel, onChange }) {
   }
   function select(value) {
     const pick = normalize(value);
-    if (!pick || !inside(pick)) { back(); return; }
+    if (!pick || pick.kind !== 'proposal' && !inside(pick)) { back(); return; }
     if (pick.kind === 'room') { focusRoom(pick); return; }
-    if (['building', 'level'].includes(pick.kind)) {
+    if (['building', 'level', 'proposal'].includes(pick.kind)) {
       room = null; walls = []; allowed = [];
     }
     selected = pick; hovered = null; changed();

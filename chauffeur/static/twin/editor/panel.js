@@ -11,6 +11,11 @@ export function createPanel({ afterSay, acceptPause }) {
   const form = document.getElementById('editor-say');
   const input = document.getElementById('editor-message');
   const send = form.querySelector('button');
+  const checks = document.createElement('button'); checks.type = 'button'; checks.id = 'editor-flag-count'; checks.hidden = true;
+  quick.before(checks);
+  let nextCheck = null, checkCount = 0;
+  const walkChecks = () => nextCheck?.();
+  checks.addEventListener('click', walkChecks);
   const history = [];
   const seen = new Set();
   const reasons = new Map(), pauses = new Set();
@@ -70,6 +75,11 @@ export function createPanel({ afterSay, acceptPause }) {
   replies();
   return {
     message, say, replies,
+    checks(count, walk) {
+      checkCount = count; nextCheck = walk; checks.hidden = false;
+      checks.textContent = `${count} ${count === 1 ? 'thing' : 'things'} to check`;
+      checks.disabled = readOnly || !count;
+    },
     clearSelection() { selection = null; },
     focusSelection(item, label) {
       selection = item;
@@ -78,9 +88,10 @@ export function createPanel({ afterSay, acceptPause }) {
     },
     readOnly(value) {
       readOnly = value; input.disabled = value; send.disabled = busy || value;
+      checks.disabled = value || !checkCount;
       quick.querySelectorAll('button').forEach(button => { button.disabled = busy || value; });
     },
-    dispose() { form.removeEventListener('submit', submit); },
+    dispose() { form.removeEventListener('submit', submit); checks.removeEventListener('click', walkChecks); checks.remove(); },
     events(build) {
       if (buildId !== build.id) { seen.clear(); reasons.clear(); firstLooks.clear(); pauses.clear(); log.replaceChildren(); buildId = build.id; }
       for (const event of build.events || []) {

@@ -183,6 +183,12 @@ def _derive(building, notes, *, persist_t_splits=True):
         if isinstance(room, dict) and room.get('id') not in seen:
             stored.append(deepcopy(room))
             seen.add(room.get('id'))
+    # Acknowledging the note must not discard a lost room's name and finishes.
+    for flag in building.get('checked_flags', []):
+        room = _flag_room(flag) if flag.get('text') == NOT_CLOSED else None
+        if isinstance(room, dict) and room.get('id') not in seen:
+            stored.append(deepcopy(room))
+            seen.add(room.get('id'))
     _piece_meta(stored + ghosts, 'room', notes)
     valid = [twin_plan._polygon(room.get('polygon')) for room in stored]
     bounds = [_bounds(room['polygon']) if ok else None for room, ok in zip(stored, valid)]
@@ -282,6 +288,11 @@ def _derive(building, notes, *, persist_t_splits=True):
                          if index not in inherited], 'room', notes)
     # Located read ghosts do not claim floor regions or disappear on an edit.
     building['rooms'] = rooms + ghosts
+    if building.get('checked_flags'):
+        restored = {room['id'] for room in rooms}
+        building['checked_flags'] = [flag for flag in building['checked_flags']
+                                    if not (isinstance(_flag_room(flag), dict)
+                                            and _flag_room(flag).get('id') in restored)]
     for owner, room in enumerate(stored):
         if owner not in inherited.values():
             flags.append({'level': room.get('level'),
@@ -301,7 +312,15 @@ def derive(building: dict, *, persist_t_splits=True) -> list[str]:
     """Rebuild room caches; flat-read assembly can keep T-splits derived (R31)."""
     notes = []
     _derive(building, notes, persist_t_splits=persist_t_splits)
+    filter_checked_flags(building)
     return notes
+
+
+def filter_checked_flags(building):
+    """Keep acknowledgements of this exact issue across derivation and saves."""
+    checked = building.get('checked_flags', [])
+    if checked:
+        building['flags'] = [flag for flag in building.get('flags', []) if flag not in checked]
 
 
 def _note(piece, kind, reason, notes):
@@ -454,6 +473,7 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
             notes.append('Dropped flags with invalid text or position.')
         _derive(building, notes, persist_t_splits=persist_t_splits)
         _pieces(building, notes)
+        filter_checked_flags(building)
         buildings.append(building)
     site = model.get('site', {})
     if not isinstance(site, dict):

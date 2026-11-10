@@ -81,6 +81,8 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     roomSelection.select({ kind: record.kind, id: record.piece.id, building: record.building.id, level });
   }
   function pick(x, y) {
+    const proposed = delegate?.pick?.(x, y);
+    if (proposed) return proposed;
     const site = pickSite?.(x, y); if (site) return site;
     let item = view.pick(x, y);
     if (item?.kind === 'roof') {

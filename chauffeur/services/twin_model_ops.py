@@ -620,6 +620,23 @@ def _follow_dormers(building, before):
 
 def _set_field(building, op):
     from services import twin_edit, twin_model_bridge
+    if op.get('field') == 'flag_ok':
+        value = op.get('value')
+        flags = building.get('flags', [])
+        index = value.get('index') if isinstance(value, dict) else None
+        text = value.get('text') if isinstance(value, dict) else None
+        if (type(index) is not int or not 0 <= index < len(flags)
+                or not isinstance(text, str) or flags[index].get('text') != text
+                or 'flag' in value and value['flag'] != flags[index]):
+            raise Refused('That check has changed. Open it again.')
+        flag = flags.pop(index)
+        piece = next((p for name in ('openings', 'anchors', 'items', 'dormers')
+                      for p in building.get(name, []) if p['id'] == flag.get('piece')), None)
+        if (text == twin_model.NOT_CLOSED or piece is not None
+                and text in (*hosts._texts(piece), 'This dormer lost its roof; place it again.')):
+            if flag not in building.setdefault('checked_flags', []):
+                building['checked_flags'].append(deepcopy(flag))
+        return
     kind, piece = _piece(building, op.get('id'))
     if kind == 'roof':
         # Reuse the established field validation and window-bearing gable guard,
@@ -971,6 +988,7 @@ def apply(model, op: dict, actor: str = 'person') -> tuple[dict, str]:
                          for r in building.get('roofs', [])]
     notes.extend(hosts.follow(building, before))
     _follow_dormers(building, before)
+    twin_model.filter_checked_flags(building)
     if actor == 'person':
         _mark_touched(building, previous, op)
     words = {'move_joint': 'Moved the corner.', 'move_wall': 'Moved the wall.',

@@ -563,6 +563,7 @@ def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]
         for proposal in building['proposals']:
             proposal['id'] = proposal['piece']['id']
         building['flags'] = deepcopy(source.get('flags', old.get('flags', [])))
+        building['checked_flags'] = deepcopy(old.get('checked_flags', source.get('checked_flags', [])))
         building['rooms'] = deepcopy(source.get('rooms', []))
         for room in old.get('rooms', []):
             if _person(room):

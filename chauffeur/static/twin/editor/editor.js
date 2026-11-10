@@ -12,6 +12,7 @@ import { createPlace } from './place.js';
 import { createRoofTools } from './roof_tools.js';
 import { createLotTools } from './lot_tools.js';
 import { createLibrary } from './library.js';
+import { createFlags } from './flags.js';
 
 const el = id => document.getElementById(id);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
@@ -24,7 +25,7 @@ export async function boot() {
   let resuming = false, stopping = false;
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
   let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, library = null, previewing = false, lastSummary = '';
-  let roofTools = null, lot = null;
+  let roofTools = null, lot = null, flags = null;
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
@@ -148,6 +149,7 @@ export async function boot() {
     drawFloors();
     tools?.refresh();
     library?.refresh();
+    flags?.refresh();
     pauses?.sync();
     timeline?.sync(currentBuild);
   }
@@ -426,6 +428,8 @@ export async function boot() {
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, addDormer: () => roofTools?.addDormer() });
     library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || snapshot.plan, tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
+    flags = createFlags({ view, getModel: () => snapshot.model, getPlan: () => snapshot.plan,
+      tools, panel, op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
     draw = createDraw({ view, tools, getPlan: () => snapshot.plan, op: operation => applyOpNow(operation),
       gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract });
     roofTools = createRoofTools({ view, tools, getPlan: () => snapshot.plan,
@@ -442,6 +446,7 @@ export async function boot() {
       // rebuild (seconds for a refitted house) follows on the poll's tick.
       reload: async () => { await loadSheets(); polling.pollNow(true).catch(report); } });
     tools.delegate({
+      pick: flags.pick,
       pointerDown: event => lot.pointerDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event) || library.pointerDown(event),
       pointerMove: event => lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event) || library.pointerMove(event),
       pointerUp: (event, cancel) => lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
@@ -470,6 +475,7 @@ export async function boot() {
     if (new URLSearchParams(location.search).get('test') === '1') window.__twinEditor = {
       selection: tools.selection, handles: () => [...tools.handles(), ...lot.handles()], op: applyOp,
       underlay: lot.underlay, lotHandles: lot.lotHandles, lotSuggestions: lot.lotSuggestions,
+      flags: flags.flags, proposals: flags.proposals,
       get lastDragFrameMs() { return tools.lastDragFrameMs; },
     };
     // The editor uses the mockup's dark work surface; the shared preview keeps

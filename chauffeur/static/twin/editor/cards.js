@@ -44,7 +44,9 @@ export function findPiece(plan, pieceId, buildingId) {
   const dormer = building.dormers?.find(p => p.id === pieceId);
   if (dormer) return { piece: section || dormer, building, kind: 'dormer' };
   const piece = section || building.roofs?.find(p => p.id === pieceId);
-  return piece ? { piece, building, kind: 'roof' } : null;
+  if (piece) return { piece, building, kind: 'roof' };
+  const proposal = building.proposals?.find(p => (p.id || p.piece.id) === pieceId);
+  return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
 export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select }) {
@@ -80,6 +82,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
   function draw(next = selection) {
     if (next?.pieceId !== selection?.pieceId || next?.buildingId !== selection?.buildingId) edgeIndex = null;
     const record = next && findPiece(getPlan(), next.pieceId, next.buildingId);
+    if (record?.kind === 'proposal') { host.hidden = true; return; }
     const roof = record?.kind === 'roof' && record.building.roofs?.find(r => r.id === record.piece.id);
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
