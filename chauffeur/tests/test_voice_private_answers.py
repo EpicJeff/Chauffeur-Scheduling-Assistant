@@ -283,6 +283,26 @@ class PrivateAnswerTests(unittest.TestCase):
                                  call={'name': 'get_calendar_events', 'arguments': {}})
         self.assertEqual(speech, QUESTION)
 
+    def test_locate_is_private(self):
+        """'Where is Ben' answers with a person's whereabouts: never spoken unasked
+        in a shared room (Task 2 review carry-forward)."""
+        turn = self.vp.SatelliteTurn(storage.get_member('jeff'))
+        turn.before_tool('house', {'action': 'locate', 'query': 'Ben'})
+        turn.tool_result({'status': 'success', 'message': 'Ben is at school.'})
+        self.assertFalse(turn.safe)
+        from services import agent_tools_v2
+        with patch.object(agent_tools_v2, 'house', fake({'status': 'success', 'message': 'Ben is at school.'})):
+            self.reply = 'Ben is at school.'
+            speech, _ = self.say('where is Ben right now', JEFF,
+                                 call={'name': 'house', 'arguments': {'action': 'locate', 'query': 'Ben'}})
+        self.assertEqual(speech, QUESTION)
+
+    def test_device_control_spoken(self):
+        turn = self.vp.SatelliteTurn(storage.get_member('jeff'))
+        turn.before_tool('house', {'action': 'act', 'entity_id': 'light.office', 'service': 'turn_off'})
+        turn.tool_result({'status': 'success', 'message': 'Done.'})
+        self.assertTrue(turn.safe)
+
     def test_unknown_voice_never_held(self):
         from services import agent_tools_v2
         with patch.object(agent_tools_v2, 'find_in_chauffeur',
