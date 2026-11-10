@@ -5,10 +5,12 @@ from services import model_pools
 
 def scenario_pro_pool_and_mission_tier():
     s = {}
-    check(model_pools.DEFAULT_POOLS['pro'] == ["gemini-4-argon", "gemini-3.1-pro-preview"],
-          "pro pool leads with Gemini 4 Argon and keeps the 3.1 preview as the fallback")
+    # 2026-11-10, the user: "gemini 4 carbon is available now. It is the top model."
+    # A wrong id costs a 404, which cools it 6 h and falls through to Argon.
+    check(model_pools.DEFAULT_POOLS['pro'] == ["gemini-4-carbon", "gemini-4-argon", "gemini-3.1-pro-preview"],
+          "pro pool leads with Gemini 4 Carbon, then Argon, then the 3.1 preview")
     models = model_pools.models_for('mission', s)
-    check(models == ["gemini-4-argon", "gemini-3.1-pro-preview"],
+    check(models == ["gemini-4-carbon", "gemini-4-argon", "gemini-3.1-pro-preview"],
           f"mission tier serves ONLY the pro pool, got {models}")
     free = set()
     for t in ('interactive', 'background', 'heavy', 'vision'):
