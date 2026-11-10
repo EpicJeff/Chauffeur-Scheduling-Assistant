@@ -364,6 +364,7 @@ def get_area_map(ttl: float = 60) -> list:
 _area_meta_cache = {'ts': 0.0, 'data': None}
 _entity_registry_cache = {'ts': 0.0, 'data': None}
 _device_registry_cache = {'ts': 0.0, 'data': None}
+_floor_registry_cache = {'ts': 0.0, 'data': None}
 _exposed_cache = {'ts': 0.0, 'data': None}
 
 
@@ -398,6 +399,15 @@ def get_device_registry(ttl: float = 300) -> list:
                           _device_registry_cache, ttl)
 
 
+def get_floor_registry(ttl: float = 300) -> list:
+    """Floors and their level numbers, with a stale copy when HA cannot answer."""
+    if mode() == 'unconfigured':
+        return []
+    return _registry_list('config/floor_registry/list',
+                          ('floor_id', 'name', 'level'),
+                          _floor_registry_cache, ttl)
+
+
 def get_exposed(ttl: float = 60) -> dict:
     """Assist conversation exposure; a failed refresh never grants control."""
     now = time.time()
@@ -414,7 +424,7 @@ def get_exposed(ttl: float = 60) -> dict:
 
 
 def get_area_registry(ttl: float = 300) -> list:
-    """[{area_id, name, picture, icon}] from HA's area registry.
+    """[{area_id, name, picture, icon, floor_id}] from HA's area registry.
 
     Separate from `get_area_map`, which answers "what is IN this area" through
     the template API. A room's PICTURE and icon are registry fields and the
@@ -434,7 +444,8 @@ def get_area_registry(ttl: float = 300) -> list:
     if not isinstance(rows, list):
         return _area_meta_cache['data'] or []
     out = [{'area_id': r.get('area_id'), 'name': r.get('name'),
-            'picture': r.get('picture'), 'icon': r.get('icon')}
+            'picture': r.get('picture'), 'icon': r.get('icon'),
+            'floor_id': r.get('floor_id')}
            for r in rows if isinstance(r, dict)]
     with _cache_lock:
         _area_meta_cache.update(ts=now, data=out)
