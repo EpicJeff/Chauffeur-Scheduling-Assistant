@@ -161,22 +161,6 @@
 
     <div>
         <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
-            What a tap may do
-        </div>
-        <label class="flex items-center gap-2 text-sm text-gray-300">
-            <input type="checkbox" x-model="panel.panel_allow_unsafe_controls"
-                @change="savePanel()">
-            Let Home Assistant tiles switch things on and off
-        </label>
-        <p class="text-xs text-gray-500 mt-1">
-            Off, those tiles are a display. On, a tap on the wall does the thing —
-            which is right for a light and wrong for a garage door, so it is one
-            decision made deliberately rather than a default.
-        </p>
-    </div>
-
-    <div>
-        <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
             Home Assistant dashboard address
         </div>
         <input type="text" x-model="panel.ha_browser_url" @change="savePanel()"

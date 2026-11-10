@@ -1,0 +1,209 @@
+{# One parent-owned rulebook. Keep the controls and their logic together;
+   config.html only includes this component beside Argyle's settings. #}
+<details data-control-rules x-data="controlRulesPage()" x-init="load()"
+    class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700">
+    <summary class="cursor-pointer px-4 py-3 font-semibold text-blue-200">Who can control what</summary>
+    <div class="px-4 pb-4 space-y-4 text-sm">
+        <p x-show="loading" class="text-xs text-gray-400" role="status">Loading control rules…</p>
+        <div x-show="!loading && !rules" x-cloak>
+            <p class="text-xs text-gray-400">Control rules could not be loaded.</p>
+            <button type="button" @click="load()" class="mt-2 bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-xs">Try again</button>
+        </div>
+        <template x-if="rules">
+            <div class="space-y-4">
+                <fieldset :disabled="!!saving" class="space-y-4 min-w-0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" :checked="!!rules.enabled" @change="setEnabled($event.target.checked)" class="mt-1">
+                        <span>
+                            <b>Chauffeur can control Home Assistant devices</b>
+                            <span class="block text-gray-400 text-xs">Off: nothing anywhere operates a device. Reading still works.</span>
+                        </span>
+                    </label>
+
+                    <section class="bg-gray-900/50 rounded-xl border border-gray-700 p-4">
+                        <h3 class="font-semibold text-gray-300 mb-2">Needs proof of who you are</h3>
+                        <div class="space-y-1">
+                            <template x-for="kind in kinds" :key="kind.id">
+                                <label class="flex items-center gap-2 py-2 text-gray-300">
+                                    <input type="checkbox" :checked="!!rules.proof[kind.id]" @change="setProof(kind.id, $event.target.checked)">
+                                    <span x-text="kind.label"></span>
+                                </label>
+                            </template>
+                        </div>
+                    </section>
+
+                    {% for role, title in [('parent', 'Parent'), ('adult', 'Adult'), ('child', 'Child'), ('helper', 'Helper'), ('guest', 'Guest')] %}
+                    <section class="bg-gray-900/50 rounded-xl border border-gray-700 p-4">
+                        <h3 class="font-semibold text-gray-300 mb-2">{{ title }}</h3>
+                        {% if role in ['helper', 'guest'] %}
+                        <p class="text-xs text-gray-400 mb-2">Each person's own access can narrow this further.</p>
+                        {% endif %}
+                        <template x-for="kind in kinds" :key="kind.id">
+                            <div class="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-gray-800">
+                                <span x-text="kind.label" class="text-gray-300"></span>
+                                <div role="group" :aria-label="'{{ title }}: ' + kind.label" class="flex shrink-0 gap-1 bg-gray-800 rounded-lg p-1">
+                                    {% for value, label in [('yes', 'Yes'), ('no', 'No')] %}
+                                    <button type="button" @click="setPerson('{{ role }}', kind.id, '{{ value }}')"
+                                        :aria-pressed="!!(rules.people.{{ role }}[kind.id] === '{{ value }}')"
+                                        :class="rules.people.{{ role }}[kind.id] === '{{ value }}' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
+                                        class="px-3 py-2 rounded-lg text-xs font-bold transition-colors">{{ label }}</button>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </template>
+                    </section>
+                    {% endfor %}
+
+                    {% for place, title in [('panel', 'Wall panel'), ('unknown_voice', 'Unknown voice')] %}
+                    <section class="bg-gray-900/50 rounded-xl border border-gray-700 p-4">
+                        <h3 class="font-semibold text-gray-300 mb-2">{{ title }}</h3>
+                        {% if place == 'unknown_voice' %}
+                        <p class="text-xs text-gray-400 mb-2">Ask who needs voice ID turned on for the speaker.</p>
+                        {% endif %}
+                        <template x-for="kind in kinds" :key="kind.id">
+                            <div class="py-2 border-b border-gray-800 space-y-2">
+                                <div class="text-gray-300" x-text="kind.label"></div>
+                                <div role="group" :aria-label="'{{ title }}: ' + kind.label" class="inline-flex flex-wrap gap-1 bg-gray-800 rounded-lg p-1">
+                                    {% for value, label in [('yes', 'Yes'), ('ask', 'Ask who'), ('no', 'No')] %}
+                                    <button type="button" @click="setPlace('{{ place }}', kind.id, '{{ value }}')"
+                                        :aria-pressed="!!(rules.places.{{ place }}[kind.id] === '{{ value }}')"
+                                        :class="rules.places.{{ place }}[kind.id] === '{{ value }}' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
+                                        class="px-3 py-2 rounded-lg text-xs font-bold transition-colors"
+                                        {% if value == 'yes' %}x-text="rules.proof[kind.id] ? 'Ask who (needs proof)' : 'Yes'"{% endif %}>{{ label }}</button>
+                                    {% endfor %}
+                                </div>
+                                <p class="text-xs text-gray-400" x-text="placeLabel('{{ place }}', kind.id)"></p>
+                            </div>
+                        </template>
+                    </section>
+                    {% endfor %}
+                </fieldset>
+                <p role="status" aria-live="polite" class="text-xs text-gray-400" x-text="saving ? 'Saving…' : saveStatus"></p>
+
+                <section class="bg-gray-900/50 rounded-xl border border-gray-700 p-4 space-y-2">
+                    <h3 class="font-semibold text-gray-300">Scripts Chauffeur cannot read</h3>
+                    <p class="text-xs text-gray-400">These scripts need permission for every kind, including any proof requirements.</p>
+                    <template x-for="script in warnings.unreadable_scripts" :key="script.entity_id">
+                        <div class="py-2 border-b border-gray-800">
+                            <b class="text-gray-300 break-words" x-text="script.name"></b>
+                            <p class="text-xs text-gray-400 break-words" x-text="script.reason"></p>
+                        </div>
+                    </template>
+                    <p x-show="!warnings.unreadable_scripts.length" class="text-xs text-gray-500 italic">No unreadable scripts found.</p>
+                    <p class="text-xs text-gray-400">Scripts that start other automations are judged only by what they touch directly.</p>
+                    <p class="text-xs text-gray-400">That includes firing an event or flipping an input_boolean helper: the automation it starts is not inspected.</p>
+                </section>
+                <template x-if="warnings.local_handling">
+                    <section class="bg-amber-500/10 rounded-xl border border-amber-500/30 p-4 space-y-2">
+                        <h3 class="font-semibold text-amber-300">Home Assistant can answer before Argyle</h3>
+                        <p class="text-xs text-gray-300">These voice pipelines prefer handling commands locally. Any voice can operate the devices below through Home Assistant directly, before Chauffeur's rules apply.</p>
+                        <ul class="list-disc list-inside text-gray-300">
+                            <template x-for="(pipeline, index) in warnings.local_handling.pipelines" :key="index">
+                                <li class="break-words" x-text="pipeline"></li>
+                            </template>
+                        </ul>
+                        <ul class="list-disc list-inside text-gray-300">
+                            <template x-for="device in warnings.local_handling.devices" :key="device.entity_id">
+                                <li class="break-words" x-text="device.name"></li>
+                            </template>
+                        </ul>
+                    </section>
+                </template>
+                <p x-show="warningError" x-text="warningError" class="text-xs text-amber-300" role="status"></p>
+            </div>
+        </template>
+    </div>
+</details>
+<script>
+window.controlRulesPage = function () {
+    return {
+        base: window.chfBase !== undefined ? window.chfBase : '',
+        rules: null,
+        savedRules: null,
+        kinds: [],
+        warnings: { unreadable_scripts: [], local_handling: null },
+        loading: false,
+        saving: false,
+        saveStatus: '',
+        warningError: '',
+        async read() {
+            const response = await fetch(this.base + 'api/ha/control/rules');
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'Could not load control rules.');
+            return data;
+        },
+        async load() {
+            this.loading = true;
+            try {
+                const data = await this.read();
+                this.rules = data.rules;
+                this.savedRules = JSON.parse(JSON.stringify(data.rules));
+                this.kinds = data.kinds;
+                this.warnings = data.warnings;
+                this.warningError = '';
+            } catch (error) {
+                showGlobalAlert(error.message || 'Could not load control rules.');
+            } finally {
+                this.loading = false;
+            }
+        },
+        setEnabled(value) {
+            this.rules = { ...this.rules, enabled: !!value };
+            return this.save();
+        },
+        setProof(kind, value) {
+            this.rules = { ...this.rules, proof: { ...this.rules.proof, [kind]: !!value } };
+            return this.save();
+        },
+        setPerson(role, kind, value) {
+            this.rules = { ...this.rules, people: { ...this.rules.people,
+                [role]: { ...this.rules.people[role], [kind]: value } } };
+            return this.save();
+        },
+        setPlace(place, kind, value) {
+            this.rules = { ...this.rules, places: { ...this.rules.places,
+                [place]: { ...this.rules.places[place], [kind]: value } } };
+            return this.save();
+        },
+        placeLabel(place, kind) {
+            const value = this.rules.places[place][kind];
+            if (value === 'no') return 'No';
+            if (value === 'ask') return 'Ask who';
+            return this.rules.proof[kind] ? 'Ask who (needs proof)' : 'Yes';
+        },
+        async save() {
+            this.saving = true;
+            this.saveStatus = '';
+            window.chfSettingsSaving?.();
+            try {
+                const response = await fetch(this.base + 'api/ha/control/rules', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.rules),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Could not save control rules.');
+                this.rules = data;
+                this.savedRules = JSON.parse(JSON.stringify(data));
+                this.saveStatus = 'Saved';
+                window.chfSettingsSaved?.(true);
+                // The restrictions just changed: ask the owning service which
+                // exposed devices now belong in the local-handling warning.
+                try {
+                    this.warnings = (await this.read()).warnings;
+                    this.warningError = '';
+                } catch (error) {
+                    this.warningError = 'Rules saved. The warnings could not be refreshed.';
+                }
+            } catch (error) {
+                this.rules = JSON.parse(JSON.stringify(this.savedRules));
+                this.saveStatus = 'Not saved';
+                const message = error.message || 'Could not save control rules.';
+                window.chfSettingsSaved?.(false, message);
+                showGlobalAlert(message);
+            } finally {
+                this.saving = false;
+            }
+        },
+    };
+};
+</script>

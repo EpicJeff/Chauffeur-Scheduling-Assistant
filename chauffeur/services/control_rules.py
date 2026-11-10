@@ -121,6 +121,40 @@ def validate_rules(raw: dict) -> dict:
     return raw
 
 
+def local_handling_warning(rules: dict) -> dict | None:
+    """Name restricted, Assist-exposed devices HA may handle before Argyle."""
+    from services import ha_api
+
+    try:
+        if ha_api.mode() == 'unconfigured':
+            return None
+        result = ha_api.ws_command('assist_pipeline/pipeline/list')
+        pipelines = [row.get('name') or row.get('id') or 'Unnamed pipeline'
+                     for row in (result or {}).get('pipelines', [])
+                     if row.get('prefer_local_intents')]
+        if not pipelines:
+            return None
+        restricted = {kind for kind in KINDS
+                      if not rules['enabled'] or rules['proof'][kind]
+                      or any(row[kind] == 'no' for row in rules['people'].values())
+                      or any(row[kind] != 'yes' for row in rules['places'].values())}
+        if not restricted:
+            return None
+        exposed = ha_api.get_exposed()
+        devices = []
+        for state in ha_api.get_states():
+            eid = state['entity_id']
+            attrs = state.get('attributes') or {}
+            kind = kind_of(eid, attrs)
+            if exposed.get(eid) and kind in restricted:
+                devices.append({'entity_id': eid, 'name': attrs.get('friendly_name') or eid,
+                                'kind': kind})
+        return {'pipelines': pipelines, 'devices': devices} if devices else None
+    except Exception:
+        # HA going away must not take the settings page with it.
+        return None
+
+
 @dataclass(frozen=True)
 class Who:
     role: str | None

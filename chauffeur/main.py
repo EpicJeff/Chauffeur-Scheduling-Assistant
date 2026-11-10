@@ -11182,6 +11182,44 @@ def require_parent_token(token: Optional[str]):
 
 # --- Home Assistant bridge API (services/ha_api.py) ---
 
+@app.get('/api/ha/control/rules')
+def ha_control_rules():
+    """The parent-owned rulebook and warnings; useful even without HA."""
+    from services import control_rules, control_scripts, ha_api
+
+    grid = control_rules.rules()
+    labels = ('Lights', 'Switches & fans', 'TV & music', 'Climate', 'Blinds & shades',
+              'Garage, doors & gates', 'Locks', 'Alarm', 'Everything else')
+    unreadable = []
+    try:
+        if ha_api.mode() != 'unconfigured':
+            unreadable = control_scripts.unreadable_scripts()
+    except Exception:
+        pass  # No HA, or HA lost mid-read: keep the rules editable.
+    return {
+        'rules': grid,
+        'kinds': [{'id': kind, 'label': label} for kind, label in zip(control_rules.KINDS, labels)],
+        'warnings': {'unreadable_scripts': unreadable,
+                     'local_handling': control_rules.local_handling_warning(grid)},
+    }
+
+
+@app.post('/api/ha/control/rules')
+async def save_ha_control_rules(request: Request):
+    """Validate the whole grid and preserve every unrelated setting."""
+    from services import control_rules
+
+    try:
+        grid = control_rules.validate_rules(await request.json())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with storage.db_lock:
+        settings = dict(storage.get_settings() or {})
+        settings['ha_control'] = grid
+        storage.update_settings(settings)
+    return grid
+
+
 @app.get("/api/ha/status")
 def ha_status():
     from services import ha_api

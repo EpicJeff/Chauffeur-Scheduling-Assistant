@@ -1184,6 +1184,7 @@
                         </div>
                     </details>
 
+                    {% include 'components/control_rules.html' %}
                     <details id="voice-identity" class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700"
                              @toggle="if ($event.target.open) loadVoiceIdentity()">
                         <summary class="cursor-pointer px-4 py-3 font-semibold text-blue-200">🎙️ Voice identity</summary>

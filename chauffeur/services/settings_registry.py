@@ -145,11 +145,10 @@ ENTRIES: List[dict] = [
        'these, so 12 gives you halves, thirds, quarters and sixths. Set per '
        'board, under Boards.',
        page='home', anchor='board-settings', ui_marker="page().columns"),
-    _e('panel_allow_unsafe_controls', 'panel', 'Let the board operate locks',
-       'Whether a tap on a board tile may lock or unlock a door, open a cover '
-       'or a garage, or turn a valve. Off by default because a wall panel is '
-       'reachable by everybody in the house; alarms are never included.',
-       page='config', anchor='boards'),
+    _e('ha_control', 'integrations', 'Who can control what',
+       'Home Assistant device control for each role, the wall panel and unknown voices; '
+       'choose which kinds need proof of who you are, or turn all device control off.',
+       page='config', anchor='people', ui_marker='data-control-rules'),
     _e('panel_pages', 'panel', 'Boards',
        'Every board this household has — the wall panel\'s home screen plus '
        'any others you have made. Each one carries its own tiles, layout, '
@@ -809,7 +808,9 @@ def audit() -> dict:
     while hiding whatever was added last.
     """
     from models.schemas import Settings
-    model = set(Settings.model_fields)
+    # The structured rulebook has its own strict validator and save endpoint.
+    # The old schema field remains readable for migration, with no editor.
+    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'ha_control'}
     listed = set(BY_KEY)
     return {'missing': sorted(model - listed), 'stale': sorted(listed - model)}
 
