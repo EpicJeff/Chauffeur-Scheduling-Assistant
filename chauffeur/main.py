@@ -11188,8 +11188,6 @@ def ha_control_rules():
     from services import control_rules, control_scripts, ha_api
 
     grid = control_rules.rules()
-    labels = ('Lights', 'Switches & fans', 'TV & music', 'Climate', 'Blinds & shades',
-              'Garage, doors & gates', 'Locks', 'Alarm', 'Everything else')
     unreadable = []
     try:
         if ha_api.mode() != 'unconfigured':
@@ -11198,7 +11196,8 @@ def ha_control_rules():
         pass  # No HA, or HA lost mid-read: keep the rules editable.
     return {
         'rules': grid,
-        'kinds': [{'id': kind, 'label': label} for kind, label in zip(control_rules.KINDS, labels)],
+        'kinds': [{'id': kind, 'label': control_rules.KIND_LABELS[kind]}
+                  for kind in control_rules.KINDS],
         'warnings': {'unreadable_scripts': unreadable,
                      'local_handling': control_rules.local_handling_warning(grid)},
     }
@@ -11213,10 +11212,7 @@ async def save_ha_control_rules(request: Request):
         grid = control_rules.validate_rules(await request.json())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    with storage.db_lock:
-        settings = dict(storage.get_settings() or {})
-        settings['ha_control'] = grid
-        storage.update_settings(settings)
+    storage.patch_settings({'ha_control': grid})
     return grid
 
 

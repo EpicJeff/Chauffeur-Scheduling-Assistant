@@ -82,6 +82,9 @@ STATES = [
     state('cover.garage_door', 'closed', device_class='garage', friendly_name='Garage'),
     state('script.goodnight', friendly_name='Goodnight'),
     state('script.open_garage', friendly_name='Open garage'),
+    state('script.lights_on', friendly_name='Lights on'),
+    state('scene.lockdown', friendly_name='Lockdown', entity_id=['lock.front']),
+    state('scene.movie', friendly_name='Movie', entity_id=['light.a']),
 ]
 
 PIPELINES = {
@@ -99,8 +102,18 @@ SCRIPT_CONFIGS = {
         {'action': 'light.turn_off', 'target': {'entity_id': '{{ states("input_text.room") }}'}}]},
     'script.open_garage': {'sequence': [
         {'action': 'cover.open_cover', 'target': {'entity_id': 'cover.garage_door'}}]},
+    'script.lights_on': {'sequence': [
+        {'action': 'light.turn_on', 'target': {'entity_id': 'light.a'}}]},
 }
-RELATED = {'script.open_garage': {'entity': ['cover.garage_door']}}
+RELATED = {'script.open_garage': {'entity': ['cover.garage_door']},
+           'script.lights_on': {'entity': ['light.a']}}
+
+
+def _clear_pipeline_cache():
+    # Contract (review ruling 5): the ~60 s pipeline-list cache can be cleared.
+    clear = getattr(cr, 'clear_pipeline_cache', None)
+    if clear:
+        clear()
 
 
 def _member(mid, role):
@@ -157,6 +170,7 @@ class _Base(unittest.TestCase):
             return None
         ha_api.ws_command = ws
         cs.clear_cache()
+        _clear_pipeline_cache()
 
         # Settings live in memory: update_settings replaces the WHOLE row,
         # exactly as storage does, so a save that drops other keys shows up.
@@ -165,12 +179,20 @@ class _Base(unittest.TestCase):
         base.pop('panel_allow_unsafe_controls', None)
         self.store = {**base, 'auth_enforce': True, 'sentinel_setting': 'kept'}
 
+        self.update_calls, self.patch_calls = [], []
+
         def save(data):
+            self.update_calls.append(copy.deepcopy(data))
             self.store.clear()
             self.store.update(copy.deepcopy(data))
+
+        def merge(updates):
+            self.patch_calls.append(copy.deepcopy(updates))
+            self.store.update(copy.deepcopy(updates))
         self.patches = [
             patch.object(storage, 'get_settings', side_effect=lambda: copy.deepcopy(self.store)),
             patch.object(storage, 'update_settings', side_effect=save),
+            patch.object(storage, 'patch_settings', side_effect=merge),
         ]
         for p in self.patches:
             p.start()
@@ -182,6 +204,7 @@ class _Base(unittest.TestCase):
         for n, fn in self.orig.items():
             setattr(ha_api, n, fn)
         cs.clear_cache()
+        _clear_pipeline_cache()
 
     def get_rules(self, token=None, **headers):
         if token:
@@ -285,6 +308,7 @@ class Warnings(_Base):
         # No pipeline prefers local handling: no warning.
         for p in self.pipelines['pipelines']:
             p['prefer_local_intents'] = False
+        _clear_pipeline_cache()
         self.assertIsNone(cr.local_handling_warning(cr.default_rules({})))
         r = self.get_rules(self.mum)
         self.assertEqual(r.status_code, 200, r.text)
@@ -514,6 +538,317 @@ class Page(_Base):
         r = self.get_rules(self.mum)
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()['rules']['places']['panel']['garage'], 'ask')
+
+
+# --- review rulings (Claude review of 75b5c385) ------------------------------
+#
+# 1. POST saves through storage.patch_settings({'ha_control': grid}); never
+#    update_settings (which re-dirties every schedule).
+# 2. GET and POST /api/ha/control/rules have their own PARENTS rows in
+#    services/auth.py, not only the /api/ha/* catch-all.
+# 3. control_rules.KIND_LABELS sits beside KINDS (same order) and the GET's
+#    kinds come from it.
+# 4. local_handling_warning also names Assist-exposed scripts and scenes that
+#    touch a restricted kind, and exposed scripts Chauffeur cannot read.
+# 5. The pipeline list is cached ~60 s; control_rules.clear_pipeline_cache()
+#    empties it.
+# 6. The component loads when its <details> opens (@toggle / x-on:toggle), not
+#    on page init, and a second open does not fetch again; after a successful
+#    save `saving` is false before the warnings refresh finishes.
+# 7. A save error handled by chfSettingsSaved(false, msg) (it returns truthy)
+#    is not shown again through showGlobalAlert.
+# 8. The status line under a place cell shows only when its text differs from
+#    the selected button's text.
+# 9. config.html's Argyle setting no longer says locks always need a parent;
+#    it points at the Who can control what grid.
+
+PAGE_HARNESS = r"""
+const fs = require('fs');
+const vm = require('vm');
+const input = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+globalThis.window = globalThis;
+const forbidden = [];
+for (const name of ['alert', 'confirm', 'prompt']) {
+  globalThis[name] = function () { forbidden.push(name); throw new Error('browser dialog: ' + name); };
+}
+const alerts = [];
+globalThis.showGlobalAlert = function (msg) { alerts.push(String(msg)); };
+function El() {
+  const el = { style: {}, dataset: {}, children: [], classList: { add(){}, remove(){}, contains(){ return false; }, toggle(){} },
+    appendChild(c){ el.children.push(c); return c; }, addEventListener(){}, removeEventListener(){},
+    setAttribute(){}, getAttribute(){ return null; }, querySelector(){ return null; }, querySelectorAll(){ return []; } };
+  return el;
+}
+globalThis.document = { getElementById(){ return null; }, createElement(){ return El(); },
+  querySelector(){ return null; }, querySelectorAll(){ return []; }, addEventListener(){}, removeEventListener(){},
+  body: El(), documentElement: El() };
+globalThis.addEventListener = function () {};
+globalThis.location = { pathname: '/config', search: '', origin: 'http://chauffeur.local', href: 'http://chauffeur.local/config' };
+const mem = {};
+globalThis.localStorage = { getItem(k){ return k in mem ? mem[k] : null; }, setItem(k, v){ mem[k] = String(v); }, removeItem(k){ delete mem[k]; } };
+window.chfBase = input.base;
+
+// GET answers follow input.gets ('ok' | 'hang'), the last repeating; POST
+// answers follow input.posts ({status, body}); a 200 echoes the grid.
+const calls = [];
+let getN = 0, postN = 0;
+globalThis.fetch = function (url, opts) {
+  opts = opts || {};
+  const method = (opts.method || 'GET').toUpperCase();
+  calls.push({ url: String(url), method, body: opts.body === undefined ? null : String(opts.body) });
+  const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  if (method === 'GET') {
+    const gets = input.gets || ['ok'];
+    const mode = gets[Math.min(getN++, gets.length - 1)];
+    if (mode === 'hang') return new Promise(() => {});
+    return Promise.resolve(json(200, input.payload));
+  }
+  const posts = input.posts || [{ status: 200 }];
+  const r = posts[Math.min(postN++, posts.length - 1)];
+  return Promise.resolve(r.status === 200 ? json(200, JSON.parse(opts.body)) : json(r.status, r.body));
+};
+const flush = (ms) => new Promise(r => setTimeout(r, ms || 100));
+// Evaluate an Alpine expression from the template against the component.
+function evalIn(page, expr, locals) {
+  return new Function('__page', '__locals', 'with (__page) { with (__locals) { return (' + expr + '); } }')(page, locals || {});
+}
+// An event handler (@toggle="...") is a statement, not an expression.
+function runIn(page, stmt, locals) {
+  return new Function('__page', '__locals', 'with (__page) { with (__locals) { ' + stmt + ' } }')(page, locals || {});
+}
+const out = { forbidden, alerts, calls };
+(async function () {
+  try {
+    for (const src of input.scripts) vm.runInThisContext(src);
+    const scenario = new Function('input', 'out', 'flush', 'calls', 'alerts', 'evalIn', 'runIn',
+                                  'return (async () => {' + input.scenario + '})();');
+    await scenario(input, out, flush, calls, alerts, evalIn, runIn);
+  } catch (e) {
+    out.error = String(e && e.stack || e);
+  }
+  process.stdout.write(JSON.stringify(out) + '\n', () => process.exit(0));
+})();
+"""
+
+
+def _open_tag(page_html, marker):
+    """The opening tag of the element carrying `marker`, attributes unescaped."""
+    i = page_html.index(marker)
+    start = page_html.rindex('<', 0, i)
+    end = page_html.index('>', i)
+    return page_html[start:end + 1]
+
+
+def _attr(tag, *names):
+    for name in names:
+        m = re.search(r'(?:^|\s)' + re.escape(name) + r'="([^"]*)"', tag)
+        if m:
+            return html.unescape(m.group(1))
+    return None
+
+
+class ReviewRulings(_Base):
+    config_page = Page.config_page
+
+    def page_run(self, scenario, **extra):
+        page = self.config_page()
+        scripts = _scripts(page, 'controlRulesPage')
+        self.assertTrue(scripts, 'no inline script defines window.controlRulesPage')
+        payload = self.get_rules(self.mum).json()
+        out = run_node(PAGE_HARNESS, {'base': BASE, 'scripts': scripts, 'payload': payload,
+                                      'scenario': scenario, **extra})
+        self.assertNotIn('error', out, out.get('error'))
+        self.assertEqual(out['forbidden'], [], 'browser dialogs are banned')
+        return out, page, payload
+
+    # --- 1 ---------------------------------------------------------------
+
+    def test_post_saves_through_patch_settings(self):
+        grid = cr.default_rules({})
+        grid['people']['guest']['media'] = 'no'
+        r = self.post_rules(grid, self.mum)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(len(self.update_calls), 0,
+                         'saved through update_settings, which re-dirties every schedule')
+        self.assertEqual(self.patch_calls, [{'ha_control': grid}])
+        self.assertEqual(self.store.get('ha_control'), grid)
+        self.assertEqual(self.store.get('sentinel_setting'), 'kept')
+        self.assertTrue(self.store.get('auth_enforce'))
+
+    # --- 2 ---------------------------------------------------------------
+
+    def test_rules_routes_have_their_own_auth_rows(self):
+        from services import auth
+        for method in ('GET', 'POST'):
+            row = next((rule for rule in auth.RULES
+                        if auth._rule_matches(rule[0], rule[1], method, '/api/ha/control/rules')), None)
+            self.assertIsNotNone(row, method)
+            self.assertEqual(row[1], '/api/ha/control/rules',
+                             f'{method} resolves through {row[1]!r}, not a row of its own')
+            self.assertEqual(row[2], auth.PARENTS)
+            self.assertEqual(auth.resolve(method, '/api/ha/control/rules'), auth.PARENTS)
+        r = self.post_rules(cr.default_rules({}), **{'X-Device-Token': self.panel})
+        self.assertEqual(r.status_code, 403, 'a wall panel cannot rewrite the rules: ' + r.text)
+        self.assertNotIn('ha_control', self.store)
+
+    # --- 3 ---------------------------------------------------------------
+
+    def test_kind_labels_beside_kinds(self):
+        self.assertTrue(hasattr(cr, 'KIND_LABELS'), 'control_rules.KIND_LABELS is missing')
+        labels = cr.KIND_LABELS
+        if isinstance(labels, dict):
+            self.assertEqual(list(labels), list(cr.KINDS))
+            values = list(labels.values())
+            renamed = {k: f'#{v}' for k, v in labels.items()}
+        else:
+            values = list(labels)
+            renamed = type(labels)(f'#{v}' for v in labels)
+        self.assertEqual(len(values), len(cr.KINDS))
+        self.assertEqual(values, [label for _, label in KIND_LABELS])
+        with patch.object(cr, 'KIND_LABELS', renamed):
+            r = self.get_rules(self.mum)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual([k['label'] for k in r.json()['kinds']], [f'#{label}' for _, label in KIND_LABELS],
+                         "the page's labels come from KIND_LABELS")
+
+    # --- 4 ---------------------------------------------------------------
+
+    def test_local_handling_names_scripts_and_scenes(self):
+        self.exposed = {'script.open_garage': True, 'script.goodnight': True, 'script.lights_on': True,
+                        'scene.lockdown': True, 'scene.movie': True, 'light.a': True}
+        warning = cr.local_handling_warning(cr.default_rules({})) or {}
+        names = {d['entity_id'] for d in warning.get('devices', [])}
+        self.assertIn('script.open_garage', names, 'an exposed script that opens the garage')
+        self.assertIn('script.goodnight', names, 'an exposed script Chauffeur cannot read')
+        self.assertIn('scene.lockdown', names, 'an exposed scene that sets a lock')
+        for harmless in ('script.lights_on', 'scene.movie', 'light.a'):
+            self.assertNotIn(harmless, names, f'{harmless} touches nothing restricted')
+
+    # --- 5 ---------------------------------------------------------------
+
+    def test_pipeline_list_cached(self):
+        listed = []
+        ws = ha_api.ws_command
+
+        def counting(command, timeout=8, **fields):
+            if command == 'assist_pipeline/pipeline/list':
+                listed.append(command)
+            return ws(command, timeout=timeout, **fields)
+        ha_api.ws_command = counting
+        cr.local_handling_warning(cr.default_rules({}))
+        cr.local_handling_warning(cr.default_rules({}))
+        self.assertEqual(len(listed), 1, 'two reads within a minute list the pipelines once')
+        self.assertTrue(hasattr(cr, 'clear_pipeline_cache'), 'control_rules.clear_pipeline_cache is missing')
+        cr.clear_pipeline_cache()
+        cr.local_handling_warning(cr.default_rules({}))
+        self.assertEqual(len(listed), 2, 'clearing the cache reads the pipelines again')
+
+    # --- 6 ---------------------------------------------------------------
+
+    def test_loads_when_opened_not_on_page_init(self):
+        page = self.config_page()
+        tag = _open_tag(page, 'data-control-rules')
+        init = _attr(tag, 'x-init') or ''
+        self.assertNotIn('load(', init, 'the rules are not fetched on page load')
+        toggle = _attr(tag, '@toggle', 'x-on:toggle')
+        self.assertIsNotNone(toggle, 'the <details> loads on @toggle')
+
+        out, _, _ = self.page_run(r"""
+          const page = window.controlRulesPage();
+          page.$el = { open: true };
+          page.$event = { target: { open: true } };
+          runIn(page, input.toggle); await flush();
+          out.afterFirst = calls.filter(c => c.method === 'GET').length;
+          out.loaded = !!page.rules;
+          runIn(page, input.toggle); await flush();
+          out.afterSecond = calls.filter(c => c.method === 'GET').length;
+        """, toggle=toggle)
+        self.assertEqual(out['afterFirst'], 1)
+        self.assertTrue(out['loaded'])
+        self.assertEqual(out['afterSecond'], 1, 'opening again does not fetch the rules again')
+
+    def test_saving_clears_before_warnings_refresh(self):
+        out, _, _ = self.page_run(r"""
+          const page = window.controlRulesPage();
+          await page.load(); await flush();
+          page.setPerson('child', 'lights', 'no');   // its warnings refresh never answers
+          await flush(200);
+          out.saving = page.saving;
+          out.posted = calls.filter(c => c.method === 'POST').length;
+        """, gets=['ok', 'hang'])
+        self.assertEqual(out['posted'], 1)
+        self.assertFalse(out['saving'], 'the fieldset is enabled again once the grid is saved')
+
+    # --- 7 ---------------------------------------------------------------
+
+    def test_save_error_shown_once(self):
+        out, _, _ = self.page_run(r"""
+          out.saved = [];
+          window.chfSettingsSaving = () => {};
+          window.chfSettingsSaved = (ok, msg) => { out.saved.push([ok, msg || null]); return true; };
+          const page = window.controlRulesPage();
+          await page.load(); await flush();
+          await page.setPerson('child', 'media', 'no'); await flush();
+        """, posts=[{'status': 400, 'body': {'detail': 'The child card for media must be yes or no.'}}])
+        self.assertEqual(out['saved'], [[False, 'The child card for media must be yes or no.']])
+        self.assertEqual(out['alerts'], [], 'chfSettingsSaved already showed it')
+
+    # --- 8 ---------------------------------------------------------------
+
+    def test_place_status_only_when_it_differs(self):
+        page = self.config_page()
+        buttons = {}
+        for m in re.finditer(r'<button\b([^>]*)>(.*?)</button>', page, re.S):
+            hit = re.search(r"""setPlace\(\s*['"]panel['"]\s*,\s*kind\.id\s*,\s*['"](yes|ask|no)['"]\s*\)""",
+                            html.unescape(m.group(1)))
+            if hit:
+                buttons[hit.group(1)] = {'xtext': _attr(m.group(1), 'x-text'),
+                                         'text': html.unescape(re.sub(r'<[^>]+>', '', m.group(2))).strip()}
+        self.assertEqual(set(buttons), {'yes', 'ask', 'no'}, buttons)
+        status = None
+        for m in re.finditer(r'<(\w+)\b([^>]*)>', page):
+            xtext = _attr(m.group(2), 'x-text') or ''
+            if re.search(r"""placeLabel\(\s*['"]panel['"]""", xtext):
+                status = {'xtext': xtext, 'xshow': _attr(m.group(2), 'x-show')}
+                break
+
+        cases = [('lights', 'yes', False), ('locks', 'yes', True), ('climate', 'ask', False),
+                 ('alarm', 'no', True), ('locks', 'ask', True)]
+        out, _, _ = self.page_run(r"""
+          const page = window.controlRulesPage();
+          await page.load(); await flush();
+          out.rows = [];
+          for (const [kind, value, proof] of input.cases) {
+            page.rules.places.panel[kind] = value;
+            page.rules.proof[kind] = proof;
+            const scope = { kind: { id: kind } };
+            const b = input.buttons[value];
+            const button = b.xtext ? String(evalIn(page, b.xtext, scope)) : b.text;
+            let shown = false, text = null;
+            if (input.status) {
+              text = String(evalIn(page, input.status.xtext, scope));
+              shown = input.status.xshow ? !!evalIn(page, input.status.xshow, scope) : true;
+            }
+            out.rows.push({ kind, value, proof, button, shown, text });
+          }
+        """, buttons=buttons, status=status, cases=cases)
+        for row in out['rows']:
+            if row['text'] is not None:
+                self.assertEqual(row['shown'], row['text'] != row['button'],
+                                 f"status under {row['kind']}={row['value']}: {row}")
+            if row['value'] == 'yes' and row['proof']:
+                visible = [row['button']] + ([row['text']] if row['shown'] else [])
+                self.assertIn('Ask who (needs proof)', visible, 'the screen never claims a plain Yes')
+
+    # --- 9 ---------------------------------------------------------------
+
+    def test_argyle_setting_points_at_grid(self):
+        page = html.unescape(self.config_page())
+        self.assertFalse('Locks, alarms and garage doors always need a parent or adult.' in page,
+                         'config.html still says locks always need a parent or adult')
+        i = page.index('authSettings.house_control_unexposed')
+        label = page[i:page.index('</label>', i)]
+        self.assertIn('Who can control what', label, 'the Argyle setting points at the grid')
 
 
 if __name__ == '__main__':

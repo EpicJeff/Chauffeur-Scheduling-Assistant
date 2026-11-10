@@ -178,6 +178,9 @@ RULES = [
     (ANY, '/api/calendars/*', PARENTS, None),
     (ANY, '/api/walmart/*', PARENTS, None),
     (ANY, '/api/ha_sensors/*', PARENTS, None),
+    # Editing the household rulebook is administration, even on a panel.
+    ('GET', '/api/ha/control/rules', PARENTS, None),
+    ('POST', '/api/ha/control/rules', PARENTS, None),
     # The music card's HA lanes, carved out ABOVE the admin prefix below
     # (first hit wins): the board's music card lists players and sends
     # transport commands from a wall, and the artwork proxy is drawn as a bare

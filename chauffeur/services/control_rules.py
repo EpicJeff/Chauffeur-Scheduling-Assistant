@@ -17,6 +17,11 @@ KINDS: tuple[str, ...] = (
     'lights', 'switches', 'media', 'climate', 'blinds',
     'garage', 'locks', 'alarm', 'other',
 )
+KIND_LABELS = {
+    'lights': 'Lights', 'switches': 'Switches & fans', 'media': 'TV & music',
+    'climate': 'Climate', 'blinds': 'Blinds & shades', 'garage': 'Garage, doors & gates',
+    'locks': 'Locks', 'alarm': 'Alarm', 'other': 'Everything else',
+}
 ROLES = ('parent', 'adult', 'child', 'helper', 'guest')
 PLACES = ('panel', 'unknown_voice')
 NEVER_DOMAINS: frozenset[str] = frozenset({
@@ -121,6 +126,29 @@ def validate_rules(raw: dict) -> dict:
     return raw
 
 
+_pipeline_cache = {'data': None, 'expires': 0.0}
+_pipeline_lock = Lock()
+
+
+def clear_pipeline_cache() -> None:
+    """Refresh the Assist pipeline list on demand as well as once a minute."""
+    with _pipeline_lock:
+        _pipeline_cache.update(data=None, expires=0.0)
+
+
+def _assist_pipelines() -> list[dict]:
+    from services import ha_api
+
+    with _pipeline_lock:
+        if _pipeline_cache['data'] is not None and time.monotonic() < _pipeline_cache['expires']:
+            return _pipeline_cache['data']
+        result = ha_api.ws_command('assist_pipeline/pipeline/list')
+        rows = result.get('pipelines') if isinstance(result, dict) else None
+        rows = rows if isinstance(rows, list) else []
+        _pipeline_cache.update(data=rows, expires=time.monotonic() + 60)
+        return rows
+
+
 def local_handling_warning(rules: dict) -> dict | None:
     """Name restricted, Assist-exposed devices HA may handle before Argyle."""
     from services import ha_api
@@ -128,9 +156,8 @@ def local_handling_warning(rules: dict) -> dict | None:
     try:
         if ha_api.mode() == 'unconfigured':
             return None
-        result = ha_api.ws_command('assist_pipeline/pipeline/list')
         pipelines = [row.get('name') or row.get('id') or 'Unnamed pipeline'
-                     for row in (result or {}).get('pipelines', [])
+                     for row in _assist_pipelines()
                      if row.get('prefer_local_intents')]
         if not pipelines:
             return None
@@ -144,11 +171,17 @@ def local_handling_warning(rules: dict) -> dict | None:
         devices = []
         for state in ha_api.get_states():
             eid = state['entity_id']
+            if not exposed.get(eid):
+                continue
             attrs = state.get('attributes') or {}
             kind = kind_of(eid, attrs)
-            if exposed.get(eid) and kind in restricted:
+            # Scripts/scenes follow the same recursive analysis as control;
+            # an unreadable effect counts as every kind there, too.
+            touched_kinds = kinds_for((eid,)) if kind in ('script', 'scene') else (kind,)
+            restricted_kind = next((k for k in touched_kinds if k in restricted), None)
+            if restricted_kind:
                 devices.append({'entity_id': eid, 'name': attrs.get('friendly_name') or eid,
-                                'kind': kind})
+                                'kind': restricted_kind})
         return {'pipelines': pipelines, 'devices': devices} if devices else None
     except Exception:
         # HA going away must not take the settings page with it.

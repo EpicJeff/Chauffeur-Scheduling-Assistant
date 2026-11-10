@@ -1,6 +1,6 @@
 {# One parent-owned rulebook. Keep the controls and their logic together;
    config.html only includes this component beside Argyle's settings. #}
-<details data-control-rules x-data="controlRulesPage()" x-init="load()"
+<details data-control-rules x-data="controlRulesPage()" @toggle="if ($event.target.open) load()"
     class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700">
     <summary class="cursor-pointer px-4 py-3 font-semibold text-blue-200">Who can control what</summary>
     <div class="px-4 pb-4 space-y-4 text-sm">
@@ -72,7 +72,6 @@
                                         {% if value == 'yes' %}x-text="rules.proof[kind.id] ? 'Ask who (needs proof)' : 'Yes'"{% endif %}>{{ label }}</button>
                                     {% endfor %}
                                 </div>
-                                <p class="text-xs text-gray-400" x-text="placeLabel('{{ place }}', kind.id)"></p>
                             </div>
                         </template>
                     </section>
@@ -126,6 +125,7 @@ window.controlRulesPage = function () {
         saving: false,
         saveStatus: '',
         warningError: '',
+        warningRequest: 0,
         async read() {
             const response = await fetch(this.base + 'api/ha/control/rules');
             const data = await response.json();
@@ -133,6 +133,7 @@ window.controlRulesPage = function () {
             return data;
         },
         async load() {
+            if (this.rules || this.loading) return;
             this.loading = true;
             try {
                 const data = await this.read();
@@ -171,6 +172,19 @@ window.controlRulesPage = function () {
             if (value === 'ask') return 'Ask who';
             return this.rules.proof[kind] ? 'Ask who (needs proof)' : 'Yes';
         },
+        async refreshWarnings() {
+            const request = ++this.warningRequest;
+            try {
+                const data = await this.read();
+                if (request !== this.warningRequest) return;
+                this.warnings = data.warnings;
+                this.warningError = '';
+            } catch (error) {
+                if (request === this.warningRequest) {
+                    this.warningError = 'Rules saved. The warnings could not be refreshed.';
+                }
+            }
+        },
         async save() {
             this.saving = true;
             this.saveStatus = '';
@@ -186,23 +200,18 @@ window.controlRulesPage = function () {
                 this.savedRules = JSON.parse(JSON.stringify(data));
                 this.saveStatus = 'Saved';
                 window.chfSettingsSaved?.(true);
-                // The restrictions just changed: ask the owning service which
-                // exposed devices now belong in the local-handling warning.
-                try {
-                    this.warnings = (await this.read()).warnings;
-                    this.warningError = '';
-                } catch (error) {
-                    this.warningError = 'Rules saved. The warnings could not be refreshed.';
-                }
             } catch (error) {
                 this.rules = JSON.parse(JSON.stringify(this.savedRules));
                 this.saveStatus = 'Not saved';
                 const message = error.message || 'Could not save control rules.';
-                window.chfSettingsSaved?.(false, message);
-                showGlobalAlert(message);
+                if (!window.chfSettingsSaved?.(false, message)) showGlobalAlert(message);
+                return;
             } finally {
                 this.saving = false;
             }
+            // Saving the grid is finished. A slow warning read must not keep
+            // the controls disabled, or replace warnings from a newer save.
+            this.refreshWarnings();
         },
     };
 };
