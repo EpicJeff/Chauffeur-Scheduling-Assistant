@@ -117,11 +117,12 @@ class VoiceContext:
 
     def actor(self) -> dict | None:
         """The person speaking, revalidated independently of PIN proof."""
+        from services import scope
         if self.level == 'verified':
-            return self.verified_member()
+            member = self.verified_member()
+            return member if member and scope.can_see(member, 'chat.agent') else None
         if self.level != 'named' or not self.recognized_this_turn:
             return None
-        from services import scope
         with _lock:
             row = _sessions.get((self.ha_instance_id, self.satellite_id))
             if not row or row.get('level') != 'named' or not row.get('recognized'):

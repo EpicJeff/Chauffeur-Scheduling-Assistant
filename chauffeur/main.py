@@ -3927,11 +3927,18 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
 
         actor = ctx.actor()
         if actor and res.get('card'):
-            from services.agent_tools_v2 import _post_chat_message
-            channel = storage.get_or_create_dm(actor['id'], 'argyle')
-            reply = res.get('message', 'Done.')
-            _post_chat_message(channel, storage.ensure_argyle_member(), reply, card=res['card'])
-            res['message'] = reply.rstrip() + " I've put that in your Argyle chat."
+            try:
+                from services.agent_tools_v2 import _post_chat_message
+                argyle = storage.ensure_argyle_member()
+                channel = storage.get_or_create_dm(actor['id'], argyle['id'])
+                card = res['card']
+                if card.get('proposal_id'):
+                    storage.update_action_proposal(card['proposal_id'], {'channel_id': channel['id']})
+                reply = res.get('message', 'Done.')
+                _post_chat_message(channel, argyle, reply, card=card)
+                res['message'] = reply.rstrip() + " I've put that in your Argyle chat."
+            except Exception as e:
+                logger.error(f"Voice Argyle reply post failed: {e}")
 
         if conv_id:
             storage.add_message_to_conversation(conv_id, {'role': 'assistant', 'content': res.get("message", "Done."), 'timestamp': time.time()})

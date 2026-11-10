@@ -383,18 +383,28 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
             system_prompt += (f"\nYou are speaking with {_nm} (role: {_role}) in the family chat. "
                               f"Resolve 'me', 'my', 'I', and 'mine' to {_nm}. For messaging and chore tools, "
                               f"pass from_member/member_name as \"{_nm}\" automatically — never ask who is "
-                              f"speaking, you already know.\n"
-                              "When the request would CHANGE the schedule (reassign a driver, mark someone "
-                              "unavailable, add/remove a routing or priority rule, or add an errand), call "
-                              "propose_family_action with a clear one-sentence summary instead of doing it "
-                              "silently — a parent approves it with one tap. Answer questions, read the "
-                              "schedule, send messages, and claim chores directly.\n")
+                              f"speaking, you already know.\n")
+            if not voice_actor:
+                system_prompt += ("When the request would CHANGE the schedule (reassign a driver, mark someone "
+                                  "unavailable, add/remove a routing or priority rule, or add an errand), call "
+                                  "propose_family_action with a clear one-sentence summary instead of doing it "
+                                  "silently — a parent approves it with one tap. Answer questions, read the "
+                                  "schedule, send messages, and claim chores directly.\n")
             if not _is_admin_member(acting_member):
                 system_prompt += ("This person is NOT a parent/admin: answer questions, send their messages, and "
                                   "manage their own chores, but you cannot change global scheduling (routing/priority "
                                   "rules, the solver, or errands) — those tools are not available to them.\n")
             if (acting_member.get('role') or '') == 'child':
-                system_prompt += (
+                system_prompt += ((
+                    "SPEAKING WITH A CHILD — they are often the FIRST to know about logistics changes, "
+                    "so treat their reports as valuable. For schedule facts beyond direct driver and "
+                    "shopping changes (practice moved or cancelled, a new event, or needing money or "
+                    "supplies by a date), call propose_family_action so a parent can approve them. "
+                    "Tell them you've flagged those facts for their parents. Ask at most ONE short "
+                    "clarifying question; if they don't know, propose with what you have and note the "
+                    "gap in the summary. Be warm, brief, and reassuring. Never lecture, never "
+                    "guilt-trip about chores, points, or streaks.\n"
+                ) if voice_actor else (
                     "SPEAKING WITH A CHILD — they are often the FIRST to know about logistics changes, "
                     "so treat their reports as valuable. When they report schedule information (practice "
                     "moved or cancelled, a new event, needing money or supplies by a date, a ride "
@@ -405,7 +415,8 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                     "question; if they don't know, propose with what you have and note the gap in the "
                     "summary. Be warm, brief, and reassuring. Never lecture, never guilt-trip about "
                     "chores, points, or streaks. You never change the schedule directly for a child — "
-                    "always the proposal card.\n"
+                    "always the proposal card.\n"))
+                system_prompt += (
                     "SCHOOL LIST: they manage their OWN school/deadline list directly with "
                     "add_kid_task / complete_kid_task / get_kid_tasks (homework, tests, projects, "
                     "things to bring) — no approval needed, it's their list. For a big project weeks "
@@ -424,7 +435,8 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                     "plainly that you have asked and that nothing is decided yet; never promise the "
                     "answer, and never treat a no as a failure — a parent saying no with a reason is "
                     "a real answer and better than silence. Use propose_family_action for FACTS they "
-                    "are reporting; make_request for things they are ASKING for.\n")
+                    + ("are reporting beyond direct driver and shopping changes; " if voice_actor else "are reporting; ")
+                    + "make_request for things they are ASKING for.\n")
         else:
             system_prompt += ("\nFAMILY MESSAGING & CHORES: you can send family/direct messages and claim chores, "
                               "but you do NOT know who is speaking in this context. If the speaker has identified "
@@ -1059,6 +1071,11 @@ sending or claiming, and never pass from_member/member_name for them.
                         acting_member=actor, voice_context=voice_context, source=source,
                         proven=proven, device_id=device_id,
                         **({'spoken': True} if voice_actor else {}))
+                    if voice_actor and args.get('action') in ('act', 'app') and res.get('status') == 'success':
+                        from services.voice_tools import record_action
+                        record_action(voice_context, 'house', voice_actor,
+                                      {'entity_id': res.get('entity_id'), 'service': res.get('service'),
+                                       'app': res.get('app')}, voice_context.provenance())
                     if res.get('message'): agent_message = res['message']
                 elif func_name == 'music':
                     from services import agent_tools_v2 as _atv2
@@ -1073,6 +1090,11 @@ sending or claiming, and never pass from_member/member_name for them.
                         acting_member=actor, voice_context=voice_context, source=source,
                         proven=proven, device_id=device_id,
                         **({'spoken': True} if voice_actor else {}))
+                    if voice_actor and args.get('action') == 'play' and res.get('status') == 'success':
+                        from services.voice_tools import record_action
+                        record_action(voice_context, 'music', voice_actor,
+                                      {'entity_id': res.get('entity_id'), 'item': res['item'].get('name')},
+                                      voice_context.provenance())
                     if res.get('message'): agent_message = res['message']
                 elif func_name == "announce_to_room":
                     from services.agent_tools_v2 import announce_to_room
@@ -1173,6 +1195,12 @@ sending or claiming, and never pass from_member/member_name for them.
                     if voice_actor and 'source' in allowed:
                         kwargs['source'] = source
                     res = fn(**kwargs, acting_member=actor)
+                    if voice_actor and func_name == 'memory' and args.get('action') in ('remember', 'forget') \
+                            and res.get('status') == 'success':
+                        from services.voice_tools import record_action
+                        record_action(voice_context, 'memory', voice_actor,
+                                      {'action': args.get('action'), 'text': (res.get('memory') or {}).get('text')},
+                                      voice_context.provenance())
                     if isinstance(res, dict) and res.get("schedule_dirty"):
                         schedule_dirty = True
                     if res.get("message"): agent_message = res["message"]
