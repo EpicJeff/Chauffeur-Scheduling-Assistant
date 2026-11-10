@@ -10007,7 +10007,9 @@ def execute_tool(name: str, args: dict, actor=None, focus_key=None, mission_id=N
     try:
         import inspect
         # Identity belongs to the caller, never to model-authored arguments.
-        args = {k: v for k, v in args.items() if k not in ('acting_member', 'focus_key', 'actor', 'mission_id')}
+        args = {k: v for k, v in args.items() if k not in (
+            'acting_member', 'focus_key', 'actor', 'mission_id',
+            'proven', 'device_id', 'source', 'voice_context')}
         parameters = inspect.signature(handler).parameters
         context = {}
         if 'actor' in parameters:

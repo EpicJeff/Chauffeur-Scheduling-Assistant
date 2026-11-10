@@ -775,7 +775,7 @@ class HouseToolTests(unittest.TestCase):
         self.settings['panel_allow_unsafe_controls'] = True
         for eid, service in (('lock.front_door', 'unlock'), ('cover.main_garage', 'open_cover')):
             res = self.run_tool(action='act', entity_id=eid, service=service,
-                                acting_member=access.HOUSE, source='panel')
+                                acting_member=access.HOUSE, source='panel', device_id='house-test-panel')
             self.assertEqual(res['status'], 'refused')
             self.assertEqual(res['needs'], 'identify')
             self.assertEqual(res['control_held']['message'], "Who's asking?")

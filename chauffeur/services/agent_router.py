@@ -171,7 +171,7 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
                           acting_member: Optional[Dict] = None,
                           propose_only: bool = False,
                           focus_key: Optional[str] = None, voice_context=None,
-                          proven: bool = True, device_id: Optional[str] = None) -> Dict[str, Any]:
+                          proven: bool = False, device_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Main entrypoint for the Agent Orchestrator.
     Decides whether to route to Gemma (tools) or Gemini (heavy lifting).
@@ -1030,7 +1030,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
-                    if not proven:
+                    if not proven and args.get('action') in ('act', 'app'):
                         # Chat token provenance can identify an account without
                         # proving who is using the shared panel right now.
                         actor = access.HOUSE

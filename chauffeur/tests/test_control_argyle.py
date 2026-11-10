@@ -320,14 +320,15 @@ class ArgyleObeys(unittest.TestCase):
 
     def test_panel_chat_lock_defaults(self):
         res = self.house(action='act', entity_id='lock.front', service='unlock',
-                         acting_member=access.HOUSE, source='panel')
+                         acting_member=access.HOUSE, source='panel', device_id=self.panel_id)
         self.assertEqual(res['status'], 'refused', res)
         self.assertIn('needs', res, 'a refusal says what would make it work')
         self.assertIsNone(res['needs'])
         self.assertNotIn('control_held', res)
         self.extra['panel_allow_unsafe_controls'] = True
+        # Held only for a known panel (Task 5 review ruling 3).
         res = self.house(action='act', entity_id='lock.front', service='unlock',
-                         acting_member=access.HOUSE, source='panel')
+                         acting_member=access.HOUSE, source='panel', device_id=self.panel_id)
         self.assertEqual(res['status'], 'refused', res)
         self.assertEqual(res.get('needs'), 'identify', res)
         held = res.get('control_held') or {}
@@ -491,9 +492,239 @@ class ArgyleObeys(unittest.TestCase):
             return {'message': '', 'tool_calls': [self.UNLOCK]}
         with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=fake_llm):
             res = agent_router.process_agent_request('unlock the front door', source='panel',
-                                                     acting_member=access.HOUSE)
+                                                     acting_member=access.HOUSE, device_id=self.panel_id)
         self.assertTrue((res.get('control_held') or {}).get('id'), res)
         self.assertEqual(self.device_calls('lock'), [])
+
+    # --- Task 5 review rulings -------------------------------------------------
+    # 1. A wall-panel token is not proof on ANY Argyle entry point; a new
+    #    control_rules.token_proven(headers, query) says who is proven, and the
+    #    router fails closed when a caller does not say.
+    # 2. The router's swap of an unproven member to the panel card covers house
+    #    'act' and 'app' only, never 'locate'.
+    # 3. A panel 'identify' refusal is held only for a known panel (device id).
+    # 4. execute_tool drops proven, device_id, source and voice_context from
+    #    model-authored args.
+
+    UNLOCKED = ('lock', 'unlock', {'entity_id': 'lock.front'})
+
+    def fake_llm(self, call):
+        def fake(prompt, tools, system_prompt):
+            if 'Tool Result' in prompt:
+                return {'message': '', 'tool_calls': []}
+            return {'message': '', 'tool_calls': [call]}
+        return fake
+
+    def personal(self, proof='password'):
+        return storage.create_member_token('mum', proof=proof, minted_on='personal')
+
+    def unproven(self):
+        """Every credential that names mum but proves nobody is standing there."""
+        return [('panel-minted', {'X-Member-Token': storage.create_member_token(
+                    'mum', proof='pin', minted_on='panel')}),
+                ('house session', {'X-Member-Token': storage.create_member_token('mum', house_session=True)}),
+                ('PIN-less', {'X-Member-Token': storage.create_member_token('mum')}),
+                ('personal token beside a panel device', {'X-Member-Token': self.personal(),
+                                                          'X-Device-Token': self.panel})]
+
+    def dm_post(self, headers, body='unlock the front door'):
+        storage.ensure_argyle_member()
+        dm = storage.get_or_create_dm('mum', storage.ARGYLE_MEMBER_ID)
+        with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=self.fake_llm(self.UNLOCK)):
+            return self.client.post(f"/api/channels/{dm['id']}/messages",
+                                    json={'sender_member_id': 'mum', 'body': body}, headers=headers)
+
+    def funnel_post(self, headers):
+        from services import chat_actions
+        storage.ensure_family_channel()
+        family = storage.get_family_channel()
+        self.extra['chat_suggestions_enabled'] = True
+        body = "I can't make it, reschedule it and unlock the front door"
+        self.assertTrue(chat_actions.suggests_action(body))
+        with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=self.fake_llm(self.UNLOCK)), \
+                patch.object(chat_actions, 'classify_actionable',
+                             return_value={'actionable': True, 'confidence': 0.95}):
+            return self.client.post(f"/api/channels/{family['id']}/messages",
+                                    json={'sender_member_id': 'mum', 'body': body}, headers=headers)
+
+    def phone_run(self, headers, text='unlock the front door'):
+        import uuid
+        rid = uuid.uuid4().hex
+        for step, body in (('start', {'request_id': rid}), (f'{rid}/text', {'text': text})):
+            r = self.client.post(f'/api/app-voice/{step}', json=body, headers=headers)
+            if r.status_code != 200:
+                return r  # refused before Argyle runs; the caller checks the code
+        with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=self.fake_llm(self.UNLOCK)):
+            return self.client.post(f'/api/app-voice/{rid}/run', headers=headers)
+
+    def test_argyle_dm_panel_token_is_not_proof(self):
+        # The control: a personal password sign-in posting to its own Argyle DM unlocks,
+        # so the DM path really reaches the house tool.
+        r = self.dm_post({'X-Member-Token': self.personal()})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.device_calls('lock'), [self.UNLOCKED], 'the DM path never reached the house tool')
+        for label, headers in self.unproven():
+            r = self.dm_post(headers)
+            # 200 today for every one of these; refusing the post outright is also not an unlock.
+            self.assertIn(r.status_code, (200, 401, 403), (label, r.text))
+            self.assertEqual(self.device_calls('lock'), [self.UNLOCKED],
+                             f'{label}: the Argyle DM unlocked with a token that proves nobody')
+
+    def test_suggestion_funnel_panel_token_is_not_proof(self):
+        r = self.funnel_post({'X-Member-Token': self.personal()})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.device_calls('lock'), [self.UNLOCKED], 'the funnel path never reached the house tool')
+        for label, headers in self.unproven():
+            r = self.funnel_post(headers)
+            self.assertIn(r.status_code, (200, 401, 403), (label, r.text))
+            self.assertEqual(self.device_calls('lock'), [self.UNLOCKED],
+                             f'{label}: the suggestion funnel unlocked with a token that proves nobody')
+
+    def test_phone_voice_panel_token_is_not_proof(self):
+        r = self.phone_run({'X-Member-Token': self.personal()})
+        self.assertEqual(r.status_code, 200, r.text)  # control: start, text and run all succeed
+        self.assertEqual(self.device_calls('lock'), [self.UNLOCKED], 'the phone voice path never reached the house tool')
+        for label, headers in self.unproven():
+            if label == 'house session':
+                continue  # app_voice.personal() already refuses it at /start (403)
+            r = self.phone_run(headers)
+            self.assertIn(r.status_code, (200, 403, 409), (label, r.text))
+            self.assertEqual(self.device_calls('lock'), [self.UNLOCKED],
+                             f'{label}: phone voice unlocked with a token that proves nobody: {r.text}')
+
+    def test_token_proven_helper(self):
+        self.assertTrue(callable(getattr(cr, 'token_proven', None)),
+                        'control_rules.token_proven(headers, query) is missing')
+        personal = self.personal()
+        panel_minted = storage.create_member_token('mum', proof='pin', minted_on='panel')
+        legacy = 'legacy' + personal[6:]
+        import time
+        with storage.db_lock:
+            storage.member_tokens_table.insert({'token': legacy, 'member_id': 'mum', 'created_at': time.time()})
+        cases = [
+            ('personal password', {'X-Member-Token': personal}, True),
+            ('personal PIN', {'X-Member-Token': self.personal(proof='pin')}, True),
+            ('legacy row without provenance', {'X-Member-Token': legacy}, True),
+            ('panel-minted PIN', {'X-Member-Token': panel_minted}, False),
+            ('panel-minted password', {'X-Member-Token': storage.create_member_token(
+                'mum', proof='password', minted_on='panel')}, False),
+            ('house session', {'X-Member-Token': storage.create_member_token('mum', house_session=True)}, False),
+            ('PIN-less', {'X-Member-Token': storage.create_member_token('mum')}, False),
+            ('personal token beside a panel device', {'X-Member-Token': personal,
+                                                      'X-Device-Token': self.panel}, False),
+            ('unknown token', {'X-Member-Token': 'not-a-token'}, False),
+            ('no token', {}, False),
+        ]
+        for label, headers, expected in cases:
+            self.assertIs(cr.token_proven(headers, {}), expected, label)
+        # Lower-case header names (Starlette's) and the query-string forms.
+        self.assertIs(cr.token_proven({'x-member-token': personal}, {}), True)
+        self.assertIs(cr.token_proven({}, {'member_token': personal}), True)
+        self.assertIs(cr.token_proven({}, {'member_token': panel_minted}), False)
+        self.assertIs(cr.token_proven({}, {'member_token': personal, 'device_token': self.panel}), False)
+
+    def test_router_without_proven_fails_closed(self):
+        for source in ('pwa', 'family'):
+            # The control: told the member is proven, the router unlocks.
+            with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=self.fake_llm(self.UNLOCK)):
+                agent_router.process_agent_request('unlock the front door', source=source,
+                                                   acting_member=self.mum, proven=True)
+            self.assertEqual(self.device_calls('lock'), [self.UNLOCKED], source)
+            self.calls.clear()
+            with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=self.fake_llm(self.UNLOCK)):
+                res = agent_router.process_agent_request('unlock the front door', source=source,
+                                                         acting_member=self.mum)
+            self.assertEqual(self.device_calls('lock'), [],
+                             f'{source}: a caller that never said proven= unlocked a proof kind: {res}')
+
+    def test_unproven_parent_locate_keeps_private_read(self):
+        from services import maps, stages
+        self.states.append(_state('device_tracker.lily_phone', 'not_home', friendly_name="Lily's Phone",
+                                  source_type='gps', latitude=35.76, longitude=-78.96))
+        self.states.append(_state('person.lily', 'not_home', friendly_name='Lily',
+                                  device_trackers=['device_tracker.lily_phone'],
+                                  source='device_tracker.lily_phone', latitude=35.76, longitude=-78.96))
+        if not storage.get_member('lily'):
+            storage.add_member({'id': 'lily', 'name': 'Lily', 'role': 'child', 'status': 'active'})
+        storage.update_member('lily', {'ha_person_entity': 'person.lily'})
+        real = agent_tools_v2.house
+        seen = []
+
+        def spy(**kw):
+            res = real(**kw)
+            seen.append((kw, res))
+            return res
+        locate = {'name': 'house', 'arguments': {'action': 'locate', 'query': 'Lily'}}
+        with patch.object(stages, 'can', lambda member, capability: (
+                capability != 'private_location' or (member or {}).get('id') == 'lily')), \
+                patch.object(maps, 'reverse_geocode', lambda lat, lon: 'Target, 12 Elm St, Cary'), \
+                patch.object(agent_tools_v2, 'house', spy):
+            # The fixture really is private: the panel card is refused.
+            res = real(action='locate', query='Lily', acting_member=access.HOUSE, source='panel')
+            self.assertEqual(res['status'], 'refused', res)
+            self.assertIn('private', res['message'].lower())
+            r = self.chat({'X-Member-Token': storage.create_member_token('mum', house_session=True)},
+                          locate, body={'source': 'pwa'})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(len(seen), 1, seen)
+        kw, res = seen[0]
+        self.assertEqual(res['status'], 'success',
+                         f'a house-session parent lost the private read (actor {kw.get("acting_member")}): {res}')
+        self.assertEqual(res['zone'], 'not_home')
+
+    def test_identify_held_only_for_a_known_panel(self):
+        self.extra['panel_allow_unsafe_controls'] = True
+        res = self.house(action='act', entity_id='lock.front', service='unlock',
+                         acting_member=access.HOUSE, source='panel')
+        self.assertEqual(res['status'], 'refused', res)
+        self.assertEqual(res.get('needs'), 'identify', res)
+        self.assertNotIn('control_held', res, 'a hold bound to no panel can never be taken back')
+        res = self.house(action='act', entity_id='lock.front', service='unlock',
+                         acting_member=access.HOUSE, source='panel', device_id=self.panel_id)
+        self.assertEqual(res.get('needs'), 'identify', res)
+        held = (res.get('control_held') or {}).get('id')
+        self.assertTrue(held, res)
+        self.assertEqual(cr.take_held(held, self.panel_id)['args']['entity_id'], 'lock.front')
+        # The anon-panel surface: a member token on a ?panel=true page, no device.
+        r = self.chat({'X-Member-Token': self.personal()}, self.UNLOCK,
+                      body={'context': {'search': '?panel=true'}})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertNotIn('control_held', r.json(), r.text)
+        self.assertEqual(self.device_calls('lock'), [])
+
+    def test_execute_tool_drops_identity_args(self):
+        # Model-authored source='admin' with no actor is the admin card today.
+        res = agent_tools_v2.execute_tool('house', {'action': 'act', 'entity_id': 'lock.front',
+                                                    'service': 'unlock', 'source': 'admin'}, actor=None)
+        self.assertEqual(self.device_calls('lock'), [], f'model args claimed the admin page: {res}')
+        # Nor may the model bind a hold to a panel the caller never named.
+        self.extra['panel_allow_unsafe_controls'] = True
+        res = agent_tools_v2.execute_tool('house', {'action': 'act', 'entity_id': 'lock.front', 'service': 'unlock',
+                                                    'source': 'panel', 'device_id': self.panel2_id},
+                                          actor=access.HOUSE)
+        held = (res.get('control_held') or {}).get('id')
+        if held:
+            self.assertIsNone(cr.take_held(held, self.panel2_id), 'model args bound a hold to another panel')
+        self.assertEqual(self.device_calls('lock'), [])
+
+    def test_approved_proposal_cannot_change_identity(self):
+        from services import chat_actions
+        payload = {'action': 'act', 'entity_id': 'lock.front', 'service': 'unlock', 'proven': True,
+                   'device_id': self.panel2_id, 'source': 'admin',
+                   'voice_context': {'level': 'verified', 'member_id': 'mum'}}
+        pid = storage.add_action_proposal({'action_type': 'house', 'summary': 'Unlock the front door',
+                                           'payload': payload, 'requires_admin': True, 'channel_id': None})
+        seen = []
+
+        def handler(args, actor=None):
+            seen.append(dict(args))
+            return {'status': 'success', 'message': 'ok'}
+        with patch.dict(agent_tools_v2.TOOL_HANDLERS, {'house': handler}):
+            chat_actions.act_on_proposal(pid, 'approve', self.mum)
+        self.assertEqual(len(seen), 1, 'the approval never reached execute_tool')
+        self.assertEqual(seen[0].get('entity_id'), 'lock.front', 'the tool\'s own arguments survive')
+        self.assertEqual(sorted({'proven', 'device_id', 'source', 'voice_context'} & set(seen[0])), [],
+                         f'identity rode in on the proposal payload: {seen[0]}')
 
 
 if __name__ == '__main__':

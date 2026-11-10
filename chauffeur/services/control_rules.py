@@ -170,10 +170,12 @@ _HELD_ARGS = {
 }
 
 
-def hold(tool: str, args: dict, device_id: str | None = None) -> str:
+def hold(tool: str, args: dict, device_id: str | None = None) -> str | None:
     """Keep a copy of the requested tool call until the person identifies."""
     if tool not in ('house', 'music'):
         raise ValueError('Only house and music actions can be held.')
+    if not device_id:
+        return None
     held_id = secrets.token_urlsafe(32)
     with _identity_lock:
         now = time.time()
@@ -185,6 +187,8 @@ def hold(tool: str, args: dict, device_id: str | None = None) -> str:
 
 
 def take_held(held_id: str, device_id: str | None = None) -> dict | None:
+    if not device_id:
+        return None
     with _identity_lock:
         _prune_expired(_held, time.time())
         row = _held.get(held_id)
@@ -194,10 +198,37 @@ def take_held(held_id: str, device_id: str | None = None) -> dict | None:
     return {'tool': row['tool'], 'args': row['args']} if row else None
 
 
+def token_proven(headers, query) -> bool:
+    """Personal password/PIN provenance proves a person, except on a panel."""
+    from services import storage
+    from tinydb import Query
+
+    try:
+        headers = {key.lower(): value for key, value in headers.items()}
+        for device_token in (headers.get('x-device-token'), query.get('device_token')):
+            device = storage.get_device_by_token(device_token) if device_token else None
+            if device and device.get('kind') == 'panel':
+                return False
+        token = headers.get('x-member-token') or query.get('member_token')
+        if not token or not storage.get_member_by_token(token):
+            return False
+        with storage.db_lock:
+            row = storage.member_tokens_table.get(Query().token == token)
+        if not row or row.get('house_session'):
+            return False
+        # Only rows with NEITHER field predate provenance. Incomplete new
+        # rows must not accidentally become personal password sign-ins.
+        legacy = 'proof' not in row and 'minted_on' not in row
+        proof = 'password' if legacy else row.get('proof')
+        minted_on = 'personal' if legacy else row.get('minted_on')
+        return bool(proof in ('password', 'pin') and minted_on and minted_on != 'panel')
+    except Exception:
+        return False
+
+
 def who_from_request(headers, query) -> Who:
     """Only personal sign-ins or a consumed panel grant prove a person."""
     from services import storage
-    from tinydb import Query
 
     panel = Who(None, None, 'panel', False)
     headers = {key.lower(): value for key, value in headers.items()}
@@ -212,22 +243,10 @@ def who_from_request(headers, query) -> Who:
                 return Who(member.get('role'), member['id'], None, True)
 
         token = headers.get('x-member-token') or query.get('member_token')
-        if token:
+        if token_proven(headers, query):
             member = storage.get_member_by_token(token)
-            if not member or is_panel:
-                return panel
-            with storage.db_lock:
-                row = storage.member_tokens_table.get(Query().token == token)
-            if not row or row.get('house_session'):
-                return panel
-            # Only rows with NEITHER field predate provenance. Incomplete new
-            # rows must not accidentally become personal password sign-ins.
-            legacy = 'proof' not in row and 'minted_on' not in row
-            proof = 'password' if legacy else row.get('proof')
-            minted_on = 'personal' if legacy else row.get('minted_on')
-            if proof in ('password', 'pin') and minted_on and minted_on != 'panel':
+            if member:
                 return Who(member.get('role'), member['id'], None, True)
-            return panel
         if device or grant:
             return panel
     except Exception:
@@ -270,7 +289,7 @@ def agent_refusal(decision, who: Who, tool: str, args: dict, source: str | None,
             result['message'] = 'Say your PIN first, then ask again.'
         elif decision.needs == 'identify':
             result['message'] = 'Who is this? Say your name and PIN, then ask again.'
-    elif who.place == 'panel' and decision.needs == 'identify':
+    elif who.place == 'panel' and decision.needs == 'identify' and device_id:
         result['control_held'] = {'id': hold(tool, args, device_id), 'message': "Who's asking?"}
     return result
 
