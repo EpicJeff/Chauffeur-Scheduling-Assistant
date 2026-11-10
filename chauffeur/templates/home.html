@@ -3775,7 +3775,7 @@
 
                 async post(path, body) {
                     try {
-                        await fetch(this.apiBase + path, {
+                        await window.chfControlFetch(this.apiBase + path, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(body),
@@ -6535,12 +6535,18 @@
                     // The next board poll is what makes this true.
                     row.on = !row.on;
                     try {
-                        const r = await fetch(this.apiBase + 'api/ha/toggle', {
+                        const r = await window.chfControlFetch(this.apiBase + 'api/ha/toggle', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ entity_id: row.entity_id })
                         });
-                        if (!r.ok) throw new Error('refused');
+                        if (!r.ok) {
+                            row.on = !row.on;
+                            // chfControlFetch already explained a permission refusal.
+                            if (r.status !== 403 && window.showGlobalAlert) {
+                                showGlobalAlert("Couldn't reach Home Assistant.");
+                            }
+                        }
                     } catch (e) {
                         row.on = !row.on;            // put it back
                         if (window.showGlobalAlert) {

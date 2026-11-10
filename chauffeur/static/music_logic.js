@@ -40,11 +40,14 @@
         return (opts && opts.apiBase) || '';
     }
 
-    async function json(url, init) {
-        const res = await fetch(url, init);
+    async function json(url, init, control = false) {
+        const send = control && window.chfControlFetch ? window.chfControlFetch : fetch;
+        const res = await send(url, init);
         if (!res.ok) {
             const body = await res.json().catch(() => ({}));
-            const err = new Error(body.detail || ('HTTP ' + res.status));
+            const detail = body.detail;
+            const err = new Error((typeof detail === 'string' ? detail : detail && detail.message)
+                || ('HTTP ' + res.status));
             err.status = res.status;
             throw err;
         }
@@ -274,7 +277,7 @@
         async command(entityId, command, extra, opts) {
             if (!entityId) return false;
             try {
-                const response = await fetch(base(opts) + 'api/ha/media_players/'
+                const response = await (window.chfControlFetch || fetch)(base(opts) + 'api/ha/media_players/'
                     + encodeURIComponent(entityId) + '/command', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -879,7 +882,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(Object.assign(
                     { entity_id: entityId, action }, extra || {})),
-            });
+            }, true);
         },
 
         async play(entityId, uri, mediaType, opts, extra) {
@@ -895,7 +898,7 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
-            });
+            }, true);
             return true;
         },
     };

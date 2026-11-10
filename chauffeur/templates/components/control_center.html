@@ -1054,14 +1054,16 @@ function closeChatHelpModal() {
 
                 // Show anchored bubble AFTER ui_action has rearranged elements if needed
                 if (typeof window.showAnchoredChatBubble === 'function') {
+                    const action = data.control_held
+                        ? window.chfControlHeldButton(data.control_held) : null;
                     if (data.target_element_id) {
                         // Small delay to ensure browser paints the DOM move before calculating rect
                         setTimeout(() => {
-                            window.showAnchoredChatBubble(data.target_element_id, data.reply);
+                            window.showAnchoredChatBubble(data.target_element_id, data.reply, action);
                         }, 10);
                     } else {
                         // Fallback to anchoring on the chat input box itself
-                        window.showAnchoredChatBubble('chat-overlay-container', data.reply);
+                        window.showAnchoredChatBubble('chat-overlay-container', data.reply, action);
                     }
                 }
             }
@@ -1201,7 +1203,7 @@ function closeChatHelpModal() {
     });
 
     // --- Anchored Chat Bubble ---
-    window.showAnchoredChatBubble = function(targetId, message) {
+    window.showAnchoredChatBubble = function(targetId, message, action = null) {
         let targetEl = null;
         if (targetId) {
             targetEl = document.getElementById(targetId);
@@ -1213,6 +1215,11 @@ function closeChatHelpModal() {
         // Simple markdown rendering
         let formatted = message.replace(/\n/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
         bubble.innerHTML = formatted;
+        if (action) {
+            // An actionable reply must sit below the global questions (z-400).
+            bubble.style.zIndex = '110';
+            bubble.appendChild(action);
+        }
         
         // Add a small tail if anchored
         let tail = null;
@@ -1265,8 +1272,9 @@ function closeChatHelpModal() {
             bubble.classList.add('opacity-100', 'translate-y-0');
         });
 
-        // Remove after 12 seconds
-        setTimeout(() => {
+        // Keep a held action reachable while the person chooses and enters a PIN.
+        // Ordinary replies remain short-lived toasts.
+        if (!action) setTimeout(() => {
             bubble.classList.remove('opacity-100', 'translate-y-0');
             bubble.classList.add('opacity-0', 'translate-y-2');
             setTimeout(() => {
@@ -1432,16 +1440,21 @@ function closeChatHelpModal() {
     // Restored after a chat-bubble refactor (commit f21f14a) removed these two
     // functions but left the #cc-alert-modal markup above and ~30 callers across
     // trip/dashboard/config/errands/trips pages calling showGlobalAlert().
+    let pendingGlobalAlertResolve = null;
     function showGlobalAlert(message) {
+        if (pendingGlobalAlertResolve) pendingGlobalAlertResolve();
         document.getElementById('cc-alert-message').textContent = message;
         document.getElementById('cc-alert-modal').classList.remove('hidden');
         document.getElementById('cc-alert-modal').classList.add('flex');
+        return new Promise(resolve => { pendingGlobalAlertResolve = resolve; });
     }
     window.showGlobalAlert = showGlobalAlert;
 
     function closeGlobalAlert() {
         document.getElementById('cc-alert-modal').classList.add('hidden');
         document.getElementById('cc-alert-modal').classList.remove('flex');
+        if (pendingGlobalAlertResolve) pendingGlobalAlertResolve();
+        pendingGlobalAlertResolve = null;
     }
     window.closeGlobalAlert = closeGlobalAlert;
 
@@ -1547,6 +1560,39 @@ function closeChatHelpModal() {
 // So: one function. It checks what is already stored, prompts at most once,
 // and STORES the result under the same keys the PWA uses, which is what makes
 // the next overlay silent. A member with no PIN is never asked anything.
+// Avatars, critters and one-action control grants share the same PIN step.
+// The caller owns the endpoint and decides whether the result may be stored.
+window.chfPinHandshake = async function (member, verify) {
+    while (true) {
+        const pin = await promptInput('Hi ' + (member.name || '') + '!', 'Enter your PIN',
+            { type: 'password', placeholder: '\u2022\u2022\u2022\u2022' });
+        if (pin === null || pin === undefined) return null;
+        try {
+            const res = await verify(pin);
+            if (res.status === 403) {
+                const body = await res.json().catch(() => ({}));
+                const detail = body.detail;
+                if ((typeof detail === 'string' ? detail : detail && detail.message)
+                    === 'Set a PIN to use this from the wall.') {
+                    showGlobalAlert('Set a PIN to use this from the wall.');
+                    return null;
+                }
+                await showGlobalAlert('Wrong PIN');
+                continue;
+            }
+            if (res.status === 429) {
+                showGlobalAlert('Too many tries \u2014 wait a moment');
+                return null;
+            }
+            if (!res.ok) return null;
+            return await res.json();
+        } catch (e) {
+            showGlobalAlert('Could not verify \u2014 check connection');
+            return null;
+        }
+    }
+};
+
 window.chfMemberToken = async function (member, opts) {
     opts = opts || {};
     const base = (window.chfBase !== undefined) ? window.chfBase : '';
@@ -1576,26 +1622,95 @@ window.chfMemberToken = async function (member, opts) {
         return tok || null;
     }
     // 4. the kiosk pad
-    while (true) {
-        const pin = await promptInput('Hi ' + (member.name || '') + '!', 'Enter your PIN',
-            { type: 'password', placeholder: '\u2022\u2022\u2022\u2022' });
-        if (pin === null || pin === undefined) return null;
-        try {
-            const res = await fetch(base + 'api/members/' + member.id + '/auth', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pin: pin }),
-            });
-            if (res.status === 403) { showGlobalAlert('Wrong PIN'); continue; }
-            if (res.status === 429) { showGlobalAlert('Too many tries \u2014 wait a moment'); return null; }
-            if (!res.ok) return null;
-            const tok = (await res.json()).token;
-            if (tok) window.chfStoreMemberToken(member.id, tok);
-            return tok || null;
-        } catch (e) {
-            showGlobalAlert('Could not verify \u2014 check connection');
+    const result = await window.chfPinHandshake(member, pin => fetch(base + 'api/members/' + member.id + '/auth', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: pin }),
+    }));
+    const tok = result && result.token;
+    if (tok) window.chfStoreMemberToken(member.id, tok);
+    return tok || null;
+};
+
+// A panel PIN buys ONE action. Never use or update the remembered member token.
+window.chfControlGrant = async function () {
+    const base = window.chfBase !== undefined ? window.chfBase : '';
+    try {
+        const res = await fetch(base + 'api/members');
+        if (!res.ok) throw new Error('members unavailable');
+        const all = await res.json();
+        const members = (Array.isArray(all) ? all : []).filter(m => !m.status || m.status === 'active');
+        if (!members.length) {
+            showGlobalAlert('No active members are available.');
             return null;
         }
+        const id = await promptChoice("Who's asking?", '', members.map(m => ({ value: m.id, label: m.name })));
+        const member = members.find(m => m.id === id);
+        if (!member) return null;
+        if (!member.has_pin) {
+            showGlobalAlert('Set a PIN to use this from the wall.');
+            return null;
+        }
+        const result = await window.chfPinHandshake(member, pin => fetch(base + 'api/ha/control/grant', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ member_id: member.id, pin: pin }),
+        }));
+        return (result && result.grant) || null;
+    } catch (e) {
+        showGlobalAlert('Could not verify \u2014 check connection');
+        return null;
     }
+};
+
+window.chfControlFetch = async function (url, opts) {
+    let res = await fetch(url, opts);
+    if (res.status !== 403) return res;
+    let body = await res.clone().json().catch(() => ({}));
+    if (body.detail && body.detail.needs === 'identify') {
+        const grant = await window.chfControlGrant();
+        if (!grant) return res;
+        const headers = new Headers((opts && opts.headers) || {});
+        headers.set('x-control-grant', grant);
+        res = await fetch(url, Object.assign({}, opts, { headers: headers }));
+        if (res.status !== 403) return res;
+        body = await res.clone().json().catch(() => ({}));
+    }
+    const detail = body.detail;
+    showGlobalAlert((typeof detail === 'string' ? detail : detail && detail.message)
+        || 'Home Assistant refused that.');
+    return res;
+};
+
+window.chfControlHeldButton = function (held) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'w-full text-left px-4 py-3 rounded-lg bg-gray-900 border border-gray-700 '
+        + 'hover:border-blue-500 text-white font-bold text-sm transition-colors';
+    button.textContent = "Who's asking?";
+    button.onclick = async function () {
+        if (button.disabled) return;
+        button.disabled = true;
+        let completed = false;
+        try {
+            const grant = await window.chfControlGrant();
+            if (!grant) return;
+            const base = window.chfBase !== undefined ? window.chfBase : '';
+            const res = await fetch(base + 'api/ha/control/held/' + encodeURIComponent(held.id), {
+                method: 'POST', headers: { 'x-control-grant': grant },
+            });
+            const body = await res.json();
+            const detail = body.detail;
+            const message = body.message || (typeof detail === 'string' ? detail : detail && detail.message)
+                || 'Home Assistant refused that.';
+            showGlobalAlert(message);
+            completed = res.ok;
+            if (completed) button.textContent = message;
+        } catch (e) {
+            showGlobalAlert('Could not reach Home Assistant.');
+        } finally {
+            button.disabled = completed;
+        }
+    };
+    return button;
 };
 
 window.chfStoreMemberToken = function (memberId, token) {

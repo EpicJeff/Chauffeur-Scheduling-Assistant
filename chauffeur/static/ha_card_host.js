@@ -461,7 +461,7 @@
                 if (!spec.interactive) {
                     return Promise.reject(new Error('this tile is read-only'));
                 }
-                return fetch(API.base + 'api/ha/card/service', {
+                return (window.chfControlFetch || fetch)(API.base + 'api/ha/card/service', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ domain: domain, service: service, data: data || {} }),
