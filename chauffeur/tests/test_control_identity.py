@@ -251,6 +251,40 @@ class Identity(unittest.TestCase):
         with patch('time.time', return_value=time.time() + 121):
             self.assertIsNone(cr.take_held(held))
 
+    # --- "unproven" and "at the panel" are different facts (Task 5 round 2) --
+
+    def _phone_device(self):
+        """A trusted device that is NOT a panel (a family phone)."""
+        from tinydb import Query
+        token = storage.enrol_device_token('phone-1', "Dad's phone", by_member='dad')
+        with storage.db_lock:
+            storage.trusted_devices_table.update({'kind': 'phone'}, Query().device_id == 'phone-1')
+        return token
+
+    def test_pinless_personal_token_is_the_member(self):
+        pinless = storage.create_member_token('dad')  # proof 'none', minted on a personal device
+        password = storage.create_member_token('mum', proof='password', minted_on='personal')
+        # At the panel stays the Wall panel card, whoever's token rides along:
+        for label, headers, query in (
+                ('PIN-less token + panel header', {'x-member-token': pinless, 'x-device-token': self.panel}, {}),
+                ('PIN-less token + panel query', {'x-member-token': pinless}, {'device_token': self.panel}),
+                ('password token + panel header', {'x-member-token': password, 'x-device-token': self.panel}, {}),
+                ('panel-minted, no header', {'x-member-token': storage.create_member_token(
+                    'dad', minted_on='panel')}, {}),
+                ('house session', {'x-member-token': storage.create_member_token('mum', house_session=True)}, {})):
+            who = cr.who_from_request(headers, query)
+            self.assertEqual((who.place, who.member_id, who.proven), ('panel', None, False), label)
+        # On their own device a PIN-less member is THAT member, unproven.
+        for label, headers in (('alone', {'x-member-token': pinless}),
+                               ('with a phone device', {'x-member-token': pinless,
+                                                        'x-device-token': self._phone_device()})):
+            who = cr.who_from_request(headers, {})
+            self.assertEqual((who.role, who.member_id, who.place, who.proven), ('parent', 'dad', None, False),
+                             f'PIN-less personal token {label}')
+        # Their own row decides: a proof kind asks for the PIN, never the panel's no.
+        decision = cr.decide(cr.who_from_request({'x-member-token': pinless}, {}), ('locks',), cr.default_rules({}))
+        self.assertEqual((decision.allowed, decision.needs), (False, 'pin'))
+
 
 if __name__ == '__main__':
     unittest.main()

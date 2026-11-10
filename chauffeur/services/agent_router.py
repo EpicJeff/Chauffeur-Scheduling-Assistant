@@ -171,7 +171,8 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
                           acting_member: Optional[Dict] = None,
                           propose_only: bool = False,
                           focus_key: Optional[str] = None, voice_context=None,
-                          proven: bool = False, device_id: Optional[str] = None) -> Dict[str, Any]:
+                          proven: bool = False, device_id: Optional[str] = None,
+                          at_panel: bool = False) -> Dict[str, Any]:
     """
     Main entrypoint for the Agent Orchestrator.
     Decides whether to route to Gemma (tools) or Gemini (heavy lifting).
@@ -1030,9 +1031,9 @@ sending or claiming, and never pass from_member/member_name for them.
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
-                    if not proven and args.get('action') in ('act', 'app'):
-                        # Chat token provenance can identify an account without
-                        # proving who is using the shared panel right now.
+                    if at_panel and args.get('action') in ('act', 'app'):
+                        # A shared panel uses the place card. A personal token
+                        # without proof still uses that member's own row/scope.
                         actor = access.HOUSE
                     res = _atv2.house(**{k: v for k, v in args.items() if k in (
                         'action', 'query', 'entity_id', 'domain', 'service', 'data', 'hours', 'app')},
@@ -1045,7 +1046,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
-                    if not proven:
+                    if at_panel:
                         actor = access.HOUSE
                     res = _atv2.music(**{k: v for k, v in args.items() if k in (
                         'action', 'query', 'room', 'player', 'media_type', 'mode', 'level')},

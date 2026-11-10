@@ -326,7 +326,8 @@ def _execute(action_type: str, payload: dict, approver=None) -> dict:
 
 
 def run_suggestion_funnel(channel: dict, sender: dict, body: str,
-                          proven: bool = False, device_id: str = None) -> Optional[dict]:
+                          proven: bool = False, device_id: str = None,
+                          at_panel: bool = False) -> Optional[dict]:
     """Implicit detection (Layer 3), opt-in per family. Tier 1 (keyword) is
     gated by the caller. Here: Tier 2 cheap classify, then run the agent and
     surface a dismissible proposal card ONLY if it produced one. Never mutates
@@ -340,7 +341,7 @@ def run_suggestion_funnel(channel: dict, sender: dict, body: str,
         return None
     try:
         res = process_agent_request(body, source="family", acting_member=sender,
-                                    proven=proven, device_id=device_id)
+                                    proven=proven, device_id=device_id, at_panel=at_panel)
     except Exception as e:
         logger.error(f"Suggestion funnel agent run failed: {e}")
         return None

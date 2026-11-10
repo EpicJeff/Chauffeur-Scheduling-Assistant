@@ -3919,7 +3919,7 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
             storage.add_message_to_conversation(conv_id, {'role': 'user', 'content': req.text, 'timestamp': time.time()})
 
         res = process_agent_request(req.text, history=conv_history, source='voice', voice_context=ctx,
-                                    proven=ctx.level == 'verified',
+                                    proven=ctx.level == 'verified', at_panel=False,
                                     focus_key=f"voice:{ctx.scope_key}:{req.conversation_id}" if req.conversation_id else None)
         readback = voice_approval.current_readback(ctx)
         if readback:
@@ -4183,9 +4183,10 @@ def phone_voice_run(request_id: str, request: Request):
     from services import app_voice, control_rules
     turn = _phone_voice_turn(request, request_id)
     try:
+        proven, at_panel = control_rules.request_facts(request.headers, request.query_params)
         device = _panel_device(request)
         worker = partial(_run_argyle_mention,
-                         proven=control_rules.token_proven(request.headers, request.query_params),
+                         proven=proven, at_panel=at_panel,
                          device_id=device['device_id'] if device else None)
         result = app_voice.run(turn, worker)
         turn.check()
@@ -7826,11 +7827,12 @@ def house_editor_say(request: Request, body: dict = Body(default={})):
         _house_editor_bound_models(agent_router)
         token = _house_editor_output_limit.set(4096)
         try:
+            proven, at_panel = control_rules.request_facts(request.headers, request.query_params)
             with llm.collect_usage(before=twin_cost.require_clear, after=record_request):
                 result = agent_router.process_agent_request(
                     message, context={'house_editor': {**status, 'selection': selection}},
                     history=history, source='house_editor', acting_member=parent,
-                    proven=control_rules.token_proven(request.headers, request.query_params),
+                    proven=proven, at_panel=at_panel,
                     focus_key='house_editor:' + (status['build'] or 'idle'))
         finally:
             _house_editor_output_limit.reset(token)
@@ -10310,11 +10312,10 @@ class MemberAuthRequest(BaseModel):
     house_session: bool = False
 
 def _panel_device(request: Request = None) -> Optional[dict]:
+    from services import control_rules
     headers = request.headers if request else {}
     query = request.query_params if request else {}
-    token = headers.get('x-device-token') or query.get('device_token')
-    device = storage.get_device_by_token(token) if token else None
-    return device if device and device.get('kind') == 'panel' else None
+    return control_rules.panel_device(headers, query)
 
 
 def _member_token_place(request: Request = None) -> str:
@@ -18214,7 +18215,7 @@ def _mentions_argyle(body: str) -> bool:
 
 
 def _run_argyle_mention(channel: dict, sender: dict, body: str, message_id: str = None,
-                        proven: bool = False, device_id: str = None):
+                        proven: bool = False, device_id: str = None, at_panel: bool = False):
     """Background worker: a chat message @mentioned Argyle (or landed in an
     Argyle DM, where every message is implicitly for the assistant). Route the
     question to the agent as the sending member (known identity + role scope)
@@ -18266,7 +18267,7 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str, message_id: str 
                                     and app_voice._credential(m.get('body') or '')
                                     else m.get('body') or '')} for m in used]
         res = process_agent_request(query, source="family", acting_member=sender,
-                                    proven=proven, device_id=device_id,
+                                    proven=proven, device_id=device_id, at_panel=at_panel,
                                     **({'history': history} if history is not None else {}),
                                     focus_key=f"channel:{channel.get('id')}" if channel.get('id') else None)
         reply = (res or {}).get("message") or "Sorry — I couldn't work that out."
@@ -18401,22 +18402,30 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     # without a mention. Never re-trigger on Argyle's own posts.
     is_argyle_dm = channel.get('kind') == 'dm' \
         and storage.ARGYLE_MEMBER_ID in (channel.get('member_ids') or [])
-    from services import control_rules
-    proven = control_rules.token_proven(request.headers if request else {},
-                                        request.query_params if request else {})
-    device = _panel_device(request)
-    device_id = device['device_id'] if device else None
-    if req.sender_member_id != storage.ARGYLE_MEMBER_ID \
-            and (is_argyle_dm or _mentions_argyle(body)):
-        background_tasks.add_task(_run_argyle_mention, channel, sender, body, message['id'],
-                                  proven=proven, device_id=device_id)
-    elif req.sender_member_id != storage.ARGYLE_MEMBER_ID:
-        # Implicit detection (opt-in): Tier 1 keyword pre-filter gates the
-        # expensive funnel so ordinary chatter never reaches the agent.
-        from services import chat_actions
-        if storage.get_settings().get('chat_suggestions_enabled') and chat_actions.suggests_action(body):
-            background_tasks.add_task(chat_actions.run_suggestion_funnel, channel, sender, body,
-                                      proven=proven, device_id=device_id)
+    try:
+        if req.sender_member_id != storage.ARGYLE_MEMBER_ID \
+                and (is_argyle_dm or _mentions_argyle(body)):
+            from services import control_rules
+            proven, at_panel = control_rules.request_facts(request.headers if request else {},
+                                                          request.query_params if request else {})
+            device = _panel_device(request)
+            background_tasks.add_task(_run_argyle_mention, channel, sender, body, message['id'],
+                                      proven=proven, at_panel=at_panel,
+                                      device_id=device['device_id'] if device else None)
+        elif req.sender_member_id != storage.ARGYLE_MEMBER_ID:
+            # Implicit detection (opt-in): Tier 1 keyword pre-filter gates the
+            # expensive funnel so ordinary chatter never reaches the agent.
+            from services import chat_actions
+            if storage.get_settings().get('chat_suggestions_enabled') and chat_actions.suggests_action(body):
+                from services import control_rules
+                proven, at_panel = control_rules.request_facts(request.headers if request else {},
+                                                              request.query_params if request else {})
+                device = _panel_device(request)
+                background_tasks.add_task(chat_actions.run_suggestion_funnel, channel, sender, body,
+                                          proven=proven, at_panel=at_panel,
+                                          device_id=device['device_id'] if device else None)
+    except Exception as error:
+        logger.error(f"Argyle message dispatch failed: {error}")
     return message
 
 class ChannelReadRequest(BaseModel):
@@ -20314,9 +20323,9 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, 
 
     try:
         from services import control_rules
-        proven = control_rules.token_proven(request.headers if request else {},
-                                            request.query_params if request else {})
-        _member, device = _chat_identity(request)
+        proven, at_panel = control_rules.request_facts(request.headers if request else {},
+                                                      request.query_params if request else {})
+        device = _panel_device(request)
         is_first = False
         if payload.conversation_id:
             conv = storage.get_conversation(payload.conversation_id)
@@ -20338,7 +20347,8 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, 
         res = process_agent_request(payload.message, context=payload.context, history=conv_history,
                                     source=conv['surface']['kind'], driver_id=payload.driver_id,
                                     acting_member=acting_member,
-                                    proven=proven, device_id=device['device_id'] if device else None,
+                                    proven=proven, at_panel=at_panel,
+                                    device_id=device['device_id'] if device else None,
                                     focus_key=f"conv:{payload.conversation_id}" if payload.conversation_id else None)
         reply = res.get("message", "I did not understand that.")
         target_id = res.get("target_element_id")

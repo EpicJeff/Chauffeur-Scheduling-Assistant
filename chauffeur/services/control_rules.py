@@ -198,32 +198,49 @@ def take_held(held_id: str, device_id: str | None = None) -> dict | None:
     return {'tool': row['tool'], 'args': row['args']} if row else None
 
 
-def token_proven(headers, query) -> bool:
-    """Personal password/PIN provenance proves a person, except on a panel."""
+def panel_device(headers, query) -> dict | None:
+    """A validated panel credential in either request location names the place."""
+    from services import storage
+
+    headers = {key.lower(): value for key, value in headers.items()}
+    for token in (headers.get('x-device-token'), query.get('device_token')):
+        device = storage.get_device_by_token(token) if token else None
+        if device and device.get('kind') == 'panel':
+            return device
+    return None
+
+
+def request_facts(headers, query) -> tuple[bool, bool]:
+    """Return (proven, at_panel): lack of proof does not make a person a panel."""
     from services import storage
     from tinydb import Query
 
+    at_panel = False
     try:
         headers = {key.lower(): value for key, value in headers.items()}
-        for device_token in (headers.get('x-device-token'), query.get('device_token')):
-            device = storage.get_device_by_token(device_token) if device_token else None
-            if device and device.get('kind') == 'panel':
-                return False
+        at_panel = panel_device(headers, query) is not None
         token = headers.get('x-member-token') or query.get('member_token')
         if not token or not storage.get_member_by_token(token):
-            return False
+            return False, at_panel
         with storage.db_lock:
             row = storage.member_tokens_table.get(Query().token == token)
-        if not row or row.get('house_session'):
-            return False
+        if not row:
+            return False, at_panel
+        at_panel = at_panel or bool(row.get('house_session') or row.get('minted_on') == 'panel')
         # Only rows with NEITHER field predate provenance. Incomplete new
         # rows must not accidentally become personal password sign-ins.
         legacy = 'proof' not in row and 'minted_on' not in row
         proof = 'password' if legacy else row.get('proof')
         minted_on = 'personal' if legacy else row.get('minted_on')
-        return bool(proof in ('password', 'pin') and minted_on and minted_on != 'panel')
+        proven = bool(not at_panel and proof in ('password', 'pin') and minted_on and minted_on != 'panel')
+        return proven, at_panel
     except Exception:
-        return False
+        return False, at_panel
+
+
+def token_proven(headers, query) -> bool:
+    """Compatibility accessor for callers that need only the proof fact."""
+    return request_facts(headers, query)[0]
 
 
 def who_from_request(headers, query) -> Who:
@@ -233,22 +250,19 @@ def who_from_request(headers, query) -> Who:
     panel = Who(None, None, 'panel', False)
     headers = {key.lower(): value for key, value in headers.items()}
     try:
-        device_token = headers.get('x-device-token') or query.get('device_token')
-        device = storage.get_device_by_token(device_token) if device_token else None
-        is_panel = bool(device and device.get('kind') == 'panel')
+        device = panel_device(headers, query)
         grant = headers.get('x-control-grant')
-        if grant and is_panel:
+        if grant and device:
             member = consume_grant(grant, device['device_id'])
             if member:
                 return Who(member.get('role'), member['id'], None, True)
 
         token = headers.get('x-member-token') or query.get('member_token')
-        if token_proven(headers, query):
+        proven, at_panel = request_facts(headers, query)
+        if not at_panel:
             member = storage.get_member_by_token(token)
             if member:
-                return Who(member.get('role'), member['id'], None, True)
-        if device or grant:
-            return panel
+                return Who(member.get('role'), member['id'], None, proven)
     except Exception:
         # A failed identity read is never evidence of an admin or a person.
         return panel

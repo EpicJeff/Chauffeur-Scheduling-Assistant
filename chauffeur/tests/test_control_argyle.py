@@ -726,6 +726,116 @@ class ArgyleObeys(unittest.TestCase):
         self.assertEqual(sorted({'proven', 'device_id', 'source', 'voice_context'} & set(seen[0])), [],
                          f'identity rode in on the proposal payload: {seen[0]}')
 
+    # --- Round 2: "unproven" and "at the panel" are different facts -----------
+    # At the panel = a panel device token, a panel-minted member token or a
+    # house session: the Wall panel card. A PIN-less member on their own device
+    # is THAT member with proven=False: their own row decides, proof kinds come
+    # back needs 'pin', and their own scope applies.
+
+    PLAY = {'name': 'music', 'arguments': {'action': 'play', 'query': 'Hotel California',
+                                           'player': 'Kitchen Speaker'}}
+
+    def through_argyle(self, member_id, headers, call):
+        """One model tool call through /api/chat, the member's Argyle DM and phone voice.
+        Returns {path: [house/music tool results]}."""
+        import uuid
+        storage.ensure_argyle_member()
+        seen, current = {}, []
+        real = {'house': agent_tools_v2.house, 'music': agent_tools_v2.music}
+
+        def spy(name):
+            def run(**kw):
+                res = real[name](**kw)
+                seen.setdefault(current[-1], []).append(res)
+                return res
+            return run
+        with patch.object(agent_tools_v2, 'house', spy('house')), \
+                patch.object(agent_tools_v2, 'music', spy('music')), \
+                patch.object(agent_router, 'call_gemma_with_fallback', side_effect=self.fake_llm(call)), \
+                patch('services.llm.auto_name_conversation', lambda *a, **kw: None):
+            current.append('/api/chat')
+            r = self.client.post('/api/chat', json={'message': 'please', 'source': 'pwa'}, headers=headers)
+            self.assertEqual(r.status_code, 200, ('/api/chat', r.text))
+            current.append('Argyle DM')
+            dm = storage.get_or_create_dm(member_id, storage.ARGYLE_MEMBER_ID)
+            r = self.client.post(f"/api/channels/{dm['id']}/messages",
+                                 json={'sender_member_id': member_id, 'body': 'please'}, headers=headers)
+            self.assertEqual(r.status_code, 200, ('Argyle DM', r.text))
+            current.append('phone voice')
+            rid = uuid.uuid4().hex
+            for step, body in (('start', {'request_id': rid}), (f'{rid}/text', {'text': 'please'}),
+                               (f'{rid}/run', None)):
+                r = self.client.post(f'/api/app-voice/{step}', json=body, headers=headers)
+                self.assertEqual(r.status_code, 200, ('phone voice', step, r.text))
+        return seen
+
+    def pinless(self, mid, role, **fields):
+        _member(mid, role)  # no PIN
+        if fields:
+            storage.update_member(mid, fields)
+        return {'X-Member-Token': storage.create_member_token(mid)}  # proof 'none', minted 'personal'
+
+    def test_pinless_child_media_by_own_row(self):
+        headers = self.pinless('pinkid', 'child')
+        self.grid(people_child_media='no', places_panel_media='yes')
+        seen = self.through_argyle('pinkid', headers, self.PLAY)
+        for path in ('/api/chat', 'Argyle DM', 'phone voice'):
+            results = seen.get(path) or []
+            self.assertEqual(len(results), 1, (path, seen))
+            self.assertEqual(results[0]['status'], 'refused',
+                             f'{path}: a PIN-less child played on the panel card, not their own row: {results[0]}')
+            self.assertIsNone(results[0].get('needs', 'missing'), (path, results[0]))
+        self.assertEqual(self.device_calls('music_assistant'), [])
+
+    def test_pinless_child_media_by_own_scope(self):
+        # The grid allows children media; this child's own scope does not include music.
+        headers = self.pinless('scopekid', 'child', scope={'overrides': {'music': 'none'}})
+        self.grid(people_child_media='yes', places_panel_media='yes')
+        seen = self.through_argyle('scopekid', headers, self.PLAY)
+        for path in ('/api/chat', 'Argyle DM', 'phone voice'):
+            for res in seen.get(path) or []:  # withholding the tool altogether is also a refusal
+                self.assertEqual(res['status'], 'refused',
+                                 f'{path}: music played past the member\'s own scope: {res}')
+                self.assertIsNone(res.get('needs', 'missing'), (path, res))
+        self.assertEqual(self.device_calls('music_assistant'), [],
+                         'a PIN-less child whose scope excludes music played music')
+
+    def test_pinless_parent_unlock_needs_pin(self):
+        headers = self.pinless('pindad', 'parent')
+        seen = self.through_argyle('pindad', headers, self.UNLOCK)
+        for path in ('/api/chat', 'Argyle DM', 'phone voice'):
+            results = seen.get(path) or []
+            self.assertEqual(len(results), 1, (path, seen))
+            self.assertEqual(results[0]['status'], 'refused', (path, results[0]))
+            self.assertEqual(results[0].get('needs'), 'pin',
+                             f'{path}: a PIN-less parent got the panel card, not their own row: {results[0]}')
+            self.assertNotIn('control_held', results[0])
+        self.assertEqual(self.device_calls('lock'), [])
+
+    def test_chat_never_holds_for_a_non_panel_device(self):
+        from tinydb import Query
+        phone = storage.enrol_device_token('phone-argyle', "Dad's phone", by_member='mum')
+        with storage.db_lock:
+            storage.trusted_devices_table.update({'kind': 'phone'}, Query().device_id == 'phone-argyle')
+        self.assertNotEqual(storage.get_device_by_token(phone).get('kind'), 'panel')
+        self.extra['panel_allow_unsafe_controls'] = True
+        cases = (
+            ('?panel=true page, password token, phone device',
+             {'X-Member-Token': self.personal(), 'X-Device-Token': phone},
+             {'context': {'search': '?panel=true'}}),
+            ('PIN-less parent, phone device',
+             {**self.pinless('pindad', 'parent'), 'X-Device-Token': phone}, {'source': 'pwa'}),
+        )
+        for label, headers, body in cases:
+            r = self.chat(headers, self.UNLOCK, body=body)
+            self.assertEqual(r.status_code, 200, (label, r.text))
+            held = (r.json().get('control_held') or {}).get('id')
+            if held:
+                self.assertIsNone(cr.take_held(held, 'phone-argyle'),
+                                  f'{label}: a hold was bound to a device that is not a panel')
+            self.assertNotIn('control_held', r.json(), f'{label}: held with no panel to take it back')
+        self.assertEqual(self.device_calls('lock'), [])
+
 
 if __name__ == '__main__':
     unittest.main()
