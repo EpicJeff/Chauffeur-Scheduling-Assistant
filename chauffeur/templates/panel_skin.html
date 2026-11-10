@@ -55,7 +55,8 @@
    custom board fell back to whatever the panel's own OS had, which on a
    Raspberry Pi is tofu boxes. Same climb ha_theme's window.chfBase does for
    scripts. #}
-{% set _skin_up = '../' if '/board/' in request.url.path else '' %}
+{# Any depth, not just /board/: the wall's 3D house is /house/twin, one level down too. #}
+{% set _skin_up = '../' * (request.url.path.count('/') - 1) %}
 <link rel="stylesheet" href="{{ _skin_up }}{{ 'static/vendor/fonts/emoji/emoji.css'|ver }}">
 {% endif %}
 <style>

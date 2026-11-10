@@ -59,6 +59,13 @@
     .twin-device-actions button { border:1px solid rgba(227,211,171,.45); border-radius:999px; padding:6px 11px; min-height:44px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
     .twin-device-actions button:hover, .twin-device-actions button:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
     .twin-device-actions button:disabled { opacity:.5; cursor:default; }
+    /* A device toggle reads as a switch, not a button named after its state: the track
+       is filled when the device is on (aria-checked, the confirmed state). */
+    .twin-device-actions button[role="switch"] { position:relative; width:64px; padding:0; border-color:transparent; font-size:0; }
+    .twin-device-actions button[role="switch"]::before { content:''; position:absolute; left:6px; top:50%; width:52px; height:30px; margin-top:-15px; box-sizing:border-box; border:1px solid rgba(227,211,171,.45); border-radius:999px; background:rgba(227,211,171,.08); }
+    .twin-device-actions button[role="switch"]::after { content:''; position:absolute; left:11px; top:50%; width:20px; height:20px; margin-top:-10px; border-radius:50%; background:#c9bb98; transition:transform .15s; }
+    .twin-device-actions button[role="switch"][aria-checked="true"]::before { background:#e3d3ab; border-color:#e3d3ab; }
+    .twin-device-actions button[role="switch"][aria-checked="true"]::after { transform:translateX(22px); background:#2a2117; }
     /* The editor's dock and fixed header/scrolling body; rows follow agenda-event. */
     #twin-room-panel { width:min(364px, calc(100vw - 32px)); display:flex; flex-direction:column; overflow:hidden; }
     #twin-room-panel > header { flex-shrink:0; align-items:center; margin-top:0; margin-bottom:12px; }
@@ -72,7 +79,9 @@
     .twin-room-device input[type="range"] { flex:1; min-width:100px; min-height:44px; accent-color:#e3d3ab; }
     html[data-twin-wall] #top-nav-bar, html[data-twin-wall] #chat-overlay-container,
     html[data-twin-wall] #twin-tier, html[data-twin-wall] #twin-hud,
-    html[data-twin-wall] #twin-controls > fieldset:not(#twin-modes) { display:none !important; }
+    /* The wall keeps the floor picker: from the Exterior a tap lands on the roof, so a
+       floor is the only way to reach a room. Time and camera are preview tools. */
+    html[data-twin-wall] #twin-controls > fieldset:not(#twin-modes):not(#twin-view-picker) { display:none !important; }
     html[data-twin-wall] #twin-controls { top:16px; }
     html[data-twin-wall] .twin-device-sheet { top:86px; max-height:calc(100dvh - 112px - var(--panel-shelf-h, 0px)); }
     [hidden] { display:none !important; }
@@ -83,7 +92,7 @@
   {% include 'components/control_center.html' %}
   <main id="twin-canvas" aria-label="Interactive house preview"></main>
   <div id="twin-controls" aria-label="House preview controls">
-    <fieldset><legend>View</legend><div id="twin-views"></div></fieldset>
+    <fieldset id="twin-view-picker"><legend>View</legend><div id="twin-views"></div></fieldset>
     <fieldset><legend>Time</legend><button type="button" data-time="day">Day</button><button type="button" data-time="night">Night</button></fieldset>
     <fieldset><legend>Camera</legend><button type="button" data-camera="front">Front</button><button type="button" data-camera="porch">Porch</button><button type="button" data-camera="rear">Rear</button><button type="button" data-camera="top">Top</button></fieldset>
     {% if request.query_params.get('panel') != 'true' and request.query_params.get('kiosk') != 'true' %}
