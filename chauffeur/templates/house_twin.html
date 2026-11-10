@@ -52,7 +52,7 @@
     #twin-edit:hover, #twin-edit:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
     /* The live sheet uses the preview controls' parchment and the editor card's right dock. */
     .twin-live-labels { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
-    .twin-live-labels span { position:absolute; transform:translateY(-50%); max-width:190px; padding:3px 6px; border-radius:8px; background:rgba(28,23,16,.9); color:#f0e6cf; font:12px/1.4 system-ui; }
+    .twin-live-labels span { position:absolute; box-sizing:border-box; max-width:190px; height:23px; padding:3px 6px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border-radius:8px; background:rgba(28,23,16,.9); color:#f0e6cf; font:12px/1.4 system-ui; }
     .twin-device-sheet { position:fixed; top:154px; right:16px; z-index:47; box-sizing:border-box; width:min(320px, calc(100vw - 32px)); max-height:calc(100dvh - 180px - var(--panel-shelf-h, 0px)); overflow:auto; padding:16px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.94); color:#f0e6cf; font:13px/1.4 system-ui; }
     .twin-device-sheet h2 { margin:0 0 8px; font-size:18px; font-weight:700; }
     .twin-device-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }

@@ -4,6 +4,16 @@ import { groundAt } from '../twin_ground.js';
 import { markerState, levelOfDetail, markerTexture, markerSprite } from './markers.js';
 
 const FT = .3048, unreachable = 'Home Assistant is not reachable.';
+// Screen sizes in CSS px: a marker is a 44 px tap target (the page's own controls' hit height),
+// a room badge a little larger; labels never cover another marker or another label.
+const MARKER_PX = 44, BADGE_PX = 52, LABEL_GAP = 4, LABEL_H = 23, LABEL_MAX = 190;
+let measurer = null;
+function labelWidth(text) {
+  measurer ||= document.createElement('canvas').getContext('2d');
+  measurer.font = '12px system-ui';
+  return Math.min(LABEL_MAX, Math.ceil(measurer.measureText(text).width) + 14);
+}
+const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 const iconKind = row => row.entity_id.startsWith('alarm_control_panel.') ? 'alarm' : row.kind;
 
 export async function mountLive(view, { api = (path, options) => fetch(base() + path, options) } = {}) {
@@ -41,7 +51,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     return { ...marker, ...markerState(marker.kind, 'unknown'), stale: true, dim: true, sprite, labelNode: label };
   });
   const plain = row => {
-    const { sprite, labelNode, ...data } = row;
+    const { sprite, labelNode, labelBox, screen, ...data } = row;
     return { ...data, at: [...data.at], entities: [...data.entities] };
   };
   const roomRows = () => layout.rooms.filter(room => room.area_id).map(room => {
@@ -54,7 +64,9 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       row.stale = stale; row.dim = stale || mode === 'lights' && row.kind !== 'light';
       row.sprite.material.map = texture(iconKind(row), row.look);
       row.sprite.material.opacity = row.dim ? .4 : 1;
-      row.labelNode.textContent = `${row.name} · ${row.label}`;
+      const text = `${row.name} · ${row.label}`;
+      if (row.labelNode.textContent !== text) { row.labelNode.textContent = text; row.labelBox = null; }
+      row.labelBox ||= { w: labelWidth(text), h: LABEL_H };
       row.labelNode.style.opacity = row.dim ? '.4' : '1';
     }
     if (selected) showSheet(selected);
@@ -134,17 +146,43 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const shown = rows.filter(row => view.groups?.levels[`${row.building}:${row.level}`]?.visible !== false);
     const lod = levelOfDetail(shown, FT / pixelSize(view.controls.target));
     const individual = new Set(lod.markers), visibleBadges = new Set();
-    const place = (sprite, size = 34) => sprite.scale.setScalar(pixelSize(sprite.position) * size);
+    const place = (sprite, size) => sprite.scale.setScalar(pixelSize(sprite.position) * size);
+    const screen = position => {
+      projected.copy(position).project(camera);
+      return { x: (projected.x + 1) * rect.width / 2, y: (1 - projected.y) * rect.height / 2,
+        front: projected.z >= -1 && projected.z <= 1 };
+    };
+    const icons = [];
     for (const row of rows) {
-      row.sprite.visible = individual.has(row.device_id); place(row.sprite);
-      projected.copy(row.sprite.position).project(camera);
-      const label = row.labelNode;
-      label.hidden = !row.sprite.visible || !lod.labels || projected.z < -1 || projected.z > 1;
-      if (!label.hidden) {
-        label.style.left = `${(projected.x + 1) * rect.width / 2 + 22}px`;
-        label.style.top = `${(1 - projected.y) * rect.height / 2}px`;
+      row.sprite.visible = individual.has(row.device_id); row.sprite.center.set(.5, .5); place(row.sprite, MARKER_PX);
+      row.screen = row.sprite.visible ? screen(row.sprite.position) : null;
+      if (row.screen?.front) {
+        const half = MARKER_PX / 2;
+        icons.push({ row, left: row.screen.x - half, right: row.screen.x + half, top: row.screen.y - half, bottom: row.screen.y + half });
       }
     }
+    // Labels: attention first, then what is on; each takes the first side that covers no other
+    // marker and no placed label, inside the canvas, or stays hidden until the camera comes closer.
+    const rank = row => row.look === 'attention' ? 0 : row.look === 'on' ? 1 : 2;
+    const taken = [];
+    for (const row of [...rows].sort((a, b) => rank(a) - rank(b))) {
+      const label = row.labelNode, at = row.screen;
+      let spot = null;
+      if (lod.labels && at?.front && row.labelBox) {
+        const { w, h } = row.labelBox, half = MARKER_PX / 2;
+        const sides = [[at.x + half + LABEL_GAP, at.y - h / 2], [at.x - half - LABEL_GAP - w, at.y - h / 2],
+          [at.x - w / 2, at.y + half + LABEL_GAP], [at.x - w / 2, at.y - half - LABEL_GAP - h]];
+        for (const [left, top] of sides) {
+          const box = { left, top, right: left + w, bottom: top + h };
+          if (left < 0 || top < 0 || box.right > rect.width || box.bottom > rect.height) continue;
+          if (icons.some(icon => icon.row !== row && overlaps(icon, box)) || taken.some(other => overlaps(other, box))) continue;
+          spot = box; break;
+        }
+      }
+      label.hidden = !spot;
+      if (spot) { taken.push(spot); label.style.left = `${spot.left}px`; label.style.top = `${spot.top}px`; }
+    }
+    const shownBadges = [];
     for (const badge of lod.badges) {
       const key = JSON.stringify([badge.building, badge.room]); visibleBadges.add(key);
       let sprite = badges.get(key);
@@ -155,8 +193,26 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       sprite.material.map = texture('room', badge.attention ? 'attention' : 'off', badge.count);
       sprite.material.opacity = members.every(row => row.dim) ? .4 : 1;
       sprite.userData.room = { building: badge.building, room: badge.room };
-      sprite.visible = true; place(sprite, 40);
+      sprite.visible = true; place(sprite, BADGE_PX);
+      shownBadges.push({ sprite, ...screen(sprite.position), dx: 0, dy: 0 });
     }
+    // Small neighbouring rooms put their badges on top of each other far out: push them apart on
+    // screen (sprite.center moves the drawn badge and its tap target together) so each stays legible.
+    const apart = BADGE_PX + 4;
+    for (let pass = 0; pass < 12; pass++) {
+      let moved = false;
+      for (let i = 0; i < shownBadges.length; i++) for (let j = i + 1; j < shownBadges.length; j++) {
+        const a = shownBadges[i], b = shownBadges[j];
+        let vx = b.x + b.dx - a.x - a.dx, vy = b.y + b.dy - a.y - a.dy, d = Math.hypot(vx, vy);
+        if (d >= apart - .5) continue;
+        if (d < .01) { const turn = (i + j) * 2.4; vx = Math.cos(turn); vy = Math.sin(turn); d = 1; }
+        else { vx /= d; vy /= d; }
+        const push = (apart - Math.max(d, .01)) / 2;
+        a.dx -= vx * push; a.dy -= vy * push; b.dx += vx * push; b.dy += vy * push; moved = true;
+      }
+      if (!moved) break;
+    }
+    for (const b of shownBadges) b.sprite.center.set(.5 - b.dx / BADGE_PX, .5 + b.dy / BADGE_PX);
     badges.forEach((sprite, key) => { sprite.visible = visibleBadges.has(key); });
     root.updateMatrixWorld(true);
   }
