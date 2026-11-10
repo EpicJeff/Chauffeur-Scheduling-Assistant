@@ -554,6 +554,18 @@ def _roof_area(area):
 
 def _union(polygons):
     from services import twin_blocks
+    # Connected joints average near-coincident measurements. Align those
+    # sub-tolerance differences for the new roof only; keep the rooms intact.
+    maps = []
+    for axis in (0, 1):
+        groups = []
+        for value in sorted({p[axis] for polygon in polygons for p in polygon}):
+            if not groups or value - groups[-1][0] > graph._TOL:
+                groups.append([value])
+            else:
+                groups[-1].append(value)
+        maps.append({v: (group[0] + group[-1]) / 2 for group in groups for v in group})
+    polygons = [[[maps[i][p[i]] for i in (0, 1)] for p in polygon] for polygon in polygons]
     for polygon in polygons:
         _roof_area(polygon)
     xs = sorted({p[0] for polygon in polygons for p in polygon})

@@ -452,7 +452,8 @@ def scenario_roof_over_the_left_wing_then_gable_both_ends():
         section = _section(H.flat(), MAIN, roof['id'])
         check(section['kind'] == 'gable' and section['ridge'] == 'y', ('a gable along the wing', section))
         check(_near(section['rect'], list(WING_BOX)), section['rect'])
-        check((section.get('ends') or {}).get('y0') == 'gable' and (section.get('ends') or {}).get('y1') == 'gable',
+        ends = section.get('ends') or {}   # flatten omits ends that equal the section's kind (R51)
+        check(ends.get('y0', section['kind']) == 'gable' and ends.get('y1', section['kind']) == 'gable',
               ('both ends gable', section.get('ends')))
         _no_errors(s)
 

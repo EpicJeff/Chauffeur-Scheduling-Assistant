@@ -35,13 +35,17 @@ export function findPiece(plan, pieceId, buildingId) {
     const piece = building[list]?.find(p => p.id === pieceId);
     if (piece) return { piece, building, kind };
   }
-  const piece = building.roof?.sections?.find(p => p.id === pieceId);
+  const section = building.roof?.sections?.find(p => p.id === pieceId);
+  const dormer = building.dormers?.find(p => p.id === pieceId);
+  if (dormer) return { piece: section || dormer, building, kind: 'dormer' };
+  const piece = section || building.roofs?.find(p => p.id === pieceId);
   return piece ? { piece, building, kind: 'roof' } : null;
 }
 
-export function createCards({ getPlan, getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, ask, canEdit, select }) {
+export function createCards({ getPlan, getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select }) {
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
+  let edgeIndex = null;
   const endNames = { x0: 'Left end', x1: 'Right end', y0: 'Front end', y1: 'Back end' };
   const fieldValue = (piece, field) => field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
   const title = ({ kind, piece, building }) => {
@@ -69,7 +73,10 @@ export function createCards({ getPlan, getLabel, getSelection = () => ({}), getF
     ? (record.building.roof.flags || []).filter(flag => flag.block_rect?.length === 4
       && flag.block_rect.every((v, i) => Math.abs(v - record.piece.block[i]) <= 1)) : [];
   function draw(next = selection) {
+    if (next?.pieceId !== selection?.pieceId || next?.buildingId !== selection?.buildingId) edgeIndex = null;
     const record = next && findPiece(getPlan(), next.pieceId, next.buildingId);
+    const roof = record?.kind === 'roof' && record.building.roofs?.find(r => r.id === record.piece.id);
+    if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const flags = roofFlags(record);
     const nextLayout = record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind;
     host.hidden = !record;
@@ -102,17 +109,24 @@ export function createCards({ getPlan, getLabel, getSelection = () => ({}), getF
       for (const flag of flags) {
         const note = document.createElement('p'); note.textContent = flag.text; host.append(note);
       }
+      if (roof && op) {
+        roof.edges.forEach((edge, index) => host.append(button(`Edge ${index + 1}: ${edge.setting === 'clip' ? 'Clipped' : edge.setting === 'gable' ? 'Gable' : 'Sloped'}`, () => {
+          edgeIndex = index; layout = null; draw();
+        })));
+        if (addDormer) host.append(button('Add dormer', addDormer));
+      }
     }
     const form = document.createElement('form'); form.addEventListener('submit', event => event.preventDefault()); host.append(form);
     const more = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'More'; more.append(summary);
-    const cardFields = (fields[kind] || []).flatMap(field => field !== 'ends' ? [field]
+    const cardFields = (kind === 'roof' && roof && !piece.rect ? []
+      : fields[kind === 'dormer' && piece.rect ? 'roof' : kind] || []).flatMap(field => field !== 'ends' ? [field]
       : ['gable', 'hip'].includes(piece.kind) ? [`ends.${piece.ridge}0`, `ends.${piece.ridge}1`] : []);
     for (const field of cardFields) {
       const end = field.startsWith('ends.') ? field.slice(5) : null;
       const label = document.createElement('label'); label.textContent = end ? endNames[end]
         : getFieldLabels()[field] || labels[field] || field[0].toUpperCase() + field.slice(1);
       let input;
-      const choices = field === 'kind' ? (kind === 'roof' ? ['hip', 'gable', 'shed', 'flat'] : ['window', 'door', 'slider', 'bifold', 'passage', 'garage'])
+      const choices = field === 'kind' ? (['roof', 'dormer'].includes(kind) ? ['hip', 'gable', 'shed', 'flat'] : ['window', 'door', 'slider', 'bifold', 'passage', 'garage'])
         : end ? ['gable', 'hip', 'clip'] : field === 'ridge' ? ['x', 'y'] : field === 'low_side' ? ['x0', 'x1', 'y0', 'y1'] : null;
       if (choices) {
         input = document.createElement('select');
@@ -172,13 +186,57 @@ export function createCards({ getPlan, getLabel, getSelection = () => ({}), getF
       if (!canEdit()) return;
       if (!await window.promptConfirm(`Delete ${getLabel(selection)}?`, 'Attached doors or windows may also be removed. The timeline keeps the earlier house.', 'Delete', 'Cancel')) return;
       await pending;
-      await edit({ op: 'delete', building: building.id, piece: piece.id }); select(null);
+      if (roof && !piece.rect && op) await op({ op: 'delete', building: building.id, id: piece.id });
+      else await edit({ op: 'delete', building: building.id, piece: piece.id });
+      select(null);
     }));
+  }
+  function drawEdge(next, record, roof) {
+    const edge = roof.edges[edgeIndex];
+    if (!edge) { edgeIndex = null; layout = null; draw(next); return; }
+    const signature = `edge:${edgeIndex}:${JSON.stringify(edge)}:${canEdit()}`;
+    selection = next; host.hidden = false;
+    if (layout === signature) return;
+    layout = signature; host.replaceChildren(); inputs = new Map();
+    const heading = document.createElement('h3'); heading.textContent = `Roof edge ${edgeIndex + 1}`;
+    host.append(heading, button('Back to roof', () => { edgeIndex = null; layout = null; draw(); }));
+    const index = edgeIndex, building = record.building.id;
+    const save = change => {
+      if (!canEdit()) return;
+      pending = pending.then(() => {
+        const current = getPlan().buildings.find(b => b.id === building)?.roofs.find(r => r.id === roof.id);
+        return op({ op: 'set_roof_edge', building, roof: roof.id, edge: index,
+          setting: current?.edges[index].setting || roof.edges[index].setting, ...change });
+      }).catch(report).finally(() => draw());
+      return pending;
+    };
+    for (const [setting, label] of [['sloped', 'Sloped'], ['gable', 'Gable'], ['clip', 'Clipped']]) {
+      const choice = button(label, () => save({ setting }));
+      choice.setAttribute('aria-pressed', String(edge.setting === setting)); host.append(choice);
+    }
+    const label = document.createElement('label'); label.textContent = 'Pitch';
+    const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.max = '24'; input.step = 'any';
+    input.setAttribute('aria-label', 'Pitch'); input.value = edge.pitch ?? roof.pitch ?? 6; input.disabled = !canEdit();
+    let baseline = String(input.value);
+    const savePitch = () => {
+      if (String(input.value) === baseline) return;
+      const pitch = Number(input.value);
+      if (!input.value.trim() || !Number.isFinite(pitch) || pitch < 0 || pitch > 24) {
+        report(new Error('Choose a pitch from 0 to 24 in 12.')); return;
+      }
+      baseline = String(input.value); save({ pitch });
+    };
+    input.addEventListener('change', savePitch);
+    input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); savePitch(); } });
+    label.append(input); const unit = document.createElement('span'); unit.textContent = 'in 12'; label.append(unit); host.append(label);
   }
   function button(text, action) {
     const node = document.createElement('button'); node.type = 'button'; node.textContent = text;
     node.disabled = !canEdit();
     node.addEventListener('click', () => Promise.resolve().then(action).catch(report)); return node;
   }
-  return { draw };
+  return { draw, edge(handle) {
+    const next = { pieceId: handle.id, buildingId: handle.building };
+    selection = next; edgeIndex = handle.edge; layout = null; draw(next);
+  } };
 }

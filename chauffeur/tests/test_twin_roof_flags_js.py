@@ -253,6 +253,17 @@ def test_flag_matches_its_block_within_a_foot():
 def test_flagged_roof_card_confirms_through_accept():
     driver = r"""
 import { pathToFileURL } from 'node:url';
+import { registerHooks } from 'node:module';
+// cards now shares the room-title geometry helper with the scene. Resolve
+// that dependency from the real source when this driver copies the card.
+registerHooks({resolve(spec, ctx, next) {
+  if (spec === '../twin_generator.js') return {url: pathToFileURL(process.argv[3] + '/twin_generator.js').href, shortCircuit: true};
+  if (spec === 'three') return {url: pathToFileURL(process.argv[4] + '/three.module.js').href, shortCircuit: true};
+  if (spec.startsWith('three/addons/')) return {url: pathToFileURL(process.argv[4] + '/addons/' + spec.slice(13)).href, shortCircuit: true};
+  return next(spec, ctx);
+}, load(url, ctx, next) {
+  return url.startsWith('file:') && url.endsWith('.js') ? {...next(url, {...ctx, format: 'module'}), format: 'module'} : next(url, ctx);
+}});
 class Element {
   constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.value = ''; }
   append(...nodes) { this.children.push(...nodes); }
@@ -292,7 +303,7 @@ console.log('flagged roof card passed');
         path = os.path.join(tmp, 'driver.mjs')
         with open(path, 'w', encoding='utf-8') as file:
             file.write(driver)
-        result = subprocess.run(['node', path, module], capture_output=True, text=True, timeout=30)
+        result = subprocess.run(['node', path, module, TWIN, VENDOR], capture_output=True, text=True, timeout=30)
         check(result.returncode == 0, result.stderr)
 
 
