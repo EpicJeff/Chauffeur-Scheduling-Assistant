@@ -13,7 +13,7 @@ import { createPanel } from './panel.mjs';
 const elements = new Map();
 const node = () => ({ hidden: false, style: {}, dataset: {}, listeners: {}, children: [],
   offsetWidth: 300, offsetHeight: 200, value: '', textContent: '',
-  setAttribute() {}, replaceChildren() { this.children = []; }, querySelectorAll: () => [],
+  setAttribute() {}, before() {}, replaceChildren() { this.children = []; }, querySelectorAll: () => [],
   querySelector: () => node(), append(child) { child.parent = this; this.children.push(child); },
   remove() { this.parent.children = this.parent.children.filter(child => child !== this); },
   addEventListener(event, fn) { this.listeners[event] = fn; } });
@@ -135,6 +135,12 @@ export const createSceneTools = () => tools;
 export const createHistory = () => ({ perform: action => action(), sync() {}, clear() {} });
 export const createDraw = () => ({ cancel() {} });
 export const createLotTools = () => ({ dragging: () => false });
+export const streetView = () => null, streetSegment = () => null;
+export const createRoofTools = () => ({ cancel() {}, addDormer() {},
+  pointerDown: () => false, pointerMove: () => false, pointerUp: () => false });
+export const createLibrary = () => ({ refresh() {}, pick: () => false, pickSite: () => false,
+  pointerDown: () => false, pointerMove: () => false, pointerUp: () => false });
+export const createFlags = () => ({ refresh() {}, pick: () => null, flags: () => ({}), proposals: () => [] });
 export const createPlanView = () => ({});
 export const createPauses = () => ({ sync() {}, current: () => null, dismissed: () => false });
 export const applyRegistration = (_, p) => p, invertRegistration = (_, p) => p;
@@ -233,6 +239,9 @@ registerHooks({{resolve(spec, ctx, next) {{
     for name in ('api', 'cards', 'snap', 'words', 'pauses', 'panel', 'place'):
         source = (ROOT / (name + '.js')).read_text(encoding='utf-8')
         (work / (name + '.mjs')).write_text(source.replace(".js'", ".mjs'"), encoding='utf-8')
+    # cards names library's material lines; the library itself loads three.js
+    # assets the pause card never uses, so it is stubbed like the editor's.
+    (work / 'library.mjs').write_text('export const materialLines = () => [];\n', encoding='utf-8')
     (work / 'driver.mjs').write_text(DRIVER, encoding='utf-8')
     result = subprocess.run(['node', '--import', loader.as_uri(), str(work / 'driver.mjs')], capture_output=True, text=True, timeout=30)
     if result.returncode:
