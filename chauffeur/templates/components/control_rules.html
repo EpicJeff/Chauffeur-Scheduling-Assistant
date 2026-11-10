@@ -1,5 +1,13 @@
 {# One parent-owned rulebook. Keep the controls and their logic together;
    config.html only includes this component beside Argyle's settings. #}
+{% macro control_rule_row(title) %}
+<div class="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-gray-800">
+    <span x-text="kind.label" class="text-gray-300"></span>
+    <div role="group" :aria-label="'{{ title }}: ' + kind.label" class="flex shrink-0 gap-1 bg-gray-800 rounded-lg p-1">
+        {{ caller() }}
+    </div>
+</div>
+{% endmacro %}
 <details data-control-rules x-data="controlRulesPage()" @toggle="if ($event.target.open) load()"
     class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700">
     <summary class="cursor-pointer px-4 py-3 font-semibold text-blue-200">Who can control what</summary>
@@ -39,17 +47,14 @@
                         <p class="text-xs text-gray-400 mb-2">Each person's own access can narrow this further.</p>
                         {% endif %}
                         <template x-for="kind in kinds" :key="kind.id">
-                            <div class="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-gray-800">
-                                <span x-text="kind.label" class="text-gray-300"></span>
-                                <div role="group" :aria-label="'{{ title }}: ' + kind.label" class="flex shrink-0 gap-1 bg-gray-800 rounded-lg p-1">
+                            {% call control_rule_row(title) %}
                                     {% for value, label in [('yes', 'Yes'), ('no', 'No')] %}
                                     <button type="button" @click="setPerson('{{ role }}', kind.id, '{{ value }}')"
                                         :aria-pressed="!!(rules.people.{{ role }}[kind.id] === '{{ value }}')"
                                         :class="rules.people.{{ role }}[kind.id] === '{{ value }}' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
                                         class="px-3 py-2 rounded-lg text-xs font-bold transition-colors">{{ label }}</button>
                                     {% endfor %}
-                                </div>
-                            </div>
+                            {% endcall %}
                         </template>
                     </section>
                     {% endfor %}
@@ -61,18 +66,14 @@
                         <p class="text-xs text-gray-400 mb-2">Ask who needs voice ID turned on for the speaker.</p>
                         {% endif %}
                         <template x-for="kind in kinds" :key="kind.id">
-                            <div class="py-2 border-b border-gray-800 space-y-2">
-                                <div class="text-gray-300" x-text="kind.label"></div>
-                                <div role="group" :aria-label="'{{ title }}: ' + kind.label" class="inline-flex flex-wrap gap-1 bg-gray-800 rounded-lg p-1">
-                                    {% for value, label in [('yes', 'Yes'), ('ask', 'Ask who'), ('no', 'No')] %}
-                                    <button type="button" @click="setPlace('{{ place }}', kind.id, '{{ value }}')"
-                                        :aria-pressed="!!(rules.places.{{ place }}[kind.id] === '{{ value }}')"
-                                        :class="rules.places.{{ place }}[kind.id] === '{{ value }}' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
-                                        class="px-3 py-2 rounded-lg text-xs font-bold transition-colors"
-                                        {% if value == 'yes' %}x-text="rules.proof[kind.id] ? 'Ask who (needs proof)' : 'Yes'"{% endif %}>{{ label }}</button>
-                                    {% endfor %}
-                                </div>
-                            </div>
+                            {% call control_rule_row(title) %}
+                                <template x-for="option in placeOptions('{{ place }}', kind.id)" :key="option.value">
+                                    <button type="button" @click="setPlace('{{ place }}', kind.id, option.value)"
+                                        :aria-pressed="!!(placeSelected('{{ place }}', kind.id) === option.value)"
+                                        :class="placeSelected('{{ place }}', kind.id) === option.value ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
+                                        class="px-3 py-2 rounded-lg text-xs font-bold transition-colors" x-text="option.label"></button>
+                                </template>
+                            {% endcall %}
                         </template>
                     </section>
                     {% endfor %}
@@ -166,11 +167,17 @@ window.controlRulesPage = function () {
                 [place]: { ...this.rules.places[place], [kind]: value } } };
             return this.save();
         },
-        placeLabel(place, kind) {
+        placeOptions(place, kind) {
+            const options = [{ value: 'ask', label: 'Ask who' }, { value: 'no', label: 'No' }];
+            return this.rules.proof[kind] ? options : [{ value: 'yes', label: 'Yes' }, ...options];
+        },
+        placeSelected(place, kind) {
             const value = this.rules.places[place][kind];
-            if (value === 'no') return 'No';
-            if (value === 'ask') return 'Ask who';
-            return this.rules.proof[kind] ? 'Ask who (needs proof)' : 'Yes';
+            return value === 'yes' && this.rules.proof[kind] ? 'ask' : value;
+        },
+        placeLabel(place, kind) {
+            const selected = this.placeSelected(place, kind);
+            return this.placeOptions(place, kind).find(option => option.value === selected).label;
         },
         async refreshWarnings() {
             const request = ++this.warningRequest;

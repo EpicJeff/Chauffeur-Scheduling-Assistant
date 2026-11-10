@@ -30,8 +30,12 @@ CONTRACT these tests fix (the names did not exist when they were written):
     setPlace(place, kind, value) sets rules.places[place][kind], then saves
     save()                       POST chfBase + 'api/ha/control/rules' with the
                                  WHOLE grid; a refusal goes to showGlobalAlert
-    placeLabel(place, kind)      'Yes' | 'No' | 'Ask who' |
-                                 'Ask who (needs proof)' (Yes on a proof kind)
+    placeLabel(place, kind)      'Yes' | 'No' | 'Ask who'; Yes on a proof kind
+                                 reads 'Ask who' (or 'Ask who (needs proof)')
+    placeOptions(place, kind)    [{value, label}]: Yes / Ask who / No, or only
+                                 Ask who / No on a kind that needs proof
+    placeSelected(place, kind)   the value shown selected ('ask' for a stored
+                                 'yes' on a proof kind)
   Saving is immediate (no debounce), like saveAuthSettings().
 
 Stubbed ha_api; the real FastAPI app with auth enforcement on; settings held
@@ -506,9 +510,9 @@ class Page(_Base):
         cr.validate_rules(copy.deepcopy(posts[0]['body']))
 
         # The screen never claims more than happens: Yes on a proof kind asks.
-        self.assertEqual(out['labels'], {
-            'locks': 'Ask who (needs proof)', 'lights': 'Yes', 'climate': 'Ask who', 'alarm': 'No',
-        })
+        labels = dict(out['labels'])
+        self.assertIn(labels.pop('locks'), ('Ask who', 'Ask who (needs proof)'))
+        self.assertEqual(labels, {'lights': 'Yes', 'climate': 'Ask who', 'alarm': 'No'})
         self.assertEqual(out['lastPost']['places']['panel']['locks'], 'yes')
         self.assertEqual(out['lastPost']['places']['panel']['alarm'], 'no')
 
@@ -804,7 +808,8 @@ class ReviewRulings(_Base):
             if hit:
                 buttons[hit.group(1)] = {'xtext': _attr(m.group(1), 'x-text'),
                                          'text': html.unescape(re.sub(r'<[^>]+>', '', m.group(2))).strip()}
-        self.assertEqual(set(buttons), {'yes', 'ask', 'no'}, buttons)
+        # Static buttons, or buttons built from placeOptions() (ruling A below).
+        self.assertTrue(set(buttons) == {'yes', 'ask', 'no'} or 'placeOptions(' in page, buttons)
         status = None
         for m in re.finditer(r'<(\w+)\b([^>]*)>', page):
             xtext = _attr(m.group(2), 'x-text') or ''
@@ -822,8 +827,14 @@ class ReviewRulings(_Base):
             page.rules.places.panel[kind] = value;
             page.rules.proof[kind] = proof;
             const scope = { kind: { id: kind } };
-            const b = input.buttons[value];
-            const button = b.xtext ? String(evalIn(page, b.xtext, scope)) : b.text;
+            let button;
+            if (input.buttons[value]) {
+              const b = input.buttons[value];
+              button = b.xtext ? String(evalIn(page, b.xtext, scope)) : b.text;
+            } else {
+              const chosen = page.placeSelected('panel', kind);
+              button = (page.placeOptions('panel', kind).find(o => o.value === chosen) || {}).label;
+            }
             let shown = false, text = null;
             if (input.status) {
               text = String(evalIn(page, input.status.xtext, scope));
@@ -831,14 +842,81 @@ class ReviewRulings(_Base):
             }
             out.rows.push({ kind, value, proof, button, shown, text });
           }
-        """, buttons=buttons, status=status, cases=cases)
+        """, buttons=buttons if set(buttons) == {'yes', 'ask', 'no'} else {}, status=status, cases=cases)
         for row in out['rows']:
             if row['text'] is not None:
                 self.assertEqual(row['shown'], row['text'] != row['button'],
                                  f"status under {row['kind']}={row['value']}: {row}")
             if row['value'] == 'yes' and row['proof']:
                 visible = [row['button']] + ([row['text']] if row['shown'] else [])
-                self.assertIn('Ask who (needs proof)', visible, 'the screen never claims a plain Yes')
+                self.assertTrue(any(v in ('Ask who', 'Ask who (needs proof)') for v in visible)
+                                and 'Yes' not in visible, f'the screen never claims a plain Yes: {row}')
+
+    # --- A: proof kinds offer Ask who / No at places (screenshots, 043c5a64)
+
+    def test_proof_kind_place_offers_ask_or_no(self):
+        page = self.config_page()
+        start = page.index('data-control-rules')
+        component = html.unescape(page[start:page.index('</details>', start)])
+        self.assertFalse('Ask who (needs proof)' in component,
+                         'the component still renders an "Ask who (needs proof)" button beside "Ask who"')
+        self.assertIn('placeOptions(', component, 'the place buttons are built from placeOptions()')
+
+        out, _, _ = self.page_run(r"""
+          const page = window.controlRulesPage();
+          await page.load(); await flush();
+          out.hasHelpers = typeof page.placeOptions === 'function' && typeof page.placeSelected === 'function';
+          if (!out.hasHelpers) return;
+          const look = (place, kind) => ({
+            options: page.placeOptions(place, kind).map(o => [o.value, o.label]),
+            selected: page.placeSelected(place, kind),
+          });
+          page.rules.proof.locks = true;
+          page.rules.places.panel.locks = 'yes';
+          page.rules.places.unknown_voice.locks = 'yes';
+          out.proofPanel = look('panel', 'locks');
+          out.proofVoice = look('unknown_voice', 'locks');
+          await page.setPlace('panel', 'locks', 'ask'); await flush();
+          out.saved = JSON.parse(calls.filter(c => c.method === 'POST').pop().body).places.panel.locks;
+          page.rules.proof.locks = false;
+          out.plainAsk = look('panel', 'locks');
+          page.rules.places.panel.locks = 'yes';
+          out.plainYes = look('panel', 'locks');
+        """)
+        self.assertTrue(out['hasHelpers'], 'window.controlRulesPage() has placeOptions() and placeSelected()')
+        two = [['ask', 'Ask who'], ['no', 'No']]
+        three = [['yes', 'Yes'], ['ask', 'Ask who'], ['no', 'No']]
+        self.assertEqual(out['proofPanel'], {'options': two, 'selected': 'ask'},
+                         'a stored yes on a proof kind reads as Ask who')
+        self.assertEqual(out['proofVoice'], {'options': two, 'selected': 'ask'})
+        self.assertEqual(out['saved'], 'ask')
+        self.assertEqual(out['plainAsk'], {'options': three, 'selected': 'ask'})
+        self.assertEqual(out['plainYes'], {'options': three, 'selected': 'yes'})
+
+    # --- B: role rows and place rows share one row markup
+
+    def test_role_and_place_rows_share_markup(self):
+        page = self.config_page()
+
+        def row_shape(title):
+            i = page.index('>' + title + '</h3>')
+            m = re.compile(r'<template\s+x-for="[^"]*kinds[^"]*"[^>]*>').search(page, i)
+            self.assertIsNotNone(m, title)
+            body = page[m.end():page.index('</template>', m.end())]
+            tags = re.findall(r'<(\w+)\b([^>]*)>', body)
+            self.assertTrue(tags, title)
+
+            def shape(pred, what):
+                hit = next(((tag, attrs) for tag, attrs in tags if pred(attrs)), None)
+                self.assertIsNotNone(hit, f'{title}: no {what}')
+                return hit[0], ' '.join(sorted((_attr(hit[1], 'class') or '').split()))
+            return {
+                'row': (tags[0][0], ' '.join(sorted((_attr(tags[0][1], 'class') or '').split()))),
+                'label': shape(lambda a: _attr(a, 'x-text') == 'kind.label', 'kind label'),
+                'control': shape(lambda a: _attr(a, 'role') == 'group', 'segmented control'),
+            }
+        role, place = row_shape('Parent'), row_shape('Wall panel')
+        self.assertEqual(role, place, 'a role row and a place row are built by the same row markup')
 
     # --- 9 ---------------------------------------------------------------
 
