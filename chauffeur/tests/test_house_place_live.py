@@ -503,22 +503,28 @@ def scenario_plot_read_suggestions_and_placement():
         page.locator('[data-place-suggestion="plot-3"] button[data-suggestion-dismiss]').click()
         page.wait_for_function("() => !document.querySelector('[data-place-suggestion=\"plot-3\"]')", timeout=10000)
 
-        # The map: drag the shed's footprint 50 px, then confirm the placement.
-        page.wait_for_selector('#place-map [data-place-footprint="shed"]', state='visible', timeout=10000)
-        check(page.locator('#place-map [data-place-footprint="house"]').count() == 1, 'every accepted footprint is drawn')
-        box = page.locator('#place-map [data-place-footprint="shed"]').bounding_box()
-        x, y = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
+        # Place the accepted footprint in the shared scene, including buildings
+        # that have not been built yet. The move saves on release.
+        page.locator('[data-place-building="shed"]').get_by_role('button', name='Place on the lot', exact=True).click()
+        page.wait_for_function("() => window.__twinEditor.lotHandles().some(h => h.building === 'shed' && h.kind === 'move')")
+        handle = page.evaluate("() => window.__twinEditor.lotHandles().find(h => h.building === 'shed' && h.kind === 'move')")
+        x, y = handle['screen']
         page.mouse.move(x, y)
         page.mouse.down()
         for step in range(1, 11):
             page.mouse.move(x + step * 5, y)
         page.mouse.up()
+        page.wait_for_function("""before => fetch(window.chfBase + 'api/house/editor/sheets').then(r => r.json()).then(s => {
+            const now = s.place.buildings.find(b => b.id === 'shed').footprint;
+            return Math.hypot(now[0][0] - before[0][0], now[0][1] - before[0][1]) > .5;
+        })""", arg=outlines['plot-2'])
+        sent = _building(page, 'shed')['footprint']
+        page.get_by_role('button', name='These are in the right place', exact=True).click()
+        page.wait_for_timeout(800)
+        _open_place(page)
         check(page.inner_text('#place-confirm-placement').strip() == 'These are in the right place',
               page.inner_text('#place-confirm-placement'))
-        page.click('#place-confirm-placement')
-        page.wait_for_timeout(800)
         check(placements, 'Confirm sends the placement')
-        sent = next(f['outline'] for f in placements[-1]['footprints'] if f['building'] == 'shed')
         before = outlines['plot-2']
         shift = [sent[0][0] - before[0][0], sent[0][1] - before[0][1]]
         check(abs(shift[0]) + abs(shift[1]) > 0.5, ('the drag moved the shed', before, sent))
@@ -526,11 +532,23 @@ def scenario_plot_read_suggestions_and_placement():
               ('a drag moves, it does not reshape', before, sent))
         check(_place(page)['lot']['placement']['confirmed'] is True, 'the placement is confirmed')
 
-        page.locator('#place-map [data-place-edge="0"]').click()
+        page.click('#place-in-scene')
+        # The scene's lot edge is a real ground-plane click, followed by the
+        # explicit street action. Merely selecting the edge must not save it.
+        edge = _place(page)['lot']['read']['lot'][:2]
+        midpoint = [(a + b) / 2 for a, b in zip(*edge)]
+        pixel = page.evaluate("""p => {
+            const v = window.__twin, FT = .3048;
+            v.controls.target.set(p[0]*FT, 0, -p[1]*FT);
+            v.camera.position.set((p[0]-10)*FT, 80*FT, -p[1]*FT);
+            v.controls.update(); v.camera.updateMatrixWorld(true);
+            const q = v.camera.position.clone().set(p[0]*FT, 0, -p[1]*FT).project(v.camera);
+            const r = v.renderer3.domElement.getBoundingClientRect();
+            return [r.left + (q.x+1)*r.width/2, r.top + (1-q.y)*r.height/2];
+        }""", midpoint)
+        page.mouse.click(*pixel)
+        page.get_by_role('button', name='This edge is the street', exact=True).click()
         page.wait_for_timeout(800)
-        if not any(p.get('street_edge') == [0, 1] for p in placements):
-            page.click('#place-confirm-placement')
-            page.wait_for_timeout(800)
         check(any(p.get('street_edge') == [0, 1] for p in placements), ('tapping a lot edge makes it the street', placements))
         check(_place(page)['lot']['placement']['street_edge'] == [0, 1], _place(page)['lot']['placement'])
     check(not _unexpected(s.errors()), s.errors())

@@ -53,7 +53,9 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
   function instruction() {
     el('pause-instruction').textContent = mode === 'pin'
       ? ['Tap a point on the blue outline, then its matching spot on the floor below.', 'Tap where that point belongs on the floor below.', 'Tap a second point on the blue outline, farther away.', 'Tap where the second point belongs on the floor below.'][pins.length]
-      : mode === 'drag' ? 'Drag the blue outline along the floor. Choose Looks right when it is in place.'
+      : mode === 'drag' ? pause?.kind === 'lot_placement'
+        ? 'Drag the centre handle to move the building, or its edge handle to turn. Choose Looks right when it is in place.'
+        : 'Drag the blue outline along the floor. Choose Looks right when it is in place.'
         : adjusted ? 'This is a preview. Choose Looks right to keep it.' : '';
   }
   function disable(value) { busy = value; host.querySelectorAll('button, input').forEach(b => { b.disabled = value || !canEdit(); }); }
@@ -212,6 +214,13 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
   };
   return {
     sync, anchor, accept, lastAnswer: () => lastAnswer, clearLastAnswer() { lastAnswer = null; },
+    lotPlacement: () => pause?.kind === 'lot_placement' && getBuild()?.part !== 'lot' && !dismissed
+      ? { building: owner(), transform: pause.transform } : null,
+    setLotTransform(transform) {
+      if (pause?.kind !== 'lot_placement' || busy || !canEdit()) return;
+      pause.transform = structuredClone({ position: transform.position, rotation: transform.rotation });
+      el('pause-turn').value = pause.transform.rotation; changed();
+    },
     current: () => pause, sheetMaster: () => masterSize, pinCheck: () => lastPin,
     dismissed: () => dismissed,
     show() { dismissed = false; sync(); },
@@ -235,6 +244,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     },
     pointerDown(event) {
       if (!mode || !pause || busy || !canEdit()) return false;
+      if (pause.kind === 'lot_placement') return false;
       if (drag) return true;
       const targetKey = mode === 'pin' && pins.length % 2 ? referenceKey : floorKey;
       const point = view.floorAt(event.clientX, event.clientY, targetKey); if (!point) return true;

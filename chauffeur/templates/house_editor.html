@@ -18,7 +18,7 @@
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place'] %}
+    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/lot_tools'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     const map = document.createElement('script'); map.type = 'importmap';
@@ -136,10 +136,9 @@
             </section>
             <section id="place-placement" class="place-card" hidden>
               <h3>Place the buildings</h3>
-              <p id="place-map-note">Tap a lot edge for the street. Drag a building to place it, or select it and use the arrow keys.</p>
-              <svg id="place-map" role="group" aria-label="Lot and building footprints in feet"></svg>
+              <p>Place buildings over the plot plan in the scene. Select a building to move or turn it; tap a footprint or lot edge to use it.</p>
               <div class="editor-actions">
-                <button id="place-turn" type="button" disabled>Turn 90 degrees</button>
+                <button id="place-in-scene" type="button">Place in the scene</button>
                 <button id="place-confirm-placement" type="button">These are in the right place</button>
               </div>
             </section>

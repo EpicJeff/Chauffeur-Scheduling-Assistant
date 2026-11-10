@@ -130,8 +130,11 @@ export function createPolling(config) {
 export const mountTwin = async () => ({ scene: {}, rebuild: async p => { globalThis.rendered = p; } });
 export const runDirector = async () => {};
 export const createPanel = () => ({ message() {}, readOnly() {}, events() {}, reset() {} });
-const tools = { refresh() {}, drawFloors() {}, delegate() {}, selected() {} };
+const tools = { refresh() {}, drawFloors() {}, delegate() {}, selected() {}, dragging: () => false };
 export const createSceneTools = () => tools;
+export const createHistory = () => ({ perform: action => action(), sync() {}, clear() {} });
+export const createDraw = () => ({ cancel() {} });
+export const createLotTools = () => ({ dragging: () => false });
 export const createPlanView = () => ({});
 export const createPauses = () => ({ sync() {}, current: () => null, dismissed: () => false });
 export const applyRegistration = (_, p) => p, invertRegistration = (_, p) => p;
@@ -210,11 +213,28 @@ if __name__ == '__main__':
     if not shutil.which('node'):
         raise RuntimeError('node is required for the draft pause runtime check')
     work = Path(tempfile.mkdtemp(prefix='twin_draft_pause_js_'))
+    # cards now shares contains with the generator. Load that real dependency
+    # and its vendored three.js imports; keep the assertions below unchanged.
+    loader = work / 'loader.mjs'
+    twin = ROOT.parent.as_uri()
+    vendor = (ROOT.parents[1] / 'vendor' / 'three-r187').as_uri()
+    loader.write_text(f"""
+import {{registerHooks}} from 'node:module';
+registerHooks({{resolve(spec, ctx, next) {{
+  if (spec === '../twin_generator.mjs') return {{url: '{twin}/twin_generator.js', shortCircuit: true}};
+  if (spec === 'three') return {{url: '{vendor}/three.module.js', shortCircuit: true}};
+  if (spec.startsWith('three/addons/')) return {{url: '{vendor}/addons/' + spec.slice(13), shortCircuit: true}};
+  return next(spec, ctx);
+}}, load(url, ctx, next) {{
+  return url.startsWith('{twin}/') && url.endsWith('.js')
+    ? {{...next(url, {{...ctx, format:'module'}}), format:'module'}} : next(url, ctx);
+}}}});
+""", encoding='utf-8')
     for name in ('api', 'cards', 'snap', 'words', 'pauses', 'panel', 'place'):
         source = (ROOT / (name + '.js')).read_text(encoding='utf-8')
         (work / (name + '.mjs')).write_text(source.replace(".js'", ".mjs'"), encoding='utf-8')
     (work / 'driver.mjs').write_text(DRIVER, encoding='utf-8')
-    result = subprocess.run(['node', str(work / 'driver.mjs')], capture_output=True, text=True, timeout=30)
+    result = subprocess.run(['node', '--import', loader.as_uri(), str(work / 'driver.mjs')], capture_output=True, text=True, timeout=30)
     if result.returncode:
         raise AssertionError(result.stderr)
     print(result.stdout.strip())
@@ -224,7 +244,7 @@ if __name__ == '__main__':
     (work / 'editor-stubs.mjs').write_text(EDITOR_STUBS, encoding='utf-8')
     for name, driver in [('editor-driver', EDITOR_DRIVER), ('place-driver', PLACE_DRIVER)]:
         (work / (name + '.mjs')).write_text(driver, encoding='utf-8')
-        result = subprocess.run(['node', str(work / (name + '.mjs'))], capture_output=True, text=True, timeout=30)
+        result = subprocess.run(['node', '--import', loader.as_uri(), str(work / (name + '.mjs'))], capture_output=True, text=True, timeout=30)
         if result.returncode:
             raise AssertionError(result.stderr)
         print(result.stdout.strip())
