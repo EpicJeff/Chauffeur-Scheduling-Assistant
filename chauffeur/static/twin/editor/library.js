@@ -203,6 +203,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     return point && { building, kind, piece, point: point.toArray(), side, room, role, surface, level: piece.level };
   }
   function dismiss() { chooser?.remove(); chooser = null; }
+  const pickingWords = () => `Choose a material for the ${picking?.label || 'surface'}.`;
   function stopPicking() {
     if (!picking) return;
     picking = null; el('library-status').textContent = hint;
@@ -228,8 +229,8 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     if (!canEdit()) return;
     dismiss(); picking = surface; tab = 'materials';
     if (host.hidden) { host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true'); }
+    el('library-status').textContent = pickingWords();
     await browse();
-    el('library-status').textContent = `Choose a material for the ${surface.label || 'surface'}.`;
     el('library-entries').querySelector('button')?.focus();
   }
   async function browse() {
@@ -258,7 +259,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       });
     }
     host.querySelectorAll('[data-library-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.libraryTab === tab)));
-    el('library-status').textContent = hint;
+    el('library-status').textContent = picking ? pickingWords() : hint;
   }
   listen(el('rail-library'), 'click', () => {
     host.hidden = !host.hidden; el('rail-library').setAttribute('aria-pressed', String(!host.hidden));

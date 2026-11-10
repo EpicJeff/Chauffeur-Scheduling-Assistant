@@ -830,8 +830,8 @@ def scenario_pick_a_material_on_the_card_by_keyboard():
         change.focus()
         page.keyboard.press('Enter')
         page.wait_for_selector('#library-panel', state='visible', timeout=10000)
-        check('Choose a material for the outside face.' in page.inner_text('#library-status'),
-              page.inner_text('#library-status'))
+        page.wait_for_function("() => document.getElementById('library-status').textContent"
+                               " === 'Choose a material for the outside face.'", timeout=10000)
         thumb = page.locator(f'#library-panel [data-material="{BRICK}"]').first
         thumb.wait_for(state='visible', timeout=10000)
         thumb.focus()
@@ -840,20 +840,21 @@ def scenario_pick_a_material_on_the_card_by_keyboard():
         floor.wait_for(state='visible', timeout=5000)
         for scope in SCOPES:
             check(page.locator(f'#material-chooser button:text-is("{scope}")').is_visible(), scope)
+        signature = H.scene_signature(page)
         floor.focus()
         page.keyboard.press('Enter')
         _until(H.model, lambda m: (_by_id(H.building(m, POOL)['levels'], 'L1').get('materials') or {}).get('siding') == brick,
                        'the floor siding reaches the store')
         sets = [op for op in posted if op and op.get('op') == 'set_material']
         check(len(sets) == 1 and sets[0]['target'] == {'level': 'L1', 'role': 'siding'} and sets[0]['material'] == brick, sets)
+        H.wait_rebuilt(page, signature)
         _close_library(page)
         _select_front_wall(page)
         text = _card_text(page)
         check(any(f'{n}, from the level' in text for n in _names(library, BRICK)), ('the card reads it from the level', text))
         clear = _outside_row(page).locator('button:text-is("Clear for this floor")')
         check(clear.count() == 1, ('the floor line clears there', text))
-        clear.focus()
-        page.keyboard.press('Enter')
+        clear.press('Enter')
         _until(H.model, lambda m: 'siding' not in (_by_id(H.building(m, POOL)['levels'], 'L1').get('materials') or {}),
                'Clear for this floor reaches the store')
         _no_errors(s)
