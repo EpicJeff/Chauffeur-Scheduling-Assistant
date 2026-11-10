@@ -11,6 +11,84 @@ TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'assign_driver_to_e
 MUTATIONS = frozenset({'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
                        'add_shopping_items', 'check_off_shopping_item'})
 
+# Successful writes whose confirmation repeats the speaker's request, and
+# reads already offered on the household voice rail. Mixed tools that can
+# disclose other records remain private; house locate is checked per action.
+SPEAKABLE = frozenset({
+    'get_calendar_events', 'get_travel_time', 'get_shopping_list_items',
+    'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
+    'house', 'music', 'memory', 'report_gap', 'prepare_voice_approval',
+    'add_household_task', 'complete_household_task', 'claim_household_task',
+    'add_kid_task', 'complete_kid_task', 'claim_chore', 'reopen_chore',
+    'add_shopping_items', 'check_off_shopping_item', 'remove_shopping_item_by_name',
+    'send_family_message', 'send_direct_message', 'announce_to_room',
+    'create_list', 'create_trip', 'start_project', 'add_project_step', 'add_to_project',
+    'set_project_state', 'set_step_state', 'make_request', 'answer_request',
+    'add_thread_note', 'close_thread', 'update_thread_action', 'mark_ask_sent',
+    'answer_ask', 'start_ask', 'propose_family_action', 'dismiss_insight',
+    'add_errand', 'update_errand', 'delete_errand', 'add_errand_rule', 'delete_errand_rule',
+    'set_errand_habits', 'forget_errand_preference', 'update_memory',
+    'add_routing_rule', 'delete_routing_rule', 'add_priority_rule', 'delete_priority_rule',
+    'run_solver', 'set_household_status', 'decide_optional_event', 'set_event_optional',
+    'cancel_event', 'restore_event', 'group_events_ride_together', 'ungroup_event',
+    'add_trip_accommodation', 'edit_trip_accommodation', 'add_trip_poi', 'edit_trip_poi',
+    'clear_trip_itinerary', 'auto_schedule_trip_itinerary', 'schedule_trip_itinerary',
+    'adjust_points', 'contribute_to_family_goal', 'cover_with_assist', 'log_program_session',
+    'add_dishes', 'add_meal_to_repertoire', 'add_meal_ingredients_to_list',
+    'mark_meal_served', 'mark_leftovers', 'clear_leftovers', 'refine_meal_dish',
+    'change_tonights_plate', 'approve_week_dinners', 'set_meal_rule', 'plan_specific_dinner',
+    'unlock_dinner', 'pair_dishes', 'unpair_dishes', 'set_dish_scope', 'set_dish_categories',
+    'set_hosting', 'set_dish_prep', 'clear_dish_prep', 'schedule_shopping_trip',
+    'add_occasion', 'add_occasion_guests', 'set_occasion_attendance',
+    'answer_occasion_question', 'stamp_occasion_template', 'add_occasion_dishes',
+    'set_occasion_menu', 'add_occasion_gift_list',
+})
+PRIVATE = frozenset({
+    'read_mail', 'search_mail', 'get_family_messages', 'list_threads',
+    'find_in_chauffeur', 'get_requests', 'research_question', 'start_mission_for',
+    'launch_mission', 'act_on_situation', 'explain_situation', 'next_situation',
+    'list_situations', 'list_projects', 'get_project', 'list_programs',
+    'list_insights', 'list_open_findings', 'list_chores', 'get_routine_status',
+    'get_current_state', 'get_drive_digest', 'get_household_status', 'get_household_load',
+    'get_household_tasks', 'get_kid_tasks', 'get_assist_coverage', 'get_family_goals',
+    'get_point_balances', 'get_errands', 'get_errand_habits', 'get_errand_preferences',
+    'get_eating_plan', 'get_meal_rules', 'get_tonights_plate', 'get_week_dinners',
+    'get_shopping_trip', 'get_prep_ahead', 'get_run_sheet', 'get_occasion',
+    'get_occasion_gaps', 'get_occasion_insights', 'suggest_dinner', 'suggest_gift_ideas',
+    'source_for_occasion', 'search_places', 'generate_trip_plan', 'draft_thread_message',
+    'post_weekly_digest', 'negotiate_day', 'ask_deal', 'program_progress',
+    'manage_car', 'manage_trip_rules', 'manage_trip_flights',
+})
+
+
+def row_checks_before(name, args, member):
+    """The phone's existing row-level audible checks, shared by satellites."""
+    if name in ('assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy'):
+        from services.agent_tools_v2 import _find_event_fuzzy
+        row, error = _find_event_fuzzy(args.get('event_name') or '', args.get('target_date') or 'today')
+        if error or not row or not speech_safe(row):
+            return False
+    elif name in ('get_shopping_list_items', 'add_shopping_items', 'check_off_shopping_item'):
+        from services.agent_tools_v2 import _resolve_shopping_list
+        row, error = _resolve_shopping_list(args.get('list_name') or '', member)
+        if error or not row or not scope.audience_allows(row, 'shopping_list', None) \
+                or row.get('private') or row.get('sensitivity') == 'sensitive':
+            return False
+    elif name in ('start_mission_for', 'find_in_chauffeur'):
+        return False  # goal/focus/mission results can contain private details
+    return True
+
+
+def row_checks_after(name, result):
+    if name == 'get_calendar_events' and isinstance(result, dict):
+        # Match the audible HOUSE projection, including hashed Busy ids.
+        sources = {r.get('id'): r for r in access.cached_schedule().get('events', [])}
+        for row in result.get('events', []):
+            source = sources.get(row.get('id'))
+            if not source or not speech_safe(source):
+                return False
+    return True
+
 
 def speech_safe(row):
     return scope.audience_allows(row, 'calendar_event', None) \

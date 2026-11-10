@@ -771,6 +771,10 @@ sending or claiming, and never pass from_member/member_name for them.
             args = tool_call.get("arguments", {})
             from services.app_voice import current as phone_voice
             phone_turn = phone_voice.get()
+            from services.voice_private import current as satellite_voice
+            satellite_turn = satellite_voice.get() if voice_actor else None
+            if satellite_turn is not None:
+                satellite_turn.before_tool(func_name, args)
             if phone_turn is not None:
                 phone_turn.before_tool(func_name, args)
                 if func_name not in {t.get('name') for t in tools}:
@@ -841,9 +845,12 @@ sending or claiming, and never pass from_member/member_name for them.
                         if res.get('status') == 'ok' and res.get('changed'):
                             house_design_summary.append(res['summary'])
                 elif func_name == "get_calendar_events":
-                    res = get_calendar_events(args.get("start_date"), args.get("end_date"),
-                                              **({'spoken': True, 'member_name': args.get('member_name') or ''}
-                                                 if voice_actor else {}))
+                    if voice_actor:
+                        from services import agent_tools_v2 as _atv2
+                        res = _atv2.get_calendar_events(args.get('start_date'), args.get('end_date'),
+                                                       spoken=True, member_name=args.get('member_name') or '')
+                    else:
+                        res = get_calendar_events(args.get('start_date'), args.get('end_date'))
                 elif func_name == "assign_driver_to_event_fuzzy":
                     from services.agent_tools_v2 import assign_driver_to_event_fuzzy
                     res = assign_driver_to_event_fuzzy(args.get("event_name"), args.get("driver_name"), args.get("target_date"))
@@ -1630,6 +1637,8 @@ sending or claiming, and never pass from_member/member_name for them.
                 control_held = res['control_held']
             if phone_turn is not None:
                 phone_turn.tool_result(res)
+            if satellite_turn is not None:
+                satellite_turn.tool_result(res)
             if isinstance(res, dict) and (res.get("error") or res.get("status") == "error"):
                 logger.warning(f"[agent] tool {func_name} error: {res.get('message') or res.get('error')}")
             logger.info(f"[agent-timing] tool {func_name} took {_time.time() - tool_start:.1f}s (status={tool_status})")

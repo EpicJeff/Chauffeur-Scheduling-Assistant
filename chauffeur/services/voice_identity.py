@@ -68,6 +68,8 @@ def configure(enabled: bool, satellites: list, approvals_enabled: bool = False) 
                      'answer_speaker': speaker if speaker.startswith('media_player.') and len(speaker) <= 128 else ''})
     if enabled and not _revision():
         raise ValueError('Set an Argyle service token before enabling voice identity.')
+    from services import voice_private
+    voice_private.release_all()
     with _lock:
         storage.set_app_state('voice_identity_config', {'enabled': bool(enabled), 'satellites': rows,
                                                       'approvals_enabled': bool(approvals_enabled) and bool(enabled)})
@@ -179,6 +181,8 @@ def _new_session(device=None):
 
 def end_session(ha_instance_id, satellite_id) -> None:
     """End this satellite's identity while allowing recognition next time."""
+    from services import voice_private
+    voice_private.expire(ha_instance_id, satellite_id)
     with _lock:
         key = (ha_instance_id, satellite_id)
         row = _sessions.get(key)

@@ -3861,7 +3861,7 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
     """
     from services.agent_router import process_agent_request
 
-    from services import voice_identity, voice_approval
+    from services import voice_identity, voice_approval, voice_private
     import hashlib
     headers = getattr(request, 'headers', {}) or {}
     authenticated = voice_identity.service_authenticated(headers)
@@ -3895,6 +3895,9 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
         control = voice_approval.intercept(req.text, ctx)
         if control is not None:
             return _voice_response(control.get('message', 'Please try again.'), req.language)
+        control = voice_private.intercept(req.text, ctx)
+        if control is not None:
+            return _voice_response(control['message'], req.language, control.get('continue', False))
         conv_history = []
         conv_id = None
         if req.conversation_id:
@@ -3918,15 +3921,24 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
                 conv_history = conv.get("messages", [])
             storage.add_message_to_conversation(conv_id, {'role': 'user', 'content': req.text, 'timestamp': time.time()})
 
-        res = process_agent_request(req.text, history=conv_history, source='voice', voice_context=ctx,
-                                    proven=ctx.level == 'verified', at_panel=False,
-                                    focus_key=f"voice:{ctx.scope_key}:{req.conversation_id}" if req.conversation_id else None)
+        actor = ctx.actor()
+        satellite_turn = voice_private.SatelliteTurn(actor) if actor else None
+        satellite_token = voice_private.current.set(satellite_turn)
+        try:
+            res = process_agent_request(req.text, history=conv_history, source='voice', voice_context=ctx,
+                                        proven=ctx.level == 'verified', at_panel=False,
+                                        focus_key=f"voice:{ctx.scope_key}:{req.conversation_id}" if req.conversation_id else None)
+        finally:
+            voice_private.current.reset(satellite_token)
         readback = voice_approval.current_readback(ctx)
         if readback:
             res['message'] = readback  # a model summary cannot change an approval question
 
         actor = ctx.actor()
-        if actor and res.get('card'):
+        private_answer = satellite_turn is not None and not satellite_turn.safe
+        if private_answer:
+            res['message'] = voice_private.hold(ctx, satellite_turn.member, res.get('message', 'Done.'), res.get('card'))
+        elif actor and res.get('card'):
             try:
                 from services.agent_tools_v2 import _post_chat_message
                 argyle = storage.ensure_argyle_member()
@@ -3964,13 +3976,15 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
             
         # Return format expected by Home Assistant Conversation integration
         speech = res.get('message', 'I did not understand that.')
-        if ctx.greeting and not readback:
+        if ctx.greeting and not readback and not private_answer:
             speech = ctx.greeting + ' ' + speech
         from services import voice_conversation
         keep_listening = voice_conversation.continue_conversation(ctx, req.text)
-        if voice_conversation.is_sign_off(req.text):
+        signed_off = voice_conversation.is_sign_off(req.text)
+        if signed_off:
             voice_identity.end_session(ctx.ha_instance_id, ctx.satellite_id)
-        return _voice_response(speech, req.language, voice_identity.expects_reply(ctx) or keep_listening)
+        return _voice_response(speech, req.language,
+                               not signed_off and (private_answer or voice_identity.expects_reply(ctx) or keep_listening))
 
     def perform_and_speak():
         return _answer_in_room(perform(), req)
