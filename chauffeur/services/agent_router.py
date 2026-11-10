@@ -844,6 +844,10 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = agent_tools_v2.execute_tool('house_design', args, actor=acting_member, focus_key=focus_key)
                         if res.get('status') == 'ok' and res.get('changed'):
                             house_design_summary.append(res['summary'])
+                elif func_name == "get_weather":
+                    from services.agent_tools_v2 import get_weather
+                    res = get_weather(days=args.get('days', 7))
+                    if res.get('message'): agent_message = res['message']
                 elif func_name == "get_calendar_events":
                     if voice_actor:
                         from services import agent_tools_v2 as _atv2

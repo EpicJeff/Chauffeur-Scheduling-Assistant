@@ -85,7 +85,8 @@ class ScheduleOnTheSatellite(unittest.TestCase):
                           base.fake({'status': 'success', 'message': digest})):
             speech, _ = self.say("Can you tell me what's next on the schedule for today?", base.JEFF,
                                  call={'name': 'get_drive_digest', 'arguments': {'target_date': 'today'}})
-        self.assertEqual(speech, digest)
+        self.assertTrue(speech.endswith(digest), speech)    # after 'Hi Jeff.' on a first recognition
+        self.assertNotEqual(speech, base.QUESTION)
         self.assertEqual(self.vp._held, {})
 
     def test_mail_still_asks(self):

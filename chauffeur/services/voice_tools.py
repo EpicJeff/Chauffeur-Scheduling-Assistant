@@ -3,7 +3,7 @@ import re
 from services import storage, scope, access
 from services.voice_identity import VoiceContext, _revision, voice_names
 
-TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'assign_driver_to_event_fuzzy',
+TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'get_weather', 'assign_driver_to_event_fuzzy',
                    'remove_override_for_event_fuzzy', 'get_shopping_list_items',
                    'add_shopping_items', 'check_off_shopping_item', 'send_family_message', 'send_direct_message',
                    'find_in_chauffeur', 'start_project', 'prepare_voice_approval', 'house', 'music', 'memory',
@@ -11,11 +11,12 @@ TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'assign_driver_to_e
 MUTATIONS = frozenset({'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
                        'add_shopping_items', 'check_off_shopping_item'})
 
-# Successful writes whose confirmation repeats the speaker's request, and
-# reads already offered on the household voice rail. Mixed tools that can
-# disclose other records remain private; house locate is checked per action.
+# Privacy follows the data: shared household reads and changes are speakable,
+# as are confirmations that only repeat the speaker's request. Sensitive stores
+# remain private, including errors that may name records. Calendar/list/driver
+# rows still pass the checks below; house locate is checked per action.
 SPEAKABLE = frozenset({
-    'get_calendar_events', 'get_travel_time', 'get_shopping_list_items',
+    'get_calendar_events', 'get_travel_time', 'get_weather', 'get_shopping_list_items',
     'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
     'house', 'music', 'memory', 'report_gap', 'prepare_voice_approval',
     'add_household_task', 'complete_household_task', 'claim_household_task',
@@ -24,8 +25,7 @@ SPEAKABLE = frozenset({
     'send_family_message', 'send_direct_message', 'announce_to_room',
     'create_list', 'create_trip', 'start_project', 'add_project_step', 'add_to_project',
     'set_project_state', 'set_step_state', 'make_request',
-    'add_thread_note', 'close_thread', 'update_thread_action', 'mark_ask_sent',
-    'answer_ask', 'propose_family_action', 'dismiss_insight',
+    'propose_family_action', 'dismiss_insight',
     'add_errand', 'update_errand', 'delete_errand', 'add_errand_rule', 'delete_errand_rule',
     'set_errand_habits', 'forget_errand_preference', 'update_memory',
     'add_routing_rule', 'delete_routing_rule', 'add_priority_rule', 'delete_priority_rule',
@@ -41,24 +41,29 @@ SPEAKABLE = frozenset({
     'set_hosting', 'set_dish_prep', 'clear_dish_prep', 'schedule_shopping_trip',
     'add_occasion', 'add_occasion_guests', 'set_occasion_attendance',
     'answer_occasion_question', 'stamp_occasion_template', 'add_occasion_dishes',
-    'set_occasion_menu', 'add_occasion_gift_list',
+    'set_occasion_menu',
+    'adjust_points', 'research_question', 'list_projects', 'get_project', 'list_programs',
+    'list_chores', 'get_routine_status', 'get_drive_digest', 'get_household_status',
+    'get_household_load', 'get_household_tasks', 'get_kid_tasks', 'get_assist_coverage',
+    'get_family_goals', 'get_point_balances', 'get_errands', 'get_errand_habits',
+    'get_errand_preferences', 'get_eating_plan', 'get_meal_rules', 'get_tonights_plate',
+    'get_week_dinners', 'get_shopping_trip', 'get_prep_ahead', 'get_run_sheet',
+    'suggest_dinner', 'search_places', 'generate_trip_plan', 'post_weekly_digest',
+    'negotiate_day', 'program_progress', 'manage_car', 'manage_trip_rules', 'manage_trip_flights',
+    # Registry-only household actions follow the same rule as the chat tools.
+    'house_design', 'propose_program', 'start_drive', 'update_drive_status',
+    'add_override', 'delete_override', 'generate_trip_flights', 'add_trip_flight',
+    'edit_trip_flight', 'delete_trip_flight', 'challenge_pet_battle', 'award_pet_xp', 'get_pet_status',
 })
 PRIVATE = frozenset({
-    'answer_request', 'adjust_points', 'start_ask',
+    'answer_request', 'start_ask', 'mark_ask_sent', 'answer_ask',
     'read_mail', 'search_mail', 'get_family_messages', 'list_threads',
-    'find_in_chauffeur', 'get_requests', 'research_question', 'start_mission_for',
+    'add_thread_note', 'close_thread', 'update_thread_action', 'create_thread',
+    'find_in_chauffeur', 'get_requests', 'start_mission_for',
     'launch_mission', 'act_on_situation', 'explain_situation', 'next_situation',
-    'list_situations', 'list_projects', 'get_project', 'list_programs',
-    'list_insights', 'list_open_findings', 'list_chores', 'get_routine_status',
-    'get_current_state', 'get_drive_digest', 'get_household_status', 'get_household_load',
-    'get_household_tasks', 'get_kid_tasks', 'get_assist_coverage', 'get_family_goals',
-    'get_point_balances', 'get_errands', 'get_errand_habits', 'get_errand_preferences',
-    'get_eating_plan', 'get_meal_rules', 'get_tonights_plate', 'get_week_dinners',
-    'get_shopping_trip', 'get_prep_ahead', 'get_run_sheet', 'get_occasion',
-    'get_occasion_gaps', 'get_occasion_insights', 'suggest_dinner', 'suggest_gift_ideas',
-    'source_for_occasion', 'search_places', 'generate_trip_plan', 'draft_thread_message',
-    'post_weekly_digest', 'negotiate_day', 'ask_deal', 'program_progress',
-    'manage_car', 'manage_trip_rules', 'manage_trip_flights',
+    'list_situations', 'list_insights', 'list_open_findings', 'get_current_state',
+    'get_occasion', 'get_occasion_gaps', 'get_occasion_insights', 'suggest_gift_ideas',
+    'add_occasion_gift_list', 'source_for_occasion', 'draft_thread_message', 'ask_deal',
 })
 
 
@@ -177,6 +182,8 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
     elif name == 'get_travel_time':
         result = tools.get_travel_time(origin=args.get('origin') or '',
                                        destination=args.get('destination') or '')
+    elif name == 'get_weather':
+        result = tools.get_weather(days=args.get('days', 7))
     elif name == 'house':
         result = tools.house(**{k: v for k, v in args.items() if k in (
             'action', 'query', 'entity_id', 'domain', 'service', 'data', 'hours', 'app')},

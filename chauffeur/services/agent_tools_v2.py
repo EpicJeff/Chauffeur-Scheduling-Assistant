@@ -87,6 +87,52 @@ def get_travel_time(origin: str = '', destination: str = '') -> Dict[str, Any]:
             "travel_mins": mins,
             "message": f"About {mins} min from {'home' if from_home else origin} to {destination}, without traffic."}
 
+def get_weather(days: int = 7) -> Dict[str, Any]:
+    """Read HA's daily forecast; an unavailable or malformed feed stays harmless."""
+    unavailable = {"status": "error", "message": "I can't see a weather forecast right now."}
+    try:
+        from services import ha_api, storage
+        days = max(1, min(10, int(days)))
+        settings = storage.get_settings()
+        forecast = ha_api.get_weather_forecast(settings.get('weather_entity') or None, 'daily')
+        today = datetime.date.today()
+        upcoming = []
+        for entry in forecast or []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                date = datetime.date.fromisoformat(str(entry.get('datetime') or '')[:10])
+            except ValueError:
+                continue
+            if date < today:
+                continue
+            upcoming.append({
+                'date': date.isoformat(), 'weekday': date.strftime('%A'),
+                'condition': entry.get('condition'), 'high': entry.get('temperature'),
+                'low': entry.get('templow'), 'precipitation': entry.get('precipitation_probability'),
+            })
+        upcoming = sorted(upcoming, key=lambda row: row['date'])[:days]
+        if not upcoming:
+            return unavailable
+        lines = []
+        for day in upcoming:
+            label = 'Today' if day['date'] == today.isoformat() else day['weekday']
+            condition = {'partlycloudy': 'partly cloudy', 'clear-night': 'clear',
+                         'rainy': 'rain likely', 'pouring': 'heavy rain',
+                         'snowy': 'snow', 'snowy-rainy': 'snow and rain',
+                         'lightning-rainy': 'thunderstorms', 'windy-variant': 'windy and cloudy',
+                         'exceptional': 'unusual weather'}.get(day['condition'], day['condition'])
+            condition = condition or 'condition unavailable'
+            if day['precipitation'] is not None and day['precipitation'] != 0:
+                condition += f" ({day['precipitation']}%)"
+            high = day['high'] if day['high'] is not None else 'unknown'
+            low = day['low'] if day['low'] is not None else 'unknown'
+            lines.append(f"{label}: {condition}, {high}/{low}.")
+        return {'status': 'success', 'days': upcoming, 'message': ' '.join(lines)}
+    except Exception:
+        return unavailable
+
+
 def _get_target_element_id(entity_type: str, entity_id: str) -> str:
     """Helper to generate consistent DOM element IDs for UI anchoring."""
     if entity_type == "event":
@@ -4885,6 +4931,7 @@ def get_available_tools() -> List[Dict]:
             }
         },
         _flat_tool("get_travel_time"),
+        _flat_tool("get_weather"),
         _flat_tool("find_in_chauffeur"),
         _flat_tool("list_projects"),
         _flat_tool("get_project"),
@@ -7537,6 +7584,11 @@ class GetHouseholdStatusTool(BaseModel):
     """
     target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
 
+class GetWeatherTool(BaseModel):
+    """The weather forecast for today and the coming days (up to 10) from Home Assistant: 'what's the weather this week', 'will it rain Saturday'."""
+    days: int = Field(7, description="How many forecast days, clamped to 1..10.")
+
+
 class GetTravelTimeTool(BaseModel):
     """Looks up a typical drive without live traffic, for places not on the
     schedule. A scheduled drive's departure is the leave_label returned by
@@ -7679,6 +7731,7 @@ TOOL_SCHEMAS = {
     "add_occasion_gift_list": AddOccasionGiftListTool.model_json_schema(),
 
     "get_travel_time": GetTravelTimeTool.model_json_schema(),
+    "get_weather": GetWeatherTool.model_json_schema(),
     "start_drive": StartDriveTool.model_json_schema(),
     "update_drive_status": UpdateDriveStatusTool.model_json_schema(),
     "get_current_state": GetCurrentStateTool.model_json_schema(),
@@ -9495,6 +9548,10 @@ def handle_create_thread(args: dict, actor=None, focus_key=None) -> dict:
                          acting_member=actor, idem=args.get('idem'), project_id=args.get('project_id'), focus_key=focus_key)
 
 
+def handle_get_weather(args: dict) -> dict:
+    return get_weather(days=args.get('days', 7))
+
+
 def handle_get_travel_time(args: dict) -> dict:
     return get_travel_time(origin=args.get("origin") or '',
                            destination=args.get("destination") or '')
@@ -9881,6 +9938,7 @@ TOOL_HANDLERS = {
     "log_program_session": handle_log_program_session,
     "propose_program": handle_propose_program,
     "get_travel_time": handle_get_travel_time,
+    "get_weather": handle_get_weather,
     "start_drive": handle_start_drive,
     "update_drive_status": handle_update_drive_status,
     "get_current_state": handle_get_current_state,
