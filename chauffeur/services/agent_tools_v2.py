@@ -1826,7 +1826,8 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
                        and set(channel.get('member_ids') or []) == {acting_member.get('id'), 'argyle'})
         if spoken:
             from services.voice_identity import VoiceContext
-            voice_actor = voice_context.actor() if isinstance(voice_context, VoiceContext) else None
+            voice_actor = (voice_context.actor() or voice_context.verified_member()) \
+                if isinstance(voice_context, VoiceContext) else None
             # Revalidate voice identity here; a household fallback actor is
             # not evidence that the person speaking is the situation actor.
             row = _sit.load(k, sid)
@@ -2225,11 +2226,11 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     """The one chat door for anything that takes steps, time or outside people
     (front door §1): the project is created at once, its card is posted
     first, then Argyle plans inside it. A child's project waits for a parent
-    to plan it. Recognised voice acts as its member; other voice and House
+    to plan it. Recognised or verified voice acts as its member; other voice and House
     callers use the parent of record. Rooms use the household audience."""
     from services.voice_identity import VoiceContext
     from services import storage, subjects, situations, projects, missions as _missions, triage as _tri
-    # Voice writes use the actor when present. Room reads still
+    # Voice writes use the actor or verified member when present. Room reads still
     # use HOUSE and spoken_safe, independently of that write identity.
     ctx = voice_context if isinstance(voice_context, VoiceContext) else None
     house = not ctx and access.is_house(acting_member)
@@ -2237,7 +2238,7 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     goal = (goal or '').strip()
     if not goal:
         return {"status": "error", "message": "Say what you want to get done."}
-    actor = (ctx.actor() or situations.parent_of_record()) if ctx else acting_member
+    actor = (ctx.actor() or ctx.verified_member() or situations.parent_of_record()) if ctx else acting_member
     if house or (spoken and not actor):
         actor = situations.parent_of_record()
     if not actor or not actor.get('id'):

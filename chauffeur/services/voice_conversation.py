@@ -1,4 +1,4 @@
-"""Listening policy for ordinary satellite replies; identity prompts own theirs."""
+"""Satellite conversation state and listening policy for ordinary replies."""
 import re
 import threading
 import time
@@ -60,6 +60,23 @@ def in_conversation(ctx) -> bool:
     with _lock:
         previous = _turns.get(key)
         return previous is not None and time.monotonic() - previous[1] < GAP_SECONDS
+
+
+def close(ctx):
+    """Record a closed mic, including answers handled before the model."""
+    with _lock:
+        _turns.pop((ctx.ha_instance_id, ctx.satellite_id), None)
+
+
+def touch(ctx):
+    """Record an open mic without spending or resetting its ordinary-turn cap."""
+    if not ctx.satellite_id:
+        return
+    key = (ctx.ha_instance_id, ctx.satellite_id)
+    now = time.monotonic()
+    with _lock:
+        count = _turns.get(key, (0, now))[0]
+        _turns[key] = (count, now)
 
 
 def continue_conversation(ctx, text):

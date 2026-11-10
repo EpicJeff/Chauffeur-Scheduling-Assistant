@@ -161,7 +161,7 @@ def intercept(text, ctx):
             return None
         actor = ctx.actor()
         if entry['expires'] <= time.time() or voice_conversation.is_sign_off(text) \
-                or not actor or actor['id'] != entry['member_id']:
+                or not ctx.recognized_this_turn or not actor or actor['id'] != entry['member_id']:
             _try_release(key)
             return None
         # Prefer the private destination when a reply includes both choices

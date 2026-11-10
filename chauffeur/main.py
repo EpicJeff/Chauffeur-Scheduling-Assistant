@@ -3931,17 +3931,19 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
         finally:
             voice_private.current.reset(satellite_token)
         readback = voice_approval.current_readback(ctx)
-        if readback:
-            res['message'] = readback  # a model summary cannot change an approval question
-
         actor = ctx.actor()
-        private_answer = not readback and satellite_turn is not None and not satellite_turn.safe
-        if private_answer:
+        unsafe_answer = satellite_turn is not None and not satellite_turn.safe
+        private_answer = not readback and unsafe_answer
+        if readback and unsafe_answer:
+            voice_private.post_reply_to_chat(satellite_turn.member['id'], res.get('message', 'Done.'), res.get('card'))
+        elif private_answer:
             res['message'] = voice_private.hold(ctx, satellite_turn.member, res.get('message', 'Done.'), res.get('card'))
         elif actor and res.get('card'):
             reply = res.get('message', 'Done.')
             if voice_private.post_reply_to_chat(actor['id'], reply, res['card']):
                 res['message'] = reply.rstrip() + voice_private.CHAT_NOTICE
+        if readback:
+            res['message'] = readback  # a model summary cannot change an approval question
 
         if conv_id:
             storage.add_message_to_conversation(conv_id, {'role': 'assistant', 'content': res.get("message", "Done."), 'timestamp': time.time()})
@@ -3978,7 +3980,13 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
                                not signed_off and (private_answer or voice_identity.expects_reply(ctx) or keep_listening))
 
     def perform_and_speak():
-        return _answer_in_room(perform(), req)
+        result = perform()
+        from services import voice_conversation
+        if result.get('continue_conversation'):
+            voice_conversation.touch(ctx)
+        else:
+            voice_conversation.close(ctx)
+        return _answer_in_room(result, req)
 
     # Cache only sanitized replies. Authentication retries never check a PIN twice,
     # and a duplicate delivery of one utterance never says its answer twice on the

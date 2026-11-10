@@ -120,10 +120,12 @@ class VoiceContext:
     def actor(self) -> dict | None:
         """The person speaking, revalidated independently of PIN proof."""
         from services import scope
+        if not self.recognized_this_turn:
+            return None
         if self.level == 'verified':
             member = self.verified_member()
             return member if member and scope.can_see(member, 'chat.agent') else None
-        if self.level != 'named' or not self.recognized_this_turn:
+        if self.level != 'named':
             return None
         with _lock:
             row = _sessions.get((self.ha_instance_id, self.satellite_id))
@@ -133,10 +135,11 @@ class VoiceContext:
             return member if member and scope.can_see(member, 'chat.agent') else None
 
     def provenance(self):
-        member = self.actor()
+        actor = self.actor()
+        member = actor or self.verified_member()
         return {'actor_kind': 'member' if member else 'household_voice',
                 'actor_member_id': member['id'] if member else None,
-                **({'via': 'voice'} if member else {}),
+                **({'via': 'voice'} if actor else {}),
                 'ha_instance_id': self.ha_instance_id, 'satellite_id': self.satellite_id,
                 'request_id': self.request_id}
 

@@ -152,7 +152,8 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
         return {'status': 'refused', 'message': 'The satellite service token changed. Please try again.'}
     if not ctx.ha_instance_id and (name in MUTATIONS or name in ('send_family_message', 'send_direct_message')):
         return {'status': 'refused', 'message': 'This household action needs the configured satellite service token and metadata.'}
-    principal = getattr(ctx, 'actor', ctx.verified_member)()
+    # Without per-turn evidence, retain the verified household rail.
+    principal = getattr(ctx, 'actor', ctx.verified_member)() or ctx.verified_member()
     if name in MUTATIONS and principal is None:
         from services.situations import parent_of_record
         principal = parent_of_record()

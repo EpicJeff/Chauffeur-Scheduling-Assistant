@@ -729,7 +729,8 @@ def apply(ctx, evidence):
                     row['generation'], row['level'], row['member_id'], row['expires_at'], ctx.service_revision, ctx.paired)
         # Listening continuity is stricter than retaining an identity: a long,
         # uncertain sample spends the conversation cap even if the session stays.
-        recognized = bool(matched or (not usable and row.get('recognized') and row.get('member_id')
+        recognized = bool(matched or (not usable and row.get('member_id')
+                                     and (row.get('recognized') or (row['level'] == 'verified' and row.get('speaker_anchor')))
                                      and voice_conversation.in_conversation(ctx))
                           or (usable and row['level'] == 'verified' and anchor
                               and score(vector, anchor) >= CONTINUITY and not contradiction))
