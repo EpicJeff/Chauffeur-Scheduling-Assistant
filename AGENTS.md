@@ -27,6 +27,25 @@ Chauffeur is a family logistics app that runs as a Home Assistant add-on (FastAP
 - **PowerShell:** no double quotes in commit messages, and never round-trip source through `Get-Content`/`Set-Content` (it mangles UTF-8). Prefer the Bash tool or Python for file edits.
 - Event, trip and solver semantics are locked in the memory files. Read before changing anything in `services/solver*`, trips, or the calendar feed.
 
+## Several sessions at once: one worktree each
+
+Several sessions (Claude Code and Codex) often work on this repo at the same time. Each one works in its own folder so none of them has to wait for, or disturb, another.
+
+- **Never edit in the main folder (`E:\repositories\Chauffeur`).** It stays clean, on `main`, and is used only to fast-forward `main` and push.
+- **Start every piece of work in its own git worktree and branch**, for example `git worktree add -b <topic> ../Chauffeur-<topic> main`. Run tests and Codex jobs inside that worktree (the Codex companion allows one job per folder).
+- **Commit freely on the branch. Do not bump the version there.**
+- **Landing on main** happens when the work is ready. Claude Code does it, under the hand-off contract below:
+  1. In the worktree, run `git merge main` and resolve the conflicts. Never hand-merge the generated Tailwind CSS: take either side and rerun `python tools/build_tailwind.py` from `chauffeur/`.
+  2. Run the gate tests.
+  3. Bump with `python chauffeur/tools/bump_version.py`. It reads main's current number, so two sessions never claim the same version.
+  4. Add the `system_capabilities.md` entry at the top, then commit.
+  5. In the main folder, run `git merge --ff-only <topic>`, then `git push`. If the fast-forward refuses, `main` has moved: go back to step 1 and retry.
+  6. Remove the worktree and delete the branch.
+- **Some conflicts are routine at landing.** Each has a fixed resolution:
+  - the version in `chauffeur/config.yaml`: renumber;
+  - the top of `system_capabilities.md`: keep both entries;
+  - the Tailwind output: rebuild.
+
 ## The hand-off contract with Claude Code
 
 - **Do not bump `chauffeur/config.yaml` and do not commit.** Leave your changes in the working tree with a short note of what you changed, what you tested and how. Claude Code runs the gate tests, reviews the diff, updates `system_capabilities.md`, bumps the version and commits under its own rule.
