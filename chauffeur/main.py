@@ -3925,6 +3925,14 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
         if readback:
             res['message'] = readback  # a model summary cannot change an approval question
 
+        actor = ctx.actor()
+        if actor and res.get('card'):
+            from services.agent_tools_v2 import _post_chat_message
+            channel = storage.get_or_create_dm(actor['id'], 'argyle')
+            reply = res.get('message', 'Done.')
+            _post_chat_message(channel, storage.ensure_argyle_member(), reply, card=res['card'])
+            res['message'] = reply.rstrip() + " I've put that in your Argyle chat."
+
         if conv_id:
             storage.add_message_to_conversation(conv_id, {'role': 'assistant', 'content': res.get("message", "Done."), 'timestamp': time.time()})
         

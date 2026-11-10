@@ -73,7 +73,7 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
         return {'status': 'refused', 'message': 'The satellite service token changed. Please try again.'}
     if not ctx.ha_instance_id and (name in MUTATIONS or name in ('send_family_message', 'send_direct_message')):
         return {'status': 'refused', 'message': 'This household action needs the configured satellite service token and metadata.'}
-    principal = ctx.verified_member()
+    principal = getattr(ctx, 'actor', ctx.verified_member)()
     if name in MUTATIONS and principal is None:
         from services.situations import parent_of_record
         principal = parent_of_record()
@@ -102,7 +102,7 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
             'action', 'query', 'entity_id', 'domain', 'service', 'data', 'hours', 'app')},
             voice_context=ctx, source='voice')
         if args.get('action') in ('act', 'app') and result.get('status') == 'success':
-            record_action(ctx, 'house', ctx.verified_member(),
+            record_action(ctx, 'house', principal,
                           {'entity_id': result.get('entity_id'), 'service': result.get('service'),
                            'app': result.get('app')}, provenance)
     elif name == 'music':
@@ -110,20 +110,20 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
             'action', 'query', 'room', 'player', 'media_type', 'mode', 'level')},
             voice_context=ctx, source='voice')
         if args.get('action') == 'play' and result.get('status') == 'success':
-            record_action(ctx, 'music', ctx.verified_member(),
+            record_action(ctx, 'music', principal,
                           {'entity_id': result.get('entity_id'), 'item': result['item'].get('name')}, provenance)
     elif name == 'report_gap':
         # A gap is a gap whoever hit it; the voice need not be known.
         result = tools.report_gap(**{k: v for k, v in args.items() if k in (
             'kind', 'what_was_asked', 'what_was_missing', 'asked', 'prior')},
-            acting_member=ctx.verified_member() or ctx.member(), source='voice')
+            acting_member=principal or ctx.member(), source='voice')
     elif name == 'memory':
-        # Teaching is a parent's act; a verified voice is the only spoken proof of one.
+        # Teaching uses the speaker's role; recognition does not supply PIN proof.
         result = tools.memory(**{k: v for k, v in args.items() if k in (
             'action', 'text', 'kind', 'phrase', 'entity_ids', 'memory_id')},
-            acting_member=ctx.verified_member(), source='voice')
+            acting_member=principal, source='voice')
         if args.get('action') in ('remember', 'forget') and result.get('status') == 'success':
-            record_action(ctx, 'memory', ctx.verified_member(),
+            record_action(ctx, 'memory', principal,
                           {'action': args.get('action'), 'text': (result.get('memory') or {}).get('text')}, provenance)
     elif name == 'get_shopping_list_items':
         result = tools.get_shopping_list_items(args.get('list_name') or '', acting_member=None)
@@ -131,7 +131,7 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
         body = str(args.get('message_text') or '').strip()
         if not body:
             return {'status': 'error', 'message': 'What should I send to the family?'}
-        member = ctx.verified_member()
+        member = principal
         sender = member or storage.ensure_argyle_member()
         if name == 'send_direct_message':
             wanted = str(args.get('recipient_name') or '').strip().casefold()
@@ -163,7 +163,7 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
                                        spoken=True)
     else:
         result = tools.start_project(args.get('goal') or '', args.get('title'),
-                                     acting_member=ctx.verified_member(), focus_key=focus_key,
+                                     acting_member=principal, focus_key=focus_key,
                                      voice_context=ctx, subject_kind=args.get('subject_kind'),
                                      subject_id=args.get('subject_id'))
     return result

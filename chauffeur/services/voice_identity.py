@@ -115,10 +115,25 @@ class VoiceContext:
     def verified_member(self):
         return self.member() if self.level == 'verified' else None
 
+    def actor(self) -> dict | None:
+        """The person speaking, revalidated independently of PIN proof."""
+        if self.level == 'verified':
+            return self.verified_member()
+        if self.level != 'named' or not self.recognized_this_turn:
+            return None
+        from services import scope
+        with _lock:
+            row = _sessions.get((self.ha_instance_id, self.satellite_id))
+            if not row or row.get('level') != 'named' or not row.get('recognized'):
+                return None
+            member = self.member()
+            return member if member and scope.can_see(member, 'chat.agent') else None
+
     def provenance(self):
-        member = self.verified_member()
+        member = self.actor()
         return {'actor_kind': 'member' if member else 'household_voice',
                 'actor_member_id': member['id'] if member else None,
+                **({'via': 'voice'} if member else {}),
                 'ha_instance_id': self.ha_instance_id, 'satellite_id': self.satellite_id,
                 'request_id': self.request_id}
 
