@@ -42,7 +42,8 @@ SHARED = ('get_drive_digest', 'get_run_sheet', 'get_household_tasks', 'get_kid_t
           'get_calendar_events', 'get_shopping_list_items', 'research_question', 'get_weather')
 PERSONAL = ('read_mail', 'search_mail', 'get_family_messages', 'list_threads', 'get_requests', 'answer_request',
             'list_insights', 'list_open_findings', 'find_in_chauffeur', 'get_current_state', 'start_ask',
-            'draft_thread_message', 'suggest_gift_ideas', 'add_occasion_gift_list', 'get_occasion')
+            'draft_thread_message', 'suggest_gift_ideas', 'add_occasion_gift_list', 'get_occasion',
+            'manage_car')   # manage_car locate says where a family car, so a person, is
 
 
 def forecast(days=10, start=None):
