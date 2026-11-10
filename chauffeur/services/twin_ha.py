@@ -14,14 +14,20 @@ from services import control_rules, ha_api, house, twin_model
 
 # What a device IS, most telling first: a lock that also reports its battery
 # is a lock, and a light that also reports its energy is a light.
-_KINDS = ('lock', 'garage', 'climate', 'light', 'fan', 'switch', 'camera',
+_KINDS = ('lock', 'garage', 'climate', 'light', 'fan', 'outlet', 'switch', 'camera',
           'media', 'blinds', 'sensor', 'other')
 _PLURALS = {'light': 'lights', 'switch': 'switches', 'fan': 'fans',
             'camera': 'cameras', 'sensor': 'sensors', 'outlet': 'outlets'}
 
 
-def _entity_kind(entity):
+def _entity_kind(entity, registry=None):
     domain = entity['domain']
+    if domain == 'switch':
+        # A smart plug is an outlet: its state says so, or the registry does.
+        row = registry or {}
+        attrs = (entity.get('_state') or {}).get('attributes') or {}
+        if 'outlet' in (attrs.get('device_class'), row.get('device_class'), row.get('original_device_class')):
+            return 'outlet'
     if domain == 'cover':
         attrs = (entity.get('_state') or {}).get('attributes')
         return 'garage' if control_rules.kind_of(entity['entity_id'], attrs) == 'garage' else 'blinds'
@@ -46,7 +52,10 @@ def catalogue() -> dict:
                       'floor_id': row.get('floor_id'), 'floor_name': floor.get('name'),
                       'floor_level': floor.get('level')})
     area_by_name = {a['name']: a['area_id'] for a in areas}
-    order = {e['entity_id']: i for i, e in enumerate(ha_api.get_entity_registry())}
+    registry = ha_api.get_entity_registry()
+    order = {e['entity_id']: i for i, e in enumerate(registry)}
+    rows = {e['entity_id']: e for e in registry}
+    kind = lambda e: _entity_kind(e, rows.get(e['entity_id']))
     grouped = {}
     for entity in house._catalogue():
         device_id = entity.get('_device_id') or 'entity:' + entity['entity_id']
@@ -54,11 +63,11 @@ def catalogue() -> dict:
     devices = []
     for device_id, members in grouped.items():
         members.sort(key=lambda e: order.get(e['entity_id'], len(order)))
-        primary = min(members, key=lambda e: _KINDS.index(_entity_kind(e)))
+        primary = min(members, key=lambda e: _KINDS.index(kind(e)))
         devices.append({'device_id': device_id,
                         'name': primary.get('_device_name') or primary['name'],
                         'area_id': area_by_name.get(primary.get('area')),
-                        'kind': _entity_kind(primary), 'entity_id': primary['entity_id'],
+                        'kind': kind(primary), 'entity_id': primary['entity_id'],
                         'entities': [e['entity_id'] for e in members]})
     return {'available': bool(areas), 'areas': areas, 'floors': floors, 'devices': devices}
 

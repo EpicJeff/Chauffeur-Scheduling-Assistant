@@ -131,6 +131,14 @@ check('grid_and_explicit_lock_actions', async () => {
   const garage = deviceActions({...layout.devices.find(d => d.kind === 'garage'),offered:true},null,async (...args) => calls.push(args));
   await click(button(garage,'Open')); assert.deepEqual(calls.at(-1),['cover.garage','open_cover',{}]);
 });
+check('a_smart_plug_outlet_toggles_like_a_switch', async () => {
+  // Final review M1: a switch with device_class outlet is kind outlet; it keeps its On/Off control.
+  const outlet = deviceActions({device_id:'kettle',name:'Kettle plug',entity_id:'switch.kettle',entities:['switch.kettle'],kind:'outlet',offered:true,area_id:'kitchen'},
+    {state:'off',attributes:{device_class:'outlet'}},async (...args) => calls.push(args));
+  const node = outlet.querySelectorAll('button').find(n => n.getAttribute('role') === 'switch');
+  assert.ok(node, 'an outlet has the same On/Off switch a switch has');
+  await click(node); assert.deepEqual(calls.at(-1),['switch.kettle','toggle',{}]);
+});
 check('lights_mode_builds_transformed_floor_glow_and_restores_all', async () => {
   states['light.lamp'] = {state:'on',attributes:{brightness:128}}; await live.refresh();
   const summary = live.rooms(); assert.ok(Math.abs(summary[0].glow - (128/255+1)/2)<.001);

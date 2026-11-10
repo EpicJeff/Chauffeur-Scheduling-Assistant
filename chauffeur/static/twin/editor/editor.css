@@ -97,8 +97,10 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-material-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
 .editor-material-line span { display: block; color: var(--editor-muted); font-size: 11px; }
 .editor-material-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex: 0 0 auto; max-width: 55%; }
-.editor-device-row { cursor: grab; touch-action: none; user-select: none; }
-.editor-device-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.editor-device-row { cursor: grab; touch-action: pan-y; user-select: none; justify-content: flex-start; }
+.editor-device-row > .editor-material-actions { margin-left: auto; }
+.editor-device-grip { flex: 0 0 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; margin: 0 -8px 0 -10px; color: var(--editor-muted); font-size: 18px; touch-action: none; cursor: grab; }
+.editor-device-row > div:nth-child(2) { min-width: 0; overflow-wrap: anywhere; }
 #library-panel, #material-chooser { position: fixed; z-index: 5; padding: 14px; border: 1px solid var(--editor-accent); border-radius: 16px; background: var(--editor-panel); }
 /* Docked in the side column over the floor list, ending above the piece card, so the
    whole scene stays free to drop on (it docks the way the piece card does). */

@@ -36,6 +36,34 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     return { opening: opening.id, side: side === inside ? 'in' : 'out' };
   }
 
+  // The room's doors (any opening but a window), each with the host that puts a device on
+  // this room's face of it: a lock or a contact sensor belongs on its door.
+  function doors(room) {
+    const building = getPlan()?.buildings.find(b => b.id === room.building);
+    const out = [];
+    for (const opening of building?.openings || []) {
+      if (opening.kind === 'window' || opening.state === 'ghost') continue;
+      const wall = building.walls.find(w => w.id === (opening.wall || opening.host?.wall) && w.state !== 'ghost');
+      if (!wall) continue;
+      const left = wallFace(building, wall, 'left').room, right = wallFace(building, wall, 'right').room;
+      const side = left?.id === room.id ? 'left' : right?.id === room.id ? 'right' : null;
+      const host = side && openingHost(building, opening, side);
+      if (!host) continue;
+      const other = side === 'left' ? right : left, noun = opening.kind === 'garage' ? 'garage door' : 'door';
+      const label = opening.name || (other ? `${noun[0].toUpperCase()}${noun.slice(1)} to ${other.name || 'the next room'}` : `Outside ${noun}`);
+      out.push({ id: opening.id, building: building.id, host, label });
+    }
+    // Doors that read the same are told apart by number.
+    const seen = new Map();
+    for (const door of out) seen.set(door.label, (seen.get(door.label) || 0) + 1);
+    const count = new Map();
+    for (const door of out) if (seen.get(door.label) > 1) {
+      count.set(door.label, (count.get(door.label) || 0) + 1);
+      door.label = `${door.label} ${count.get(door.label)}`;
+    }
+    return out;
+  }
+
   function operation(device, event, surfaceKind = null) {
     const picked = view.pick(event.clientX, event.clientY);
     const building = getPlan()?.buildings.find(b => b.id === (picked?.building ?? picked?.buildingId));
@@ -173,17 +201,22 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
       sprite.material.opacity = inRoom ? 1 : .2;
     }
   }
+  const saved = device => getPlan()?.buildings.some(b => b.anchors?.some(a => a.device === device.device_id)
+    || b.devices?.some(d => d.device === device.device_id));
+  // Like the wall: a device in a Home Assistant area draws; with no room linked to its area
+  // only a saved placement says where (the building card flags it to move or remove).
   function refresh() {
     if (stopped) return;
     const state = link.state(), shown = new Set();
     for (const device of state?.available ? state.devices || [] : []) {
       if (!state.areas?.some(a => a.area_id === device.area_id)) continue;
-      if (!state.rooms?.some(r => r.ha_area === device.area_id && !r.gone)) continue;
+      if (!state.rooms?.some(r => r.ha_area === device.area_id && !r.gone) && !saved(device)) continue;
       shown.add(device.device_id);
       let row = sprites.get(device.device_id);
       if (!row) {
         if (!textures.has(device.kind)) textures.set(device.kind, markerTexture(device.kind, 'off'));
         const sprite = markerSprite(textures.get(device.kind)); root.add(sprite);
+        sprite.userData.deviceId = device.device_id;
         row = { sprite }; sprites.set(device.device_id, row);
       }
       row.at = spot(device);
@@ -204,7 +237,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     sprites.forEach(row => row.sprite.material.dispose()); textures.forEach(texture => texture.dispose());
     sprites.clear(); textures.clear();
   }
-  const controller = { anchors, arm, startDrag, pointerDown, pointerUp, cancel, refresh, draw, stop };
+  const controller = { anchors, doors, arm, startDrag, pointerDown, pointerUp, cancel, refresh, draw, stop };
   link.setPlacement(controller);
   signal.addEventListener('abort', stop, { once: true });
   return controller;

@@ -1061,6 +1061,14 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
     if kind in ('place_device', 'unplace_device'):
         device = _device_id(op.get('device'))
         if kind == 'place_device':
+            if ha_catalogue is None:
+                from services import twin_ha
+                ha_catalogue = twin_ha.safe_catalogue()
+            # A guessed id would be stored and never drawn; with no Home Assistant
+            # the id cannot be checked, so it is kept.
+            if ha_catalogue.get('available') and not any(
+                    d.get('device_id') == device for d in ha_catalogue.get('devices', [])):
+                raise Refused('Choose a device.')
             _place_device(model, op, actor)
         else:
             if not _unplace_device(model, device, actor):

@@ -130,7 +130,7 @@ export function createPolling(config) {
 export const mountTwin = async () => ({ scene: {}, rebuild: async p => { globalThis.rendered = p; } });
 export const runDirector = async () => {};
 export const createPanel = () => ({ message() {}, readOnly() {}, events() {}, reset() {} });
-const tools = { refresh() {}, drawFloors() {}, delegate() {}, selected() {}, dragging: () => false };
+const tools = { refresh() {}, drawFloors() {}, delegate() {}, selected() {}, dragging: () => false, refreshLink: async () => {} };
 export const createSceneTools = () => tools;
 export const createHistory = () => ({ perform: action => action(), sync() {}, clear() {} });
 export const createDraw = () => ({ cancel() {} });
@@ -146,6 +146,8 @@ export const createPauses = () => ({ sync() {}, current: () => null, dismissed: 
 export const applyRegistration = (_, p) => p, invertRegistration = (_, p) => p;
 export const createTimeline = () => ({ sync() {}, preview: () => null });
 export const createPlace = () => ({ sync() {}, isOpen: () => false });
+export const createDevicePlacement = () => ({ refresh() {}, draw() {}, stop() {}, cancel() {},
+  pointerDown: () => false, pointerUp: () => false });
 '''
 
 EDITOR_DRIVER = r'''

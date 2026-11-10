@@ -8,7 +8,7 @@ import { buildYard } from './twin_yard.js';
 import { base, loadSky, disposeObject } from './twin_library.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 import { hostPoint } from './twin_hosts.js';
-import { mountLive } from './live/live.js';
+import { keepLive } from './live/live.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } = {}) {
   const probe = document.createElement('canvas').getContext('webgl2');
@@ -911,11 +911,11 @@ async function boot() {
     const hudTimer = hud ? setInterval(() => {
       const stats = view.stats(); hud.textContent = `${stats.fps.toFixed(1)} fps · ${stats.drawCalls} draw calls`;
     }, 500) : null;
-    window.addEventListener('pagehide', () => { clearInterval(hudTimer); view.dispose(); }, { once: true });
     // The live layer comes up on its own: a slow or absent Home Assistant never delays the
-    // probe below, and a layer that fails never reaches this page's status line.
-    mountLive(view, { api: (path, options) => fetch(base() + path, options) })
-      .catch(error => console.error('[twin live]', error));
+    // probe below, and a layer that fails never reaches this page's status line. The keeper
+    // retries a layer that could not mount and re-reads the layout, so a wall never needs a reload.
+    const keeper = keepLive(view, { api: (path, options) => fetch(base() + path, options) });
+    window.addEventListener('pagehide', () => { keeper.stop(); clearInterval(hudTimer); view.dispose(); }, { once: true });
     const query = new URLSearchParams(location.search);
     if (query.get('probe') === '1') {
       let result;

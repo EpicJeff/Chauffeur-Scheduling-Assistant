@@ -174,6 +174,7 @@ class El {
     let stopped = false;
     const e = Object.assign(Object.create(null), {
       type: event.type, target: this, bubbles: event.bubbles !== false, defaultPrevented: false, key: event.key,
+      pointerType: event.pointerType, button: event.button ?? 0, pointerId: event.pointerId ?? 1,
       preventDefault() { this.defaultPrevented = true; }, stopPropagation() { stopped = true; }, stopImmediatePropagation() { stopped = true; },
     });
     for (let n = this; n && !stopped; n = e.bubbles ? n.parentElement : null) {
@@ -564,6 +565,129 @@ check('pick_a_spot_names_each_spot', async () => {
     `free spots of the device's kind, named, then the surfaces: ${asked}`);
   assert.ok(subset(commits[0], { op: 'place_device', device: 'd-plug', anchor: 'a1' }), JSON.stringify(commits));
   abort.abort();
+});
+
+// ---------------------------------------------------------------- final review fix wave
+// A placement double: records what the rows ask of it.
+function placementDouble(extra = {}) {
+  const asked = { drags: [], armed: [] };
+  return { asked, cancel() {}, arm(device, kind) { asked.armed.push([device.device_id, kind]); },
+    startDrag(event, device) { asked.drags.push([device.device_id, event.pointerType]); },
+    anchors: () => [], doors: () => [], ...extra };
+}
+const deviceRowOf = (section, name) => descendants(section).find(n => n.classList?.contains('editor-device-row') && words(n).includes(name)) || null;
+
+// I1: a placed device's row in the room card has Remove, through the editor's op path.
+check('i1_placed_row_offers_remove', async () => {
+  const body = linked();
+  body.devices = [
+    { device_id: 'd-lock', name: 'Back door lock', kind: 'lock', area_id: 'kitchen', placed: { kind: 'host', building: 'B1' } },
+    { device_id: 'd-lamp', name: 'Den lamp', kind: 'light', area_id: 'kitchen', placed: null }];
+  const { link, commits, abort } = mount(body);
+  await link.refresh();
+  const section = link.roomSection(BUILDING.rooms[0]);
+  const placedRow = deviceRowOf(section, 'Back door lock'), freeRow = deviceRowOf(section, 'Den lamp');
+  assert.ok(placedRow && freeRow, `both rows: ${words(section)}`);
+  assert.ok(!buttonNamed(freeRow, 'Remove'), 'an unplaced device has nothing to remove');
+  const remove = buttonNamed(placedRow, 'Remove');
+  assert.ok(remove, `a placed device's row has Remove: ${words(placedRow)}`);
+  remove.click(); await settle();
+  assert.deepEqual(commits, [{ op: 'unplace_device', device: 'd-lock' }], JSON.stringify(commits));
+  abort.abort();
+});
+
+// I3: a touch that starts on a row's words scrolls the card; only the grip carries the row.
+check('i3_touch_drags_only_from_the_grip', async () => {
+  const body = linked();
+  body.devices = [{ device_id: 'd-lamp', name: 'Den lamp', kind: 'light', area_id: 'kitchen' }];
+  const { link, abort } = mount(body);
+  await link.refresh();
+  const placement = placementDouble(); link.setPlacement(placement);
+  const row = deviceRowOf(link.roomSection(BUILDING.rooms[0]), 'Den lamp');
+  const grip = descendants(row).find(n => n.classList?.contains('editor-device-grip'));
+  assert.ok(grip, 'the row has a grip handle');
+  const name = descendants(row).find(n => n.localName === 'p');
+  name.dispatchEvent({ type: 'pointerdown', pointerType: 'touch' });
+  assert.deepEqual(placement.asked.drags, [], 'a touch on the words never starts a drag (the card scrolls)');
+  grip.dispatchEvent({ type: 'pointerdown', pointerType: 'touch' });
+  name.dispatchEvent({ type: 'pointerdown', pointerType: 'mouse' });
+  assert.deepEqual(placement.asked.drags.map(d => d[0]), ['d-lamp', 'd-lamp'], 'the grip (touch) and a mouse anywhere carry it');
+  abort.abort();
+});
+
+// M3: Pick a spot offers the room's doors to a lock or a contact sensor, and only to them.
+check('m3_pick_a_spot_offers_doors', async () => {
+  const body = linked();
+  body.devices = [{ device_id: 'd-lock', name: 'Back door lock', kind: 'lock', area_id: 'kitchen' },
+    { device_id: 'd-contact', name: 'Back door sensor', kind: 'sensor', area_id: 'kitchen' },
+    { device_id: 'd-lamp', name: 'Den lamp', kind: 'light', area_id: 'kitchen' }];
+  const { link, commits, abort } = mount(body);
+  await link.refresh();
+  const doors = [{ id: 'o-back', building: 'B1', label: 'Outside door', host: { opening: 'o-back', side: 'in' } },
+    { id: 'o-hall', building: 'B1', label: 'Door to Hall', host: { opening: 'o-hall', side: 'out' } }];
+  link.setPlacement(placementDouble({ doors: () => doors }));
+  const section = link.roomSection(BUILDING.rooms[0]);
+  choose = options => (options.find(o => o.label === 'Door to Hall') || {}).value ?? null;
+  buttonNamed(deviceRowOf(section, 'Back door lock'), 'Pick a spot').click(); await settle();
+  const asked = choices.at(-1).options.map(o => o.label);
+  assert.deepEqual(asked, ['Outside door', 'Door to Hall', 'On a wall', 'On the ceiling'], `doors first: ${asked}`);
+  assert.deepEqual(commits.at(-1), { op: 'place_device', device: 'd-lock', building: 'B1', host: { opening: 'o-hall', side: 'out' } },
+    JSON.stringify(commits));
+  choose = () => null;
+  buttonNamed(deviceRowOf(section, 'Back door sensor'), 'Pick a spot').click(); await settle();
+  assert.ok(choices.at(-1).options.some(o => o.label === 'Outside door'), 'a contact sensor is offered the doors too');
+  buttonNamed(deviceRowOf(section, 'Den lamp'), 'Pick a spot').click(); await settle();
+  assert.ok(!choices.at(-1).options.some(o => o.label === 'Outside door'), 'a light is not offered a door');
+  abort.abort();
+});
+
+// M4: a placed device whose Home Assistant area has no room shows on its building's card,
+// flagged, with Remove and a grip to move it.
+check('m4_placed_device_in_a_roomless_area_is_flagged', async () => {
+  const body = linked();
+  body.areas = [...AREAS, { area_id: 'studio', name: 'Studio', floor_id: 'ground', floor_name: 'Ground floor', floor_level: 0 }];
+  body.unlinked = [...body.unlinked, { area_id: 'studio', name: 'Studio' }];
+  body.devices = [
+    { device_id: 'd-hue', name: 'Hue lamp', kind: 'light', area_id: 'studio', placed: { kind: 'host', building: 'B1' } },
+    { device_id: 'd-free', name: 'Studio fan', kind: 'fan', area_id: 'studio', placed: null },
+    { device_id: 'd-other', name: 'Shed lamp', kind: 'light', area_id: 'studio', placed: { kind: 'host', building: 'B2' } }];
+  const { link, commits, abort } = mount(body);
+  await link.refresh();
+  link.setPlacement(placementDouble());
+  const section = link.buildingSection(BUILDING);
+  const row = deviceRowOf(section, 'Hue lamp');
+  assert.ok(row, `the building card lists the placed device: ${words(section)}`);
+  assert.ok(words(section).includes('Studio has no room'), `flagged with its area: ${words(section)}`);
+  assert.ok(!deviceRowOf(section, 'Studio fan'), 'an unplaced device stays with its area, not listed here');
+  assert.ok(!deviceRowOf(section, 'Shed lamp'), "another building's device is not this card's");
+  assert.ok(descendants(row).some(n => n.classList?.contains('editor-device-grip')), 'it can be carried to a new spot');
+  buttonNamed(row, 'Remove').click(); await settle();
+  assert.deepEqual(commits, [{ op: 'unplace_device', device: 'd-hue' }], JSON.stringify(commits));
+  abort.abort();
+});
+
+// M5: Blink after the session expired shows the signed-out notice alone.
+check('m5_blink_signed_out_shows_one_notice', async () => {
+  const body = linked();
+  body.devices = [{ device_id: 'd-lamp', name: 'Den lamp', kind: 'light', area_id: 'kitchen' }];
+  const { link, abort } = mount(body);
+  await link.refresh();
+  const realFetch = globalThis.fetch, realDispatch = window.dispatchEvent;
+  window.dispatchEvent = () => true;
+  globalThis.fetch = async (input, init = {}) => /identify/.test(String(input))
+    ? { ok: false, status: 401, headers: { get: () => 'text/plain' }, text: async () => 'Unauthorized' }
+    : realFetch(input, init);
+  try {
+    buttonNamed(deviceRowOf(link.roomSection(BUILDING.rooms[0]), 'Den lamp'), 'Blink').click(); await settle();
+    assert.equal(alerts.length, 1, `one notice: ${JSON.stringify(alerts)}`);
+    assert.ok(!alerts.includes('Could not blink that light.'), 'no second, misleading alert');
+    // A real failure still says so.
+    alerts.length = 0;
+    globalThis.fetch = async () => ({ ok: false, status: 502, headers: { get: () => 'application/json' },
+      text: async () => '{"detail": "upstream"}' });
+    buttonNamed(deviceRowOf(link.roomSection(BUILDING.rooms[0]), 'Den lamp'), 'Blink').click(); await settle();
+    assert.deepEqual(alerts, ['Could not blink that light.']);
+  } finally { globalThis.fetch = realFetch; window.dispatchEvent = realDispatch; abort.abort(); }
 });
 
 for (const [name, fn] of checks) {

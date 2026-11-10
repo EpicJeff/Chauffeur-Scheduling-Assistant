@@ -771,6 +771,95 @@ def test_m3_unplacing_unplaced_device_refuses_without_a_round():
     check(ts.current_id() == before, 'refusal must not write an empty round')
 
 
+def test_m2_place_device_refuses_an_id_ha_does_not_list():
+    """Final review M2: while Home Assistant lists devices, place_device refuses an id it
+    does not list (a guessed 'kitchen_pendant' would be stored and never drawn); with
+    no Home Assistant the id cannot be checked and is kept."""
+    from services import agent_tools_v2, twin_edit
+    import threading
+    with _ha(LIVE):
+        for op in ({'op': 'place_device', 'device': 'kitchen_pendant', 'anchor': 'a-light'},
+                   {'op': 'place_device', 'device': 'kitchen_pendant', 'building': 'B1',
+                    'host': {'ceiling': 'kitchen', 'u': 0.5, 'v': 0.5}}):
+            check(_refused(_house(), op) == 'Choose a device.', op)
+        placed = _apply(_house(), {'op': 'place_device', 'device': 'dev_lamp', 'anchor': 'a-light'})
+        check(_by_id(_bld(placed)['anchors'], 'a-light')['device'] == 'dev_lamp', 'a listed id places')
+    with _ha(OFFLINE):
+        kept = _apply(_house(), {'op': 'place_device', 'device': 'kitchen_pendant', 'anchor': 'a-light'})
+        check(_by_id(_bld(kept)['anchors'], 'a-light')['device'] == 'kitchen_pendant', 'no HA: kept')
+
+    # Argyle's path reads the catalogue once, outside the store locks, and hears the sentence.
+    _people()
+    storage.patch_settings({'house_twin': None, 'house_twin_cost': None})
+    shutil.rmtree(ts.DATA_DIR, ignore_errors=True)
+    ts.push_round(_bridge.flatten(_house()), 'build')
+    ts.update_model(lambda _: _house())
+    calls = []
+
+    def catalogue():
+        free = []
+
+        def probe():
+            for lock in (ts.LIFECYCLE, ts._LOCK):
+                acquired = lock.acquire(timeout=0.1)
+                free.append(acquired)
+                if acquired:
+                    lock.release()
+        thread = threading.Thread(target=probe)
+        thread.start()
+        thread.join(1)
+        calls.append(free)
+        return copy.deepcopy(LIVE)
+    with patch.object(twin_ha(), 'catalogue', side_effect=catalogue):
+        before = ts.current_id()
+        out = agent_tools_v2.execute_tool('house_design', {'action': 'edit', 'building': 'B1', 'edit': {
+            'op': 'place_device', 'device': 'kitchen_pendant', 'anchor': 'a-light'}}, actor=storage.get_member('p1'))
+        check(out.get('status') == 'error' and out.get('message') == 'Choose a device.', out)
+        check(ts.current_id() == before, 'a refused guess stores nothing')
+        check(calls == [[True, True]], f'catalogue once, outside both locks: {calls}')
+        twin_edit.save({'op': 'place_device', 'building': 'B1', 'device': 'dev_lamp', 'anchor': 'a-light'}, 'p1')
+        check(_by_id(_bld(ts.current_model())['anchors'], 'a-light')['device'] == 'dev_lamp', 'a listed id saves')
+
+
+def test_m2_house_design_lists_a_linked_rooms_devices():
+    """Final review M2: Argyle learns device ids. Describing a linked room lists its
+    area's devices with ids, names, kinds and placed state; status names the linked rooms."""
+    from services import agent_tools_v2
+    _people()
+    storage.patch_settings({'house_twin': None, 'house_twin_cost': None})
+    shutil.rmtree(ts.DATA_DIR, ignore_errors=True)
+    ts.push_round(_bridge.flatten(_house()), 'build')
+
+    def linked(_):
+        model = _house()
+        _by_id(_bld(model)['rooms'], 'kitchen')['ha_area'] = 'a_kitchen'
+        _by_id(_bld(model)['anchors'], 'a-light')['device'] = 'dev_lamp'
+        return model
+    ts.update_model(linked)
+    parent = storage.get_member('p1')
+    with _ha(LIVE):
+        out = agent_tools_v2.execute_tool('house_design', {'action': 'describe', 'piece': 'kitchen', 'building': 'B1'},
+                                          actor=parent)
+        check(out.get('status') == 'ok', out)
+        rows = {d['device_id']: d for d in out.get('devices') or []}
+        check(set(rows) == {'dev_lamp', 'dev_lock'}, ("the area's devices, no other area's", out))
+        check(rows['dev_lamp'] == {'device_id': 'dev_lamp', 'name': 'Kitchen pendant', 'kind': 'light', 'placed': True},
+              rows['dev_lamp'])
+        check(rows['dev_lock']['placed'] is False, rows['dev_lock'])
+        for words in ('dev_lamp', 'Kitchen pendant', 'dev_lock', 'Front door lock', 'not placed'):
+            check(words in out['summary'], (words, out['summary']))
+        status = agent_tools_v2.execute_tool('house_design', {'action': 'status'}, actor=parent)
+        check('Kitchen (kitchen)' in status['summary'] and 'describe' in status['summary'].lower(), status['summary'])
+        # An unlinked room lists nothing.
+        garage = agent_tools_v2.execute_tool('house_design', {'action': 'describe', 'piece': 'garage', 'building': 'B1'},
+                                             actor=parent)
+        check(not garage.get('devices') and 'dev_' not in garage['summary'], garage)
+    with _ha(OFFLINE):
+        out = agent_tools_v2.execute_tool('house_design', {'action': 'describe', 'piece': 'kitchen', 'building': 'B1'},
+                                          actor=parent)
+        check(out.get('status') == 'ok' and not out.get('devices'), out)
+
+
 TESTS = (
     test_place_on_anchor_then_move_to_wall,
     test_one_device_one_place,
@@ -790,6 +879,8 @@ TESTS = (
     test_m1_device_refusals_use_q8_copy,
     test_m2_opening_inside_follows_room_not_wall_direction,
     test_m3_unplacing_unplaced_device_refuses_without_a_round,
+    test_m2_place_device_refuses_an_id_ha_does_not_list,
+    test_m2_house_design_lists_a_linked_rooms_devices,
 )
 
 

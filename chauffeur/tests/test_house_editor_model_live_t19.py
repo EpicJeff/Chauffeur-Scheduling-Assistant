@@ -99,6 +99,8 @@ FAKE = house_ha_fake.FakeHA(
               'entities': [('switch.coffee_plug', 'off', {})]},
              {'id': 'dev-k-kettle', 'name': 'Kettle plug', 'area_id': 'kitchen',
               'entities': [('switch.kettle_plug', 'off', {})]},
+             {'id': 'dev-k-lock', 'name': 'Back door lock', 'area_id': 'kitchen',
+              'entities': [('lock.back_door_lock', 'locked', {})]},
              {'id': 'dev-patio', 'name': 'Patio light', 'area_id': 'patio',
               'entities': [('light.patio_light', 'off', {'supported_features': 8})]}],
 ).install()
@@ -616,6 +618,206 @@ def scenario_a_carried_row_says_where_to_drop():
         _no_errors(s)
 
 
+# --- final review fix wave --------------------------------------------------------
+
+MARKER_JS = """([id]) => {
+    const group = window.__twin.scene.getObjectByName('editor-device-markers');
+    const sprite = group && group.children.find(c => c.userData && c.userData.deviceId === id);
+    return sprite ? {x: sprite.position.x, z: sprite.position.z, visible: sprite.visible} : null;
+}"""
+AUTO_JS = """([id]) => {
+    const state = window.__twinEditor.haLink.state();
+    const d = (state && state.devices || []).find(x => x.device_id === id), auto = d && d.auto;
+    if (!auto || d.placed) return null;
+    const b = window.__twin.plan.buildings.find(item => item.id === auto.building);
+    const a = (b.rotation || 0) * Math.PI / 180, p = b.position || [0, 0], FT = 0.3048;
+    return {x: (Math.cos(a) * auto.at[0] - Math.sin(a) * auto.at[1] + p[0]) * FT,
+            z: -(Math.sin(a) * auto.at[0] + Math.cos(a) * auto.at[1] + p[1]) * FT};
+}"""
+
+
+def _at_auto(page, device_id):
+    marker, auto = page.evaluate(MARKER_JS, [device_id]), page.evaluate(AUTO_JS, [device_id])
+    return bool(marker and auto and math.hypot(marker['x'] - auto['x'], marker['z'] - auto['z']) < 0.05)
+
+
+def scenario_room_row_removes_a_placed_device():
+    # Final review I1: a device dropped on a wall has no card of its own; its room row has
+    # Remove, which posts unplace_device and puts the marker back at its automatic spot.
+    s = _serve()
+    if s is None:
+        return
+    _reset()
+    _facts()
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        posted = _record_ops(page)
+        _open(page, s)
+        _kitchen(page, 'wall')
+        check(_row(page, 'Counter lamp').get_by_role('button', name='Remove', exact=True).count() == 0,
+              'an unplaced device has no Remove')
+        before = _store()
+        _drag_row_to(page, 'Counter lamp', DROP)
+        _committed(page, posted, before)
+        check(_wait(page, lambda: _status(page, 'Counter lamp') == 'Placed'), _status(page, 'Counter lamp'))
+        check(_wait(page, lambda: not _at_auto(page, 'dev-k-lamp')), 'the marker moved to the wall')
+        del posted[:]
+        before = _store()
+        _button(_row(page, 'Counter lamp'), 'Remove').click()
+        ops = _committed(page, posted, before)
+        check(ops == [{'op': 'unplace_device', 'device': 'dev-k-lamp'}], ('Remove posts unplace_device', ops))
+        check(_placements(H.model(), 'dev-k-lamp') == [], _placements(H.model(), 'dev-k-lamp'))
+        check(_wait(page, lambda: _status(page, 'Counter lamp') == 'Not placed yet'), _status(page, 'Counter lamp'))
+        check(_wait(page, lambda: _at_auto(page, 'dev-k-lamp'), 15),
+              ('the marker is back at its automatic spot', page.evaluate(MARKER_JS, ['dev-k-lamp']),
+               page.evaluate(AUTO_JS, ['dev-k-lamp'])))
+        _no_errors(s)
+
+
+def _touch(client, kind, x, y):
+    points = [] if kind == 'touchEnd' else [{'x': x, 'y': y}]
+    client.send('Input.dispatchTouchEvent', {'type': kind, 'touchPoints': points})
+
+
+def scenario_touch_scrolls_the_card_over_device_rows():
+    # Final review I3: on a touch screen a swipe that starts on a device row scrolls the
+    # card (the rows used to swallow it as a drag); the grip still carries a row by touch.
+    s = _serve()
+    if s is None:
+        return
+    _reset()
+    _facts()
+    with s.browser(launch_args=H.GPU_ARGS, has_touch=True) as page:
+        page.set_viewport_size({'width': 1280, 'height': 720})
+        posted = _record_ops(page)
+        _open(page, s)
+        _kitchen(page, 'wall')
+        sizes = page.evaluate("() => { const c = document.getElementById('piece-card'); return [c.scrollHeight, c.clientHeight]; }")
+        check(sizes[0] > sizes[1] + 40, ('the Kitchen card scrolls at this size', sizes))
+        found = page.evaluate(ROW_JS, ['Ceiling light', 'row'])
+        check(found == 1, found)
+        # The first row at the top of the card, as a person's thumb finds it.
+        room = page.evaluate("""() => { const c = document.getElementById('piece-card');
+            const r = document.querySelector('[data-t19-row="row"]');
+            c.scrollTop += r.getBoundingClientRect().top - c.getBoundingClientRect().top - 8;
+            return c.scrollHeight - c.clientHeight - c.scrollTop; }""")
+        down = room > 60   # room left below: swipe up to read on; else swipe back down
+        row = page.locator('[data-t19-row="row"]')
+        box = row.bounding_box()
+        card = page.locator('#piece-card').bounding_box()
+        check(box['y'] >= card['y'] - 1 and box['y'] + box['height'] <= card['y'] + card['height'] + 1,
+              ('the row shows in the card', box, card))
+        x, y = box['x'] + box['width'] * 0.35, box['y'] + box['height'] / 2
+        check(page.evaluate("([x, y]) => !document.elementFromPoint(x, y).closest('.editor-device-grip, button')", [x, y]),
+              "the swipe starts on the row's words")
+        client = page.context.new_cdp_session(page)
+        top = page.evaluate("() => document.getElementById('piece-card').scrollTop")
+        sign = -1 if down else 1
+        _touch(client, 'touchStart', x, y)
+        for step in range(1, 13):
+            _touch(client, 'touchMove', x, y + sign * step * 12)
+            page.wait_for_timeout(16)
+        _touch(client, 'touchEnd', x, y + sign * 144)
+        page.wait_for_timeout(600)
+        moved = page.evaluate("() => document.getElementById('piece-card').scrollTop") - top
+        check(abs(moved) > 40, ('a swipe over the rows scrolls the card', moved, room))
+        check(posted == [] and not page.locator('#device-tools').is_visible(), ('the swipe carried nothing', posted))
+
+        # The grip still carries a row by touch, onto the wall.
+        page.evaluate("() => { document.getElementById('piece-card').scrollTop = 0; }")
+        _row(page, 'Counter lamp')
+        grip = page.locator('[data-t19-row="row"] .editor-device-grip')
+        check(grip.count() == 1, 'the row has a grip')
+        g = grip.bounding_box()
+        check(g['width'] >= 43 and g['height'] >= 43, ('the grip is a 44 px target', g))
+        sx, sy = H.screen_of_world(page, *DROP, POOL)
+        H._on_canvas(page, sx, sy)
+        gx, gy = g['x'] + g['width'] / 2, g['y'] + g['height'] / 2
+        before = _store()
+        _touch(client, 'touchStart', gx, gy)
+        for k in range(1, 21):
+            _touch(client, 'touchMove', gx + (sx - gx) * k / 20, gy + (sy - gy) * k / 20)
+            page.wait_for_timeout(16)
+        _touch(client, 'touchEnd', sx, sy)
+        ops = _committed(page, posted, before)
+        check(isinstance(ops[0], dict) and ops[0].get('op') == 'place_device' and ops[0].get('device') == 'dev-k-lamp'
+              and _wall_host(ops[0], NORTH_IN, 'right', DROP[0], DROP[2]), ('a touch carry from the grip places it', ops))
+        _no_errors(s)
+
+
+def scenario_pick_a_spot_offers_a_lock_its_doors():
+    # Final review M3: a lock (or a contact sensor) is offered the room's doors by name.
+    s = _serve()
+    if s is None:
+        return
+    _reset()
+    _facts()
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        posted = _record_ops(page)
+        _open(page, s)
+        _kitchen(page)
+        _button(_row(page, 'Back door lock'), 'Pick a spot').click()
+        labels = _choices(page)
+        doors = [t for t in labels if 'door' in t.lower()]
+        check(doors and labels[-2:] == ['On a wall', 'On the ceiling'], ('the room\'s doors are offered first', labels))
+        before = _store()
+        _choose(page, doors[0])
+        ops = _committed(page, posted, before)
+        op = ops[0]
+        host = (op or {}).get('host') or {}
+        check(op.get('op') == 'place_device' and op.get('device') == 'dev-k-lock' and op.get('building') == POOL
+              and host.get('opening') and host.get('side') in ('in', 'out'), ('the lock goes on the door', op))
+        b = _b(H.model())
+        opening = next((o for o in b['openings'] if o['id'] == host['opening']), None)
+        check(opening is not None and opening.get('kind') != 'window', ('a door, not a window', opening))
+        walls = H.room_walls(H.model(), POOL, KITCHEN)
+        check(opening.get('wall') in walls, ('one of the Kitchen\'s own doors', opening.get('wall'), walls))
+        placed = _placements(H.model(), 'dev-k-lock')
+        check(len(placed) == 1 and placed[0][2]['host'] == host, placed)
+        check(_wait(page, lambda: _status(page, 'Back door lock') == 'Placed'), _status(page, 'Back door lock'))
+        _no_errors(s)
+
+
+def scenario_device_in_a_roomless_area_stays_in_the_editor():
+    # Final review M4: Home Assistant moves the placed Ceiling light to Patio, which no room
+    # links. The wall still draws it, so the editor does too, and the building card lists it,
+    # flagged, with Remove.
+    s = _serve()
+    if s is None:
+        return
+    _reset()
+    _facts()
+    ceiling = next(d for d in FAKE.devices if d['id'] == 'dev-k-ceiling')
+    ceiling['area_id'] = 'patio'
+    try:
+        with s.browser(launch_args=H.GPU_ARGS) as page:
+            posted = _record_ops(page)
+            _open(page, s)
+            check(_wait(page, lambda: (page.evaluate(MARKER_JS, ['dev-k-ceiling']) or {}).get('visible') is True, 15),
+                  ('the editor draws the placed light, as the wall does', page.evaluate(MARKER_JS, ['dev-k-ceiling'])))
+            _kitchen(page)
+            check('Ceiling light' not in _card_text(page), ('no longer one of the Kitchen\'s devices', _card_text(page)))
+            # A focused room steps out first when the piece lies outside it (t18's _select).
+            for _ in range(3):
+                page.evaluate('([p, b]) => window.__editor.clickPiece(p, b)', [POOL, POOL])
+                H.settle(page)
+                if _is('building', POOL)(_selection(page, _is('building', POOL), 2.0)):
+                    break
+            check(_is('building', POOL)(_selection(page)), ('the building card is open', _selection(page)))
+            check(_wait(page, lambda: 'Placed devices with no room' in _card_text(page)),
+                  ('the building card lists it', _card_text(page)))
+            text = _card_text(page)
+            check('Ceiling light' in text and 'Patio has no room' in text, ('flagged with its area', text))
+            before = _store()
+            _button(_row(page, 'Ceiling light'), 'Remove').click()
+            ops = _committed(page, posted, before)
+            check(ops == [{'op': 'unplace_device', 'device': 'dev-k-ceiling'}], ops)
+            check(_wait(page, lambda: page.evaluate(MARKER_JS, ['dev-k-ceiling']) is None, 15),
+                  'unplaced, with no room for its area, it draws nowhere (the wall agrees)')
+            _no_errors(s)
+    finally:
+        ceiling['area_id'] = 'kitchen'
+
+
 SCENARIOS = [
     scenario_count_note_shows,
     scenario_pick_a_spot_on_an_anchor,
@@ -625,6 +827,10 @@ SCENARIOS = [
     scenario_escape_cancels_an_armed_placement,
     scenario_anchor_card_removes_its_device,
     scenario_a_carried_row_says_where_to_drop,
+    scenario_room_row_removes_a_placed_device,
+    scenario_touch_scrolls_the_card_over_device_rows,
+    scenario_pick_a_spot_offers_a_lock_its_doors,
+    scenario_device_in_a_roomless_area_stays_in_the_editor,
 ]
 
 

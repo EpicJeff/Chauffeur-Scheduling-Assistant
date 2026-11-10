@@ -91,18 +91,30 @@ globalThis.location = {search:''};
 globalThis.requestAnimationFrame = callback => setImmediate(callback);
 
 // The live layer's 10 s poll clock, captured so a check fires it by hand.
-const realSetTimeout = globalThis.setTimeout;
+const realSetTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
 let ticks = [];
+// The live keeper's clocks (I2): pending[id] = {delay, callback}; clearTimeout drops one.
+const pending = new Map();
+let nextTimer = 1e6;
 globalThis.setTimeout = (callback, delay, ...args) => {
   if (delay === 10000) { ticks.push(callback); return 0; }
+  if (delay === 45000 || delay === 300000) { const id = ++nextTimer; pending.set(id, {delay, callback}); return id; }
   return realSetTimeout(callback, delay, ...args);
 };
+globalThis.clearTimeout = id => { if (pending.has(id)) pending.delete(id); else realClearTimeout(id); };
+const armed = () => [...pending.values()].map(t => t.delay).sort();
+async function fire(delay) {
+  const [id, timer] = [...pending.entries()].find(([, t]) => t.delay === delay) || [];
+  assert.ok(timer, `a ${delay} ms timer is armed: ${JSON.stringify(armed())}`);
+  pending.delete(id); timer.callback();
+  await wait(60);
+}
 const wait = ms => new Promise(resolve => realSetTimeout(resolve, ms));
 const settles = (promise, ms = 2000) => Promise.race([
   Promise.resolve(promise).then(() => true, () => true), wait(ms).then(() => false)]);
 
 const THREE = await import('three');
-const {mountLive} = await import(file('static/twin/live/live.js'));
+const {mountLive, keepLive} = await import(file('static/twin/live/live.js'));
 
 const polygon = [[0,0],[10,0],[10,10],[0,10]];
 const DEVICES = [
@@ -258,6 +270,109 @@ check('a_throwing_frame_does_not_hang_polling', async () => {
     assert.ok(await settles(t.live.refresh()), 'the next refresh settles');
     assert.ok(statePolls(t).length > before, 'the next refresh asks api/ha/card/states again');
     assert.equal(look(t, 'lamp'), 'on', 'and draws the new answer');
+  } finally { t.cleanup(); }
+});
+
+// ---------------------------------------------------------------- final review I2
+// A wall that loaded while Home Assistant was down recovers with no reload, and a mounted
+// layer re-reads the layout on a slow clock; one timer at a time; stop ends it.
+function keeperRig() {
+  pending.clear();
+  const t = {available: false, failing: false, requests: [], extra: false};
+  const devices = DEVICES.map(d => ({device_id:d.device_id, name:d.name, entity_id:d.entity_id, entities:[d.entity_id],
+    kind:d.kind, offered:true, area_id:'kitchen'}));
+  const states = Object.fromEntries(DEVICES.map(d => [d.entity_id, {entity_id:d.entity_id, state:d.state, attributes:{...d.attributes}}]));
+  const layout = () => {
+    const rows = t.extra ? [...devices, {device_id:'fan', name:'Ceiling fan', entity_id:'fan.ceiling', entities:['fan.ceiling'],
+      kind:'fan', offered:true, area_id:'kitchen'}] : devices;
+    return {available:t.available, rooms:[{building:'b', room:'r', level:'L1', name:'Kitchen', area_id:'kitchen', lights:[]}],
+      devices:t.available ? rows : [],
+      markers:t.available ? rows.map((d, i) => ({...d, building:'b', level:'L1', room:'r', at:[i * 3, 1, 2], placed:true})) : []};
+  };
+  t.api = async path => {
+    t.requests.push(path);
+    if (t.failing) throw new TypeError('Failed to fetch');
+    return {ok:true, json:async () => structuredClone(path === 'api/house/live' ? layout() : {states})};
+  };
+  const canvas = new Node('canvas'), host = new Node('main'); host.append(canvas); body.append(host);
+  const camera = new THREE.PerspectiveCamera(38, 1.4, .1, 1000); camera.position.set(0, 50, 0); camera.lookAt(0, 0, 0);
+  t.view = {ready:true, scene:new THREE.Scene(), renderer3:{domElement:canvas}, camera, controls:{target:new THREE.Vector3()},
+    groups:{levels:{'b:L1':new THREE.Group()}},
+    plan:{buildings:[{id:'b', position:[0,0], rotation:0, base:0, levels:[{id:'L1', elevation:0}],
+      rooms:[{id:'r', level:'L1', polygon}], stairs:[]}]},
+    pick: () => ({kind:'room', building:'b', id:'r'}), render() { this.live?.draw(); }};
+  t.layoutReads = () => t.requests.filter(p => p === 'api/house/live').length;
+  t.cleanup = () => { try { t.keeper?.stop(); } catch {} try { t.view.live?.stop(); } catch {} host.remove(); pending.clear(); };
+  return t;
+}
+
+check('i2_keeper_retries_until_home_assistant_answers', async () => {
+  assert.equal(typeof keepLive, 'function', 'live.js exports keepLive(view, {api})');
+  const t = keeperRig();
+  try {
+    t.keeper = keepLive(t.view, {api: t.api});
+    await wait(60);
+    assert.ok(!t.view.live, 'Home Assistant away at load: no layer');
+    assert.deepEqual(armed(), [45000], 'one retry armed, 45 s out');
+    t.failing = true;
+    await fire(45000);
+    assert.ok(!t.view.live, 'a failed read is no layer either');
+    assert.deepEqual(armed(), [45000], 'and the next retry is armed, never two');
+    t.failing = false; t.available = true;
+    await fire(45000);
+    assert.ok(t.view.live, 'Home Assistant back: the layer mounts with no reload');
+    assert.equal(t.view.live.markers().length, DEVICES.length, 'with its markers');
+    assert.deepEqual(armed(), [300000], 'mounted: only the slow layout re-read is armed');
+    await t.keeper.check(); await t.keeper.check();
+    assert.deepEqual(armed(), [300000], 'an extra check never doubles the clock');
+    t.keeper.stop();
+    assert.deepEqual(armed(), [], 'stop clears the clock');
+  } finally { t.cleanup(); }
+});
+
+check('i2_keeper_rereads_the_layout_and_remounts_only_on_change', async () => {
+  const t = keeperRig();
+  t.available = true;
+  try {
+    t.keeper = keepLive(t.view, {api: t.api});
+    await wait(60);
+    const first = t.view.live;
+    assert.ok(first, 'mounted');
+    let reads = t.layoutReads();
+    await fire(300000);
+    assert.equal(t.layoutReads(), reads + 1, 'the slow clock reads the layout once');
+    assert.equal(t.view.live, first, 'an unchanged layout keeps the layer (an open room stays open)');
+    assert.deepEqual(armed(), [300000]);
+    // A device placed in the editor today: the next re-read draws it.
+    t.extra = true; reads = t.layoutReads();
+    await fire(300000);
+    assert.notEqual(t.view.live, first, 'a changed layout remounts');
+    assert.equal(t.layoutReads(), reads + 1, 'one read: the remount uses the layout it read');
+    assert.ok(t.view.live.markers().some(m => m.device_id === 'fan'), 'the new device has its marker');
+    assert.equal(first.markers().length, DEVICES.length, 'the old layer was left as it was');
+    assert.deepEqual(armed(), [300000]);
+    // Home Assistant away at a re-read: the layer stays (its poll already dims it).
+    const second = t.view.live; t.failing = true;
+    await fire(300000);
+    assert.equal(t.view.live, second, 'a failed re-read keeps the layer');
+    assert.deepEqual(armed(), [300000]);
+  } finally { t.cleanup(); }
+});
+
+check('i2_keeper_stopped_mid_mount_leaves_no_layer', async () => {
+  const t = keeperRig();
+  t.available = true;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const slow = t.api;
+  t.api = async (path, options) => { if (path === 'api/house/live') await gate; return slow(path, options); };
+  try {
+    t.keeper = keepLive(t.view, {api: t.api});
+    await wait(20);
+    t.keeper.stop();
+    release(); await wait(80);
+    assert.ok(!t.view.live, 'a page that left while the layer mounted keeps no layer');
+    assert.deepEqual(armed(), [], 'and no clock');
   } finally { t.cleanup(); }
 });
 

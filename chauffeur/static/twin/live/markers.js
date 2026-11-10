@@ -48,7 +48,7 @@ export function markerTexture(kind, look, count = null) {
   } else if (kind === 'garage' || kind === 'blinds') {
     line([[24, 69], [24, 32], [72, 32], [72, 69]]);
     for (const y of [42, 52, 62]) line([[30, y], [66, y]]);
-  } else if (kind === 'switch') {
+  } else if (kind === 'switch' || kind === 'outlet') {
     ctx.beginPath(); ctx.arc(48, 49, 23, -Math.PI * .32, Math.PI * 1.32); ctx.stroke(); line([[48, 22], [48, 46]]);
   } else if (kind === 'fan') {
     circle(48, 48, 5);

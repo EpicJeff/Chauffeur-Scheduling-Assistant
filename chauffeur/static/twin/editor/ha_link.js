@@ -25,11 +25,16 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
   const byLevel = floors => [...floors || []].sort((a, b) =>
     (a.level ?? Infinity) - (b.level ?? Infinity) || String(a.name).localeCompare(String(b.name)));
 
-  function isPlaced(device) {
+  // Where a device is placed: the current plan decides (a save shows at once), else the link's answer.
+  function placedIn(device, building) {
     const plan = getPlan?.();
-    return plan ? plan.buildings.some(b => b.anchors?.some(a => a.device === device.device_id)
-      || b.devices?.some(d => d.device === device.device_id)) : !!device.placed;
+    if (!plan) return !!device.placed && (!building || device.placed.building === building.id);
+    return plan.buildings.some(b => (!building || b.id === building.id)
+      && (b.anchors?.some(a => a.device === device.device_id) || b.devices?.some(d => d.device === device.device_id)));
   }
+  const isPlaced = device => placedIn(device);
+  // A device whose Home Assistant area no room links (the area was moved or never linked).
+  const roomless = device => !latest?.rooms?.some(r => r.ha_area && r.ha_area === device.area_id && !r.gone);
   // The area id a room shows: its stored value, matched to an area by id or name.
   function chosen(room) {
     const row = latest?.rooms?.find(r => r.room === room.id && r.building === room.building);
@@ -45,16 +50,21 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     return `${String(kind || 'device').charAt(0).toUpperCase()}${String(kind || 'device').slice(1)} spot ${index + 1}${where}`;
   }
 
+  // A lock or a contact sensor belongs on a door: the room's doors come first.
   async function pickSpot(room, device) {
     if (!canEdit()) return;
     placement?.cancel();
-    const anchors = placement?.anchors(room).filter(a => !a.device && a.kind === device.kind) || [];
+    const anchors = room && placement?.anchors(room).filter(a => !a.device && a.kind === device.kind) || [];
+    const doors = room && ['lock', 'sensor'].includes(device.kind) && placement?.doors?.(room) || [];
     const choice = await window.promptChoice('Pick a spot', `Where does ${device.name} belong?`, [
+      ...doors.map(d => ({ value: `door:${d.id}`, label: d.label })),
       ...anchors.map((a, i) => ({ value: a.id, label: a.name || spotName(device.kind, i, a.host) })),
       { value: 'wall', label: 'On a wall' }, { value: 'ceiling', label: 'On the ceiling' },
     ]);
     if (signal?.aborted || !canEdit() || choice == null) return;
+    const door = doors.find(d => `door:${d.id}` === choice);
     if (choice === 'wall' || choice === 'ceiling') placement?.arm(device, choice);
+    else if (door) await onCommit({ op: 'place_device', device: device.device_id, building: door.building, host: door.host });
     else if (anchors.some(a => a.id === choice)) await onCommit({ op: 'place_device', device: device.device_id, anchor: choice });
   }
 
@@ -62,25 +72,50 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     if (!canEdit() || blinking.has(device.device_id)) return;
     blinking.add(device.device_id);
     try { await api.request('identify', 'POST', { device_id: device.device_id }, 'ha'); }
-    catch { if (!signal?.aborted) window.showGlobalAlert('Could not blink that light.'); }
+    // A signed-out tab has already said so (api.js marks the error shown): one notice, not two.
+    catch (error) { if (!signal?.aborted && !error?.shown) window.showGlobalAlert('Could not blink that light.'); }
     finally { blinking.delete(device.device_id); }
+  }
+
+  // One device row, wherever it is listed. A mouse carries the row from anywhere on it;
+  // a finger only from the grip, so a swipe over the words scrolls the card.
+  function deviceRow(device, room, flag) {
+    const row = element('div'); row.className = 'editor-material-line editor-device-row';
+    const grip = element('span', '⠿'); grip.className = 'editor-device-grip';
+    grip.setAttribute('aria-hidden', 'true'); grip.title = `Drag ${device.name} onto the house`;
+    const words = element('div'), actions = element('div'); actions.className = 'editor-material-actions';
+    const placed = isPlaced(device);
+    words.append(element('p', device.name), element('span', device.kind), element('span', placed ? 'Placed' : 'Not placed yet'));
+    if (flag) words.append(element('span', flag));
+    actions.append(button('Pick a spot', () => pickSpot(room, device), `spot:${device.device_id}`));
+    if (device.kind === 'light') actions.append(button('Blink', () => blink(device), `blink:${device.device_id}`));
+    if (placed) actions.append(button('Remove', () => {
+      if (canEdit()) return onCommit({ op: 'unplace_device', device: device.device_id });
+    }, `remove:${device.device_id}`));
+    row.addEventListener('pointerdown', event => {
+      if (event.pointerType !== 'mouse' && !event.target?.closest?.('.editor-device-grip')) return;
+      placement?.startDrag(event, device);
+    }, { signal });
+    row.append(grip, words, actions);
+    return row;
   }
 
   function devicesSection(room, area, notes) {
     const section = element('section');
     section.append(element('h3', 'Devices'));
-    for (const device of latest.devices || []) {
-      if (device.area_id !== area) continue;
-      const row = element('div'); row.className = 'editor-material-line editor-device-row';
-      const words = element('div'), actions = element('div'); actions.className = 'editor-material-actions';
-      words.append(element('p', device.name), element('span', device.kind), element('span', isPlaced(device) ? 'Placed' : 'Not placed yet'));
-      actions.append(button('Pick a spot', () => pickSpot(room, device), `spot:${device.device_id}`));
-      if (device.kind === 'light') actions.append(button('Blink', () => blink(device), `blink:${device.device_id}`));
-      row.addEventListener('pointerdown', event => placement?.startDrag(event, device), { signal });
-      row.append(words, actions); section.append(row);
-    }
+    for (const device of latest.devices || []) if (device.area_id === area) section.append(deviceRow(device, room));
     for (const note of notes || []) section.append(element('p', note));
     return section;
+  }
+
+  // Placed devices on this building whose area no room links: the wall still draws them,
+  // so the editor lists them where a person can move or remove them.
+  function strays(building) {
+    return (latest?.devices || []).filter(d => roomless(d) && placedIn(d, building));
+  }
+  function strayFlag(device) {
+    const area = latest.areas?.find(a => a.area_id === device.area_id);
+    return area ? `${area.name} has no room` : 'Not in a Home Assistant area';
   }
 
   function anchorSection(anchor) {
@@ -172,18 +207,25 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
 
   function buildingSection(building) {
     const section = element('section');
-    if (!latest?.available || !latest.unlinked?.length) return section;
-    section.append(element('h3', 'Areas with no room'));
-    const actions = element('div'); actions.className = 'editor-actions';
-    for (const area of latest.unlinked) actions.append(button(area.name, async () => {
-      const rooms = choosable(building);
-      const id = await window.promptChoice('Choose a room', `Which room belongs to ${area.name}?`,
-        rooms.map(({ room, label }) => ({ value: room.id, label })));
-      if (signal?.aborted || id == null) return;
-      const room = rooms.find(r => r.room.id === id)?.room;
-      if (room) await commit({ ...room, building: building.id }, area.area_id);
-    }, `unlinked:${area.area_id}`));
-    section.append(actions);
+    if (!latest?.available) return section;
+    if (latest.unlinked?.length) {
+      section.append(element('h3', 'Areas with no room'));
+      const actions = element('div'); actions.className = 'editor-actions';
+      for (const area of latest.unlinked) actions.append(button(area.name, async () => {
+        const rooms = choosable(building);
+        const id = await window.promptChoice('Choose a room', `Which room belongs to ${area.name}?`,
+          rooms.map(({ room, label }) => ({ value: room.id, label })));
+        if (signal?.aborted || id == null) return;
+        const room = rooms.find(r => r.room.id === id)?.room;
+        if (room) await commit({ ...room, building: building.id }, area.area_id);
+      }, `unlinked:${area.area_id}`));
+      section.append(actions);
+    }
+    const placed = strays(building);
+    if (placed.length) {
+      section.append(element('h3', 'Placed devices with no room'));
+      for (const device of placed) section.append(deviceRow(device, null, strayFlag(device)));
+    }
     return section;
   }
 
@@ -202,7 +244,8 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
         .map(d => [d.device_id, d.name, d.kind, isPlaced(d)]);
       return JSON.stringify([...base, piece.ha_area, row, latest.areas, latest.floors, devices]);
     }
-    return JSON.stringify([...base, latest.unlinked, choosable(building).map(({ room, label }) => [room.id, label])]);
+    return JSON.stringify([...base, latest.unlinked, choosable(building).map(({ room, label }) => [room.id, label]),
+      strays(building).map(d => [d.device_id, d.name, d.kind, strayFlag(d)])]);
   }
 
   // Draw a card's Home Assistant section into `host`. A person's focus is kept:

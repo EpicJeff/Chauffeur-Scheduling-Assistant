@@ -7691,7 +7691,8 @@ class HouseDesignTool(BaseModel):
         "add_opening (wall, kind, at, width?=3, sill?, head?); "
         "move_hosted (id, host?, at?, z?, offset?); resize_opening (id, width?, sill?, head?, at?); "
         "add_anchor (kind, host); add_item (asset, host, rotation?, scale?); "
-        "place_device (device, anchor or building+host, offset?, host may be {opening, side:in|out}); "
+        "place_device (device id from describe of a linked room, anchor or building+host, offset?, "
+        "host may be {opening, side:in|out}); "
         "unplace_device (device); "
         "host is {wall, side, at, z} with side left|right, {floor: room, u, v}, or {ceiling: room, u, v}; "
         "u,v are room fractions 0..1. "
@@ -9586,6 +9587,27 @@ def _house_design_building_summary(building) -> str:
         f"{len(building['rooms'])} rooms. Roof sections: {roofs}.")
 
 
+def _house_design_room_devices(room) -> tuple[str, list]:
+    """A linked room's Home Assistant devices: how Argyle learns a device id."""
+    from services import twin_ha, twin_store
+    if not room.get('ha_area'):
+        return '', []
+    catalogue = twin_ha.safe_catalogue()
+    if not catalogue['available']:
+        return ' Home Assistant is not reachable, so its devices are not listed.', []
+    area = twin_ha.resolve_area(room['ha_area'], catalogue['areas'])
+    if area is None:
+        return " This room's Home Assistant area is gone.", []
+    placed = twin_ha.placements(twin_store.current_model() or {'buildings': []})
+    devices = [{'device_id': d['device_id'], 'name': d['name'], 'kind': d['kind'],
+                'placed': d['device_id'] in placed}
+               for d in catalogue['devices'] if d.get('area_id') == area]
+    name = next((a['name'] for a in catalogue['areas'] if a['area_id'] == area), area)
+    rows = '; '.join(f"{d['name']} (device {d['device_id']}, {d['kind']}, "
+                     f"{'placed' if d['placed'] else 'not placed'})" for d in devices)
+    return f' Home Assistant devices in {name}: {rows or "none"}.', devices
+
+
 def house_design_status() -> dict:
     """Small editor context, with the same latest-build rule as the hand path."""
     from services import twin_build, twin_place, twin_store
@@ -9608,6 +9630,12 @@ def house_design_status() -> dict:
         ]
         summaries.extend(_house_design_building_summary(building)
                          for building in (plan or {}).get('buildings', []))
+        linked = ', '.join(f"{room.get('name') or room['id']} ({room['id']})"
+                           for building in (plan or {}).get('buildings', [])
+                           for room in building.get('rooms', []) if room.get('ha_area'))
+        if linked:
+            summaries.append(f'Rooms linked to Home Assistant: {linked}. '
+                             'Describe one for its device ids.')
         pause = (build or {}).get('pause')
         pause_words = (f"{pause['step']}: {pause.get('why') or pause['kind'].replace('_', ' ')}"
                        if pause else None)
@@ -9716,7 +9744,13 @@ def handle_house_design(args: dict, actor=None) -> dict:
 
             fields = '; '.join(f"{key.replace('_', ' ')}: {words(key, value)}"
                                for key, value in piece.items() if key != 'src')
-            return {'status': 'ok', 'summary': f"{kind.capitalize()} in {building['id']}: {fields}."}
+            out = {'status': 'ok', 'summary': f"{kind.capitalize()} in {building['id']}: {fields}."}
+            if kind == 'room':
+                extra, devices = _house_design_room_devices(piece)
+                out['summary'] += extra
+                if devices:
+                    out['devices'] = devices
+            return out
         current = house_design_status()
         if not current['build']:
             raise ValueError('There is no current build.')

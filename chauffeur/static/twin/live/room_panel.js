@@ -27,7 +27,7 @@ export function deviceActions(row, state, control, { compact = false } = {}) {
     actions.append(node); return node;
   };
   if (!row.offered) return actions;
-  if (!compact && ['light', 'switch', 'fan'].includes(row.kind)) {
+  if (!compact && ['light', 'switch', 'outlet', 'fan'].includes(row.kind)) {
     const toggle = button(state?.state === 'on' ? 'On' : 'Off', 'toggle');
     toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-label', row.name);
     toggle.setAttribute('aria-checked', String(state?.state === 'on'));

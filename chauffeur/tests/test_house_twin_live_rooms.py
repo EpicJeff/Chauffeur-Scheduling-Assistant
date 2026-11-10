@@ -399,7 +399,46 @@ def scenario_room_panel_respects_the_grid():
         L.set_grid(L.grid())
 
 
+def scenario_wall_recovers_when_home_assistant_returns():
+    """Final review I2: the wall loaded while Home Assistant was away (no markers, a tap on
+    the Kitchen does nothing). Home Assistant comes back; within the retry window (45 s,
+    run forward on the page's clock) the layer mounts with no reload, the markers draw and
+    the Kitchen opens."""
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    FAKE.available = False
+    try:
+        with s.browser(launch_args=L.GPU_ARGS) as page:
+            seen = L.record(page)
+            page.clock.install()
+            L.open_twin(page, s, query='tier=low&test=1&panel=true&kiosk=true', live=False)
+            check(L.wait_for(page, lambda: any(m == 'GET' and u.split('?')[0].endswith('/api/house/live')
+                                               for m, u, _ in seen), 10), 'the wall asks api/house/live')
+            page.wait_for_timeout(1500)
+            check(not page.evaluate('() => !!window.__twin.live'), 'no live layer while Home Assistant is away')
+            loads = [u for m, u, _ in seen if m == 'GET' and '/house/twin?' in u]
+            FAKE.available = True
+            page.clock.fast_forward(46000)
+            try:
+                page.wait_for_function('() => !!(window.__twin && window.__twin.live)', timeout=20000)
+            except Exception:
+                raise AssertionError('Home Assistant is back: the live layer mounts within the retry window')
+            L.wait_markers(page)
+            check([u for m, u, _ in seen if m == 'GET' and '/house/twin?' in u] == loads, 'no reload')
+            L.aim_kitchen(page)
+            _open_room(page, *KITCHEN_SAMPLE, 'Kitchen')
+            for did in L.KITCHEN_DEVICES:
+                check(L.NAMES[did] in _row(page, did).inner_text(), ('the row names its device', did))
+            L.no_errors(s)
+    finally:
+        FAKE.available = True
+
+
 SCENARIOS = [
+    scenario_wall_recovers_when_home_assistant_returns,
     scenario_tap_kitchen_opens_its_devices,
     scenario_brightness_slider_sets_percent,
     scenario_lights_mode_lights_rooms,

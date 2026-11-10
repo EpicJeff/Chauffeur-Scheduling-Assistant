@@ -479,6 +479,41 @@ def test_renamed_area_keeps_the_link():
         check(twin_ha.resolve_area('kitchen', after['areas']) == 'kitchen')
 
 
+def test_m1_smart_plug_is_an_outlet():
+    """Final review M1: a switch whose device_class is outlet (in its state, or the
+    registry's device_class / original_device_class) is kind outlet, so the outlets
+    count note and the outlet spots work; a plain switch stays a switch."""
+    extra = [('switch.kettle_plug', 'on', {'friendly_name': 'Kettle plug', 'device_class': 'outlet'}, 'dO', 'kitchen'),
+             ('switch.lamp_plug', 'off', {'friendly_name': 'Lamp plug'}, 'dQ', 'kitchen')]
+    ENTITIES.extend(extra)
+    DEVICE_NAMES.update(dO='Kettle plug', dQ='Lamp plug')
+    try:
+        with FakeHA():
+            rows = ha_api.get_entity_registry
+
+            def registry(ttl=300):
+                out = rows(ttl)
+                for row in out:
+                    if row['entity_id'] == 'switch.lamp_plug':
+                        row['original_device_class'] = 'outlet'
+                return out
+            ha_api.get_entity_registry = registry
+            by_id = {d['device_id']: d for d in twin_ha.catalogue()['devices']}
+        check(by_id['dO']['kind'] == 'outlet', by_id['dO'])
+        check(by_id['dQ']['kind'] == 'outlet', ("the registry's outlet signal counts too", by_id['dQ']))
+        check(by_id['entity:switch.coffee']['kind'] == 'switch', by_id['entity:switch.coffee'])
+    finally:
+        del ENTITIES[-len(extra):]
+        DEVICE_NAMES.pop('dO')
+        DEVICE_NAMES.pop('dQ')
+    # The outlets note now has devices to count.
+    b = building([room('r1', 'Kitchen', rect(0, 0, 8, 6), ha_area='kitchen')],
+                 anchors=_anchors('o', 'outlet', 6, 'r1', 'floor'))
+    c = cat(dict(dev('p1', 'switch'), kind='outlet'), dict(dev('p2', 'switch'), kind='outlet'))
+    check(twin_ha.count_notes(model(b), 'r1', c) == ['The plan shows 6 outlets; Home Assistant has 2 in this area.'],
+          twin_ha.count_notes(model(b), 'r1', c))
+
+
 TESTS = (
     test_floor_registry_reads_floors_and_is_empty_without_ha,
     test_catalogue_groups_entities_by_device,
@@ -495,6 +530,7 @@ TESTS = (
     test_obvious_places_garage_and_lock,
     test_deleted_area_reads_as_gone,
     test_renamed_area_keeps_the_link,
+    test_m1_smart_plug_is_an_outlet,
 )
 
 

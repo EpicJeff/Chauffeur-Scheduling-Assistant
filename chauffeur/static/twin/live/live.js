@@ -44,15 +44,67 @@ function readOverlays() {
   });
 }
 
-export async function mountLive(view, { api = (path, options) => fetch(base() + path, options) } = {}) {
-  const events = new AbortController(), requests = new AbortController();
-  let layout;
-  const first = deadline(requests.signal, REQUEST_MS);
+// One read of the layout: the answer, or null when it failed or timed out.
+async function readLayout(api, stop) {
+  const limit = deadline(stop, REQUEST_MS);
   try {
-    const response = await api('api/house/live', { signal: first.signal });
-    if (!response.ok) return null;
-    layout = await response.json();
-  } catch { return null; } finally { first.done(); }
+    const response = await api('api/house/live', { signal: limit.signal });
+    return response.ok ? await response.json() : null;
+  } catch { return null; } finally { limit.done(); }
+}
+
+// What a layer draws from a layout; a re-read that matches it changes nothing on screen.
+const layoutKey = layout => JSON.stringify([
+  (layout?.markers || []).map(m => [m.device_id, m.name, m.kind, m.entity_id, m.entities, m.building, m.level, m.room, m.at, m.placed, m.offered]),
+  (layout?.rooms || []).map(r => [r.building, r.room, r.level, r.area_id, r.name, r.lights, r.polygon_world]),
+  (layout?.devices || []).map(d => [d.device_id, d.name, d.kind, d.entity_id, d.entities, d.area_id, d.offered])]);
+
+// The wall keeps its live layer without a reload. A layer that could not mount (Home Assistant
+// away, a read that failed or timed out) is tried again every 45 s; a mounted one re-reads the
+// layout every 5 minutes and remounts only when what it draws changed. One timer at a time.
+export const LIVE_RETRY_MS = 45000, LIVE_LAYOUT_MS = 300000;
+export function keepLive(view, { api = (path, options) => fetch(base() + path, options) } = {}) {
+  const halt = new AbortController();
+  let timer = null, busy = null, live = null, readAt = 0;
+  const schedule = ms => { clearTimeout(timer); timer = halt.signal.aborted ? null : setTimeout(() => { timer = null; check(); }, ms); };
+  function check() {
+    if (halt.signal.aborted) return Promise.resolve(live);
+    if (busy) return busy;
+    clearTimeout(timer); timer = null;
+    busy = (async () => {
+      try {
+        if (live && view.live !== live) live = null;
+        if (!live) { live = await mountLive(view, { api }); return; }
+        readAt = Date.now();
+        const layout = await readLayout(api, halt.signal);
+        // Away or failed: the mounted layer stays; its own poll already shows it stale.
+        if (halt.signal.aborted || !layout?.available || layoutKey(layout) === layoutKey(live.layout())) return;
+        const old = live; live = null;
+        old.stop(); if (view.live === old) view.live = null;
+        live = await mountLive(view, { api, layout });
+      } catch (error) { report(error); }
+      finally {
+        busy = null;
+        if (halt.signal.aborted) { live?.stop(); if (live && view.live === live) view.live = null; live = null; }
+        else schedule(live ? LIVE_LAYOUT_MS : LIVE_RETRY_MS);
+      }
+    })();
+    return busy.then(() => live);
+  }
+  // A server push may mean a placement changed; at most one extra read in 30 s.
+  const pushed = () => { if (live && Date.now() - readAt > 30000) check(); };
+  if (typeof document.addEventListener === 'function') document.addEventListener('chf-server-update', pushed, { signal: halt.signal });
+  check();
+  return {
+    check,
+    live: () => live,
+    stop() { if (halt.signal.aborted) return; halt.abort(); clearTimeout(timer); timer = null; },
+  };
+}
+
+export async function mountLive(view, { api = (path, options) => fetch(base() + path, options), layout = null } = {}) {
+  const events = new AbortController(), requests = new AbortController();
+  layout ||= await readLayout(api, requests.signal);
   if (!layout?.available || !view.ready) return null;
 
   const canvas = view.renderer3.domElement, host = canvas.parentElement;
@@ -170,7 +222,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   function tap(row) {
     if (stale) { window.showGlobalAlert(unreachable); return; }
     if (!row.offered) { showSheet(row); return; }
-    if (['light', 'switch'].includes(row.kind)) { closeSheet(); void control(row.entity_id, 'toggle'); }
+    if (['light', 'switch', 'outlet'].includes(row.kind)) { closeSheet(); void control(row.entity_id, 'toggle'); }
     else if (['lock', 'garage', 'alarm'].includes(iconKind(row))) showSheet(row);
     else openRoom(row.building, row.room, row);
   }
