@@ -576,7 +576,7 @@
         try { if (typeof localStorage === 'undefined') return; } catch (e) { return; }
         // Shared with the admin gate, which installs its wrapper before nav.
         window.chfIsControlUrl = function (url) {
-            return /(?:^|\/)api\/(?:ha\/(?:control\/|toggle(?:[?#]|$)|card\/(?:service|climate)(?:[?#]|$)|media_players\/[^/?#]+\/command(?:[?#]|$))|music\/(?:play|queue\/command)(?:[?#]|$))/.test(url);
+            return /(?:^|\/)api\/(?:panel\/talk(?:[?#]|$)|ha\/(?:control\/|toggle(?:[?#]|$)|card\/(?:service|climate)(?:[?#]|$)|media_players\/[^/?#]+\/command(?:[?#]|$))|music\/(?:play|queue\/command)(?:[?#]|$))/.test(url);
         };
         const _fetch = window.fetch.bind(window);
         window.fetch = function (input, init) {

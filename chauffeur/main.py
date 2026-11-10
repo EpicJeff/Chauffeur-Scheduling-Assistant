@@ -1760,6 +1760,21 @@ def ha_toggle(req: HAToggleRequest, request: Request):
     # and the board's next poll is what makes it true.
     return {'ok': True}
 
+@app.get("/api/panel/talk")
+def panel_talk_status(request: Request):
+    from services import control_rules, panel_talk
+    device = control_rules.panel_device(request.headers, request.query_params)
+    return panel_talk.status(device)
+
+
+@app.post("/api/panel/talk")
+def panel_talk_start(request: Request):
+    from services import control_rules, panel_talk
+    device = control_rules.panel_device(request.headers, request.query_params)
+    code, body = panel_talk.start(device)
+    return JSONResponse(status_code=code, content=body)
+
+
 @app.get("/api/panel/profile")
 def panel_profile(tabs: Optional[str] = None, widgets: Optional[str] = None,
                   page: Optional[str] = None):

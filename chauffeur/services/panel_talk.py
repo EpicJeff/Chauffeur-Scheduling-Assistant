@@ -1,5 +1,77 @@
 """A wall panel's room and voice satellite, discovered through Home Assistant."""
+import threading
+import time
+
 from services import announce, ha_api, storage, voice_identity
+
+START_MESSAGE = 'Yes?'
+
+_last_start: dict[str, float] = {}
+_start_lock = threading.Lock()
+
+
+def status(device: dict | None) -> dict:
+    """Availability and the satellite's own state, never a fabricated state."""
+    if not device or not device.get('area_id'):
+        return {'available': False, 'state': None}
+    try:
+        satellite = satellite_for_panel(device)
+        state = (ha_api.get_state(satellite) or {}).get('state') if satellite else None
+        return {'available': state not in (None, 'unavailable', 'unknown'), 'state': state}
+    except Exception:
+        return {'available': False, 'state': None}
+
+
+def _offline_message(device: dict) -> str:
+    try:
+        area = next((a for a in ha_api.get_area_map()
+                     if a.get('id') == device.get('area_id')), {})
+        name = area.get('name') or 'room'
+    except Exception:
+        name = 'room'
+    return f'The {name} speaker is offline.'
+
+
+def start(device: dict | None) -> tuple[int, dict]:
+    """Start one ordinary HA conversation; the panel supplies no person identity."""
+    if not device:
+        return 403, {'message': 'Only a paired wall panel can start a conversation.'}
+    if not device.get('area_id'):
+        return 409, {'message': 'No voice satellite is available for this panel.'}
+    try:
+        if not ha_api.is_available():
+            return 409, {'message': 'Home Assistant is not available.'}
+        satellite = satellite_for_panel(device)
+        if not satellite:
+            # The resolver excludes unavailable entities. Distinguish an offline
+            # room speaker from a room that has no satellite configured at all.
+            areas = ha_api.get_area_map()
+            area = next((a for a in areas if a.get('id') == device.get('area_id')), {})
+            pinned = ((storage.get_settings() or {}).get('announce_targets') or {}).get(device.get('area_id'))
+            candidates = [device.get('satellite_id'), pinned, *area.get('entities', [])]
+            for entity in candidates:
+                if entity and entity.startswith('assist_satellite.'):
+                    state = (ha_api.get_state(entity) or {}).get('state')
+                    if state in (None, 'unavailable', 'unknown'):
+                        return 502, {'message': _offline_message(device)}
+            return 409, {'message': 'No voice satellite is available for this panel.'}
+        state = (ha_api.get_state(satellite) or {}).get('state')
+        if state in (None, 'unavailable', 'unknown'):
+            return 502, {'message': _offline_message(device)}
+        with _start_lock:
+            device_id = device['device_id']
+            previous = _last_start.get(device_id)
+            if previous is not None and time.time() - previous < 5:
+                return 429, {'message': 'Please wait a moment before trying again.'}
+            result = ha_api.call_service('assist_satellite', 'start_conversation',
+                                         {'entity_id': satellite, 'preannounce': True,
+                                          'start_message': START_MESSAGE})
+            if result is None:
+                return 502, {'message': _offline_message(device)}
+            _last_start[device_id] = time.time()
+        return 200, {'ok': True}
+    except Exception:
+        return 502, {'message': _offline_message(device)}
 
 
 def _known_satellites(states: dict) -> dict:
