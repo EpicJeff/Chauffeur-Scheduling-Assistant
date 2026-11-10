@@ -303,6 +303,89 @@ class PrivateAnswerTests(unittest.TestCase):
         turn.tool_result({'status': 'success', 'message': 'Done.'})
         self.assertTrue(turn.safe)
 
+    # --- review round 1 ---------------------------------------------------------
+    # Ruling (controller, 2026-11-10, replaces "an error is never private"): calling
+    # a PRIVATE tool makes the turn private whatever comes back (a bare state dict
+    # with no status is a disclosure); a SPEAKABLE tool's errors stay speakable
+    # ("Say your PIN first"); tools whose speakable text carries records are PRIVATE.
+    def test_private_tool_without_status_is_private(self):
+        turn = self.vp.SatelliteTurn(storage.get_member('jeff'))
+        turn.before_tool('get_current_state', {})
+        turn.tool_result({'schedule': [{'title': 'Therapy'}]})
+        self.assertFalse(turn.safe)
+
+    def test_private_tool_error_still_private(self):
+        turn = self.vp.SatelliteTurn(storage.get_member('jeff'))
+        turn.before_tool('read_mail', {})
+        turn.tool_result({'status': 'error', 'message': 'Which one? "Re: Ben\'s report"'})
+        self.assertFalse(turn.safe)
+
+    def test_record_bearing_tools_are_private(self):
+        for name in ('answer_request', 'adjust_points', 'start_ask', 'get_current_state', 'list_insights'):
+            self.assertIn(name, voice_tools.PRIVATE, name)
+
+    def test_house_without_arguments_does_not_raise(self):
+        turn = self.vp.SatelliteTurn(storage.get_member('jeff'))
+        turn.before_tool('house', None)
+        turn.tool_result(None)
+
+    def _ctx(self):
+        return voice.context({'ha_instance_id': 'ha', 'satellite_id': KITCHEN, 'device_id': 'device-' + KITCHEN,
+                              'request_id': uuid.uuid4().hex, 'observed_at': time.time()}, True)
+
+    def test_read_it_still_posts_card(self):
+        self.say('what is on the calendar tomorrow', JEFF)       # Jeff is recognised, the mic is open
+        card = {'kind': 'family_action', 'id': 'card-9', 'proposal_id': 'prop-9', 'summary': 'Draft'}
+        self.vp.hold(self._ctx(), storage.get_member('jeff'), SECRET, card)
+        with patch.object(storage, 'update_action_proposal') as bind:
+            speech, _ = self.say('read it', JEFF, seconds=0.4)
+        self.assertTrue(speech.startswith(SECRET), speech)
+        channel = storage.get_or_create_dm('jeff', storage.ensure_argyle_member()['id'])
+        rows = storage.get_channel_messages(channel['id'], limit=10)
+        self.assertTrue(any((m.get('card') or {}).get('id') == 'card-9' for m in rows), rows)
+        bind.assert_called_once_with('prop-9', {'channel_id': channel['id']})
+
+    def test_dont_read_it_sends(self):
+        self.hold_mail()
+        speech, _ = self.say("don't read it out loud", JEFF, seconds=0.4)
+        self.assertEqual(speech, 'Sent to your chat.')
+        self.assertTrue(any('pineapple' in body for body in self.dm()))
+
+    def test_failed_post_never_breaks_the_next_turn(self):
+        from services import agent_tools_v2
+        self.hold_mail()
+        with patch.object(agent_tools_v2, '_post_chat_message', side_effect=RuntimeError('db locked')):
+            speech, _ = self.say('what time is practice on saturday', MUM,
+                                 call={'name': 'get_calendar_events', 'arguments': {}})
+        self.assertNotIn('pineapple', speech)
+        self.assertNotIn('error', speech.lower())
+        self.assertIn(('ha', KITCHEN), self.vp._held, 'kept for a later retry, never lost')
+
+    def test_failed_post_still_ends_the_session_on_goodbye(self):
+        from services import agent_tools_v2
+        self.hold_mail()
+        with patch.object(agent_tools_v2, '_post_chat_message', side_effect=RuntimeError('db locked')):
+            speech, keep = self.say('thanks, that is all', JEFF)
+        self.assertNotIn('pineapple', speech)
+        self.assertFalse(keep)
+        self.assertEqual(voice._sessions[('ha', KITCHEN)]['level'], 'unknown')
+
+    def test_failed_post_never_breaks_configure(self):
+        from services import agent_tools_v2
+        self.hold_mail()
+        with patch.object(agent_tools_v2, '_post_chat_message', side_effect=RuntimeError('db locked')):
+            voice.configure(True, [{'ha_instance_id': 'ha', 'satellite_id': KITCHEN,
+                                    'device_id': 'device-' + KITCHEN, 'enabled': True,
+                                    'recognition_enabled': True}])
+
+    def test_approval_readback_is_never_held(self):
+        from services import voice_approval
+        with patch.object(voice_approval, 'current_readback',
+                          return_value='Say approve booking to book the dentist for Friday.'):
+            speech, _ = self.hold_mail()
+        self.assertEqual(speech, 'Say approve booking to book the dentist for Friday.')
+        self.assertEqual(self.vp._held, {})
+
     def test_unknown_voice_never_held(self):
         from services import agent_tools_v2
         with patch.object(agent_tools_v2, 'find_in_chauffeur',
