@@ -151,7 +151,7 @@ class PrivateAnswerTests(unittest.TestCase):
         self.assertEqual(unclassified, [], 'classify every tool as SPEAKABLE or PRIVATE')
         self.assertEqual(both, [])
         for name in ('read_mail', 'search_mail', 'get_family_messages', 'list_threads',
-                     'find_in_chauffeur', 'get_requests', 'research_question', 'launch_mission'):
+                     'find_in_chauffeur', 'get_requests', 'launch_mission'):
             self.assertIn(name, voice_tools.PRIVATE, name)
         for name in ('add_household_task', 'add_shopping_items', 'send_family_message', 'house', 'music'):
             self.assertIn(name, voice_tools.SPEAKABLE, name)
@@ -321,7 +321,9 @@ class PrivateAnswerTests(unittest.TestCase):
         self.assertFalse(turn.safe)
 
     def test_record_bearing_tools_are_private(self):
-        for name in ('answer_request', 'adjust_points', 'start_ask', 'get_current_state', 'list_insights'):
+        # adjust_points left this list 2026-11-10: privacy follows the data, and a
+        # household's points are shared (tests/test_voice_privacy_weather.py).
+        for name in ('answer_request', 'start_ask', 'get_current_state', 'list_insights'):
             self.assertIn(name, voice_tools.PRIVATE, name)
 
     def test_house_without_arguments_does_not_raise(self):
