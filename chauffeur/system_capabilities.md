@@ -1,6 +1,35 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.773 (2026-11-09).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.775 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.775 (2026-11-10, NOT device-verified): the house is one connected model, and the editor edits the house itself.**
+
+Spec: `docs/superpowers/specs/2026-11-09-house-connected-model-design.md` (pieces 1 and 2 of 5). Plan: `docs/superpowers/plans/2026-11-09-house-connected-model-pieces-1-2.md`, Tasks 1-18, rulings P1-P6 and R1-R56 in the SDD ledger. Claude wrote the tests first; Codex and Claude agents built the code; every task, every fix round and a whole-branch review were Claude-reviewed.
+
+Why: the v2.499.771 device run was judged really rough. Rooms were drawn shapes unconnected to their walls, windows and doors floated, roofs allowed one slope per section, and placing the house on the lot was close to impossible.
+
+The model (schema 3, `chauffeur.twin.plan/3`):
+- Walls run between shared joints (`kind` solid or separator). A separator is an invisible wall that splits an open-plan room. Rooms are derived from the regions the walls close, so moving a shared wall resizes both rooms. Room names and kinds hold through drags by joint-cycle match, then by overlap.
+- Openings, anchors and items are hosted on a wall, floor or ceiling, at an offset along it. They follow their host when it moves, and are ghosted with a reason (never dropped) when the host is gone.
+- Roofs are drawn areas with a setting per edge (sloped, gable or clipped) and a pitch per edge, so two sides of one roof can slope differently. Dormers sit on an edge and are flagged, not dropped, when they no longer fit.
+- Flags and proposals: a read that disagrees with a person's piece becomes a proposal, never an overwrite. Lost pieces are flagged at their last real position.
+- `services/twin_model.py`, `twin_model_graph.py`, `twin_model_roofs.py`, `twin_model_hosts.py`, `twin_model_bridge.py`, `twin_model_ops.py`. The round store holds schema 3 (`twin_store.current_model`, `update_model`); `current()` still returns the flat view, so the build pipeline is unchanged. Schema-2 rounds migrate on read, with separators added where a stored room edge had no wall, grouped into one flag per level.
+- Every edit is an operation: `POST /api/house/editor/op` (refusals come back as plain sentences). Argyle's `house_design` tool uses the same operations.
+- Builds and rebuilds from the drawings keep a person's walls, windows and rooms once each. A read never doubles a person's piece.
+
+The editor (`static/twin/editor/`), in the real 3D view only (the separate 2D Plan mode is retired):
+- Selection is rooms first: a room highlights in one colour and its walls in another. Escape steps out from piece to room to level.
+- Live drags with snapping: walls, joints, rooms, and the middle and edges of doors and windows. Dimension labels can be clicked to type a distance.
+- Draw a wall, a room, an invisible split, or a roof area.
+- Roof edge tools: per-edge setting and pitch, and dormers.
+- Asset library (`GET /api/house/editor/library`, `static/twin/twin_library.js`): materials by scope (this piece, this room, this floor, the whole building), with a Change button on every material line and Clear for inherited ones. Items have Turn and Size (50-200%). Anchors and items have a distance from their surface.
+- Lot placement: move and turn the building on the lot, with the street edge used for the first view.
+- Flags and proposals list, with fix and accept actions.
+- Undo and redo, which refuse with a sentence when something else changed the house since that step.
+
+Known limits: exterior walls are centred on the drawn line, so the house reads 2-3 in larger per side. An edit takes about 330 ms.
+
+New suites: `tests/test_twin_model*.py`, `test_twin_store_model.py`, `test_twin_model_ops_walls.py`, `test_twin_model_ops_more.py`, node suites for snap, drag, handles, draw, roof tools, lot tools, flags and library, and the live suites `tests/test_house_editor_model_live_t10.py` through `t17.py`.
 
 **v2.499.773 (2026-11-09, NOT device-verified): one rulebook decides who may control Home Assistant devices, on every surface.**
 
