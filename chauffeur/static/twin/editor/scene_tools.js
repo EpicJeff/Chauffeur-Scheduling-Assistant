@@ -360,5 +360,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     delegate(value) { delegate = value; },
     refresh() { drawFloors(); if (selection && !findPiece(getPlan(), selection.pieceId, selection.buildingId)) select(null); else roomSelection.refresh(); },
     refreshCard() { cards.draw(selection); },
+    // The card's area section redraws once the link answers; the scene never waits on it.
+    refreshLink() { return haLink.refresh().then(() => { if (!signal?.aborted) cards.draw(selection); }).catch(report); },
   };
 }

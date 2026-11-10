@@ -149,13 +149,15 @@ export async function boot() {
       if (eye) { aimed = true; view.aim(eye.position, eye.target); }
     }
     renderedGhosts = countGhosts(plan);
-    await tools?.haLink?.refresh();
     drawFloors();
     tools?.refresh();
     library?.refresh();
     flags?.refresh();
     pauses?.sync();
     timeline?.sync(currentBuild);
+    // Read the Home Assistant link beside the scene, never before it: a slow or
+    // unreachable Home Assistant must not hold the editor's start, a poll or a save.
+    tools?.refreshLink();
   }
   function drawFloors() {
     tools?.drawFloors();

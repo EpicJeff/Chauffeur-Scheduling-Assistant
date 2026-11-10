@@ -2,7 +2,7 @@ const noHa = 'Home Assistant is not connected, so areas and devices are hidden.'
 const goneArea = "This room's Home Assistant area is gone; pick another.";
 
 export function createHaLink({ api, onCommit, signal }) {
-  let latest = null, pending = null;
+  let latest = null, pending = null, queued = null;
   const element = (tag, text) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -21,7 +21,9 @@ export function createHaLink({ api, onCommit, signal }) {
 
   function refresh() {
     if (signal?.aborted) return Promise.resolve(latest);
-    if (pending) return pending;
+    // A read asked for while one is out (a save landed meanwhile) follows it, so
+    // the answer kept is never older than the last change.
+    if (pending) return queued ||= pending.then(() => { queued = null; return refresh(); });
     pending = api.request('link', 'GET', undefined, 'ha').then(data => {
       if (!signal?.aborted) latest = data;
       return latest;
