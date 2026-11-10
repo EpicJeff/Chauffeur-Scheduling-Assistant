@@ -202,6 +202,23 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     }
     return point && { building, kind, piece, point: point.toArray(), side, room, role, surface, level: piece.level };
   }
+  // In the floor cutaway the ceiling has no rendered slab to raycast. An
+  // explicit ceiling placement still uses its real plane and room boundary.
+  function ceilingAt(event, fromBelow = false) {
+    const selected = tools.selection();
+    const building = getPlan()?.buildings.find(b => b.id === selected.building);
+    const room = building?.rooms.find(r => r.id === selected.room && r.state !== 'ghost');
+    if (!room) return null;
+    const level = building.levels.find(l => l.id === room.level);
+    if (!level) return null;
+    const worldRay = ray(event), origin = local(building, worldRay.origin);
+    const direction = local(building, worldRay.origin.clone().add(worldRay.direction)).sub(origin).normalize();
+    if (fromBelow && direction.z <= 0) return null;
+    const point = new THREE.Ray(origin, direction).intersectPlane(
+      new THREE.Plane(new THREE.Vector3(0, 0, 1), -(level.elevation || 0) - level.ceiling), new THREE.Vector3());
+    if (!point || !contains(room.polygon, [point.x, point.y])) return null;
+    return { building, kind: 'room', piece: room, point: point.toArray(), room, role: 'porch_ceiling', surface: 'ceiling', level: room.level };
+  }
   function dismiss() { chooser?.remove(); chooser = null; }
   const pickingWords = () => `Choose a material for the ${picking?.label || 'surface'}.`;
   function stopPicking() {
@@ -349,5 +366,5 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     dismiss(); thumbnails.current?.dispose(); if (siteDrag) view.controls.enabled = siteDrag.enabled;
     view.controls.removeEventListener('change', refresh); outline.removeFromParent(); outline.geometry.dispose(); outline.material.dispose();
   }, { once: true });
-  return { pickSite, pointerDown, pointerMove, pointerUp, refresh, pick };
+  return { pickSite, surfaceAt, ceilingAt, pointerDown, pointerMove, pointerUp, refresh, pick };
 }

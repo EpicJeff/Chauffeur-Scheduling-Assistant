@@ -1,8 +1,9 @@
 const noHa = 'Home Assistant is not connected, so areas and devices are hidden.';
 const goneArea = "This room's Home Assistant area is gone; pick another.";
 
-export function createHaLink({ api, onCommit, signal }) {
-  let latest = null, pending = null, queued = null;
+export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => true }) {
+  let latest = null, pending = null, queued = null, placement = null;
+  const blinking = new Set();
   const element = (tag, text) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -18,6 +19,61 @@ export function createHaLink({ api, onCommit, signal }) {
   };
   const commit = (room, value) => onCommit({ op: 'set', building: room.building,
     id: room.id, field: 'ha_area', value });
+
+  function isPlaced(device) {
+    const plan = getPlan?.();
+    return plan ? plan.buildings.some(b => b.anchors?.some(a => a.device === device.device_id)
+      || b.devices?.some(d => d.device === device.device_id)) : !!device.placed;
+  }
+
+  async function pickSpot(room, device) {
+    if (!canEdit()) return;
+    placement?.cancel();
+    const anchors = placement?.anchors(room).filter(a => !a.device && a.kind === device.kind) || [];
+    const choice = await window.promptChoice('Pick a spot', `Where does ${device.name} belong?`, [
+      ...anchors.map((a, i) => ({ value: a.id, label: a.name || `${device.kind} spot ${i + 1}` })),
+      { value: 'wall', label: 'On a wall' }, { value: 'ceiling', label: 'On the ceiling' },
+    ]);
+    if (signal?.aborted || !canEdit() || choice == null) return;
+    if (choice === 'wall' || choice === 'ceiling') placement?.arm(device, choice);
+    else if (anchors.some(a => a.id === choice)) await onCommit({ op: 'place_device', device: device.device_id, anchor: choice });
+  }
+
+  async function blink(device) {
+    if (!canEdit() || blinking.has(device.device_id)) return;
+    blinking.add(device.device_id);
+    try { await api.request('identify', 'POST', { device_id: device.device_id }, 'ha'); }
+    catch { if (!signal?.aborted) window.showGlobalAlert('Could not blink that light.'); }
+    finally { blinking.delete(device.device_id); }
+  }
+
+  function devicesSection(room, area, notes) {
+    const section = element('section');
+    section.append(element('h3', 'Devices'));
+    for (const device of latest.devices || []) {
+      if (device.area_id !== area) continue;
+      const row = element('div'); row.className = 'editor-material-line editor-device-row';
+      const words = element('div'), actions = element('div'); actions.className = 'editor-material-actions';
+      words.append(element('p', device.name), element('span', device.kind), element('span', isPlaced(device) ? 'Placed' : 'Not placed yet'));
+      actions.append(button('Pick a spot', () => pickSpot(room, device)));
+      if (device.kind === 'light') actions.append(button('Blink', () => blink(device)));
+      row.addEventListener('pointerdown', event => placement?.startDrag(event, device), { signal });
+      row.append(words, actions); section.append(row);
+    }
+    for (const note of notes || []) section.append(element('p', note));
+    return section;
+  }
+
+  function anchorSection(anchor) {
+    const section = element('section');
+    if (!latest?.available || !anchor.device) return section;
+    const device = latest.devices?.find(d => d.device_id === anchor.device);
+    section.className = 'editor-material-line';
+    section.append(element('p', device?.name || anchor.device), button('Remove', () => {
+      if (canEdit()) return onCommit({ op: 'unplace_device', device: anchor.device });
+    }));
+    return section;
+  }
 
   function refresh() {
     if (signal?.aborted) return Promise.resolve(latest);
@@ -76,6 +132,8 @@ export function createHaLink({ api, onCommit, signal }) {
         section.append(suggestion);
       }
     }
+    if (selected && !row?.gone && areas.some(a => a.area_id === selected))
+      section.append(devicesSection(room, selected, row?.notes));
     return section;
   }
 
@@ -96,5 +154,7 @@ export function createHaLink({ api, onCommit, signal }) {
     return section;
   }
 
-  return { refresh, roomSection, buildingSection, state: () => latest };
+  return { refresh, roomSection, buildingSection, anchorSection, state: () => latest,
+    cancelPlacement() { placement?.cancel(); },
+    setPlacement(value) { placement = value; } };
 }

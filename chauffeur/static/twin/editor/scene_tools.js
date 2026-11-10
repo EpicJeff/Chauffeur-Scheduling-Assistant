@@ -48,7 +48,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     handles?.refresh();
     drawDimensions(getPlan(), state);
   } });
-  const haLink = createHaLink({ api, onCommit: op, signal });
+  const haLink = createHaLink({ api, onCommit: op, signal, getPlan, canEdit });
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
     op, addDormer, canEdit, select, pickMaterial, haLink, ask: item => panel.focusSelection(item, getLabel(item)) });
@@ -104,6 +104,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     return item;
   }
   function setTool(name) {
+    if (name !== 'select') haLink.cancelPlacement();
     tool = name; onInteract?.();
     for (const id of ['select', 'move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor']) el(`rail-${id}`).setAttribute('aria-pressed', String(id === name));
     canvas.style.cursor = name === 'move' ? 'grab' : name === 'select' ? '' : 'crosshair';

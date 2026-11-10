@@ -13,6 +13,7 @@ import { createRoofTools } from './roof_tools.js';
 import { createLotTools, streetView, streetSegment } from './lot_tools.js';
 import { createLibrary } from './library.js';
 import { createFlags } from './flags.js';
+import { createDevicePlacement } from './device_placement.js';
 
 const el = id => document.getElementById(id);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
@@ -25,7 +26,7 @@ export async function boot() {
   let resuming = false, stopping = false;
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
   let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, library = null, previewing = false, lastSummary = '';
-  let roofTools = null, lot = null, flags = null, aimed = false;
+  let roofTools = null, lot = null, flags = null, devices = null, aimed = false;
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
@@ -152,12 +153,13 @@ export async function boot() {
     drawFloors();
     tools?.refresh();
     library?.refresh();
+    devices?.refresh();
     flags?.refresh();
     pauses?.sync();
     timeline?.sync(currentBuild);
     // Read the Home Assistant link beside the scene, never before it: a slow or
     // unreachable Home Assistant must not hold the editor's start, a poll or a save.
-    tools?.refreshLink();
+    tools?.refreshLink().then(() => devices?.refresh()).catch(report);
   }
   function drawFloors() {
     tools?.drawFloors();
@@ -451,18 +453,22 @@ export async function boot() {
       // The lot card frees itself once the place rows are fresh; the scene
       // rebuild (seconds for a refitted house) follows on the poll's tick.
       reload: async () => { await loadSheets(); polling.pollNow(true).catch(report); } });
+    devices = createDevicePlacement({ view, tools, library, getPlan: () => timeline?.preview() || snapshot.plan,
+      op: applyOp, canEdit, signal: lifecycle.signal,
+      prepare() { onInteract(); roofTools.cancel(); draw.cancel(); } });
+    view.live = { draw: devices.draw, stop: devices.stop };
     tools.delegate({
       pick: flags.pick,
-      pointerDown: event => lot.pointerDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event) || library.pointerDown(event),
+      pointerDown: event => devices.pointerDown(event) || lot.pointerDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event) || library.pointerDown(event),
       pointerMove: event => lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event) || library.pointerMove(event),
-      pointerUp: (event, cancel) => lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
-      floorChanged() { roofTools.cancel(); draw.floorChanged(); }, cancel() { roofTools.cancel(); draw.cancel(); },
+      pointerUp: (event, cancel) => devices.pointerUp(event, cancel) || lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
+      floorChanged() { devices.cancel(); roofTools.cancel(); draw.floorChanged(); }, cancel() { devices.cancel(); roofTools.cancel(); draw.cancel(); },
     });
     timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
       canScrub: () => !menuBusy && !directing,
       log(summary) { const line = document.createElement('li'); line.textContent = summary; el('editor-log').append(line); lastSummary = summary; },
       onPreview(value) {
-        previewing = value; roofTools.cancel(); draw.cancel(); tools.select(null); pauses.dismiss(); panel.readOnly(value);
+        previewing = value; devices.cancel(); roofTools.cancel(); draw.cancel(); tools.select(null); pauses.dismiss(); panel.readOnly(value);
         tools.refreshCard(); syncBuildButton();
         for (const id of ['move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-level', 'delete', 'roof']) el(`rail-${id}`).disabled = value;
         if (!value) pauses.resume();

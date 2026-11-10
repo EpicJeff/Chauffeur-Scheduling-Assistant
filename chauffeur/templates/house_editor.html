@@ -23,6 +23,8 @@
     {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/editor/flags.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/flags.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/ha_link.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/ha_link.js' | ver | tojson }};
+    imports[new URL(window.chfBase + 'static/twin/editor/device_placement.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/device_placement.js' | ver | tojson }};
+    imports[new URL(window.chfBase + 'static/twin/live/markers.js', location.href).href] = window.chfBase + {{ 'static/twin/live/markers.js' | ver | tojson }};
     const map = document.createElement('script'); map.type = 'importmap';
     map.textContent = JSON.stringify({ imports }); document.head.appendChild(map);
     document.addEventListener('DOMContentLoaded', () => {
@@ -78,6 +80,10 @@
     <section id="draw-tools" aria-label="Drawing tools" hidden>
       <p id="draw-note" role="status"></p>
       <button id="draw-cancel" type="button">Cancel drawing</button>
+    </section>
+    <section id="device-tools" aria-label="Device placement" hidden>
+      <p id="device-note" role="status"></p>
+      <button id="device-cancel" type="button">Cancel placement</button>
     </section>
     <aside id="piece-card" aria-label="Selected piece" hidden></aside>
     <section id="roof-tools" aria-label="Roof tools" hidden>

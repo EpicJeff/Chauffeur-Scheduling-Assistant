@@ -90,12 +90,12 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       && flag.block_rect.every((v, i) => Math.abs(v - record.piece.block[i]) <= 1)) : [];
   function drawHaSection(record) {
     if (!haSection) return;
-    const signature = JSON.stringify([haLink.state(), record.piece, canEdit()]);
+    const signature = JSON.stringify([haLink.state(), record.piece, record.building.anchors, record.building.devices, canEdit()]);
     if (signature === haSignature) return;
     haSignature = signature;
     haSection.replaceChildren(record.kind === 'room'
       ? haLink.roomSection({ ...record.piece, room: record.piece.id, building: record.building.id })
-      : haLink.buildingSection(record.building));
+      : record.kind === 'anchor' ? haLink.anchorSection(record.piece) : haLink.buildingSection(record.building));
     haSection.querySelectorAll('select, button').forEach(node => { node.disabled = !canEdit(); });
   }
   function draw(next = selection) {
@@ -231,7 +231,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       (['ridge', 'low_side'].includes(field) ? more : form).append(label);
     }
     if (more.children.length > 1) form.append(more);
-    if (haLink && ['room', 'building'].includes(kind)) {
+    if (haLink && ['room', 'building', 'anchor'].includes(kind)) {
       haSection = document.createElement('section'); host.append(haSection); drawHaSection(record);
     }
     host.append(button('Ask Argyle about this', () => ask(selection)));
