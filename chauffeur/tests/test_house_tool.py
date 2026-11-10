@@ -414,7 +414,7 @@ class HouseToolTests(unittest.TestCase):
             self.assertIn(member, [r['entity_id'] for r in res['devices'][0]['entities']])
 
     def test_reading_a_device_by_name_answers_the_whole_device(self):
-        res = self.run_tool(action='read', query='powerwall', acting_member={'id': 'k1', 'role': 'kid'})
+        res = self.run_tool(action='read', query='powerwall', acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(res['device']['device'], 'Powerwall')
         rows = {r['entity_id']: r for r in res['device']['entities']}
@@ -601,7 +601,7 @@ class HouseToolTests(unittest.TestCase):
         self.assertEqual(next(r['state'] for r in cat['entities'] if r['entity_id'] == 'sensor.b0_battery'), '12')
 
     def test_read_of_a_category_question_answers_with_the_tally_and_never_one_entity(self):
-        res = self.run_tool(action='read', query='all the doors locked', acting_member={'id': 'k1', 'role': 'kid'})
+        res = self.run_tool(action='read', query='all the doors locked', acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertNotIn('entity', res)
         self.assertEqual({c['category'] for c in res['categories']}, {'door', 'lock'})
@@ -642,13 +642,13 @@ class HouseToolTests(unittest.TestCase):
         self.assertNotIn('tv-token', repr(tv))
 
     def test_read_of_an_unexposed_entity_is_still_a_read(self):
-        res = self.run_tool(action='read', entity_id='light.hall', acting_member={'id': 'k1', 'role': 'kid'})
+        res = self.run_tool(action='read', entity_id='light.hall', acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success')
         self.assertFalse(res['entity']['exposed'])
 
     def test_an_ambiguous_query_returns_candidates_and_touches_nothing(self):
         res = self.run_tool(action='act', query='office', service='turn_off',
-                            acting_member={'id': 'p1', 'role': 'parent'})
+                            acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(res['status'], 'ambiguous')
         self.assertGreater(len(res['candidates']), 1)
         self.assertEqual(self.calls, [])
@@ -666,7 +666,7 @@ class HouseToolTests(unittest.TestCase):
     # --- act ----------------------------------------------------------------
     def test_a_kid_can_turn_off_an_exposed_lamp_and_hears_the_state_after(self):
         res = self.run_tool(action='act', entity_id='light.office_lamp', service='turn_off',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls, [('light', 'turn_off', {'entity_id': 'light.office_lamp'})])
         self.assertEqual(res['state_after'], 'off')
@@ -682,7 +682,7 @@ class HouseToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(res['entity']['entity_id'], 'water_heater.pool')
         res = self.run_tool(action='act', query='pool heater', service='set_temperature', data={'temperature': 83},
-                            acting_member={'id': 'p1', 'role': 'parent'})
+                            acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[-1], ('water_heater', 'set_temperature', {'temperature': 83, 'entity_id': 'water_heater.pool'}))
         self.assertEqual(self.run_tool(action='find', query='office light')['candidates'][0]['entity_id'], 'light.office_lamp')
@@ -693,56 +693,59 @@ class HouseToolTests(unittest.TestCase):
 
     def test_brightness_rides_the_call_as_given(self):
         res = self.run_tool(action='act', query='office lamp', service='light.turn_on', data={'brightness_pct': 20},
-                            acting_member={'id': 'p1', 'role': 'parent'})
+                            acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[0], ('light', 'turn_on', {'entity_id': 'light.office_lamp', 'brightness_pct': 20}))
         self.assertEqual(res['brightness_pct'], 20)
 
     def test_entity_id_in_data_never_overrides_the_resolved_entity(self):
         self.run_tool(action='act', entity_id='light.office_lamp', service='turn_off',
-                      data={'entity_id': 'lock.front_door'}, acting_member={'id': 'p1', 'role': 'parent'})
+                      data={'entity_id': 'lock.front_door'}, acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(self.calls, [('light', 'turn_off', {'entity_id': 'light.office_lamp'})])
 
     def test_an_unexposed_light_is_refused_until_the_household_allows_it(self):
         res = self.run_tool(action='act', entity_id='light.hall', service='turn_on',
-                            acting_member={'id': 'p1', 'role': 'parent'})
+                            acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(res['status'], 'refused')
         self.assertIn('not exposed', res['message'])
         self.assertIn('Config', res['message'])
         self.assertEqual(self.calls, [])
         self.settings['house_control_unexposed'] = True
         res = self.run_tool(action='act', entity_id='light.hall', service='turn_on',
-                            acting_member={'id': 'p1', 'role': 'parent'})
+                            acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(res['state_after'], 'on')
 
     def test_a_lock_needs_a_verified_parent_voice(self):
+        named = voice('named', {'id': 'm_lorena', 'role': 'parent'})
+        named.paired, named.recognized_this_turn, named.member_id = True, True, 'm_lorena'
         res = self.run_tool(action='act', entity_id='lock.front_door', service='unlock',
-                            voice_context=voice('named', {'id': 'p1', 'role': 'parent'}), source='voice')
+                            voice_context=named, source='voice')
         self.assertEqual(res['status'], 'refused')
-        self.assertIn('parent', res['message'])
+        self.assertEqual(res['needs'], 'pin')
+        self.assertEqual(res['message'], 'Say your PIN first, then ask again.')
         self.assertEqual(self.calls, [])
         res = self.run_tool(action='act', entity_id='lock.front_door', service='unlock',
-                            voice_context=voice('verified', {'id': 'p1', 'role': 'parent'}), source='voice')
+                            voice_context=voice('verified', {'id': 'm_lorena', 'role': 'parent'}), source='voice')
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(res['state_after'], 'unlocked')
 
     def test_a_verified_kid_voice_still_cannot_unlock(self):
         res = self.run_tool(action='act', entity_id='lock.front_door', service='unlock',
-                            voice_context=voice('verified', {'id': 'k1', 'role': 'kid'}), source='voice')
+                            voice_context=voice('verified', {'id': 'm_lily', 'role': 'child'}), source='voice')
         self.assertEqual(res['status'], 'refused')
         self.assertEqual(self.calls, [])
 
     def test_a_garage_door_needs_a_parent_but_a_blind_does_not(self):
         res = self.run_tool(action='act', entity_id='cover.main_garage', service='open_cover',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'refused')
         self.assertEqual(self.calls, [])
         res = self.run_tool(action='act', entity_id='cover.office_blind', service='open_cover',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         res = self.run_tool(action='act', entity_id='cover.main_garage', service='open_cover',
-                            acting_member={'id': 'p1', 'role': 'parent'})
+                            acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(res['state_after'], 'open')
 
@@ -755,18 +758,28 @@ class HouseToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'refused')
         self.assertEqual(self.calls, [])
 
-    def test_the_wall_panel_may_switch_a_light_but_never_unlock_the_door(self):
+    def test_the_wall_panel_obeys_the_grid_defaults(self):
         from services import access
         res = self.run_tool(action='act', entity_id='light.office_lamp', service='turn_off',
                             acting_member=access.HOUSE, source='panel')
         self.assertEqual(res['status'], 'success', res)
         res = self.run_tool(action='act', entity_id='lock.front_door', service='unlock',
                             acting_member=access.HOUSE, source='panel')
-        self.assertEqual(res['status'], 'refused', 'the wall panel reads as an adult but is a room anyone can walk into')
+        self.assertEqual(res['status'], 'refused')
+        self.assertIsNone(res['needs'], 'the default panel Locks cell is No')
         self.assertEqual(self.calls, [('light', 'turn_off', {'entity_id': 'light.office_lamp'})])
         res = self.run_tool(action='act', entity_id='cover.main_garage', service='open_cover',
                             acting_member=access.HOUSE_PARENT, source='panel')
         self.assertEqual(res['status'], 'refused')
+        self.assertIsNone(res['needs'], 'the default panel Garage cell is No')
+        self.settings['panel_allow_unsafe_controls'] = True
+        for eid, service in (('lock.front_door', 'unlock'), ('cover.main_garage', 'open_cover')):
+            res = self.run_tool(action='act', entity_id=eid, service=service,
+                                acting_member=access.HOUSE, source='panel')
+            self.assertEqual(res['status'], 'refused')
+            self.assertEqual(res['needs'], 'identify')
+            self.assertEqual(res['control_held']['message'], "Who's asking?")
+        self.assertEqual(self.calls, [('light', 'turn_off', {'entity_id': 'light.office_lamp'})])
 
     def test_an_unknown_voice_may_still_switch_a_light(self):
         res = self.run_tool(action='act', entity_id='light.office_lamp', service='turn_off',
@@ -775,11 +788,11 @@ class HouseToolTests(unittest.TestCase):
 
     def test_a_service_the_entity_does_not_have_is_an_error_and_calls_nothing(self):
         res = self.run_tool(action='act', entity_id='light.office_lamp', service='unlock',
-                            acting_member={'id': 'p1', 'role': 'parent'})
+                            acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(res['status'], 'error')
         self.assertEqual(self.calls, [])
         res = self.run_tool(action='act', entity_id='light.office_lamp', service='lock.turn_off',
-                            acting_member={'id': 'p1', 'role': 'parent'})
+                            acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(res['status'], 'error', 'a service from another domain was accepted')
         self.assertEqual(self.calls, [])
 
@@ -912,7 +925,7 @@ class HouseToolTests(unittest.TestCase):
         self.assertNotIn('apps', lamp)
 
     def test_a_spoken_app_name_becomes_the_package_id_on_the_remote(self):
-        res = self.run_tool(action='app', query='office tv', app='netflix', acting_member={'id': 'k1', 'role': 'kid'})
+        res = self.run_tool(action='app', query='office tv', app='netflix', acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         # DEVICE-FOUND 2026-10-28: a package id launches nothing on a Google TV; the link does.
         self.assertEqual(self.calls, [('remote', 'turn_on', {'entity_id': 'remote.office_tv',
@@ -938,18 +951,18 @@ class HouseToolTests(unittest.TestCase):
                 ('kodi', 'org.xbmc.kodi', 'org.xbmc.kodi')):          # no link known: the package goes
             self.calls.clear()
             res = self.run_tool(action='app', entity_id='remote.office_tv', app=spoken,
-                                acting_member={'id': 'k1', 'role': 'kid'})
+                                acting_member={'id': 'm_lily', 'role': 'child'})
             self.assertEqual(res['status'], 'success', (spoken, res))
             self.assertEqual(self.calls[0][2]['activity'], link, spoken)
             self.assertEqual(res['app_id'], package, spoken)
 
     def test_a_package_id_or_a_link_is_sent_as_given(self):
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='tv.twitch.android.app',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[0][2]['activity'], 'tv.twitch.android.app')
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='https://www.netflix.com/title/80057281',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[1][2]['activity'], 'https://www.netflix.com/title/80057281')
 
@@ -959,7 +972,7 @@ class HouseToolTests(unittest.TestCase):
         longer claims the app is missing as the only reading (Paramount+ WAS installed)."""
         self.tv_opens_browser = True
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='hulu',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertFalse(res['landed'])
         self.assertEqual([c[2]['activity'] for c in self.calls], ['hulu://video/', 'https://www.hulu.com/'])
@@ -978,7 +991,7 @@ class HouseToolTests(unittest.TestCase):
         goes first because only the app can answer it; the browser can never take it."""
         self.tv_claims = {'pplus://www.paramountplus.com/'}   # the https link would open the browser
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='paramount plus',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertTrue(res['landed'], res)
         self.assertEqual(res['sent'], 'pplus://www.paramountplus.com/')
@@ -991,7 +1004,7 @@ class HouseToolTests(unittest.TestCase):
             self.calls.clear()
             self.tv_claims = None
             res = self.run_tool(action='app', entity_id='remote.office_tv', app=spoken,
-                                acting_member={'id': 'k1', 'role': 'kid'})
+                                acting_member={'id': 'm_lily', 'role': 'child'})
             self.assertEqual(self.calls[0][2]['activity'], scheme, spoken)
 
     def test_a_scheme_nobody_claims_falls_through_to_the_web_link(self):
@@ -1000,7 +1013,7 @@ class HouseToolTests(unittest.TestCase):
         landing, not the silence."""
         self.tv_claims = {'https://www.hulu.com/'}
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='hulu',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertTrue(res['landed'], res)
         self.assertEqual([c[2]['activity'] for c in self.calls], ['hulu://video/', 'https://www.hulu.com/'])
@@ -1026,70 +1039,70 @@ class HouseToolTests(unittest.TestCase):
 
     def test_an_app_only_ha_knows_is_sent_under_the_name_ha_lists(self):
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='frndly',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[0][2]['activity'], 'Frndly TV')
         self.assertEqual(res['app'], 'Frndly TV')
 
     def test_an_unknown_app_is_an_error_that_names_what_the_tv_has_and_touches_nothing(self):
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='nintendo',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'error')
         self.assertIn('nintendo', res['message'])
         self.assertIn('Netflix', res['message'])
         self.assertEqual(self.calls, [])
-        res = self.run_tool(action='app', entity_id='remote.office_tv', app='', acting_member={'id': 'k1', 'role': 'kid'})
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='', acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'error')
         self.assertEqual(self.calls, [])
 
     def test_the_media_player_twin_or_the_room_finds_the_remote(self):
         res = self.run_tool(action='app', entity_id='media_player.office_tv_2', app='netflix',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(res['entity_id'], 'remote.office_tv')
         self.calls.clear()
-        res = self.run_tool(action='app', query='office', app='youtube', acting_member={'id': 'k1', 'role': 'kid'})
+        res = self.run_tool(action='app', query='office', app='youtube', acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[0][2]['entity_id'], 'remote.office_tv')
 
     def test_part_of_a_tvs_name_is_enough_when_it_fits_one_tv(self):
         """Live 2026-10-28: 'pool house' found no TV while the Pool House Lounge TV sat there."""
-        res = self.run_tool(action='app', query='living', app='netflix', acting_member={'id': 'p1', 'role': 'parent'})
+        res = self.run_tool(action='app', query='living', app='netflix', acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(res['status'], 'refused', res)   # unexposed, but it was FOUND
         self.assertIn('Living Room TV', res['message'])
         self.assertEqual(self.calls, [])
 
     def test_a_tv_without_an_app_list_is_never_an_app_target(self):
         res = self.run_tool(action='app', query='living room apple tv', app='netflix',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'error', res)
         self.assertIn('Android TV', res['message'])
         self.assertEqual(self.calls, [])
-        res = self.run_tool(action='app', query='office lamp', app='netflix', acting_member={'id': 'k1', 'role': 'kid'})
+        res = self.run_tool(action='app', query='office lamp', app='netflix', acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'error', res)
         self.assertEqual(self.calls, [])
 
     def test_a_tv_counts_as_exposed_when_either_twin_is(self):
         # remote.office_tv is not exposed; its media_player twin is. The TV is one thing.
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='netflix',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.calls.clear()
         res = self.run_tool(action='app', query='living room tv', app='netflix',
-                            acting_member={'id': 'p1', 'role': 'parent'})
+                            acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(res['status'], 'refused', res)
         self.assertIn('not exposed', res['message'])
         self.assertEqual(self.calls, [])
         self.settings['house_control_unexposed'] = True
         res = self.run_tool(action='app', query='living room tv', app='netflix',
-                            acting_member={'id': 'p1', 'role': 'parent'})
+                            acting_member={'id': 'm_lorena', 'role': 'parent'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[0][2]['entity_id'], 'remote.living_room_tv')
 
     def test_an_offline_android_tv_is_offline_not_a_non_tv(self):
         """Live 2026-10-28: the Sunroom TV was unavailable, carried no app list, and was called
         'not an Android TV' while it sat in the Android TV Remote integration."""
-        res = self.run_tool(action='app', query='sunroom tv', app='netflix', acting_member={'id': 'k1', 'role': 'kid'})
+        res = self.run_tool(action='app', query='sunroom tv', app='netflix', acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'error', res)
         self.assertIn('offline', res['message'])
         self.assertNotIn('not an Android TV', res['message'])
@@ -1099,7 +1112,7 @@ class HouseToolTests(unittest.TestCase):
         """Live 2026-10-28: 'open DIRECTV' on a TV already on DIRECTV read as landed although
         the launch itself had changed nothing."""
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='directv',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(res['app_id'], 'com.att.tv')
         self.assertFalse(res['landed'])
@@ -1129,7 +1142,7 @@ class HouseToolTests(unittest.TestCase):
     def test_the_answer_is_honest_when_the_tv_does_not_report_the_app(self):
         self.tv_ignores_launches = True
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='netflix',
-                            acting_member={'id': 'k1', 'role': 'kid'})
+                            acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         self.assertFalse(res['landed'])
         self.assertNotIn('is on Netflix', res['message'])
@@ -1159,7 +1172,7 @@ class HouseToolTests(unittest.TestCase):
         from services import agent_router
         src = inspect.getsource(agent_router)
         branch = src[src.index("elif func_name == 'house':"):]
-        self.assertIn("'app'", branch[:600], 'the chat router drops the app argument before it reaches the tool')
+        self.assertIn("'app'", branch[:1400], 'the chat router drops the app argument before it reaches the tool')
         self.assertIn("action='app'", src, 'the system prompt never tells the model how to open an app')
 
     # --- degradation --------------------------------------------------------
@@ -1167,7 +1180,7 @@ class HouseToolTests(unittest.TestCase):
         setattr(ha_api, 'mode', lambda: 'unconfigured')
         for action in ('find', 'read', 'history', 'act', 'locate', 'app'):
             res = self.run_tool(action=action, query='office lamp', entity_id='light.office_lamp', service='turn_off',
-                                app='netflix', acting_member={'id': 'p1', 'role': 'parent'})
+                                app='netflix', acting_member={'id': 'm_lorena', 'role': 'parent'})
             self.assertEqual(res['status'], 'error', action)
             self.assertIn('not connected', res['message'])
         self.assertEqual(self.calls, [])

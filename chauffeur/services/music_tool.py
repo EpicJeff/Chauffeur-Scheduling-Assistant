@@ -163,7 +163,7 @@ def _ma_list(states):
 
 
 def music(action='', query='', room='', player='', media_type='', mode='', level=None,
-          acting_member=None, voice_context=None, source=None):
+          acting_member=None, voice_context=None, source=None, proven=True, device_id=None):
     """Return plain success/error dicts, including when HA or search fails."""
     try:
         if ha_api.mode() == 'unconfigured':
@@ -184,6 +184,14 @@ def music(action='', query='', room='', player='', media_type='', mode='', level
         eid, area, error = _target(action, room, player, voice_context, source, states)
         if error:
             return {'status': 'error', 'message': error}
+        if action != 'now':
+            from services import control_rules
+            who = control_rules.who_from_agent(acting_member, voice_context, source, proven)
+            decision = control_rules.check(who, [eid])
+            if not decision.allowed:
+                return control_rules.agent_refusal(decision, who, 'music', {
+                    'action': action, 'query': query, 'player': eid,
+                    'media_type': media_type, 'mode': mode, 'level': level}, source, device_id)
         name = _name(states, eid)
         room_name = (area or {}).get('name') or ''
         result = {'status': 'success', 'entity_id': eid, 'player': name, 'room': room_name}

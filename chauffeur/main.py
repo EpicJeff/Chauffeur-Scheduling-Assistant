@@ -10357,7 +10357,7 @@ def control_held(held_id: str, request: Request):
         raise HTTPException(status_code=403,
                             detail={'message': 'Identify yourself and enter your PIN.',
                                     'needs': 'identify', 'kinds': []})
-    held = control_rules.take_held(held_id)
+    held = control_rules.take_held(held_id, device['device_id'])
     if not held:
         raise HTTPException(status_code=404, detail='That action has expired or was already used.')
     args = {**held['args'], 'acting_member': member, 'source': 'panel_grant',
@@ -20296,6 +20296,25 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, 
         raise HTTPException(status_code=401, detail='Sign in on your personal device to talk to Argyle.')
     payload.conversation_id = conv['id']
 
+    # A panel's avatar/PIN token and house session do not prove the person
+    # currently standing there, even if sent without the device header.
+    headers = request.headers if request else {}
+    query = request.query_params if request else {}
+    member_token = headers.get('x-member-token') or query.get('member_token')
+    proven = False
+    if member_token:
+        from tinydb import Query
+        with storage.db_lock:
+            token_row = storage.member_tokens_table.get(Query().token == member_token)
+        if token_row and not token_row.get('house_session'):
+            legacy = 'proof' not in token_row and 'minted_on' not in token_row
+            proof = 'password' if legacy else token_row.get('proof')
+            minted_on = 'personal' if legacy else token_row.get('minted_on')
+            proven = bool(proof in ('password', 'pin') and minted_on and minted_on != 'panel')
+    _member, device = _chat_identity(request)
+    if device and device.get('kind') == 'panel':
+        proven = False
+
     try:
         is_first = False
         if payload.conversation_id:
@@ -20318,6 +20337,7 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, 
         res = process_agent_request(payload.message, context=payload.context, history=conv_history,
                                     source=conv['surface']['kind'], driver_id=payload.driver_id,
                                     acting_member=acting_member,
+                                    proven=proven, device_id=device['device_id'] if device else None,
                                     focus_key=f"conv:{payload.conversation_id}" if payload.conversation_id else None)
         reply = res.get("message", "I did not understand that.")
         target_id = res.get("target_element_id")
@@ -20409,7 +20429,9 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, 
                         
                 background_tasks.add_task(_bg_generate, trip_id, payload.message, payload.conversation_id)
             
-        return {"reply": reply, "target_element_id": target_id, "ui_action": res.get("ui_action"), "target_driver_id": res.get("target_driver_id")}
+        return {"reply": reply, "target_element_id": target_id, "ui_action": res.get("ui_action"),
+                "target_driver_id": res.get("target_driver_id"),
+                **({'control_held': res['control_held']} if res.get('control_held') else {})}
     except Exception as e:
         import traceback
         logger.error(f"Error in chat loop: {traceback.format_exc()}")

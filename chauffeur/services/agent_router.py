@@ -170,7 +170,8 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
                           source: str = "admin", driver_id: Optional[str] = None,
                           acting_member: Optional[Dict] = None,
                           propose_only: bool = False,
-                          focus_key: Optional[str] = None, voice_context=None) -> Dict[str, Any]:
+                          focus_key: Optional[str] = None, voice_context=None,
+                          proven: bool = True, device_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Main entrypoint for the Agent Orchestrator.
     Decides whether to route to Gemma (tools) or Gemini (heavy lifting).
@@ -632,6 +633,7 @@ sending or claiming, and never pass from_member/member_name for them.
                 and res.get("status") == "success" and bool(res.get("message")))
 
     executed_results = {}
+    control_held = None
 
     agent_scratchpad = ""
     max_iterations = 3
@@ -692,7 +694,8 @@ sending or claiming, and never pass from_member/member_name for them.
                 "target_element_id": target_id,
                 "ui_action": ui_action,
                 "target_driver_id": target_driver_id,
-                "schedule_dirty": schedule_dirty
+                "schedule_dirty": schedule_dirty,
+                **({'control_held': control_held} if control_held else {})
             }
 
         # Check for Delegation to the heavy lifter (flash pool)
@@ -704,7 +707,8 @@ sending or claiming, and never pass from_member/member_name for them.
             return {
                 "status": "delegated", 
                 "message": "I'm delegating this massive trip to my heavy lifter module. I'll get to work generating accommodations and points of interest. One moment!",
-                "ui_action": "generate_massive_trip"
+                "ui_action": "generate_massive_trip",
+                **({'control_held': control_held} if control_held else {})
             }
             
         tool_calls = llm_response.get("tool_calls", [])
@@ -1026,9 +1030,14 @@ sending or claiming, and never pass from_member/member_name for them.
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
+                    if not proven:
+                        # Chat token provenance can identify an account without
+                        # proving who is using the shared panel right now.
+                        actor = access.HOUSE
                     res = _atv2.house(**{k: v for k, v in args.items() if k in (
                         'action', 'query', 'entity_id', 'domain', 'service', 'data', 'hours', 'app')},
-                        acting_member=actor, voice_context=voice_context, source=source)
+                        acting_member=actor, voice_context=voice_context, source=source,
+                        proven=proven, device_id=device_id)
                     if res.get('message'): agent_message = res['message']
                 elif func_name == 'music':
                     from services import agent_tools_v2 as _atv2
@@ -1036,9 +1045,12 @@ sending or claiming, and never pass from_member/member_name for them.
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
+                    if not proven:
+                        actor = access.HOUSE
                     res = _atv2.music(**{k: v for k, v in args.items() if k in (
                         'action', 'query', 'room', 'player', 'media_type', 'mode', 'level')},
-                        acting_member=actor, voice_context=voice_context, source=source)
+                        acting_member=actor, voice_context=voice_context, source=source,
+                        proven=proven, device_id=device_id)
                     if res.get('message'): agent_message = res['message']
                 elif func_name == "announce_to_room":
                     from services.agent_tools_v2 import announce_to_room
@@ -1555,6 +1567,8 @@ sending or claiming, and never pass from_member/member_name for them.
                 _calendar_viewer.reset(calendar_token)
 
             tool_status = res.get("status", "ok") if isinstance(res, dict) else "?"
+            if isinstance(res, dict) and res.get('control_held'):
+                control_held = res['control_held']
             if phone_turn is not None:
                 phone_turn.tool_result(res)
             if isinstance(res, dict) and (res.get("error") or res.get("status") == "error"):
@@ -1604,5 +1618,6 @@ sending or claiming, and never pass from_member/member_name for them.
         "target_driver_id": target_driver_id,
         "schedule_dirty": schedule_dirty,
         "card": card,
+        **({'control_held': control_held} if control_held else {}),
         **({'house_design_summary': house_design_summary} if source == 'house_editor' else {})
     }

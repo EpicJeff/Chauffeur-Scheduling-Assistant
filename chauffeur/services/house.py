@@ -818,7 +818,8 @@ def _remote_for(query, entity_id, catalogue):
     return {'status': 'error', 'message': f'No Android TV called {query}. TVs that can open apps: {_tv_list(remotes)}.'}
 
 
-def open_app(query='', entity_id='', app='', catalogue=None):
+def open_app(query='', entity_id='', app='', catalogue=None, acting_member=None,
+             voice_context=None, source=None, proven=True, device_id=None):
     """Launch an app on an Android TV through its HA remote; the TV is read back, never trusted."""
     catalogue = _catalogue() if catalogue is None else catalogue
     remote = _remote_for(query, entity_id, catalogue)
@@ -840,7 +841,13 @@ def open_app(query='', entity_id='', app='', catalogue=None):
     if not any(exposed.get(t) for t in (eid, *twins)) and not storage.get_settings().get('house_control_unexposed'):
         return {'status': 'refused', 'message': (
             f"{remote['name']} is not exposed to Assist; expose it in Home Assistant, "
-            'or allow unexposed control under Config › People › Argyle.')}
+            'or allow unexposed control under Config › People › Argyle.'), 'needs': None}
+    from services import control_rules
+    who = control_rules.who_from_agent(acting_member, voice_context, source, proven)
+    decision = control_rules.check(who, [eid])
+    if not decision.allowed:
+        return control_rules.agent_refusal(decision, who, 'house', {
+            'action': 'app', 'entity_id': eid, 'app': app}, source, device_id)
     if not ha_api.has_service('remote', 'turn_on'):
         return {'status': 'error', 'message': 'Home Assistant cannot launch apps on that TV.'}
     # Fresh, not the catalogue's cached copy: the TV may have moved since the catalogue was built.
@@ -905,7 +912,8 @@ def _trusted(acting_member, voice_context, source):
 
 
 def house(action='', query='', entity_id='', domain='', service='', data=None,
-          hours=24, app='', acting_member=None, voice_context=None, source=None):
+          hours=24, app='', acting_member=None, voice_context=None, source=None,
+          proven=True, device_id=None):
     """One boundary for every action: failures are plain results, never exceptions."""
     try:
         if ha_api.mode() == 'unconfigured':
@@ -914,7 +922,8 @@ def house(action='', query='', entity_id='', domain='', service='', data=None,
             return {'status': 'error', 'message': 'Unknown house action. Use find, read, history, act, app or locate.'}
         catalogue = _catalogue()
         if action == 'app':
-            return open_app(query, entity_id, app, catalogue)
+            return open_app(query, entity_id, app, catalogue, acting_member,
+                            voice_context, source, proven, device_id)
         if action == 'find':
             if not str(query or '').strip():
                 return {'status': 'error', 'message': 'Which device or room should I find?'}
@@ -955,13 +964,17 @@ def house(action='', query='', entity_id='', domain='', service='', data=None,
         if not ha_api.get_exposed().get(eid) and not storage.get_settings().get('house_control_unexposed'):
             return {'status': 'refused', 'message': (
                 f"{entity['name']} is not exposed to Assist; expose it in Home Assistant, "
-                'or allow unexposed control under Config › People › Argyle.')}
-        attrs = entity['_state'].get('attributes') or {}
-        sensitive = entity_domain in ('lock', 'alarm_control_panel') or (
-            entity_domain == 'cover' and attrs.get('device_class') in ('garage', 'door', 'gate'))
-        if sensitive and not _trusted(acting_member, voice_context, source):
-            return {'status': 'refused', 'message': 'That needs a parent on their phone.'}
-        result = ha_api.call_service(service_domain, service_name, {**(data or {}), 'entity_id': eid})
+                'or allow unexposed control under Config › People › Argyle.'), 'needs': None}
+        from services import control_rules
+        who = control_rules.who_from_agent(acting_member, voice_context, source, proven)
+        payload = {**(data or {}), 'entity_id': eid}
+        ids = control_rules.call_targets(service_domain, service_name, payload)
+        decision = control_rules.check(who, ids)
+        if not decision.allowed:
+            return control_rules.agent_refusal(decision, who, 'house', {
+                'action': 'act', 'entity_id': eid, 'service': service,
+                'data': data}, source, device_id)
+        result = ha_api.call_service(service_domain, service_name, payload)
         if result is None:
             return {'status': 'error', 'message': 'Home Assistant could not control that device.'}
         _settle()

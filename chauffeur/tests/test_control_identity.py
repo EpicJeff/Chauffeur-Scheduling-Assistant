@@ -91,7 +91,7 @@ class Identity(unittest.TestCase):
         r = self.client.post('/api/ha/control/grant', json={'member_id': 'mum', 'pin': '4321'},
                              headers={'X-Device-Token': self.panel, 'X-Member-Token': kid_token})
         self.assertEqual(r.status_code, 200, r.text)
-        held = cr.hold('house', {'action': 'read', 'entity_id': 'light.a'})
+        held = cr.hold('house', {'action': 'read', 'entity_id': 'light.a'}, device_id='panel-1')
         real = house.house
         house.house = lambda **kw: {'status': 'success', 'by': kw['acting_member']['id']}
         try:
@@ -224,7 +224,7 @@ class Identity(unittest.TestCase):
             return {'status': 'success', 'message': 'Front door is unlocked.'}
         house.house = fake
         try:
-            held = cr.hold('house', {'action': 'act', 'entity_id': 'lock.front', 'service': 'unlock'})
+            held = cr.hold('house', {'action': 'act', 'entity_id': 'lock.front', 'service': 'unlock'}, device_id='panel-1')
             g = self.grant('mum', '4321').json()['grant']
             headers = {'X-Device-Token': self.panel, 'X-Control-Grant': g}
             r = self.client.post(f'/api/ha/control/held/{held}', headers=headers)

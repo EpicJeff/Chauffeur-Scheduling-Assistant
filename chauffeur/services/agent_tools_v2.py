@@ -1382,19 +1382,22 @@ def get_assist_coverage(target_date: str = None) -> Dict[str, Any]:
 
 def house(action='', query='', entity_id='', domain='', service='', data=None,
           hours=24, app='', acting_member=None, voice_context=None, source=None,
-          focus_key=None, spoken=False):
+          focus_key=None, spoken=False, proven=True, device_id=None):
     from services import house as house_service
     return house_service.house(action=action, query=query, entity_id=entity_id,
                                domain=domain, service=service, data=data, hours=hours, app=app,
-                               acting_member=acting_member, voice_context=voice_context, source=source)
+                               acting_member=acting_member, voice_context=voice_context, source=source,
+                               proven=proven, device_id=device_id)
 
 
 def music(action='', query='', room='', player='', media_type='', mode='', level=None,
-          acting_member=None, voice_context=None, source=None, focus_key=None, spoken=False):
+          acting_member=None, voice_context=None, source=None, focus_key=None, spoken=False,
+          proven=True, device_id=None):
     from services import music_tool
     return music_tool.music(action=action, query=query, room=room, player=player,
                             media_type=media_type, mode=mode, level=level,
-                            acting_member=acting_member, voice_context=voice_context, source=source)
+                            acting_member=acting_member, voice_context=voice_context, source=source,
+                            proven=proven, device_id=device_id)
 
 
 def memory(action='remember', text='', kind='preference', phrase='', entity_ids=None, memory_id='',

@@ -164,7 +164,13 @@ def consume_grant(token: str, device_id: str) -> dict | None:
     return member if member and storage.member_has_access(member) else None
 
 
-def hold(tool: str, args: dict) -> str:
+_HELD_ARGS = {
+    'house': frozenset(('action', 'query', 'entity_id', 'domain', 'service', 'data', 'hours', 'app')),
+    'music': frozenset(('action', 'query', 'room', 'player', 'media_type', 'mode', 'level')),
+}
+
+
+def hold(tool: str, args: dict, device_id: str | None = None) -> str:
     """Keep a copy of the requested tool call until the person identifies."""
     if tool not in ('house', 'music'):
         raise ValueError('Only house and music actions can be held.')
@@ -172,14 +178,19 @@ def hold(tool: str, args: dict) -> str:
     with _identity_lock:
         now = time.time()
         _prune_expired(_held, now)
-        _held[held_id] = {'tool': tool, 'args': deepcopy(args), 'expires_at': now + 120}
+        _held[held_id] = {'tool': tool,
+                          'args': deepcopy({k: v for k, v in args.items() if k in _HELD_ARGS[tool]}),
+                          'device_id': device_id, 'expires_at': now + 120}
     return held_id
 
 
-def take_held(held_id: str) -> dict | None:
+def take_held(held_id: str, device_id: str | None = None) -> dict | None:
     with _identity_lock:
         _prune_expired(_held, time.time())
-        row = _held.pop(held_id, None)
+        row = _held.get(held_id)
+        if not row or row['device_id'] != device_id:
+            return None
+        del _held[held_id]
     return {'tool': row['tool'], 'args': row['args']} if row else None
 
 
@@ -225,7 +236,8 @@ def who_from_request(headers, query) -> Who:
     return panel
 
 
-def who_from_agent(acting_member: dict | None, voice_context, source: str | None) -> Who:
+def who_from_agent(acting_member: dict | None, voice_context, source: str | None,
+                   proven: bool = True) -> Who:
     from services import access, storage
 
     if source == 'voice':
@@ -234,19 +246,33 @@ def who_from_agent(acting_member: dict | None, voice_context, source: str | None
                 member = voice_context.verified_member()
                 if member and storage.member_has_access(member):
                     return Who(member.get('role'), member['id'], None, True)
-            if voice_context.recognized_this_turn and voice_context.member_id:
+            if getattr(voice_context, 'recognized_this_turn', False) and voice_context.member_id:
                 member = storage.get_member(voice_context.member_id)
                 if member and storage.member_has_access(member):
                     return Who(member.get('role'), member['id'], None, False)
         return Who(None, None, 'unknown_voice', False,
-                   voice_id=bool(voice_context and voice_context.paired))
+                   voice_id=bool(voice_context and getattr(voice_context, 'paired', False)))
     if access.is_house(acting_member):
         return Who(None, None, 'panel', False)
     if acting_member is None and source == 'admin':
         return Who(None, None, None, False, admin=True)
     if acting_member and storage.member_has_access(acting_member):
-        return Who(acting_member.get('role'), acting_member['id'], None, True)
+        return Who(acting_member.get('role'), acting_member['id'], None, proven)
     return Who(None, None, 'panel', False)
+
+
+def agent_refusal(decision, who: Who, tool: str, args: dict, source: str | None,
+                   device_id: str | None = None) -> dict:
+    """Use the same identification response for every agent control tool."""
+    result = {'status': 'refused', 'message': decision.message, 'needs': decision.needs}
+    if source == 'voice':
+        if decision.needs == 'pin':
+            result['message'] = 'Say your PIN first, then ask again.'
+        elif decision.needs == 'identify':
+            result['message'] = 'Who is this? Say your name and PIN, then ask again.'
+    elif who.place == 'panel' and decision.needs == 'identify':
+        result['control_held'] = {'id': hold(tool, args, device_id), 'message': "Who's asking?"}
+    return result
 
 
 @dataclass
