@@ -12,6 +12,7 @@ SENT = 'Sent to your chat.'
 CHAT_NOTICE = " I've put that in your Argyle chat."
 current = ContextVar('chauffeur_satellite_voice', default=None)
 _held = {}
+_undelivered = []
 _lock = threading.RLock()
 _READ = re.compile(r'\b(?:read|out loud|aloud|tell me|yes|go ahead)\b', re.I)
 _SEND = re.compile(r"\b(?:send|chat|phone|no|later|don['’]t read|do not read|not out loud)\b", re.I)
@@ -81,8 +82,22 @@ def _release(key):
     return True
 
 
+def _flush_undelivered(key):
+    """Caller holds _lock; retry displaced answers for their original members."""
+    for pending in list(_undelivered):
+        pending_key, entry = pending
+        if pending_key != key:
+            continue
+        try:
+            if post_reply_to_chat(entry['member_id'], entry['reply'], entry['card']):
+                _undelivered.remove(pending)
+        except Exception:
+            logging.getLogger(__name__).exception('Private voice answer delivery failed')
+
+
 def _try_release(key):
     try:
+        _flush_undelivered(key)
         return _release(key)
     except Exception:
         logging.getLogger(__name__).exception('Private voice answer delivery failed')
@@ -103,7 +118,7 @@ def expire(ha_instance_id, satellite_id):
 def release_all():
     """Reconfiguring identity ends every session, delivering pending answers."""
     with _lock:
-        for key in list(_held):
+        for key in dict.fromkeys([*_held, *(key for key, _ in _undelivered)]):
             _try_release(key)
 
 
@@ -111,8 +126,11 @@ def hold(ctx, actor, reply, card):
     key = (ctx.ha_instance_id, ctx.satellite_id)
     with _lock:
         if not _try_release(key):
-            # Do not overwrite an answer whose delivery must still be retried.
-            return QUESTION
+            # The new question must refer to the new answer. Retain any older
+            # answer separately until its original member's DM is available.
+            previous = _discard(key)
+            if previous:
+                _undelivered.append((key, previous))
         entry = {'member_id': actor['id'], 'reply': reply, 'card': card,
                  'expires': time.time() + 60, 'reasks': 0}
 
@@ -158,6 +176,7 @@ def intercept(text, ctx):
                 if _try_release(key):
                     reply = reply.rstrip() + CHAT_NOTICE
             else:
+                _flush_undelivered(key)
                 _discard(key)
             return {'message': reply}
         if not entry['reasks']:
