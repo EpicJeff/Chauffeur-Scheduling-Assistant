@@ -121,7 +121,7 @@ class PanelTalkServer(unittest.TestCase):
         self.states[KITCHEN_SAT] = 'listening'
         r = self.get()
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json(), {'available': True, 'state': 'listening'})
+        self.assertEqual(r.json(), {'available': True, 'state': 'listening', 'glow': True})
 
     def test_get_unavailable_no_satellite_in_room(self):
         self.assertEqual(self.get(self.panel2).json()['available'], False)
@@ -186,7 +186,7 @@ class PanelTalkServer(unittest.TestCase):
 
     def test_status_reads_fresh_state(self):
         self.fresh[KITCHEN_SAT] = 'listening'          # the cache still says idle
-        self.assertEqual(self.get().json(), {'available': True, 'state': 'listening'})
+        self.assertEqual(self.get().json(), {'available': True, 'state': 'listening', 'glow': True})
 
     def test_post_ignored_while_busy(self):
         for busy in ('listening', 'processing', 'responding'):
