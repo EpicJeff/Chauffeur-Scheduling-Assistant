@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Tree } from '@dgreenheck/ez-tree';
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
-import { kitMaterial, loadModel } from './twin_library.js';
+import { kitMaterial, loadModel, disposeObject } from './twin_library.js';
 import { groundAt } from './twin_ground.js';
 
 function random(seed) {
@@ -174,21 +174,33 @@ export async function buildYard(plan, kit, tier) {
   const plants = group.children.filter(o => o instanceof Tree); plants.forEach(o => o.removeFromParent());
   mergeStatic(group); plants.forEach(o => group.add(o));
 
-  const models = new Map();
+  const models = new Map(), latePlacements = new Map();
   const placements = await Promise.all((site.furniture || []).map(async f => {
     const assetId = (f.asset || kit.furniture?.[f.kind] || '').replace(/^polyhaven:/, '');
     if (!assetId || !f.at) return;
-    if (!models.has(assetId)) models.set(assetId, loadModel(assetId, kit));
-    const source = await models.get(assetId); if (!source) return;
-    const model = source.clone(true); model.scale.setScalar((f.scale || 1) / FT);
-    let elevation = groundAt(plan, ...f.at) + (f.elevation || 0);
-    for (const b of plan.buildings || []) for (const porch of allPorches(b)) if (porch.polygon) {
-      const pos = b.position || [0, 0], angle = -(b.rotation || 0) * Math.PI / 180;
-      const x = f.at[0] - pos[0], y = f.at[1] - pos[1];
-      if (inside([Math.cos(angle) * x - Math.sin(angle) * y, Math.sin(angle) * x + Math.cos(angle) * y], porch.polygon)) elevation = groundAt(plan, ...pos) + (b.base || 0) + porch.floor;
+    const place = (model, late = false) => {
+      if (group.userData.disposed) { disposeObject(model); return; }
+      model.scale.setScalar((f.scale || 1) / FT);
+      let elevation = groundAt(plan, ...f.at) + (f.elevation || 0);
+      for (const b of plan.buildings || []) for (const porch of allPorches(b)) if (porch.polygon) {
+        const pos = b.position || [0, 0], angle = -(b.rotation || 0) * Math.PI / 180;
+        const x = f.at[0] - pos[0], y = f.at[1] - pos[1];
+        if (inside([Math.cos(angle) * x - Math.sin(angle) * y, Math.sin(angle) * x + Math.cos(angle) * y], porch.polygon)) elevation = groundAt(plan, ...pos) + (b.base || 0) + porch.floor;
+      }
+      model.position.set(f.at[0], elevation, -f.at[1]); model.rotation.y = THREE.MathUtils.degToRad(f.rotation || 0);
+      if (late) { group.add(model); mergeStatic(model); }
+      return model;
+    };
+    if (!models.has(assetId)) {
+      latePlacements.set(assetId, []);
+      models.set(assetId, loadModel(assetId, kit, source => {
+        if (group.userData.disposed) { disposeObject(source); return; }
+        for (const draw of latePlacements.get(assetId)) draw(source.clone(true), true);
+      }));
     }
-    model.position.set(f.at[0], elevation, -f.at[1]); model.rotation.y = THREE.MathUtils.degToRad(f.rotation || 0);
-    return model;
+    latePlacements.get(assetId).push(place);
+    const source = await models.get(assetId);
+    return source ? place(source.clone(true)) : null;
   }));
   placements.filter(Boolean).forEach(model => group.add(model));
   // Merge model instances by their shared material as well, without folding

@@ -466,7 +466,8 @@ def scenario_the_legacy_body_still_pauses_at_the_scale_outline():
               'Build is off while a build is paused')
         page.wait_for_timeout(1500)
         plan = _api(page, 'GET', 'state')['body']['plan']
-        walls = [w for w in _house_of(plan)['walls'] if w['level'] == 'L1' and w.get('state') != 'ghost']
+        walls = [w for w in _house_of(plan)['walls'] if w['level'] == 'L1' and w.get('state') != 'ghost'
+                 and w.get('kind') != 'separator']   # invisible walls draw nothing (spec 4.1)
         drawn = page.evaluate("() => window.__twin.pieceIds('house')")
         check(walls and all(w['id'] in drawn for w in walls), ('every main-floor wall is drawn', len(walls), drawn[:10]))
         lines = page.inner_text('#editor-agent').splitlines()

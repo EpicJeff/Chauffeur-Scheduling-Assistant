@@ -1,6 +1,7 @@
 import { mountTwin } from '../twin_view.js';
 import { runDirector } from '../twin_director.js';
 import { request, createPolling, idleInterval, buildInterval, checkpoint, plain, report, active, session } from './api.js';
+import * as api from './api.js';
 import { createPanel } from './panel.js';
 import { createSceneTools } from './scene_tools.js';
 import { createPlanView } from './plan_view.js';
@@ -44,6 +45,16 @@ export async function boot() {
     [snapshot, sheets] = await Promise.all([request('state'), request('sheets')]);
     await renderScene(); timeline?.sync(currentBuild);
     lastSummary = result.summary;
+    return result;
+  }
+  async function applyOp(operation) {
+    if (!canEdit()) throw new Error('Use Back to now before changing your house.');
+    const result = await api.op(operation);
+    snapshot = { ...snapshot, plan: result.plan, model: result.model };
+    const line = document.createElement('li'); line.textContent = plain(result.words); el('editor-log').append(line);
+    lastSummary = result.words;
+    await renderScene();
+    await polling.refreshState(); timeline?.sync(currentBuild);
     return result;
   }
 
@@ -108,6 +119,7 @@ export async function boot() {
     return plan;
   }
   async function renderScene() {
+    if (tools?.dragging()) return;
     const plan = timeline?.preview() || previewPlan(), signature = JSON.stringify(plan);
     if (view && signature !== lastScene) {
       await view.rebuild(plan);
@@ -386,8 +398,8 @@ export async function boot() {
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
     view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true });
     const onInteract = () => { pauses?.dismiss(); syncBuildButton(); };
-    tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getSheets: () => sheets,
-      edit, panel, canEdit, signal: lifecycle.signal, onInteract });
+    tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getSheets: () => sheets,
+      edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract });
     planView = createPlanView({ view, tools, edit, canEdit, signal: lifecycle.signal, onInteract });
     pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
       getSheets: () => sheets, refresh: () => polling.pollNow(true), preview: () => renderScene().catch(report),
@@ -418,6 +430,10 @@ export async function boot() {
       pause: pauses.current, sheetMaster: pauses.sheetMaster, pinCheck: pauses.pinCheck,
       buildingCentre: tools.buildingCentre, clearLastAnswer: pauses.clearLastAnswer, dragPauseGhost: pauses.dragPauseGhost,
     });
+    if (new URLSearchParams(location.search).get('test') === '1') window.__twinEditor = {
+      selection: tools.selection, handles: () => [], op: applyOp,
+      get lastDragFrameMs() { return tools.lastDragFrameMs; },
+    };
     // The editor uses the mockup's dark work surface; the shared preview keeps
     // its own daylight sky, with the same renderer and lighting.
     view.scene.background?.set?.('#171e27');

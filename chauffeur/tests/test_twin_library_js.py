@@ -17,11 +17,13 @@ import path from 'node:path';
 const job = JSON.parse(process.argv[2]);
 registerHooks({
   resolve(spec, ctx, next) {
+    if (spec === '@dgreenheck/ez-tree') return {url: 'test:tree', shortCircuit: true};
     if (spec === 'three') return {url: pathToFileURL(path.join(job.vendor, 'three.module.js')).href, shortCircuit: true};
     if (spec.startsWith('three/addons/')) return {url: pathToFileURL(path.join(job.vendor, 'addons', spec.slice(13))).href, shortCircuit: true};
     return next(spec, ctx);
   },
   load(url, ctx, next) {
+    if (url === 'test:tree') return {format: 'module', shortCircuit: true, source: 'export class Tree {}'};
     if (url.startsWith('file:') && url.endsWith('.js')) return {...next(url, {...ctx, format: 'module'}), format: 'module'};
     return next(url, ctx);
   },
@@ -32,103 +34,181 @@ const {GLTFLoader} = await import('three/addons/loaders/GLTFLoader.js');
 const {HDRLoader} = await import('three/addons/loaders/HDRLoader.js');
 const lib = await import(pathToFileURL(path.join(job.twin, 'twin_library.js')).href);
 const {buildTwin} = await import(pathToFileURL(path.join(job.twin, 'twin_generator.js')).href);
-const timers = new Map(); let nextTimer = 0;
-globalThis.setTimeout = (fn, ms) => {timers.set(++nextTimer, {fn, ms}); return nextTimer;};
+const {buildYard} = await import(pathToFileURL(path.join(job.twin, 'twin_yard.js')).href);
+const timers = new Map(); let nextTimer = 0, now = 0;
+globalThis.setTimeout = (fn, ms) => {timers.set(++nextTimer, {fn, at: now + ms}); return nextTimer;};
 globalThis.clearTimeout = id => timers.delete(id);
-const flush = async () => {for (let i = 0; i < 30; i++) await Promise.resolve();};
-const expire = async () => {
-  for (const [id, {fn, ms}] of [...timers]) {
-    assert.ok(ms > 0 && ms < 60000, 'asset deadline is independent of the browser test timeout');
-    timers.delete(id); fn();
+const flush = async () => {for (let i = 0; i < 50; i++) await Promise.resolve();};
+const advance = async ms => {
+  const end = now + ms;
+  while (true) {
+    const due = [...timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+    if (!due) break;
+    const [id, timer] = due; now = timer.at; timers.delete(id); timer.fn(); await flush();
   }
-  await flush();
+  now = end; await flush();
 };
 const requests = [];
 THREE.TextureLoader.prototype.load = function(url, success, progress, error) {
   const texture = new THREE.Texture();
-  requests.push({texture, success, error}); return texture;
+  requests.push({url, texture, success, error}); return texture;
 };
 const files = {'test_diff_1k.jpg': '', 'test_nor_gl_1k.jpg': '', 'test_rough_1k.jpg': ''};
-const kit = {materials: {floor: {asset: 'test', color: '#123456'}}, manifest: {test: {kind: 'material', files}}};
+const materialKit = id => ({materials: {floor: {asset: id, color: '#123456'}}, manifest: {[id]: {kind: 'material', files}}});
+const modelKit = id => ({manifest: {[id]: {kind: 'model', files: {[id + '.gltf']: ''}}}});
 const takeRequests = () => requests.splice(0);
 const clean = () => assert.equal(timers.size, 0, 'no asset deadline leaks');
+const cube = () => new THREE.Group().add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1).translate(0, .5, 0),
+  new THREE.MeshStandardMaterial({map: new THREE.Texture()})));
+let passed = 0;
+const ok = label => {clean(); ++passed; console.log('  ok ' + label);};
 
-const normal = lib.kitMaterial('floor', kit, 'high'), normalRequests = takeRequests();
+const normalKit = materialKit('normal');
+const normal = lib.kitMaterial('floor', normalKit, 'high'), normalRequests = takeRequests();
 normalRequests.forEach(r => r.success(r.texture)); await normal.userData.ready;
-assert.equal(normal.map, normalRequests[0].texture); clean();
-console.log('  ok material success clears its deadline');
+assert.equal(normal.map.source, normalRequests[0].texture.source);
+const normalMap = normal.map;
+normal.dispose();
+const cachedMaterial = lib.kitMaterial('floor', normalKit, 'high'); await cachedMaterial.userData.ready;
+assert.equal(takeRequests().length, 0); assert.ok(cachedMaterial.map);
+assert.notEqual(cachedMaterial.map, normalMap, 'a scene owns its copies of cached textures');
+ok('material success caches images and clears its deadline');
 
 const building = {id: 'house', levels: [{id: 'L1', elevation: 0, ceiling: 9}], walls: [],
-  rooms: [{id: 'room', level: 'L1', polygon: [[0,0],[10,0],[10,10],[0,10]], floor_material: {id: 'test', color: '#123456'}}]};
-const twin = buildTwin({buildings: [building], site: {}, materials: {}}, kit, 'high');
+  rooms: [{id: 'room', level: 'L1', polygon: [[0,0],[10,0],[10,10],[0,10]], floor_material: {id: 'slow_finish', color: '#123456'}}]};
+const slowKit = materialKit('slow_finish');
+const twin = buildTwin({buildings: [building], site: {}, materials: {}}, slowKit, 'high');
 let ready = false; twin.ready.then(() => {ready = true;}); await flush();
 assert.equal(ready, false, 'real generator waits for the stalled surface images');
 const stalled = takeRequests(); assert.ok(stalled.length);
-await expire(); assert.equal(ready, true, 'plain-colour geometry becomes ready after asset failure');
+await advance(15000); assert.equal(ready, true, 'plain geometry is ready at 15 seconds');
 assert.ok(twin.pieceBounds.has('house:room'));
-for (const material of twin.materials.values()) if (material.name === 'floor') {
-  assert.equal(material.map, null); assert.equal(material.color.getHexString(), '123456');
-}
-stalled.forEach(r => r.success(r.texture)); await flush();
-for (const material of twin.materials.values()) assert.ok(!material.map, 'late callback cannot revive expired maps');
-lib.disposeObject(twin.root); clean();
-console.log('  ok generator readiness survives stalled per-room images and late callbacks');
+const slowMaterial = [...twin.materials.values()].find(m => m.name === 'floor' && m.color.getHexString() === '123456');
+assert.equal(slowMaterial.map, null);
+await advance(5000); stalled.forEach(r => r.success(r.texture)); await flush();
+assert.ok(slowMaterial.map, 'a texture arriving at 20 seconds applies to the existing material');
+assert.equal(slowMaterial.map.source, stalled[0].texture.source);
+assert.equal(slowMaterial.color.getHexString(), 'ffffff');
+lib.disposeObject(twin.root);
+ok('generator becomes ready at 15 seconds and applies its late finish at 20 seconds');
 
-const failed = lib.kitMaterial('floor', kit, 'high'), failedRequests = takeRequests();
+const failed = lib.kitMaterial('floor', materialKit('failed'), 'high'), failedRequests = takeRequests();
 failedRequests[0].error(); await failed.userData.ready;
-assert.equal(failed.map, null); clean();
-console.log('  ok one image failure settles the entire material, including stalled siblings');
+failedRequests.slice(1).forEach(r => r.success(r.texture)); await flush();
+assert.equal(failed.map, null); assert.equal(failed.normalMap, null); assert.equal(failed.roughnessMap, null);
+assert.equal(failed.color.getHexString(), '123456');
+ok('an actual image error keeps the entire material plain, including late siblings');
 
-const disposed = lib.kitMaterial('floor', kit, 'high'), disposedRequests = takeRequests();
+const disposed = lib.kitMaterial('floor', materialKit('disposed'), 'high'), disposedRequests = takeRequests();
 disposed.dispose(); await disposed.userData.ready;
-disposedRequests.forEach(r => r.success(r.texture));
-assert.equal(disposed.map, null); clean();
-console.log('  ok disposal settles pending material readiness without reviving maps');
+await advance(20000); disposedRequests.forEach(r => r.success(r.texture)); await flush();
+assert.equal(disposed.map, null);
+const disposedCache = lib.kitMaterial('floor', materialKit('disposed'), 'high'); await disposedCache.userData.ready;
+assert.ok(disposedCache.map); assert.equal(takeRequests().length, 0);
+ok('disposal settles readiness and a late image only applies to a live material');
 
-const modelKit = {manifest: {chair: {kind: 'model', files: {'chair.gltf': ''}}}};
-let modelResolve, modelSignal;
+let modelResolve, modelSignal, fetches = 0;
 GLTFLoader.prototype.loadAsync = function() {
-  modelSignal = this.manager.abortController.signal;
+  ++fetches; modelSignal = this.manager.abortController.signal;
+  assert.equal(timers.size, 0, 'the request is issued before its deadline starts');
   return new Promise(resolve => {modelResolve = resolve;});
 };
-const modelPending = lib.loadModel('chair', modelKit); await flush(); await expire();
-assert.equal(await modelPending, null); assert.equal(modelSignal.aborted, true);
-const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial({map: new THREE.Texture()}));
-let released = 0;
-[mesh.geometry, mesh.material, mesh.material.map].forEach(o => o.addEventListener('dispose', () => released++));
-modelResolve({scene: new THREE.Group().add(mesh)}); await flush();
-assert.equal(released, 3); clean();
-console.log('  ok stalled model aborts, falls back, and disposes a late response');
+let lateModel;
+const chairKit = modelKit('slow_chair');
+const modelPending = lib.loadModel('slow_chair', chairKit, model => {lateModel = model;});
+await flush(); await advance(15000);
+assert.equal(await modelPending, null); assert.equal(modelSignal.aborted, false);
+await advance(5000); const source = cube(); let released = 0;
+[source.children[0].geometry, source.children[0].material, source.children[0].material.map]
+  .forEach(o => o.addEventListener('dispose', () => released++));
+modelResolve({scene: source}); await flush();
+assert.ok(lateModel?.isGroup); assert.equal(released, 1, 'only the imported material is replaced during standardization');
+lib.disposeObject(lateModel);
+const cachedModel = await lib.loadModel('slow_chair', chairKit);
+assert.ok(cachedModel?.isGroup); assert.equal(fetches, 1, 'the 20-second model is reused without a new fetch');
+assert.notEqual(cachedModel.children[0].geometry, source.children[0].geometry);
+assert.notEqual(cachedModel.children[0].material.map, source.children[0].material.map);
+lib.disposeObject(cachedModel);
+ok('a model at 20 seconds is delivered late, cached, and survives disposal of a previous scene');
 
-const itemBuilding = {...building, items: [{id: 'chair', asset: 'chair', host: {floor: 'room', u: .5, v: .5}}],
+const itemBuilding = {...building, rooms: [{...building.rooms[0], floor_material: undefined}],
+  items: [{id: 'chair', asset: 'hosted_chair', host: {floor: 'room', u: .5, v: .5}}],
   fixtures: [{id: 'chair', kind: 'bench', level: 'L1', rect: [4,4,6,6], height: 2}]};
-const itemTwin = buildTwin({buildings: [itemBuilding], materials: {}}, modelKit, 'high');
+const hostedKit = modelKit('hosted_chair');
+const itemTwin = buildTwin({buildings: [itemBuilding], materials: {}}, hostedKit, 'high');
 let itemReady = false; itemTwin.ready.then(() => {itemReady = true;}); await flush();
-assert.equal(itemReady, false); await expire(); assert.equal(itemReady, true);
-assert.equal(itemTwin.pieceBounds.get('house:chair').box.max.y, 2, 'timed-out model retains its procedural fixture');
-lib.disposeObject(itemTwin.root); clean();
-console.log('  ok generator registers a fixture fallback after a stalled hosted model');
+assert.equal(itemReady, false); await advance(15000); assert.equal(itemReady, true);
+assert.equal(itemTwin.pieceBounds.get('house:chair').box.max.y, 2, 'deadline retains the procedural fixture');
+await advance(5000); modelResolve({scene: cube()}); await flush();
+assert.ok(Math.abs(itemTwin.pieceBounds.get('house:chair').box.max.y - 1 / .3048) < .001,
+  'late model replaces the fallback and updates its bounds');
+assert.equal(itemTwin.pickObjects.get('house:chair').userData.kind, 'item');
+const afterLateBuild = buildTwin({buildings: [itemBuilding], materials: {}}, hostedKit, 'high');
+await afterLateBuild.ready;
+assert.equal(fetches, 2, 'the next build uses the cached hosted model');
+lib.disposeObject(itemTwin.root); lib.disposeObject(afterLateBuild.root);
+ok('a late hosted model replaces the existing fallback and is used by the next build');
+
+const deadBuilding = {...itemBuilding, items: [{...itemBuilding.items[0], asset: 'disposed_chair'}]};
+const deadTwin = buildTwin({buildings: [deadBuilding], materials: {}}, modelKit('disposed_chair'), 'high');
+await flush(); await advance(15000); await deadTwin.ready; lib.disposeObject(deadTwin.root);
+const deadObjects = deadTwin.root.children.length, deadBounds = deadTwin.pieceBounds.get('house:chair').box.clone();
+let disposedLateGeometry = 0;
+const deadSource = cube(), deadGeometry = deadSource.children[0].geometry;
+deadGeometry.clone = function() {
+  const out = THREE.BufferGeometry.prototype.clone.call(this);
+  out.addEventListener('dispose', () => ++disposedLateGeometry); return out;
+};
+modelResolve({scene: deadSource}); await flush();
+assert.equal(deadTwin.root.children.length, deadObjects);
+assert.ok(deadTwin.pieceBounds.get('house:chair').box.equals(deadBounds), 'a late model cannot update a disposed scene');
+assert.equal(disposedLateGeometry, 1, 'the disposed scene releases its copy of the late model');
+ok('a disposed generator ignores a late hosted model');
+
+const yardKit = modelKit('yard_chair'), yardFetches = fetches;
+const yardPlan = {buildings: [], site: {furniture: [
+  {asset: 'yard_chair', at: [5, 5]}, {asset: 'yard_chair', at: [10, 5]},
+]}};
+let yard;
+const yardPending = buildYard(yardPlan, yardKit, 'low').then(value => {yard = value;});
+await flush(); await advance(15000); await yardPending;
+assert.equal(fetches, yardFetches + 1, 'placements share one request');
+const yardSource = cube(); yardSource.children[0].material.name = 'late_yard_model';
+await advance(5000); modelResolve({scene: yardSource}); await flush();
+const yardMeshes = [];
+yard.group.traverse(o => {if (o.isMesh && o.material.name === 'late_yard_model') yardMeshes.push(o);});
+assert.equal(yardMeshes.length, 2, 'both late yard placements are applied');
+const cachedYard = await buildYard(yardPlan, yardKit, 'low');
+const cachedYardMeshes = [];
+cachedYard.group.traverse(o => {if (o.isMesh && o.material.name === 'late_yard_model') cachedYardMeshes.push(o);});
+assert.equal(cachedYardMeshes.length, 1, 'cached instances retain shared-material batching');
+assert.equal(fetches, yardFetches + 1);
+lib.disposeObject(yard.group); lib.disposeObject(cachedYard.group);
+ok('late yard furniture is applied and subsequent builds reuse and batch it');
 
 GLTFLoader.prototype.loadAsync = async () => {throw new Error('offline');};
-assert.equal(await lib.loadModel('chair', modelKit), null); clean();
-console.log('  ok rejected model falls back and clears its deadline');
+assert.equal(await lib.loadModel('offline_chair', modelKit('offline_chair')), null);
+ok('a rejected model falls back and clears its deadline');
 
-let skyResolve, skySignal;
+let skyResolve, skySignal, skyFetches = 0, lateSky;
 HDRLoader.prototype.loadAsync = function() {
-  skySignal = this.manager.abortController.signal;
+  ++skyFetches; skySignal = this.manager.abortController.signal;
   return new Promise(resolve => {skyResolve = resolve;});
 };
-const skyPending = lib.loadSky({manifest: {sky: {kind: 'hdri', files: {'sky.hdr': ''}}}});
-await flush(); await expire(); assert.equal(await skyPending, null); assert.equal(skySignal.aborted, true);
-let skyReleased = false;
-const sky = new THREE.Texture(); sky.addEventListener('dispose', () => {skyReleased = true;});
-skyResolve(sky); await flush(); assert.equal(skyReleased, true); clean();
-console.log('  ok stalled sky aborts and disposes a late response');
+const skyKit = {manifest: {slow_sky: {kind: 'hdri', files: {'sky.hdr': ''}}}};
+const skyPending = lib.loadSky(skyKit, texture => {lateSky = texture;});
+await flush(); await advance(15000); assert.equal(await skyPending, null); assert.equal(skySignal.aborted, false);
+await advance(5000); const sky = new THREE.Texture(); skyResolve(sky); await flush();
+assert.ok(lateSky?.isTexture); lateSky.dispose();
+const cachedSky = await lib.loadSky(skyKit); assert.ok(cachedSky?.isTexture); assert.equal(skyFetches, 1);
+assert.notEqual(cachedSky, lateSky);
+ok('a late sky is delivered and cached without aborting its request');
 
-GLTFLoader.prototype.loadAsync = async () => ({scene: new THREE.Group().add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial()))});
-assert.ok((await lib.loadModel('chair', modelKit)).isGroup); clean();
-console.log('  ok successful model loads remain available');
-console.log('9/9 passed');
+GLTFLoader.prototype.loadAsync = async () => ({scene: cube()});
+assert.ok((await lib.loadModel('fast_chair', modelKit('fast_chair'))).isGroup);
+ok('successful model loads remain available');
+console.log(`${passed}/${passed} passed`);
+
 """
 
 

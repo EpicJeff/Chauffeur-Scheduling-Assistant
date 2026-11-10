@@ -79,7 +79,8 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #plan-tools > div, #pause-card > div { display: flex; flex-wrap: wrap; gap: 6px; }
 #plan-note { color: var(--editor-muted); margin-top: 6px; }
 #piece-card, #pause-card { position: fixed; z-index: 4; width: 280px; padding: 14px; border: 1px solid var(--editor-accent); border-radius: 16px; background: var(--editor-panel); max-height: calc(100dvh - 260px); overflow-y: auto; }
-#piece-card { right: calc(var(--editor-side) + 158px); top: 150px; }
+/* Dock over the panel's scroll area, leaving Argyle's replies and composer free. */
+#piece-card { right: 14px; top: 74px; width: var(--editor-side); max-height: calc(100dvh - 300px); }
 #piece-card h3 { padding-right: 50px; margin-bottom: 12px; }
 #piece-card > button[aria-label] { position: absolute; right: 8px; top: 8px; }
 #piece-card label, #pause-card label { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0; }
@@ -95,6 +96,8 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #pause-card[data-pinning="true"] { top: 74px !important; left: 96px !important; width: 280px; }
 #pause-card[data-pinning="true"] > div, #pause-card[data-pinning="true"] #pause-reason { display: none; }
 #editor-drag-hint, .editor-pin-dot { position: fixed; z-index: 6; pointer-events: none; background: #104566; border: 1px solid var(--editor-accent); border-radius: 12px; padding: 8px; }
+.editor-dimensions { pointer-events: none; }
+.editor-dimensions button { position: fixed; z-index: 3; pointer-events: auto; transform: translate(-50%, -50%); background: var(--editor-panel); color: var(--editor-accent); border: 1px solid var(--editor-accent); border-radius: 12px; padding: 6px 8px; font-size: 12px; white-space: nowrap; }
 #editor-drag-layer { position: fixed; inset: 0; width: 100vw; height: 100dvh; pointer-events: none; z-index: 3; }
 #editor-drag-outline { fill: #52ccff22; stroke: #52ccff; stroke-width: 3; stroke-dasharray: 8 4; }
 .editor-pin-dot { width: 28px; height: 28px; border-radius: 50%; padding: 2px; text-align: center; transform: translate(-50%, -50%); background: #ef8a26; color: #101820; border-color: #ffbf75; }
@@ -194,7 +197,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   #editor-time-labels { height: 44px; }
   #editor-cameras { left: 76px; bottom: calc(49% + 96px); }
   #editor-cameras button { padding: 5px 8px; }
-  #piece-card { top: 86px; right: 8px; width: min(280px, calc(100vw - 86px)); max-height: calc(52dvh - 150px); }
+  #piece-card { top: calc(52% + 62px); right: 8px; width: calc(100vw - 16px); max-height: calc(48dvh - 200px); }
   #pause-card { max-height: calc(52dvh - 150px); width: min(280px, calc(100vw - 96px)); }
   #plan-tools { left: 76px; right: 8px; top: 75px; }
   #plan-tools button { font-size: 11px; padding: 5px; }

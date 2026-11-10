@@ -481,6 +481,86 @@ def scenario_anchors_draw_only_when_shown():
     check(not p0view._unexpected(s.errors()), s.errors())
 
 
+
+def _stacked_box():
+    b = _box()
+    b['levels'].append({'id': 'L2', 'name': 'Upper floor', 'elevation': 9, 'ceiling': 9})
+    for wall in list(b['walls']):
+        b['walls'].append({**copy.deepcopy(wall), 'id': wall['id'] + '-upper', 'level': 'L2'})
+    b['rooms'].append({**copy.deepcopy(b['rooms'][0]), 'id': 'r2', 'level': 'L2'})
+    return b
+
+
+def scenario_storey_slab_reaches_exterior_wall_face():
+    # At y=-0.25 the mitred wall's outer face must continue through the slab
+    # band (8.2..9 ft), with the same surface immediately above and below it.
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s)
+        _rebuild(page, _plan(_stacked_box()))
+        hits = page.evaluate("""async () => {
+            const THREE = await import('three'), view = window.__twin, meshes = [];
+            view.setView('ext'); view.scene.updateMatrixWorld(true);
+            view.scene.traverse(o => {
+                if (!o.isMesh || o.layers.isEnabled(31)) return;
+                for (let p = o; p; p = p.parent) if (!p.visible) return;
+                meshes.push(o);
+            });
+            return [8.0, 8.6, 9.4].map(height => {
+                const ray = new THREE.Raycaster(new THREE.Vector3(3.37, height, 2).multiplyScalar(.3048),
+                    new THREE.Vector3(0, 0, -1));
+                const hit = ray.intersectObjects(meshes, false)[0];
+                return {height, y: hit ? -hit.point.z / .3048 : null};
+            });
+        }""")
+        for hit in hits:
+            check(hit['y'] is not None and close(hit['y'], -T / 2),
+                  f'the exterior stays at y=-0.25 ft through the storey line: {hits}')
+    check(not p0view._unexpected(s.errors()), s.errors())
+
+
+def scenario_household_porch_room_has_one_floor_surface():
+    from pathlib import Path
+    from services import twin_model_bridge
+    old = json.loads((Path(__file__).parent / 'fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
+    model, _ = twin_model_bridge.assemble(old, None)
+    flat = twin_model_bridge.flatten(model)
+    pool = next(b for b in flat['buildings'] if b['id'] == 'pool-house')
+    pool.update(position=[0, 0], rotation=0, base=0)
+    porch = next(r for r in pool['rooms'] if r['kind'] == 'porch')
+    detail = next(p for p in pool['porches'] if p['id'] == porch['id'])
+    # Use the household's actual porch outline, but clear furnishings and site
+    # placement so the ray measures its floor alone, in local building feet.
+    pool.update(fixtures=[], items=[], anchors=[], lights=[])
+    xs, ys = zip(*porch['polygon'])
+    x = min(xs) + (max(xs) - min(xs)) * .373
+    y = min(ys) + (max(ys) - min(ys)) * .431
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s)
+        _rebuild(page, {'buildings': [pool], 'site': {}, 'materials': {}})
+        hits = page.evaluate("""async ({x, y, z, level}) => {
+            const THREE = await import('three'), view = window.__twin, meshes = [];
+            view.setView('pool-house:' + level); view.scene.updateMatrixWorld(true);
+            view.scene.traverse(o => {
+                if (!o.isMesh || o.layers.isEnabled(31)) return;
+                for (let p = o; p; p = p.parent) if (!p.visible) return;
+                meshes.push(o);
+            });
+            const ray = new THREE.Raycaster(new THREE.Vector3(x, z + 5, -y).multiplyScalar(.3048),
+                new THREE.Vector3(0, -1, 0));
+            return ray.intersectObjects(meshes, false).filter(h => Math.abs(h.point.y / .3048 - z) < .005)
+                .map(h => ({role: h.object.material.name, height: h.point.y / .3048}));
+        }""", {'x': x, 'y': y, 'z': detail['floor'], 'level': porch['level']})
+        check(len(hits) == 1, f'the household porch has one rendered floor at {detail["floor"]} ft: {hits}')
+        check(page.evaluate('(id) => !!window.__twin.worldBox(id, "pool-house")', porch['id']),
+              'the porch room keeps its floor identity')
+    check(not p0view._unexpected(s.errors()), s.errors())
+
 SCENARIOS = (
     scenario_household_corners_are_closed,
     scenario_a_wall_without_a_footprint_keeps_todays_path,
@@ -490,6 +570,8 @@ SCENARIOS = (
     scenario_wall_face_override_paints_only_that_face,
     scenario_item_sits_on_its_host,
     scenario_anchors_draw_only_when_shown,
+    scenario_storey_slab_reaches_exterior_wall_face,
+    scenario_household_porch_room_has_one_floor_surface,
 )
 
 

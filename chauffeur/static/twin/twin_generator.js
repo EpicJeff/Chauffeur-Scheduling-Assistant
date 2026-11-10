@@ -2,7 +2,7 @@
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { kitMaterial, loadModel } from './twin_library.js';
+import { kitMaterial, loadModel, disposeObject } from './twin_library.js';
 import { hostPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { groundAt } from './twin_ground.js';
@@ -24,7 +24,7 @@ export function allPorches(building) {
   return result;
 }
 
-export function mergeStatic(group) {
+export function mergeStatic(group, { perPiece = false } = {}) {
   group.updateMatrixWorld(true);
   const inverse = group.matrixWorld.clone().invert(), buckets = new Map();
   group.traverse(o => {
@@ -52,12 +52,14 @@ export function mergeStatic(group) {
       g.morphTargetsRelative = false;
       g.clearGroups();
       g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse, o.matrixWorld));
-      if (!buckets.has(o.material)) buckets.set(o.material, []);
-      buckets.get(o.material).push({ geometry: g, mesh: o });
+      const key = perPiece ? `${o.material.uuid}:${o.userData.pieceId || ''}` : o.material;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push({ geometry: g, mesh: o });
     } catch { g?.dispose(); } // An odd optional model stays independently drawn.
   });
   const old = new Set();
-  for (const [mat, entries] of buckets) {
+  for (const entries of buckets.values()) {
+    const mat = entries[0].mesh.material;
     let geometry;
     try { geometry = mergeGeometries(entries.map(e => e.geometry)); }
     catch { /* Keep the originals if a model cannot be merged. */ }
@@ -240,7 +242,7 @@ function footprintPanel(footprint, a, c, lo, ta, tc) {
   });
 }
 
-export function buildTwin(plan, kit, tier, { showAnchors = false } = {}) {
+export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel = null } = {}) {
   const root = new THREE.Group(); root.scale.setScalar(FT);
   const pieces = new Map(), pieceBounds = new Map(), pickObjects = new Map(), roofSurfaces = new Map(), mergeGroups = [], ghostBatches = [];
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
@@ -857,6 +859,10 @@ export function buildTwin(plan, kit, tier, { showAnchors = false } = {}) {
         }
       }
     }
+    const porches = allPorches(b);
+    const porchRoom = po => (b.rooms || []).find(r => r.kind === 'porch' && r.polygon?.length >= 3
+      && (r.level === (po.level || first.id)) && (r.id === po.id
+        || r.polygon.every(p => contains(po.polygon, p)) && po.polygon.every(p => contains(r.polygon, p))));
     // A half-storey gets its own outline-based slab just like a full level.
     for (const l of ordered) {
       use({ ...l, id: `floor:${l.id}` }, 'floor', `floor:${l.id}`);
@@ -869,17 +875,27 @@ export function buildTwin(plan, kit, tier, { showAnchors = false } = {}) {
       });
       for (const room of surfaces) {
         const poly = room.polygon;
+        const porch = room.kind === 'porch' && porches.find(po => po.polygon && porchRoom(po) === room);
+        const elevation = porch ? porch.floor : l.elevation;
         use(room.id ? room : { ...l, id: `floor:${l.id}` }, room.id ? 'room' : 'floor', `floor:${l.id}`);
         // Only insert stair holes fully contained in this footprint.
         const inside = p => { let v = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) v = !v; return v; };
         const cuts = holes.filter(h => h.every(inside));
-        mesh(local[l.id], polygon(poly, l.id === first.id ? 0 : l.elevation - 0.8, l.elevation - 0.02, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'));
-        mesh(local[l.id], polygon(poly, l.elevation, l.elevation, cuts), mat('floor', l, room.floor_material));
+        mesh(local[l.id], polygon(poly, l.id === first.id ? 0 : elevation - 0.8, elevation - 0.02, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'));
+        mesh(local[l.id], polygon(poly, elevation, elevation, cuts), mat(porch ? 'patio_concrete' : 'floor', l, room.floor_material));
+      }
+      // Room boundaries stop at the wall lines. Their slab plus these mitred
+      // wall footprints fills the level through to its exterior faces.
+      if (l.id !== first.id) for (const wall of b.walls.filter(w => w.level === l.id && w.exterior
+        && w.kind !== 'separator' && w.state !== 'ghost' && w.footprint?.length === 4)) {
+        use({ ...l, id: `floor:${l.id}` }, 'floor', `floor:${l.id}`);
+        mesh(local[l.id], polygon(wall.footprint, l.elevation - 0.8, l.elevation), mat('interior_wall'));
       }
     }
-    for (const [index, po] of allPorches(b).entries()) {
+    for (const [index, po] of porches.entries()) {
       if (!po.polygon) continue;
-      use(po, 'porch', po === b.porch ? 'porch' : `porch:${index}`); mesh(local[first.id], polygon(po.polygon, 0, po.floor), mat('patio_concrete'));
+      use(po, 'porch', po === b.porch ? 'porch' : `porch:${index}`);
+      if (!porchRoom(po)) mesh(local[first.id], polygon(po.polygon, 0, po.floor), mat('patio_concrete'));
       const shed = b.roof?.extensions?.find(e => e.kind === 'shed_continuation');
       const section = sections.find(s => s.id === shed?.section);
       const main = section && { plate: section.plate, x1: section.rect[2] };
@@ -1037,45 +1053,75 @@ export function buildTwin(plan, kit, tier, { showAnchors = false } = {}) {
     };
     registerRecords();
     for (const [key, { data }] of records) if (data.ghost) ghostBatches.push(batchGhost(root, pieces.get(key), ghost, ghostEdges));
-    const models = new Map(), itemGroups = new Map();
+    const models = new Map(), lateItems = new Map(), itemGroups = new Map();
     const jobs = (b.items || []).filter(item => item.asset).map(async item => {
       let point, source;
       try { point = hostPoint(b, item.host, item.offset || 0); }
       catch { /* Retain any legacy fixture when its host is unavailable. */ }
+      const fallback = fixtureFallbacks.get(item.id);
+      // Keep an expired request's fallback separate from shared batches, so a
+      // late model can replace just that item without disturbing its neighbours.
+      const holder = new THREE.Group();
+      let ghostUpdate = null;
+      const draw = (source, late = false) => {
+        if (root.userData.disposed) { if (source) disposeObject(source); return; }
+        if (!source && !fallback) return;
+        const level = !source && fallback ? levels[fallback.piece.level] : hostLevel(item.host);
+        if (!level) { if (source) disposeObject(source); return; }
+        const key = `${b.id}:${item.id}`;
+        const proxy = pickObjects.get(key);
+        if (proxy) { proxy.removeFromParent(); proxy.geometry.dispose(); pickObjects.delete(key); }
+        for (const object of pieces.get(key) || []) {
+          const parent = object.parent; object.removeFromParent(); object.geometry?.dispose();
+          if (parent && parent !== holder && !parent.children.length) parent.removeFromParent();
+        }
+        if (ghostUpdate) { ghostBatches.splice(ghostBatches.indexOf(ghostUpdate), 1); ghostUpdate = null; }
+        holder.clear(); holder.removeFromParent();
+        pieces.delete(key); pieceBounds.delete(key); records.delete(key);
+        if (!itemGroups.has(level.id)) {
+          const group = new THREE.Group(); local[level.id].add(group); itemGroups.set(level.id, group);
+        }
+        const group = source && !late ? itemGroups.get(level.id) : holder;
+        if (group === holder) local[level.id].add(holder);
+        if (source) {
+          const model = source;
+          model.scale.multiplyScalar((item.scale ?? 1) / FT);
+          model.position.set(point[0], point[2], -point[1]);
+          model.rotation.y = THREE.MathUtils.degToRad(item.rotation || 0);
+          model.updateMatrixWorld(true);
+          use(item, 'item', item.id);
+          model.traverse(object => {
+            if (object.isMesh) mesh(group, object.geometry.clone().applyMatrix4(object.matrixWorld), object.material);
+          });
+          const geometries = new Set(); model.traverse(o => { if (o.geometry) geometries.add(o.geometry); });
+          geometries.forEach(g => g.dispose());
+        } else drawFixture(fallback.piece, fallback.index, group);
+        registerRecords();
+        if (item.state === 'ghost' && pieces.has(key)) {
+          ghostUpdate = batchGhost(root, pieces.get(key), ghost, ghostEdges); ghostBatches.push(ghostUpdate);
+        }
+        if (late) mergeStatic(holder, { perPiece: levelKey(level.id) === editableLevel });
+      };
       if (point) {
         const asset = item.asset.replace(/^polyhaven:/, '');
-        if (!models.has(asset)) models.set(asset, loadModel(asset, kit));
+        if (!models.has(asset)) {
+          lateItems.set(asset, []);
+          models.set(asset, loadModel(asset, kit, model => {
+            if (root.userData.disposed) { disposeObject(model); return; }
+            for (const update of lateItems.get(asset)) update(model.clone(true), true);
+          }));
+        }
+        lateItems.get(asset).push(draw);
         source = await models.get(asset);
       }
-      const fallback = fixtureFallbacks.get(item.id);
-      if (!source && !fallback) return;
-      const level = !source && fallback ? levels[fallback.piece.level] : hostLevel(item.host);
-      if (!level) return;
-      if (!itemGroups.has(level.id)) {
-        const group = new THREE.Group(); local[level.id].add(group); itemGroups.set(level.id, group);
-      }
-      const group = itemGroups.get(level.id);
-      if (source) {
-        const model = source.clone(true);
-        model.scale.multiplyScalar((item.scale ?? 1) / FT);
-        model.position.set(point[0], point[2], -point[1]);
-        model.rotation.y = THREE.MathUtils.degToRad(item.rotation || 0);
-        model.updateMatrixWorld(true);
-        use(item, 'item', item.id);
-        model.traverse(object => {
-          if (object.isMesh) mesh(group, object.geometry.clone().applyMatrix4(object.matrixWorld), object.material);
-        });
-      } else drawFixture(fallback.piece, fallback.index, group);
-      registerRecords();
-      if (item.state === 'ghost' && pieces.has(`${b.id}:${item.id}`))
-        ghostBatches.push(batchGhost(root, pieces.get(`${b.id}:${item.id}`), ghost, ghostEdges));
+      draw(source?.clone(true));
     });
     pendingModels.push(Promise.all(jobs).then(() => {
-      for (const group of itemGroups.values()) mergeStatic(group);
+      for (const [level, group] of itemGroups) mergeStatic(group, { perPiece: levelKey(level) === editableLevel });
     }));
   }
   // Merge within independently switchable domains, never across a floor cut.
-  for (const g of mergeGroups) mergeStatic(g);
+  for (const g of mergeGroups) mergeStatic(g, { perPiece: !!editableLevel && g.userData.levelKey === editableLevel });
   groups.gableCut.visible = false;
   const updateGhosts = () => ghostBatches.forEach(update => update());
   updateGhosts();
