@@ -335,6 +335,9 @@ class PrivateAnswerTests(unittest.TestCase):
 
     def test_read_it_still_posts_card(self):
         self.say('what is on the calendar tomorrow', JEFF)       # Jeff is recognised, the mic is open
+        # A card's proposal must exist: storage refuses a chat child of a missing proposal.
+        storage.add_action_proposal({'id': 'prop-9', 'action_type': 'request', 'summary': 'Draft',
+                                     'created_by_member_id': 'jeff'})
         card = {'kind': 'family_action', 'id': 'card-9', 'proposal_id': 'prop-9', 'summary': 'Draft'}
         self.vp.hold(self._ctx(), storage.get_member('jeff'), SECRET, card)
         with patch.object(storage, 'update_action_proposal') as bind:
