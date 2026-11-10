@@ -1,6 +1,77 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.781 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.782 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.782 (2026-11-10, NOT device-verified): the 3D house knows Home Assistant. Rooms link to areas, devices sit where they are, and a wall panel shows and controls them live.**
+
+Spec: `docs/superpowers/specs/2026-11-09-house-connected-model-design.md` §7, piece 3. Plan: `docs/superpowers/plans/2026-11-10-house-ha-link-piece-3.md`, Tasks 1-7, rulings Q1-Q14 in the SDD ledger. Claude wrote the tests first, Codex built Tasks 1-7, and Claude agents ran every browser round. Each task had its own Claude review, except Task 5, which got its task-level review inside the final whole-branch review (Ruling Q14). The whole-branch review was followed by one fix wave.
+
+Exit check, browser-verified on the fixture house: at the wall panel, tap the kitchen, and its devices open with their live state and controls, with the lights where they are.
+
+The house's view of Home Assistant (`services/twin_ha.py`):
+- `catalogue()` lists areas (with `floor_id`, `floor_name`, `floor_level`; `ha_api.get_floor_registry` is new and `get_area_registry` carries `floor_id`) and devices with their kind.
+- A device's kind is what it is, never its side sensor: a lock that reports a battery is a lock. A smart plug (`device_class` outlet) is an `outlet`.
+- `safe_catalogue()` never raises. A failed read is remembered for 30 s, so an unreachable Home Assistant costs one timeout per 30 s, not one per request.
+- `suggest` names an area for a room by name and floor. `obvious` places garage covers on garage openings and a lock on a room's single outside door, and skips ghost openings.
+
+The model (schema 3) holds device placements:
+- A building's `devices` list holds `{id:'device:<ha id>', device, host, offset, src}`. An anchor can carry a `device`. A new opening host is `{opening, side:'in'|'out'}`; the inside face is decided by a point-in-room test.
+- Ops `place_device` and `unplace_device`; a room's `ha_area` is stored as an area id.
+- Setting a room's area places the obvious devices in the same round with `src.auto` (Ruling Q3). One device that cannot be placed never blocks the link.
+- One device, one place: a device follows its door or wall through a move, a split or a merge.
+- A device whose host is deleted is kept and flagged, never dropped. Deleting an anchor moves its device onto the anchor's surface.
+- The catalogue is read once, outside the twin store lock, on Argyle's path. Gap: the editor's `POST /api/house/editor/op` still takes the locks before saving, so its read happens under them; the 30 s failure memory caps the cost.
+- Refusals: `Nothing changed.`, `Choose a device.` (also for an id Home Assistant does not list, while it lists devices), `Pick a wall, floor, ceiling or door for it.`, `That spot already holds a device; move it first.`
+- Argyle: `house_design` describe of a linked room lists the area's devices with ids and placed state. `status` names the linked rooms.
+
+Routes (`main.py`, tiers in `services/auth.py`):
+- `GET /api/house/ha/link` (parents): rooms with their area, suggestions, `Areas with no room`, and the count notes (`The plan shows {n} {plural kind}; Home Assistant has {m} in this area.`).
+- `GET /api/house/live` (wall): rooms, markers at world positions (building-local turned counter-clockwise by `rotation`, then plus `position`; Ruling Q6), and devices by area. Each carries `offered` from the household control grid. Devices whose area is gone are left out. Settings, states and geometry are read once per request.
+- `POST /api/house/ha/identify` (parents), the editor's Blink:
+  - a light that supports flash flashes once;
+  - any other light is toggled, then restored after 1.5 s from a fresh read, with one pending restore per light so two Blinks never stack;
+  - copy `Could not blink that light.` and `Only lights can blink.`
+- `GET api/ha/card/states` now adds `reachable:false` when Home Assistant's last `/states` read failed and an old copy is being served (Ruling Q13). Other callers keep the old copy, as before.
+- With no Home Assistant, every route answers `available:false`, and the editor says `Home Assistant is not connected, so areas and devices are hidden.`
+
+The editor (`static/twin/editor/ha_link.js`, `device_placement.js`; Tasks 4-5):
+- A room card's area is a pick list grouped by floor (ordered by level), not free text:
+  - `No area`;
+  - `Suggested: {area name}` with `Use`;
+  - a gone area shows `This room's Home Assistant area is gone; pick another.`
+- A building card lists `Areas with no room`, each placed on a room through a chooser that names the floor and skips ghost rooms. It also lists placed devices whose area has no room, so a person can move or remove them.
+- Device rows show what is in the room, placed or not. A person can:
+  - Blink a light;
+  - drag a row onto a wall, the floor, the ceiling or a spot (touch and pen drag from a 44 px grip, so the card still scrolls);
+  - Pick a spot, which names each spot and offers the room's doors for locks and contact sensors;
+  - Remove a placed device.
+- Every change goes through the editor's op path and undo history. Commits queue behind a pending name save, so none is lost.
+- The editor never waits on Home Assistant to start, poll or save. It reads the link only when the plan changed or a room, building or anchor card is open. A failed read keeps the last good answer.
+
+The live layer in the 3D house (`static/twin/live/live.js`, `markers.js`, `room_panel.js`, `modes.js`; Tasks 6-7):
+- One marker per device, as a 44 px screen-space icon by kind with its state. Labels take a free side and never cover another marker or label.
+- Zoomed far out, a room's markers merge into one badge with a count that shows any device needing attention. Overlapping badges are pushed apart.
+- Attention: an unlocked lock, an open or opening garage, and a smoke, moisture or gas sensor that is on. Unavailable reads as unavailable.
+- Taps obey the household control grid through `api/ha/card/service` and `chfControlFetch` (Ruling Q2), with PIN or identify when asked:
+  - a light, switch or outlet toggles with its own domain's toggle (Ruling Q10);
+  - a lock, garage or alarm opens a sheet with explicit actions;
+  - unlock, open and disarm ask once through `promptConfirm` in the shared `live.control`, on every surface.
+  - A marker shows the confirmed state from the next poll, never an optimistic flip.
+- State is polled every 10 s, and at once after a control.
+  - When Home Assistant stops answering, markers dim and a tap says `Home Assistant is not reachable.` This covers a failed poll, `reachable:false`, or an empty answer while markers exist (Ruling Q12).
+  - One error never stops the polling.
+- The wall keeps itself alive: a failed mount retries every 45 s, and the layout is re-read every 5 min and redrawn only when it changed. A wall that loads while Home Assistant is down recovers with no reload.
+- Tapping a room opens its room panel (`#twin-room-panel`) with every device in the room's area, each with its control: a switch, brightness, or the lock and garage actions.
+- `Lights` / `All` mode: lit rooms glow in their lights' colour and other markers dim.
+- The wall view (`?panel=true&kiosk=true`) shows only the house, the floor picker, the mode strip, the room panel and the panel shelf. The shelf stays so a wall can leave the twin (Ruling Q11). No editing controls show.
+- The House page has a `3D house` link that keeps the `panel` and `kiosk` flags (Ruling Q4). The twin is not the front door.
+
+Not done, parked in the house arc memory:
+- device-verified run;
+- the editor op route's catalogue read under the store lock;
+- root-relative shelf links on the twin page (`/home?...`);
+- whether a flash on an off light leaves it on, which depends on the integration and needs a device check;
+- `tests/test_house_live.py` 3/7 on the chat widget's 401 for `api/chat/conversation?surface=admin` when nobody is signed in. This happens on main too and is not from this branch.
 
 **v2.499.781 (2026-11-10, NOT device-verified): a rainbow glow around the wall panel while its room's satellite is in a conversation.**
 
