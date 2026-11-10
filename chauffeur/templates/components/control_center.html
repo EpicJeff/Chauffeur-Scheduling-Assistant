@@ -567,18 +567,6 @@ function closeChatHelpModal() {
    the shelf owns the bottom edge and the bar is a transient orb (ha_theme),
    so none of this applies there; ?chat=none hides the bar and the floor. #}
 <style>
-    /* Placement follows ha_theme.html's panel-chat-orb; appearance is shared. */
-    #panel-talk-orb {
-        position: fixed;
-        left: calc(50% + 4.25rem);
-        bottom: calc(var(--panel-shelf-h) + 1rem);
-        transform: translateX(-50%);
-        --argyle-orb-base-transform: translateX(-50%);
-        transform-origin: 50% 100%;
-        z-index: 80;
-    }
-    #panel-talk-orb.hidden { display: none; }
-    #panel-talk-orb.argyle-orb-hidden { transform: translateX(-50%) scale(0.72); }
     html:not([data-panel]) body:not(.chat-none) > .overflow-y-auto,
     html:not([data-panel]) body:not(.chat-none) > :not(.overflow-y-auto) > .flex-1.overflow-y-auto {
         padding-bottom: var(--argyle-floor, 6.5rem);
@@ -620,8 +608,9 @@ function closeChatHelpModal() {
         let turn = 0;
         let pollTimer = null;
         let stopTimer = null;
+        let polls = 0;
         const talk = window.chfPanelTalk = { check, start, state: 'idle' };
-        const buttons = () => ['chat-talk-btn', 'panel-talk-orb'].map(id => document.getElementById(id)).filter(Boolean);
+        const buttons = () => ['chat-talk-btn'].map(id => document.getElementById(id)).filter(Boolean);
         const base = () => window.chfBase !== undefined ? window.chfBase : '';
 
         function render(state) {
@@ -667,6 +656,11 @@ function closeChatHelpModal() {
             try {
                 const data = await request('GET');
                 if (turn !== current) return;
+                ++polls;
+                if (data.available && data.state === 'idle' && polls <= 2) {
+                    pollTimer = setTimeout(() => poll(current), 1000);
+                    return;
+                }
                 if (!data.available || !['listening', 'processing', 'responding'].includes(data.state)) {
                     idle();
                     return;
@@ -689,6 +683,7 @@ function closeChatHelpModal() {
             try {
                 await request('POST');
                 if (turn !== current) return;
+                polls = 0;
                 render('listening');
                 pollTimer = setTimeout(() => poll(current), 1000);
             } catch (e) {
@@ -1269,23 +1264,16 @@ function closeChatHelpModal() {
         }
         const orb = ArgyleOrb.create({ id: 'panel-chat-orb', label: 'Ask Argyle' });
         document.body.appendChild(orb);
-        const talkOrb = ArgyleOrb.create({ id: 'panel-talk-orb', label: 'Talk to Argyle' });
-        talkOrb.classList.add('hidden');
-        talkOrb.innerHTML = document.getElementById('chat-talk-btn').innerHTML;
-        talkOrb.addEventListener('click', () => window.chfPanelTalk.start());
-        document.body.appendChild(talkOrb);
 
         function openChat() {
             el.classList.add('panel-chat-open');
             orb.classList.add('panel-chat-hidden');
-            talkOrb.classList.add('argyle-orb-hidden');
             const input = document.getElementById('chat-input');
             if (input) input.focus();
         }
         function closeChat() {
             el.classList.remove('panel-chat-open');
             orb.classList.remove('panel-chat-hidden');
-            talkOrb.classList.remove('argyle-orb-hidden');
             const input = document.getElementById('chat-input');
             if (input) input.blur();
         }

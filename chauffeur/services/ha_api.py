@@ -99,6 +99,14 @@ def get_state(entity_id: str):
     return None
 
 
+def get_state_fresh(entity_id: str):
+    """Read one entity directly, without the shared states cache."""
+    try:
+        return _request('GET', f'/states/{entity_id}')
+    except Exception:
+        return None
+
+
 def get_script_config(object_id: str) -> dict | None:
     """UI-managed script configuration; YAML scripts and absent HA return None."""
     try:

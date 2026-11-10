@@ -1,4 +1,5 @@
 """A wall panel's room and voice satellite, discovered through Home Assistant."""
+import logging
 import threading
 import time
 
@@ -16,7 +17,7 @@ def status(device: dict | None) -> dict:
         return {'available': False, 'state': None}
     try:
         satellite = satellite_for_panel(device)
-        state = (ha_api.get_state(satellite) or {}).get('state') if satellite else None
+        state = (ha_api.get_state_fresh(satellite) or {}).get('state') if satellite else None
         return {'available': state not in (None, 'unavailable', 'unknown'), 'state': state}
     except Exception:
         return {'available': False, 'state': None}
@@ -41,7 +42,7 @@ def start(device: dict | None) -> tuple[int, dict]:
     try:
         if not ha_api.is_available():
             return 409, {'message': 'Home Assistant is not available.'}
-        satellite = satellite_for_panel(device)
+        satellite = satellite_for_panel(device, ha_available=True)
         if not satellite:
             # The resolver excludes unavailable entities. Distinguish an offline
             # room speaker from a room that has no satellite configured at all.
@@ -51,26 +52,41 @@ def start(device: dict | None) -> tuple[int, dict]:
             candidates = [device.get('satellite_id'), pinned, *area.get('entities', [])]
             for entity in candidates:
                 if entity and entity.startswith('assist_satellite.'):
-                    state = (ha_api.get_state(entity) or {}).get('state')
+                    state = (ha_api.get_state_fresh(entity) or {}).get('state')
                     if state in (None, 'unavailable', 'unknown'):
                         return 502, {'message': _offline_message(device)}
             return 409, {'message': 'No voice satellite is available for this panel.'}
-        state = (ha_api.get_state(satellite) or {}).get('state')
+        state = (ha_api.get_state_fresh(satellite) or {}).get('state')
         if state in (None, 'unavailable', 'unknown'):
             return 502, {'message': _offline_message(device)}
+        if state in ('listening', 'processing', 'responding'):
+            return 409, {'message': 'The room speaker is already in a conversation.'}
         with _start_lock:
             device_id = device['device_id']
             previous = _last_start.get(device_id)
-            if previous is not None and time.time() - previous < 5:
+            stamp = time.time()
+            if previous is not None and stamp - previous < 5:
                 return 429, {'message': 'Please wait a moment before trying again.'}
+            _last_start[device_id] = stamp
+        started = False
+        try:
             result = ha_api.call_service('assist_satellite', 'start_conversation',
                                          {'entity_id': satellite, 'preannounce': True,
-                                          'start_message': START_MESSAGE})
-            if result is None:
-                return 502, {'message': _offline_message(device)}
-            _last_start[device_id] = time.time()
+                                          'start_message': START_MESSAGE}, timeout=15)
+            started = result is not None
+        finally:
+            if not started:
+                with _start_lock:
+                    if _last_start.get(device_id) == stamp:
+                        if previous is None:
+                            _last_start.pop(device_id, None)
+                        else:
+                            _last_start[device_id] = previous
+        if result is None:
+            return 502, {'message': _offline_message(device)}
         return 200, {'ok': True}
     except Exception:
+        logging.exception('Could not start a panel conversation')
         return 502, {'message': _offline_message(device)}
 
 
@@ -86,13 +102,13 @@ def _known_satellites(states: dict) -> dict:
             if eid not in states or announce._usable(states, eid)}
 
 
-def satellite_for_panel(device: dict | None) -> str | None:
+def satellite_for_panel(device: dict | None, *, ha_available: bool | None = None) -> str | None:
     """Usable override, satellite announce pin, then the first room satellite.
 
     An unavailable HA installation or a failed HA read leaves the panel silent.
     """
     try:
-        if not device or not ha_api.is_available():
+        if not device or not (ha_api.is_available() if ha_available is None else ha_available):
             return None
         states = announce._states_by_id()
         override = device.get('satellite_id')
