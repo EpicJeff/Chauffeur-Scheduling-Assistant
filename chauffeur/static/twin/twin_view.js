@@ -8,6 +8,7 @@ import { buildYard } from './twin_yard.js';
 import { base, loadSky, disposeObject } from './twin_library.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 import { hostPoint } from './twin_hosts.js';
+import { mountLive } from './live/live.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } = {}) {
   const probe = document.createElement('canvas').getContext('webgl2');
@@ -207,6 +208,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   }
   function render() {
     if (disposed) return;
+    view.live?.draw();
     twin?.updateGhosts();
     renderer3.info.reset();
     renderer3.render(scene, camera);
@@ -224,6 +226,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   const view = {
     ready: false, scene, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan,
+    render,
     cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
     saveView() {
       return { camera, position: camera.position.clone(), quaternion: camera.quaternion.clone(), target: controls.target.clone(),
@@ -730,6 +733,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     dispose() {
       if (disposed) return;
       disposed = true; ++revision; view.ready = false;
+      view.live?.stop();
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
@@ -908,6 +912,7 @@ async function boot() {
       const stats = view.stats(); hud.textContent = `${stats.fps.toFixed(1)} fps · ${stats.drawCalls} draw calls`;
     }, 500) : null;
     window.addEventListener('pagehide', () => { clearInterval(hudTimer); view.dispose(); }, { once: true });
+    await mountLive(view, { api: (path, options) => fetch(base() + path, options) });
     const query = new URLSearchParams(location.search);
     if (query.get('probe') === '1') {
       let result;
