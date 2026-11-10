@@ -9,8 +9,10 @@ import math
 from services import control_rules, ha_api, house, twin_model
 
 
-_KINDS = ('light', 'switch', 'fan', 'camera', 'sensor', 'lock',
-          'garage', 'blinds', 'climate', 'media', 'other')
+# What a device IS, most telling first: a lock that also reports its battery
+# is a lock, and a light that also reports its energy is a light.
+_KINDS = ('lock', 'garage', 'climate', 'light', 'fan', 'switch', 'camera',
+          'media', 'blinds', 'sensor', 'other')
 _PLURALS = {'light': 'lights', 'switch': 'switches', 'fan': 'fans',
             'camera': 'cameras', 'sensor': 'sensors', 'outlet': 'outlets'}
 

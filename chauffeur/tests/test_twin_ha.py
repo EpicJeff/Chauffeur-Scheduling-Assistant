@@ -58,9 +58,13 @@ ENTITIES = [
     ('sensor.kitchen_ceiling_energy', '3', {'friendly_name': 'Kitchen ceiling energy'}, 'dK', 'kitchen'),
     ('light.kitchen_ceiling', 'on', {'friendly_name': 'Kitchen ceiling'}, 'dK', 'kitchen'),
     ('switch.coffee', 'off', {'friendly_name': 'Coffee maker'}, None, 'kitchen'),
+    # a real device carries side sensors listed first; its kind is still what it IS
+    ('binary_sensor.garage_door_obstruction', 'off', {'friendly_name': 'Garage obstruction', 'device_class': 'problem'}, 'dG', 'garage'),
     ('cover.garage_door', 'closed', {'friendly_name': 'Garage door', 'device_class': 'garage'}, 'dG', 'garage'),
     ('cover.living_shade', 'open', {'friendly_name': 'Living shade', 'device_class': 'shade'}, 'dS', 'living_room'),
+    ('sensor.front_door_battery', '80', {'friendly_name': 'Front door battery', 'device_class': 'battery'}, 'dF', 'living_room'),
     ('lock.front_door', 'locked', {'friendly_name': 'Front door'}, 'dF', 'living_room'),
+    ('sensor.hall_temperature', '20', {'friendly_name': 'Hall temperature', 'device_class': 'temperature'}, 'dC', 'living_room'),
     ('climate.hall', 'heat', {'friendly_name': 'Hall thermostat'}, 'dC', 'living_room'),
     ('media_player.tv', 'off', {'friendly_name': 'Living TV'}, 'dT', 'living_room'),
     ('camera.porch', 'idle', {'friendly_name': 'Porch camera'}, 'dP', 'living_room'),
