@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.780 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.781 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.781 (2026-11-10, NOT device-verified): a rainbow glow around the wall panel while its room's satellite is in a conversation.**
+
+The user: "When the voice satellite associated with a wall panel is actively in a conversation, can we have an effect show on the panel like the dynamic Siri rainbow border?"
+
+- Any conversation on the panel's room satellite counts: a tap on the mic or a wake word from across the room. A soft flowing rainbow glow on all four edges (`#panel-talk-glow` in `components/control_center.html`, panel pages only): listening bright and flowing, thinking a slower shimmer, answering a gentle pulse; fades on idle; a static glow under prefers-reduced-motion; above the screensaver without waking it; never blocks a tap.
+- The panel asks `GET /api/panel/talk` once a second while the screen is visible (now also `glow`); the server shares one fresh Home Assistant read per satellite per 0.8 s across panels (`panel_talk._fresh_cache`), while a tap's busy check still reads HA itself.
+- Household switch `panel_talk_glow` (default on), Config › Boards › The wall panel.
+
+Tests: `tests/test_panel_glow.py`; `tests/test_panel_talk.py` updated for the `glow` field.
 
 **v2.499.780 (2026-11-10, NOT device-verified): the schedule is read aloud again; Argyle tells the weather; Argyle opens apps on an Apple TV.**
 
