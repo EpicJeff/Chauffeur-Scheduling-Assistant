@@ -243,7 +243,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   host.addEventListener('twinrebuilt', refresh, { signal });
   window.addEventListener('resize', refresh, { signal });
   signal.addEventListener('abort', () => { view.controls.removeEventListener('change', refresh); layer.remove(); }, { once: true });
-  return { begin, update, finish, refresh, active: () => !!gesture,
+  return { begin, update, finish, refresh, hit, active: () => !!gesture,
     show(value) { preview = value; refresh(); },
     handles() { refresh(); return rows.map(({ handle }) => ({ kind: handle.kind, id: handle.id, at: [...handle.at] })); },
     get lastDragFrameMs() { return lastFrameMs ?? drag.lastDragFrameMs; } };

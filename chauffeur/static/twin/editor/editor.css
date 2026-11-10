@@ -89,6 +89,19 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #piece-card input[type="checkbox"] { width: 44px; }
 #piece-card > button:not([aria-label]) { width: 100%; margin-top: 8px; }
 #piece-card details summary { min-height: 44px; cursor: pointer; padding-top: 10px; }
+.editor-material-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
+.editor-material-line span { display: block; color: var(--editor-muted); font-size: 11px; }
+#library-panel, #material-chooser { position: fixed; z-index: 5; padding: 14px; border: 1px solid var(--editor-accent); border-radius: 16px; background: var(--editor-panel); }
+/* Docked in the side column over the floor list, ending above the piece card, so the
+   whole scene stays free to drop on (it docks the way the piece card does). */
+#library-panel { right: 14px; top: 14px; width: var(--editor-side); height: calc(var(--editor-floor-height) + 60px); display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto minmax(0, 1fr); align-items: center; column-gap: 8px; padding: 10px 14px; background: rgb(21, 27, 34); }
+#library-panel [role="tablist"] { display: flex; justify-content: flex-end; gap: 6px; }
+#library-panel [aria-selected="true"] { border-color: var(--editor-accent); color: var(--editor-accent); }
+#library-status { grid-column: 1 / -1; color: var(--editor-muted); font-size: 12px; margin: 6px 0; }
+#library-entries { grid-column: 1 / -1; align-self: stretch; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-content: start; grid-auto-rows: max-content; gap: 6px; }
+#library-entries button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; font-size: 11px; line-height: 1.25; text-align: center; overflow: hidden; }
+#library-entries img { width: 100%; height: 64px; object-fit: contain; pointer-events: none; }
+#material-chooser { display: flex; flex-direction: column; gap: 6px; width: 220px; }
 #pause-card h3 { color: var(--editor-accent); font-size: 14px; margin-bottom: 6px; }
 #pause-card p { margin-bottom: 10px; }
 #pause-accept { background: #119e50; border-color: #119e50; }
@@ -203,6 +216,11 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   #editor-cameras { left: 76px; bottom: calc(49% + 96px); }
   #editor-cameras button { padding: 5px 8px; }
   #piece-card { top: calc(52% + 134px); right: 8px; width: calc(100vw - 16px); max-height: calc(48dvh - 224px); }
+  #library-panel { left: 8px; right: 8px; top: calc(52% + 8px); width: auto; height: 196px; }
+  #library-entries { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 92px; overflow: auto hidden; }
+  #library-entries img { height: 56px; }
+  /* The open library takes the floor row; the card moves below it rather than under it. */
+  #library-panel:not([hidden]) ~ #piece-card { top: calc(52% + 216px); max-height: calc(48dvh - 306px); }
   #pause-card { max-height: calc(52dvh - 150px); width: min(280px, calc(100vw - 96px)); }
   #draw-tools { left: 76px; right: 8px; top: 75px; }
   #draw-tools button { font-size: 11px; padding: 5px; }

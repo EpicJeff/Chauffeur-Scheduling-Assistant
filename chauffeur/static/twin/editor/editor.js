@@ -9,6 +9,7 @@ import { createHistory } from './history.js';
 import { createPauses, applyRegistration, invertRegistration } from './pauses.js';
 import { createTimeline } from './timeline.js';
 import { createPlace } from './place.js';
+import { createLibrary } from './library.js';
 
 const el = id => document.getElementById(id);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
@@ -20,7 +21,7 @@ export async function boot() {
   let currentBuild = null, ghostBuild = null, renderedGhosts = 0, lastScene = '';
   let resuming = false, stopping = false;
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
-  let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, previewing = false, lastSummary = '';
+  let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, library = null, previewing = false, lastSummary = '';
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
@@ -133,6 +134,7 @@ export async function boot() {
     renderedGhosts = countGhosts(plan);
     drawFloors();
     tools?.refresh();
+    library?.refresh();
     pauses?.sync();
     timeline?.sync(currentBuild);
   }
@@ -406,17 +408,20 @@ export async function boot() {
     history = createHistory({ getRound: currentRound, getBuild: () => currentBuild,
       canEdit, signal: lifecycle.signal,
       refresh: async () => { draw?.cancel(); await polling.refreshState(); await renderScene(); } });
-    tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getSheets: () => sheets,
+    tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
+      pickSite: (x, y) => library?.pickSite(x, y),
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract });
+    library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || snapshot.plan, tools,
+      op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
     draw = createDraw({ view, tools, getPlan: () => snapshot.plan, op: applyOpNow,
       gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract });
     pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
       getSheets: () => sheets, refresh: () => polling.pollNow(true), preview: () => renderScene().catch(report),
       visibilityChanged: syncBuildButton, canEdit, signal: lifecycle.signal });
     tools.delegate({
-      pointerDown: event => pauses.pointerDown(event) || draw.pointerDown(event),
-      pointerMove: event => pauses.pointerMove(event) || draw.pointerMove(event),
-      pointerUp: (event, cancel) => pauses.pointerUp(event, cancel) || draw.pointerUp(event, cancel),
+      pointerDown: event => pauses.pointerDown(event) || draw.pointerDown(event) || library.pointerDown(event),
+      pointerMove: event => pauses.pointerMove(event) || draw.pointerMove(event) || library.pointerMove(event),
+      pointerUp: (event, cancel) => pauses.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
       floorChanged: draw.floorChanged, cancel: draw.cancel,
     });
     timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,

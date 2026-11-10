@@ -7763,6 +7763,34 @@ def house_editor_build_resume(build_id: str):
     return _house_editor_call(twin_build.resume, build_id, lookup=True)
 
 
+@app.get('/api/house/editor/library')
+def house_editor_library(request: Request):
+    from services import twin_library
+    require_parent_token(request.headers.get('x-member-token') or
+                         request.query_params.get('member_token'))
+    kit = twin_library.kit('modern_farmhouse')
+    words = lambda value: value.replace('_', ' ').strip().capitalize()
+    materials, items = [], {}
+    for asset, entry in twin_library.manifest().items():
+        if entry.get('kind') == 'material':
+            color = next((ref['color'] for ref in kit['materials'].values()
+                          if ref['asset'] == asset), '#b8b0a4')
+            materials.append({'id': asset, 'name': words(asset), 'color': color})
+        elif entry.get('kind') == 'model':
+            items[asset] = {'id': asset, 'name': words(asset), 'kind': 'furniture'}
+    for ref in kit['materials'].values():
+        material = {'id': ref['asset'], 'name': words(ref['asset']), 'color': ref['color']}
+        if material not in materials:
+            materials.append(material)
+    for asset in kit['furniture'].values():
+        items[asset] = {'id': asset, 'name': words(asset), 'kind': 'furniture'}
+    for kind, presets in (('shrub', kit['shrubs']),
+                          ('tree', kit['backdrop_trees'] + kit['specimen_trees'])):
+        for preset in presets:
+            items[preset] = {'id': preset, 'name': words(preset), 'kind': kind}
+    return {'materials': materials, 'items': list(items.values())}
+
+
 @app.post('/api/house/editor/op')
 def house_editor_op(request: Request, body: dict = Body(default={})):
     from services import twin_edit, twin_store

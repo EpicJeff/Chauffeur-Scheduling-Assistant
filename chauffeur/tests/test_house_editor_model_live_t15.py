@@ -96,7 +96,20 @@ def _rename(plan):
 
 
 def _serve():
-    return H.serve(_rename)
+    """The served app with the store back on the seeded round (or None: no playwright).
+
+    serve() seeds once per process, so a scenario that moves the tree or deletes the
+    shrub would otherwise leave that for the next one; as in Task 13's _reset() and
+    Task 14's _fresh(), every scenario starts from the seed round (twin_store.revert).
+    """
+    s = H.serve(_rename)
+    if s is None:
+        return None
+    from services import twin_store
+    seed = min(r['id'] for r in twin_store.rounds())
+    if twin_store.current_id() != seed:
+        twin_store.revert(seed)
+    return s
 
 
 # --- the household, read from the stored model ----------------------------------
