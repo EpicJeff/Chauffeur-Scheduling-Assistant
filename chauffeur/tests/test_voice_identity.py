@@ -352,13 +352,16 @@ class VoiceIdentityTests(unittest.TestCase):
         self.assertTrue(all(s['source'] == 'voice' for s in seen))
 
     def test_router_refuses_unoffered_privileged_tool(self):
+        # An unrecognised voice. Since 2026-11-10 a verified or recognised voice
+        # acts as its member with their phone tools, read_mail included
+        # (tests/test_voice_actor.py); the stranger's rail is unchanged.
         calls = []
         def llm(prompt, tools, system_prompt):
             calls.append((tools, system_prompt, prompt))
             return {'tool_calls': [{'name': 'read_mail', 'arguments': {'uid': 1}}]} if len(calls) == 1 else {'message': 'Use your phone.'}
         with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=llm), \
                 patch.object(agent_tools_v2, 'read_mail') as read:
-            agent_router.process_agent_request('read my mail', source='voice', voice_context=self.verify(),
+            agent_router.process_agent_request('read my mail', source='voice', voice_context=self.context(),
                                                 context={'private': 'SECRET'}, focus_key='private-focus')
             read.assert_not_called()
         self.assertNotIn('read_mail', {t['name'] for t in calls[0][0]})
