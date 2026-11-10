@@ -137,9 +137,16 @@ def unexpected(errors):
 
 def signed_in(page):
     """Place the parent session in localStorage the way admin_gate stores it."""
-    page.add_init_script(
-        "localStorage.setItem('chauffeur_admin_token', %s);"
-        "localStorage.setItem('chauffeur_admin_token_for', %s);" % (json.dumps(STATE['token']), json.dumps(PARENT['id'])))
+    # Init scripts run in every document, Chromium's chrome-error:// page after a
+    # loopback reset included, where localStorage throws (R56): guard both.
+    page.add_init_script(SIGN_IN_SCRIPT % (json.dumps(STATE['token']), json.dumps(PARENT['id'])))
+
+
+SIGN_IN_SCRIPT = (
+    "if (location.protocol.startsWith('http')) { try {"
+    "localStorage.setItem('chauffeur_admin_token', %s);"
+    "localStorage.setItem('chauffeur_admin_token_for', %s);"
+    "} catch (e) {} }")
 
 
 def settle(page, frames=2):
