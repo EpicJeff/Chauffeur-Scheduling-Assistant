@@ -1875,6 +1875,19 @@ def get_trusted_devices() -> List[dict]:
                       key=lambda r: -(r.get('last_seen') or 0))
 
 
+def set_device_room(device_id: str, area_id: Optional[str],
+                    satellite_id: Optional[str]) -> Optional[dict]:
+    """Assign a room and optional voice satellite to a trusted wall panel."""
+    with db_lock:
+        row = get_trusted_device(device_id)
+        if not row or row.get('kind') != 'panel':
+            return None
+        fields = {'area_id': area_id or None, 'satellite_id': satellite_id or None}
+        deletion.check()
+        trusted_devices_table.update(fields, Query().device_id == device_id)
+        return {**row, **fields}
+
+
 def untrust_device(device_id: str) -> None:
     with db_lock:
         deletion.check()

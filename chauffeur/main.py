@@ -10830,8 +10830,38 @@ def list_trusted_devices(x_member_token: Optional[str] = Header(None)):
     a lost tablet from."""
     require_parent_token(x_member_token)
     names = {m['id']: m.get('name') for m in storage.get_all_members(include_archived=True)}
-    return [{**d, 'trusted_by_name': names.get(d.get('trusted_by'))}
+    return [{**{k: v for k, v in d.items() if k != 'device_token'},
+             'trusted_by_name': names.get(d.get('trusted_by'))}
             for d in storage.get_trusted_devices()]
+
+
+@app.get("/api/account/devices/rooms")
+def device_rooms(x_member_token: Optional[str] = Header(None)):
+    require_parent_token(x_member_token)
+    from services import panel_talk
+    return panel_talk.rooms()
+
+
+class DeviceRoomRequest(BaseModel):
+    area_id: Optional[str] = None
+    satellite_id: Optional[str] = None
+
+
+@app.post("/api/account/devices/{device_id}/room")
+def set_panel_room(device_id: str, req: DeviceRoomRequest,
+                   x_member_token: Optional[str] = Header(None)):
+    require_parent_token(x_member_token)
+    device = storage.get_trusted_device(device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    if device.get('kind') != 'panel':
+        raise HTTPException(status_code=400, detail="Only panels have a room")
+    if req.satellite_id and not req.satellite_id.startswith('assist_satellite.'):
+        raise HTTPException(status_code=400, detail="Choose an assist_satellite entity")
+    row = storage.set_device_room(device_id, req.area_id or None, req.satellite_id or None)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Panel not found")
+    return {k: v for k, v in row.items() if k != 'device_token'}
 
 
 # Labels `trust_device` and the pairing flow hand out when nobody chose one.
