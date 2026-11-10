@@ -566,7 +566,9 @@ def apply_model(model, edit, validated=None):
     if not isinstance(edit, dict):
         raise ValueError('An edit must be an object.')
     op = edit.get('op')
-    if (op in ops.MORE_OPS and (op not in ('set', 'add_opening') or 'id' in edit)
+    # A flag_ok set names a building's check, not a piece, so it carries no id.
+    if (op in ops.MORE_OPS and (op not in ('set', 'add_opening') or 'id' in edit
+                                or op == 'set' and edit.get('field') == 'flag_ok')
             or op in ('move_joint', 'move_wall', 'move_room', 'split_wall', 'draw_room', 'split_room')
             or op == 'delete' and 'id' in edit):
         return ops.apply(model, edit)

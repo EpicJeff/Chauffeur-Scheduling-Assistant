@@ -72,6 +72,8 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     roomSelection.select({ kind: record.kind, id: record.piece.id, building: record.building.id, level });
   }
   function pick(x, y) {
+    const proposed = delegate?.pick?.(x, y);
+    if (proposed) return proposed;
     const item = view.pick(x, y);
     const record = item?.kind === 'roof' && findPiece(getPlan(), item.id, item.building);
     const markedRoof = record && (record.piece.state === 'ghost' || record.piece.block

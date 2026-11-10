@@ -9,6 +9,7 @@ import { createHistory } from './history.js';
 import { createPauses, applyRegistration, invertRegistration } from './pauses.js';
 import { createTimeline } from './timeline.js';
 import { createPlace } from './place.js';
+import { createFlags } from './flags.js';
 
 const el = id => document.getElementById(id);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
@@ -21,6 +22,7 @@ export async function boot() {
   let resuming = false, stopping = false;
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
   let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, previewing = false, lastSummary = '';
+  let flags = null;
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
@@ -133,6 +135,7 @@ export async function boot() {
     renderedGhosts = countGhosts(plan);
     drawFloors();
     tools?.refresh();
+    flags?.refresh();
     pauses?.sync();
     timeline?.sync(currentBuild);
   }
@@ -408,12 +411,15 @@ export async function boot() {
       refresh: async () => { draw?.cancel(); await polling.refreshState(); await renderScene(); } });
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getSheets: () => sheets,
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract });
+    flags = createFlags({ view, getModel: () => snapshot.model, getPlan: () => snapshot.plan,
+      tools, panel, op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
     draw = createDraw({ view, tools, getPlan: () => snapshot.plan, op: applyOpNow,
       gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract });
     pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
       getSheets: () => sheets, refresh: () => polling.pollNow(true), preview: () => renderScene().catch(report),
       visibilityChanged: syncBuildButton, canEdit, signal: lifecycle.signal });
     tools.delegate({
+      pick: flags.pick,
       pointerDown: event => pauses.pointerDown(event) || draw.pointerDown(event),
       pointerMove: event => pauses.pointerMove(event) || draw.pointerMove(event),
       pointerUp: (event, cancel) => pauses.pointerUp(event, cancel) || draw.pointerUp(event, cancel),
@@ -441,6 +447,7 @@ export async function boot() {
     });
     if (new URLSearchParams(location.search).get('test') === '1') window.__twinEditor = {
       selection: tools.selection, handles: tools.handles, op: applyOp,
+      flags: flags.flags, proposals: flags.proposals,
       get lastDragFrameMs() { return tools.lastDragFrameMs; },
     };
     // The editor uses the mockup's dark work surface; the shared preview keeps

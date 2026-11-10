@@ -36,7 +36,9 @@ export function findPiece(plan, pieceId, buildingId) {
     if (piece) return { piece, building, kind };
   }
   const piece = building.roof?.sections?.find(p => p.id === pieceId);
-  return piece ? { piece, building, kind: 'roof' } : null;
+  if (piece) return { piece, building, kind: 'roof' };
+  const proposal = building.proposals?.find(p => (p.id || p.piece.id) === pieceId);
+  return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
 export function createCards({ getPlan, getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, ask, canEdit, select }) {
@@ -70,6 +72,7 @@ export function createCards({ getPlan, getLabel, getSelection = () => ({}), getF
       && flag.block_rect.every((v, i) => Math.abs(v - record.piece.block[i]) <= 1)) : [];
   function draw(next = selection) {
     const record = next && findPiece(getPlan(), next.pieceId, next.buildingId);
+    if (record?.kind === 'proposal') { host.hidden = true; return; }
     const flags = roofFlags(record);
     const nextLayout = record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind;
     host.hidden = !record;

@@ -621,6 +621,103 @@ def test_accept_and_dismiss_a_proposal():
 
 # ---------------------------------------------------------------- site items (P4)
 
+def test_flag_ok_removes_only_the_index_and_text_and_refuses_replay():
+    model = _house()
+    first = {'level': 'L1', 'at': [1, 1], 'text': 'Check the first piece.', 'piece': 's1'}
+    second = {'level': 'L1', 'at': [2, 2], 'text': 'Check the second piece.', 'piece': 'mid'}
+    _b(model)['flags'] = [first, second]
+    other = copy.deepcopy(_b(model))
+    other['id'] = 'B2'
+    model['buildings'].append(other)
+    before = copy.deepcopy(model)
+    op = {'op': 'set', 'building': 'B1', 'field': 'flag_ok', 'value': {'index': 0, 'text': first['text']}}
+    after = _apply(model, op)
+    check(_b(after)['flags'] == [second], _b(after)['flags'])
+    check(after['buildings'][1] == before['buildings'][1], 'the other building is unchanged')
+    check(_b(after)['walls'] == _b(before)['walls'], 'acknowledging keeps every wall')
+    check(model == before, 'apply does not mutate its input')
+    _refused(after, op)
+    check(_b(after)['flags'] == [second], 'a replay never removes the next flag')
+
+
+def test_flag_ok_rejects_bad_index_or_text():
+    model = _house()
+    _b(model)['flags'] = [{'at': [1, 1], 'text': 'Check this piece.'}]
+    before = copy.deepcopy(model)
+    for value in (None, True, {}, {'index': True, 'text': 'Check this piece.'},
+                  {'index': -1, 'text': 'Check this piece.'}, {'index': 1, 'text': 'Check this piece.'},
+                  {'index': 0.0, 'text': 'Check this piece.'}, {'index': 0},
+                  {'index': 0, 'text': 'Another check.'}):
+        _refused(model, {'op': 'set', 'building': 'B1', 'field': 'flag_ok', 'value': value})
+        check(model == before, ('a refused acknowledgement changes nothing', value))
+
+
+def test_flag_ok_snapshot_distinguishes_checks_with_the_same_words():
+    model = _house()
+    first = {'level': 'L1', 'at': [1, 1], 'text': 'Check this piece.'}
+    second = {**first, 'at': [2, 2]}
+    _b(model)['flags'] = [first, second]
+    op = {'op': 'set', 'building': 'B1', 'field': 'flag_ok',
+          'value': {'index': 0, 'text': first['text'], 'flag': copy.deepcopy(first)}}
+    after = _apply(model, op)
+    check(_b(after)['flags'] == [second], 'only the indexed flag is removed when the words repeat')
+    _refused(after, op)
+
+
+def test_flag_ok_migration_separator_stays_cleared_after_normalize_and_reread():
+    with open(HOUSEHOLD, encoding='utf-8') as handle:
+        flat = json.load(handle)
+    bridge = _need('twin_model_bridge')
+    model, _ = bridge.assemble(flat)
+    b = model['buildings'][0]
+    index, flag = next((i, f) for i, f in enumerate(b['flags']) if f.get('separators'))
+    walls = copy.deepcopy(b['walls'])
+    after = _apply(model, {'op': 'set', 'building': b['id'], 'field': 'flag_ok',
+                           'value': {'index': index, 'text': flag['text']}})
+    expected = b['flags'][:index] + b['flags'][index + 1:]
+    check(after['buildings'][0]['flags'] == expected, 'only the selected grouped flag is removed')
+    check(after['buildings'][0]['walls'] == walls, 'all migration separators and their flagged markers stay')
+    normalized, _ = _need('twin_model').normalize(after)
+    reread, _ = bridge.assemble(bridge.flatten(normalized), previous=normalized)
+    check(not any(f['text'] == flag['text'] and f.get('level') == flag['level']
+                  for f in reread['buildings'][0]['flags']), 'R37: the acknowledged group is not flagged again')
+
+
+def test_flag_ok_unclosed_room_stays_checked_and_keeps_its_recovery_record():
+    model = _house()
+    wall = copy.deepcopy(_by_id(_b(model)['walls'], 'w'))
+    _b(model)['walls'].remove(_by_id(_b(model)['walls'], 'w'))
+    model, _ = _need('twin_model').normalize(model)
+    index, flag = next((i, f) for i, f in enumerate(_b(model)['flags'])
+                       if isinstance(f.get('piece'), dict) and f['piece'].get('room', {}).get('id') == 'kitchen')
+    after = _apply(model, {'op': 'set', 'building': 'B1', 'field': 'flag_ok',
+                           'value': {'index': index, 'text': flag['text']}})
+    normalized, _ = _need('twin_model').normalize(after)
+    check(flag not in _b(normalized)['flags'], 'the derived room note stays acknowledged on a save')
+    check(flag in _b(normalized)['checked_flags'], 'the missing room record is retained')
+    _b(normalized)['walls'].append(wall)
+    restored, _ = _need('twin_model').normalize(normalized)
+    kitchen = _by_id(_b(restored)['rooms'], 'kitchen')
+    check(kitchen['name'] == 'Kitchen', 'reclosing the room recovers its name after acknowledging its flag')
+    check(flag not in _b(restored)['checked_flags'], 'a repaired room retires its acknowledgement')
+
+
+def test_flag_ok_unhosted_opening_stays_checked_until_it_is_repaired():
+    model = _house()
+    model = _apply(model, {'op': 'add_opening', 'building': 'B1', 'wall': 'mid', 'at': 5, 'kind': 'door'})
+    model = _apply(model, {'op': 'delete', 'building': 'B1', 'id': 'mid'})
+    index, flag = next((i, f) for i, f in enumerate(_b(model)['flags']) if 'lost its wall' in f['text'])
+    after = _apply(model, {'op': 'set', 'building': 'B1', 'field': 'flag_ok',
+                           'value': {'index': index, 'text': flag['text']}})
+    normalized, _ = _need('twin_model').normalize(after)
+    check(flag not in _b(after)['flags'] and flag not in _b(normalized)['flags'], 'the unhosted note stays checked')
+    door = _by_id(_b(normalized)['openings'], flag['piece'])
+    check(door['state'] == 'ghost', 'acknowledging never deletes or falsely settles the door')
+    repaired = _apply(normalized, {'op': 'move_hosted', 'building': 'B1', 'id': door['id'],
+                                   'host': {'wall': 's1', 'side': 'left', 'at': 5, 'z': 0}})
+    check(not _b(repaired).get('checked_flags'), 'rehosting retires the old acknowledgement')
+
+
 def _household_site():
     with open(HOUSEHOLD, encoding='utf-8') as handle:
         return json.load(handle)['site']
@@ -788,6 +885,32 @@ def test_op_route_refusal_is_400_with_words():
     check(ts.current_model() == before, 'a refusal changes nothing')
 
 
+def test_op_route_flag_ok_clears_a_check_and_refuses_a_replay():
+    """Looks right posts flag_ok with no piece id; the route must reach the model op."""
+    tokens = _people()
+    storage.patch_settings({'house_twin': None, 'house_twin_cost': None})
+    shutil.rmtree(ts.DATA_DIR, ignore_errors=True)
+    with open(HOUSEHOLD, encoding='utf-8') as handle:
+        ts.push_round(json.load(handle), 'build')
+    before = ts.current_model()
+    b = before['buildings'][0]
+    index, flag = next((i, f) for i, f in enumerate(b['flags']) if f.get('separators'))
+    op = {'op': 'set', 'building': b['id'], 'field': 'flag_ok',
+          'value': {'index': index, 'text': flag['text'], 'flag': flag}}
+    c = _client()
+    with _enforced():
+        r = c.post('/api/house/editor/op', headers=tokens['parent'], json={'op': op})
+        check(r.status_code == 200, f'{r.status_code} {r.text}')
+        after = ts.current_model()
+        check(after['buildings'][0]['flags'] == b['flags'][:index] + b['flags'][index + 1:],
+              'the route removes exactly that check')
+        check([o['flags'] for o in after['buildings'][1:]] == [o['flags'] for o in before['buildings'][1:]],
+              'the other buildings keep their checks')
+        r = c.post('/api/house/editor/op', headers=tokens['parent'], json={'op': op})
+    check(r.status_code == 400, f'a replay is refused: {r.status_code} {r.text}')
+    check(ts.current_model() == after, 'a refused replay changes nothing')
+
+
 def test_house_design_tool_reaches_new_ops():
     from services import agent_tools_v2
     _people()
@@ -861,11 +984,18 @@ TESTS = (
     test_set_edits_fields_and_names_a_room,
     test_set_material_cascade_and_clear,
     test_accept_and_dismiss_a_proposal,
+    test_flag_ok_removes_only_the_index_and_text_and_refuses_replay,
+    test_flag_ok_rejects_bad_index_or_text,
+    test_flag_ok_snapshot_distinguishes_checks_with_the_same_words,
+    test_flag_ok_migration_separator_stays_cleared_after_normalize_and_reread,
+    test_flag_ok_unclosed_room_stays_checked_and_keeps_its_recovery_record,
+    test_flag_ok_unhosted_opening_stays_checked_until_it_is_repaired,
     test_site_items_record_compose_overrides,
     test_op_route_round_trip,
     test_op_route_rename_uses_the_saved_summary_and_registry,
     test_op_route_delete_survives_a_sheet_reread_and_logs_the_parent,
     test_op_route_refusal_is_400_with_words,
+    test_op_route_flag_ok_clears_a_check_and_refuses_a_replay,
     test_house_design_tool_reaches_new_ops,
     test_legacy_edit_ops_still_work,
 )
