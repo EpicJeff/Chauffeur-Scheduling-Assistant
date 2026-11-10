@@ -1,6 +1,37 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.775 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.776 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.776 (2026-11-10, NOT device-verified): a voice Argyle recognises acts as that person; a goodbye ends it; private answers wait for "read it" or "send it".**
+
+Spec: `docs/superpowers/specs/2026-11-10-voice-acts-and-panel-talk-design.md` (piece 1 of 2; piece 2, panel tap-to-talk, follows). Plan: `docs/superpowers/plans/2026-11-10-voice-acts-and-panel-talk.md`, Tasks 1-3, rulings in the SDD ledger. Claude wrote every test first, Codex built the code, every task, every fix round and a whole-branch review were Claude-reviewed.
+
+Why: the user, 2026-11-10: "If you are recognized by voice, you should be able to do whatever you can do in chat on your phone. That is the point of recognition." Before this, a recognised voice was only a lens for questions; writes ran on the household's behalf (`parent_of_record`, "Household voice:" messages) and most changes said "That needs your phone."
+
+Who acts (`VoiceContext.actor()`, `services/voice_identity.py`):
+- A voice recognised on THIS turn (a fingerprint match, a continuation of the PIN speaker's anchor, or a short reply inside the same conversation), with Argyle chat scope. A PIN-verified session also needs that per-turn evidence; without it the turn keeps the verified household rail exactly as before (the PIN holder as principal and sender, provenance `member`).
+- Never a claimed name ("It's Jeff"), never an uncertain long sample, never a short first turn of a new conversation.
+- A fingerprint is never proof: `proven` stays `level == 'verified'`, so booking approvals and HA kinds with "Require authentication" still ask for the PIN.
+
+What the actor gets (`services/agent_router.py`):
+- The tools, role prompt and dispatch that person's Argyle DM on the phone gets (the same builder, not a copy), plus the household voice mutations (drivers, shopping) done directly as them: recognised never means less than a stranger.
+- Writes are recorded as the member with `via: 'voice'`; messages come from them with no prefix; device control, music and memory reach Config › Voice identity's action history.
+- A card (a proposal, a request) is posted with the reply into their Argyle DM, bound to it, and the speech ends "I've put that in your Argyle chat."
+
+Conversations and goodbye (`services/voice_conversation.py`, `voice_fingerprint.apply`):
+- A conversation ends when the answer HA is sent closes the mic (any path, intercepts included) or 30 s pass between turns. Short replies (under 1.2 s, or no audio) inherit the recognised speaker only inside one conversation; HA's own conversation_id is not the boundary (ESPHome keeps it ~5 minutes).
+- A sign-off ("thanks, that's all", "bye") still gets Argyle's answer, closes the mic and now ends the satellite's identity session (`voice_identity.end_session`).
+
+Private answers (`services/voice_private.py`):
+- Every agent tool is classified in `voice_tools.SPEAKABLE` or `voice_tools.PRIVATE` (a test fails on an unclassified tool; unknown names count as private at runtime). Calling a private tool makes the turn private whatever it returns; a speakable tool's errors stay speakable ("Say your PIN first"); the phone's per-row checks (calendar, shopping, driver events) apply; a person's whereabouts (house locate) are private.
+- On a private actor turn Argyle holds the answer and asks "That's private. Read it out, or send it to your chat?" The same person's next turn decides ("read it", "out loud" / "send it", "chat", "don't read it"), one re-ask when unclear. Another voice, an unknown voice, a goodbye, a second unclear reply or 60 s post it to their DM ("Sent to your chat."). A held card is posted even on "read it". A failed DM post never breaks a turn; the answer stays queued and is retried.
+- The phone path (`app_voice.PhoneTurn`) is unchanged; its per-row checks moved verbatim into shared `voice_tools` helpers.
+
+Unrecognised voices are unchanged.
+
+Tests: `tests/test_voice_session_end.py`, `test_voice_actor.py`, `test_voice_private_answers.py`; `test_voice_identity.py` (the privileged-tool refusal is now the stranger's case). `tests/test_panel_room.py` is committed for piece 2 and skips until it is built.
+
+Device steps: rebuild the add-on. At a satellite with your voice set up: ask for something only your phone could do before ("add take out the bins to the house list", "cancel Ben's dentist on Friday"); ask "read me my latest email" and answer "read it" or "send it"; say "thanks, that's all", then a short "yes" in a new conversation should not be treated as you. A kid's recognised voice should get the kid's own rail.
 
 **v2.499.775 (2026-11-10, NOT device-verified): the house is one connected model, and the editor edits the house itself.**
 
