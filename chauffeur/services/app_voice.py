@@ -89,7 +89,8 @@ class Turn:
         if not isinstance(result, dict) or result.get('error') or result.get('status') not in ('success', 'ok'):
             self.speech_safe = False
         from services.voice_tools import row_checks_after
-        if self.tools and not row_checks_after(self.tools[-1], result):
+        # Digest row gating is satellite-only; retain the phone's existing policy.
+        if self.tools and not row_checks_after(self.tools[-1], result, check_drive_digest=False):
             self.speech_safe = False
 
     def audible(self, result):

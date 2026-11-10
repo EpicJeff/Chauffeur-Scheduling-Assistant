@@ -14,7 +14,9 @@ MUTATIONS = frozenset({'assign_driver_to_event_fuzzy', 'remove_override_for_even
 # Privacy follows the data: shared household reads and changes are speakable,
 # as are confirmations that only repeat the speaker's request. Sensitive stores
 # remain private, including errors that may name records. Calendar/list/driver
-# rows still pass the checks below; house locate is checked per action.
+# rows still pass the checks below; satellite drive digests check their source
+# rows too. Reads with unchecked calendar/program titles stay private, and
+# house locate is checked per action.
 SPEAKABLE = frozenset({
     'get_calendar_events', 'get_travel_time', 'get_weather', 'get_shopping_list_items',
     'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
@@ -42,20 +44,21 @@ SPEAKABLE = frozenset({
     'add_occasion', 'add_occasion_guests', 'set_occasion_attendance',
     'answer_occasion_question', 'stamp_occasion_template', 'add_occasion_dishes',
     'set_occasion_menu',
-    'adjust_points', 'research_question', 'list_projects', 'get_project', 'list_programs',
+    'adjust_points', 'research_question', 'list_projects', 'get_project',
     'list_chores', 'get_routine_status', 'get_drive_digest', 'get_household_status',
-    'get_household_load', 'get_household_tasks', 'get_kid_tasks', 'get_assist_coverage',
+    'get_household_load', 'get_household_tasks', 'get_kid_tasks',
     'get_family_goals', 'get_point_balances', 'get_errands', 'get_errand_habits',
     'get_errand_preferences', 'get_eating_plan', 'get_meal_rules', 'get_tonights_plate',
     'get_week_dinners', 'get_shopping_trip', 'get_prep_ahead', 'get_run_sheet',
     'suggest_dinner', 'search_places', 'generate_trip_plan', 'post_weekly_digest',
-    'negotiate_day', 'program_progress', 'manage_trip_rules', 'manage_trip_flights',
+    'manage_trip_rules', 'manage_trip_flights',
     # Registry-only household actions follow the same rule as the chat tools.
     'house_design', 'propose_program', 'start_drive', 'update_drive_status',
     'add_override', 'delete_override', 'generate_trip_flights', 'add_trip_flight',
     'edit_trip_flight', 'delete_trip_flight', 'challenge_pet_battle', 'award_pet_xp', 'get_pet_status',
 })
 PRIVATE = frozenset({
+    'get_assist_coverage', 'negotiate_day', 'list_programs', 'program_progress',
     'manage_car',  # Locating a family car also reveals a person's whereabouts.
     'answer_request', 'start_ask', 'mark_ask_sent', 'answer_ask',
     'read_mail', 'search_mail', 'get_family_messages', 'list_threads',
@@ -86,13 +89,25 @@ def row_checks_before(name, args, member):
     return True
 
 
-def row_checks_after(name, result):
+def row_checks_after(name, result, *, check_drive_digest=True):
     if name == 'get_calendar_events' and isinstance(result, dict):
         # Match the audible HOUSE projection, including hashed Busy ids.
         sources = {r.get('id'): r for r in access.cached_schedule().get('events', [])}
         for row in result.get('events', []):
             source = sources.get(row.get('id'))
             if not source or not speech_safe(source):
+                return False
+    elif name == 'get_drive_digest' and check_drive_digest and isinstance(result, dict):
+        schedule = access.cached_schedule()
+        sources = {r.get('id'): r for r in schedule.get('events', []) if r.get('id')}
+        errands = {r.get('id') for r in schedule.get('scheduled_errands', []) if r.get('id')}
+        for row in result.get('events', []):
+            event_id = row.get('id')
+            source = sources.get(event_id)
+            if source is not None:
+                if not speech_safe(source):
+                    return False
+            elif event_id not in errands:
                 return False
     return True
 

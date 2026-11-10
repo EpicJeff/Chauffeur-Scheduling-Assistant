@@ -629,7 +629,7 @@ KNOWN_APPS = (
     ('Tubi', 'com.tubitv', (), ('https://tubitv.com', 'tubitv://open')),                               # both verified
     ('Crunchyroll', 'com.crunchyroll.crunchyroid', (), ('crunchyroll://', 'https://www.crunchyroll.com')),
     ('ESPN', 'com.espn.score_center', (), ('sportscenter://x-callback-url', 'https://www.espn.com/watch')),  # scheme verified
-    ('Apple Music', 'com.apple.android.music', (), ('https://music.apple.com',)),
+    ('Apple Music', 'com.apple.android.music', ('music',), ('https://music.apple.com',)),
     ('Pandora', 'com.pandora.android.atv', (), ('https://www.pandora.com',)),
     ('Play Store', 'com.android.vending', ('google play', 'google play store', 'app store'),
      ('https://play.google.com/store',)),                                                              # verified
@@ -762,6 +762,12 @@ def _resolve_app(app, listed, listed_only=False):
                 return known_for(name) or (name, name, (name,))
         if not listed_only and w in known:
             return known[w]
+    if listed_only:
+        requested = next((known[f] for f in wanted if f in known), None)
+        if requested:
+            for name in listed:
+                if any(f in known and known[f][1] == requested[1] for f in _app_forms(name)):
+                    return name, name, (name,)
     best, best_score = None, 0.0
     for name in listed:
         score = max(_score(w, [name]) for w in wanted)
@@ -787,13 +793,15 @@ def _tv_list(remotes):
 
 
 def _is_apple_tv(entity):
-    return entity['domain'] == 'media_player' and entity.get('_platform') == 'apple_tv'
+    attrs = entity['_state'].get('attributes') or {}
+    # SELECT_SOURCE (2048) distinguishes a TV with no current app list from a HomePod.
+    return (entity['domain'] == 'media_player' and entity.get('_platform') == 'apple_tv'
+            and ('source_list' in attrs or bool((attrs.get('supported_features') or 0) & 2048)))
 
 
 def _remote_for(query, entity_id, catalogue):
     """The app-capable TV a person means, by id, twin, name or room."""
-    remotes = _android_remotes(catalogue) + [e for e in catalogue if _is_apple_tv(e) and (
-        'source_list' in (e['_state'].get('attributes') or {}) or e['state'] in ('unavailable', 'unknown', None))]
+    remotes = _android_remotes(catalogue) + [e for e in catalogue if _is_apple_tv(e)]
     if not remotes:
         return {'status': 'error', 'message': 'No Android TV or Apple TV with apps is connected to Home Assistant.'}
     if entity_id:

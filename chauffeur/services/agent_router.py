@@ -142,6 +142,7 @@ DEFAULT_AGENT_MESSAGE = "I have processed your request."
 PROPOSE_ONLY_READS = {
     "research_question",
     "get_calendar_events",
+    "get_weather",
     "get_household_tasks", "get_household_load",
     "get_shopping_list_items", "get_kid_tasks",
     "get_family_messages", "get_requests",

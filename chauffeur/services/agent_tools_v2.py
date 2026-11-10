@@ -92,7 +92,8 @@ def get_weather(days: int = 7) -> Dict[str, Any]:
     unavailable = {"status": "error", "message": "I can't see a weather forecast right now."}
     try:
         from services import ha_api, storage
-        days = max(1, min(10, int(days)))
+        # An explicit zero still clamps to one; an omitted/null count is a week.
+        days = max(1, min(10, int(days or 7) if days != 0 else 0))
         settings = storage.get_settings()
         forecast = ha_api.get_weather_forecast(settings.get('weather_entity') or None, 'daily')
         today = datetime.date.today()
