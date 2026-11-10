@@ -18,9 +18,11 @@ Server, services/panel_talk.py + main.py:
 
 Page, templates/components/control_center.html, window.chfPanelTalk:
   check() -> Promise<bool>: GET chfBase + 'api/panel/talk' with X-Device-Token
-       (localStorage chauffeur_device_token); shows #chat-talk-btn and
-       #panel-talk-orb (removes class 'hidden') when available, hides them
-       (adds 'hidden') otherwise.
+       (localStorage chauffeur_device_token); shows #chat-talk-btn (removes
+       class 'hidden') when available, hides it (adds 'hidden') otherwise.
+  The user, 2026-11-10: "I don't want the one-tap microphone next to the orb.
+  The orb should be the way into Argyle and then there is a mic button on the
+  chat box if you want to have a voice conversation." No second orb.
   start() -> Promise: POST the same URL; on a refusal showGlobalAlert(message);
        on success state 'listening', then GET once a second (at most 120 s) and
        follow the satellite: listening / processing / responding, back to
@@ -189,21 +191,17 @@ class PanelTalkPage(unittest.TestCase):
         out = self.run_page("""
             out.ok = await window.chfPanelTalk.check();
             out.bar = byId['chat-talk-btn'].classList.contains('hidden');
-            out.orb = byId['panel-talk-orb'].classList.contains('hidden');
         """, [[TALK_SCENARIO_ROUTES, [js.ok({'available': False, 'state': None})]]])
         self.assertIs(out['ok'], False)
         self.assertTrue(out['bar'])
-        self.assertTrue(out['orb'])
 
     def test_button_shown_when_available(self):
         out = self.run_page("""
             out.ok = await window.chfPanelTalk.check();
             out.bar = byId['chat-talk-btn'].classList.contains('hidden');
-            out.orb = byId['panel-talk-orb'].classList.contains('hidden');
         """, [[TALK_SCENARIO_ROUTES, [js.ok({'available': True, 'state': 'idle'})]]])
         self.assertIs(out['ok'], True)
         self.assertFalse(out['bar'])
-        self.assertFalse(out['orb'])
         call = self.talk_calls(out)[0]
         self.assertEqual(call['url'], js.BASE + 'api/panel/talk', 'never a root-relative URL under ingress')
         self.assertEqual(call['headers'].get('x-device-token'), 'dev-tok')
@@ -251,6 +249,11 @@ class PanelTalkPage(unittest.TestCase):
             await window.chfPanelTalk.start();
         """, [[TALK_SCENARIO_ROUTES, [{'throw': True}]]])
         self.assertEqual(len(out['alerts']), 1)
+
+    def test_orb_is_the_only_way_in(self):
+        src = (HERE.parent / 'templates' / 'components' / 'control_center.html').read_text(encoding='utf-8')
+        self.assertNotIn('panel-talk-orb', src, 'no one-tap mic beside the orb (user, 2026-11-10)')
+        self.assertIn('chat-talk-btn', src)
 
     def test_nav_keeps_device_token_on_panel_talk(self):
         url = js.BASE + 'api/panel/talk'
