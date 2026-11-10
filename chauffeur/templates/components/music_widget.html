@@ -614,7 +614,7 @@
                 index: (index === undefined) ? null : index,
             }, _mwOpts);
         } catch (e) {
-            _mwToast(e.message || 'Queue change failed');
+            if (!e.shown) _mwToast(e.message || 'Queue change failed');
             return;
         }
         setTimeout(mwLoadQueue, 400);
@@ -630,7 +630,7 @@
             await MusicLogic.play(ent.entity_id, uri, null, _mwOpts, { radioMode: true });
             _mwToast('Radio started from this song 📡');
         } catch (e) {
-            _mwToast(e.message || 'Radio mode failed');
+            if (!e.shown) _mwToast(e.message || 'Radio mode failed');
         }
         setTimeout(mwRefresh, 1200);
     }
@@ -923,7 +923,7 @@
             });
             if (enqueue) _mwToast(enqueue === 'next' ? 'Playing next ⏭' : 'Added to the queue ➕');
         } catch (e) {
-            _mwToast(e.message || 'Play failed');
+            if (!e.shown) _mwToast(e.message || 'Play failed');
         }
         setTimeout(mwRefresh, 1200);
         setTimeout(mwLoadFavorites, 1500);

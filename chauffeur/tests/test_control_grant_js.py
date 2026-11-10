@@ -124,20 +124,36 @@ for (const name of ['alert', 'confirm', 'prompt']) {
   globalThis[name] = function () { forbidden.push(name); throw new Error('browser dialog: ' + name); };
 }
 
-// A DOM thin enough to be honest: elements remember text, children, parent,
+// A DOM thin enough to be honest: elements remember text, children, ONE
+// parent (appending elsewhere moves a node; remove() detaches it), classes,
 // attributes and listeners, and a click runs onclick plus 'click' listeners.
 const created = [];
+function detach(c) {
+  if (c && c._parent) {
+    const i = c._parent.children.indexOf(c);
+    if (i !== -1) c._parent.children.splice(i, 1);
+    c._parent = null;
+  }
+}
 function El(tag, id) {
+  const classes = new Set();
   const el = {
     tagName: String(tag || 'div').toUpperCase(), id: id || '', dataset: {}, style: { setProperty() {} },
-    children: [], _parent: null, _listeners: {}, _attrs: {}, textContent: '', innerHTML: '', innerText: '',
+    children: [], _parent: null, _removed: false, _listeners: {}, _attrs: {}, textContent: '', innerHTML: '', innerText: '',
     value: '', disabled: false, onclick: null, className: '', type: '',
-    classList: { add() {}, remove() {}, contains() { return false; }, toggle() {} },
-    appendChild(c) { if (c && typeof c === 'object') { c._parent = el; el.children.push(c); } return c; },
+    get parentNode() { return el._parent; }, get parentElement() { return el._parent; },
+    classList: {
+      add(...cs) { cs.forEach(c => classes.add(c)); }, remove(...cs) { cs.forEach(c => classes.delete(c)); },
+      contains(c) { return classes.has(c); },
+      toggle(c, force) { const on = force === undefined ? !classes.has(c) : !!force; on ? classes.add(c) : classes.delete(c); return on; },
+    },
+    appendChild(c) { if (c && typeof c === 'object') { detach(c); c._parent = el; c._removed = false; el.children.push(c); } return c; },
     insertBefore(c) { return el.appendChild(c); }, prepend(c) { return el.appendChild(c); },
     append(...cs) { cs.forEach(c => typeof c === 'object' ? el.appendChild(c) : (el.textContent += String(c))); },
-    replaceChildren(...cs) { el.children = []; cs.forEach(c => el.append(c)); },
-    removeChild(c) { return c; }, remove() {}, contains() { return false; },
+    replaceChildren(...cs) { el.children.slice().forEach(detach); cs.forEach(c => el.append(c)); },
+    removeChild(c) { detach(c); if (c) c._removed = true; return c; },
+    remove() { detach(el); el._removed = true; },
+    contains() { return false; },
     addEventListener(t, fn) { (el._listeners[t] = el._listeners[t] || []).push(fn); }, removeEventListener() {},
     setAttribute(k, v) { el._attrs[k] = String(v); }, getAttribute(k) { return k in el._attrs ? el._attrs[k] : null; },
     removeAttribute(k) { delete el._attrs[k]; },
@@ -160,7 +176,7 @@ globalThis.document = {
   createTextNode(t) { const n = El('#text'); n.textContent = String(t); return n; },
   querySelector() { return null; }, querySelectorAll() { return []; },
   addEventListener() {}, removeEventListener() {},
-  body: El('body'), documentElement: El('html'),
+  body: El('body'), documentElement: El('html'), head: El('head'),
 };
 globalThis.location = { pathname: '/home', search: '?panel=true', origin: 'http://chauffeur.local',
                         href: 'http://chauffeur.local/home?panel=true' };
@@ -202,16 +218,60 @@ globalThis.fetch = async function (url, opts) {
   }
   return new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } });
 };
-const flush = (ms) => new Promise(r => setTimeout(r, ms || 50));
+const realSetTimeout = setTimeout;
+const realClearTimeout = clearTimeout;
+const flush = (ms) => new Promise(r => realSetTimeout(r, ms || 50));
+let vnow = 0;
+const virtual = [];
+if (input.fakeTimers) {
+  globalThis.setTimeout = function (fn, ms, ...args) {
+    ms = Number(ms) || 0;
+    if (ms < 1000) return realSetTimeout(fn, ms, ...args);
+    const t = { fn, due: vnow + ms, args };
+    virtual.push(t);
+    return t;
+  };
+  globalThis.clearTimeout = function (t) {
+    const i = virtual.indexOf(t);
+    if (i !== -1) virtual.splice(i, 1); else realClearTimeout(t);
+  };
+}
+// Move the virtual clock forward, running every long timer that falls due.
+async function advance(ms) {
+  const target = vnow + ms;
+  while (true) {
+    virtual.sort((a, b) => a.due - b.due);
+    const t = virtual[0];
+    if (!t || t.due > target) break;
+    virtual.shift();
+    vnow = t.due;
+    if (typeof t.fn === 'function') t.fn(...t.args);
+    await flush(20);
+  }
+  vnow = target;
+  await flush(400);
+}
 const out = { forbidden, calls, storageWrites, alerts: [], choices: [], inputs: [] };
 
 (async function () {
   try {
     for (const src of input.blocks) vm.runInThisContext(src);
+    for (const src of (input.extra || [])) vm.runInThisContext(src);
+    // What the page's own showGlobalAlert hands its ~30 existing callers.
+    try {
+      const r = window.showGlobalAlert('probe');
+      out.realAlertReturn = r === undefined ? 'undefined'
+        : (r && typeof r.then === 'function' ? 'promise' : typeof r);
+    } catch (e) { out.realAlertReturn = 'threw: ' + e; }
     // The page's own prompt helpers are replaced by scripted answers.
     const choices = (input.choices || []).slice();
     const pins = (input.pins || []).slice();
-    globalThis.showGlobalAlert = function (msg) { out.alerts.push(String(msg)); };
+    // alertPending: the alert behaves like a modal nobody has dismissed yet,
+    // for a caller that (wrongly) waits on it.
+    globalThis.showGlobalAlert = function (msg) {
+      out.alerts.push(String(msg));
+      return input.alertPending ? new Promise(() => {}) : undefined;
+    };
     globalThis.promptConfirm = async function () { return true; };
     globalThis.promptChoice = async function (title, message, options) {
       out.choices.push({ title, message, options: (options || []).map(o => ({ value: o.value, label: o.label })) });
@@ -228,13 +288,15 @@ const out = { forbidden, calls, storageWrites, alerts: [], choices: [], inputs: 
       grant: typeof window.chfControlGrant, fetch: typeof window.chfControlFetch,
       button: typeof window.chfControlHeldButton,
     };
-    const scenario = new Function('out', 'flush', 'created', 'byId',
+    const scenario = new Function('out', 'flush', 'created', 'byId', 'advance',
                                   'return (async () => {' + input.scenario + '})();');
-    await scenario(out, flush, created, byId);
+    await scenario(out, flush, created, byId, advance);
   } catch (e) {
     out.error = String(e && e.stack || e);
   }
-  console.log(JSON.stringify(out));
+  // A long timer the page left behind (a bubble's dismissal) must not hold
+  // node open past the answer.
+  process.stdout.write(JSON.stringify(out) + '\n', () => process.exit(0));
 })();
 """
 
@@ -251,11 +313,11 @@ IDENTIFY = refused(403, "Who's asking? Identify yourself and enter your PIN.", '
 
 
 class ControlGrantJs(unittest.TestCase):
-    def run_cc(self, scenario, routes, choices=(), pins=(), needs=()):
+    def run_cc(self, scenario, routes, choices=(), pins=(), needs=(), **opts):
         out = run_node(CC_HARNESS, {
             'base': BASE, 'blocks': _cc_blocks(), 'scenario': scenario,
-            'routes': [['api/members', [ok(MEMBERS)]], *routes],
-            'choices': list(choices), 'pins': list(pins),
+            'routes': [*routes, ['api/members', [ok(MEMBERS)]]],
+            'choices': list(choices), 'pins': list(pins), **opts,
         })
         self.assertDefined(out, *needs)
         self.assertNotIn('error', out, out.get('error'))
@@ -500,7 +562,9 @@ if (input.admin) window.chfAdminSession = () => ({ id: 'mum', token: 'admin-tok'
   } catch (e) {
     out.error = String(e && e.stack || e);
   }
-  console.log(JSON.stringify(out));
+  // A long timer the page left behind (a bubble's dismissal) must not hold
+  // node open past the answer.
+  process.stdout.write(JSON.stringify(out) + '\n', () => process.exit(0));
 })();
 """
 
@@ -566,6 +630,331 @@ class FetchWrappers(unittest.TestCase):
             self.assertEqual(seen[url].get('x-device-token'), 'dev-tok', url)
         for url in ORDINARY_URLS:
             self.assertNotIn('x-device-token', seen[url], url)
+
+
+# --- review rulings (Claude review of f741261c) ------------------------------
+#
+# 1. Only a wrong PIN asks again; any other refusal of the PIN step is final.
+# 2. The avatar/critter PIN pad (chfMemberToken) reopens after a wrong PIN
+#    without waiting for the alert; showGlobalAlert returns nothing, as before.
+# 3. The held-action bubble has a close control (a created element with a
+#    click handler, not the action button), goes a few seconds after a
+#    completed action, and by itself at about 120 s (the held lifetime). A 404
+#    ("expired or already used") is final: no fresh face + PIN round.
+# 4. A refusal chfControlFetch already showed is not shown again: the error
+#    music_logic.js json() and the hosted card's callService throw carries
+#    `shown === true`; an error nobody showed carries no such flag.
+# 5. One window.chfIsControlUrl(url), defined in nav.html (in the script that
+#    carries its fetch wrapper); admin_gate.html asks it at request time and
+#    keeps a local fallback only for when it is absent; both agree.
+# 6. Concurrent chfControlGrant() calls share one picker and one result.
+
+STATIC = os.path.join(HERE, 'static')
+
+
+def _static(name):
+    with open(os.path.join(STATIC, name), encoding='utf-8') as f:
+        return f.read()
+
+
+HELD_SETUP = r"""
+  const real = window.chfControlHeldButton;
+  let button = null;
+  window.chfControlHeldButton = function () { button = real.apply(this, arguments); return button; };
+  const input = byId['chat-input'];
+  input.value = 'unlock the front door';
+  for (const fn of (input._listeners.keydown || [])) fn({ key: 'Enter', shiftKey: false, preventDefault() {} });
+  await flush(200);
+  if (!button) throw new Error('the chat reply made no held button');
+  let bubble = button;
+  while (bubble._parent && bubble._parent !== document.body) bubble = bubble._parent;
+  const gone = () => bubble._removed || !bubble._parent || bubble.style.display === 'none'
+    || bubble.classList.contains('hidden');
+  const descendants = (el) => el.children.reduce((acc, c) => acc.concat([c], descendants(c)), []);
+  const clickable = (el) => typeof el.onclick === 'function' || (el._listeners.click || []).length > 0;
+  out.shownAtStart = !gone();
+"""
+
+HELD_ROUTES = [
+    ['api/chat/conversation', [ok({'conversation': {'id': 'c1'}})]],
+    ['api/chat?', [ok({'reply': "Who's asking?", 'control_held': {'id': 'h-9', 'message': "Who's asking?"}})]],
+    ['api/ha/control/grant', [ok({'grant': 'g-4'})]],
+]
+
+
+class ReviewRulings(unittest.TestCase):
+    run_cc = ControlGrantJs.run_cc
+    assertDefined = ControlGrantJs.assertDefined
+    grant_calls = ControlGrantJs.grant_calls
+    NAMES = ControlGrantJs.NAMES
+
+    # --- 1 ---------------------------------------------------------------
+
+    def test_grant_other_403_is_final(self):
+        for refusal, shown in (
+            (refused(403, 'A paired wall panel is required.', None), 'A paired wall panel is required.'),
+            ({'status': 403, 'body': {'detail': 'Not authenticated'}}, 'Not authenticated'),
+        ):
+            out = self.run_cc('out.result = await window.chfControlGrant();',
+                              [['api/ha/control/grant', [refusal]]],
+                              choices=['mum', 'mum', 'mum'], pins=['1111', '2222', '3333'], needs=('grant',))
+            self.assertIsNone(out.get('result'))
+            self.assertEqual(out['alerts'], [shown], 'shown once, never as "Wrong PIN"')
+            self.assertEqual(len(self.grant_calls(out)), 1, 'a refusal that is not a wrong PIN is final')
+            self.assertEqual(len(out['inputs']), 1)
+
+        # A wrong PIN still asks again, whatever the server's sentence.
+        out = self.run_cc('out.result = await window.chfControlGrant();',
+                          [['api/ha/control/grant', [refused(403, 'That PIN is not right.', 'pin'),
+                                                     ok({'grant': 'g-5'})]]],
+                          choices=['mum', 'mum'], pins=['0000', '4321'], needs=('grant',))
+        self.assertEqual(out['result'], 'g-5')
+        self.assertIn('Wrong PIN', out['alerts'])
+
+    # --- 2 ---------------------------------------------------------------
+
+    def test_member_token_wrong_pin_does_not_wait_for_alert(self):
+        out = self.run_cc(
+            """const p = window.chfMemberToken({ id: 'mum', name: 'Mum', has_pin: true });
+               out.result = await Promise.race([p, flush(600).then(() => '__still_waiting__')]);""",
+            [['api/members/mum/auth', [{'status': 403, 'body': {'detail': 'Wrong PIN'}}, ok({'token': 'tok-1'})]]],
+            pins=['0000', '4321'], alertPending=True)
+        self.assertEqual(out['alerts'], ['Wrong PIN'])
+        self.assertEqual(len(out['inputs']), 2, 'the PIN pad reopens without the alert being dismissed')
+        self.assertEqual(out['result'], 'tok-1')
+
+    def test_show_global_alert_returns_nothing(self):
+        out = self.run_cc('', [])
+        self.assertEqual(out['realAlertReturn'], 'undefined',
+                         'showGlobalAlert keeps its old return value for its existing callers')
+
+    # --- 3 ---------------------------------------------------------------
+
+    def test_held_bubble_has_close_control(self):
+        out = self.run_cc(HELD_SETUP + r"""
+          const own = new Set([button, ...descendants(button)]);
+          const closers = descendants(bubble).filter(e => !own.has(e) && clickable(e));
+          out.closers = closers.length;
+          if (closers.length) { closers[0].click(); await flush(400); }
+          out.goneAfterClose = gone();
+        """, HELD_ROUTES, needs=('button',), fakeTimers=True)
+        self.assertTrue(out['shownAtStart'])
+        self.assertGreaterEqual(out['closers'], 1, 'the held bubble has a close control')
+        self.assertTrue(out['goneAfterClose'], 'closing removes the bubble')
+
+    def test_held_bubble_removed_after_completed_action(self):
+        out = self.run_cc(HELD_SETUP + r"""
+          button.click(); await flush(300);
+          out.held = out.calls.filter(c => c.url.indexOf('api/ha/control/held/') !== -1).length;
+          await advance(10000);
+          out.goneLater = gone();
+        """, HELD_ROUTES + [['api/ha/control/held/', [ok({'status': 'ok', 'message': 'Unlocked the front door.'})]]],
+            choices=['mum'], pins=['4321'], needs=('button', 'grant'), fakeTimers=True)
+        self.assertTrue(out['shownAtStart'])
+        self.assertEqual(out['held'], 1)
+        self.assertTrue(out['goneLater'], 'a completed action takes its bubble away within seconds')
+
+    def test_held_bubble_auto_dismisses_at_held_lifetime(self):
+        out = self.run_cc(HELD_SETUP + r"""
+          await advance(60000);
+          out.at60 = gone();
+          await advance(70000);
+          out.at130 = gone();
+        """, HELD_ROUTES, needs=('button',), fakeTimers=True)
+        self.assertTrue(out['shownAtStart'])
+        self.assertFalse(out['at60'], 'still there while the held action can run')
+        self.assertTrue(out['at130'], 'gone once the held action has expired (about 120 s)')
+
+    def test_held_404_is_final(self):
+        out = self.run_cc(HELD_SETUP + r"""
+          button.click(); await flush(300);
+          out.finalAfter404 = !!button.disabled || gone();
+          if (!gone()) { button.click(); await flush(300); }
+          out.texts = created.map(e => String(e.textContent || '') + ' ' + String(e.innerHTML || ''));
+        """, HELD_ROUTES + [['api/ha/control/held/', [
+            {'status': 404, 'body': {'detail': 'That action has expired or was already used.'}}]]],
+            choices=['mum', 'mum'], pins=['4321', '4321'], needs=('button', 'grant'), fakeTimers=True)
+        self.assertTrue(out['shownAtStart'])
+        self.assertTrue(out['finalAfter404'], 'the button is disabled or the bubble removed')
+        self.assertEqual(len(out['choices']), 1, 'no fresh face picker after a 404')
+        self.assertEqual(len(self.grant_calls(out)), 1, 'no fresh PIN after a 404')
+        self.assertEqual(len([c for c in out['calls'] if 'api/ha/control/held/' in c['url']]), 1)
+        shown = out['alerts'] + out['texts']
+        self.assertTrue(any('expired' in s for s in shown), 'the 404 is explained')
+
+    # --- 4 ---------------------------------------------------------------
+
+    def test_music_refusal_shown_once(self):
+        out = self.run_cc(r"""
+          const opts = { apiBase: window.chfBase };
+          try { await window.MusicLogic.play('media_player.kitchen', 'uri:x', 'track', opts); out.played = true; }
+          catch (e) { out.refusal = { message: e.message, shown: e.shown === true }; }
+          try { await window.MusicLogic.queueCommand('media_player.kitchen', 'clear', {}, opts); }
+          catch (e) { out.failure = { message: e.message, shown: e.shown === true }; }
+        """, [['api/music/play', [refused(403, 'TV & music needs a parent.', None, ['media'])]],
+              ['api/music/queue/command', [{'status': 500, 'body': {'detail': 'Music Assistant needs its token.'}}]]],
+            needs=('fetch',), extra=[_static('music_logic.js')])
+        self.assertEqual(out['alerts'], ['TV & music needs a parent.'])
+        self.assertEqual(out.get('refusal', {}).get('message'), 'TV & music needs a parent.')
+        self.assertTrue(out['refusal']['shown'], 'the thrown error says chfControlFetch already showed it')
+        self.assertFalse(out.get('failure', {}).get('shown', True), 'an error nobody showed is not flagged')
+
+    def test_card_refusal_shown_once(self):
+        out = self.run_cc(r"""
+          const hass = window.ChauffeurHaCards._makeHass({ states: {}, interactive: true, apiBase: window.chfBase });
+          try { await hass.callService('lock', 'unlock', { entity_id: 'lock.front' }); out.called = true; }
+          catch (e) { out.refusal = { message: e.message, shown: e.shown === true }; }
+          try { await hass.callService('light', 'turn_on', { entity_id: 'light.a' }); }
+          catch (e) { out.failure = { message: e.message, shown: e.shown === true }; }
+        """, [['api/ha/card/service', [refused(403, 'Locks need a parent.', None, ['locks']),
+                                       {'status': 502, 'body': {'detail': 'Home Assistant is away.'}}]]],
+            needs=('fetch',), extra=[_static('ha_card_host.js')])
+        self.assertEqual(out['alerts'], ['Locks need a parent.'])
+        self.assertIn('refusal', out)
+        self.assertTrue(out['refusal']['shown'], 'the card is told the refusal was already shown')
+        self.assertFalse(out.get('failure', {}).get('shown', True), 'an error nobody showed is not flagged')
+
+    # --- 6 ---------------------------------------------------------------
+
+    def test_concurrent_grants_share_one_picker(self):
+        out = self.run_cc(r"""
+          const both = await Promise.all([window.chfControlGrant(), window.chfControlGrant()]);
+          out.results = both;
+        """, [['api/ha/control/grant', [ok({'grant': 'g-6'}), ok({'grant': 'g-7'})]]],
+            choices=['mum', 'mum'], pins=['4321', '4321'], needs=('grant',))
+        self.assertEqual(len(out['choices']), 1, 'one picker for both callers')
+        self.assertEqual(len(self.grant_calls(out)), 1)
+        self.assertEqual(out['results'], ['g-6', 'g-6'])
+
+
+# --- 5: one chfIsControlUrl ---------------------------------------------------
+
+_NAV_BLOCK = []
+
+
+def _nav_wrapper_block():
+    """nav.html's rendered script that carries its fetch wrapper (it holds Jinja)."""
+    if not _NAV_BLOCK:
+        import sys
+        import types
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        sys.path.insert(0, HERE)
+        import harness  # noqa: F401  (isolates CHAUFFEUR_DATA_DIR before main loads)
+        import main
+        req = types.SimpleNamespace(url=types.SimpleNamespace(path='/home'), query_params={})
+        page = main.templates.env.get_template('nav.html').render(request=req)
+        blocks = [b for a, b in re.findall(r'<script(\s[^>]*)?>(.*?)</script>', page, re.S)
+                  if 'attachDeviceToken' in b and 'src=' not in (a or '')]
+        assert len(blocks) == 1, f'expected one nav wrapper script, found {len(blocks)}'
+        _NAV_BLOCK.append(blocks[0])
+    return _NAV_BLOCK[0]
+
+
+URL_HARNESS = r"""
+const fs = require('fs');
+const vm = require('vm');
+const input = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+globalThis.window = globalThis;
+for (const name of ['alert', 'confirm', 'prompt']) {
+  globalThis[name] = function () { throw new Error('browser dialog: ' + name); };
+}
+function El() {
+  const e = { style: { setProperty() {} }, dataset: {}, children: [],
+    classList: { add() {}, remove() {}, contains() { return false; }, toggle() {} },
+    appendChild(c) { return c; }, insertBefore(c) { return c; }, prepend(c) { return c; },
+    addEventListener() {}, removeEventListener() {}, setAttribute() {}, getAttribute() { return null; },
+    querySelector() { return null; }, querySelectorAll() { return []; }, remove() {}, contains() { return false; } };
+  return e;
+}
+globalThis.document = { getElementById() { return El(); }, createElement() { return El(); },
+  querySelector() { return null; }, querySelectorAll() { return []; },
+  addEventListener() {}, removeEventListener() {}, body: El(), documentElement: El(), head: El() };
+globalThis.location = { pathname: '/home', search: '', hash: '', origin: 'http://chauffeur.local',
+                        href: 'http://chauffeur.local/home' };
+const store = { chauffeur_device_token: 'dev-tok', chauffeur_device_id: 'did-1' };
+globalThis.localStorage = { getItem(k) { return k in store ? store[k] : null; },
+  setItem(k, v) { store[k] = String(v); }, removeItem(k) { delete store[k]; } };
+globalThis.sessionStorage = { getItem() { return null; }, setItem() {}, removeItem() {} };
+globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
+globalThis.addEventListener = () => {};
+const seen = [];
+globalThis.fetch = async function (url, init) {
+  const headers = {};
+  new Headers((init || {}).headers || {}).forEach((v, k) => { headers[k.toLowerCase()] = v; });
+  seen.push({ url: String(url), headers });
+  return new Response('{}', { status: 200 });
+};
+const out = { seen };
+(async function () {
+  try {
+    const run = new Function('input', 'load', 'out',
+                             'return (async () => {' + input.scenario + '})();');
+    await run(input, (src) => vm.runInThisContext(src), out);
+  } catch (e) {
+    out.error = String(e && e.stack || e);
+  }
+  // A long timer the page left behind (a bubble's dismissal) must not hold
+  // node open past the answer.
+  process.stdout.write(JSON.stringify(out) + '\n', () => process.exit(0));
+})();
+"""
+
+EDGE_URLS = [
+    BASE + 'api/ha/toggle?x=1', BASE + 'api/music/play', BASE + 'api/music/queue/command',
+    BASE + 'api/ha/control', BASE + 'api/ha/togglex', BASE + 'api/ha/card/services',
+    'api/ha/toggle', 'http://chauffeur.local/api/ha/card/service',
+    BASE + 'api/ha/media_players/x/command/extra', BASE + 'api/house/toggle', BASE + 'api/ha/states',
+]
+
+
+class OneControlUrlRule(unittest.TestCase):
+    def run_url(self, scenario, **extra):
+        out = run_node(URL_HARNESS, {'scenario': scenario, **extra})
+        self.assertNotIn('error', out, out.get('error'))
+        return out
+
+    def nav_answers(self, urls):
+        out = self.run_url(r"""
+          load(input.nav);
+          out.type = typeof window.chfIsControlUrl;
+          if (out.type === 'function') out.answers = input.urls.map(u => !!window.chfIsControlUrl(u));
+        """, nav=_nav_wrapper_block(), urls=urls)
+        self.assertEqual(out['type'], 'function', 'nav.html defines window.chfIsControlUrl')
+        return dict(zip(urls, out['answers']))
+
+    def test_nav_defines_chf_is_control_url(self):
+        answers = self.nav_answers(CONTROL_URLS + ORDINARY_URLS)
+        for url in CONTROL_URLS:
+            self.assertTrue(answers[url], url)
+        for url in ORDINARY_URLS:
+            self.assertFalse(answers[url], url)
+
+    def test_admin_gate_reuses_chf_is_control_url(self):
+        # The gate is installed ABOVE nav's script, so it must ask at request time.
+        out = self.run_url(r"""
+          window.chfAdminSession = () => ({ id: 'mum', token: 'admin-tok' });
+          load(input.gate);
+          out.asked = [];
+          window.chfIsControlUrl = (u) => { out.asked.push(String(u)); return String(u).indexOf('api/custom/control') !== -1; };
+          await window.fetch(input.base + 'api/custom/control', { headers: { 'X-Device-Token': 'dev-tok' } });
+          await window.fetch(input.base + 'api/ha/toggle', { headers: { 'X-Device-Token': 'dev-tok' } });
+        """, gate=_iife(ADMIN_GATE, 'attachAdminToken'), base=BASE)
+        seen = {s['url']: s['headers'] for s in out['seen']}
+        self.assertTrue(out['asked'], 'the gate never asked window.chfIsControlUrl')
+        self.assertEqual(seen[BASE + 'api/custom/control'].get('x-device-token'), 'dev-tok',
+                         "nav's answer decides, not a second copy of the rule")
+        self.assertNotIn('x-device-token', seen[BASE + 'api/ha/toggle'])
+
+    def test_wrappers_agree_on_control_urls(self):
+        urls = CONTROL_URLS + ORDINARY_URLS + EDGE_URLS
+        nav = self.nav_answers(urls)
+        out = self.run_url(r"""
+          window.chfAdminSession = () => ({ id: 'mum', token: 'admin-tok' });
+          load(input.gate);
+          for (const u of input.urls) await window.fetch(u, { headers: { 'X-Device-Token': 'dev-tok' } });
+        """, gate=_iife(ADMIN_GATE, 'attachAdminToken'), urls=urls)
+        gate = {s['url']: s['headers'].get('x-device-token') == 'dev-tok' for s in out['seen']}
+        self.assertEqual(gate, nav, "the gate's fallback and nav's rule disagree")
 
 
 class CallSites(unittest.TestCase):

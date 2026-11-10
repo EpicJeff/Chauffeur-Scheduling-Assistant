@@ -6247,7 +6247,7 @@
                             item: s.member ? item : null,
                         });
                     } catch (e) {
-                        s.error = e.message || 'Play failed';
+                        if (!e.shown) s.error = e.message || 'Play failed';
                         return;
                     }
                     if (enqueue) {
@@ -6284,7 +6284,7 @@
                         s.notice = 'Radio started from this song 📡';
                         setTimeout(() => { if (s.notice) s.notice = ''; }, 4000);
                     } catch (e) {
-                        s.error = e.message || 'Radio mode failed';
+                        if (!e.shown) s.error = e.message || 'Radio mode failed';
                     }
                     setTimeout(() => this.refreshMusic(t), 1200);
                 },
@@ -6336,7 +6336,7 @@
                             index: (action === 'play_index' && item) ? item.index : null,
                         }, { apiBase: this.apiBase });
                     } catch (e) {
-                        s.error = e.message || 'Queue change failed';
+                        if (!e.shown) s.error = e.message || 'Queue change failed';
                         return;
                     }
                     setTimeout(() => this.loadMusicQueue(t), 400);

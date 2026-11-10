@@ -70,7 +70,9 @@
             if (token && !h.has('X-Member-Token')) h.set('X-Member-Token', token);
             // Control grants need the panel identity beside a person's session.
             // All ordinary requests still drop the furniture's credential.
-            const control = /(?:^|\/)api\/(?:ha\/(?:control\/|toggle(?:[?#]|$)|card\/(?:service|climate)(?:[?#]|$)|media_players\/[^/?#]+\/command(?:[?#]|$))|music\/(?:play|queue\/command)(?:[?#]|$))/.test(url);
+            const control = typeof window.chfIsControlUrl === 'function'
+              ? window.chfIsControlUrl(url)
+              : /(?:^|\/)api\/(?:ha\/(?:control\/|toggle(?:[?#]|$)|card\/(?:service|climate)(?:[?#]|$)|media_players\/[^/?#]+\/command(?:[?#]|$))|music\/(?:play|queue\/command)(?:[?#]|$))/.test(url);
             if (token && !control) h.delete('X-Device-Token');
             if (!h.has('X-Device-Id')) h.set('X-Device-Id', did);
             init.headers = h;

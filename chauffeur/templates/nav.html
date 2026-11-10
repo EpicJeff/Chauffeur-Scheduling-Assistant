@@ -574,6 +574,10 @@
         // the reason a page fails to boot.
         if (typeof window === 'undefined' || typeof window.fetch !== 'function'
             || typeof localStorage === 'undefined') return;
+        // Shared with the admin gate, which installs its wrapper before nav.
+        window.chfIsControlUrl = function (url) {
+            return /(?:^|\/)api\/(?:ha\/(?:control\/|toggle(?:[?#]|$)|card\/(?:service|climate)(?:[?#]|$)|media_players\/[^/?#]+\/command(?:[?#]|$))|music\/(?:play|queue\/command)(?:[?#]|$))/.test(url);
+        };
         const _fetch = window.fetch.bind(window);
         window.fetch = function (input, init) {
             try {
@@ -584,7 +588,7 @@
                     // Control also needs the panel's identity for one-use grants,
                     // even during a parent's visit. Ordinary requests keep using
                     // only the person's session, as before.
-                    const control = /(?:^|\/)api\/(?:ha\/(?:control\/|toggle(?:[?#]|$)|card\/(?:service|climate)(?:[?#]|$)|media_players\/[^/?#]+\/command(?:[?#]|$))|music\/(?:play|queue\/command)(?:[?#]|$))/.test(url);
+                    const control = window.chfIsControlUrl(url);
                     const admin = !parentVisit && window.chfAdminSession ? window.chfAdminSession() : null;
                     const person = parentVisit || admin;
                     const dt = person && !control ? '' : localStorage.getItem('chauffeur_device_token');

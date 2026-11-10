@@ -466,7 +466,14 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ domain: domain, service: service, data: data || {} }),
                 }).then(function (r) {
-                    if (!r.ok) throw new Error('Home Assistant refused that');
+                    if (!r.ok) return r.json().catch(function () { return {}; }).then(function (body) {
+                        var detail = body.detail;
+                        var err = new Error((typeof detail === 'string' ? detail : detail && detail.message)
+                            || 'Home Assistant refused that');
+                        err.status = r.status;
+                        err.shown = r.chfControlShown === true;
+                        throw err;
+                    });
                     // The next board poll is up to a minute out, which on a
                     // lock card somebody just tapped reads as "nothing
                     // happened". Ask for the house again now, and once more

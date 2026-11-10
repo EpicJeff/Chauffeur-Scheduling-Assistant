@@ -49,6 +49,7 @@
             const err = new Error((typeof detail === 'string' ? detail : detail && detail.message)
                 || ('HTTP ' + res.status));
             err.status = res.status;
+            err.shown = res.chfControlShown === true;
             throw err;
         }
         return res.json();

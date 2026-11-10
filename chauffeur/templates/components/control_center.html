@@ -1215,10 +1215,36 @@ function closeChatHelpModal() {
         // Simple markdown rendering
         let formatted = message.replace(/\n/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
         bubble.innerHTML = formatted;
+        let dismissTimer = null;
+        let dismissed = false;
+        const dismiss = () => {
+            if (dismissed) return;
+            dismissed = true;
+            clearTimeout(dismissTimer);
+            if (action) {
+                action.chfControlDismissed = true;
+                action.disabled = true;
+            }
+            bubble.classList.remove('opacity-100', 'translate-y-0');
+            bubble.classList.add('opacity-0', 'translate-y-2');
+            setTimeout(() => bubble.remove(), 300);
+        };
         if (action) {
             // An actionable reply must sit below the global questions (z-400).
             bubble.style.zIndex = '110';
             bubble.appendChild(action);
+            const close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'block ml-auto mt-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 '
+                + 'text-white rounded text-sm transition-colors font-bold';
+            close.textContent = 'Close';
+            close.setAttribute('aria-label', 'Dismiss reply');
+            close.onclick = dismiss;
+            bubble.appendChild(close);
+            action.chfControlComplete = () => {
+                clearTimeout(dismissTimer);
+                dismissTimer = setTimeout(dismiss, 4000);
+            };
         }
         
         // Add a small tail if anchored
@@ -1272,15 +1298,9 @@ function closeChatHelpModal() {
             bubble.classList.add('opacity-100', 'translate-y-0');
         });
 
-        // Keep a held action reachable while the person chooses and enters a PIN.
-        // Ordinary replies remain short-lived toasts.
-        if (!action) setTimeout(() => {
-            bubble.classList.remove('opacity-100', 'translate-y-0');
-            bubble.classList.add('opacity-0', 'translate-y-2');
-            setTimeout(() => {
-                if(bubble.parentNode) bubble.parentNode.removeChild(bubble);
-            }, 300);
-        }, 12000);
+        // A held action lives for two minutes on the server. Ordinary replies
+        // remain short-lived toasts; completed held actions leave in seconds.
+        dismissTimer = setTimeout(dismiss, action ? 120000 : 12000);
     };
 
     // What to ask, ON THE PAGE YOU ARE ON. This widget rides on every page,
@@ -1446,9 +1466,21 @@ function closeChatHelpModal() {
         document.getElementById('cc-alert-message').textContent = message;
         document.getElementById('cc-alert-modal').classList.remove('hidden');
         document.getElementById('cc-alert-modal').classList.add('flex');
-        return new Promise(resolve => { pendingGlobalAlertResolve = resolve; });
     }
     window.showGlobalAlert = showGlobalAlert;
+
+    // Only the control PIN step waits for dismissal. Keep showGlobalAlert's
+    // original void return and the avatar/critter pad's immediate retry.
+    const ccShowGlobalAlert = showGlobalAlert;
+    window.chfControlAlert = function (message) {
+        if (window.showGlobalAlert !== ccShowGlobalAlert) {
+            return Promise.resolve(window.showGlobalAlert(message));
+        }
+        return new Promise(resolve => {
+            ccShowGlobalAlert(message);
+            pendingGlobalAlertResolve = resolve;
+        });
+    };
 
     function closeGlobalAlert() {
         document.getElementById('cc-alert-modal').classList.add('hidden');
@@ -1562,7 +1594,7 @@ function closeChatHelpModal() {
 // the next overlay silent. A member with no PIN is never asked anything.
 // Avatars, critters and one-action control grants share the same PIN step.
 // The caller owns the endpoint and decides whether the result may be stored.
-window.chfPinHandshake = async function (member, verify) {
+window.chfPinHandshake = async function (member, verify, control = false) {
     while (true) {
         const pin = await promptInput('Hi ' + (member.name || '') + '!', 'Enter your PIN',
             { type: 'password', placeholder: '\u2022\u2022\u2022\u2022' });
@@ -1572,12 +1604,17 @@ window.chfPinHandshake = async function (member, verify) {
             if (res.status === 403) {
                 const body = await res.json().catch(() => ({}));
                 const detail = body.detail;
-                if ((typeof detail === 'string' ? detail : detail && detail.message)
-                    === 'Set a PIN to use this from the wall.') {
+                const message = typeof detail === 'string' ? detail : detail && detail.message;
+                if (message === 'Set a PIN to use this from the wall.') {
                     showGlobalAlert('Set a PIN to use this from the wall.');
                     return null;
                 }
-                await showGlobalAlert('Wrong PIN');
+                if (control && message !== 'Wrong PIN' && (!detail || detail.needs !== 'pin')) {
+                    showGlobalAlert(message || 'Home Assistant refused that.');
+                    return null;
+                }
+                if (control) await window.chfControlAlert('Wrong PIN');
+                else showGlobalAlert('Wrong PIN');
                 continue;
             }
             if (res.status === 429) {
@@ -1632,33 +1669,38 @@ window.chfMemberToken = async function (member, opts) {
 };
 
 // A panel PIN buys ONE action. Never use or update the remembered member token.
-window.chfControlGrant = async function () {
-    const base = window.chfBase !== undefined ? window.chfBase : '';
-    try {
-        const res = await fetch(base + 'api/members');
-        if (!res.ok) throw new Error('members unavailable');
-        const all = await res.json();
-        const members = (Array.isArray(all) ? all : []).filter(m => !m.status || m.status === 'active');
-        if (!members.length) {
-            showGlobalAlert('No active members are available.');
+let pendingControlGrant = null;
+window.chfControlGrant = function () {
+    if (pendingControlGrant) return pendingControlGrant;
+    pendingControlGrant = (async function () {
+        const base = window.chfBase !== undefined ? window.chfBase : '';
+        try {
+            const res = await fetch(base + 'api/members');
+            if (!res.ok) throw new Error('members unavailable');
+            const all = await res.json();
+            const members = (Array.isArray(all) ? all : []).filter(m => !m.status || m.status === 'active');
+            if (!members.length) {
+                showGlobalAlert('No active members are available.');
+                return null;
+            }
+            const id = await promptChoice("Who's asking?", '', members.map(m => ({ value: m.id, label: m.name })));
+            const member = members.find(m => m.id === id);
+            if (!member) return null;
+            if (!member.has_pin) {
+                showGlobalAlert('Set a PIN to use this from the wall.');
+                return null;
+            }
+            const result = await window.chfPinHandshake(member, pin => fetch(base + 'api/ha/control/grant', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ member_id: member.id, pin: pin }),
+            }), true);
+            return (result && result.grant) || null;
+        } catch (e) {
+            showGlobalAlert('Could not verify \u2014 check connection');
             return null;
         }
-        const id = await promptChoice("Who's asking?", '', members.map(m => ({ value: m.id, label: m.name })));
-        const member = members.find(m => m.id === id);
-        if (!member) return null;
-        if (!member.has_pin) {
-            showGlobalAlert('Set a PIN to use this from the wall.');
-            return null;
-        }
-        const result = await window.chfPinHandshake(member, pin => fetch(base + 'api/ha/control/grant', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ member_id: member.id, pin: pin }),
-        }));
-        return (result && result.grant) || null;
-    } catch (e) {
-        showGlobalAlert('Could not verify \u2014 check connection');
-        return null;
-    }
+    })().finally(() => { pendingControlGrant = null; });
+    return pendingControlGrant;
 };
 
 window.chfControlFetch = async function (url, opts) {
@@ -1677,6 +1719,7 @@ window.chfControlFetch = async function (url, opts) {
     const detail = body.detail;
     showGlobalAlert((typeof detail === 'string' ? detail : detail && detail.message)
         || 'Home Assistant refused that.');
+    res.chfControlShown = true;
     return res;
 };
 
@@ -1692,22 +1735,25 @@ window.chfControlHeldButton = function (held) {
         let completed = false;
         try {
             const grant = await window.chfControlGrant();
-            if (!grant) return;
+            if (!grant || button.chfControlDismissed) return;
             const base = window.chfBase !== undefined ? window.chfBase : '';
             const res = await fetch(base + 'api/ha/control/held/' + encodeURIComponent(held.id), {
                 method: 'POST', headers: { 'x-control-grant': grant },
             });
-            const body = await res.json();
+            const body = await res.json().catch(() => ({}));
             const detail = body.detail;
             const message = body.message || (typeof detail === 'string' ? detail : detail && detail.message)
                 || 'Home Assistant refused that.';
             showGlobalAlert(message);
-            completed = res.ok;
-            if (completed) button.textContent = message;
+            completed = res.ok || res.status === 404;
+            if (completed) {
+                button.textContent = message;
+                if (button.chfControlComplete) button.chfControlComplete();
+            }
         } catch (e) {
             showGlobalAlert('Could not reach Home Assistant.');
         } finally {
-            button.disabled = completed;
+            button.disabled = completed || !!button.chfControlDismissed;
         }
     };
     return button;
