@@ -563,7 +563,7 @@ def test_identify_guarded():
         check(c.ha.calls == [], f'nothing reached Home Assistant: {c.ha.calls}')
         # A parent the household grid says may not turn lights on is refused by control_rules.guard.
         rules = cr.default_rules({})
-        rules['people']['parent']['light'] = 'no'
+        rules['people']['parent']['lights'] = 'no'
         c.extra = {'ha_control': rules}
         r = _identify(c, 'dev-k-light')
         check(r.status_code == 403, f'the grid refuses before any call: {r.status_code} {r.text}')

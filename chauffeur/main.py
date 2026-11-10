@@ -7299,6 +7299,171 @@ def house_twin_api():
             'kit_id': 'modern_farmhouse'}
 
 
+def _house_ha_context():
+    from services import twin_ha, twin_store
+    model = twin_store.current_model() or {'buildings': []}
+    catalogue = twin_ha.catalogue()
+    # Resolve legacy area names on this read only; the model operations own writes.
+    for building in model['buildings']:
+        for room in building.get('rooms', []):
+            area = twin_ha.resolve_area(room.get('ha_area'), catalogue['areas'])
+            if area:
+                room['ha_area'] = area
+    return model, catalogue
+
+
+@app.get('/api/house/ha/link')
+def house_ha_link():
+    from services import twin_ha
+    model, catalogue = _house_ha_context()
+    suggestions = twin_ha.suggest(model, catalogue['areas'])
+    gone = set(twin_ha.gone_rooms(model, catalogue['areas']))
+    placed = twin_ha.placements(model)
+    auto = twin_ha.auto_spots(model, catalogue)
+    rooms = []
+    linked = set()
+    for building in model['buildings']:
+        for room in building.get('rooms', []):
+            area = room.get('ha_area') or None
+            linked.add(area)
+            row = {'building': building['id'], 'level': room.get('level'),
+                   'room': room['id'], 'name': room.get('name', ''), 'ha_area': area,
+                   'gone': room['id'] in gone,
+                   'notes': twin_ha.count_notes(model, room['id'], catalogue)}
+            if room['id'] in suggestions:
+                row['suggested'] = suggestions[room['id']]
+            rooms.append(row)
+    return {**catalogue, 'rooms': rooms,
+            'unlinked': [{'area_id': a['area_id'], 'name': a['name']}
+                         for a in catalogue['areas'] if a['area_id'] not in linked],
+            'devices': [{**d, 'placed': placed.get(d['device_id']),
+                         'auto': auto.get(d['device_id'])} for d in catalogue['devices']]}
+
+
+def _house_lot_point(building, point):
+    import math
+    angle = math.radians(building.get('rotation', 0))
+    c, s = math.cos(angle), math.sin(angle)
+    px, py = building.get('position', [0, 0])
+    out = [px + point[0] * c - point[1] * s,
+           py + point[0] * s + point[1] * c]
+    if len(point) > 2:
+        out.append(point[2] + building.get('base', 0))
+    return out
+
+
+def _house_ha_placed_spot(building, device_id, placement):
+    from services import twin_ha, twin_model_hosts
+    if placement['kind'] == 'anchor':
+        piece = next(a for a in building.get('anchors', []) if a['id'] == placement['anchor'])
+    else:
+        piece = next(d for d in building.get('devices', []) if d.get('device') == device_id)
+    host = piece.get('host', {})
+    geometry = twin_model_hosts.snapshot(building)
+    surface = twin_model_hosts._surface(geometry, host) or {}
+    level = surface.get('level', piece.get('level'))
+    try:
+        point = twin_model_hosts.world_point(building, host, piece.get('offset', 0))
+    except ValueError:
+        # Lost hosts retain their last position in the model's flag.
+        flag = next((f for f in building.get('flags', []) if f.get('piece') == piece['id']), None)
+        if flag is None:
+            return None
+        level = flag.get('level')
+        elevation = next((l.get('elevation', 0) for l in building.get('levels', [])
+                          if l['id'] == level), 0)
+        point = [*flag['at'][:2], elevation + 4]
+    rooms = [r for r in building.get('rooms', []) if r.get('level') == level]
+    room = next((r for r in rooms if r['id'] == host.get('floor', host.get('ceiling'))), None)
+    if room is None:
+        room = next((r for r in rooms if twin_ha._inside(point[:2], r.get('polygon', []))), None)
+    if room is None:
+        opening = surface.get('opening', {})
+        wall = host.get('wall', opening.get('wall'))
+        room = next((r for r in rooms if wall and any(w['id'] == wall
+                     for w in twin_ha._room_walls(building, r))), None)
+    return {'building': building['id'], 'level': level,
+            'room': room['id'] if room else None, 'at': point[:2], 'z': point[2]}
+
+
+@app.get('/api/house/live')
+def house_live(request: Request):
+    from services import control_rules, twin_ha
+    model, catalogue = _house_ha_context()
+    buildings = {b['id']: b for b in model['buildings']}
+    placed = twin_ha.placements(model)
+    auto = twin_ha.auto_spots(model, catalogue)
+    who = control_rules.who_from_request(request.headers, request.query_params)
+    rooms, markers = [], []
+    for building in model['buildings']:
+        for room in building.get('rooms', []):
+            area = twin_ha.resolve_area(room.get('ha_area'), catalogue['areas']) if catalogue['available'] else None
+            lights = [eid for d in catalogue['devices'] if area and d.get('area_id') == area
+                      for eid in d['entities'] if eid.startswith('light.')]
+            rooms.append({'room': room['id'], 'building': building['id'],
+                          'level': room.get('level'), 'area_id': area,
+                          'name': room.get('name', ''), 'lights': lights,
+                          'polygon_world': [_house_lot_point(building, p) for p in room.get('polygon', [])]})
+    areas = {a['area_id'] for a in catalogue['areas']}
+    for device in catalogue['devices'] if catalogue['available'] else []:
+        if device.get('area_id') not in areas:
+            continue
+        device_id = device['device_id']
+        placement = placed.get(device_id)
+        if placement:
+            building = buildings[placement['building']]
+            spot = _house_ha_placed_spot(building, device_id, placement)
+        else:
+            spot = auto.get(device_id)
+        if spot is None:
+            continue
+        building = buildings[spot['building']]
+        markers.append({key: device[key] for key in ('device_id', 'name', 'kind', 'entity_id', 'entities')})
+        markers[-1].update(building=spot['building'], level=spot['level'], room=spot['room'],
+                           at=_house_lot_point(building, [*spot['at'], spot['z']]),
+                           placed=placement is not None,
+                           offered=control_rules.offered(who, device['entity_id']))
+    return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers}
+
+
+class HouseHaIdentifyRequest(BaseModel):
+    device_id: str
+
+
+@app.post('/api/house/ha/identify')
+def house_ha_identify(req: HouseHaIdentifyRequest, request: Request):
+    from threading import Timer
+    from services import control_rules, ha_api, twin_ha
+    catalogue = twin_ha.catalogue()
+    if not catalogue['available']:
+        raise HTTPException(status_code=503, detail='Home Assistant is not reachable.')
+    device = next((d for d in catalogue['devices'] if d['device_id'] == req.device_id), None)
+    if device is None:
+        raise HTTPException(status_code=404, detail='Could not blink that light.')
+    entity_id = device['entity_id']
+    control_rules.guard(request, [entity_id])
+    if not entity_id.startswith('light.'):
+        raise HTTPException(status_code=400, detail='Only lights can blink.')
+    state = ha_api.get_state(entity_id)
+    if not state or state.get('state') not in ('on', 'off'):
+        raise HTTPException(status_code=503, detail='Could not blink that light.')
+    if int((state.get('attributes') or {}).get('supported_features') or 0) & 8:
+        if ha_api.call_service('light', 'turn_on', {'entity_id': entity_id, 'flash': 'short'}) is None:
+            raise HTTPException(status_code=502, detail='Could not blink that light.')
+        return {'ok': True, 'how': 'flash'}
+    if ha_api.call_service('light', 'toggle', {'entity_id': entity_id}) is None:
+        raise HTTPException(status_code=502, detail='Could not blink that light.')
+
+    def restore():
+        ha_api.call_service('light', 'turn_on' if state['state'] == 'on' else 'turn_off',
+                            {'entity_id': entity_id})
+
+    timer = Timer(1.5, restore)
+    timer.daemon = True
+    timer.start()
+    return {'ok': True, 'how': 'toggle'}
+
+
 @app.get("/api/house/twin/library/{asset_id}/{name:path}")
 def house_twin_library_file(asset_id: str, name: str):
     from services import twin_library
