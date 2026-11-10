@@ -1,6 +1,24 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.779 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.780 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.780 (2026-11-10, NOT device-verified): the schedule is read aloud again; Argyle tells the weather; Argyle opens apps on an Apple TV.**
+
+From the first device run of tap-to-talk. The user: "I got a lot of 'That's private' responses even though it knew who I was and I was just asking for the schedule which should not be private by default."; "It also told me it had no tool to tell me the weather for the week which is silly."; "I was also told there is no tool to open an app on an Apple TV."
+
+Privacy follows the data (`services/voice_tools.py`):
+- Cause: v2.499.776 classified every read outside the old voice-only set PRIVATE, so the drive digest, run sheet, chores, dinners and routines were held behind "Read it out, or send it to your chat?".
+- Now shared household information is SPEAKABLE: schedule, drives, chores, routines, meals, lists, errands, trips, projects, points, goals, weather, web research.
+- PRIVATE: mail, family messages, threads and asks, requests, the Mind's insights and findings, wide searches, the raw admin state, gift-bearing occasion reads, a person's whereabouts (house locate, manage_car), and four reads that would speak calendar or program titles with no per-row check (assist coverage, day negotiation, programs list, program progress).
+- Per-row checks still hold a private or sensitive calendar event: `get_calendar_events` as before, and now the drive digest (its result carries the ids it speaks; household errands pass; an unknown id holds). The phone path is unchanged.
+
+Weather (`agent_tools_v2.get_weather`): the daily forecast from Home Assistant (`settings.weather_entity`, else the first weather entity), today onward, 1-10 days (default 7), one spoken line per day; offered to every voice, speakable; "I can't see a weather forecast right now." when HA has none. The weather board tile is the hand path.
+
+Apple TV apps (`services/house.open_app`): an Apple TV is a `media_player` from the `apple_tv` platform with an app list (`source_list`); HomePods are not TVs. "Put ESPN on the living room Apple TV" matches the spoken app to a name the TV lists (known nicknames too: HBO Max to Max), wakes the TV when off, and calls `media_player.select_source`; the same exposure check and control rulebook apply before anything is sent, and the TV is read back. Android TVs behave as before; a room with both kinds asks which TV unless the name is exact.
+
+Tests: `tests/test_voice_privacy_weather.py`, `tests/test_house_apple_tv.py`, `tests/test_house_apple_tv_edges.py`; `test_voice_private_answers.py` updated to the ruling.
+
+Device steps: rebuild; at the panel or a satellite ask "what's next on the schedule today" (answered aloud), "what's the weather this week", and "open Disney Plus on the living room Apple TV".
 
 **v2.499.779 (2026-11-10, NOT device-verified): Gemini 4 Carbon leads the pro model pool.**
 
