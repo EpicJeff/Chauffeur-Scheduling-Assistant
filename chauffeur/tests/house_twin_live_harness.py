@@ -46,6 +46,7 @@ foot at the floor. That counts as zoomed in: markers stand alone, not merged.
 Hooks the live layer must give under ?test=1 (window.__twin.live): see the
 task 6/7 tests report for the full list.
 """
+import contextlib
 import copy
 import io
 import json
@@ -170,6 +171,48 @@ class LiveFakeHA(house_ha_fake.FakeHA):
             return out
         ha_api.call_service = call
         return self
+
+    @contextlib.contextmanager
+    def real_states_cache(self):
+        """The real server's states path for the block (Task 6 review C1, Ruling Q13).
+
+        The fake's own get_states answers [] the moment Home Assistant is away. The real
+        ha_api.get_states keeps a cache and, once Home Assistant has answered even once,
+        serves that stale copy when the fetch fails. Inside this block the real
+        get_states / get_state (and whatever reachability record the fix keeps beside the
+        cache) run; only the HTTP call is faked: ha_api._request answers GET /states with
+        this fake's states while `available`, and None (a failed request, what the real
+        _request returns on a timeout or an HTTP error) while not. Everything else stays
+        faked at function level as before. The cache starts cold and is left cold."""
+        from services import ha_api
+        names = ('get_states', 'get_state', '_request')
+        saved = {n: getattr(ha_api, n) for n in names}
+        fake = self
+
+        def request(method, path, json_body=None, params=None, timeout=None):
+            if not fake.available:
+                return None
+            if method == 'GET' and path == '/states':
+                return copy.deepcopy(list(fake.states.values()))
+            return None
+
+        cache = copy.deepcopy(ha_api._states_cache)
+        ha_api._states_cache.update(ts=0.0, data=None)
+        ha_api.get_states, ha_api.get_state = self.orig['get_states'], self.orig['get_state']
+        ha_api._request = request
+        try:
+            yield self
+        finally:
+            # Leave the last real fetch a successful one, so no failure record outlives the block.
+            fake.available = True
+            try:
+                ha_api.get_states(ttl=0)
+            except Exception:
+                pass
+            for n, fn in saved.items():
+                setattr(ha_api, n, fn)
+            ha_api._states_cache.clear()
+            ha_api._states_cache.update(cache)
 
 
 FAKE = LiveFakeHA(

@@ -323,6 +323,68 @@ def scenario_ha_stops_answering_dims_markers():
         FAKE.available = True
 
 
+def scenario_ha_stops_answering_after_a_warm_cache_dims_markers():
+    """Task 6 review C1 / Ruling Q13, against the real states path.
+
+    The real ha_api.get_states serves its cached copy when the fetch fails, so once
+    Home Assistant has answered, card/states keeps answering the OLD, non-empty states
+    when it goes away (the fake's own get_states answers [] and hid this). Ruling Q13:
+    that answer carries reachable: false and the live layer treats it as a failed poll.
+    FAKE.real_states_cache() runs the real get_states and its cache; only the HTTP call
+    is faked."""
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    try:
+        with FAKE.real_states_cache(), s.browser(launch_args=L.GPU_ARGS) as page, L.LogWatch() as log:
+            seen = L.record(page)
+            L.open_twin(page, s)
+            L.aim_kitchen(page)
+            # Home Assistant has answered through the real cache: every marker is fresh.
+            rows = {m['device_id']: m for m in L.markers(page)}
+            check(all(r['stale'] is False and r['dim'] is False for r in rows.values()),
+                  ('the first real fetch is fresh', list(rows.values())[:2]))
+            before = {did: r['look'] for did, r in rows.items()}
+
+            # Home Assistant goes away. Wait out get_states' 5 s ttl so the next poll makes a real
+            # fetch, which fails, and the route serves the warm cache.
+            FAKE.available = False
+            page.wait_for_timeout(5500)
+            L.refresh(page)
+            rows = {m['device_id']: m for m in L.markers(page)}
+            check(set(rows) == set(before), ('the markers stay on the house', sorted(rows)))
+            for did, row in rows.items():
+                check(row['stale'] is True and row['dim'] is True,
+                      ('a stale copy served because the fetch failed is a failed poll: stale and dimmed', row))
+                check(row['look'] == before[did], ('the last state is kept', did, before[did], row['look']))
+            check(L.drawn_dim(L.sprite(page, 'dev-k-ceiling')), ('drawn dimmed', L.sprite(page, 'dev-k-ceiling')))
+
+            # A tap explains itself and sends nothing (not even a POST that the route then refuses).
+            start = len(seen)
+            L.tap_marker(page, 'dev-k-ceiling')
+            check(L.wait_for(page, lambda: L.alert(page) is not None), 'a stale tap explains itself')
+            check(L.alert(page) == L.UNREACHABLE, ('the unreachable copy', L.alert(page)))
+            page.wait_for_timeout(500)
+            check(L.service_posts(seen[start:]) == [],
+                  ('a stale tap posts nothing to api/ha/card/service', L.service_posts(seen[start:])))
+            check(FAKE.calls == [], ('nothing was sent', FAKE.calls))
+            L.close_alert(page)
+
+            # It comes back: the next real fetch is fresh again.
+            FAKE.available = True
+            L.refresh(page)
+            rows = {m['device_id']: m for m in L.markers(page)}
+            check(all(r['stale'] is False and r['dim'] is False for r in rows.values()),
+                  ('fresh once Home Assistant answers again', list(rows.values())[:2]))
+            check(L.drawn_full(L.sprite(page, 'dev-k-ceiling')), L.sprite(page, 'dev-k-ceiling'))
+            L.no_errors(s)
+            check(log.records == [], ('nothing logs an error', [r.getMessage() for r in log.records]))
+    finally:
+        FAKE.available = True
+
+
 def scenario_no_ha_twin_renders_without_markers():
     s = L.serve()
     if s is None:
@@ -361,6 +423,7 @@ SCENARIOS = [
     scenario_unlock_asks_first,
     scenario_refused_tap_shows_rulebook_message_and_no_flip,
     scenario_ha_stops_answering_dims_markers,
+    scenario_ha_stops_answering_after_a_warm_cache_dims_markers,
     scenario_no_ha_twin_renders_without_markers,
 ]
 
