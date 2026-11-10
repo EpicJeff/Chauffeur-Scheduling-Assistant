@@ -1,0 +1,298 @@
+"""Private answers wait for the speaker (spec 2026-11-10, Task 3).
+
+The user, 2026-11-10: "Can Argyle just ask whether to read it aloud or send it
+to the chat?" On a recognised (actor) satellite turn whose answer is not safe
+to speak, Argyle holds the answer and asks QUESTION. The same actor's next
+turn decides: read it aloud, or post it to their Argyle DM. Anything else
+(another voice, an unknown voice, a sign-off, a second unclear reply, the 60 s
+timer) posts it to the DM: nothing private is read out on someone else's say
+so, and nothing is lost.
+
+What is safe to speak: every agent tool is classified SPEAKABLE or PRIVATE in
+voice_tools (a write that confirms what the speaker asked is speakable; a read
+is speakable only if it was already a voice tool); unknown names are private;
+the phone's per-row checks (calendar events, shopping lists, driver events)
+apply too. Unrecognised voices never meet the question.
+
+Ruling (controller, 2026-11-10): the held answer lives in voice_private,
+keyed by satellite, not on the identity session row: another voice's
+fingerprint replaces the session row before the turn is handled, which would
+silently drop the answer instead of sending it to the chat.
+
+Every scenario runs the real endpoint and router; only the model is stubbed.
+
+Run from chauffeur/ with HA_BASE_URL unset:
+    python tests/test_voice_private_answers.py
+"""
+import os
+from pathlib import Path
+import sys
+import tempfile
+import time
+import unittest
+import uuid
+from unittest.mock import patch
+
+os.environ['CHAUFFEUR_DATA_DIR'] = tempfile.mkdtemp(prefix='chauffeur_private_answers_')
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from services import storage, voice_identity as voice, voice_fingerprint as fp, voice_tools, agent_router
+
+KITCHEN = 'assist_satellite.kitchen'
+QUESTION = "That's private. Read it out, or send it to your chat?"
+SECRET = 'The email from school says the password reset code is pineapple.'
+
+
+def vector(index=0):
+    return [float(i == index) for i in range(256)]
+
+
+JEFF = vector(0)
+MUM = vector(3)
+TV = vector(1)
+
+
+def fake(result):
+    """A tool stand-in the router can call with any keyword arguments."""
+    def tool(*args, **kwargs):
+        tool.calls.append(kwargs)
+        return dict(result)
+    tool.calls = []
+    return tool
+
+
+class PrivateAnswerTests(unittest.TestCase):
+    def setUp(self):
+        for table in (storage.members_table, storage.member_tokens_table, storage.app_state_table,
+                      storage.rate_limits_table, storage.conversations_table, storage.chat_messages_table):
+            table.truncate()
+        voice._sessions.clear(); voice._observed.clear(); voice._requests.clear()
+        fp._observations.clear(); fp._enrollments.clear(); fp._last.clear()
+        from services import voice_private
+        self.vp = voice_private
+        voice_private._held.clear()
+        self.settings = {'service_token': 'service'}
+        settings_patch = patch.object(storage, 'get_settings', side_effect=lambda: dict(self.settings))
+        settings_patch.start(); self.addCleanup(settings_patch.stop)
+        storage.add_member({'id': 'jeff', 'name': 'Jeff', 'role': 'parent'})
+        storage.add_member({'id': 'mum', 'name': 'Mum', 'role': 'parent'})
+        storage.ensure_argyle_member()
+        fp._save([{'member_id': mid, 'key': ['ha', KITCHEN], 'vector': vec, 'revision': fp.REVISION,
+                   'consent_actor': 'jeff', 'created_at': time.time(), 'checks': 2, 'calibrated': True}
+                  for mid, vec in (('jeff', JEFF), ('mum', MUM))])
+        voice.configure(True, [{'ha_instance_id': 'ha', 'satellite_id': KITCHEN, 'device_id': 'device-' + KITCHEN,
+                                'enabled': True, 'recognition_enabled': True}])
+        from services import voice_conversation
+        voice_conversation._turns.clear()
+        for target, value in (('services.announce.answer_through_speaker', None),
+                              ('services.llm.auto_name_conversation', None),
+                              ('main.trigger_background_refresh', None)):
+            p = patch(target, return_value=value) if value is None and target.endswith('speaker') \
+                else patch(target, lambda *a, **kw: None)
+            p.start(); self.addCleanup(p.stop)
+        # Timers never fire on their own inside a test; expire() is called directly.
+        timer = patch('threading.Timer')
+        self.timer = timer.start(); self.addCleanup(timer.stop)
+        self.call = None
+        self.reply = 'Okay.'
+        self.model_turns = 0
+
+        def fake_llm(prompt, tools, system_prompt, *a, **kw):
+            if 'Tool Result' in prompt or self.call is None:
+                return {'message': self.reply, 'tool_calls': []}
+            self.model_turns += 1
+            return {'message': '', 'tool_calls': [self.call]}
+        llm = patch.object(agent_router, 'call_gemma_with_fallback', side_effect=fake_llm)
+        llm.start(); self.addCleanup(llm.stop)
+
+    # --- fixtures ----------------------------------------------------------
+    def say(self, text, voiceprint=None, seconds=6.0, call=None):
+        import main
+        from starlette.requests import Request
+        self.call = call
+        request_id = uuid.uuid4().hex
+        metadata = {'ha_instance_id': 'ha', 'satellite_id': KITCHEN, 'device_id': 'device-' + KITCHEN,
+                    'request_id': request_id, 'utterance_id': request_id, 'run_id': 'run-' + request_id,
+                    'observed_at': time.time()}
+        if voiceprint is not None:
+            ctx = voice.context(dict(metadata), True)
+            oid = 'obs-' + request_id
+            fp._observations[oid] = {'key': ('ha', KITCHEN, 'device-' + KITCHEN, 'run-' + request_id, request_id),
+                                     'revision': ctx.service_revision, 'vector': voiceprint, 'seconds': seconds,
+                                     'expires': time.time() + 60}
+            metadata['observation_id'] = oid
+        request = Request({'type': 'http', 'method': 'POST', 'path': '/', 'query_string': b'',
+                           'headers': [(b'x-service-token', b'service')]})
+        result = main.converse_ha_assist(main.ConverseRequest(text=text, voice=metadata,
+                                                              conversation_id='conv-1'), request)
+        return result['response']['speech']['plain']['speech'], result['continue_conversation']
+
+    def dm(self, member_id='jeff'):
+        channel = storage.get_or_create_dm(member_id, 'argyle')
+        return [m.get('body') or '' for m in storage.get_channel_messages(channel['id'], limit=20)]
+
+    def hold_mail(self):
+        """Jeff asks for his mail; the answer is private and gets held."""
+        from services import agent_tools_v2
+        self.reply = SECRET
+        mail = patch.object(agent_tools_v2, 'read_mail', fake({'status': 'success', 'message': SECRET}))
+        mail.start(); self.addCleanup(mail.stop)
+        speech, keep = self.say('read me the latest email from school', JEFF,
+                                call={'name': 'read_mail', 'arguments': {}})
+        self.reply = 'Okay.'
+        return speech, keep
+
+    # --- classification ------------------------------------------------------
+    def test_every_registry_tool_is_classified(self):
+        from services import agent_tools_v2
+        names = {t['name'] for t in agent_tools_v2.get_available_tools() + agent_tools_v2.get_admin_tools()}
+        names |= {'house', 'music', 'memory', 'report_gap', 'prepare_voice_approval'}
+        unclassified = sorted(n for n in names if n not in voice_tools.SPEAKABLE and n not in voice_tools.PRIVATE)
+        both = sorted(voice_tools.SPEAKABLE & voice_tools.PRIVATE)
+        self.assertEqual(unclassified, [], 'classify every tool as SPEAKABLE or PRIVATE')
+        self.assertEqual(both, [])
+        for name in ('read_mail', 'search_mail', 'get_family_messages', 'list_threads',
+                     'find_in_chauffeur', 'get_requests', 'research_question', 'launch_mission'):
+            self.assertIn(name, voice_tools.PRIVATE, name)
+        for name in ('add_household_task', 'add_shopping_items', 'send_family_message', 'house', 'music'):
+            self.assertIn(name, voice_tools.SPEAKABLE, name)
+
+    def test_unknown_tool_is_private(self):
+        turn = self.vp.SatelliteTurn(storage.get_member('jeff'))
+        turn.before_tool('a_tool_added_next_year', {})
+        turn.tool_result({'status': 'success'})
+        self.assertFalse(turn.safe)
+
+    def test_failed_tool_is_not_private(self):
+        turn = self.vp.SatelliteTurn(storage.get_member('jeff'))
+        turn.before_tool('add_household_task', {'title': 'Bins'})
+        turn.tool_result({'status': 'error', 'message': 'No title.'})
+        self.assertTrue(turn.safe, 'an error message is not private')
+
+    # --- speakable answers -----------------------------------------------------
+    def test_write_confirmation_spoken(self):
+        from services import agent_tools_v2
+        with patch.object(agent_tools_v2, 'add_household_task',
+                          fake({'status': 'success', 'message': 'Added take out the bins.'})):
+            self.reply = 'Added take out the bins.'
+            speech, _ = self.say('add take out the bins to the house list', JEFF,
+                                 call={'name': 'add_household_task', 'arguments': {'title': 'Take out the bins'}})
+        self.assertNotEqual(speech, QUESTION)
+        self.assertIn('bins', speech)
+        self.assertEqual(self.vp._held, {})
+
+    # --- private answers --------------------------------------------------------
+    def test_private_read_asks(self):
+        speech, keep = self.hold_mail()
+        self.assertEqual(speech, QUESTION)
+        self.assertTrue(keep, 'the mic stays open for the answer')
+        self.assertNotIn('pineapple', speech)
+        self.assertEqual(self.dm(), [])
+        self.assertEqual(self.timer.call_args.args[0], 60)
+
+    def test_same_actor_read_it(self):
+        self.hold_mail()
+        turns = self.model_turns
+        speech, _ = self.say('read it', JEFF, seconds=0.4)
+        self.assertEqual(speech, SECRET)
+        self.assertEqual(self.model_turns, turns, 'the decision never reaches the model')
+        self.assertEqual(self.vp._held, {})
+        self.assertEqual(self.dm(), [])
+
+    def test_same_actor_yes_out_loud(self):
+        self.hold_mail()
+        self.assertEqual(self.say('yes, out loud', JEFF, seconds=0.4)[0], SECRET)
+
+    def test_same_actor_send_it(self):
+        self.hold_mail()
+        speech, _ = self.say('send it to my chat', JEFF, seconds=0.4)
+        self.assertEqual(speech, 'Sent to your chat.')
+        self.assertTrue(any('pineapple' in body for body in self.dm()), self.dm())
+        self.assertEqual(self.vp._held, {})
+
+    def test_same_actor_no_sends(self):
+        self.hold_mail()
+        self.assertEqual(self.say('no', JEFF, seconds=0.4)[0], 'Sent to your chat.')
+        self.assertTrue(any('pineapple' in body for body in self.dm()))
+
+    def test_unclear_reasks_once(self):
+        self.hold_mail()
+        speech, keep = self.say('hmm what was that', JEFF, seconds=0.4)
+        self.assertEqual(speech, QUESTION)
+        self.assertTrue(keep)
+        self.assertEqual(self.dm(), [])
+
+    def test_second_unclear_releases(self):
+        self.hold_mail()
+        self.say('hmm what was that', JEFF, seconds=0.4)
+        turns = self.model_turns
+        speech, _ = self.say('what time is practice on saturday', JEFF,
+                             call={'name': 'get_calendar_events', 'arguments': {}})
+        self.assertNotIn('pineapple', speech)
+        self.assertTrue(any('pineapple' in body for body in self.dm()))
+        self.assertEqual(self.model_turns, turns + 1, 'the turn goes on to the model')
+
+    def test_other_voice_sends_to_chat(self):
+        self.hold_mail()
+        turns = self.model_turns
+        speech, _ = self.say('read it', MUM)
+        self.assertNotIn('pineapple', speech)
+        self.assertTrue(any('pineapple' in body for body in self.dm('jeff')))
+        self.assertFalse(any('pineapple' in body for body in self.dm('mum')))
+        self.assertEqual(self.vp._held, {})
+        self.say('what time is practice on saturday', MUM, call={'name': 'get_calendar_events', 'arguments': {}})
+        self.assertEqual(self.model_turns, turns + 1, "Mum's own turn is answered normally")
+
+    def test_unknown_voice_sends_to_chat(self):
+        self.hold_mail()
+        speech, _ = self.say('read it out loud now please everyone', TV)
+        self.assertNotIn('pineapple', speech)
+        self.assertTrue(any('pineapple' in body for body in self.dm()))
+
+    def test_sign_off_sends_to_chat(self):
+        self.hold_mail()
+        speech, keep = self.say('thanks, that is all', JEFF)
+        self.assertNotIn('pineapple', speech)
+        self.assertFalse(keep)
+        self.assertTrue(any('pineapple' in body for body in self.dm()))
+        self.assertEqual(voice._sessions[('ha', KITCHEN)]['level'], 'unknown')
+
+    def test_timer_sends_to_chat(self):
+        self.hold_mail()
+        self.vp.expire('ha', KITCHEN)
+        self.assertTrue(any('pineapple' in body for body in self.dm()))
+        self.assertEqual(self.vp._held, {})
+        self.vp.expire('ha', KITCHEN)       # a second expiry posts nothing more
+        self.assertEqual(sum('pineapple' in body for body in self.dm()), 1)
+
+    def test_late_reply_after_timer_reaches_model(self):
+        self.hold_mail()
+        self.vp.expire('ha', KITCHEN)
+        turns = self.model_turns
+        self.say('read it', JEFF, seconds=0.4, call={'name': 'get_calendar_events', 'arguments': {}})
+        self.assertEqual(self.model_turns, turns + 1)
+
+    def test_calendar_private_event_asks(self):
+        from services import agent_tools_v2, access
+        events = [{'id': 'e1', 'title': 'Therapy', 'private': True}]
+        with patch.object(agent_tools_v2, 'get_calendar_events',
+                          fake({'status': 'success', 'events': [{'id': 'e1', 'title': 'Therapy'}],
+                                'message': 'Therapy at 3.'})), \
+                patch.object(access, 'cached_schedule', return_value={'events': events}):
+            self.reply = 'You have therapy at 3.'
+            speech, _ = self.say('what do I have tomorrow afternoon', JEFF,
+                                 call={'name': 'get_calendar_events', 'arguments': {}})
+        self.assertEqual(speech, QUESTION)
+
+    def test_unknown_voice_never_held(self):
+        from services import agent_tools_v2
+        with patch.object(agent_tools_v2, 'find_in_chauffeur',
+                          fake({'status': 'success', 'message': 'The dentist is on Friday.'})):
+            self.reply = 'The dentist is on Friday.'
+            speech, _ = self.say('when is the dentist again', TV,
+                                 call={'name': 'find_in_chauffeur', 'arguments': {'query': 'dentist'}})
+        self.assertNotEqual(speech, QUESTION)
+        self.assertEqual(self.vp._held, {})
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)
