@@ -10319,7 +10319,12 @@ def _panel_device(request: Request = None) -> Optional[dict]:
 
 
 def _member_token_place(request: Request = None) -> str:
-    return 'panel' if _panel_device(request) else 'personal'
+    if _panel_device(request):
+        return 'panel'
+    # A device id can only downgrade provenance, never authorize a panel grant.
+    device_id = request.headers.get('x-device-id') if request else None
+    device = storage.get_trusted_device(device_id) if device_id else None
+    return 'panel' if device and device.get('kind') == 'panel' else 'personal'
 
 
 class ControlGrantRequest(BaseModel):
@@ -10369,7 +10374,7 @@ def control_held(held_id: str, request: Request):
     if not held:
         raise HTTPException(status_code=404, detail='That action has expired or was already used.')
     args = {**held['args'], 'acting_member': member, 'source': 'panel_grant',
-            'voice_context': None}
+            'voice_context': None, 'proven': True}
     if held['tool'] == 'house':
         from services import house as house_service
         return house_service.house(**args)

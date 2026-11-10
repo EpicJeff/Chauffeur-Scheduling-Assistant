@@ -70,6 +70,13 @@ class Kinds(unittest.TestCase):
         # an unread cover might be the garage, so it is judged as one.
         self.assertEqual(cr.kind_of('cover.garage_door', None), 'garage')
 
+    def test_helper_domains_are_other(self):
+        # Task 5 final wave: a shopping list, a timer, a counter and a calendar
+        # are ordinary household things, not unsupported targets.
+        for eid in ('todo.shopping', 'timer.laundry', 'counter.cups_of_coffee', 'calendar.family'):
+            self.assertEqual(cr.kind_of(eid, {}), 'other', eid)
+            self.assertEqual(cr.kind_of(eid, None), 'other', f'{eid} with unread attributes')
+
     def test_not_device_control(self):
         for eid in ('homeassistant.restart', 'notify.mobile', 'sensor.temperature',
                     'binary_sensor.door', 'automation.goodnight', 'person.mum', 'zone.home'):
@@ -120,6 +127,43 @@ class Defaults(unittest.TestCase):
             got = cr.rules({'ha_control': broken})
             self.assertEqual(got, cr.default_rules({}), broken)
             self.assertFalse(cr.decide(member('child'), ['locks'], got).allowed)
+
+
+    def test_grid_missing_a_kind_is_completed(self):
+        # Unknown extra keys are not a missing kind: they still fall back safely.
+        for mutate in (lambda g: g['people']['parent'].update(teleport='yes'),
+                       lambda g: g.update(extra=True),
+                       lambda g: g['proof'].update(teleport=True)):
+            stored = cr.default_rules({})
+            stored['people']['child']['lights'] = 'no'
+            mutate(stored)
+            got = cr.rules({'ha_control': stored})
+            self.assertEqual(cr.validate_rules(copy.deepcopy(got)), got, 'the result is always a valid grid')
+            self.assertFalse(cr.decide(member('child'), ['locks'], got).allowed)
+            self.assertEqual(set(got['proof']), set(cr.KINDS))
+
+        # A grid saved before a kind existed (simulated by deleting one) keeps
+        # every saved cell; only the missing kind comes from the defaults.
+        settings = {'panel_allow_unsafe_controls': True}
+        stored = cr.default_rules(settings)
+        stored['people']['child']['lights'] = 'no'
+        stored['people']['adult']['media'] = 'no'
+        stored['places']['panel']['media'] = 'no'
+        stored['places']['unknown_voice']['other'] = 'no'
+        stored['proof']['climate'] = True
+        saved = copy.deepcopy(stored)
+        del stored['proof']['garage']
+        for section in ('people', 'places'):
+            for row in stored[section].values():
+                del row['garage']
+        got = cr.rules({**settings, 'ha_control': stored})
+        self.assertEqual(got['people']['child']['lights'], 'no', 'a saved cell was discarded')
+        self.assertEqual(got['places']['panel']['media'], 'no', 'a saved cell was discarded')
+        self.assertEqual(got, saved, 'only the missing kind is filled, from default_rules(settings)')
+        self.assertEqual(got['places']['panel']['garage'], 'ask')
+        self.assertIs(got['proof']['garage'], True)
+        self.assertEqual(cr.validate_rules(copy.deepcopy(got)), got)
+        self.assertFalse(cr.decide(member('child'), ['garage'], got).allowed)
 
 
 class Validate(unittest.TestCase):

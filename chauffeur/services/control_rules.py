@@ -42,6 +42,7 @@ _DOMAIN_KINDS = {
     'input_button': 'other', 'input_number': 'other', 'input_select': 'other',
     'input_text': 'other', 'input_datetime': 'other',
     'lawn_mower': 'other', 'humidifier': 'other', 'camera': 'other',
+    'todo': 'other', 'timer': 'other', 'counter': 'other', 'calendar': 'other',
 }
 _SENSITIVE = frozenset({'garage', 'locks', 'alarm'})
 
@@ -87,13 +88,27 @@ def default_rules(settings: dict) -> dict:
 
 
 def rules(settings: dict | None = None) -> dict:
-    """Copy a valid saved grid; missing or malformed grids get fresh defaults."""
+    """Complete missing kinds in saved grids; malformed grids get defaults."""
     if settings is None:
         from services import storage
         settings = storage.get_settings() or {}
     if 'ha_control' in settings:
         try:
-            return deepcopy(validate_rules(settings['ha_control']))
+            grid = deepcopy(settings['ha_control'])
+            defaults = default_rules(settings)
+            _check_keys(grid, ('enabled', 'proof', 'people', 'places'), 'Home Assistant control rules')
+            _check_keys(grid['people'], ROLES, 'People')
+            _check_keys(grid['places'], PLACES, 'Places')
+            rows = [(grid['proof'], defaults['proof'])]
+            for section in ('people', 'places'):
+                rows.extend((grid[section][row], defaults[section][row])
+                            for row in defaults[section])
+            for saved, default in rows:
+                if not isinstance(saved, dict):
+                    raise ValueError('A control card must be a grid of kinds.')
+                for kind in KINDS:
+                    saved.setdefault(kind, default[kind])
+            return validate_rules(grid)
         except ValueError:
             pass
     return default_rules(settings)
@@ -283,16 +298,17 @@ def request_facts(headers, query) -> tuple[bool, bool]:
     from tinydb import Query
 
     at_panel = False
+    token = None
     try:
         headers = {key.lower(): value for key, value in headers.items()}
-        at_panel = panel_device(headers, query) is not None
         token = headers.get('x-member-token') or query.get('member_token')
+        at_panel = panel_device(headers, query) is not None
         if not token or not storage.get_member_by_token(token):
             return False, at_panel
         with storage.db_lock:
             row = storage.member_tokens_table.get(Query().token == token)
         if not row:
-            return False, at_panel
+            return False, True
         at_panel = at_panel or bool(row.get('house_session') or row.get('minted_on') == 'panel')
         # Only rows with NEITHER field predate provenance. Incomplete new
         # rows must not accidentally become personal password sign-ins.
@@ -302,7 +318,7 @@ def request_facts(headers, query) -> tuple[bool, bool]:
         proven = bool(not at_panel and proof in ('password', 'pin') and minted_on and minted_on != 'panel')
         return proven, at_panel
     except Exception:
-        return False, at_panel
+        return False, at_panel or bool(token)
 
 
 def token_proven(headers, query) -> bool:
@@ -372,6 +388,8 @@ def agent_refusal(decision, who: Who, tool: str, args: dict, source: str | None,
             result['message'] = 'Who is this? Say your name and PIN, then ask again.'
     elif who.place == 'panel' and decision.needs == 'identify' and device_id:
         result['control_held'] = {'id': hold(tool, args, device_id), 'message': "Who's asking?"}
+    elif decision.needs == 'identify':
+        result['message'] = 'Ask from the wall panel or a speaker to identify yourself.'
     return result
 
 
@@ -540,6 +558,10 @@ def _check_kinds(who: Who, kinds: Iterable[str], settings: dict | None) -> Decis
         member = storage.get_member(who.member_id)
         if not member or not scope.can_see(member, 'music'):
             return Decision(False, None, kinds, 'Your access does not include music control; ask a parent.')
+    if decision.needs == 'pin' and who.member_id:
+        member = storage.get_member(who.member_id)
+        if member and not member.get('pin_hash'):
+            return Decision(False, 'pin', kinds, 'Set a PIN in your profile to confirm who you are.')
     return decision
 
 

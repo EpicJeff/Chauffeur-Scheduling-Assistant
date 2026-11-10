@@ -285,6 +285,35 @@ class Identity(unittest.TestCase):
         decision = cr.decide(cr.who_from_request({'x-member-token': pinless}, {}), ('locks',), cr.default_rules({}))
         self.assertEqual((decision.allowed, decision.needs), (False, 'pin'))
 
+    # --- Task 5 final wave --------------------------------------------------
+
+    def test_request_facts_fail_toward_the_panel(self):
+        token = storage.create_member_token('mum', proof='password', minted_on='personal')
+        headers = {'x-member-token': token}
+        # The control: a readable personal password row is a proven person, not a panel.
+        self.assertEqual(cr.request_facts(headers, {}), (True, False))
+        # The token validated, then its row read came back empty or raised.
+        for label, effect in (('row read returned None', lambda *a, **kw: None),
+                              ('row read raised', RuntimeError('database is locked'))):
+            with patch.object(storage.member_tokens_table, 'get', side_effect=effect):
+                self.assertEqual(cr.request_facts(headers, {}), (False, True),
+                                 f'{label}: expected (proven=False, at_panel=True)')
+                who = cr.who_from_request(headers, {})
+                self.assertEqual((who.place, who.member_id, who.proven), ('panel', None, False), label)
+
+    def test_pin_minted_with_a_panel_device_id_is_panel_minted(self):
+        # The panel's PIN step identifies itself by X-Device-Id alone (no device token).
+        r = self.client.post('/api/members/kid/auth', json={'pin': '1111'},
+                             headers={'X-Device-Id': 'panel-1'})
+        self.assertEqual(r.status_code, 200, r.text)
+        token = r.json()['token']
+        from tinydb import Query
+        row = storage.member_tokens_table.get(Query().token == token)
+        self.assertEqual(row.get('minted_on'), 'panel',
+                         'a token minted at an enrolled panel (named by X-Device-Id) must record minted_on=panel')
+        who = cr.who_from_request({'x-member-token': token}, {})
+        self.assertEqual(who.place, 'panel')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1382,7 +1382,7 @@ def get_assist_coverage(target_date: str = None) -> Dict[str, Any]:
 
 def house(action='', query='', entity_id='', domain='', service='', data=None,
           hours=24, app='', acting_member=None, voice_context=None, source=None,
-          focus_key=None, spoken=False, proven=True, device_id=None):
+          focus_key=None, spoken=False, proven=False, device_id=None):
     from services import house as house_service
     return house_service.house(action=action, query=query, entity_id=entity_id,
                                domain=domain, service=service, data=data, hours=hours, app=app,
@@ -1392,7 +1392,7 @@ def house(action='', query='', entity_id='', domain='', service='', data=None,
 
 def music(action='', query='', room='', player='', media_type='', mode='', level=None,
           acting_member=None, voice_context=None, source=None, focus_key=None, spoken=False,
-          proven=True, device_id=None):
+          proven=False, device_id=None):
     from services import music_tool
     return music_tool.music(action=action, query=query, room=room, player=player,
                             media_type=media_type, mode=mode, level=level,

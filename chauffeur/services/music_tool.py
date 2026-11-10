@@ -163,7 +163,7 @@ def _ma_list(states):
 
 
 def music(action='', query='', room='', player='', media_type='', mode='', level=None,
-          acting_member=None, voice_context=None, source=None, proven=True, device_id=None):
+          acting_member=None, voice_context=None, source=None, proven=False, device_id=None):
     """Return plain success/error dicts, including when HA or search fails."""
     try:
         if ha_api.mode() == 'unconfigured':

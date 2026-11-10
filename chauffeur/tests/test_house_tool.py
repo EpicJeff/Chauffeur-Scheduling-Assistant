@@ -745,7 +745,7 @@ class HouseToolTests(unittest.TestCase):
                             acting_member={'id': 'm_lily', 'role': 'child'})
         self.assertEqual(res['status'], 'success', res)
         res = self.run_tool(action='act', entity_id='cover.main_garage', service='open_cover',
-                            acting_member={'id': 'm_lorena', 'role': 'parent'})
+                            acting_member={'id': 'm_lorena', 'role': 'parent'}, proven=True)
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(res['state_after'], 'open')
 

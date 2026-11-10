@@ -480,7 +480,7 @@ class Page(_Base):
             'Needs proof of who you are',
             'Ask who needs voice ID turned on for the speaker.',
             "Each person's own access can narrow this further.",
-            'Scripts that start other automations are judged only by what they touch directly.',
+            'Scripts that flip an input_boolean helper are judged only by what they touch directly; the automation it starts is not inspected.',
         ):
             self.assertIn(copy_line, text)
 
@@ -927,6 +927,22 @@ class ReviewRulings(_Base):
         i = page.index('authSettings.house_control_unexposed')
         label = page[i:page.index('</label>', i)]
         self.assertIn('Who can control what', label, 'the Argyle setting points at the grid')
+
+    # --- Task 5 final wave -------------------------------------------------
+
+    def test_unread_scripts_note_counts_event_steps(self):
+        # control_scripts reads an event step as unreadable, so a script that
+        # fires an event needs every kind's permission. The note must not say
+        # event steps are judged only by what they touch directly.
+        text = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', html.unescape(self.config_page())))
+        start = text.find('These scripts need permission for every kind')
+        self.assertGreaterEqual(start, 0, 'the unread-scripts note is missing')
+        note = text[start:start + 1500]
+        self.assertNotIn('That includes firing an event', note,
+                         'the note still says a fired event is judged only by what the script touches')
+        sentences = [s for s in re.split(r'(?<=[.!?]) ', note) if re.search(r'\bevents?\b', s, re.I)]
+        self.assertTrue(any('every kind' in s.lower() for s in sentences),
+                        f'no sentence says an event step counts as every kind: {sentences}')
 
 
 if __name__ == '__main__':

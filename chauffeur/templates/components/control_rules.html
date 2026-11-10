@@ -90,8 +90,8 @@
                         </div>
                     </template>
                     <p x-show="!warnings.unreadable_scripts.length" class="text-xs text-gray-500 italic">No unreadable scripts found.</p>
-                    <p class="text-xs text-gray-400">Scripts that start other automations are judged only by what they touch directly.</p>
-                    <p class="text-xs text-gray-400">That includes firing an event or flipping an input_boolean helper: the automation it starts is not inspected.</p>
+                    <p class="text-xs text-gray-400">Scripts that flip an input_boolean helper are judged only by what they touch directly; the automation it starts is not inspected.</p>
+                    <p class="text-xs text-gray-400">Firing an event counts as touching every kind, including any proof requirements.</p>
                 </section>
                 <template x-if="warnings.local_handling">
                     <section class="bg-amber-500/10 rounded-xl border border-amber-500/30 p-4 space-y-2">

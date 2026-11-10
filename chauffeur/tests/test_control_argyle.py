@@ -428,7 +428,7 @@ class ArgyleObeys(unittest.TestCase):
         self.assertIsNone(res.get('needs', 'missing'), res)
         self.assertEqual(self.calls, [], 'a script that locks the door is a lock action')
         res = self.house(action='act', entity_id='script.goodnight', service='turn_on',
-                         acting_member=self.mum, source='pwa')
+                         acting_member=self.mum, source='pwa', proven=True)
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls, [('script', 'turn_on', {'entity_id': 'script.goodnight'})])
 
@@ -834,6 +834,140 @@ class ArgyleObeys(unittest.TestCase):
                 self.assertIsNone(cr.take_held(held, 'phone-argyle'),
                                   f'{label}: a hold was bound to a device that is not a panel')
             self.assertNotIn('control_held', r.json(), f'{label}: held with no panel to take it back')
+        self.assertEqual(self.device_calls('lock'), [])
+
+    # --- Task 5 final wave ------------------------------------------------------
+
+    def add_helpers(self):
+        """An exposed shopping list and laundry timer, and two scripts that only touch them."""
+        self.states += [
+            _state('todo.shopping', '2', friendly_name='Shopping'),
+            _state('timer.laundry', 'idle', friendly_name='Laundry timer'),
+            _state('script.laundry_timer', 'off', friendly_name='Laundry timer start'),
+            _state('script.need_milk', 'off', friendly_name='Need milk'),
+        ]
+        exposed = {**EXPOSED, 'todo.shopping': True, 'timer.laundry': True,
+                   'script.laundry_timer': True, 'script.need_milk': True}
+        services = {**SERVICES, 'todo': {'add_item'}, 'timer': {'start'}}
+        configs = {
+            'script.laundry_timer': [{'action': 'timer.start', 'target': {'entity_id': 'timer.laundry'}}],
+            'script.need_milk': [{'action': 'todo.add_item', 'target': {'entity_id': 'todo.shopping'},
+                                  'data': {'item': 'milk'}}],
+        }
+        related = {'script.laundry_timer': ['timer.laundry'], 'script.need_milk': ['todo.shopping']}
+        ws = ha_api.ws_command
+
+        def helper_ws(command, timeout=8, **fields):
+            if command == 'search/related' and fields.get('item_id') in related:
+                return {'entity': related[fields['item_id']]}
+            if command == 'script/config' and fields.get('entity_id') in configs:
+                return {'config': {'sequence': configs[fields['entity_id']]}}
+            return ws(command, timeout=timeout, **fields)
+        ha_api.get_exposed = lambda ttl=60: dict(exposed)
+        ha_api.has_service = lambda d, s: s in services.get(d, set())
+        ha_api.ws_command = helper_ws
+        cs.clear_cache()
+
+    def test_todo_and_timer_are_everyday_other(self):
+        self.add_helpers()
+        parent = cr.Who('parent', 'mum', None, True)
+        self.assertTrue(cr.check(parent, ['todo.shopping']).allowed, cr.check(parent, ['todo.shopping']))
+        res = self.house(action='act', entity_id='todo.shopping', service='add_item', data={'item': 'milk'},
+                         acting_member=self.mum, source='pwa', proven=True)
+        self.assertEqual(res['status'], 'success', res)
+        res = self.house(action='act', entity_id='timer.laundry', service='start',
+                         acting_member=self.mum, source='pwa', proven=True)
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls, [('todo', 'add_item', {'item': 'milk', 'entity_id': 'todo.shopping'}),
+                                      ('timer', 'start', {'entity_id': 'timer.laundry'})])
+        # A script that only starts a timer or adds a list item is readable, and
+        # the default grid lets a child run it.
+        for script in ('script.laundry_timer', 'script.need_milk'):
+            touched, reasons = cs.touched(script)
+            self.assertEqual(reasons, [], f'{script} should be readable')
+            self.assertEqual(cr.kinds_for([script]), ('other',), script)
+            res = self.house(action='act', entity_id=script, service='turn_on',
+                             acting_member=self.kid, source='pwa', proven=True)
+            self.assertEqual(res['status'], 'success', (script, res))
+
+    def test_tools_default_to_unproven(self):
+        import inspect
+        from services import music_tool
+        for fn in (house.house, music_tool.music, agent_tools_v2.house, agent_tools_v2.music):
+            self.assertIs(inspect.signature(fn).parameters['proven'].default, False,
+                          f'{fn.__module__}.{fn.__name__} must default proven=False')
+        # A direct call that never says proven= cannot unlock a proof kind.
+        res = house.house(action='act', entity_id='lock.front', service='unlock',
+                          acting_member=self.mum, source='pwa')
+        self.assertEqual(self.device_calls('lock'), [], f'house.house unlocked without proven=: {res}')
+        res = agent_tools_v2.house(action='act', entity_id='lock.front', service='unlock',
+                                   acting_member=self.mum, source='pwa')
+        self.assertEqual(self.device_calls('lock'), [], f'agent_tools_v2.house unlocked without proven=: {res}')
+        rules = cr.default_rules({})
+        rules['proof']['media'] = True
+        self.extra['ha_control'] = rules
+        for fn in (music_tool.music, agent_tools_v2.music):
+            res = fn(action='pause', player='Kitchen Speaker', acting_member=self.mum, source='pwa')
+            self.assertEqual((res['status'], res.get('needs')), ('refused', 'pin'), res)
+        self.assertEqual(self.device_calls('media_player'), [])
+
+    def test_held_route_says_proven(self):
+        # The granted held action runs as the PIN-proven person: the route passes
+        # proven=True explicitly rather than leaning on a default.
+        self.extra['panel_allow_unsafe_controls'] = True
+        held = cr.hold('house', {'action': 'act', 'entity_id': 'lock.front', 'service': 'unlock'}, self.panel_id)
+        seen = []
+        real = house.house
+
+        def spy(**kw):
+            seen.append(kw)
+            return real(**kw)
+        with patch.object(house, 'house', spy):
+            r = self.client.post(f'/api/ha/control/held/{held}',
+                                 headers={'X-Device-Token': self.panel, 'X-Control-Grant': self.grant()})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()['status'], 'success', r.text)
+        self.assertEqual(self.device_calls('lock'), [self.UNLOCKED])
+        self.assertIs(seen[0].get('proven'), True, f'the held route did not pass proven=True: {sorted(seen[0])}')
+
+    def test_pinless_proof_refusal_says_set_a_pin(self):
+        headers = self.pinless('pindad', 'parent')
+        seen = self.through_argyle('pindad', headers, self.UNLOCK)
+        for path in ('/api/chat', 'Argyle DM', 'phone voice'):
+            results = seen.get(path) or []
+            self.assertEqual(len(results), 1, (path, seen))
+            res = results[0]
+            self.assertEqual(res.get('needs'), 'pin', (path, res))
+            message = res['message']
+            self.assertIn('PIN', message, (path, res))
+            self.assertTrue('profile' in message.lower() or 'set' in message.lower(),
+                            f'{path}: a member with no PIN is told to enter one: {message!r}')
+        self.assertEqual(self.device_calls('lock'), [])
+
+    def test_identify_refusal_names_the_wall_or_a_speaker(self):
+        # A DM or a phone turn cannot run "Who's asking?": nothing there takes a PIN
+        # for a held action. Say where it can be done instead.
+        self.extra['panel_allow_unsafe_controls'] = True
+        seen = []
+        real = agent_tools_v2.house
+
+        def spy(**kw):
+            res = real(**kw)
+            seen.append(res)
+            return res
+        panel_minted = {'X-Member-Token': storage.create_member_token('mum', proof='pin', minted_on='panel')}
+        with patch.object(agent_tools_v2, 'house', spy):
+            r = self.dm_post(panel_minted)
+            self.assertEqual(r.status_code, 200, r.text)
+            r = self.phone_run(panel_minted)
+            self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(len(seen), 2, seen)
+        for path, res in zip(('Argyle DM', 'phone voice'), seen):
+            self.assertEqual(res.get('needs'), 'identify', (path, res))
+            self.assertNotIn('control_held', res, (path, res))
+            message = res['message'].lower()
+            self.assertTrue('wall' in message or 'speaker' in message,
+                            f'{path}: the identify refusal does not say where to identify: {res["message"]!r}')
         self.assertEqual(self.device_calls('lock'), [])
 
 

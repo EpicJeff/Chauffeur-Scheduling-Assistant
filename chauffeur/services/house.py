@@ -819,7 +819,7 @@ def _remote_for(query, entity_id, catalogue):
 
 
 def open_app(query='', entity_id='', app='', catalogue=None, acting_member=None,
-             voice_context=None, source=None, proven=True, device_id=None):
+             voice_context=None, source=None, proven=False, device_id=None):
     """Launch an app on an Android TV through its HA remote; the TV is read back, never trusted."""
     catalogue = _catalogue() if catalogue is None else catalogue
     remote = _remote_for(query, entity_id, catalogue)
@@ -913,7 +913,7 @@ def _trusted(acting_member, voice_context, source):
 
 def house(action='', query='', entity_id='', domain='', service='', data=None,
           hours=24, app='', acting_member=None, voice_context=None, source=None,
-          proven=True, device_id=None):
+          proven=False, device_id=None):
     """One boundary for every action: failures are plain results, never exceptions."""
     try:
         if ha_api.mode() == 'unconfigured':
