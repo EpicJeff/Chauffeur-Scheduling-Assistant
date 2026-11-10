@@ -152,10 +152,40 @@ class VoiceActorTests(unittest.TestCase):
         self.say('yes', JEFF, seconds=0.4)
         self.assertEqual(self.ctx().actor()['id'], 'jeff')
 
-    def test_actor_for_verified(self):
+    # Ruling (controller, 2026-11-10, after the branch review): a PIN is not a
+    # 10-minute pass for whoever talks next. A verified session acts only with
+    # per-turn evidence: this voice continues the PIN speaker's anchor, or a short
+    # reply inside the same conversation. Without it the turn keeps today's
+    # verified household rail (verified_member() unchanged).
+    def test_actor_for_verified_without_evidence_is_none(self):
         self.say("It's Jeff")
         self.say('my PIN is 1234')
-        self.say('what is on the calendar tomorrow')
+        self.say('what is on the calendar tomorrow')        # no audio: nothing ties this voice to the PIN
+        self.assertEqual(self.ctx().level, 'verified')
+        self.assertIsNone(self.ctx().actor())
+        self.assertEqual(self.ctx().verified_member()['id'], 'jeff')
+
+    def test_verified_short_reply_inside_conversation_acts(self):
+        self.say("It's Jeff", JEFF)
+        self.say('my PIN is 1234', JEFF)
+        self.say('what is on the calendar tomorrow', JEFF)
+        self.say('yes', JEFF, seconds=0.4)
+        self.assertEqual(self.ctx().actor()['id'], 'jeff')
+
+    def test_verified_short_reply_in_new_conversation_does_not_act(self):
+        from services import voice_conversation
+        self.say("It's Jeff", JEFF)
+        self.say('my PIN is 1234', JEFF)
+        self.say('what is on the calendar tomorrow', JEFF)
+        self.addCleanup(setattr, voice_conversation, 'GAP_SECONDS', voice_conversation.GAP_SECONDS)
+        voice_conversation.GAP_SECONDS = 0
+        self.say('yes', JEFF, seconds=0.4)
+        self.assertIsNone(self.ctx().actor())
+
+    def test_actor_for_verified(self):
+        self.say("It's Jeff", JEFF)
+        self.say('my PIN is 1234', JEFF)
+        self.say('what is on the calendar tomorrow', JEFF)
         self.assertEqual(self.ctx().level, 'verified')
         self.assertEqual(self.ctx().actor()['id'], 'jeff')
 

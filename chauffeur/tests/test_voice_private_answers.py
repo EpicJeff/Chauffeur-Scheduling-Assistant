@@ -404,6 +404,80 @@ class PrivateAnswerTests(unittest.TestCase):
             speech, _ = self.hold_mail()
         self.assertEqual(speech, 'Say approve booking to book the dentist for Friday.')
         self.assertEqual(self.vp._held, {})
+        # Branch review M1: the private answer is not lost either.
+        self.assertTrue(any('pineapple' in body for body in self.dm()), self.dm())
+
+    # --- branch review (Tasks 1-3) -------------------------------------------------
+    def verify_jeff(self):
+        storage.set_member_pin('jeff', '1234')
+        self.say("It's Jeff", JEFF)
+        self.say('my PIN is 1234', JEFF)
+        self.assertEqual(voice._sessions[('ha', KITCHEN)]['level'], 'verified')
+
+    def test_verified_session_other_voice_cannot_read_it(self):
+        """C1: Jeff gave his PIN; his mail is held; a voice that is merely
+        uncertain against Jeff (not a contradiction) says read it."""
+        import math
+        self.verify_jeff()
+        self.assertEqual(self.hold_mail()[0], QUESTION)
+        near = [0.0] * 256
+        near[0], near[5] = 1.0, 1.5
+        norm = math.sqrt(sum(x * x for x in near))
+        near = [x / norm for x in near]
+        self.assertTrue(fp.DIFFERENT < fp.score(near, JEFF) < fp.THRESHOLD)
+        speech, _ = self.say('read it out loud please', near, seconds=2.0)
+        self.assertNotIn('pineapple', speech)
+        self.assertTrue(any('pineapple' in body for body in self.dm()))
+
+    def test_verified_own_short_read_it_works(self):
+        self.verify_jeff()
+        self.hold_mail()
+        self.assertEqual(self.say('read it', JEFF, seconds=0.4)[0], SECRET)
+
+    def _actor_on_next_turn(self, text, voiceprint, seconds):
+        seen = []
+        real = agent_router.process_agent_request
+
+        def spy(*a, **kw):
+            seen.append(kw.get('voice_context'))
+            return real(*a, **kw)
+        with patch.object(agent_router, 'process_agent_request', side_effect=spy):
+            self.say(text, voiceprint, seconds=seconds)
+        return seen[-1].actor()
+
+    def test_send_it_closes_the_conversation(self):
+        """C2: "send it" closes the mic, so the next short turn is a new
+        conversation and inherits nobody."""
+        self.hold_mail()
+        speech, keep = self.say('send it', JEFF, seconds=0.4)
+        self.assertEqual(speech, 'Sent to your chat.')
+        self.assertFalse(keep)
+        self.assertIsNone(self._actor_on_next_turn('lights off', TV, 0.4))
+
+    def test_read_it_closes_the_conversation(self):
+        self.hold_mail()
+        speech, keep = self.say('read it', JEFF, seconds=0.4)
+        self.assertEqual(speech, SECRET)
+        if not keep:
+            self.assertIsNone(self._actor_on_next_turn('lights off', TV, 0.4))
+
+    def test_identity_prompt_keeps_the_conversation(self):
+        """Every satellite answer moves the conversation clock by the flag HA is
+        actually sent, intercepts included."""
+        from services import voice_conversation
+        ctx = voice.context({'ha_instance_id': 'ha', 'satellite_id': KITCHEN, 'device_id': 'device-' + KITCHEN,
+                             'request_id': 'r', 'observed_at': time.time()}, True)
+        result = self.say("It's Jeff")           # a name prompt keeps the mic open for the PIN
+        self.assertEqual(voice_conversation.in_conversation(ctx), bool(result[1]))
+
+    def test_read_it_works_with_conversation_mode_off(self):
+        """I2: the hold keeps the mic open even when conversation mode is off, so
+        the answer to the question is inside the conversation."""
+        self.settings['voice_conversation_mode'] = False
+        speech, keep = self.hold_mail()
+        self.assertEqual(speech, QUESTION)
+        self.assertTrue(keep)
+        self.assertEqual(self.say('read it', JEFF, seconds=0.4)[0], SECRET)
 
     def test_unknown_voice_never_held(self):
         from services import agent_tools_v2
