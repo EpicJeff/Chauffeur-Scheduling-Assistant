@@ -175,6 +175,7 @@ export async function boot() {
     return plan;
   }
   async function renderScene() {
+    view?.setSite?.(snapshot.site);
     if (tools?.dragging() || lot?.dragging()) return;
     const plan = timeline?.preview() || previewPlan(), signature = JSON.stringify(plan);
     const changed = signature !== lastScene;

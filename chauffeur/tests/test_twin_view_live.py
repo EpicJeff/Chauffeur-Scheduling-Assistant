@@ -184,11 +184,12 @@ def scenario_night_lights_rooms():
     with s.browser(launch_args=GPU_ARGS) as page:
         _open(page, s, 'tier=high')
         page.evaluate('() => window.__twin.setTime("night")')
-        n = page.evaluate('() => window.__twin.roomLights.filter(l => l.visible).length')
+        # Lamps keep their visibility (program keys never change with time); lit = visible with intensity.
+        n = page.evaluate('() => window.__twin.roomLights.filter(l => l.visible && l.intensity > 0).length')
         want = sum(len(b['lights']) for b in PLAN['buildings'])
         check(n == want, f'{n} lit of {want} fixtures')
         page.evaluate('() => window.__twin.setTime("day")')
-        check(page.evaluate('() => window.__twin.roomLights.filter(l => l.visible).length') == 0, 'off by day')
+        check(page.evaluate('() => window.__twin.roomLights.filter(l => l.visible && l.intensity > 0).length') == 0, 'off by day')
 
 
 def scenario_capture_returns_pngs():

@@ -1,6 +1,68 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.790 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.791 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.791 (2026-11-11, NOT device-verified): the 3D house's sun and moon follow the real date, time and place. A facing dial says which way the house fronts. Day and Night are previews that return to Now.**
+
+**The ask.** The user, 2026-11-11: "Day/Night should be controlled by the time of day with actual sun positioning based on the date and time. We know where the house is located and which way it faces (or we can set that) so this should be doable."
+
+This is slice 1a of modes and the glance bar.
+
+**How it was built.** Codex built it from a Claude brief. Claude ran the browser checks, updated one outdated check, and redrew the dial icon.
+
+**Ephemeris** (`static/twin/sky/ephemeris.js`, pure, no packages).
+- `sunPosition`, `moonPosition`, `moonIllumination` and `sunTimes` follow the NOAA/SunCalc low-precision formulas.
+- The sun is accurate to 0.5° and the moon to 1.5°.
+- Sunrise and sunset use -0.833°; dawn and dusk use -6°; polar days give null.
+
+**The site** (`services/twin_site.py`).
+- `GET api/house/twin` and `GET api/house/editor/state` carry `site: {lat, lon, front_bearing_deg, source, timezone}`.
+- lat/lon come from the cached geocode of `home_location`. No network call is made.
+- With no geocode, `source` is `'default'`: lat 40, with longitude from the browser's UTC offset.
+- **The facing bearing** is saved at `house_twin.place.lot.front_bearing_deg` through the existing `PUT api/house/editor/place/lot/placement` (PARENTS). It defaults to 180. No new routes.
+- **Model frame** (`look.js` `modelDirection`): the compass front is aligned to the Front camera's ray. With the front facing south, the northern noon sun lights the front.
+
+**The look** (`look.js`, `twin_view.js`). It updates every 60 s.
+- **Sun altitude bands.** The look moves smoothly through day (above 6°), golden hour, civil twilight and night (below -6°, fading to -12°).
+- **The moon.** It is bluish and lights the scene in proportion to its altitude and illuminated fraction. It casts no shadow.
+- **Programs never change with time.**
+  - The sun and moon are two DirectionalLights that are always visible.
+  - `scene.environment` is always set, with its intensity faded.
+  - Decorative lamps keep their visibility and change only intensity.
+  - So the day passing compiles nothing.
+- **Sun shadow map.** It refreshes at most once a minute, and at once on rebuilds and cutaway changes.
+
+**Buttons.** The Time group is Now / Day / Night.
+- Day previews local noon and Night previews 23:00 at the site, in the household's IANA timezone.
+- A preview returns to Now when Now is pressed, after 2 idle minutes, or on reload.
+- `setTime('day'|'night')` previews and `setTime('now')` returns to the clock. Test hook: `setClock`.
+
+**The facing dial** is in the editor's Your files step: "Which way does the front of the house face?"
+- You can drag it, type degrees, or use the arrow keys (Shift for 10° steps).
+- The house icon marks the front with an arrow and a door gap.
+
+**Tests.**
+
+| File | Passed |
+|---|---|
+| test_twin_ephemeris_js | 12/12, against NOAA, NASA and USNO references |
+| test_twin_site | 5/5 |
+| test_twin_sky_js | 7/7 |
+| test_house_twin_real_sun_live | 4/4 |
+| test_twin_view_live | 14 ok |
+| test_house_twin_real_lights_live | 10/10 |
+| test_house_twin_bake_live | 16/16 (3 on a solo rerun after loopback drops) |
+| test_house_twin_controls_live | 3/3 |
+| test_house_editor_guided_live and test_house_editor_steps_live | pass |
+| test_auth | 19/19 |
+| test_tailwind_build | 6/6 |
+| Editor node tests | pass |
+
+- test_twin_view_live's night-lamp check now counts lit lamps (visible with intensity), since lamps keep their visibility by design.
+
+**Open.**
+- No weather yet: clouds do not dim the sun.
+- The moon's phase is not drawn.
 
 **v2.499.790 (2026-11-11, NOT device-verified): the sky is no longer baked, and Lights mode keeps the time of day.**
 

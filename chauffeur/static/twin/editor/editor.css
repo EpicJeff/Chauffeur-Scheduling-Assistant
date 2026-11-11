@@ -197,6 +197,14 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .place-shell legend { padding: 0 4px; }
 .place-size { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .place-size button { grid-column: 1 / -1; }
+.place-compass { position: relative; width: 176px; height: 176px; margin: 12px auto; color: var(--editor-muted); }
+.place-compass > span { position: absolute; }
+.place-compass-n { top: 0; left: 50%; transform: translateX(-50%); }
+.place-compass-s { bottom: 0; left: 50%; transform: translateX(-50%); }
+.place-compass-e { right: 0; top: 50%; transform: translateY(-50%); }
+.place-compass-w { left: 0; top: 50%; transform: translateY(-50%); }
+#place-facing-dial { position: absolute; inset: 24px; width: 128px; height: 128px; border-radius: 50%; touch-action: none; color: var(--editor-accent); }
+#place-facing-house { pointer-events: none; }
 .place-setup, #place-suggestions, #place-photo-suggestions { display: grid; gap: 16px; min-width: 0; }
 #place-suggestions:empty, #place-photo-suggestions:empty { display: none; }
 #place-suggestions .editor-page > button { margin: 8px 6px 0 0; }
