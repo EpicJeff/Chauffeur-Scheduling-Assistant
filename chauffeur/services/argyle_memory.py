@@ -75,7 +75,7 @@ def prompt_block() -> str:
             "spoken). When a parent or adult corrects what a word means, or how to answer, or says 'remember', "
             "call memory(action='remember') without being asked, with kind='vocabulary' and the entity ids from "
             "find when it is what a phrase means, and say what you remembered. A child's correction is answered, "
-            "never stored.\n")
+            "never stored. A request about how Argyle talks goes to style, never to remember.\n")
     return head + ('\n'.join(lines) + '\n' if lines else '- nothing yet.\n')
 
 

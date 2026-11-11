@@ -1168,7 +1168,7 @@ sending or claiming, and never pass from_member/member_name for them.
                                    "start_ask", "mark_ask_sent", "answer_ask", "search_mail", "read_mail",
                                    "start_mission_for", "start_project", "find_in_chauffeur",
                                    "list_projects", "get_project", "add_project_step",
-                                   "add_to_project", "set_project_state", "set_step_state", "memory",
+                                   "add_to_project", "set_project_state", "set_step_state", "memory", "style",
                                    "report_gap"):
                     from services import agent_tools_v2 as _atv2, situations as _sit, access
                     # Resolve identity here, never from model arguments. Reads

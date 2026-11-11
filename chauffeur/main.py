@@ -20573,6 +20573,66 @@ def argyle_memories_forget(memory_id: str, request: Request = None):
     return res
 
 
+def _argyle_style_member(request: Request):
+    member = storage.get_member_by_token(request.headers.get('X-Member-Token') or '')
+    if not member:
+        raise HTTPException(status_code=401, detail='Sign in to choose your Argyle style.')
+    return member
+
+
+@app.get("/api/argyle/style/me")
+def argyle_style_me_get(request: Request):
+    from services import argyle_style
+    member = _argyle_style_member(request)
+    key, custom = argyle_style.household()
+    return {'status': 'success', **argyle_style.get_member_style(member['id']),
+            'household': {'style': key, 'custom': custom}, 'labels': argyle_style.LABELS}
+
+
+@app.post("/api/argyle/style/me")
+def argyle_style_me_set(request: Request, body: dict = Body(default={})):
+    from services import argyle_style
+    member = _argyle_style_member(request)
+    try:
+        choice = argyle_style.set_member_style(member['id'], body.get('style') or '', body.get('custom') or '')
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {'status': 'success', **choice}
+
+
+@app.get("/api/argyle/style")
+def argyle_style_list():
+    from services import argyle_style
+    key, custom = argyle_style.household()
+    people = []
+    for member in storage.get_all_members():
+        choice = argyle_style.get_member_style(member['id'])
+        if choice['style'] != 'household':
+            people.append({**{k: member.get(k) for k in ('id', 'name', 'role')}, **choice})
+    return {'household': {'style': key, 'custom': custom}, 'people': people}
+
+
+@app.post("/api/argyle/style")
+def argyle_style_household_set(body: dict = Body(default={})):
+    from services import argyle_style
+    try:
+        argyle_style.set_household_style(body.get('style') or '', body.get('custom') or '')
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    key, custom = argyle_style.household()
+    return {'status': 'success', 'household': {'style': key, 'custom': custom}}
+
+
+@app.post("/api/argyle/style/reset/{member_id}")
+def argyle_style_reset(member_id: str):
+    from services import argyle_style
+    try:
+        choice = argyle_style.set_member_style(member_id, 'household')
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {'status': 'success', **choice}
+
+
 @app.get("/api/argyle/gaps.md")
 def argyle_gaps_markdown(status: str = 'open'):
     """The gap list as a note to paste to whoever fixes the tools."""
