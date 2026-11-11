@@ -1,6 +1,115 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.787 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.788 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.788 (2026-11-11, NOT device-verified): the 3D house controls real devices. Tap toggles, hold opens a control ring at the marker, every kind has real controls, and state arrives live from Home Assistant.**
+
+**The ask.** The user asked, 2026-11-11: "For lights, I want to tap the light in the house to turn it on or off and I want the color and brightness controls right there with the light icon... Same with thermostats, I want the temp setting(s) shown as handle(s) on an arc like in the thermostat card and I want to be able to set modes. This has to give useful controls for most/all of the things or it is just a pretty shell with no value."
+
+**Where it is written up.**
+- Spec: `docs/superpowers/specs/2026-11-11-twin-device-controls-design.md`, user answers in §5.
+- Plan: `docs/superpowers/plans/2026-11-11-twin-device-controls.md`.
+- Rulings C1-C12 are in the SDD ledger.
+
+**How it was built.** Claude wrote the tests first. Codex built the push client, the registries, the ring and the controls for each kind. Claude agents ran the browser rounds, the whole-branch review and one fix wave.
+
+**Gestures** (`static/twin/live/ring.js`, `live.js`).
+- A tap toggles a light, switch, outlet or fan.
+- A scene or script tap runs it.
+- A tap on any other kind opens its ring.
+- A hold of 500 ms opens the ring at the marker.
+- The click Chromium sends when the finger lifts after a hold is swallowed.
+- When markers overlap, the one whose centre is nearest the finger wins (C4).
+- A drag that orbits the camera never opens a ring.
+- The ring follows the marker as the camera moves.
+- It closes on a tap outside it or on Escape.
+- Opened from the room panel, it takes the focus and gives it back when it closes.
+
+**Registries** (`kinds.js`, `modes.js`).
+- `registerKind({id, match, icon, look, quick, ring, panel, unsafe})`.
+- `registerMode({id, label, enter, update, leave})`; Lights and All come first.
+- Behaviour is pinned against `tests/fixtures/twin_live/kinds_before_registry.json`, captured from v2.499.787. Under C5, only room-row rows that moved onto a shared builder changed, and those gained only `data-ring-part` attributes.
+
+**Ring parts per kind** (`static/twin/live/controls/*.js`). Each room-panel row uses the same builder as its ring.
+- **light:** the centre is on/off (C2). A brightness arc, a kelvin arc, colour swatches and a wheel, and effect chips appear according to `supported_color_modes` and `effect_list`.
+- **switch, outlet:** the on/off centre only (C3).
+- **climate:**
+  - one setpoint handle, or low and high handles whenever a range is carried (`auto` included), on HA's thermostat arc;
+  - steps follow `target_temp_step`, clamped to min/max;
+  - chips for modes, fan modes and presets;
+  - the current temperature and what it is doing.
+- **fan:** speed (by `percentage_step`), oscillate, direction and presets.
+- **cover:** open, stop, close, position and tilt.
+  - A blind never asks.
+  - A garage asks once on Open and has no position or tilt arc.
+- **media:** play/pause, previous, next, volume, mute, sources and now playing.
+- **lock:** Unlock asks once.
+- **alarm:** one Arm button per supported mode; Disarm asks once.
+  - The code is typed in the page, never in a browser dialog.
+  - The typed code is cleared on every close.
+- **vacuum:** start, pause, return and locate.
+- **humidifier, water_heater:** on/off, a target and modes.
+- **camera:** a still that refreshes while the ring is open (see Cameras).
+- **Unoffered devices:** a device the household grid does not offer gets a read-only ring; sensors are always read-only.
+
+**Calls.** Every call goes through `live.control` to `api/ha/card/service` and the household control grid.
+- The ring shows only confirmed state, never an optimistic guess.
+- One call goes out within 1 s of the last input.
+- A press made while a send is out is never lost: the newest safe call waits and goes when the first answers (C10).
+- A second unlock or disarm while one is out says "Still working on …" and asks once.
+
+**Live state** (`services/ha_events.py`, `GET /api/ha/stream`).
+- `ha_events` holds one Home Assistant websocket subscribed to `state_changed`.
+  - Each push replaces its row in the states cache in place and marks the cache fresh.
+  - It reconnects with growing backoff and says why once per change of failure reason.
+  - Saving the Home Assistant URL or token restarts it.
+- `GET /api/ha/stream` (WALL_OR_SERVICE) is Server-Sent Events.
+  - It takes no entity list from the URL; the server derives the house's set, optionally narrowed by `?area=` (C11).
+  - It sleeps until woken and sends a ping every 15 s.
+  - With no HA it answers and sends nothing.
+- The page batches pushes to one animation frame.
+- If the stream fails, the 10 s poll carries on, and the page says so once.
+
+**Cameras** (C9, user answer "Apply the grid everywhere", 2026-11-11).
+- **One gate.** `_camera_refusal` in `main.py` applies the household grid's `other` kind to every lane a camera picture leaves by:
+  - `GET /api/house/camera/{entity_id}`;
+  - `/api/camera_proxy` and `/api/camera_proxy_stream`, which the hosted HA cards use;
+  - `/api/ha/image` and `/api/ha/image64` for a camera path, which board tiles and picture cards use.
+- **Refusals.** A refusal is a 403 and Home Assistant is never asked.
+  - A cell that needs identifying says to open the camera on your phone.
+  - A cell that needs a PIN says to sign in on this device.
+- **When control is off.** With the household's HA control switch off, cameras keep the route tiers they had before this release (C12: the switch governs control, not seeing).
+- **Tokens.** Home Assistant camera tokens never leave the server.
+  - `ha_api.public_state()` strips `access_token` and the `entity_picture` token from every state sent out: card states, board payloads and the stream.
+  - The access log blanks every `*token=` value.
+- **Stills.**
+  - The page sends identity in headers and shows each frame as a blob.
+  - It fetches one frame at a time, the next 2 s after the last answer, and aborts after 8 s.
+  - The server reads the warm cache and caps a frame at 4 MB and 6 s.
+
+**More** (HA's own cards). Each room-panel row has a More button that mounts HA's card through `ChauffeurHaCards.mountBuiltin`:
+- `hui-light-card`, `hui-thermostat-card` or `hui-humidifier-card` for those kinds;
+- `hui-tile-card` for anything else.
+
+Locks, garages and alarms have no More button, and neither do devices the grid does not offer. If a card cannot mount, our own controls stand in.
+
+**Tests.**
+
+| Group | Files and results |
+|---|---|
+| Push and cameras | test_ha_events 12/12, test_twin_camera_route 11/11 |
+| Registries and ring | test_twin_kinds_js 3/3, test_twin_ring_js 9/9, test_twin_ring_edges_js 5/5 |
+| Controls and the live layer | test_twin_controls_js 22/22, test_twin_live_stream_js 4/4, test_twin_live_control_js 7/7 |
+| In the browser | test_house_twin_controls_live 3/3, test_house_twin_controls_more_live 9/9 |
+| Camera surfaces | test_board_ha_tiles 31/31, test_ha_cards 18/18, test_ha_card_host_runtime 8/8, test_board_cards 16/16, test_ha_frontend 24/24 |
+| Auth and dialogs | test_auth 19/19, test_control_grant_js 29/29 |
+
+The twin's live, wall, bake and real-lights suites stay green.
+
+**Open.**
+- A household that wants cameras hidden from someone must keep HA control on and refuse that person's `other` kind.
+- An image request cannot carry the identify or PIN retry, so an `ask` cell refuses cameras on that surface.
+- The ring's look has been checked only in the desktop browser, never on a phone or the Pi panel.
 
 **v2.499.787 (2026-11-11, NOT device-verified): each light's glow is baked on the desktop and drawn live on every screen: soft shadows, no light through walls, lit windows.**
 
