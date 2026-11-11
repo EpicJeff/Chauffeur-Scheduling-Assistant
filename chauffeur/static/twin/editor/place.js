@@ -130,6 +130,54 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     return result;
   }
   const patch = (id, body) => mutate(`place/buildings/${encodeURIComponent(id)}`, 'PATCH', body);
+  let facing = 180, facingPointer = null;
+  const dial = el('place-facing-dial'), degrees = el('place-facing-degrees');
+  function showFacing(value) {
+    facing = (Math.round(value) % 360 + 360) % 360;
+    degrees.value = String(facing);
+    dial.setAttribute('aria-valuenow', String(facing));
+    dial.setAttribute('aria-valuetext', `${facing} degrees`);
+    el('place-facing-house').style.transform = `rotate(${facing}deg)`;
+  }
+  const saveFacing = () => work(async () => {
+    await mutate('place/lot/placement', 'PUT', { front_bearing_deg: facing });
+    status('House facing saved.');
+  });
+  function pointFacing(event) {
+    const rect = dial.getBoundingClientRect();
+    showFacing(Math.atan2(event.clientX - rect.left - rect.width / 2,
+      rect.top + rect.height / 2 - event.clientY) * 180 / Math.PI);
+  }
+  dial.addEventListener('pointerdown', event => {
+    if (stopped() || event.button !== 0) return;
+    event.preventDefault(); facingPointer = event.pointerId;
+    dial.setPointerCapture?.(event.pointerId); pointFacing(event);
+  });
+  dial.addEventListener('pointermove', event => {
+    if (facingPointer === event.pointerId && !stopped()) pointFacing(event);
+  });
+  dial.addEventListener('pointerup', event => {
+    if (facingPointer !== event.pointerId) return;
+    facingPointer = null; dial.releasePointerCapture?.(event.pointerId); saveFacing();
+  });
+  dial.addEventListener('pointercancel', () => { facingPointer = null; showFacing(place().lot?.front_bearing_deg ?? 180); });
+  dial.addEventListener('keydown', event => {
+    const delta = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[event.key];
+    if (delta === undefined || stopped()) return;
+    event.preventDefault(); showFacing(facing + delta * (event.shiftKey ? 10 : 1));
+  });
+  dial.addEventListener('keyup', event => {
+    if (event.key.startsWith('Arrow') && !stopped()) saveFacing();
+  });
+  degrees.addEventListener('input', () => {
+    const value = Number(degrees.value);
+    if (degrees.value !== '' && Number.isInteger(value) && value >= 0 && value <= 359) showFacing(value);
+  });
+  el('place-facing-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const value = Number(degrees.value);
+    if (degrees.value !== '' && Number.isInteger(value) && value >= 0 && value <= 359) { showFacing(value); saveFacing(); }
+  });
   async function paid(title, key, action, part = null) {
     const estimates = sheets.estimates || {};
     const estimate = key === 'build' ? part === 'place'
@@ -418,6 +466,8 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     }
   }
   function render() {
+    if (facingPointer === null && document.activeElement !== degrees && document.activeElement !== dial)
+      showFacing(place().lot?.front_bearing_deg ?? 180);
     const addKind = el('place-add-kind'), chosenKind = addKind.value;
     addKind.replaceChildren(...kinds().map(([value, label]) => node('option', label, { value })));
     if (kinds().some(([id]) => id === chosenKind)) addKind.value = chosenKind;

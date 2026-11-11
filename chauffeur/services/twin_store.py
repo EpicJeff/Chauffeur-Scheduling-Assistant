@@ -112,6 +112,16 @@ def place() -> dict:
         return deepcopy(_place_state()['place'])
 
 
+def set_front_bearing(value) -> dict:
+    if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value < 360:
+        raise ValueError('Choose a front bearing from 0 to 359 degrees.')
+    with LIFECYCLE, _LOCK:
+        row = _place_state()
+        row['place']['lot']['front_bearing_deg'] = value
+        _save(row)
+        return deepcopy(row['place']['lot'])
+
+
 def _drawing_parts(row):
     """Rows own their pages; row-less pages still belong to the source part."""
     parts = set()

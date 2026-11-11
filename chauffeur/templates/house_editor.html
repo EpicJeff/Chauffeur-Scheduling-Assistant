@@ -18,7 +18,7 @@
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/library', 'editor/flags'] %}
+    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/library', 'editor/flags'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/editor/flags.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/flags.js' | ver | tojson }};
@@ -166,6 +166,23 @@
         <div class="place-layout">
           <div id="place-cards" data-place-step="Your files"></div>
           <aside class="place-setup" aria-label="Set up the lot">
+          <section class="place-card" data-place-step="Your files">
+            <h3 id="place-facing-label">Which way does the front of the house face?</h3>
+            <form id="place-facing-form">
+              <div class="place-compass">
+                <span class="place-compass-n">N</span><span class="place-compass-e">E</span>
+                <span class="place-compass-s">S</span><span class="place-compass-w">W</span>
+                <button id="place-facing-dial" type="button" role="slider" aria-labelledby="place-facing-label" aria-valuemin="0" aria-valuemax="359" aria-valuenow="180" aria-orientation="horizontal">
+                  <svg id="place-facing-house" viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
+                    <path d="M32 3 L40 13 H24 Z" fill="currentColor"/><path d="M27 19 H16 V50 H48 V19 H37" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><path d="M27 19 V24 M37 19 V24" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              </div>
+              <label>Front bearing in degrees<input id="place-facing-degrees" type="number" min="0" max="359" step="1" required value="180"></label>
+              <p class="place-muted">The arrow and the door gap mark the front. Drag the house or use the arrow keys. 0° is north, 90° east, 180° south, 270° west.</p>
+              <button type="submit">Save facing</button>
+            </form>
+          </section>
             <section class="place-card" data-place-step="Your lot">
               <h3>The plot plan</h3>
               <p>Upload it to the Lot and confirm its page role. Read it to find building footprints, then choose which to keep.</p>
