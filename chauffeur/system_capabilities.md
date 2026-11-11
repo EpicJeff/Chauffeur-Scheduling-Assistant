@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.788 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.789 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.789 (2026-11-11, NOT device-verified): the wall panel glow is a thinner ring.**
+
+The user: "Can you make the rainbow ring tighter, like 1/3 as big and a tighter falloff?"
+
+- `#panel-talk-glow` edge is `clamp(7px, 1.35vmin, 15px)` (was `clamp(20px, 4vmin, 44px)`), and the edge masks drop to 35% within the outer 30% of that band before fading out, so the light hugs the screen edge. States, timing and the household switch are unchanged.
+
+Tests: `tests/test_panel_glow.py`, `tests/test_screensaver.py`; screenshot checked.
 
 **v2.499.788 (2026-11-11, NOT device-verified): the 3D house controls real devices. Tap toggles, hold opens a control ring at the marker, every kind has real controls, and state arrives live from Home Assistant.**
 
