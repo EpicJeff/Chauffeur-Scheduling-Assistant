@@ -1,6 +1,203 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.783 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.787 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.787 (2026-11-11, NOT device-verified): each light's glow is baked on the desktop and drawn live on every screen: soft shadows, no light through walls, lit windows.**
+
+**The ask.** The user asked, 2026-11-10: "Can we use baked lightmaps for the lights and just toggle those on or off. Since the lights don't move, we should be able to optimize this."
+
+**Where it is written up.**
+- Spec: `docs/superpowers/specs/2026-11-10-house-baked-lights-design.md`, user answers in §5.
+- Plan: `docs/superpowers/plans/2026-11-10-house-baked-lights.md`.
+- Rulings B1-B17 are in the SDD ledger.
+
+**How it was built.** Claude wrote the tests first. Codex built the atlas, storage, baker and runtime. Claude agents ran the vendoring, the browser rounds, the whole-branch review and one fix wave.
+
+**What is baked.** Room lights and sky visibility.
+- The sun and moon stay real-time, as one directional light each (user answer, spec §5).
+- Baked sky visibility multiplies the ambient light rather than adding to it (B16), so corners darken and window-lit areas brighten.
+
+**The layout** (`static/twin/bake/atlas.js`, B2, B6, B7, B12). It is worked out in a Web Worker and cached in IndexedDB, which keeps the last 2 (B10). It has two parts.
+- A sky atlas in `uv2` covers every opaque merged mesh.
+- A room-light atlas in `uv3` covers only surfaces a room light reaches.
+  - Horizontal faces are clipped along room outlines, so each face belongs to one room.
+  - `lmRoom` says which room a face belongs to.
+  - Each room has its own region on shared pages.
+- Bank 0 holds every room, even rooms with no lights; extra banks hold only rooms with more than 2b lights.
+- Fixtures, glass and alpha-tested plant cards are left out of both atlases, so every tier computes the same key.
+- Every tier lays out at 8 texels/ft (B11, I1).
+
+**Compression** (vendored Basis Universal v1.50 and three r187's KTX2 pieces, with hashes in `static/vendor/basis-universal/VENDORED.md`; B4, B5, B8, B9, B13).
+- Each page is UASTC KTX2 with Zstd supercompression.
+- Two lights share a page: light 0 in RGB and light 1 in alpha.
+- A worker transcodes each page to BC4/BC5 on desktop and EAC R11/RG11 on the Pi, falling back to RGBA.
+- The household's whole bake is about 1.9 MB on disk, against 33.5 MB raw.
+
+**Baking** (`baker.js`, `bake_pass.js`).
+- Only the desk's 3D house view bakes (`/house/twin`, High or Max, a parent; B15). The editor never bakes; its status chip says "Lights wait to re-bake".
+- It bakes on idle frames, pauses while the person drags, and resumes after 2 s of stillness.
+- Only stale lights are re-baked. Light keys follow each light's spot.
+- A change of model round cancels a bake in flight.
+- A failed read aborts the step. Nothing is uploaded and the manifest is left untouched.
+- A server lease per key stops two machines baking at once (`POST api/house/bakes/{key}/lease`, PARENTS, 60 s; B17).
+- The desk page shows "Baking lights n of m" and a `Bake lighting now` button.
+- "Bake lighting now" keeps each light's old entry until its new one lands.
+
+**Storage** (`services/twin_bakes.py`).
+- Routes under `api/house/bakes/`:
+  - page and manifest writes are PARENTS;
+  - reads are WALL_OR_SERVICE with ETag;
+  - writes are atomic;
+  - KTX2 or PNG is accepted (B14);
+  - the manifest records the format, densities, round and complete flag.
+- Old keys are pruned to the current and previous ones, plus any written in the last 10 minutes.
+- The page index and manifest size are bounded.
+
+**Drawing it** (`lightmap_material.js`, `runtime.js`).
+- Tints come from a DataTexture, so toggling, dimming and recolouring never recompile a shader.
+- A light with a fresh bake frees its real-time pool slot. Any other light keeps the v2.499.783 real-time path.
+- Lit rooms glow through their glazed windows from outside.
+- A wall opened before any bake picks the bake up when it lands, with no reload.
+- Polls that change nothing re-upload nothing.
+- Pages that hold no placed light are never fetched or held.
+- With no bake at all, Lights mode behaves exactly as v2.499.783.
+
+**Measured on the desktop GPU** (the Pi 5 is unmeasured).
+- Baking the household's 4 lights plus the sky takes about 24 s; 10 lights take about 42 s.
+- The atlas worker takes 2.9 s.
+- GPU memory for the bake is about 26 MB, or about 37 MB with 10 lights.
+- At the Low tier with 10 lights, a frame takes 2.41 ms baked against 3.01 ms real-time.
+
+**Tests.**
+- test_twin_bake_atlas_js 12/12, test_twin_bakes 15/15, test_twin_baker_js 11/11.
+- test_twin_bake_runtime_js 11/11, test_twin_lightmap_material_js 7/7, test_twin_basis_vendor_js 10/10.
+- test_house_twin_bake_live 16/16.
+- The real-lights, live-layer, wall and editor suites stay green.
+
+**Open.**
+- The yard paving pokes 0.25 ft into the pool house, leaving a dark strip at the wall's foot. This is a generator overlap.
+- A light placed inside a wall bakes one side only.
+- The atlas fingerprint takes about 150-220 ms on the main thread per load.
+
+**v2.499.786 (2026-11-11, NOT device-verified): doors and windows go where you click on a wall.**
+
+The user, 2026-11-11: "I have not gotten adding doors or windows to work ... it fails to add every time I try either one."
+
+Cause: the editor's Add door and Add window tools turned a click into a point on the focused floor's plane, and only accepted a wall within 1 ft of that point. So:
+- a click on a wall's face did nothing and showed "Click a solid wall.";
+- with no floor chosen, only the first building's ground floor counted, so the pool house and upper floors could never take an opening;
+- an inside wall seen at an angle could take the door on the wrong wall.
+
+Fix (`static/twin/editor/draw.js`, `twin_view.pick(x, y, {skip})`, `library.surfaceAt`):
+- The tool finds the wall under the cursor in 3D and skips room selection boxes. The opening goes on that wall, on any building and any floor, from any camera.
+- The wall is found again at commit time, so a save still in flight cannot leave a stale wall id.
+- The straight-down floor-plane lookup stays as the fallback.
+- The prompts read "Click a wall where the door goes."
+
+Refusals in plain words:
+- an opening overlapping another on the same wall, along it and in height: "There is already a door or window there. Pick a clear stretch of wall for the door." This is new in `twin_model_ops._opening_clear`, and also applies to Argyle's `add_opening`. A window above a door is still allowed.
+- a wall too short: "The door does not fit on that wall there. Pick a longer stretch of wall." (both edit paths);
+- the editor's "That wall is too short for a 3 foot door."
+
+Test: `tests/test_house_editor_openings_live.py` covers 5 scenarios:
+- an outside-wall door with no floor chosen;
+- an upper-floor window above the porch;
+- an inside-wall door;
+- an inside-wall window;
+- the overlap refusal.
+
+It failed 0/5 on the old code.
+
+Open:
+- moving or resizing an opening into another one is not checked;
+- in Select mode, a wall above the porch still selects the porch, as before this fix.
+
+**v2.499.785 (2026-11-11, NOT device-verified): the house builds itself in front of you, and you can stop it, fix it by hand and carry on.**
+
+Spec: `docs/superpowers/specs/2026-11-09-house-connected-model-design.md` §6, piece 4. Plan: `docs/superpowers/plans/2026-11-10-house-guided-build-piece-4.md`, rulings Q1-Q15 in the SDD ledger. Claude wrote every test first and Codex built Tasks 1-8. Claude agents ran the browser rounds, the reviews and the fix waves. Task 9, retiring the legacy per-floor build path, moved to its own follow-up branch (Ruling Q15). The legacy path still works.
+
+Reader calls stream and can be stopped (`services/llm_stream.py`, `twin_reads.read_stream`):
+- Anthropic (Messages SSE) and Gemini (`streamGenerateContent?alt=sse`) stream their answer. Other providers read blocking (Ruling Q3).
+- **Stop.** `llm_stream.Cancel` ends a call within 2 s at any moment: during connect, before the first byte, or mid-answer.
+  - `llm_budget.urlopen` hands the socket to Cancel the moment it connects.
+  - On Windows the socket is detached and closed off the Stop thread.
+- **Cost.** A stopped or dropped call is charged its input plus the output it produced (`twin_cost.record(cancelled=, produced_chars=)`), never `max_output_tokens` (Ruling Q11).
+- `read_stream` matches `read`: pool and credentials, cooldowns, workflow `twin`, error bodies, one parse retry, OpenAI JSON mode.
+
+Pieces as they are read:
+- `services/twin_stream.Pieces` parses partial JSON and emits each complete array item.
+- The build (`twin_build.py`) sends `{type:'piece', step, stage, kind, piece}` events.
+- **Streamed steps.** Only the draft, draft_level and draft_rooms steps stream pieces (Ruling Q13). Every other read uses the streaming call only so Stop can end it.
+- **Stage names:** scale, outline, walls, rooms, doors and windows, fixtures, roofs, finishes, yard.
+- **The building's frame.** The step-start event carries the building's frame. A building that is not yet in the plan still shows its ghosts in the right place.
+- **Saving.** Build state is saved on stage change, throttled, not per chunk. Piece events are dropped once their step settles.
+
+Stop, fix, continue (the user's own Stop rule, Ruling Q14):
+- A Stop lets the piece in progress finish, waiting at most 1 s for it, then ends the call.
+- A reply that has fully arrived is always kept and cached, so Continue never pays twice.
+- The complete pieces that arrived are published as one round, marked `partial`.
+- **Continue** re-reads the stopped step on the model as it stands.
+  - A person's pieces are never overwritten.
+  - Deleted pieces stay deleted, because tombstones cover read fixtures too.
+  - A disagreement becomes a proposal with Use this / Dismiss.
+- A dropped stream stops the build with a plain message and offers Read it again. A max-tokens draft keeps the per-floor fallback (Ruling Q8).
+- A restart mid-stream rebuilds the partial round from the saved piece events.
+
+The reader is told the house's rules (`twin_reads.py`):
+- rooms are closed by walls;
+- every opening sits on a wall;
+- fixtures on the plans (lights, switches, outlets, fans, smoke alarms) are read as `fixtures`.
+
+The bridge turns each fixture into an anchor on its surface:
+- A wall fixture within 2 ft snaps to its named wall (Ruling Q12).
+- Kinds are normalised by words, so a pendant is a light and a smoke detector or thermostat is a sensor.
+- A fixture with no surface becomes a flag.
+- A person's anchor is never displaced.
+- Fixtures are kept through the per-floor fallback.
+
+The editor (`static/twin/editor/`):
+- **Front door.** With no house, the canvas shows `Let's make your house` with `Add plans and photos` and `Draw it myself`. The second arms Draw wall.
+- **Step strip.** `Your files`, `Your lot`, `Build`, `Check it`, `Link to Home Assistant` (`steps.js`), always visible, each marked done, now or not yet.
+  - Every control of the old Your place dialog lives in the Your files, Your lot or Build panel. Menu › Your place opens Your files.
+  - A stopped build reads Build: now, never done.
+- **Status chip** (`status_chip.js`):
+  - `Working` while a step runs, `Waiting on you` while paused, at a checkpoint or stopped (Ruling Q10);
+  - `$x.xx so far` from the ledger, which the chip always matches;
+  - `about $x.xx`, including Continue's estimate after a Stop;
+  - Stop inside the chip while a build is running, paused or at a checkpoint.
+- **Ghosts that settle** (`build_ghosts.js`, sharing `ghost_geometry.js` with proposal ghosts). Each piece appears translucent in the real house at its building's transform, and turns solid when its round lands. A malformed piece is skipped and never freezes the view. Two tabs see the same pieces, and either tab's Stop ends the build.
+- **Checks one at a time** (`checks.js`). The pause, the model flags and the proposals form one queue, opened from Check it or by a new pause.
+  - Each check frames and highlights its thing; roof checks outline their roof area.
+  - Actions: `Looks right`, `Fix it` (opens the piece; a paused build stays paused) and `Skip for now`.
+  - A pause's re-read is `Read it again · about $x.xx`.
+- Streamed batches no longer reload `/state`. Only cost or settle events do.
+- At 1280x800 the tool rail fits in two columns.
+
+Proven by:
+- test_llm_stream 17/17, test_twin_stream 6/6, test_twin_reads_rules 4/4, test_twin_fixtures_merge 6/6;
+- test_twin_build_stream 9/9, test_twin_build_stream_more 20/20;
+- test_house_editor_guided_live 6/6, test_house_editor_steps_live 8/8, test_house_editor_live, test_house_place_live;
+- the editor model live suites and the node suites for ghosts, chip, steps, checks and flags;
+- every twin build and model suite.
+
+Exit on the device (spec §9): watch a fresh pool house build piece by piece, stop it once mid-way, fix it by hand, continue, and check that the spend on screen matches the ledger.
+
+**v2.499.784 (2026-11-11, NOT device-verified): the 3D house wall reaches Argyle, and warnings show from every floor.**
+
+The gap audit of 2026-11-11 found three wall-panel faults. Each was fixed test-first: the tests are in `tests/test_house_twin_wall_live.py` and `tests/test_twin_markers_js.py`.
+
+- **Argyle on the 3D house wall** (`/house/twin?panel=true&kiosk=true`).
+  - Before: the page hid `#chat-overlay-container`, so tapping the orb opened nothing. Chat, Ask and tap-to-talk were dead there.
+  - Now: the chat box rests as the orb, as it does on every other panel. Marker labels keep clear of the orb and the open box.
+  - Known and unchanged: the text box does not take focus when the orb opens. That is true on every panel, so no on-screen keyboard rises.
+- **Attention on every level** (`live/live.js`).
+  - A device that needs attention stays drawn while its floor is hidden.
+  - Its floor's button in the floor picker carries a dot and ", needs attention".
+  - Calm markers still hide with their floor.
+- **Door and window contacts count as attention** (`live/markers.js`).
+  - A binary sensor of class door, window, opening or garage_door is attention when it is on.
+  - It reads "open" or "closed" instead of "on" or "off".
+  - Motion, occupancy, presence and temperature are not attention.
 
 **v2.499.783 (2026-11-10, NOT device-verified): Lights mode lights the house from each fixture.**
 

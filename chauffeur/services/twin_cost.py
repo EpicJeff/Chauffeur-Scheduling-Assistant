@@ -134,7 +134,8 @@ def require_clear() -> None:
         raise CheckpointReached(checkpoint, spent)
 
 
-def record(stage: str, usage: list[dict], run: str | None = None) -> list[dict]:
+def record(stage: str, usage: list[dict], run: str | None = None, *,
+           cancelled=False, produced_chars=0) -> list[dict]:
     added = []
     for request in usage:
         inp, out = request.get('input_tokens'), request.get('output_tokens')
@@ -147,7 +148,8 @@ def record(stage: str, usage: list[dict], run: str | None = None) -> list[dict]:
                 if inp is None:
                     inp = 1600 * (request.get('images') or 0) + math.ceil((request.get('prompt_chars') or 0) / 4)
                 if out is None:
-                    out = request.get('max_output_tokens') or UNKNOWN_OUTPUT_TOKENS
+                    out = (produced_chars // 4 if cancelled else
+                           request.get('max_output_tokens') or UNKNOWN_OUTPUT_TOKENS)
             usd, priced = price(request['model'], inp, out)
         added.append({'stage': stage, 'model': request['model'],
                       'input_tokens': inp, 'output_tokens': out, 'usd': usd,

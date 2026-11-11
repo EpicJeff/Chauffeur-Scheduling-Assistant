@@ -610,6 +610,22 @@ def _opening(building, piece):
         raise Refused(f'Invalid opening: {reason}.')
 
 
+def _opening_clear(building, piece, noun):
+    """A new opening never lands inside another on the same wall: it would be
+    stored and drawn nowhere a person can see. One above another is fine."""
+    from services import twin_model_bridge
+    flat = twin_model_bridge.flatten({'buildings': [building]})['buildings'][0]
+    new = next(o for o in flat['openings'] if o['id'] == piece['id'])
+    for other in flat['openings']:
+        if other['id'] == new['id'] or other.get('wall') != new.get('wall') or other.get('state') == 'ghost':
+            continue
+        across = (min(other['at'] + other['width'] / 2, new['at'] + new['width'] / 2)
+                  - max(other['at'] - other['width'] / 2, new['at'] - new['width'] / 2))
+        up = min(other['head'], new['head']) - max(other['sill'], new['sill'])
+        if across > _EPS and up > _EPS:
+            raise Refused(f'There is already a door or window there. Pick a clear stretch of wall for the {noun}.')
+
+
 def _rehost(building, piece, host, opening=False):
     host = deepcopy(host)
     if not isinstance(host, dict):
@@ -862,7 +878,15 @@ def _more(building, op, ha_catalogue=None):
                  'sill': _number(op.get('sill', min(2, height / 3) if op['kind'] == 'window' else 0)),
                  'head': _positive(op.get('head', min(7, height))), 'state': 'settled'}
         building['openings'].append(piece)
-        _rehost(building, piece, piece, True)
+        noun = {'slider': 'sliding door', 'bifold': 'folding door', 'garage': 'garage door',
+                'passage': 'passage'}.get(op['kind'], op['kind'])
+        try:
+            _rehost(building, piece, piece, True)
+        except Refused as exc:
+            if 'outside the wall span' in str(exc):
+                raise Refused(f'The {noun} does not fit on that wall there. Pick a longer stretch of wall.') from exc
+            raise
+        _opening_clear(building, piece, noun)
     elif kind in ('add_anchor', 'add_item'):
         collection = 'anchors' if kind == 'add_anchor' else 'items'
         piece = {'id': _id(building, collection[:-1]), 'state': 'settled'}

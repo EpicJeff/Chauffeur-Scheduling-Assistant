@@ -1,15 +1,21 @@
 import * as THREE from 'three';
 
+const CONTACTS = ['door', 'window', 'opening', 'garage_door'];
+
 // entityId is optional: an alarm panel is known by its domain (the catalogue may not kind it 'alarm').
 export function markerState(kind, state, attributes, entityId = '') {
   const attrs = attributes || {}, value = String(state ?? 'unknown');
-  const label = value + (kind === 'sensor' && attrs.unit_of_measurement ? ` ${attrs.unit_of_measurement}` : '');
+  // A door or window contact is on when open: it reads open or closed, and open wants attention.
+  const contact = kind === 'sensor' && CONTACTS.includes(attrs.device_class) && ['on', 'off'].includes(value);
+  const label = contact ? (value === 'on' ? 'open' : 'closed')
+    : value + (kind === 'sensor' && attrs.unit_of_measurement ? ` ${attrs.unit_of_measurement}` : '');
   if (['unknown', 'unavailable'].includes(value)) return { look: 'unavailable', label };
   const alarm = kind === 'alarm' || String(entityId).startsWith('alarm_control_panel.');
   const attention = kind === 'lock' && ['unlocked', 'unlocking', 'open', 'opening', 'jammed'].includes(value)
     || kind === 'garage' && ['open', 'opening'].includes(value)
     || alarm && ['triggered', 'pending', 'arming'].includes(value)
-    || kind === 'sensor' && ['smoke', 'moisture', 'gas'].includes(attrs.device_class) && value === 'on';
+    || kind === 'sensor' && ['smoke', 'moisture', 'gas'].includes(attrs.device_class) && value === 'on'
+    || contact && value === 'on';
   const off = ['off', 'closed', 'locked', 'idle', 'standby'].includes(value) || alarm && value === 'disarmed';
   return { look: attention ? 'attention' : off ? 'off' : 'on', label };
 }

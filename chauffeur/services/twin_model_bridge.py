@@ -559,7 +559,7 @@ def _flat_opening(opening, roof_ids):
 
 def _surface_host(building, point, level, kind):
     for room in building['rooms']:
-        if room['level'] != level:
+        if room['level'] != level or room.get('state') in ('ghost', 'proposal'):
             continue
         # A tiny square also counts boundary points without another polygon API.
         x, y = point
@@ -571,6 +571,82 @@ def _surface_host(building, point, level, kind):
     return None
 
 
+def _fixture_host(building, piece, geometry=None):
+    point, level, surface = piece['at'], piece['level'], piece['surface']
+    if surface in ('ceiling', 'floor'):
+        return _surface_host(building, point, level, surface)
+    if surface != 'wall':
+        return None
+    geometry = geometry if geometry is not None else hosts.snapshot(building)
+    candidates, named = [], []
+    room_host = _surface_host(building, point, level, 'floor')
+    room = geometry['rooms'].get((room_host or {}).get('floor'))
+    for wid, wall in geometry['walls'].items():
+        if wall['level'] != level:
+            continue
+        a, b = wall['a'], wall['b']
+        length = math.dist(a, b)
+        dx, dy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+        at = max(0, min(length, (point[0] - a[0]) * dx + (point[1] - a[1]) * dy))
+        side = 'left' if (point[1] - a[1]) * dx - (point[0] - a[0]) * dy >= 0 else 'right'
+        host = {'wall': wid, 'side': side, 'at': at, 'z': 3.5}
+        projected = [a[0] + dx * at, a[1] + dy * at]
+        gap = math.dist(projected, point)
+        if gap > 2:
+            continue
+        if wid == piece.get('wall') or wid.split('~')[0] == piece.get('wall'):
+            named.append((gap, wid, host))
+        if room and any(not _coverage(a, b, [{'from': c, 'to': d, 'level': level}], level)
+                        for c, d in _segments(room['polygon'])):
+            candidates.append((gap, wid, host))
+    return min(named or candidates, default=(None, None, None), key=lambda c: c[:2])[2]
+
+
+def _read_fixtures(building, fixtures):
+    geometry = hosts.snapshot(building)
+    person_spots = []
+    for anchor in building['anchors']:
+        if _person(anchor) and twin_model._host_error(anchor.get('host'), building) is None:
+            surface = hosts._surface(geometry, anchor['host'])
+            if surface:
+                person_spots.append((surface.get('level'), hosts._point(geometry, anchor['host'])[:2]))
+    # A rooms read can replace the draft's derived room. Recover generated
+    # anchors from their read coordinates; a person's chosen host stays theirs.
+    lost = [p for p in building['anchors'] if not _person(p) and 'surface' in p and 'at' in p
+            and twin_model._host_error(p.get('host'), building) is not None]
+    lost_ids = {p['id'] for p in lost}
+    building['anchors'] = [p for p in building['anchors'] if p['id'] not in lost_ids]
+    for index, detail in enumerate([*fixtures, *lost]):
+        piece = deepcopy(detail)
+        piece.setdefault('id', f'fixtures-{index + 1}')
+        building['flags'] = [f for f in building['flags']
+                             if not (isinstance(f.get('piece'), dict)
+                                     and f['piece'].get('fixture', {}).get('id') == piece['id'])]
+        if any(p['id'] == piece['id'] for p in building['anchors']):
+            continue
+        piece['src'] = piece.get('src') or {'sheet': '', 'page': 0, 'step': 'draft'}
+        piece['kind'] = twin_plan.fixture_kind(piece['kind'])
+        host = _fixture_host(building, piece, geometry)
+        if (host is None or twin_model._host_error(host, building) is not None
+                or piece['kind'] not in ('light', 'switch', 'outlet', 'fan', 'camera', 'sensor')):
+            text = (f"This fixture has an unknown kind ({detail['kind']}); choose its kind."
+                    if piece['kind'] not in ('light', 'switch', 'outlet', 'fan', 'camera', 'sensor')
+                    else f"This {detail['kind']} has no valid surface; place it again.")
+            flag = {'level': piece['level'], 'at': list(piece['at']), 'text': text,
+                    'piece': {'fixture': piece}}
+            if flag not in building['flags']:
+                building['flags'].append(flag)
+            continue
+        point = hosts._point(geometry, host)
+        occupied = any(level == piece['level'] and math.dist(point[:2], spot) <= .5
+                       for level, spot in person_spots)
+        if not occupied:
+            piece['host'] = host
+            piece.setdefault('offset', 0)
+            piece.setdefault('device', None)
+            building['anchors'].append(piece)
+
+
 def _details(building, flat, previous):
     for name in ('anchors', 'items'):
         pinned = [deepcopy(p) for p in previous.get(name, []) if _person(p)]
@@ -580,8 +656,11 @@ def _details(building, flat, previous):
     building['devices'] = [pinned.pop(p['id'], deepcopy(p))
                            for p in flat.get('devices', previous.get('devices', []))]
     building['devices'].extend(pinned.values())
+    _read_fixtures(building, [p for p in flat.get('fixtures', []) if 'rect' not in p])
     for name, target, surface in (('lights', 'anchors', 'ceiling'), ('fixtures', 'items', 'floor')):
         for index, detail in enumerate(flat.get(name, [])):
+            if name == 'fixtures' and 'rect' not in detail:
+                continue
             piece = deepcopy(detail)
             piece.setdefault('id', f'{name}-{index + 1}')
             if any(p['id'] == piece['id'] for p in building[target]):

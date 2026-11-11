@@ -219,7 +219,7 @@ import {readFileSync} from 'node:fs';
 const scripts=JSON.parse(readFileSync(process.argv[2]));
 for(const mode of ['getter','methods','available']) {
   const handlers=[], nodes=new Map();let reloads=0;
-  const element=()=>({style:{},dataset:{},children:[],classList:{add(){},remove(){},contains(){return true;}},
+  const element=()=>({style:{},dataset:{},children:[],classList:{add(){},remove(){},toggle(){},contains(){return true;}},
     addEventListener(){},appendChild(){},querySelectorAll(){return [];},getBoundingClientRect(){return {height:0};},setAttribute(){},focus(){}});
   const get=id=>{if(id==='chat-input')return null;if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);};
   const context={console,URL,URLSearchParams,Headers,DOMException,

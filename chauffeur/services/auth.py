@@ -454,6 +454,12 @@ RULES = [
     (ANY, '/api/house/state', WALL_OR_SERVICE, None),
     ('GET', '/api/house/neighborhood', WALL_OR_SERVICE, None),
     ('GET', '/api/house/twin', WALL_OR_SERVICE, None),
+    ('POST', '/api/house/bakes/{key}/{page}.png', PARENTS, None),
+    ('GET', '/api/house/bakes/{key}/{page}.png', WALL_OR_SERVICE, None),
+    ('GET', '/api/house/bakes/{key}', WALL_OR_SERVICE, None),
+    ('PUT', '/api/house/bakes/{key}', PARENTS, None),
+    # Ruling B17: one desk bakes a key at a time; a child's view asks and gets 403 (M4).
+    ('POST', '/api/house/bakes/{key}/lease', PARENTS, None),
     ('GET', '/api/house/ha/link', PARENTS, None),
     ('GET', '/api/house/live', WALL, None),
     ('POST', '/api/house/ha/identify', PARENTS, None),

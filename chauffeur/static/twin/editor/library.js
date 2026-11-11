@@ -169,8 +169,8 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     for (let i = 0; i < 3; i++) r.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -groundAt(getPlan(), point.x / FT, -point.z / FT) * FT), point);
     return [point.x / FT, -point.z / FT];
   }
-  function surfaceAt(event) {
-    const picked = view.pick(event.clientX, event.clientY); if (!picked) return null;
+  function surfaceAt(event, options) {
+    const picked = view.pick(event.clientX, event.clientY, options); if (!picked) return null;
     const building = getPlan().buildings.find(b => b.id === picked.building);
     let kind = picked.kind, id = picked.id;
     if (['opening', 'anchor', 'item', 'fixture', 'light'].includes(kind)) {

@@ -1351,6 +1351,11 @@ async def add_no_cache_headers(request: Request, call_next):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+    elif request.url.path.startswith("/static/twin/bake/") and request.url.path.endswith(".js"):
+        # The lightmap workers import their modules by relative URL, where no import
+        # map applies: revalidate those (a cheap 304) so a panel never runs last
+        # week's worker code against this week's page (I9).
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -7346,7 +7351,7 @@ def house_facade_delete(fid: str):
 def house_twin_api():
     from services import twin_store
     return {'plan': twin_store.current(), 'rounds': twin_store.rounds(),
-            'kit_id': 'modern_farmhouse'}
+            'round': twin_store.current_id(), 'kit_id': 'modern_farmhouse'}
 
 
 def _house_ha_context(settings=None):
@@ -7539,6 +7544,76 @@ def house_ha_identify(req: HouseHaIdentifyRequest, request: Request):
     timer.daemon = True
     timer.start()
     return {'ok': True, 'how': 'toggle'}
+
+
+@app.post('/api/house/bakes/{key}/{page}.png')
+async def house_bake_page_post(key: str, page: str, request: Request):
+    from services import twin_bakes
+    try:
+        twin_bakes.check_key(key)
+        twin_bakes.check_page(page)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > twin_bakes.MAX_PAGE_BYTES:
+            raise HTTPException(status_code=413, detail='Bake page exceeds 16 MiB.')
+        data.extend(chunk)
+    try:
+        etag = await asyncio.to_thread(twin_bakes.save_page, key, page, bytes(data))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {'etag': etag}
+
+
+@app.post('/api/house/bakes/{key}/lease')
+def house_bake_lease(key: str, body: dict = Body(...)):
+    """Ruling B17: one desk bakes a key at a time (60 s, renewed while baking)."""
+    from services import twin_bakes
+    try:
+        ok, answer = twin_bakes.lease(key, body.get('owner'), body.get('action', 'acquire'))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not ok:
+        raise HTTPException(status_code=409, detail='Another screen is baking this house.')
+    return answer
+
+
+@app.get('/api/house/bakes/{key}/{page}.png')
+def house_bake_page_get(key: str, page: str, request: Request):
+    from services import twin_bakes
+    try:
+        data, etag = twin_bakes.read_page(key, page)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail='No such bake page.') from exc
+    matches = request.headers.get('if-none-match', '').split(',')
+    headers = {'ETag': etag}
+    if any(tag.strip().removeprefix('W/') in (etag, '*') for tag in matches):
+        return Response(status_code=304, headers=headers)
+    kind = 'image/ktx2' if data.startswith(twin_bakes.KTX2_SIGNATURE) else 'image/png'
+    return Response(content=data, media_type=kind, headers=headers)
+
+
+@app.get('/api/house/bakes/{key}')
+def house_bake_manifest_get(key: str):
+    from services import twin_bakes
+    try:
+        return twin_bakes.read_manifest(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail='No such bake manifest.') from exc
+
+
+@app.put('/api/house/bakes/{key}')
+def house_bake_manifest_put(key: str, body: dict = Body(...)):
+    from services import twin_bakes
+    try:
+        return twin_bakes.save_manifest(key, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/house/twin/library/{asset_id}/{name:path}")
@@ -8163,12 +8238,15 @@ def house_editor_record():
 
 @app.get('/api/house/editor/state')
 def house_editor_state():
-    from services import twin_build, twin_cost, twin_store
+    from services import twin_bakes, twin_build, twin_cost, twin_store
     with twin_store.LIFECYCLE:
         latest = twin_build.latest()
         return {'plan': twin_store.current(), 'model': twin_store.current_model(), 'rounds': twin_store.rounds(),
-                'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint()},
-                'build': latest}
+                'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint(),
+                         'estimate': twin_build.remaining_estimate(latest) if latest else None},
+                'build': latest,
+                # Ruling B15: the editor never bakes; its chip says when lights wait to re-bake.
+                'bake': twin_bakes.status(twin_store.current_id())}
 
 
 @app.get('/api/house/twin/rounds/{round_id}')

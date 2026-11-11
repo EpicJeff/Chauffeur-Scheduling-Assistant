@@ -22,9 +22,11 @@
       'three/addons/': twinBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': twinBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'live/markers', 'live/live', 'live/room_panel', 'live/modes'] %}
+    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
+    // Bake modules import three by its path; map that path onto the one versioned three.
+    twinImports[new URL(twinBase + 'static/vendor/three-r187/three.module.js', location.href).href] = twinImports.three;
     const twinMap = document.createElement('script'); twinMap.type = 'importmap';
     twinMap.textContent = JSON.stringify({ imports: twinImports }); document.head.appendChild(twinMap);
     document.addEventListener('DOMContentLoaded', () => {
@@ -44,6 +46,10 @@
     #twin-controls button { border:1px solid transparent; border-radius:999px; padding:6px 11px; min-height:44px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
     #twin-controls button[aria-pressed="true"] { background:rgba(227,211,171,.2); border-color:rgba(227,211,171,.45); }
     #twin-controls button:hover, #twin-controls button:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
+    #twin-bake-controls output { align-self:center; padding:0 10px 0 4px; font-weight:500; white-space:nowrap; }
+    /* A floor holding something that wants attention (an unlocked lock, an open door) wears the
+       marker's attention colour, so it shows whichever floor is on screen. */
+    #twin-views button[data-attention]::after { content:''; display:inline-block; width:9px; height:9px; margin-left:6px; border-radius:50%; background:#edaa48; box-shadow:0 0 0 2px #fff0d4; vertical-align:middle; }
     #twin-tier, #twin-status, #twin-hud { padding:8px 12px; border:1px solid rgba(227,211,171,.45); border-radius:8px; background:rgba(28,23,16,.9); color:#f0e6cf; font:13px/1.4 system-ui; }
     #twin-hud { position:fixed; right:16px; bottom:calc(var(--panel-shelf-h, 0px) + 64px); z-index:46; pointer-events:none; }
     #twin-tier { position:fixed; right:16px; bottom:calc(var(--panel-shelf-h, 0px) + 16px); z-index:46; }
@@ -77,7 +83,9 @@
     .twin-room-device .twin-device-actions { margin-top:8px; align-items:center; }
     .twin-room-device label { display:flex; flex-wrap:wrap; align-items:center; gap:8px; width:100%; }
     .twin-room-device input[type="range"] { flex:1; min-width:100px; min-height:44px; accent-color:#e3d3ab; }
-    html[data-twin-wall] #top-nav-bar, html[data-twin-wall] #chat-overlay-container,
+    /* The chat box stays: on a panel it rests as the Argyle orb (ha_theme.html), the only way
+       into Argyle and tap-to-talk there. */
+    html[data-twin-wall] #top-nav-bar,
     html[data-twin-wall] #twin-tier, html[data-twin-wall] #twin-hud,
     /* The wall keeps the floor picker: from the Exterior a tap lands on the roof, so a
        floor is the only way to reach a room. Time and camera are preview tools. */

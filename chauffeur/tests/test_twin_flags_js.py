@@ -105,8 +105,31 @@ btn('Dismiss').dispatchEvent(new Event('click'));await new Promise(r=>setTimeout
 assert.deepEqual(saved.at(-1),{op:'dismiss_proposal',building:B,id:p.id});assert.equal(flags.proposals().length,0);
 assert.ok(bf.walls.some(w=>w.id===north.id&&w.from[1]===north.from[1]));
 console.log('  ok Dismiss posts its own operation and preserves the person wall');
+// Final review M9: a proposal's ghost and a build's ghost are one concept, drawn by one builder.
+// The same opening on the same wall gives the same ghost: same box, same look.
+const {createBuildGhosts}=await import(file('static/twin/editor/build_ghosts.js'));
+const ghostMeshes=()=>{const out=new Set();view.scene.updateMatrixWorld(true);view.scene.traverse(o=>{
+  if(o.isMesh&&!o.isInstancedMesh&&[].concat(o.material||[]).some(m=>m.transparent&&m.opacity<1))out.add(o);});return out;};
+const opening={id:'O-ghost',wall:north.id,level:north.level,at:4,width:3,sill:3,head:7,kind:'window'};
+const before=ghostMeshes();
+b.proposals=[{id:'O-ghost:proposal',kind:'opening',against:null,piece:{...opening,id:'O-ghost:proposal',state:'proposal'}}];
+bf.proposals=b.proposals;flags.refresh();tick();
+const proposed=[...ghostMeshes()].filter(o=>!before.has(o));
+assert.equal(proposed.length,1,'one proposal ghost mesh for the opening');
+const builds=createBuildGhosts(view),beforeBuild=ghostMeshes();
+builds.add({seq:1,type:'piece',step:'draft',stage:'doors and windows',kind:'opening',building:B,piece:opening});
+const built=[...ghostMeshes()].filter(o=>!beforeBuild.has(o));
+assert.equal(built.length,1,'one build ghost mesh for the opening');
+const boxOf=o=>{o.geometry.computeBoundingBox();return o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld);};
+const [pb,bb]=[boxOf(proposed[0]),boxOf(built[0])];
+for(const k of ['min','max'])for(const axis of ['x','y','z'])
+  assert.ok(Math.abs(pb[k][axis]-bb[k][axis])<1e-6,`the same opening gives the same ghost box (${k}.${axis}: ${pb[k][axis]} vs ${bb[k][axis]})`);
+assert.equal(proposed[0].material.opacity,built[0].material.opacity,'both ghosts wear the same fill');
+assert.equal(proposed[0].material.color.getHexString(),built[0].material.color.getHexString(),'both ghosts wear the same colour');
+builds.clear();b.proposals=[];bf.proposals=[];flags.refresh();
+console.log('  ok a proposal ghost and a build ghost of the same piece come from one builder');
 abort.abort();panel.dispose();view.dispose();assert.equal(frames.size,0);
-console.log('4/4 passed');
+console.log('5/5 passed');
 """
 
 

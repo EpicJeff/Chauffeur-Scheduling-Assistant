@@ -9,8 +9,12 @@ import { base, loadSky, disposeObject } from './twin_library.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 import { hostPoint } from './twin_hosts.js';
 import { keepLive } from './live/live.js';
+import { mountBake } from './bake/runtime.js';
 
-export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } = {}) {
+export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true } = {}) {
+  // Ruling B15: only the 3D house view bakes lights. The editor's scene is the house
+  // mid-edit (a focused floor, faded floors, editable geometry), so it never bakes.
+  const bakes = bake && !el.closest?.('.editor-shell');
   const probe = document.createElement('canvas').getContext('webgl2');
   if (!probe) throw new Error('This screen needs WebGL 2 to show the house.');
   tier = new URLSearchParams(location.search).get('tier') || tier;
@@ -227,7 +231,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
     ready: false, scene, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
-    groups: null, roomLights: [], plan,
+    groups: null, roomLights: [], plan, round,
     render,
     cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
     saveView() {
@@ -290,7 +294,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       controls.target.set(focus.x * FT, frame.elevation * FT, -focus.y * FT);
       controls.enableRotate = false; controls.update(); resize();
     },
-    pick(clientX, clientY) {
+    // `skip` names piece kinds the ray passes through (the opening tools look
+    // through a porch's or a room's pick box for the wall behind it).
+    pick(clientX, clientY, { skip = [] } = {}) {
       if (!twin) return null;
       const rect = renderer3.domElement.getBoundingClientRect();
       if (clientX < rect.left || clientX >= rect.right || clientY < rect.top || clientY >= rect.bottom) return null;
@@ -309,6 +315,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       });
       const hits = raycaster.intersectObjects(candidates, false).filter(hit => {
         const { kind, buildingId, pieceId } = hit.object.userData;
+        if (skip.includes(kind)) return false;
         if (kind !== 'room') return true;
         const room = plan.buildings.find(b => b.id === buildingId)?.rooms?.find(r => r.id === pieceId);
         if (!room?.polygon?.length) return true;
@@ -511,6 +518,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       const key = `${buildingId}:${levelId}`, group = twin?.groups.levels[key];
       const before = plan.buildings.find(b => b.id === buildingId), after = flat.buildings.find(b => b.id === buildingId);
       if (!group || !before || !after || twin.editableLevel !== key) return;
+      view.bake?.stop();
       // The focused level has per-piece meshes (R42). Rebuild its changed
       // buffers in place: no roof, yard, texture or optional-model work per frame.
       // Keep selection materials alive throughout a gesture. Replacing every
@@ -632,6 +640,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
     },
     async rebuild(nextPlan, { preserveYard = false } = {}) {
+      view.bake?.stop();
       const version = ++revision; view.ready = false;
       const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel });
       next.editableLevel = editableLevel;
@@ -733,11 +742,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       attachSheet();
       paintSelection();
       view.ready = true;
+      startBake();
       el.dispatchEvent(new CustomEvent('twinrebuilt', { detail: view }));
     },
     dispose() {
       if (disposed) return;
       disposed = true; ++revision; view.ready = false;
+      view.bake?.stop();
       view.live?.stop();
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
@@ -769,6 +780,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       sun.intensity = .12; ambient.intensity = .18;
     } else { sun.visible = !night; sun.intensity = SUN_INTENSITY; ambient.intensity = night ? .24 : 1.8; }
     renderer3.toneMappingExposure = evening || night ? 1.2 : 1;
+    view.bakeSky?.();
+  }
+  view.bakeSky = () => view.bake?.sky(ambient.color, ambient.intensity);
+  function startBake() {
+    view.bake?.stop();
+    if (!bakes) return;
+    mountBake(view, twin.root, { host: document.getElementById('twin-controls') });
+    view.bakeSky();
   }
   function applyLights() {
     if (!twin) return;
@@ -911,7 +930,7 @@ async function boot() {
     const kitResponse = await fetch(base() + 'api/house/twin/kit/' + encodeURIComponent(snapshot.kit_id));
     if (!kitResponse.ok) throw new Error('Could not load the house style.');
     const kit = await kitResponse.json();
-    const view = await mountTwin(host, { plan: snapshot.plan, kit });
+    const view = await mountTwin(host, { plan: snapshot.plan, kit, round: snapshot.round ?? null });
     document.getElementById('twin-tier').textContent = view.tier === 'low' ? 'Low' : 'High';
     const views = document.getElementById('twin-views');
     const syncViews = () => {
