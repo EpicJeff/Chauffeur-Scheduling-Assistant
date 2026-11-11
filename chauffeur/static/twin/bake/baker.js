@@ -1,30 +1,57 @@
-import { assignChannels } from './atlas.js';
-import { renderPage } from './bake_pass.js';
+import { assignChannels, CHANNEL_FALLBACK, CHART_STATS, fingerprint } from './atlas.js';
+import { renderPage, addRoomBounceAcrossPages } from './bake_pass.js';
 import { withBakeLease } from './bake_lock.js';
+import { reachLights } from './reach.js';
+import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
 
 export { encodePage, decodePage } from './codec.js';
 
 export function lightKey(atlas, light, slot, bank) {
-  const text = JSON.stringify([atlas.key, light.device, light.at, slot,
-    bank.rooms.map(r => [r.room, r.region])]);
-  const h = [0x811c9dc5, 0x9e3779b9, 0x85ebca6b, 0xc2b2ae35];
-  for (let k = 0; k < text.length; k++) for (let i = 0; i < 4; i++) h[i] = Math.imul(h[i] ^ text.charCodeAt(k), 0x01000193 + i * 2);
-  return h.map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');
+  const hash=fingerprint();
+  hash.add(JSON.stringify(['light-slots-7',light.reach || atlas.key,light.device,light.at]));
+  if (slot.assignments) {
+    const ranking=[...slot.assignments].sort((a,b)=>a.chartKey<b.chartKey?-1:a.chartKey>b.chartKey?1:0), rank=new Uint8Array(2);
+    for (const a of ranking) {
+      hash.add(a.chartKey);rank[0]=a.bank;rank[1]=a.channel;hash.add(rank);
+    }
+  } else hash.add(JSON.stringify([slot.bank,slot.channel]));
+  return hash.key();
 }
 
-export function bakeLayout(atlas, layout, lights) {
-  const slots = assignChannels(atlas.room.rooms, lights), banks = atlas.room.packBanks(lights);
+export function bakeLayout(atlas, layout, lights, history) {
+  lights = reachLights(atlas.room, lights);
+  const slots = assignChannels(atlas.room.rooms, lights, decodeSlots(history,atlas.room.charts.length)), banks = atlas.room.packBanks(lights, slots);
   let offset = 0;
-  const offsets = banks.map(b => { const n = offset; offset += b.pages; return n; });
+  // Geometry reserves a fixed address stride, even when its trailing pages are
+  // unlit. A lamp reaching a new page must not shift another bank's stored bytes.
+  const offsets = banks.map(b => { const n = offset; offset += b.addressPages ?? b.pages; return n; });
   const entries = {};
+  const byChart=banks.map(b=>new Map(b.charts.map(c=>[c.id,c])));
+  const address=new Int32Array(12);
   for (const light of lights) {
     const s = slots[light.device]; if (!s) continue;
-    const region = banks[s.bank].rooms.find(r => r.room === s.room)?.region;
-    if (!region) continue;
-    entries[light.device] = { page: offsets[s.bank] + region.page, channel: s.channel,
+    const location=fingerprint(), usedPages=new Set();
+    const visit=(c,bank)=>{
+      if (!c) return;
+      usedPages.add(offsets[bank]+c.page);
+      const r=c.rect,s=c.sourceRegion;
+      address[0]=c.id;address[1]=bank;address[2]=c.page;
+      address[3]=r.x;address[4]=r.y;address[5]=r.w;address[6]=r.h;
+      address[7]=s?.page ?? -1;address[8]=s?.x ?? -1;address[9]=s?.y ?? -1;
+      address[10]=s?.w ?? -1;address[11]=s?.h ?? -1;
+      location.add(address);
+    };
+    if (s.assignments) for (const a of s.assignments) visit(byChart[a.bank].get(a.chart),a.bank);
+    else for (const c of banks[s.bank].charts) if ((s.receivers || [s.room]).includes(c.room)) visit(c,s.bank);
+    const pages=[...usedPages].sort((a,b)=>a-b);
+    if (!pages.length) continue;
+    entries[light.device] = { page: pages[0], pages, channel: s.channel,
+      location: location.key(),
       key: lightKey(atlas, light, s, banks[s.bank]) };
   }
-  return { slots, banks, offsets, entries, pages: offset,
+  return { slots, banks, offsets, entries, pages: offset, fallback: slots[CHANNEL_FALLBACK],
+    ownership:encodeSlots(slots,atlas.room.charts.length),
+    ranking:slots[CHART_STATS] || {worstDroppedFraction:0,worstChart:null,droppedCharts:0},
     densities: { room: layout.room.density } };
 }
 
@@ -40,13 +67,14 @@ async function exists(api, url) {
 export function createBaker(view, { renderer, atlas, layout, lights, api, codec, force = false,
   round = view.round ?? null, owner = null }) {
   const plan = view.plan, enabled = ['high', 'max'].includes(view.tier);
-  const packed = bakeLayout(atlas, layout, lights), path = `api/house/bakes/${atlas.key}`;
+  let packed, assignmentHistory;
+  const path = `api/house/bakes/${atlas.key}`;
   const who = owner || [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
   let cancelled = false, manifest = null, done = 0, total = 0, busy = false;
   const unavailable = new Set();
   // Bake lighting now re-bakes every light, but each keeps its stored entry
   // (same key) until its new bake lands, so panels never drop to real-time mid-run (M6).
-  const redo = new Set(force ? lights.filter(l => packed.entries[l.device]).map(l => l.device) : []);
+  const redo = new Set();
   const valid = () => !cancelled && view.plan === plan;
   const readManifest = async () => {
     const response = await api(path);
@@ -54,15 +82,19 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     if (!response.ok) throw new Error(`Could not read the bake manifest (HTTP ${response.status}).`);
     return response.json();
   };
-  const isStale = device => packed.entries[device] && (redo.has(device) || manifest.lights[device]?.key !== packed.entries[device].key);
+  const isStale = device => packed.entries[device] && (redo.has(device) || manifest.lights[device]?.key !== packed.entries[device].key ||
+    manifest.lights[device]?.location !== packed.entries[device].location);
   const ready = enabled ? readManifest().then(async m => {
+    assignmentHistory=m?.ownership;
+    packed=bakeLayout(atlas,layout,lights,assignmentHistory);
+    if(force) for(const l of lights) if(packed.entries[l.device]) redo.add(l.device);
     manifest = m || { pages: packed.pages, lights: {} };
     if (m) {
-      const ids = new Set(Object.values(m.lights).map(e => e.page));
+      const ids = new Set(Object.values(m.lights).flatMap(e => e.pages || [e.page]));
       const missing = new Set();
       for (const p of ids) if (!(await exists(api, `${path}/${p}.png`))) missing.add(p);
       manifest = { ...manifest, lights: { ...manifest.lights } };
-      for (const [id, e] of Object.entries(manifest.lights)) if (missing.has(e.page)) { unavailable.add(id); delete manifest.lights[id]; }
+      for (const [id, e] of Object.entries(manifest.lights)) if ((e.pages || [e.page]).some(p => missing.has(p))) { unavailable.add(id); delete manifest.lights[id]; }
     }
     total = lights.filter(l => isStale(l.device)).length;
   }) : Promise.resolve();
@@ -84,6 +116,10 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     if (!valid()) return null;
     // Another desk may have baked lights since this one last looked.
     const latest = await readManifest();
+    if(latest?.ownership && !sameSlots(latest.ownership,assignmentHistory)) {
+      assignmentHistory=latest.ownership;
+      packed=bakeLayout(atlas,layout,lights,assignmentHistory);
+    }
     if (latest) {
       for (const [device, e] of Object.entries(latest.lights))
         if (!unavailable.has(device) && !redo.has(device)) manifest.lights[device] = e;
@@ -91,43 +127,54 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     const stale = lights.filter(l => isStale(l.device)).map(l => l.device), id = stale[0];
     if (!id) return null;
     const light = lights.find(l => l.device === id), s = packed.slots[id];
-    const bank = packed.banks[s.bank], size = layout.room.page;
-    const charts = bank.charts.filter(c => c.room === s.room);
+    const size = layout.room.page;
+    const owned=new Map(s.assignments?.map(a=>[a.chart,a]));
+    const charts = packed.banks.flatMap(bank=>bank.charts.flatMap(c=>{
+      const a=owned.get(c.id);
+      return a?.bank===bank.bank || !s.assignments && bank.bank===s.bank && (s.receivers || [s.room]).includes(c.room)
+        ? [{...c,page:c.page+packed.offsets[bank.bank],channel:a?.channel ?? s.channel}] : [];
+    }));
     const pages = [...new Set(charts.map(c => c.page))];
-    const uploads = [];
+    const uploads = [], rendered = [];
     for (const p of pages) {
-      const page = p + packed.offsets[s.bank];
+      const page = p;
       const mine = charts.filter(c => c.page === p);
-      const pixels = await renderPage(view, renderer, mine, size, light, layout, atlas);
+      const pixels = await renderPage(view, renderer, mine, size, light, layout, atlas, {deferBounce:true});
       if (!valid()) return null;
+      rendered.push({page, charts:mine, bytes:pixels});
+    }
+    addRoomBounceAcrossPages(rendered,size);
+    for (const {page, charts:mine, bytes:pixels} of rendered) {
       const channels = await pageData(page, size, 2);
-      // Replace only this room's charts, never a neighbour or the other light.
+      // Replace only this light's receiving charts and channel.
       for (const c of mine) {
         const r = c.rect;
         for (let y = Math.max(0, r.y - 2); y < Math.min(size, r.y + r.h + 2); y++)
           for (let x = Math.max(0, r.x - 2); x < Math.min(size, r.x + r.w + 2); x++) {
             const sx = Math.max(r.x, Math.min(r.x + r.w - 1, x)), sy = Math.max(r.y, Math.min(r.y + r.h - 1, y));
-            channels[s.channel][y * size + x] = pixels[(sy * size + sx) * 4];
+            channels[c.channel][y * size + x] = pixels[(sy * size + sx) * 4];
           }
       }
       const bytes = await codec.encode({ width: size, height: size, channels });
       uploads.push({ page, bytes });
     }
     if (!valid()) return null;
-    const next = { ...manifest, pages: packed.pages, densities: packed.densities,
+    const next = { ...manifest, pages: packed.pages, densities: packed.densities, ownership:packed.ownership,
       formats: Array(packed.pages).fill('ktx2'), lights: { ...manifest.lights } };
     for (const [device, entry] of Object.entries(next.lights))
-      if (entry.key !== packed.entries[device]?.key || unavailable.has(device)) delete next.lights[device];
+      if (entry.key !== packed.entries[device]?.key || entry.location !== packed.entries[device]?.location || unavailable.has(device)) delete next.lights[device];
     // Sparse banks can change the global offsets of later, unchanged banks.
     // Move their existing bytes rather than re-baking those lights. Read all
     // sources before the first upload so overlapping moves cannot eat data.
     const moves = new Map();
     for (const [device, entry] of Object.entries(next.lights)) {
       const expected = packed.entries[device];
-      if (entry.page !== expected.page && !moves.has(expected.page)) {
-        const r = await api(`${path}/${entry.page}.png`);
+      for (let i = 0; i < expected.pages.length; i++) {
+        const page = expected.pages[i], before = (entry.pages || [entry.page])[i];
+        if (before === page || moves.has(page)) continue;
+        const r = await api(`${path}/${before}.png`);
         if (!r.ok) throw new Error('Could not preserve the later light bank.');
-        moves.set(expected.page, new Uint8Array(await r.arrayBuffer()));
+        moves.set(page, new Uint8Array(await r.arrayBuffer()));
       }
       next.lights[device] = expected;
     }
@@ -156,7 +203,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     if (!valid()) return null;
     const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
     if (!r.ok) throw new Error('Could not save the bake manifest.');
-    manifest = next; redo.delete(id); done++;
+    manifest = next; assignmentHistory=packed.ownership; redo.delete(id); done++;
     unavailable.delete(id);
     return id;
   }

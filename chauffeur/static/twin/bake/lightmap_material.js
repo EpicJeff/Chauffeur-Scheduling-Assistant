@@ -14,6 +14,47 @@ export function setLightTint(uniforms, room, slot, rgb, intensity) {
   const i = (room * t.image.width + slot) * 4;
   t.image.data.set([c.r, c.g, c.b, 0], i); t.needsUpdate = true;
 }
+// Flat chart addressing stays below WebGL2's minimum texture-size limit even
+// when a detailed house has more charts than texture rows.
+export const chartAddress = (chart, bank, banks) => [((chart * banks + bank) % 1024), Math.floor((chart * banks + bank) / 1024)];
+export function applyChartIndices(atlas) {
+  const arrays = new Map(), ArrayType = atlas.room.charts.length < 32768 ? Int16Array : Float32Array;
+  for (const c of atlas.room.charts) {
+    const g=c.mesh.geometry;
+    if (!arrays.has(g)) arrays.set(g,new ArrayType(g.attributes.position.count).fill(-1));
+    for (const f of c.faces) arrays.get(g).fill(c.id,f*3,f*3+3);
+  }
+  for (const [g,data] of arrays) {
+    g.setAttribute('lmRoom',new THREE.BufferAttribute(data,1));
+    g.deleteAttribute('lmLightPage'); // Bank pages now come from chart metadata.
+  }
+}
+export function chartLightmapUniforms(chartCount, packed, lights, pageSize, layers) {
+  if (lights.length > 4095) throw new Error('Too many light indices for a chart owner texture.');
+  const uniforms = lightmapUniforms(1, Math.max(1, lights.length)), banks = Math.max(1, packed.banks.length);
+  const texture = new THREE.DataTexture(new Float32Array(1024 * Math.max(1, Math.ceil(chartCount*banks/1024))*4),
+    1024, Math.max(1, Math.ceil(chartCount*banks/1024)), THREE.RGBAFormat, THREE.FloatType);
+  const owners = new Map();
+  lights.forEach((l,index) => {
+    const slot = packed.slots[l.device]; if (!slot) return;
+    for (const a of slot.assignments || (slot.receivingCharts || []).map(chart=>({chart,bank:slot.bank,channel:slot.channel}))) {
+      const key = a.chart*banks+a.bank;
+      if (!owners.has(key)) owners.set(key,[0,0]);
+      owners.get(key)[a.channel] = index+1;
+    }
+  });
+  packed.banks.forEach((bank,b) => bank.charts.forEach(c => {
+    const [x,y] = chartAddress(c.id,b,banks), owner = owners.get(c.id*banks+b) || [0,0];
+    texture.image.data.set([(c.rect.x-c.sourceRegion.x)/pageSize, (c.rect.y-c.sourceRegion.y)/pageSize,
+      Math.max(0,layers[b].indexOf(c.page)), owner[0]+owner[1]*4096], (y*1024+x)*4);
+  }));
+  texture.needsUpdate=true; uniforms.lmRegions={value:texture}; uniforms.lmChartMode={value:1};
+  return uniforms;
+}
+export function chartLookupGLSL(banks) {
+  return `ivec2 lmAddress(int bank, int chart) { int id = chart * ${Math.max(1,banks)} + bank; return ivec2(id % 1024, id / 1024); }
+vec3 lmOwnerTint(float owner) { return owner < 0.5 ? vec3(0.0) : texelFetch(lmTints, ivec2(int(owner)-1, 0), 0).rgb; }`;
+}
 export const lightSwizzle = format => format === THREE.RGBAFormat ? 'ra' : 'rg';
 export function pickTranscode(extensions, channels) {
   if (extensions.has('EXT_texture_compression_rgtc')) return channels === 1 ? THREE.RED_RGTC1_Format : THREE.RED_GREEN_RGTC2_Format;
@@ -38,24 +79,26 @@ export function transcodePage(module, bytes, format) {
 }
 
 export function patchLightmaps(materials, pages, uniforms) {
+  const chartMode = !!uniforms.lmChartMode;
   // M8: a room's region sits two texels from its neighbours on a shared page. Sample no
   // coarser than mip 1 (gradients clamped to two texels a pixel), so a far-off room never
   // blends a neighbour's light into its border under its own tint. The gradients are
   // taken outside the room branch, where derivatives are defined.
   const bankCode = pages.banks.map((t, b) => {
     const s = lightSwizzle(t.format);
-    return `vec4 region${b} = texelFetch(lmRegions, ivec2(${b}, int(vLmRoom + 0.5)), 0);
+    return `vec4 region${b} = texelFetch(lmRegions, ${chartMode ? `lmAddress(${b}, int(vLmRoom + 0.5))` : `ivec2(${b}, int(vLmRoom + 0.5))`}, 0);
 float lmSpan${b} = max(length(lmDx), length(lmDy)) * float(textureSize(lmBank${b}, 0).x);
 float lmClamp${b} = lmSpan${b} > 2.0 ? 2.0 / lmSpan${b} : 1.0;
 vec4 bank${b} = textureGrad(lmBank${b}, vec3(vLmUV + region${b}.xy, region${b}.z), lmDx * lmClamp${b}, lmDy * lmClamp${b});
-vec3 tint${b}a = texelFetch(lmTints, ivec2(${2*b}, int(vLmRoom + 0.5)), 0).rgb;
-vec3 tint${b}b = texelFetch(lmTints, ivec2(${2*b+1}, int(vLmRoom + 0.5)), 0).rgb;
+vec3 tint${b}a = ${chartMode ? `lmOwnerTint(mod(region${b}.w, 4096.0))` : `texelFetch(lmTints, ivec2(${2*b}, int(vLmRoom + 0.5)), 0).rgb`};
+vec3 tint${b}b = ${chartMode ? `lmOwnerTint(floor(region${b}.w / 4096.0))` : `texelFetch(lmTints, ivec2(${2*b+1}, int(vLmRoom + 0.5)), 0).rgb`};
 lmLight += bank${b}.r * tint${b}a + bank${b}.${s[1]} * tint${b}b;`;
   }).join('\n');
   const declarations = `uniform sampler2D lmTints;
 uniform sampler2D lmRegions;
 varying vec2 vLmUV; varying float vLmRoom;
-${pages.banks.map((t, b) => `uniform highp sampler2DArray lmBank${b};`).join('\n')}`;
+${pages.banks.map((t, b) => `uniform highp sampler2DArray lmBank${b};`).join('\n')}
+${chartMode ? chartLookupGLSL(pages.banks.length) : ''}`;
   const slots = uniforms.lmTints.value.image.width, rooms = uniforms.lmTints.value.image.height;
   if (!uniforms.lmRegions) {
     const t = new THREE.DataTexture(new Float32Array(Math.max(1, pages.banks.length) * rooms * 4),
@@ -86,7 +129,7 @@ vec3 lmLight = vec3(0.0);
 if (vLmRoom > -0.5) { ${bankCode} }
 reflectedLight.indirectDiffuse += lmLight * 16.0 * RECIPROCAL_PI * diffuseColor.rgb;`);
     };
-    material.customProgramCacheKey = () => `${key}|lm-4|${slots}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
+    material.customProgramCacheKey = () => `${key}|lm-4|${chartMode ? 'charts-2|' : ''}${slots}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
     material.needsUpdate = true;
   }
 }
@@ -152,12 +195,16 @@ export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker
     const data = await new Promise((resolve, reject) => {
       const w = new Worker(versioned('./atlas_worker.js'), { type: 'module' });
       const cancel = () => { finish(); reject(new Error('Atlas cancelled.')); };
-      const finish = () => { w.terminate(); signal?.removeEventListener('abort', cancel); };
+      const finish = () => { clearTimeout(timeout); w.terminate(); signal?.removeEventListener('abort', cancel); };
+      // A worker which neither answers nor errors must not leave key:null forever.
+      const timeout=setTimeout(() => { finish(); reject(new Error('Atlas worker timed out after 30 seconds.')); },30000);
       w.onmessage = e => { finish(); e.data.error ? reject(new Error(e.data.error)) : resolve(e.data); };
       w.onerror = e => { finish(); reject(e.error || new Error(e.message || 'Atlas worker failed.')); };
+      w.onmessageerror = () => { finish(); reject(new Error('Atlas worker returned an unreadable message.')); };
       signal?.addEventListener('abort', cancel, { once: true });
       if (signal?.aborted) { cancel(); return; }
-      w.postMessage(job, buffers(job.meshes));
+      try { w.postMessage(job, buffers(job.meshes)); }
+      catch (error) { finish(); reject(error); }
     });
     await cached(db, data.key, data).catch(() => null);
     await cached(db, 'input:' + job.cacheKey, data.key).catch(() => null);

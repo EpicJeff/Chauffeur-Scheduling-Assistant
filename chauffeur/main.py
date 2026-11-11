@@ -1373,7 +1373,8 @@ async def add_no_cache_headers(request: Request, call_next):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
-    elif request.url.path.startswith("/static/twin/bake/") and request.url.path.endswith(".js"):
+    elif ((request.url.path.startswith("/static/twin/bake/") and request.url.path.endswith(".js"))
+          or request.url.path == "/static/twin/twin_light_math.js"):
         # The lightmap workers import their modules by relative URL, where no import
         # map applies: revalidate those (a cheap 304) so a panel never runs last
         # week's worker code against this week's page (I9).

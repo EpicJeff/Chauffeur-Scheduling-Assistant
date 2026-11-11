@@ -7,7 +7,8 @@ import { hostPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { groundAt } from './twin_ground.js';
 
-export const FT = 0.3048;
+import { FT } from './twin_light_math.js';
+export { FT } from './twin_light_math.js';
 export const PICK_LAYER = 31;
 const ROOF_THICKNESS = 0.25;
 // Keep in step with twin_plan.porches: ids win, polygon fallback for aliases

@@ -285,12 +285,25 @@ function compare(a, b) {
 const roomIndex = (atlas, id) => atlas.room.rooms.findIndex(r => r.building === job.pool && r.id === id);
 // Chart rects of a room inside one bank's page set (bank-local page), from packBanks (Ruling B7).
 function bankRects(atlas, lights, bank, roomId) {
-  const banks = atlas.room.packBanks(lights.map(l => ({ device: l.device, building: l.building, room: l.room })));
+  const banks = atlas.room.packBanks(lights);
   const b = banks[bank], room = roomIndex(atlas, roomId);
   assert.ok(b, `atlas.room.packBanks has a bank ${bank}`);
   const charts = b.charts.filter(c => c.room === room && c.rect.w >= 3 && c.rect.h >= 3);
   assert.ok(charts.length, `room ${roomId} has charts in bank ${bank}`);
   return { page: charts[0].page, rects: charts.filter(c => c.page === charts[0].page).map(c => c.rect), banks };
+}
+
+
+function lightSamples(packed, id, stored, key) {
+  const slot=packed.slots[id], decoded=new Map(), values=[];
+  for(const a of slot.assignments) {
+    const chart=packed.banks[a.bank].charts.find(c=>c.id===a.chart);
+    if(chart.rect.w<3||chart.rect.h<3) continue;
+    const page=packed.offsets[a.bank]+chart.page;
+    if(!decoded.has(page)) decoded.set(page,rgba(stored.get(`${key}/${page}`)));
+    values.push(...channelOver(decoded.get(page),[chart.rect],a.channel));
+  }
+  assert.ok(values.length,`${id} has sampled owned texels`); return values;
 }
 
 const checks = [];
@@ -312,68 +325,52 @@ check('room_only_manifest_is_complete_without_a_sky_pass', async () => {
   assert.equal(await again.bakeNext(), null, 'no sky work remains');
 });
 
+
 check('stale_lights_are_only_the_changed_ones', async () => {
-  need('createBaker', 'encodePage', 'decodePage');
-  const ctx = await setup(), server = fakeServer(), lights = [k1, k2, h1, c1], key = ctx.atlas.key;
-  const first = makeBaker(ctx, server, lights);
-  assert.deepEqual(asSet(await first.staleLights()), ['c1', 'h1', 'k1', 'k2'], 'nothing baked yet: every light is stale');
-  FILL.value = .08;
-  const baked = await bakeAll(first);
-  assert.ok(!baked.includes('sky'), 'only room lights bake');
-  assert.deepEqual(asSet(baked), ['c1', 'h1', 'k1', 'k2'], `each light baked: ${JSON.stringify(baked)}`);
-  assert.equal(baked.length, new Set(baked).size, `nothing baked twice: ${JSON.stringify(baked)}`);
-  assert.deepEqual([...await first.staleLights()], [], 'after the bake nothing is stale');
-  assert.deepEqual(server.bad, [], `every request is a relative api/house/bakes/ path the server accepts: ${server.bad}`);
-  const m1 = server.manifests.get(key);
-  assert.ok(m1, `the manifest is stored under atlas.key ${key}: ${[...server.manifests.keys()]}`);
-  for (const id of ['k1', 'k2', 'h1', 'c1']) {
-    const e = m1.lights[id];
-    assert.ok(e && Number.isInteger(e.page) && [0, 1].includes(e.channel) && KEY_RE.test(e.key), `manifest entry for ${id}: ${JSON.stringify(e)}`);
-    assert.ok(server.pages.has(`${key}/${e.page}`), `${id}'s page ${e.page} was uploaded`);
+  const ctx=await setup(),server=fakeServer(),lights=[k1,k2,h1,c1],key=ctx.atlas.key;
+  FILL.value=.08;
+  const first=makeBaker(ctx,server,lights);
+  assert.deepEqual(asSet(await first.staleLights()),['c1','h1','k1','k2']);
+  assert.deepEqual(asSet(await bakeAll(first)),['c1','h1','k1','k2']);
+  assert.deepEqual(await first.staleLights(),[]);
+  assert.deepEqual(server.bad,[]);
+  const packed=B.bakeLayout(ctx.atlas,LAYOUT,lights),manifest=structuredClone(server.manifests.get(key));
+  for(const id of ['k1','k2','h1','c1']) {
+    const e=manifest.lights[id];assert.ok(KEY_RE.test(e.key));
+    for(const page of e.pages) assert.ok(server.pages.has(`${key}/${page}`),'every owned bank page was published');
+    assert.ok(mean(lightSamples(packed,id,server.pages,key))>5,`${id} writes every chart's own channel`);
   }
-  assert.equal(new Set(['k1', 'k2', 'h1', 'c1'].map(id => m1.lights[id].key)).size, 4, 'every light has its own key');
-  assert.equal(m1.lights.k1.page, m1.lights.k2.page, 'the two Kitchen lights share a page (one bank)');
-  assert.deepEqual(asSet([m1.lights.k1.channel, m1.lights.k2.channel]), [0, 1], 'the Kitchen lights take channels 0 and 1');
-  for (const b of server.pages.values()) assert.ok(isKtx2(b), 'every stored page is KTX2 (Ruling B4)');
-  const kitchen = bankRects(ctx.atlas, lights, 0, job.kitchen), hall = bankRects(ctx.atlas, lights, 0, job.hall);
-  assert.equal(kitchen.page, hall.page, 'fixture: the Kitchen and the Hall share bank 0\'s page');
-  assert.equal(m1.lights.h1.page, m1.lights.k1.page, 'so the Hall light is on the Kitchen lights\' page');
-  const before = new Map(server.pages);
+  assert.equal(new Set(Object.values(manifest.lights).map(e=>e.key)).size,4);
+  for(const data of server.pages.values()) assert.ok(isKtx2(data));
+  const again=makeBaker(ctx,server,lights),since=server.calls.length;
+  assert.deepEqual(await again.staleLights(),[]);assert.equal(await again.bakeNext(),null);
+  assert.deepEqual(server.writes(since),[],'fresh charts cause no writes');
 
-  // A second page, nothing moved: nothing to bake, nothing written.
-  const again = makeBaker(ctx, server, lights);
-  assert.deepEqual([...await again.staleLights()], [], 'a fresh baker reads the manifest: nothing stale');
-  const since = server.calls.length; STEP.n++;
-  assert.ok(!(await again.bakeNext()), 'bakeNext() has nothing to do');
-  assert.deepEqual(server.writes(since), [], 'and writes nothing');
-
-  // The Hall light moves two feet: only it is stale, only its page is rewritten.
-  const moved = { ...h1, at: [h1.at[0] + 2, h1.at[1], h1.at[2]] }, lights2 = [k1, k2, moved, c1];
-  const third = makeBaker(ctx, server, lights2);
-  assert.deepEqual([...await third.staleLights()], ['h1'], 'moving the Hall light makes only it stale');
-  FILL.value = .24;
-  const since3 = server.calls.length;
-  assert.deepEqual(await bakeAll(third), ['h1'], 'only the moved room light re-bakes');
-  const posted = asSet(server.writes(since3).filter(c => c.method === 'POST').map(c => Number(c.path.split('/').pop().split('.')[0])));
-  const m3 = server.manifests.get(key);
-  assert.deepEqual(posted, [m3.lights.h1.page], `only the Hall light's page is uploaded again: ${posted}`);
-  assert.notEqual(m3.lights.h1.key, m1.lights.h1.key, 'the Hall light has a new key');
-  for (const id of ['k1', 'k2', 'c1']) assert.deepEqual(m3.lights[id], m1.lights[id], `${id} is untouched in the manifest`);
-  const page = `${key}/${m3.lights.h1.page}`, old = rgba(before.get(page)), now = rgba(server.pages.get(page));
-  for (const [id, ch] of [['k1', m1.lights.k1.channel], ['k2', m1.lights.k2.channel]]) {
-    const a = channelOver(old, kitchen.rects, ch), b = channelOver(now, kitchen.rects, ch);
-    assert.ok(mean(a) > 5, `${id} was baked into the page (channel ${ch} mean ${mean(a).toFixed(1)})`);
-    const d = compare(a, b);
-    assert.ok(d.mean <= 1.5 && d.max <= 12, `${id}'s channel keeps its data when the page is rewritten (Review Focus 4): ${JSON.stringify(d)}`);
+  // A same-key forced refresh isolates channel preservation from re-ranking.
+  const before=new Map(server.pages),forced=makeBaker(ctx,server,[h1,k1,k2,c1],{force:true});
+  FILL.value=.24;
+  assert.equal(await forced.bakeNext(),'h1');
+  for(const id of ['k1','k2','c1']) {
+    const delta=compare(lightSamples(packed,id,before,key),lightSamples(packed,id,server.pages,key));
+    assert.ok(delta.mean<=1.5&&delta.max<=12,`${id}'s owned texels survive another light's multi-bank write: ${JSON.stringify(delta)}`);
   }
-  const hallBefore = channelOver(old, hall.rects, m1.lights.h1.channel), hallAfter = channelOver(now, hall.rects, m3.lights.h1.channel);
-  assert.ok(compare(hallBefore, hallAfter).mean >= 3, `the moved light's channel holds its new bake: ${JSON.stringify(compare(hallBefore, hallAfter))}`);
-  for (const [id, bytes] of before) if (id !== page) assert.deepEqual(server.pages.get(id), bytes, `page ${id} is not rewritten`);
+  assert.ok(compare(lightSamples(packed,'h1',before,key),lightSamples(packed,'h1',server.pages,key)).mean>=3);
+  assert.deepEqual(server.manifests.get(key).lights,manifest.lights,'forced refresh retains every key and entry');
+  const ownPages=new Set(manifest.lights.h1.pages);
+  for(const [path,bytes] of before) if(!ownPages.has(Number(path.split('/').pop()))) assert.deepEqual(server.pages.get(path),bytes);
 
-  // Other geometry (another atlas key): every light is stale again.
-  const other = await setup('high', { room: { ...LAYOUT.room, density: 2, page: 512 } });
-  assert.notEqual(other.atlas.key, key, 'fixture: another layout is another atlas key');
-  assert.deepEqual(asSet(await makeBaker(other, server, lights2).staleLights()), ['c1', 'h1', 'k1', 'k2'], 'a new atlas key makes every light stale');
+  const moved={...h1,at:[h1.at[0]+2,h1.at[1],h1.at[2]]},nextLights=[moved,k1,k2,c1];
+  const next=B.bakeLayout(ctx.atlas,LAYOUT,nextLights,manifest.ownership);
+  const changed=nextLights.filter(l=>next.entries[l.device].key!==manifest.lights[l.device].key ||
+    next.entries[l.device].location!==manifest.lights[l.device].location).map(l=>l.device);
+  assert.deepEqual(changed,['h1'],'only the moved light changes below the six-member cap');
+  const third=makeBaker(ctx,server,nextLights);
+  assert.deepEqual(asSet(await third.staleLights()),asSet(changed),'only changed geometry, reach or slots go stale');
+  assert.deepEqual(asSet(await bakeAll(third)),asSet(changed));
+  assert.deepEqual(server.manifests.get(key).lights,next.entries);
+  const other=await setup('high',{room:{...LAYOUT.room,density:2,page:512}});
+  assert.notEqual(other.atlas.key,key);
+  assert.deepEqual(asSet(await makeBaker(other,server,nextLights).staleLights()),['c1','h1','k1','k2']);
 });
 
 check('a_round_change_cancels_and_uploads_nothing', async () => {
@@ -410,31 +407,27 @@ check('a_round_change_cancels_and_uploads_nothing', async () => {
   } finally { FILL.onRead = null; }
 });
 
+
 check('a_third_light_in_a_room_goes_to_a_second_bank', async () => {
-  need('createBaker', 'encodePage', 'decodePage');
-  const ctx = await setup(), server = fakeServer(), lights = [k1, k2, k3, h1], key = ctx.atlas.key;
-  FILL.value = .1;
-  const baked = await bakeAll(makeBaker(ctx, server, lights));
-  assert.deepEqual(asSet(baked), ['h1', 'k1', 'k2', 'k3'], `every light baked: ${baked}`);
-  const m = server.manifests.get(key), L = m.lights;
-  assert.equal(L.k1.page, L.k2.page, 'the first two Kitchen lights share bank 0\'s page');
-  assert.deepEqual(asSet([L.k1.channel, L.k2.channel]), [0, 1], 'and take its two channels');
-  assert.notEqual(L.k3.page, L.k1.page, `the third Kitchen light goes to another page (a second bank): ${JSON.stringify(L)}`);
-  assert.equal(L.k3.channel, 0, 'the first channel of the second bank');
-  assert.equal(L.h1.page, L.k1.page, 'the Hall light stays in bank 0 (on the Kitchen\'s page in this layout)');
-  assert.equal(L.h1.channel, 0, 'the Hall light is its room\'s first light');
-  // Bank 1 is sparse (Ruling B7): only the Kitchen, laid out by packBanks.
-  const second = bankRects(ctx.atlas, lights, 1, job.kitchen);
-  assert.deepEqual(second.banks[1].rooms.map(r => r.room), [roomIndex(ctx.atlas, job.kitchen)], 'fixture: bank 1 holds the Kitchen only');
-  const img = rgba(server.pages.get(`${key}/${L.k3.page}`));
-  assert.ok(mean(channelOver(img, second.rects, 0)) > 5, 'the third light is baked at the Kitchen\'s place in bank 1 (packBanks), channel R');
-  assert.ok(mean(channelOver(img, second.rects, 1)) <= 2, 'bank 1\'s second channel is empty: the Kitchen has no fourth light');
-  const hall = bankRects(ctx.atlas, lights, 0, job.hall), page0 = rgba(server.pages.get(`${key}/${L.h1.page}`));
-  assert.ok(mean(channelOver(page0, hall.rects, 0)) > 5, 'the Hall light is baked at the Hall\'s place in bank 0');
-  assert.ok(mean(channelOver(page0, hall.rects, 1)) <= 2, 'the Hall has no second light: its A stays empty');
-  const files = [...server.pages.keys()].filter(id => id.startsWith(key + '/'));
-  const expected = second.banks.reduce((n, b) => n + b.pages, 0);
-  assert.equal(files.length, expected, `pages stored = each sparse bank's pages (${expected}): ${files}`);
+  const ctx=await setup(),server=fakeServer(),lights=[k1,k2,k3,h1],key=ctx.atlas.key;
+  FILL.value=.1;
+  assert.deepEqual(asSet(await bakeAll(makeBaker(ctx,server,lights))),['h1','k1','k2','k3']);
+  const packed=B.bakeLayout(ctx.atlas,LAYOUT,lights),owners=new Map();
+  assert.equal(packed.banks.length,3,'bank count is fixed');
+  for(const l of lights) {
+    assert.ok(mean(lightSamples(packed,l.device,server.pages,key))>5,`${l.device} lands in its own per-chart channels`);
+    for(const a of packed.slots[l.device].assignments) {
+      const address=`${a.chart}/${a.bank}/${a.channel}`;
+      assert.ok(!owners.has(address),'each chart channel has exactly one light');owners.set(address,l.device);
+    }
+  }
+  assert.ok(Object.values(packed.slots).some(s=>s.assignments.some(a=>a.bank===1)),'third/fourth-ranked chart contributions use bank one');
+  assert.equal(packed.banks[2].charts.length,0,'four lights never occupy bank two');
+  for(let p=0;p<packed.banks[2].pages;p++) {
+    const image=rgba(server.pages.get(`${key}/${packed.offsets[2]+p}`));
+    assert.ok(mean(image.data.filter((v,i)=>i%4===0))<=2&&mean(image.data.filter((v,i)=>i%4===3))<=2,'reserved bank-two pages remain empty');
+  }
+  assert.equal([...server.pages.keys()].filter(p=>p.startsWith(key+'/')).length,packed.pages);
 });
 
 check('low_tier_never_bakes', async () => {
@@ -503,7 +496,8 @@ check('manifest_written_last', async () => {
     const m = server.manifests.get(key);
     assert.ok(m, `${id}: the manifest landed`);
     assert.deepEqual(asSet(Object.keys(m.lights)), asSet(done), `${id}: the manifest lists exactly the lights baked so far`);
-    for (const e of Object.values(m.lights)) assert.ok(server.pages.has(`${key}/${e.page}`), `${id}: every page the manifest names exists before it is named: ${JSON.stringify(e)}`);
+    for (const e of Object.values(m.lights)) for(const page of e.pages || [e.page])
+      assert.ok(server.pages.has(`${key}/${page}`), `${id}: every owned bank page exists before the manifest names it`);
   }
   assert.deepEqual(asSet(done), ['c1', 'h1', 'k1'], `every light baked: ${done}`);
   const p = baker.progress();
@@ -540,7 +534,7 @@ check('a_failed_read_aborts_the_step', async () => {
   const moved = { ...h1, at: [h1.at[0] + 2, h1.at[1], h1.at[2]] };
   const page = manifest.lights.h1.page;
   server.fail = (method, path) => method === 'GET' && path === `api/house/bakes/${key}/${page}.png` && !server.calls.at(-1).inm ? 502 : null;
-  const baker = makeBaker(ctx, server, [k1, k2, moved]), since = server.calls.length;
+  const baker = makeBaker(ctx, server, [moved, k1, k2]), since = server.calls.length;
   STEP.n++;
   await assert.rejects(withTimeout(Promise.resolve(baker.bakeNext()), 120000, 'bakeNext() over a 502'), error => !/did not settle/.test(error.message),
     'a page read that fails with 502 throws out of the step');
@@ -551,8 +545,8 @@ check('a_failed_read_aborts_the_step', async () => {
   server.fail = null;
   STEP.n++;
   assert.equal(await withTimeout(Promise.resolve(baker.bakeNext()), 120000, 'bakeNext() once the server is back'), 'h1', 'the retry bakes the moved light');
-  const img = rgba(server.pages.get(`${key}/${page}`)), kitchen = bankRects(ctx.atlas, lights, 0, job.kitchen);
-  for (const id of ['k1', 'k2']) assert.ok(mean(channelOver(img, kitchen.rects, manifest.lights[id].channel)) > 5, `${id} kept its channel`);
+  const expected=B.bakeLayout(ctx.atlas,LAYOUT,[moved,k1,k2]);
+  assert.ok(mean(lightSamples(expected,'h1',server.pages,key))>5,'retry writes the moved light into its new chart ownership');
 
   // The readiness probe: a 500 on a page the manifest names is not "missing".
   server.fail = (method, path) => method === 'GET' && /\/\d+\.png$/.test(path) ? 500 : null;
@@ -612,8 +606,8 @@ check('two_machines_take_turns_through_the_server_lease', async () => {
   assert.equal(server.lease.holder, null, 'the lease is free at the end');
   const m = server.manifests.get(key);
   assert.deepEqual(asSet(Object.keys(m.lights)), ['h1', 'k1', 'k2'], `every light landed: ${JSON.stringify(m.lights)} after ${ra} / ${rb}`);
-  const img = rgba(server.pages.get(`${key}/${m.lights.k1.page}`)), kitchen = bankRects(a.atlas, [k1, k2, h1], 0, job.kitchen);
-  for (const id of ['k1', 'k2']) assert.ok(mean(channelOver(img, kitchen.rects, m.lights[id].channel)) > 5, `${id} kept its channel`);
+  const packed=B.bakeLayout(a.atlas,LAYOUT,[k1,k2,h1]);
+  for (const id of ['k1', 'k2']) assert.ok(mean(lightSamples(packed,id,server.pages,key))>5,`${id} kept all of its per-chart channels across desks`);
 });
 
 const only = process.argv[3] ? process.argv[3].split(',') : null;

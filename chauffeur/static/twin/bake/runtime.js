@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { base } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt } from '../twin_ground.js';
-import { loadAtlas, lightmapUniforms, patchLightmaps, setLightTint, pickTranscode, lightSwizzle } from './lightmap_material.js';
+import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, chartLookupGLSL, patchLightmaps, setLightTint, pickTranscode, lightSwizzle } from './lightmap_material.js';
 import { createBaker, bakeLayout } from './baker.js';
 import { mayBake } from './bake_lock.js';
 import { workerCodec } from './worker_codec.js';
 import { covered } from './atlas_transport.js';
+import { sameSlots } from './slots.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Every tier lays its atlas out at the desk's 8 texels/ft, so a wall that opens before
@@ -62,7 +63,14 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   let layers = [], baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
   let dragging = false, stillAt = performance.now();
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
-  let failure = '', manifestText = null;
+  let failure = '', errorReason = null, manifestText = null;
+  function reportError(error) {
+    if (!valid()) return;
+    errorReason=error?.message || String(error);
+    failure='Could not bake lighting. Try Bake lighting now.';
+    console.error('House lighting bake failed:', error);
+    showProgress();
+  }
   const etags = new Map(), present = new Set(), clones = [], textures = new Set();
   const valid = () => !stopped && view.plan === round;
   const paused = () => dragging || performance.now() - stillAt < 2000;
@@ -102,7 +110,11 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   function light(device, rgb, intensity) {
     tints.set(device, { rgb: [...rgb], intensity });
     const s = packed?.slots[device];
-    if (s && uniforms) setLightTint(uniforms, s.room, s.bank * 2 + s.channel, rgb, fresh.has(device) ? intensity : 0);
+    if (s && uniforms) {
+      if (uniforms.lmChartMode) setLightTint(uniforms, 0, lights.findIndex(l => l.device === device), rgb, fresh.has(device) ? intensity : 0);
+      else for (const room of s.receivers || [s.room])
+        setLightTint(uniforms, room, s.bank * 2 + s.channel, rgb, fresh.has(device) ? intensity : 0);
+    }
   }
   function regions() {
     const width = Math.max(1, packed.banks.length), height = Math.max(1, atlas.room.rooms.length);
@@ -146,7 +158,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     const normal = new THREE.Vector3(), local = new THREE.Vector3();
     function windowSample(centre, room, paneNormal) {
       if (room < 0) return null;
-      let closest = Infinity, uv = null;
+      let closest = Infinity, uv = null, chartId = -1;
       for (const chart of byRoom.get(room) || []) {
         const g = chart.mesh.geometry, pos = g.attributes.position, tex = g.attributes.uv3;
         local.copy(centre).applyMatrix4(invert(chart.mesh));
@@ -160,11 +172,12 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
           const distance = point.distanceToSquared(local);
           if (distance >= closest) continue;
           closest = distance; triangle.getBarycoord(point, bary);
+          chartId = chart.id;
           uv = [0, 1].map(k => bary.x * tex.array[index * 2 + k] +
             bary.y * tex.array[(index + 1) * 2 + k] + bary.z * tex.array[(index + 2) * 2 + k]);
         }
       }
-      return uv;
+      return uv ? {uv, chartId} : null;
     }
     root.updateMatrixWorld(true);
     root.traverse(mesh => {
@@ -194,8 +207,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
         pane.getNormal(paneNormal).transformDirection(mesh.matrixWorld);
         const sample = windowSample(centre, owner, paneNormal);
         if (sample) {
-          owners.fill(owner, i, i + 3);
-          for (let k = 0; k < 3; k++) glowUV.set(sample, (i + k) * 2);
+          owners.fill(uniforms.lmChartMode ? sample.chartId : owner, i, i + 3);
+          for (let k = 0; k < 3; k++) glowUV.set(sample.uv, (i + k) * 2);
         }
       }
       mesh.geometry.setAttribute('glowRoom', new THREE.BufferAttribute(owners, 1));
@@ -212,35 +225,39 @@ vGlowRoom = glowRoom; vGlowUV = glowUV;`);
         shader.fragmentShader = `uniform sampler2D lmTints; uniform sampler2D lmRegions;
 varying float vGlowRoom; varying vec2 vGlowUV;
 ${banks.map((t, b) => `uniform highp sampler2DArray glowBank${b};`).join('\n')}
+${uniforms.lmChartMode ? chartLookupGLSL(banks.length) : ''}
 ` + shader.fragmentShader;
         const sum = banks.map((t, b) => `
-vec4 region${b} = texelFetch(lmRegions, ivec2(${b}, int(vGlowRoom + 0.5)), 0);
+vec4 region${b} = texelFetch(lmRegions, ${uniforms.lmChartMode ? `lmAddress(${b}, int(vGlowRoom + 0.5))` : `ivec2(${b}, int(vGlowRoom + 0.5))`}, 0);
 vec4 value${b} = textureLod(glowBank${b}, vec3(vGlowUV + region${b}.xy, region${b}.z), 0.0);
-vec3 tint${b}a = texelFetch(lmTints, ivec2(${2*b}, int(vGlowRoom + 0.5)), 0).rgb;
-vec3 tint${b}b = texelFetch(lmTints, ivec2(${2*b+1}, int(vGlowRoom + 0.5)), 0).rgb;
+vec3 tint${b}a = ${uniforms.lmChartMode ? `lmOwnerTint(mod(region${b}.w, 4096.0))` : `texelFetch(lmTints, ivec2(${2*b}, int(vGlowRoom + 0.5)), 0).rgb`};
+vec3 tint${b}b = ${uniforms.lmChartMode ? `lmOwnerTint(floor(region${b}.w / 4096.0))` : `texelFetch(lmTints, ivec2(${2*b+1}, int(vGlowRoom + 0.5)), 0).rgb`};
 totalEmissiveRadiance += (value${b}.r * tint${b}a + value${b}.${lightSwizzle(t.format)[1]} * tint${b}b) * 8.0;
 `).join('\n');
         shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 if (vGlowRoom > -0.5) { ${sum} }`);
       };
-      material.customProgramCacheKey = () => `twin-window-glow-3-${banks.map(t => lightSwizzle(t.format)).join(',')}`;
+      material.customProgramCacheKey = () => `twin-window-glow-4-${banks.map(t => lightSwizzle(t.format)).join(',')}`;
     });
   }
   // The light list's layout: banks, layers, tints and the blank arrays it draws from.
-  function prepare(list) {
+  function prepare(list, history = packed?.ownership) {
     unpatch();
     for (const t of textures) t.dispose();
     textures.clear();
     if (uniforms) { uniforms.lmTints.value.dispose(); uniforms.lmRegions.value.dispose(); }
     lights = list; lightsKey = JSON.stringify(list);
-    packed = bakeLayout(atlas, layout, lights);
+    packed = bakeLayout(atlas, layout, lights, history);
+    if (packed.banks.some(b => b.chartPacking)) applyChartIndices(atlas);
     // A bank page no placed light writes to (bank zero reserves unlit rooms,
     // Ruling B12) is never fetched or held on the GPU: each bank's array keeps
     // only its lit pages, and lmRegions maps a page to its layer.
-    layers = packed.banks.map((b, i) => [...new Set(Object.values(packed.entries).map(e => e.page - packed.offsets[i])
+    layers = packed.banks.map((b, i) => [...new Set(Object.values(packed.entries).flatMap(e => e.pages || [e.page]).map(p => p - packed.offsets[i])
       .filter(p => p >= 0 && p < b.pages))].sort((a, c) => a - c));
-    uniforms = lightmapUniforms(atlas.room.rooms.length, Math.max(2, packed.banks.length * 2));
-    uniforms.lmRegions = { value: regions() };
+    uniforms = packed.banks.some(b => b.chartPacking)
+      ? chartLightmapUniforms(atlas.room.charts.length, packed, lights, layout.room.page, layers)
+      : lightmapUniforms(atlas.room.rooms.length, Math.max(2, packed.banks.length * 2));
+    if (!uniforms.lmRegions) uniforms.lmRegions = { value: regions() };
     const roomFormat = pickTranscode(view.renderer3.extensions, 2);
     pages = {
       // A bank with no lit page holds one 4x4 placeholder layer (one compressed block).
@@ -277,6 +294,12 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       return;
     }
     const m = JSON.parse(text);
+    // A reopened panel or another desk's publication adopts the persisted
+    // channels. Never reset survivors to a fresh assignment on reload/poll.
+    if(m.ownership && text!==manifestText && !sameSlots(m.ownership,packed.ownership)) {
+      const next=bakeLayout(atlas,layout,lights,m.ownership);
+      if(!sameSlots(next.ownership,packed.ownership)) prepare(lights,m.ownership);
+    }
     let changed = text !== manifestText;
     manifestText = text;
     const wanted = new Set();
@@ -306,7 +329,8 @@ if (vGlowRoom > -0.5) { ${sum} }`);
     const previous = [...fresh]; fresh.clear();
     for (const l of lights) {
       const e = packed.entries[l.device], stored = m.lights[l.device];
-      if (e && stored?.key === e.key && stored.page === e.page && stored.channel === e.channel && present.has(e.page)) fresh.add(l.device);
+      if (e && stored?.key === e.key && stored.location === e.location && stored.channel === e.channel &&
+        JSON.stringify(stored.pages) === JSON.stringify(e.pages) && e.pages.every(p => present.has(p))) fresh.add(l.device);
     }
     stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
     if (present.size) patch();
@@ -324,14 +348,15 @@ if (vGlowRoom > -0.5) { ${sum} }`);
     const next = lightsOf(layoutNow);
     if (JSON.stringify(next) === lightsKey) return;
     if (running) { pendingRun = true; baker?.cancel(); }
-    prepare(next);
+    const text=await readManifest(atlas.key);if(!valid())return;
+    prepare(next,typeof text==='string'?JSON.parse(text).ownership || packed?.ownership:packed?.ownership);
     await loadPages();
     if (allowed && !running) run();
   }
   async function run(force = false) {
     if (!allowed || !valid() || !atlas) return;
     if (running) { pendingForce ||= force; return; }
-    failure = ''; progress = { done: 0, total: force ? lights.length : stale.length };
+    failure = ''; errorReason = null; progress = { done: 0, total: force ? lights.length : stale.length };
     running = true; showProgress();
     const mine = lightsKey;
     try {
@@ -346,16 +371,16 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       // Tell the editor's chip this round's lights are whole (Ruling B15).
       if (valid() && mine === lightsKey && !(await baker.staleLights()).length) await baker.settle();
     } catch (error) {
-      if (valid()) failure = 'Could not bake lighting. Try Bake lighting now.';
+      reportError(error);
     } finally {
       running = false; progress = { done: 0, total: 0 }; showProgress();
       if (valid() && (pendingForce || pendingRun)) { const f = pendingForce; pendingForce = pendingRun = false; run(f); }
     }
   }
-  async function begin() {
+  async function begin(text) {
     atlas = pending.apply(); pending = null;
     codec = workerCodec();
-    prepare(lights);
+    prepare(lights,typeof text==='string'?JSON.parse(text).ownership:undefined);
     await loadPages(); if (!valid()) return;
     showProgress();
     if (allowed) run();
@@ -365,7 +390,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
     if (pending) {
       // A wall that opened before any bake applies the atlas when one lands (I1, M1).
       const text = await readManifest(pending.key);
-      if (typeof text === 'string' && valid() && pending) await begin();
+      if (typeof text === 'string' && valid() && pending) await begin(text);
       return;
     }
     if (!atlas) return;
@@ -374,7 +399,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
   }
   const controller = {
     state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: running && paused(),
-      ...progress, baked: [...baked], stale: [...stale] }),
+      ...progress, baked: [...baked], stale: [...stale], error: errorReason }),
     fresh: () => valid() ? [...fresh] : [], light, idle, refresh,
     // The lightmap arrays as held: per array its layer size and layer count, plus what
     // the GPU has been told to upload (test hooks).
@@ -416,7 +441,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       allowed = canBake && await mayBake(api, `api/house/bakes/${pending.key}`, owner);
       if (!valid()) return;
       showControls();
-      if (typeof text === 'string' || allowed) await begin();
+      if (typeof text === 'string' || allowed) await begin(text);
       if (!valid()) return;
       // Panels and other tabs pick up pages as another desktop publishes them.
       const tick = async () => {
@@ -425,7 +450,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
         if (valid()) timer = setTimeout(tick, pollMs);
       };
       if (pollMs > 0) timer = setTimeout(tick, pollMs);
-    } catch { /* Worker/storage failure keeps v2.499.783's real-time lighting. */ }
+    } catch (error) { reportError(error); }
   })();
   return controller;
 }

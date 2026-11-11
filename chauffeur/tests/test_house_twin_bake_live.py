@@ -425,8 +425,10 @@ def scenario_moving_a_light_rebakes_only_it():
                 check(m_after['lights'][did] == m_before['lights'][did], ('the other lights keep their entries', did))
             files_after = page_files(key)
             changed = sorted(n for n in files_after if files_after.get(n) != files_before.get(n))
-            check(changed == [m_after['lights']['dev-hall-light']['page']],
-                  ('only the Hall light\'s page is rewritten', changed, m_after['lights']['dev-hall-light']))
+            # With reach a light spans several pages (its 'pages'); only those may be rewritten.
+            hall = m_after['lights']['dev-hall-light']
+            check(changed and set(changed) <= set(hall.get('pages') or [hall['page']]),
+                  ("only the Hall light's pages are rewritten", changed, hall))
             check(all(m_ in ('POST', 'PUT') for m_, _ in writes(seen, before)), writes(seen, before))
 
             # The Kitchen's channels on that page keep their light.
@@ -940,7 +942,86 @@ def scenario_day_ground_is_even_after_the_bake():
         L.no_errors(s)
 
 
+def scenario_open_plan_light_crosses_the_invisible_wall():
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    from services import twin_store
+
+    def open_plan(before):
+        model = copy.deepcopy(before)
+        b = H.building(model, L.POOL)
+        wall = next(w for w in b['walls'] if w['id'] == 'wall:9adea4c38eb2430697cf47d4ddee9d2a')
+        wall.update(kind='separator', thickness=0, src={'person': True})
+        b['openings'] = [o for o in b.get('openings', []) if o.get('wall') != wall['id']]
+        return model
+
+    twin_store.update_model(open_plan, 'edit', note='reach test: Kitchen and Hall share an invisible wall')
+    clear_bakes()
+    try:
+        with s.browser(launch_args=L.GPU_ARGS) as page:
+            desk_baked(s, page)
+            L.aim_kitchen(page)
+            page.evaluate("() => window.__twin.setTime('night')")
+            RL.lights_mode(page)
+            only_on(page, None)
+            points = [(20, 13.2, .02), (21, 13.5, .02)]
+            solid = [(27.2, 17.5, .02)]
+            off = sample_at(page, points + solid)
+            count = programs(page)
+            only_on(page, 'light.ceiling_light', brightness=255)
+            check(is_baked(baked_row(page, 'dev-k-ceiling')), 'the test uses baked light')
+            on = sample_at(page, points + solid)
+            rise = [lum(a) - lum(b) for a, b in zip(on, off)]
+            check(mean(rise[:2]) > 3, ('the neighbouring floor past the invisible wall brightens', rise))
+            check(abs(rise[2]) <= 3, ('the Changing floor behind its solid wall stays dark', rise))
+            check(programs(page) == count, 'turning on the cross-room bake compiles nothing')
+            L.no_errors(s)
+    finally:
+        L.reset()
+
+
+def scenario_light_spills_through_a_window():
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        desk_baked(s, page)
+        L.aim_kitchen(page)
+        # aim_kitchen frames the room only; widen to take in the ground outside the
+        # west window (same view, centred between the room and the samples, higher up).
+        page.evaluate("""([bid, key, x, y, h]) => {
+            const v = window.__twin, b = v.plan.buildings.find(item => item.id === bid);
+            const a = (b.rotation || 0) * Math.PI / 180;
+            const wx = Math.cos(a) * x - Math.sin(a) * y + (b.position?.[0] || 0);
+            const wy = Math.sin(a) * x + Math.cos(a) * y + (b.position?.[1] || 0);
+            v.setView(key);
+            v.aim([wx, wy - 0.5, h], [wx, wy, 0]);
+        }""", [L.POOL, L.FLOOR, 2, 15, 75])
+        H.settle(page, 3)
+        page.evaluate("() => window.__twin.setTime('night')")
+        RL.lights_mode(page)
+        # Ceiling -> west window -> ground; the control ray meets solid wall
+        # beyond the end of the glazing. Both points are outside the house.
+        points = [(-3, 9.5, .02), (-3.5, 10.5, .02), (-3, 24, .02)]
+        only_on(page, None)
+        off = sample_at(page, points)
+        only_on(page, 'light.ceiling_light', brightness=255)
+        check(is_baked(baked_row(page, 'dev-k-ceiling')), 'the spill uses a fresh bake')
+        on = sample_at(page, points)
+        rise = [lum(a) - lum(b) for a, b in zip(on, off)]
+        check(mean(rise[:2]) > 3, ('ground beyond the glazed window brightens at Night', rise))
+        check(abs(rise[2]) <= 3, ('ground behind the solid wall stays dark', rise))
+        L.no_errors(s)
+
+
 SCENARIOS = [
+    scenario_open_plan_light_crosses_the_invisible_wall,
+    scenario_light_spills_through_a_window,
     scenario_bake_runs_on_idle_and_lands,
     scenario_baked_light_does_not_cross_a_wall,
     scenario_moving_a_light_rebakes_only_it,

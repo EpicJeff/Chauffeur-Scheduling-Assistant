@@ -35,7 +35,7 @@ export function atlasJob(root, plan, layout) {
   });
   const hash = fingerprint();
   // Geometry and room outlines drive the cache. Device movement does not.
-  hash.add('atlas-worker-3'); hash.add(JSON.stringify([layout, plan.generatorVersion, plan.buildings?.map(b => ({
+  hash.add('atlas-worker-reach-7'); hash.add(JSON.stringify([layout, plan.generatorVersion, plan.buildings?.map(b => ({
     id: b.id, rooms: b.rooms, levels: b.levels }))]));
   for (const m of meshes) {
     hash.add(JSON.stringify([m.matrix, m.name, m.buildingId]));
@@ -47,7 +47,7 @@ export function atlasJob(root, plan, layout) {
 export function packAtlas(atlas, meshes) {
   const charts = list => list.map(c => ({ ...c, mesh: meshes.indexOf(c.mesh) }));
   return { key: atlas.key,
-    room: { pages: atlas.room.pages, rooms: atlas.room.rooms, charts: charts(atlas.room.charts) },
+    room: { pages: atlas.room.pages, rooms: atlas.room.rooms, plan: atlas.room.plan, charts: charts(atlas.room.charts) },
     geometries: meshes.map(m => geometryData(m.geometry)) };
 }
 export function applyAtlas(data, root, layout) {
@@ -55,6 +55,6 @@ export function applyAtlas(data, root, layout) {
   data.geometries.forEach((g, i) => { const old = meshes[i].geometry; meshes[i].geometry = geometryFrom(g); old.dispose(); });
   const charts = list => list.map(c => ({ ...c, mesh: meshes[c.mesh] }));
   const room = { ...data.room, charts: charts(data.room.charts) };
-  room.packBanks = lights => packBanks(room, lights, layout.room);
+  room.packBanks = (lights, slots) => packBanks(room, lights, layout.room, slots);
   return { key: data.key, room };
 }
