@@ -97,6 +97,20 @@ class StyleRoutes(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(argyle_style.get_member_style('m_lily')['style'], 'household')
 
+    def test_a_kid_is_refused_even_with_enforcement_off(self):
+        self.settings['auth_enforce'] = False
+        argyle_style.set_member_style('m_mom', 'plain')
+        r = self.client.get('/api/argyle/style', headers=self.kid)
+        self.assertEqual(r.status_code, 403, r.text)
+        r = self.client.post('/api/argyle/style', headers=self.kid, json={'style': 'playful'})
+        self.assertEqual(r.status_code, 403, r.text)
+        r = self.client.post('/api/argyle/style/reset/m_mom', headers=self.kid)
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertEqual(argyle_style.household(), ('warm', ''))
+        self.assertEqual(argyle_style.get_member_style('m_mom')['style'], 'plain')
+        r = self.client.post('/api/argyle/style', headers=self.parent, json={'style': 'playful'})
+        self.assertEqual(r.status_code, 200, r.text)
+
     def test_every_route_has_a_tier(self):
         for method, path in (('GET', '/api/argyle/style/me'), ('POST', '/api/argyle/style/me'),
                              ('GET', '/api/argyle/style'), ('POST', '/api/argyle/style'),

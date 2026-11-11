@@ -21,9 +21,14 @@ def clean_custom(text) -> str:
     return ' '.join(text.split())[:200]
 
 
+def _key(value) -> str:
+    # A stored list or dict must never reach a dict lookup on a prompt build.
+    return value if isinstance(value, str) and value in LABELS else ''
+
+
 def household() -> tuple[str, str]:
     settings = storage.get_settings()
-    style = settings.get('argyle_style', 'warm')
+    style = _key(settings.get('argyle_style', 'warm'))
     custom = clean_custom(settings.get('argyle_style_custom')) if style == 'custom' else ''
     if style not in PRESETS or (style == 'custom' and not custom):
         return 'warm', ''
@@ -38,7 +43,7 @@ def _choice(member) -> dict:
 
 def for_member(member: dict | None) -> tuple[str, str]:
     choice = _choice(member)
-    style = choice.get('style')
+    style = _key(choice.get('style'))
     custom = clean_custom(choice.get('custom')) if style == 'custom' else ''
     if style not in PRESETS or (style == 'custom' and not custom):
         return household()
@@ -48,11 +53,11 @@ def for_member(member: dict | None) -> tuple[str, str]:
 def get_member_style(member_id) -> dict:
     """Return the saved choice, before resolving household inheritance."""
     choice = _choice(storage.get_member(member_id))
-    return {'style': choice.get('style') or 'household', 'custom': clean_custom(choice.get('custom'))}
+    return {'style': _key(choice.get('style')) or 'household', 'custom': clean_custom(choice.get('custom'))}
 
 
 def set_member_style(member_id, style, custom='') -> dict:
-    if style not in LABELS:
+    if not _key(style):
         raise ValueError('Unknown Argyle style')
     choice = {'style': style, 'custom': clean_custom(custom) if style == 'custom' else ''}
     if not storage.update_member(member_id, {'argyle_style': choice}):
@@ -61,13 +66,14 @@ def set_member_style(member_id, style, custom='') -> dict:
 
 
 def set_household_style(style, custom=''):
-    if style not in PRESETS:
+    if _key(style) not in PRESETS:
         raise ValueError('Unknown household Argyle style')
     storage.patch_settings({'argyle_style': style,
                             'argyle_style_custom': clean_custom(custom) if style == 'custom' else ''})
 
 
 def prompt_block(style, custom) -> str:
+    style = _key(style)
     custom = clean_custom(custom) if style == 'custom' else ''
     if style not in PRESETS or (style == 'custom' and not custom):
         style = 'warm'

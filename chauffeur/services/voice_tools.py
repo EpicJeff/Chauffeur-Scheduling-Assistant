@@ -232,6 +232,8 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
             record_action(ctx, 'memory', principal,
                           {'action': args.get('action'), 'text': (result.get('memory') or {}).get('text')}, provenance)
     elif name == 'style':
+        # The speaker's own choice: a PIN unlock is not proof of who is talking now.
+        principal = getattr(ctx, 'actor', lambda: None)()
         result = tools.style(**{k: v for k, v in args.items() if k in (
             'action', 'scope', 'style', 'custom')}, acting_member=principal, source='voice')
         if args.get('action', 'set') in ('set', 'reset') and result.get('status') == 'success':

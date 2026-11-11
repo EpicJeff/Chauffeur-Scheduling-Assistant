@@ -20600,9 +20600,16 @@ def argyle_style_me_set(request: Request, body: dict = Body(default={})):
     return {'status': 'success', **choice}
 
 
+def _argyle_style_parent(request: Request):
+    """The household style and everyone's choices are a parent's, enforcement on or off."""
+    if (_memory_actor(request, None).get('role') or '') != 'parent':
+        raise HTTPException(status_code=403, detail='A parent manages the household style.')
+
+
 @app.get("/api/argyle/style")
-def argyle_style_list():
+def argyle_style_list(request: Request):
     from services import argyle_style
+    _argyle_style_parent(request)
     key, custom = argyle_style.household()
     people = []
     for member in storage.get_all_members():
@@ -20613,8 +20620,9 @@ def argyle_style_list():
 
 
 @app.post("/api/argyle/style")
-def argyle_style_household_set(body: dict = Body(default={})):
+def argyle_style_household_set(request: Request, body: dict = Body(default={})):
     from services import argyle_style
+    _argyle_style_parent(request)
     try:
         argyle_style.set_household_style(body.get('style') or '', body.get('custom') or '')
     except ValueError as exc:
@@ -20624,8 +20632,9 @@ def argyle_style_household_set(body: dict = Body(default={})):
 
 
 @app.post("/api/argyle/style/reset/{member_id}")
-def argyle_style_reset(member_id: str):
+def argyle_style_reset(member_id: str, request: Request):
     from services import argyle_style
+    _argyle_style_parent(request)
     try:
         choice = argyle_style.set_member_style(member_id, 'household')
     except ValueError as exc:

@@ -108,6 +108,13 @@ class StyleTool(unittest.TestCase):
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.mine(KID)['custom'], 'a pirate')
         self.assertTrue(self.recorded, 'a spoken change is recorded like every other voice action')
+        # A parent PIN-unlocked the satellite; a voice nobody recognised speaks next.
+        for scope in ('me', 'household'):
+            res = voice_tools.dispatch('style', {'action': 'set', 'scope': scope, 'style': 'playful'},
+                                       voice('verified', PARENT, recognised=False))
+            self.assertNotEqual(res.get('status'), 'success', (scope, res))
+        self.assertEqual(self.mine(PARENT)['style'], 'household', 'an unrecognised voice spent the PIN')
+        self.assertEqual(argyle_style.household(), ('warm', ''))
 
     def test_wiring(self):
         tools = [t for t in agent_tools_v2.get_available_tools() if t['name'] == 'style']
