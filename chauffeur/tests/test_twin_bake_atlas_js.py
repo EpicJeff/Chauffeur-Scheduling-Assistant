@@ -166,6 +166,7 @@ const index = new Map(merged.map((m, i) => [m, i]));
 const levelOf = o => { for (let p = o.parent; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey; return null; };
 const shown = o => { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; };
 const covered = m => !m.material.transparent && m.material.name !== 'fixture';
+const originalTriangles = merged.filter(covered).reduce((n, m) => n + (m.geometry.index?.count ?? m.geometry.attributes.position.count) / 3, 0);
 const vtx = (g, f, k) => g.index ? g.index.getX(3 * f + k) : 3 * f + k;
 const tris = g => (g.index ? g.index.count : g.attributes.position.count) / 3;
 const P = (g, i) => new THREE.Vector3().fromBufferAttribute(g.attributes.position, i);
@@ -352,10 +353,52 @@ function summarise(atlas, o) {
 output.atlases = [];
 let last = null;
 for (const o of job.atlases) {
+  const start = performance.now();
   last = o ? buildAtlas(out.root, job.plan, o) : buildAtlas(out.root, job.plan);
+  const buildMs = performance.now() - start;
   output.atlases.push(summarise(last, merge(o)));
+  Object.assign(output.atlases.at(-1), { buildMs, originalTriangles,
+    triangles: merged.filter(covered).reduce((n, m) => n + tris(m.geometry), 0) });
 }
 if (job.lights) output.lights = assignChannels(last.room.rooms, job.lights);
+if (job.lights && job.sparseBanks) {
+  const banks = last.room.packBanks(job.lights);
+  output.emptyBanks = last.room.packBanks([]);
+  output.bankRemapsExact = banks.every(b => b.charts.every(c => {
+    const source = last.room.charts.find(s => s.mesh === c.mesh && s.faces === c.faces);
+    const r = b.rooms.find(r => r.room === c.room);
+    return source && r && c.rect.w === source.rect.w && c.rect.h === source.rect.h &&
+      c.rect.x - source.rect.x === r.region.x - r.sourceRegion.x &&
+      c.rect.y - source.rect.y === r.region.y - r.sourceRegion.y;
+  }));
+  output.banks = banks.map(b => ({ bank: b.bank, pages: b.pages, rooms: b.rooms,
+    charts: b.charts.map(c => ({ room: c.room, page: c.page, rect: c.rect, faces: c.faces,
+      mesh: index.get(c.mesh) })) }));
+}
+}
+if (job.clipCase) {
+  // An indexed, sloped ceiling crosses a concave room, another room, and exterior.
+  // Both winding and all interpolated source attributes must survive the rebuild.
+  const root = new THREE.Group(), level = new THREE.Group();
+  level.userData.buildingId = 'b'; level.userData.levelKey = 'b:L2'; root.add(level);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute([-1, 9.9, 1, 9, 10.9, 1, 9, 10.9, -9, -1, 9.9, -9], 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute([-1, -1, 9, -1, 9, 9, -1, 9], 2));
+  g.setAttribute('colourWeight', new THREE.Float32BufferAttribute([-3, 7, 27, 17], 1));
+  g.setIndex([0, 2, 1, 0, 3, 2]); g.computeVertexNormals(); // down-facing
+  const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ name: 'interior_wall' }));
+  mesh.userData.merged = true; level.add(mesh);
+  const plan = { buildings: [{ id: 'b', levels: [{ id: 'L1', elevation: 0 }, { id: 'L2', elevation: 11 }], rooms: [
+    { id: 'concave', level: 'L1', polygon: [[0, 0], [5, 0], [5, 3], [3, 3], [3, 8], [0, 8]] },
+    { id: 'right', level: 'L1', polygon: [[5, 0], [8, 0], [8, 8], [5, 8]] },
+    { id: 'upper', level: 'L2', polygon: [[0, 0], [8, 0], [8, 8], [0, 8]] }
+  ] }] };
+  const atlas = buildAtlas(root, plan), geo = mesh.geometry, a = geo.attributes;
+  output.clip = { indexed: !!geo.index, replaced: geo !== g,
+    positions: Array.from(a.position.array), uv: Array.from(a.uv.array),
+    weight: Array.from(a.colourWeight.array), normal: Array.from(a.normal.array),
+    room: Array.from(a.lmRoom.array), rooms: atlas.room.rooms,
+    chartFaces: atlas.room.charts.flatMap(c => c.faces) };
 }
 console.log(JSON.stringify(output));
 """
@@ -413,7 +456,7 @@ def forty_lights():
 _RUNS = {}
 
 
-def run(name, plan_fn=None, atlases=(None,), probes=(), lights=None, assign_cases=None):
+def run(name, plan_fn=None, atlases=(None,), probes=(), lights=None, assign_cases=None, sparse_banks=False, clip_case=False):
     """One fresh node process: build the plan once, atlas it once per options
     entry (None = the defaults), probe each; cached per name for the file."""
     if name in _RUNS:
@@ -426,6 +469,7 @@ def run(name, plan_fn=None, atlases=(None,), probes=(), lights=None, assign_case
         job = {'vendor': VENDOR, 'twin': TWIN, 'atlas': ATLAS, 'plan': plan_fn() if plan_fn else None,
                'defaults': DEFAULTS, 'kit': {**tl.kit('modern_farmhouse'), 'manifest': {}}, 'atlases': list(atlases),
                'probes': list(probes), 'lights': lights, 'assignCases': assign_cases, 'attrs': list(ATTRS)}
+        job.update(sparseBanks=sparse_banks, clipCase=clip_case)
         with open(job_path, 'w', encoding='utf-8') as f:
             json.dump(job, f)
         result = subprocess.run(['node', driver, job_path], capture_output=True, text=True, timeout=300)
@@ -719,6 +763,82 @@ def scenario_memory_stays_bounded():
           'forty light fixtures change no atlas')
 
 
+def scenario_horizontal_faces_are_clipped_and_buffers_rebuilt():
+    s = run('clip', clip_case=True)['clip']
+    check(s['replaced'] and not s['indexed'], 'split faces rebuild non-indexed merged buffers')
+    pos = [s['positions'][i:i + 3] for i in range(0, len(s['positions']), 3)]
+    check(len(pos) > 6, 'the original two triangles must split')
+    polys = [[[0, 0], [5, 0], [5, 3], [3, 3], [3, 8], [0, 8]],
+             [[5, 0], [8, 0], [8, 8], [5, 8]]]
+    areas = {-1: 0, 0: 0, 1: 0}
+    room_faces = []
+    for f in range(len(pos) // 3):
+        tri = pos[3 * f:3 * f + 3]
+        rs = s['room'][3 * f:3 * f + 3]
+        check(rs[0] == rs[1] == rs[2] and rs[0] in areas, ('one lower-level room per face', rs))
+        r = rs[0]
+        if r >= 0:
+            room_faces.append(f)
+        # Projected area, and winding: this slab is a downward-facing ceiling.
+        a, b, c = tri
+        cross = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2])
+        check(cross < 0, ('winding retained, no degenerate pieces', tri))
+        areas[r] += abs(cross) / 2
+        for wa, wb in ((0.1, 0.1), (0.8, 0.1), (0.1, 0.8), (1 / 3, 1 / 3)):
+            x = a[0] * wa + b[0] * wb + c[0] * (1 - wa - wb)
+            y = -(a[2] * wa + b[2] * wb + c[2] * (1 - wa - wb))
+            expected = next((i for i, p in enumerate(polys) if inside(p, x, y)), -1)
+            check(r == expected, ('no triangle spans two room regions or exterior', f, r, expected, x, y))
+    check(all(abs(areas[k] - v) < 1e-4 for k, v in {-1: 46, 0: 30, 1: 24}.items()),
+          ('clipping conserves the whole slab, including exterior', areas))
+    check(sorted(s['chartFaces']) == room_faces, 'each clipped room face gets one room chart')
+    for i, (x, h, z) in enumerate(pos):
+        check(abs(h - (10 + x * 0.1)) < 2e-6, 'sloped height interpolated')
+        check(abs(s['uv'][2 * i] - x) < 2e-6 and abs(s['uv'][2 * i + 1] + z) < 2e-6, 'source uv interpolated')
+        check(abs(s['weight'][i] - (x - 2 * z)) < 2e-6, 'custom attribute interpolated')
+        check(s['normal'][3 * i + 1] < -0.99, 'source normal retained')
+    d = main_run()[DEFAULT]
+    check(0 < d['triangles'] - d['originalTriangles'] <= d['originalTriangles'] * 0.25,
+          ('household splitting stays within +25% triangles', d['originalTriangles'], d['triangles']))
+
+
+def scenario_high_sparse_banks_stay_within_six_pages():
+    _, lights = forty_lights()
+    out = run('forty-high-sparse', lambda: forty_lights()[0], atlases=({'room': {'density': 8}},),
+              lights=lights, sparse_banks=True)
+    banks, slots = out['banks'], out['lights']
+    s = out['atlases'][0]
+    check(out['emptyBanks'] == [], 'no lights allocate no bank pages')
+    check(out['bankRemapsExact'], 'every sparse chart preserves its faces, dimensions and exact base uv3 offset')
+    check([b['bank'] for b in banks] == [0, 1, 2], 'three two-channel banks')
+    check(sum(b['pages'] for b in banks) <= 6, ('High sparse banks fit six 2048 RG pages total', banks))
+    check(sum(b['pages'] for b in banks) + s['sky']['pages'] <= 6,
+          ('High sparse banks plus the sky fit six pages total', [b['pages'] for b in banks], s['sky']['pages']))
+    for bank in banks:
+        expected = {v['room'] for v in slots.values() if v['bank'] >= bank['bank']}
+        check({r['room'] for r in bank['rooms']} == expected, 'only rooms using this bank occupy regions')
+        check({c['room'] for c in bank['charts']} == expected, 'only active room charts occupy pages')
+        regions = {r['room']: r for r in bank['rooms']}
+        for r in regions.values():
+            a, source = r['region'], r['sourceRegion']
+            check(source == s['rooms'][r['room']]['region'], 'base uv3 source region is explicit')
+            check((a['w'], a['h']) == (source['w'], source['h']), 'bank remap keeps isometric scale')
+            check(0 <= a['page'] < bank['pages'] and 0 <= a['x'] <= 2048 - a['w']
+                  and 0 <= a['y'] <= 2048 - a['h'], 'bank region within page')
+        for i, r in enumerate(bank['rooms']):
+            a = r['region']
+            for t in bank['rooms'][i + 1:]:
+                b = t['region']
+                if a['page'] == b['page']:
+                    check(max(b['x'] - a['x'] - a['w'], a['x'] - b['x'] - b['w'],
+                              b['y'] - a['y'] - a['h'], a['y'] - b['y'] - b['h']) >= 2, 'bank regions keep gutters')
+        for c in bank['charts']:
+            r, a = regions[c['room']]['region'], c['rect']
+            check(c['page'] == r['page'] and r['x'] <= a['x'] <= r['x'] + r['w'] - a['w']
+                  and r['y'] <= a['y'] <= r['y'] + r['h'] - a['h'], 'remapped charts stay in bank region')
+    check(not run('no-bank', assign_cases=[{'rooms': [], 'lights': []}])['assign'][0], 'no light gets a phantom slot')
+
+
 SCENARIOS = (
     scenario_same_model_same_atlas,
     scenario_a_light_added_or_moved_changes_no_atlas,
@@ -730,6 +850,8 @@ SCENARIOS = (
     scenario_a_wall_between_two_rooms_has_a_chart_on_each_side,
     scenario_a_room_with_three_lights_needs_a_second_bank,
     scenario_memory_stays_bounded,
+    scenario_horizontal_faces_are_clipped_and_buffers_rebuilt,
+    scenario_high_sparse_banks_stay_within_six_pages,
 )
 
 
