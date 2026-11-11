@@ -387,6 +387,157 @@ def scenario_lights_mode_dims_the_scene_and_all_restores():
         L.no_errors(s)
 
 
+ROOM_LAMPS_JS = """() => {
+    const v = window.__twin, night = v.state.time === 'night', fixtures = [];
+    const lamps = (v.roomLights || []).map(l => ({visible: l.visible, intensity: l.intensity, level: l.userData.level,
+        own: l.userData.intensity, levelVisible: !!v.groups.levels[l.userData.level]?.visible, inScene: !!l.parent && !!l.parent.parent}));
+    v.scene.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'fixture') fixtures.push(m.emissiveIntensity); });
+    return {night, lamps, fixtures};
+}"""
+
+
+def room_lamps(page):
+    return page.evaluate(ROOM_LAMPS_JS)
+
+
+def check_night_lamps(page, why):
+    """The house's own night lamps as the view's rule has them: visible on a shown level at night, at their own
+    intensity, and the fixtures glowing."""
+    state = room_lamps(page)
+    check(state['night'], (why, 'still night', state['night']))
+    check(state['lamps'], (why, 'the house has night lamps to check', state))
+    wrong = [l for l in state['lamps'] if l['visible'] != l['levelVisible']]
+    check(not wrong, (why, 'a night lamp is visible exactly when its level is shown', wrong))
+    dark = [l for l in state['lamps'] if l['visible'] and not (l['intensity'] > 0 and l['intensity'] == l['own'])]
+    check(not dark, (why, 'a shown night lamp is at its own intensity', dark))
+    check(state['fixtures'] and all(value == 2 for value in state['fixtures']),
+          (why, 'every fixture glows at night', sorted(set(state['fixtures']))))
+
+
+def scenario_all_after_a_floor_change_in_lights_follows_the_floor():
+    """At night, Lights in Ext, the ground floor shown, then All: the upper floors' night lamps stay off."""
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page, s)
+        page.evaluate("() => { window.__twin.setView('ext'); window.__twin.setTime('night'); }")
+        calm(page)
+        check_night_lamps(page, 'night in Ext before Lights')
+        lights_mode(page)
+        # The first floor view that hides some of the house's night lamps.
+        target = page.evaluate("""() => {
+            const v = window.__twin, levels = v.groups.levels, keys = v.levelKeys();
+            const lamps = (v.roomLights || []).map(l => l.userData.level);
+            for (const key of keys) {
+                v.setView(key);
+                if (lamps.some(level => !levels[level]?.visible)) return key;
+            }
+            return null;
+        }""")
+        check(target, ('a floor view that hides some night lamps', page.evaluate('() => window.__twin.levelKeys()')))
+        calm(page)
+        all_mode(page)
+        check_night_lamps(page, 'All after a floor change in Lights')
+        page.evaluate("() => window.__twin.setView('ext')")
+        calm(page)
+        check_night_lamps(page, 'Ext again after All')
+        L.no_errors(s)
+
+
+LATE_SKY_JS = """async () => {
+    const THREE = await import('three'), v = window.__twin;
+    if (typeof v.applySky !== 'function') return 'window.__twin.applySky is missing (a ?test=1 hook: the late sky path)';
+    const data = new Float32Array([0.6, 0.7, 0.9, 1, 0.5, 0.6, 0.8, 1]);
+    const texture = new THREE.DataTexture(data, 2, 1, THREE.RGBAFormat, THREE.FloatType);
+    texture.mapping = THREE.EquirectangularReflectionMapping; texture.needsUpdate = true;
+    v.applySky(texture);
+    return null;
+}"""
+
+
+def scenario_a_sky_arriving_in_lights_is_the_sky_after_all():
+    """The sky can land late (loadSky's onLate). Arriving during Lights mode, it is the day's sky after All."""
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page, s)
+        page.evaluate("() => window.__twin.setTime('day')")
+        calm(page)
+        before = look(page)['environment']
+        lights_mode(page)
+        check(look(page)['environment'] is None, ('Lights mode has no environment light', look(page)))
+        missing = page.evaluate(LATE_SKY_JS)
+        check(missing is None, missing)
+        calm(page)
+        check(look(page)['environment'] is None, ('the late sky keeps Lights mode dark', look(page)))
+        all_mode(page)
+        after = look(page)
+        page.evaluate('() => window.__twin.setTime(window.__twin.state.time)')
+        calm(page)
+        current = look(page)
+        check(after['environment'] is not None and after['environment'] != before,
+              ('All lights the day with the sky that arrived, not the one it found', before, after['environment']))
+        check(after == current, ('All is the day as the view draws it now', after, current))
+        L.no_errors(s)
+
+
+def scenario_a_rebuild_in_lights_keeps_the_night_lamps_after_all():
+    """A house rebuilt while in Lights mode at night gets its night lamps and glowing fixtures back on All."""
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page, s)
+        page.evaluate("() => { window.__twin.setView('ext'); window.__twin.setTime('night'); }")
+        calm(page)
+        check_night_lamps(page, 'night before Lights')
+        night = look(page)
+        lights_mode(page)
+        page.evaluate('async () => { await window.__twin.rebuild(window.__twin.plan, {preserveYard: true}); }')
+        calm(page)
+        state = room_lamps(page)
+        check(all(l['intensity'] == 0 for l in state['lamps']), ('the rebuilt night lamps stay off in Lights', state))
+        all_mode(page)
+        check_night_lamps(page, 'All after a rebuild in Lights')
+        after = look(page)
+        check({k: after[k] for k in ('background', 'environment', 'exposure', 'time')}
+              == {k: night[k] for k in ('background', 'environment', 'exposure', 'time')},
+              ('All after a rebuild is the night it found', night, after))
+        L.no_errors(s)
+
+
+PROGRAM_KEYS_JS = """() => window.__twin.renderer3.info.programs.map(p => p.id + ' ' + p.cacheKey.split(',')[0])"""
+
+
+def scenario_first_lights_entry_compiles_no_lit_shader():
+    """The live layer compiles Lights mode's programs at mount (renderer3.compileAsync with the pool shown), so
+    the first tap on Lights compiles no lit shader on the panel; at most a plain unlit one."""
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page, s)
+        L.aim_kitchen(page)
+        calm(page)
+        before = set(page.evaluate(PROGRAM_KEYS_JS))
+        lights_mode(page)
+        check(lit_pool(page), ('lights are on in Lights mode', lights(page)))
+        new = sorted(set(page.evaluate(PROGRAM_KEYS_JS)) - before)
+        lit = [key for key in new if key.split(' ', 1)[1] not in ('basic', 'sprite')]
+        check(not lit, ('the first Lights entry compiles no lit shader: they were warmed at mount', new))
+        L.no_errors(s)
+
+
 HOLD_JS = """() => {
     const original = window.chfControlFetch;
     window.__heldControl = {original, held: false};
@@ -539,6 +690,10 @@ SCENARIOS = [
     scenario_tap_off_turns_the_light_off_after_confirmed_state,
     scenario_ha_unreachable_draws_lights_off,
     scenario_wall_panel_lights_mode,
+    scenario_all_after_a_floor_change_in_lights_follows_the_floor,
+    scenario_a_sky_arriving_in_lights_is_the_sky_after_all,
+    scenario_a_rebuild_in_lights_keeps_the_night_lamps_after_all,
+    scenario_first_lights_entry_compiles_no_lit_shader,
 ]
 
 
