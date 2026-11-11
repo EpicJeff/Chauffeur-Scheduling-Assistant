@@ -438,7 +438,7 @@ def _check_base(base):
         raise ValueError('The base must be a round id.')
 
 
-def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, changes=(), step=None):
+def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, changes=(), step=None, partial=False):
     """Called with _LOCK held; file, pointer and fixes form one mutation."""
     round_id = max((r['id'] for r in row['rounds']), default=0) + 1
     at = datetime.now(timezone.utc).isoformat()
@@ -447,6 +447,8 @@ def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, chan
               'cost': cost, 'run': run, 'stale': stale}
     if step is not None:
         record['step'] = deepcopy(step)
+    if partial:
+        record['partial'] = True
     root = Path(DATA_DIR) / 'rounds'
     root.mkdir(parents=True, exist_ok=True)
     target = root / f'{round_id}.json'
@@ -489,7 +491,7 @@ def push_round(plan: dict, kind: str, note: str = '', cost: float | None = None,
         return _append_round(row, model, kind, note, cost, run, base, step=step)
 
 
-def update_current(mutator, kind, note='', step=None, cost=None, generation=None, *, state_mutator=None) -> int:
+def update_current(mutator, kind, note='', step=None, cost=None, generation=None, *, state_mutator=None, partial=False) -> int:
     """Publish a latest-plan mutation and any paired state changes in one save."""
     with LIFECYCLE, _LOCK:
         row = _state()
@@ -503,7 +505,7 @@ def update_current(mutator, kind, note='', step=None, cost=None, generation=None
         model, _ = twin_model_bridge.assemble(plan, previous=before)
         if state_mutator is not None:
             state_mutator(row)
-        return _append_round(row, model, kind, note=note, cost=cost, step=step)
+        return _append_round(row, model, kind, note=note, cost=cost, step=step, partial=partial)
 
 
 def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, state_mutator=None) -> int:
