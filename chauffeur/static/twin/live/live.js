@@ -13,7 +13,7 @@ const MARKER_PX = 44, BADGE_PX = 52, LABEL_GAP = 4, LABEL_H = 23, LABEL_MAX = 19
 // says Home Assistant is not reachable, instead of waiting on a dead network for minutes.
 const REQUEST_MS = 15000;
 // Page chrome drawn over the scene: no label goes under it, and a marker under it gets none.
-const OVERLAYS = '#twin-controls > *, #twin-tier, #twin-hud, #twin-status, #panel-shelf';
+const OVERLAYS = '#twin-controls > *, #twin-tier, #twin-hud, #twin-status, #panel-shelf, #panel-chat-orb, #chat-overlay-container';
 let measurer = null;
 function labelWidth(text) {
   measurer ||= document.createElement('canvas').getContext('2d');

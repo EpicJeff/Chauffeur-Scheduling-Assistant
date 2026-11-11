@@ -77,7 +77,9 @@
     .twin-room-device .twin-device-actions { margin-top:8px; align-items:center; }
     .twin-room-device label { display:flex; flex-wrap:wrap; align-items:center; gap:8px; width:100%; }
     .twin-room-device input[type="range"] { flex:1; min-width:100px; min-height:44px; accent-color:#e3d3ab; }
-    html[data-twin-wall] #top-nav-bar, html[data-twin-wall] #chat-overlay-container,
+    /* The chat box stays: on a panel it rests as the Argyle orb (ha_theme.html), the only way
+       into Argyle and tap-to-talk there. */
+    html[data-twin-wall] #top-nav-bar,
     html[data-twin-wall] #twin-tier, html[data-twin-wall] #twin-hud,
     /* The wall keeps the floor picker: from the Exterior a tap lands on the roof, so a
        floor is the only way to reach a room. Time and camera are preview tools. */
