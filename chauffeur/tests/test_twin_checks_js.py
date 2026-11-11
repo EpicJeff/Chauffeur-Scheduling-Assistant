@@ -44,7 +44,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from twin_editor_dom import PRELUDE, run_node  # noqa: E402
 
 NAMES = ['queue_merges_pause_flags_and_proposals', 'skip_moves_on_and_keeps_the_item',
-         'fix_it_leaves_the_build_waiting']
+         'fix_it_leaves_the_build_waiting', 'a_roof_check_highlights_its_roof',
+         'the_queue_is_not_rebuilt_every_frame', 'the_check_card_hides_the_piece_card',
+         'a_check_shown_while_the_house_draws_waits_for_it']
 
 DRIVER = PRELUDE + r"""
 const NAMES = %s;
@@ -200,6 +202,112 @@ await test('fix_it_leaves_the_build_waiting', async () => {
   assert.equal(ops.length, 0, 'Fix it changes nothing by itself');
   assert.ok(checks.queue().some(i => i.kind === 'flag' && i.building === B && i.index === wall.index), 'the flag stays until it is fixed or looks right');
 });
+
+// Final review I3: a roof check outlines its roof area at the roof's plate, frames it, selects the
+// roof, and its marker stands out from every other marker. Every flag's marker can be told apart.
+const shownIn = o => { for (let n = o; n; n = n.parent) if (!n.visible) return false; return true; };
+await test('a_roof_check_highlights_its_roof', async () => {
+  const checks = make(); build = null; await settle();
+  const roofFlags = flagRows.filter(r => r.flag.block_rect);
+  assert.ok(roofFlags.length >= 4, 'test setup: the household has roof checks');
+  const host = view.renderer3.domElement.parentElement;
+  const currentMarkers = () => host.querySelectorAll('.editor-flag-marker')
+    .filter(n => n.className.split(/\s+/).includes('editor-flag-marker-current'));
+  // One walk of the queue visits every check once.
+  const seenRoofs = new Set();
+  const length = checks.queue().length;
+  checks.next(); await settle();
+  for (let step = 0; step < length; step++, checks.next(), await settle()) {
+    const item = checks.current();
+    if (item?.kind !== 'flag') continue;
+    const current = currentMarkers();
+    assert.equal(current.length, 1, `exactly one marker reads as the current check: ${item.flag.text}`);
+    assert.ok(!current[0].hidden, `the current marker is in view: ${item.flag.text}`);
+    if (!item.flag.block_rect) continue;
+    seenRoofs.add(`${item.building}:${item.index}`);
+    const b = model.buildings.find(x => x.id === item.building);
+    const roof = b.roofs.find(r => Array.isArray(r.block) && r.block.every((v, i) => Math.abs(v - item.flag.block_rect[i]) < 1e-6));
+    assert.ok(roof, 'test setup: a roof stands on the checked block');
+    const [x0, y0, x1, y1] = item.flag.block_rect;
+    let group = null;
+    view.scene.traverse(o => { if (o.name === 'editor-flag-highlight') group = o; });
+    assert.ok(group, 'the check highlight is a group named editor-flag-highlight');
+    view.scene.updateMatrixWorld(true);
+    const lines = [];
+    group.traverse(o => { if (o.isLine && shownIn(o)) lines.push(o); });
+    assert.ok(lines.length >= 1, `the roof check outlines its roof area: ${item.flag.text}`);
+    const box = new THREE.Box3();
+    for (const line of lines) { line.geometry.computeBoundingBox(); box.union(line.geometry.boundingBox.clone().applyMatrix4(line.matrixWorld)); }
+    const want = new THREE.Box3().setFromPoints([[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(q => world(b, [...q, roof.plate])));
+    for (const k of ['min', 'max']) for (const axis of ['x', 'y', 'z'])
+      assert.ok(Math.abs(box[k][axis] - want[k][axis]) < .1, `the outline is the roof area at its plate (${k}.${axis}: ${box[k][axis]} vs ${want[k][axis]})`);
+    view.camera.updateMatrixWorld(true);
+    const at = world(b, [...item.flag.at, roof.plate]).project(view.camera);
+    assert.ok(Math.abs(at.x) < .05 && Math.abs(at.y) < .05, `the camera frames the roof, not the ground: ${at.x}, ${at.y}`);
+    assert.equal(tools.selection().id, roof.id, 'the checked roof is selected, so the selection paint shows it');
+    assert.ok(Math.abs(parseFloat(current[0].style.left) - 720) < 3 && Math.abs(parseFloat(current[0].style.top) - 450) < 3,
+      `the current marker sits on the roof at its plate: ${current[0].style.left}, ${current[0].style.top}`);
+  }
+  assert.equal(seenRoofs.size, roofFlags.length, 'the walk met every roof check');
+});
+
+// Final review M2: with nothing new, the queue is not rebuilt and stringified each frame.
+await test('the_queue_is_not_rebuilt_every_frame', async () => {
+  const checks = make(); await settle(); checks.dismiss(false); await settle();
+  const stringify = JSON.stringify;
+  let rebuilt = 0;
+  JSON.stringify = function (value, ...rest) {
+    if (Array.isArray(value) && value.some(v => v && ['pause', 'flag', 'proposal'].includes(v.kind))) rebuilt++;
+    return stringify.call(this, value, ...rest);
+  };
+  try { for (let i = 0; i < 20; i++) tick(); }
+  finally { JSON.stringify = stringify; }
+  assert.equal(rebuilt, 0, 'twenty quiet frames rebuild the queue no times');
+  // A new build still reaches the queue on the next frame: a fresh pause opens the card.
+  build = null; tick();
+  build = pausedBuild(); tick();
+  assert.equal(document.getElementById('check-card').hidden, false, 'a new pause opens the check card on the next frame');
+  assert.equal(checks.current()?.kind, 'pause');
+});
+
+// Final review M4: while a check is open the selected piece's card steps aside (same slot).
+await test('the_check_card_hides_the_piece_card', async () => {
+  let shell = document.querySelectorAll('.editor-shell')[0];
+  if (!shell) {
+    shell = document.createElement('div'); shell.className = 'editor-shell'; document.body.append(shell);
+    shell.append(document.getElementById('piece-card'));
+  }
+  const checks = make(); build = null; await settle();
+  const separator = flagRows.find(r => r.flag.separators);
+  await goTo(checks, item => item?.kind === 'flag' && item.building === separator.building && item.index === separator.index);
+  await settle();
+  assert.equal(document.getElementById('check-card').hidden, false, 'test setup: the check card is open');
+  assert.ok(shell.hasAttribute('data-reviewing'), 'an open check card marks the shell, so the piece card hides');
+  checks.dismiss(); await settle();
+  assert.ok(!shell.hasAttribute('data-reviewing'), 'closing the check brings the piece card back');
+  checks.show(); await settle();
+  assert.ok(shell.hasAttribute('data-reviewing'), 'test setup: the check is open again');
+  await click(button('Fix it')); await settle();
+  assert.ok(!shell.hasAttribute('data-reviewing'), 'Fix it shows the piece card for editing');
+});
+
+// Final review M3: a check focused while the house is still drawing waits for the drawn house.
+await test('a_check_shown_while_the_house_draws_waits_for_it', async () => {
+  const checks = make(); build = null; await settle();
+  await view.rebuild({buildings: [], site: {}, materials: {}});
+  const drawing = view.rebuild(flat);
+  assert.equal(view.ready, false, 'test setup: the house is drawing');
+  const target = flagRows.find(r => r.building === B && r.flag.level === 'L2');
+  assert.ok(target, 'test setup: a pool house check on its second floor');
+  for (let i = 0; i <= checks.queue().length; i++) {
+    const item = checks.current();
+    if (item?.kind === 'flag' && item.building === target.building && item.index === target.index) break;
+    checks.next();
+  }
+  assert.equal(checks.current()?.index, target.index, 'test setup: the check was focused mid-draw');
+  await drawing; await settle();
+  assert.equal(view.state.view, `${B}:L2`, `once drawn, the check's floor shows (not the outside under its roof): ${view.state.view}`);
+});
 finish();
 """ % json.dumps(NAMES)
 
@@ -210,7 +318,7 @@ def run():
     model = assemble(fixture)[0]
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
     kit['manifest'] = {}
-    code, out = run_node(DRIVER, {'root': ROOT.as_posix(), 'model': model, 'flat': flatten(model), 'kit': kit})
+    code, out = run_node(DRIVER, {'root': ROOT.as_posix(), 'model': model, 'flat': flatten(model), 'kit': kit}, timeout=300)
     print(out.strip())
     if code is None:
         return

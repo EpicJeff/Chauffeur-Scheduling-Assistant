@@ -20,6 +20,7 @@ import { createSteps } from './steps.js';
 import { createChecks } from './checks.js';
 
 const el = id => document.getElementById(id);
+const STREAM_ONLY = new Set(['piece', 'stage', 'stream_reset', 'log']);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
 
 export async function boot() {
@@ -48,11 +49,17 @@ export async function boot() {
     if (name === 'Check it') { place?.close(false); checks?.show(); }
     else { checks?.dismiss(false); place?.open(name); }
   } });
-  const header = el('editor-top');
+  const header = el('editor-top'), rail = el('editor-rail');
   if (typeof ResizeObserver !== 'undefined') {
-    const observer = new ResizeObserver(() => document.querySelector('.editor-shell').style
-      .setProperty('--editor-header-bottom', `${header.getBoundingClientRect().bottom + 8}px`));
+    // Panels beside the rail start at its right edge: the rail is one column or two (M1).
+    const observer = new ResizeObserver(() => {
+      const style = document.querySelector('.editor-shell').style;
+      style.setProperty('--editor-header-bottom', `${header.getBoundingClientRect().bottom + 8}px`);
+      const right = rail?.getBoundingClientRect?.().right;
+      if (right > 0) style.setProperty('--editor-rail-right', `${Math.round(right + 8)}px`);
+    });
     observer.observe(header);
+    if (rail) observer.observe(rail);
     lifecycle.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
   }
   const currentRound = () => [...snapshot.rounds].reverse().find(row => !row.stale)?.id ?? null;
@@ -102,7 +109,7 @@ export async function boot() {
   function syncBuildButton() {
     syncChip();
     steps.render(stepState());
-    el('editor-front-door').hidden = drawingStarted || !!sheets.place?.buildings?.length
+    el('editor-front-door').hidden = drawingStarted || !!sheets.place?.buildings?.length || !!sheets.sources?.length
       || !!snapshot.model?.buildings?.length || !!sheets.place?.lot?.read || !!snapshot.plan?.site?.lot?.length;
     history?.sync();
     // Reaching ready requires successful parent-only editor API requests.
@@ -124,7 +131,8 @@ export async function boot() {
   }
   function syncChip() {
     statusChip.update({ state: currentBuild?.state, pause: currentBuild?.pause,
-      cost: snapshot.cost?.total || 0, estimate: currentBuild?.state === 'running' ? snapshot.cost?.estimate : null });
+      cost: snapshot.cost?.total || 0,
+      estimate: ['running', 'stopped', 'checkpoint'].includes(currentBuild?.state) ? snapshot.cost?.estimate ?? null : null });
   }
   function countGhosts(plan) {
     if (!plan || typeof plan !== 'object') return 0;
@@ -207,7 +215,7 @@ export async function boot() {
     sheets = await request('sheets');
     const photos = sheets.sources.filter(source => source.kind === 'photo').length;
     el('editor-source-count').textContent = `${sheets.sources.filter(source => source.kind === 'drawing').reduce((n, source) => n + source.pages, 0)} sheets \u00b7 ${photos} ${photos === 1 ? 'photo' : 'photos'}`;
-    place?.sync(sheets, { ...snapshot, buildState: currentBuild });
+    syncBuildButton();
   }
   const polling = createPolling({
     async onState(state) {
@@ -236,7 +244,8 @@ export async function boot() {
       const showPieces = build.state === 'running' || currentBuild?.state === 'running' || buildGhosts?.count() > 0;
       currentBuild = build;
       for (const event of build.events || []) {
-        if (event.type === 'stream_reset') buildGhosts?.clear(event.step);
+        if (event.type === 'stream_reset') buildGhosts?.clear(event.step, event.after);
+        if (event.type === 'stage' && event.frame) buildGhosts?.add(event);
         if (event.type === 'piece' && showPieces && build.steps.find(s => s.id === event.step)?.status !== 'done')
           buildGhosts?.add({ ...event, building: event.building || build.part || 'house' });
         if (event.type === 'ghost') ghosts.set(event.step, event);
@@ -252,9 +261,11 @@ export async function boot() {
       setStatus(build.state === 'running' ? `Argyle is building${step ? ' · ' + step.label : ''}`
         : build.state === 'paused' ? 'Argyle is waiting for you'
           : build.state === 'done' ? 'House ready' : build.state === 'checkpoint' ? 'Spending checkpoint' : 'Build stopped');
-      // Each new event batch can carry saved pieces, temporary outlines or
-      // new costs. Read their owning state before rebuilding the scene.
-      if (build.events?.length) {
+      // A batch can carry saved pieces, temporary outlines or new costs: read their owning state
+      // before rebuilding the scene. Streamed pieces, stages, resets and log lines change nothing
+      // /state or /sheets return, so a streaming read does not reload the house twice a second.
+      // A cost event still reloads, so the chip keeps matching the ledger.
+      if ((build.events || []).some(event => !STREAM_ONLY.has(event.type))) {
         await polling.refreshState();
         await loadSheets();
       }

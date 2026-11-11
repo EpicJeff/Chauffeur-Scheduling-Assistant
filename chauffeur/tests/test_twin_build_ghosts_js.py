@@ -24,6 +24,8 @@ transform lands far from where it belongs.
 Tests:
   a_piece_event_adds_one_ghost
   settle_replaces_ghosts_with_the_round
+  a_building_not_yet_in_the_plan_still_draws   (final review I1)
+  an_undrawable_piece_is_skipped               (final review I2)
 
 Run from chauffeur/:  python tests/test_twin_build_ghosts_js.py
 """
@@ -110,6 +112,59 @@ if (which === 'a_piece_event_adds_one_ghost') {
   await settleFrames();
   assert.equal(ghosts.count(), 2, 'each further piece adds one more ghost');
   console.log('  ok a_piece_event_adds_one_ghost');
+} else if (which === 'a_building_not_yet_in_the_plan_still_draws') {
+  // Final review I1: a building added in Your files enters the plan with the first round. Until then
+  // the step's first stage event carries the frame the engine will give it (position, turn, base, levels).
+  const frameOf = f => p => {
+    const a = (f.rotation || 0) * Math.PI / 180, pos = f.position;
+    return new THREE.Vector3((Math.cos(a) * p[0] - Math.sin(a) * p[1] + pos[0]) * FT,
+      (p[2] + (f.base || 0)) * FT, -(Math.sin(a) * p[0] + Math.cos(a) * p[1] + pos[1]) * FT);
+  };
+  const frame = {id: 'fresh-shed', position: [260, 20], rotation: 90, base: 0,
+    levels: [{id: 'L1', name: 'Main floor', elevation: 0, ceiling: 9}]};
+  assert.equal(ghostsAt(frameOf(frame)(mid)).length, 0, 'test setup: nothing translucent where the shed will stand');
+  await ghosts.add({seq: 3, type: 'stage', step: 'draft', label: 'Reading the drawings', frame});
+  await ghosts.add({...piece(5, 'draft', 'wall', 'walls', W9), building: 'fresh-shed'});
+  await settleFrames();
+  assert.equal(ghosts.count(), 1, 'a piece of a building not yet in the plan draws one ghost');
+  assert.ok(ghostsAt(frameOf(frame)(mid)).length > 0, 'it stands where the engine will place the new building');
+  // With no frame sent, the ghost still draws, right of every building as the engine places a new one.
+  let right = -Infinity;
+  for (const x of view.plan.buildings) {
+    const a = (x.rotation || 0) * Math.PI / 180, pos = x.position || [0, 0];
+    for (const level of x.levels || []) for (const p of level.outline || [])
+      right = Math.max(right, Math.cos(a) * p[0] - Math.sin(a) * p[1] + pos[0]);
+  }
+  await ghosts.add({...piece(6, 'draft', 'wall', 'walls', W9), building: 'unframed-shed'});
+  await settleFrames();
+  assert.equal(ghosts.count(), 2, 'a piece with no frame and no building in the plan still draws');
+  assert.ok(ghostsAt(frameOf({position: [right + 10, 0], rotation: 0})(mid)).length > 0,
+    'with no frame the ghost stands right of the existing buildings, as the engine places a new one');
+  console.log('  ok a_building_not_yet_in_the_plan_still_draws');
+} else if (which === 'an_undrawable_piece_is_skipped') {
+  // Final review I2: pieces come straight from the reply; one that cannot be drawn is skipped and logged.
+  const logged = [], warn = console.warn;
+  console.warn = (...args) => logged.push(args.map(String).join(' '));
+  const bad = [
+    piece(1, 'draft', 'roof', 'roofs', {id: 'R2', kind: 'gable', pitch: 8}),
+    piece(2, 'draft', 'roof', 'roofs', {id: 'R3', kind: 'gable', pitch: 8, rect: [0, 0, 'a', 4]}),
+    piece(3, 'draft', 'wall', 'walls', {id: 'W0', level: 'L1', from: [1, 2]}),
+    piece(4, 'draft', 'wall', 'walls', {id: 'W00', level: 'L1', from: ['a', 2], to: [3, 4]}),
+    piece(7, 'draft', 'opening', 'openings', {id: 'O1', wall: 'W1', at: 'x', width: 3, sill: 0, head: 7}),
+    piece(8, 'draft', 'level', 'levels', {id: 'L9', outline: [[0, 0], ['a', 1], [2]]}),
+    piece(10, 'draft', 'room', 'rooms', {id: 'R9', polygon: 'nope'}),
+    piece(11, 'draft', 'fixture', 'fixtures', {id: 'F1', at: 'here'}),
+    {seq: 12, type: 'piece', step: 'draft', kind: 'wall', building: B, piece: null},
+  ];
+  try {
+    for (const event of bad) assert.doesNotThrow(() => ghosts.add(event), 'an undrawable piece never throws: ' + JSON.stringify(event.piece));
+    await ghosts.add(piece(13, 'draft', 'wall', 'walls', W9));
+  } finally { console.warn = warn; }
+  await settleFrames();
+  assert.equal(ghosts.count(), 1, 'the bad pieces are skipped; the good wall after them draws');
+  assert.ok(ghostsAt(world(mid)).length > 0, 'the good wall stands in the pool house');
+  assert.ok(logged.length >= 1, 'a skipped piece is logged');
+  console.log('  ok an_undrawable_piece_is_skipped');
 } else {
   await ghosts.add(piece(5, 'draft', 'wall', 'walls', W9));
   await ghosts.add(piece(6, 'draft', 'wall', 'walls', wall('W10', [40, 32], [40, 34])));
@@ -135,7 +190,8 @@ view.dispose();
 process.exit(0);
 """
 
-TESTS = ['a_piece_event_adds_one_ghost', 'settle_replaces_ghosts_with_the_round']
+TESTS = ['a_piece_event_adds_one_ghost', 'settle_replaces_ghosts_with_the_round',
+         'a_building_not_yet_in_the_plan_still_draws', 'an_undrawable_piece_is_skipped']
 
 
 def run():

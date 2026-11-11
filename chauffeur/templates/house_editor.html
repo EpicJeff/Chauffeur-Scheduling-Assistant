@@ -26,7 +26,7 @@
     imports[new URL(window.chfBase + 'static/twin/editor/device_placement.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/device_placement.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/build_ghosts.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/build_ghosts.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/status_chip.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/status_chip.js' | ver | tojson }};
-    {% for name in ['steps', 'checks'] %}
+    {% for name in ['steps', 'checks', 'ghost_geometry'] %}
     imports[new URL(window.chfBase + 'static/twin/editor/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/editor/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/live/markers.js', location.href).href] = window.chfBase + {{ 'static/twin/live/markers.js' | ver | tojson }};

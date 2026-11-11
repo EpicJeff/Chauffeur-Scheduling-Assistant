@@ -1089,8 +1089,11 @@ class Cancelled(RuntimeError):
     """The person stopped a read; its cost has already been recorded."""
 
 
-def read_stream(kind, context, images, *, cancel, on_text, run, step):
-    """Read one model answer with live text and the usual twin validation."""
+def read_stream(kind, context, images, *, cancel, on_text, run, step, on_reset=None):
+    """Read one model answer with live text and the usual twin validation.
+
+    on_reset, when given, is called before a second attempt (a refused or truncated reply): the
+    text already sent through on_text belongs to an attempt that is not the answer."""
     from services import llm_stream
 
     if not isinstance(kind, str) or kind not in KINDS:
@@ -1119,6 +1122,8 @@ def read_stream(kind, context, images, *, cancel, on_text, run, step):
     for attempt in range(2):
         if cancel.cancelled:
             raise Cancelled('Read stopped.')
+        if attempt and on_reset is not None:
+            on_reset()
         twin_cost.require_clear()
         parts, error, dropped = [], None, False
         try:

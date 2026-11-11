@@ -659,7 +659,69 @@ def scenario_chip_spend_matches_the_ledger():
     check(not H.unexpected(s.errors()), s.errors())
 
 
+# --- final whole-branch review I1 ---------------------------------------------------------
+
+def _without_pool_house(plan):
+    plan['buildings'] = [b for b in plan['buildings'] if b['id'] != B]
+    return plan
+
+
+def scenario_a_fresh_building_shows_its_ghosts_rising():
+    # The pool house was removed from the house (or the house started over): it stays in Your
+    # place with its drawings, but the plan has no pool house until the build's first round lands.
+    s = _serve()
+    if s is None:
+        return
+    reader = _fresh()
+    from services import twin_build as tb, twin_store as ts
+    ts.push_round(_without_pool_house(H.household_plan()), 'build')
+    try:
+        with s.browser(launch_args=H.GPU_ARGS) as page:
+            _open(page, s)
+            check(page.evaluate("bid => !(window.__twin.plan.buildings || []).some(b => b.id === bid)", B),
+                  'test setup: the scene has no pool house')
+            bid = _start(page)
+            seen, deadline = [], time.time() + 90
+            while time.time() < deadline and not reader.at_gate.is_set():
+                count = _ghosts(page)
+                arrived = len(_server_pieces(bid))
+                check(count <= arrived, ('a ghost for a piece that has not arrived', count, arrived))
+                if not seen or seen[-1] != count:
+                    seen.append(count)
+                page.wait_for_timeout(100)
+            _wait_gate(page, reader, bid)
+            seen.append(_ghosts(page))
+            rising = sorted(set(c for c in seen if c > 0))
+            check(len(rising) >= 3 and seen == sorted(seen),
+                  ('a building\'s first build shows its ghosts rising piece by piece', seen))
+            check(page.evaluate("bid => !(window.__twin.plan.buildings || []).some(b => b.id === bid)", B),
+                  'test setup: no round has landed yet, the scene still has no pool house')
+            stage = next(e for e in tb.status(bid)['events'] if e['type'] == 'stage' and e.get('frame'))
+            frame = stage['frame']
+            a = math.radians(frame.get('rotation') or 0)
+            px, py = frame['position']
+
+            def at(p):
+                return [math.cos(a) * p[0] - math.sin(a) * p[1] + px, math.sin(a) * p[0] + math.cos(a) * p[1] + py,
+                        p[2] + (frame.get('base') or 0)]
+            hits = _raw_at(page, [at(_mid(w)) for w in KEPT])
+            check(all(h > 0 for h in hits), ('each arrived wall stands where the engine will place the pool house', hits, frame))
+            page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_guided_fresh_building.png'))
+            reader.go.set()
+            _wait(page, lambda: _step_status(bid) == 'done', 60,
+                  ('the released read lands as a round', [(x['id'], x['status']) for x in tb.status(bid)['steps']]))
+            _wait(page, lambda: not [q for q in _ghost_seqs(page) if q <= _server_pieces(bid)[-1]['seq']], 15,
+                  ('the read ghosts settle once its round lands', _ghost_seqs(page)))
+            pool = next(b for b in ts.current()['buildings'] if b['id'] == B)
+            check(pool['position'] == frame['position'] and (pool.get('rotation') or 0) == (frame.get('rotation') or 0),
+                  ('the round put the pool house where its ghosts stood', pool['position'], frame))
+    finally:
+        _quiet_engine()
+    check(not H.unexpected(s.errors()), s.errors())
+
+
 SCENARIOS = [
+    scenario_a_fresh_building_shows_its_ghosts_rising,
     scenario_pieces_appear_one_by_one,
     scenario_stop_mid_walls_keeps_the_walls,
     scenario_two_tabs_see_the_same_pieces,

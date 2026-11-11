@@ -27,6 +27,8 @@ The derivation this test pins, case by case (only where the answer is plain):
     read and placed: Your files and Your lot done, Build now, the rest not yet;
   - lot read but not placed: Your lot is now;
   - a build running: Build is now;
+  - a build stopped, at a spending checkpoint or failed (a partial round may
+    exist): Build is now, never done (final review M5);
   - the house built with flags or proposals left: Build done, Check it now;
   - built with nothing to check: Check it done, Link to Home Assistant now;
   - every room linked to a Home Assistant area (room.ha_area): Link done.
@@ -99,6 +101,11 @@ await test('step_state_from_model_and_sources', async () => {
       {'Build': 'done', 'Check it': 'done', 'Link to Home Assistant': 'now'}],
     ['every room linked', {model: builtModel({flags: 0, proposals: 0, linked: true}), sheets: filedSheets(), build: null},
       {'Check it': 'done', 'Link to Home Assistant': 'done'}],
+    // Final review M5: a build stopped half way published a partial round, so pieces exist; it still
+    // waits for Continue. Build is now, not done, and no later step is now.
+    ...['stopped', 'checkpoint', 'failed'].map(state => [`a ${state} build with a partial round`,
+      {model: builtModel({flags: 0, proposals: 0}), sheets: filedSheets(), build: {id: 'b1', state, steps: [], events: []}},
+      {'Build': 'now', 'Check it': 'not-yet', 'Link to Home Assistant': 'not-yet'}]),
   ];
   for (const [label, state, want] of cases) {
     steps.render(state);

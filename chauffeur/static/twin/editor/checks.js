@@ -26,6 +26,13 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   // The queue opens from Check it (or when a build pauses), never by itself on load: opening it
   // moves the camera and the floor, which must not happen before the person asks.
   let rows = [], selected = null, signature = '', busy = false, dismissed = true, framing = false, emptyOpen = false, frame;
+  let seenModel, seenBuild, waiting = false;
+  const sceneHost = view.renderer3?.domElement?.parentElement;
+  const isHidden = () => dismissed || !selected && !emptyOpen || !canEdit();
+  // While a flag or proposal check is open its card takes the piece card's slot, so the piece card
+  // steps aside (a pause's card sits on the left and leaves the piece card where it is).
+  const reviewing = () => card.closest?.('.editor-shell')
+    ?.toggleAttribute('data-reviewing', !card.hidden && selected?.kind !== 'pause');
   const items = () => {
     const build = getBuild(), buildings = getModel()?.buildings || [];
     return [
@@ -43,6 +50,16 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   }
   function focus() {
     if (!selected || dismissed) return;
+    // A check chosen while the house is still drawing waits for the drawn house when the floor it
+    // names is not in the scene being replaced (choosing it there would do nothing).
+    const level = selected.kind === 'flag' ? selected.flag.level : selected.kind === 'proposal' ? selected.piece?.level : null;
+    if (view.ready === false && sceneHost && level && !view.groups?.levels?.[`${selected.building}:${level}`]) {
+      if (!waiting) {
+        waiting = true;
+        sceneHost.addEventListener('twinrebuilt', () => { waiting = false; focus(); }, { once: true, signal });
+      }
+      return;
+    }
     framing = true;
     try {
       if (selected.kind === 'pause') { review.dismiss(); pauses?.show(); }
@@ -52,9 +69,9 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   function draw() {
     if (adjustment) adjustmentHome.append(adjustment);
     sendHome();
-    card.replaceChildren(); card.hidden = dismissed || !selected && !emptyOpen || !canEdit();
+    card.replaceChildren(); card.hidden = isHidden();
     card.setAttribute('data-check-kind', selected?.kind || 'empty');
-    pauseControls();
+    pauseControls(); reviewing();
     if (card.hidden) return;
     const title = document.createElement('h3'); title.textContent = selected?.stepInfo?.label || 'Check this piece';
     const close = button('Close', dismiss, true); close.setAttribute('aria-label', 'Close check');
@@ -131,8 +148,8 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   function sync() {
     const fresh = items(), nextSignature = JSON.stringify(fresh);
     if (signature === nextSignature) {
-      card.hidden = dismissed || !selected && !emptyOpen || !canEdit();
-      pauseControls();
+      card.hidden = isHidden();
+      pauseControls(); reviewing();
       return;
     }
     const index = Math.max(0, rows.findIndex(r => key(r) === key(selected)));
@@ -159,11 +176,19 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
     dismissed = true; pauses?.dismiss(); review.dismiss(); draw();
     if (notify !== false) onClose?.();
   }
-  function tick() { sync(); frame = requestAnimationFrame(tick); }
+  // Each frame only notices a new model or build (the editor replaces them, never edits them in
+  // place) or a change in whether the card may show; the queue is rebuilt only then.
+  function tick() {
+    const model = getModel(), build = getBuild();
+    if (model !== seenModel || build !== seenBuild) { seenModel = model; seenBuild = build; sync(); }
+    else if (card.hidden !== isHidden()) { card.hidden = isHidden(); pauseControls(); reviewing(); }
+    frame = requestAnimationFrame(tick);
+  }
   signal.addEventListener('abort', () => {
     cancelAnimationFrame(frame);
     if (adjustment) adjustmentHome.append(adjustment);
     sendHome();
+    card.hidden = true; reviewing();
     card.remove();
   }, { once: true });
   document.addEventListener('keydown', event => {

@@ -169,8 +169,10 @@ def _events(build, since):
 
 def _persisted_items(build, step):
     events = _events(build, 0)
+    # A reset with `after` dropped only one refused attempt's pieces (they left the events then);
+    # the pieces before it stay this step's.
     after = max((e['seq'] for e in events if e.get('step') == step['id']
-                 and e['type'] in ('stream_reset', 'settled')), default=0)
+                 and e['type'] in ('stream_reset', 'settled') and 'after' not in e), default=0)
     keys = {'level': 'levels', 'wall': 'walls', 'opening': 'openings',
             'fixture': 'fixtures', 'room': 'rooms', 'roof': 'sections'}
     paths = {keys[kind]: ('building.' if step['kind'] == 'draft' else '') + keys[kind]
@@ -238,7 +240,8 @@ def status(build_id, since=0):
 def remaining_estimate(build_id):
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
-        if build['state'] != 'running':
+        # Running: what is left. Stopped or at a checkpoint: what Continue would read.
+        if build['state'] not in ('running', 'stopped', 'checkpoint'):
             return None
         pages = [p for p in twin_store.page_roles() if p.get('building') == build['inputs'].get('part')]
         photos = sum(twin_store.source_image_count(source) for source in build['inputs'].get('photos', []))
@@ -581,6 +584,22 @@ def _base(plan, build, lot=None):
             house.update(identity)
         house['levels'].extend(l for l in levels if not any(old['id'] == l['id'] for old in house['levels']))
     return twin_plan.normalize(plan)[0]
+
+
+def _frame(build):
+    """Where the build's building stands, or where its first round will put it: a building added
+    in Your files is not in the plan until then, and its streamed pieces need a frame to stand in."""
+    if build['inputs'].get('part') == 'lot' or not build['inputs'].get('building'):
+        return None
+    try:
+        house = _house(_base(twin_store.current(), build), build)
+    except Exception:
+        logger.warning('The building frame for the streamed pieces could not be worked out.', exc_info=True)
+        return None
+    return {'id': house['id'], 'position': list(house.get('position') or [0, 0]),
+            'rotation': house.get('rotation') or 0, 'base': house.get('base') or 0,
+            'levels': [{k: level[k] for k in ('id', 'name', 'elevation', 'ceiling') if k in level}
+                       for level in house.get('levels', [])]}
 
 
 def _outline(plan, build, level=None):
@@ -1546,9 +1565,9 @@ def _read(build, step, reader, ticket, kind, images, context, *, checkpoint_chec
     pieces_enabled = kind in ('draft', 'draft_level', 'draft_rooms')
     paths = {path: stage for path, stage in STREAM_PATHS.items()
              if path.startswith('building.') == (kind != 'draft_rooms')}
-    parser = twin_stream.Pieces(paths)
     stream = {'step': step['id'], 'items': [], 'stage': None, 'kind': kind}
-    call = {'parser': parser, 'stopping': False, 'text': [], 'kind': kind, 'pieces_enabled': pieces_enabled}
+    call = {'parser': twin_stream.Pieces(paths), 'stopping': False, 'text': [], 'kind': kind,
+            'pieces_enabled': pieces_enabled}
     with twin_store.LIFECYCLE, _LOCK:
         if not _live(build, ticket):
             raise twin_reads.Cancelled('Read stopped.')
@@ -1563,6 +1582,27 @@ def _read(build, step, reader, ticket, kind, images, context, *, checkpoint_chec
                 else:
                     _reset_stream(build, step)
             runtime['stream'] = stream
+        # Where this call's pieces start, so a retry can drop only its own.
+        call['seq_from'], call['items_from'] = build['seq'], len(stream['items'])
+
+    def on_reset():
+        # read_stream reads again (a refused or truncated reply): the refused attempt's text and
+        # pieces are not this read's. A Stop during the retry keeps only the retry's pieces.
+        with twin_store.LIFECYCLE, _LOCK:
+            call['text'] = []
+            call['parser'] = twin_stream.Pieces(paths)
+            valid = (_BUILDS.get(build['id']) is build and runtime.get('ticket') == ticket
+                     and build['generation'] == twin_store.generation())
+            if not pieces_enabled or not valid:
+                return
+            del stream['items'][call['items_from']:]
+            stream['stage'] = None
+            refused = {e['seq'] for e in build['events'] if e['type'] == 'piece'
+                       and e.get('step') == step['id'] and e['seq'] > call['seq_from']}
+            if refused:
+                build['events'] = [e for e in build['events'] if e['seq'] not in refused]
+                _event(build, 'stream_reset', step=step['id'], after=call['seq_from'])
+                _save(build)
 
     def on_text(text):
         if not pieces_enabled:
@@ -1576,6 +1616,7 @@ def _read(build, step, reader, ticket, kind, images, context, *, checkpoint_chec
             if not valid or cancel.cancelled or (not _live(build, ticket) and not call['stopping']):
                 return
             call['text'].append(text)
+            parser = call['parser']
 
             def stage(value):
                 if value != stream['stage']:
@@ -1609,11 +1650,13 @@ def _read(build, step, reader, ticket, kind, images, context, *, checkpoint_chec
     try:
         try:
             if product:
+                reset = {'on_reset': on_reset} if _accepts(twin_reads.read_stream, 'on_reset') else {}
                 raw = twin_reads.read_stream(kind, context, images, cancel=cancel, on_text=on_text,
-                                             run=build['id'], step=step['id'])
+                                             run=build['id'], step=step['id'], **reset)
             else:
+                reset = {'on_reset': on_reset} if _accepts(reader, 'on_reset') else {}
                 raw = reader(kind, images, context, run=build['id'], step=step['id'],
-                             cancel=cancel, on_text=on_text)
+                             cancel=cancel, on_text=on_text, **reset)
         except twin_reads.Cancelled:
             if not call.get('keep_complete'):
                 raise
@@ -1628,6 +1671,14 @@ def _read(build, step, reader, ticket, kind, images, context, *, checkpoint_chec
             runtime['calls'].pop(cancel, None)
             if call.get('timer'):
                 call['timer'].cancel()
+
+
+def _accepts(fn, name):
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in parameters or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
 
 
 def _scoped_piece(path, piece, scope):
@@ -3041,7 +3092,8 @@ def _run(build, ticket, reader):
                 _WORKERS[build['id']].pop('stream', None)
                 if step['kind'] in ('draft', 'draft_rooms'):
                     _reset_stream(build, step)
-                _event(build, 'stage', step=step['id'], label=step['label'])
+                frame = _frame(build) if step['kind'] in ('draft', 'draft_rooms') else None
+                _event(build, 'stage', step=step['id'], label=step['label'], **({'frame': frame} if frame else {}))
                 _save(build)
             result = _obtain(build, step, reader, ticket)
             with twin_store.LIFECYCLE, _LOCK:

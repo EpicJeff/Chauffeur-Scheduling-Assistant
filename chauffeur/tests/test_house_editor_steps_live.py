@@ -665,8 +665,64 @@ def scenario_stop_fix_continue():
         S._release(reader)
 
 
+# --- final whole-branch review: M1 (the rail at 1280x800) and I3 (a roof check, seen) ---------
+
+def scenario_every_tool_is_in_view_at_1280x800():
+    s = _serve()
+    if s is None:
+        return
+    _household()
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s)
+        _wait_house(page)
+        page.set_viewport_size({'width': 1280, 'height': 800})
+        H.settle(page, 6)
+        got = page.evaluate("""() => {
+            const rail = document.getElementById('editor-rail'), r = rail.getBoundingClientRect();
+            const header = document.getElementById('editor-top').getBoundingClientRect();
+            return {scroll: rail.scrollHeight, client: rail.clientHeight, top: r.top, bottom: r.bottom,
+                header: header.bottom, height: innerHeight,
+                buttons: [...rail.querySelectorAll('button')].map(b => {
+                    const q = b.getBoundingClientRect();
+                    return {text: b.textContent.trim(), top: q.top, bottom: q.bottom, left: q.left, right: q.right};
+                })};
+        }""")
+        check(got['scroll'] <= got['client'] + 1, ('the rail holds every tool without scrolling', got['scroll'], got['client']))
+        for b in got['buttons']:
+            check(got['top'] - 0.5 <= b['top'] and b['bottom'] <= got['bottom'] + 0.5,
+                  (f"{b['text']} is inside the rail's visible box", b, got['top'], got['bottom']))
+            check(b['top'] >= got['header'] and b['bottom'] <= got['height'] - 160,
+                  (f"{b['text']} sits between the header and the timeline", b, got['header'], got['height']))
+        for name in ('Delete', 'Undo', 'Redo', 'Sheet'):
+            rail_button = page.locator('#editor-rail button', has_text=name).first
+            check(rail_button.is_visible() and _uncovered(page, rail_button), f'{name} is in view and on top at 1280x800')
+        page.screenshot(path=os.path.join(SHOTS, 'house_steps_rail_1280.png'))
+        # I3: a roof check outlines its roof and frames it; its marker stands out.
+        _open_step(page, 'Check it')
+        card = page.locator('#check-card')
+        for _ in range(16):
+            if 'roof' in card.inner_text().lower():
+                break
+            _button(page, 'Skip for now', card).click()
+            H.settle(page)
+        check('roof' in card.inner_text().lower(), ('test setup: a roof check is shown', card.inner_text()))
+        H.settle(page, 6)
+        lit = page.evaluate("""() => {
+            let group = null; window.__twin.scene.traverse(o => { if (o.name === 'editor-flag-highlight') group = o; });
+            if (!group) return null;
+            let lines = 0; group.traverse(o => { if (o.isLine) lines++; });
+            const shown = o => { for (let n = o; n; n = n.parent) if (!n.visible) return false; return true; };
+            return {lines, shown: shown(group), current: document.querySelectorAll('.editor-flag-marker-current').length};
+        }""")
+        check(lit and lit['lines'] >= 1 and lit['shown'], ('the roof check outlines its roof area', lit))
+        check(lit['current'] == 1, ('one marker reads as the current check', lit))
+        page.screenshot(path=os.path.join(SHOTS, 'house_steps_roof_check.png'))
+    check(not _unexpected(s.errors()), s.errors())
+
+
 if __name__ == '__main__':
     H.run([
+        scenario_every_tool_is_in_view_at_1280x800,
         scenario_empty_house_shows_the_front_door,
         scenario_add_plans_opens_your_files,
         scenario_draw_it_myself_arms_draw_wall,

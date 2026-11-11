@@ -295,6 +295,118 @@ def test_I2_product_plot_retries_truncation_at_twice_limit():
     check(len([e for e in tc.entries() if e.get('run') == build['id']]) == 2, 'one charge per attempt')
 
 
+# --- final whole-branch review ---------------------------------------------------------
+
+def test_final_I1_each_step_start_carries_the_buildings_frame():
+    """A building added in Your files is not in the plan until the first round lands; the step's
+    first stage event names where the engine will put it, so its ghosts can stand there."""
+    bid = s._pool_house()
+    check(s._house(bid) is None, 'test setup: the pool house is not in the plan yet')
+    reader = s.StreamReader(gate_at=('draft', s.after_wall(3, half=True)))
+    b = tb.start({'part': bid}, reader=reader, inline=False)
+    try:
+        check(reader.at_gate.wait(10), 'test setup: the draft read reached the gate')
+        events = tb.status(b)['events']
+        stage = next((e for e in events if e['type'] == 'stage' and e.get('step') == 'draft' and e.get('label')), None)
+        check(stage is not None and isinstance(stage.get('frame'), dict),
+              ('the draft step\'s first stage event carries the building\'s frame', stage))
+        frame = stage['frame']
+        check(frame.get('id') == bid and len(frame.get('position') or []) == 2
+              and isinstance(frame.get('rotation'), (int, float)) and isinstance(frame.get('base', 0), (int, float)),
+              ('the frame names the building, its position, turn and base', frame))
+        check([l['id'] for l in frame.get('levels') or []] == ['L1', 'L2'],
+              ('the frame carries the floors the pieces stand on', frame.get('levels')))
+        first_piece = next(e['seq'] for e in events if e['type'] == 'piece')
+        check(stage['seq'] < first_piece, 'the frame arrives before the first piece')
+        tb.stop(b)
+        s._stopped_with(b, lambda st: any(r.get('partial') for r in s._draft_rounds(0)))
+        house = s._house(bid)
+        check(house is not None and house['position'] == frame['position'] and house['rotation'] == frame['rotation'],
+              ('the first round puts the building where the frame said', house and house['position'], frame))
+    finally:
+        s._release(reader)
+
+
+def test_final_M6_a_stopped_build_has_a_continue_estimate():
+    bid = s._pool_house()
+    reader = s.StreamReader(gate_at=('draft', s.after_wall(3, half=True)))
+    b = tb.start({'part': bid}, reader=reader, inline=False)
+    try:
+        check(reader.at_gate.wait(10), 'test setup: the draft read reached the gate')
+        running = tb.remaining_estimate(b)
+        check(isinstance(running, float) and running > 0, ('test setup: a running build has an estimate', running))
+        tb.stop(b)
+        s._stopped_with(b)
+        stopped = tb.remaining_estimate(b)
+        check(isinstance(stopped, float) and stopped > 0,
+              ('a stopped build says what Continue would cost', stopped))
+    finally:
+        s._release(reader)
+
+
+def _retry_wire(bad, good_parts, during_retry=None):
+    attempts = []
+
+    def wire(*args, cancel, max_output_tokens, **kw):
+        attempts.append(max_output_tokens)
+        cancel.reset()
+        if len(attempts) == 1:
+            cancel.usage.update(dispatched=True, input_tokens=100, output_tokens=10, complete=True, finish_reason='end_turn')
+            yield bad
+            return
+        for part in good_parts:
+            yield part
+        if during_retry is not None:
+            during_retry()
+            cancel.usage.update(dispatched=True, input_tokens=100, output_tokens=10, complete=False)
+            return
+        cancel.usage.update(dispatched=True, input_tokens=100, output_tokens=10, complete=True, finish_reason='end_turn')
+    return wire, attempts
+
+
+def _rejected_reply():
+    shifted = copy.deepcopy(s.DRAFT)
+    for wall in shifted['building']['walls']:
+        wall['from'] = [wall['from'][0] + 100, wall['from'][1]]
+        wall['to'] = [wall['to'][0] + 100, wall['to'][1]]
+    return shifted, json.dumps(shifted) + ' Here is the house you asked for.'
+
+
+def test_final_M8_a_parse_retry_streams_its_own_pieces():
+    build, step, ticket = runtime()
+    shifted, bad = _rejected_reply()
+    wire, attempts = _retry_wire(bad, [s._text()])
+    with patch.object(twin_reads.model_pools, 'credentials', return_value=(s.MODEL, 'fake')), \
+         patch.object(tb.llm_stream, 'stream_json', wire):
+        out = tb._read(build, step, twin_reads.read, ticket, 'draft', [], {})
+    check(len(attempts) == 2 and 'error' not in out, ('test setup: the first reply is refused and read again', attempts, out))
+    events = [e for e in tb.status(build['id'])['events'] if e.get('step') == step['id']]
+    walls = [e['piece'] for e in events if e['type'] == 'piece' and e['kind'] == 'wall']
+    check(walls == s.WALLS, ('the retry streams its own walls and the refused reply\'s walls are gone',
+                             [w['from'] for w in walls]))
+    check(any(e['type'] == 'stream_reset' for e in events), 'the page is told to clear the refused reply\'s ghosts')
+
+
+def test_final_M8_stop_during_a_retry_keeps_only_the_retrys_pieces():
+    build, step, ticket = runtime()
+    shifted, bad = _rejected_reply()
+    text, cut = s._text(), s.after_wall(2)
+    wire, attempts = _retry_wire(bad, [text[:cut]], during_retry=lambda: tb.stop(build['id']))
+    with patch.object(twin_reads.model_pools, 'credentials', return_value=(s.MODEL, 'fake')), \
+         patch.object(tb.llm_stream, 'stream_json', wire):
+        try:
+            tb._read(build, step, twin_reads.read, ticket, 'draft', [], {})
+        except twin_reads.Cancelled:
+            pass
+    check(len(attempts) == 2, ('test setup: Stop came during the second attempt', attempts))
+    tb._keep_partial(build, step, ticket)
+    house = s._house(build['inputs']['part'])
+    check(house is not None, 'test setup: a partial round was published')
+    check(all(s._covered_once(house, w) for w in s.WALLS[:2]), 'the retry\'s arrived walls are kept')
+    check(not any(s._along(house, w) for w in shifted['building']['walls']),
+          ('the refused reply\'s walls are never published', [(w['from'], w['to']) for w in house['walls']]))
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_') and callable(v)]
 if __name__ == '__main__':
     failed = []

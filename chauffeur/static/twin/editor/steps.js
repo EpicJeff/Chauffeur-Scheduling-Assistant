@@ -17,12 +17,15 @@ export function createSteps(host, { state, onOpen = () => {} }) {
     const filed = drawings.length ? drawings.every(s => Array.from({ length: s.pages }, (_, i) => i + 1)
       .every(page => sheets.page_roles?.some(r => r.source === s.id && r.page === page && r.role)))
       : sources.length > 0 || buildings.length > 0 || !!sheets.place?.buildings?.some(b => b.footprint);
+    // A build stopped half way (Stop, a spending checkpoint, a failure) may have published a partial
+    // round, so pieces exist; it still waits for Continue, so Build is now and not done.
+    const unfinished = ['running', 'stopped', 'checkpoint', 'failed'].includes(build?.state);
     const built = buildings.some(b => b.walls?.length || b.rooms?.length || b.roofs?.length);
     const count = buildings.reduce((n, b) => n + (b.flags?.length || 0) + (b.proposals?.length || 0), 0);
     const rooms = buildings.flatMap(b => b.rooms || []);
-    const done = [filed, !!sheets.place?.lot?.placement, built, built && !count,
-      rooms.length > 0 && rooms.every(r => r.ha_area)];
-    const now = build?.state === 'running' ? 2 : build?.state === 'paused' ? 3
+    const done = [filed, !!sheets.place?.lot?.placement, built && !unfinished, built && !unfinished && !count,
+      !unfinished && rooms.length > 0 && rooms.every(r => r.ha_area)];
+    const now = unfinished ? 2 : build?.state === 'paused' ? 3
       : built ? count ? 3 : done[4] ? -1 : 4 : done.findIndex(value => !value);
     buttons.forEach((button, i) => {
       const status = i === now ? 'now' : done[i] ? 'done' : 'not-yet';

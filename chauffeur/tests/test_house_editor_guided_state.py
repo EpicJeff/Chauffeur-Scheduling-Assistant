@@ -20,7 +20,8 @@ def test_cost_payload_tracks_household_ledger_and_running_estimate():
             s.tb.stop(b)
             s._stopped_with(b)
             stopped = c.get('/api/house/editor/state', headers=parent).json()
-            s.check(stopped['cost']['estimate'] is None and stopped['cost']['total'] == s.tc.total(), stopped['cost'])
+            # Final review M6: a stopped build carries what Continue would cost (it was None before).
+            s.check((stopped['cost']['estimate'] or 0) > 0 and stopped['cost']['total'] == s.tc.total(), stopped['cost'])
         finally:
             s._release(reader)
 

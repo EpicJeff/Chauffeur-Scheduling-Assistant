@@ -41,6 +41,12 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-rail { position: absolute; left: 16px; top: calc(var(--editor-header-bottom, 130px) + (100dvh - var(--editor-header-bottom, 130px) - 160px) / 2); transform: translateY(-50%); display: flex; flex-direction: column; padding: 6px; gap: 2px; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); z-index: 2; max-height: calc(100dvh - var(--editor-header-bottom, 130px) - 172px); overflow-y: auto; }
 #editor-rail button { font-size: 11px; border: 0; background: transparent; padding: 6px; }
 #editor-rail button[aria-pressed="true"] { background: #0ba7df; color: white; }
+/* Sixteen tools at the 44px touch height need about 750px. Where the band between the header and the
+   timeline is shorter, the rail stands in two columns so no tool scrolls out of sight; whatever sits
+   right of the rail starts at --editor-rail-right, which the editor keeps at the rail's right edge. */
+@media (min-width: 701px) and (max-height: 1100px) {
+  #editor-rail { display: grid; grid-template-columns: repeat(2, auto); align-content: start; }
+}
 #editor-floors { position: absolute; right: 14px; top: 14px; display: flex; flex-direction: column; gap: 5px; width: var(--editor-side); height: var(--editor-floor-height); overflow-y: auto; z-index: 2; }
 #editor-floors > * { flex: 0 0 auto; }
 #editor-floors > span { color: var(--editor-muted); text-align: right; }
@@ -84,9 +90,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-progress::-webkit-progress-bar { background: #293849; }
 #editor-progress::-webkit-progress-value { background: linear-gradient(90deg, #16a45f, #10b2e0); }
 .editor-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-#editor-cameras { position: absolute; left: 112px; bottom: 160px; display: flex; flex-wrap: wrap; gap: 4px; z-index: 2; }
+#editor-cameras { position: absolute; left: calc(var(--editor-rail-right, 96px) + 16px); bottom: 160px; display: flex; flex-wrap: wrap; gap: 4px; z-index: 2; }
 #editor-cameras button { background: var(--editor-panel); }
-#draw-tools, #roof-tools, #device-tools { position: absolute; left: 96px; top: var(--editor-header-bottom, 130px); right: calc(var(--editor-side) + 28px); z-index: 3; padding: 10px; background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 12px; }
+#draw-tools, #roof-tools, #device-tools { position: absolute; left: var(--editor-rail-right, 96px); top: var(--editor-header-bottom, 130px); right: calc(var(--editor-side) + 28px); z-index: 3; padding: 10px; background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 12px; }
 #draw-tools > div, #roof-tools > div, #pause-card > div { display: flex; flex-wrap: wrap; gap: 6px; }
 #draw-note, #roof-note, #device-note { color: var(--editor-muted); margin-top: 6px; }
 #device-tools.editor-device-dragging { pointer-events: none; }
@@ -126,7 +132,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #pause-accept { background: #119e50; border-color: #119e50; }
 #pause-instruction { color: var(--editor-accent); margin-top: 8px; }
 #pause-instruction:empty, #pause-instruction:empty + #pause-cancel { display: none; }
-#pause-card[data-pinning="true"] { top: var(--editor-header-bottom, 130px) !important; left: 96px !important; width: 280px; }
+#pause-card[data-pinning="true"] { top: var(--editor-header-bottom, 130px) !important; left: var(--editor-rail-right, 96px) !important; width: 280px; }
 #pause-card[data-pinning="true"] > div, #pause-card[data-pinning="true"] #pause-reason { display: none; }
 #editor-drag-hint, .editor-pin-dot { position: fixed; z-index: 6; pointer-events: none; background: #104566; border: 1px solid var(--editor-accent); border-radius: 12px; padding: 8px; }
 .editor-dimensions { pointer-events: none; }
@@ -137,6 +143,8 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-drag-layer { position: fixed; inset: 0; width: 100vw; height: 100dvh; pointer-events: none; z-index: 3; }
 #editor-drag-outline { fill: #52ccff22; stroke: #52ccff; stroke-width: 3; stroke-dasharray: 8 4; }
 .editor-pin-dot { width: 28px; height: 28px; border-radius: 50%; padding: 2px; text-align: center; transform: translate(-50%, -50%); background: #ef8a26; color: #101820; border-color: #ffbf75; }
+/* The check being shown: larger, in the editor's accent, above the other markers. */
+.editor-flag-marker.editor-flag-marker-current { width: 38px; height: 38px; font-size: 18px; font-weight: 700; background: var(--editor-accent); border: 2px solid #dff6ff; color: #071018; box-shadow: 0 0 0 4px rgba(82, 204, 255, .35); z-index: 7; }
 .editor-floor-row { display: flex; align-items: center; gap: 4px; background: var(--editor-panel); border-radius: 10px; }
 #editor-floors .editor-floor-row button { flex: 1; min-width: 0; font-size: 12px; }
 #editor-floors .editor-floor-row [data-floor-visible] { flex: 0 0 36px; padding: 6px; display: grid; place-items: center; }
@@ -151,7 +159,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-time-labels button[data-kind="director"] { --mark: #f5ba57; }
 #editor-progress { height: 4px; margin: 4px 0; }
 #editor-scrub { display: block; padding: 0; border: 0; width: 100%; min-height: 30px; height: 30px; accent-color: var(--editor-accent); background: transparent; cursor: ew-resize; }
-#time-chip { position: absolute; top: var(--editor-header-bottom, 130px); left: 96px; padding: 10px 14px; border: 1px solid #c5a1ff; border-radius: 24px; background: var(--editor-panel); z-index: 4; }
+#time-chip { position: absolute; top: var(--editor-header-bottom, 130px); left: var(--editor-rail-right, 96px); padding: 10px 14px; border: 1px solid #c5a1ff; border-radius: 24px; background: var(--editor-panel); z-index: 4; }
 #time-actions { display: flex; justify-content: flex-start; gap: 8px; margin-bottom: 8px; }
 /* Your place reuses the editor's panel, page fieldset and action treatments.
    Full-screen header/body/footer follows ui_design_guide's growing dialogs. */
@@ -256,7 +264,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #check-card #pause-card { position: static; width: auto; border: 0; padding: 0; max-height: none; }
 /* The check card's title already names the step; the pause card keeps its reason, size and adjustments. */
 #check-card #pause-title { display: none; }
-#check-card[data-check-kind="pause"] { left: 96px; right: auto; top: var(--editor-header-bottom, 130px); width: 280px; max-height: calc(100dvh - var(--editor-header-bottom, 130px) - 100px); }
+#check-card[data-check-kind="pause"] { left: var(--editor-rail-right, 96px); right: auto; top: var(--editor-header-bottom, 130px); width: 280px; max-height: calc(100dvh - var(--editor-header-bottom, 130px) - 100px); }
 @media (max-width: 700px) {
   /* Below the header and the rail's column, over the scene band; above the rail and timeline. */
   #editor-front-door { top: var(--editor-header-bottom, 110px); left: 104px; right: 8px; width: auto; }
