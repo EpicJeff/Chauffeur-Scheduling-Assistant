@@ -1,6 +1,93 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.783 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.785 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.785 (2026-11-11, NOT device-verified): the house builds itself in front of you, and you can stop it, fix it by hand and carry on.**
+
+Spec: `docs/superpowers/specs/2026-11-09-house-connected-model-design.md` §6, piece 4. Plan: `docs/superpowers/plans/2026-11-10-house-guided-build-piece-4.md`, rulings Q1-Q15 in the SDD ledger. Claude wrote every test first and Codex built Tasks 1-8. Claude agents ran the browser rounds, the reviews and the fix waves. Task 9, retiring the legacy per-floor build path, moved to its own follow-up branch (Ruling Q15). The legacy path still works.
+
+Reader calls stream and can be stopped (`services/llm_stream.py`, `twin_reads.read_stream`):
+- Anthropic (Messages SSE) and Gemini (`streamGenerateContent?alt=sse`) stream their answer. Other providers read blocking (Ruling Q3).
+- **Stop.** `llm_stream.Cancel` ends a call within 2 s at any moment: during connect, before the first byte, or mid-answer.
+  - `llm_budget.urlopen` hands the socket to Cancel the moment it connects.
+  - On Windows the socket is detached and closed off the Stop thread.
+- **Cost.** A stopped or dropped call is charged its input plus the output it produced (`twin_cost.record(cancelled=, produced_chars=)`), never `max_output_tokens` (Ruling Q11).
+- `read_stream` matches `read`: pool and credentials, cooldowns, workflow `twin`, error bodies, one parse retry, OpenAI JSON mode.
+
+Pieces as they are read:
+- `services/twin_stream.Pieces` parses partial JSON and emits each complete array item.
+- The build (`twin_build.py`) sends `{type:'piece', step, stage, kind, piece}` events.
+- **Streamed steps.** Only the draft, draft_level and draft_rooms steps stream pieces (Ruling Q13). Every other read uses the streaming call only so Stop can end it.
+- **Stage names:** scale, outline, walls, rooms, doors and windows, fixtures, roofs, finishes, yard.
+- **The building's frame.** The step-start event carries the building's frame. A building that is not yet in the plan still shows its ghosts in the right place.
+- **Saving.** Build state is saved on stage change, throttled, not per chunk. Piece events are dropped once their step settles.
+
+Stop, fix, continue (the user's own Stop rule, Ruling Q14):
+- A Stop lets the piece in progress finish, waiting at most 1 s for it, then ends the call.
+- A reply that has fully arrived is always kept and cached, so Continue never pays twice.
+- The complete pieces that arrived are published as one round, marked `partial`.
+- **Continue** re-reads the stopped step on the model as it stands.
+  - A person's pieces are never overwritten.
+  - Deleted pieces stay deleted, because tombstones cover read fixtures too.
+  - A disagreement becomes a proposal with Use this / Dismiss.
+- A dropped stream stops the build with a plain message and offers Read it again. A max-tokens draft keeps the per-floor fallback (Ruling Q8).
+- A restart mid-stream rebuilds the partial round from the saved piece events.
+
+The reader is told the house's rules (`twin_reads.py`):
+- rooms are closed by walls;
+- every opening sits on a wall;
+- fixtures on the plans (lights, switches, outlets, fans, smoke alarms) are read as `fixtures`.
+
+The bridge turns each fixture into an anchor on its surface:
+- A wall fixture within 2 ft snaps to its named wall (Ruling Q12).
+- Kinds are normalised by words, so a pendant is a light and a smoke detector or thermostat is a sensor.
+- A fixture with no surface becomes a flag.
+- A person's anchor is never displaced.
+- Fixtures are kept through the per-floor fallback.
+
+The editor (`static/twin/editor/`):
+- **Front door.** With no house, the canvas shows `Let's make your house` with `Add plans and photos` and `Draw it myself`. The second arms Draw wall.
+- **Step strip.** `Your files`, `Your lot`, `Build`, `Check it`, `Link to Home Assistant` (`steps.js`), always visible, each marked done, now or not yet.
+  - Every control of the old Your place dialog lives in the Your files, Your lot or Build panel. Menu › Your place opens Your files.
+  - A stopped build reads Build: now, never done.
+- **Status chip** (`status_chip.js`):
+  - `Working` while a step runs, `Waiting on you` while paused, at a checkpoint or stopped (Ruling Q10);
+  - `$x.xx so far` from the ledger, which the chip always matches;
+  - `about $x.xx`, including Continue's estimate after a Stop;
+  - Stop inside the chip while a build is running, paused or at a checkpoint.
+- **Ghosts that settle** (`build_ghosts.js`, sharing `ghost_geometry.js` with proposal ghosts). Each piece appears translucent in the real house at its building's transform, and turns solid when its round lands. A malformed piece is skipped and never freezes the view. Two tabs see the same pieces, and either tab's Stop ends the build.
+- **Checks one at a time** (`checks.js`). The pause, the model flags and the proposals form one queue, opened from Check it or by a new pause.
+  - Each check frames and highlights its thing; roof checks outline their roof area.
+  - Actions: `Looks right`, `Fix it` (opens the piece; a paused build stays paused) and `Skip for now`.
+  - A pause's re-read is `Read it again · about $x.xx`.
+- Streamed batches no longer reload `/state`. Only cost or settle events do.
+- At 1280x800 the tool rail fits in two columns.
+
+Proven by:
+- test_llm_stream 17/17, test_twin_stream 6/6, test_twin_reads_rules 4/4, test_twin_fixtures_merge 6/6;
+- test_twin_build_stream 9/9, test_twin_build_stream_more 20/20;
+- test_house_editor_guided_live 6/6, test_house_editor_steps_live 8/8, test_house_editor_live, test_house_place_live;
+- the editor model live suites and the node suites for ghosts, chip, steps, checks and flags;
+- every twin build and model suite.
+
+Exit on the device (spec §9): watch a fresh pool house build piece by piece, stop it once mid-way, fix it by hand, continue, and check that the spend on screen matches the ledger.
+
+**v2.499.784 (2026-11-11, NOT device-verified): the 3D house wall reaches Argyle, and warnings show from every floor.**
+
+The gap audit of 2026-11-11 found three wall-panel faults. Each was fixed test-first: the tests are in `tests/test_house_twin_wall_live.py` and `tests/test_twin_markers_js.py`.
+
+- **Argyle on the 3D house wall** (`/house/twin?panel=true&kiosk=true`).
+  - Before: the page hid `#chat-overlay-container`, so tapping the orb opened nothing. Chat, Ask and tap-to-talk were dead there.
+  - Now: the chat box rests as the orb, as it does on every other panel. Marker labels keep clear of the orb and the open box.
+  - Known and unchanged: the text box does not take focus when the orb opens. That is true on every panel, so no on-screen keyboard rises.
+- **Attention on every level** (`live/live.js`).
+  - A device that needs attention stays drawn while its floor is hidden.
+  - Its floor's button in the floor picker carries a dot and ", needs attention".
+  - Calm markers still hide with their floor.
+- **Door and window contacts count as attention** (`live/markers.js`).
+  - A binary sensor of class door, window, opening or garage_door is attention when it is on.
+  - It reads "open" or "closed" instead of "on" or "off".
+  - Motion, occupancy, presence and temperature are not attention.
 
 **v2.499.783 (2026-11-10, NOT device-verified): Lights mode lights the house from each fixture.**
 

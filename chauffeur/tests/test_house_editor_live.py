@@ -179,11 +179,13 @@ def _api(page, method, path, body=None):
     }""", [method, path, body])
 
 
-def _open_place(page):
-    if not page.locator('#place-view').is_visible():
-        page.click('#editor-menu')
-        page.click('#editor-manage-sources')
-    page.wait_for_selector('#place-view', state='visible', timeout=10000)
+def _open_place(page, step='Your files'):
+    # Piece 4 Task 7: the former Your place dialog is the Your files, Your lot and
+    # Build step panels; only the navigation to a control changes.
+    panel = page.locator(f'[data-step-panel="{step}"]')
+    if not panel.count() or not panel.is_visible():
+        page.locator(f'[data-step="{step}"]').click()
+    panel.wait_for(state='visible', timeout=10000)
 
 
 def _paid_confirm(page, timeout=3000):
@@ -295,6 +297,7 @@ def scenario_build_streams_ghosts_and_log_lines():
             _open(page, s)
             _open_place(page)
             start = time.time()
+            _open_place(page, 'Build')
             page.click('[data-place-build="house"]')
             _paid_confirm(page)
             st = _wait_build(page, "b.state === 'running'", timeout=20000)
@@ -378,7 +381,7 @@ def scenario_a_half_storey_has_its_floor_button_and_every_floor_lines_up():
 
 def scenario_a_draft_that_cannot_be_read_pauses_in_plain_words():
     # The draft flow's only pause (spec section 5): the whole first floor
-    # fails, the card says so in one sentence, offers Try again instead of
+    # fails, the card says so in one sentence, offers Read it again instead of
     # Looks right, and a paused build can be stopped.
     s = _serve()
     if s is None:
@@ -391,6 +394,7 @@ def scenario_a_draft_that_cannot_be_read_pauses_in_plain_words():
             _signed_in(page)
             _open(page, s)
             _open_place(page)
+            _open_place(page, 'Build')
             page.click('[data-place-build="house"]')
             _paid_confirm(page)
             st = _wait_build(page, "b.state === 'paused' && b.pause && b.pause.kind === 'draft'", timeout=30000)
@@ -406,7 +410,9 @@ def scenario_a_draft_that_cannot_be_read_pauses_in_plain_words():
                   ('plain words, no step ids', card))
             for sel in ('#pause-accept', '#pause-pin', '#pause-drag'):
                 check(not page.locator(sel).is_visible(), (sel, 'nothing to line up when the drawings were not read'))
-            check(page.inner_text('#pause-reread').strip() == 'Try again', page.inner_text('#pause-reread'))
+            # Piece 4 Task 8: every pause re-read (a failed draft's too) is `Read it again · about $x.xx`.
+            check(re.match(r'^Read it again · about \$\d+\.\d\d$', page.inner_text('#pause-reread').strip()),
+                  page.inner_text('#pause-reread'))
             check(page.locator('#editor-stop').is_visible(), 'a paused build can be stopped')
             check(page.locator('[data-place-build="house"]').is_disabled() and page.locator('#place-build').is_disabled(),
                   'Build is off while a build is paused')
@@ -515,6 +521,7 @@ def scenario_checkpoint_asks_to_continue():
             status=409, body=json.dumps({'detail': {'checkpoint': 10.0, 'total': 10.12}}),
             headers={'Content-Type': 'application/json'}))
         _open_place(page)
+        _open_place(page, 'Build')
         page.click('[data-place-build="house"]')
         _paid_confirm(page)
         page.wait_for_function("() => document.body.innerText.includes('Spent $10.12 so far')", timeout=10000)
@@ -551,8 +558,10 @@ def scenario_empty_state_uploads_and_suggests_roles():
         check(r['status'] == 200, r)
         page.reload()
         page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=60000)
-        page.wait_for_selector('#place-view', state='visible', timeout=10000)
-        check(page.locator('#place-view').is_visible(), 'Your place shows on an empty house')
+        # Piece 4 Task 7: an empty house shows the front door; Add plans and photos opens Your files.
+        page.get_by_text("Let's make your house", exact=True).wait_for(state='visible', timeout=10000)
+        page.get_by_role('button', name='Add plans and photos', exact=True).click()
+        _open_place(page)
         check(page.locator('#place-build').is_disabled(), 'Build waits for confirmed pages')
         page.fill('#place-add-name', 'Main house')
         page.select_option('#place-add-kind', label='Main house')
@@ -1287,6 +1296,7 @@ def scenario_each_page_belongs_to_a_building_and_build_builds_that_one():
         page.locator('[data-place-building="main-house"] select[data-place-move]').first.select_option(label='Pool house')
         page.wait_for_selector('[data-place-building="pool-house"] [data-place-page]', state='visible', timeout=10000)
         page.wait_for_function("() => !document.querySelector('[data-place-build=\"pool-house\"]').disabled", timeout=10000)
+        _open_place(page, 'Build')
         page.click('[data-place-build="pool-house"]')
         _paid_confirm(page)
         again = page.get_by_role('button', name='Build again', exact=True)

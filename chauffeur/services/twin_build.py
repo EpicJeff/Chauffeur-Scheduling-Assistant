@@ -1,10 +1,11 @@
 """Restartable, piece-by-piece house builds from cropped drawing reads.
 
-The lifecycle lock covers publication, never a reader call. A stopped worker
-can cache its paid answer, but only the active worker may publish plan changes.
+The lifecycle lock covers publication, never a reader call. Stopped streams
+keep complete pieces as a partial round; only complete replies can be cached.
 """
 from copy import deepcopy
 import base64
+import inspect
 import json
 import logging
 import math
@@ -17,9 +18,9 @@ import time
 from urllib.parse import quote
 import uuid
 
-from services import (twin_blocks, twin_compose, twin_cost, twin_draft, twin_library,
+from services import (llm_stream, twin_blocks, twin_compose, twin_cost, twin_draft, twin_library,
                       twin_joints, twin_place, twin_plan, twin_reads, twin_register,
-                      twin_model, twin_roof_derive, twin_roof_issues, twin_store)
+                      twin_model, twin_roof_derive, twin_roof_issues, twin_store, twin_stream)
 
 _LOCK = threading.RLock()
 _BUILDS = {}
@@ -32,10 +33,18 @@ logger = logging.getLogger(__name__)
 _LABELS = {'roof': 'Roof sections', 'pitch': 'Roof slopes', 'plot': 'Lot',
            'draft': 'Reading the drawings', 'draft_rooms': 'Rooms',
            'site': 'Yard', 'compose': 'Plants and beds', 'finishes': 'Colours and finishes'}
+STREAM_PATHS = {'building.levels': 'outline', 'building.walls': 'walls',
+                'building.openings': 'doors and windows', 'building.fixtures': 'fixtures',
+                'building.rooms': 'rooms', 'building.roof.sections': 'roofs',
+                'rooms': 'rooms', 'walls': 'walls'}
 
 
 class _ReadError(ValueError):
     """An unsuccessful reader reply leaves the step retryable, without a cache."""
+
+    def __init__(self, message, *, dropped=False):
+        super().__init__(message)
+        self.dropped = dropped
 
 
 def _step(kind, row=None, level=None, pause=None, name=None):
@@ -114,6 +123,11 @@ def _get(bid):
     if bid not in _BUILDS:
         try:
             _BUILDS[bid] = json.loads((_root(bid) / 'state.json').read_text(encoding='utf-8'))
+            build = _BUILDS[bid]
+            # A settled piece page can reach disk just before state.json.
+            # Its sequence numbers must never be reused after a restart.
+            if isinstance(build.get('events'), list) and isinstance(build.get('seq'), int):
+                build['seq'] = max([build['seq'], *(e['seq'] for e in _events(build, 0))])
         except FileNotFoundError:
             raise KeyError(bid) from None
     build = _BUILDS[bid]
@@ -130,8 +144,42 @@ def _save(build):
 
 
 def _event(build, event_type, **fields):
+    if event_type == 'settled':
+        _page_pieces(build, fields['step'])
     build['seq'] += 1
     build['events'].append({'seq': build['seq'], 'type': event_type, **deepcopy(fields)})
+
+
+def _page_pieces(build, step):
+    pieces = [e for e in build['events'] if e['type'] == 'piece' and e.get('step') == step]
+    if pieces:
+        _atomic(_root(build['id']) / 'pieces' / f"{pieces[-1]['seq']}.json", pieces)
+        seqs = {e['seq'] for e in pieces}
+        build['events'] = [e for e in build['events'] if e['seq'] not in seqs]
+
+
+def _events(build, since):
+    events = [e for e in build['events'] if e['seq'] > since]
+    for page in (_root(build['id']) / 'pieces').glob('*.json'):
+        if int(page.stem) > since:
+            events.extend(e for e in json.loads(page.read_text(encoding='utf-8')) if e['seq'] > since)
+    # A crash between writing a page and saving state can leave both copies.
+    return sorted({e['seq']: e for e in events}.values(), key=lambda e: e['seq'])
+
+
+def _persisted_items(build, step):
+    events = _events(build, 0)
+    # A reset with `after` dropped only one refused attempt's pieces (they left the events then);
+    # the pieces before it stay this step's.
+    after = max((e['seq'] for e in events if e.get('step') == step['id']
+                 and e['type'] in ('stream_reset', 'settled') and 'after' not in e), default=0)
+    keys = {'level': 'levels', 'wall': 'walls', 'opening': 'openings',
+            'fixture': 'fixtures', 'room': 'rooms', 'roof': 'sections'}
+    paths = {keys[kind]: ('building.' if step['kind'] == 'draft' else '') + keys[kind]
+             for kind in keys}
+    paths['sections'] = 'building.roof.sections'
+    return [(e.get('path') or paths[keys[e['kind']]], e['piece']) for e in events
+            if e['type'] == 'piece' and e.get('step') == step['id'] and e['seq'] > after]
 
 
 def _live(build, ticket):
@@ -177,11 +225,35 @@ def latest():
 def status(build_id, since=0):
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
+        if build['state'] == 'stopped':
+            _spend(build)
+        runtime = _WORKERS.get(build_id, {})
         return deepcopy({'part': build['inputs'].get('part'), 'next': build.get('next'),
+                         'streaming': build['state'] == 'running' and bool(runtime.get('stream')),
+                         'stopping': build['state'] == 'stopped' and bool(runtime.get('busy')),
                          'roof_flags': [flag for step in build['steps'] for flag in step.get('roof_flags', [])],
-                         **{key: ([e for e in build[key] if e['seq'] > since]
+                          **{key: (_events(build, since)
                                if key == 'events' else build[key])
                          for key in ('id', 'state', 'steps', 'events', 'seq', 'pause', 'cost')}})
+
+
+def remaining_estimate(build_id):
+    with twin_store.LIFECYCLE, _LOCK:
+        build = _get(build_id)
+        # Running: what is left. Stopped or at a checkpoint: what Continue would read.
+        if build['state'] not in ('running', 'stopped', 'checkpoint'):
+            return None
+        pages = [p for p in twin_store.page_roles() if p.get('building') == build['inputs'].get('part')]
+        photos = sum(twin_store.source_image_count(source) for source in build['inputs'].get('photos', []))
+        remaining = []
+        for step in build['steps']:
+            kind = step['kind']
+            if step['status'] == 'done' or kind not in twin_reads.MAX_OUTPUT:
+                continue
+            images = (sum(p['role'] == 'floor' for p in pages) if kind == 'draft_rooms'
+                      else len(pages) + photos if kind == 'draft' else photos if kind == 'finishes' else 1)
+            remaining.append(step.get('estimate') or twin_cost.estimate(kind, images))
+        return math.fsum(remaining)
 
 
 def _launch(build, reader, inline):
@@ -193,7 +265,8 @@ def _launch(build, reader, inline):
     except Exception:
         build['state'] = previous_state
         raise
-    _WORKERS[build['id']] = {'reader': reader, 'inline': inline, 'ticket': ticket, 'busy': True}
+    _WORKERS[build['id']] = {'reader': reader, 'inline': inline, 'ticket': ticket,
+                             'busy': True, 'cancels': []}
     return ticket
 
 
@@ -361,11 +434,35 @@ def _chain_failed(build):
 
 
 def stop(build_id):
+    cancels = []
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
         if build['state'] != 'done':
             build['state'] = 'stopped'
             _save(build)
+            runtime = _WORKERS.get(build_id, {})
+            for cancel in runtime.get('cancels', []):
+                call = runtime.get('calls', {}).get(cancel)
+                if call and (call['parser'].complete or not call['pieces_enabled']):
+                    try:
+                        call['reply'] = twin_reads._stream_answer(''.join(call['text']), call['kind'] in twin_reads.THINKING)
+                    except (ValueError, TypeError):
+                        pass
+                    else:
+                        call['keep_complete'] = True
+                if call and call.get('keep_complete'):
+                    cancels.append(cancel)
+                elif call and call['parser'].pending and not call['stopping']:
+                    call['stopping'] = True
+                    timer = threading.Timer(1, cancel.cancel)
+                    timer.daemon = True
+                    call['timer'] = timer
+                    timer.start()
+                elif not call or not call['stopping']:
+                    cancels.append(cancel)
+    # Closing a response may wake a reader that needs the lifecycle lock.
+    for cancel in cancels:
+        cancel.cancel()
     return status(build_id)
 
 
@@ -403,8 +500,19 @@ def recover():
                         or (build['state'] == 'paused' and (not isinstance(build['pause'], dict)
                             or not {'kind', 'step', 'registration'} <= build['pause'].keys()))):
                     raise ValueError('Incomplete build steps or pause')
-                if build['state'] == 'running':
+                if build['state'] == 'running' or (build['state'] == 'stopped'
+                        and any(step['status'] == 'running' for step in build['steps'])):
                     build['state'] = 'stopped'
+                    for step in build['steps']:
+                        if step['status'] != 'running':
+                            continue
+                        items = _persisted_items(build, step)
+                        ticket = uuid.uuid4().hex
+                        _WORKERS[build['id']] = {'ticket': ticket, 'busy': False,
+                                                'stream': {'step': step['id'], 'items': items}}
+                        _safe_keep_partial(build, step, ticket)
+                        step['status'] = 'pending'
+                        _event(build, 'question', step=step['id'], text='The read was interrupted. Read it again.')
                     _save(build)
                 recovered.append(build)
             except twin_store.StaleGeneration:
@@ -476,6 +584,22 @@ def _base(plan, build, lot=None):
             house.update(identity)
         house['levels'].extend(l for l in levels if not any(old['id'] == l['id'] for old in house['levels']))
     return twin_plan.normalize(plan)[0]
+
+
+def _frame(build):
+    """Where the build's building stands, or where its first round will put it: a building added
+    in Your files is not in the plan until then, and its streamed pieces need a frame to stand in."""
+    if build['inputs'].get('part') == 'lot' or not build['inputs'].get('building'):
+        return None
+    try:
+        house = _house(_base(twin_store.current(), build), build)
+    except Exception:
+        logger.warning('The building frame for the streamed pieces could not be worked out.', exc_info=True)
+        return None
+    return {'id': house['id'], 'position': list(house.get('position') or [0, 0]),
+            'rotation': house.get('rotation') or 0, 'base': house.get('base') or 0,
+            'levels': [{k: level[k] for k in ('id', 'name', 'elevation', 'ceiling') if k in level}
+                       for level in house.get('levels', [])]}
 
 
 def _outline(plan, build, level=None):
@@ -695,6 +819,9 @@ def _matches(a, b, kind, house, *, original=False):
         return p.get('level')
     if level(a) != level(b) or (kind == 'site' and a.get('kind') != b.get('kind')):
         return False
+    if kind == 'fixture' and (twin_plan.fixture_kind(a.get('kind')) != twin_plan.fixture_kind(b.get('kind'))
+                              or a.get('surface') != b.get('surface')):
+        return False
     ga = _match_geometry(a, kind, house)
     gb = (_geometry(b, kind, house) if kind == 'wall' and not original
           else _match_geometry(b, kind, house))
@@ -850,8 +977,10 @@ def _reattach(house, old_house, ghosts):
 
 
 def _spend(build):
-    build['cost'] = math.fsum(e['usd'] for e in twin_cost.entries() if e.get('run') == build['id'])
-    _event(build, 'cost', cost=build['cost'])
+    cost = math.fsum(e['usd'] for e in twin_cost.entries() if e.get('run') == build['id'])
+    if cost != build['cost']:
+        build['cost'] = cost
+        _event(build, 'cost', cost=cost)
 
 
 def _draft_pages(build, *, floors_only=False):
@@ -998,7 +1127,7 @@ def _migrate_crop_draft_frame(house, draft, step, tombstones, notes):
             house['position'] = [house['position'][i] - delta[i] for i in (0, 1)]
 
 
-def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
+def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, partial=False):
     """The read already uses building feet. Merge identities before references."""
     draft = deepcopy(fragment.get('building', {}) if step['kind'] == 'draft' else fragment)
     pages = _draft_pages(build, floors_only=True)
@@ -1008,9 +1137,9 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
                  for p in fragment.get('pages', [])
                  if 0 <= p['image'] < len(all_pages) and all_pages[p['image']]['role'] == 'floor'}
         levels = sorted(draft.get('levels', []), key=lambda l: l['elevation'])
-        remap = {l['id']: f'L{i + 1}' for i, l in enumerate(levels)}
+        remap = {l['id']: l['id'] if partial else f'L{i + 1}' for i, l in enumerate(levels)}
         for i, level in enumerate(levels):
-            name = names.get(level['id']) or (pages[i].get('level') if i < len(pages) else None)
+            name = names.get(level['id']) or (pages[i].get('level') if not partial and i < len(pages) else None)
             level['id'] = remap[level['id']]
             level['name'] = name or level['name']
             level.update(state='settled', src={'sheet': '', 'page': 1, 'step': step['id']})
@@ -1020,8 +1149,8 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
         if not levels:
             return
         house['levels'] = levels + [l for l in house['levels']
-            if l['id'] not in remap.values() and l.get('src', {}).get('person')]
-        for key in ('walls', 'rooms', 'stairs'):
+            if l['id'] not in remap.values() and (partial or l.get('src', {}).get('person'))]
+        for key in ('walls', 'rooms', 'stairs', 'fixtures'):
             for piece in draft.get(key, []):
                 piece['level'] = remap.get(piece.get('level'), piece.get('level'))
 
@@ -1141,6 +1270,21 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
                           if draft.get('porch') else None)
     house['stairs'] = _merge_list(house.get('stairs', []), pieces('stairs', 'stair'),
                                   'stair', house, build, step, tombstones=tombstones)
+    if 'fixtures' in draft:
+        fixtures = pieces('fixtures', 'fixture')
+        for fixture in fixtures:
+            if 'wall' in fixture:
+                fixture['wall'] = wall_ids.get(fixture['wall'], fixture['wall'])
+        # Flat output keeps anchors for the renderer. Only a new fixture read
+        # converts generated anchors back to read pieces for identity merging.
+        anchors = [p for p in house.get('anchors', []) if 'surface' in p]
+        ids = {p['id'] for p in anchors if not p.get('src', {}).get('person')}
+        existing = house.get('fixtures', []) + anchors
+        house['anchors'] = [p for p in house.get('anchors', []) if p['id'] not in ids]
+        house['lights'] = [p for p in house.get('lights', []) if p['id'] not in ids]
+        house['fixtures'] = [p for p in existing if 'rect' in p] + _merge_list(
+            [p for p in existing if 'rect' not in p], fixtures, 'fixture', house, build, step,
+            tombstones=tombstones)
 
 
 def _check_draft(house):
@@ -1313,7 +1457,8 @@ def _check_draft_rooms(house, step):
 
 
 def _pause_draft(build, step):
-    build['pause'] = {'kind': 'draft', 'step': step['id'], 'registration': None,
+    build['pause'] = {'id': f"{build['id']}:{step['id']}:{build['seq'] + 1}",
+                      'kind': 'draft', 'step': step['id'], 'registration': None,
                       'why': 'The drawings could not be read as one building.'}
     build['state'] = 'paused'
     step['status'] = 'paused'
@@ -1407,13 +1552,195 @@ def _start_draft_heartbeat(build, step, ticket, context, finished, mode, *, star
     return pulse
 
 
+def _read(build, step, reader, ticket, kind, images, context, *, checkpoint_checked=False):
+    product = (reader is _REAL_READER and reader is twin_reads.read
+               and build['inputs'].get('part') is not None)
+    parameters = inspect.signature(reader).parameters
+    accepts_stream = all(name in parameters for name in ('cancel', 'on_text'))
+    if not product and not accepts_stream:
+        options = {'checkpoint_checked': True} if checkpoint_checked and reader is _REAL_READER else {}
+        return reader(kind, images, context, run=build['id'], step=step['id'], **options)
+
+    cancel = llm_stream.Cancel()
+    pieces_enabled = kind in ('draft', 'draft_level', 'draft_rooms')
+    paths = {path: stage for path, stage in STREAM_PATHS.items()
+             if path.startswith('building.') == (kind != 'draft_rooms')}
+    stream = {'step': step['id'], 'items': [], 'stage': None, 'kind': kind}
+    call = {'parser': twin_stream.Pieces(paths), 'stopping': False, 'text': [], 'kind': kind,
+            'pieces_enabled': pieces_enabled}
+    with twin_store.LIFECYCLE, _LOCK:
+        if not _live(build, ticket):
+            raise twin_reads.Cancelled('Read stopped.')
+        runtime = _WORKERS[build['id']]
+        runtime['cancels'].append(cancel)
+        runtime.setdefault('calls', {})[cancel] = call
+        if pieces_enabled:
+            if kind == 'draft_level':
+                previous = runtime.get('stream', {})
+                if previous.get('kind') == 'draft_level':
+                    stream = previous
+                else:
+                    _reset_stream(build, step)
+            runtime['stream'] = stream
+        # Where this call's pieces start, so a retry can drop only its own.
+        call['seq_from'], call['items_from'] = build['seq'], len(stream['items'])
+
+    def on_reset():
+        # read_stream reads again (a refused or truncated reply): the refused attempt's text and
+        # pieces are not this read's. A Stop during the retry keeps only the retry's pieces.
+        with twin_store.LIFECYCLE, _LOCK:
+            call['text'] = []
+            call['parser'] = twin_stream.Pieces(paths)
+            valid = (_BUILDS.get(build['id']) is build and runtime.get('ticket') == ticket
+                     and build['generation'] == twin_store.generation())
+            if not pieces_enabled or not valid:
+                return
+            del stream['items'][call['items_from']:]
+            stream['stage'] = None
+            refused = {e['seq'] for e in build['events'] if e['type'] == 'piece'
+                       and e.get('step') == step['id'] and e['seq'] > call['seq_from']}
+            if refused:
+                build['events'] = [e for e in build['events'] if e['seq'] not in refused]
+                _event(build, 'stream_reset', step=step['id'], after=call['seq_from'])
+                _save(build)
+
+    def on_text(text):
+        if not pieces_enabled:
+            with twin_store.LIFECYCLE, _LOCK:
+                if _live(build, ticket) and not cancel.cancelled:
+                    call['text'].append(text)
+            return
+        with twin_store.LIFECYCLE, _LOCK:
+            valid = (_BUILDS.get(build['id']) is build and runtime.get('ticket') == ticket
+                     and build['generation'] == twin_store.generation())
+            if not valid or cancel.cancelled or (not _live(build, ticket) and not call['stopping']):
+                return
+            call['text'].append(text)
+            parser = call['parser']
+
+            def stage(value):
+                if value != stream['stage']:
+                    stream['stage'] = value
+                    _event(build, 'stage', step=step['id'], stage=value)
+
+            # Observe array boundaries even when a blocking provider delivers
+            # the entire answer in one callback, or the next item is incomplete.
+            previous_stage = stream['stage']
+            for char in text:
+                pieces = parser.feed(char)
+                for name, path, piece in pieces:
+                    stage(name)
+                    if kind == 'draft_level':
+                        piece = _scoped_piece(path, piece, context['level'])
+                    piece_kind = {'levels': 'level', 'walls': 'wall', 'openings': 'opening',
+                                  'fixtures': 'fixture', 'rooms': 'room', 'sections': 'roof'}[path.rsplit('.', 1)[-1]]
+                    stream['items'].append((path, piece))
+                    _event(build, 'piece', step=step['id'], stage=name, kind=piece_kind, piece=piece,
+                           path=path, scope=context.get('level') if kind == 'draft_level' else None)
+                if call['stopping'] and pieces:
+                    cancel.cancel()
+                    break
+                stage(parser.stage)
+            now = _clock()
+            if (stream['stage'] != previous_stage or now - stream.get('saved_at', now) >= 2):
+                _save(build)
+                stream['saved_at'] = now
+            stream.setdefault('saved_at', now)
+
+    try:
+        try:
+            if product:
+                reset = {'on_reset': on_reset} if _accepts(twin_reads.read_stream, 'on_reset') else {}
+                raw = twin_reads.read_stream(kind, context, images, cancel=cancel, on_text=on_text,
+                                             run=build['id'], step=step['id'], **reset)
+            else:
+                reset = {'on_reset': on_reset} if _accepts(reader, 'on_reset') else {}
+                raw = reader(kind, images, context, run=build['id'], step=step['id'],
+                             cancel=cancel, on_text=on_text, **reset)
+        except twin_reads.Cancelled:
+            if not call.get('keep_complete'):
+                raise
+            raw = call['reply']
+        with twin_store.LIFECYCLE, _LOCK:
+            if cancel.cancelled and not call.get('keep_complete'):
+                raise twin_reads.Cancelled('Read stopped.')
+        return raw
+    finally:
+        with twin_store.LIFECYCLE, _LOCK:
+            runtime['cancels'].remove(cancel)
+            runtime['calls'].pop(cancel, None)
+            if call.get('timer'):
+                call['timer'].cancel()
+
+
+def _accepts(fn, name):
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in parameters or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+
+
+def _scoped_piece(path, piece, scope):
+    piece = deepcopy(piece)
+    if scope != 'roof':
+        if path == 'building.walls' and 'id' in piece:
+            piece['id'] = f"{scope}:{piece['id']}"
+        if path in ('building.openings', 'building.fixtures') and 'wall' in piece:
+            piece['wall'] = f"{scope}:{piece['wall']}"
+    return piece
+
+
+def _reset_stream(build, step):
+    build['events'] = [e for e in build['events'] if not (e['type'] == 'piece' and e.get('step') == step['id'])]
+    _event(build, 'stream_reset', step=step['id'])
+
+
+def _safe_keep_partial(build, step, ticket):
+    try:
+        _keep_partial(build, step, ticket)
+    except Exception:
+        logger.exception('The arrived pieces could not be kept.')
+
+
+def _keep_partial(build, step, ticket):
+    runtime = _WORKERS.get(build['id'], {})
+    stream = runtime.get('stream')
+    if (runtime.get('ticket') != ticket or not stream or stream['step'] != step['id']
+            or stream.get('published') or not stream['items']):
+        return
+    raw = {}
+    for path, piece in stream['items']:
+        target = raw
+        keys = path.split('.')
+        for key in keys[:-1]:
+            target = target.setdefault(key, {})
+        target.setdefault(keys[-1], []).append(deepcopy(piece))
+    fragment, _ = twin_reads.parse(step['kind'], raw)
+
+    def mutate(current):
+        plan = _base(current, build)
+        house = _house(plan, build)
+        # A partial read adds arrived pieces; unarrived pieces of an earlier
+        # read remain until a complete reread can reconcile them.
+        partial_step = {k: v for k, v in step.items() if k not in ('reread', 'removed_steps')}
+        _merge_draft({**build, 'existing': False}, partial_step, fragment, house,
+                     tombstones=twin_store.tombstones(), partial=True)
+        return plan
+
+    twin_store.update_current(mutate, kind='build', step={'id': step['id'], 'label': step['label']},
+                              generation=build['generation'], cost=build['cost'], partial=True)
+    stream['published'] = True
+    # Continue must also retire generated pieces a fresh reply no longer contains.
+    step['reread'] = True
+
+
 def _read_draft(build, step, reader, ticket, images, context, sheets):
     """Run the paid pair together; only the draft can publish plan geometry."""
     finished = threading.Event()
 
     def read(kind, read_images, read_context):
-        options = {'checkpoint_checked': True} if reader is _REAL_READER else {}
-        return reader(kind, read_images, read_context, run=build['id'], step=step['id'], **options)
+        return _read(build, step, reader, ticket, kind, read_images, read_context, checkpoint_checked=True)
 
     def outline():
         try:
@@ -1528,6 +1855,21 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
     with twin_store.LIFECYCLE, _LOCK:
         if not _live(build, ticket):
             return None
+        _reset_stream(build, step)
+        stream = {'step': step['id'], 'kind': 'draft_level', 'items': [], 'stage': None}
+        _WORKERS[build['id']]['stream'] = stream
+        # Completed scopes are paid replies, including after a restart.
+        for read in reads:
+            scope = read['context']['level']
+            house = read['fragment'].get('building', {})
+            for path in STREAM_PATHS:
+                if not path.startswith('building.'):
+                    continue
+                value = house
+                for key in path.split('.')[1:]:
+                    value = value.get(key, {}) if isinstance(value, dict) else {}
+                if isinstance(value, list):
+                    stream['items'].extend((path, _scoped_piece(path, piece, scope)) for piece in value)
         sentence = 'The drawings were read one floor at a time.'
         if not any(e['type'] == 'log' and e.get('step') == step['id'] and e.get('text') == sentence
                    for e in build['events']):
@@ -1543,17 +1885,17 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
             part, issues = reads[index]['fragment'], reads[index]['problems']
         else:
             twin_cost.require_clear()
-            options = {'checkpoint_checked': True} if reader is _REAL_READER else {}
             finished = threading.Event()
             pulse = _start_draft_heartbeat(build, step, ticket, context, finished, 'one floor at a time',
                                             started=started)
             try:
-                raw = reader('draft_level', images, read_context, run=build['id'], step=step['id'], **options)
+                raw = _read(build, step, reader, ticket, 'draft_level', images, read_context,
+                            checkpoint_checked=True)
             finally:
                 finished.set()
                 pulse.join()
             if isinstance(raw, dict) and raw.get('error'):
-                raise _ReadError(raw['error'])
+                raise _ReadError(raw['error'], dropped=raw.get('dropped', False))
             part, issues = twin_reads.parse('draft_level', raw)
             if isinstance(raw, dict):
                 issues = list(raw.get('problems') or []) + issues
@@ -1581,9 +1923,14 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
                                     for o in incoming.get('openings', []) if o.get('wall') in wall_ids]
             for key in ('rooms', 'stairs'):
                 incoming[key] = [p for p in incoming.get(key, []) if p['level'] == scope]
+            if 'fixtures' in incoming:
+                incoming['fixtures'] = [p for p in incoming['fixtures'] if p['level'] == scope]
+            for fixture in incoming.get('fixtures', []):
+                if 'wall' in fixture:
+                    fixture['wall'] = wall_ids.get(fixture['wall'], fixture['wall'])
             incoming.pop('roof', None)
         else:
-            for key in ('walls', 'rooms', 'stairs'):
+            for key in ('walls', 'rooms', 'stairs', 'fixtures'):
                 incoming.pop(key, None)
             incoming['openings'] = [o for o in incoming.get('openings', []) if 'gable' in o]
             # Floor reads own their porches, including columns. A roof read
@@ -1593,6 +1940,8 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
             incoming.pop('porch', None)
         for key in ('levels', 'walls', 'openings', 'rooms', 'porches', 'stairs'):
             fragment['building'][key].extend(deepcopy(incoming.get(key, [])))
+        if 'fixtures' in incoming:
+            fragment['building'].setdefault('fixtures', []).extend(deepcopy(incoming['fixtures']))
         if incoming.get('porch'):
             fragment['building']['porches'].append(deepcopy(incoming['porch']))
             fragment['building'].setdefault('porch', deepcopy(incoming['porch']))
@@ -1776,8 +2125,7 @@ def _read_roof_blocks(build, step, reader, ticket, result):
             finished = threading.Event()
             pulse = _start_draft_heartbeat(build, step, ticket, context, finished, 'roof_observe')
             try:
-                options = {'checkpoint_checked': True} if reader is _REAL_READER else {}
-                raw = reader(kind, read_images, ctx, run=build['id'], step=step['id'], **options)
+                raw = _read(build, step, reader, ticket, kind, read_images, ctx, checkpoint_checked=True)
                 if isinstance(raw, dict) and raw.get('error'):
                     raise _ReadError(raw['error'])
                 fragment, problems = (_roof_observations(raw, ctx) if kind == 'roof_observe'
@@ -1809,7 +2157,7 @@ def _read_roof_blocks(build, step, reader, ticket, result):
                     if progress['observe'] is None or _cache_result(build, step, ticket, result) is None:
                         return None
                 observations = progress['observe']['fragment'].get('blocks', {})
-        except twin_cost.CheckpointReached:
+        except (twin_cost.CheckpointReached, twin_reads.Cancelled):
             raise
         except Exception as exc:
             progress['error'] = str(exc)
@@ -1913,7 +2261,7 @@ def _read_roof_blocks(build, step, reader, ticket, result):
         progress['flags'] = [{**f, 'block_rect': deepcopy(rects[f['block']])} for f in flags]
         roof['choices'] = choices
         roof['flags'] = deepcopy(progress['flags'])
-    except twin_cost.CheckpointReached:
+    except (twin_cost.CheckpointReached, twin_reads.Cancelled):
         raise
     except Exception as exc:
         # Derivation is advisory too: retain the unmodified draft on an internal failure.
@@ -1972,15 +2320,15 @@ def _obtain(build, step, reader, ticket):
                 finished = threading.Event()
                 pulse = _start_draft_heartbeat(build, step, ticket, context, finished, '')
                 try:
-                    raw = reader(step['kind'], images, context, run=build['id'], step=step['id'])
+                    raw = _read(build, step, reader, ticket, step['kind'], images, context)
                 finally:
                     finished.set()
                     pulse.join()
             else:
-                raw = reader(step['kind'], images, context, run=build['id'], step=step['id'])
+                raw = _read(build, step, reader, ticket, step['kind'], images, context)
         truncated = step['kind'] == 'draft' and isinstance(raw, dict) and raw.get('truncated')
         if isinstance(raw, dict) and raw.get('error') and not truncated:
-            raise _ReadError(raw['error'])
+            raise _ReadError(raw['error'], dropped=raw.get('dropped', False))
         fragment, problems = twin_reads.parse(step['kind'], raw) if not truncated else ({}, [])
         if isinstance(raw, dict) and not truncated:
             problems = list(raw.get('problems') or []) + problems
@@ -2072,7 +2420,8 @@ def _pause(build, step, result):
     fragment = result['fragment']
     is_lot = build['inputs'].get('part') == 'lot'
     plan = None if is_lot else _base(twin_store.current(), build)
-    pause = {'kind': step['pause'], 'step': step['id'], 'why': fragment.get('why', ''),
+    pause = {'id': f"{build['id']}:{step['id']}:{build['seq'] + 1}",
+             'kind': step['pause'], 'step': step['id'], 'why': fragment.get('why', ''),
              'confidence': fragment.get('confidence', 0)}
     if step['kind'] in ('outline', 'registration'):
         pause['registration'], pause['rms'] = _registration(build, step, result, plan)
@@ -2624,6 +2973,9 @@ def answer(build_id, step_id, decision):
         if not isinstance(decision, dict) or len(decision) != 1:
             raise ValueError('Accept the step or provide its registration or placement.')
         decision = deepcopy(decision)
+        if decision.get('skip') is True:
+            # Skipping walks the editor's queue; it never settles or resumes a step.
+            return status(build_id)
         if step['kind'] == 'draft':
             raise ValueError('The drawings could not be read as one building. Try again.')
         if 'registration' in decision:
@@ -2717,6 +3069,7 @@ def _idle(build, ticket):
 
 def _run(build, ticket, reader):
     successor = next_ticket = None
+    step = None
     try:
         while True:
             result = None
@@ -2736,7 +3089,11 @@ def _run(build, ticket, reader):
                         next_ticket = _launch(successor, reader, inline)
                     break
                 step['status'] = 'running'
-                _event(build, 'stage', step=step['id'], label=step['label'])
+                _WORKERS[build['id']].pop('stream', None)
+                if step['kind'] in ('draft', 'draft_rooms'):
+                    _reset_stream(build, step)
+                frame = _frame(build) if step['kind'] in ('draft', 'draft_rooms') else None
+                _event(build, 'stage', step=step['id'], label=step['label'], **({'frame': frame} if frame else {}))
                 _save(build)
             result = _obtain(build, step, reader, ticket)
             with twin_store.LIFECYCLE, _LOCK:
@@ -2767,7 +3124,7 @@ def _run(build, ticket, reader):
                 _save(build)
         if successor is not None:
             _dispatch(successor, next_ticket, reader, inline)
-    except twin_store.StaleGeneration:
+    except (twin_store.StaleGeneration, twin_reads.Cancelled):
         return
     except twin_cost.CheckpointReached as exc:
         with twin_store.LIFECYCLE, _LOCK:
@@ -2786,9 +3143,13 @@ def _run(build, ticket, reader):
                 retryable = cached or isinstance(exc, _ReadError)
                 build['state'] = 'stopped' if retryable else 'failed'
                 step['status'] = 'pending'
+                streaming = _WORKERS.get(build['id'], {}).get('stream')
+                if retryable and streaming:
+                    _safe_keep_partial(build, step, ticket)
                 logger.exception('%s could not finish.', step['label'])
                 _event(build, 'question' if retryable else 'error', step=step['id'],
-                       text=('The drawings could not be read.' if step['kind'] == 'draft' else
+                       text=('The reply ended before it was complete. Read it again.' if getattr(exc, 'dropped', False) else
+                              ('The drawings could not be read.' + (' Read it again.' if streaming else '')) if step['kind'] == 'draft' else
                              'This drawing could not be read. Check the page and try reading it again.'))
                 if cached and step['pause'] and isinstance(result, dict) and not result.get('error'):
                     try:
@@ -2807,7 +3168,17 @@ def _run(build, ticket, reader):
                     _save(successor)
     finally:
         with twin_store.LIFECYCLE, _LOCK:
-            _idle(build, ticket)
+            try:
+                if (step is not None and step['status'] != 'done' and build['state'] == 'stopped'
+                        and _BUILDS.get(build['id']) is build
+                        and _WORKERS.get(build['id'], {}).get('ticket') == ticket
+                        and build['generation'] == twin_store.generation()):
+                    _spend(build)
+                    _safe_keep_partial(build, step, ticket)
+                    step['status'] = 'pending'
+                    _save(build)
+            finally:
+                _idle(build, ticket)
 
 
 twin_store.build_running = running
