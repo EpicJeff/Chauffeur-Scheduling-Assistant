@@ -7536,6 +7536,62 @@ def house_ha_identify(req: HouseHaIdentifyRequest, request: Request):
     return {'ok': True, 'how': 'toggle'}
 
 
+@app.post('/api/house/bakes/{key}/{page}.png')
+async def house_bake_page_post(key: str, page: str, request: Request):
+    from services import twin_bakes
+    try:
+        twin_bakes.check_key(key)
+        twin_bakes.check_page(page)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > twin_bakes.MAX_PAGE_BYTES:
+            raise HTTPException(status_code=413, detail='Bake page exceeds 16 MiB.')
+        data.extend(chunk)
+    try:
+        etag = await asyncio.to_thread(twin_bakes.save_page, key, page, bytes(data))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {'etag': etag}
+
+
+@app.get('/api/house/bakes/{key}/{page}.png')
+def house_bake_page_get(key: str, page: str, request: Request):
+    from services import twin_bakes
+    try:
+        data, etag = twin_bakes.read_page(key, page)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail='No such bake page.') from exc
+    matches = request.headers.get('if-none-match', '').split(',')
+    headers = {'ETag': etag}
+    if any(tag.strip().removeprefix('W/') in (etag, '*') for tag in matches):
+        return Response(status_code=304, headers=headers)
+    return Response(content=data, media_type='image/png', headers=headers)
+
+
+@app.get('/api/house/bakes/{key}')
+def house_bake_manifest_get(key: str):
+    from services import twin_bakes
+    try:
+        return twin_bakes.read_manifest(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail='No such bake manifest.') from exc
+
+
+@app.put('/api/house/bakes/{key}')
+def house_bake_manifest_put(key: str, body: dict = Body(...)):
+    from services import twin_bakes
+    try:
+        return twin_bakes.save_manifest(key, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/house/twin/library/{asset_id}/{name:path}")
 def house_twin_library_file(asset_id: str, name: str):
     from services import twin_library
