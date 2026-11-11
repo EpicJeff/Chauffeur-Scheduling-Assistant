@@ -1,6 +1,23 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.783 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.784 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.784 (2026-11-11, NOT device-verified): the 3D house wall reaches Argyle, and warnings show from every floor.**
+
+The gap audit of 2026-11-11 found three wall-panel faults. Each was fixed test-first: the tests are in `tests/test_house_twin_wall_live.py` and `tests/test_twin_markers_js.py`.
+
+- **Argyle on the 3D house wall** (`/house/twin?panel=true&kiosk=true`).
+  - Before: the page hid `#chat-overlay-container`, so tapping the orb opened nothing. Chat, Ask and tap-to-talk were dead there.
+  - Now: the chat box rests as the orb, as it does on every other panel. Marker labels keep clear of the orb and the open box.
+  - Known and unchanged: the text box does not take focus when the orb opens. That is true on every panel, so no on-screen keyboard rises.
+- **Attention on every level** (`live/live.js`).
+  - A device that needs attention stays drawn while its floor is hidden.
+  - Its floor's button in the floor picker carries a dot and ", needs attention".
+  - Calm markers still hide with their floor.
+- **Door and window contacts count as attention** (`live/markers.js`).
+  - A binary sensor of class door, window, opening or garage_door is attention when it is on.
+  - It reads "open" or "closed" instead of "on" or "off".
+  - Motion, occupancy, presence and temperature are not attention.
 
 **v2.499.783 (2026-11-10, NOT device-verified): Lights mode lights the house from each fixture.**
 
