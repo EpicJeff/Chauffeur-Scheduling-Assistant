@@ -5,7 +5,7 @@ export function lightmapUniforms(roomCount, slotCount) {
   const t = new THREE.DataTexture(new Float32Array(Math.max(1, roomCount) * Math.max(1, slotCount) * 4),
     Math.max(1, slotCount), Math.max(1, roomCount), THREE.RGBAFormat, THREE.FloatType);
   t.needsUpdate = true;
-  return { lmTints: { value: t }, skyTint: { value: new THREE.Color(0, 0, 0) } };
+  return { lmTints: { value: t } };
 }
 export function setLightTint(uniforms, room, slot, rgb, intensity) {
   const t = uniforms.lmTints.value;
@@ -52,9 +52,9 @@ vec3 tint${b}a = texelFetch(lmTints, ivec2(${2*b}, int(vLmRoom + 0.5)), 0).rgb;
 vec3 tint${b}b = texelFetch(lmTints, ivec2(${2*b+1}, int(vLmRoom + 0.5)), 0).rgb;
 lmLight += bank${b}.r * tint${b}a + bank${b}.${s[1]} * tint${b}b;`;
   }).join('\n');
-  const declarations = `uniform highp sampler2DArray lmSky; uniform sampler2D lmTints;
-uniform sampler2D lmRegions; uniform vec3 skyTint;
-varying vec2 vLmSkyUV; varying vec2 vLmUV; varying float vLmRoom; varying float vLmSkyPage;
+  const declarations = `uniform sampler2D lmTints;
+uniform sampler2D lmRegions;
+varying vec2 vLmUV; varying float vLmRoom;
 ${pages.banks.map((t, b) => `uniform highp sampler2DArray lmBank${b};`).join('\n')}`;
   const slots = uniforms.lmTints.value.image.width, rooms = uniforms.lmTints.value.image.height;
   if (!uniforms.lmRegions) {
@@ -70,40 +70,23 @@ ${pages.banks.map((t, b) => `uniform highp sampler2DArray lmBank${b};`).join('\n
     material.userData.lmBefore = before; material.userData.lmOriginalKey = key;
     material.onBeforeCompile = (shader, renderer) => {
       before.call(material, shader, renderer);
-      Object.assign(shader.uniforms, uniforms, { lmSky: { value: pages.sky } });
+      Object.assign(shader.uniforms, uniforms);
       pages.banks.forEach((t, b) => { shader.uniforms[`lmBank${b}`] = { value: t }; });
-      shader.vertexShader = `#ifndef USE_UV2
-attribute vec2 uv2;
-#endif
-#ifndef USE_UV3
+      shader.vertexShader = `#ifndef USE_UV3
 attribute vec2 uv3;
 #endif
-attribute float lmRoom; attribute float lmSkyPage;
-varying vec2 vLmSkyUV; varying vec2 vLmUV; varying float vLmRoom; varying float vLmSkyPage;\n` + shader.vertexShader;
+attribute float lmRoom;
+varying vec2 vLmUV; varying float vLmRoom;\n` + shader.vertexShader;
       shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
-vLmSkyUV = uv2; vLmUV = uv3; vLmRoom = lmRoom; vLmSkyPage = lmSkyPage;`);
+vLmUV = uv3; vLmRoom = lmRoom;`);
       shader.fragmentShader = declarations + '\n' + shader.fragmentShader;
-      // Ruling B16: the baked sky visibility MULTIPLIES the ambient (hemisphere and
-      // environment) term, never adds to it. A face of this tilt open to the whole sky
-      // bakes (1 + up) / 2, so it keeps the ambient it had; shaded corners and rooms away
-      // from windows lose theirs. Faces turned down see no sky and keep their ambient.
-      // skyTint is 1 once this key's sky is loaded, 0 before (no recompile).
       shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_end>', `vec2 lmDx = dFdx(vLmUV), lmDy = dFdy(vLmUV);
-float lmVisible = texture(lmSky, vec3(vLmSkyUV, max(0.0, vLmSkyPage))).r;
-#if defined( RE_IndirectDiffuse )
-if (vLmSkyPage > -0.5) {
-  float lmOpen = 0.5 + 0.5 * inverseTransformDirection(geometryNormal, viewMatrix).y;
-  float lmShade = clamp(lmVisible / max(lmOpen, 0.05), 0.0, 1.0);
-  float lmKeep = mix(1.0, lmShade, smoothstep(0.05, 0.2, lmOpen) * skyTint.r);
-  irradiance *= lmKeep; iblIrradiance *= lmKeep;
-}
-#endif
 #include <lights_fragment_end>
 vec3 lmLight = vec3(0.0);
 if (vLmRoom > -0.5) { ${bankCode} }
 reflectedLight.indirectDiffuse += lmLight * 16.0 * RECIPROCAL_PI * diffuseColor.rgb;`);
     };
-    material.customProgramCacheKey = () => `${key}|lm-3|${slots}|${pages.sky.format}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
+    material.customProgramCacheKey = () => `${key}|lm-4|${slots}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
     material.needsUpdate = true;
   }
 }

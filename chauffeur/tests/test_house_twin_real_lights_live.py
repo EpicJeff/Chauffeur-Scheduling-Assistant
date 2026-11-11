@@ -14,8 +14,8 @@ What the page must give (beyond piece 3's):
   that is off, unavailable or stale is absent or has intensity 0 and real false).
 - In Lights mode a real THREE.PointLight (decay 2, a finite distance near the
   room's larger span) at each real light's marker, from a fixed pool made once
-  (low tier: 4 PointLights); the scene dims to an evening look; `All` restores
-  exactly the lights, sky, exposure, environment and time of day it found.
+  (low tier: 4 PointLights); Lights keeps the current time look; `All` releases lamp ownership.
+  Day/Night changes background, environment and exposure immediately in either mode.
 - The light follows confirmed Home Assistant state only.
 
 How the pixels are read: sample() hides every sprite (markers and room badges),
@@ -129,7 +129,9 @@ def lamp_at(page, device_id, floor_lamp=False):
 LOOK_JS = """() => {
     const v = window.__twin, s = v.scene, out = {lights: []};
     s.traverse(o => {
-        if (!o.isLight || o.isPointLight) return;
+        // The time look is sun, sky and ambient. Lamps (the live pool's PointLights and the
+        // decorative RectAreaLights Lights mode switches off) are not part of it.
+        if (!o.isLight || o.isPointLight || o.isRectAreaLight) return;
         out.lights.push({type: o.type, id: o.uuid, visible: o.visible, intensity: Math.round(o.intensity * 1e4) / 1e4,
                          color: o.color.getHexString(), ground: o.groundColor ? o.groundColor.getHexString() : null});
     });
@@ -181,6 +183,27 @@ SAMPLE_JS = """([points, FT, r]) => {
         });
     } finally { for (const o of hidden) o.visible = true; }
 }"""
+
+
+SCREEN_PIXELS_JS = """points => {
+    const v = window.__twin, renderer = v.renderer3, gl = renderer.getContext(), canvas = renderer.domElement;
+    const hidden = [];
+    v.scene.traverse(o => { if (o.isSprite && o.visible) { hidden.push(o); o.visible = false; } });
+    try {
+        renderer.render(v.scene, v.camera);
+        return points.map(([x, y]) => {
+            const pixel = new Uint8Array(4);
+            gl.readPixels(Math.min(canvas.width - 1, Math.floor(x * canvas.width)),
+                          Math.min(canvas.height - 1, Math.floor(y * canvas.height)), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+            return Array.from(pixel.slice(0, 3));
+        });
+    } finally { for (const object of hidden) object.visible = true; }
+}"""
+
+
+def screen_pixels(page, points):
+    """Canvas RGB at normalized bottom-left screen coordinates, without markers or HTML overlays."""
+    return page.evaluate(SCREEN_PIXELS_JS, points)
 
 
 def sample(page, local_points, r=3):
@@ -261,6 +284,7 @@ def scenario_lit_kitchen_brightens_near_the_fixture():
     with s.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, s)
         L.aim_kitchen(page)
+        page.evaluate("() => window.__twin.setTime('night')")
         others_off(page)
         lights_mode(page)
         check(is_off(light(page, 'dev-k-ceiling')), ('the Ceiling light is off', lights(page)))
@@ -307,6 +331,7 @@ def scenario_colour_light_tints_the_room():
         with s.browser(launch_args=L.GPU_ARGS) as page:
             L.open_twin(page, s)
             L.aim_kitchen(page)
+            page.evaluate("() => window.__twin.setTime('night')")
             others_off(page)
             lights_mode(page)
             off_near, off_ref = sample(page, NEAR_CHANGING), sample(page, KITCHEN_REF)
@@ -336,7 +361,7 @@ def scenario_colour_light_tints_the_room():
         L.reset()
 
 
-def scenario_lights_mode_dims_the_scene_and_all_restores():
+def scenario_lights_mode_keeps_the_day():
     s = L.serve()
     if s is None:
         return
@@ -344,46 +369,45 @@ def scenario_lights_mode_dims_the_scene_and_all_restores():
     L.facts()
     with s.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, s)
-        L.aim_kitchen(page)
         others_off(page)
+        page.evaluate("() => { window.__twin.setTime('day'); window.__twin.setView('ext'); window.__twin.setCamera('front'); }")
         calm(page)
         day = look(page)
-        check(day['time'] == 'day', day)
-        day_hall = sample(page, HALL_FLOOR)
-
+        grid = [[x / 10, y / 10] for x in range(2, 9) for y in range(2, 9)]
+        before = screen_pixels(page, grid)
+        before_mean = mean(map(lum, before))
+        background = screen_pixels(page, [[.98, .98]])[0]
         lights_mode(page)
-        evening = look(page)
-        check(sky(evening) < .5 * sky(day), ('Lights mode turns the sun and sky down', sky(day), sky(evening), evening))
-        before_bg, during_bg = hex_lum(day['background']), hex_lum(evening['background'])
-        if before_bg is not None and during_bg is not None:
-            check(during_bg < before_bg - 30, ('the sky darkens to evening', day['background'], evening['background']))
-        evening_hall = sample(page, HALL_FLOOR)
-        check(mean(map(lum, evening_hall)) < mean(map(lum, day_hall)) - 15,
-              ('the unlit Hall reads darker in Lights mode', day_hall, evening_hall))
-        check(lit_pool(page) == [], ('every light off: no pool light lit', lit_pool(page)))
+        during = screen_pixels(page, grid)
+        during_mean = mean(map(lum, during))
+        check(before_mean > 0, ('day grid is illuminated', before_mean))
+        check(abs(during_mean - before_mean) <= before_mean * .06,
+              ('Lights preserves the day within 6 percent', before_mean, during_mean))
+        check(screen_pixels(page, [[.98, .98]])[0] == background, 'the sky/background pixel is unchanged')
+        check(look(page) == day, ('background, environment, sun, ambient and exposure stay the same', day, look(page)))
+        check(lit_pool(page) == [], 'all HA lamps are off')
+        lamps = room_lamps(page)
+        check(all(l['intensity'] == 0 for l in lamps['lamps']), ('decorative room lamps are off', lamps))
+        check(all(value == 0 for value in lamps['fixtures']), ('decorative fixture emissive is off', lamps))
 
-        all_mode(page)
-        check(look(page) == day, ('All restores exactly the lighting it found', day, look(page)))
-        back_hall = sample(page, HALL_FLOOR)
-        check(abs(mean(map(lum, back_hall)) - mean(map(lum, day_hall))) < 6, ('the Hall floor is back', day_hall, back_hall))
-        check(lit_pool(page) == [], ('All: no pool light lit', lit_pool(page)))
-
-        # At night: Lights, then All, gives the night back, not the day.
-        page.evaluate("() => window.__twin.setTime('night')")
+        page.get_by_role('button', name='Night', exact=True).locator('visible=true').click()
         calm(page)
+        night_mean = mean(map(lum, screen_pixels(page, grid)))
+        check(night_mean < during_mean * .70, ('Night changes the look at once in Lights mode', during_mean, night_mean))
+        lamps = room_lamps(page)
+        check(all(l['intensity'] == 0 for l in lamps['lamps']), ('Night in Lights keeps decorative lamps off', lamps))
+        check(all(value == 0 for value in lamps['fixtures']), ('Night in Lights keeps fixture emissive off', lamps))
         night = look(page)
         check(night['time'] == 'night', night)
-        lights_mode(page)
         all_mode(page)
-        check(look(page) == night, ('All after Lights at night keeps the night', night, look(page)))
-
-        # And twice over by day: nothing creeps.
+        check(look(page) == night, ('All keeps the current Night time look', night, look(page)))
+        check_night_lamps(page, 'All restores decorative night lamps')
         page.evaluate("() => window.__twin.setTime('day')")
         calm(page)
         for _ in range(2):
             lights_mode(page)
             all_mode(page)
-        check(look(page) == day, ('Lights and All twice: still exactly the day', day, look(page)))
+        check(look(page) == day, ('repeated Lights/All keeps Day', day, look(page)))
         L.no_errors(s)
 
 
@@ -471,11 +495,11 @@ def scenario_a_sky_arriving_in_lights_is_the_sky_after_all():
         calm(page)
         before = look(page)['environment']
         lights_mode(page)
-        check(look(page)['environment'] is None, ('Lights mode has no environment light', look(page)))
+        check(look(page)['environment'] == before, ('Lights keeps the current day environment', look(page)))
         missing = page.evaluate(LATE_SKY_JS)
         check(missing is None, missing)
         calm(page)
-        check(look(page)['environment'] is None, ('the late sky keeps Lights mode dark', look(page)))
+        check(look(page)['environment'] is not None and look(page)['environment'] != before, ('the late day sky appears immediately in Lights mode', look(page)))
         all_mode(page)
         after = look(page)
         page.evaluate('() => window.__twin.setTime(window.__twin.state.time)')
@@ -562,6 +586,7 @@ def scenario_tap_off_turns_the_light_off_after_confirmed_state():
         with s.browser(launch_args=L.GPU_ARGS) as page:
             L.open_twin(page, s)
             L.aim_kitchen(page)
+            page.evaluate("() => window.__twin.setTime('night')")
             lights_mode(page)
             row = light(page, 'dev-k-lamp')
             check(is_on(row) and abs(row['intensity'] - 128 / 255) < .01, ('the Counter lamp is a real light at 50 percent', row))
@@ -613,6 +638,7 @@ def scenario_ha_unreachable_draws_lights_off():
         with s.browser(launch_args=L.GPU_ARGS) as page:
             L.open_twin(page, s)
             L.aim_kitchen(page)
+            page.evaluate("() => window.__twin.setTime('night')")
             day = look(page)
             lights_mode(page)
             for did in ('dev-k-lamp', 'dev-k-pendant', 'dev-changing-light'):
@@ -623,7 +649,7 @@ def scenario_ha_unreachable_draws_lights_off():
                 rows = lights(page)
                 check(all(is_off(r) for r in rows), (why, 'every light draws off', rows))
                 check(lit_pool(page) == [], (why, 'no PointLight lit', lit_pool(page)))
-                check(sky(look(page)) < .5 * sky(day), (why, 'the scene keeps its evening look', look(page)))
+                check(look(page) == day, (why, 'the scene keeps its current time look', look(page)))
                 rows = {m['device_id']: m for m in L.markers(page)}
                 check(all(m['stale'] is True and m['dim'] is True for m in rows.values()), (why, 'markers stale and dimmed'))
                 check(rows['dev-k-lamp']['look'] == 'on', (why, 'the marker keeps its last state', rows['dev-k-lamp']))
@@ -661,6 +687,7 @@ def scenario_wall_panel_lights_mode():
     with s.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, s, query='tier=low&test=1&panel=true&kiosk=true')
         L.aim_kitchen(page)
+        page.evaluate("() => window.__twin.setTime('night')")
         day = look(page)
         count = len(pool(page))
         check(count == 4, ('the low tier holds a pool of four PointLights from the start', count))
@@ -671,7 +698,7 @@ def scenario_wall_panel_lights_mode():
             check(is_on(light(page, did)), ('on the wall, the light is real', did, lights_rows(page)))
         check(len(lit_pool(page)) == 3, ('three lit PointLights', lit_pool(page)))
         check(len(pool(page)) == count, ('the pool did not grow', count, len(pool(page))))
-        check(sky(look(page)) < .5 * sky(day), ('the wall dims to evening', look(page)))
+        check(look(page) == day, ('Lights keeps the wall time look', look(page)))
         mode_button(page, 'All').click()   # one tap back
         calm(page)
         check(look(page) == day, ('All restores the wall\'s look', day, look(page)))
@@ -686,7 +713,7 @@ def lights_rows(page):
 SCENARIOS = [
     scenario_lit_kitchen_brightens_near_the_fixture,
     scenario_colour_light_tints_the_room,
-    scenario_lights_mode_dims_the_scene_and_all_restores,
+    scenario_lights_mode_keeps_the_day,
     scenario_tap_off_turns_the_light_off_after_confirmed_state,
     scenario_ha_unreachable_draws_lights_off,
     scenario_wall_panel_lights_mode,

@@ -5,7 +5,7 @@ tests/test_house_twin_real_lights_live.py).
 Lights mode used to lay a flat translucent sheet over each lit room's floor.
 Now every light that is on gets a real THREE.PointLight at its marker, in its
 colour, as bright as its brightness, from a fixed pool per tier; the fixture
-glows; the scene dims to an evening look; `All` puts everything back.
+glows; Day/Night keeps control of the time look; `All` releases the lamps.
 
 What this file assumes (the implementer matches these):
 
@@ -47,9 +47,8 @@ Through mountLive (static/twin/live/live.js), which builds the rig from view.tie
   - The fallback wash: an object tagged userData.lightWash = {building, room}
     per linked room, shown in Lights mode only for a room holding a light that is
     on but over the budget.
-  - The evening look goes through the view: view.setEvening(true) on entering
-    Lights mode, view.setEvening(false) on leaving it (twin_view.js implements it
-    on its own sun / hemisphere / sky, restoring exactly what was there).
+  - Lamp ownership goes through view.setLiveLamps(true/false). Entering or
+    leaving Lights never calls setTime or the retired setEvening time-look path.
   - In All mode every pool light has intensity 0 and every wash is hidden.
 
 Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_real_lights_js.py
@@ -142,7 +141,7 @@ const layout = {available:true,
     area_id:area(f.room),building:'b',level:'L1',room:f.room,at:f.at,placed:true}))};
 let reachable = true;
 const api = async path => ({ok:true,json:async () => structuredClone(path === 'api/house/live' ? layout : {states,reachable})});
-const evening = [];
+const lampOwnership = [], timeChanges = [];
 function makeView(tier) {
   const canvas = new Node('canvas'), host = new Node('main'); host.append(canvas); body.append(host);
   const camera = new THREE.PerspectiveCamera(38,1.4,.1,1000); camera.position.set(8*FT,50*FT,-5*FT); camera.lookAt(8*FT,0,-5*FT);
@@ -150,7 +149,7 @@ function makeView(tier) {
   return {ready:true,tier,scene:new THREE.Scene(),renderer3:{domElement:canvas,shadowMap:{enabled:tier !== 'low'}},camera,
     controls:{target:new THREE.Vector3(8*FT,0,-5*FT)},groups:{levels:{'b:L1':level}},
     plan:{buildings:[{id:'b',position:[0,0],rotation:0,base:0,levels:[{id:'L1',elevation:0,ceiling:10}],rooms:roomsPlan,stairs:[]}]},
-    pick: () => null, render() { this.live?.draw(); }, setEvening(on) { evening.push(!!on); }};
+    pick: () => null, render() { this.live?.draw(); }, setLiveLamps(on) { lampOwnership.push(!!on); }, setEvening() { timeChanges.push('evening'); }, setTime() { timeChanges.push('time'); }};
 }
 const shown = o => { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; };
 const pool = view => { const out = []; view.scene.traverse(o => { if (o.isPointLight) out.push(o); }); return out; };
@@ -179,7 +178,7 @@ const tint = object => {
 };
 const setTarget = (view, x, y) => { view.controls.target.set(x*FT, 0, -y*FT); view.camera.position.set(x*FT, 50*FT, -y*FT); view.camera.lookAt(x*FT, 0, -y*FT); };
 async function mounted(tier = 'low') {
-  states = initialStates(); reachable = true; evening.length = 0;
+  states = initialStates(); reachable = true; lampOwnership.length = 0; timeChanges.length = 0;
   const view = makeView(tier);
   const live = await mountLive(view, {api});
   assert.ok(live, 'the live layer mounts on the fake view');
@@ -189,6 +188,19 @@ async function mounted(tier = 'low') {
 
 const checks = [];
 const check = (name, fn) => checks.push([name, fn]);
+
+
+check('lights_mode_never_requests_a_time_look_change', async () => {
+  const {view, live} = await mounted('low');
+  try {
+    live.setMode('lights'); live.draw(); await live.refresh();
+    assert.deepEqual(timeChanges, [], 'lighting(true) must never change the time look');
+    assert.equal(lampOwnership.at(-1), true, 'Lights owns the lamps');
+    live.setMode('all');
+    assert.deepEqual(timeChanges, [], 'leaving Lights must never change the time look');
+    assert.equal(lampOwnership.at(-1), false, 'All releases the lamps');
+  } finally { live.stop(); }
+});
 
 check('color_from_rgb_kelvin_mireds_and_default', async () => {
   need('lightColor');
@@ -352,23 +364,23 @@ check('over_budget_lights_fall_back_to_glow_and_wash', async () => {
 check('all_mode_restores_previous_lighting', async () => {
   const {view, live} = await mounted('low');
   try {
-    assert.deepEqual(evening, [], 'mounting does not change the look');
+    assert.deepEqual(lampOwnership, [], 'mounting does not change the look');
     live.setMode('lights');
-    assert.equal(evening.at(-1), true, 'Lights asks the view for the evening look: view.setEvening(true)');
+    assert.equal(lampOwnership.at(-1), true, 'Lights takes lamp ownership: view.setLiveLamps(true)');
     assert.ok(pool(view).some(l => l.intensity > 0), 'Lights mode lights the pool');
     live.setMode(null);
-    assert.equal(evening.at(-1), false, 'All gives the look back: view.setEvening(false)');
+    assert.equal(lampOwnership.at(-1), false, 'All releases lamp ownership: view.setLiveLamps(false)');
     assert.ok(pool(view).every(l => l.intensity === 0), 'All: every pool light is dark');
     assert.equal(tagged(view, 'lightWash').some(shown), false, 'All: no wash');
     // A poll while in All mode lights nothing.
     states['light.c1'] = {state:'on', attributes:{brightness:255}}; await live.refresh();
     assert.ok(pool(view).every(l => l.intensity === 0), 'All: a poll lights nothing');
-    assert.equal(evening.at(-1), false, 'All: a poll does not dim the scene');
+    assert.equal(lampOwnership.at(-1), false, 'All: a poll does not dim the scene');
     live.setMode('lights'); live.setMode(null);
-    assert.equal(evening.at(-1), false, 'the last word after All is always false');
+    assert.equal(lampOwnership.at(-1), false, 'the last word after All is always false');
     live.setMode('lights');
   } finally { live.stop(); }
-  assert.equal(evening.at(-1), false, 'stopping the layer in Lights mode gives the look back');
+  assert.equal(lampOwnership.at(-1), false, 'stopping the layer in Lights mode gives the look back');
 });
 
 check('floor_lamp_light_hangs_at_lamp_height', async () => {

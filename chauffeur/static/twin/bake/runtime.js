@@ -11,7 +11,7 @@ import { covered } from './atlas_transport.js';
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Every tier lays its atlas out at the desk's 8 texels/ft, so a wall that opens before
 // any bake polls the very key the desk will bake (I1).
-const options = density => ({ sky: { density: 2, page: 2048, gutter: 2 }, room: { density, page: 2048, gutter: 2 } });
+const options = density => ({ room: { density, page: 2048, gutter: 2 } });
 
 function arrayTexture(results, count, format, size) {
   const example = results.find(Boolean);
@@ -61,7 +61,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   let lights = [], lightsKey = '', packed = null, uniforms = null, pages = null;
   let layers = [], baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
   let dragging = false, stillAt = performance.now();
-  let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false, skyReady = false;
+  let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
   let failure = '', manifestText = null;
   const etags = new Map(), present = new Set(), clones = [], textures = new Set();
   const valid = () => !stopped && view.plan === round;
@@ -98,11 +98,6 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       else requestAnimationFrame(resolve);
     });
     if (paused()) return idle();
-  }
-  // Ruling B16: the baked sky visibility shapes the ambient term (dark corners, light
-  // near windows); it never adds light. skyTint switches it on once the sky is loaded.
-  function skyTint() {
-    if (uniforms) uniforms.skyTint.value.setScalar(skyReady ? 1 : 0);
   }
   function light(device, rgb, intensity) {
     tints.set(device, { rgb: [...rgb], intensity });
@@ -246,19 +241,17 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       .filter(p => p >= 0 && p < b.pages))].sort((a, c) => a - c));
     uniforms = lightmapUniforms(atlas.room.rooms.length, Math.max(2, packed.banks.length * 2));
     uniforms.lmRegions = { value: regions() };
-    const skyFormat = pickTranscode(view.renderer3.extensions, 1), roomFormat = pickTranscode(view.renderer3.extensions, 2);
-    pages = { sky: blankArray(atlas.sky.pages, skyFormat, layout.sky.page),
+    const roomFormat = pickTranscode(view.renderer3.extensions, 2);
+    pages = {
       // A bank with no lit page holds one 4x4 placeholder layer (one compressed block).
       banks: packed.banks.map((b, i) => layers[i].length ? blankArray(layers[i].length, roomFormat, layout.room.page)
         : blankArray(1, roomFormat, 4)) };
-    textures.add(pages.sky); pages.banks.forEach(t => textures.add(t));
-    etags.clear(); present.clear(); manifestText = null; fresh.clear(); skyReady = false;
+    pages.banks.forEach(t => textures.add(t));
+    etags.clear(); present.clear(); manifestText = null; fresh.clear();
     stale = lights.map(l => l.device);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
-    view.bakeSky?.();
   }
   function locate(p) {
-    if (p < atlas.sky.pages) return { texture: pages.sky, layer: p };
     for (let i = 0; i < layers.length; i++) {
       const layer = layers[i].indexOf(p - packed.offsets[i]);
       if (layer >= 0) return { texture: pages.banks[i], layer };
@@ -279,14 +272,14 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       if (manifestText === null && !present.size && !fresh.size) return;
       for (const id of fresh) light(id, [0, 0, 0], 0);
       for (const p of present) { const at = locate(p); if (at) writeLayer(at.texture, at.layer, null); }
-      fresh.clear(); present.clear(); etags.clear(); manifestText = null; skyReady = false;
-      stale = lights.map(l => l.device); skyTint(); view.bakeSky?.(); view.render();
+      fresh.clear(); present.clear(); etags.clear(); manifestText = null;
+      stale = lights.map(l => l.device); view.render();
       return;
     }
     const m = JSON.parse(text);
     let changed = text !== manifestText;
     manifestText = text;
-    const wanted = new Set(Array.from({ length: atlas.sky.pages }, (_, p) => p));
+    const wanted = new Set();
     layers.forEach((list, i) => list.forEach(p => wanted.add(packed.offsets[i] + p)));
     for (const p of [...wanted].sort((a, c) => a - c)) {
       const etag = etags.get(p), at = locate(p);
@@ -316,11 +309,10 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       if (e && stored?.key === e.key && stored.page === e.page && stored.channel === e.channel && present.has(e.page)) fresh.add(l.device);
     }
     stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
-    skyReady = !!m.sky && Array.from({ length: atlas.sky.pages }, (_, p) => p).every(p => present.has(p));
     if (present.size) patch();
     for (const id of previous) if (!fresh.has(id)) light(id, [0, 0, 0], 0);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
-    skyTint(); view.bakeSky?.();
+
     // Refresh the pool selection as soon as a light becomes fresh.
     if (view.live) await view.live.refresh();
     view.render();
@@ -383,15 +375,15 @@ if (vGlowRoom > -0.5) { ${sum} }`);
   const controller = {
     state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: running && paused(),
       ...progress, baked: [...baked], stale: [...stale] }),
-    fresh: () => valid() ? [...fresh] : [], light, sky: skyTint, idle, refresh,
+    fresh: () => valid() ? [...fresh] : [], light, idle, refresh,
     // The lightmap arrays as held: per array its layer size and layer count, plus what
     // the GPU has been told to upload (test hooks).
-    held: () => pages ? { sky: { size: pages.sky.image.width, layers: pages.sky.image.depth },
+    held: () => pages ? {
       banks: pages.banks.map((t, i) => ({ size: t.image.width, layers: t.image.depth, pages: packed.banks[i].pages, lit: [...layers[i]] })),
-      versions: { sky: pages.sky.version, banks: pages.banks.map(t => t.version) },
-      ids: { sky: pages.sky.uuid, banks: pages.banks.map(t => t.uuid) },
-      updates: { sky: [...pages.sky.layerUpdates], banks: pages.banks.map(t => [...t.layerUpdates]) },
-      textures: { sky: pages.sky, banks: [...pages.banks] } } : null,
+      versions: { banks: pages.banks.map(t => t.version) },
+      ids: { banks: pages.banks.map(t => t.uuid) },
+      updates: { banks: pages.banks.map(t => [...t.layerUpdates]) },
+      textures: { banks: [...pages.banks] } } : null,
     now: () => run(true),
     stop() {
       if (stopped) return;
@@ -415,8 +407,8 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       if (!valid()) return;
       let text = await readManifest(pending.key);
       const manifest = typeof text === 'string' ? JSON.parse(text) : null;
-      if (manifest?.densities && (manifest.densities.sky !== layout.sky.density || manifest.densities.room !== layout.room.density)) {
-        layout = { sky: { ...layout.sky, density: manifest.densities.sky }, room: { ...layout.room, density: manifest.densities.room } };
+      if (manifest?.densities && (manifest.densities.room !== layout.room.density)) {
+        layout = { room: { ...layout.room, density: manifest.densities.room } };
         pending = await loadAtlas(root, round, layout, { signal: halt.signal, apply: false });
         if (!valid()) return;
         text = await readManifest(pending.key);

@@ -26,7 +26,6 @@ Hooks the page must give under ?test=1 (beyond the real-lights ones):
               camera moving, then 2 s still);
       done, total  this run's lights baked and to bake (0, 0 when idle);
       baked   every id this page has baked since it opened, in order: device ids,
-              and 'sky' for the sky pass;
       stale   device ids whose bake is missing or out of date for `key`.
   window.__twin.bake.fresh() -> device ids drawn from a loaded bake right now.
   window.__twin.live.lights() rows carry baked: true for a light drawn from its
@@ -37,7 +36,7 @@ light at work). The wall shows neither.
 
 Where bakes live: services.twin_bakes under twin_store.DATA_DIR/bakes/<key>/:
 numbered page files (KTX2 bytes, Ruling B4; the file name's stem is the page
-number) and manifest.json ({pages, lights: {device: {page, channel, key}}, sky}).
+number) and manifest.json ({pages, lights: {device: {page, channel, key}}}).
 The lights a desk bakes are the placed light markers; whether the unplaced
 Pendant is baked is not pinned.
 
@@ -310,6 +309,7 @@ def kitchen_rise(page, points=None):
     """Ceiling light off -> on in Lights mode over the Kitchen: (near rise, far rise, detail)."""
     L.aim_kitchen(page)
     only_on(page, None)
+    page.evaluate("() => window.__twin.setTime('night')")
     RL.lights_mode(page)
     near, far = points or RL.NEAR_CEILING, RL.FAR_KITCHEN
     off_near, off_far = RL.sample(page, near), RL.sample(page, far)
@@ -338,7 +338,7 @@ def scenario_bake_runs_on_idle_and_lands():
         st = wait_baked(page)
         check(KEY_RE.match(st['key'] or ''), ('the atlas key', st))
         check(set(BAKED) <= set(st['baked']), ('this page baked every placed light', st))
-        check('sky' in st['baked'], ('and the sky', st))
+        check('sky' not in st['baked'], ('only room lights bake', st))
         check(st['stale'] == [] or not set(BAKED) & set(st['stale']), ('nothing placed is left stale', st))
         key = st['key']
         m = stored_manifest(key)
@@ -376,6 +376,7 @@ def scenario_baked_light_does_not_cross_a_wall():
         desk_baked(s, page)
         L.aim_kitchen(page)
         only_on(page, None)
+        page.evaluate("() => window.__twin.setTime('night')")
         RL.lights_mode(page)
         rooms_next_door = RL.HALL_FLOOR + RL.NEAR_CHANGING
         off_next, off_near = RL.sample(page, rooms_next_door), RL.sample(page, RL.NEAR_CEILING)
@@ -405,6 +406,7 @@ def scenario_moving_a_light_rebakes_only_it():
             files_before, m_before = page_files(key), stored_manifest(key)
             L.aim_kitchen(page)
             only_on(page, 'light.ceiling_light', brightness=255)
+            page.evaluate("() => window.__twin.setTime('night')")
             RL.lights_mode(page)
             kitchen_before = RL.sample(page, RL.NEAR_CEILING + RL.KITCHEN_REF)
 
@@ -430,6 +432,7 @@ def scenario_moving_a_light_rebakes_only_it():
             # The Kitchen's channels on that page keep their light.
             L.aim_kitchen(page)
             only_on(page, 'light.ceiling_light', brightness=255)
+            page.evaluate("() => window.__twin.setTime('night')")
             RL.lights_mode(page)
             check(is_baked(baked_row(page, 'dev-k-ceiling')), ('the Ceiling light draws baked', baked_row(page, 'dev-k-ceiling')))
             kitchen_after = RL.sample(page, RL.NEAR_CEILING + RL.KITCHEN_REF)
@@ -477,6 +480,7 @@ def scenario_toggle_is_exact():
         desk_baked(s, page)
         L.aim_kitchen(page)
         only_on(page, None)
+        page.evaluate("() => window.__twin.setTime('night')")
         RL.lights_mode(page)
         points = RL.NEAR_CEILING + RL.FAR_KITCHEN + RL.HALL_FLOOR
         off1 = RL.sample(page, points)
@@ -507,6 +511,7 @@ def scenario_colour_follows_live():
             desk_baked(s, page)
             L.aim_kitchen(page)
             only_on(page, None)
+            page.evaluate("() => window.__twin.setTime('night')")
             RL.lights_mode(page)
             off_near, off_ref = RL.sample(page, RL.NEAR_CHANGING), RL.sample(page, RL.KITCHEN_REF)
             only_on(page, 'light.changing_light', brightness=153, rgb_color=[0, 0, 255])
@@ -541,6 +546,7 @@ def scenario_lit_room_glows_through_its_windows_from_outside():
         page.evaluate("() => window.__twin.setView('ext')")
         aim_local(page, EYE, WINDOW)
         only_on(page, None)
+        page.evaluate("() => window.__twin.setTime('night')")
         RL.lights_mode(page)
         off_window, off_wall = sample_at(page, [WINDOW, WALL_BESIDE])
         RL.set_light('light.ceiling_light', 'on', brightness=255)
@@ -578,6 +584,7 @@ def scenario_pi_tier_draws_baked_lights():
             check(state(page)['key'] == key, ('the wall draws the same atlas key', state(page), key))
             check('dev-changing-light' not in fresh(page), ('a light missing from the manifest is not drawn baked', sorted(fresh(page))))
             L.aim_kitchen(page)
+            page.evaluate("() => window.__twin.setTime('night')")
             RL.lights_mode(page)
             lamp = baked_row(page, 'dev-k-lamp')
             check(is_baked(lamp), ('on the Pi the Counter lamp draws from its bake', lamp))
@@ -610,6 +617,7 @@ def scenario_pi_tier_draws_baked_lights():
             page.wait_for_timeout(8000)
             check(fresh(page) == set(), ('no page, no baked light', sorted(fresh(page))))
             L.aim_kitchen(page)
+            page.evaluate("() => window.__twin.setTime('night')")
             RL.lights_mode(page)
             lamp = RL.light(page, 'dev-k-lamp')
             check(RL.is_on(lamp) and lamp.get('baked') is not True, ('the Counter lamp falls back to real-time', lamp))
@@ -696,9 +704,9 @@ def scenario_bake_now_rebakes_everything():
         check(state(page)['total'] >= len(BAKED), ('the run counts every light', state(page)))
         st = wait_baked(page)
         again = st['baked'][already:]
-        check(set(BAKED) <= set(again) and 'sky' in again, ('every light and the sky bake again', again))
+        check(set(BAKED) == set(again), ('every room light bakes again', again))
         posted = {p.split('/')[-1].split('.')[0] for m_, p in writes(seen, before) if m_ == 'POST'}
-        named = {str(e['page']) for e in m['lights'].values()} | {str(m['sky']['page'])}
+        named = {str(e['page']) for e in m['lights'].values()}
         check(named <= posted, ('every page is uploaded again', sorted(named), sorted(posted)))
         check(all(stored_manifest(key)['lights'][d]['key'] == m['lights'][d]['key'] for d in BAKED),
               ('nothing moved: the light keys stay', m['lights'], stored_manifest(key)['lights']))
@@ -774,7 +782,7 @@ def scenario_two_tabs_bake_without_tearing():
         files = page_files(key)
         torn = {n: ktx2_problem(page_bytes(key, n)) for n in files if ktx2_problem(page_bytes(key, n))}
         check(not torn, ('no stored page is torn', torn))
-        for entry in list(m['lights'].values()) + [m['sky']]:
+        for entry in list(m['lights'].values()):
             check(entry['page'] in files, ('every page the manifest names exists', entry, sorted(files)))
 
         # Neither tab's write lost the other's channel: each Kitchen light lights the floor on its own.
@@ -782,6 +790,7 @@ def scenario_two_tabs_bake_without_tearing():
         wait_until(other, lambda: set(BAKED) <= fresh(other), 120, ('the reopened tab draws the bake', sorted(fresh(other))))
         L.aim_kitchen(other)
         only_on(other, None)
+        other.evaluate("() => window.__twin.setTime('night')")
         RL.lights_mode(other)
         dark_ceiling, dark_lamp = RL.sample(other, RL.NEAR_CEILING), RL.sample(other, NEAR_LAMP)
         only_on(other, 'light.ceiling_light', brightness=255)
@@ -828,6 +837,7 @@ def scenario_wall_opened_before_the_bake_picks_it_up():
         wait_until(wall, lambda: set(BAKED) <= fresh(wall), 90,
                    ('the wall picks the bake up without a reload', state(wall), sorted(fresh(wall))))
         L.aim_kitchen(wall)
+        wall.evaluate("() => window.__twin.setTime('night')")
         RL.lights_mode(wall)
         check(is_baked(baked_row(wall, 'dev-k-lamp')), ('the Counter lamp now draws from its bake', baked_row(wall, 'dev-k-lamp')))
         check(writes(seen) == [], ('the wall uploads nothing', writes(seen)))
@@ -844,7 +854,7 @@ def scenario_editor_never_bakes_and_says_when_lights_wait():
     L.facts()
     clear_bakes()
     behind = 'ab' * 20
-    twin_bakes.save_manifest(behind, {'pages': 1, 'lights': {}, 'sky': {'page': 0, 'channel': 0},
+    twin_bakes.save_manifest(behind, {'pages': 1, 'lights': {},
                                       'round': (twin_store.current_id() or 0) + 1000, 'complete': True})
     with s.browser(launch_args=L.GPU_ARGS) as page:
         seen = bake_requests(page)
@@ -874,42 +884,59 @@ def scenario_editor_never_bakes_and_says_when_lights_wait():
         L.no_errors(s)
 
 
-def scenario_sky_bake_shapes_daylight_never_adds():
-    """Ruling B16: the baked sky multiplies the daylight ambient: open surfaces keep v2.499.783's
-    look, a room away from its windows goes darker, nothing gets brighter."""
+def scenario_day_ground_is_even_after_the_bake():
+    """Only room lights bake: a bake landing must not mottle the open daylight lawn."""
+    from statistics import pstdev
     s = L.serve()
     if s is None:
         return
     L.reset()
     L.facts()
+    clear_bakes()
+    # Hold uploads until the initial samples exist; then resume the real baker.
     with s.browser(launch_args=L.GPU_ARGS) as page:
-        desk_baked(s, page)
-    grid = [(x, y) for x in (300, 500, 700, 900, 1100) for y in (300, 450, 600, 750)]
-
-    def measure(page):
+        gate = {'hold': True}
+        held = []
+        def hold_upload(route):
+            if gate['hold'] and route.request.method == 'POST' and route.request.url.endswith('.png'):
+                held.append(route)
+            else:
+                route.continue_()
+        page.route('**/api/house/bakes/**', hold_upload)
+        open_desk(page, s)
         page.evaluate("() => { window.__twin.setTime('day'); window.__twin.setView('ext'); window.__twin.setCamera('front'); }")
         H.settle(page, 4)
-        outside = mean(lum(L.pixel(page, x, y)) for x, y in grid)
-        L.aim_kitchen(page)
-        page.evaluate("() => window.__twin.setTime('day')")
+        points = page.evaluate("""async () => {
+            const THREE = await import('three'), v = window.__twin, ray = new THREE.Raycaster();
+            v.scene.updateMatrixWorld(true); v.camera.updateMatrixWorld(true);
+            const meshes = [];
+            v.scene.traverse(o => { if (o.isMesh && !o.layers.isEnabled(31)) {
+                let shown = true; for (let p = o; p; p = p.parent) shown &&= p.visible;
+                if (shown) meshes.push(o);
+            }});
+            const points = [];
+            for (let y = .12; y < .65; y += .045)
+                for (let x = .12; x < .9; x += .045) {
+                    ray.setFromCamera(new THREE.Vector2(x * 2 - 1, y * 2 - 1), v.camera);
+                    const hit = ray.intersectObjects(meshes, false)[0];
+                    if (hit?.object.material?.name === 'lawn') points.push([x, y]);
+                }
+            return points.length < 20 ? points : Array.from({length: 20}, (_, i) => points[Math.floor(i * (points.length - 1) / 19)]);
+        }""")
+        check(len(points) == 20, ('20 visible pixels hit open lawn', points))
+        check(not fresh(page), 'before sample precedes publication of any room bake')
+        before = [lum(pixel) for pixel in RL.screen_pixels(page, points)]
+        spread_before = pstdev(before)
+        gate['hold'] = False
+        page.unroute('**/api/house/bakes/**', hold_upload)
+        for route in held:
+            route.continue_()
+        wait_baked(page)
         H.settle(page, 4)
-        inside = mean(lum(p) for p in RL.sample(page, RL.FAR_KITCHEN))
-        return outside, inside
-
-    with s.browser(launch_args=L.GPU_ARGS) as page:
-        open_wall(page, s)
-        wait_until(page, lambda: set(BAKED) <= fresh(page), 120, ('the wall draws the bake', sorted(fresh(page))))
-        baked_out, baked_in = measure(page)
-        page.route('**/api/house/bakes/**', lambda route: route.fulfill(status=404, content_type='application/json', body='{"detail":"Not Found"}'))
-        reopen(page)
-        page.wait_for_timeout(6000)
-        check(fresh(page) == set(), ('no bake drawn', sorted(fresh(page))))
-        plain_out, plain_in = measure(page)
-        detail = {'baked_out': round(baked_out, 1), 'plain_out': round(plain_out, 1),
-                  'baked_in': round(baked_in, 1), 'plain_in': round(plain_in, 1)}
-        check(baked_out <= plain_out * 1.04 + 2, ('the sky bake never brightens the outside', detail))
-        check(baked_out >= plain_out * 0.75, ('open surfaces keep their daylight', detail))
-        check(baked_in < plain_in - 3, ('the room away from its windows goes darker', detail))
+        after = [lum(pixel) for pixel in RL.screen_pixels(page, points)]
+        spread_after = pstdev(after)
+        check(spread_after <= spread_before * 1.25 + 2,
+              ('ground stays even when room bakes land', spread_before, spread_after, before, after))
         L.no_errors(s)
 
 
@@ -929,7 +956,7 @@ SCENARIOS = [
     scenario_two_tabs_bake_without_tearing,
     scenario_wall_opened_before_the_bake_picks_it_up,
     scenario_editor_never_bakes_and_says_when_lights_wait,
-    scenario_sky_bake_shapes_daylight_never_adds,
+    scenario_day_ground_is_even_after_the_bake,
 ]
 
 

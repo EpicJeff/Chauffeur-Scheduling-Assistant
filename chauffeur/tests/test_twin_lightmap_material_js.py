@@ -1,73 +1,13 @@
-"""Baked lights at runtime, in node (Task 4 of docs/superpowers/plans/2026-11-10-house-baked-lights.md,
-as amended by Rulings B2, B8, B9 and B10 in .superpowers/sdd/2026-11-10-house-baked-lights/progress.md;
-the pixels are tests/test_house_twin_bake_live.py's).
+"""Room-light material, texture formats and worker-cache checks in node.
 
-Runs under node with the vendored three (static/vendor/three-r187) for bare 'three'
-imports, the real vendored Basis encoder/transcoder wasm (to make and read real
-KTX2 pages), and, for the atlas, the household's pool house built with
-static/twin/twin_generator.js (the household fixture pushed through
-twin_store.push_round, read back with twin_store.current(), the other buildings
-dropped) at LAYOUT = {sky: {1, 256, 2}, room: {1, 256, 2}}.
+Fixed room/slot tint textures toggle lights without recompiles. The material
+adds room irradiance through uv3/lmRoom, preserves three's ambient term and
+has no sky uniforms. Desktop BC5, Pi EAC RG11 and RGBA fallback preserve both
+room-light channels. Worker transport matches the direct atlas, cached
+geometry is applied only when ready, and IndexedDB keeps the last two atlases.
+The live rig keeps lights real-time until their room bake is fresh.
 
-What this file pins (the implementer matches these):
-
-static/twin/bake/lightmap_material.js, importable in node (no DOM, no Worker, no
-indexedDB touched at module load):
-  lightmapUniforms(roomCount, slotCount) -> uniforms shared by every patched material:
-      lmTints: {value: THREE.DataTexture}, RGBA, width slotCount, height roomCount;
-               texel (room, slot) at index (room * slotCount + slot) * 4; Float32Array
-               or Uint16Array (half float) data. A slot is bank * 2 + channel.
-      skyTint: {value: THREE.Color}.
-  setLightTint(uniforms, room, slot, rgb, intensity): rgb 0-255 (sRGB, as
-      lightColor gives it), intensity 0..1 (as lightIntensity gives it). The texel
-      holds a linear colour times intensity (proportional to intensity, 0 when 0);
-      the texture is flagged for upload (its version rises). Never touches a
-      material: toggles, dimming and colour changes never recompile (Ruling B2).
-  patchLightmaps(materials, pages, uniforms): patches MeshStandardMaterials through
-      onBeforeCompile. pages = {sky: <array texture, layer = page>, banks: [<array
-      texture per bank>]}. The compiled shader's uniforms hold the SAME uniform
-      objects (shader.uniforms.lmTints === uniforms.lmTints, same for skyTint); the
-      vertex shader reads the atlas attributes (it mentions uv3 and lmRoom).
-      customProgramCacheKey() covers everything the shader text depends on.
-  lightSwizzle(format) -> 'rg' for THREE.RED_GREEN_RGTC2_Format and
-      THREE.RG11_EAC_Format, 'ra' for THREE.RGBAFormat (the RGBA32 fallback keeps
-      light 1 in A, Ruling B8). The swizzle is compiled in: a material patched with
-      RGBA bank pages compiles to other shader text (reading .a) than one patched
-      with RG pages (reading .g), and its customProgramCacheKey differs.
-  pickTranscode(extensions, channels) -> the THREE format a page is transcoded to
-      (Ruling B9). extensions: {has(name)} (renderer.extensions). With
-      'EXT_texture_compression_rgtc': RED_RGTC1_Format (1 channel) /
-      RED_GREEN_RGTC2_Format (2); else with 'WEBGL_compressed_texture_etc':
-      R11_EAC_Format / RG11_EAC_Format; else RGBAFormat.
-  transcodePage(transcoder, bytes, format) -> {width, height, format, mipmaps:
-      [{data, width, height}]} (or a promise of it): every level of a KTX2 page
-      transcoded with the initialised basis_transcoder module straight to that
-      format (the stock KTX2Loader is not used: it never picks BC4/BC5/EAC).
-  loadAtlas(root, plan, layout, {Worker, indexedDB}) -> Promise of the atlas
-      (Ruling B10). buildAtlas runs in a module Worker (new Worker(new URL(..., import.meta.url), ...)):
-      the mesh buffers go to it in the transfer list, and the attributes and the
-      clipped geometry come back onto the meshes under `root`. The answer
-      matches buildAtlas(root, plan, layout) run in place: the same key,
-      sky.pages, room.pages, room.rooms, and per covered mesh the same position,
-      uv2, uv3, lmRoom, lmSkyPage and lmLightPage arrays. The result is cached in
-      IndexedDB by atlas key: a second load of the same house starts no worker job.
-      The worker script uses self.onmessage / self.addEventListener and
-      self.postMessage. A worker that cannot start or that errors rejects the
-      promise (the caller then draws every light real-time); the main thread never
-      builds the atlas itself.
-
-The runtime contract with the live layer (static/twin/live/modes.js):
-  view.bake (twin_view sets it) has fresh() -> device ids whose bake is loaded and
-  drawn now, and light(device, rgb, intensity) -> sets that light's tint. In Lights
-  mode a light in fresh() takes no pool PointLight (its pool slot goes to the next
-  nearest), keeps its glowing fixture, and is told its live colour and brightness
-  (intensity 0 when off, and for every baked light in All mode). live.lights()
-  rows carry baked: true for it (real: false). With no view.bake, or fresh() empty,
-  Lights mode is exactly v2.499.783's. A change in fresh() is picked up on the next
-  live.refresh().
-
-Skips (rather than fails) when node is unavailable.
-Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_lightmap_material_js.py
+Run from chauffeur/: python tests/test_twin_lightmap_material_js.py [check-name] (HA_BASE_URL unset).
 """
 import copy
 import json
@@ -87,7 +27,7 @@ from services import twin_library as tl  # noqa: E402
 from services import twin_store  # noqa: E402
 
 HOUSEHOLD = os.path.join(ROOT, 'tests', 'fixtures', 'twin_model', 'household-2026-11-09.json')
-LAYOUT = {'sky': {'density': 1, 'page': 256, 'gutter': 2}, 'room': {'density': 1, 'page': 256, 'gutter': 2}}
+LAYOUT = {'room': {'density': 1, 'page': 256, 'gutter': 2}}
 POOL = 'pool-house'
 
 DRIVER = r"""
@@ -410,20 +350,31 @@ function tintAt(uniforms, slots, room, slot) {
 const checks = [];
 const check = (name, fn) => checks.push([name, fn]);
 
+
+check('material_leaves_ambient_alone_without_sky_uniforms', async () => {
+  const uniforms = M.lightmapUniforms(3, 2);
+  assert.ok(!Object.hasOwn(uniforms, 'skyTint'), 'no skyTint uniform');
+  const material = new THREE.MeshStandardMaterial();
+  M.patchLightmaps([material], {banks: [arrayPage(THREE.RG11_EAC_Format)]}, uniforms);
+  const shader = compile(material);
+  assert.ok(!Object.hasOwn(shader.uniforms, 'lmSky'), 'no lmSky sampler');
+  assert.ok(!/skyTint|lmSky|uv2/.test(shader.vertexShader + shader.fragmentShader), 'no sky shader terms');
+  assert.ok(!/irradiance\s*\*=|iblIrradiance\s*\*=/.test(shader.fragmentShader), 'three ambient is unmodified');
+  assert.ok(material.customProgramCacheKey().includes('|lm-4|'), 'new shader program cache key');
+});
+
 check('fixed_uniforms_never_recompile', async () => {
   need('lightmapUniforms', 'setLightTint', 'patchLightmaps');
   const rooms = 3, slots = 4, uniforms = M.lightmapUniforms(rooms, slots);
   const tints = uniforms.lmTints?.value;
   assert.ok(tints && tints.isDataTexture, 'uniforms.lmTints holds a DataTexture (Ruling B2: tints never live in per-light uniforms)');
   assert.equal(tints.image.width, slots, 'one texel column per slot'); assert.equal(tints.image.height, rooms, 'one row per room');
-  assert.ok(uniforms.skyTint?.value?.isColor, 'uniforms.skyTint holds a THREE.Color');
   const materials = [new THREE.MeshStandardMaterial({ name: 'floor' }), new THREE.MeshStandardMaterial({ name: 'interior_wall' })];
-  const pages = { sky: arrayPage(THREE.R11_EAC_Format, 2), banks: [arrayPage(THREE.RG11_EAC_Format, 1), arrayPage(THREE.RG11_EAC_Format, 1)] };
+  const pages = { banks: [arrayPage(THREE.RG11_EAC_Format, 1), arrayPage(THREE.RG11_EAC_Format, 1)] };
   M.patchLightmaps(materials, pages, uniforms);
   const first = materials.map(compile), keys = materials.map(m => m.customProgramCacheKey()), versions = materials.map(m => m.version);
   first.forEach((shader, i) => {
     assert.equal(shader.uniforms.lmTints, uniforms.lmTints, `${materials[i].name}: the shader shares uniforms.lmTints (the same object)`);
-    assert.equal(shader.uniforms.skyTint, uniforms.skyTint, `${materials[i].name}: the shader shares uniforms.skyTint`);
     assert.ok(/\buv3\b/.test(shader.vertexShader) && /\blmRoom\b/.test(shader.vertexShader), `${materials[i].name}: the vertex shader reads uv3 and lmRoom`);
     assert.notEqual(shader.fragmentShader, THREE.ShaderLib.standard.fragmentShader, `${materials[i].name}: the fragment shader adds the baked light`);
   });
@@ -441,7 +392,6 @@ check('fixed_uniforms_never_recompile', async () => {
   assert.deepEqual(tintAt(uniforms, slots, 1, 1), [0, 0, 0], 'a slot never set stays dark');
   M.setLightTint(uniforms, 1, 0, [255, 0, 0], 0);
   assert.deepEqual(tintAt(uniforms, slots, 1, 0), [0, 0, 0], 'off is zero');
-  uniforms.skyTint.value.setRGB(.2, .3, .5);
   materials.forEach((m, i) => {
     assert.equal(m.version, versions[i], `${m.name}: toggling, dimming and colour never flag the material for a recompile`);
     assert.equal(m.customProgramCacheKey(), keys[i], `${m.name}: the program key never changes with the lights`);
@@ -496,12 +446,12 @@ check('transcode_picks_rgtc_on_desktop_and_eac_on_pi', async () => {
   need('pickTranscode', 'transcodePage');
   const pick = M.pickTranscode;
   assert.equal(pick(extensions(RGTC), 2), THREE.RED_GREEN_RGTC2_Format, 'desktop, a light page: BC5');
-  assert.equal(pick(extensions(RGTC), 1), THREE.RED_RGTC1_Format, 'desktop, a sky page: BC4');
+  assert.equal(pick(extensions(RGTC), 1), THREE.RED_RGTC1_Format, 'desktop, a single-channel texture: BC4');
   assert.equal(pick(extensions(ETC), 2), THREE.RG11_EAC_Format, 'Pi, a light page: EAC RG11');
-  assert.equal(pick(extensions(ETC), 1), THREE.R11_EAC_Format, 'Pi, a sky page: EAC R11');
+  assert.equal(pick(extensions(ETC), 1), THREE.R11_EAC_Format, 'Pi, a single-channel texture: EAC R11');
   assert.equal(pick(extensions(RGTC, ETC), 2), THREE.RED_GREEN_RGTC2_Format, 'both: RGTC');
   assert.equal(pick(extensions(), 2), THREE.RGBAFormat, 'neither: the uncompressed fallback');
-  assert.equal(pick(extensions(), 1), THREE.RGBAFormat, 'neither, sky: the uncompressed fallback');
+  assert.equal(pick(extensions(), 1), THREE.RGBAFormat, 'neither, single channel: the uncompressed fallback');
   const two = encodeTest(true), one = encodeTest(false);
   for (const [format, perPixel, src, name] of [[THREE.RED_GREEN_RGTC2_Format, 1, two, 'BC5'], [THREE.RG11_EAC_Format, 1, two, 'RG11'],
     [THREE.RED_RGTC1_Format, .5, one, 'BC4'], [THREE.R11_EAC_Format, .5, one, 'R11'], [THREE.RGBAFormat, 4, two, 'RGBA32']]) {
@@ -525,10 +475,10 @@ check('fallback_reads_r_and_a', async () => {
   assert.equal(M.lightSwizzle(THREE.RGBAFormat), 'ra', 'the RGBA32 fallback reads R and A (Ruling B8)');
   assert.equal(M.lightSwizzle(THREE.RG11_EAC_Format), 'rg', 'EAC RG11 reads R and G');
   assert.equal(M.lightSwizzle(THREE.RED_GREEN_RGTC2_Format), 'rg', 'BC5 reads R and G');
-  const uniforms = M.lightmapUniforms(3, 4), sky = arrayPage(THREE.RGBAFormat, 1);
+  const uniforms = M.lightmapUniforms(3, 4);
   const fallback = new THREE.MeshStandardMaterial({ name: 'floor' }), compressed = new THREE.MeshStandardMaterial({ name: 'floor' });
-  M.patchLightmaps([fallback], { sky, banks: [arrayPage(THREE.RGBAFormat)] }, uniforms);
-  M.patchLightmaps([compressed], { sky, banks: [arrayPage(THREE.RG11_EAC_Format)] }, uniforms);
+  M.patchLightmaps([fallback], { banks: [arrayPage(THREE.RGBAFormat)] }, uniforms);
+  M.patchLightmaps([compressed], { banks: [arrayPage(THREE.RG11_EAC_Format)] }, uniforms);
   const a = compile(fallback).fragmentShader.split('\n').map(s => s.trim()), b = compile(compressed).fragmentShader.split('\n').map(s => s.trim());
   const onlyA = a.filter(line => !b.includes(line)), onlyB = b.filter(line => !a.includes(line));
   assert.ok(onlyA.length && onlyB.length, 'RGBA and RG bank pages compile to different shader text (the swizzle is compiled in)');
@@ -550,7 +500,6 @@ check('atlas_runs_in_a_worker_and_is_cached', async () => {
   const jobs = mine.flatMap(w => w.posted);
   assert.ok(jobs.some(p => p.transfer.some(x => x instanceof ArrayBuffer)), 'the mesh buffers go to the worker in the transfer list');
   assert.equal(atlas.key, direct.key, 'the same atlas key as buildAtlas in place');
-  assert.equal(atlas.sky.pages, direct.sky.pages, 'the same sky pages');
   assert.equal(atlas.room.pages, direct.room.pages, 'the same room pages');
   assert.deepEqual(roomsOf(atlas), roomsOf(direct), 'the same rooms and regions');
   sameAttributes(reference, root, 'from the worker');
@@ -596,7 +545,7 @@ check('indexeddb_keeps_the_last_two_atlases', async () => {
   need('loadAtlas');
   const idb = fakeIndexedDB(), keys = [];
   for (const density of [1, 1.5, 2]) {
-    const layout = { sky: job.layout.sky, room: { ...job.layout.room, density } };
+    const layout = { room: { ...job.layout.room, density } };
     const atlas = await withTimeout(M.loadAtlas(await house(), job.plan, layout, { Worker: FakeWorker, indexedDB: idb }), 60000, 'loadAtlas()');
     keys.push(atlas.key);
   }
@@ -611,9 +560,9 @@ check('indexeddb_keeps_the_last_two_atlases', async () => {
   assert.deepEqual(atlases.sort(), keys.slice(1).sort(), `only the last two atlases stay: ${held}`);
   assert.equal(held.filter(k => String(k).startsWith('input:')).length, 2, `and the fingerprints pointing at them: ${held}`);
   // A cache hit makes an atlas the newest again.
-  const first = { sky: job.layout.sky, room: { ...job.layout.room, density: 1.5 } };
+  const first = { room: { ...job.layout.room, density: 1.5 } };
   await M.loadAtlas(await house(), job.plan, first, { Worker: FakeWorker, indexedDB: idb });
-  await M.loadAtlas(await house(), job.plan, { sky: job.layout.sky, room: { ...job.layout.room, density: .75 } }, { Worker: FakeWorker, indexedDB: idb });
+  await M.loadAtlas(await house(), job.plan, { room: { ...job.layout.room, density: .75 } }, { Worker: FakeWorker, indexedDB: idb });
   const after = [];
   await new Promise(resolve => {
     const tx = db.transaction('atlases', 'readonly'), r = tx.objectStore('atlases').getAllKeys();

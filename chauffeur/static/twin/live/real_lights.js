@@ -3,7 +3,7 @@ import { TIERS } from '../twin_tiers.js';
 
 const clamp = (value, max = 255) => Math.max(0, Math.min(max, value));
 // Candela at full brightness. A ceiling light 10 ft up leaves the floor under it
-// bright but not clipped under the evening look's exposure, and the far corner lit.
+// bright but not clipped at night exposure, and the far corner lit.
 export const CANDELA = 40;
 
 export function lightColor(attributes = {}) {
@@ -37,8 +37,8 @@ export function createRealLights(view, { tier = view.tier || 'low' } = {}) {
   // three.js keys programs on the number of visible lights and shadow casters, so
   // inside Lights mode the whole pool stays visible and only intensity and placement
   // change. Outside it the pool is hidden: every lit fragment would otherwise loop
-  // over dark lights (Low measured +17% frame time in All). Showing it rides the
-  // program switch the evening look makes anyway (the environment map goes).
+  // over dark lights (Low measured +17% frame time in All). mountModes warms the
+  // pool variant with the current environment before the first Lights entry.
   const pool = Array.from({ length: cap }, (_, index) => {
     const light = new THREE.PointLight('#fff1c9', 0, 1, 2);
     light.visible = false;
@@ -52,6 +52,7 @@ export function createRealLights(view, { tier = view.tier || 'low' } = {}) {
     view.scene.add(light);
     return light;
   });
+  let shown = false;
   return {
     update(candidates, target) {
       const baked = new Set(view.bake?.fresh() || []);
@@ -73,7 +74,8 @@ export function createRealLights(view, { tier = view.tier || 'low' } = {}) {
       });
       return new Set(selected);
     },
-    show(on) { for (const light of pool) light.visible = !!on; },
+    show(on) { shown = !!on; for (const light of pool) light.visible = shown; },
+    shown: () => shown,
     stop() {
       for (const light of pool) { light.removeFromParent(); light.shadow.dispose(); }
     },

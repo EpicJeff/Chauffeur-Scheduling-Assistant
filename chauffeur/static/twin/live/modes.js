@@ -54,7 +54,7 @@ export function mountModes(view, live) {
   const realLighting = !!view.tier;
   let legacyRooms = [];
   const rig = createRealLights(view);
-  const context = {view, live, lighting(on) { view.setEvening?.(on); rig.show(on); }};
+  const context = {view, live, lighting(on) { view.setLiveLamps?.(on); rig.show(on); }};
   registry.get(mode).enter(context);
   const layout = live.layout();
   // The same world transform as the marker, including lot ground elevation.
@@ -104,17 +104,24 @@ export function mountModes(view, live) {
     group.add(mesh); view.scene.add(group); floors.push({ room, mesh, group, parent });
   }
   // Compile Lights mode's shader programs now, with the pool, bulbs and washes
-  // shown and no environment map as the evening look has it, so the first tap on Lights does
+  // shown, so the first tap on Lights does
   // not stall while every material compiles (three.js keeps both variants per
   // material). compile() reads the scene synchronously; only the wait for the
   // GPU runs after, so the scene is put back at once. Real renderers only.
-  if (realLighting && typeof view.renderer3?.compileAsync === 'function' && view.camera) {
-    const environment = view.scene.environment, extras = [...lamps.map(lamp => lamp.bulb), ...floors.map(floor => floor.group)];
-    rig.show(true); view.scene.environment = null; for (const object of extras) object.visible = true;
+  // The time look (Day/Night) changes the light set every program is keyed on,
+  // so the warm-up runs again for the new look (view.onTimeLook), restoring
+  // exactly what was shown, whether Lights mode is on or not.
+  function warm() {
+    if (!realLighting || typeof view.renderer3?.compileAsync !== 'function' || !view.camera) return;
+    const extras = [...lamps.map(lamp => lamp.bulb), ...floors.map(floor => floor.group)];
+    const shown = extras.map(object => object.visible), poolShown = rig.shown?.();
+    rig.show(true); for (const object of extras) object.visible = true;
     try { view.renderer3.compileAsync(view.scene, view.camera).catch(() => {}); }
     catch { /* a failed warm-up only leaves the first entry its compile */ }
-    finally { rig.show(false); view.scene.environment = environment; for (const object of extras) object.visible = false; }
+    finally { rig.show(!!poolShown); extras.forEach((object, i) => { object.visible = shown[i]; }); }
   }
+  warm();
+  view.onTimeLook = warm;
   function update() {
     // Read without copying the house: this runs on every push (review M3).
     const states = live.peek(), stale = live.stale();

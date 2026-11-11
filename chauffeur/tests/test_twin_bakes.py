@@ -29,10 +29,9 @@ Decisions pinned here where the plan leaves room:
   then carries>}.
 - GET: 200, Content-Type image/png, the exact bytes, an ETag header; a matching
   If-None-Match answers 304; new bytes give a new ETag. A missing page is 404.
-- Manifest: {'pages': int >= 1, 'lights': {device: {'page', 'channel', 'key'}},
-  'sky': {'page', 'channel'}}. channel 0..3; page 0..pages-1; a light's key has
+- Manifest: {'pages': int >= 1, 'lights': {device: {'page', 'channel', 'key'}}}. channel 0..3; page 0..pages-1; a light's key has
   the key format. A bad manifest is 400 and nothing is stored. GET answers the
-  stored pages, lights and sky unchanged.
+  stored pages and lights unchanged; legacy sky metadata is ignored.
 - Concurrency (Review Focus 2): while two parents upload different bytes to the
   same page and a panel reads it, every read is exactly one of the uploads (never
   a mix, never truncated, never an error) and every upload answers 200. The
@@ -217,7 +216,6 @@ def test_manifest_round_trip_and_checks():
         bad = []
         m = manifest(); m['lights']['dev-k-light']['channel'] = 4; bad.append(('channel 4', m))
         m = manifest(); m['lights']['dev-k-light']['channel'] = -1; bad.append(('channel -1', m))
-        m = manifest(); m['sky']['channel'] = 5; bad.append(('sky channel 5', m))
         m = manifest(pages=2); m['lights']['dev-k-light']['page'] = 2; bad.append(('page past pages', m))
         m = manifest(); m['lights']['dev-k-light']['key'] = '../../x'; bad.append(('light key not a key', m))
         m = manifest(); m['pages'] = 0; bad.append(('no pages', m))
@@ -386,15 +384,15 @@ def test_ktx2_magic_and_content_type():
 
 def test_manifest_formats_and_densities():
     import copy
-    body = {**manifest(), 'formats': ['ktx2', 'png'], 'densities': {'sky': 2, 'room': 8}}
+    body = {**manifest(), 'formats': ['ktx2', 'png'], 'densities': {'room': 8}}
     with Ctx() as c:
         key = key_of(0x82)
         check(c.put_manifest(key, body).status_code == 200, 'new manifest accepted')
         check(c.client.get(manifest_url(key), headers=c.panel).json() == body, 'metadata round trips')
         for field, value in [('formats', ['ktx2']), ('formats', ['gif', 'png']),
-                             ('densities', {'sky': 0, 'room': 8}),
-                             ('densities', {'sky': 2, 'room': -1}),
-                             ('densities', {'sky': 2}), ('densities', {'sky': True, 'room': 8})]:
+                             ('densities', {'room': 0}),
+                             ('densities', {'room': -1}),
+                             ('densities', {'sky': 2}), ('densities', {'room': True})]:
             bad = copy.deepcopy(body); bad[field] = value
             check(c.put_manifest(key, bad).status_code == 400, (field, value))
         check(c.client.get(manifest_url(key), headers=c.panel).json() == body, 'bad metadata changes nothing')
@@ -551,7 +549,25 @@ def test_bake_modules_are_versioned():
             check('no-cache' in r.headers.get('cache-control', ''), (name, 'bake modules are revalidated', r.headers.get('cache-control')))
 
 
+
+def test_room_only_complete_manifest_and_ignored_legacy_sky():
+    with Ctx() as c:
+        body = manifest()
+        del body['sky']
+        body.update(complete=True, densities={'room': 8})
+        key = key_of(0x93)
+        result = c.put_manifest(key, body)
+        check(result.status_code == 200, ('room-only complete manifest accepted', result.status_code, result.text))
+        check(c.client.get(manifest_url(key), headers=c.panel).json() == body, 'complete room-only manifest round trips')
+        body['sky'] = {'page': 999, 'channel': 99}
+        body['densities']['sky'] = 0
+        result = c.put_manifest(key, body)
+        check(result.status_code == 200, ('legacy sky metadata is ignored', result.status_code, result.text))
+        check(c.client.get(manifest_url(key), headers=c.panel).json()['lights'] == body['lights'], 'legacy metadata preserves room lights')
+
+
 TESTS = (
+    test_room_only_complete_manifest_and_ignored_legacy_sky,
     test_routes_have_their_tiers,
     test_upload_then_download_with_etag,
     test_manifest_round_trip_and_checks,

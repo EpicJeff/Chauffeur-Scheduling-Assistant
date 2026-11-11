@@ -1,11 +1,11 @@
 // Geometry is in plan feet. The root's metres/lot transform only enters the key.
 import * as THREE from '../../vendor/three-r187/three.module.js';
 
-const VERSION = 'room-atlas-1';
+const VERSION = 'room-atlas-2';
 const EPS = 1e-6;
 const prepared = new WeakMap();
 const atlasAttributes = new Set(['uv2', 'uv3', 'lmRoom', 'lmSkyPage', 'lmLightPage']);
-const defaults = { sky: { density: 2, page: 2048, gutter: 2 }, room: { density: 4, page: 2048, gutter: 2 } };
+const defaults = { room: { density: 4, page: 2048, gutter: 2 } };
 
 function options(input, kind) {
   const o = { ...defaults[kind], ...input };
@@ -74,7 +74,7 @@ function roomData(plan) {
 }
 
 // Cut a convex polygon into its intersection with a convex room part and its
-// disjoint exterior pieces. Retaining the exterior preserves sky/render geometry.
+// disjoint exterior pieces. Retaining the exterior preserves render geometry.
 function cut(poly, boundary, minHeight = -Infinity) {
   let rest = poly;
   const outside = [];
@@ -229,7 +229,7 @@ function prepare(mesh, data) {
   geometry.computeBoundingBox(); geometry.computeBoundingSphere();
   mesh.geometry = geometry;
   old.dispose();
-  const state = { owners, sky: null, room: null };
+  const state = { owners, room: null };
   prepared.set(geometry, state);
   return state;
 }
@@ -238,11 +238,11 @@ function vertexKey(p) {
   return `${Math.round(p.x * 1e4)},${Math.round(p.y * 1e4)},${Math.round(p.z * 1e4)}`;
 }
 
-function chartsFor(mesh, owners, byRoom) {
+function chartsFor(mesh, owners) {
   const pos = mesh.geometry.attributes.position, faces = [], atVertex = new Map();
   const p = i => new THREE.Vector3().fromBufferAttribute(pos, i);
   for (let f = 0; f < pos.count / 3; f++) {
-    if (byRoom && owners[f] < 0) continue;
+    if (owners[f] < 0) continue;
     const v = [p(3 * f), p(3 * f + 1), p(3 * f + 2)];
     const n = v[1].clone().sub(v[0]).cross(v[2].clone().sub(v[0]));
     if (n.length() / 2 < 1e-6) continue;
@@ -261,7 +261,7 @@ function chartsFor(mesh, owners, byRoom) {
     for (let q = 0; q < queue.length; q++) {
       const face = faces[queue[q]];
       for (const key of face.keys) for (const f of atVertex.get(key)) {
-        if (visited[f] || byRoom && owners[f] !== owners[ref.f]) continue;
+        if (visited[f] || owners[f] !== owners[ref.f]) continue;
         const other = faces[f];
         // Tight planes avoid accumulating curvature in a flood-fill isometry.
         if (ref.n.dot(other.n) < 0.999999 || other.v.some(v => Math.abs(v.clone().sub(ref.v[0]).dot(ref.n)) > 1e-4)) continue;
@@ -420,34 +420,30 @@ export function packBanks(layout, lights, o) {
   return banks;
 }
 
-export function buildAtlas(group, plan, { sky, room } = {}) {
-  const so = options(sky, 'sky'), ro = options(room, 'room'), data = roomData(plan);
-  const skyCharts = [], roomCharts = [], hash = fingerprint();
-  hash.add(JSON.stringify([VERSION, plan.generatorVersion ?? null, so, ro, [...data.buildings], data.rooms]));
+export function buildAtlas(group, plan, { room } = {}) {
+  const ro = options(room, 'room'), data = roomData(plan);
+  const roomCharts = [], hash = fingerprint();
+  hash.add(JSON.stringify([VERSION, plan.generatorVersion ?? null, ro, [...data.buildings], data.rooms]));
   group.updateMatrixWorld(true);
   group.traverse(mesh => {
     if (!atlasMesh(mesh)) return;
     const state = prepare(mesh, data), g = mesh.geometry;
-    if (!state.sky) state.sky = chartsFor(mesh, state.owners, false);
-    if (!state.room) state.room = chartsFor(mesh, state.owners, true);
-    skyCharts.push(...state.sky); roomCharts.push(...state.room);
+    if (!state.room) state.room = chartsFor(mesh, state.owners);
+    roomCharts.push(...state.room);
     const owner = new Float32Array(g.attributes.position.count);
     for (let f = 0; f < state.owners.length; f++) owner.fill(state.owners[f], f * 3, f * 3 + 3);
     g.setAttribute('lmRoom', new THREE.Float32BufferAttribute(owner, 1));
-    // No chart is required for zero-area triangles, but the attribute still is.
-    g.setAttribute('uv2', new THREE.Float32BufferAttribute(new Float32Array(owner.length * 2), 2));
-    g.setAttribute('lmSkyPage', new THREE.Float32BufferAttribute(new Float32Array(owner.length), 1));
     g.deleteAttribute('uv3'); g.deleteAttribute('lmLightPage');
     hash.add(mesh.material.name || ''); hash.add(JSON.stringify(mesh.matrixWorld.elements));
     for (const name of ['position', 'normal', 'uv']) if (g.attributes[name]) hash.add(g.attributes[name].array);
   });
-  const sc = scaled(skyCharts, so), rc = scaled(roomCharts, ro);
-  const skyPages = shelves(sc, so.page, so.page, so.gutter), roomPages = roomLayout(rc, data.rooms, ro);
-  writeUV(sc, so, 'uv2', 'lmSkyPage'); writeUV(rc, ro, 'uv3', 'lmLightPage');
+  const rc = scaled(roomCharts, ro);
+  const roomPages = roomLayout(rc, data.rooms, ro);
+  writeUV(rc, ro, 'uv3', 'lmLightPage');
   const publicChart = c => ({ mesh: c.mesh, faces: c.faces, page: c.page, rect: c.rect });
   const lightLayout = { pages: roomPages, rooms: data.rooms, charts: rc.map(c => ({ ...publicChart(c), room: c.room })) };
   // uv3 remains the stable base layout. For a sparse bank, add
   // (region.xy - sourceRegion.xy) / page to uv3 and use region.page.
   lightLayout.packBanks = lights => packBanks(lightLayout, lights, ro);
-  return { key: hash.key(), sky: { pages: skyPages, charts: sc.map(publicChart) }, room: lightLayout };
+  return { key: hash.key(), room: lightLayout };
 }

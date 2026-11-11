@@ -1,97 +1,16 @@
-"""The lightmap atlases (Task 1 of docs/superpowers/plans/2026-11-10-house-baked-lights.md,
-as amended by Rulings B2, B3 and B5 in .superpowers/sdd/2026-11-10-house-baked-lights/progress.md;
-spec docs/superpowers/specs/2026-11-10-house-baked-lights-design.md, decision 3).
+"""Room-light atlas geometry checked with the real generator and vendored three in node.
 
-Runs static/twin/twin_generator.js and static/twin/bake/atlas.js under node with
-the vendored three (static/vendor/three-r187) resolved for the bare 'three'
-imports through a module resolve hook. The house is the household's real one:
-tests/fixtures/twin_model/household-2026-11-09.json pushed through
-twin_store.push_round (schema 3 assembly) and read back as the flat plan the
-scene draws (twin_store.current()), built at tier 'high' with the real
-modern_farmhouse kit and an empty manifest (plain materials, nothing fetched).
-The driver awaits `ready` before it builds an atlas.
+Only room-light charts are built: uv3, lmRoom and lmLightPage. No sky atlas,
+uv2 or lmSkyPage is generated. Opaque solid geometry is retained; fixtures,
+glass and alpha-tested plant cards are excluded. Faces are clipped to room
+outlines, with one coplanar connected chart per patch and isometric density.
+Rooms keep their own regions, gutters and bank-zero reservations; extra banks
+hold only rooms needing more than two lights. Keys are stable across processes
+and device movement, and change with geometry or room-layout parameters.
+The household fixture exercises floors, ceilings, walls on both sides,
+openings, exterior faces, sparse banks and bounded memory.
 
-Ruling B2: two layouts.
-  - SKY atlas, in uv2: every covered mesh (below), 2 texels/ft, per-vertex
-    `lmSkyPage` (the page of the face's sky chart).
-  - ROOM-LIGHT atlas, in uv3: only the faces a room's light can reach (that
-    room's floor, its ceiling, the wall faces looking into it, opening
-    reveals), 4 texels/ft by default and 8 on High/Max bakes (B3). Per-vertex
-    `lmRoom` (index into atlas.room.rooms,
-    -1 for every other face: exterior walls, roof tops) and `lmLightPage` (the
-    page of the face's room chart). Each room's charts are packed into the
-    room's own region of a shared page. Pages ship as two-channel textures
-    (EAC RG11 / BC5, B4), so a bank is two channels (B5): a room's first two
-    lights take R and G of its region, a third light opens a second bank.
-
-Interface pinned (the ruling's, with the room it leaves decided here):
-
-    import { buildAtlas, assignChannels } from './static/twin/bake/atlas.js';
-    buildAtlas(group, plan, { sky: {density, page, gutter}, room: {density, page, gutter} })
-      -> { key,
-           sky:  { pages, charts: [{ mesh, faces, page, rect }] },
-           room: { pages, rooms: [{ building, level, id, region }],
-                   charts: [{ mesh, faces, room, page, rect }] } }
-    assignChannels(rooms, lights) -> { [device]: { room, bank, channel } }
-
-  - `plan` is the flat plan the twin was built from (room polygons come from
-    it). Defaults: sky {density: 2, page: 2048, gutter: 2}, room {density: 4,
-    page: 2048, gutter: 2}; High/Max pass room {density: 8}. A partial layout
-    object takes the rest from the defaults. buildAtlas(group, plan) equals buildAtlas(group, plan, defaults).
-  - Covered meshes: every mesh under `group` with userData.merged whose material
-    is opaque (not material.transparent) and not named 'fixture'. Fixture boxes
-    are out of both atlases, so adding or moving lights changes no attribute and
-    no key (Review Focus 4). Glass and screens get neither layout.
-  - Attributes on every covered mesh, one entry per position: uv2 (itemSize 2),
-    lmSkyPage and lmRoom (itemSize 1). uv3 (itemSize 2) and lmLightPage
-    (itemSize 1) on every covered mesh that has a room face. Page and room
-    values are whole numbers and the same at a face's three vertices. A face
-    with lmRoom -1 is in no room chart (its uv3 and lmLightPage mean nothing).
-  - uv2 and uv3 are normalised to their own layout's page: texel = uv * page,
-    inside the chart's rect.
-  - atlas.room.rooms lists every room of the plan with a polygon (porches
-    included), buildings in plan order, rooms in plan order, as {building,
-    level, id, region}. region is {page, x, y, w, h} in texels (null only for a
-    room with no faces); every room chart lies inside its room's region, on the
-    region's page; regions on one page never overlap.
-  - Charts (both layouts): rects are {x, y, w, h}, whole texels, w and h at
-    least 1, inside the page, no wider or taller than their chart's extent
-    plus one; on one page any two rects are at least `gutter` texels apart
-    along x or along y. chart.mesh is the mesh object; faces are triangle
-    indices into its geometry. A chart is one coplanar (normals within 1
-    degree, vertices within 0.02 ft of the plane) patch, connected through
-    shared vertex positions, of one mesh (and, for the room layout, one room).
-    The mapping is an isometry times density: every edge of 0.05 ft or more
-    measures density * its length in feet within 1%. At most two charts for
-    every three charted faces.
-  - Coverage: every face of 1e-6 sq ft or more of a covered mesh is in exactly
-    one sky chart; every such face with lmRoom >= 0 is in exactly one room
-    chart, of that room.
-  - Key: lowercase hex, 16 to 64 characters, the same across processes. It
-    changes with either layout's parameters, with an opening removed and with
-    a building moved on the lot; never with lights.
-  - assignChannels: rooms is any list of {building, id, ...} (atlas.room.rooms
-    in use); lights is [{device, building, room}] with room a room id. A light
-    takes the next free slot of its room in list order: slot k is bank
-    floor(k / 2), channel k % 2. `room` in the answer is the room's index. A
-    light whose room is not in the list is left out (it draws real-time).
-    Appending a light never moves the lights already placed.
-
-The probes. Rays are cast in the twin's own frame through each building's
-level group, against the covered meshes a camera would draw (the hidden gable
-cutaway is skipped; FrontSide faces are hit only from the front, as in a
-render). The kitchen is the main house's L1 room
-room:14e8bce101b54e1aba698138e2a56ddb, x 37-59, y 0-24.67; its neighbour
-across the wall at y 24.67 (x 46.33-59) is room:56144f5bfc4d44b0b2796a3c7d7d20a7.
-Above the kitchen the first surfaces are the upper floor's slab (interior_wall)
-and, at x 40, a sloped roof soffit (porch_ceiling) higher than the level's
-ceiling. Those merged faces run over several rooms below, so a face must be
-split along the room outlines (or built per room) before it can carry one
-lmRoom: a face classified by its centroid lands in the wrong room.
-
-Skips (rather than fails) when node is unavailable.
-
-Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_bake_atlas_js.py
+Run from chauffeur/: python tests/test_twin_bake_atlas_js.py (HA_BASE_URL unset).
 """
 import copy
 import json
@@ -116,13 +35,13 @@ TWIN = os.path.join(ROOT, 'static', 'twin')
 ATLAS = os.path.join(TWIN, 'bake', 'atlas.js')
 VENDOR = os.path.join(ROOT, 'static', 'vendor', 'three-r187')
 HOUSEHOLD = os.path.join(ROOT, 'tests', 'fixtures', 'twin_model', 'household-2026-11-09.json')
-DEFAULTS = {'sky': {'density': 2, 'page': 2048, 'gutter': 2}, 'room': {'density': 4, 'page': 2048, 'gutter': 2}}
+DEFAULTS = {'room': {'density': 4, 'page': 2048, 'gutter': 2}}
 KEY_RE = re.compile(r'^[0-9a-f]{16,64}$')
 LEVELS = ('main-house:L1', 'main-house:L2', 'main-house:L3', 'pool-house:L1', 'pool-house:L2')
 HOUSE = 'main-house'
 KITCHEN = 'room:14e8bce101b54e1aba698138e2a56ddb'      # L1, x 37-59, y 0-24.67
 NEIGHBOUR = 'room:56144f5bfc4d44b0b2796a3c7d7d20a7'    # L1, x 46.33-59, y 24.67-32.5
-ATTRS = ('uv2', 'uv3', 'lmSkyPage', 'lmRoom', 'lmLightPage')
+ATTRS = ('uv3', 'lmRoom', 'lmLightPage')
 
 
 def check(cond, msg):
@@ -174,7 +93,7 @@ const area = (g, f) => { const a = P(g, vtx(g, f, 0)), b = P(g, vtx(g, f, 1)), c
 const normal = (g, f) => { const a = P(g, vtx(g, f, 0)), b = P(g, vtx(g, f, 1)), c = P(g, vtx(g, f, 2)); return b.sub(a).cross(c.sub(a)).normalize(); };
 const keyOf = v => `${Math.round(v.x * 1e4)},${Math.round(v.y * 1e4)},${Math.round(v.z * 1e4)}`;
 const COS1 = Math.cos(Math.PI / 180);
-const merge = o => ({ sky: { ...job.defaults.sky, ...(o?.sky || {}) }, room: { ...job.defaults.room, ...(o?.room || {}) } });
+const merge = o => ({ room: { ...job.defaults.room, ...(o?.room || {}) } });
 // A face's value of a one-component attribute; NaN when its corners disagree or it is not whole.
 const faceValue = (g, name, f) => {
   const a = g.attributes[name]; if (!a) return undefined;
@@ -193,12 +112,12 @@ function summarise(atlas, o) {
     if (!covered(m)) return;
     const g = m.geometry, count = g.attributes.position.count;
     const ok = (name, size) => { const a = g.attributes[name]; return !!a && a.itemSize === size && a.count === count; };
-    for (const [name, size] of [['uv2', 2], ['lmSkyPage', 1], ['lmRoom', 1]]) if (!ok(name, size)) push('attrs', { i, role: m.material.name, name });
-    if (!ok('lmRoom', 1) || !ok('lmSkyPage', 1)) return;
+    for (const [name, size] of [['lmRoom', 1]]) if (!ok(name, size)) push('attrs', { i, role: m.material.name, name });
+    if (!ok('lmRoom', 1)) return;
     let mine = 0;
     for (let f = 0; f < n[i]; f++) {
-      const r = faceValue(g, 'lmRoom', f), s = faceValue(g, 'lmSkyPage', f);
-      if (Number.isNaN(r) || Number.isNaN(s)) { push('faceValues', { i, f, r, s }); continue; }
+      const r = faceValue(g, 'lmRoom', f);
+      if (Number.isNaN(r)) { push('faceValues', { i, f, r }); continue; }
       if (r < -1 || r >= rooms.length) push('faceValues', { i, f, r, rooms: rooms.length });
       if (area(g, f) >= 1e-6) { solidFaces++; if (r >= 0) { mine++; roomFaces++; } }
     }
@@ -246,8 +165,6 @@ function summarise(atlas, o) {
         }
         const of = roomChartOf.get(c.mesh);
         for (const f of c.faces) of[f] = of[f] === -1 ? c.room : -2;
-      } else {
-        for (const f of c.faces) if (faceValue(g, 'lmSkyPage', f) !== c.page) { push('sky.facePage', { ci, f, lmSkyPage: faceValue(g, 'lmSkyPage', f), page: c.page }); break; }
       }
       if (!perPage.has(c.page)) perPage.set(c.page, []);
       perPage.get(c.page).push({ ci, ...r });
@@ -322,7 +239,6 @@ function summarise(atlas, o) {
     return { pages: L?.pages, charts: charts.length, chartedFaces, rectArea,
              pagesUsed: [...perPage.keys()].sort((a, b) => a - b) };
   };
-  const sky = layout('sky', atlas.sky, o.sky, 'uv2');
   const room = layout('room', atlas.room, o.room, 'uv3');
   const hash = a => a ? createHash('sha256').update(Buffer.from(a.array.buffer, a.array.byteOffset, a.array.byteLength)).digest('hex') : null;
   const meshes = merged.map((m, i) => ({ i, role: m.material.name, level: levelOf(m), covered: covered(m),
@@ -346,7 +262,7 @@ function summarise(atlas, o) {
              lmRoom: faceValue(geo, 'lmRoom', f) ?? null, lmLightPage: faceValue(geo, 'lmLightPage', f) ?? null,
              roomChart: roomChartOf.get(m)[f], mesh: index.get(m), face: f };
   });
-  return { key: atlas.key, sky, room, roomFaces, solidFaces, meshes, probes, errors,
+  return { key: atlas.key, hasSky: Object.hasOwn(atlas, 'sky'), hasUV2: merged.some(m => m.geometry.attributes.uv2 || m.geometry.attributes.lmSkyPage), room, roomFaces, solidFaces, meshes, probes, errors,
            rooms: rooms.map(r => ({ building: r.building, level: r.level, id: r.id, region: r.region ?? null })) };
 }
 
@@ -495,10 +411,9 @@ PROBES = (
 )
 
 # The main build: one process, several atlases on the same meshes, in place.
-MAIN_ATLASES = [None, copy.deepcopy(DEFAULTS), {'sky': {'gutter': 4}, 'room': {'gutter': 4}},
-                {'room': {'density': 8}}, {'sky': {'density': 4}},
-                {'sky': {'page': 256}, 'room': {'page': 1024}}]
-DEFAULT, EXPLICIT, WIDE_GUTTER, HIGH, SKY_DENSE, SMALL_PAGES = range(len(MAIN_ATLASES))
+MAIN_ATLASES = [None, copy.deepcopy(DEFAULTS), {'room': {'gutter': 4}},
+                {'room': {'density': 8}}, {'room': {'page': 1024}}]
+DEFAULT, EXPLICIT, WIDE_GUTTER, HIGH, SMALL_PAGES = range(len(MAIN_ATLASES))
 
 
 def main_run():
@@ -538,18 +453,18 @@ def inside(poly, x, y):
 def scenario_same_model_same_atlas():
     first = main_run()[DEFAULT]
     check(isinstance(first['key'], str) and KEY_RE.match(first['key']), f'key is lowercase hex, 16-64 chars: {first["key"]!r}')
-    check(all(h[0] and h[2] and h[3] for _, _, h in layout(first)), 'every covered mesh has uv2, lmSkyPage and lmRoom to compare')
-    check(any(h[1] and h[4] for _, _, h in layout(first)), 'some covered mesh has uv3 and lmLightPage to compare')
+    check(all(h[1] for _, _, h in layout(first)), 'every covered mesh has lmRoom to compare')
+    check(any(h[0] and h[2] for _, _, h in layout(first)), 'some covered mesh has uv3 and lmLightPage to compare')
     # Same model, a separate process (fresh material uuids): the same atlases.
     again = run('again', household)['atlases'][0]
     check(again['key'] == first['key'], ('same model, same key', first['key'], again['key']))
-    check((again['sky']['pages'], again['room']['pages']) == (first['sky']['pages'], first['room']['pages']), 'same pages')
+    check(again['room']['pages'] == first['room']['pages'], 'same pages')
     check(again['rooms'] == first['rooms'], 'same rooms and regions')
     check(layout(again) == layout(first), 'same model, the same bytes in every atlas attribute of every covered mesh')
     explicit = main_run()[EXPLICIT]
     check(explicit['key'] == first['key'] and layout(explicit) == layout(first),
           'buildAtlas(group, plan) == buildAtlas(group, plan, defaults), rebuilt in place')
-    for i, what in ((WIDE_GUTTER, 'gutter'), (HIGH, 'room density (High)'), (SKY_DENSE, 'sky density'), (SMALL_PAGES, 'page')):
+    for i, what in ((WIDE_GUTTER, 'gutter'), (HIGH, 'room density (High)'), (SMALL_PAGES, 'page')):
         check(main_run()[i]['key'] != first['key'], f'a different {what} gives a different key')
 
     def fewer_openings():
@@ -584,45 +499,40 @@ def scenario_a_light_added_or_moved_changes_no_atlas():
 def scenario_charts_never_overlap_and_keep_gutters():
     for i in (DEFAULT, WIDE_GUTTER, HIGH, SMALL_PAGES):
         s = main_run()[i]
-        check(s['sky']['charts'] > 0 and s['room']['charts'] > 0, f'charts were made in both layouts (atlas {i})')
-        bad = errors_of(s, 'sky.mesh', 'sky.rect', 'sky.page', 'sky.faces', 'sky.overlap', 'sky.uvOutside', 'sky.noUv',
-                        'room.mesh', 'room.rect', 'room.page', 'room.faces', 'room.overlap', 'room.uvOutside', 'room.noUv',
+        check(s['room']['charts'] > 0, f'room charts were made (atlas {i})')
+        bad = errors_of(s, 'room.mesh', 'room.rect', 'room.page', 'room.faces', 'room.overlap', 'room.uvOutside', 'room.noUv',
                         'room.chartRoom', 'room.outsideRegion', 'region')
         check(not bad, (f'atlas {i} ({MAIN_ATLASES[i]}): rects whole, inside their page and their room region, '
                         f'gutters kept, uv inside each rect, regions apart', bad))
 
 
 def scenario_texel_density_matches_world_size():
-    for i in (DEFAULT, HIGH, SKY_DENSE, SMALL_PAGES):
+    for i in (DEFAULT, HIGH, SMALL_PAGES):
         s = main_run()[i]
-        bad = errors_of(s, 'sky.density', 'sky.padded', 'sky.coplanar', 'sky.connected',
-                        'room.density', 'room.padded', 'room.coplanar', 'room.connected')
+        bad = errors_of(s, 'room.density', 'room.padded', 'room.coplanar', 'room.connected')
         check(not bad, (f'atlas {i} ({MAIN_ATLASES[i]}): each layout at its own texels per foot, rects fit their '
                         f'chart, each chart one coplanar connected patch', bad))
-    d, high, sky = main_run()[DEFAULT], main_run()[HIGH], main_run()[SKY_DENSE]
-    check(3.0 < sky['sky']['rectArea'] / d['sky']['rectArea'] < 4.6, ('sky at 4 is about four times sky at 2', d['sky'], sky['sky']))
+    d, high = main_run()[DEFAULT], main_run()[HIGH]
     check(3.0 < high['room']['rectArea'] / d['room']['rectArea'] < 4.6, ('room at 8 (High) is about four times room at 4', d['room'], high['room']))
-    check(high['sky']['rectArea'] == d['sky']['rectArea'], 'the room density leaves the sky layout alone')
 
 
-def scenario_every_interior_face_has_uv2():
+def scenario_every_interior_face_has_uv3():
     s = main_run()[DEFAULT]
     covered = [m for m in s['meshes'] if m['covered']]
     for level in LEVELS:
         for role in ('floor', 'interior_wall'):
             check(any(m['level'] == level and m['role'] == role for m in covered),
                   f'{level} has a covered {role} mesh (the check is not vacuous)')
-    check(any(m['role'] == 'roof' for m in covered), 'roof meshes are covered by the sky atlas')
+    check(any(m['role'] == 'roof' for m in covered), 'roof meshes remain in the rendered geometry')
     check(all(not m['covered'] for m in s['meshes'] if m['role'] in ('glass', 'screen')), 'glass and screens get neither layout')
-    bad = errors_of(s, 'attrs', 'faceValues', 'sky.uncharted', 'sky.twice', 'sky.facePage',
-                    'room.uncharted', 'room.twice', 'room.stray', 'room.faceRoom', 'room.facePage')
-    check(not bad, ('every covered face in one sky chart; every room face in one chart of its room; no other face '
+    bad = errors_of(s, 'attrs', 'faceValues', 'room.uncharted', 'room.twice', 'room.stray', 'room.faceRoom', 'room.facePage')
+    check(not bad, ('every room face in one chart of its room; no other face '
                     'in a room chart', bad))
     check(0 < s['roomFaces'] < s['solidFaces'], ('some faces are room faces, not all', s['roomFaces'], s['solidFaces']))
     check(not errors_of(main_run()[HIGH], 'attrs', 'faceValues', 'room.uncharted', 'room.twice', 'room.stray',
                         'room.faceRoom', 'room.facePage'), ('High room layout keeps the same coverage',
                         errors_of(main_run()[HIGH], 'attrs', 'faceValues', 'room.')))
-    for kind in ('sky', 'room'):
+    for kind in ('room',):
         check(s[kind]['charts'] * 3 <= s[kind]['chartedFaces'] * 2,
               (f'{kind}: charts join coplanar connected faces, not one per triangle', s[kind]))
     plan_rooms = [(b['id'], r['level'], r['id']) for b in household()['buildings'] for r in b['rooms']
@@ -635,16 +545,14 @@ def scenario_every_interior_face_has_uv2():
 
 def scenario_pages_grow_when_one_is_full():
     small, high = main_run()[SMALL_PAGES], main_run()[DEFAULT]
-    check(high['sky']['pages'] == 1 and high['sky']['pagesUsed'] == [0], ('sky at 2 texels/ft fits one 2048 page', high['sky']))
-    for kind, size in (('sky', 256), ('room', 1024)):
+    for kind, size in (('room', 1024),):
         L = small[kind]
         check(L['pages'] >= 2, (f'{kind} on {size} pages spills onto more', L['pages']))
         check(L['pages'] >= math.ceil(L['rectArea'] / size ** 2), (f'{kind}: pages hold no more than their area', L))
         check(L['pagesUsed'] == list(range(L['pages'])), (f'{kind}: every page in use, none skipped', L))
-    for kind in ('sky', 'room'):
+    for kind in ('room',):
         check(high[kind]['pagesUsed'] == list(range(high[kind]['pages'])), (f'{kind} default: every page in use', high[kind]))
-    bad = errors_of(small, 'sky.overlap', 'sky.rect', 'sky.page', 'sky.uncharted', 'sky.twice',
-                    'room.overlap', 'room.rect', 'room.page', 'room.uncharted', 'room.twice', 'room.outsideRegion',
+    bad = errors_of(small, 'room.overlap', 'room.rect', 'room.page', 'room.uncharted', 'room.twice', 'room.outsideRegion',
                     'region')
     check(not bad, ('spilled pages keep every rule', bad))
     check(not errors_of(high, 'regionOverlap') and not errors_of(small, 'regionOverlap'),
@@ -758,7 +666,6 @@ def scenario_memory_stays_bounded():
     check(banks == 3, ('six kitchen lights take three two-channel banks; no room needs a fourth', banks))
     pages = s['room']['pages']
     check(pages * banks <= 4, ('at 4 texels/ft, room-light pages x banks stays within four 2048 RG pages', pages, banks))
-    check(s['sky']['pages'] == 1, ('the sky at 2 texels/ft is one page', s['sky']['pages']))
     check(s['key'] == main_run()[DEFAULT]['key'] and layout(s) == layout(main_run()[DEFAULT]),
           'forty light fixtures change no atlas')
 
@@ -812,8 +719,6 @@ def scenario_high_sparse_banks_stay_within_six_pages():
     check(out['bankRemapsExact'], 'every sparse chart preserves its faces, dimensions and exact base uv3 offset')
     check([b['bank'] for b in banks] == [0, 1, 2], 'three two-channel banks')
     check(sum(b['pages'] for b in banks) <= 6, ('High sparse banks fit six 2048 RG pages total', banks))
-    check(sum(b['pages'] for b in banks) + s['sky']['pages'] <= 6,
-          ('High sparse banks plus the sky fit six pages total', [b['pages'] for b in banks], s['sky']['pages']))
     for bank in banks:
         # Ruling B12: bank 0 reserves a region for every room so a new light never moves another's page;
         # banks >= 1 hold only the rooms that use them.
@@ -848,12 +753,20 @@ def scenario_high_sparse_banks_stay_within_six_pages():
     check(not run('no-bank', assign_cases=[{'rooms': [], 'lights': []}])['assign'][0], 'no light gets a phantom slot')
 
 
+
+def scenario_no_sky_atlas_or_uv2():
+    s = main_run()[DEFAULT]
+    check(not s['hasUV2'], 'room-only atlas must never build uv2 or lmSkyPage')
+    check(not s['hasSky'], 'room-only atlas has no sky charts or pages')
+
+
 SCENARIOS = (
+    scenario_no_sky_atlas_or_uv2,
     scenario_same_model_same_atlas,
     scenario_a_light_added_or_moved_changes_no_atlas,
     scenario_charts_never_overlap_and_keep_gutters,
     scenario_texel_density_matches_world_size,
-    scenario_every_interior_face_has_uv2,
+    scenario_every_interior_face_has_uv3,
     scenario_pages_grow_when_one_is_full,
     scenario_room_faces_belong_to_their_room,
     scenario_a_wall_between_two_rooms_has_a_chart_on_each_side,

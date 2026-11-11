@@ -1,72 +1,14 @@
-"""The baker's logic, in node (Task 3 of docs/superpowers/plans/2026-11-10-house-baked-lights.md,
-as amended by Rulings B2-B10 in .superpowers/sdd/2026-11-10-house-baked-lights/progress.md;
-the GPU half runs in Chromium in tests/test_house_twin_bake_live.py).
+"""Room-light baker and codec checks with the real atlas, fake GPU and in-memory server.
 
-The house is the household's pool house (tests/fixtures/twin_model/household-2026-11-09.json
-pushed through twin_store.push_round and read back with twin_store.current(), the
-other buildings dropped), built with static/twin/twin_generator.js at tier 'high'
-with the modern_farmhouse kit and an empty manifest, and atlased with
-static/twin/bake/atlas.js at a small layout so the real Basis encoder stays fast:
+The pool-house fixture at one texel/ft uses two room pages. Two lights share
+each room's region (light 0 in RGB, light 1 in alpha); a third uses a sparse
+second bank. Checks preserve channels and neighbours, stable light keys,
+freshness, cancellation, buffer ownership, manifest-last publication,
+read failures, existence probes, forced refresh and the cross-desk lease.
+Only room lights bake. Manifests need no sky to be complete, legacy sky options
+are ignored, and a new round can settle without a sky entry.
 
-    LAYOUT = {sky: {density: 1, page: 256, gutter: 2}, room: {density: 1, page: 256, gutter: 2}}
-
-(3 sky pages and 2 room pages; the Kitchen and the Hall share room page 0, the
-Changing room is on page 1). The GPU is a fake: a three.js WebGLRenderer
-look-alike whose render() draws nothing and whose readRenderTargetPixels /
-readRenderTargetPixelsAsync fill the buffer with one value (FILL.value in 0..1;
-RGB = value and A = 1 when the buffer holds four channels per texel). The Basis
-encoder and transcoder are the real vendored wasm (static/vendor/basis-universal,
-static/vendor/three-r187/addons/libs/basis), loaded in node with wasmBinary.
-
-What this file pins (the implementer matches these):
-
-static/twin/bake/baker.js, importable in node (no DOM, no Worker at module load):
-  encodePage(encoder, {width, height, channels}) -> Uint8Array (or a promise of one):
-      a KTX2 file, Basis UASTC, with mipmaps (Ruling B3), from the initialised
-      basis_encoder module. channels are Uint8Arrays of width*height. Two channels
-      (a light bank) put channel 0 in RGB and channel 1 in A (Ruling B8:
-      setSwizzle(0,0,0,1) + setForceAlpha(true)); one channel (sky) goes in R.
-  decodePage(transcoder, bytes) -> {width, height, channels: [r, a]} (or a promise):
-      level 0 transcoded to RGBA32 with the initialised basis_transcoder module,
-      R and A as Uint8Arrays (the uncompressed fallback reads .r/.a, Ruling B8).
-  createBaker(view, {renderer, atlas, layout, lights, api, codec})
-      -> {staleLights(), bakeNext(), cancel(), progress()}
-    view      {tier, plan, scene, renderer3, camera}: tier 'low' never bakes. The
-              baker treats `view.plan` being replaced by another object (what
-              twin_view's rebuild and rebuildLevel do when the model round
-              changes) as a round change: the bake in flight is thrown away and
-              this baker uploads nothing more (Review Focus 1).
-    renderer  the WebGLRenderer the passes run on (here the fake).
-    atlas     buildAtlas(group, plan, layout)'s answer; layout the {sky, room}
-              options it was built with (page sizes come from there).
-    lights    [{device, building, level, room, at: [x, y, z] lot feet}] in the
-              order assignChannels and atlas.room.packBanks take them.
-    api       (path, options) -> a fetch Response; path relative ('api/house/bakes/...',
-              never root-relative). Routes as services/twin_bakes.py serves them:
-                GET/PUT 'api/house/bakes/{atlas.key}'            the manifest
-                POST/GET 'api/house/bakes/{atlas.key}/{page}.{ext}' a page (any ext)
-              The fake server here mirrors twin_bakes._check_manifest (pages,
-              lights {device: {page, channel, key}}, sky {page, channel}).
-    codec     {encode(job) -> Promise<bytes>, decode(bytes) -> Promise<{width, height, channels}>};
-              the test passes encodePage/decodePage over the real wasm. The page's
-              own default may run them in a worker.
-  staleLights() -> device ids (array, or a promise of one) whose bake is missing
-      from the manifest or whose stored light key no longer matches (the key covers
-      atlas.key and the light's spot).
-  bakeNext() -> promise of the id it baked: 'sky' for the sky pass (baked first
-      when the manifest has no sky for this key), a device id for a light, or a
-      falsy value when nothing is left (or on 'low', or after a round change).
-      Each step that bakes ends with exactly one manifest PUT, after the page
-      POSTs it needs, so lights land one by one ("manifest written last").
-  Pages and channels: the manifest's light entry {page, channel, key}; page is the
-  index in the page URL; channel 0 is R and channel 1 is A of the stored page
-  (Ruling B8). Light slots follow assignChannels (slot k: bank floor(k/2),
-  channel k%2) and every bank is laid out by atlas.room.packBanks(lights)
-  (Ruling B7: a bank holds only the rooms that need it). Rewriting a page keeps
-  the other channels' data (Review Focus 4).
-
-Skips (rather than fails) when node is unavailable.
-Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_baker_js.py
+Run from chauffeur/: python tests/test_twin_baker_js.py [check-name] (HA_BASE_URL unset).
 """
 import copy
 import json
@@ -86,7 +28,7 @@ from services import twin_library as tl  # noqa: E402
 from services import twin_store  # noqa: E402
 
 HOUSEHOLD = os.path.join(ROOT, 'tests', 'fixtures', 'twin_model', 'household-2026-11-09.json')
-LAYOUT = {'sky': {'density': 1, 'page': 256, 'gutter': 2}, 'room': {'density': 1, 'page': 256, 'gutter': 2}}
+LAYOUT = {'room': {'density': 1, 'page': 256, 'gutter': 2}}
 POOL = 'pool-house'
 KITCHEN = 'room:5d7de10ca48340ae85c407d22337c6f7'
 HALL = 'room:f94386f3da524031b4530a0847d7bc75'
@@ -199,8 +141,8 @@ function checkManifest(body) {   // services/twin_bakes._check_manifest, as of e
   const pages = body.pages;
   if (!Number.isInteger(pages) || pages < 1) return 'pages';
   if (!body.lights || typeof body.lights !== 'object' || Array.isArray(body.lights)) return 'lights';
-  for (const entry of [body.sky, ...Object.values(body.lights)]) {
-    if (!entry || typeof entry !== 'object') return 'an entry without page and channel (the sky is required)';
+  for (const entry of Object.values(body.lights)) {
+    if (!entry || typeof entry !== 'object') return 'an entry without page and channel';
     if (!Number.isInteger(entry.page) || entry.page < 0 || entry.page >= pages) return 'entry page outside the manifest';
     if (!Number.isInteger(entry.channel) || entry.channel < 0 || entry.channel > 3) return 'channel';
   }
@@ -354,6 +296,22 @@ function bankRects(atlas, lights, bank, roomId) {
 const checks = [];
 const check = (name, fn) => checks.push([name, fn]);
 
+
+check('room_only_manifest_is_complete_without_a_sky_pass', async () => {
+  // Legacy callers may still send sky options; they must have no effect.
+  const ctx = await setup('high', {...LAYOUT, sky: {density: 1, page: 256, gutter: 2}}), server = fakeServer(), lights = [k1, k2];
+  const baked = await bakeAll(makeBaker(ctx, server, lights, {round: 42}));
+  assert.deepEqual(baked, ['k1', 'k2'], 'no sky pass runs');
+  const manifest = server.manifests.get(ctx.atlas.key);
+  assert.equal(manifest.complete, true, 'room-only manifest is complete');
+  assert.equal(manifest.round, 42);
+  assert.ok(!Object.hasOwn(manifest, 'sky'), 'new manifest never publishes sky');
+  assert.deepEqual(manifest.densities, {room: LAYOUT.room.density});
+  const again = makeBaker(ctx, server, lights, {round: 43});
+  assert.equal(await again.settle(), true, 'a new round settles without a sky entry');
+  assert.equal(await again.bakeNext(), null, 'no sky work remains');
+});
+
 check('stale_lights_are_only_the_changed_ones', async () => {
   need('createBaker', 'encodePage', 'decodePage');
   const ctx = await setup(), server = fakeServer(), lights = [k1, k2, h1, c1], key = ctx.atlas.key;
@@ -361,8 +319,8 @@ check('stale_lights_are_only_the_changed_ones', async () => {
   assert.deepEqual(asSet(await first.staleLights()), ['c1', 'h1', 'k1', 'k2'], 'nothing baked yet: every light is stale');
   FILL.value = .08;
   const baked = await bakeAll(first);
-  assert.ok(baked.includes('sky'), `the sky is baked too: ${JSON.stringify(baked)}`);
-  assert.deepEqual(asSet(baked.filter(id => id !== 'sky')), ['c1', 'h1', 'k1', 'k2'], `each light baked: ${JSON.stringify(baked)}`);
+  assert.ok(!baked.includes('sky'), 'only room lights bake');
+  assert.deepEqual(asSet(baked), ['c1', 'h1', 'k1', 'k2'], `each light baked: ${JSON.stringify(baked)}`);
   assert.equal(baked.length, new Set(baked).size, `nothing baked twice: ${JSON.stringify(baked)}`);
   assert.deepEqual([...await first.staleLights()], [], 'after the bake nothing is stale');
   assert.deepEqual(server.bad, [], `every request is a relative api/house/bakes/ path the server accepts: ${server.bad}`);
@@ -395,7 +353,7 @@ check('stale_lights_are_only_the_changed_ones', async () => {
   assert.deepEqual([...await third.staleLights()], ['h1'], 'moving the Hall light makes only it stale');
   FILL.value = .24;
   const since3 = server.calls.length;
-  assert.deepEqual(await bakeAll(third), ['h1'], 'only the moved light re-bakes (not the sky)');
+  assert.deepEqual(await bakeAll(third), ['h1'], 'only the moved room light re-bakes');
   const posted = asSet(server.writes(since3).filter(c => c.method === 'POST').map(c => Number(c.path.split('/').pop().split('.')[0])));
   const m3 = server.manifests.get(key);
   assert.deepEqual(posted, [m3.lights.h1.page], `only the Hall light's page is uploaded again: ${posted}`);
@@ -413,7 +371,7 @@ check('stale_lights_are_only_the_changed_ones', async () => {
   for (const [id, bytes] of before) if (id !== page) assert.deepEqual(server.pages.get(id), bytes, `page ${id} is not rewritten`);
 
   // Other geometry (another atlas key): every light is stale again.
-  const other = await setup('high', { sky: LAYOUT.sky, room: { ...LAYOUT.room, density: 2, page: 512 } });
+  const other = await setup('high', { room: { ...LAYOUT.room, density: 2, page: 512 } });
   assert.notEqual(other.atlas.key, key, 'fixture: another layout is another atlas key');
   assert.deepEqual(asSet(await makeBaker(other, server, lights2).staleLights()), ['c1', 'h1', 'k1', 'k2'], 'a new atlas key makes every light stale');
 });
@@ -457,7 +415,7 @@ check('a_third_light_in_a_room_goes_to_a_second_bank', async () => {
   const ctx = await setup(), server = fakeServer(), lights = [k1, k2, k3, h1], key = ctx.atlas.key;
   FILL.value = .1;
   const baked = await bakeAll(makeBaker(ctx, server, lights));
-  assert.deepEqual(asSet(baked.filter(id => id !== 'sky')), ['h1', 'k1', 'k2', 'k3'], `every light baked: ${baked}`);
+  assert.deepEqual(asSet(baked), ['h1', 'k1', 'k2', 'k3'], `every light baked: ${baked}`);
   const m = server.manifests.get(key), L = m.lights;
   assert.equal(L.k1.page, L.k2.page, 'the first two Kitchen lights share bank 0\'s page');
   assert.deepEqual(asSet([L.k1.channel, L.k2.channel]), [0, 1], 'and take its two channels');
@@ -475,8 +433,8 @@ check('a_third_light_in_a_room_goes_to_a_second_bank', async () => {
   assert.ok(mean(channelOver(page0, hall.rects, 0)) > 5, 'the Hall light is baked at the Hall\'s place in bank 0');
   assert.ok(mean(channelOver(page0, hall.rects, 1)) <= 2, 'the Hall has no second light: its A stays empty');
   const files = [...server.pages.keys()].filter(id => id.startsWith(key + '/'));
-  const expected = ctx.atlas.sky.pages + second.banks.reduce((n, b) => n + b.pages, 0);
-  assert.equal(files.length, expected, `pages stored = sky pages + each sparse bank's pages (${expected}): ${files}`);
+  const expected = second.banks.reduce((n, b) => n + b.pages, 0);
+  assert.equal(files.length, expected, `pages stored = each sparse bank's pages (${expected}): ${files}`);
 });
 
 check('low_tier_never_bakes', async () => {
@@ -517,9 +475,9 @@ check('encode_puts_light_1_in_alpha', async () => {
   assert.equal(dec.width, W); assert.equal(dec.height, H);
   assert.ok(compare(dec.channels[0], a).mean <= 2 && compare(dec.channels[1], b).mean <= 2, 'decodePage gives back [R, A] = [light 0, light 1]');
   const one = await B.encodePage(E, { width: W, height: H, channels: [a] });
-  assert.ok(isKtx2(one), 'a one-channel (sky) page is KTX2 too');
-  const sky = rgba(one), S = [];
-  for (let i = 0; i < W * H; i++) S.push(sky.data[4 * i]);
+  assert.ok(isKtx2(one), 'a single-channel codec page is KTX2 too');
+  const single = rgba(one), S = [];
+  for (let i = 0; i < W * H; i++) S.push(single.data[4 * i]);
   assert.ok(compare(S, a).mean <= 2, 'a one-channel page keeps its channel in R');
 });
 
@@ -544,11 +502,10 @@ check('manifest_written_last', async () => {
     assert.ok(writes.slice(0, -1).every(w => w.method === 'POST' && w.path.startsWith(`api/house/bakes/${key}/`)), `${id}: page POSTs before it`);
     const m = server.manifests.get(key);
     assert.ok(m, `${id}: the manifest landed`);
-    assert.deepEqual(asSet(Object.keys(m.lights)), asSet(done.filter(d => d !== 'sky')), `${id}: the manifest lists exactly the lights baked so far`);
-    for (const e of [m.sky, ...Object.values(m.lights)]) assert.ok(server.pages.has(`${key}/${e.page}`), `${id}: every page the manifest names exists before it is named: ${JSON.stringify(e)}`);
+    assert.deepEqual(asSet(Object.keys(m.lights)), asSet(done), `${id}: the manifest lists exactly the lights baked so far`);
+    for (const e of Object.values(m.lights)) assert.ok(server.pages.has(`${key}/${e.page}`), `${id}: every page the manifest names exists before it is named: ${JSON.stringify(e)}`);
   }
-  assert.equal(done[0], 'sky', `the sky is baked first (the manifest needs it): ${done}`);
-  assert.deepEqual(asSet(done.filter(d => d !== 'sky')), ['c1', 'h1', 'k1'], `every light baked: ${done}`);
+  assert.deepEqual(asSet(done), ['c1', 'h1', 'k1'], `every light baked: ${done}`);
   const p = baker.progress();
   assert.ok(p && p.total >= 3 && p.done === p.total, `progress() counts the lights of the run: ${JSON.stringify(p)}`);
 });
@@ -565,7 +522,7 @@ check('baking_never_frees_the_houses_own_buffers', async () => {
   try {
     FILL.value = .1;
     const baked = await bakeAll(makeBaker(ctx, server, [k1, h1]));
-    assert.ok(baked.includes('sky') && baked.includes('k1'), `the sky and a light were baked: ${baked}`);
+    assert.ok(baked.includes('k1'), `a room light was baked: ${baked}`);
   } finally { THREE.BufferGeometry.prototype.dispose = dispose; }
   assert.ok(disposed.length, 'the bake disposed its proxies');
   const shared = disposed.flatMap(g => Object.entries(g.attributes).filter(([, a]) => house.has(a)).map(([n]) => n));
@@ -597,13 +554,6 @@ check('a_failed_read_aborts_the_step', async () => {
   const img = rgba(server.pages.get(`${key}/${page}`)), kitchen = bankRects(ctx.atlas, lights, 0, job.kitchen);
   for (const id of ['k1', 'k2']) assert.ok(mean(channelOver(img, kitchen.rects, manifest.lights[id].channel)) > 5, `${id} kept its channel`);
 
-  // The sky step's bank pages: a 502 aborts it too, before any upload.
-  const fresh = fakeServer();
-  fresh.fail = (method, path) => method === 'GET' && /\/\d+\.png$/.test(path) && Number(path.split('/').pop().split('.')[0]) >= ctx.atlas.sky.pages ? 502 : null;
-  STEP.n++;
-  await assert.rejects(withTimeout(Promise.resolve(makeBaker(ctx, fresh, lights).bakeNext()), 120000, 'the sky step over a 502'),
-    error => !/did not settle/.test(error.message), 'a bank page read that fails with 502 throws');
-  assert.deepEqual(fresh.writes(), [], 'the sky step uploads nothing');
   // The readiness probe: a 500 on a page the manifest names is not "missing".
   server.fail = (method, path) => method === 'GET' && /\/\d+\.png$/.test(path) ? 500 : null;
   await assert.rejects(withTimeout(Promise.resolve(makeBaker(ctx, server, lights).staleLights()), 60000, 'staleLights() over a 500'),
@@ -612,8 +562,7 @@ check('a_failed_read_aborts_the_step', async () => {
 });
 
 check('existence_is_checked_without_downloading_pages', async () => {
-  // M5: the readiness check and the sky step's bank pages ask with If-None-Match: * and
-  // download nothing; a forced sky step re-uploads only the sky pages.
+  // M5: the readiness check asks with If-None-Match: * and downloads nothing.
   need('createBaker');
   const ctx = await setup(), server = fakeServer(), lights = [k1, k2, h1, c1], key = ctx.atlas.key;
   FILL.value = .1;
@@ -623,19 +572,11 @@ check('existence_is_checked_without_downloading_pages', async () => {
   assert.deepEqual([...await again.staleLights()], [], 'nothing stale');
   const full = server.calls.slice(since).filter(c => c.full).map(c => c.path);
   assert.deepEqual(full, [], `the readiness check downloads no page: ${full}`);
-  since = server.calls.length;
-  const forced = makeBaker(ctx, server, lights, { force: true });
-  STEP.n++;
-  assert.equal(await withTimeout(Promise.resolve(forced.bakeNext()), 120000, 'the forced sky step'), 'sky');
-  const posted = server.writes(since).filter(c => c.method === 'POST').map(c => Number(c.path.split('/').pop().split('.')[0]));
-  assert.ok(posted.length && posted.every(p => p < ctx.atlas.sky.pages), `only sky pages are uploaded again: ${posted}`);
-  const bankGets = server.calls.slice(since).filter(c => c.method === 'GET' && /\/\d+\.png$/.test(c.path) &&
-    Number(c.path.split('/').pop().split('.')[0]) >= ctx.atlas.sky.pages);
-  assert.ok(bankGets.every(c => !c.full), `bank pages are checked, not downloaded: ${JSON.stringify(bankGets)}`);
+
 });
 
 check('bake_now_keeps_each_light_until_its_new_bake_lands', async () => {
-  // M6: a forced run keeps the sky and every light in the manifest (same keys) until each
+  // M6: a forced run keeps every light in the manifest (same keys) until each
   // one's new bake replaces it; panels never fall back to real-time mid-run.
   need('createBaker');
   const ctx = await setup(), server = fakeServer(), lights = [k1, k2, h1, c1], key = ctx.atlas.key;
@@ -651,11 +592,10 @@ check('bake_now_keeps_each_light_until_its_new_bake_lands', async () => {
     if (!id) break;
     seen.push(id);
     const now = server.manifests.get(key);
-    assert.ok(now.sky, `${id}: the sky stays in the manifest`);
     assert.deepEqual(asSet(Object.keys(now.lights)), ['c1', 'h1', 'k1', 'k2'], `${id}: every light stays in the manifest`);
     for (const d of Object.keys(before.lights)) assert.equal(now.lights[d].key, before.lights[d].key, `${id}: ${d} keeps its key`);
   }
-  assert.deepEqual(asSet(seen), ['c1', 'h1', 'k1', 'k2', 'sky'], `the forced run re-bakes everything once: ${seen}`);
+  assert.deepEqual(asSet(seen), ['c1', 'h1', 'k1', 'k2'], `the forced run re-bakes everything once: ${seen}`);
   assert.deepEqual([...await forced.staleLights()], [], 'nothing left after the forced run');
 });
 

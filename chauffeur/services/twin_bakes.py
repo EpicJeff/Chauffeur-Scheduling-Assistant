@@ -97,7 +97,7 @@ def _check_manifest(body):
     lights = body.get('lights')
     if not isinstance(lights, dict):
         raise ValueError('Bake lights must be an object.')
-    for entry in [body.get('sky'), *lights.values()]:
+    for entry in lights.values():
         if not isinstance(entry, dict):
             raise ValueError('Bake entries need a page and channel.')
         page, channel = entry.get('page'), entry.get('channel')
@@ -116,10 +116,10 @@ def _check_manifest(body):
         densities = body['densities']
         if not isinstance(densities, dict) or any(
             type(densities.get(k)) not in (int, float) or not math.isfinite(densities[k]) or densities[k] <= 0
-            for k in ('sky', 'room')
+            for k in ('room',)
         ):
-            raise ValueError('Bake densities need positive finite sky and room values.')
-    # Which model round the desk baked, and whether every light and the sky are done
+            raise ValueError('Bake densities need a positive finite room value.')
+    # Which model round the desk baked, and whether every room light is done
     # (Ruling B15: the editor says when lights wait to re-bake).
     if body.get('round') is not None and (type(body['round']) is not int or body['round'] < 0):
         raise ValueError('Bake round must be a round id.')
