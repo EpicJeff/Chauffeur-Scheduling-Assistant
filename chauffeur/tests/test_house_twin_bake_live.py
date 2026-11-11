@@ -585,6 +585,11 @@ def scenario_pi_tier_draws_baked_lights():
             check(RL.is_on(changing) and changing.get('baked') is not True, ('the unbaked Changing light is real-time', changing))
             check(RL.lamp_at(page, 'dev-changing-light', floor_lamp=True), ('with its pool PointLight', RL.lit_pool(page)))
             check(len(RL.pool(page)) == 4, ('the Pi keeps its pool of four', len(RL.pool(page))))
+            # The Counter lamp (on at 128) alone lifts these spots to ~200-219 of 255, where the
+            # tone curve squeezes any further rise: measure the ceiling light from the lamp off.
+            RL.set_light('light.counter_lamp', 'off')
+            L.refresh(page)
+            RL.calm(page)
             off_near = RL.sample(page, RL.NEAR_CEILING)
             RL.set_light('light.ceiling_light', 'on', brightness=255)
             L.refresh(page)
@@ -593,6 +598,7 @@ def scenario_pi_tier_draws_baked_lights():
             on_near = RL.sample(page, RL.NEAR_CEILING)
             rise = mean(lum(a) - lum(b) for a, b in zip(on_near, off_near))
             check(rise > 25, ('the Pi lights the Kitchen from the bake', round(rise, 1)))
+            RL.set_light('light.counter_lamp', 'on', brightness=128)
             check(writes(seen) == [], ('the Pi never uploads', writes(seen)))
             check(not state(page)['baking'] and state(page)['baked'] == [], ('the Pi never bakes', state(page)))
             L.no_errors(s)

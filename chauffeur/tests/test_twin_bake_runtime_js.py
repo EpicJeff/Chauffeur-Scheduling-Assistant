@@ -42,13 +42,13 @@ const until = async (fn, what) => {
   while (!fn() && Date.now() - start < 40000) await sleep(50);
   assert.ok(fn(), what);
 };
-async function context(tier = 'high', sharedServer = null) {
+async function context(tier = 'high', sharedServer = null, placed = null) {
   const out = gen.buildTwin(job.plan, job.kit, tier); await out.ready;
   const renderer = fakeRenderer(); renderer.domElement = new Node('canvas');
   const scene = new THREE.Scene(); scene.add(out.root); scene.updateMatrixWorld(true);
   const controls = new THREE.EventDispatcher(); controls.target = new THREE.Vector3();
   const view = { plan: job.plan, ready: true, scene, tier, renderer3: renderer, controls, render() {} };
-  const server = sharedServer || fakeServer(), lights = [k1, k2, h1, c1];
+  const server = sharedServer || fakeServer(), lights = placed || [k1, k2, h1, c1];
   const api = (path, init) => path === 'api/house/live' ? Promise.resolve(new Response(JSON.stringify({
     markers: lights.map(l => ({ ...l, device_id: l.device, placed: true, kind: 'light' }))
   }), { status: 200 })) : server.api(path, init);
@@ -130,7 +130,35 @@ await check('partial_bake_loads_on_low_without_writes', async () => {
     assert.equal(published.writes().length, since);
   } finally { c.controller.stop(); }
 });
-console.log(`${passed}/5 passed`); process.exit(passed === 5 ? 0 : 1);
+await check('a_bank_page_with_no_light_is_never_held', async () => {
+  // Only the Kitchen has lights: bank zero still lays out every room (B12),
+  // but a bank page no placed light writes to is neither fetched nor held.
+  const desk = await context('high', null, [k1, k2]);
+  let key;
+  try {
+    await until(() => !desk.controller.state().baking && desk.controller.fresh().length === 2,
+      'the Kitchen bake lands: ' + JSON.stringify(desk.controller.state()));
+    key = desk.controller.state().key;
+  } finally { desk.controller.stop(); }
+  const since = desk.server.calls.length, c = await context('low', desk.server, [k1, k2]);
+  try {
+    await until(() => c.controller.fresh().length === 2, 'a panel draws the Kitchen bake');
+    const held = c.controller.held(), bank = held.banks[0];
+    assert.equal(held.banks.length, 1);
+    assert.ok(bank.pages > bank.lit.length, 'the fixture has a bank-zero page with no light: ' + JSON.stringify(bank));
+    assert.equal(bank.lit.length, 1, 'the Kitchen lights share one page: ' + JSON.stringify(bank));
+    assert.equal(bank.layers, 1, 'only the lit page is a layer on the GPU: ' + JSON.stringify(bank));
+    assert.equal(bank.size, job.layout.room.page, 'the lit layer is a whole page');
+    assert.equal(held.sky.layers, 3, 'every sky page is held');
+    const skyPages = 3, unlit = Array.from({ length: bank.pages }, (_, p) => p).filter(p => !bank.lit.includes(p)).map(p => skyPages + p);
+    const got = c.server.calls.slice(since).filter(x => x.method === 'GET').map(x => x.path);
+    for (const p of unlit) assert.ok(!got.includes(`api/house/bakes/${key}/${p}.png`), `the unlit page ${p} is never fetched: ` + JSON.stringify(got));
+    assert.ok(got.includes(`api/house/bakes/${key}/${skyPages + bank.lit[0]}.png`), 'the lit page is fetched');
+    assert.deepEqual([...c.controller.fresh()].sort(), ['k1', 'k2']);
+    assert.deepEqual(c.server.writes(since), [], 'the panel writes nothing');
+  } finally { c.controller.stop(); }
+});
+console.log(`${passed}/6 passed`); process.exit(passed === 6 ? 0 : 1);
 """
 
 

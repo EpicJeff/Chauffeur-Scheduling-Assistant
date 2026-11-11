@@ -43,7 +43,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   const allowed = ['high', 'max'].includes(view.tier) && !new URLSearchParams(location.search).has('panel') &&
     !new URLSearchParams(location.search).has('kiosk');
   let stopped = false, atlas = null, layout = requestedLayout || options(8), lights = [], packed = null, uniforms = null, pages = null;
-  let baker = null, codec = null, running = false, pendingForce = false, dragging = false, stillAt = performance.now();
+  let layers = [], baker = null, codec = null, running = false, pendingForce = false, dragging = false, stillAt = performance.now();
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false, skyReady = false;
   let failure = '';
   const cache = new Map(), clones = [], textures = new Set();
@@ -94,7 +94,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     const t = new THREE.DataTexture(new Float32Array(width * height * 4), width, height, THREE.RGBAFormat, THREE.FloatType);
     packed.banks.forEach((bank, b) => bank.rooms.forEach(({ room, sourceRegion, region }) => {
       t.image.data.set([(region.x - sourceRegion.x) / layout.room.page,
-        (region.y - sourceRegion.y) / layout.room.page, region.page, 0], (room * width + b) * 4);
+        (region.y - sourceRegion.y) / layout.room.page, Math.max(0, layers[b].indexOf(region.page)), 0], (room * width + b) * 4);
     }));
     t.needsUpdate = true; return t;
   }
@@ -207,7 +207,9 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       return;
     }
     const success = new Set(), results = new Map();
-    for (let p = 0; p < packed.pages; p++) {
+    const wanted = new Set(Array.from({ length: atlas.sky.pages }, (_, p) => p));
+    layers.forEach((list, i) => list.forEach(p => wanted.add(packed.offsets[i] + p)));
+    for (const p of [...wanted].sort((a, c) => a - c)) {
       const entry = cache.get(p);
       const r = await api(`api/house/bakes/${atlas.key}/${p}.png`, { headers: entry?.etag ? { 'If-None-Match': entry.etag } : {} });
       if (!valid()) return;
@@ -228,7 +230,11 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       if (t) replaceTexture(texture, t);
     };
     put(pages.sky, 0, atlas.sky.pages, layout.sky.page);
-    packed.banks.forEach((b, i) => put(pages.banks[i], packed.offsets[i], b.pages, layout.room.page));
+    packed.banks.forEach((b, i) => {
+      if (!layers[i].length) return;
+      const t = arrayTexture(layers[i].map(p => results.get(packed.offsets[i] + p)), layers[i].length, pages.banks[i].format, layout.room.page);
+      if (t) replaceTexture(pages.banks[i], t);
+    });
     const previous = [...fresh]; fresh.clear();
     for (const l of lights) {
       const e = packed.entries[l.device], stored = m.lights[l.device];
@@ -269,6 +275,9 @@ if (vGlowRoom > -0.5) { ${sum} }`);
     state: () => ({ key: atlas?.key || null, baking: running, paused: running && paused(),
       ...progress, baked: [...baked], stale: [...stale] }),
     fresh: () => valid() ? [...fresh] : [], light, sky: skyTint, idle,
+    // The lightmap arrays as held: per array its layer size and layer count.
+    held: () => pages ? { sky: { size: pages.sky.image.width, layers: pages.sky.image.depth },
+      banks: pages.banks.map((t, i) => ({ size: t.image.width, layers: t.image.depth, pages: packed.banks[i].pages, lit: [...layers[i]] })) } : null,
     now: () => run(true),
     stop() {
       if (stopped) return;
@@ -304,11 +313,18 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       lights = (liveLayout?.markers || []).filter(m => m.kind === 'light' && m.placed && m.at && m.room)
         .map(m => ({ device: m.device_id, building: m.building, level: m.level, room: m.room, at: [...m.at] }));
       packed = bakeLayout(atlas, layout, lights);
+      // A bank page no placed light writes to (bank zero reserves unlit rooms,
+      // Ruling B12) is never fetched or held on the GPU: each bank's array keeps
+      // only its lit pages, and lmRegions maps a page to its layer.
+      layers = packed.banks.map((b, i) => [...new Set(Object.values(packed.entries).map(e => e.page - packed.offsets[i])
+        .filter(p => p >= 0 && p < b.pages))].sort((a, c) => a - c));
       uniforms = lightmapUniforms(atlas.room.rooms.length, Math.max(2, packed.banks.length * 2));
       uniforms.lmRegions = { value: regions() };
       const skyFormat = pickTranscode(view.renderer3.extensions, 1), roomFormat = pickTranscode(view.renderer3.extensions, 2);
       pages = { sky: blankArray(atlas.sky.pages, skyFormat, layout.sky.page),
-        banks: packed.banks.map(b => blankArray(b.pages, roomFormat, layout.room.page)) };
+        // A bank with no lit page holds one 4x4 placeholder layer (one compressed block).
+        banks: packed.banks.map((b, i) => layers[i].length ? blankArray(layers[i].length, roomFormat, layout.room.page)
+          : blankArray(1, roomFormat, 4)) };
       textures.add(pages.sky); pages.banks.forEach(t => textures.add(t));
       codec = workerCodec();
       await loadPages(); if (!valid()) return;
