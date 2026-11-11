@@ -14,6 +14,8 @@ import { createLotTools, streetView, streetSegment } from './lot_tools.js';
 import { createLibrary } from './library.js';
 import { createFlags } from './flags.js';
 import { createDevicePlacement } from './device_placement.js';
+import { createBuildGhosts } from './build_ghosts.js';
+import { createStatusChip } from './status_chip.js';
 
 const el = id => document.getElementById(id);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
@@ -27,6 +29,8 @@ export async function boot() {
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
   let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, library = null, previewing = false, lastSummary = '';
   let roofTools = null, lot = null, flags = null, devices = null, aimed = false;
+  let buildGhosts = null;
+  const statusChip = createStatusChip(el('editor-chip')), seenBuildRounds = new Set();
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
@@ -82,6 +86,7 @@ export async function boot() {
 
   function setStatus(text) { el('editor-status').textContent = plain(text); }
   function syncBuildButton() {
+    syncChip();
     history?.sync();
     // Reaching ready requires successful parent-only editor API requests.
     el('menu-record').hidden = !hooks.ready || session.signedOut;
@@ -90,8 +95,8 @@ export async function boot() {
     el('editor-check-step').hidden = previewing || currentBuild?.state !== 'paused' || !pauses?.dismissed();
     el('editor-resume').hidden = previewing || !['stopped', 'checkpoint'].includes(currentBuild?.state);
     el('editor-resume').disabled = !canEdit() || !hooks.ready || resuming;
-    el('editor-stop').hidden = previewing || !active(currentBuild);
-    el('editor-stop').disabled = !canEdit() || stopping;
+    el('editor-stop').hidden = currentBuild?.state !== 'running';
+    el('editor-stop').disabled = session.signedOut || stopping;
     const busy = !canEdit() || !hooks.ready || resuming || active(currentBuild);
     for (const id of ['menu-director', 'menu-advanced', 'menu-start-over', 'menu-reset-spend']) el(id).disabled = busy;
     el('menu-start-over').disabled = !canEdit() || !hooks.ready || resuming
@@ -100,7 +105,10 @@ export async function boot() {
     el('advanced-save').disabled = busy;
     panel.readOnly(!canEdit());
   }
-  function cost(value) { el('editor-cost').textContent = `$${Number(value || 0).toFixed(2)}`; }
+  function syncChip() {
+    statusChip.update({ state: currentBuild?.state, pause: currentBuild?.pause,
+      cost: snapshot.cost?.total || 0, estimate: currentBuild?.state === 'running' ? snapshot.cost?.estimate : null });
+  }
   function countGhosts(plan) {
     if (!plan || typeof plan !== 'object') return 0;
     return (plan.state === 'ghost' ? 1 : 0) + Object.values(plan).reduce((n, value) =>
@@ -154,6 +162,12 @@ export async function boot() {
       if (eye) { aimed = true; view.aim(eye.position, eye.target); }
     }
     renderedGhosts = countGhosts(plan);
+    buildGhosts?.sync();
+    for (const round of snapshot.rounds || []) {
+      if (seenBuildRounds.has(round.id)) continue;
+      seenBuildRounds.add(round.id);
+      buildGhosts?.settle(round);
+    }
     drawFloors();
     tools?.refresh();
     library?.refresh();
@@ -180,22 +194,30 @@ export async function boot() {
   const polling = createPolling({
     async onState(state) {
       if (!state.build && currentBuild) {
-        currentBuild = null; ghostBuild = null; ghosts.clear(); panel.reset(); drawTimeline(null);
+        currentBuild = null; ghostBuild = null; ghosts.clear(); buildGhosts?.clear(); panel.reset(); drawTimeline(null);
         await loadSheets();
       }
-      snapshot = state; cost(state.cost?.total);
+      snapshot = state;
       syncBuildButton();
       if (!currentBuild) setStatus(sheets.page_roles.some(row => ['floor', 'plot'].includes(row.role)) ? 'Ready to build' : 'Add drawings to begin');
     },
     async onBuild(build) {
-      if (ghostBuild !== build.id) { ghosts.clear(); ghostBuild = build.id; }
+      if (ghostBuild !== build.id) {
+        ghosts.clear(); buildGhosts?.clear(); ghostBuild = build.id;
+        seenBuildRounds.clear();
+        for (const round of snapshot.rounds || []) seenBuildRounds.add(round.id);
+      }
       // Yield once per new question, while allowing uploads if the person
       // reopens Your place during the same pause.
       if (['paused', 'checkpoint'].includes(build.state) && place?.isOpen()
         && (currentBuild?.id !== build.id || currentBuild?.state !== build.state
           || currentBuild?.pause?.step !== build.pause?.step)) place.close();
+      const showPieces = build.state === 'running' || currentBuild?.state === 'running' || buildGhosts?.count() > 0;
       currentBuild = build;
       for (const event of build.events || []) {
+        if (event.type === 'stream_reset') buildGhosts?.clear(event.step);
+        if (event.type === 'piece' && showPieces && build.steps.find(s => s.id === event.step)?.status !== 'done')
+          buildGhosts?.add({ ...event, building: event.building || build.part || 'house' });
         if (event.type === 'ghost') ghosts.set(event.step, event);
         if (event.type === 'settled') ghosts.delete(event.step);
       }
@@ -260,7 +282,7 @@ export async function boot() {
     finally { resuming = false; syncBuildButton(); }
   });
   listen(el('editor-stop'), 'click', async () => {
-    if (!canEdit() || stopping || !active(currentBuild)) return;
+    if (session.signedOut || stopping || currentBuild?.state !== 'running') return;
     stopping = true; syncBuildButton();
     try {
       await request(`build/${encodeURIComponent(currentBuild.id)}/stop`, 'POST', {});
@@ -416,7 +438,7 @@ export async function boot() {
   };
   window.fetch = watchAnswers;
   window.addEventListener('pagehide', () => {
-    polling.stop(); view?.dispose(); lifecycle.abort(); panel.dispose();
+    polling.stop(); buildGhosts?.clear(); view?.dispose(); lifecycle.abort(); panel.dispose();
     window.removeEventListener('editor-signed-out', signedOut);
     document.removeEventListener('visibilitychange', foreground);
     window.removeEventListener('focus', foreground);
@@ -430,6 +452,8 @@ export async function boot() {
     await loadSheets();
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
     view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true });
+    buildGhosts = createBuildGhosts(view);
+    if (new URLSearchParams(location.search).get('test') === '1') hooks.buildGhosts = buildGhosts;
     view.showAnchors = true;
     const onInteract = () => { pauses?.dismiss(); syncBuildButton(); };
     history = createHistory({ getRound: currentRound, getBuild: () => currentBuild,

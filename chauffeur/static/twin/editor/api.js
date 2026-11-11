@@ -1,6 +1,7 @@
 // The shared nav fetch wrapper owns the parent session and ingress headers.
 export const idleInterval = 60000;
 export const buildInterval = 1000;
+export const streamInterval = 500;
 const signedOut = 'Home Assistant signed this tab out. Open any Chauffeur admin page from the Home Assistant sidebar, then come back here.';
 export const plain = value => String(value ?? '');
 export const session = { signedOut: false, notices: 0, noticeShown: false };
@@ -83,7 +84,8 @@ export const active = build => ['running', 'paused', 'checkpoint'].includes(buil
 
 export function createPolling({ onState, onBuild, onTick, onError }) {
   let build = null, seq = 0, timer = null, pending = null, stopped = false, nextBuild = null;
-  const interval = () => nextBuild || build?.state === 'running' ? buildInterval : idleInterval;
+  const interval = () => build?.streaming || build?.stopping ? streamInterval
+    : nextBuild || build?.state === 'running' ? buildInterval : idleInterval;
   const enabled = () => !stopped && !session.signedOut && !document.hidden;
   const schedule = () => {
     clearTimeout(timer);

@@ -8162,7 +8162,8 @@ def house_editor_state():
     with twin_store.LIFECYCLE:
         latest = twin_build.latest()
         return {'plan': twin_store.current(), 'model': twin_store.current_model(), 'rounds': twin_store.rounds(),
-                'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint()},
+                'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint(),
+                         'estimate': twin_build.remaining_estimate(latest) if latest else None},
                 'build': latest}
 
 

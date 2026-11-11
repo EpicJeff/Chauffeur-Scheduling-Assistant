@@ -24,6 +24,8 @@
     imports[new URL(window.chfBase + 'static/twin/editor/flags.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/flags.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/ha_link.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/ha_link.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/device_placement.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/device_placement.js' | ver | tojson }};
+    imports[new URL(window.chfBase + 'static/twin/editor/build_ghosts.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/build_ghosts.js' | ver | tojson }};
+    imports[new URL(window.chfBase + 'static/twin/editor/status_chip.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/status_chip.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/live/markers.js', location.href).href] = window.chfBase + {{ 'static/twin/live/markers.js' | ver | tojson }};
     const map = document.createElement('script'); map.type = 'importmap';
     map.textContent = JSON.stringify({ imports }); document.head.appendChild(map);
@@ -41,7 +43,7 @@
     <header id="editor-top">
       <h1>House editor</h1>
       <output id="editor-status" role="status">Opening your house…</output>
-      <output id="editor-cost" aria-label="Total spent">$0.00</output>
+      <div id="editor-chip" aria-label="Build status and spend"></div>
       <button id="editor-check-step" type="button" hidden>Check this step</button>
       <button id="editor-resume" type="button" hidden>Resume</button>
       <button id="editor-stop" type="button" aria-label="Stop build" hidden>Stop</button>

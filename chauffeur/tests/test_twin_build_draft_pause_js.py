@@ -148,6 +148,8 @@ export const createTimeline = () => ({ sync() {}, preview: () => null });
 export const createPlace = () => ({ sync() {}, isOpen: () => false });
 export const createDevicePlacement = () => ({ refresh() {}, draw() {}, stop() {}, cancel() {},
   pointerDown: () => false, pointerUp: () => false });
+export const createBuildGhosts = () => ({ add() {}, settle() {}, clear() {}, sync() {}, count: () => 0, seqs: () => [] });
+export const createStatusChip = () => ({ update() {} });
 '''
 
 EDITOR_DRIVER = r'''
