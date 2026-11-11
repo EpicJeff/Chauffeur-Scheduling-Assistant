@@ -341,6 +341,7 @@ def run_suggestion_funnel(channel: dict, sender: dict, body: str,
         return None
     try:
         res = process_agent_request(body, source="family", acting_member=sender,
+                                    style_member=None,
                                     proven=proven, device_id=device_id, at_panel=at_panel)
     except Exception as e:
         logger.error(f"Suggestion funnel agent run failed: {e}")

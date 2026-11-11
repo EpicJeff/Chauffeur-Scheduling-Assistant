@@ -3973,6 +3973,7 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
         satellite_token = voice_private.current.set(satellite_turn)
         try:
             res = process_agent_request(req.text, history=conv_history, source='voice', voice_context=ctx,
+                                        style_member=actor,
                                         proven=ctx.level == 'verified', at_panel=False,
                                         focus_key=f"voice:{ctx.scope_key}:{req.conversation_id}" if req.conversation_id else None)
         finally:
@@ -8280,6 +8281,7 @@ def house_editor_say(request: Request, body: dict = Body(default={})):
                 result = agent_router.process_agent_request(
                     message, context={'house_editor': {**status, 'selection': selection}},
                     history=history, source='house_editor', acting_member=parent,
+                    style_member=None,
                     proven=proven, at_panel=at_panel,
                     focus_key='house_editor:' + (status['build'] or 'idle'))
         finally:
@@ -18874,6 +18876,7 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str, message_id: str 
                                     and app_voice._credential(m.get('body') or '')
                                     else m.get('body') or '')} for m in used]
         res = process_agent_request(query, source="family", acting_member=sender,
+                                    style_member=sender if personal_dm else None,
                                     proven=proven, device_id=device_id, at_panel=at_panel,
                                     **({'history': history} if history is not None else {}),
                                     focus_key=f"channel:{channel.get('id')}" if channel.get('id') else None)
@@ -20959,6 +20962,8 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, 
         res = process_agent_request(payload.message, context=payload.context, history=conv_history,
                                     source=conv['surface']['kind'], driver_id=payload.driver_id,
                                     acting_member=acting_member,
+                                    style_member=(acting_member if conv['surface']['kind'] in ('pwa', 'admin')
+                                                  and not at_panel else None),
                                     proven=proven, at_panel=at_panel,
                                     device_id=device['device_id'] if device else None,
                                     focus_key=f"conv:{payload.conversation_id}" if payload.conversation_id else None)
