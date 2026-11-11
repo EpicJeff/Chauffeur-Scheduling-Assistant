@@ -1,6 +1,21 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.791 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.792 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.792 (2026-11-11, NOT device-verified): Argyle's style. A household default for how Argyle talks, and each person's own.**
+
+The user: "Some families may want a more pragmatic agent, some may want a super friendly one, some may want a pirate or something silly." Rulings: a household default with per-person customization; kids pick their own, Custom included. Spec `docs/superpowers/specs/2026-11-11-argyle-style-design.md`.
+
+- Styles: Plain and brief, Warm (the default, today's voice), Playful, Custom (one line, at most 200 characters). A person's default is Same as the household.
+- Whose style: the person's own in their PWA/admin chat, their DM with Argyle, and a voice recognised this turn; the household's on the wall panel, the family channel (everyone reads the reply), an unknown voice, the Mind and the chat suggestion funnel. Callers pass `style_member` to `agent_router.process_agent_request`; the router never infers it from `acting_member`.
+- `services/argyle_style.py` owns presets, resolution and the prompt block, appended as the LAST text of the system prompt. The block says the style never overrides any rule: tool arguments and written data (titles, list items, errands, memory rows, messages sent for a person) stay plain; facts stay exact; PIN, approval, lock and read-or-send wording is fixed; someone upset gets calm and warm; spoken and driver answers stay short. A Custom line is cleaned (one line, no control characters, 200 cap) and quoted as a manner of speaking, never an instruction. A family that never touches it gets today's prompt plus the Warm block.
+- Hand paths: PWA Profile & appearance › "How Argyle talks to you" (`pwaChooseArgyleStyle`); Config › People › How Argyle talks (`#argyle-style`): household style, everyone whose style differs with their Custom text, Reset (parents). Routes: `GET/POST /api/argyle/style/me` (signed in, member from the token only), `GET/POST /api/argyle/style` and `POST /api/argyle/style/reset/{id}` (parents, checked in the handler too). Settings `argyle_style` (default `warm`), `argyle_style_custom`.
+- Agent path: the `style` tool (set/show/reset, scope me/household). Household is parents only; nobody, the shared panel and a voice not recognised this turn change nothing (a PIN unlock alone is not the speaker). A style request is never stored as a memory row. Existing "talk like..." memory rows are left alone.
+- The PWA's own `promptChoice` marks a `selected` option and `promptInput` takes `maxLength`, like the shared ones.
+
+Device steps: set a loud Custom style on your phone, then add a shopping item and an event by typed chat and by voice; the item and title must come out plain while the reply is styled. Post @argyle in the family channel and check the reply uses the household style. Ask the panel's satellite with an unknown voice to "talk like a pirate" and check nothing changes.
+
+Tests: `tests/test_argyle_style.py`, `test_argyle_style_router.py`, `test_argyle_style_tool.py`, `test_argyle_style_routes.py`, `test_argyle_style_ui.py`; neighbours `test_argyle_memory.py`, `test_voice_actor.py`, `test_voice_identity.py`, `test_voice_privacy_weather.py`, `test_auth.py`, `test_agent_driver_tools.py`, `test_settings_registry.py`, `test_tailwind_build.py`, `test_control_grant_js.py`, `test_argyle_orb.py`.
 
 **v2.499.791 (2026-11-11, NOT device-verified): the 3D house's sun and moon follow the real date, time and place. A facing dial says which way the house fronts. Day and Night are previews that return to Now.**
 
