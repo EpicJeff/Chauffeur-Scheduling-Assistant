@@ -7462,6 +7462,44 @@ def _house_ha_placed_spot(building, device_id, placement, geometry):
             'room': room['id'] if room else None, 'at': point[:2], 'z': point[2]}
 
 
+@app.get('/api/house/twin/glance')
+def house_twin_glance(request: Request, panel_id: str | None = None):
+    from services import auth, control_rules, twin_glance
+    parent = auth.identify(request.headers, request.query_params)['tier'] == auth.PARENT
+    panel = control_rules.panel_device(request.headers, request.query_params)
+    if panel_id:
+        if not parent:
+            raise HTTPException(status_code=403, detail='Only a parent can choose another panel.')
+        panel = storage.get_trusted_device(panel_id)
+        if not panel or panel.get('kind') != 'panel':
+            raise HTTPException(status_code=404, detail='Panel not found.')
+    result = twin_glance.read(panel)
+    result['can_edit'] = parent
+    if parent:
+        result['panels'] = [{'device_id': d['device_id'], 'label': d.get('label') or 'Wall panel'}
+                            for d in storage.get_trusted_devices() if d.get('kind') == 'panel']
+    return result
+
+
+class TwinGlanceRequest(BaseModel):
+    entities: list[str] | None = None
+    idle_enabled: bool = False
+    panel_idle_enabled: bool = True
+    panel_id: str | None = None
+
+
+@app.put('/api/house/twin/glance')
+def save_house_twin_glance(req: TwinGlanceRequest):
+    import re
+    from services import twin_glance
+    if req.entities is not None and (len(req.entities) > 12 or len(set(req.entities)) != len(req.entities)
+            or any(not re.fullmatch(r'[a-z_]+\.[a-z0-9_]+', eid) for eid in req.entities)):
+        raise HTTPException(status_code=422, detail='Choose up to twelve different entities.')
+    if twin_glance.save(req.entities, req.idle_enabled, req.panel_id, req.panel_idle_enabled) is None:
+        raise HTTPException(status_code=404, detail='Panel not found.')
+    return {'saved': True}
+
+
 @app.get('/api/house/live')
 def house_live(request: Request):
     from services import control_rules, ha_api, twin_ha, twin_model_hosts
@@ -11753,6 +11791,24 @@ def _house_stream_entities(area: str | None = None) -> set:
     for device in catalogue.get('devices') or []:
         if device.get('area_id') in areas and (area is None or device.get('area_id') == area) and device.get('entity_id'):
             ids.add(device['entity_id'])
+            # Climate and glance read secondary entities too (temperature, energy,
+            # battery). Device markers still use one primary entity.
+            ids.update(device.get('entities') or [])
+    if area is None:
+        from services import ha_api
+        # The default glance weather is not necessarily assigned to a room.
+        import re
+        try:
+            glance_states = ha_api.get_states()
+        except Exception:
+            glance_states = []
+        for row in glance_states:
+            eid = row.get('entity_id', '')
+            attrs = row.get('attributes') or {}
+            if (eid.startswith('weather.') or attrs.get('device_class') in ('power', 'energy', 'battery')
+                    or eid.startswith('sensor.') and re.search(r'solar|grid|battery|powerwall|car.?charg',
+                                                              eid + ' ' + attrs.get('friendly_name', ''), re.I)):
+                ids.add(eid)
     for building in model.get('buildings') or []:
         for room in building.get('rooms', []):
             found = twin_ha.resolve_area(room.get('ha_area'), catalogue.get('areas') or [])

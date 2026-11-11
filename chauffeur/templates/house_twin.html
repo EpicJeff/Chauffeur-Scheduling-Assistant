@@ -25,6 +25,9 @@
     {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
+    {% for name in ['live/climate', 'live/glance', 'live/idle', 'live/glance_settings'] %}
+    twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
+    {% endfor %}
     // Bake modules import three by its path; map that path onto the one versioned three.
     twinImports[new URL(twinBase + 'static/vendor/three-r187/three.module.js', location.href).href] = twinImports.three;
     const twinMap = document.createElement('script'); twinMap.type = 'importmap';
@@ -178,6 +181,32 @@
     html[data-twin-wall] #twin-controls { top:16px; }
     html[data-twin-wall] .twin-device-sheet { top:86px; max-height:calc(100dvh - 112px - var(--panel-shelf-h, 0px)); }
     [hidden] { display:none !important; }
+    #twin-glance-home { position:fixed; bottom:max(calc(var(--panel-shelf-h, 0px) + 16px), var(--twin-glance-clearance, 0px)); left:16px; right:16px; z-index:46; pointer-events:none; }
+    #twin-glance { display:flex; flex-wrap:wrap; justify-content:center; gap:12px 24px; padding:10px 16px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.9); color:#f0e6cf; font:14px/1.4 system-ui; }
+    #twin-glance > div { display:flex; align-items:center; gap:8px; }
+    #twin-glance canvas { width:26px; height:26px; }
+    #twin-glance strong { white-space:nowrap; }
+    #twin-tier { bottom:calc(var(--panel-shelf-h, 0px) + 90px); }
+    #twin-hud { bottom:calc(var(--panel-shelf-h, 0px) + 136px); }
+    #twin-status { bottom:calc(var(--panel-shelf-h, 0px) + 90px); }
+    #twin-mode-legend { align-self:center; padding:8px 12px; background:rgba(28,23,16,.9); border-radius:8px; color:#f0e6cf; max-width:calc(100vw - 32px); }
+    .twin-climate-labels { position:fixed; inset:0; pointer-events:none; z-index:44; overflow:hidden; }
+    .twin-climate-labels span { position:absolute; transform:translate(-50%, -50%); white-space:nowrap; padding:4px 8px; border-radius:8px; background:rgba(28,23,16,.94); color:#f0e6cf; font:600 13px system-ui; }
+    #twin-idle { position:fixed; inset:0; z-index:49; pointer-events:none; padding:clamp(20px, 5vw, 80px); color:#f0e6cf; display:flex; flex-direction:column; align-items:flex-start; justify-content:space-between; padding-bottom:calc(var(--panel-shelf-h, 0px) + 24px); }
+    #twin-idle-clock { max-width:min(760px, 100%); padding:24px; border-radius:22px; background:rgba(28,23,16,.82); }
+    #twin-idle .ss-time { font:700 clamp(64px, 10vw, 144px)/1 system-ui; }
+    #twin-idle .ss-date, #twin-idle-weather { font:500 clamp(20px, 3vw, 36px)/1.5 system-ui; }
+    #twin-idle #twin-glance { margin-top:16px; justify-content:flex-start; border:0; padding:0; background:transparent; }
+    #twin-idle-next { width:min(500px, 100%); }
+    html[data-twin-idle] #twin-controls, html[data-twin-idle] #twin-tier, html[data-twin-idle] #twin-hud, html[data-twin-idle] #top-nav-bar, html[data-twin-idle] .twin-climate-labels { visibility:hidden; }
+    #twin-glance-settings label { display:block; margin:12px 0; }
+    #twin-glance-settings input[type=search], #twin-glance-settings select { display:block; width:100%; padding:10px; border:1px solid #4b5563; border-radius:8px; background:#111827; color:white; }
+    #twin-glance-settings button { min-height:44px; padding:8px 12px; border:1px solid #4b5563; border-radius:8px; color:white; background:#374151; }
+    #twin-glance-settings button:disabled { opacity:.4; }
+    #twin-glance-selected { padding:0; list-style:none; }
+    #twin-glance-selected li { display:flex; align-items:center; gap:4px; margin:8px 0; }
+    #twin-glance-selected li span { flex:1; }
+    #twin-glance-choices { display:flex; flex-direction:column; gap:6px; max-height:280px; overflow:auto; }
   </style>
 </head>
 <body>
@@ -190,8 +219,27 @@
     <fieldset><legend>Camera</legend><button type="button" data-camera="front">Front</button><button type="button" data-camera="porch">Porch</button><button type="button" data-camera="rear">Rear</button><button type="button" data-camera="top">Top</button></fieldset>
     {% if request.query_params.get('panel') != 'true' and request.query_params.get('kiosk') != 'true' %}
     <a id="twin-edit" href="{{ _up }}house/editor">Edit the house</a>
+    <fieldset><legend>House settings</legend><button id="twin-settings-gear" type="button" hidden aria-label="House settings">⚙ Settings</button></fieldset>
     {% endif %}
   </div>
+  <div id="twin-glance-home"></div>
+  <section id="twin-idle" hidden aria-label="House idle face">
+    <div id="twin-idle-clock"><div class="ss-time"></div><div class="ss-date"></div><div id="twin-idle-weather"></div></div>
+    <div id="twin-idle-next" hidden></div>
+  </section>
+  {% from 'components/settings_drawer.html' import settings_drawer, settings_section with context %}
+  {% call settings_drawer('twin', 'House') %}
+    {% call settings_section('twin-glance-settings', 'Live readings and idle face') %}
+      <label>Display <select id="twin-glance-panel"><option value="">Household default / desk</option></select></label>
+      <label>Glance list <select id="twin-glance-source" data-setting="house_twin_glance"><option value="inherit">Automatic readings</option><option value="custom">This panel's list</option></select></label>
+      <ol id="twin-glance-selected"></ol>
+      <label>Find linked entities <input id="twin-glance-search" type="search" placeholder="Search by name or entity"></label>
+      <div id="twin-glance-choices"></div>
+      <label><input id="house_twin_idle_enabled" type="checkbox"> Show idle face after one minute</label>
+      <label><input id="twin-panels-idle" type="checkbox"> Enable idle face on panels by default</label>
+      <button id="twin-glance-save" type="button">Save house settings</button>
+    {% endcall %}
+  {% endcall %}
   <output id="twin-tier" aria-label="Render tier">Loading</output>
   {% if request.query_params.get('hud') == '1' %}
   <output id="twin-hud" aria-label="Live render performance">Measuring fps and draw calls</output>
