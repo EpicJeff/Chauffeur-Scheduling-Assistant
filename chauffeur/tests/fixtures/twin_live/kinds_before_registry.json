@@ -1,0 +1,2885 @@
+{
+ "states": {
+  "light|on|{}|": "on|on",
+  "light|off|{}|": "off|off",
+  "light|unavailable|{}|": "unavailable|unavailable",
+  "light|unknown|{}|": "unavailable|unknown",
+  "light|null|{}|": "unavailable|unknown",
+  "light|locked|{}|": "off|locked",
+  "light|unlocked|{}|": "on|unlocked",
+  "light|unlocking|{}|": "on|unlocking",
+  "light|jammed|{}|": "on|jammed",
+  "light|open|{}|": "on|open",
+  "light|opening|{}|": "on|opening",
+  "light|closed|{}|": "off|closed",
+  "light|heat|{}|": "on|heat",
+  "light|idle|{}|": "off|idle",
+  "light|playing|{}|": "on|playing",
+  "light|standby|{}|": "off|standby",
+  "light|triggered|{}|": "on|triggered",
+  "light|pending|{}|": "on|pending",
+  "light|arming|{}|": "on|arming",
+  "light|disarmed|{}|": "on|disarmed",
+  "light|armed_away|{}|": "on|armed_away",
+  "light|71.2|{}|": "on|71.2",
+  "switch|on|{}|": "on|on",
+  "switch|off|{}|": "off|off",
+  "switch|unavailable|{}|": "unavailable|unavailable",
+  "switch|unknown|{}|": "unavailable|unknown",
+  "switch|null|{}|": "unavailable|unknown",
+  "switch|locked|{}|": "off|locked",
+  "switch|unlocked|{}|": "on|unlocked",
+  "switch|unlocking|{}|": "on|unlocking",
+  "switch|jammed|{}|": "on|jammed",
+  "switch|open|{}|": "on|open",
+  "switch|opening|{}|": "on|opening",
+  "switch|closed|{}|": "off|closed",
+  "switch|heat|{}|": "on|heat",
+  "switch|idle|{}|": "off|idle",
+  "switch|playing|{}|": "on|playing",
+  "switch|standby|{}|": "off|standby",
+  "switch|triggered|{}|": "on|triggered",
+  "switch|pending|{}|": "on|pending",
+  "switch|arming|{}|": "on|arming",
+  "switch|disarmed|{}|": "on|disarmed",
+  "switch|armed_away|{}|": "on|armed_away",
+  "switch|71.2|{}|": "on|71.2",
+  "outlet|on|{}|": "on|on",
+  "outlet|off|{}|": "off|off",
+  "outlet|unavailable|{}|": "unavailable|unavailable",
+  "outlet|unknown|{}|": "unavailable|unknown",
+  "outlet|null|{}|": "unavailable|unknown",
+  "outlet|locked|{}|": "off|locked",
+  "outlet|unlocked|{}|": "on|unlocked",
+  "outlet|unlocking|{}|": "on|unlocking",
+  "outlet|jammed|{}|": "on|jammed",
+  "outlet|open|{}|": "on|open",
+  "outlet|opening|{}|": "on|opening",
+  "outlet|closed|{}|": "off|closed",
+  "outlet|heat|{}|": "on|heat",
+  "outlet|idle|{}|": "off|idle",
+  "outlet|playing|{}|": "on|playing",
+  "outlet|standby|{}|": "off|standby",
+  "outlet|triggered|{}|": "on|triggered",
+  "outlet|pending|{}|": "on|pending",
+  "outlet|arming|{}|": "on|arming",
+  "outlet|disarmed|{}|": "on|disarmed",
+  "outlet|armed_away|{}|": "on|armed_away",
+  "outlet|71.2|{}|": "on|71.2",
+  "fan|on|{}|": "on|on",
+  "fan|off|{}|": "off|off",
+  "fan|unavailable|{}|": "unavailable|unavailable",
+  "fan|unknown|{}|": "unavailable|unknown",
+  "fan|null|{}|": "unavailable|unknown",
+  "fan|locked|{}|": "off|locked",
+  "fan|unlocked|{}|": "on|unlocked",
+  "fan|unlocking|{}|": "on|unlocking",
+  "fan|jammed|{}|": "on|jammed",
+  "fan|open|{}|": "on|open",
+  "fan|opening|{}|": "on|opening",
+  "fan|closed|{}|": "off|closed",
+  "fan|heat|{}|": "on|heat",
+  "fan|idle|{}|": "off|idle",
+  "fan|playing|{}|": "on|playing",
+  "fan|standby|{}|": "off|standby",
+  "fan|triggered|{}|": "on|triggered",
+  "fan|pending|{}|": "on|pending",
+  "fan|arming|{}|": "on|arming",
+  "fan|disarmed|{}|": "on|disarmed",
+  "fan|armed_away|{}|": "on|armed_away",
+  "fan|71.2|{}|": "on|71.2",
+  "lock|on|{}|": "on|on",
+  "lock|off|{}|": "off|off",
+  "lock|unavailable|{}|": "unavailable|unavailable",
+  "lock|unknown|{}|": "unavailable|unknown",
+  "lock|null|{}|": "unavailable|unknown",
+  "lock|locked|{}|": "off|locked",
+  "lock|unlocked|{}|": "attention|unlocked",
+  "lock|unlocking|{}|": "attention|unlocking",
+  "lock|jammed|{}|": "attention|jammed",
+  "lock|open|{}|": "attention|open",
+  "lock|opening|{}|": "attention|opening",
+  "lock|closed|{}|": "off|closed",
+  "lock|heat|{}|": "on|heat",
+  "lock|idle|{}|": "off|idle",
+  "lock|playing|{}|": "on|playing",
+  "lock|standby|{}|": "off|standby",
+  "lock|triggered|{}|": "on|triggered",
+  "lock|pending|{}|": "on|pending",
+  "lock|arming|{}|": "on|arming",
+  "lock|disarmed|{}|": "on|disarmed",
+  "lock|armed_away|{}|": "on|armed_away",
+  "lock|71.2|{}|": "on|71.2",
+  "garage|on|{}|": "on|on",
+  "garage|off|{}|": "off|off",
+  "garage|unavailable|{}|": "unavailable|unavailable",
+  "garage|unknown|{}|": "unavailable|unknown",
+  "garage|null|{}|": "unavailable|unknown",
+  "garage|locked|{}|": "off|locked",
+  "garage|unlocked|{}|": "on|unlocked",
+  "garage|unlocking|{}|": "on|unlocking",
+  "garage|jammed|{}|": "on|jammed",
+  "garage|open|{}|": "attention|open",
+  "garage|opening|{}|": "attention|opening",
+  "garage|closed|{}|": "off|closed",
+  "garage|heat|{}|": "on|heat",
+  "garage|idle|{}|": "off|idle",
+  "garage|playing|{}|": "on|playing",
+  "garage|standby|{}|": "off|standby",
+  "garage|triggered|{}|": "on|triggered",
+  "garage|pending|{}|": "on|pending",
+  "garage|arming|{}|": "on|arming",
+  "garage|disarmed|{}|": "on|disarmed",
+  "garage|armed_away|{}|": "on|armed_away",
+  "garage|71.2|{}|": "on|71.2",
+  "blinds|on|{}|": "on|on",
+  "blinds|off|{}|": "off|off",
+  "blinds|unavailable|{}|": "unavailable|unavailable",
+  "blinds|unknown|{}|": "unavailable|unknown",
+  "blinds|null|{}|": "unavailable|unknown",
+  "blinds|locked|{}|": "off|locked",
+  "blinds|unlocked|{}|": "on|unlocked",
+  "blinds|unlocking|{}|": "on|unlocking",
+  "blinds|jammed|{}|": "on|jammed",
+  "blinds|open|{}|": "on|open",
+  "blinds|opening|{}|": "on|opening",
+  "blinds|closed|{}|": "off|closed",
+  "blinds|heat|{}|": "on|heat",
+  "blinds|idle|{}|": "off|idle",
+  "blinds|playing|{}|": "on|playing",
+  "blinds|standby|{}|": "off|standby",
+  "blinds|triggered|{}|": "on|triggered",
+  "blinds|pending|{}|": "on|pending",
+  "blinds|arming|{}|": "on|arming",
+  "blinds|disarmed|{}|": "on|disarmed",
+  "blinds|armed_away|{}|": "on|armed_away",
+  "blinds|71.2|{}|": "on|71.2",
+  "climate|on|{}|": "on|on",
+  "climate|off|{}|": "off|off",
+  "climate|unavailable|{}|": "unavailable|unavailable",
+  "climate|unknown|{}|": "unavailable|unknown",
+  "climate|null|{}|": "unavailable|unknown",
+  "climate|locked|{}|": "off|locked",
+  "climate|unlocked|{}|": "on|unlocked",
+  "climate|unlocking|{}|": "on|unlocking",
+  "climate|jammed|{}|": "on|jammed",
+  "climate|open|{}|": "on|open",
+  "climate|opening|{}|": "on|opening",
+  "climate|closed|{}|": "off|closed",
+  "climate|heat|{}|": "on|heat",
+  "climate|idle|{}|": "off|idle",
+  "climate|playing|{}|": "on|playing",
+  "climate|standby|{}|": "off|standby",
+  "climate|triggered|{}|": "on|triggered",
+  "climate|pending|{}|": "on|pending",
+  "climate|arming|{}|": "on|arming",
+  "climate|disarmed|{}|": "on|disarmed",
+  "climate|armed_away|{}|": "on|armed_away",
+  "climate|71.2|{}|": "on|71.2",
+  "sensor|on|{}|": "on|on",
+  "sensor|off|{}|": "off|off",
+  "sensor|unavailable|{}|": "unavailable|unavailable",
+  "sensor|unknown|{}|": "unavailable|unknown",
+  "sensor|null|{}|": "unavailable|unknown",
+  "sensor|locked|{}|": "off|locked",
+  "sensor|unlocked|{}|": "on|unlocked",
+  "sensor|unlocking|{}|": "on|unlocking",
+  "sensor|jammed|{}|": "on|jammed",
+  "sensor|open|{}|": "on|open",
+  "sensor|opening|{}|": "on|opening",
+  "sensor|closed|{}|": "off|closed",
+  "sensor|heat|{}|": "on|heat",
+  "sensor|idle|{}|": "off|idle",
+  "sensor|playing|{}|": "on|playing",
+  "sensor|standby|{}|": "off|standby",
+  "sensor|triggered|{}|": "on|triggered",
+  "sensor|pending|{}|": "on|pending",
+  "sensor|arming|{}|": "on|arming",
+  "sensor|disarmed|{}|": "on|disarmed",
+  "sensor|armed_away|{}|": "on|armed_away",
+  "sensor|71.2|{}|": "on|71.2",
+  "camera|on|{}|": "on|on",
+  "camera|off|{}|": "off|off",
+  "camera|unavailable|{}|": "unavailable|unavailable",
+  "camera|unknown|{}|": "unavailable|unknown",
+  "camera|null|{}|": "unavailable|unknown",
+  "camera|locked|{}|": "off|locked",
+  "camera|unlocked|{}|": "on|unlocked",
+  "camera|unlocking|{}|": "on|unlocking",
+  "camera|jammed|{}|": "on|jammed",
+  "camera|open|{}|": "on|open",
+  "camera|opening|{}|": "on|opening",
+  "camera|closed|{}|": "off|closed",
+  "camera|heat|{}|": "on|heat",
+  "camera|idle|{}|": "off|idle",
+  "camera|playing|{}|": "on|playing",
+  "camera|standby|{}|": "off|standby",
+  "camera|triggered|{}|": "on|triggered",
+  "camera|pending|{}|": "on|pending",
+  "camera|arming|{}|": "on|arming",
+  "camera|disarmed|{}|": "on|disarmed",
+  "camera|armed_away|{}|": "on|armed_away",
+  "camera|71.2|{}|": "on|71.2",
+  "media|on|{}|": "on|on",
+  "media|off|{}|": "off|off",
+  "media|unavailable|{}|": "unavailable|unavailable",
+  "media|unknown|{}|": "unavailable|unknown",
+  "media|null|{}|": "unavailable|unknown",
+  "media|locked|{}|": "off|locked",
+  "media|unlocked|{}|": "on|unlocked",
+  "media|unlocking|{}|": "on|unlocking",
+  "media|jammed|{}|": "on|jammed",
+  "media|open|{}|": "on|open",
+  "media|opening|{}|": "on|opening",
+  "media|closed|{}|": "off|closed",
+  "media|heat|{}|": "on|heat",
+  "media|idle|{}|": "off|idle",
+  "media|playing|{}|": "on|playing",
+  "media|standby|{}|": "off|standby",
+  "media|triggered|{}|": "on|triggered",
+  "media|pending|{}|": "on|pending",
+  "media|arming|{}|": "on|arming",
+  "media|disarmed|{}|": "on|disarmed",
+  "media|armed_away|{}|": "on|armed_away",
+  "media|71.2|{}|": "on|71.2",
+  "alarm|on|{}|": "on|on",
+  "alarm|off|{}|": "off|off",
+  "alarm|unavailable|{}|": "unavailable|unavailable",
+  "alarm|unknown|{}|": "unavailable|unknown",
+  "alarm|null|{}|": "unavailable|unknown",
+  "alarm|locked|{}|": "off|locked",
+  "alarm|unlocked|{}|": "on|unlocked",
+  "alarm|unlocking|{}|": "on|unlocking",
+  "alarm|jammed|{}|": "on|jammed",
+  "alarm|open|{}|": "on|open",
+  "alarm|opening|{}|": "on|opening",
+  "alarm|closed|{}|": "off|closed",
+  "alarm|heat|{}|": "on|heat",
+  "alarm|idle|{}|": "off|idle",
+  "alarm|playing|{}|": "on|playing",
+  "alarm|standby|{}|": "off|standby",
+  "alarm|triggered|{}|": "attention|triggered",
+  "alarm|pending|{}|": "attention|pending",
+  "alarm|arming|{}|": "attention|arming",
+  "alarm|disarmed|{}|": "off|disarmed",
+  "alarm|armed_away|{}|": "on|armed_away",
+  "alarm|71.2|{}|": "on|71.2",
+  "other|on|{}|": "on|on",
+  "other|off|{}|": "off|off",
+  "other|unavailable|{}|": "unavailable|unavailable",
+  "other|unknown|{}|": "unavailable|unknown",
+  "other|null|{}|": "unavailable|unknown",
+  "other|locked|{}|": "off|locked",
+  "other|unlocked|{}|": "on|unlocked",
+  "other|unlocking|{}|": "on|unlocking",
+  "other|jammed|{}|": "on|jammed",
+  "other|open|{}|": "on|open",
+  "other|opening|{}|": "on|opening",
+  "other|closed|{}|": "off|closed",
+  "other|heat|{}|": "on|heat",
+  "other|idle|{}|": "off|idle",
+  "other|playing|{}|": "on|playing",
+  "other|standby|{}|": "off|standby",
+  "other|triggered|{}|": "on|triggered",
+  "other|pending|{}|": "on|pending",
+  "other|arming|{}|": "on|arming",
+  "other|disarmed|{}|": "on|disarmed",
+  "other|armed_away|{}|": "on|armed_away",
+  "other|71.2|{}|": "on|71.2",
+  "sensor|on|{\"unit_of_measurement\":\"°F\"}|": "on|on °F",
+  "sensor|off|{\"unit_of_measurement\":\"°F\"}|": "off|off °F",
+  "sensor|unavailable|{\"unit_of_measurement\":\"°F\"}|": "unavailable|unavailable °F",
+  "sensor|unknown|{\"unit_of_measurement\":\"°F\"}|": "unavailable|unknown °F",
+  "sensor|null|{\"unit_of_measurement\":\"°F\"}|": "unavailable|unknown °F",
+  "sensor|locked|{\"unit_of_measurement\":\"°F\"}|": "off|locked °F",
+  "sensor|unlocked|{\"unit_of_measurement\":\"°F\"}|": "on|unlocked °F",
+  "sensor|unlocking|{\"unit_of_measurement\":\"°F\"}|": "on|unlocking °F",
+  "sensor|jammed|{\"unit_of_measurement\":\"°F\"}|": "on|jammed °F",
+  "sensor|open|{\"unit_of_measurement\":\"°F\"}|": "on|open °F",
+  "sensor|opening|{\"unit_of_measurement\":\"°F\"}|": "on|opening °F",
+  "sensor|closed|{\"unit_of_measurement\":\"°F\"}|": "off|closed °F",
+  "sensor|heat|{\"unit_of_measurement\":\"°F\"}|": "on|heat °F",
+  "sensor|idle|{\"unit_of_measurement\":\"°F\"}|": "off|idle °F",
+  "sensor|playing|{\"unit_of_measurement\":\"°F\"}|": "on|playing °F",
+  "sensor|standby|{\"unit_of_measurement\":\"°F\"}|": "off|standby °F",
+  "sensor|triggered|{\"unit_of_measurement\":\"°F\"}|": "on|triggered °F",
+  "sensor|pending|{\"unit_of_measurement\":\"°F\"}|": "on|pending °F",
+  "sensor|arming|{\"unit_of_measurement\":\"°F\"}|": "on|arming °F",
+  "sensor|disarmed|{\"unit_of_measurement\":\"°F\"}|": "on|disarmed °F",
+  "sensor|armed_away|{\"unit_of_measurement\":\"°F\"}|": "on|armed_away °F",
+  "sensor|71.2|{\"unit_of_measurement\":\"°F\"}|": "on|71.2 °F",
+  "climate|on|{\"unit_of_measurement\":\"°F\"}|": "on|on",
+  "climate|off|{\"unit_of_measurement\":\"°F\"}|": "off|off",
+  "climate|unavailable|{\"unit_of_measurement\":\"°F\"}|": "unavailable|unavailable",
+  "climate|unknown|{\"unit_of_measurement\":\"°F\"}|": "unavailable|unknown",
+  "climate|null|{\"unit_of_measurement\":\"°F\"}|": "unavailable|unknown",
+  "climate|locked|{\"unit_of_measurement\":\"°F\"}|": "off|locked",
+  "climate|unlocked|{\"unit_of_measurement\":\"°F\"}|": "on|unlocked",
+  "climate|unlocking|{\"unit_of_measurement\":\"°F\"}|": "on|unlocking",
+  "climate|jammed|{\"unit_of_measurement\":\"°F\"}|": "on|jammed",
+  "climate|open|{\"unit_of_measurement\":\"°F\"}|": "on|open",
+  "climate|opening|{\"unit_of_measurement\":\"°F\"}|": "on|opening",
+  "climate|closed|{\"unit_of_measurement\":\"°F\"}|": "off|closed",
+  "climate|heat|{\"unit_of_measurement\":\"°F\"}|": "on|heat",
+  "climate|idle|{\"unit_of_measurement\":\"°F\"}|": "off|idle",
+  "climate|playing|{\"unit_of_measurement\":\"°F\"}|": "on|playing",
+  "climate|standby|{\"unit_of_measurement\":\"°F\"}|": "off|standby",
+  "climate|triggered|{\"unit_of_measurement\":\"°F\"}|": "on|triggered",
+  "climate|pending|{\"unit_of_measurement\":\"°F\"}|": "on|pending",
+  "climate|arming|{\"unit_of_measurement\":\"°F\"}|": "on|arming",
+  "climate|disarmed|{\"unit_of_measurement\":\"°F\"}|": "on|disarmed",
+  "climate|armed_away|{\"unit_of_measurement\":\"°F\"}|": "on|armed_away",
+  "climate|71.2|{\"unit_of_measurement\":\"°F\"}|": "on|71.2",
+  "light|on|{\"unit_of_measurement\":\"°F\"}|": "on|on",
+  "light|off|{\"unit_of_measurement\":\"°F\"}|": "off|off",
+  "light|unavailable|{\"unit_of_measurement\":\"°F\"}|": "unavailable|unavailable",
+  "light|unknown|{\"unit_of_measurement\":\"°F\"}|": "unavailable|unknown",
+  "light|null|{\"unit_of_measurement\":\"°F\"}|": "unavailable|unknown",
+  "light|locked|{\"unit_of_measurement\":\"°F\"}|": "off|locked",
+  "light|unlocked|{\"unit_of_measurement\":\"°F\"}|": "on|unlocked",
+  "light|unlocking|{\"unit_of_measurement\":\"°F\"}|": "on|unlocking",
+  "light|jammed|{\"unit_of_measurement\":\"°F\"}|": "on|jammed",
+  "light|open|{\"unit_of_measurement\":\"°F\"}|": "on|open",
+  "light|opening|{\"unit_of_measurement\":\"°F\"}|": "on|opening",
+  "light|closed|{\"unit_of_measurement\":\"°F\"}|": "off|closed",
+  "light|heat|{\"unit_of_measurement\":\"°F\"}|": "on|heat",
+  "light|idle|{\"unit_of_measurement\":\"°F\"}|": "off|idle",
+  "light|playing|{\"unit_of_measurement\":\"°F\"}|": "on|playing",
+  "light|standby|{\"unit_of_measurement\":\"°F\"}|": "off|standby",
+  "light|triggered|{\"unit_of_measurement\":\"°F\"}|": "on|triggered",
+  "light|pending|{\"unit_of_measurement\":\"°F\"}|": "on|pending",
+  "light|arming|{\"unit_of_measurement\":\"°F\"}|": "on|arming",
+  "light|disarmed|{\"unit_of_measurement\":\"°F\"}|": "on|disarmed",
+  "light|armed_away|{\"unit_of_measurement\":\"°F\"}|": "on|armed_away",
+  "light|71.2|{\"unit_of_measurement\":\"°F\"}|": "on|71.2",
+  "sensor|on|{\"device_class\":\"door\"}|": "attention|open",
+  "sensor|off|{\"device_class\":\"door\"}|": "off|closed",
+  "sensor|unavailable|{\"device_class\":\"door\"}|": "unavailable|unavailable",
+  "sensor|71.2|{\"device_class\":\"door\"}|": "on|71.2",
+  "sensor|on|{\"device_class\":\"door\"}|binary_sensor.door": "attention|open",
+  "sensor|off|{\"device_class\":\"door\"}|binary_sensor.door": "off|closed",
+  "sensor|on|{\"device_class\":\"window\"}|": "attention|open",
+  "sensor|off|{\"device_class\":\"window\"}|": "off|closed",
+  "sensor|unavailable|{\"device_class\":\"window\"}|": "unavailable|unavailable",
+  "sensor|71.2|{\"device_class\":\"window\"}|": "on|71.2",
+  "sensor|on|{\"device_class\":\"window\"}|binary_sensor.window": "attention|open",
+  "sensor|off|{\"device_class\":\"window\"}|binary_sensor.window": "off|closed",
+  "sensor|on|{\"device_class\":\"opening\"}|": "attention|open",
+  "sensor|off|{\"device_class\":\"opening\"}|": "off|closed",
+  "sensor|unavailable|{\"device_class\":\"opening\"}|": "unavailable|unavailable",
+  "sensor|71.2|{\"device_class\":\"opening\"}|": "on|71.2",
+  "sensor|on|{\"device_class\":\"opening\"}|binary_sensor.opening": "attention|open",
+  "sensor|off|{\"device_class\":\"opening\"}|binary_sensor.opening": "off|closed",
+  "sensor|on|{\"device_class\":\"garage_door\"}|": "attention|open",
+  "sensor|off|{\"device_class\":\"garage_door\"}|": "off|closed",
+  "sensor|unavailable|{\"device_class\":\"garage_door\"}|": "unavailable|unavailable",
+  "sensor|71.2|{\"device_class\":\"garage_door\"}|": "on|71.2",
+  "sensor|on|{\"device_class\":\"garage_door\"}|binary_sensor.garage_door": "attention|open",
+  "sensor|off|{\"device_class\":\"garage_door\"}|binary_sensor.garage_door": "off|closed",
+  "sensor|on|{\"device_class\":\"smoke\"}|": "attention|on",
+  "sensor|off|{\"device_class\":\"smoke\"}|": "off|off",
+  "sensor|unavailable|{\"device_class\":\"smoke\"}|": "unavailable|unavailable",
+  "sensor|71.2|{\"device_class\":\"smoke\"}|": "on|71.2",
+  "sensor|on|{\"device_class\":\"smoke\"}|binary_sensor.smoke": "attention|on",
+  "sensor|off|{\"device_class\":\"smoke\"}|binary_sensor.smoke": "off|off",
+  "sensor|on|{\"device_class\":\"moisture\"}|": "attention|on",
+  "sensor|off|{\"device_class\":\"moisture\"}|": "off|off",
+  "sensor|unavailable|{\"device_class\":\"moisture\"}|": "unavailable|unavailable",
+  "sensor|71.2|{\"device_class\":\"moisture\"}|": "on|71.2",
+  "sensor|on|{\"device_class\":\"moisture\"}|binary_sensor.moisture": "attention|on",
+  "sensor|off|{\"device_class\":\"moisture\"}|binary_sensor.moisture": "off|off",
+  "sensor|on|{\"device_class\":\"gas\"}|": "attention|on",
+  "sensor|off|{\"device_class\":\"gas\"}|": "off|off",
+  "sensor|unavailable|{\"device_class\":\"gas\"}|": "unavailable|unavailable",
+  "sensor|71.2|{\"device_class\":\"gas\"}|": "on|71.2",
+  "sensor|on|{\"device_class\":\"gas\"}|binary_sensor.gas": "attention|on",
+  "sensor|off|{\"device_class\":\"gas\"}|binary_sensor.gas": "off|off",
+  "sensor|on|{\"device_class\":\"motion\"}|": "on|on",
+  "sensor|off|{\"device_class\":\"motion\"}|": "off|off",
+  "sensor|unavailable|{\"device_class\":\"motion\"}|": "unavailable|unavailable",
+  "sensor|71.2|{\"device_class\":\"motion\"}|": "on|71.2",
+  "sensor|on|{\"device_class\":\"motion\"}|binary_sensor.motion": "on|on",
+  "sensor|off|{\"device_class\":\"motion\"}|binary_sensor.motion": "off|off",
+  "sensor|on|{\"device_class\":\"temperature\"}|": "on|on",
+  "sensor|off|{\"device_class\":\"temperature\"}|": "off|off",
+  "sensor|unavailable|{\"device_class\":\"temperature\"}|": "unavailable|unavailable",
+  "sensor|71.2|{\"device_class\":\"temperature\"}|": "on|71.2",
+  "sensor|on|{\"device_class\":\"temperature\"}|binary_sensor.temperature": "on|on",
+  "sensor|off|{\"device_class\":\"temperature\"}|binary_sensor.temperature": "off|off",
+  "other|on|{}|alarm_control_panel.house": "on|on",
+  "other|off|{}|alarm_control_panel.house": "off|off",
+  "other|unavailable|{}|alarm_control_panel.house": "unavailable|unavailable",
+  "other|unknown|{}|alarm_control_panel.house": "unavailable|unknown",
+  "other|null|{}|alarm_control_panel.house": "unavailable|unknown",
+  "other|locked|{}|alarm_control_panel.house": "off|locked",
+  "other|unlocked|{}|alarm_control_panel.house": "on|unlocked",
+  "other|unlocking|{}|alarm_control_panel.house": "on|unlocking",
+  "other|jammed|{}|alarm_control_panel.house": "on|jammed",
+  "other|open|{}|alarm_control_panel.house": "on|open",
+  "other|opening|{}|alarm_control_panel.house": "on|opening",
+  "other|closed|{}|alarm_control_panel.house": "off|closed",
+  "other|heat|{}|alarm_control_panel.house": "on|heat",
+  "other|idle|{}|alarm_control_panel.house": "off|idle",
+  "other|playing|{}|alarm_control_panel.house": "on|playing",
+  "other|standby|{}|alarm_control_panel.house": "off|standby",
+  "other|triggered|{}|alarm_control_panel.house": "attention|triggered",
+  "other|pending|{}|alarm_control_panel.house": "attention|pending",
+  "other|arming|{}|alarm_control_panel.house": "attention|arming",
+  "other|disarmed|{}|alarm_control_panel.house": "off|disarmed",
+  "other|armed_away|{}|alarm_control_panel.house": "on|armed_away",
+  "other|71.2|{}|alarm_control_panel.house": "on|71.2",
+  "alarm|on|{}|alarm_control_panel.house": "on|on",
+  "alarm|off|{}|alarm_control_panel.house": "off|off",
+  "alarm|unavailable|{}|alarm_control_panel.house": "unavailable|unavailable",
+  "alarm|unknown|{}|alarm_control_panel.house": "unavailable|unknown",
+  "alarm|null|{}|alarm_control_panel.house": "unavailable|unknown",
+  "alarm|locked|{}|alarm_control_panel.house": "off|locked",
+  "alarm|unlocked|{}|alarm_control_panel.house": "on|unlocked",
+  "alarm|unlocking|{}|alarm_control_panel.house": "on|unlocking",
+  "alarm|jammed|{}|alarm_control_panel.house": "on|jammed",
+  "alarm|open|{}|alarm_control_panel.house": "on|open",
+  "alarm|opening|{}|alarm_control_panel.house": "on|opening",
+  "alarm|closed|{}|alarm_control_panel.house": "off|closed",
+  "alarm|heat|{}|alarm_control_panel.house": "on|heat",
+  "alarm|idle|{}|alarm_control_panel.house": "off|idle",
+  "alarm|playing|{}|alarm_control_panel.house": "on|playing",
+  "alarm|standby|{}|alarm_control_panel.house": "off|standby",
+  "alarm|triggered|{}|alarm_control_panel.house": "attention|triggered",
+  "alarm|pending|{}|alarm_control_panel.house": "attention|pending",
+  "alarm|arming|{}|alarm_control_panel.house": "attention|arming",
+  "alarm|disarmed|{}|alarm_control_panel.house": "off|disarmed",
+  "alarm|armed_away|{}|alarm_control_panel.house": "on|armed_away",
+  "alarm|71.2|{}|alarm_control_panel.house": "on|71.2",
+  "sensor|on|{}|alarm_control_panel.house": "on|on",
+  "sensor|off|{}|alarm_control_panel.house": "off|off",
+  "sensor|unavailable|{}|alarm_control_panel.house": "unavailable|unavailable",
+  "sensor|unknown|{}|alarm_control_panel.house": "unavailable|unknown",
+  "sensor|null|{}|alarm_control_panel.house": "unavailable|unknown",
+  "sensor|locked|{}|alarm_control_panel.house": "off|locked",
+  "sensor|unlocked|{}|alarm_control_panel.house": "on|unlocked",
+  "sensor|unlocking|{}|alarm_control_panel.house": "on|unlocking",
+  "sensor|jammed|{}|alarm_control_panel.house": "on|jammed",
+  "sensor|open|{}|alarm_control_panel.house": "on|open",
+  "sensor|opening|{}|alarm_control_panel.house": "on|opening",
+  "sensor|closed|{}|alarm_control_panel.house": "off|closed",
+  "sensor|heat|{}|alarm_control_panel.house": "on|heat",
+  "sensor|idle|{}|alarm_control_panel.house": "off|idle",
+  "sensor|playing|{}|alarm_control_panel.house": "on|playing",
+  "sensor|standby|{}|alarm_control_panel.house": "off|standby",
+  "sensor|triggered|{}|alarm_control_panel.house": "attention|triggered",
+  "sensor|pending|{}|alarm_control_panel.house": "attention|pending",
+  "sensor|arming|{}|alarm_control_panel.house": "attention|arming",
+  "sensor|disarmed|{}|alarm_control_panel.house": "off|disarmed",
+  "sensor|armed_away|{}|alarm_control_panel.house": "on|armed_away",
+  "sensor|71.2|{}|alarm_control_panel.house": "on|71.2",
+  "light|on||": "on|on",
+  "light|off||": "off|off",
+  "light|on|null|": "on|on",
+  "light|off|null|": "off|off",
+  "garage|open|{\"device_class\":\"garage\"}|cover.garage_door": "attention|open",
+  "garage|opening|{\"device_class\":\"garage\"}|cover.garage_door": "attention|opening",
+  "garage|closed|{\"device_class\":\"garage\"}|cover.garage_door": "off|closed",
+  "garage|closing|{\"device_class\":\"garage\"}|cover.garage_door": "on|closing"
+ },
+ "icons": {
+  "light|on": "4d605172b5b501ec",
+  "light|off": "9ef3bb1c6891d8ad",
+  "light|attention": "1e81cd78cfae778d",
+  "light|unavailable": "b7c680aa871b8b7c",
+  "switch|on": "00fc4d8c16417b51",
+  "switch|off": "8bfc8a498e4189c9",
+  "switch|attention": "f4b332deb5652522",
+  "switch|unavailable": "0024c311329182f1",
+  "outlet|on": "00fc4d8c16417b51",
+  "outlet|off": "8bfc8a498e4189c9",
+  "outlet|attention": "f4b332deb5652522",
+  "outlet|unavailable": "0024c311329182f1",
+  "fan|on": "22bf90071999ca34",
+  "fan|off": "12821385a6c0ed4d",
+  "fan|attention": "95a9a3719feb799d",
+  "fan|unavailable": "347c69c6c807bc9e",
+  "lock|on": "15db7d3894d7ce20",
+  "lock|off": "9b7eead870a3fe8d",
+  "lock|attention": "94074630db25d14b",
+  "lock|unavailable": "34105e6840b0fe2d",
+  "garage|on": "06a8a97213b1702d",
+  "garage|off": "347fddc0ddc0ae5e",
+  "garage|attention": "39be4b737a55f96f",
+  "garage|unavailable": "42743290b818d860",
+  "blinds|on": "06a8a97213b1702d",
+  "blinds|off": "347fddc0ddc0ae5e",
+  "blinds|attention": "39be4b737a55f96f",
+  "blinds|unavailable": "42743290b818d860",
+  "climate|on": "4b452f48eb58deee",
+  "climate|off": "e0c1b95f7c612dde",
+  "climate|attention": "d071c2bdba7ad7ed",
+  "climate|unavailable": "af97b64f27da1322",
+  "sensor|on": "83ce1d28dbba4403",
+  "sensor|off": "d2eafc4a7d00b18a",
+  "sensor|attention": "cf94e28e02873ad3",
+  "sensor|unavailable": "dddf5014320ad34f",
+  "camera|on": "13b71d78ab704f88",
+  "camera|off": "4eb532c5fbe32e69",
+  "camera|attention": "dbcc14e7f1009417",
+  "camera|unavailable": "a0fc7f4cdd90bc45",
+  "media|on": "ccaa80963ff7a6e7",
+  "media|off": "dc1586e92fb26591",
+  "media|attention": "2cfdf7175881627c",
+  "media|unavailable": "7a79d34fd7ca6229",
+  "alarm|on": "5cda107a348e3cdc",
+  "alarm|off": "323ede09db34c0c8",
+  "alarm|attention": "4ee5c0b9b9a704a9",
+  "alarm|unavailable": "74ded649b277700a",
+  "other|on": "e76629c2b4d539b0",
+  "other|off": "67d5895460fb457e",
+  "other|attention": "4e0391f7ed42d1b0",
+  "other|unavailable": "d9f3b7b3a52c8ada",
+  "room|on": "e76629c2b4d539b0",
+  "room|off": "67d5895460fb457e",
+  "room|attention": "4e0391f7ed42d1b0",
+  "room|unavailable": "d9f3b7b3a52c8ada",
+  "anything-else|on": "e76629c2b4d539b0",
+  "anything-else|off": "67d5895460fb457e",
+  "anything-else|attention": "4e0391f7ed42d1b0",
+  "anything-else|unavailable": "d9f3b7b3a52c8ada",
+  "room|off|3": "17c04f259caf614a",
+  "room|attention|12": "c010e788485a8a68",
+  "room|off|0": "5ef70e704a3ce311"
+ },
+ "actions": {
+  "light|light.lamp|off|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {
+      "aria-checked": "false",
+      "aria-label": "Thing",
+      "role": "switch"
+     },
+     {
+      "type": "button"
+     },
+     "Off"
+    ],
+    [
+     "label",
+     {},
+     {},
+     "Brightness",
+     [
+      "input",
+      {
+       "aria-label": "Thing brightness"
+      },
+      {
+       "type": "range",
+       "min": "0",
+       "max": "100",
+       "step": "1",
+       "value": "0"
+      }
+     ]
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "turn_on",
+       {
+        "brightness_pct": 40
+       }
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "turn_on",
+       {
+        "brightness_pct": 40
+       }
+      ]
+     ],
+     []
+    ]
+   ]
+  },
+  "light|light.lamp|off|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "light|light.lamp|off|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "light|light.lamp|off|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "light|light.lamp|on|{\"brightness\":128}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {
+      "aria-checked": "true",
+      "aria-label": "Thing",
+      "role": "switch"
+     },
+     {
+      "type": "button"
+     },
+     "On"
+    ],
+    [
+     "label",
+     {},
+     {},
+     "Brightness",
+     [
+      "input",
+      {
+       "aria-label": "Thing brightness"
+      },
+      {
+       "type": "range",
+       "min": "0",
+       "max": "100",
+       "step": "1",
+       "value": "50"
+      }
+     ]
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "turn_on",
+       {
+        "brightness_pct": 40
+       }
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "turn_on",
+       {
+        "brightness_pct": 40
+       }
+      ]
+     ],
+     []
+    ]
+   ]
+  },
+  "light|light.lamp|on|{\"brightness\":128}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "light|light.lamp|on|{\"brightness\":128}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "light|light.lamp|on|{\"brightness\":128}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "light|light.lamp|on|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {
+      "aria-checked": "true",
+      "aria-label": "Thing",
+      "role": "switch"
+     },
+     {
+      "type": "button"
+     },
+     "On"
+    ],
+    [
+     "label",
+     {},
+     {},
+     "Brightness",
+     [
+      "input",
+      {
+       "aria-label": "Thing brightness"
+      },
+      {
+       "type": "range",
+       "min": "0",
+       "max": "100",
+       "step": "1",
+       "value": "0"
+      }
+     ]
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "turn_on",
+       {
+        "brightness_pct": 40
+       }
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "light.lamp",
+       "turn_on",
+       {
+        "brightness_pct": 40
+       }
+      ]
+     ],
+     []
+    ]
+   ]
+  },
+  "light|light.lamp|on|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "light|light.lamp|on|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "light|light.lamp|on|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "switch|switch.plug|on|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {
+      "aria-checked": "true",
+      "aria-label": "Thing",
+      "role": "switch"
+     },
+     {
+      "type": "button"
+     },
+     "On"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "switch.plug",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "switch.plug",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ]
+   ]
+  },
+  "switch|switch.plug|on|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "switch|switch.plug|on|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "switch|switch.plug|on|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "switch|switch.plug|off|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {
+      "aria-checked": "false",
+      "aria-label": "Thing",
+      "role": "switch"
+     },
+     {
+      "type": "button"
+     },
+     "Off"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "switch.plug",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "switch.plug",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ]
+   ]
+  },
+  "switch|switch.plug|off|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "switch|switch.plug|off|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "switch|switch.plug|off|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "outlet|switch.kettle|off|{\"device_class\":\"outlet\"}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {
+      "aria-checked": "false",
+      "aria-label": "Thing",
+      "role": "switch"
+     },
+     {
+      "type": "button"
+     },
+     "Off"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "switch.kettle",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "switch.kettle",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ]
+   ]
+  },
+  "outlet|switch.kettle|off|{\"device_class\":\"outlet\"}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "outlet|switch.kettle|off|{\"device_class\":\"outlet\"}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "outlet|switch.kettle|off|{\"device_class\":\"outlet\"}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "fan|fan.ceiling|on|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {
+      "aria-checked": "true",
+      "aria-label": "Thing",
+      "role": "switch"
+     },
+     {
+      "type": "button"
+     },
+     "On"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "fan.ceiling",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "fan.ceiling",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ]
+   ]
+  },
+  "fan|fan.ceiling|on|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "fan|fan.ceiling|on|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "fan|fan.ceiling|on|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "fan|fan.ceiling|off|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {
+      "aria-checked": "false",
+      "aria-label": "Thing",
+      "role": "switch"
+     },
+     {
+      "type": "button"
+     },
+     "Off"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "fan.ceiling",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "fan.ceiling",
+       "toggle",
+       {}
+      ]
+     ],
+     []
+    ]
+   ]
+  },
+  "fan|fan.ceiling|off|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "fan|fan.ceiling|off|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "fan|fan.ceiling|off|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "lock|lock.back_door|locked|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Lock"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Unlock"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "lock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "lock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "unlock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "unlock",
+       {}
+      ]
+     ],
+     [
+      [
+       "Unlock Thing?",
+       "Are you sure?",
+       "Unlock",
+       "Cancel"
+      ]
+     ]
+    ]
+   ]
+  },
+  "lock|lock.back_door|locked|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Lock"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Unlock"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "lock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "lock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "unlock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "unlock",
+       {}
+      ]
+     ],
+     [
+      [
+       "Unlock Thing?",
+       "Are you sure?",
+       "Unlock",
+       "Cancel"
+      ]
+     ]
+    ]
+   ]
+  },
+  "lock|lock.back_door|locked|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "lock|lock.back_door|locked|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "lock|lock.back_door|unlocked|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Lock"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Unlock"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "lock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "lock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "unlock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "unlock",
+       {}
+      ]
+     ],
+     [
+      [
+       "Unlock Thing?",
+       "Are you sure?",
+       "Unlock",
+       "Cancel"
+      ]
+     ]
+    ]
+   ]
+  },
+  "lock|lock.back_door|unlocked|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Lock"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Unlock"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "lock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "lock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "unlock",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "lock.back_door",
+       "unlock",
+       {}
+      ]
+     ],
+     [
+      [
+       "Unlock Thing?",
+       "Are you sure?",
+       "Unlock",
+       "Cancel"
+      ]
+     ]
+    ]
+   ]
+  },
+  "lock|lock.back_door|unlocked|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "lock|lock.back_door|unlocked|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "garage|cover.garage_door|closed|{\"device_class\":\"garage\"}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Open"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Close"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "cover.garage_door",
+       "open_cover",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "cover.garage_door",
+       "open_cover",
+       {}
+      ]
+     ],
+     [
+      [
+       "Open Thing?",
+       "Are you sure?",
+       "Open",
+       "Cancel"
+      ]
+     ]
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "cover.garage_door",
+       "close_cover",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "cover.garage_door",
+       "close_cover",
+       {}
+      ]
+     ],
+     []
+    ]
+   ]
+  },
+  "garage|cover.garage_door|closed|{\"device_class\":\"garage\"}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Open"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Close"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "cover.garage_door",
+       "open_cover",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "cover.garage_door",
+       "open_cover",
+       {}
+      ]
+     ],
+     [
+      [
+       "Open Thing?",
+       "Are you sure?",
+       "Open",
+       "Cancel"
+      ]
+     ]
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "cover.garage_door",
+       "close_cover",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "cover.garage_door",
+       "close_cover",
+       {}
+      ]
+     ],
+     []
+    ]
+   ]
+  },
+  "garage|cover.garage_door|closed|{\"device_class\":\"garage\"}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "garage|cover.garage_door|closed|{\"device_class\":\"garage\"}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "blinds|cover.blind|open|{\"current_position\":50}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "blinds|cover.blind|open|{\"current_position\":50}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "blinds|cover.blind|open|{\"current_position\":50}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "blinds|cover.blind|open|{\"current_position\":50}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "climate|climate.hall|heat|{\"temperature\":68,\"target_temp_step\":1,\"min_temp\":45,\"max_temp\":95,\"current_temperature\":70}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Lower"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Raise"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "climate.hall",
+       "set_temperature",
+       {
+        "temperature": 67
+       }
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "climate.hall",
+       "set_temperature",
+       {
+        "temperature": 67
+       }
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "climate.hall",
+       "set_temperature",
+       {
+        "temperature": 69
+       }
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "climate.hall",
+       "set_temperature",
+       {
+        "temperature": 69
+       }
+      ]
+     ],
+     []
+    ]
+   ]
+  },
+  "climate|climate.hall|heat|{\"temperature\":68,\"target_temp_step\":1,\"min_temp\":45,\"max_temp\":95,\"current_temperature\":70}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "climate|climate.hall|heat|{\"temperature\":68,\"target_temp_step\":1,\"min_temp\":45,\"max_temp\":95,\"current_temperature\":70}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "climate|climate.hall|heat|{\"temperature\":68,\"target_temp_step\":1,\"min_temp\":45,\"max_temp\":95,\"current_temperature\":70}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "climate|climate.hall|heat|{\"temperature\":95,\"target_temp_step\":0.5,\"min_temp\":45,\"max_temp\":95}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Lower"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button",
+      "disabled": true
+     },
+     "Raise"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "climate.hall",
+       "set_temperature",
+       {
+        "temperature": 94.5
+       }
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "climate.hall",
+       "set_temperature",
+       {
+        "temperature": 94.5
+       }
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "disabled",
+     [],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "disabled",
+     [],
+     []
+    ]
+   ]
+  },
+  "climate|climate.hall|heat|{\"temperature\":95,\"target_temp_step\":0.5,\"min_temp\":45,\"max_temp\":95}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "climate|climate.hall|heat|{\"temperature\":95,\"target_temp_step\":0.5,\"min_temp\":45,\"max_temp\":95}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "climate|climate.hall|heat|{\"temperature\":95,\"target_temp_step\":0.5,\"min_temp\":45,\"max_temp\":95}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "climate|climate.hall|off|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "climate|climate.hall|off|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "climate|climate.hall|off|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "climate|climate.hall|off|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "sensor|sensor.kitchen_temperature|71.2|{\"unit_of_measurement\":\"°F\"}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "sensor|sensor.kitchen_temperature|71.2|{\"unit_of_measurement\":\"°F\"}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "sensor|sensor.kitchen_temperature|71.2|{\"unit_of_measurement\":\"°F\"}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "sensor|sensor.kitchen_temperature|71.2|{\"unit_of_measurement\":\"°F\"}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "camera|camera.porch|idle|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "camera|camera.porch|idle|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "camera|camera.porch|idle|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "camera|camera.porch|idle|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "media|media_player.den|playing|{\"volume_level\":0.4}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "media|media_player.den|playing|{\"volume_level\":0.4}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "media|media_player.den|playing|{\"volume_level\":0.4}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "media|media_player.den|playing|{\"volume_level\":0.4}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "other|alarm_control_panel.house|armed_home|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Arm home"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Arm away"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Disarm"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_home",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_home",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_away",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_away",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     2,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_disarm",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     2,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_disarm",
+       {}
+      ]
+     ],
+     [
+      [
+       "Disarm Thing?",
+       "Are you sure?",
+       "Disarm",
+       "Cancel"
+      ]
+     ]
+    ]
+   ]
+  },
+  "other|alarm_control_panel.house|armed_home|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Arm home"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Arm away"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Disarm"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_home",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_home",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_away",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_away",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     2,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_disarm",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     2,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_disarm",
+       {}
+      ]
+     ],
+     [
+      [
+       "Disarm Thing?",
+       "Are you sure?",
+       "Disarm",
+       "Cancel"
+      ]
+     ]
+    ]
+   ]
+  },
+  "other|alarm_control_panel.house|armed_home|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "other|alarm_control_panel.house|armed_home|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "alarm|alarm_control_panel.house|disarmed|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Arm home"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Arm away"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Disarm"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_home",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_home",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_away",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_away",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     2,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_disarm",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     2,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_disarm",
+       {}
+      ]
+     ],
+     [
+      [
+       "Disarm Thing?",
+       "Are you sure?",
+       "Disarm",
+       "Cancel"
+      ]
+     ]
+    ]
+   ]
+  },
+  "alarm|alarm_control_panel.house|disarmed|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {},
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Arm home"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Arm away"
+    ],
+    [
+     "button",
+     {},
+     {
+      "type": "button"
+     },
+     "Disarm"
+    ]
+   ],
+   "sends": [
+    [
+     0,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_home",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     0,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_home",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_away",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     1,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_arm_away",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     2,
+     "shared",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_disarm",
+       {}
+      ]
+     ],
+     []
+    ],
+    [
+     2,
+     "plain",
+     "enabled",
+     [
+      [
+       "alarm_control_panel.house",
+       "alarm_disarm",
+       {}
+      ]
+     ],
+     [
+      [
+       "Disarm Thing?",
+       "Are you sure?",
+       "Disarm",
+       "Cancel"
+      ]
+     ]
+    ]
+   ]
+  },
+  "alarm|alarm_control_panel.house|disarmed|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "alarm|alarm_control_panel.house|disarmed|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "other|scene.movie|scening|{}|offered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "other|scene.movie|scening|{}|offered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "other|scene.movie|scening|{}|unoffered|full": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  },
+  "other|scene.movie|scening|{}|unoffered|compact": {
+   "shape": [
+    "div",
+    {
+     "class": "twin-device-actions"
+    },
+    {}
+   ],
+   "sends": []
+  }
+ }
+}
