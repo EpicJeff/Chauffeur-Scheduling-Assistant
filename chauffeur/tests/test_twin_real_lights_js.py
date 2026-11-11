@@ -34,7 +34,9 @@ Through mountLive (static/twin/live/live.js), which builds the rig from view.tie
     intensity 0 and real false); `at` is the marker's `at`; rgb lightColor's;
     intensity lightIntensity's; real whether it holds a pool PointLight now.
   - In Lights mode each real light's PointLight sits at its marker's world spot
-    (x and z equal; y the marker's, or at most a foot under it), intensity > 0,
+    (x and z equal; y the marker's, or at most a foot under it; Ruling R1: a light
+    standing on the floor is a floor lamp, its PointLight and its glowing fixture
+    4.5 ft above the floor, straight over the marker), intensity > 0,
     decay 2, a finite distance near the room's larger span (0.5x to 2.5x).
     Unused pool lights have intensity 0. Choice is redone on draw() when the
     camera target moves.
@@ -156,11 +158,14 @@ const allLights = view => { const out = []; view.scene.traverse(o => { if (o.isL
 const tagged = (view, key) => { const out = []; view.scene.traverse(o => { if (o.userData && o.userData[key] !== undefined) out.push(o); }); return out; };
 const markerSpot = (view, id) => { let spot = null; view.scene.traverse(o => { if (o.isSprite && o.userData.deviceId === id) spot = o.getWorldPosition(new THREE.Vector3()); }); return spot; };
 // The pool light lighting a marker: on, x and z on the marker, y at most a foot under it.
-const lampAt = (view, id) => {
+// A floor lamp's (Ruling R1: a light on the floor) hangs 4.5 ft above the floor its marker is on.
+const LAMP_HEIGHT = 4.5;
+const lampAt = (view, id, floorLamp = false) => {
   const spot = markerSpot(view, id); assert.ok(spot, `the marker sprite of ${id}`);
   return pool(view).filter(l => l.intensity > 0 && shown(l)).find(l => {
     const p = l.getWorldPosition(new THREE.Vector3());
-    return Math.abs(p.x - spot.x) < .05 && Math.abs(p.z - spot.z) < .05 && p.y <= spot.y + .05 && p.y >= spot.y - FT - .05;
+    if (Math.abs(p.x - spot.x) >= .05 || Math.abs(p.z - spot.z) >= .05) return false;
+    return floorLamp ? Math.abs(p.y - (spot.y + LAMP_HEIGHT * FT)) < .05 : p.y <= spot.y + .05 && p.y >= spot.y - FT - .05;
   }) || null;
 };
 const row = (live, id) => live.lights().find(r => r.device === id) || null;
@@ -364,6 +369,32 @@ check('all_mode_restores_previous_lighting', async () => {
     live.setMode('lights');
   } finally { live.stop(); }
   assert.equal(evening.at(-1), false, 'stopping the layer in Lights mode gives the look back');
+});
+
+check('floor_lamp_light_hangs_at_lamp_height', async () => {
+  // Ruling R1: a light standing on the floor of room C is a floor lamp.
+  const lamp = light('d1','C',[3,33,0],'on',{brightness:255});
+  const marker = {device_id:'d1',name:'d1',entity_id:'light.d1',entities:['light.d1'],kind:'light',offered:true,
+    area_id:'area_c',building:'b',level:'L1',room:'C',at:[3,33,0],placed:true};
+  fixture.push(lamp); layout.markers.push(marker);
+  layout.devices.push({device_id:'d1',name:'d1',entity_id:'light.d1',entities:['light.d1'],kind:'light',offered:true,area_id:'area_c'});
+  try {
+    const {view, live} = await mounted('high');
+    try {
+      live.setMode('lights');
+      assert.ok(row(live, 'd1')?.real === true, `the floor lamp is real on high: ${JSON.stringify(row(live, 'd1'))}`);
+      assert.deepEqual(row(live, 'd1').at, [3,33,0], 'live.lights() keeps the at of the marker');
+      const hung = lampAt(view, 'd1', true);
+      assert.ok(hung, `the floor lamp's light is 4.5 ft above the floor: ${JSON.stringify(pool(view).filter(l => l.intensity > 0).map(l => l.position.toArray().map(v => v / FT)))}`);
+      assert.equal(lampAt(view, 'd1'), null, 'not at the marker on the floor');
+      const glow = bulb(view, 'd1')[0], at = glow.getWorldPosition(new THREE.Vector3());
+      assert.ok(Math.abs(at.y - LAMP_HEIGHT * FT) < .05, `the fixture glows at the bulb, 4.5 ft up: ${at.y / FT} ft`);
+      assert.ok(lampAt(view, 'a1'), 'a light 9 ft up keeps the marker height rule');
+    } finally { live.stop(); }
+  } finally {
+    fixture.splice(fixture.indexOf(lamp), 1); layout.markers.splice(layout.markers.indexOf(marker), 1);
+    layout.devices.splice(layout.devices.findIndex(d => d.device_id === 'd1'), 1);
+  }
 });
 
 let passed = 0;

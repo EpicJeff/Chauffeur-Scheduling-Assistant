@@ -108,12 +108,21 @@ MARKER_SPOT_JS = """([id, FT]) => {
 }"""
 
 
-def lamp_at(page, device_id):
-    """The lit pool light at a marker: x, y on it, height the marker's or up to a foot under."""
+LAMP_HEIGHT = 4.5   # Ruling R1: a light on the floor is a floor lamp, its bulb 4.5 ft up
+
+
+def lamp_at(page, device_id, floor_lamp=False):
+    """The lit pool light at a marker: x, y on it, height the marker's or up to a foot under.
+
+    A floor lamp (floor_lamp=True: the light stands on the floor, its marker at the
+    floor) has its light LAMP_HEIGHT above the floor instead."""
     spot = page.evaluate(MARKER_SPOT_JS, [device_id, FT])
     check(spot, ('the marker sprite of', device_id))
+
+    def height(z):
+        return abs(z - (spot[2] + LAMP_HEIGHT)) < .05 if floor_lamp else spot[2] - 1.05 <= z <= spot[2] + .05
     hits = [p for p in lit_pool(page) if abs(p['at'][0] - spot[0]) < .2 and abs(p['at'][1] - spot[1]) < .2
-            and spot[2] - 1.05 <= p['at'][2] <= spot[2] + .05]
+            and height(p['at'][2])]
     return hits[0] if hits else None
 
 
@@ -405,7 +414,7 @@ def scenario_tap_off_turns_the_light_off_after_confirmed_state():
             lights_mode(page)
             row = light(page, 'dev-k-lamp')
             check(is_on(row) and abs(row['intensity'] - 128 / 255) < .01, ('the Counter lamp is a real light at 50 percent', row))
-            check(lamp_at(page, 'dev-k-lamp'), ('a lit PointLight at the Counter lamp', lit_pool(page)))
+            check(lamp_at(page, 'dev-k-lamp', floor_lamp=True), ('a lit PointLight at the Counter lamp', lit_pool(page)))
             count = len(pool(page))
             H.settle(page, 6)
             programs = page.evaluate('() => window.__twin.renderer3.info.programs.length')
@@ -419,7 +428,7 @@ def scenario_tap_off_turns_the_light_off_after_confirmed_state():
                   'the tap reached Home Assistant and its answer is held')
             check(FAKE.calls[start:] and FAKE.calls[-1][:2] == ('light', 'toggle'), FAKE.calls[start:])
             check(is_on(light(page, 'dev-k-lamp')), ('no optimistic flip: still on while the answer is out', light(page, 'dev-k-lamp')))
-            check(lamp_at(page, 'dev-k-lamp'), 'the PointLight stays lit while the answer is out')
+            check(lamp_at(page, 'dev-k-lamp', floor_lamp=True), 'the PointLight stays lit while the answer is out')
             page.evaluate('() => window.__releaseControl()')
             page.wait_for_timeout(800)
             L.refresh(page)
@@ -433,7 +442,7 @@ def scenario_tap_off_turns_the_light_off_after_confirmed_state():
                   ('off once Home Assistant confirms', light(page, 'dev-k-lamp')))
             check(FAKE.states['light.counter_lamp']['state'] == 'off', FAKE.states['light.counter_lamp'])
             calm(page)
-            check(lamp_at(page, 'dev-k-lamp') is None, ('no lit PointLight at the lamp', lit_pool(page)))
+            check(lamp_at(page, 'dev-k-lamp', floor_lamp=True) is None, ('no lit PointLight at the lamp', lit_pool(page)))
             check(len(pool(page)) == count, ('the pool keeps its size', count, len(pool(page))))
             check(page.evaluate('() => window.__twin.renderer3.info.programs.length') == programs,
                   ('turning a light off compiles no shader', programs,

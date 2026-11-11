@@ -17,6 +17,9 @@ export function roomStates(rooms, states) {
 // range's smooth cut-off leaves that corner lit. Without shadows a light shines
 // through walls, so a tighter range is also less light in the next room and on
 // the lawn outside. Bounded to the room's larger span (0.6x to 2x).
+// Feet above the floor at which a floor lamp's bulb hangs (Ruling R1).
+export const LAMP_HEIGHT = 4.5;
+
 export function lightRange(marker, building, level, room, span) {
   if (!room?.polygon?.length || !building) return span * 1.5;
   const angle = (building.rotation || 0) * Math.PI / 180, [px, py] = building.position || [0, 0];
@@ -53,12 +56,18 @@ export function mountModes(view, live) {
     const xs = room?.polygon?.map(p => p[0]) || [], ys = room?.polygon?.map(p => p[1]) || [];
     const span = xs.length ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 1) : 10;
     const level = building?.levels.find(l => l.id === marker.level);
-    const range = lightRange(marker, building, level, room, span);
+    // A light standing on the floor is a floor lamp: its bulb, and so its light,
+    // hangs LAMP_HEIGHT above the floor (a bulb on the floor makes one hot spot
+    // and lights nothing). The marker stays where the person put it.
+    const floor = (building?.base || 0) + (level?.elevation || 0);
+    const standing = !!level && marker.at[2] <= floor + .1;
+    const z = standing ? floor + LAMP_HEIGHT : marker.at[2];
+    const range = lightRange({ ...marker, at: [marker.at[0], marker.at[1], z] }, building, level, room, span);
     const position = new THREE.Vector3(marker.at[0] * FT,
-      (marker.at[2] + groundAt(view.plan, ...(building?.position || [0, 0]))) * FT, -marker.at[1] * FT);
+      (z + groundAt(view.plan, ...(building?.position || [0, 0]))) * FT, -marker.at[1] * FT);
     // Ceiling placements sit just below the slab so their own fixture cannot
-    // occlude them. Floor/wall placements retain the person's chosen height.
-    if (level && marker.at[2] >= (building.base || 0) + level.elevation + level.ceiling - .1) position.y -= .2 * FT;
+    // occlude them. Wall placements retain the person's chosen height.
+    if (level && !standing && marker.at[2] >= floor + level.ceiling - .1) position.y -= .2 * FT;
     const bulb = new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: '#fff1c9', toneMapped: false }));
     bulb.position.copy(position); bulb.userData.bulb = marker.device_id; bulb.visible = false;
     view.scene.add(bulb);
