@@ -95,7 +95,7 @@ export async function boot() {
     el('editor-check-step').hidden = previewing || currentBuild?.state !== 'paused' || !pauses?.dismissed();
     el('editor-resume').hidden = previewing || !['stopped', 'checkpoint'].includes(currentBuild?.state);
     el('editor-resume').disabled = !canEdit() || !hooks.ready || resuming;
-    el('editor-stop').hidden = currentBuild?.state !== 'running';
+    el('editor-stop').hidden = !active(currentBuild);
     el('editor-stop').disabled = session.signedOut || stopping;
     const busy = !canEdit() || !hooks.ready || resuming || active(currentBuild);
     for (const id of ['menu-director', 'menu-advanced', 'menu-start-over', 'menu-reset-spend']) el(id).disabled = busy;
@@ -282,7 +282,7 @@ export async function boot() {
     finally { resuming = false; syncBuildButton(); }
   });
   listen(el('editor-stop'), 'click', async () => {
-    if (session.signedOut || stopping || currentBuild?.state !== 'running') return;
+    if (session.signedOut || stopping || !active(currentBuild)) return;
     stopping = true; syncBuildButton();
     try {
       await request(`build/${encodeURIComponent(currentBuild.id)}/stop`, 'POST', {});

@@ -25,9 +25,13 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-top h1, #editor-top output { background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 24px; padding: 8px 14px; }
 #editor-top #editor-status { color: var(--editor-accent); border-color: #167aa5; }
 /* Same top-bar pill and action as the existing status and Stop controls. */
-#editor-chip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 24px; padding: 4px 8px 4px 14px; }
+/* The chip keeps the pills' 38px height in every state, so the bar never jumps when a build starts or stops;
+   Stop is a compact pill inside it with a 44px hit area (the Messages new-chat precedent). */
+#editor-chip { display: flex; align-items: center; gap: 8px; min-height: 38px; white-space: nowrap; background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 24px; padding: 0 14px; }
+#editor-chip:has(> button:not([hidden])) { padding-right: 3px; }
 #editor-chip [role="status"] { color: var(--editor-accent); }
-#editor-chip button { border-radius: 24px; }
+#editor-chip button { position: relative; min-height: 30px; padding: 2px 12px; border-radius: 24px; }
+#editor-chip button::before { content: ''; position: absolute; inset: -8px -3px; }
 #editor-menu { position: relative; }
 #editor-menu summary { list-style: none; border: 1px solid var(--editor-line); border-radius: 10px; padding: 10px; background: var(--editor-panel); }
 #editor-menu > div { position: absolute; left: 0; top: 48px; width: 210px; padding: 8px; background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 12px; }
@@ -214,7 +218,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   #editor-scene { inset: 0 0 48% 0; }
   #editor-top { left: 8px; right: 8px; top: 8px; gap: 4px; }
   #editor-top h1, #editor-top output { padding: 6px 8px; font-size: 11px; }
-  #editor-chip { font-size: 11px; padding: 4px 8px; }
+  #editor-chip { font-size: 11px; min-height: 31px; padding: 0 8px; gap: 6px; }
+  #editor-chip button { min-height: 25px; padding: 1px 8px; }
+  #editor-chip button::before { inset: -11px -3px; }
   #editor-agent { top: calc(52% + 72px); bottom: calc(8px + env(safe-area-inset-bottom)); left: 8px; right: 8px; width: auto; }
   #editor-rail { left: 8px; top: 100px; transform: none; max-height: calc(52% - 160px); overflow: auto; }
   #editor-floors { left: 8px; right: 8px; top: calc(52% + 8px); width: auto; height: 56px; flex-direction: row; align-items: center; overflow: auto; }

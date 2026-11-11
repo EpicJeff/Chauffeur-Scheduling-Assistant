@@ -11,7 +11,8 @@ export function createStatusChip(host) {
     spend.textContent = `$${Number(value.cost || 0).toFixed(2)} so far`;
     estimate.hidden = value.estimate == null;
     estimate.textContent = value.estimate == null ? '' : `about $${Number(value.estimate).toFixed(2)}`;
-    if (stop) stop.hidden = value.state !== 'running';
+    // Stop ends any build still in flight: running, or waiting at a pause or checkpoint.
+    if (stop) stop.hidden = !['running', 'paused', 'checkpoint'].includes(value.state);
   }
   update({ state: null, cost: 0, estimate: null });
   return { update };
