@@ -1,0 +1,667 @@
+"""Live state pushed from Home Assistant (Task 2 of
+docs/superpowers/plans/2026-11-11-twin-device-controls.md; spec
+docs/superpowers/specs/2026-11-11-twin-device-controls-design.md decision 5;
+brief .superpowers/sdd/2026-11-11-twin-device-controls/task-2-brief.md).
+
+No network sockets: Home Assistant's websocket is a fake connection object
+patched over `ha_events._connect`, and the SSE route is driven by calling the
+ASGI app in-process on one shared event loop (TestClient buffers a whole
+response, so it cannot read a stream that never ends; the one loopback pair
+left is asyncio's own self-pipe, made once, see _app_loop).
+
+Interfaces assumed (services/ha_events.py):
+- `start()`: starts ONE background client when Home Assistant is configured,
+  i.e. when `ha_api._ws_url_and_token()` names a url; with none it starts no
+  thread and connects to nothing. Calling it again while running changes nothing.
+- `stop()`: ends the client (closes the connection, the thread exits).
+- `subscribe(entities=None) -> queue.Queue`: each pushed change arrives as
+  `{'entity_id': str, 'state': <HA's new_state object, or None when removed>}`;
+  with `entities` given, only those ids arrive. `unsubscribe(q)` ends one.
+- `_connect(url)`: the seam the tests replace; returns a connection with
+  `send(text)`, `recv(timeout=None) -> text` and `close()` (the shape of
+  websockets.sync.client's connection, which ha_api.ws_command already uses).
+  Auth rides the connection as HA's own protocol: auth_required, auth with the
+  token from `_ws_url_and_token()`, auth_ok, then
+  `{'id': n, 'type': 'subscribe_events', 'event_type': 'state_changed'}`.
+- `BACKOFF_BASE` / `BACKOFF_MAX` (seconds): module constants read at run time;
+  the delay between failed connects starts near BACKOFF_BASE and grows (to at
+  most BACKOFF_MAX). These tests set 0.1 / 1.0.
+- A pushed change is written into `ha_api`'s states cache (the row replaced,
+  the cache marked fresh) BEFORE subscribers hear of it.
+
+The route: `GET /api/ha/stream?entities=a.b,c.d` (WALL_OR_SERVICE), media type
+text/event-stream; every `data:` line is one JSON change shaped like the queue
+item above (unnamed SSE events, so `EventSource.onmessage` reads them). Comment
+lines (`: ping`) are allowed; nothing else is sent as data.
+
+Run from chauffeur/:  env -u HA_BASE_URL python tests/test_ha_events.py
+"""
+import asyncio
+import contextlib
+import copy
+import io
+import json
+import logging
+import os
+import queue
+import sys
+import tempfile
+import threading
+import time
+import traceback
+from unittest.mock import patch
+
+if not os.environ.get('CHAUFFEUR_DATA_DIR', '').startswith(tempfile.gettempdir()):
+    os.environ['CHAUFFEUR_DATA_DIR'] = tempfile.mkdtemp(prefix='chauffeur_ha_events_')
+for _name in ('HA_BASE_URL', 'HA_TOKEN', 'SUPERVISOR_TOKEN'):
+    os.environ.pop(_name, None)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from services import auth, ha_api, storage  # noqa: E402
+
+STREAM = '/api/ha/stream'
+TOKEN = 'tok-ha'
+SERVICE_TOKEN = 'svc-secret-1'
+_real_settings = storage.get_settings
+
+
+def check(cond, msg):
+    if not cond:
+        raise AssertionError(msg)
+
+
+def wait_until(pred, timeout, step=0.01):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(step)
+    return bool(pred())
+
+
+def _events():
+    from services import ha_events
+    return ha_events
+
+
+# ---------------------------------------------------------------- fake Home Assistant websocket
+
+_CLOSED = object()
+
+
+class FakeConn:
+    """One accepted websocket, in memory. HA's side of the protocol only."""
+
+    def __init__(self, hub):
+        self.hub, self.inbox, self.closed = hub, queue.Queue(), False
+        self.sub_id = None
+        self.authed = False
+        self.inbox.put({'type': 'auth_required', 'ha_version': '2026.11.0'})
+
+    def _reply(self, msg):
+        self.inbox.put(msg)
+
+    def send(self, text):
+        if self.closed:
+            from websockets.exceptions import ConnectionClosedError
+            raise ConnectionClosedError(None, None)
+        msg = json.loads(text)
+        kind = msg.get('type')
+        if kind == 'auth':
+            self.authed = msg.get('access_token') == self.hub.token
+            self._reply({'type': 'auth_ok' if self.authed else 'auth_invalid', 'ha_version': '2026.11.0'})
+            return
+        if not self.authed:
+            return
+        if kind == 'subscribe_events' and msg.get('event_type') == 'state_changed':
+            self.sub_id = msg['id']
+            self._reply({'id': msg['id'], 'type': 'result', 'success': True, 'result': None})
+        elif kind == 'get_states':
+            self._reply({'id': msg['id'], 'type': 'result', 'success': True,
+                         'result': copy.deepcopy(list(self.hub.states.values()))})
+        elif kind == 'ping':
+            self._reply({'id': msg['id'], 'type': 'pong'})
+        elif 'id' in msg:
+            self._reply({'id': msg['id'], 'type': 'result', 'success': True, 'result': None})
+
+    def recv(self, timeout=None, *args, **kwargs):
+        if self.closed and self.inbox.empty():
+            from websockets.exceptions import ConnectionClosedError
+            raise ConnectionClosedError(None, None)
+        try:
+            item = self.inbox.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError('timed out waiting for a message')
+        if item is _CLOSED:
+            from websockets.exceptions import ConnectionClosedError
+            raise ConnectionClosedError(None, None)
+        return json.dumps(item)
+
+    def __iter__(self):
+        from websockets.exceptions import ConnectionClosedOK
+        while True:
+            try:
+                yield self.recv()
+            except ConnectionClosedOK:
+                return
+
+    def ping(self, *args, **kwargs):
+        done = threading.Event()
+        done.set()
+        return done
+
+    def close(self, *args, **kwargs):
+        if not self.closed:
+            self.closed = True
+            self.inbox.put(_CLOSED)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+class FakeHub:
+    """Home Assistant's websocket endpoint and its REST /states, in memory."""
+
+    def __init__(self):
+        self.token = TOKEN
+        self.refuse = False
+        self.attempts = []          # (monotonic time, accepted)
+        self.conns = []
+        self.rest_calls = []
+        self.states = {s['entity_id']: s for s in (
+            _state('light.kitchen', 'off', brightness=None),
+            _state('lock.back', 'locked'),
+            _state('switch.other', 'off'),
+        )}
+        self.orig = {}
+
+    def connect(self, url, *args, **kwargs):
+        self.attempts.append((time.monotonic(), not self.refuse))
+        if self.refuse:
+            raise ConnectionRefusedError('Home Assistant is restarting')
+        conn = FakeConn(self)
+        self.conns.append(conn)
+        return conn
+
+    def live(self):
+        return [c for c in self.conns if not c.closed and c.sub_id is not None]
+
+    def subscribed(self, n=1):
+        return sum(1 for c in self.conns if c.sub_id is not None) >= n and bool(self.live())
+
+    def push(self, entity_id, state, **attributes):
+        old = copy.deepcopy(self.states.get(entity_id))
+        new = _state(entity_id, state, **attributes)
+        self.states[entity_id] = new
+        for conn in self.live():
+            conn.inbox.put({'id': conn.sub_id, 'type': 'event', 'event': {
+                'event_type': 'state_changed', 'time_fired': '2026-11-11T12:00:00+00:00', 'origin': 'LOCAL',
+                'data': {'entity_id': entity_id, 'old_state': old, 'new_state': copy.deepcopy(new)}}})
+        return new
+
+    def drop(self):
+        """HA goes away: every open connection dies and new ones are refused."""
+        self.refuse = True
+        for conn in self.conns:
+            conn.close()
+
+    def rest(self, method, path, json_body=None, params=None, timeout=None):
+        self.rest_calls.append((method, path))
+        if method == 'GET' and path == '/states':
+            return copy.deepcopy(list(self.states.values()))
+        if method == 'GET' and path.startswith('/states/'):
+            return copy.deepcopy(self.states.get(path[len('/states/'):]))
+        if method == 'GET' and path == '/config':
+            return {'version': '2026.11.0'}
+        return None
+
+    def install(self):
+        ev = _events()
+        self.orig = {'_connect': (ev, ev._connect),
+                     '_ws_url_and_token': (ha_api, ha_api._ws_url_and_token),
+                     '_base_and_token': (ha_api, ha_api._base_and_token),
+                     '_request': (ha_api, ha_api._request),
+                     'BACKOFF_BASE': (ev, getattr(ev, 'BACKOFF_BASE', None)),
+                     'BACKOFF_MAX': (ev, getattr(ev, 'BACKOFF_MAX', None))}
+        ev._connect = self.connect
+        ev.BACKOFF_BASE, ev.BACKOFF_MAX = 0.1, 1.0
+        ha_api._ws_url_and_token = lambda: ('ws://ha.test:8123/api/websocket', TOKEN)
+        ha_api._base_and_token = lambda: ('http://ha.test:8123/api', TOKEN)
+        ha_api._request = self.rest
+        _reset_cache()
+        return self
+
+    def uninstall(self):
+        try:
+            _events().stop()
+        finally:
+            for name, (owner, value) in self.orig.items():
+                if value is not None:
+                    setattr(owner, name, value)
+            _reset_cache()
+
+
+def _state(eid, st, **attrs):
+    return {'entity_id': eid, 'state': st, 'last_changed': '2026-11-11T12:00:00+00:00',
+            'attributes': {'friendly_name': eid.split('.', 1)[1].replace('_', ' ').title(),
+                           **{k: v for k, v in attrs.items() if v is not None}}}
+
+
+def _reset_cache():
+    with ha_api._cache_lock:
+        ha_api._states_cache.clear()
+        ha_api._states_cache.update({'ts': 0.0, 'data': None})
+
+
+@contextlib.contextmanager
+def fake_ha():
+    hub = FakeHub().install()
+    try:
+        yield hub
+    finally:
+        hub.uninstall()
+
+
+def started(hub, n=1):
+    """start() and wait for the n-th subscription to state_changed."""
+    _events().start()
+    check(wait_until(lambda: hub.subscribed(n), 3),
+          f'the client connects, authenticates and subscribes to state_changed: attempts {hub.attempts}')
+
+
+# ---------------------------------------------------------------- the app, in-process
+
+_LOOP = {'loop': None}
+
+
+def _app_loop():
+    """ONE event loop for every in-process request, on its own thread.
+
+    Making an event loop on Windows makes a loopback socket pair (asyncio's
+    self-pipe), and this machine's loopback drops connections in bursts: a loop
+    per request hung one run in five inside socket.accept. So the loop is made
+    once, and a try that has not come up in 5 s is abandoned for a fresh one."""
+    if _LOOP['loop'] is not None:
+        return _LOOP['loop']
+    for _ in range(3):
+        ready, box = threading.Event(), {}
+
+        def run():
+            loop = asyncio.new_event_loop()
+            box['loop'] = loop
+            ready.set()
+            loop.run_forever()
+        threading.Thread(target=run, daemon=True, name='test-app-loop').start()
+        if ready.wait(5):
+            _LOOP['loop'] = box['loop']
+            return box['loop']
+    raise AssertionError('could not make an event loop (loopback socket pair) in three tries')
+
+
+class Stream:
+    """One GET to the ASGI app on the shared test loop: no socket. The
+    response's start and every body chunk are recorded as they are sent, and
+    close() is the browser going away (http.disconnect)."""
+
+    def __init__(self, path, headers=()):
+        import main
+        self.app, self.path, self.headers = main.app, path, list(headers)
+        self.status, self.media, self.body, self.ended = None, '', b'', False
+        self.error = None
+        self.started = threading.Event()
+        self.lock = threading.Lock()
+        self.loop = self.gone = self.future = None
+
+    async def _main(self):
+        self.gone = asyncio.Event()
+        path, _, query = self.path.partition('?')
+        scope = {'type': 'http', 'http_version': '1.1', 'method': 'GET', 'scheme': 'http', 'path': path,
+                 'raw_path': path.encode(), 'root_path': '', 'query_string': query.encode(),
+                 'headers': [(k.lower().encode(), v.encode()) for k, v in self.headers],
+                 'client': ('192.168.1.40', 50000), 'server': ('testserver', 80), 'state': {}, 'extensions': {}}
+        asked = False
+
+        async def receive():
+            nonlocal asked
+            if not asked:
+                asked = True
+                return {'type': 'http.request', 'body': b'', 'more_body': False}
+            await self.gone.wait()
+            return {'type': 'http.disconnect'}
+
+        async def send(message):
+            if message['type'] == 'http.response.start':
+                self.status = message['status']
+                self.media = dict((k.decode().lower(), v.decode()) for k, v in message.get('headers', [])).get(
+                    'content-type', '')
+                self.started.set()
+            elif message['type'] == 'http.response.body':
+                with self.lock:
+                    self.body += message.get('body', b'')
+                if not message.get('more_body'):
+                    self.ended = True
+
+        try:
+            await self.app(scope, receive, send)
+        except BaseException as e:  # recorded; asserted on by the caller
+            self.error = e
+            raise
+        finally:
+            self.started.set()
+
+    def open(self):
+        self.loop = _app_loop()
+        self.future = asyncio.run_coroutine_threadsafe(self._main(), self.loop)
+        check(self.started.wait(10), f'{self.path}: the response starts')
+        check(self.error is None, f'{self.path}: the app raised {self.error!r}')
+        return self
+
+    def text(self):
+        with self.lock:
+            return self.body.decode('utf-8', 'replace')
+
+    def changes(self):
+        """Every `data:` line, parsed."""
+        out = []
+        for line in self.text().splitlines():
+            if line.startswith('data:'):
+                out.append(json.loads(line[5:].strip()))
+        return out
+
+    def close(self):
+        if self.future is None:
+            return True
+        if not self.future.done() and self.gone is not None:
+            self.loop.call_soon_threadsafe(self.gone.set)
+        try:
+            self.future.result(5)
+        except Exception:
+            pass
+        if not self.future.done():
+            self.future.cancel()
+            return False
+        return True
+
+
+class People:
+    """Enforcement on; a parent, a panel and the service token."""
+
+    def __enter__(self):
+        for mid, role in (('mum', 'parent'), ('kid', 'child')):
+            if not storage.get_member(mid):
+                storage.add_member({'id': mid, 'name': mid.title(), 'role': role, 'status': 'active'})
+        self.mum_token = storage.create_member_token('mum', proof='password', minted_on='personal')
+        self.panel = {'X-Device-Token': storage.enrol_device_token('panel-1', 'Kitchen panel', by_member='mum')}
+        self.service = {'X-Service-Token': SERVICE_TOKEN}
+        self.patch = patch.object(storage, 'get_settings', side_effect=lambda: {
+            **_real_settings(), 'auth_enforce': True, 'service_token': SERVICE_TOKEN})
+        self.patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.patch.stop()
+
+
+def stream(path, headers):
+    return Stream(path, list(headers.items())).open()
+
+
+# ---------------------------------------------------------------- tests
+
+def test_state_changed_reaches_a_subscriber_within_a_second():
+    with fake_ha() as hub, People() as who:
+        started(hub)
+        q = _events().subscribe(['light.kitchen'])
+        s = stream(STREAM + '?entities=light.kitchen', who.panel)
+        try:
+            check(s.status == 200, f'the panel reads the stream: {s.status} {s.text()[:200]}')
+            check(s.media.startswith('text/event-stream'), f'an SSE stream: {s.media!r}')
+            time.sleep(0.3)     # the route's own subscription settles
+            t0 = time.monotonic()
+            hub.push('light.kitchen', 'on', brightness=200, color_mode='brightness')
+            item = q.get(timeout=1.0)
+            check(time.monotonic() - t0 < 1.0, 'the queue hears it within a second')
+            check(item['entity_id'] == 'light.kitchen', item)
+            check(item['state']['state'] == 'on' and item['state']['attributes'].get('brightness') == 200,
+                  f'the new state, attributes and all: {item}')
+            hit = lambda: [c for c in s.changes() if c.get('entity_id') == 'light.kitchen'
+                           and (c.get('state') or {}).get('state') == 'on']
+            check(wait_until(lambda: bool(hit()), 1.0 - (time.monotonic() - t0)),
+                  f'the SSE stream carries it within a second of HA: {s.text()[:400]!r}')
+            change = hit()[0]
+            check(change['state']['attributes'].get('brightness') == 200, change)
+            check(not s.ended, 'the stream stays open')
+        finally:
+            _events().unsubscribe(q)
+            check(s.close(), 'the stream ends when the browser goes away')
+
+
+def test_filter_by_entities():
+    with fake_ha() as hub, People() as who:
+        started(hub)
+        only = _events().subscribe(['light.kitchen', 'lock.back'])
+        every = _events().subscribe()
+        s = stream(STREAM + '?entities=light.kitchen,lock.back', who.panel)
+        try:
+            time.sleep(0.3)
+            hub.push('switch.other', 'on')
+            hub.push('light.kitchen', 'on')
+            hub.push('lock.back', 'unlocked')
+            hub.push('switch.other', 'off')
+            want = {('light.kitchen', 'on'), ('lock.back', 'unlocked')}
+            seen = lambda: {(c['entity_id'], (c.get('state') or {}).get('state')) for c in s.changes()}
+            check(wait_until(lambda: want <= seen(), 2), f'both asked-for changes arrive: {s.text()[:400]!r}')
+            time.sleep(0.2)
+            ids = {c['entity_id'] for c in s.changes()}
+            check(ids <= {'light.kitchen', 'lock.back'}, f'nothing the page did not ask for: {sorted(ids)}')
+            got = []
+            while True:
+                try:
+                    got.append(only.get(timeout=0.5))
+                except queue.Empty:
+                    break
+            check([(g['entity_id'], g['state']['state']) for g in got] == [('light.kitchen', 'on'), ('lock.back', 'unlocked')],
+                  f'subscribe(entities) hears only those, in order: {got}')
+            got = []
+            while True:
+                try:
+                    got.append(every.get(timeout=0.5))
+                except queue.Empty:
+                    break
+            check([g['entity_id'] for g in got] == ['switch.other', 'light.kitchen', 'lock.back', 'switch.other'],
+                  f'subscribe() with no filter hears every change: {[g["entity_id"] for g in got]}')
+        finally:
+            _events().unsubscribe(only)
+            _events().unsubscribe(every)
+            check(s.close(), 'the stream ends when the browser goes away')
+
+
+def test_no_ha_no_errors():
+    ev = _events()
+    tried = []
+    real_connect = ev._connect
+    ev._connect = lambda *a, **k: tried.append(a) or (_ for _ in ()).throw(AssertionError('connected with no HA'))
+    out, logs = io.StringIO(), LogWatch()
+    try:
+        with People() as who, contextlib.redirect_stdout(out), logs:
+            check(ha_api._ws_url_and_token() == (None, None), 'this test runs with no Home Assistant configured')
+            before = {t.ident for t in threading.enumerate()}
+            check(ev.start() in (None, False), 'start() with no HA reports that it did not start')
+            ev.start()
+            time.sleep(0.3)
+            spawned = [t.name for t in threading.enumerate() if t.ident not in before and t.is_alive()]
+            check(not spawned, f'no thread starts with no Home Assistant: {spawned}')
+            q = ev.subscribe(['light.kitchen'])
+            s = stream(STREAM + '?entities=light.kitchen', who.panel)
+            try:
+                check(s.status == 200 and s.media.startswith('text/event-stream'),
+                      f'the stream still answers with no HA: {s.status} {s.media!r} {s.text()[:200]!r}')
+                time.sleep(1.5)
+                check(not s.changes(), f'and stays quiet: {s.text()[:300]!r}')
+                check(not s.ended, 'it neither ends nor errors')
+                check(q.empty(), 'a subscriber hears nothing')
+            finally:
+                ev.unsubscribe(q)
+                check(s.close(), 'the stream ends when the browser goes away')
+            ev.stop()
+            ev.stop()
+        check(not tried, f'nothing tried to connect: {tried}')
+        printed = out.getvalue()
+        complaints = [line for line in printed.splitlines() if 'Traceback' in line
+                      or ('ha_events' in line or '[ha_api]' in line) and ('fail' in line.lower() or 'error' in line.lower())]
+        check(not complaints, f'nothing complains with no HA: {complaints[:5]}')
+        check(not logs.records, f'nothing logged an error: {[r.getMessage() for r in logs.records]}')
+    finally:
+        ev._connect = real_connect
+
+
+def test_reconnects_with_backoff():
+    with fake_ha() as hub, People() as who:
+        started(hub)
+        q = _events().subscribe(['light.kitchen'])
+        s = stream(STREAM + '?entities=light.kitchen', who.panel)
+        try:
+            time.sleep(0.3)
+            hub.push('light.kitchen', 'on')
+            check(q.get(timeout=1)['state']['state'] == 'on', 'live before the drop')
+            # Home Assistant restarts: the connection dies and connects are refused for a while.
+            hub.drop()
+            refused = lambda: [t for t, ok in hub.attempts if not ok]
+            check(wait_until(lambda: len(refused()) >= 4, 6),
+                  f'the client keeps trying: {len(refused())} refused attempts')
+            times = refused()[:4]
+            gaps = [b - a for a, b in zip(times, times[1:])]
+            check(gaps[0] >= 0.05, f'it waits between attempts, never spins: gaps {gaps}')
+            check(gaps[2] >= 2 * gaps[0] and gaps[1] >= gaps[0] * 0.9 and gaps[2] >= gaps[1] * 0.9,
+                  f'the wait grows: gaps {[round(g, 3) for g in gaps]}')
+            check(not s.ended, 'the SSE client keeps its connection through the drop')
+            # HA is back.
+            n = sum(1 for c in hub.conns if c.sub_id is not None)
+            hub.refuse = False
+            check(wait_until(lambda: hub.subscribed(n + 1), 3),
+                  f'the client reconnects and subscribes again: attempts {len(hub.attempts)}')
+            time.sleep(0.1)
+            t0 = time.monotonic()
+            hub.push('light.kitchen', 'off')
+            heard = []
+            while time.monotonic() - t0 < 1.0 and not any(h['state']['state'] == 'off' for h in heard):
+                try:
+                    heard.append(q.get(timeout=max(0.01, 1.0 - (time.monotonic() - t0))))
+                except queue.Empty:
+                    break
+            check(any(h['entity_id'] == 'light.kitchen' and h['state']['state'] == 'off' for h in heard),
+                  f'the same subscriber hears state again within a second: {heard}')
+            check(wait_until(lambda: any((c.get('state') or {}).get('state') == 'off' for c in s.changes()),
+                             1.0 - (time.monotonic() - t0)),
+                  f'the same SSE stream carries state again: {s.text()[-300:]!r}')
+            check(not s.ended, 'still open')
+        finally:
+            _events().unsubscribe(q)
+            check(s.close(), 'the stream ends when the browser goes away')
+
+
+def test_stream_route_auth_tiers():
+    check(auth.resolve('GET', STREAM) == auth.WALL_OR_SERVICE,
+          f'the stream is WALL_OR_SERVICE: {auth.resolve("GET", STREAM)}')
+    with fake_ha() as hub, People() as who:
+        started(hub)
+        cases = (
+            ('a wall panel', STREAM + '?entities=light.kitchen', who.panel, 200),
+            ('the service', STREAM + '?entities=light.kitchen', who.service, 200),
+            # EventSource cannot set headers: a person's token rides the query.
+            ('a parent by query token', STREAM + '?entities=light.kitchen&member_token=' + who.mum_token, {}, 200),
+            ('anonymous off the LAN', STREAM + '?entities=light.kitchen', {'CF-Connecting-IP': '203.0.113.9'}, 401),
+            ('a forged device token off the LAN', STREAM + '?entities=light.kitchen',
+             {'CF-Connecting-IP': '203.0.113.9', 'X-Device-Token': 'not-a-token'}, 401),
+        )
+        for name, path, headers, want in cases:
+            s = stream(path, headers)
+            try:
+                check(s.status == want, f'{name}: {s.status} (want {want}) {s.text()[:200]!r}')
+                if want == 200:
+                    check(s.media.startswith('text/event-stream'), f'{name}: {s.media!r}')
+                else:
+                    check(wait_until(lambda: s.ended, 2), f'{name}: the refusal ends the response')
+                    check('data:' not in s.text(), f'{name}: a refusal carries no state: {s.text()[:200]!r}')
+            finally:
+                check(s.close(), f'{name}: the response ends')
+
+
+def test_the_state_cache_is_warmed():
+    with fake_ha() as hub:
+        rows = ha_api.get_states()
+        check(len(rows) == 3 and len(hub.rest_calls) == 1, f'the cache primed by one REST read: {hub.rest_calls}')
+        started(hub)
+        q = _events().subscribe()
+        try:
+            time.sleep(0.3)
+            # The cache has gone stale by the clock: only the push can make it fresh again.
+            with ha_api._cache_lock:
+                ha_api._states_cache['ts'] = time.time() - 3600
+            calls = len(hub.rest_calls)
+            hub.push('light.kitchen', 'on', brightness=150)
+            check(q.get(timeout=1)['entity_id'] == 'light.kitchen', 'pushed')
+            time.sleep(0.1)
+            rows = {r['entity_id']: r for r in ha_api.get_states()}
+            check(len(hub.rest_calls) == calls,
+                  f'get_states answered without a REST call after the push: {hub.rest_calls[calls:]}')
+            check(rows.get('light.kitchen', {}).get('state') == 'on'
+                  and rows['light.kitchen']['attributes'].get('brightness') == 150,
+                  f'and it has the pushed state: {rows.get("light.kitchen")}')
+            check(rows.get('lock.back', {}).get('state') == 'locked' and 'switch.other' in rows,
+                  f'every other row is kept: {sorted(rows)}')
+            check(ha_api.get_state('light.kitchen')['state'] == 'on', 'get_state reads the warm cache too')
+            check(len(hub.rest_calls) == calls, f'still no REST call: {hub.rest_calls[calls:]}')
+        finally:
+            _events().unsubscribe(q)
+
+
+class LogWatch(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.ERROR)
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+    def __enter__(self):
+        logging.getLogger().addHandler(self)
+        return self
+
+    def __exit__(self, *exc):
+        logging.getLogger().removeHandler(self)
+
+
+TESTS = [
+    test_state_changed_reaches_a_subscriber_within_a_second,
+    test_filter_by_entities,
+    test_no_ha_no_errors,
+    test_reconnects_with_backoff,
+    test_stream_route_auth_tiers,
+    test_the_state_cache_is_warmed,
+]
+
+
+def main():
+    passed = 0
+    for test in TESTS:
+        try:
+            test()
+            passed += 1
+            print(f'  ok   {test.__name__}')
+        except Exception as e:
+            print(f'  FAIL {test.__name__}: {type(e).__name__}: {str(e)[:600]}')
+            if not isinstance(e, AssertionError):
+                traceback.print_exc(limit=3)
+    print(f'{passed}/{len(TESTS)} passed')
+    return passed == len(TESTS)
+
+
+if __name__ == '__main__':
+    ok = main()
+    sys.stdout.flush()
+    os._exit(0 if ok else 1)
