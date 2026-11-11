@@ -1,6 +1,83 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.786 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.787 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.787 (2026-11-11, NOT device-verified): each light's glow is baked on the desktop and drawn live on every screen: soft shadows, no light through walls, lit windows.**
+
+**The ask.** The user asked, 2026-11-10: "Can we use baked lightmaps for the lights and just toggle those on or off. Since the lights don't move, we should be able to optimize this."
+
+**Where it is written up.**
+- Spec: `docs/superpowers/specs/2026-11-10-house-baked-lights-design.md`, user answers in §5.
+- Plan: `docs/superpowers/plans/2026-11-10-house-baked-lights.md`.
+- Rulings B1-B17 are in the SDD ledger.
+
+**How it was built.** Claude wrote the tests first. Codex built the atlas, storage, baker and runtime. Claude agents ran the vendoring, the browser rounds, the whole-branch review and one fix wave.
+
+**What is baked.** Room lights and sky visibility.
+- The sun and moon stay real-time, as one directional light each (user answer, spec §5).
+- Baked sky visibility multiplies the ambient light rather than adding to it (B16), so corners darken and window-lit areas brighten.
+
+**The layout** (`static/twin/bake/atlas.js`, B2, B6, B7, B12). It is worked out in a Web Worker and cached in IndexedDB, which keeps the last 2 (B10). It has two parts.
+- A sky atlas in `uv2` covers every opaque merged mesh.
+- A room-light atlas in `uv3` covers only surfaces a room light reaches.
+  - Horizontal faces are clipped along room outlines, so each face belongs to one room.
+  - `lmRoom` says which room a face belongs to.
+  - Each room has its own region on shared pages.
+- Bank 0 holds every room, even rooms with no lights; extra banks hold only rooms with more than 2b lights.
+- Fixtures, glass and alpha-tested plant cards are left out of both atlases, so every tier computes the same key.
+- Every tier lays out at 8 texels/ft (B11, I1).
+
+**Compression** (vendored Basis Universal v1.50 and three r187's KTX2 pieces, with hashes in `static/vendor/basis-universal/VENDORED.md`; B4, B5, B8, B9, B13).
+- Each page is UASTC KTX2 with Zstd supercompression.
+- Two lights share a page: light 0 in RGB and light 1 in alpha.
+- A worker transcodes each page to BC4/BC5 on desktop and EAC R11/RG11 on the Pi, falling back to RGBA.
+- The household's whole bake is about 1.9 MB on disk, against 33.5 MB raw.
+
+**Baking** (`baker.js`, `bake_pass.js`).
+- Only the desk's 3D house view bakes (`/house/twin`, High or Max, a parent; B15). The editor never bakes; its status chip says "Lights wait to re-bake".
+- It bakes on idle frames, pauses while the person drags, and resumes after 2 s of stillness.
+- Only stale lights are re-baked. Light keys follow each light's spot.
+- A change of model round cancels a bake in flight.
+- A failed read aborts the step. Nothing is uploaded and the manifest is left untouched.
+- A server lease per key stops two machines baking at once (`POST api/house/bakes/{key}/lease`, PARENTS, 60 s; B17).
+- The desk page shows "Baking lights n of m" and a `Bake lighting now` button.
+- "Bake lighting now" keeps each light's old entry until its new one lands.
+
+**Storage** (`services/twin_bakes.py`).
+- Routes under `api/house/bakes/`:
+  - page and manifest writes are PARENTS;
+  - reads are WALL_OR_SERVICE with ETag;
+  - writes are atomic;
+  - KTX2 or PNG is accepted (B14);
+  - the manifest records the format, densities, round and complete flag.
+- Old keys are pruned to the current and previous ones, plus any written in the last 10 minutes.
+- The page index and manifest size are bounded.
+
+**Drawing it** (`lightmap_material.js`, `runtime.js`).
+- Tints come from a DataTexture, so toggling, dimming and recolouring never recompile a shader.
+- A light with a fresh bake frees its real-time pool slot. Any other light keeps the v2.499.783 real-time path.
+- Lit rooms glow through their glazed windows from outside.
+- A wall opened before any bake picks the bake up when it lands, with no reload.
+- Polls that change nothing re-upload nothing.
+- Pages that hold no placed light are never fetched or held.
+- With no bake at all, Lights mode behaves exactly as v2.499.783.
+
+**Measured on the desktop GPU** (the Pi 5 is unmeasured).
+- Baking the household's 4 lights plus the sky takes about 24 s; 10 lights take about 42 s.
+- The atlas worker takes 2.9 s.
+- GPU memory for the bake is about 26 MB, or about 37 MB with 10 lights.
+- At the Low tier with 10 lights, a frame takes 2.41 ms baked against 3.01 ms real-time.
+
+**Tests.**
+- test_twin_bake_atlas_js 12/12, test_twin_bakes 15/15, test_twin_baker_js 11/11.
+- test_twin_bake_runtime_js 11/11, test_twin_lightmap_material_js 7/7, test_twin_basis_vendor_js 10/10.
+- test_house_twin_bake_live 16/16.
+- The real-lights, live-layer, wall and editor suites stay green.
+
+**Open.**
+- The yard paving pokes 0.25 ft into the pool house, leaving a dark strip at the wall's foot. This is a generator overlap.
+- A light placed inside a wall bakes one side only.
+- The atlas fingerprint takes about 150-220 ms on the main thread per load.
 
 **v2.499.786 (2026-11-11, NOT device-verified): doors and windows go where you click on a wall.**
 
