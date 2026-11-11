@@ -1,6 +1,80 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.791 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.793 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.793 (2026-11-11, NOT device-verified): the 3D house gains a glance bar, an idle face and Climate mode.**
+
+This is slice 1b of modes and the glance bar, following spec `docs/superpowers/specs/2026-11-06-house-digital-twin-design.md` §5.3 and §5.6.
+
+**How it was built.** Codex built it from a Claude brief. Claude ran the browser checks and made these fixes:
+- a test hook so panels never go idle mid-test;
+- the wall look restored to `panel=true&kiosk=true` only, after Codex had widened it to every `panel=true`;
+- a fallback for the thermostat's unit;
+- three test races.
+
+**Climate mode** (`static/twin/live/climate.js`, registered through `registerMode`).
+- **Room colour.** Each room's floor is coloured by its current temperature:
+  - the reading comes from the room's climate `current_temperature`, else the mean of its temperature sensors, converting mixed units;
+  - the comfort band is the setpoint ±1, a range widened by 1 each side, or 68-74°F (20-23°C) when there is no setpoint;
+  - colours run from cool blue through grey to warm red, saturating 10°F or 5°C beyond the band;
+  - a room with no reading stays neutral.
+- **Labels.** Rooms show current → target labels.
+- It has a legend.
+- The unit comes from the thermostat, else a temperature sensor, else °F.
+
+**Glance bar** (`static/twin/live/glance.js`, `glance_settings.js`, `services/twin_glance.py`).
+- **Placement.** One bar anchored at the bottom on every view and in every mode, lifted clear of the Argyle orb.
+- **Items.** Each item has its kind icon and live value. Unavailable shows an em dash. A thermostat shows its current temperature, never its mode.
+- **Default list.** The weather temperature, then up to 4 power, energy or battery entities, or sensors named solar, grid, battery, Powerwall or car charging. An empty custom list hides the bar.
+- **Storage.**
+  - The household list lives in `app_state['house_twin_glance']`.
+  - A panel override lives on its `trusted_devices` row. The panel is identified by its validated device token only.
+- **Route.** `GET/PUT api/house/twin/glance`. GET serves the caller's panel or the household list. PUT is PARENTS; a parent may pick an enrolled panel with `panel_id`.
+- **Settings.** The twin's desk drawer section is "Live readings and idle face": search, add, reorder and remove up to 12 entities, and choose household or this panel. Walls keep no settings drawer.
+- **Schedules.** Saving the bar never dirties schedules.
+
+**Idle face** (`static/twin/live/idle.js`).
+- **When.** After one minute untouched. On by default for panels, off for desks; both are settings.
+- **What it shows.**
+  - a slow exterior orbit (about 5.8 minutes a turn) at Now;
+  - the shared glance clock with date and weather;
+  - the glance bar moved into the time card (the same node, never a copy);
+  - the compact hero card from the shared builder.
+- **Wake.** Any touch, key or pointer restores the exact view, camera and time preview, and the waking input is consumed.
+- **Bake.** The orbit never wakes the bake.
+- **Screensaver.** `nav.html` gives way to it: the photo screensaver and the go-home timer stand down while the twin idle face is enabled.
+- **Testing.** Under `test=1` it waits for an explicit `idle_ms`.
+
+**Tests.**
+
+| Group | Files and results |
+|---|---|
+| New node | test_twin_climate_js 7/7, test_twin_glance_js 9/9, test_twin_idle_js 6/6 |
+| New server | test_twin_glance 10/10 |
+| New browser | test_house_twin_glance_live 5/5 |
+| Twin browser | test_house_twin_real_lights_live 10/10, test_house_twin_real_sun_live 4/4, test_house_twin_bake_live 16/16 |
+| Server and settings | test_auth 19/19, test_settings_registry 11/11, test_twin_site 5/5, test_tailwind_build 6/6 |
+
+- test_settings_drawer_live fails the same way on main's code (a networkidle timeout on /work). It is not this change.
+
+**Open.**
+- Security and Energy modes come next (slice 1c).
+- Room labels do not yet avoid one another.
+
+**v2.499.792 (2026-11-11, NOT device-verified): Argyle's style. A household default for how Argyle talks, and each person's own.**
+
+The user: "Some families may want a more pragmatic agent, some may want a super friendly one, some may want a pirate or something silly." Rulings: a household default with per-person customization; kids pick their own, Custom included. Spec `docs/superpowers/specs/2026-11-11-argyle-style-design.md`.
+
+- Styles: Plain and brief, Warm (the default, today's voice), Playful, Custom (one line, at most 200 characters). A person's default is Same as the household.
+- Whose style: the person's own in their PWA/admin chat, their DM with Argyle, and a voice recognised this turn; the household's on the wall panel, the family channel (everyone reads the reply), an unknown voice, the Mind and the chat suggestion funnel. Callers pass `style_member` to `agent_router.process_agent_request`; the router never infers it from `acting_member`.
+- `services/argyle_style.py` owns presets, resolution and the prompt block, appended as the LAST text of the system prompt. The block says the style never overrides any rule: tool arguments and written data (titles, list items, errands, memory rows, messages sent for a person) stay plain; facts stay exact; PIN, approval, lock and read-or-send wording is fixed; someone upset gets calm and warm; spoken and driver answers stay short. A Custom line is cleaned (one line, no control characters, 200 cap) and quoted as a manner of speaking, never an instruction. A family that never touches it gets today's prompt plus the Warm block.
+- Hand paths: PWA Profile & appearance › "How Argyle talks to you" (`pwaChooseArgyleStyle`); Config › People › How Argyle talks (`#argyle-style`): household style, everyone whose style differs with their Custom text, Reset (parents). Routes: `GET/POST /api/argyle/style/me` (signed in, member from the token only), `GET/POST /api/argyle/style` and `POST /api/argyle/style/reset/{id}` (parents, checked in the handler too). Settings `argyle_style` (default `warm`), `argyle_style_custom`.
+- Agent path: the `style` tool (set/show/reset, scope me/household). Household is parents only; nobody, the shared panel and a voice not recognised this turn change nothing (a PIN unlock alone is not the speaker). A style request is never stored as a memory row. Existing "talk like..." memory rows are left alone.
+- The PWA's own `promptChoice` marks a `selected` option and `promptInput` takes `maxLength`, like the shared ones.
+
+Device steps: set a loud Custom style on your phone, then add a shopping item and an event by typed chat and by voice; the item and title must come out plain while the reply is styled. Post @argyle in the family channel and check the reply uses the household style. Ask the panel's satellite with an unknown voice to "talk like a pirate" and check nothing changes.
+
+Tests: `tests/test_argyle_style.py`, `test_argyle_style_router.py`, `test_argyle_style_tool.py`, `test_argyle_style_routes.py`, `test_argyle_style_ui.py`; neighbours `test_argyle_memory.py`, `test_voice_actor.py`, `test_voice_identity.py`, `test_voice_privacy_weather.py`, `test_auth.py`, `test_agent_driver_tools.py`, `test_settings_registry.py`, `test_tailwind_build.py`, `test_control_grant_js.py`, `test_argyle_orb.py`.
 
 **v2.499.791 (2026-11-11, NOT device-verified): the 3D house's sun and moon follow the real date, time and place. A facing dial says which way the house fronts. Day and Night are previews that return to Now.**
 

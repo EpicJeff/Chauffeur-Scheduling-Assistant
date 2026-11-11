@@ -7,9 +7,9 @@ TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'get_weather', 'ass
                    'remove_override_for_event_fuzzy', 'get_shopping_list_items',
                    'add_shopping_items', 'check_off_shopping_item', 'send_family_message', 'send_direct_message',
                    'find_in_chauffeur', 'start_project', 'prepare_voice_approval', 'house', 'music', 'memory',
-                   'report_gap'})
+                   'report_gap', 'style'})
 MUTATIONS = frozenset({'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
-                       'add_shopping_items', 'check_off_shopping_item'})
+                       'add_shopping_items', 'check_off_shopping_item', 'style'})
 
 # Privacy follows the data: shared household reads and changes are speakable,
 # as are confirmations that only repeat the speaker's request. Sensitive stores
@@ -20,7 +20,7 @@ MUTATIONS = frozenset({'assign_driver_to_event_fuzzy', 'remove_override_for_even
 SPEAKABLE = frozenset({
     'get_calendar_events', 'get_travel_time', 'get_weather', 'get_shopping_list_items',
     'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
-    'house', 'music', 'memory', 'report_gap', 'prepare_voice_approval',
+    'house', 'music', 'memory', 'style', 'report_gap', 'prepare_voice_approval',
     'add_household_task', 'complete_household_task', 'claim_household_task',
     'add_kid_task', 'complete_kid_task', 'claim_chore', 'reopen_chore',
     'add_shopping_items', 'check_off_shopping_item', 'remove_shopping_item_by_name',
@@ -171,17 +171,20 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
     args = args if isinstance(args, dict) else {}
     if ctx.ha_instance_id and ctx.service_revision != _revision():
         return {'status': 'refused', 'message': 'The satellite service token changed. Please try again.'}
-    if not ctx.ha_instance_id and (name in MUTATIONS or name in ('send_family_message', 'send_direct_message')):
+    # Style is person-owned: never delegate an unknown speaker to a parent.
+    # It changes no household logistics and needs no satellite service metadata.
+    delegated_mutation = name in MUTATIONS and name != 'style'
+    if not ctx.ha_instance_id and (delegated_mutation or name in ('send_family_message', 'send_direct_message')):
         return {'status': 'refused', 'message': 'This household action needs the configured satellite service token and metadata.'}
     # Without per-turn evidence, retain the verified household rail.
     principal = getattr(ctx, 'actor', ctx.verified_member)() or ctx.verified_member()
-    if name in MUTATIONS and principal is None:
+    if delegated_mutation and principal is None:
         from services.situations import parent_of_record
         principal = parent_of_record()
         if not principal or not storage.member_has_access(principal):
             return {'status': 'refused', 'message': 'A parent needs to set up household actions on their phone first.'}
     provenance = ctx.provenance()
-    if name in MUTATIONS:
+    if delegated_mutation:
         with storage.db_lock, storage.db.transaction():
             if ctx.service_revision != _revision():
                 return {'status': 'refused', 'message': 'The satellite service token changed. Please try again.'}
@@ -228,6 +231,14 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
         if args.get('action') in ('remember', 'forget') and result.get('status') == 'success':
             record_action(ctx, 'memory', principal,
                           {'action': args.get('action'), 'text': (result.get('memory') or {}).get('text')}, provenance)
+    elif name == 'style':
+        # The speaker's own choice: a PIN unlock is not proof of who is talking now.
+        principal = getattr(ctx, 'actor', lambda: None)()
+        result = tools.style(**{k: v for k, v in args.items() if k in (
+            'action', 'scope', 'style', 'custom')}, acting_member=principal, source='voice')
+        if args.get('action', 'set') in ('set', 'reset') and result.get('status') == 'success':
+            record_action(ctx, 'style', principal,
+                          {'action': args.get('action', 'set'), 'scope': args.get('scope', 'me')}, provenance)
     elif name == 'get_shopping_list_items':
         result = tools.get_shopping_list_items(args.get('list_name') or '', acting_member=None)
     elif name in ('send_family_message', 'send_direct_message'):

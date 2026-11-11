@@ -3973,6 +3973,7 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
         satellite_token = voice_private.current.set(satellite_turn)
         try:
             res = process_agent_request(req.text, history=conv_history, source='voice', voice_context=ctx,
+                                        style_member=actor,
                                         proven=ctx.level == 'verified', at_panel=False,
                                         focus_key=f"voice:{ctx.scope_key}:{req.conversation_id}" if req.conversation_id else None)
         finally:
@@ -8322,6 +8323,7 @@ def house_editor_say(request: Request, body: dict = Body(default={})):
                 result = agent_router.process_agent_request(
                     message, context={'house_editor': {**status, 'selection': selection}},
                     history=history, source='house_editor', acting_member=parent,
+                    style_member=None,
                     proven=proven, at_panel=at_panel,
                     focus_key='house_editor:' + (status['build'] or 'idle'))
         finally:
@@ -18934,6 +18936,7 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str, message_id: str 
                                     and app_voice._credential(m.get('body') or '')
                                     else m.get('body') or '')} for m in used]
         res = process_agent_request(query, source="family", acting_member=sender,
+                                    style_member=sender if personal_dm else None,
                                     proven=proven, device_id=device_id, at_panel=at_panel,
                                     **({'history': history} if history is not None else {}),
                                     focus_key=f"channel:{channel.get('id')}" if channel.get('id') else None)
@@ -20630,6 +20633,75 @@ def argyle_memories_forget(memory_id: str, request: Request = None):
     return res
 
 
+def _argyle_style_member(request: Request):
+    member = storage.get_member_by_token(request.headers.get('X-Member-Token') or '')
+    if not member:
+        raise HTTPException(status_code=401, detail='Sign in to choose your Argyle style.')
+    return member
+
+
+@app.get("/api/argyle/style/me")
+def argyle_style_me_get(request: Request):
+    from services import argyle_style
+    member = _argyle_style_member(request)
+    key, custom = argyle_style.household()
+    return {'status': 'success', **argyle_style.get_member_style(member['id']),
+            'household': {'style': key, 'custom': custom}, 'labels': argyle_style.LABELS}
+
+
+@app.post("/api/argyle/style/me")
+def argyle_style_me_set(request: Request, body: dict = Body(default={})):
+    from services import argyle_style
+    member = _argyle_style_member(request)
+    try:
+        choice = argyle_style.set_member_style(member['id'], body.get('style') or '', body.get('custom') or '')
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {'status': 'success', **choice}
+
+
+def _argyle_style_parent(request: Request):
+    """The household style and everyone's choices are a parent's, enforcement on or off."""
+    if (_memory_actor(request, None).get('role') or '') != 'parent':
+        raise HTTPException(status_code=403, detail='A parent manages the household style.')
+
+
+@app.get("/api/argyle/style")
+def argyle_style_list(request: Request):
+    from services import argyle_style
+    _argyle_style_parent(request)
+    key, custom = argyle_style.household()
+    people = []
+    for member in storage.get_all_members():
+        choice = argyle_style.get_member_style(member['id'])
+        if choice['style'] != 'household':
+            people.append({**{k: member.get(k) for k in ('id', 'name', 'role')}, **choice})
+    return {'household': {'style': key, 'custom': custom}, 'people': people}
+
+
+@app.post("/api/argyle/style")
+def argyle_style_household_set(request: Request, body: dict = Body(default={})):
+    from services import argyle_style
+    _argyle_style_parent(request)
+    try:
+        argyle_style.set_household_style(body.get('style') or '', body.get('custom') or '')
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    key, custom = argyle_style.household()
+    return {'status': 'success', 'household': {'style': key, 'custom': custom}}
+
+
+@app.post("/api/argyle/style/reset/{member_id}")
+def argyle_style_reset(member_id: str, request: Request):
+    from services import argyle_style
+    _argyle_style_parent(request)
+    try:
+        choice = argyle_style.set_member_style(member_id, 'household')
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {'status': 'success', **choice}
+
+
 @app.get("/api/argyle/gaps.md")
 def argyle_gaps_markdown(status: str = 'open'):
     """The gap list as a note to paste to whoever fixes the tools."""
@@ -21019,6 +21091,8 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, 
         res = process_agent_request(payload.message, context=payload.context, history=conv_history,
                                     source=conv['surface']['kind'], driver_id=payload.driver_id,
                                     acting_member=acting_member,
+                                    style_member=(acting_member if conv['surface']['kind'] in ('pwa', 'admin')
+                                                  and not at_panel else None),
                                     proven=proven, at_panel=at_panel,
                                     device_id=device['device_id'] if device else None,
                                     focus_key=f"conv:{payload.conversation_id}" if payload.conversation_id else None)
