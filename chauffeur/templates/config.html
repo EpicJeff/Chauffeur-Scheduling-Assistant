@@ -1520,6 +1520,96 @@
                             </div>
                         </div>
                     </details>
+                    <details id="argyle-style" class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700"
+                        x-data="{ people: [], argyle_style: 'warm', argyle_style_custom: '',
+                                  labels: {plain: 'Plain and brief', warm: 'Warm', playful: 'Playful', custom: 'Custom'},
+                                  problem: '', loaded: false, busy: false,
+                                  base() { return window.location.pathname.endsWith('/') ? '../' : ''; },
+                                  async load() {
+                                      this.problem = ''; this.loaded = false;
+                                      try { const r = await fetch(this.base() + 'api/argyle/style');
+                                            if (!r.ok) { this.problem = 'Could not load Argyle styles (HTTP ' + r.status + ').'; return; }
+                                            const j = await r.json();
+                                            this.argyle_style = j.household.style;
+                                            this.argyle_style_custom = j.household.custom || '';
+                                            this.people = (j.people || []).filter(person => person.style !== 'household');
+                                            this.loaded = true; }
+                                      catch (e) { this.problem = 'Could not load Argyle styles (' + (e && e.message || 'network') + ').'; }
+                                  },
+                                  async save() {
+                                      if (this.busy || !this.loaded) return;
+                                      const custom = this.argyle_style === 'custom' ? this.argyle_style_custom.trim() : '';
+                                      if (this.argyle_style === 'custom' && !custom) { showGlobalAlert('Describe the custom style first.'); return; }
+                                      this.busy = true; this.problem = '';
+                                      try { const r = await fetch(this.base() + 'api/argyle/style', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({style: this.argyle_style, custom})});
+                                            if (!r.ok) { const j = await r.json().catch(() => ({})); this.problem = j.detail || 'Could not save the household style (HTTP ' + r.status + ').'; return; }
+                                            const j = await r.json();
+                                            this.argyle_style = j.household.style; this.argyle_style_custom = j.household.custom || '';
+                                            showGlobalAlert('Household style saved.'); }
+                                      catch (e) { this.problem = 'Could not save the household style (' + (e && e.message || 'network') + ').'; }
+                                      finally { this.busy = false; }
+                                  },
+                                  async reset(person) {
+                                      if (this.busy) return;
+                                      this.busy = true;
+                                      try { if (!(await promptConfirm('Reset Argyle style?', person.name + ' will use the household style.', 'Reset', 'Keep'))) return;
+                                            this.problem = '';
+                                            const r = await fetch(this.base() + 'api/argyle/style/reset/' + encodeURIComponent(person.id), {method: 'POST'});
+                                            if (!r.ok) { const j = await r.json().catch(() => ({})); this.problem = j.detail || 'Could not reset that style (HTTP ' + r.status + ').'; return; }
+                                            this.people = this.people.filter(row => row.id !== person.id); }
+                                      catch (e) { this.problem = 'Could not reset that style (' + (e && e.message || 'network') + ').'; }
+                                      finally { this.busy = false; }
+                                  } }"
+                        x-init="load()">
+                        <summary class="cursor-pointer px-4 py-3 font-semibold text-blue-200">
+                            How Argyle talks &mdash; household style and personal choices
+                        </summary>
+                        <div class="px-4 pb-4 space-y-3 text-sm">
+                            <p class="text-gray-400">Choose how Argyle speaks to the household. Each person can choose their own style in Profile &amp; appearance.</p>
+                            <p class="text-red-300 text-xs" role="alert" x-show="problem" x-text="problem"></p>
+                            <p class="text-gray-500 text-xs" x-show="!loaded && !problem">Loading Argyle styles&hellip;</p>
+                            <button type="button" x-show="!loaded && problem" :disabled="!!busy" @click="load()"
+                                class="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs">Try again</button>
+                            <div x-show="loaded" class="space-y-3">
+                                <form @submit.prevent="save()" class="space-y-3">
+                                    <label class="block">
+                                        <span class="block text-gray-400 text-xs">Household style</span>
+                                        <select name="argyle_style" x-model="argyle_style" :disabled="!!busy"
+                                            class="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-white">
+                                            <option value="plain">Plain and brief</option>
+                                            <option value="warm">Warm</option>
+                                            <option value="playful">Playful</option>
+                                            <option value="custom">Custom</option>
+                                        </select>
+                                    </label>
+                                    <label class="block" x-show="argyle_style === 'custom'">
+                                        <span class="block text-gray-400 text-xs">Your own style (up to 200 characters)</span>
+                                        <input type="text" name="argyle_style_custom" x-model="argyle_style_custom" maxlength="200" :disabled="!!busy"
+                                            placeholder="For example: a cheerful pirate"
+                                            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white">
+                                    </label>
+                                    <button type="submit" :disabled="!!busy" class="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm">Save household style</button>
+                                </form>
+                                <p class="text-gray-400">Personal choices</p>
+                                <template x-if="!people.length">
+                                    <p class="text-gray-500 text-xs">Everyone uses the household style.</p>
+                                </template>
+                                <ul class="space-y-2">
+                                    <template x-for="person in people" :key="person.id">
+                                        <li class="flex items-start justify-between gap-3 bg-gray-900 rounded-xl p-3">
+                                            <div class="min-w-0">
+                                                <div class="text-gray-200 break-words" x-text="person.name"></div>
+                                                <div class="text-gray-400 text-xs" x-text="labels[person.style] || person.style"></div>
+                                                <div class="text-gray-200 break-words whitespace-pre-wrap" x-show="person.style === 'custom'" x-text="person.custom"></div>
+                                            </div>
+                                            <button type="button" :disabled="!!busy" @click="reset(person)"
+                                                class="shrink-0 text-xs text-red-300 hover:text-red-200 px-2 py-1 rounded-lg border border-gray-700">Reset</button>
+                                        </li>
+                                    </template>
+                                </ul>
+                            </div>
+                        </div>
+                    </details>
                     <details id="people" class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700">
                         <summary class="cursor-pointer px-4 py-3 font-semibold text-blue-200">
                             ✉️ Invite email &mdash; how invites and password resets are sent

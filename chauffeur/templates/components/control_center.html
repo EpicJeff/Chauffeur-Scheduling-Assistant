@@ -1746,7 +1746,7 @@ function closeChatHelpModal() {
     }
 
     // prompt() replacement. Resolves to the entered string, or null on cancel.
-    window.promptInput = function(title, message, { placeholder = '', value = '', type = 'text', okText = 'OK' } = {}) {
+    window.promptInput = function(title, message, { placeholder = '', value = '', type = 'text', okText = 'OK', maxLength = null } = {}) {
         return new Promise(resolve => {
             const modal = document.getElementById('cc-input-modal');
             const field = document.getElementById('cc-input-field');
@@ -1758,6 +1758,8 @@ function closeChatHelpModal() {
             field.type = type;
             field.placeholder = placeholder;
             field.value = value;
+            if (Number.isInteger(maxLength) && maxLength >= 0) field.maxLength = maxLength;
+            else field.removeAttribute('maxlength');
             let done = false;
             const finish = (result) => {
                 if (done) return;
@@ -1804,6 +1806,10 @@ function closeChatHelpModal() {
                 b.className = 'w-full text-left px-4 py-3 rounded-lg bg-gray-900 border border-gray-700 '
                     + 'hover:border-blue-500 text-white font-bold text-sm transition-colors';
                 b.textContent = o.label;
+                if (o.selected) {
+                    b.textContent += ' ✓';
+                    b.setAttribute('aria-current', 'true');
+                }
                 b.setAttribute('data-prompt-choice', o.value);
                 b.onclick = () => finish(o.value);
                 list.appendChild(b);
