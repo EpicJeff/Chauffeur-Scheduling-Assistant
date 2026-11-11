@@ -31,7 +31,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   controls.maxPolarAngle = Math.PI * 0.49;
   controls.enableDamping = false;
   RectAreaLightUniformsLib.init();
-  const sun = new THREE.DirectionalLight('#fff0d4', 3.0);
+  const SUN_INTENSITY = 3.0;
+  const sun = new THREE.DirectionalLight('#fff0d4', SUN_INTENSITY);
   sun.castShadow = settings.shadows;
   if (settings.shadows) {
     sun.shadow.mapSize.set(4096, 4096);
@@ -42,6 +43,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   let yardGroup = null;
   let twin = null, disposed = false, revision = 0, sky = null, environment = null, environmentTarget = null;
   const state = { view: 'ext', time: 'day', camera: 'front' };
+  let evening = false;
   let bounds = { x: 19, y: 11, span: 38 };
   let framed = false, cameraMoved = false;
   controls.addEventListener('start', () => { cameraMoved = true; });
@@ -412,13 +414,16 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     setTime(time) {
       if (!['day', 'night'].includes(time)) return;
       state.time = time;
-      const night = time === 'night';
-      scene.background = new THREE.Color(night ? '#101b31' : '#b9cbd7');
-      scene.environment = night ? null : environment;
-      scene.environmentIntensity = 0.65;
-      sun.visible = !night; ambient.intensity = night ? 0.24 : 1.8;
-      renderer3.toneMappingExposure = night ? 1.2 : 1;
+      applyTimeLook();
       applyLights(); render();
+    },
+    setEvening(on) {
+      // Drawn from the view's own state both ways, never restored from a copy:
+      // a floor change, a late sky, a rebuild or Day/Night while in Lights mode
+      // all show on leaving it.
+      if (evening === !!on) return;
+      evening = !!on;
+      applyTimeLook(); applyLights(); render();
     },
     setCamera(name) {
       if (!['front', 'back', 'orbit', 'porch', 'rear', 'top'].includes(name)) return;
@@ -753,14 +758,34 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     // Materials with no geometry (e.g. an empty polygon) still own requests.
     model.materials.forEach(m => m.dispose());
   }
+  function applyTimeLook() {
+    const night = state.time === 'night';
+    scene.background = new THREE.Color(evening || night ? '#101b31' : '#b9cbd7');
+    scene.environment = evening || night ? null : environment;
+    scene.environmentIntensity = evening ? .04 : .65;
+    if (evening) {
+      // Preserve visibility and the shader's light counts. The live pool is
+      // independently driven by confirmed HA state; this is the existing rig.
+      sun.intensity = .12; ambient.intensity = .18;
+    } else { sun.visible = !night; sun.intensity = SUN_INTENSITY; ambient.intensity = night ? .24 : 1.8; }
+    renderer3.toneMappingExposure = evening || night ? 1.2 : 1;
+  }
   function applyLights() {
     if (!twin) return;
     const night = state.time === 'night';
-    twin.roomLights.forEach(l => { l.visible = night && !!twin.groups.levels[l.userData.level]?.visible; });
-    twin.root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'fixture') m.emissiveIntensity = night ? 2 : 0; });
+    twin.roomLights.forEach(l => {
+      // Each lamp keeps its own intensity, so leaving Lights mode (even after a
+      // rebuild in it) lights it again; visibility follows the shown levels.
+      l.userData.intensity ??= l.intensity;
+      l.intensity = evening ? 0 : l.userData.intensity;
+      if (!evening) l.visible = night && !!twin.groups.levels[l.userData.level]?.visible;
+    });
+    twin.root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'fixture') m.emissiveIntensity = !evening && night ? 2 : 0; });
   }
   if (new URLSearchParams(location.search).get('test') === '1') Object.assign(view, {
     cameraState() { return { position: camera.position.toArray(), target: controls.target.toArray() }; },
+    // The sky as loadSky's late callback hands it over (it can land after the page is up).
+    applySky(texture) { applySky(texture); },
     setCameraState({ position, target }) {
       cameraMoved = true; camera.position.fromArray(position); controls.target.fromArray(target); controls.update(); render();
     },
