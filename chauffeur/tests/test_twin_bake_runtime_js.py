@@ -42,19 +42,21 @@ const until = async (fn, what) => {
   while (!fn() && Date.now() - start < 40000) await sleep(50);
   assert.ok(fn(), what);
 };
-async function context(tier = 'high', sharedServer = null, placed = null) {
+const liveLayout = list => ({ markers: list.map(l => ({ ...l, device_id: l.device, placed: true, kind: 'light' })) });
+async function context(tier = 'high', sharedServer = null, placed = null, extra = {}) {
   const out = gen.buildTwin(job.plan, job.kit, tier); await out.ready;
   const renderer = fakeRenderer(); renderer.domElement = new Node('canvas');
   const scene = new THREE.Scene(); scene.add(out.root); scene.updateMatrixWorld(true);
   const controls = new THREE.EventDispatcher(); controls.target = new THREE.Vector3();
   const view = { plan: job.plan, ready: true, scene, tier, renderer3: renderer, controls, render() {} };
   const server = sharedServer || fakeServer(), lights = placed || [k1, k2, h1, c1];
-  const api = (path, init) => path === 'api/house/live' ? Promise.resolve(new Response(JSON.stringify({
-    markers: lights.map(l => ({ ...l, device_id: l.device, placed: true, kind: 'light' }))
-  }), { status: 200 })) : server.api(path, init);
-  const controller = mountBake(view, out.root, { host: document.getElementById('twin-controls'), layout: job.layout, api });
+  const api = (path, init) => path === 'api/house/live' ? Promise.resolve(new Response(JSON.stringify(liveLayout(lights)), { status: 200 }))
+    : extra.deny && path.endsWith('/lease') ? Promise.resolve(new Response('{"detail":"Requires parent"}', { status: 403 }))
+    : server.api(path, init);
+  const host = extra.host || document.getElementById('twin-controls');
+  const controller = mountBake(view, out.root, { host, layout: job.layout, api, ...(extra.poll !== undefined ? { poll: extra.poll } : {}) });
   view.bakeSky = () => controller.sky(new THREE.Color(.1, .2, .3), 1);
-  return { view, controller, server, out, renderer };
+  return { view, controller, server, out, renderer, host };
 }
 let passed = 0, published = null;
 async function check(name, fn) {
@@ -158,7 +160,106 @@ await check('a_bank_page_with_no_light_is_never_held', async () => {
     assert.deepEqual(c.server.writes(since), [], 'the panel writes nothing');
   } finally { c.controller.stop(); }
 });
-console.log(`${passed}/6 passed`); process.exit(passed === 6 ? 0 : 1);
+await check('a_wall_opened_before_the_bake_picks_it_up', async () => {
+  // I1: a wall that mounts before any bake polls the key the desk will bake and draws the
+  // bake when it lands, without a reload. M1: until then it keeps its own geometry.
+  const server = fakeServer(), wall = await context('low', server, null, { poll: 300 });
+  try {
+    await until(() => wall.controller.state().key !== null, 'the wall computes its atlas key');
+    await sleep(1000);
+    assert.deepEqual(wall.controller.fresh(), [], 'no bake yet');
+    assert.ok(covered(wall.out.root).every(m => !m.geometry.attributes.lmSkyPage), 'M1: with no bake the wall keeps its own geometry');
+    const desk = await context('high', server);
+    try {
+      await until(() => !desk.controller.state().baking && desk.controller.fresh().length === 4, 'the desk bakes');
+      assert.equal(wall.controller.state().key, desk.controller.state().key, 'the wall polls the key the desk bakes');
+    } finally { desk.controller.stop(); }
+    await until(() => wall.controller.fresh().length === 4, 'the wall picks the bake up without a reload: ' + JSON.stringify(wall.controller.state()));
+    assert.ok(covered(wall.out.root).every(m => m.geometry.attributes.lmSkyPage), 'the atlas is applied once a bake exists');
+    assert.equal(wall.renderer.log.renders, 0, 'the wall never bakes');
+  } finally { wall.controller.stop(); }
+});
+let wallServer = null;
+async function bakedWall(extra = {}) {
+  if (!wallServer) {
+    const desk = await context('high', null, [k1, k2, h1, c1]);
+    try { await until(() => !desk.controller.state().baking && desk.controller.fresh().length === 4, 'the desk bakes'); }
+    finally { desk.controller.stop(); }
+    wallServer = desk.server;
+  }
+  const wall = await context('low', wallServer, [k1, k2, h1, c1], { poll: 0, ...extra });
+  await until(() => wall.controller.fresh().length === 4, 'the wall draws the bake');
+  return wall;
+}
+await check('a_poll_with_nothing_new_rebuilds_nothing', async () => {
+  // I2: an unchanged manifest and 304 pages rebuild, re-upload and redraw nothing; a
+  // changed page updates only its own layer of the array it lives in.
+  const wall = await bakedWall(), server = wall.server;
+  try {
+    let renders = 0, refreshes = 0;
+    wall.view.render = () => { renders++; };
+    wall.view.live = { refresh: async () => { refreshes++; }, layout: () => liveLayout([k1, k2, h1, c1]) };
+    const before = wall.controller.held(), since = server.calls.length;
+    await wall.controller.refresh();
+    const after = wall.controller.held();
+    assert.deepEqual(after.versions, before.versions, 'no array texture is re-uploaded');
+    assert.deepEqual(after.ids, before.ids, 'no array texture is replaced');
+    assert.equal(renders, 0, 'nothing is redrawn'); assert.equal(refreshes, 0, 'the live layer is not refreshed');
+    const gets = server.calls.slice(since).filter(c => c.method === 'GET' && c.path.endsWith('.png'));
+    assert.ok(gets.length && gets.every(c => c.inm && !c.full), `every page is asked with its ETag and answers 304: ${JSON.stringify(gets)}`);
+    const key = wall.controller.state().key, page = server.manifests.get(key).lights.k1.page;
+    // What a render does: the GPU took every flagged layer.
+    const arrays = wall.controller.held().textures;
+    [arrays.sky, ...arrays.banks].forEach(t => t.clearLayerUpdates());
+    await server.api(`api/house/bakes/${key}/${page}.png`, { method: 'POST', body: server.pages.get(`${key}/${page}`) });
+    await wall.controller.refresh();
+    const changed = wall.controller.held();
+    assert.deepEqual(changed.ids, before.ids, 'a changed page keeps its array texture');
+    assert.equal(changed.versions.sky, before.versions.sky, 'the sky array is untouched');
+    assert.ok(changed.versions.banks[0] > before.versions.banks[0], 'the bank array is flagged');
+    assert.deepEqual(changed.updates.banks[0], [changed.banks[0].lit.indexOf(page - changed.sky.layers)], 'only the changed page\'s layer uploads');
+    assert.deepEqual([...wall.controller.fresh()].sort(), ['c1', 'h1', 'k1', 'k2']);
+  } finally { wall.controller.stop(); }
+});
+await check('lights_moved_while_open_follow_the_layout', async () => {
+  // M3: the light list follows the live layer's layout: a light moved while the wall is
+  // up stops drawing its old bake at once.
+  const wall = await bakedWall();
+  try {
+    const moved = { ...h1, at: [h1.at[0] + 2, h1.at[1], h1.at[2]] };
+    wall.view.live = { refresh: async () => {}, layout: () => liveLayout([k1, k2, moved, c1]) };
+    await wall.controller.refresh();
+    assert.deepEqual([...wall.controller.fresh()].sort(), ['c1', 'k1', 'k2'], 'the moved light is no longer drawn baked');
+    assert.deepEqual(wall.controller.state().stale, ['h1'], 'it waits to re-bake');
+  } finally { wall.controller.stop(); }
+});
+await check('window_glow_inverts_each_mesh_once', async () => {
+  // M2: the window glow looks up charts by room and inverts each mesh's matrix once.
+  let inverts = 0;
+  const invert = THREE.Matrix4.prototype.invert;
+  THREE.Matrix4.prototype.invert = function () { inverts++; return invert.call(this); };
+  let wall;
+  try { wall = await bakedWall(); } finally { THREE.Matrix4.prototype.invert = invert; }
+  try {
+    let meshes = 0; wall.out.root.traverse(o => { if (o.isMesh) meshes++; });
+    assert.ok(inverts <= meshes * 2, `matrix inversions ${inverts} for ${meshes} meshes`);
+  } finally { wall.controller.stop(); }
+});
+await check('a_child_never_bakes', async () => {
+  // M4: the bake lease is parents-only; a child's High view shows no button and never bakes.
+  const host = new Node('div');
+  const c = await context('high', null, null, { deny: true, host });
+  try {
+    await until(() => c.controller.state().key !== null, 'the atlas key');
+    await sleep(2500);
+    assert.equal(c.controller.state().baking, false, 'no run starts');
+    assert.equal(c.renderer.log.renders, 0, 'no GPU work');
+    assert.deepEqual(c.server.writes(), [], 'nothing is uploaded');
+    const find = n => n.id === 'twin-bake-controls' || n.children.some(find);
+    assert.ok(!find(host), 'no Bake lighting now for a child');
+  } finally { c.controller.stop(); }
+});
+console.log(`${passed}/11 passed`); process.exit(passed === 11 ? 0 : 1);
 """
 
 

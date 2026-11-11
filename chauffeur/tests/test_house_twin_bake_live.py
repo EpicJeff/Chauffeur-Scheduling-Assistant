@@ -167,7 +167,8 @@ def bake_requests(page):
 
 
 def writes(seen, since=0):
-    return [(m, p) for m, p in seen[since:] if m != 'GET']
+    # The server lease (Ruling B17) is not bake data: writes are page uploads and manifests.
+    return [(m, p) for m, p in seen[since:] if m != 'GET' and not p.endswith('/lease')]
 
 
 def baked_row(page, device_id):
@@ -794,6 +795,124 @@ def scenario_two_tabs_bake_without_tearing():
         check(not H.unexpected(other_errors), H.unexpected(other_errors))
 
 
+def other_page(page):
+    """A second, separate browser context on the same browser (another machine's cookies)."""
+    context = page.context.browser.new_context(viewport={'width': 1400, 'height': 1000})
+    return context, context.new_page()
+
+
+def scenario_wall_opened_before_the_bake_picks_it_up():
+    """I1: a wall that opens before any bake draws the bake once a desk lands it, without a reload."""
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    clear_bakes()
+    with s.browser(launch_args=L.GPU_ARGS) as wall:
+        seen = bake_requests(wall)
+        open_wall(wall, s)
+        wait_until(wall, lambda: bool(state(wall).get('key')), 120, ('the wall computes its atlas key', state(wall)))
+        wall.wait_for_timeout(3000)
+        check(fresh(wall) == set(), ('no bake yet: nothing drawn baked', sorted(fresh(wall))))
+        wall_key = state(wall)['key']
+        context, desk = other_page(wall)
+        try:
+            desk_errors = track_errors(desk)
+            open_desk(desk, s)
+            st = wait_baked(desk)
+            check(st['key'] == wall_key, ('the wall polls the very key the desk bakes', wall_key, st['key']))
+            check(not H.unexpected(desk_errors), H.unexpected(desk_errors))
+        finally:
+            context.close()
+        wait_until(wall, lambda: set(BAKED) <= fresh(wall), 90,
+                   ('the wall picks the bake up without a reload', state(wall), sorted(fresh(wall))))
+        L.aim_kitchen(wall)
+        RL.lights_mode(wall)
+        check(is_baked(baked_row(wall, 'dev-k-lamp')), ('the Counter lamp now draws from its bake', baked_row(wall, 'dev-k-lamp')))
+        check(writes(seen) == [], ('the wall uploads nothing', writes(seen)))
+        L.no_errors(s)
+
+
+def scenario_editor_never_bakes_and_says_when_lights_wait():
+    """Ruling B15: the editor never bakes; its chip says when the lights wait to re-bake."""
+    from services import twin_bakes, twin_store
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    clear_bakes()
+    behind = 'ab' * 20
+    twin_bakes.save_manifest(behind, {'pages': 1, 'lights': {}, 'sky': {'page': 0, 'channel': 0},
+                                      'round': (twin_store.current_id() or 0) + 1000, 'complete': True})
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        seen = bake_requests(page)
+        H.signed_in(page)
+        goto_retry(page, s.url('house/editor?tier=high&test=1'))
+        page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=90000)
+        page.wait_for_function('() => window.__twin && window.__twin.ready === true', timeout=90000)
+        page.wait_for_timeout(8000)
+        check(seen == [], ('the editor never reads or writes a bake', seen[:6]))
+        check(page.evaluate('() => !window.__twin.bake'), 'the editor mounts no bake controller')
+        check(page.get_by_role('button', name=BAKE_NOW, exact=True).count() == 0, f'the editor offers no {BAKE_NOW!r}')
+        chip = page.locator('#editor-chip')
+        check('Lights wait to re-bake' in chip.inner_text(), ('the chip says the lights wait', chip.inner_text()))
+        L.no_errors(s)
+    clear_bakes()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        open_desk(page, s)
+        wait_baked(page)
+    check(twin_bakes.status(twin_store.current_id()) == {'waiting': False},
+          ('a desk bake of the current round clears the wait', twin_bakes.status(twin_store.current_id())))
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        H.signed_in(page)
+        goto_retry(page, s.url('house/editor?tier=high&test=1'))
+        page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=90000)
+        page.wait_for_timeout(2000)
+        check('re-bake' not in page.locator('#editor-chip').inner_text(), ('nothing to say once baked', page.locator('#editor-chip').inner_text()))
+        L.no_errors(s)
+
+
+def scenario_sky_bake_shapes_daylight_never_adds():
+    """Ruling B16: the baked sky multiplies the daylight ambient: open surfaces keep v2.499.783's
+    look, a room away from its windows goes darker, nothing gets brighter."""
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        desk_baked(s, page)
+    grid = [(x, y) for x in (300, 500, 700, 900, 1100) for y in (300, 450, 600, 750)]
+
+    def measure(page):
+        page.evaluate("() => { window.__twin.setTime('day'); window.__twin.setView('ext'); window.__twin.setCamera('front'); }")
+        H.settle(page, 4)
+        outside = mean(lum(L.pixel(page, x, y)) for x, y in grid)
+        L.aim_kitchen(page)
+        page.evaluate("() => window.__twin.setTime('day')")
+        H.settle(page, 4)
+        inside = mean(lum(p) for p in RL.sample(page, RL.FAR_KITCHEN))
+        return outside, inside
+
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        open_wall(page, s)
+        wait_until(page, lambda: set(BAKED) <= fresh(page), 120, ('the wall draws the bake', sorted(fresh(page))))
+        baked_out, baked_in = measure(page)
+        page.route('**/api/house/bakes/**', lambda route: route.fulfill(status=404, content_type='application/json', body='{"detail":"Not Found"}'))
+        reopen(page)
+        page.wait_for_timeout(6000)
+        check(fresh(page) == set(), ('no bake drawn', sorted(fresh(page))))
+        plain_out, plain_in = measure(page)
+        detail = {'baked_out': round(baked_out, 1), 'plain_out': round(plain_out, 1),
+                  'baked_in': round(baked_in, 1), 'plain_in': round(plain_in, 1)}
+        check(baked_out <= plain_out * 1.04 + 2, ('the sky bake never brightens the outside', detail))
+        check(baked_out >= plain_out * 0.75, ('open surfaces keep their daylight', detail))
+        check(baked_in < plain_in - 3, ('the room away from its windows goes darker', detail))
+        L.no_errors(s)
+
+
 SCENARIOS = [
     scenario_bake_runs_on_idle_and_lands,
     scenario_baked_light_does_not_cross_a_wall,
@@ -808,6 +927,9 @@ SCENARIOS = [
     scenario_bake_now_rebakes_everything,
     scenario_progress_words,
     scenario_two_tabs_bake_without_tearing,
+    scenario_wall_opened_before_the_bake_picks_it_up,
+    scenario_editor_never_bakes_and_says_when_lights_wait,
+    scenario_sky_bake_shapes_daylight_never_adds,
 ]
 
 

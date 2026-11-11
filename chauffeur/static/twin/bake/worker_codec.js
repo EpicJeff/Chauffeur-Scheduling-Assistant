@@ -1,5 +1,9 @@
 export function workerCodec() {
-  const worker = new Worker(new URL('./codec_worker.js', import.meta.url));
+  // The import map's versioned URL (I9); a browser without import.meta.resolve takes the plain one.
+  const plain = new URL('./codec_worker.js', import.meta.url).href;
+  let url = plain;
+  try { if (import.meta.resolve) url = import.meta.resolve(plain); } catch { /* the plain URL */ }
+  const worker = new Worker(url);
   let serial = 0, stopped = false;
   const pending = new Map();
   worker.onmessage = ({ data }) => {

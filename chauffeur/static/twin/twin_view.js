@@ -11,7 +11,10 @@ import { hostPoint } from './twin_hosts.js';
 import { keepLive } from './live/live.js';
 import { mountBake } from './bake/runtime.js';
 
-export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } = {}) {
+export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true } = {}) {
+  // Ruling B15: only the 3D house view bakes lights. The editor's scene is the house
+  // mid-edit (a focused floor, faded floors, editable geometry), so it never bakes.
+  const bakes = bake && !el.closest?.('.editor-shell');
   const probe = document.createElement('canvas').getContext('webgl2');
   if (!probe) throw new Error('This screen needs WebGL 2 to show the house.');
   tier = new URLSearchParams(location.search).get('tier') || tier;
@@ -228,7 +231,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
     ready: false, scene, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
-    groups: null, roomLights: [], plan,
+    groups: null, roomLights: [], plan, round,
     render,
     cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
     saveView() {
@@ -632,7 +635,6 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       }
       render();
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
-      startBake();
     },
     async rebuild(nextPlan, { preserveYard = false } = {}) {
       view.bake?.stop();
@@ -780,7 +782,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   view.bakeSky = () => view.bake?.sky(ambient.color, ambient.intensity);
   function startBake() {
     view.bake?.stop();
-    mountBake(view, twin.root, { host: document.getElementById('twin-controls') || el.closest('.editor-shell')?.querySelector('.editor-toolbar') });
+    if (!bakes) return;
+    mountBake(view, twin.root, { host: document.getElementById('twin-controls') });
     view.bakeSky();
   }
   function applyLights() {
@@ -924,7 +927,7 @@ async function boot() {
     const kitResponse = await fetch(base() + 'api/house/twin/kit/' + encodeURIComponent(snapshot.kit_id));
     if (!kitResponse.ok) throw new Error('Could not load the house style.');
     const kit = await kitResponse.json();
-    const view = await mountTwin(host, { plan: snapshot.plan, kit });
+    const view = await mountTwin(host, { plan: snapshot.plan, kit, round: snapshot.round ?? null });
     document.getElementById('twin-tier').textContent = view.tier === 'low' ? 'Low' : 'High';
     const views = document.getElementById('twin-views');
     const syncViews = () => {

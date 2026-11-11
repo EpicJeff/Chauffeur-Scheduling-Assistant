@@ -30,6 +30,11 @@
     imports[new URL(window.chfBase + 'static/twin/editor/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/editor/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/live/markers.js', location.href).href] = window.chfBase + {{ 'static/twin/live/markers.js' | ver | tojson }};
+    {% for name in ['live/live', 'live/room_panel', 'live/modes', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
+    imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
+    {% endfor %}
+    // Bake modules import three by its path; map that path onto the one versioned three.
+    imports[new URL(window.chfBase + 'static/vendor/three-r187/three.module.js', location.href).href] = imports.three;
     const map = document.createElement('script'); map.type = 'importmap';
     map.textContent = JSON.stringify({ imports }); document.head.appendChild(map);
     document.addEventListener('DOMContentLoaded', () => {

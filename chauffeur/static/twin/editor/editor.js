@@ -131,7 +131,7 @@ export async function boot() {
   }
   function syncChip() {
     statusChip.update({ state: currentBuild?.state, pause: currentBuild?.pause,
-      cost: snapshot.cost?.total || 0,
+      cost: snapshot.cost?.total || 0, bake: snapshot.bake,
       estimate: ['running', 'stopped', 'checkpoint'].includes(currentBuild?.state) ? snapshot.cost?.estimate ?? null : null });
   }
   function countGhosts(plan) {
@@ -505,7 +505,7 @@ export async function boot() {
   try {
     await loadSheets();
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
-    view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true });
+    view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true, bake: false });
     buildGhosts = createBuildGhosts(view);
     if (new URLSearchParams(location.search).get('test') === '1') hooks.buildGhosts = buildGhosts;
     view.showAnchors = true;

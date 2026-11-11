@@ -8,14 +8,25 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 
 from services import twin_store
 
 MAX_PAGE_BYTES = 16 * 1024 * 1024
+MAX_PAGES = 64                      # page index 0..63 (M7)
+MAX_MANIFEST_BYTES = 1024 * 1024    # 1 MiB (M7)
+LEASE_SECONDS = 60                  # Ruling B17
+KEEP_RECENT_SECONDS = 600           # a key written this recently is a bake in progress
 PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 KTX2_SIGNATURE = b'\xabKTX 20\xbb\r\n\x1a\n'
 _KEY = re.compile(r'[0-9a-f]{16,64}')
 _LOCK = threading.RLock()
+_LEASES = {}                        # key -> (owner, until); the add-on runs one worker
+_OWNER = re.compile(r'[A-Za-z0-9_.:-]{1,64}')
+
+
+def _now():
+    return time.time()
 
 
 def check_key(key):
@@ -25,7 +36,7 @@ def check_key(key):
 
 
 def check_page(page):
-    if not re.fullmatch(r'[0-9]+', str(page)):
+    if not re.fullmatch(r'[0-9]+', str(page)) or int(page) >= MAX_PAGES:
         raise ValueError('Invalid bake page.')
     return int(page)
 
@@ -47,6 +58,8 @@ def _write(path, data):
                                          delete=False) as out:
             temp_path = out.name
             out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
         os.replace(temp_path, path)
     finally:
         if temp_path is not None and os.path.exists(temp_path):
@@ -79,6 +92,8 @@ def _check_manifest(body):
     pages = body.get('pages')
     if type(pages) is not int or pages < 1:
         raise ValueError('Bake manifest needs at least one page.')
+    if pages > MAX_PAGES:
+        raise ValueError(f'Bake manifest has more than {MAX_PAGES} pages.')
     lights = body.get('lights')
     if not isinstance(lights, dict):
         raise ValueError('Bake lights must be an object.')
@@ -104,15 +119,106 @@ def _check_manifest(body):
             for k in ('sky', 'room')
         ):
             raise ValueError('Bake densities need positive finite sky and room values.')
+    # Which model round the desk baked, and whether every light and the sky are done
+    # (Ruling B15: the editor says when lights wait to re-bake).
+    if body.get('round') is not None and (type(body['round']) is not int or body['round'] < 0):
+        raise ValueError('Bake round must be a round id.')
+    if 'complete' in body and type(body['complete']) is not bool:
+        raise ValueError('Bake complete must be true or false.')
 
 
 def save_manifest(key, body):
     path = _directory(key) / 'manifest.json'
     _check_manifest(body)
     data = json.dumps(body, allow_nan=False).encode('utf-8')
+    if len(data) > MAX_MANIFEST_BYTES:
+        raise ValueError('Bake manifest exceeds 1 MiB.')
     with _LOCK:
         _write(path, data)
+        _prune_older(key)
     return body
+
+
+def _touched(path):
+    manifest = path / 'manifest.json'
+    times = [path.stat().st_mtime]
+    if manifest.exists():
+        times.append(manifest.stat().st_mtime)
+    return max(times)
+
+
+def _prune_older(current):
+    """Keep the key just saved and the most recent other one (I3). A key written in
+    the last few minutes is a bake in progress on some desk and is kept too."""
+    root = Path(twin_store.DATA_DIR) / 'bakes'
+    others = []
+    for path in root.iterdir():
+        if path.name == current or not path.is_dir() or path.is_symlink() or not _KEY.fullmatch(path.name):
+            continue
+        try:
+            others.append((_touched(path), path))
+        except OSError:
+            continue
+    others.sort(key=lambda row: row[0], reverse=True)
+    now = _now()
+    for when, path in others[1:]:
+        if now - when < KEEP_RECENT_SECONDS:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def status(current_round):
+    """{'waiting': bool} from the most recently saved manifest that names its round,
+    or None when no desk has recorded a bake (Ruling B15)."""
+    root = Path(twin_store.DATA_DIR) / 'bakes'
+    with _LOCK:
+        if not root.is_dir():
+            return None
+        latest = None
+        for path in root.iterdir():
+            manifest = path / 'manifest.json'
+            if not _KEY.fullmatch(path.name) or not manifest.is_file():
+                continue
+            try:
+                when = manifest.stat().st_mtime
+            except OSError:
+                continue
+            if latest is None or when > latest[0]:
+                latest = (when, manifest)
+        if latest is None:
+            return None
+        try:
+            body = json.loads(latest[1].read_bytes())
+        except (OSError, ValueError):
+            return None
+    if body.get('round') is None:
+        return None
+    return {'waiting': body['round'] != current_round or body.get('complete') is not True}
+
+
+def lease(key, owner, action):
+    """Ruling B17: one desk bakes a key at a time. Answers (ok, body)."""
+    check_key(key)
+    if not isinstance(owner, str) or not _OWNER.fullmatch(owner):
+        raise ValueError('A lease needs an owner.')
+    if action not in ('acquire', 'release', 'check'):
+        raise ValueError('A lease action is acquire, release or check.')
+    with _LOCK:
+        now = _now()
+        held = _LEASES.get(key)
+        if held and held[1] <= now:
+            _LEASES.pop(key, None)
+            held = None
+        if action == 'check':
+            return True, {'free': held is None or held[0] == owner}
+        if action == 'release':
+            if held and held[0] == owner:
+                _LEASES.pop(key, None)
+            return True, {'held': False}
+        if held and held[0] != owner:
+            return False, {'held': False, 'seconds': max(1, math.ceil(held[1] - now))}
+        _LEASES[key] = (owner, now + LEASE_SECONDS)
+        return True, {'held': True, 'seconds': LEASE_SECONDS}
 
 
 def read_manifest(key):

@@ -195,6 +195,19 @@ if (which === 'chip_words_follow_state') {
     assert.match(text, /\$1\.50 so far/, 'the spend stays in view with no build: ' + text);
   }
   console.log('  ok chip_words_follow_state');
+} else if (which === 'chip_says_when_lights_wait_to_rebake') {
+  // Ruling B15: the editor never bakes; the desk's 3D house does. The chip says when the
+  // lights wait for it (the editor state's bake: {waiting}).
+  let text = await say({state: null, pause: null, cost: 0, estimate: null, bake: {waiting: true}});
+  assert.match(text, /Lights wait to re-bake/, 'the chip says the lights wait: ' + text);
+  text = await say({state: 'running', pause: null, cost: 1, estimate: 2, bake: {waiting: true}});
+  assert.match(text, /\bWorking\b/, 'alongside a running build: ' + text);
+  assert.match(text, /Lights wait to re-bake/, text);
+  for (const bake of [{waiting: false}, null, undefined]) {
+    text = await say({state: null, pause: null, cost: 0, estimate: null, bake});
+    assert.doesNotMatch(text, /re-bake/, 'nothing to say when the bake is current or never ran: ' + JSON.stringify(bake) + ' ' + text);
+  }
+  console.log('  ok chip_says_when_lights_wait_to_rebake');
 } else {
   let text = await say({state: 'running', pause: null, cost: 1.234, estimate: 0.5});
   assert.match(text, /\$1\.23 so far/, 'spend shows as $x.xx so far: ' + text);
@@ -216,7 +229,7 @@ if (which === 'chip_words_follow_state') {
 process.exit(0);
 """
 
-TESTS = ['chip_words_follow_state', 'spend_and_estimate_format']
+TESTS = ['chip_words_follow_state', 'spend_and_estimate_format', 'chip_says_when_lights_wait_to_rebake']
 
 
 def run():

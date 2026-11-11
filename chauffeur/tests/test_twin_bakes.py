@@ -400,6 +400,157 @@ def test_manifest_formats_and_densities():
         check(c.client.get(manifest_url(key), headers=c.panel).json() == body, 'bad metadata changes nothing')
 
 
+LEASE_TEMPLATE = '/api/house/bakes/{key}/lease'
+
+
+def lease_url(key):
+    return f'/api/house/bakes/{key}/lease'
+
+
+def test_lease_serialises_bakes_of_one_key():
+    """Ruling B17: one server-side lease per bake key, PARENTS, 60 s, renewed while baking."""
+    from services import twin_bakes
+    check(auth.resolve('POST', LEASE_TEMPLATE) == auth.PARENTS, f'POST {LEASE_TEMPLATE}: {auth.resolve("POST", LEASE_TEMPLATE)}')
+    import main
+    served = {(m, r.path) for r in main.app.routes for m in (getattr(r, 'methods', None) or ())}
+    check(('POST', LEASE_TEMPLATE) in served, f'the app serves POST {LEASE_TEMPLATE}')
+    key, other = key_of(0x70), key_of(0x71)
+    clock = [1000.0]
+    with Ctx() as c, patch.object(twin_bakes, '_now', side_effect=lambda: clock[0]):
+        def ask(owner, action='acquire', who=None, k=key):
+            return c.client.post(lease_url(k), json={'owner': owner, 'action': action},
+                                 headers=c.mum if who is None else who)
+        for who, name, status in ((c.kid, 'a child', 403), (c.panel, 'the wall panel', 403), ({}, 'nobody', 401)):
+            r = ask('desk-a', who=who)
+            check(r.status_code == status, (name, r.status_code, r.text))
+        r = ask('desk-a', 'check')
+        check(r.status_code == 200 and r.json().get('free') is True, ('a parent may check: the key is free', r.status_code, r.text))
+        r = ask('desk-a')
+        check(r.status_code == 200 and r.json().get('held') is True, ('desk A takes the lease', r.status_code, r.text))
+        check(r.json().get('seconds') == 60, ('a lease lasts 60 s', r.text))
+        r = ask('desk-b')
+        check(r.status_code == 409, ('desk B waits while A holds it', r.status_code, r.text))
+        check(ask('desk-b', 'check').json().get('free') is False, 'check says it is taken')
+        check(ask('desk-b', k=other).status_code == 200, 'another key is its own lease')
+        clock[0] += 50
+        check(ask('desk-a').status_code == 200, 'A renews within the minute')
+        clock[0] += 50
+        check(ask('desk-b').status_code == 409, 'the renewal holds it past the first minute')
+        check(ask('desk-b', 'release').status_code == 200 and ask('desk-b').status_code == 409,
+              'B cannot release the lease A holds')
+        check(ask('desk-a', 'release').status_code == 200, 'A lets go')
+        check(ask('desk-b').status_code == 200, 'B takes it once A lets go')
+        clock[0] += 61
+        check(ask('desk-a').status_code == 200, 'a lease nobody renews lapses after 60 s')
+        for bad in ({'owner': '', 'action': 'acquire'}, {'owner': 'x' * 65, 'action': 'acquire'},
+                    {'owner': 'desk-a', 'action': 'steal'}, {'action': 'acquire'}):
+            r = c.client.post(lease_url(key), json=bad, headers=c.mum)
+            check(r.status_code in (400, 422), ('a bad lease request', bad, r.status_code))
+        r = c.client.post(lease_url('nothex'), json={'owner': 'a', 'action': 'acquire'}, headers=c.mum)
+        check(r.status_code == 400, ('a bad key is refused', r.status_code))
+
+
+def _age(key, seconds):
+    folder = os.path.join(bakes_dir(), key)
+    when = os.path.getmtime(folder) - seconds
+    for name in os.listdir(folder):
+        os.utime(os.path.join(folder, name), (when, when))
+    os.utime(folder, (when, when))
+
+
+def test_a_new_keys_manifest_prunes_older_keys():
+    """I3: a new key's manifest keeps that key and the one before it; older bakes go."""
+    from services import twin_bakes
+    twin_bakes.prune(set())
+    keys = [key_of(0x80 + i) for i in range(4)]
+    with Ctx() as c:
+        for i, k in enumerate(keys[:3]):
+            check(c.upload(k, 0, png(seed=i)).status_code == 200, 'seed a page')
+            check(c.put_manifest(k, manifest()).status_code == 200, 'seed a manifest')
+            _age(k, 3600 * (3 - i))           # older keys were baked hours ago
+        check(not os.path.exists(os.path.join(bakes_dir(), keys[0])), 'the oldest key went when a newer pair landed')
+        check(c.upload(keys[3], 0, png(seed=9)).status_code == 200, 'a new key, first page')
+        check(c.put_manifest(keys[3], manifest()).status_code == 200, 'and its manifest')
+        left = sorted(n for n in os.listdir(bakes_dir()) if os.path.isdir(os.path.join(bakes_dir(), n)))
+        check(left == sorted([keys[2], keys[3]]), ('the current key and the previous one stay', left))
+        check(c.client.get(page_url(keys[2], 0), headers=c.panel).content == png(seed=2), 'the previous key keeps its page')
+        # A bake in progress (pages, no manifest yet, written just now) is never pruned under it.
+        check(c.upload(keys[0], 0, png(seed=5)).status_code == 200, 'a desk starts another key')
+        check(c.put_manifest(keys[3], manifest()).status_code == 200, 're-save the current manifest')
+        check(os.path.exists(stored_path(keys[0], 0)), 'a key written in the last minutes stays')
+
+
+def test_page_index_and_manifest_are_bounded():
+    """M7: page index at most 63, manifest at most 1 MiB."""
+    key = key_of(0x90)
+    with Ctx() as c:
+        check(c.upload(key, 63, png()).status_code == 200, 'page 63 is accepted')
+        r = c.upload(key, 64, png())
+        check(r.status_code == 400, ('page 64 is refused', r.status_code, r.text))
+        body = manifest()
+        body['lights'].update({f'dev-{i:05d}-' + 'x' * 40: {'page': 0, 'channel': 0, 'key': key_of(i)} for i in range(12000)})
+        r = c.put_manifest(key, body)
+        check(r.status_code in (400, 413), ('an over-1 MiB manifest is refused', r.status_code))
+        r = c.put_manifest(key, manifest(pages=65))
+        check(r.status_code == 400, ('a manifest of 65 pages is refused', r.status_code))
+
+
+def test_editor_state_says_when_lights_wait_to_rebake():
+    """B15: the desk records which round it baked; the editor's state says when lights wait."""
+    from services import twin_bakes
+    twin_bakes.prune(set())
+    key = key_of(0xa0)
+    with Ctx() as c:
+        def state():
+            r = c.client.get('/api/house/editor/state', headers=c.mum)
+            check(r.status_code == 200, (r.status_code, r.text[:300]))
+            return r.json().get('bake')
+        check(state() is None, ('no bake ever: nothing to say', state()))
+        if twin_store.current_id() is None:
+            import json
+            with open(os.path.join(ROOT, 'tests', 'fixtures', 'twin_model', 'household-2026-11-09.json'), encoding='utf-8') as f:
+                twin_store.push_round(json.load(f), 'build')
+        current = twin_store.current_id()
+        check(isinstance(current, int), ('a saved round', current))
+        body = {**manifest(), 'round': current, 'complete': True}
+        check(c.put_manifest(key, body).status_code == 200, 'the desk records a complete bake of this round')
+        check(state() == {'waiting': False}, ('the bake is current', state()))
+        check(c.put_manifest(key, {**body, 'complete': False}).status_code == 200, 'a bake part-way')
+        check(state() == {'waiting': True}, ('lights still to bake', state()))
+        check(c.put_manifest(key, {**body, 'complete': True, 'round': (current or 0) + 100}).status_code == 200, 'a bake of another round')
+        check(state() == {'waiting': True}, ('another round: lights wait', state()))
+        for bad in ('x', -1, 1.5, True):
+            r = c.put_manifest(key, {**body, 'round': bad})
+            check(r.status_code == 400, ('a bad round is refused', bad, r.status_code))
+        r = c.put_manifest(key, {**body, 'complete': 'yes'})
+        check(r.status_code == 400, ('complete is a boolean', r.status_code))
+        twin = c.client.get('/api/house/twin', headers=c.mum).json()
+        check(twin.get('round') == current, ('the 3D house page learns the round it draws', twin.get('round'), current))
+
+
+BAKE_MODULES = ('bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker',
+                'bake/bake_pass', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker',
+                'bake/codec_worker', 'live/real_lights')
+
+
+def test_bake_modules_are_versioned():
+    """I9: every bake module, the workers and live/real_lights sit in both import maps with ?v=,
+    and a module a worker imports by a relative URL is revalidated, never served stale."""
+    with Ctx() as c:
+        for page in ('/house/twin', '/house/editor'):
+            r = c.client.get(page, headers=c.mum)
+            check(r.status_code == 200, (page, r.status_code))
+            for name in BAKE_MODULES:
+                check(re.search(r'static/twin/' + re.escape(name) + r'\.js\?v=', r.text),
+                      (page, f'{name}.js is in the import map with ?v='))
+            check("three-r187/three.module.js', location.href).href]" in r.text,
+                  (page, 'the relative three import maps onto the same versioned three'))
+        for name in ('atlas', 'atlas_transport', 'codec'):
+            r = c.client.get(f'/static/twin/bake/{name}.js')
+            check(r.status_code == 200, (name, r.status_code))
+            check('no-cache' in r.headers.get('cache-control', ''), (name, 'bake modules are revalidated', r.headers.get('cache-control')))
+
+
 TESTS = (
     test_routes_have_their_tiers,
     test_upload_then_download_with_etag,
@@ -411,6 +562,11 @@ TESTS = (
     test_wall_panel_can_read,
     test_ktx2_magic_and_content_type,
     test_manifest_formats_and_densities,
+    test_lease_serialises_bakes_of_one_key,
+    test_a_new_keys_manifest_prunes_older_keys,
+    test_page_index_and_manifest_are_bounded,
+    test_editor_state_says_when_lights_wait_to_rebake,
+    test_bake_modules_are_versioned,
 )
 
 

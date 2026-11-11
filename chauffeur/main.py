@@ -1346,6 +1346,11 @@ async def add_no_cache_headers(request: Request, call_next):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+    elif request.url.path.startswith("/static/twin/bake/") and request.url.path.endswith(".js"):
+        # The lightmap workers import their modules by relative URL, where no import
+        # map applies: revalidate those (a cheap 304) so a panel never runs last
+        # week's worker code against this week's page (I9).
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -7341,7 +7346,7 @@ def house_facade_delete(fid: str):
 def house_twin_api():
     from services import twin_store
     return {'plan': twin_store.current(), 'rounds': twin_store.rounds(),
-            'kit_id': 'modern_farmhouse'}
+            'round': twin_store.current_id(), 'kit_id': 'modern_farmhouse'}
 
 
 def _house_ha_context(settings=None):
@@ -7554,6 +7559,19 @@ async def house_bake_page_post(key: str, page: str, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {'etag': etag}
+
+
+@app.post('/api/house/bakes/{key}/lease')
+def house_bake_lease(key: str, body: dict = Body(...)):
+    """Ruling B17: one desk bakes a key at a time (60 s, renewed while baking)."""
+    from services import twin_bakes
+    try:
+        ok, answer = twin_bakes.lease(key, body.get('owner'), body.get('action', 'acquire'))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not ok:
+        raise HTTPException(status_code=409, detail='Another screen is baking this house.')
+    return answer
 
 
 @app.get('/api/house/bakes/{key}/{page}.png')
@@ -8215,13 +8233,15 @@ def house_editor_record():
 
 @app.get('/api/house/editor/state')
 def house_editor_state():
-    from services import twin_build, twin_cost, twin_store
+    from services import twin_bakes, twin_build, twin_cost, twin_store
     with twin_store.LIFECYCLE:
         latest = twin_build.latest()
         return {'plan': twin_store.current(), 'model': twin_store.current_model(), 'rounds': twin_store.rounds(),
                 'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint(),
                          'estimate': twin_build.remaining_estimate(latest) if latest else None},
-                'build': latest}
+                'build': latest,
+                # Ruling B15: the editor never bakes; its chip says when lights wait to re-bake.
+                'bake': twin_bakes.status(twin_store.current_id())}
 
 
 @app.get('/api/house/twin/rounds/{round_id}')

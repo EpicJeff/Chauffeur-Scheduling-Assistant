@@ -38,10 +38,16 @@ export function transcodePage(module, bytes, format) {
 }
 
 export function patchLightmaps(materials, pages, uniforms) {
+  // M8: a room's region sits two texels from its neighbours on a shared page. Sample no
+  // coarser than mip 1 (gradients clamped to two texels a pixel), so a far-off room never
+  // blends a neighbour's light into its border under its own tint. The gradients are
+  // taken outside the room branch, where derivatives are defined.
   const bankCode = pages.banks.map((t, b) => {
     const s = lightSwizzle(t.format);
     return `vec4 region${b} = texelFetch(lmRegions, ivec2(${b}, int(vLmRoom + 0.5)), 0);
-vec4 bank${b} = texture(lmBank${b}, vec3(vLmUV + region${b}.xy, region${b}.z));
+float lmSpan${b} = max(length(lmDx), length(lmDy)) * float(textureSize(lmBank${b}, 0).x);
+float lmClamp${b} = lmSpan${b} > 2.0 ? 2.0 / lmSpan${b} : 1.0;
+vec4 bank${b} = textureGrad(lmBank${b}, vec3(vLmUV + region${b}.xy, region${b}.z), lmDx * lmClamp${b}, lmDy * lmClamp${b});
 vec3 tint${b}a = texelFetch(lmTints, ivec2(${2*b}, int(vLmRoom + 0.5)), 0).rgb;
 vec3 tint${b}b = texelFetch(lmTints, ivec2(${2*b+1}, int(vLmRoom + 0.5)), 0).rgb;
 lmLight += bank${b}.r * tint${b}a + bank${b}.${s[1]} * tint${b}b;`;
@@ -77,13 +83,27 @@ varying vec2 vLmSkyUV; varying vec2 vLmUV; varying float vLmRoom; varying float 
       shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
 vLmSkyUV = uv2; vLmUV = uv3; vLmRoom = lmRoom; vLmSkyPage = lmSkyPage;`);
       shader.fragmentShader = declarations + '\n' + shader.fragmentShader;
-      shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+      // Ruling B16: the baked sky visibility MULTIPLIES the ambient (hemisphere and
+      // environment) term, never adds to it. A face of this tilt open to the whole sky
+      // bakes (1 + up) / 2, so it keeps the ambient it had; shaded corners and rooms away
+      // from windows lose theirs. Faces turned down see no sky and keep their ambient.
+      // skyTint is 1 once this key's sky is loaded, 0 before (no recompile).
+      shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_end>', `vec2 lmDx = dFdx(vLmUV), lmDy = dFdy(vLmUV);
+float lmVisible = texture(lmSky, vec3(vLmSkyUV, max(0.0, vLmSkyPage))).r;
+#if defined( RE_IndirectDiffuse )
+if (vLmSkyPage > -0.5) {
+  float lmOpen = 0.5 + 0.5 * inverseTransformDirection(geometryNormal, viewMatrix).y;
+  float lmShade = clamp(lmVisible / max(lmOpen, 0.05), 0.0, 1.0);
+  float lmKeep = mix(1.0, lmShade, smoothstep(0.05, 0.2, lmOpen) * skyTint.r);
+  irradiance *= lmKeep; iblIrradiance *= lmKeep;
+}
+#endif
+#include <lights_fragment_end>
 vec3 lmLight = vec3(0.0);
 if (vLmRoom > -0.5) { ${bankCode} }
-vec3 lmSkyValue = texture(lmSky, vec3(vLmSkyUV, max(0.0, vLmSkyPage))).rrr * skyTint;
-reflectedLight.indirectDiffuse += (lmLight * 16.0 + lmSkyValue) * RECIPROCAL_PI * diffuseColor.rgb;`);
+reflectedLight.indirectDiffuse += lmLight * 16.0 * RECIPROCAL_PI * diffuseColor.rgb;`);
     };
-    material.customProgramCacheKey = () => `${key}|lm-2|${slots}|${pages.sky.format}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
+    material.customProgramCacheKey = () => `${key}|lm-3|${slots}|${pages.sky.format}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
     material.needsUpdate = true;
   }
 }
@@ -105,17 +125,49 @@ async function cached(db, key, data) {
     tx.oncomplete = () => resolve(data); tx.onerror = tx.onabort = () => resolve(null); r.onerror = () => resolve(null);
   });
 }
-export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker, indexedDB = globalThis.indexedDB, signal } = {}) {
+// A browser keeps its two most recently used atlases (I3): each holds the clipped house,
+// about 14 MB, under Home Assistant's own origin. 'recent' lists them newest first with
+// the input fingerprints that point at them; every other entry is deleted.
+export const KEEP_ATLASES = 2;
+async function remember(db, key, input) {
+  if (!db) return;
+  await new Promise(resolve => {
+    const tx = db.transaction('atlases', 'readwrite'), store = tx.objectStore('atlases');
+    const r = store.get('recent');
+    r.onsuccess = () => {
+      const list = (Array.isArray(r.result) ? r.result : []).filter(row => row && row.key);
+      const mine = list.find(row => row.key === key) || { key, inputs: [] };
+      if (!mine.inputs.includes(input)) mine.inputs.push(input);
+      const keep = [mine, ...list.filter(row => row.key !== key)].slice(0, KEEP_ATLASES);
+      store.put(keep, 'recent');
+      const live = new Set(['recent', ...keep.flatMap(row => [row.key, ...row.inputs.map(i => 'input:' + i)])]);
+      if (store.getAllKeys) {
+        const all = store.getAllKeys();
+        all.onsuccess = () => { for (const k of all.result) if (!live.has(k)) store.delete(k); };
+      }
+    };
+    tx.oncomplete = resolve; tx.onerror = tx.onabort = resolve;
+  });
+}
+// A module's URL as this page's import map versions it (I9): a worker script is never
+// served from last week's cache.
+export function versioned(spec, from = import.meta.url) {
+  const plain = new URL(spec, from).href;
+  try { return import.meta.resolve ? import.meta.resolve(plain) : plain; } catch { return plain; }
+}
+// apply: false answers {key, apply()} and leaves the meshes alone until apply() (M1).
+export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker, indexedDB = globalThis.indexedDB, signal, apply = true } = {}) {
   const check = () => { if (signal?.aborted) throw new Error('Atlas cancelled.'); };
   check();
   const job = atlasJob(root, plan, layout), db = await openCache(indexedDB).catch(() => null);
+  const answer = data => apply ? applyAtlas(data, root, layout) : { key: data.key, apply: () => applyAtlas(data, root, layout) };
   try {
     const key = await cached(db, 'input:' + job.cacheKey).catch(() => null);
     const hit = key && await cached(db, key).catch(() => null);
     check();
-    if (hit) return applyAtlas(hit, root, layout);
+    if (hit) { await remember(db, hit.key, job.cacheKey).catch(() => null); return answer(hit); }
     const data = await new Promise((resolve, reject) => {
-      const w = new Worker(new URL('./atlas_worker.js', import.meta.url), { type: 'module' });
+      const w = new Worker(versioned('./atlas_worker.js'), { type: 'module' });
       const cancel = () => { finish(); reject(new Error('Atlas cancelled.')); };
       const finish = () => { w.terminate(); signal?.removeEventListener('abort', cancel); };
       w.onmessage = e => { finish(); e.data.error ? reject(new Error(e.data.error)) : resolve(e.data); };
@@ -126,7 +178,8 @@ export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker
     });
     await cached(db, data.key, data).catch(() => null);
     await cached(db, 'input:' + job.cacheKey, data.key).catch(() => null);
+    await remember(db, data.key, job.cacheKey).catch(() => null);
     check();
-    return applyAtlas(data, root, layout);
+    return answer(data);
   } finally { db?.close(); }
 }

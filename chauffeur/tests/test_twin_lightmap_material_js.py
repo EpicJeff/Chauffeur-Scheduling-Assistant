@@ -313,6 +313,7 @@ function fakeIndexedDB() {
         add(value, key) { return this.put(value, key); },
         get(key) { log.gets++; return op(() => { const v = store().data.get(keyOf(key)); return v === undefined ? undefined : structuredClone(v); }); },
         getAll() { return op(() => [...store().data.values()].map(v => structuredClone(v))); },
+        getAllKeys() { return op(() => [...store().data.keys()].map(k => k.startsWith('s:') ? k.slice(2) : JSON.parse(k.slice(2)))); },
         count() { return op(() => store().data.size); },
         delete(key) { return op(() => { store().data.delete(keyOf(key)); }); },
         clear() { return op(() => { store().data.clear(); }); },
@@ -587,6 +588,38 @@ check('lights_draw_real_time_until_the_atlas_is_ready', async () => {
     assert.equal(pool(view).filter(l => l.intensity > 0).length, 4, 'four pool lights lit');
     assert.equal(washShown(view, 'B'), true, 'room B over budget gets its wash, as before');
   } finally { live.stop(); }
+});
+
+check('indexeddb_keeps_the_last_two_atlases', async () => {
+  // I3: every geometry change is a new atlas of about 14 MB in Home Assistant's origin. A
+  // browser keeps the two it used last and deletes the rest.
+  need('loadAtlas');
+  const idb = fakeIndexedDB(), keys = [];
+  for (const density of [1, 1.5, 2]) {
+    const layout = { sky: job.layout.sky, room: { ...job.layout.room, density } };
+    const atlas = await withTimeout(M.loadAtlas(await house(), job.plan, layout, { Worker: FakeWorker, indexedDB: idb }), 60000, 'loadAtlas()');
+    keys.push(atlas.key);
+  }
+  assert.equal(new Set(keys).size, 3, 'fixture: three layouts, three atlas keys');
+  const held = [];
+  const db = await new Promise(resolve => { const r = idb.open('twin-lightmap-atlases', 1); r.onsuccess = () => resolve(r.result); });
+  await new Promise(resolve => {
+    const tx = db.transaction('atlases', 'readonly'), r = tx.objectStore('atlases').getAllKeys();
+    r.onsuccess = () => held.push(...r.result); tx.oncomplete = resolve;
+  });
+  const atlases = held.filter(k => keys.includes(k));
+  assert.deepEqual(atlases.sort(), keys.slice(1).sort(), `only the last two atlases stay: ${held}`);
+  assert.equal(held.filter(k => String(k).startsWith('input:')).length, 2, `and the fingerprints pointing at them: ${held}`);
+  // A cache hit makes an atlas the newest again.
+  const first = { sky: job.layout.sky, room: { ...job.layout.room, density: 1.5 } };
+  await M.loadAtlas(await house(), job.plan, first, { Worker: FakeWorker, indexedDB: idb });
+  await M.loadAtlas(await house(), job.plan, { sky: job.layout.sky, room: { ...job.layout.room, density: .75 } }, { Worker: FakeWorker, indexedDB: idb });
+  const after = [];
+  await new Promise(resolve => {
+    const tx = db.transaction('atlases', 'readonly'), r = tx.objectStore('atlases').getAllKeys();
+    r.onsuccess = () => after.push(...r.result); tx.oncomplete = resolve;
+  });
+  assert.ok(after.includes(keys[1]) && !after.includes(keys[2]), `the atlas used last survives: ${after}`);
 });
 
 const only = process.argv[3] ? process.argv[3].split(',') : null;

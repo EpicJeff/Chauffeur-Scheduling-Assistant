@@ -34,7 +34,10 @@ function proxies(charts, size, sky, layout) {
   }
   for (const [mesh, list] of groups) {
     const g = new THREE.BufferGeometry(), src = mesh.geometry;
-    g.setAttribute('position', src.attributes.position); g.setAttribute('normal', src.attributes.normal);
+    // Own attribute objects over the same arrays: dispose() frees a geometry's GL buffers,
+    // and the house's own position and normal buffers must outlive the bake (I6).
+    g.setAttribute('position', new THREE.BufferAttribute(src.attributes.position.array, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(src.attributes.normal.array, 3));
     const uv = src.attributes[sky ? 'uv2' : 'uv3'].array.slice();
     const index = [];
     for (const c of list) {

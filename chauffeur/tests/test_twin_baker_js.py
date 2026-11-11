@@ -212,23 +212,59 @@ async function bytesOf(body) {
   if (typeof body === 'string') return new TextEncoder().encode(body);
   return new Uint8Array(await new Response(body).arrayBuffer());
 }
-function fakeServer() {
-  const pages = new Map(), manifests = new Map(), calls = [], bad = [];
-  const answer = (status, body, type) => new Response(body instanceof Uint8Array ? body.slice() : body, { status, headers: type ? { 'Content-Type': type } : {} });
+function fakeServer({ leaseRequired = false } = {}) {
+  const pages = new Map(), manifests = new Map(), calls = [], bad = [], etags = new Map();
+  const lease = { holder: null, granted: 0, overlaps: 0, refused: 0 };
+  let fail = null, version = 0;
+  const answer = (status, body, type, extra = {}) => new Response(status === 304 ? null : body instanceof Uint8Array ? body.slice() : body,
+    { status, headers: { ...(type ? { 'Content-Type': type } : {}), ...extra } });
+  const header = (options, name) => {
+    const h = options.headers || {};
+    return h instanceof Headers ? h.get(name) : Object.entries(h).find(([k]) => k.toLowerCase() === name.toLowerCase())?.[1];
+  };
   const api = async (path, options = {}) => {
     const method = String(options.method || 'GET').toUpperCase(), p = String(path).split('?')[0];
-    calls.push({ method, path: p, step: STEP.n });
+    const call = { method, path: p, step: STEP.n, inm: header(options, 'If-None-Match') || null, full: false };
+    calls.push(call);
+    const injected = fail?.(method, p);
+    if (injected) return answer(injected, '{"detail":"injected"}', 'application/json');
     if (!p.startsWith('api/house/bakes/')) { bad.push(p); return answer(404, '{"detail":"Not Found"}', 'application/json'); }
-    let m = p.match(/^api\/house\/bakes\/([0-9a-f]{16,64})\/(\d+)\.(\w+)$/);
+    let m = p.match(/^api\/house\/bakes\/([0-9a-f]{16,64})\/lease$/);
+    if (m && method === 'POST') {   // services/twin_bakes.lease (Ruling B17); no clock: leases only end by release
+      const body = JSON.parse(new TextDecoder().decode(await bytesOf(options.body)));
+      if (body.action === 'check') return answer(200, JSON.stringify({ free: !lease.holder || lease.holder === body.owner }), 'application/json');
+      if (body.action === 'release') { if (lease.holder === body.owner) lease.holder = null; return answer(200, '{"held":false}', 'application/json'); }
+      if (lease.holder && lease.holder !== body.owner) { lease.refused++; return answer(409, '{"detail":"held"}', 'application/json'); }
+      if (!lease.holder) lease.granted++;
+      lease.holder = body.owner;
+      return answer(200, '{"held":true,"seconds":60}', 'application/json');
+    }
+    const guard = () => {
+      if (!leaseRequired || lease.holder) return null;
+      bad.push(`${method} ${p} without the lease`);
+      return answer(409, '{"detail":"no lease"}', 'application/json');
+    };
+    m = p.match(/^api\/house\/bakes\/([0-9a-f]{16,64})\/(\d+)\.(\w+)$/);
     if (m) {
       const id = `${m[1]}/${Number(m[2])}`;
-      if (method === 'POST') { const b = await bytesOf(options.body); pages.set(id, b); return answer(200, JSON.stringify({ etag: `"${pages.size}-${b.length}"` }), 'application/json'); }
-      if (method === 'GET') return pages.has(id) ? answer(200, pages.get(id), 'application/octet-stream') : answer(404, '{"detail":"Not Found"}', 'application/json');
+      if (method === 'POST') {
+        const refused = guard(); if (refused) return refused;
+        const b = await bytesOf(options.body); pages.set(id, b); etags.set(id, `"${++version}-${b.length}"`);
+        return answer(200, JSON.stringify({ etag: etags.get(id) }), 'application/json');
+      }
+      if (method === 'GET') {
+        if (!pages.has(id)) return answer(404, '{"detail":"Not Found"}', 'application/json');
+        const tags = String(call.inm || '').split(',').map(t => t.trim().replace(/^W\//, ''));
+        if (tags.some(t => t === '*' || t === etags.get(id))) return answer(304, null, null, { ETag: etags.get(id) });
+        call.full = true;
+        return answer(200, pages.get(id), 'application/octet-stream', { ETag: etags.get(id) });
+      }
       return answer(405, '{}', 'application/json');
     }
     m = p.match(/^api\/house\/bakes\/([0-9a-f]{16,64})$/);
     if (m) {
       if (method === 'PUT') {
+        const refused = guard(); if (refused) return refused;
         let body; try { body = JSON.parse(new TextDecoder().decode(await bytesOf(options.body))); } catch { return answer(400, '{"detail":"bad json"}', 'application/json'); }
         const why = checkManifest(body);
         if (why) { bad.push(`manifest refused: ${why}`); return answer(400, JSON.stringify({ detail: why }), 'application/json'); }
@@ -240,8 +276,9 @@ function fakeServer() {
     }
     bad.push(p); return answer(404, '{"detail":"Not Found"}', 'application/json');
   };
-  const writes = (since = 0) => calls.slice(since).filter(c => c.method !== 'GET');
-  return { api, pages, manifests, calls, bad, writes };
+  // The lease is not bake data: writes() are page uploads and manifest saves.
+  const writes = (since = 0) => calls.slice(since).filter(c => c.method !== 'GET' && !c.path.endsWith('/lease'));
+  return { api, pages, manifests, calls, bad, writes, lease, etags, set fail(f) { fail = f; }, get fail() { return fail; } };
 }
 
 // --- the house, the lights, the codec -----------------------------------------------------
@@ -266,7 +303,7 @@ async function setup(tier = 'high', layout = LAYOUT) {
   return { out, atlas, renderer, view, layout };
 }
 const codec = { encode: async j => B.encodePage(E, j), decode: async bytes => B.decodePage(T, bytes) };
-const makeBaker = (ctx, server, lights) => B.createBaker(ctx.view, { renderer: ctx.renderer, atlas: ctx.atlas, layout: ctx.layout, lights, api: server.api, codec });
+const makeBaker = (ctx, server, lights, extra = {}) => B.createBaker(ctx.view, { renderer: ctx.renderer, atlas: ctx.atlas, layout: ctx.layout, lights, api: server.api, codec, ...extra });
 async function bakeAll(baker, limit = 32) {
   const ids = [];
   for (let i = 0; i < limit; i++) {
@@ -495,7 +532,8 @@ check('manifest_written_last', async () => {
   for (let i = 0; i < 16; i++) {
     STEP.n++;
     const step = STEP.n, id = await withTimeout(Promise.resolve(baker.bakeNext()), 120000, 'bakeNext()');
-    const writes = server.calls.filter(c => c.step === step && c.method !== 'GET');
+    // The B17 lease is not bake data; the step's writes are its page uploads and manifest.
+    const writes = server.calls.filter(c => c.step === step && c.method !== 'GET' && !c.path.endsWith('/lease'));
     if (!id) { assert.deepEqual(writes, [], 'a step with nothing to bake writes nothing'); break; }
     done.push(id);
     assert.ok(writes.length >= 2, `${id}: page upload(s) then the manifest: ${JSON.stringify(writes)}`);
@@ -513,6 +551,129 @@ check('manifest_written_last', async () => {
   assert.deepEqual(asSet(done.filter(d => d !== 'sky')), ['c1', 'h1', 'k1'], `every light baked: ${done}`);
   const p = baker.progress();
   assert.ok(p && p.total >= 3 && p.done === p.total, `progress() counts the lights of the run: ${JSON.stringify(p)}`);
+});
+
+check('baking_never_frees_the_houses_own_buffers', async () => {
+  // I6: three's dispose() deletes the GL buffer of every attribute of a geometry. The bake's
+  // proxies must hold their own attribute objects, never the house meshes'.
+  need('createBaker');
+  const ctx = await setup(), server = fakeServer();
+  const house = new Set();
+  ctx.out.root.traverse(o => { if (o.geometry) for (const a of Object.values(o.geometry.attributes)) house.add(a); });
+  const disposed = [], dispose = THREE.BufferGeometry.prototype.dispose;
+  THREE.BufferGeometry.prototype.dispose = function () { disposed.push(this); return dispose.call(this); };
+  try {
+    FILL.value = .1;
+    const baked = await bakeAll(makeBaker(ctx, server, [k1, h1]));
+    assert.ok(baked.includes('sky') && baked.includes('k1'), `the sky and a light were baked: ${baked}`);
+  } finally { THREE.BufferGeometry.prototype.dispose = dispose; }
+  assert.ok(disposed.length, 'the bake disposed its proxies');
+  const shared = disposed.flatMap(g => Object.entries(g.attributes).filter(([, a]) => house.has(a)).map(([n]) => n));
+  assert.deepEqual(shared, [], 'no disposed geometry holds an attribute of the house');
+});
+
+check('a_failed_read_aborts_the_step', async () => {
+  // I7: only a 404 is "no page". A 502 while the add-on restarts aborts the step: nothing is
+  // uploaded and the manifest is untouched; the next run retries.
+  need('createBaker');
+  const ctx = await setup(), server = fakeServer(), lights = [k1, k2, h1], key = ctx.atlas.key;
+  FILL.value = .1;
+  await bakeAll(makeBaker(ctx, server, lights));
+  const manifest = structuredClone(server.manifests.get(key)), pages = new Map(server.pages);
+  const moved = { ...h1, at: [h1.at[0] + 2, h1.at[1], h1.at[2]] };
+  const page = manifest.lights.h1.page;
+  server.fail = (method, path) => method === 'GET' && path === `api/house/bakes/${key}/${page}.png` && !server.calls.at(-1).inm ? 502 : null;
+  const baker = makeBaker(ctx, server, [k1, k2, moved]), since = server.calls.length;
+  STEP.n++;
+  await assert.rejects(withTimeout(Promise.resolve(baker.bakeNext()), 120000, 'bakeNext() over a 502'), error => !/did not settle/.test(error.message),
+    'a page read that fails with 502 throws out of the step');
+  assert.deepEqual(server.writes(since), [], `nothing is uploaded: ${JSON.stringify(server.writes(since))}`);
+  assert.deepEqual(server.manifests.get(key), manifest, 'the manifest is untouched');
+  for (const [id, bytes] of pages) assert.deepEqual(server.pages.get(id), bytes, `page ${id} is untouched`);
+  assert.equal(server.lease.holder, null, 'the lease is let go after the failed step');
+  server.fail = null;
+  STEP.n++;
+  assert.equal(await withTimeout(Promise.resolve(baker.bakeNext()), 120000, 'bakeNext() once the server is back'), 'h1', 'the retry bakes the moved light');
+  const img = rgba(server.pages.get(`${key}/${page}`)), kitchen = bankRects(ctx.atlas, lights, 0, job.kitchen);
+  for (const id of ['k1', 'k2']) assert.ok(mean(channelOver(img, kitchen.rects, manifest.lights[id].channel)) > 5, `${id} kept its channel`);
+
+  // The sky step's bank pages: a 502 aborts it too, before any upload.
+  const fresh = fakeServer();
+  fresh.fail = (method, path) => method === 'GET' && /\/\d+\.png$/.test(path) && Number(path.split('/').pop().split('.')[0]) >= ctx.atlas.sky.pages ? 502 : null;
+  STEP.n++;
+  await assert.rejects(withTimeout(Promise.resolve(makeBaker(ctx, fresh, lights).bakeNext()), 120000, 'the sky step over a 502'),
+    error => !/did not settle/.test(error.message), 'a bank page read that fails with 502 throws');
+  assert.deepEqual(fresh.writes(), [], 'the sky step uploads nothing');
+  // The readiness probe: a 500 on a page the manifest names is not "missing".
+  server.fail = (method, path) => method === 'GET' && /\/\d+\.png$/.test(path) ? 500 : null;
+  await assert.rejects(withTimeout(Promise.resolve(makeBaker(ctx, server, lights).staleLights()), 60000, 'staleLights() over a 500'),
+    error => !/did not settle/.test(error.message), 'a 500 while checking pages throws');
+  server.fail = null;
+});
+
+check('existence_is_checked_without_downloading_pages', async () => {
+  // M5: the readiness check and the sky step's bank pages ask with If-None-Match: * and
+  // download nothing; a forced sky step re-uploads only the sky pages.
+  need('createBaker');
+  const ctx = await setup(), server = fakeServer(), lights = [k1, k2, h1, c1], key = ctx.atlas.key;
+  FILL.value = .1;
+  await bakeAll(makeBaker(ctx, server, lights));
+  let since = server.calls.length;
+  const again = makeBaker(ctx, server, lights);
+  assert.deepEqual([...await again.staleLights()], [], 'nothing stale');
+  const full = server.calls.slice(since).filter(c => c.full).map(c => c.path);
+  assert.deepEqual(full, [], `the readiness check downloads no page: ${full}`);
+  since = server.calls.length;
+  const forced = makeBaker(ctx, server, lights, { force: true });
+  STEP.n++;
+  assert.equal(await withTimeout(Promise.resolve(forced.bakeNext()), 120000, 'the forced sky step'), 'sky');
+  const posted = server.writes(since).filter(c => c.method === 'POST').map(c => Number(c.path.split('/').pop().split('.')[0]));
+  assert.ok(posted.length && posted.every(p => p < ctx.atlas.sky.pages), `only sky pages are uploaded again: ${posted}`);
+  const bankGets = server.calls.slice(since).filter(c => c.method === 'GET' && /\/\d+\.png$/.test(c.path) &&
+    Number(c.path.split('/').pop().split('.')[0]) >= ctx.atlas.sky.pages);
+  assert.ok(bankGets.every(c => !c.full), `bank pages are checked, not downloaded: ${JSON.stringify(bankGets)}`);
+});
+
+check('bake_now_keeps_each_light_until_its_new_bake_lands', async () => {
+  // M6: a forced run keeps the sky and every light in the manifest (same keys) until each
+  // one's new bake replaces it; panels never fall back to real-time mid-run.
+  need('createBaker');
+  const ctx = await setup(), server = fakeServer(), lights = [k1, k2, h1, c1], key = ctx.atlas.key;
+  FILL.value = .1;
+  await bakeAll(makeBaker(ctx, server, lights));
+  const before = structuredClone(server.manifests.get(key));
+  const forced = makeBaker(ctx, server, lights, { force: true });
+  assert.deepEqual(asSet(await forced.staleLights()), ['c1', 'h1', 'k1', 'k2'], 'a forced run counts every light');
+  const seen = [];
+  for (let i = 0; i < 16; i++) {
+    STEP.n++;
+    const id = await withTimeout(Promise.resolve(forced.bakeNext()), 120000, 'bakeNext()');
+    if (!id) break;
+    seen.push(id);
+    const now = server.manifests.get(key);
+    assert.ok(now.sky, `${id}: the sky stays in the manifest`);
+    assert.deepEqual(asSet(Object.keys(now.lights)), ['c1', 'h1', 'k1', 'k2'], `${id}: every light stays in the manifest`);
+    for (const d of Object.keys(before.lights)) assert.equal(now.lights[d].key, before.lights[d].key, `${id}: ${d} keeps its key`);
+  }
+  assert.deepEqual(asSet(seen), ['c1', 'h1', 'k1', 'k2', 'sky'], `the forced run re-bakes everything once: ${seen}`);
+  assert.deepEqual([...await forced.staleLights()], [], 'nothing left after the forced run');
+});
+
+check('two_machines_take_turns_through_the_server_lease', async () => {
+  // I8 / Ruling B17: two desks (no shared browser lock) bake one key; the server lease lets
+  // one step write at a time, so neither erases the other's channel.
+  need('createBaker');
+  const a = await setup(), b = await setup(), server = fakeServer({ leaseRequired: true }), key = a.atlas.key;
+  assert.equal(b.atlas.key, key, 'fixture: both desks draw the same atlas');
+  FILL.value = .1;
+  const [ra, rb] = await Promise.all([bakeAll(makeBaker(a, server, [k1, k2, h1])), bakeAll(makeBaker(b, server, [k1, k2, h1]))]);
+  assert.deepEqual(server.bad, [], `every write held the lease: ${server.bad}`);
+  assert.ok(server.lease.granted >= 2, `steps took the lease: ${JSON.stringify(server.lease)}`);
+  assert.equal(server.lease.holder, null, 'the lease is free at the end');
+  const m = server.manifests.get(key);
+  assert.deepEqual(asSet(Object.keys(m.lights)), ['h1', 'k1', 'k2'], `every light landed: ${JSON.stringify(m.lights)} after ${ra} / ${rb}`);
+  const img = rgba(server.pages.get(`${key}/${m.lights.k1.page}`)), kitchen = bankRects(a.atlas, [k1, k2, h1], 0, job.kitchen);
+  for (const id of ['k1', 'k2']) assert.ok(mean(channelOver(img, kitchen.rects, m.lights[id].channel)) > 5, `${id} kept its channel`);
 });
 
 const only = process.argv[3] ? process.argv[3].split(',') : null;
