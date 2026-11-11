@@ -41,11 +41,13 @@ export function plotSuggestionCard({ read, suggestion, buildings, kinds, draft, 
   return card;
 }
 
-export function createPlace({ request, getSheets, reload, follow, canEdit, panel, lotTools }) {
+export function createPlace({ request, getSheets, reload, follow, canEdit, panel, lotTools, onClose, getLink, getPlan }) {
   const host = el('place-view');
   let sheets = getSheets(), snapshot = {}, rows = [], saved = [], busy = false, working = null, signature = '', returnFocus = null;
   let footprints = new Map();
   const suggestionDrafts = new Map();
+  let currentStep = 'Your files';
+  const linkCards = new Map();
   const place = () => sheets.place || { buildings: [], lot: {}, photo_tags: {} };
   const parts = () => [{ id: 'lot', name: 'Lot' }, ...place().buildings];
   const kinds = () => (sheets.kinds || []).map(k => [k.id, k.label]);
@@ -122,19 +124,51 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     if (await window.promptConfirm(title, cost ? key === 'build' ? `${description}, ${cost} at most. Continue?` : `This will cost ${cost}. Continue?`
       : 'This reads your documents and adds to the running cost. Continue?', 'Continue', 'Cancel')) await action();
   }
-  function close() {
+  function close(notify = true) {
     host.hidden = true;
-    el('place-suggestions').replaceChildren();
-    for (const child of document.querySelector('.editor-shell').children) if (child !== host) child.inert = false;
+    if (notify !== false) onClose?.();
     if (returnFocus?.isConnected && !returnFocus.closest('[hidden]')) returnFocus.focus();
     else el('editor-menu').querySelector('summary').focus();
   }
-  function open() {
+  function open(name = 'Your files') {
     returnFocus = document.activeElement;
+    currentStep = name;
     host.hidden = false;
+    host.setAttribute('data-step-panel', name); host.setAttribute('aria-label', name);
+    el('place-title').textContent = name;
     el('editor-menu').open = false;
-    for (const child of document.querySelector('.editor-shell').children) if (child !== host) child.inert = true;
-    render(); el('place-close').focus();
+    showStep();
+    if (name === 'Link to Home Assistant') linkSections().catch(report);
+    el('place-close').focus();
+  }
+  function showStep() {
+    host.querySelectorAll('[data-place-step]').forEach(section => { section.hidden = section.dataset.placeStep !== currentStep; });
+    el('place-placement').hidden = currentStep !== 'Your lot' || !place().lot?.read && !place().lot?.placement;
+  }
+  async function linkSections(refresh = true) {
+    const link = getLink?.(), target = el('place-ha-links');
+    if (!link || host.hidden || currentStep !== 'Link to Home Assistant') return;
+    if (refresh) await link.refresh();
+    if (host.hidden || currentStep !== 'Link to Home Assistant') return;
+    const shown = new Set();
+    for (const b of getPlan?.()?.buildings || []) {
+      const records = [{ kind: 'building', piece: b, building: b },
+        ...(b.rooms || []).filter(r => r.state !== 'ghost').map(piece => ({ kind: 'room', piece, building: b }))];
+      for (const record of records) {
+        const id = `${b.id}:${record.kind}:${record.piece.id}`; shown.add(id);
+        let row = linkCards.get(id);
+        if (!row) {
+          const card = node('section', undefined, { class: 'place-card' }), title = node('h3'), body = node('div');
+          card.append(title, body); row = { card, title, body }; linkCards.set(id, row); target.append(card);
+        }
+        row.title.textContent = record.piece.name || (record.kind === 'room' ? 'Room' : 'Building');
+        link.draw(row.body, record);
+      }
+    }
+    for (const [id, row] of linkCards) if (!shown.has(id)) { row.card.remove(); linkCards.delete(id); }
+    el('place-ha-note').hidden = shown.size > 0 && !!link.state()?.available;
+    el('place-ha-note').textContent = !link.state()?.available
+      ? 'Home Assistant is not connected, so areas and devices are hidden.' : 'Build rooms to link them to Home Assistant.';
   }
   function pageRows(source, page) { return rows.filter(row => row.source === source && row.page === page); }
   async function move(row, part) {
@@ -310,7 +344,14 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     for (const photo of photos) card.append(photoCard(photo));
     if (!documents && !photos.length) card.append(node('p', 'No drawings or photos yet.', { class: 'place-muted' }));
     if (!lot && !hasDrawings(part.id)) card.append(shellCard(part));
-    const build = node('button', lot ? 'Build the lot' : 'Build this building', { type: 'button', 'data-place-build': part.id, class: 'place-primary' });
+    return card;
+  }
+  function buildCard(part) {
+    const card = node('section', undefined, { class: 'place-card' });
+    const estimate = part.id === 'lot' ? sheets.lot_build_estimate : sheets.estimates?.build?.[part.id]?.total;
+    card.append(node('h3', part.name), node('p', `about $${Number(estimate || 0).toFixed(2)}`));
+    const build = node('button', part.id === 'lot' ? 'Build the lot' : 'Build this building',
+      { type: 'button', 'data-place-build': part.id, class: 'place-primary' });
     build.addEventListener('click', () => work(() => buildPart(part.id))); card.append(build);
     return card;
   }
@@ -360,11 +401,12 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     addKind.replaceChildren(...kinds().map(([value, label]) => node('option', label, { value })));
     if (kinds().some(([id]) => id === chosenKind)) addKind.value = chosenKind;
     el('place-cards').replaceChildren(...parts().map(partCard));
+    el('place-build-cards').replaceChildren(...parts().map(buildCard));
     for (const [id, title, key] of [['place-read-plot', 'Read the plot plan', 'plot'], ['place-suggest-photos', 'Suggest from photos', 'photos']])
       el(id).textContent = `${title} · about $${Number(sheets.estimates?.[key] || 0).toFixed(2)}`;
-    if (!host.hidden) plotSuggestions(); else el('place-suggestions').replaceChildren();
+    plotSuggestions();
     photoSuggestions();
-    el('place-placement').hidden = !place().lot?.read && !place().lot?.placement; controls();
+    showStep(); controls();
   }
   function sync(nextSheets, nextSnapshot) {
     const nextSignature = JSON.stringify([nextSheets, nextSnapshot.build, nextSnapshot.buildState?.state, canEdit()]);
@@ -387,15 +429,9 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     footprints = new Map(place().buildings.filter(b => b.footprint).map(b => [b.id, copy(b.footprint)]));
     render();
   }
-  el('place-close').addEventListener('click', close);
+  el('place-close').addEventListener('click', () => close());
   host.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); close(); }
-    if (event.key === 'Tab') {
-      const focusable = [...host.querySelectorAll('button, input, select, summary, [tabindex="0"]')].filter(n => !n.disabled && n.getClientRects().length);
-      const first = focusable[0], last = focusable.at(-1);
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-    }
   });
   el('place-add-form').addEventListener('submit', event => {
     event.preventDefault(); work(async () => {
@@ -418,5 +454,5 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     status('Placement confirmed.');
   }));
   el('place-in-scene').addEventListener('click', () => { close(); lotTools()?.showLot(); });
-  return { open, close, isOpen: () => !host.hidden, sync };
+  return { open, close, isOpen: () => !host.hidden, sync, refreshLink: () => linkSections(false) };
 }

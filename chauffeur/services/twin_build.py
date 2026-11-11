@@ -1438,7 +1438,8 @@ def _check_draft_rooms(house, step):
 
 
 def _pause_draft(build, step):
-    build['pause'] = {'kind': 'draft', 'step': step['id'], 'registration': None,
+    build['pause'] = {'id': f"{build['id']}:{step['id']}:{build['seq'] + 1}",
+                      'kind': 'draft', 'step': step['id'], 'registration': None,
                       'why': 'The drawings could not be read as one building.'}
     build['state'] = 'paused'
     step['status'] = 'paused'
@@ -2368,7 +2369,8 @@ def _pause(build, step, result):
     fragment = result['fragment']
     is_lot = build['inputs'].get('part') == 'lot'
     plan = None if is_lot else _base(twin_store.current(), build)
-    pause = {'kind': step['pause'], 'step': step['id'], 'why': fragment.get('why', ''),
+    pause = {'id': f"{build['id']}:{step['id']}:{build['seq'] + 1}",
+             'kind': step['pause'], 'step': step['id'], 'why': fragment.get('why', ''),
              'confidence': fragment.get('confidence', 0)}
     if step['kind'] in ('outline', 'registration'):
         pause['registration'], pause['rms'] = _registration(build, step, result, plan)
@@ -2920,6 +2922,9 @@ def answer(build_id, step_id, decision):
         if not isinstance(decision, dict) or len(decision) != 1:
             raise ValueError('Accept the step or provide its registration or placement.')
         decision = deepcopy(decision)
+        if decision.get('skip') is True:
+            # Skipping walks the editor's queue; it never settles or resumes a step.
+            return status(build_id)
         if step['kind'] == 'draft':
             raise ValueError('The drawings could not be read as one building. Try again.')
         if 'registration' in decision:

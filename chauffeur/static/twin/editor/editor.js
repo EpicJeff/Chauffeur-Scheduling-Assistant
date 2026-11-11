@@ -16,6 +16,8 @@ import { createFlags } from './flags.js';
 import { createDevicePlacement } from './device_placement.js';
 import { createBuildGhosts } from './build_ghosts.js';
 import { createStatusChip } from './status_chip.js';
+import { createSteps } from './steps.js';
+import { createChecks } from './checks.js';
 
 const el = id => document.getElementById(id);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
@@ -29,7 +31,7 @@ export async function boot() {
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
   let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, library = null, previewing = false, lastSummary = '';
   let roofTools = null, lot = null, flags = null, devices = null, aimed = false;
-  let buildGhosts = null;
+  let buildGhosts = null, checks = null, drawingStarted = false;
   const statusChip = createStatusChip(el('editor-chip')), seenBuildRounds = new Set();
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
@@ -41,6 +43,18 @@ export async function boot() {
       await pauses?.accept(); return true;
     } });
   const canEdit = () => !previewing && !session.signedOut && !menuBusy && !directing;
+  const stepState = () => ({ model: snapshot.model, sheets, build: currentBuild });
+  const steps = createSteps(el('editor-steps'), { state: stepState(), onOpen(name) {
+    if (name === 'Check it') { place?.close(false); checks?.show(); }
+    else { checks?.dismiss(false); place?.open(name); }
+  } });
+  const header = el('editor-top');
+  if (typeof ResizeObserver !== 'undefined') {
+    const observer = new ResizeObserver(() => document.querySelector('.editor-shell').style
+      .setProperty('--editor-header-bottom', `${header.getBoundingClientRect().bottom + 8}px`));
+    observer.observe(header);
+    lifecycle.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
+  }
   const currentRound = () => [...snapshot.rounds].reverse().find(row => !row.stale)?.id ?? null;
   function summary(text) {
     lastSummary = text;
@@ -87,6 +101,9 @@ export async function boot() {
   function setStatus(text) { el('editor-status').textContent = plain(text); }
   function syncBuildButton() {
     syncChip();
+    steps.render(stepState());
+    el('editor-front-door').hidden = drawingStarted || !!sheets.place?.buildings?.length
+      || !!snapshot.model?.buildings?.length || !!sheets.place?.lot?.read || !!snapshot.plan?.site?.lot?.length;
     history?.sync();
     // Reaching ready requires successful parent-only editor API requests.
     el('menu-record').hidden = !hooks.ready || session.signedOut;
@@ -174,10 +191,11 @@ export async function boot() {
     devices?.refresh();
     flags?.refresh();
     pauses?.sync();
+    checks?.sync();
     timeline?.sync(currentBuild);
     // Read the Home Assistant link beside the scene, never before it: a slow or
     // unreachable Home Assistant must not hold the editor's start, a poll or a save.
-    tools?.refreshLink(changed).then(() => devices?.refresh()).catch(report);
+    tools?.refreshLink(changed).then(() => { devices?.refresh(); place?.refreshLink?.().catch(report); }).catch(report);
   }
   function drawFloors() {
     tools?.drawFloors();
@@ -265,7 +283,8 @@ export async function boot() {
 
   place = createPlace({ request, getSheets: () => sheets,
     reload: async () => { await polling.pollNow(true); await loadSheets(); },
-    follow: id => polling.follow(id), canEdit: () => canEdit() && !resuming && !stopping, panel, lotTools: () => lot });
+    follow: id => polling.follow(id), canEdit: () => canEdit() && !resuming && !stopping, panel, lotTools: () => lot,
+    onClose: () => steps.close(), getLink: () => tools?.haLink, getPlan: () => snapshot.plan });
 
   listen(el('editor-resume'), 'click', async () => {
     if (!canEdit() || resuming || !['stopped', 'checkpoint'].includes(currentBuild?.state)) return;
@@ -290,8 +309,28 @@ export async function boot() {
     } catch (error) { report(error); }
     finally { stopping = false; syncBuildButton(); }
   });
-  listen(el('editor-manage-sources'), 'click', () => place.open());
-  listen(el('menu-upload'), 'click', () => place.open());
+  listen(el('editor-manage-sources'), 'click', () => steps.open('Your files'));
+  listen(el('menu-upload'), 'click', () => steps.open('Your files'));
+  listen(el('editor-add-files'), 'click', () => steps.open('Your files'));
+  listen(el('editor-draw-myself'), 'click', async () => {
+    if (!canEdit() || !hooks.ready) return;
+    el('editor-draw-myself').disabled = true;
+    try {
+      if (!snapshot.plan?.buildings?.length) {
+        const part = sheets.place?.buildings?.[0] || (await request('place/buildings', 'POST', { name: 'My house', kind: 'main_house' })).building;
+        const plan = structuredClone(snapshot.plan || emptyPlan());
+        plan.buildings.push({ id: part.id, name: part.name, position: [0, 0], rotation: 0, base: 0,
+          levels: [{ id: 'L1', name: 'Main floor', elevation: 0, ceiling: 9 }],
+          walls: [], openings: [], rooms: [], roof: { sections: [] } });
+        await request('plan', 'PUT', { plan, reason: 'Start drawing my house.', base: currentRound() }, 'twin');
+        await polling.pollNow(true); await loadSheets();
+      }
+      drawingStarted = true; syncBuildButton();
+      place.close(); tools.chooseFloor(tools.floor().key); tools.select(null);
+      el('rail-draw-wall').click();
+    } catch (error) { report(error); }
+    finally { el('editor-draw-myself').disabled = false; }
+  });
   listen(el('menu-record'), 'click', async () => {
     if (!hooks.ready || session.signedOut || downloading) return;
     downloading = true; syncBuildButton();
@@ -401,7 +440,7 @@ export async function boot() {
       el('editor-advanced').hidden = true; advancedBase = null;
       await polling.pollNow(true);
       await loadSheets();
-      place.open();
+      drawingStarted = false; steps.close();
       await timeline?.now();
       summary('House cleared. The spend total stays.');
       setStatus('Add drawings to begin');
@@ -409,7 +448,7 @@ export async function boot() {
     finally { menuBusy = false; syncBuildButton(); }
   });
   listen(el('editor-check-step'), 'click', () => {
-    tools?.select(null); draw?.cancel(); pauses?.show();
+    tools?.select(null); draw?.cancel(); steps.open('Check it');
   });
 
   if (new URLSearchParams(location.search).get('test') === '1') Object.assign(hooks, {
@@ -455,7 +494,7 @@ export async function boot() {
     buildGhosts = createBuildGhosts(view);
     if (new URLSearchParams(location.search).get('test') === '1') hooks.buildGhosts = buildGhosts;
     view.showAnchors = true;
-    const onInteract = () => { pauses?.dismiss(); syncBuildButton(); };
+    const onInteract = () => { checks?.dismiss(); pauses?.dismiss(); syncBuildButton(); };
     history = createHistory({ getRound: currentRound, getBuild: () => currentBuild,
       canEdit, signal: lifecycle.signal, latest: () => polling.refreshState(),
       refresh: async () => { draw?.cancel(); await polling.refreshState(); await renderScene(); } });
@@ -465,7 +504,8 @@ export async function boot() {
     library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || snapshot.plan, tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
     flags = createFlags({ view, getModel: () => snapshot.model, getPlan: () => snapshot.plan,
-      tools, panel, op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
+      tools, panel, op: applyOp, canEdit, signal: lifecycle.signal, onInteract, managed: true,
+      onReview: item => checks?.show(item) });
     draw = createDraw({ view, tools, getPlan: () => snapshot.plan, op: operation => applyOpNow(operation),
       gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract });
     roofTools = createRoofTools({ view, tools, getPlan: () => snapshot.plan,
@@ -473,7 +513,10 @@ export async function boot() {
       canEdit, panel, signal: lifecycle.signal, onInteract, cancelDrawing: draw.cancel });
     pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
       getSheets: () => sheets, refresh: () => polling.pollNow(true), preview: () => renderScene().catch(report),
-      visibilityChanged: syncBuildButton, canEdit, signal: lifecycle.signal });
+      visibilityChanged: syncBuildButton, canEdit, signal: lifecycle.signal, guided: true });
+    checks = createChecks(view, { api, getBuild: () => currentBuild, getModel: () => snapshot.model,
+      getPlan: () => snapshot.plan, tools, panel, canEdit, signal: lifecycle.signal, op: applyOp, flags, pauses,
+      onClose: () => steps.close() });
     lot = createLotTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getSheets: () => sheets,
       getSelection: tools.selection, select: tools.select, pauses, signal: lifecycle.signal,
       canEdit: () => canEdit() && (!active(currentBuild) || !!pauses.lotPlacement()),
@@ -526,7 +569,6 @@ export async function boot() {
     view.scene.background?.set?.('#171e27');
     hooks.ready = true;
     syncBuildButton();
-    if (!sheets.place?.buildings?.length && !sheets.sources.some(source => source.part === 'lot')) place.open();
   } catch (error) {
     setStatus(error.signedOut ? 'Home Assistant signed the tab out'
       : error.status === 401 || error.status === 403 ? 'Sign in to edit your house' : 'Could not open the house. Reload to try again.');

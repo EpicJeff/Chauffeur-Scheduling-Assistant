@@ -6,7 +6,7 @@ import { findPiece } from './cards.js';
 import { report } from './api.js';
 
 // Review geometry belongs to the editor, never to the flattened building.
-export function createFlags({ view, getModel, getPlan, tools, panel, op, canEdit, signal, onInteract }) {
+export function createFlags({ view, getModel, getPlan, tools, panel, op, canEdit, signal, onInteract, managed = false, onReview }) {
   const canvas = view.renderer3.domElement, host = canvas.parentElement;
   const layer = document.createElement('div'); layer.className = 'editor-flag-markers'; host.append(layer);
   const card = document.createElement('aside'); card.id = 'review-card'; card.hidden = true;
@@ -36,6 +36,7 @@ export function createFlags({ view, getModel, getPlan, tools, panel, op, canEdit
     return node;
   }
   function drawCard() {
+    if (managed) { card.hidden = true; return; }
     card.replaceChildren(); card.hidden = !current && !proposal;
     shell.toggleAttribute('data-reviewing', !card.hidden);
     if (card.hidden) return;
@@ -167,7 +168,8 @@ export function createFlags({ view, getModel, getPlan, tools, panel, op, canEdit
         proposals.push({ ...row, group, mesh });
       }
       if (proposal) proposal = proposals.find(row => row.building === proposal.building && row.id === proposal.id) || null;
-      panel.checks(rows.length, walk); drawHighlight(); drawCard();
+      if (!managed) panel.checks(rows.length, walk);
+      drawHighlight(); drawCard();
     }
   }
   function visible(bid, level) {
@@ -193,6 +195,7 @@ export function createFlags({ view, getModel, getPlan, tools, panel, op, canEdit
       lastSelection = key;
       const selected = tools.selection();
       proposal = proposals.find(row => selected.kind === 'proposal' && row.id === selected.id && row.building === selected.building) || null;
+      if (managed && proposal) onReview?.({ kind: 'proposal', building: proposal.building, id: proposal.id });
       current = null; drawHighlight(); drawCard();
     }
     const rect = canvas.getBoundingClientRect(); view.camera.updateMatrixWorld(true);
@@ -210,10 +213,25 @@ export function createFlags({ view, getModel, getPlan, tools, panel, op, canEdit
   }
   signal.addEventListener('abort', () => {
     cancelAnimationFrame(frame); clearGeometry(root); root.removeFromParent(); layer.remove(); card.remove();
-    shell.removeAttribute('data-reviewing');
+    shell?.removeAttribute('data-reviewing');
   }, { once: true });
   frame = requestAnimationFrame(tick);
-  return { refresh, pick,
+  return { refresh, pick, dismiss: closeReview,
+    review(item) {
+      refresh();
+      if (item?.kind === 'flag') {
+        const row = rows.find(r => r.building === item.building && r.index === item.index);
+        if (row) showFlag(row);
+      } else if (item?.kind === 'proposal') {
+        current = null; proposal = proposals.find(r => r.building === item.building && r.id === item.id);
+        if (proposal) {
+          const b = building(proposal.building), piece = proposal.piece;
+          const at = piece.from || piece.area?.[0] || piece.position || [0, 0];
+          selectFlag({ building: b.id, flag: { piece: proposal.against, level: piece.level, at } });
+        }
+        drawHighlight(); drawCard();
+      } else closeReview();
+    },
     flags: () => ({ count: rows.length, markers: rows.map(row => ({ building: row.building, index: row.index, at: [...row.flag.at] })),
       current: current && { building: current.building, index: current.index, text: current.flag.text, piece: current.flag.piece }, highlighted: [...highlighted] }),
     proposals: () => proposals.map(({ building, id, kind, against }) => ({ building, id, kind, against })),

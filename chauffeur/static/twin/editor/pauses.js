@@ -24,7 +24,7 @@ export function fromTwoPoints(aPx, bPx, aFt, bFt) {
   return { scale: feet / pixels, angle, origin_px: [...aPx], offset: [...aFt] };
 }
 
-export function createPauses({ view, getBuild, getGhost, getSheets, refresh, preview, visibilityChanged, canEdit, signal }) {
+export function createPauses({ view, getBuild, getGhost, getSheets, refresh, preview, visibilityChanged, canEdit, signal, guided = false }) {
   const el = id => document.getElementById(id), host = el('pause-card'), canvas = view.renderer3.domElement;
   let key = null, pause = null, step = null, buildId = null, floorKey = null;
   let mode = null, pins = [], drag = null, busy = false, lastAnswer = null, dismissed = false, masterSize = null;
@@ -111,7 +111,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
       const lotPlot = build.part === 'lot' && pause.step === 'plot';
       el('pause-drag').hidden = lotPlot || pause.kind === 'draft';
       el('pause-cancel').hidden = lotPlot || pause.kind === 'draft';
-      el('pause-accept').hidden = pause.kind === 'draft';
+      el('pause-accept').hidden = guided || pause.kind === 'draft';
       el('pause-turn-label').hidden = pause.kind !== 'lot_placement' || lotPlot;
       el('pause-turn').value = pause.transform?.rotation || 0;
       el('pause-pin').hidden = pause.kind !== 'level_registration' || lotPlot;
@@ -122,6 +122,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     el('pause-reread').textContent = Number.isFinite(lastCost) ? `Re-read · last $${lastCost.toFixed(2)}` : 'Re-read · last cost $— (unavailable)';
     if (pause.kind === 'draft') el('pause-reread').textContent = 'Try again';
     el('pause-reread').title = 'Reads this drawing again and adds to the running cost.';
+    el('pause-reread').hidden = guided;
     host.hidden = dismissed || !canEdit();
     disable(busy); anchor(); visibilityChanged?.();
   }
@@ -214,6 +215,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
   };
   return {
     sync, anchor, accept, lastAnswer: () => lastAnswer, clearLastAnswer() { lastAnswer = null; },
+    rereadEstimate: () => step?.estimate ?? step?.last_cost ?? step?.cost ?? stepCosts.get(pause?.step) ?? 0,
     lotPlacement: () => pause?.kind === 'lot_placement' && getBuild()?.part !== 'lot' && !dismissed
       ? { building: owner(), transform: pause.transform } : null,
     setLotTransform(transform) {

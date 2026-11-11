@@ -150,6 +150,9 @@ export const createDevicePlacement = () => ({ refresh() {}, draw() {}, stop() {}
   pointerDown: () => false, pointerUp: () => false });
 export const createBuildGhosts = () => ({ add() {}, settle() {}, clear() {}, sync() {}, count: () => 0, seqs: () => [] });
 export const createStatusChip = () => ({ update() {} });
+// The editor now mounts the step strip and checks; this driver tests preview ownership.
+export const createSteps = () => ({ render() {}, open() {}, close() {} });
+export const createChecks = () => ({ sync() {}, show() {}, dismiss() {} });
 '''
 
 EDITOR_DRIVER = r'''

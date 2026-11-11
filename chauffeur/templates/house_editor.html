@@ -26,6 +26,9 @@
     imports[new URL(window.chfBase + 'static/twin/editor/device_placement.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/device_placement.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/build_ghosts.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/build_ghosts.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/status_chip.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/status_chip.js' | ver | tojson }};
+    {% for name in ['steps', 'checks'] %}
+    imports[new URL(window.chfBase + 'static/twin/editor/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/editor/' ~ name ~ '.js') | ver | tojson }};
+    {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/live/markers.js', location.href).href] = window.chfBase + {{ 'static/twin/live/markers.js' | ver | tojson }};
     const map = document.createElement('script'); map.type = 'importmap';
     map.textContent = JSON.stringify({ imports }); document.head.appendChild(map);
@@ -40,6 +43,11 @@
   <div id="editor-chrome">{% include 'nav.html' %}</div>
   <main class="editor-shell" aria-label="House editor">
     <div id="editor-scene" aria-label="Interactive house preview"></div>
+    <section id="editor-front-door" class="place-card" hidden>
+      <h2>Let's make your house</h2>
+      <button id="editor-add-files" type="button">Add plans and photos</button>
+      <button id="editor-draw-myself" type="button">Draw it myself</button>
+    </section>
     <header id="editor-top">
       <h1>House editor</h1>
       <output id="editor-status" role="status">Opening your house…</output>
@@ -58,6 +66,7 @@
           <button id="menu-record" type="button" hidden disabled>Download build record</button>
           <a href="{{ _up }}house/twin">House preview</a></div>
       </details>
+      <nav id="editor-steps" aria-label="Build your house"></nav>
     </header>
     <nav id="editor-rail" aria-label="House tools">
       {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('draw-room', 'Draw room'), ('draw-wall', 'Draw wall'), ('split-room', 'Split room'), ('add-door', 'Add door'), ('add-window', 'Add window'), ('add-anchor', 'Add anchor'), ('roof', 'Roof'), ('add-level', 'Add floor'), ('delete', 'Delete'), ('undo', 'Undo'), ('redo', 'Redo'), ('sheet', 'Sheet')] %}
@@ -138,27 +147,27 @@
       <div id="time-actions" hidden><button id="time-return" type="button">Return here</button><button id="time-now" type="button">Back to now</button></div>
       <div><span id="editor-time-note">Your build will appear here, one step at a time.</span><output id="editor-step-count">0 steps</output></div>
     </footer>
-    <section id="place-view" role="dialog" aria-modal="true" aria-label="Your place" hidden>
+    <section id="place-view" aria-label="Your files" hidden>
       <header class="place-header">
-        <div><h2>Your place</h2><p>The lot and every building, with their drawings and photos.</p></div>
+        <div><h2 id="place-title">Your files</h2><p>The lot and every building, with their drawings and photos.</p></div>
         <button id="place-close" type="button">Back to the house</button>
       </header>
       <div class="place-scroll">
-        <form id="place-add-form" class="place-add">
+        <form id="place-add-form" class="place-add" data-place-step="Your files">
           <label>Building name<input id="place-add-name" type="text" maxlength="100" required placeholder="Detached garage"></label>
           <label>Kind<select id="place-add-kind"></select></label>
           <button id="place-add" type="submit">Add building</button>
         </form>
         <div class="place-layout">
-          <div id="place-cards"></div>
+          <div id="place-cards" data-place-step="Your files"></div>
           <aside class="place-setup" aria-label="Set up the lot">
-            <section class="place-card">
+            <section class="place-card" data-place-step="Your lot">
               <h3>The plot plan</h3>
               <p>Upload it to the Lot and confirm its page role. Read it to find building footprints, then choose which to keep.</p>
               <button id="place-read-plot" type="button" disabled>Read the plot plan</button>
               <div id="place-suggestions"></div>
             </section>
-            <section id="place-placement" class="place-card" hidden>
+            <section id="place-placement" class="place-card" data-place-step="Your lot" hidden>
               <h3>Place the buildings</h3>
               <p>Place buildings over the plot plan in the scene. Select a building to move or turn it; tap a footprint or lot edge to use it.</p>
               <div class="editor-actions">
@@ -166,7 +175,7 @@
                 <button id="place-confirm-placement" type="button">These are in the right place</button>
               </div>
             </section>
-            <section class="place-card">
+            <section class="place-card" data-place-step="Your files">
               <h3>Learn from photos</h3>
               <p>Suggest which buildings a photo shows and a starting shape for buildings without drawings. You choose what to use.</p>
               <button id="place-suggest-photos" type="button" disabled>Suggest from photos</button>
@@ -174,11 +183,13 @@
             </section>
           </aside>
         </div>
+        <div id="place-build-cards" data-place-step="Build"></div>
+        <div data-place-step="Link to Home Assistant"><p id="place-ha-note"></p><div id="place-ha-links"></div></div>
       </div>
       <footer class="place-footer">
         <p id="place-status" role="status">Add PDF drawings and JPEG or PNG photos to the part they show. Check each page, then confirm.</p>
-        <div class="editor-actions"><button id="place-confirm-pages" type="button" disabled>Confirm pages</button>
-          <button id="place-build" class="place-primary" type="button" disabled>Build your place</button></div>
+        <div class="editor-actions"><button id="place-confirm-pages" data-place-step="Your files" type="button" disabled>Confirm pages</button>
+          <button id="place-build" data-place-step="Build" class="place-primary" type="button" disabled>Build your place</button></div>
       </footer>
     </section>
   </main>
