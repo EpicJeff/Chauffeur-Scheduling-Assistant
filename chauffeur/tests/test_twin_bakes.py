@@ -371,6 +371,35 @@ def test_wall_panel_can_read():
         check(c.client.get(manifest_url(key)).status_code == 401, 'nobody signed in reads no manifest')
 
 
+def test_ktx2_magic_and_content_type():
+    key = key_of(0x81)
+    body = b'\xabKTX 20\xbb\r\n\x1a\n' + bytes(range(128))
+    with Ctx() as c:
+        r = c.upload(key, 0, body, content_type='application/octet-stream')
+        check(r.status_code == 200, ('KTX2 magic accepted independently of MIME', r.text))
+        got = c.client.get(page_url(key, 0), headers=c.panel)
+        check(got.content == body, 'KTX2 round trips byte for byte')
+        check(got.headers['content-type'].startswith('image/ktx2'), got.headers)
+        check(c.upload(key, 1, b'KTX 20 fake', content_type='image/ktx2').status_code == 400,
+              'MIME without the complete magic is refused')
+
+
+def test_manifest_formats_and_densities():
+    import copy
+    body = {**manifest(), 'formats': ['ktx2', 'png'], 'densities': {'sky': 2, 'room': 8}}
+    with Ctx() as c:
+        key = key_of(0x82)
+        check(c.put_manifest(key, body).status_code == 200, 'new manifest accepted')
+        check(c.client.get(manifest_url(key), headers=c.panel).json() == body, 'metadata round trips')
+        for field, value in [('formats', ['ktx2']), ('formats', ['gif', 'png']),
+                             ('densities', {'sky': 0, 'room': 8}),
+                             ('densities', {'sky': 2, 'room': -1}),
+                             ('densities', {'sky': 2}), ('densities', {'sky': True, 'room': 8})]:
+            bad = copy.deepcopy(body); bad[field] = value
+            check(c.put_manifest(key, bad).status_code == 400, (field, value))
+        check(c.client.get(manifest_url(key), headers=c.panel).json() == body, 'bad metadata changes nothing')
+
+
 TESTS = (
     test_routes_have_their_tiers,
     test_upload_then_download_with_etag,
@@ -380,6 +409,8 @@ TESTS = (
     test_concurrent_uploads_never_tear_a_page,
     test_prune_keeps_only_live_keys,
     test_wall_panel_can_read,
+    test_ktx2_magic_and_content_type,
+    test_manifest_formats_and_densities,
 )
 
 

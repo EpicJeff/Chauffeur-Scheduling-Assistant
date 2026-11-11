@@ -54,7 +54,8 @@ export function createRealLights(view, { tier = view.tier || 'low' } = {}) {
   });
   return {
     update(candidates, target) {
-      const selected = pickReal(candidates, target, cap);
+      const baked = new Set(view.bake?.fresh() || []);
+      const selected = pickReal(candidates.filter(row => !baked.has(row.device)), target, cap);
       const byId = new Map(candidates.map(row => [row.device, row]));
       pool.forEach((light, index) => {
         const row = byId.get(selected[index]);

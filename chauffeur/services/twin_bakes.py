@@ -1,6 +1,7 @@
 """Atomic storage for the twin's baked light pages and manifests."""
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -12,6 +13,7 @@ from services import twin_store
 
 MAX_PAGE_BYTES = 16 * 1024 * 1024
 PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
+KTX2_SIGNATURE = b'\xabKTX 20\xbb\r\n\x1a\n'
 _KEY = re.compile(r'[0-9a-f]{16,64}')
 _LOCK = threading.RLock()
 
@@ -55,8 +57,8 @@ def save_page(key, page, data):
     path = _directory(key) / f'{check_page(page)}.png'
     if len(data) > MAX_PAGE_BYTES:
         raise ValueError('Bake page exceeds 16 MiB.')
-    if not data.startswith(PNG_SIGNATURE):
-        raise ValueError('Bake page must be a PNG.')
+    if not data.startswith((PNG_SIGNATURE, KTX2_SIGNATURE)):
+        raise ValueError('Bake page must be a PNG or KTX2.')
     with _LOCK:
         _write(path, data)
     return _etag(data)
@@ -90,6 +92,18 @@ def _check_manifest(body):
             raise ValueError('Bake channel must be between 0 and 3.')
     for entry in lights.values():
         check_key(entry.get('key'))
+    # Old PNG manifests remain readable and writable during the transition.
+    if 'formats' in body:
+        formats = body['formats']
+        if not isinstance(formats, list) or len(formats) != pages or any(f not in ('png', 'ktx2') for f in formats):
+            raise ValueError('Bake formats must describe every page as png or ktx2.')
+    if 'densities' in body:
+        densities = body['densities']
+        if not isinstance(densities, dict) or any(
+            type(densities.get(k)) not in (int, float) or not math.isfinite(densities[k]) or densities[k] <= 0
+            for k in ('sky', 'room')
+        ):
+            raise ValueError('Bake densities need positive finite sky and room values.')
 
 
 def save_manifest(key, body):

@@ -9,6 +9,7 @@ import { base, loadSky, disposeObject } from './twin_library.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 import { hostPoint } from './twin_hosts.js';
 import { keepLive } from './live/live.js';
+import { mountBake } from './bake/runtime.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } = {}) {
   const probe = document.createElement('canvas').getContext('webgl2');
@@ -511,6 +512,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       const key = `${buildingId}:${levelId}`, group = twin?.groups.levels[key];
       const before = plan.buildings.find(b => b.id === buildingId), after = flat.buildings.find(b => b.id === buildingId);
       if (!group || !before || !after || twin.editableLevel !== key) return;
+      view.bake?.stop();
       // The focused level has per-piece meshes (R42). Rebuild its changed
       // buffers in place: no roof, yard, texture or optional-model work per frame.
       // Keep selection materials alive throughout a gesture. Replacing every
@@ -630,8 +632,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       }
       render();
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
+      startBake();
     },
     async rebuild(nextPlan, { preserveYard = false } = {}) {
+      view.bake?.stop();
       const version = ++revision; view.ready = false;
       const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel });
       next.editableLevel = editableLevel;
@@ -733,11 +737,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       attachSheet();
       paintSelection();
       view.ready = true;
+      startBake();
       el.dispatchEvent(new CustomEvent('twinrebuilt', { detail: view }));
     },
     dispose() {
       if (disposed) return;
       disposed = true; ++revision; view.ready = false;
+      view.bake?.stop();
       view.live?.stop();
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
@@ -769,6 +775,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       sun.intensity = .12; ambient.intensity = .18;
     } else { sun.visible = !night; sun.intensity = SUN_INTENSITY; ambient.intensity = night ? .24 : 1.8; }
     renderer3.toneMappingExposure = evening || night ? 1.2 : 1;
+    view.bakeSky?.();
+  }
+  view.bakeSky = () => view.bake?.sky(ambient.color, ambient.intensity);
+  function startBake() {
+    view.bake?.stop();
+    mountBake(view, twin.root, { host: document.getElementById('twin-controls') || el.closest('.editor-shell')?.querySelector('.editor-toolbar') });
+    view.bakeSky();
   }
   function applyLights() {
     if (!twin) return;

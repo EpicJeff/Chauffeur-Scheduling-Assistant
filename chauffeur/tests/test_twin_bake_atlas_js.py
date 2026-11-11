@@ -815,8 +815,17 @@ def scenario_high_sparse_banks_stay_within_six_pages():
     check(sum(b['pages'] for b in banks) + s['sky']['pages'] <= 6,
           ('High sparse banks plus the sky fit six pages total', [b['pages'] for b in banks], s['sky']['pages']))
     for bank in banks:
-        expected = {v['room'] for v in slots.values() if v['bank'] >= bank['bank']}
-        check({r['room'] for r in bank['rooms']} == expected, 'only rooms using this bank occupy regions')
+        # Ruling B12: bank 0 reserves a region for every room so a new light never moves another's page;
+        # banks >= 1 hold only the rooms that use them.
+        if bank['bank'] == 0:
+            lit = {v['room'] for v in slots.values()}
+            held = {r['room'] for r in bank['rooms']}
+            check(lit <= held and len(held) > len(lit),
+                  ('bank 0 reserves a region for every room, dark ones included (B12)', len(held), len(lit)))
+            expected = held
+        else:
+            expected = {v['room'] for v in slots.values() if v['bank'] >= bank['bank']}
+            check({r['room'] for r in bank['rooms']} == expected, 'only rooms using this bank occupy regions')
         check({c['room'] for c in bank['charts']} == expected, 'only active room charts occupy pages')
         regions = {r['room']: r for r in bank['rooms']}
         for r in regions.values():

@@ -1,5 +1,5 @@
 // Geometry is in plan feet. The root's metres/lot transform only enters the key.
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three-r187/three.module.js';
 
 const VERSION = 'room-atlas-1';
 const EPS = 1e-6;
@@ -365,7 +365,7 @@ function writeUV(charts, o, name, pageName) {
 
 // A small streaming 128-bit fingerprint; no WebCrypto async boundary, UUIDs, or
 // light records. Hashing generated buffers also captures generator changes.
-function fingerprint() {
+export function fingerprint() {
   const h = [0x811c9dc5, 0x9e3779b9, 0x85ebca6b, 0xc2b2ae35], encoder = new TextEncoder();
   return {
     add(value) {
@@ -391,11 +391,11 @@ export function assignChannels(rooms, lights) {
   return result;
 }
 
-function packBanks(layout, lights, o) {
+export function packBanks(layout, lights, o) {
   const slots = Object.values(assignChannels(layout.rooms, lights)), banks = [];
   const count = slots.length ? 1 + Math.max(...slots.map(s => s.bank)) : 0;
   for (let bank = 0; bank < count; bank++) {
-    const active = new Set(slots.filter(s => s.bank >= bank).map(s => s.room));
+    const active = new Set(bank === 0 ? layout.rooms.map((r, i) => i) : slots.filter(s => s.bank >= bank).map(s => s.room));
     const regions = layout.rooms.flatMap((r, room) => active.has(room) && r.region
       ? [{ id: room, w: r.region.w, h: r.region.h, sourceRegion: r.region }] : []);
     const pages = shelves(regions, o.page, o.page, o.gutter);

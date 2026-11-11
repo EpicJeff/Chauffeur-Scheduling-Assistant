@@ -7569,7 +7569,8 @@ def house_bake_page_get(key: str, page: str, request: Request):
     headers = {'ETag': etag}
     if any(tag.strip().removeprefix('W/') in (etag, '*') for tag in matches):
         return Response(status_code=304, headers=headers)
-    return Response(content=data, media_type='image/png', headers=headers)
+    kind = 'image/ktx2' if data.startswith(twin_bakes.KTX2_SIGNATURE) else 'image/png'
+    return Response(content=data, media_type=kind, headers=headers)
 
 
 @app.get('/api/house/bakes/{key}')

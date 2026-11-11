@@ -127,15 +127,21 @@ export function mountModes(view, live) {
     const candidates = lamps.filter(lamp => mode === 'lights' && lamp.intensity > 0 &&
       view.groups.levels[`${lamp.marker.building}:${lamp.marker.level}`]?.visible !== false)
       .map(lamp => ({ device: lamp.marker.device_id, at: lamp.marker.at, ...lamp }));
+    const fresh = new Set(view.bake?.fresh() || []);
     const selected = rig.update(realLighting ? candidates : [], target ? [target.x / FT, -target.z / FT, target.y / FT] : [0, 0, 0]);
     for (const lamp of lamps) {
+      const baked = fresh.has(lamp.marker.device_id);
+      const shown = candidates.some(row => row.device === lamp.marker.device_id);
+      // Clear a former bake too: losing freshness must never leave its tint on.
+      if (baked || lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, baked && shown ? lamp.intensity : 0);
+      lamp.baked = baked;
       lamp.real = selected.has(lamp.marker.device_id);
-      lamp.bulb.visible = candidates.some(row => row.device === lamp.marker.device_id);
+      lamp.bulb.visible = shown;
       lamp.bulb.material.color.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
     }
     for (const floor of floors) {
       const { room, mesh, group, parent } = floor;
-      const overflow = candidates.filter(lamp => !selected.has(lamp.device) &&
+      const overflow = candidates.filter(lamp => !selected.has(lamp.device) && !fresh.has(lamp.device) &&
         lamp.marker.building === room.building && lamp.marker.room === room.room);
       const legacy = legacyRooms.find(row => row.building === room.building && row.room === room.room);
       const glow = realLighting ? (overflow.length ? overflow.reduce((sum, lamp) => sum + lamp.intensity, 0) / overflow.length : 0) : legacy?.glow || 0;
@@ -153,8 +159,9 @@ export function mountModes(view, live) {
     },
     draw,
     lights: () => lamps.map(lamp => ({ device: lamp.marker.device_id, at: [...lamp.marker.at],
-      rgb: [...lamp.rgb], intensity: lamp.intensity, real: lamp.real })),
+      rgb: [...lamp.rgb], intensity: lamp.intensity, real: lamp.real, baked: !!lamp.baked })),
     stop() {
+      for (const lamp of lamps) if (lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, 0);
       unsubscribe(); strip.remove();
       if (mode === 'lights') view.setEvening?.(false);
       rig.stop();
