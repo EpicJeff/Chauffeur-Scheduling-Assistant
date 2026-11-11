@@ -214,7 +214,7 @@ def fixtures_become_anchors_on_their_surfaces():
     switch = {'kind': 'switch', 'level': 'L1', 'at': [3.0, 0.0], 'surface': 'wall', 'wall': 's'}
     outlet = {'kind': 'outlet', 'level': 'L1', 'at': [15.0, 5.0], 'surface': 'floor'}
     fan = {'kind': 'fan', 'level': 'L1', 'at': [12.0, 6.0], 'surface': 'ceiling'}
-    lost_wall = {'kind': 'switch', 'level': 'L1', 'at': [8.0, 8.0], 'surface': 'wall', 'wall': 'nope'}
+    lost_wall = {'kind': 'switch', 'level': 'L1', 'at': [8.0, 5.0], 'surface': 'wall', 'wall': 'nope'}
     outside = {'kind': 'light', 'level': 'L1', 'at': [40.0, 5.0], 'surface': 'ceiling'}
     counter = {'id': 'counter-1', 'level': 'L1', 'kind': 'counter', 'asset': 'counter', 'rect': [1, 1, 3, 2],
                'height': 3}

@@ -37,6 +37,10 @@ import threading
 import time
 import traceback
 import urllib.request
+import http.client
+import ssl
+import io
+from unittest.mock import patch, Mock
 
 if not os.environ.get('CHAUFFEUR_DATA_DIR', '').startswith(tempfile.gettempdir()):
     os.environ['CHAUFFEUR_DATA_DIR'] = tempfile.mkdtemp(prefix='chauffeur_llm_stream_')
@@ -231,7 +235,7 @@ class Wire:
         self.requests, self.bodies = [], []
         self.called = threading.Event()
 
-    def __call__(self, request, timeout=60):
+    def __call__(self, request, timeout=60, **kwargs):
         self.requests.append(request)
         self.called.set()
         if self.gate is not None:
@@ -848,7 +852,262 @@ def _blocking_read(kind, answer, context, gemini=False):
         model_pools.call_pool_json = original
 
 
+def C1_socket_reachable_before_headers_and_cancel_before_send():
+    # Run urllib's real handlers and budget admission, with a fake connection.
+    for provider, phase in ((p, phase) for p in ('anthropic', 'gemini', 'openai')
+                            for phase in ('connect', 'headers')):
+        connected, closed, release, returned = (threading.Event() for _ in range(4))
+        sock = Mock(spec=socket.socket)
+        sock.shutdown.side_effect = lambda *a: closed.set()
+        sock.detach.return_value = -1
+        sent = []
+        def connect(conn):
+            conn.sock = conn._create_connection(('fake', 443))
+            connected.set()
+            if phase == 'connect':
+                release.wait(3)
+        def response(conn):
+            release.wait(3)
+            returned.set()
+            raise OSError('closed before headers')
+        with patch.object(urllib.request, 'urlopen', _no_network), \
+             patch.object(socket, 'create_connection', return_value=sock), \
+             patch.object(http.client.HTTPSConnection, 'connect', connect), \
+             patch.object(http.client.HTTPSConnection, 'getresponse', response), \
+             patch.object(llm_budget, '_reserve', return_value=('fake', 1)), \
+             patch.object(llm_budget, '_finish'), \
+             patch.object(sock, 'sendall', side_effect=lambda data: sent.append(data)):
+            cancel = _ls().Cancel()
+            run = Run(lambda: _stream(provider, cancel))
+            try:
+                check(connected.wait(1), f'{provider}: fake connection must be reached')
+                cancel.cancel()
+                check(closed.wait(1), f'{provider}: socket shutdown before urlopen returns')
+                check(not returned.is_set(), 'headers are still blocked')
+                check(run.done.wait(1), 'consumer stops promptly')
+            finally:
+                release.set()
+                returned.wait(1)
+
+    # Cancel while admission is blocked; the eventual connection sends no bytes.
+    admitted, release = threading.Event(), threading.Event()
+    sent = []
+    sock = Mock(spec=socket.socket)
+    sock.detach.return_value = -1
+    def reserve(*args):
+        admitted.set()
+        release.wait(3)
+        return ('fake', 1)
+    def connect(conn):
+        conn.sock = sock
+    with patch.object(http.client.HTTPSConnection, 'connect', connect), \
+         patch.object(llm_budget, '_reserve', reserve), patch.object(llm_budget, '_finish'), \
+         patch.object(sock, 'sendall', side_effect=lambda data: sent.append(data)):
+        cancel = _ls().Cancel()
+        run = Run(lambda: _stream('anthropic', cancel))
+        try:
+            check(admitted.wait(1), 'admission is blocked')
+            cancel.cancel()
+        finally:
+            release.set()
+        check(run.done.wait(1), 'cancel ends the consumer')
+        time.sleep(.1)
+        check(not sent, 'cancel just before send transmits nothing')
+
+    ready, release, finished = (threading.Event() for _ in range(3))
+    cancel = _ls().Cancel()
+    before_send = cancel.before_send
+    def gated_send():
+        ready.set()
+        release.wait(3)
+        try:
+            before_send()
+        finally:
+            finished.set()
+    with patch.object(http.client.HTTPSConnection, 'connect', connect), \
+         patch.object(llm_budget, '_reserve', return_value=('fake', 1)), \
+         patch.object(llm_budget, '_finish'), patch.object(cancel, 'before_send', gated_send):
+        run = Run(lambda: _stream('anthropic', cancel))
+        try:
+            check(ready.wait(1), 'connection ready, immediately before request bytes')
+            cancel.cancel()
+        finally:
+            release.set()
+        check(finished.wait(1) and run.done.wait(1), 'cancel check runs immediately before send')
+        check(not sent and not sock.sendall.called, 'no headers or body sent after Stop')
+
+
+def M2_blocking_refusal_charged_zero():
+    _fresh_anthropic()
+    storage.patch_settings({'llm_provider': 'openai', 'llm_openai_api_key': 'fake', 'model_pool_pro': ''})
+    def refuse(req):
+        raise urllib.error.HTTPError(req.full_url, 400, 'Bad Request', {}, io.BytesIO(b'bad image detail'))
+    with Wire(refuse):
+        out = _read_stream('draft', {}, [img()], cancel=_ls().Cancel(), on_text=lambda d: None, run='m2', step='draft')
+    check('bad image detail' in out['error'], out)
+    row = tc.entries()[-1]
+    check(row['usd'] == 0 and row['basis'] == 'refused', row)
+
+
+def C1_tls_handshake_is_cancellable_before_headers():
+    entered, closed, release = (threading.Event() for _ in range(3))
+    raw, wrapped = Mock(spec=socket.socket), Mock(spec=ssl.SSLSocket)
+    raw.detach.return_value = wrapped.detach.return_value = -1
+    wrapped.shutdown.side_effect = lambda *args: closed.set()
+    def wrap(context, sock, **kwargs):
+        # Faithful to wrap_socket: an automatic handshake blocks before it
+        # returns the SSLSocket, and the original raw socket is detached.
+        raw.shutdown.side_effect = OSError('raw socket detached by TLS')
+        if kwargs.get('do_handshake_on_connect', True):
+            entered.set()
+            release.wait(3)
+        return wrapped
+    def handshake():
+        entered.set()
+        release.wait(3)
+    wrapped.do_handshake.side_effect = handshake
+    with patch.object(socket, 'create_connection', return_value=raw), \
+         patch.object(urllib.request, 'getproxies', return_value={}), \
+         patch.object(ssl.SSLContext, 'wrap_socket', wrap), \
+         patch.object(http.client.HTTPSConnection, 'getresponse', side_effect=OSError('closed')), \
+         patch.object(llm_budget, '_reserve', return_value=('fake', 1)), patch.object(llm_budget, '_finish'):
+        cancel = _ls().Cancel()
+        run = Run(lambda: _stream('anthropic', cancel))
+        try:
+            check(entered.wait(1), 'TLS handshake is blocked')
+            cancel.cancel()
+            check(closed.wait(1), 'Stop reaches the wrapped socket during TLS handshake')
+            check(run.done.wait(1), 'consumer stops')
+        finally:
+            release.set()
+
+
+def M3_dropped_stream_charges_received_output():
+    _fresh_anthropic()
+    text = '{"building":{"walls":['
+    class Dropped(Body):
+        def readline(self, *args):
+            line = super().readline(*args)
+            if not line:
+                raise OSError('connection reset')
+            return line
+    for body_type in (Body, Dropped):
+        with Wire(lambda req: body_type(rechunk(anthropic_events([text], end=False), 1))):
+            out = _read_stream('draft', {}, [img()], cancel=_ls().Cancel(), on_text=lambda d: None, run='m3', step='draft')
+        check('error' in out and not out.get('truncated'), out)
+        check(tc.entries()[-1]['input_tokens'] == 1234 and tc.entries()[-1]['output_tokens'] == len(text) // 4, tc.entries()[-1])
+
+
+def M4_reused_cancel_resets_usage():
+    cancel = _ls().Cancel()
+    with Wire(lambda req: Body(rechunk(anthropic_events(['{}']), 1))):
+        drain(lambda: _stream('anthropic', cancel))
+    with Wire(lambda req: Body(rechunk(anthropic_events(['{'], end=False), 1))):
+        drain(lambda: _stream('anthropic', cancel))
+    check(cancel.usage['complete'] is False and cancel.usage['output_tokens'] is None, cancel.usage)
+    check(cancel.produced_chars == 1, cancel.produced_chars)
+
+
+def M5_stop_never_waits_for_close_and_linux_does_not_detach():
+    entered, release = threading.Event(), threading.Event()
+    class BlockingClose:
+        def close(self):
+            entered.set()
+            release.wait(3)
+    cancel = _ls().Cancel()
+    cancel.attach(BlockingClose())
+    start = time.monotonic()
+    try:
+        cancel.cancel()
+        check(time.monotonic() - start < .2, 'Stop must not close on the request thread')
+        check(entered.wait(1), 'helper closes response')
+    finally:
+        release.set()
+    sock = Mock(spec=socket.socket)
+    with patch.object(_ls().sys, 'platform', 'linux'):
+        _ls()._close(sock)
+    check(sock.shutdown.called and not sock.detach.called and not sock.close.called,
+          'Linux wakes recv and leaves descriptor close to its owner')
+    sock = Mock(spec=socket.socket)
+    sock.detach.return_value = 123
+    with patch.object(_ls().sys, 'platform', 'win32'), patch.object(socket, 'close') as close_handle:
+        _ls()._close(sock)
+    check(sock.detach.called and close_handle.call_args.args == (123,), 'Windows also wakes blocked recv by closing its handle')
+    entered, release = threading.Event(), threading.Event()
+    class SlowBody(Body):
+        def close(self):
+            entered.set()
+            release.wait(3)
+            super().close()
+    body = SlowBody([b'first\n'], hold=0)
+    with Wire(lambda req: body):
+        cancel = _ls().Cancel()
+        run = Run(lambda: _stream('anthropic', cancel))
+        try:
+            check(body.waiting.wait(1), 'stream reader is blocked')
+            cancel.cancel()
+            check(entered.wait(1) and run.done.wait(1), 'consumer must not wait for buffered close either')
+        finally:
+            release.set()
+
+
+def M6_stream_workflow_cooldown_and_error_body():
+    _fresh_anthropic()
+    def fail(req):
+        check(llm_budget._scope.get() == ('twin', False), 'stream workflow is twin')
+        raise urllib.error.HTTPError(req.full_url, 503, 'Unavailable', {}, io.BytesIO(b'provider overloaded detail'))
+    with Wire(fail), patch.object(model_pools, 'note_failure') as failure:
+        out = _read_stream('draft', {}, [img()], cancel=_ls().Cancel(), on_text=lambda d: None, run='m6', step='draft')
+    check('provider overloaded detail' in out['error'], out)
+    check(failure.called and failure.call_args.args[0] == 'anthropic:' + CLAUDE, failure.call_args)
+
+
+def M6_refusal_json_mode_retry_and_gemini_prompt():
+    _fresh_anthropic()
+    with Wire(lambda req: Body(rechunk(anthropic_events([], stop_reason='refusal'), 1))):
+        out = _read_stream('draft', {}, [], cancel=_ls().Cancel(), on_text=lambda d: None, run='m6', step='draft')
+    check('refused: refusal' in out['error'], out)
+    _fresh_anthropic()
+    answer = recorded('draft-pool-house.json')
+    texts = iter(['bad json', json.dumps(answer)])
+    with Wire(lambda req: Body(rechunk(anthropic_events([next(texts)]), 1))) as wire:
+        out = _read_stream('draft', {}, [], cancel=_ls().Cancel(), on_text=lambda d: None, run='m6', step='draft')
+    check('error' not in out and len(wire.requests) == 2 and len(tc.entries()) == 2, out)
+    _fresh_anthropic()
+    storage.patch_settings({'llm_provider': 'openai', 'llm_openai_api_key': 'fake', 'model_pool_pro': ''})
+    reply = {'status': 'completed', 'usage': {}, 'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': json.dumps(answer)}]}]}
+    with Wire(lambda req: Body([json.dumps(reply).encode()])) as wire:
+        out = _read_stream('draft', {}, [], cancel=_ls().Cancel(), on_text=lambda d: None, run='m6', step='draft')
+    check(wire.payload().get('text') == {'format': {'type': 'json_object'}}, wire.payload())
+    _fresh_gemini()
+    with Wire(lambda req: Body(rechunk(gemini_events([json.dumps(answer)]), 1))) as wire:
+        _read_stream('draft', {}, [], cancel=_ls().Cancel(), on_text=lambda d: None, run='m6', step='draft')
+    payload = wire.payload()
+    check('systemInstruction' not in payload, 'Gemini uses the recorded concatenated system prompt')
+    check(payload['contents'][0]['parts'][0]['text'].startswith(twin_reads.PROMPTS['draft']), payload)
+
+
+def M6_blocking_truncation_keeps_usage_and_fallback_signal():
+    _fresh_anthropic()
+    storage.patch_settings({'llm_provider': 'openai', 'llm_openai_api_key': 'fake', 'model_pool_pro': ''})
+    reply = {'status': 'incomplete', 'incomplete_details': {'reason': 'max_output_tokens'},
+             'usage': {'input_tokens': 100, 'output_tokens': 17}, 'output': []}
+    with Wire(lambda req: Body([json.dumps(reply).encode()])) as wire:
+        out = _read_stream('draft', {}, [], cancel=_ls().Cancel(), on_text=lambda d: None, run='m6', step='draft')
+    check(out.get('truncated') is True and len(wire.requests) == 1, out)
+    check(tc.entries()[-1]['output_tokens'] == 17, tc.entries()[-1])
+
+
 TESTS = [
+    C1_socket_reachable_before_headers_and_cancel_before_send,
+    C1_tls_handshake_is_cancellable_before_headers,
+    M2_blocking_refusal_charged_zero,
+    M3_dropped_stream_charges_received_output,
+    M4_reused_cancel_resets_usage,
+    M5_stop_never_waits_for_close_and_linux_does_not_detach,
+    M6_stream_workflow_cooldown_and_error_body,
+    M6_refusal_json_mode_retry_and_gemini_prompt,
+    M6_blocking_truncation_keeps_usage_and_fallback_signal,
     anthropic_sse_yields_text_and_usage,
     gemini_sse_yields_text_and_usage,
     thinking_deltas_are_not_text,

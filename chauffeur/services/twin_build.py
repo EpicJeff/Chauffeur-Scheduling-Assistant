@@ -708,7 +708,8 @@ def _matches(a, b, kind, house, *, original=False):
         return p.get('level')
     if level(a) != level(b) or (kind == 'site' and a.get('kind') != b.get('kind')):
         return False
-    if kind == 'fixture' and any(a.get(k) != b.get(k) for k in ('kind', 'surface')):
+    if kind == 'fixture' and (twin_plan.fixture_kind(a.get('kind')) != twin_plan.fixture_kind(b.get('kind'))
+                              or a.get('surface') != b.get('surface')):
         return False
     ga = _match_geometry(a, kind, house)
     gb = (_geometry(b, kind, house) if kind == 'wall' and not original
@@ -1707,9 +1708,11 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
                     wall['id'] = wall_ids[wall['id']]
             incoming['openings'] = [{**o, 'wall': wall_ids[o['wall']]}
                                     for o in incoming.get('openings', []) if o.get('wall') in wall_ids]
-            for key in ('rooms', 'stairs', 'fixtures'):
+            for key in ('rooms', 'stairs'):
                 incoming[key] = [p for p in incoming.get(key, []) if p['level'] == scope]
-            for fixture in incoming['fixtures']:
+            if 'fixtures' in incoming:
+                incoming['fixtures'] = [p for p in incoming['fixtures'] if p['level'] == scope]
+            for fixture in incoming.get('fixtures', []):
                 if 'wall' in fixture:
                     fixture['wall'] = wall_ids.get(fixture['wall'], fixture['wall'])
             incoming.pop('roof', None)

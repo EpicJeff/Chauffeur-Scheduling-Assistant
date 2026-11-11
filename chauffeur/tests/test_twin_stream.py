@@ -255,7 +255,17 @@ def nested_arrays_inside_an_item_stay_inside_it():
         check(got[0][2]['walls'][0]['id'] == 'nested-wall', 'the nested array comes back inside the level, whole')
 
 
+def invalid_key_escape_does_not_abort_feed():
+    parser = _ts().Pieces({'building.walls': 'walls'})
+    text = r'{"bad\q":[],"building":{"walls":[{"id":"w1"}]}}'
+    got = []
+    for char in text:
+        got.extend(parser.feed(char))
+    check(got == [('walls', 'building.walls', {'id': 'w1'})], got)
+
+
 TESTS = [
+    invalid_key_escape_does_not_abort_feed,
     items_arrive_when_their_closing_brace_arrives,
     strings_with_brackets_do_not_confuse_it,
     half_item_at_the_end_is_not_returned,

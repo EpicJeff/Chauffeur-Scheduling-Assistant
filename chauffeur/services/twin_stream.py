@@ -41,7 +41,10 @@ class Pieces:
                 elif char == '"':
                     self._in_string = False
                     if self._key_text is not None:
-                        self._stack[-1]['key'] = json.loads(''.join(self._key_text))
+                        try:
+                            self._stack[-1]['key'] = json.loads(''.join(self._key_text))
+                        except ValueError:
+                            self._stack[-1]['key'] = None
                         self._key_text = None
                 continue
 

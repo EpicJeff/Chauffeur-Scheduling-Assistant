@@ -33,7 +33,8 @@ def _response(req, timeout_s):
     cancel = _request_cancel.get()
     if cancel is not None and cancel.cancelled:
         raise RuntimeError('Model call cancelled.')
-    resp = llm_budget.urlopen(req, timeout=timeout_s)
+    resp = llm_budget.urlopen(req, timeout=timeout_s,
+                              **({'connection_hook': cancel} if cancel is not None else {}))
     if cancel is not None:
         cancel.attach(resp)
     try:

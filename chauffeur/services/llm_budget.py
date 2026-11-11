@@ -289,8 +289,70 @@ def _finish(reservation, model, outcome, retry_at=0, failed=False):
                 db.execute('DELETE FROM pauses WHERE account=? AND scope=?', (account, scope))
 
 
-def urlopen(request, timeout=60):
+def _connection_opener(hook):
+    import http.client
+
+    class TLSContext:
+        def __init__(self, context):
+            self.context = context
+
+        def wrap_socket(self, sock, **kwargs):
+            # wrap_socket normally hides the SSLSocket until its handshake
+            # finishes. Register it first so Stop also reaches that window.
+            wrapped = self.context.wrap_socket(sock, do_handshake_on_connect=False, **kwargs)
+            hook.attach_socket(wrapped)
+            wrapped.do_handshake()
+            return wrapped
+
+    class Connection:
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            create = self._create_connection
+            def connect_socket(*args, **kwargs):
+                sock = create(*args, **kwargs)
+                hook.attach_socket(sock)
+                return sock
+            self._create_connection = connect_socket
+            if hasattr(self, '_context'):
+                self._context = TLSContext(self._context)
+
+        def connect(self):
+            super().connect()
+            hook.attach_socket(self.sock)
+
+        def send(self, data):
+            if self.sock is None:
+                self.connect()
+            hook.before_send()
+            return super().send(data)
+
+    class HTTPConnection(Connection, http.client.HTTPConnection):
+        pass
+
+    class HTTPSConnection(Connection, http.client.HTTPSConnection):
+        pass
+
+    class HTTPHandler(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(HTTPConnection, req)
+
+    class HTTPSHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(HTTPSConnection, req, context=self._context)
+
+    return urllib.request.build_opener(HTTPHandler(), HTTPSHandler())
+
+
+def urlopen(request, timeout=60, *, connection_hook=None):
     """Meter model endpoints for Gemini, Claude and OpenAI; pass other HTTP through."""
+    def open_request():
+        if connection_hook is None:
+            return urllib.request.urlopen(request, timeout=timeout)
+        # Admission may have waited on the database. A Stop during that wait
+        # must be checked before opening a connection or sending request bytes.
+        connection_hook.before_connect()
+        return _connection_opener(connection_hook).open(request, timeout=timeout)
+
     url = urllib.parse.urlsplit(request.full_url)
     paid = PAID_HOSTS.get(url.hostname)
     if paid and url.path == paid[1]:
@@ -303,13 +365,13 @@ def urlopen(request, timeout=60):
         model = url.path.split('/models/', 1)[1].split(':', 1)[0]
         key = urllib.parse.parse_qs(url.query).get('key', [''])[0] or request.get_header('X-goog-api-key', '')
     else:
-        return urllib.request.urlopen(request, timeout=timeout)
+        return open_request()
     reservation = _reserve(key, model)
     attempts = _wire_attempts.get()
     if attempts is not None:
         attempts.append(model)
     try:
-        response = urllib.request.urlopen(request, timeout=timeout)
+        response = open_request()
     except urllib.error.HTTPError as error:
         body = error.read()
         now = time.time()

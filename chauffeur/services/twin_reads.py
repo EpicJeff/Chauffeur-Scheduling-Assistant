@@ -2,7 +2,7 @@
 import json
 import re
 
-from services import llm, model_pools, storage, twin_cost, twin_place
+from services import llm, llm_budget, model_pools, storage, twin_cost, twin_place
 from services.twin_draft import FINISHES_PROMPT
 
 
@@ -243,7 +243,8 @@ FIXTURES
 - Rooms are closed by walls. Fixtures are anchors: read lights, switches,
   outlets, fans and smoke alarms shown on plans as
   fixtures:[{kind, level, at:[x,y], surface:'ceiling'|'wall'|'floor', wall?}].
-  Use singular kinds; a smoke alarm is a sensor. A wall fixture names its wall.
+  Use kind light, switch, outlet, fan, camera or sensor; a smoke alarm is a sensor.
+  A wall fixture names its wall.
 
 ROOF
 - roof: {sections:[...], extensions:[...]}. Each section is {id, kind, rect,
@@ -1115,58 +1116,81 @@ def read_stream(kind, context, images, *, cancel, on_text, run, step):
         user = json.dumps({'step': step, 'context': context}, ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError, OverflowError) as exc:
         return {'error': str(exc)}
-    twin_cost.require_clear()
-    parts = []
-    error = None
-    try:
-        for delta in llm_stream.stream_json(
-                provider, settings.get('llm_ollama_url') or '', key, bare, PROMPTS[kind], user,
-                images=images, max_output_tokens=limit, thinking_level=THINKING.get(kind, 'low'),
-                timeout_s=TIMEOUT.get(kind, 120), cancel=cancel):
-            parts.append(delta)
-            on_text(delta)
-    except Exception as exc:
-        error = str(exc)
-    finally:
-        usage = cancel.usage
-        if usage.get('dispatched'):
-            row = dict(usage, model=model, images=len(images or []),
-                       prompt_chars=len(PROMPTS[kind]) + len(user), max_output_tokens=limit)
-            twin_cost.record(f'step:{kind}', [row], run, cancelled=cancel.cancelled,
-                             produced_chars=cancel.produced_chars)
-    if cancel.cancelled:
-        raise Cancelled('Read stopped.')
-    if error:
-        return {'error': error}
-    if not cancel.usage['complete']:
-        truncated = cancel.usage.get('finish_reason') in ('max_tokens', 'MAX_TOKENS', 'incomplete')
-        return {'error': 'The model reply ended before it was complete.',
-                **({'truncated': True} if draft and truncated else {})}
-    try:
-        reply = ''.join(parts).strip()
-        if draft:
-            # Same lenient wrappers as llm's blocking draft path. Never accept
-            # a partial JSON object or choose between multiple answers.
-            reply = re.sub(r'```+\s*$', '', reply).strip()
-            start = reply.find('{')
-            if start < 0:
-                raise ValueError('Expected a JSON object')
-            reply = reply[start:]
-            answer, end = json.JSONDecoder().raw_decode(reply)
-            trailing = reply[end:].strip()
-            if trailing.startswith('{'):
-                second, _ = json.JSONDecoder().raw_decode(trailing)
-                if isinstance(second, dict):
-                    raise ValueError('Two JSON objects in one reply')
-            if trailing not in ('', '}'):
-                raise ValueError('Extra data')
-        else:
-            answer = json.loads(reply)
-    except (ValueError, TypeError) as exc:
-        return {'error': f'Failed to parse LLM JSON: {exc}'}
+    for attempt in range(2):
+        if cancel.cancelled:
+            raise Cancelled('Read stopped.')
+        twin_cost.require_clear()
+        parts, error = [], None
+        try:
+            with llm_budget.request_scope('twin', False):
+                for delta in llm_stream.stream_json(
+                        provider, settings.get('llm_ollama_url') or '', key, bare, PROMPTS[kind], user,
+                        images=images, max_output_tokens=limit, thinking_level=THINKING.get(kind, 'low'),
+                        timeout_s=TIMEOUT.get(kind, 120), cancel=cancel,
+                        strict_json='lenient' if draft else True):
+                    parts.append(delta)
+                    on_text(delta)
+        except llm_budget.Deferred as exc:
+            error = str(exc)
+        except Exception as exc:
+            error = str(exc)
+            if not cancel.cancelled:
+                model_pools.note_failure(model, error)
+        finally:
+            usage = cancel.usage
+            if usage.get('dispatched'):
+                row = dict(usage, model=model, images=len(images or []),
+                           prompt_chars=len(PROMPTS[kind]) + len(user), max_output_tokens=limit)
+                # Q11: dropped streams have known received characters too.
+                twin_cost.record(f'step:{kind}', [row], run,
+                                 cancelled=cancel.cancelled or (provider in ('anthropic', 'gemini')
+                                                              and not usage['complete']),
+                                 produced_chars=cancel.produced_chars)
+        if cancel.cancelled:
+            raise Cancelled('Read stopped.')
+        if error:
+            truncated = draft and bool(re.search(
+                r'(?:finish\s*=\s*[\"\']?max_tokens\b|reason\s*=\s*max_output_tokens\b)',
+                error, re.IGNORECASE))
+            return {'error': error, **({'truncated': True} if truncated else {})}
+        if not cancel.usage['complete']:
+            reason = cancel.usage.get('finish_reason')
+            if reason == 'refusal':
+                return {'error': f'refused: {reason}'}
+            truncated = reason in ('max_tokens', 'MAX_TOKENS', 'incomplete')
+            return {'error': 'The model reply ended before it was complete.',
+                    **({'truncated': True} if draft and truncated else {})}
+        try:
+            answer = _stream_answer(''.join(parts), draft)
+        except (ValueError, TypeError) as exc:
+            if draft and not attempt:
+                continue
+            return {'error': f'Failed to parse LLM JSON: {exc}'}
+        break
     fragment, problems = parse(kind, answer, context)
     if not _usable(kind, fragment, problems):
         return {'error': '; '.join(problems) or f'{kind} returned no usable fragment.'}
     if problems:
         fragment['problems'] = problems
     return fragment
+
+
+def _stream_answer(reply, draft):
+    reply = reply.strip()
+    if not draft:
+        return json.loads(reply)
+    # Same lenient wrappers as the blocking draft path.
+    reply = re.sub(r'```+\s*$', '', reply).strip()
+    start = reply.find('{')
+    if start < 0:
+        raise ValueError('Expected a JSON object')
+    reply = reply[start:]
+    answer, end = json.JSONDecoder().raw_decode(reply)
+    trailing = reply[end:].strip()
+    if trailing.startswith('{'):
+        second, _ = json.JSONDecoder().raw_decode(trailing)
+        if isinstance(second, dict):
+            raise ValueError('Two JSON objects in one reply')
+    if trailing not in ('', '}'):
+        raise ValueError('Extra data')
+    return answer
