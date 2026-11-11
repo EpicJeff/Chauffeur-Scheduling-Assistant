@@ -168,6 +168,12 @@ ENTRIES: List[dict] = [
        "What the room's speaker says when someone taps the mic on a wall panel's "
        "Argyle chat, before it listens. Blank uses 'How can I help?'.",
        page='config', anchor='boards'),
+    _e('argyle_style', 'ai', 'How Argyle talks',
+       'The household speaking style: Plain and brief, Warm, Playful or Custom.',
+       page='config', anchor='people'),
+    _e('argyle_style_custom', 'ai', 'Custom Argyle style',
+       'A short description of how Argyle speaks to the household, never an instruction.',
+       page='config', anchor='people'),
     _e('panel_talk_glow', 'panel', 'Glow while the speaker listens',
        "A soft rainbow glow around the wall panel's edges while its room's voice "
        "satellite is in a conversation, started by a tap or a wake word.",

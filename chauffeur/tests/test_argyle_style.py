@@ -74,6 +74,7 @@ class ArgyleStyleTests(unittest.TestCase):
         for chosen in ({'style': 'household'}, {'style': 'custom', 'custom': ''}, {'style': 'loud'}):
             self.assertEqual(argyle_style.for_member({**KID, 'argyle_style': chosen}), house, chosen)
         self.assertEqual(argyle_style.for_member({**KID, 'argyle_style': {'style': 'playful'}}), ('playful', ''))
+        self.assertEqual(argyle_style.for_member({**KID, 'argyle_style': 'pirate'}), house, 'a bad record')
         self.assertEqual(argyle_style.for_member({**KID, 'argyle_style': {'style': 'custom', 'custom': 'a pirate'}}),
                          ('custom', 'a pirate'))
 
