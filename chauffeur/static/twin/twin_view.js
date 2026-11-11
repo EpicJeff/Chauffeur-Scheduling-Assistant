@@ -429,13 +429,15 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
           environmentIntensity: scene.environmentIntensity, fog: scene.fog, exposure: renderer3.toneMappingExposure };
         applyTimeLook(); applyLights();
       } else {
-        const previous = evening; evening = null;
+        const previous = evening, time = state.time; evening = null;
         state.time = previous.time;
         scene.background = previous.background; scene.environment = previous.environment;
         scene.environmentIntensity = previous.environmentIntensity; scene.fog = previous.fog;
         renderer3.toneMappingExposure = previous.exposure;
         for (const { object, intensity, visible } of previous.lights) { object.intensity = intensity; object.visible = visible; }
         for (const [material, intensity] of previous.fixtures) material.emissiveIntensity = intensity;
+        // Day or Night tapped while in Lights: leave the scene at the time asked for.
+        if (time !== previous.time) { state.time = time; applyTimeLook(); applyLights(); }
       }
       render();
     },
@@ -788,8 +790,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     if (!twin) return;
     const night = state.time === 'night';
     twin.roomLights.forEach(l => {
-      if (evening) l.intensity = 0;
-      else l.visible = night && !!twin.groups.levels[l.userData.level]?.visible;
+      // A house rebuilt during Lights mode gets its night lamps back on leaving it.
+      l.userData.intensity ??= l.intensity;
+      l.intensity = evening ? 0 : l.userData.intensity;
+      if (!evening) l.visible = night && !!twin.groups.levels[l.userData.level]?.visible;
     });
     twin.root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'fixture') m.emissiveIntensity = !evening && night ? 2 : 0; });
   }

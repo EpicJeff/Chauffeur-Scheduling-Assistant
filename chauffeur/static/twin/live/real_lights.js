@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { TIERS } from '../twin_tiers.js';
 
 const clamp = (value, max = 255) => Math.max(0, Math.min(max, value));
+// Candela at full brightness. A ceiling light 10 ft up leaves the floor under it
+// bright but not clipped under the evening look's exposure, and the far corner lit.
+export const CANDELA = 40;
 
 export function lightColor(attributes = {}) {
   const { rgb_color: rgb, color_temp_kelvin: kelvin, color_temp: mireds } = attributes || {};
@@ -31,10 +34,14 @@ export function pickReal(candidates, target, cap) {
 
 export function createRealLights(view, { tier = view.tier || 'low' } = {}) {
   const cap = TIERS[tier]?.realLights ?? ({ medium: 8, max: 16 }[tier] || TIERS.low.realLights);
-  // Keep these visible even when dark: three.js keys programs on the number of
-  // visible lights and shadow casters. Only intensity and placement ever change.
+  // three.js keys programs on the number of visible lights and shadow casters, so
+  // inside Lights mode the whole pool stays visible and only intensity and placement
+  // change. Outside it the pool is hidden: every lit fragment would otherwise loop
+  // over dark lights (Low measured +17% frame time in All). Showing it rides the
+  // program switch the evening look makes anyway (the environment map goes).
   const pool = Array.from({ length: cap }, (_, index) => {
     const light = new THREE.PointLight('#fff1c9', 0, 1, 2);
+    light.visible = false;
     light.castShadow = (tier === 'high' || tier === 'max') && index < 2;
     if (light.castShadow) {
       light.shadow.mapSize.set(512, 512);
@@ -56,7 +63,7 @@ export function createRealLights(view, { tier = view.tier || 'low' } = {}) {
         light.position.copy(row.position);
         light.color.setRGB(...row.rgb.map(value => value / 255), THREE.SRGBColorSpace);
         light.distance = row.distance;
-        light.intensity = row.intensity * 70;
+        light.intensity = row.intensity * CANDELA;
         if (light.castShadow && moved) {
           light.shadow.camera.far = row.distance;
           light.shadow.camera.updateProjectionMatrix();
@@ -65,6 +72,7 @@ export function createRealLights(view, { tier = view.tier || 'low' } = {}) {
       });
       return new Set(selected);
     },
+    show(on) { for (const light of pool) light.visible = !!on; },
     stop() {
       for (const light of pool) { light.removeFromParent(); light.shadow.dispose(); }
     },

@@ -12,6 +12,21 @@ export function roomStates(rooms, states) {
   });
 }
 
+// A real light reaches the far corner of its own room and little beyond: the
+// farthest floor corner from the fixture (lot feet, 3D), with a margin so the
+// range's smooth cut-off leaves that corner lit. Without shadows a light shines
+// through walls, so a tighter range is also less light in the next room and on
+// the lawn outside. Bounded to the room's larger span (0.6x to 2x).
+export function lightRange(marker, building, level, room, span) {
+  if (!room?.polygon?.length || !building) return span * 1.5;
+  const angle = (building.rotation || 0) * Math.PI / 180, [px, py] = building.position || [0, 0];
+  const floor = (building.base || 0) + (level?.elevation || 0), dz = Math.max(0, marker.at[2] - floor);
+  const reach = Math.max(...room.polygon.map(([x, y]) => Math.hypot(
+    Math.cos(angle) * x - Math.sin(angle) * y + px - marker.at[0],
+    Math.sin(angle) * x + Math.cos(angle) * y + py - marker.at[1], dz)));
+  return Math.max(.6 * span, Math.min(2 * span, reach * 1.5));
+}
+
 export function mountModes(view, live) {
   const strip = document.createElement('fieldset'); strip.id = 'twin-modes';
   const legend = document.createElement('legend'); legend.textContent = 'Devices'; strip.append(legend);
@@ -37,16 +52,17 @@ export function mountModes(view, live) {
     const room = building?.rooms?.find(r => r.id === marker.room);
     const xs = room?.polygon?.map(p => p[0]) || [], ys = room?.polygon?.map(p => p[1]) || [];
     const span = xs.length ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 1) : 10;
+    const level = building?.levels.find(l => l.id === marker.level);
+    const range = lightRange(marker, building, level, room, span);
     const position = new THREE.Vector3(marker.at[0] * FT,
       (marker.at[2] + groundAt(view.plan, ...(building?.position || [0, 0]))) * FT, -marker.at[1] * FT);
     // Ceiling placements sit just below the slab so their own fixture cannot
     // occlude them. Floor/wall placements retain the person's chosen height.
-    const level = building?.levels.find(l => l.id === marker.level);
     if (level && marker.at[2] >= (building.base || 0) + level.elevation + level.ceiling - .1) position.y -= .2 * FT;
     const bulb = new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: '#fff1c9', toneMapped: false }));
     bulb.position.copy(position); bulb.userData.bulb = marker.device_id; bulb.visible = false;
     view.scene.add(bulb);
-    lamps.push({ marker, bulb, position, distance: span * FT * 1.5, intensity: 0, rgb: lightColor(), real: false });
+    lamps.push({ marker, bulb, position, distance: range * FT, intensity: 0, rgb: lightColor(), real: false });
   }
   // Use the generator's slab shape, stair holes and building transform. Overlaying the
   // floor keeps shared/merged house materials intact and costs one draw per room.
@@ -111,7 +127,7 @@ export function mountModes(view, live) {
   const unsubscribe = live.subscribe(update); update();
   return {
     setMode(value) {
-      if (mode !== value) { mode = value; view.setEvening?.(mode === 'lights'); }
+      if (mode !== value) { mode = value; view.setEvening?.(mode === 'lights'); rig.show(mode === 'lights'); }
       update();
     },
     draw,
