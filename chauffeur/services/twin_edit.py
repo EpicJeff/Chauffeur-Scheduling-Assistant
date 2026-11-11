@@ -495,11 +495,13 @@ def _apply_legacy(plan, edit, ha_catalogue=None):
                  'width': _number(edit.get('width'), 'width', positive=True),
                  'sill': min(2, wall['height'] / 3) if kind == 'window' else 0,
                  'head': min(7, wall['height']), 'state': 'settled', 'src': {'person': True}}
+        name = {'slider': 'sliding door', 'bifold': 'folding door', 'garage': 'garage door', 'passage': 'passage'}.get(kind, kind)
+        if twin_plan._opening_error(piece, {w['id']: w for w in building['walls']}, {}) == 'outside the wall span':
+            raise ValueError(f'The {name} does not fit on that wall there. Pick a longer stretch of wall.')
         _opening_valid(building, piece)
         building['openings'].append(piece)
         if len(building['openings']) > twin_plan.CAPS['openings']:
             raise ValueError('The building has too many openings.')
-        name = {'slider': 'sliding door', 'bifold': 'folding door', 'garage': 'garage door', 'passage': 'passage'}.get(kind, kind)
         summary = f'Added a {name} to {_label("wall", wall, building)}'
     elif op in ('set', 'move', 'rotate', 'delete'):
         pid = scope if op == 'rotate' else edit.get('piece')

@@ -294,7 +294,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       controls.target.set(focus.x * FT, frame.elevation * FT, -focus.y * FT);
       controls.enableRotate = false; controls.update(); resize();
     },
-    pick(clientX, clientY) {
+    // `skip` names piece kinds the ray passes through (the opening tools look
+    // through a porch's or a room's pick box for the wall behind it).
+    pick(clientX, clientY, { skip = [] } = {}) {
       if (!twin) return null;
       const rect = renderer3.domElement.getBoundingClientRect();
       if (clientX < rect.left || clientX >= rect.right || clientY < rect.top || clientY >= rect.bottom) return null;
@@ -313,6 +315,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       });
       const hits = raycaster.intersectObjects(candidates, false).filter(hit => {
         const { kind, buildingId, pieceId } = hit.object.userData;
+        if (skip.includes(kind)) return false;
         if (kind !== 'room') return true;
         const room = plan.buildings.find(b => b.id === buildingId)?.rooms?.find(r => r.id === pieceId);
         if (!room?.polygon?.length) return true;

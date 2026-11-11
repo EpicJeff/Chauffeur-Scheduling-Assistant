@@ -6,7 +6,7 @@ import { contains } from '../twin_generator.js';
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const drawingTools = ['draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor'];
 
-export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel }) {
+export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel, surfaceAt }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let tool = null, points = [], press = null, anchorKind = 'light';
   let saving = Promise.resolve(), inbox = Promise.resolve(), run = 0;
@@ -105,7 +105,20 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     note(({ 'draw-room': 'Drag a rectangle, or click corners and close on the first corner.',
       'draw-wall': 'Click wall corners. Escape or a double click ends the chain.',
       'split-room': 'Click two walls of this room to draw the split.',
-      'add-anchor': 'Click a wall or a room surface. Lights and fans go on its ceiling.' })[name] || 'Click a wall. The opening starts 3 feet wide.');
+      'add-anchor': 'Click a wall or a room surface. Lights and fans go on its ceiling.' })[name]
+      || `Click a wall where the ${name === 'add-door' ? 'door' : 'window'} goes. It starts 3 feet wide.`);
+  }
+  // A person clicks the wall they see, its face a few feet up, on any floor
+  // shown. The 3D hit names that wall's building and floor and a point on its
+  // line; the floor-plane point is only the fallback (a straight-down look at
+  // the top of a wall, where the ray never crosses the wall's face).
+  function wallHit(event) {
+    const surface = surfaceAt?.(event, { skip: ['room'] });
+    if (surface?.kind !== 'wall' || surface.piece.kind === 'separator') return null;
+    const level = surface.building.levels.find(l => l.id === surface.piece.level);
+    const z = surface.point[2] - (level?.elevation || 0), height = surface.piece.height || level?.ceiling || 0;
+    if (!level || !(z >= -1 && z <= height + 1)) return null;
+    return { building: surface.building.id, level: level.id, point: surface.point.slice(0, 2) };
   }
   function splitPoint(p) {
     const { building } = tools.floor(), room = building.rooms.find(r => r.id === tools.selection().room);
@@ -114,7 +127,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     const boundary = wallAt(p, edges);
     return boundary && wallAt(boundary.point)?.point;
   }
-  function click(p) {
+  function click(p, hit = null) {
     const { building, level } = tools.floor();
     if (tool === 'draw-room') {
       if (points.length >= 3 && distance(p, points[0]) <= 1) {
@@ -149,9 +162,15 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
         }
         save({ op: 'add_anchor', building: building.id, kind: anchorKind, host }).then(done()).catch(report); return;
       }
-      if (!target) { note('Click a solid wall.'); return; }
-      const operation = { op: 'add_opening', building: building.id, wall: target.wall.id, kind: tool === 'add-door' ? 'door' : 'window',
-        width: 3, at: Math.max(2, Math.min(target.length - 2, target.at)) };
+      const kind = tool === 'add-door' ? 'door' : 'window';
+      const host = hit && getPlan().buildings.find(b => b.id === hit.building);
+      const spot = host && wallAt(hit.point, host.walls.filter(w => w.level === hit.level && w.kind !== 'separator'));
+      const chosen = spot ? { building: host, target: spot } : target && { building, target };
+      if (!chosen) { note(`Click a wall where the ${kind} goes.`); return; }
+      const { length } = chosen.target;
+      if (length < 3) { window.showGlobalAlert(`That wall is too short for a 3 foot ${kind}.`); return; }
+      const operation = { op: 'add_opening', building: chosen.building.id, wall: chosen.target.wall.id, kind, width: 3,
+        at: length < 4 ? length / 2 : Math.max(2, Math.min(length - 2, chosen.target.at)) };
       save(operation).then(done()).catch(report);
     }
   }
@@ -220,7 +239,10 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
           save({ op: 'draw_room', building: building.id, level: level.id,
             polygon: [a, [b[0], a[1]], b, [a[0], b[1]]] }).catch(report);
       } else if (['draw-room', 'draw-wall'].includes(tool)) click(p);
-      else enqueue(() => click(p));
+      else {
+        const hit = ['add-door', 'add-window'].includes(tool) ? wallHit(event) : null;
+        enqueue(() => click(p, hit));
+      }
       return true;
     },
   };

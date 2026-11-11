@@ -1,6 +1,39 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.785 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.786 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.786 (2026-11-11, NOT device-verified): doors and windows go where you click on a wall.**
+
+The user, 2026-11-11: "I have not gotten adding doors or windows to work ... it fails to add every time I try either one."
+
+Cause: the editor's Add door and Add window tools turned a click into a point on the focused floor's plane, and only accepted a wall within 1 ft of that point. So:
+- a click on a wall's face did nothing and showed "Click a solid wall.";
+- with no floor chosen, only the first building's ground floor counted, so the pool house and upper floors could never take an opening;
+- an inside wall seen at an angle could take the door on the wrong wall.
+
+Fix (`static/twin/editor/draw.js`, `twin_view.pick(x, y, {skip})`, `library.surfaceAt`):
+- The tool finds the wall under the cursor in 3D and skips room selection boxes. The opening goes on that wall, on any building and any floor, from any camera.
+- The wall is found again at commit time, so a save still in flight cannot leave a stale wall id.
+- The straight-down floor-plane lookup stays as the fallback.
+- The prompts read "Click a wall where the door goes."
+
+Refusals in plain words:
+- an opening overlapping another on the same wall, along it and in height: "There is already a door or window there. Pick a clear stretch of wall for the door." This is new in `twin_model_ops._opening_clear`, and also applies to Argyle's `add_opening`. A window above a door is still allowed.
+- a wall too short: "The door does not fit on that wall there. Pick a longer stretch of wall." (both edit paths);
+- the editor's "That wall is too short for a 3 foot door."
+
+Test: `tests/test_house_editor_openings_live.py` covers 5 scenarios:
+- an outside-wall door with no floor chosen;
+- an upper-floor window above the porch;
+- an inside-wall door;
+- an inside-wall window;
+- the overlap refusal.
+
+It failed 0/5 on the old code.
+
+Open:
+- moving or resizing an opening into another one is not checked;
+- in Select mode, a wall above the porch still selects the porch, as before this fix.
 
 **v2.499.785 (2026-11-11, NOT device-verified): the house builds itself in front of you, and you can stop it, fix it by hand and carry on.**
 
