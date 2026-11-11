@@ -1,6 +1,55 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.789 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.790 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.790 (2026-11-11, NOT device-verified): the sky is no longer baked, and Lights mode keeps the time of day.**
+
+**The ask.** The user reported, 2026-11-11: "If you turn on lights mode, it ignores the day/night toggle and just goes dark... when not in lights mode and toggled to day, every surface looks like it has horribly low-res lightmaps applied instead of using the real-time sunlight." The user then ruled: "We decided the sun/moon would be realtime lit. Why are we baking the sky lighting?"
+
+**How it was built.** Codex built the change; Claude ran the browser checks and fixed two shader-warm-up gaps.
+
+**The sky bake is removed** (reverses v2.499.787's Ruling B16).
+- Shadow-map acne in the sky pass (one 1024 map over the whole lot, 32 directions, almost no bias) mottled every daylit surface.
+- No sky atlas (`uv2`) is built, no sky pass runs, and no sky page is stored or fetched.
+- The material carries no `skyTint`/`lmSky` term; ambient light is three's own again.
+- A manifest is complete without a sky entry, and an old manifest that still names one loads fine.
+- The atlas key changed, so stored bakes re-bake once.
+- Room-light bakes are unchanged.
+
+**Lights mode keeps the time of day.**
+- Entering Lights mode keeps the Day or Night look: background, environment, sun, ambient and exposure.
+- It only owns the lamps: the HA-driven real-time pool plus the baked glow.
+- The twin's decorative night lamps and fixture glow are switched off while it is on, so nothing is lit twice.
+- `setEvening` is now `setLiveLamps`.
+- The decorative lamps drop to zero intensity but keep their visibility, so entering Lights compiles nothing.
+
+**Shader warm-up per time look.** Day/Night changes the light set every program is keyed on.
+- The Lights warm-up (`modes.js` `warm()`) runs again on each time-look change, through `view.onTimeLook`.
+- It restores exactly what was shown, so the first lamp switched on at night builds no shader.
+- `real_lights.js` exposes `shown()`.
+
+**Tests.**
+
+| File | Passed | Notes |
+|---|---|---|
+| test_twin_bake_atlas_js | 13/13 | |
+| test_twin_bake_runtime_js | 12/12 | |
+| test_twin_baker_js | 12/12 | |
+| test_twin_bakes | 16/16 | |
+| test_twin_lightmap_material_js | 8/8 | |
+| test_twin_real_lights_js | 8/8 | |
+| test_twin_live_rooms_js | 7/7 | |
+| test_twin_controls_js | 22/22 | |
+| test_house_twin_real_lights_live | 10/10 | adds `scenario_lights_mode_keeps_the_day` |
+| test_house_twin_bake_live | 16/16 | adds `scenario_day_ground_is_even_after_the_bake`; one scenario passed on a solo rerun after a loopback drop |
+| test_house_twin_live_markers | 7/7 | |
+| test_house_twin_controls_live | 3/3 | |
+| test_twin_view_live | passes | |
+
+- The time-look comparison now leaves out lamps (PointLights and RectAreaLights).
+- Lamp-rise scenarios set Night explicitly.
+
+**Open.** Day/Night is still a manual toggle. Next: the sun and moon follow the real date and time at the home's location, with a facing dial for the house.
 
 **v2.499.789 (2026-11-11, NOT device-verified): the wall panel glow is a thinner ring.**
 
