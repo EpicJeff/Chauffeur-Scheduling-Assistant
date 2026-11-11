@@ -18,7 +18,9 @@ What this file assumes of markers.js (the implementer matches these):
   garage 'open' or 'opening'; an alarm panel (kind 'alarm', or a fourth argument
   entity id in the alarm_control_panel domain) 'triggered', 'pending' or 'arming',
   and 'disarmed' reads 'off'; a sensor whose device_class is smoke, moisture or
-  gas and whose state is 'on'.
+  gas and whose state is 'on'; a door or window contact (device_class door,
+  window, opening or garage_door) whose state is 'on', that is, open; its
+  label reads open or closed, never on or off.
   unavailable: state 'unavailable' or 'unknown', for any kind (it beats attention).
   Otherwise 'on' or 'off'.
 - `label` is a non-empty string; a sensor's label carries its reading.
@@ -91,7 +93,7 @@ check('marker_states_cover_attention_and_unavailable', () => {
     assert.equal(S('sensor', 'on', {device_class: cls}).look, 'attention', `${cls} on`);
     assert.ok(['on', 'off'].includes(S('sensor', 'off', {device_class: cls}).look), `${cls} off is calm`);
   }
-  for (const cls of ['motion', 'door', 'occupancy']) {
+  for (const cls of ['motion', 'occupancy', 'presence', 'temperature']) {
     assert.notEqual(S('sensor', 'on', {device_class: cls}).look, 'attention', `${cls} on is not an alarm`);
   }
   // A jammed, open or opening lock, and one mid-unlock, want attention too (review M7).
@@ -117,6 +119,19 @@ check('marker_states_cover_attention_and_unavailable', () => {
     const out = markerState('light', 'on', attrs);
     assert.equal(out.look, 'on', `attributes ${attrs} still read`);
   }
+  // An open door or window is attention, as an unlocked lock is: a contact sensor
+  // (binary sensor, device_class door, window, opening or garage_door) reads 'on' when open.
+  for (const cls of ['door', 'window', 'opening', 'garage_door']) {
+    assert.equal(S('sensor', 'on', {device_class: cls}).look, 'attention', `${cls} open wants attention`);
+    assert.ok(['on', 'off'].includes(S('sensor', 'off', {device_class: cls}).look), `${cls} closed is calm`);
+    assert.equal(S('sensor', 'unavailable', {device_class: cls}).look, 'unavailable', `${cls} unavailable beats attention`);
+    assert.equal(markerState('sensor', 'on', {device_class: cls}, `binary_sensor.front_${cls}`).look, 'attention',
+      `${cls} open, with its entity id`);
+  }
+  assert.notEqual(S('sensor', 'off', {device_class: 'door'}).label, S('sensor', 'on', {device_class: 'door'}).label,
+    'an open door and a closed one read differently');
+  assert.match(S('sensor', 'on', {device_class: 'window'}).label, /open/i, 'an open window reads open, not on');
+  assert.match(S('sensor', 'off', {device_class: 'door'}).label, /closed/i, 'a closed door reads closed, not off');
   // Labels differ between states a person must tell apart.
   assert.notEqual(S('lock', 'locked').label, S('lock', 'unlocked').label, 'locked and unlocked read differently');
   assert.notEqual(S('garage', 'open').label, S('garage', 'closed').label, 'open and closed read differently');
