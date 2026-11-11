@@ -147,11 +147,12 @@ def _wait_source(page, filename, timeout=30.0):
     raise AssertionError(f'{filename} was never uploaded')
 
 
-def _open_place(page):
-    if not page.locator('#place-view').is_visible():
-        page.click('#editor-menu')
-        page.click('#editor-manage-sources')
-    page.wait_for_selector('#place-view', state='visible', timeout=10000)
+def _open_place(page, step='Your files'):
+    # The former Your place dialog is now three panels; only navigation changes.
+    panel = page.locator(f'[data-step-panel="{step}"]')
+    if not panel.count() or not panel.is_visible():
+        page.locator(f'[data-step="{step}"]').click()
+    panel.wait_for(state='visible', timeout=10000)
 
 
 def _ensure_house():
@@ -214,8 +215,8 @@ def scenario_empty_place_opens_first():
         return
     with s.browser(launch_args=GPU_ARGS) as page:
         _open(page, s)
-        page.wait_for_selector('#place-view', state='visible', timeout=10000)
-        check(page.get_by_role('dialog', name='Your place').is_visible(), 'Your place is a dialog named Your place')
+        _open_place(page)
+        check(page.locator('[data-step-panel="Your files"]').is_visible(), 'Your files holds the former Your place controls')
         check(page.locator('#editor-build-target').count() == 0, 'the slice 1 building dropdown is retired')
         check(page.locator('[data-page-building]').count() == 0, 'the per-page building selector is retired')
         check(page.locator('#place-lot').is_visible(), 'the Lot card shows')
@@ -409,12 +410,14 @@ def scenario_region_moves_alone():
 
 def _confirm_plot_page(page):
     """The hand path: page 2 of two.pdf (on the lot) becomes the plot plan, then Confirm pages."""
+    _open_place(page)
     src = STATE['src']
     role = _page_row(page, '#place-lot', f'{src}:2').locator('select[data-place-role]').first
     if role.input_value() != 'plot':
         role.select_option('plot')
     page.click('#place-confirm-pages')
     page.wait_for_function("() => !document.querySelector('#place-read-plot').disabled", timeout=10000)
+    _open_place(page, 'Your lot')
 
 
 def scenario_plot_read_checkpoint_opens_continue():
@@ -436,6 +439,7 @@ def scenario_plot_read_checkpoint_opens_continue():
         _confirm_plot_page(page)
         page.route('**/api/house/editor/place/plot/read', read)
         page.route('**/api/house/twin/cost/ack', lambda r: (acks.append(1), _json(r, 200, {})))
+        _open_place(page, 'Your lot')
         page.click('#place-read-plot')
         _paid_confirm(page, required=True)
         page.wait_for_function("() => document.body.innerText.includes('Spent $10.12 so far')", timeout=10000)
@@ -469,6 +473,7 @@ def scenario_plot_read_suggestions_and_placement():
         estimate = f"${_sheets(page)['estimates']['plot']:.2f}"
         label = page.inner_text('#place-read-plot')
         check(label.startswith('Read the plot plan') and f'about {estimate}' in label, (label, estimate))
+        _open_place(page, 'Your lot')
         page.click('#place-read-plot')
         asked = _paid_confirm(page, required=True)
         check(estimate in asked, ('the confirm names the estimate', asked, estimate))
@@ -487,11 +492,13 @@ def scenario_plot_read_suggestions_and_placement():
         check(_labels(match)[0] == 'New building' and 'Main house' in _labels(match), _labels(match))
         match.select_option(label='New building')
         shed.locator('button[data-suggestion-accept]').click()
+        _open_place(page)
         page.locator('[data-place-building="shed"]').wait_for(state='visible', timeout=10000)
         check('Shed' in page.inner_text('[data-place-building="shed"]'), 'a shed card')
         check(_building(page, 'shed')['kind'] == 'shed' and _building(page, 'shed')['footprint'] == outlines['plot-2'],
               _building(page, 'shed'))
 
+        _open_place(page, 'Your lot')
         house = page.locator('[data-place-suggestion="plot-1"]')
         house.locator('select[data-suggestion-match]').select_option(label='Main house')
         house.locator('button[data-suggestion-accept]').click()
@@ -505,6 +512,7 @@ def scenario_plot_read_suggestions_and_placement():
 
         # Place the accepted footprint in the shared scene, including buildings
         # that have not been built yet. The move saves on release.
+        _open_place(page)
         page.locator('[data-place-building="shed"]').get_by_role('button', name='Place on the lot', exact=True).click()
         page.wait_for_function("() => window.__twinEditor.lotHandles().some(h => h.building === 'shed' && h.kind === 'move')")
         handle = page.evaluate("() => window.__twinEditor.lotHandles().find(h => h.building === 'shed' && h.kind === 'move')")
@@ -522,6 +530,7 @@ def scenario_plot_read_suggestions_and_placement():
         page.get_by_role('button', name='These are in the right place', exact=True).click()
         page.wait_for_timeout(800)
         _open_place(page)
+        _open_place(page, 'Your lot')
         check(page.inner_text('#place-confirm-placement').strip() == 'These are in the right place',
               page.inner_text('#place-confirm-placement'))
         check(placements, 'Confirm sends the placement')
@@ -624,14 +633,14 @@ def scenario_build_place_follows_chain():
         _open(page, s)
         page.route('**/api/house/editor/build**', builds)
         _open_place(page)
+        _open_place(page, 'Build')
         check(page.inner_text('[data-place-build="lot"]').strip() == 'Build the lot', page.inner_text('[data-place-build="lot"]'))
         check(page.inner_text('[data-place-build="house"]').strip() == 'Build this building',
               page.inner_text('[data-place-build="house"]'))
         check(page.inner_text('#place-build').strip() == 'Build your place', page.inner_text('#place-build'))
         page.click('#place-build')
         _paid_confirm(page)
-        page.wait_for_function("() => document.querySelector('#place-view').hidden || "
-                               "getComputedStyle(document.querySelector('#place-view')).display === 'none'", timeout=10000)
+        page.locator('[data-step-panel="Build"]').wait_for(state='hidden', timeout=10000)
         deadline = 10
         while deadline > 0 and 'b-chain-2' not in gets:
             page.wait_for_timeout(500)

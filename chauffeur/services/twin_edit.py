@@ -51,7 +51,12 @@ def _entries(plan):
                            ('stairs', 'stair'), ('fixtures', 'fixture'),
                            ('lights', 'light')):
             for piece in building.get(name, []):
+                if name == 'lights' and piece.get('surface'):
+                    continue  # The anchor below owns this read fixture's tombstone.
                 yield kind, piece, building, building[name]
+        for piece in building.get('anchors', []):
+            if piece.get('surface'):
+                yield 'fixture', piece, building, building['anchors']
         for piece in building['roof']['sections']:
             yield 'roof', piece, building, building['roof']['sections']
 

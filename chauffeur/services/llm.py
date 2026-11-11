@@ -15,6 +15,34 @@ DEFAULT_MAX_OUTPUT = 8192
 _EFFORT = {'low': 'low', 'medium': 'medium', 'high': 'high'}
 _usage_collectors = ContextVar('llm_usage_collectors', default=())
 _usage_request = ContextVar('llm_usage_request', default=None)
+_request_cancel = ContextVar('llm_request_cancel', default=None)
+
+
+@contextmanager
+def cancel_requests(cancel):
+    """Attach blocking responses to this call's Stop handle only."""
+    token = _request_cancel.set(cancel)
+    try:
+        yield
+    finally:
+        _request_cancel.reset(token)
+
+
+@contextmanager
+def _response(req, timeout_s):
+    cancel = _request_cancel.get()
+    if cancel is not None and cancel.cancelled:
+        raise RuntimeError('Model call cancelled.')
+    resp = llm_budget.urlopen(req, timeout=timeout_s,
+                              **({'connection_hook': cancel} if cancel is not None else {}))
+    if cancel is not None:
+        cancel.attach(resp)
+    try:
+        if cancel is not None and cancel.cancelled:
+            raise RuntimeError('Model call cancelled.')
+        yield resp
+    finally:
+        resp.close()
 
 
 @contextmanager
@@ -40,7 +68,7 @@ def _request_json(req, timeout_s):
     collectors = _usage_collectors.get()
     request = _usage_request.get()
     if not collectors or request is None:
-        with llm_budget.urlopen(req, timeout=timeout_s) as resp:
+        with _response(req, timeout_s) as resp:
             return json.loads(resp.read().decode('utf-8'))
 
     provider, inputs = request
@@ -53,7 +81,7 @@ def _request_json(req, timeout_s):
     row = dict(inputs, input_tokens=None, output_tokens=None)
     dispatched = True
     try:
-        with llm_budget.urlopen(req, timeout=timeout_s) as resp:
+        with _response(req, timeout_s) as resp:
             data = json.loads(resp.read().decode('utf-8'))
         if provider == 'gemini':
             usage = data.get('usageMetadata') or {}
@@ -282,6 +310,11 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                 method="POST"
             )
             data = _request_json(req, timeout_s)
+
+            if metrics is not None:
+                metrics.update(promptTokenCount=data.get('prompt_eval_count'),
+                               candidatesTokenCount=data.get('eval_count'),
+                               finish_reason=data.get('done_reason') or ('stop' if data.get('done', True) else None))
 
             # Check if it returned a tool call
             message = data.get('message', {})

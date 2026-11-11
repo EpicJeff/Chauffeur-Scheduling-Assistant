@@ -148,6 +148,11 @@ export const createTimeline = () => ({ sync() {}, preview: () => null });
 export const createPlace = () => ({ sync() {}, isOpen: () => false });
 export const createDevicePlacement = () => ({ refresh() {}, draw() {}, stop() {}, cancel() {},
   pointerDown: () => false, pointerUp: () => false });
+export const createBuildGhosts = () => ({ add() {}, settle() {}, clear() {}, sync() {}, count: () => 0, seqs: () => [] });
+export const createStatusChip = () => ({ update() {} });
+// The editor now mounts the step strip and checks; this driver tests preview ownership.
+export const createSteps = () => ({ render() {}, open() {}, close() {} });
+export const createChecks = () => ({ sync() {}, show() {}, dismiss() {} });
 '''
 
 EDITOR_DRIVER = r'''

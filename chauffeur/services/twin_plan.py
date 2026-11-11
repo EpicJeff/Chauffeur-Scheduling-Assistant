@@ -14,6 +14,18 @@ CAPS = {'walls': 400, 'openings': 400, 'rooms': 120, 'planting': 300,
         'furniture': 120, 'beds': 60, 'roof_sections': 40, 'terraces': 40}
 
 
+def fixture_kind(value):
+    """Use the same fixture identity when reading, merging and hosting."""
+    words = set(re.findall(r'[a-z]+', str(value).lower()))
+    for names, kind in (({'smoke', 'co', 'detector', 'thermostat', 'sensor'}, 'sensor'),
+                        ({'fan'}, 'fan'), ({'light', 'lamp', 'pendant'}, 'light'),
+                        ({'outlet', 'receptacle'}, 'outlet'), ({'switch', 'dimmer'}, 'switch'),
+                        ({'camera'}, 'camera')):
+        if words & names:
+            return kind
+    return str(value).lower().strip()
+
+
 def porches(building: dict) -> list[dict]:
     """All porch pieces, collection first in conflicts with the legacy alias.
 
@@ -460,6 +472,11 @@ def _details(building, levels, notes):
                          and _lookup(levels, item.get('level')) is not None)
             elif valid and name == 'lights':
                 valid = _point(item.get('at')) and _lookup(levels, item.get('level')) is not None
+            elif valid and name == 'fixtures' and 'rect' not in item:
+                valid = (_point(item.get('at')) and _lookup(levels, item.get('level')) is not None
+                         and isinstance(item.get('kind'), str)
+                         and item.get('surface') in ('ceiling', 'wall', 'floor')
+                         and ('wall' not in item or isinstance(item['wall'], str)))
             elif valid:
                 rect = item.get('rect')
                 valid = (isinstance(rect, (list, tuple)) and len(rect) == 4
