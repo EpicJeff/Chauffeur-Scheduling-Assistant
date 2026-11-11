@@ -1,12 +1,9 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
-import { packBanks, fingerprint } from './atlas.js';
+import { packBanks, fingerprint, atlasMesh } from './atlas.js';
 
 export function covered(root) {
   const meshes = [];
-  root.traverse(m => {
-    if (m.isMesh && m.userData.merged && !m.layers.isEnabled(31) && !Array.isArray(m.material) &&
-      !m.material.transparent && m.material.name !== 'fixture' && m.geometry?.attributes.position) meshes.push(m);
-  });
+  root.traverse(m => { if (atlasMesh(m)) meshes.push(m); });
   return meshes;
 }
 export function geometryData(g) {

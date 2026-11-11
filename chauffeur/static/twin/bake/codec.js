@@ -5,7 +5,7 @@ export function encodePage(module, { width, height, channels }) {
   }
   const e = new module.BasisEncoder();
   try {
-    e.setCreateKTX2File(true); e.setKTX2UASTCSupercompression(false); e.setUASTC(true);
+    e.setCreateKTX2File(true); e.setKTX2UASTCSupercompression(true); e.setUASTC(true);
     e.setPackUASTCFlags(0); e.setPerceptual(false); e.setMipSRGB(false);
     e.setKTX2SRGBTransferFunc(false); e.setMipGen(true);
     if (channels.length > 1) { e.setSwizzle(0, 0, 0, 1); e.setForceAlpha(true); }

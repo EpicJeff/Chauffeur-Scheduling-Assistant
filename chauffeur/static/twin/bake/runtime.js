@@ -183,10 +183,10 @@ varying float vGlowRoom; varying vec2 vGlowUV;
 ${pages.banks.map((t, b) => `uniform highp sampler2DArray glowBank${b};`).join('\n')}
 ` + shader.fragmentShader;
         const sum = pages.banks.map((t, b) => `
-vec4 region${b} = texelFetch(lmRegions, ivec2(${b}, int(vGlowRoom)), 0);
+vec4 region${b} = texelFetch(lmRegions, ivec2(${b}, int(vGlowRoom + 0.5)), 0);
 vec4 value${b} = texture(glowBank${b}, vec3(vGlowUV + region${b}.xy, region${b}.z));
-vec3 tint${b}a = texelFetch(lmTints, ivec2(${2*b}, int(vGlowRoom)), 0).rgb;
-vec3 tint${b}b = texelFetch(lmTints, ivec2(${2*b+1}, int(vGlowRoom)), 0).rgb;
+vec3 tint${b}a = texelFetch(lmTints, ivec2(${2*b}, int(vGlowRoom + 0.5)), 0).rgb;
+vec3 tint${b}b = texelFetch(lmTints, ivec2(${2*b+1}, int(vGlowRoom + 0.5)), 0).rgb;
 totalEmissiveRadiance += (value${b}.r * tint${b}a + value${b}.${lightSwizzle(t.format)[1]} * tint${b}b) * 8.0;
 `).join('\n');
         shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>

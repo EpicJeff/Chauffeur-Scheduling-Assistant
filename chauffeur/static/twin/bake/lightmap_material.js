@@ -40,10 +40,10 @@ export function transcodePage(module, bytes, format) {
 export function patchLightmaps(materials, pages, uniforms) {
   const bankCode = pages.banks.map((t, b) => {
     const s = lightSwizzle(t.format);
-    return `vec4 region${b} = texelFetch(lmRegions, ivec2(${b}, int(vLmRoom)), 0);
+    return `vec4 region${b} = texelFetch(lmRegions, ivec2(${b}, int(vLmRoom + 0.5)), 0);
 vec4 bank${b} = texture(lmBank${b}, vec3(vLmUV + region${b}.xy, region${b}.z));
-vec3 tint${b}a = texelFetch(lmTints, ivec2(${2*b}, int(vLmRoom)), 0).rgb;
-vec3 tint${b}b = texelFetch(lmTints, ivec2(${2*b+1}, int(vLmRoom)), 0).rgb;
+vec3 tint${b}a = texelFetch(lmTints, ivec2(${2*b}, int(vLmRoom + 0.5)), 0).rgb;
+vec3 tint${b}b = texelFetch(lmTints, ivec2(${2*b+1}, int(vLmRoom + 0.5)), 0).rgb;
 lmLight += bank${b}.r * tint${b}a + bank${b}.${s[1]} * tint${b}b;`;
   }).join('\n');
   const declarations = `uniform highp sampler2DArray lmSky; uniform sampler2D lmTints;

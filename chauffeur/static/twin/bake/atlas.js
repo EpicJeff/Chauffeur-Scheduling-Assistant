@@ -365,6 +365,15 @@ function writeUV(charts, o, name, pageName) {
 
 // A small streaming 128-bit fingerprint; no WebCrypto async boundary, UUIDs, or
 // light records. Hashing generated buffers also captures generator changes.
+// The surfaces a bake covers: merged, opaque, solid house and yard geometry.
+// Cut-out cards (the Low tier's merged plant cards, alphaTest) are left out on
+// every tier, so a Low panel builds the same atlas key as the desk that baked.
+export function atlasMesh(mesh) {
+  return !!(mesh.isMesh && mesh.userData.merged && !mesh.layers.isEnabled(31) && !Array.isArray(mesh.material) &&
+    !mesh.material.transparent && !(mesh.material.alphaTest > 0) && mesh.material.name !== 'fixture' &&
+    mesh.geometry?.attributes.position);
+}
+
 export function fingerprint() {
   const h = [0x811c9dc5, 0x9e3779b9, 0x85ebca6b, 0xc2b2ae35], encoder = new TextEncoder();
   return {
@@ -417,8 +426,7 @@ export function buildAtlas(group, plan, { sky, room } = {}) {
   hash.add(JSON.stringify([VERSION, plan.generatorVersion ?? null, so, ro, [...data.buildings], data.rooms]));
   group.updateMatrixWorld(true);
   group.traverse(mesh => {
-    if (!mesh.isMesh || !mesh.userData.merged || mesh.layers.isEnabled(31) || Array.isArray(mesh.material) ||
-        mesh.material.transparent || mesh.material.name === 'fixture' || !mesh.geometry?.attributes.position) return;
+    if (!atlasMesh(mesh)) return;
     const state = prepare(mesh, data), g = mesh.geometry;
     if (!state.sky) state.sky = chartsFor(mesh, state.owners, false);
     if (!state.room) state.room = chartsFor(mesh, state.owners, true);

@@ -3,6 +3,7 @@ import { FT } from '../twin_generator.js';
 import { groundAt } from '../twin_ground.js';
 import { lightRange, LAMP_HEIGHT } from '../live/modes.js';
 import { CANDELA } from '../live/real_lights.js';
+import { atlasMesh } from './atlas.js';
 
 const worldVertex = `varying vec3 wp;
 void main() { wp = (modelMatrix * vec4(position, 1.0)).xyz;
@@ -57,8 +58,7 @@ function occluders(view) {
   const scene = new THREE.Scene();
   view.scene.updateMatrixWorld(true);
   view.scene.traverse(o => {
-    if (!o.isMesh || !o.userData.merged || o.layers.isEnabled(31) || Array.isArray(o.material) ||
-      o.material.transparent || o.material.name === 'fixture') return;
+    if (!atlasMesh(o)) return;
     const mesh = new THREE.Mesh(o.geometry, o.material);
     mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); mesh.frustumCulled = false; scene.add(mesh);
   });
