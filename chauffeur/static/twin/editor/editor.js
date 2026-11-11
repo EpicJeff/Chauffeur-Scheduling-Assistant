@@ -443,7 +443,7 @@ export async function boot() {
     flags = createFlags({ view, getModel: () => snapshot.model, getPlan: () => snapshot.plan,
       tools, panel, op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
     draw = createDraw({ view, tools, getPlan: () => snapshot.plan, op: operation => applyOpNow(operation),
-      gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract });
+      gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract, surfaceAt: (event, options) => library.surfaceAt(event, options) });
     roofTools = createRoofTools({ view, tools, getPlan: () => snapshot.plan,
       op: (operation, options) => history.perform(() => applyOpNow(operation, options)),
       canEdit, panel, signal: lifecycle.signal, onInteract, cancelDrawing: draw.cancel });
