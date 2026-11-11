@@ -23,10 +23,12 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, HERE)
 LABELS = {'plain': 'Plain and brief', 'warm': 'Warm', 'playful': 'Playful', 'custom': 'Custom',
           'household': 'Same as the household'}
 
@@ -129,7 +131,7 @@ class PwaStyleSheet(unittest.TestCase):
 class ConfigPeopleBlock(unittest.TestCase):
     def test_the_parent_block(self):
         src = read('templates/config.html')
-        self.assertIn('<details id="argyle-style"', src)
+        self.assertTrue('<details id="argyle-style"' in src, 'no argyle-style block in config.html')
         block = src[src.index('<details id="argyle-style"'):]
         block = block[:block.index('</details>')]
         self.assertLess(src.index('<details id="argyle-memory"'), src.index('<details id="argyle-style"'),
