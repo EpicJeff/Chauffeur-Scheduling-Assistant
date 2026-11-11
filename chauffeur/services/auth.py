@@ -219,6 +219,7 @@ RULES = [
     # a service — decided at the SERVER by the household control grid.
     # The editor's reads (the catalog, the resource registry) stay
     # administration below.
+    ('GET', '/api/ha/stream', WALL_OR_SERVICE, None),
     ('GET', '/api/ha/card/states', WALL, None),
     ('GET', '/api/ha/card/resource', WALL, None),
     ('GET', '/api/ha/card/mdi/{name}', WALL, None),

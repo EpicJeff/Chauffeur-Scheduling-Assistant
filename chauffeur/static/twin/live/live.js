@@ -115,6 +115,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   const textures = new Map(), badges = new Map(), listeners = new Set(), busy = new Set();
   const raycaster = new THREE.Raycaster(), projected = new THREE.Vector3(), scratch = new THREE.Vector3();
   let states = {}, stopped = false, stale = true, mode = null, timer = null, polling = Promise.resolve();
+  let stream = null, pollChanges = null;
   let selected = null, sheetKey = null, sheetStatus = null, pointer = null;
   let roomPanel = null, modes = null, rows = [], levelKeys = [], resizeObserver = null;
   // Layout runs only when something it reads changed (review M1): the camera, the canvas,
@@ -344,6 +345,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }));
   async function poll(fresh) {
     if (stopped) return;
+    pollChanges = new Map();
     const limit = deadline(requests.signal, REQUEST_MS);
     try {
       const response = await api(`api/ha/card/states?fresh=${fresh ? 1 : 0}`, { signal: limit.signal });
@@ -355,8 +357,13 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
         throw new Error('states unavailable');
       if (stopped) return;
       states = body.states; stale = false;
+      // Pushes received during this request are newer than its snapshot.
+      for (const [entityId, state] of pollChanges) {
+        if (state === null) delete states[entityId];
+        else states[entityId] = state;
+      }
       for (const row of rows) Object.assign(row, stateOf(row));
-    } catch { if (!stopped) stale = true; } finally { limit.done(); }
+    } catch { if (!stopped) stale = true; } finally { pollChanges = null; limit.done(); }
     if (stopped) return;
     try { notify(); } catch (error) { report(error); }
     await drawn();
@@ -367,9 +374,38 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     polling = polling.catch(report).then(() => poll(fresh));
     return polling;
   }
+  function subscribeStates() {
+    if (stopped || typeof EventSource !== 'function') return;
+    const entities = new Set([...rows.map(row => row.entity_id), ...devices.map(row => row.entity_id),
+      ...(layout.rooms || []).flatMap(room => room.lights || [])].filter(Boolean));
+    if (!entities.size) return;
+    try {
+      const url = base() + 'api/ha/stream?entities=' + encodeURIComponent([...entities].join(','));
+      stream = new EventSource(window.chfAuthUrl ? window.chfAuthUrl(url) : url);
+      stream.onmessage = event => {
+        if (stopped) return;
+        let change;
+        try { change = JSON.parse(event.data); } catch { return; }
+        if (!change || !entities.has(change.entity_id) || !Object.hasOwn(change, 'state')) return;
+        const state = change.state;
+        if (state !== null && (typeof state !== 'object' || Array.isArray(state) || typeof state.state !== 'string')) return;
+        if (state === null) delete states[change.entity_id];
+        else states[change.entity_id] = state;
+        pollChanges?.set(change.entity_id, state);
+        stale = false;
+        for (const row of rows) Object.assign(row, stateOf(row));
+        try { notify(); } catch (error) { report(error); }
+        drawn();
+      };
+      // EventSource retries transient drops itself; the poll stays armed even
+      // if the browser closes this stream permanently (for example after a 401).
+      stream.onerror = () => {};
+    } catch { /* Polling is also the path for browsers that cannot open a stream. */ }
+  }
   function stop() {
     if (stopped) return;
     stopped = true; clearTimeout(timer); events.abort(); requests.abort(); listeners.clear();
+    stream?.close(); stream = null;
     resizeObserver?.disconnect();
     for (const part of [roomPanel, modes]) { try { part?.stop(); } catch (error) { report(error); } }
     root.traverse(object => object.material?.dispose()); root.removeFromParent();
@@ -443,6 +479,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     return null;
   }
   await refresh();
+  subscribeStates();
   const schedule = () => {
     timer = setTimeout(async () => {
       try { await refresh(); } catch (error) { report(error); } finally { if (!stopped) schedule(); }

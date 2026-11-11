@@ -1163,13 +1163,18 @@ async def lifespan(app: FastAPI):
     from services.migrations import run_all_migrations
     migration_task = asyncio.create_task(run_all_migrations())
 
-    yield
-    deletion_task.cancel()
-    task.cancel()
-    push_task.cancel()
-    ics_task.cancel()
-    ingest_task.cancel()
-    migration_task.cancel()
+    from services import ha_events
+    ha_events.start()
+    try:
+        yield
+    finally:
+        deletion_task.cancel()
+        task.cancel()
+        push_task.cancel()
+        ics_task.cancel()
+        ingest_task.cancel()
+        migration_task.cancel()
+        await asyncio.to_thread(ha_events.stop)
 
 async def _auth_guard(conn: HTTPConnection):
     """Default-deny guard, applied to every route (auth arc S1).
@@ -11558,6 +11563,36 @@ def ha_entities(domain: str):
     return ha_api.get_entities(domain)
 
 # --- Hosting a real Home Assistant custom card (services/ha_cards.py) ---
+
+@app.get("/api/ha/stream")
+async def ha_state_stream(entities: str | None = None):
+    """Confirmed HA changes; keep the browser connected through HA restarts."""
+    import queue
+    from services import ha_events
+
+    async def changes():
+        subscriber = ha_events.subscribe(
+            None if entities is None else [entity.strip() for entity in entities.split(',') if entity.strip()])
+        last_ping = time.monotonic()
+        try:
+            yield ": connected\n\n"
+            while True:
+                try:
+                    change = subscriber.get_nowait()
+                except queue.Empty:
+                    if time.monotonic() - last_ping >= 15:
+                        yield ": ping\n\n"
+                        last_ping = time.monotonic()
+                    await asyncio.sleep(0.1)
+                    continue
+                yield f"data: {json.dumps(change)}\n\n"
+                last_ping = time.monotonic()
+        finally:
+            ha_events.unsubscribe(subscriber)
+
+    return StreamingResponse(changes(), media_type="text/event-stream",
+                             headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
 
 @app.get("/api/ha/card/states")
 def ha_card_states(fresh: int = 0):
