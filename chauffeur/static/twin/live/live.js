@@ -400,6 +400,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     closeRoom() { roomPanel?.close(); closeSheet(); },
     markers: () => rows.map(plain),
     rooms: roomRows,
+    lights: () => modes?.lights() || [],
     devices: area => devices.filter(row => row.area_id === area).map(row => ({ ...row, ...stateOf(row) })),
     states: () => structuredClone(states),
     layout: () => structuredClone(layout),

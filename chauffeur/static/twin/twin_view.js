@@ -42,6 +42,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   let yardGroup = null;
   let twin = null, disposed = false, revision = 0, sky = null, environment = null, environmentTarget = null;
   const state = { view: 'ext', time: 'day', camera: 'front' };
+  let evening = null;
   let bounds = { x: 19, y: 11, span: 38 };
   let framed = false, cameraMoved = false;
   controls.addEventListener('start', () => { cameraMoved = true; });
@@ -412,13 +413,31 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     setTime(time) {
       if (!['day', 'night'].includes(time)) return;
       state.time = time;
-      const night = time === 'night';
-      scene.background = new THREE.Color(night ? '#101b31' : '#b9cbd7');
-      scene.environment = night ? null : environment;
-      scene.environmentIntensity = 0.65;
-      sun.visible = !night; ambient.intensity = night ? 0.24 : 1.8;
-      renderer3.toneMappingExposure = night ? 1.2 : 1;
+      applyTimeLook();
       applyLights(); render();
+    },
+    setEvening(on) {
+      if (!!evening === !!on) return;
+      if (on) {
+        const lights = [], fixtures = new Map();
+        scene.traverse(object => {
+          if (object.isLight) lights.push({ object, intensity: object.intensity, visible: object.visible });
+          for (const material of object.material ? [].concat(object.material) : [])
+            if (material.name === 'fixture') fixtures.set(material, material.emissiveIntensity);
+        });
+        evening = { lights, fixtures, time: state.time, background: scene.background, environment: scene.environment,
+          environmentIntensity: scene.environmentIntensity, fog: scene.fog, exposure: renderer3.toneMappingExposure };
+        applyTimeLook(); applyLights();
+      } else {
+        const previous = evening; evening = null;
+        state.time = previous.time;
+        scene.background = previous.background; scene.environment = previous.environment;
+        scene.environmentIntensity = previous.environmentIntensity; scene.fog = previous.fog;
+        renderer3.toneMappingExposure = previous.exposure;
+        for (const { object, intensity, visible } of previous.lights) { object.intensity = intensity; object.visible = visible; }
+        for (const [material, intensity] of previous.fixtures) material.emissiveIntensity = intensity;
+      }
+      render();
     },
     setCamera(name) {
       if (!['front', 'back', 'orbit', 'porch', 'rear', 'top'].includes(name)) return;
@@ -753,11 +772,26 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     // Materials with no geometry (e.g. an empty polygon) still own requests.
     model.materials.forEach(m => m.dispose());
   }
+  function applyTimeLook() {
+    const night = state.time === 'night';
+    scene.background = new THREE.Color(evening || night ? '#101b31' : '#b9cbd7');
+    scene.environment = evening || night ? null : environment;
+    scene.environmentIntensity = evening ? .04 : .65;
+    if (evening) {
+      // Preserve visibility and the shader's light counts. The live pool is
+      // independently driven by confirmed HA state; this is the existing rig.
+      sun.intensity = .12; ambient.intensity = .18;
+    } else { sun.visible = !night; ambient.intensity = night ? .24 : 1.8; }
+    renderer3.toneMappingExposure = evening || night ? 1.2 : 1;
+  }
   function applyLights() {
     if (!twin) return;
     const night = state.time === 'night';
-    twin.roomLights.forEach(l => { l.visible = night && !!twin.groups.levels[l.userData.level]?.visible; });
-    twin.root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'fixture') m.emissiveIntensity = night ? 2 : 0; });
+    twin.roomLights.forEach(l => {
+      if (evening) l.intensity = 0;
+      else l.visible = night && !!twin.groups.levels[l.userData.level]?.visible;
+    });
+    twin.root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'fixture') m.emissiveIntensity = !evening && night ? 2 : 0; });
   }
   if (new URLSearchParams(location.search).get('test') === '1') Object.assign(view, {
     cameraState() { return { position: camera.position.toArray(), target: controls.target.toArray() }; },

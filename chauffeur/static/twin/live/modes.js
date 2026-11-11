@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { FT, polygon, contains, stairHoles } from '../twin_generator.js';
 import { groundAt } from '../twin_ground.js';
+import { lightColor, lightIntensity, createRealLights } from './real_lights.js';
 
 export function roomStates(rooms, states) {
   return rooms.filter(room => room.area_id).map(room => {
@@ -20,11 +21,36 @@ export function mountModes(view, live) {
     button.addEventListener('click', () => live.setMode(mode)); strip.append(button); buttons.set(mode, button);
   }
   document.getElementById('twin-controls').append(strip);
-  let mode = null;
-  const floors = [];
+  let mode = null, lastKey = '', revision = 0;
+  const floors = [], lamps = [];
+  // Older embeds do not expose a render tier. Keep their room overview until
+  // they mount the current view, whose tier supplies the real-light budget.
+  const realLighting = !!view.tier;
+  let legacyRooms = [];
+  const rig = createRealLights(view);
+  const layout = live.layout();
+  // The same world transform as the marker, including lot ground elevation.
+  // A small shared low-poly bulb adds no shadow draw calls.
+  const bulbGeometry = new THREE.SphereGeometry(.1, 8, 6);
+  for (const marker of layout.markers.filter(row => row.kind === 'light')) {
+    const building = view.plan.buildings.find(b => b.id === marker.building);
+    const room = building?.rooms?.find(r => r.id === marker.room);
+    const xs = room?.polygon?.map(p => p[0]) || [], ys = room?.polygon?.map(p => p[1]) || [];
+    const span = xs.length ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 1) : 10;
+    const position = new THREE.Vector3(marker.at[0] * FT,
+      (marker.at[2] + groundAt(view.plan, ...(building?.position || [0, 0]))) * FT, -marker.at[1] * FT);
+    // Ceiling placements sit just below the slab so their own fixture cannot
+    // occlude them. Floor/wall placements retain the person's chosen height.
+    const level = building?.levels.find(l => l.id === marker.level);
+    if (level && marker.at[2] >= (building.base || 0) + level.elevation + level.ceiling - .1) position.y -= .2 * FT;
+    const bulb = new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: '#fff1c9', toneMapped: false }));
+    bulb.position.copy(position); bulb.userData.bulb = marker.device_id; bulb.visible = false;
+    view.scene.add(bulb);
+    lamps.push({ marker, bulb, position, distance: span * FT * 1.5, intensity: 0, rgb: lightColor(), real: false });
+  }
   // Use the generator's slab shape, stair holes and building transform. Overlaying the
   // floor keeps shared/merged house materials intact and costs one draw per room.
-  for (const room of live.layout().rooms.filter(room => room.area_id)) {
+  for (const room of layout.rooms.filter(room => room.area_id)) {
     const building = view.plan.buildings.find(b => b.id === room.building);
     const planRoom = building?.rooms?.find(r => r.id === room.room);
     const level = building?.levels.find(l => l.id === room.level);
@@ -34,31 +60,69 @@ export function mountModes(view, live) {
     const material = new THREE.MeshBasicMaterial({ color: '#fff1c9', transparent: true, opacity: 0,
       depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(polygon(planRoom.polygon, level.elevation + .035, level.elevation + .035, cuts), material);
+    mesh.userData.lightWash = { building: room.building, room: room.room };
     const group = new THREE.Group(); group.scale.setScalar(FT);
     const position = building.position || [0, 0];
     group.position.set(position[0] * FT, ((building.base || 0) + groundAt(view.plan, ...position)) * FT, -position[1] * FT);
     group.rotation.y = (building.rotation || 0) * Math.PI / 180;
-    group.add(mesh); view.scene.add(group); floors.push({ room, mesh, group, parent, lit: false });
+    group.visible = false;
+    group.add(mesh); view.scene.add(group); floors.push({ room, mesh, group, parent });
   }
   function update() {
-    const rooms = live.rooms();
+    const states = live.states(), stale = live.markers().some(row => row.stale);
+    legacyRooms = !realLighting && !stale ? live.rooms() : [];
+    for (const lamp of lamps) {
+      const state = states[lamp.marker.entity_id];
+      lamp.intensity = !stale && state?.state === 'on' ? lightIntensity(state.attributes) : 0;
+      lamp.rgb = lightColor(state?.attributes);
+    }
+    revision++;
     for (const [value, button] of buttons) button.setAttribute('aria-pressed', String(value === mode));
+    draw();
+  }
+  function draw() {
+    const target = view.controls?.target;
+    const key = [revision, mode, target?.x, target?.y, target?.z,
+      ...floors.map(floor => floor.parent.visible),
+      ...lamps.map(lamp => view.groups.levels[`${lamp.marker.building}:${lamp.marker.level}`]?.visible !== false)].join('|');
+    if (key === lastKey) return;
+    lastKey = key;
+    const candidates = lamps.filter(lamp => mode === 'lights' && lamp.intensity > 0 &&
+      view.groups.levels[`${lamp.marker.building}:${lamp.marker.level}`]?.visible !== false)
+      .map(lamp => ({ device: lamp.marker.device_id, at: lamp.marker.at, ...lamp }));
+    const selected = rig.update(realLighting ? candidates : [], target ? [target.x / FT, -target.z / FT, target.y / FT] : [0, 0, 0]);
+    for (const lamp of lamps) {
+      lamp.real = selected.has(lamp.marker.device_id);
+      lamp.bulb.visible = candidates.some(row => row.device === lamp.marker.device_id);
+      lamp.bulb.material.color.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
+    }
     for (const floor of floors) {
       const { room, mesh, group, parent } = floor;
-      const state = rooms.find(r => r.building === room.building && r.room === room.room);
-      floor.lit = state?.glow > 0;
-      group.visible = mode === 'lights' && parent.visible && floor.lit;
-      mesh.material.opacity = (state?.glow || 0) * .85;
-      if (state?.rgb) mesh.material.color.setRGB(...state.rgb.map(value => value / 255), THREE.SRGBColorSpace);
-      else mesh.material.color.set('#fff1c9');
+      const overflow = candidates.filter(lamp => !selected.has(lamp.device) &&
+        lamp.marker.building === room.building && lamp.marker.room === room.room);
+      const legacy = legacyRooms.find(row => row.building === room.building && row.room === room.room);
+      const glow = realLighting ? (overflow.length ? overflow.reduce((sum, lamp) => sum + lamp.intensity, 0) / overflow.length : 0) : legacy?.glow || 0;
+      group.visible = mode === 'lights' && parent.visible && glow > 0;
+      mesh.material.opacity = glow * .85;
+      const rgb = (realLighting ? overflow[0]?.rgb : legacy?.rgb) || [255, 241, 201];
+      mesh.material.color.setRGB(...rgb.map(value => value / 255), THREE.SRGBColorSpace);
     }
   }
   const unsubscribe = live.subscribe(update); update();
   return {
-    setMode(value) { mode = value; update(); },
-    draw() { for (const { group, parent, lit } of floors) group.visible = mode === 'lights' && parent.visible && lit; },
+    setMode(value) {
+      if (mode !== value) { mode = value; view.setEvening?.(mode === 'lights'); }
+      update();
+    },
+    draw,
+    lights: () => lamps.map(lamp => ({ device: lamp.marker.device_id, at: [...lamp.marker.at],
+      rgb: [...lamp.rgb], intensity: lamp.intensity, real: lamp.real })),
     stop() {
       unsubscribe(); strip.remove();
+      if (mode === 'lights') view.setEvening?.(false);
+      rig.stop();
+      for (const { bulb } of lamps) { bulb.removeFromParent(); bulb.material.dispose(); }
+      bulbGeometry.dispose();
       for (const { group, mesh } of floors) { group.removeFromParent(); mesh.geometry.dispose(); mesh.material.dispose(); }
     },
   };

@@ -236,6 +236,7 @@ check('intensity_follows_brightness', async () => {
     live.setMode('lights');
     assert.ok(Math.abs(row(live, 'a2').intensity - 128/255) < .01, `live.lights() intensity: ${JSON.stringify(row(live, 'a2'))}`);
     const full = lampAt(view, 'a1'), half = lampAt(view, 'a2');
+    const halfIntensity = half?.intensity;
     assert.ok(full && half, 'both white lights hold a pool light');
     assert.ok(full.intensity > half.intensity && half.intensity > 0, `255 is brighter than 128: ${full.intensity} vs ${half.intensity}`);
     assert.equal(full.decay, 2, 'physically based decay');
@@ -245,7 +246,7 @@ check('intensity_follows_brightness', async () => {
     const raised = lampAt(view, 'a2');
     assert.ok(raised && Math.abs(raised.intensity - lampAt(view, 'a1').intensity) < 1e-6, 'the same brightness, the same intensity');
     states['light.a2'].attributes.brightness = 26; await live.refresh();
-    assert.ok(lampAt(view, 'a2').intensity < half.intensity, 'dimmer at 26');
+    assert.ok(lampAt(view, 'a2').intensity < halfIntensity, `dimmer at 26: ${lampAt(view, 'a2').intensity} vs ${halfIntensity}`);
   } finally { live.stop(); }
 });
 

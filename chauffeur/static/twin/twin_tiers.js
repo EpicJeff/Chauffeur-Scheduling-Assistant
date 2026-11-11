@@ -1,7 +1,7 @@
 // Renderer settings and deterministic selection, shared by the page and embeds.
 export const TIERS = {
-  low: { pixelRatio: 1, antialias: false, shadows: false, shadowSize: 0, plantCards: true, edgeGrass: false },
-  high: { pixelRatio: Math.min(globalThis.devicePixelRatio || 1, 2), antialias: true, shadows: true, shadowSize: 4096, plantCards: false, edgeGrass: true },
+  low: { pixelRatio: 1, antialias: false, shadows: false, shadowSize: 0, plantCards: true, edgeGrass: false, realLights: 4 },
+  high: { pixelRatio: Math.min(globalThis.devicePixelRatio || 1, 2), antialias: true, shadows: true, shadowSize: 4096, plantCards: false, edgeGrass: true, realLights: 16 },
 };
 
 export function rendererName(gl) {
