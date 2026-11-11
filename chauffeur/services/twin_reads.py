@@ -1111,7 +1111,7 @@ def read_stream(kind, context, images, *, cancel, on_text, run, step):
     cap = OUTPUT_CAP.get(provider, 0)
     if draft and (cap <= 0 or (kind == 'draft' and cap < 32000)):
         return {'error': 'too small', 'truncated': True}
-    limit = min(MAX_OUTPUT[kind], cap) if cap else MAX_OUTPUT[kind]
+    limit = min(MAX_OUTPUT[kind], cap) if draft and cap else MAX_OUTPUT[kind]
     try:
         user = json.dumps({'step': step, 'context': context}, ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError, OverflowError) as exc:
@@ -1120,7 +1120,7 @@ def read_stream(kind, context, images, *, cancel, on_text, run, step):
         if cancel.cancelled:
             raise Cancelled('Read stopped.')
         twin_cost.require_clear()
-        parts, error = [], None
+        parts, error, dropped = [], None, False
         try:
             with llm_budget.request_scope('twin', False):
                 for delta in llm_stream.stream_json(
@@ -1134,6 +1134,7 @@ def read_stream(kind, context, images, *, cancel, on_text, run, step):
             error = str(exc)
         except Exception as exc:
             error = str(exc)
+            dropped = bool(cancel.produced_chars and not cancel.usage.get('finish_reason'))
             if not cancel.cancelled:
                 model_pools.note_failure(model, error)
         finally:
@@ -1149,17 +1150,25 @@ def read_stream(kind, context, images, *, cancel, on_text, run, step):
         if cancel.cancelled:
             raise Cancelled('Read stopped.')
         if error:
-            truncated = draft and bool(re.search(
+            truncated = bool(re.search(
                 r'(?:finish\s*=\s*[\"\']?max_tokens\b|reason\s*=\s*max_output_tokens\b)',
                 error, re.IGNORECASE))
-            return {'error': error, **({'truncated': True} if truncated else {})}
+            if truncated and not draft and not attempt:
+                limit *= 2
+                continue
+            return {'error': error, **({'truncated': True} if draft and truncated else {}),
+                    **({'dropped': True} if dropped and not truncated else {})}
         if not cancel.usage['complete']:
             reason = cancel.usage.get('finish_reason')
             if reason == 'refusal':
                 return {'error': f'refused: {reason}'}
             truncated = reason in ('max_tokens', 'MAX_TOKENS', 'incomplete')
+            if truncated and not draft and not attempt:
+                limit *= 2
+                continue
             return {'error': 'The model reply ended before it was complete.',
-                    **({'truncated': True} if draft and truncated else {})}
+                    **({'truncated': True} if draft and truncated else {}),
+                    **({'dropped': True} if not truncated else {})}
         try:
             answer = _stream_answer(''.join(parts), draft)
         except (ValueError, TypeError) as exc:

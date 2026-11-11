@@ -18,6 +18,14 @@ class Pieces:
     def stage(self):
         return next((self.paths[f['path']] for f in self._stack if f.get('named')), None)
 
+    @property
+    def pending(self):
+        return self._item is not None
+
+    @property
+    def complete(self):
+        return self._ended
+
     def feed(self, text):
         result = []
         for char in text:
