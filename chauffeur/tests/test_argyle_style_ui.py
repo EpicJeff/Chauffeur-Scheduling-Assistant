@@ -128,6 +128,18 @@ class PwaStyleSheet(unittest.TestCase):
         self.assertIn('pwaChooseArgyleStyle', body)
 
 
+    def test_the_pwa_prompts_mark_the_current_choice(self):
+        # The PWA carries its own prompt family (app.html), not control_center's.
+        app = read('templates/app.html')
+        choice = app[app.index('window.promptChoice = function'):]
+        choice = choice[:choice.index('};')]
+        self.assertIn('o.selected', choice, 'the current style is not marked on the phone')
+        ask = app[app.index('window.promptInput = function'):]
+        ask = ask[:ask.index('
+        };')]
+        self.assertIn('maxLength', ask)
+
+
 class ConfigPeopleBlock(unittest.TestCase):
     def test_the_parent_block(self):
         src = read('templates/config.html')
