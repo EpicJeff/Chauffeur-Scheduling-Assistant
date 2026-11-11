@@ -398,6 +398,10 @@ RULES = [
     # What the family taught Argyle (services/argyle_memory.py): a parent's list.
     (ANY, '/api/argyle/memories', PARENTS, None),
     (ANY, '/api/argyle/memories/*', PARENTS, None),
+    # First match wins: personal style must precede the parent wildcard.
+    (ANY, '/api/argyle/style/me', SIGNED_IN, None),
+    (ANY, '/api/argyle/style', PARENTS, None),
+    (ANY, '/api/argyle/style/*', PARENTS, None),
     # Where Argyle fell short (services/argyle_gaps.py): a parent's list and note.
     (ANY, '/api/argyle/gaps', PARENTS, None),
     (ANY, '/api/argyle/gaps.md', PARENTS, None),
@@ -454,6 +458,8 @@ RULES = [
     (ANY, '/api/house/state', WALL_OR_SERVICE, None),
     ('GET', '/api/house/neighborhood', WALL_OR_SERVICE, None),
     ('GET', '/api/house/twin', WALL_OR_SERVICE, None),
+    ('GET', '/api/house/twin/glance', WALL, None),
+    ('PUT', '/api/house/twin/glance', PARENTS, None),
     ('POST', '/api/house/bakes/{key}/{page}.png', PARENTS, None),
     ('GET', '/api/house/bakes/{key}/{page}.png', WALL_OR_SERVICE, None),
     ('GET', '/api/house/bakes/{key}', WALL_OR_SERVICE, None),

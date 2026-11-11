@@ -1888,6 +1888,17 @@ def set_device_room(device_id: str, area_id: Optional[str],
         return {**row, **fields}
 
 
+def set_device_twin_glance(device_id: str, fields: dict) -> Optional[dict]:
+    """Display preferences use the same enrolled row as the panel's room."""
+    with db_lock:
+        row = get_trusted_device(device_id)
+        if not row or row.get('kind') != 'panel':
+            return None
+        deletion.check()
+        trusted_devices_table.update({'house_twin_glance': fields}, Query().device_id == device_id)
+        return {**row, 'house_twin_glance': fields}
+
+
 def untrust_device(device_id: str) -> None:
     with db_lock:
         deletion.check()

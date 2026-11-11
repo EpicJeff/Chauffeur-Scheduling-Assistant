@@ -9,6 +9,9 @@ import { base, loadSky, disposeObject } from './twin_library.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 import { hostPoint } from './twin_hosts.js';
 import { keepLive } from './live/live.js';
+import { mountGlance } from './live/glance.js';
+import { mountIdle } from './live/idle.js';
+import { mountGlanceSettings } from './live/glance_settings.js';
 import { mountBake } from './bake/runtime.js';
 import { sunPosition, moonPosition, moonIllumination } from './sky/ephemeris.js';
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
@@ -772,6 +775,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       for (const name of ['pointerdown', 'pointermove', 'keydown', 'input']) document.removeEventListener(name, previewActivity);
       view.bake?.stop();
       view.live?.stop();
+      view.idle?.stop(); view.glance?.stop(); view.glanceSettings?.stop();
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
@@ -933,7 +937,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
             controls.target.y + run.height, controls.target.z + Math.sin(angle) * run.radius);
         }
       }
-      controls.update(); render();
+      if (view.idle?.active()) view.idle.frame(now);
+      else controls.update();
+      render();
       ++fpsFrames;
       if (now - fpsSince >= 500) {
         fps = fpsFrames * 1000 / (now - fpsSince); fpsFrames = 0; fpsSince = now;
@@ -1010,6 +1016,14 @@ async function boot() {
     // The live layer comes up on its own: a slow or absent Home Assistant never delays the
     // probe below, and a layer that fails never reaches this page's status line. The keeper
     // retries a layer that could not mount and re-reads the layout, so a wall never needs a reload.
+    const idleQuery = new URLSearchParams(location.search);
+    view.glance = mountGlance(document.getElementById('twin-glance-home'));
+    view.idle = mountIdle(view, view.glance, {enabled: idleQuery.get('panel') === 'true',
+      // Under test=1 the idle face waits for an explicit idle_ms, so long-running
+      // scenarios on the panel never go idle mid-test (2^31-1 ms is setTimeout's ceiling).
+      timeout: idleQuery.get('test') !== '1' ? 60000
+        : idleQuery.has('idle_ms') ? Math.max(50, Number(idleQuery.get('idle_ms')) || 60000) : 2147483647});
+    view.glanceSettings = mountGlanceSettings(view, view.glance, view.idle);
     const keeper = keepLive(view, { api: (path, options) => fetch(base() + path, options) });
     window.addEventListener('pagehide', () => { keeper.stop(); clearInterval(hudTimer); view.dispose(); }, { once: true });
     const query = new URLSearchParams(location.search);

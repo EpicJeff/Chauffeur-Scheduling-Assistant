@@ -319,6 +319,42 @@ function pwaSearch() {
     document.getElementById('pwa-feature-search').focus();
 }
 
+async function pwaChooseArgyleStyle() {
+    try {
+        const response = await fetch(apiBase + 'api/argyle/style/me');
+        if (!response.ok) {
+            showGlobalAlert('Could not load your Argyle style (HTTP ' + response.status + ').');
+            return null;
+        }
+        const current = await response.json();
+        const style = await promptChoice('How Argyle talks to you', '',
+            ['household', 'plain', 'warm', 'playful', 'custom'].map(value => ({
+                value, label: current.labels[value], selected: value === current.style,
+            })));
+        if (style === null) return null;
+        let custom = '';
+        if (style === 'custom') {
+            const text = await promptInput('Your own style', 'For example: a cheerful pirate',
+                {value: current.custom || '', maxLength: 200});
+            if (text === null || !text.trim()) return null;
+            custom = text.trim();
+        }
+        const saved = await fetch(apiBase + 'api/argyle/style/me', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({style, custom}),
+        });
+        if (!saved.ok) {
+            const problem = await saved.json().catch(() => ({}));
+            showGlobalAlert(problem.detail || 'Could not save your Argyle style (HTTP ' + saved.status + ').');
+            return null;
+        }
+        return style;
+    } catch (e) {
+        showGlobalAlert('Could not reach your Argyle style (' + (e && e.message || 'network') + ').');
+        return null;
+    }
+}
+
 function pwaOpenProfile() {
     const dialog = document.getElementById('pwa-profile');
     document.getElementById('pwa-profile-title').textContent =
@@ -331,6 +367,7 @@ function pwaOpenProfile() {
         action('avatar', 'Your avatar', 'Edit your photo or character', () => openAvatarEditor(selectedMemberId)),
         ...(typeof openPetEditor === 'function'
             ? [action('critter', 'My critter', 'Visit your companion', () => openPetEditor(selectedMemberId))] : []),
+        action('style', 'How Argyle talks to you', 'Choose the household style or your own', () => pwaChooseArgyleStyle()),
         action('theme', 'Appearance', `Theme: ${themePref()}. Change between device, light and dark.`, () => {
             cycleTheme();
             const button = dialog.querySelector('[data-feature="theme"] small');
@@ -445,6 +482,7 @@ function pwaIcon(name) {
         programs: '<path d="M12 5v16M3 3c4 0 6 0 9 2 3-2 5-2 9-2v16c-4 0-6 0-9 2-3-2-5-2-9-2V3Z"/>',
         library: '<path d="M4 4h4v16H4zM10 4h4v16h-4zM16 5l3.5-1 3 15.5-3.5 1z"/>',
         profile: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
+        style: '<path d="M4 4h16v13H9l-5 4V4Z"/><path d="M8 8h8M8 12h5"/>',
         theme: '<path d="M20.5 13a8.5 8.5 0 0 1-9.5-9.5A8.5 8.5 0 1 0 20.5 13Z"/>',
         refresh: '<path d="M20 4v6h-6M4 20v-6h6M20 10a8 8 0 0 0-14-5M4 14a8 8 0 0 0 14 5"/>',
         push: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',

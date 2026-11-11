@@ -173,7 +173,8 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
                           propose_only: bool = False,
                           focus_key: Optional[str] = None, voice_context=None,
                           proven: bool = False, device_id: Optional[str] = None,
-                          at_panel: bool = False) -> Dict[str, Any]:
+                          at_panel: bool = False,
+                          style_member: Optional[Dict] = None) -> Dict[str, Any]:
     """
     Main entrypoint for the Agent Orchestrator.
     Decides whether to route to Gemma (tools) or Gemini (heavy lifting).
@@ -182,6 +183,8 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
     acting_member (the resolved family member) is set for @argyle in the family
     chat: it supplies a known identity for 'me'/from_member resolution and gates
     the admin scheduling tools to parents/adults.
+    style_member is chosen by the caller for personal conversations; None uses
+    the household style, independently of acting_member.
     propose_only=True runs the SAME rail with its acting tools switched off
     (see PROPOSE_ONLY_TOOLS): reads still run and propose_family_action still
     posts a card, everything else is refused before dispatch. Only the Mind's
@@ -191,7 +194,7 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
     the thing being talked about under it (services/triage.py); it is handed to
     them at dispatch and never shown to the model as a parameter.
     """
-    from services import access
+    from services import access, argyle_style
     asked = user_prompt   # the person's words, before history is folded in; the gap log's view
     voice_actor = None
     if source == 'voice':
@@ -577,6 +580,8 @@ sending or claiming, and never pass from_member/member_name for them.
             tools = tools + [tool_schema()]
         else:
             tools = [t for t in tools if t.get('name') in TOOLS] + [tool_schema()]
+
+    system_prompt += argyle_style.prompt_block(*argyle_style.for_member(style_member))
 
     import time as _time
     request_start = _time.time()
@@ -1163,7 +1168,7 @@ sending or claiming, and never pass from_member/member_name for them.
                                    "start_ask", "mark_ask_sent", "answer_ask", "search_mail", "read_mail",
                                    "start_mission_for", "start_project", "find_in_chauffeur",
                                    "list_projects", "get_project", "add_project_step",
-                                   "add_to_project", "set_project_state", "set_step_state", "memory",
+                                   "add_to_project", "set_project_state", "set_step_state", "memory", "style",
                                    "report_gap"):
                     from services import agent_tools_v2 as _atv2, situations as _sit, access
                     # Resolve identity here, never from model arguments. Reads

@@ -4,14 +4,18 @@ import { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 export { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 import { groundAt } from '../twin_ground.js';
 import { lightColor, lightIntensity, createRealLights } from './real_lights.js';
+import { registerClimate, roomClimate } from './climate.js';
 
 const registry = new Map();
 export function registerMode(mode) { registry.set(mode.id, mode); return mode; }
 export function modes() { return [...registry.values()]; }
+export const modeForeground = (id, row, state) => registry.get(id)?.foreground?.(row, state) ?? true;
 
 registerMode({id: 'lights', label: 'Lights',
+  foreground: row => row.kind === 'light',
   enter: ({lighting}) => lighting(true), update() {}, leave: ({lighting}) => lighting(false)});
 registerMode({id: 'all', label: 'All', enter() {}, update() {}, leave() {}});
+registerClimate(registerMode);
 
 export function roomStates(rooms, states) {
   return rooms.filter(room => room.area_id).map(room => {
@@ -31,6 +35,10 @@ export function mountModes(view, live) {
     button.addEventListener('click', () => live.setMode(mode.id)); strip.append(button); buttons.set(mode.id, button);
   }
   document.getElementById('twin-controls').append(strip);
+  const climateLabels = document.createElement('div'); climateLabels.className = 'twin-climate-labels';
+  const modeLegend = document.createElement('output'); modeLegend.id = 'twin-mode-legend'; modeLegend.hidden = true;
+  document.getElementById('twin-controls').append(modeLegend);
+  document.body.append(climateLabels);
   let mode = 'all', lastKey = '', revision = 0;
   const floors = [], lamps = [];
   // Older embeds do not expose a render tier. Keep their room overview until
@@ -41,6 +49,7 @@ export function mountModes(view, live) {
   const context = {view, live, lighting(on) { view.setLiveLamps?.(on); rig.show(on); }};
   registry.get(mode).enter(context);
   const layout = live.layout();
+  const climateDevices = layout.devices || layout.markers;
   // The same world transform as the marker, including lot ground elevation.
   // A small shared low-poly bulb adds no shadow draw calls.
   const bulbGeometry = new THREE.SphereGeometry(.1, 8, 6);
@@ -85,7 +94,10 @@ export function mountModes(view, live) {
     group.position.set(position[0] * FT, ((building.base || 0) + groundAt(view.plan, ...position)) * FT, -position[1] * FT);
     group.rotation.y = (building.rotation || 0) * Math.PI / 180;
     group.visible = false;
-    group.add(mesh); view.scene.add(group); floors.push({ room, mesh, group, parent });
+    const label = document.createElement('span'); label.hidden = true; climateLabels.append(label);
+    const centre = planRoom.polygon.reduce((sum, p) => [sum[0] + p[0], sum[1] + p[1]], [0, 0]).map(v => v / planRoom.polygon.length);
+    const point = new THREE.Vector3(centre[0], level.elevation + .1, -centre[1]);
+    group.add(mesh); view.scene.add(group); floors.push({ room, mesh, group, parent, label, point });
   }
   // Compile Lights mode's shader programs now, with the pool, bulbs and washes
   // shown, so the first tap on Lights does
@@ -116,6 +128,8 @@ export function mountModes(view, live) {
       lamp.rgb = lightColor(state?.attributes);
     }
     revision++;
+    for (const floor of floors) floor.climate = roomClimate(floor.room, climateDevices, stale ? {} : states);
+    modeLegend.textContent = registry.get(mode)?.legend || ''; modeLegend.hidden = !modeLegend.textContent;
     for (const [value, button] of buttons) button.setAttribute('aria-pressed', String(value === mode));
     registry.get(mode)?.update?.(context);
     draw();
@@ -125,6 +139,20 @@ export function mountModes(view, live) {
     const key = [revision, mode, target?.x, target?.y, target?.z,
       ...floors.map(floor => floor.parent.visible),
       ...lamps.map(lamp => view.groups.levels[`${lamp.marker.building}:${lamp.marker.level}`]?.visible !== false)].join('|');
+    // Labels follow the camera, including the idle orbit; their floors are reused.
+    for (const floor of floors) {
+      const show = mode === 'climate' && floor.parent.visible && !!floor.climate?.label;
+      floor.label.hidden = !show;
+      if (show) {
+        floor.group.updateMatrixWorld(true); view.camera.updateMatrixWorld(true);
+        const p = floor.group.localToWorld(floor.point.clone()).project(view.camera);
+        const rect = view.renderer3.domElement.getBoundingClientRect();
+        floor.label.hidden = p.z < -1 || p.z > 1;
+        floor.label.textContent = `${floor.room.name || ''} ${floor.climate.label}`;
+        floor.label.style.left = `${rect.left + (p.x + 1) * rect.width / 2}px`;
+        floor.label.style.top = `${rect.top + (1 - p.y) * rect.height / 2}px`;
+      }
+    }
     if (key === lastKey) return;
     lastKey = key;
     const candidates = lamps.filter(lamp => mode === 'lights' && lamp.intensity > 0 &&
@@ -148,9 +176,9 @@ export function mountModes(view, live) {
         lamp.marker.building === room.building && lamp.marker.room === room.room);
       const legacy = legacyRooms.find(row => row.building === room.building && row.room === room.room);
       const glow = realLighting ? (overflow.length ? overflow.reduce((sum, lamp) => sum + lamp.intensity, 0) / overflow.length : 0) : legacy?.glow || 0;
-      group.visible = mode === 'lights' && parent.visible && glow > 0;
-      mesh.material.opacity = glow * .85;
-      const rgb = (realLighting ? overflow[0]?.rgb : legacy?.rgb) || [255, 241, 201];
+      group.visible = parent.visible && (mode === 'climate' || mode === 'lights' && glow > 0);
+      mesh.material.opacity = mode === 'climate' ? .72 : glow * .85;
+      const rgb = mode === 'climate' ? floor.climate.rgb : (realLighting ? overflow[0]?.rgb : legacy?.rgb) || [255, 241, 201];
       mesh.material.color.setRGB(...rgb.map(value => value / 255), THREE.SRGBColorSpace);
     }
   }
@@ -169,7 +197,7 @@ export function mountModes(view, live) {
       rgb: [...lamp.rgb], intensity: lamp.intensity, real: lamp.real, baked: !!lamp.baked })),
     stop() {
       for (const lamp of lamps) if (lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, 0);
-      unsubscribe(); strip.remove();
+      unsubscribe(); strip.remove(); climateLabels.remove(); modeLegend.remove();
       registry.get(mode)?.leave?.(context);
       rig.stop();
       for (const { bulb } of lamps) { bulb.removeFromParent(); bulb.material.dispose(); }

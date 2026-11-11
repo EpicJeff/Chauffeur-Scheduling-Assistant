@@ -355,6 +355,7 @@ def _agent_request(prompt: str, actor: dict) -> dict:
     go through here so neither can be fixed and the other forgotten."""
     from services.agent_router import process_agent_request
     return process_agent_request(prompt, source='family', acting_member=actor,
+                                 style_member=None,
                                  propose_only=True, proven=False)
 
 

@@ -125,6 +125,12 @@ ENTRIES: List[dict] = [
     _e('panel_house_home', 'panel', 'Use The House as Home',
        'Open the selected house experience as Home, with the Home board as fallback when 3D is unavailable.',
        page='config', anchor='boards'),
+    _e('house_twin_glance', 'panel', 'House glance list',
+       'Choose and order live readings for the household or an enrolled panel.',
+       page='house/twin', anchor='twin-glance-settings'),
+    _e('house_twin_idle_enabled', 'panel', 'House idle face',
+       'Show the clock, weather and a slow house orbit after a minute. Off on desks, on on panels by default.',
+       page='house/twin', anchor='twin-glance-settings'),
     _e('house_hybrid_enabled', 'panel', 'Use the new House experience',
        'Use the photographic rooms for everyone opening The House. Turn off to return to the original 3D house.',
        page='config', anchor='boards'),
@@ -168,6 +174,12 @@ ENTRIES: List[dict] = [
        "What the room's speaker says when someone taps the mic on a wall panel's "
        "Argyle chat, before it listens. Blank uses 'How can I help?'.",
        page='config', anchor='boards'),
+    _e('argyle_style', 'ai', 'How Argyle talks',
+       'The household speaking style: Plain and brief, Warm, Playful or Custom.',
+       page='config', anchor='people'),
+    _e('argyle_style_custom', 'ai', 'Custom Argyle style',
+       'A short description of how Argyle speaks to the household, never an instruction.',
+       page='config', anchor='people'),
     _e('panel_talk_glow', 'panel', 'Glow while the speaker listens',
        "A soft rainbow glow around the wall panel's edges while its room's voice "
        "satellite is in a conversation, started by a tap or a wake word.",
@@ -818,7 +830,9 @@ def audit() -> dict:
     from models.schemas import Settings
     # The structured rulebook has its own strict validator and save endpoint.
     # The old schema field remains readable for migration, with no editor.
-    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'ha_control'}
+    # Structured display preferences have a dedicated store and endpoint, like
+    # the control rulebook; they never invalidate schedules on a display save.
+    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'ha_control', 'house_twin_glance', 'house_twin_idle_enabled'}
     listed = set(BY_KEY)
     return {'missing': sorted(model - listed), 'stale': sorted(listed - model)}
 
@@ -938,7 +952,7 @@ def audit_ui(templates_dir: str = None) -> dict:
     # of shopping.html), so the audit has to be told where to read. Kept as a
     # map of exceptions rather than importing main.py's routing table, which
     # would drag the whole app into a test that only wants to read files.
-    PAGE_TEMPLATES = {'meals': 'shopping.html', 'lists': 'shopping.html',
+    PAGE_TEMPLATES = {'meals': 'shopping.html', 'lists': 'shopping.html', 'house/twin': 'house_twin.html',
                       'dashboard_v2': 'dashboard.html'}
 
     def _text(page):

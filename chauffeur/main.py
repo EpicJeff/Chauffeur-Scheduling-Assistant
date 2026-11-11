@@ -3974,6 +3974,7 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
         satellite_token = voice_private.current.set(satellite_turn)
         try:
             res = process_agent_request(req.text, history=conv_history, source='voice', voice_context=ctx,
+                                        style_member=actor,
                                         proven=ctx.level == 'verified', at_panel=False,
                                         focus_key=f"voice:{ctx.scope_key}:{req.conversation_id}" if req.conversation_id else None)
         finally:
@@ -7463,6 +7464,44 @@ def _house_ha_placed_spot(building, device_id, placement, geometry):
             'room': room['id'] if room else None, 'at': point[:2], 'z': point[2]}
 
 
+@app.get('/api/house/twin/glance')
+def house_twin_glance(request: Request, panel_id: str | None = None):
+    from services import auth, control_rules, twin_glance
+    parent = auth.identify(request.headers, request.query_params)['tier'] == auth.PARENT
+    panel = control_rules.panel_device(request.headers, request.query_params)
+    if panel_id:
+        if not parent:
+            raise HTTPException(status_code=403, detail='Only a parent can choose another panel.')
+        panel = storage.get_trusted_device(panel_id)
+        if not panel or panel.get('kind') != 'panel':
+            raise HTTPException(status_code=404, detail='Panel not found.')
+    result = twin_glance.read(panel)
+    result['can_edit'] = parent
+    if parent:
+        result['panels'] = [{'device_id': d['device_id'], 'label': d.get('label') or 'Wall panel'}
+                            for d in storage.get_trusted_devices() if d.get('kind') == 'panel']
+    return result
+
+
+class TwinGlanceRequest(BaseModel):
+    entities: list[str] | None = None
+    idle_enabled: bool = False
+    panel_idle_enabled: bool = True
+    panel_id: str | None = None
+
+
+@app.put('/api/house/twin/glance')
+def save_house_twin_glance(req: TwinGlanceRequest):
+    import re
+    from services import twin_glance
+    if req.entities is not None and (len(req.entities) > 12 or len(set(req.entities)) != len(req.entities)
+            or any(not re.fullmatch(r'[a-z_]+\.[a-z0-9_]+', eid) for eid in req.entities)):
+        raise HTTPException(status_code=422, detail='Choose up to twelve different entities.')
+    if twin_glance.save(req.entities, req.idle_enabled, req.panel_id, req.panel_idle_enabled) is None:
+        raise HTTPException(status_code=404, detail='Panel not found.')
+    return {'saved': True}
+
+
 @app.get('/api/house/live')
 def house_live(request: Request):
     from services import control_rules, ha_api, twin_ha, twin_model_hosts
@@ -8285,6 +8324,7 @@ def house_editor_say(request: Request, body: dict = Body(default={})):
                 result = agent_router.process_agent_request(
                     message, context={'house_editor': {**status, 'selection': selection}},
                     history=history, source='house_editor', acting_member=parent,
+                    style_member=None,
                     proven=proven, at_panel=at_panel,
                     focus_key='house_editor:' + (status['build'] or 'idle'))
         finally:
@@ -11754,6 +11794,24 @@ def _house_stream_entities(area: str | None = None) -> set:
     for device in catalogue.get('devices') or []:
         if device.get('area_id') in areas and (area is None or device.get('area_id') == area) and device.get('entity_id'):
             ids.add(device['entity_id'])
+            # Climate and glance read secondary entities too (temperature, energy,
+            # battery). Device markers still use one primary entity.
+            ids.update(device.get('entities') or [])
+    if area is None:
+        from services import ha_api
+        # The default glance weather is not necessarily assigned to a room.
+        import re
+        try:
+            glance_states = ha_api.get_states()
+        except Exception:
+            glance_states = []
+        for row in glance_states:
+            eid = row.get('entity_id', '')
+            attrs = row.get('attributes') or {}
+            if (eid.startswith('weather.') or attrs.get('device_class') in ('power', 'energy', 'battery')
+                    or eid.startswith('sensor.') and re.search(r'solar|grid|battery|powerwall|car.?charg',
+                                                              eid + ' ' + attrs.get('friendly_name', ''), re.I)):
+                ids.add(eid)
     for building in model.get('buildings') or []:
         for room in building.get('rooms', []):
             found = twin_ha.resolve_area(room.get('ha_area'), catalogue.get('areas') or [])
@@ -18879,6 +18937,7 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str, message_id: str 
                                     and app_voice._credential(m.get('body') or '')
                                     else m.get('body') or '')} for m in used]
         res = process_agent_request(query, source="family", acting_member=sender,
+                                    style_member=sender if personal_dm else None,
                                     proven=proven, device_id=device_id, at_panel=at_panel,
                                     **({'history': history} if history is not None else {}),
                                     focus_key=f"channel:{channel.get('id')}" if channel.get('id') else None)
@@ -20575,6 +20634,75 @@ def argyle_memories_forget(memory_id: str, request: Request = None):
     return res
 
 
+def _argyle_style_member(request: Request):
+    member = storage.get_member_by_token(request.headers.get('X-Member-Token') or '')
+    if not member:
+        raise HTTPException(status_code=401, detail='Sign in to choose your Argyle style.')
+    return member
+
+
+@app.get("/api/argyle/style/me")
+def argyle_style_me_get(request: Request):
+    from services import argyle_style
+    member = _argyle_style_member(request)
+    key, custom = argyle_style.household()
+    return {'status': 'success', **argyle_style.get_member_style(member['id']),
+            'household': {'style': key, 'custom': custom}, 'labels': argyle_style.LABELS}
+
+
+@app.post("/api/argyle/style/me")
+def argyle_style_me_set(request: Request, body: dict = Body(default={})):
+    from services import argyle_style
+    member = _argyle_style_member(request)
+    try:
+        choice = argyle_style.set_member_style(member['id'], body.get('style') or '', body.get('custom') or '')
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {'status': 'success', **choice}
+
+
+def _argyle_style_parent(request: Request):
+    """The household style and everyone's choices are a parent's, enforcement on or off."""
+    if (_memory_actor(request, None).get('role') or '') != 'parent':
+        raise HTTPException(status_code=403, detail='A parent manages the household style.')
+
+
+@app.get("/api/argyle/style")
+def argyle_style_list(request: Request):
+    from services import argyle_style
+    _argyle_style_parent(request)
+    key, custom = argyle_style.household()
+    people = []
+    for member in storage.get_all_members():
+        choice = argyle_style.get_member_style(member['id'])
+        if choice['style'] != 'household':
+            people.append({**{k: member.get(k) for k in ('id', 'name', 'role')}, **choice})
+    return {'household': {'style': key, 'custom': custom}, 'people': people}
+
+
+@app.post("/api/argyle/style")
+def argyle_style_household_set(request: Request, body: dict = Body(default={})):
+    from services import argyle_style
+    _argyle_style_parent(request)
+    try:
+        argyle_style.set_household_style(body.get('style') or '', body.get('custom') or '')
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    key, custom = argyle_style.household()
+    return {'status': 'success', 'household': {'style': key, 'custom': custom}}
+
+
+@app.post("/api/argyle/style/reset/{member_id}")
+def argyle_style_reset(member_id: str, request: Request):
+    from services import argyle_style
+    _argyle_style_parent(request)
+    try:
+        choice = argyle_style.set_member_style(member_id, 'household')
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {'status': 'success', **choice}
+
+
 @app.get("/api/argyle/gaps.md")
 def argyle_gaps_markdown(status: str = 'open'):
     """The gap list as a note to paste to whoever fixes the tools."""
@@ -20964,6 +21092,8 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, 
         res = process_agent_request(payload.message, context=payload.context, history=conv_history,
                                     source=conv['surface']['kind'], driver_id=payload.driver_id,
                                     acting_member=acting_member,
+                                    style_member=(acting_member if conv['surface']['kind'] in ('pwa', 'admin')
+                                                  and not at_panel else None),
                                     proven=proven, at_panel=at_panel,
                                     device_id=device['device_id'] if device else None,
                                     focus_key=f"conv:{payload.conversation_id}" if payload.conversation_id else None)

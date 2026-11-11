@@ -1447,6 +1447,40 @@ def music(action='', query='', room='', player='', media_type='', mode='', level
                             proven=proven, device_id=device_id)
 
 
+def style(action='set', scope='me', style='', custom='', acting_member=None, source='') -> dict:
+    """Change the caller's speaking style, or a parent's explicit household default."""
+    from services import access, argyle_style, storage
+    if not acting_member or access.is_house(acting_member):
+        return {'status': 'error', 'message': 'Sign in or use a recognised voice to choose how I talk.'}
+    if scope not in ('me', 'household'):
+        return {'status': 'error', 'message': 'Choose scope me or household.'}
+    if scope == 'household' and acting_member.get('role') != 'parent':
+        return {'status': 'error', 'message': 'Only a parent can manage the household style.'}
+    if action not in ('set', 'show', 'reset'):
+        return {'status': 'error', 'message': 'Choose action set, show or reset.'}
+    try:
+        if action != 'show':
+            if scope == 'household':
+                argyle_style.set_household_style('warm' if action == 'reset' else style, custom)
+            else:
+                argyle_style.set_member_style(acting_member['id'],
+                                               'household' if action == 'reset' else style, custom)
+        if scope == 'household':
+            key, text = argyle_style.household()
+            message = f"Household style: {argyle_style.LABELS[key]}"
+        else:
+            member = storage.get_member(acting_member['id'])
+            key, text = argyle_style.for_member(member)
+            choice = argyle_style.get_member_style(acting_member['id'])
+            inherited = choice['style'] == 'household' or (choice['style'] == 'custom' and not choice['custom'])
+            message = f"Your style: {argyle_style.LABELS[key]}" + (' (same as the household)' if inherited else '')
+        if text:
+            message += f': {text}'
+        return {'status': 'success', 'message': message + '.'}
+    except ValueError as exc:
+        return {'status': 'error', 'message': str(exc)}
+
+
 def memory(action='remember', text='', kind='preference', phrase='', entity_ids=None, memory_id='',
            acting_member=None, voice_context=None, source=None, focus_key=None, spoken=False):
     """What the family taught Argyle (services/argyle_memory.py). Identity is the caller's."""
@@ -5375,8 +5409,22 @@ def get_available_tools() -> List[Dict]:
             }
         },
         {
+            "name": "style",
+            "description": "Choose how Argyle talks. 'Talk like a pirate' or 'be more to the point' sets the speaker's OWN style (scope=me, the default), kids included. Only an explicit request for everyone uses scope=household, parents only. set picks plain, warm, playful or custom (with a short custom line); show says what applies; reset returns me to the household default or the household to Warm. Never store a speaking style as a memory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["set", "show", "reset"]},
+                    "scope": {"type": "string", "enum": ["me", "household"]},
+                    "style": {"type": "string", "enum": ["plain", "warm", "playful", "custom"]},
+                    "custom": {"type": "string", "description": "For custom: a manner of speaking, at most 200 characters."}
+                },
+                "required": ["action"]
+            }
+        },
+        {
             "name": "memory",
-            "description": "What the family taught you, kept across every conversation and surface. Call action=remember when a parent or adult corrects you ('no, the doors means the entry doors', 'I didn't say the car'), tells you how to answer, or says remember: kind='vocabulary' with phrase and the entity_ids (from house find) when it is what a phrase means in this house, kind='preference' with text otherwise. Do it without being asked and say what you remembered. A child's correction is answered, never stored. action=list shows what you were taught; action=forget drops one by memory_id or by its words.",
+            "description": "What the family taught you, kept across every conversation and surface. Call action=remember when a parent or adult corrects you ('no, the doors means the entry doors', 'I didn't say the car'), tells you how to answer, or says remember: kind='vocabulary' with phrase and the entity_ids (from house find) when it is what a phrase means in this house, kind='preference' with text otherwise. Do it without being asked and say what you remembered. A child's correction is answered, never stored. A request about how Argyle talks goes to style, never to remember. action=list shows what you were taught; action=forget drops one by memory_id or by its words.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -9785,6 +9833,11 @@ def handle_memory(args: dict, actor=None) -> dict:
     return memory(**args, acting_member=actor)
 
 
+def handle_style(args: dict, actor=None) -> dict:
+    return style(**{k: v for k, v in args.items() if k in ('action', 'scope', 'style', 'custom')},
+                 acting_member=actor)
+
+
 def handle_report_gap(args: dict, actor=None) -> dict:
     return report_gap(**args, acting_member=actor)
 
@@ -9940,6 +9993,7 @@ TOOL_HANDLERS = {
     'house_design': handle_house_design,
     'house': handle_house,
     'memory': handle_memory,
+    'style': handle_style,
     'report_gap': handle_report_gap,
     'music': handle_music,
     "answer_occasion_question": handle_answer_occasion_question,

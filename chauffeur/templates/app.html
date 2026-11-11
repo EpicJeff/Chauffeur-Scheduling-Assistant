@@ -3658,7 +3658,7 @@
             });
         };
 
-        window.promptInput = function (title, message, { placeholder = '', value = '', type = 'text', okText = 'OK' } = {}) {
+        window.promptInput = function (title, message, { placeholder = '', value = '', type = 'text', okText = 'OK', maxLength = null } = {}) {
             return new Promise(resolve => {
                 const overlay = _pwaModal(`
                     <div class="text-gray-100 font-bold text-lg mb-1">${mfEscape(title)}</div>
@@ -3679,6 +3679,7 @@
                 // .value, not the attribute — the text may contain quotes.
                 const field = overlay.querySelector('[data-field]');
                 field.value = value;
+                if (Number.isInteger(maxLength) && maxLength >= 0) field.maxLength = maxLength;
                 field.focus();
             });
         };
@@ -3693,7 +3694,7 @@
                 const rows = (options || []).map((o, i) => `
                     <button data-pick="${i}"
                         class="w-full text-left px-4 py-3 rounded-xl bg-gray-950 border border-gray-700
-                               text-gray-100 text-[15px] font-bold active:bg-gray-800">${mfEscape(o.label)}</button>`).join('');
+                               text-gray-100 text-[15px] font-bold active:bg-gray-800"${o.selected ? ' aria-current="true"' : ''}>${mfEscape(o.label)}${o.selected ? ' ✓' : ''}</button>`).join('');
                 _pwaModal(`
                     <div class="text-gray-100 font-bold text-lg mb-1">${mfEscape(title)}</div>
                     ${message ? `<div class="text-gray-400 text-sm mb-3 leading-snug">${mfEscape(message)}</div>` : ''}

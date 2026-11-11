@@ -21,6 +21,9 @@
     {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/library', 'editor/flags'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
+    {% for name in ['live/climate', 'live/glance', 'live/idle', 'live/glance_settings'] %}
+    imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
+    {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/editor/flags.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/flags.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/ha_link.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/ha_link.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/device_placement.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/device_placement.js' | ver | tojson }};

@@ -3,9 +3,10 @@ import { base } from '../twin_library.js';
 import { groundAt } from '../twin_ground.js';
 import { markerState, levelOfDetail, markerTexture, markerSprite } from './markers.js';
 import { deviceActions, confirmUnsafe, mountRoomPanel } from './room_panel.js';
-import { roomStates, mountModes } from './modes.js';
+import { roomStates, mountModes, modeForeground } from './modes.js';
 import { kindOf, unsafeLabel } from './kinds.js';
 import { mountRing } from './ring.js';
+import { defaultEntities, isEnergyEntity } from './glance.js';
 
 const FT = .3048, unreachable = 'Home Assistant is not reachable.';
 // Screen sizes in CSS px: a marker is a 44 px tap target (the page's own controls' hit height),
@@ -141,7 +142,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   function notify() {
     revision++; overlays = null;
     for (const row of rows) {
-      row.stale = stale; row.dim = stale || mode === 'lights' && row.kind !== 'light';
+      row.stale = stale; row.dim = stale || !modeForeground(mode, row, states[row.entity_id]);
       row.sprite.material.map = texture(iconKind(row), row.look);
       row.sprite.material.opacity = row.dim ? .4 : 1;
       const text = `${row.name} · ${row.label}`;
@@ -427,7 +428,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   function subscribeStates() {
     if (stopped || typeof EventSource !== 'function') return;
-    const entities = new Set([...rows.map(row => row.entity_id), ...devices.map(row => row.entity_id),
+    const entities = new Set([...defaultEntities(states), ...rows.map(row => row.entity_id), ...devices.flatMap(row => row.entities || [row.entity_id]),
       ...(layout.rooms || []).flatMap(room => room.lights || [])].filter(Boolean));
     if (!entities.size) return;
     try {
@@ -439,7 +440,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
         if (stopped) return;
         let change;
         try { change = JSON.parse(event.data); } catch { return; }
-        if (!change || !entities.has(change.entity_id) || !Object.hasOwn(change, 'state')) return;
+        if (!change || typeof change.entity_id !== 'string' ||
+          !(entities.has(change.entity_id) || change.entity_id.startsWith('weather.') || isEnergyEntity(change.entity_id, change.state)) || !Object.hasOwn(change, 'state')) return;
         const state = change.state;
         if (state !== null && (typeof state !== 'object' || Array.isArray(state) || typeof state.state !== 'string')) return;
         if (state === null) delete states[change.entity_id];
@@ -460,7 +462,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   function stop() {
     if (stopped) return;
-    stopped = true; clearTimeout(timer); events.abort(); requests.abort(); listeners.clear();
+    stopped = true; view.glance?.attach(null); clearTimeout(timer); events.abort(); requests.abort(); listeners.clear();
     stream?.close(); stream = null;
     try { flagFloors(); } catch (error) { report(error); }
     resizeObserver?.disconnect();
@@ -508,7 +510,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     // written to by a reader.
     state: id => states[id],
     peek: () => states,
-    stale: () => rows.some(row => row.stale),
+    stale: () => stale,
     layout: () => structuredClone(layout),
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   };
@@ -556,6 +558,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     return null;
   }
   await refresh();
+  view.glance?.attach(live);
+  view.glanceSettings?.refreshChoices();
   subscribeStates();
   const schedule = () => {
     timer = setTimeout(async () => {

@@ -1263,6 +1263,7 @@
             };
 
             const ssStart = async () => {
+                if (window._chfTwinIdleEnabled) return;
                 if (window._chfSsActive || document.hidden) { ssArm(); return; }
                 let list = { urls: [] };
                 try {
@@ -1315,6 +1316,7 @@
 
             const ssArm = () => {
                 clearTimeout(ssIdleTimer);
+                if (window._chfTwinIdleEnabled) return;
                 if (!ssCfg || !ssCfg.idle_seconds) return;
                 ssIdleTimer = setTimeout(ssStart, chfIdleRemaining(ssCfg.idle_seconds));
             };
@@ -1360,6 +1362,7 @@
                         if (!secs) return;
                         let timer;
                         const goHome = () => {
+                            if (window._chfTwinIdleEnabled) return;
                             // The Home's orbit (massing arc 1, spec §4): at
                             // the exterior the wall always rests on the
                             // street view, so the ring snaps back to stop 0
