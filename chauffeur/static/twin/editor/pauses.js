@@ -28,7 +28,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
   const el = id => document.getElementById(id), host = el('pause-card'), canvas = view.renderer3.domElement;
   let key = null, pause = null, step = null, buildId = null, floorKey = null;
   let mode = null, pins = [], drag = null, busy = false, lastAnswer = null, dismissed = false, masterSize = null;
-  let original = null, adjusted = false, referenceKey = null, lastPin = null;
+  let original = null, adjusted = false, referenceKey = null, lastPin = null, framed = false;
   let costBuild = null, costSeq = 0, cumulativeCost = 0, pendingCost = null;
   const stepCosts = new Map();
   const owner = () => step?.id === 'fit' ? getBuild()?.part
@@ -78,6 +78,24 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     masterSize = sheetMaster(getSheets(), step.source, step.page);
     view.setSheet({ url, reg: original.registration, masterSize, buildingId: frame.id, levelId });
   }
+  // Frame a pause once its floor is drawn: a sync can arrive before the scene (the checks queue
+  // shows a pause as soon as it is created), and a pause framed then never got its view or sheet.
+  function frame() {
+    const preview = view.plan.buildings.find(b => b.id === `editor-preview:${pause.step}`);
+    const ownerId = owner();
+    floorKey = preview ? `${preview.id}:${preview.levels[0].id}` : `${ownerId}:${step?.level || view.plan.buildings.find(b => b.id === ownerId)?.levels[0]?.id}`;
+    const house = view.plan.buildings.find(b => b.id === ownerId);
+    const elevation = preview?.levels[0].elevation ?? house?.levels.find(l => l.id === step?.level)?.elevation ?? Infinity;
+    const below = house?.levels.filter(l => l.elevation < elevation - .1).sort((a, b) => b.elevation - a.elevation)[0];
+    referenceKey = below ? `${ownerId}:${below.id}` : floorKey;
+    if (!view.groups?.levels[floorKey]) return;
+    framed = true;
+    view.setView(floorKey);
+    const otherKeys = view.plan.buildings.filter(b => b.id === ownerId).flatMap(b => b.levels
+      .filter(l => l.elevation <= (preview?.levels[0].elevation ?? Infinity)).map(l => `${b.id}:${l.id}`));
+    view.showLevels([floorKey, ...otherKeys]); view.setCamera('top');
+    showSheet().catch(report);
+  }
   function sync() {
     const build = getBuild(), next = build?.state === 'paused' && build.pause;
     readCosts(build);
@@ -88,20 +106,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
       key = identity; original = structuredClone(next); pause = structuredClone(next); adjusted = false;
       buildId = build.id; dismissed = false; mode = null; pins = []; masterSize = null; lastPin = null;
       step = build.steps.find(s => s.id === pause.step);
-      const preview = view.plan.buildings.find(b => b.id === `editor-preview:${pause.step}`);
-      const ownerId = owner();
-      floorKey = preview ? `${preview.id}:${preview.levels[0].id}` : `${ownerId}:${step?.level || view.plan.buildings.find(b => b.id === ownerId)?.levels[0]?.id}`;
-      const house = view.plan.buildings.find(b => b.id === ownerId);
-      const elevation = preview?.levels[0].elevation ?? house?.levels.find(l => l.id === step?.level)?.elevation ?? Infinity;
-      const below = house?.levels.filter(l => l.elevation < elevation - .1).sort((a, b) => b.elevation - a.elevation)[0];
-      referenceKey = below ? `${ownerId}:${below.id}` : floorKey;
-      if (view.groups?.levels[floorKey]) {
-        view.setView(floorKey);
-        const otherKeys = view.plan.buildings.filter(b => b.id === ownerId).flatMap(b => b.levels
-          .filter(l => l.elevation <= (preview?.levels[0].elevation ?? Infinity)).map(l => `${b.id}:${l.id}`));
-        view.showLevels([floorKey, ...otherKeys]); view.setCamera('top');
-        showSheet().catch(report);
-      }
+      framed = false;
       el('pause-title').textContent = step?.label || 'Check this outline';
       el('pause-reason').textContent = pause.kind === 'draft' ? sentence(pause.why) : pauseWords(pause);
       el('pause-size').textContent = pause.size_ft?.length === 2
@@ -118,6 +123,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
       instruction();
     }
     step = build.steps.find(s => s.id === pause.step);
+    if (!framed) frame();
     const lastCost = step?.last_cost ?? step?.cost ?? stepCosts.get(pause.step);
     el('pause-reread').textContent = Number.isFinite(lastCost) ? `Re-read · last $${lastCost.toFixed(2)}` : 'Re-read · last cost $— (unavailable)';
     if (pause.kind === 'draft') el('pause-reread').textContent = 'Try again';

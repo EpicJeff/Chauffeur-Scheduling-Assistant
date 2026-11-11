@@ -58,6 +58,10 @@ await test('the_adopted_action_posts_the_adjusted_transform', async () => {
   assert.deepEqual(requests.at(-1).body, {step: 'fit', decision: {transform: {position: [12,24], rotation:30}}});
   checks.sync();
   assert.ok(!checks.queue().some(r => r.kind === 'pause'));
+  // Browser round: once the pause leaves the card, its buttons are back in the document (pauses.js
+  // sets their hidden by id; a detached one threw on the next sync).
+  for (const id of ['pause-accept', 'pause-reread'])
+    assert.ok(document.getElementById(id).isConnected, `${id} stays in the document after the card redraws`);
 });
 lifetime.abort(); view.dispose(); finish();
 """

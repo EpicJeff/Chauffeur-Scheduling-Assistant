@@ -217,7 +217,10 @@ export async function boot() {
       }
       snapshot = state;
       syncBuildButton();
-      if (!currentBuild) setStatus(sheets.page_roles.some(row => ['floor', 'plot'].includes(row.role)) ? 'Ready to build' : 'Add drawings to begin');
+      // A house with pieces and no drawings to build from is not waiting for drawings.
+      const built = (snapshot.model?.buildings || []).some(b => b.walls?.length || b.rooms?.length || b.roofs?.length);
+      if (!currentBuild) setStatus(sheets.page_roles.some(row => ['floor', 'plot'].includes(row.role)) ? 'Ready to build'
+        : built ? 'House ready' : drawingStarted ? 'Drawing by hand' : 'Add drawings to begin');
     },
     async onBuild(build) {
       if (ghostBuild !== build.id) {
@@ -326,6 +329,7 @@ export async function boot() {
         await polling.pollNow(true); await loadSheets();
       }
       drawingStarted = true; syncBuildButton();
+      if (!currentBuild && !sheets.page_roles?.some(row => ['floor', 'plot'].includes(row.role))) setStatus('Drawing by hand');
       place.close(); tools.chooseFloor(tools.floor().key); tools.select(null);
       el('rail-draw-wall').click();
     } catch (error) { report(error); }

@@ -13,10 +13,19 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   const adjustmentHome = adjustment?.parentElement;
   const acceptButton = pauses && document.getElementById('pause-accept');
   const rereadButton = pauses && document.getElementById('pause-reread');
+  // The adopted accept and re-read buttons go back to the pause card's row before the check card
+  // is cleared: pauses.js finds them by id, and a detached button reads as missing.
+  const buttonHome = acceptButton?.parentElement;
+  const sendHome = () => {
+    if (acceptButton && buttonHome) buttonHome.prepend(acceptButton);
+    if (rereadButton && buttonHome) buttonHome.append(rereadButton);
+  };
   const rereadEstimate = () => Number(pauses?.rereadEstimate?.()
     ?? selected?.stepInfo?.estimate ?? selected?.stepInfo?.last_cost ?? selected?.stepInfo?.cost ?? 0);
   const review = flags || createFlags({ view, getModel, getPlan, tools, panel, op, canEdit, signal, managed: true });
-  let rows = [], selected = null, signature = '', busy = false, dismissed = false, framing = false, emptyOpen = false, frame;
+  // The queue opens from Check it (or when a build pauses), never by itself on load: opening it
+  // moves the camera and the floor, which must not happen before the person asks.
+  let rows = [], selected = null, signature = '', busy = false, dismissed = true, framing = false, emptyOpen = false, frame;
   const items = () => {
     const build = getBuild(), buildings = getModel()?.buildings || [];
     return [
@@ -42,6 +51,7 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   }
   function draw() {
     if (adjustment) adjustmentHome.append(adjustment);
+    sendHome();
     card.replaceChildren(); card.hidden = dismissed || !selected && !emptyOpen || !canEdit();
     card.setAttribute('data-check-kind', selected?.kind || 'empty');
     pauseControls();
@@ -52,11 +62,17 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
       const text = document.createElement('p'); text.textContent = 'Nothing needs checking.';
       card.append(title, close, text); return;
     }
-    const text = document.createElement('p');
-    text.textContent = selected.kind === 'pause' ? selected.why || 'Check this part of your house.'
-      : selected.kind === 'flag' ? selected.flag.text : 'A new reading suggests a change. Your version stays until you choose Use this.';
-    card.append(title, close, text);
     const item = selected;
+    if (item.kind === 'pause' && adjustment) {
+      // The pause card says what was read and holds its adjustments (drag, pins, turn): it sits under
+      // the title, before the answers, and its own title and reason are not repeated above it.
+      card.append(title, close, adjustment); adjustment.hidden = false;
+    } else {
+      const text = document.createElement('p');
+      text.textContent = item.kind === 'pause' ? item.why || 'Check this part of your house.'
+        : item.kind === 'flag' ? item.flag.text : 'A new reading suggests a change. Your version stays until you choose Use this.';
+      card.append(title, close, text);
+    }
     if (item.kind === 'proposal') {
       card.append(button('Use this', () => save(() => op({ op: 'accept_proposal', building: item.building, id: item.id }))),
         button('Dismiss', () => save(() => op({ op: 'dismiss_proposal', building: item.building, id: item.id }))));
@@ -88,7 +104,6 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
         if (await window.promptConfirm('Read it again?', 'Reading again adds to the running cost.', 'Read it again', 'Cancel'))
           await api.request(`build/${encodeURIComponent(item.build)}/reread`, 'POST', { step: item.step });
       }, false)));
-      if (adjustment) { card.append(adjustment); adjustment.hidden = false; }
     }
   }
   function pauseControls() {
@@ -148,7 +163,7 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   signal.addEventListener('abort', () => {
     cancelAnimationFrame(frame);
     if (adjustment) adjustmentHome.append(adjustment);
-    if (acceptButton) adjustment.append(acceptButton, rereadButton);
+    sendHome();
     card.remove();
   }, { once: true });
   document.addEventListener('keydown', event => {

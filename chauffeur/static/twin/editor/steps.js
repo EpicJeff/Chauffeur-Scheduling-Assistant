@@ -1,7 +1,7 @@
 const names = ['Your files', 'Your lot', 'Build', 'Check it', 'Link to Home Assistant'];
 
 export function createSteps(host, { state, onOpen = () => {} }) {
-  let opened = null;
+  let opened = null, shown = null;
   const buttons = names.map(name => {
     const button = document.createElement('button'); button.type = 'button';
     button.setAttribute('data-step', name);
@@ -30,6 +30,13 @@ export function createSteps(host, { state, onOpen = () => {} }) {
       button.setAttribute('aria-expanded', String(opened === names[i]));
       button.textContent = `${names[i]}${i === 3 && count ? ` (${count})` : ''} · ${status === 'not-yet' ? 'not yet' : status}`;
     });
+    // On a narrow screen the strip scrolls: keep the open step, else the one that is now, in view.
+    const lead = buttons[opened ? names.indexOf(opened) : now];
+    if (lead && lead !== shown && lead.getBoundingClientRect && host.getBoundingClientRect) {
+      shown = lead;
+      const at = lead.getBoundingClientRect(), box = host.getBoundingClientRect();
+      if (at.left < box.left || at.right > box.right) host.scrollLeft += at.left - box.left - 8;
+    }
   }
   function open(name) {
     if (!names.includes(name)) return;

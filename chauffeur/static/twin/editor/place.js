@@ -48,6 +48,23 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
   const suggestionDrafts = new Map();
   let currentStep = 'Your files';
   const linkCards = new Map();
+  // Each step panel says what it is for; the footer keeps a step's own guidance until an action reports.
+  const about = {
+    'Your files': 'The lot and every building, with their drawings and photos.',
+    'Your lot': 'Where the lot is and where each building stands on it.',
+    Build: 'Build one part at a time, or your whole place at once.',
+    'Link to Home Assistant': 'Each building and room, with its Home Assistant area and devices.',
+  };
+  let reported = false;
+  function stepNote() {
+    if (reported) return;
+    el('place-status').textContent = currentStep === 'Your lot'
+      ? 'Read the plot plan to find the buildings, then place each one where it stands.'
+      : currentStep === 'Build' ? dirty() ? 'Confirm your pages in Your files first. Building waits until they are saved.'
+        : 'Each build asks before it spends; the amount shown is about what it costs.'
+      : currentStep === 'Link to Home Assistant' ? 'Choose the Home Assistant area for each room.'
+      : 'Add PDF drawings and JPEG or PNG photos to the part they show. Check each page, then confirm.';
+  }
   const place = () => sheets.place || { buildings: [], lot: {}, photo_tags: {} };
   const parts = () => [{ id: 'lot', name: 'Lot' }, ...place().buildings];
   const kinds = () => (sheets.kinds || []).map(k => [k.id, k.label]);
@@ -68,7 +85,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     const url = (window.chfBase ?? '../') + `api/house/editor/sheets/${encodeURIComponent(source)}/${page}.png`;
     return window.chfAuthUrl ? window.chfAuthUrl(url) : url;
   };
-  function status(text) { el('place-status').textContent = text; }
+  function status(text) { reported = true; el('place-status').textContent = text; }
   function controls() {
     const blocked = stopped();
     host.querySelectorAll('input, select, button').forEach(control => {
@@ -94,6 +111,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     el('place-suggest-photos').disabled = blocked || !(sheets.sources || []).some(s => s.kind === 'photo');
     el('place-confirm-placement').disabled = blocked || !place().lot?.read;
     host.setAttribute('aria-busy', String(busy));
+    stepNote();
   }
   async function work(action, duringBuild = false) {
     if (stopped(duringBuild)) return;
@@ -136,6 +154,8 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     host.hidden = false;
     host.setAttribute('data-step-panel', name); host.setAttribute('aria-label', name);
     el('place-title').textContent = name;
+    el('place-about').textContent = about[name] || '';
+    reported = false;
     el('editor-menu').open = false;
     showStep();
     if (name === 'Link to Home Assistant') linkSections().catch(report);
@@ -144,6 +164,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
   function showStep() {
     host.querySelectorAll('[data-place-step]').forEach(section => { section.hidden = section.dataset.placeStep !== currentStep; });
     el('place-placement').hidden = currentStep !== 'Your lot' || !place().lot?.read && !place().lot?.placement;
+    stepNote();
   }
   async function linkSections(refresh = true) {
     const link = getLink?.(), target = el('place-ha-links');
