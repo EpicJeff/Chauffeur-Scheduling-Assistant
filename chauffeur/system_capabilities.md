@@ -1,6 +1,31 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.782 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.783 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.783 (2026-11-10, NOT device-verified): Lights mode lights the house from each fixture.**
+
+The user: "I expected an actual light in the 3D scene turning on and lighting the room from the point where the light is located." Lights mode used to lay a flat, unlit tint over each lit room's floor. Brief: `.superpowers/sdd/2026-11-10-house-real-lights/brief.md`, which is not committed. Claude wrote the tests first, Codex built the code, and Claude agents ran the browser round, a review and the fixes.
+
+- Each light that is on gets a real point light at its placed spot (`static/twin/live/real_lights.js`, `modes.js`).
+  - **Colour:** `rgb_color` if present, else the colour temperature converted from kelvin or mireds, else warm white.
+  - **Intensity:** follows brightness (`CANDELA` 40, physical decay).
+  - **Range:** about 1.5x the distance from the fixture to its room's farthest floor corner, clamped to 0.6-2x the room's span.
+- **Floor lamps:** a light placed on the floor hangs its light at 4.5 ft. Ceiling and wall lights stay at their marker.
+- **Bulb glow:** every lit fixture shows a glowing bulb, on every tier.
+- **Light budget per tier** (`twin_tiers.js` `realLights`):
+  - Low (Pi 5) 4, Medium 8, High and Max 16.
+  - The nearest lights to the camera target win, then the brightest.
+  - Lights over the budget keep the bulb glow plus a soft floor wash for their room.
+  - Shadows only on High and Max, for the 2 nearest lights.
+- **No shader recompiles:** the light pool is fixed per tier, built once and hidden outside Lights mode, so turning lights on or off never recompiles shaders. The program cache is warmed at mount, so the first switch into Lights mode does not stall.
+- **Evening look:** Lights mode dims the scene (`twin_view.setEvening`). Leaving it recomputes the lighting from the current time, view and sky rather than restoring a copy, so a floor change, a late sky or a rebuild made in the meantime is kept. Day and Night chosen while in Lights mode stay.
+- **Live state:** lights follow the confirmed state from the 10 s poll and never flip ahead of Home Assistant. When Home Assistant is unavailable or unreachable they draw off.
+- **Test hooks:** `live.lights()` returns `[{device, at, rgb, intensity, real}]`; `live.rooms()` is unchanged.
+- **Frame time** on the desktop GPU: Low tier at its cap with 10 lights on measures 3.2 ms, against 3.9 ms for the old Lights mode, and All mode is back to its pre-branch cost. The Pi 5 is unmeasured (`?tier=low&probe=1` on the panel).
+- **Known limits, which the baked-lights slice addresses** (`docs/superpowers/specs/2026-11-10-house-baked-lights-design.md`):
+  - lights without shadows shine through walls (Low tier, and High beyond the 2 nearest);
+  - lit rooms behind glazed windows do not read lit from outside;
+  - each bulb is one draw call.
 
 **v2.499.782 (2026-11-10, NOT device-verified): the 3D house knows Home Assistant. Rooms link to areas, devices sit where they are, and a wall panel shows and controls them live.**
 
