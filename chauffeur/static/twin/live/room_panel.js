@@ -1,4 +1,6 @@
 import { kindOf } from './kinds.js';
+import { base } from '../twin_library.js';
+import { controlShape } from './controls/shared.js';
 export { confirmUnsafe } from './kinds.js';
 
 const element = (tag, text) => {
@@ -19,17 +21,46 @@ export function mountRoomPanel(live) {
   header.className = 'twin-device-actions'; header.append(title, close);
   const body = element('div'); body.className = 'twin-room-devices'; panel.append(header, body); document.body.append(panel);
   const empty = element('p', 'No devices in this room.');
-  let room = null, shown = null;
+  let room = null, shown = null, sequence = 0;
   const widgets = new Map();
+  function stop(widget) {
+    widget.disposed = true; widget.actions.stop?.();
+    if (widget.cardId) window.ChauffeurHaCards?.unmount(widget.cardId);
+  }
   function clear() {
-    for (const widget of widgets.values()) widget.actions.stop?.();
+    for (const widget of widgets.values()) stop(widget);
     widgets.clear(); body.replaceChildren();
+  }
+  function addMore(widget, row) {
+    const kind = kindOf(row).id;
+    if (['lock', 'garage', 'alarm'].includes(kind)) return;
+    const more = element('button', 'More'); more.type = 'button'; more.setAttribute('data-more', '');
+    const bar = element('div'); bar.className = 'twin-device-actions'; bar.append(more);
+    const host = element('div'); host.hidden = true; widget.node.append(bar, host);
+    widget.cardId = `twin-card-${row.device_id}-${++sequence}`;
+    more.addEventListener('click', async () => {
+      if (widget.disposed || more.disabled) return;
+      more.disabled = true;
+      const type = {light: 'light', climate: 'thermostat', humidifier: 'humidifier'}[kind] || 'tile';
+      let mounted = false;
+      try {
+        host.hidden = false;
+        mounted = !!await window.ChauffeurHaCards?.mountBuiltin(host, {
+          id: widget.cardId, type, config: {type, entity: row.entity_id}, interactive: true, apiBase: base(),
+        });
+      } catch { /* Our controls remain available when HA's frontend is away. */ }
+      finally { more.disabled = false; }
+      if (widget.disposed) { window.ChauffeurHaCards?.unmount(widget.cardId); return; }
+      host.hidden = !mounted;
+      if (!mounted) { host.replaceChildren(); live.openRing(row); }
+    });
   }
   // A poll that changes nothing in this room leaves its rows alone, so a press that spans
   // the poll still lands and focus stays put (review M2).
   function render() {
     if (!room) return;
     const rows = live.devices(room.area_id), states = live.states();
+    window.ChauffeurHaCards?.setStates(states);
     const key = JSON.stringify([room.area_id, rows.map(row => [row.device_id, row.offered, row.label,
       states[row.entity_id]?.state, states[row.entity_id]?.attributes])]);
     if (key === shown) return;
@@ -42,21 +73,21 @@ export function mountRoomPanel(live) {
     empty.remove();
     for (const [id, widget] of widgets) {
       if (ids.has(id)) continue;
-      widget.actions.stop?.(); widget.node.remove(); widgets.delete(id);
+      stop(widget); widget.node.remove(); widgets.delete(id);
     }
     for (const row of rows) {
       const state = states[row.entity_id], attrs = state?.attributes || {};
-      const shape = JSON.stringify([row.kind, row.offered, attrs.supported_color_modes, attrs.effect_list,
-        attrs.min_color_temp_kelvin, attrs.max_color_temp_kelvin, attrs.min_mireds, attrs.max_mireds]);
+      const shape = JSON.stringify([kindOf(row).id, row.offered, controlShape(state)]);
       let widget = widgets.get(row.device_id);
       if (!widget || shape !== widget.shape || !widget.actions.update) {
         const node = widget?.node || element('section');
-        widget?.actions.stop?.();
+        if (widget) stop(widget);
         node.className = 'twin-room-device'; node.dataset.deviceId = row.device_id;
         const name = element('h3'), status = element('p');
         const actions = deviceActions(row, state, live.control, {getState: () => live.states()[row.entity_id]});
         node.replaceChildren(name, status, actions);
         widget = {node, name, status, actions, shape}; widgets.set(row.device_id, widget);
+        addMore(widget, row);
       }
       const {node, name, status, actions} = widget;
       name.textContent = row.name; status.textContent = row.label; actions.update?.(state);

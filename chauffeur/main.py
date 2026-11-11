@@ -7488,6 +7488,33 @@ def house_live(request: Request):
     return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices}
 
 
+@app.get('/api/house/camera/{entity_id}')
+def house_camera(entity_id: str, request: Request):
+    from services import control_rules, ha_api
+    if not re.fullmatch(r'camera\.[a-z0-9_]+', entity_id):
+        raise HTTPException(status_code=400, detail='Not a camera.')
+    if ha_api.mode() == 'unconfigured':
+        raise HTTPException(status_code=404, detail='No camera is available.')
+    who = control_rules.who_from_request(request.headers, request.query_params)
+    # A camera belongs to the grid's other kind. Check before any HA request;
+    # in particular, an image cannot carry an identify/PIN retry (C6).
+    decision = control_rules.check_kind(who, 'other')
+    if not decision.allowed:
+        message = ('Open this camera on your phone to see it.' if decision.needs
+                   else 'This camera is not available here.')
+        raise HTTPException(status_code=403, detail=message)
+    states = ha_api.get_states(ttl=0)
+    if ha_api.states_unreachable():
+        raise HTTPException(status_code=503, detail='Home Assistant is not reachable.')
+    if not any(row.get('entity_id') == entity_id for row in states):
+        raise HTTPException(status_code=404, detail='Camera not found.')
+    frame = ha_api.fetch_binary(f'/api/camera_proxy/{entity_id}')
+    if not frame:
+        raise HTTPException(status_code=503, detail='Home Assistant is not reachable.')
+    content, content_type = frame
+    return Response(content=content, media_type=content_type, headers={'Cache-Control': 'no-store'})
+
+
 class HouseHaIdentifyRequest(BaseModel):
     device_id: str
 

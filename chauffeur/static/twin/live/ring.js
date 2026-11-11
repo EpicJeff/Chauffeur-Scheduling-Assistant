@@ -1,4 +1,5 @@
 import { kindOf } from './kinds.js';
+import { controlShape } from './controls/shared.js';
 
 // The dial's size (its CSS box), the gap kept from the screen's edges, and the gap to the side card.
 const DIAL = 280, EDGE = 8, SPACE = 12;
@@ -74,9 +75,7 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
   function update() {
     if (!row) return;
     const state = live.states()[row.entity_id], kind = kindOf(row);
-    const attrs = state?.attributes || {};
-    const key = JSON.stringify([row.device_id, row.offered, attrs.supported_color_modes, attrs.effect_list,
-      attrs.min_color_temp_kelvin, attrs.max_color_temp_kelvin, attrs.min_mireds, attrs.max_mireds,
+    const key = JSON.stringify([row.device_id, row.offered, controlShape(state),
       kind.ring ? null : state]);
     if (signature === key && builder?.update) { builder.update(state); return; }
     if (signature === key) return;
@@ -149,7 +148,8 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
     if (suppressClick) {
       event.preventDefault(); event.stopImmediatePropagation(); suppressClick = false; clearTimeout(suppressTimer); return;
     }
-    if (row && event.target !== canvas && !inside(event)) close();
+    if (row && event.target !== canvas && !inside(event)
+        && !event.target?.closest?.('#cc-input-modal, #cc-confirm-modal')) close();
   }, {...options, capture: true});
   document.addEventListener('pointerdown', event => {
     suppressClick = false; clearTimeout(suppressTimer);

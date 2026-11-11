@@ -462,6 +462,7 @@ RULES = [
     ('POST', '/api/house/bakes/{key}/lease', PARENTS, None),
     ('GET', '/api/house/ha/link', PARENTS, None),
     ('GET', '/api/house/live', WALL, None),
+    ('GET', '/api/house/camera/{entity_id}', WALL_OR_SERVICE, None),
     ('POST', '/api/house/ha/identify', PARENTS, None),
     ('POST', '/api/house/twin/perf', WALL_OR_SERVICE, None),
     ('GET', '/api/house/twin/perf', PARENTS, None),

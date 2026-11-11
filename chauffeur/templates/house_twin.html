@@ -22,7 +22,7 @@
       'three/addons/': twinBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': twinBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
+    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     // Bake modules import three by its path; map that path onto the one versioned three.
@@ -35,6 +35,7 @@
       document.head.appendChild(twinAlpine);
     });
   </script>
+  <script defer src="{{ ('../../' if request.url.path.endswith('/') else '../') }}{{ 'static/ha_card_host.js' | ver }}"></script>
   <style>
     /* House's full-bleed scene and parchment controls (house.html:40-86). */
     html, body { margin:0; height:100%; overflow:hidden; }
@@ -112,6 +113,10 @@
     .twin-light-temperature { top:180px; }
     .twin-ring-side { position:absolute; left:292px; top:0; box-sizing:border-box; width:278px; display:flex; flex-direction:column; gap:8px; padding:12px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.98); }
     .twin-ring-caption { margin:0; font-size:11px; font-weight:600; color:#c9bb98; }
+    .twin-ring-side label { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .twin-control-summary { position:absolute; left:70px; top:108px; width:140px; text-align:center; pointer-events:none; }
+    .twin-control-summary p { margin:4px 0; }
+    .twin-camera-still { display:block; width:100%; height:auto; border-radius:8px; }
     .twin-light-swatches, .twin-light-effects { display:flex; flex-wrap:wrap; gap:8px; width:100%; justify-content:center; }
     .twin-ring-side .twin-light-swatches, .twin-ring-side .twin-light-effects { justify-content:flex-start; }
     .twin-device-actions .twin-light-swatches button { box-sizing:border-box; width:44px; height:44px; min-width:44px; min-height:44px; padding:0; border-radius:50%; font-size:0; box-shadow:inset 0 0 0 3px rgba(28,23,16,.94); }

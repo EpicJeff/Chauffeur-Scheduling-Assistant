@@ -455,6 +455,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   const live = {
     refresh, draw, control, openRoom, stop,
+    openRing: row => { roomPanel?.close(); ring?.open(row); },
     ring: () => ring?.current() || null,
     setMode(name) { mode = modes?.setMode(name || 'all') || 'all'; notify(); draw(); view.render(); },
     closeRoom() { ring?.close(); roomPanel?.close(); closeSheet(); },

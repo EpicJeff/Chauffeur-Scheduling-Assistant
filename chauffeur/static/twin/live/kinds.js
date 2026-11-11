@@ -1,6 +1,19 @@
 import { lightControls } from './controls/light.js';
+import { climateControls } from './controls/climate.js';
+import { fanControls } from './controls/fan.js';
+import { coverControls } from './controls/cover.js';
+import { mediaControls } from './controls/media.js';
+import { lockControls } from './controls/lock.js';
+import { alarmControls } from './controls/alarm.js';
+import { vacuumControls } from './controls/vacuum.js';
+import { humidifierControls } from './controls/humidifier.js';
+import { waterHeaterControls } from './controls/water_heater.js';
+import { sceneControls } from './controls/scene.js';
+import { cameraControls } from './controls/camera.js';
 
 const registrations = new Map();
+const DOMAINS = {alarm: 'alarm_control_panel', vacuum: 'vacuum', humidifier: 'humidifier',
+  water_heater: 'water_heater', scene: 'scene', script: 'script'};
 
 export function registerKind(kind) {
   registrations.set(kind.id, kind);
@@ -15,7 +28,7 @@ export function kindOf(row) {
 const CONTACTS = ['door', 'window', 'opening', 'garage_door'];
 const UNSAFE = { unlock: 'Unlock', open: 'Open', open_cover: 'Open', alarm_disarm: 'Disarm' };
 export async function confirmUnsafe(name, service, row) {
-  const label = row && kindOf(row).unsafe?.[service] || UNSAFE[service];
+  const label = row ? kindOf(row).unsafe?.[service] : UNSAFE[service];
   return !label || !!await window.promptConfirm(`${label} ${name}?`, 'Are you sure?', label, 'Cancel');
 }
 
@@ -117,42 +130,25 @@ function legacyPanel(draw) {
       actions.append(node); return node;
     };
     if (row.offered) draw?.({row, state, attrs: state?.attributes || {}, compact, button});
+    actions.update = () => {};
     return actions;
   };
 }
-const fanPanel = legacyPanel(({row, state, compact, button}) => {
-  if (compact) return;
-  const toggle = button(state?.state === 'on' ? 'On' : 'Off', 'toggle');
-  toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-label', row.name);
-  toggle.setAttribute('aria-checked', String(state?.state === 'on'));
-});
-const lockPanel = legacyPanel(({button}) => { button('Lock', 'lock'); button('Unlock', 'unlock'); });
-const garagePanel = legacyPanel(({button}) => { button('Open', 'open_cover'); button('Close', 'close_cover'); });
-const alarmPanel = legacyPanel(({row, button}) => {
-  if (!row.entity_id.startsWith('alarm_control_panel.')) return;
-  button('Arm home', 'alarm_arm_home'); button('Arm away', 'alarm_arm_away'); button('Disarm', 'alarm_disarm');
-});
-const climatePanel = legacyPanel(({attrs, compact, button}) => {
-  if (compact || !Number.isFinite(attrs.temperature)) return;
-  const step = Number(attrs.target_temp_step) > 0 ? Number(attrs.target_temp_step) : 1;
-  for (const [label, delta] of [['Lower', -step], ['Raise', step]]) {
-    const temperature = Math.round((attrs.temperature + delta) * 1000) / 1000;
-    const node = button(label, 'set_temperature', {temperature});
-    node.disabled = temperature < (attrs.min_temp ?? -Infinity) || temperature > (attrs.max_temp ?? Infinity);
-  }
-});
 const emptyPanel = legacyPanel();
 
 for (const [id, icon, panel, quick, unsafe] of [
   ['light', lightIcon, lightControls, 'toggle'], ['switch', switchIcon, lightControls, 'toggle'],
-  ['outlet', outletIcon, lightControls, 'toggle'], ['fan', fanIcon, fanPanel, 'toggle'],
-  ['lock', lockIcon, lockPanel, null, {unlock: 'Unlock'}],
-  ['garage', garageIcon, garagePanel, null, {open: 'Open', open_cover: 'Open'}], ['blinds', blindsIcon, emptyPanel],
-  ['climate', climateIcon, climatePanel], ['sensor', sensorIcon, emptyPanel],
-  ['camera', cameraIcon, emptyPanel], ['media', mediaIcon, emptyPanel],
-  ['alarm', alarmIcon, alarmPanel, null, {alarm_disarm: 'Disarm'}], ['other', otherIcon, emptyPanel],
+  ['outlet', outletIcon, lightControls, 'toggle'], ['fan', fanIcon, fanControls, 'toggle'],
+  ['lock', lockIcon, lockControls, null, {unlock: 'Unlock'}],
+  ['garage', garageIcon, coverControls, null, {open: 'Open', open_cover: 'Open'}], ['blinds', blindsIcon, coverControls],
+  ['climate', climateIcon, climateControls], ['sensor', sensorIcon, emptyPanel],
+  ['camera', cameraIcon, cameraControls], ['media', mediaIcon, mediaControls],
+  ['alarm', alarmIcon, alarmControls, null, {alarm_disarm: 'Disarm'}], ['other', otherIcon, emptyPanel],
+  ['vacuum', otherIcon, vacuumControls], ['humidifier', otherIcon, humidifierControls],
+  ['water_heater', otherIcon, waterHeaterControls], ['scene', otherIcon, sceneControls, 'turn_on'],
+  ['script', otherIcon, sceneControls, 'turn_on'],
 ]) {
   registerKind({id, icon, quick: quick || null, unsafe: unsafe || {},
-    match: row => id === 'alarm' ? row.kind === 'alarm' || String(row.entity_id || '').startsWith('alarm_control_panel.') : row.kind === id,
-    look: state => look(id, state), ring: panel === lightControls ? lightControls : null, panel});
+    match: row => row.kind === id || !!DOMAINS[id] && String(row.entity_id || '').startsWith(DOMAINS[id] + '.'),
+    look: state => look(id, state), ring: panel !== emptyPanel ? panel : null, panel});
 }
