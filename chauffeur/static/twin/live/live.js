@@ -15,7 +15,7 @@ const MARKER_PX = 44, BADGE_PX = 52, LABEL_GAP = 4, LABEL_H = 23, LABEL_MAX = 19
 // says Home Assistant is not reachable, instead of waiting on a dead network for minutes.
 const REQUEST_MS = 15000;
 // Page chrome drawn over the scene: no label goes under it, and a marker under it gets none.
-const OVERLAYS = '#twin-controls > *, #twin-tier, #twin-hud, #twin-status, #panel-shelf, #panel-chat-orb, #chat-overlay-container';
+const OVERLAYS = '#twin-controls > *, #twin-tier, #twin-hud, #twin-status, #panel-shelf, #panel-chat-orb, #chat-overlay-container, [data-ring], [data-ring] .twin-ring-side';
 let measurer = null;
 function labelWidth(text) {
   measurer ||= document.createElement('canvas').getContext('2d');
@@ -498,6 +498,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     modes = mountModes(view, live);
     ring = mountRing(view, live, {hit: hitMarker, tap, scene: tapScene,
       dismiss() { closeSheet(); roomPanel?.close(); },
+      // The open ring is one of the page's overlays: the next frame places labels around it.
+      moved() { overlays = null; lastKey = ''; },
       position(id) {
         const row = rows.find(row => row.device_id === id), rect = canvas.getBoundingClientRect();
         return row?.screen?.front ? {x: row.screen.x + rect.left, y: row.screen.y + rect.top} : null;

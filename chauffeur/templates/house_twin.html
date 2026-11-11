@@ -63,8 +63,12 @@
     .twin-device-sheet h2 { margin:0 0 8px; font-size:18px; font-weight:700; }
     .twin-device-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
     .twin-device-actions button { border:1px solid rgba(227,211,171,.45); border-radius:999px; padding:6px 11px; min-height:44px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
-    .twin-device-actions button:hover, .twin-device-actions button:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
+    /* Hover only where there is a mouse: on a touch wall a tapped button would keep it. */
+    @media (hover:hover) { .twin-device-actions button:hover { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; } }
+    .twin-device-actions button:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
     .twin-device-actions button:disabled { opacity:.5; cursor:default; }
+    /* The chosen effect reads as pressed, the way the preview controls show theirs (#twin-controls above). */
+    .twin-device-actions button[aria-pressed="true"] { background:rgba(227,211,171,.2); border-color:#e3d3ab; }
     /* A device toggle reads as a switch, not a button named after its state: the track
        is filled when the device is on (aria-checked, the confirmed state). */
     .twin-device-actions button[role="switch"] { position:relative; width:64px; padding:0; border-color:transparent; font-size:0; }
@@ -83,29 +87,39 @@
     .twin-room-device .twin-device-actions { margin-top:8px; align-items:center; }
     .twin-room-device label { display:flex; flex-wrap:wrap; align-items:center; gap:8px; width:100%; }
     .twin-room-device input[type="range"] { flex:1; min-width:100px; min-height:44px; accent-color:#e3d3ab; }
-    /* The marker's circular glyph and the sheet's parchment buttons, at the same 44px target size. */
-    .twin-device-ring { position:fixed; z-index:48; width:280px; margin-left:-140px; margin-top:-140px; color:#f0e6cf; font:13px/1.4 system-ui; }
-    .twin-device-ring > h2 { position:absolute; top:-34px; left:0; width:100%; margin:0; text-align:center; font-size:14px; font-weight:700; pointer-events:none; text-shadow:0 1px 3px #1c1710; }
+    /* The ring at a marker: a dial (the marker's circular glyph at control size) on the sheet's
+       parchment and hairline (.twin-device-sheet above), 44px targets, a name pill like the
+       marker labels (.twin-live-labels span), and a side card that is the sheet itself.
+       touch-action sits on the ring itself: Chromium ignores it on SVG paths, so a finger on an
+       arc would start a pan and cancel the drag. */
+    .twin-device-ring { position:fixed; z-index:48; width:280px; margin-left:-140px; margin-top:-140px; touch-action:none; color:#f0e6cf; font:13px/1.4 system-ui; }
+    .twin-device-ring > h2 { position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%); box-sizing:border-box; max-width:260px; margin:0; padding:3px 10px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border-radius:8px; background:rgba(28,23,16,.94); text-align:center; font-size:14px; font-weight:700; pointer-events:none; }
     .twin-ring-status { padding:8px 12px; margin:0; border-radius:8px; background:rgba(28,23,16,.94); }
     .twin-device-ring > .twin-device-actions { margin-top:0; padding:12px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.94); }
-    .twin-device-ring > .twin-light-controls { position:relative; box-sizing:border-box; width:280px; min-height:280px; padding:280px 0 0; gap:8px; border:0; background:transparent; }
-    .twin-light-controls [data-ring-part="center"] { position:absolute; left:112px; top:112px; width:56px; height:56px; min-width:56px; border:1px solid rgba(227,211,171,.45); border-radius:50%; background:rgba(28,23,16,.94); font-size:13px; }
-    .twin-light-controls [data-ring-part="center"]::before, .twin-light-controls [data-ring-part="center"]::after { content:none; }
-    .twin-light-controls [data-ring-part="center"][aria-checked="true"] { background:#e3d3ab; color:#1c1710; }
+    .twin-device-ring > .twin-light-controls { position:relative; display:block; box-sizing:border-box; width:280px; height:280px; padding:0; border:0; border-radius:50%; background:transparent; }
+    .twin-light-controls::before { content:''; position:absolute; inset:10px; border:1px solid rgba(227,211,171,.45); border-radius:50%; background:rgba(28,23,16,.98); }
+    .twin-device-ring .twin-light-controls button[data-ring-part="center"] { position:absolute; left:110px; top:110px; width:60px; height:60px; min-width:60px; padding:0; border:1px solid rgba(227,211,171,.45); border-radius:50%; background:rgba(28,23,16,.94); font-size:14px; font-weight:700; }
+    .twin-device-ring .twin-light-controls button[data-ring-part="center"]::before, .twin-device-ring .twin-light-controls button[data-ring-part="center"]::after { content:none; }
+    .twin-device-ring .twin-light-controls button[data-ring-part="center"][aria-checked="true"] { background:#e3d3ab; border-color:#e3d3ab; color:#1c1710; }
     .twin-light-arc { position:absolute; inset:0; width:280px; height:280px; overflow:visible; pointer-events:none; }
-    .twin-light-arc path { fill:none; stroke:rgba(28,23,16,.94); stroke-width:44; stroke-linecap:round; pointer-events:stroke; touch-action:none; cursor:grab; }
-    .twin-light-arc path:focus-visible { outline:none; stroke:rgba(54,43,29,.98); filter:drop-shadow(0 0 3px #e3d3ab); }
+    .twin-light-arc path { fill:none; stroke:rgba(227,211,171,.16); stroke-width:44; stroke-linecap:round; pointer-events:stroke; touch-action:none; cursor:pointer; }
+    .twin-light-arc path:focus-visible { outline:none; filter:drop-shadow(0 0 3px #e3d3ab); }
     .twin-light-arc path[aria-disabled="true"] { opacity:.5; cursor:default; }
-    .twin-light-arc .twin-light-progress { stroke:#e3d3ab; stroke-width:4; pointer-events:none; }
-    .twin-light-handle { fill:#e3d3ab; stroke:#1c1710; stroke-width:2; pointer-events:none; }
-    .twin-light-value { position:absolute; left:0; width:100%; text-align:center; font-weight:600; pointer-events:none; }
-    .twin-light-brightness { top:44px; }
-    .twin-light-temperature { top:218px; }
+    .twin-light-arc .twin-light-progress { stroke:#e3d3ab; stroke-width:44; pointer-events:none; }
+    .twin-light-handle { r:15px; fill:#f0e6cf; stroke:#1c1710; stroke-width:3; pointer-events:none; }
+    .twin-light-value { position:absolute; left:0; width:100%; text-align:center; font-size:15px; font-weight:700; pointer-events:none; }
+    .twin-light-brightness { top:78px; }
+    .twin-light-temperature { top:180px; }
+    .twin-ring-side { position:absolute; left:292px; top:0; box-sizing:border-box; width:278px; display:flex; flex-direction:column; gap:8px; padding:12px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.98); }
+    .twin-ring-caption { margin:0; font-size:11px; font-weight:600; color:#c9bb98; }
     .twin-light-swatches, .twin-light-effects { display:flex; flex-wrap:wrap; gap:8px; width:100%; justify-content:center; }
-    .twin-light-swatches button { width:44px; height:44px; min-width:44px; padding:0; font-size:0; box-shadow:inset 0 0 0 3px rgba(28,23,16,.94); }
+    .twin-ring-side .twin-light-swatches, .twin-ring-side .twin-light-effects { justify-content:flex-start; }
+    .twin-device-actions .twin-light-swatches button { box-sizing:border-box; width:44px; height:44px; min-width:44px; min-height:44px; padding:0; border-radius:50%; font-size:0; box-shadow:inset 0 0 0 3px rgba(28,23,16,.94); }
     .twin-light-wheel { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:4px; border-radius:8px; background:rgba(28,23,16,.94); }
+    .twin-ring-side .twin-light-wheel { padding:0; background:transparent; }
     .twin-colour-wheel { position:relative; width:88px; height:88px; min-width:88px; border:1px solid rgba(227,211,171,.45); border-radius:50%; background:radial-gradient(circle, white, transparent), conic-gradient(red, yellow, lime, cyan, blue, magenta, red); touch-action:none; cursor:crosshair; }
-    .twin-colour-wheel span { position:absolute; width:10px; height:10px; margin:-5px; border:2px solid #1c1710; border-radius:50%; box-shadow:0 0 0 1px #f0e6cf; pointer-events:none; }
+    .twin-ring-side .twin-colour-wheel { width:140px; height:140px; min-width:140px; }
+    .twin-colour-wheel span { position:absolute; width:14px; height:14px; margin:-7px; border:2px solid #1c1710; border-radius:50%; box-shadow:0 0 0 2px #f0e6cf; pointer-events:none; }
     .twin-colour-wheel:focus-visible { outline:2px solid #e3d3ab; outline-offset:2px; }
     .twin-colour-wheel[aria-disabled="true"] { opacity:.5; cursor:default; }
     /* The chat box stays: on a panel it rests as the Argyle orb (ha_theme.html), the only way

@@ -7,6 +7,21 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const COLOURS = [['Red', [255, 0, 0]], ['Amber', [255, 191, 0]], ['Green', [0, 255, 0]],
   ['Blue', [0, 0, 255]], ['Purple', [128, 0, 255]]];
 const SVG = 'http://www.w3.org/2000/svg';
+// The two arcs stop 20 degrees short of the horizontal on each side, so their round ends never
+// touch and a finger at the side of the ring lands on one arc, not both.
+const GAP = Math.PI / 9;
+const arcPoint = (t, lower) => {
+  const phi = Math.PI - GAP - t * (Math.PI - 2 * GAP);
+  return [140 + 90 * Math.cos(phi), 140 + (lower ? 1 : -1) * 90 * Math.sin(phi)];
+};
+const arcPath = lower => {
+  const [[x0, y0], [x1, y1]] = [arcPoint(0, lower), arcPoint(1, lower)].map(p => p.map(v => v.toFixed(2)));
+  return `M ${x0} ${y0} A 90 90 0 0 ${lower ? 0 : 1} ${x1} ${y1}`;
+};
+// The brightness arc fills in the light's own confirmed colour while it is on.
+const lightColour = s => s?.state === 'on' && Array.isArray(s.attributes?.rgb_color)
+  ? `color-mix(in srgb, rgb(${s.attributes.rgb_color.map(Number).join(',')}) 80%, #f0e6cf)` : '';
+let gradients = 0;
 function hueSat(attrs) {
   if (Array.isArray(attrs.hs_color)) return [...attrs.hs_color];
   const rgb = (attrs.rgb_color || [255, 255, 255]).map(v => v / 255);
@@ -54,13 +69,25 @@ export function lightControls({row, state, control, compact = false, surface = '
     toggle.setAttribute('aria-checked', String(confirmed?.state === 'on'));
   });
 
-  function slider(name, label, min, max, step, valueOf, serviceKey, lower = false) {
-    let node, readout, progress, handle, dragging = null, timer = null, editing = false, sending = false;
+  function slider(name, label, min, max, step, valueOf, serviceKey, lower = false, idleOf = () => false) {
+    let node, svg, readout, progress, handle, dragging = null, timer = null, editing = false, sending = false;
     if (ring) {
-      const svg = document.createElementNS(SVG, 'svg'); svg.setAttribute('viewBox', '0 0 280 280');
-      svg.setAttribute('class', 'twin-light-arc');
+      svg = document.createElementNS(SVG, 'svg'); svg.setAttribute('viewBox', '0 0 280 280');
+      svg.setAttribute('class', `twin-light-arc twin-light-arc-${name}`);
       node = document.createElementNS(SVG, 'path');
-      node.setAttribute('d', lower ? 'M 50 140 A 90 90 0 0 0 230 140' : 'M 50 140 A 90 90 0 0 1 230 140');
+      node.setAttribute('d', arcPath(lower));
+      if (name === 'temperature') {
+        // Warm on the left to cool on the right, the way the kelvin scale reads.
+        const id = `twin-kelvin-${++gradients}`, defs = document.createElementNS(SVG, 'defs');
+        const gradient = document.createElementNS(SVG, 'linearGradient');
+        gradient.setAttribute('id', id); gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
+        for (const [key, value] of [['x1', '28'], ['y1', '0'], ['x2', '252'], ['y2', '0']]) gradient.setAttribute(key, value);
+        for (const [offset, colour] of [['0', '#ff9d3c'], ['.45', '#ffe4c2'], ['1', '#cfe0ff']]) {
+          const stop = document.createElementNS(SVG, 'stop');
+          stop.setAttribute('offset', offset); stop.setAttribute('stop-color', colour); gradient.append(stop);
+        }
+        defs.append(gradient); svg.append(defs); node.style.stroke = `url(#${id})`;
+      }
       node.setAttribute('role', 'slider'); node.setAttribute('tabindex', row.offered ? '0' : '-1');
       node.setAttribute('aria-disabled', String(!row.offered));
       node.setAttribute('aria-valuemin', String(min)); node.setAttribute('aria-valuemax', String(max));
@@ -75,19 +102,24 @@ export function lightControls({row, state, control, compact = false, surface = '
       node.disabled = !row.offered; wrap.append(node); actions.append(wrap);
     }
     node.setAttribute('aria-label', `${row.name} ${name}`);
-    const show = value => {
+    const show = (value, idle = false) => {
       node.value = String(value);
       if (ring) {
         node.setAttribute('aria-valuenow', String(value));
         node.setAttribute('aria-valuetext', `${value}${name === 'brightness' ? '%' : ' K'}`);
-        const ratio = max > min ? (value - min) / (max - min) : 0, angle = ratio * Math.PI;
+        const ratio = max > min ? clamp((value - min) / (max - min), 0, 1) : 0, [cx, cy] = arcPoint(ratio, lower);
         progress.setAttribute('stroke-dasharray', `${ratio * 100} 100`);
-        handle.setAttribute('cx', String(140 - Math.cos(angle) * 90));
-        handle.setAttribute('cy', String(140 + (lower ? 1 : -1) * Math.sin(angle) * 90));
-        readout.textContent = `${label} ${value}${name === 'brightness' ? '%' : ' K'}`;
+        // A zero-length dash still draws its round cap: an empty arc draws no fill at all.
+        progress.style.visibility = name === 'brightness' && ratio > 0 ? 'visible' : 'hidden';
+        if (name === 'brightness') progress.style.stroke = lightColour(confirmed);
+        handle.setAttribute('cx', cx.toFixed(2)); handle.setAttribute('cy', cy.toFixed(2));
+        handle.style.visibility = idle ? 'hidden' : 'visible';
+        readout.textContent = idle ? '' : `${value}${name === 'brightness' ? '%' : ' K'}`;
       }
     };
-    const restore = () => { if (!editing && !sending) show(valueOf(confirmed?.attributes || {})); };
+    const restore = () => {
+      if (!editing && !sending) show(valueOf(confirmed?.attributes || {}), idleOf(confirmed?.attributes || {}));
+    };
     updates.push(restore);
     async function commit() {
       clearTimeout(timer); timer = null;
@@ -116,11 +148,15 @@ export function lightControls({row, state, control, compact = false, surface = '
         if (!(event.key in keys)) return;
         event.preventDefault(); choose(keys[event.key]); schedule();
       });
+      // The value follows the finger's angle around the ring's centre (the arc's own box, so the
+      // ring's placement on screen never skews it); past either end it holds at that end.
       const move = event => {
-        const bounds = actions.getBoundingClientRect();
-        const x = event.clientX - bounds.left - 140, y = event.clientY - bounds.top - 140;
+        const box = svg.getBoundingClientRect(), bounds = actions.getBoundingClientRect();
+        const cx = box.width ? box.left + box.width / 2 : bounds.left + 140;
+        const cy = box.width ? box.top + box.height / 2 : bounds.top + 140;
+        const x = event.clientX - cx, y = event.clientY - cy;
         const angle = Math.atan2(Math.max(0, lower ? y : -y), -x);
-        choose(min + angle / Math.PI * (max - min));
+        choose(min + clamp((angle - GAP) / (Math.PI - 2 * GAP), 0, 1) * (max - min));
       };
       node.addEventListener('pointerdown', event => {
         if (!row.offered || sending || event.button > 0) return;
@@ -146,16 +182,23 @@ export function lightControls({row, state, control, compact = false, surface = '
     const min = attrs.min_color_temp_kelvin || (attrs.max_mireds ? Math.round(1e6 / attrs.max_mireds) : 2000);
     const max = attrs.max_color_temp_kelvin || (attrs.min_mireds ? Math.round(1e6 / attrs.min_mireds) : 6500);
     slider('temperature', 'Temperature', min, max, 1,
-      a => clamp(a.color_temp_kelvin ?? (a.color_temp ? Math.round(1e6 / a.color_temp) : min), min, max), 'color_temp_kelvin', true);
+      a => clamp(a.color_temp_kelvin ?? (a.color_temp ? Math.round(1e6 / a.color_temp) : min), min, max), 'color_temp_kelvin', true,
+      a => a.color_temp_kelvin == null && !a.color_temp && !!a.color_mode && a.color_mode !== 'color_temp');
   }
+  // At the marker, colour and effects sit in a card beside the dial (the host places it on
+  // whichever side has room); in the room's row they follow the ranges.
+  const side = ring ? element('div') : actions;
+  if (ring) side.className = 'twin-ring-side';
+  const caption = text => { if (ring) { const node = element('p', text); node.className = 'twin-ring-caption'; side.append(node); } };
   if (colour) {
+    caption('Colour');
     const swatches = part(element('div'), 'swatches'); swatches.className = 'twin-light-swatches';
     for (const [name, rgb] of COLOURS) {
       const node = button(name, 'turn_on', {rgb_color: rgb}); node.setAttribute('aria-label', name);
       node.style.background = `rgb(${rgb.join(',')})`; swatches.append(node);
     }
-    actions.append(swatches);
-    const label = element('div', 'Colour'), wheel = part(element('div'), 'wheel');
+    side.append(swatches);
+    const label = element('div', ring ? undefined : 'Colour'), wheel = part(element('div'), 'wheel');
     wheel.className = 'twin-colour-wheel'; wheel.setAttribute('role', 'slider');
     wheel.setAttribute('tabindex', row.offered ? '0' : '-1'); wheel.setAttribute('aria-disabled', String(!row.offered));
     wheel.setAttribute('aria-label', `${row.name} colour`); wheel.setAttribute('aria-valuemin', '0'); wheel.setAttribute('aria-valuemax', '360');
@@ -201,16 +244,18 @@ export function lightControls({row, state, control, compact = false, surface = '
       show(); schedule();
     });
     updates.push(restore); stops.push(() => clearTimeout(timer));
-    label.className = 'twin-light-wheel'; label.append(wheel); actions.append(label);
+    label.className = 'twin-light-wheel'; label.append(wheel); side.append(label);
   }
   if (light && attrs.effect_list?.length) {
+    caption('Effects');
     const effects = part(element('div'), 'effects'); effects.className = 'twin-light-effects';
     for (const effect of attrs.effect_list) {
       const node = button(effect, 'turn_on', {effect}); effects.append(node);
       updates.push(() => node.setAttribute('aria-pressed', String(confirmed?.attributes?.effect === effect)));
     }
-    actions.append(effects);
+    side.append(effects);
   }
+  if (ring && side.childNodes.length) { actions.append(side); actions.side = side; }
   actions.update = update;
   actions.stop = () => { disposed = true; for (const stop of stops) stop(); };
   update(state);
