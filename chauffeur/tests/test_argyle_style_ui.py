@@ -135,8 +135,7 @@ class PwaStyleSheet(unittest.TestCase):
         choice = choice[:choice.index('};')]
         self.assertIn('o.selected', choice, 'the current style is not marked on the phone')
         ask = app[app.index('window.promptInput = function'):]
-        ask = ask[:ask.index('
-        };')]
+        ask = ask[:ask.index('\n        };')]
         self.assertIn('maxLength', ask)
 
 
