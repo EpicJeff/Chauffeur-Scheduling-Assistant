@@ -4,6 +4,8 @@ import { groundAt } from '../twin_ground.js';
 import { markerState, levelOfDetail, markerTexture, markerSprite } from './markers.js';
 import { deviceActions, confirmUnsafe, mountRoomPanel } from './room_panel.js';
 import { roomStates, mountModes } from './modes.js';
+import { kindOf } from './kinds.js';
+import { mountRing } from './ring.js';
 
 const FT = .3048, unreachable = 'Home Assistant is not reachable.';
 // Screen sizes in CSS px: a marker is a 44 px tap target (the page's own controls' hit height),
@@ -21,7 +23,7 @@ function labelWidth(text) {
   return Math.min(LABEL_MAX, Math.ceil(measurer.measureText(text).width) + 14);
 }
 const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-const iconKind = row => row.entity_id.startsWith('alarm_control_panel.') ? 'alarm' : row.kind;
+const iconKind = row => kindOf(row).id;
 const report = error => console.error('[twin live]', error);
 
 // A signal that aborts when the layer stops or after `ms`, whichever comes first.
@@ -116,8 +118,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   const raycaster = new THREE.Raycaster(), projected = new THREE.Vector3(), scratch = new THREE.Vector3();
   let states = {}, stopped = false, stale = true, mode = null, timer = null, polling = Promise.resolve();
   let stream = null, pollChanges = null;
-  let selected = null, sheetKey = null, sheetStatus = null, pointer = null;
-  let roomPanel = null, modes = null, rows = [], levelKeys = [], resizeObserver = null;
+  let selected = null, sheetKey = null, sheetStatus = null;
+  let roomPanel = null, modes = null, ring = null, rows = [], levelKeys = [], resizeObserver = null;
   // Layout runs only when something it reads changed (review M1): the camera, the canvas,
   // the shown levels, a poll or mode (revision), or the page's overlays.
   const lastCamera = new Float64Array(32);
@@ -192,7 +194,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     sheet.append(heading, status, actions);
   }
   function openRoom(building, room, fallback) {
-    closeSheet();
+    ring?.close(); closeSheet();
     const row = layout.rooms.find(r => r.building === building && r.room === room);
     const event = new CustomEvent('twinroom', { detail: row, cancelable: true });
     if (canvas.dispatchEvent(event)) {
@@ -210,7 +212,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     if (!device) return false;
     busy.add(entityId);
     try {
-      if (!await confirmUnsafe(device.name, service) || stopped) return false;
+      if (!await confirmUnsafe(device.name, service, device) || stopped) return false;
       if (stale) { window.showGlobalAlert(unreachable); return false; }
       const response = await window.chfControlFetch(base() + 'api/ha/card/service', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -236,9 +238,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   function tap(row) {
     if (stale) { window.showGlobalAlert(unreachable); return; }
     if (!row.offered) { showSheet(row); return; }
-    if (['light', 'switch', 'outlet'].includes(row.kind)) { closeSheet(); void control(row.entity_id, 'toggle'); }
-    else if (['lock', 'garage', 'alarm'].includes(iconKind(row))) showSheet(row);
-    else openRoom(row.building, row.room, row);
+    const service = kindOf(row).quick;
+    if (service) { closeSheet(); void control(row.entity_id, service); }
   }
   function changed(camera, rect) {
     let moved = false;
@@ -352,6 +353,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     for (const b of shownBadges) b.sprite.center.set(.5 - b.dx / BADGE_PX, .5 + b.dy / BADGE_PX);
     badges.forEach((sprite, key) => { sprite.visible = visibleBadges.has(key); });
     root.updateMatrixWorld(true);
+    ring?.draw();
   }
   // Resolves whatever the frame does: a throw in draw or render never strands a poll (review M3).
   const drawn = () => new Promise(resolve => requestAnimationFrame(() => {
@@ -424,21 +426,25 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     stream?.close(); stream = null;
     try { flagFloors(); } catch (error) { report(error); }
     resizeObserver?.disconnect();
-    for (const part of [roomPanel, modes]) { try { part?.stop(); } catch (error) { report(error); } }
+    for (const part of [ring, roomPanel, modes]) { try { part?.stop(); } catch (error) { report(error); } }
     root.traverse(object => object.material?.dispose()); root.removeFromParent();
     textures.forEach(value => value.dispose()); textures.clear(); labels.remove(); sheet.remove();
   }
-  function onPointerUp(event) {
-    const start = pointer; pointer = null;
-    if (!start || start.id !== event.pointerId || Math.hypot(start.x - event.clientX, start.y - event.clientY) > 6) return;
+  function hitMarker(event) {
+    draw();
+    const rect = canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
+    return rows.filter(row => row.screen?.front && Math.abs(row.screen.x - x) <= MARKER_PX / 2 &&
+      Math.abs(row.screen.y - y) <= MARKER_PX / 2)
+      .sort((a, b) => Math.hypot(a.screen.x - x, a.screen.y - y) - Math.hypot(b.screen.x - x, b.screen.y - y))[0];
+  }
+  function tapScene(event) {
     draw();
     const rect = canvas.getBoundingClientRect();
     raycaster.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1,
       1 - (event.clientY - rect.top) / rect.height * 2), view.camera);
-    const sprites = [...rows.map(row => row.sprite), ...badges.values()].filter(sprite => sprite.visible);
+    const sprites = [...badges.values()].filter(sprite => sprite.visible);
     const hit = raycaster.intersectObjects(sprites, false)[0]?.object;
-    if (hit?.userData.deviceId) tap(rows.find(row => row.device_id === hit.userData.deviceId));
-    else if (hit?.userData.room) {
+    if (hit?.userData.room) {
       if (stale) window.showGlobalAlert(unreachable);
       else openRoom(hit.userData.room.building, hit.userData.room.room);
     } else {
@@ -449,8 +455,9 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   const live = {
     refresh, draw, control, openRoom, stop,
-    setMode(name) { mode = name === 'lights' ? 'lights' : null; modes?.setMode(mode); notify(); draw(); view.render(); },
-    closeRoom() { roomPanel?.close(); closeSheet(); },
+    ring: () => ring?.current() || null,
+    setMode(name) { mode = modes?.setMode(name || 'all') || 'all'; notify(); draw(); view.render(); },
+    closeRoom() { ring?.close(); roomPanel?.close(); closeSheet(); },
     markers: () => rows.map(plain),
     rooms: roomRows,
     lights: () => modes?.lights() || [],
@@ -475,9 +482,6 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       return { ...marker, ...markerState(marker.kind, 'unknown'), stale: true, dim: true, sprite, labelNode: label };
     });
     levelKeys = [...new Set(rows.map(row => `${row.building}:${row.level}`))];
-    canvas.addEventListener('pointerdown', event => { pointer = { x: event.clientX, y: event.clientY, id: event.pointerId }; }, { signal: events.signal });
-    canvas.addEventListener('pointerup', onPointerUp, { signal: events.signal });
-    canvas.addEventListener('pointercancel', () => { pointer = null; }, { signal: events.signal });
     // A rebuild redraws the floor picker's buttons; flag them again.
     host?.addEventListener?.('twinrebuilt', () => queueMicrotask(flagFloors), { signal: events.signal });
     document.addEventListener('keydown', event => {
@@ -492,6 +496,12 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     }
     roomPanel = mountRoomPanel(live);
     modes = mountModes(view, live);
+    ring = mountRing(view, live, {hit: hitMarker, tap, scene: tapScene,
+      dismiss() { closeSheet(); roomPanel?.close(); },
+      position(id) {
+        const row = rows.find(row => row.device_id === id), rect = canvas.getBoundingClientRect();
+        return row?.screen?.front ? {x: row.screen.x + rect.left, y: row.screen.y + rect.top} : null;
+      }});
   } catch (error) {
     report(error); stop();
     if (view.live === live) view.live = null;

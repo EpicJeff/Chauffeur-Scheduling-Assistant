@@ -3,6 +3,14 @@ import { FT, polygon, contains, stairHoles } from '../twin_generator.js';
 import { groundAt } from '../twin_ground.js';
 import { lightColor, lightIntensity, createRealLights } from './real_lights.js';
 
+const registry = new Map();
+export function registerMode(mode) { registry.set(mode.id, mode); return mode; }
+export function modes() { return [...registry.values()]; }
+
+registerMode({id: 'lights', label: 'Lights',
+  enter: ({lighting}) => lighting(true), update() {}, leave: ({lighting}) => lighting(false)});
+registerMode({id: 'all', label: 'All', enter() {}, update() {}, leave() {}});
+
 export function roomStates(rooms, states) {
   return rooms.filter(room => room.area_id).map(room => {
     const on = [...new Set(room.lights)].map(id => states[id]).filter(state => state?.state === 'on');
@@ -34,18 +42,20 @@ export function mountModes(view, live) {
   const strip = document.createElement('fieldset'); strip.id = 'twin-modes';
   const legend = document.createElement('legend'); legend.textContent = 'Devices'; strip.append(legend);
   const buttons = new Map();
-  for (const [label, mode] of [['Lights', 'lights'], ['All', null]]) {
-    const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
-    button.addEventListener('click', () => live.setMode(mode)); strip.append(button); buttons.set(mode, button);
+  for (const mode of modes()) {
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = mode.label;
+    button.addEventListener('click', () => live.setMode(mode.id)); strip.append(button); buttons.set(mode.id, button);
   }
   document.getElementById('twin-controls').append(strip);
-  let mode = null, lastKey = '', revision = 0;
+  let mode = 'all', lastKey = '', revision = 0;
   const floors = [], lamps = [];
   // Older embeds do not expose a render tier. Keep their room overview until
   // they mount the current view, whose tier supplies the real-light budget.
   const realLighting = !!view.tier;
   let legacyRooms = [];
   const rig = createRealLights(view);
+  const context = {view, live, lighting(on) { view.setEvening?.(on); rig.show(on); }};
+  registry.get(mode).enter(context);
   const layout = live.layout();
   // The same world transform as the marker, including lot ground elevation.
   // A small shared low-poly bulb adds no shadow draw calls.
@@ -115,6 +125,7 @@ export function mountModes(view, live) {
     }
     revision++;
     for (const [value, button] of buttons) button.setAttribute('aria-pressed', String(value === mode));
+    registry.get(mode)?.update?.(context);
     draw();
   }
   function draw() {
@@ -154,8 +165,12 @@ export function mountModes(view, live) {
   const unsubscribe = live.subscribe(update); update();
   return {
     setMode(value) {
-      if (mode !== value) { mode = value; view.setEvening?.(mode === 'lights'); rig.show(mode === 'lights'); }
+      value = registry.has(value) ? value : 'all';
+      if (mode !== value) {
+        registry.get(mode)?.leave?.(context); mode = value; registry.get(mode)?.enter?.(context);
+      }
       update();
+      return mode;
     },
     draw,
     lights: () => lamps.map(lamp => ({ device: lamp.marker.device_id, at: [...lamp.marker.at],
@@ -163,7 +178,7 @@ export function mountModes(view, live) {
     stop() {
       for (const lamp of lamps) if (lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, 0);
       unsubscribe(); strip.remove();
-      if (mode === 'lights') view.setEvening?.(false);
+      registry.get(mode)?.leave?.(context);
       rig.stop();
       for (const { bulb } of lamps) { bulb.removeFromParent(); bulb.material.dispose(); }
       bulbGeometry.dispose();
