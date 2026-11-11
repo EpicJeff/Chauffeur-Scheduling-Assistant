@@ -146,9 +146,22 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       const opacity = row.dim ? '.4' : '1';
       if (row.labelNode.style.opacity !== opacity) row.labelNode.style.opacity = opacity;
     }
+    flagFloors();
     if (selected) showSheet(selected);
     // One broken listener never stops the others, or the polls that follow (review M3).
     for (const listener of [...listeners]) { try { listener(); } catch (error) { report(error); } }
+  }
+  // Attention pushes through at every level (twin design 5.1): the floor picker flags each
+  // floor holding something that wants attention, so a person looking elsewhere sees which.
+  function flagFloors() {
+    if (typeof document.querySelectorAll !== 'function') return;
+    const flagged = new Set(stopped ? [] : rows.filter(row => row.look === 'attention').map(row => `${row.building}:${row.level}`));
+    for (const button of document.querySelectorAll('#twin-views [data-view]')) {
+      const on = flagged.has(button.dataset.view);
+      if (on === button.hasAttribute('data-attention')) continue;
+      if (on) { button.setAttribute('data-attention', ''); button.setAttribute('aria-label', `${button.textContent}, needs attention`); }
+      else { button.removeAttribute('data-attention'); button.removeAttribute('aria-label'); }
+    }
   }
   function closeSheet() { selected = null; sheetKey = null; sheetStatus = null; sheet.hidden = true; sheet.replaceChildren(); }
   // A poll only refreshes the open sheet's status line; its buttons are rebuilt only when the
@@ -253,9 +266,12 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const pixelSize = point => camera.isOrthographicCamera ? (camera.top - camera.bottom) / camera.zoom / Math.max(1, rect.height)
       : 2 * Math.max(.1, -scratch.copy(point).applyMatrix4(camera.matrixWorldInverse).z)
         * Math.tan(camera.fov * Math.PI / 360) / camera.zoom / Math.max(1, rect.height);
-    const shown = rows.filter(row => view.groups?.levels[`${row.building}:${row.level}`]?.visible !== false);
+    const levelShown = row => view.groups?.levels[`${row.building}:${row.level}`]?.visible !== false;
+    const shown = rows.filter(levelShown);
     const lod = levelOfDetail(shown, FT / pixelSize(view.controls.target));
-    const individual = new Set(lod.markers), visibleBadges = new Set();
+    // A marker that wants attention stays drawn on its own while its floor is hidden (twin design 5.1).
+    const pinned = rows.filter(row => row.look === 'attention' && !levelShown(row)).map(row => row.device_id);
+    const individual = new Set([...lod.markers, ...pinned]), visibleBadges = new Set();
     const place = (sprite, size) => sprite.scale.setScalar(pixelSize(sprite.position) * size);
     const screen = position => {
       projected.copy(position).project(camera);
@@ -370,6 +386,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   function stop() {
     if (stopped) return;
     stopped = true; clearTimeout(timer); events.abort(); requests.abort(); listeners.clear();
+    try { flagFloors(); } catch (error) { report(error); }
     resizeObserver?.disconnect();
     for (const part of [roomPanel, modes]) { try { part?.stop(); } catch (error) { report(error); } }
     root.traverse(object => object.material?.dispose()); root.removeFromParent();
@@ -425,6 +442,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     canvas.addEventListener('pointerdown', event => { pointer = { x: event.clientX, y: event.clientY, id: event.pointerId }; }, { signal: events.signal });
     canvas.addEventListener('pointerup', onPointerUp, { signal: events.signal });
     canvas.addEventListener('pointercancel', () => { pointer = null; }, { signal: events.signal });
+    // A rebuild redraws the floor picker's buttons; flag them again.
+    host?.addEventListener?.('twinrebuilt', () => queueMicrotask(flagFloors), { signal: events.signal });
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape') { closeSheet(); roomPanel?.close(); }
     }, { signal: events.signal });
