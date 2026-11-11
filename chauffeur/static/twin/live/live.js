@@ -4,7 +4,7 @@ import { groundAt } from '../twin_ground.js';
 import { markerState, levelOfDetail, markerTexture, markerSprite } from './markers.js';
 import { deviceActions, confirmUnsafe, mountRoomPanel } from './room_panel.js';
 import { roomStates, mountModes } from './modes.js';
-import { kindOf } from './kinds.js';
+import { kindOf, unsafeLabel } from './kinds.js';
 import { mountRing } from './ring.js';
 
 const FT = .3048, unreachable = 'Home Assistant is not reachable.';
@@ -114,10 +114,11 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   const labels = document.createElement('div'); labels.className = 'twin-live-labels';
   const sheet = document.createElement('aside'); sheet.className = 'twin-device-sheet'; sheet.hidden = true;
   sheet.setAttribute('role', 'dialog');
-  const textures = new Map(), badges = new Map(), listeners = new Set(), busy = new Set();
+  // A control's call on its way, per entity, and the newest press waiting behind it (C10).
+  const textures = new Map(), badges = new Map(), listeners = new Set(), busy = new Set(), waiting = new Map();
   const raycaster = new THREE.Raycaster(), projected = new THREE.Vector3(), scratch = new THREE.Vector3();
   let states = {}, stopped = false, stale = true, mode = null, timer = null, polling = Promise.resolve();
-  let stream = null, pollChanges = null;
+  let stream = null, pollChanges = null, pushed = false, warned = false;
   let selected = null, sheetKey = null, sheetStatus = null;
   let roomPanel = null, modes = null, ring = null, rows = [], levelKeys = [], resizeObserver = null;
   // Layout runs only when something it reads changed (review M1): the camera, the canvas,
@@ -205,15 +206,40 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   // The one control path for every surface (marker sheet, room panel, a tap). It asks
   // before an unlock, an open or a disarm (review I1), and reads no state of its own.
+  // An entity is busy only while its question and its call are out (Ruling C10, review
+  // H2): a press meanwhile is not dropped but waits, the newest replacing any earlier one
+  // (whose promise says false), and goes once the call has answered. An unsafe press
+  // while busy is never queued: it would ask its question a second time.
   async function control(entityId, service, data = {}) {
-    if (stopped || busy.has(entityId)) return false;
+    if (stopped) return false;
     if (stale) { window.showGlobalAlert(unreachable); return false; }
     const device = devices.find(row => row.offered && (row.entity_id === entityId || row.entities?.includes(entityId)));
     if (!device) return false;
+    if (busy.has(entityId)) {
+      if (unsafeLabel(device, service, data, states[entityId])) {
+        window.showGlobalAlert(`Still working on ${device.name}…`);
+        return false;
+      }
+      waiting.get(entityId)?.resolve(false);
+      return new Promise(resolve => waiting.set(entityId, {service, data, resolve}));
+    }
     busy.add(entityId);
+    let sent = false, ok = false;
+    try { ({sent, ok} = await send(device, entityId, service, data)); }
+    finally {
+      busy.delete(entityId);
+      const next = waiting.get(entityId);
+      if (next) { waiting.delete(entityId); control(entityId, next.service, next.data).then(next.resolve, () => next.resolve(false)); }
+    }
+    // The confirming poll runs with the entity free: a press during it is sent.
+    if (sent && !stopped) await refresh(true);
+    return ok;
+  }
+  control.confirmsUnsafe = true;
+  async function send(device, entityId, service, data) {
+    if (!await confirmUnsafe(device.name, service, device, data, states[entityId]) || stopped) return {sent: false, ok: false};
+    if (stale) { window.showGlobalAlert(unreachable); return {sent: false, ok: false}; }
     try {
-      if (!await confirmUnsafe(device.name, service, device) || stopped) return false;
-      if (stale) { window.showGlobalAlert(unreachable); return false; }
       const response = await window.chfControlFetch(base() + 'api/ha/card/service', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain: entityId.split('.')[0], service, data: { ...data, entity_id: entityId } }),
@@ -221,20 +247,18 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
         // "Who's asking?", so the time a person takes over the PIN is never counted.
         get signal() { return deadline(requests.signal, REQUEST_MS).signal; },
       });
-      if (stopped) return false;
+      if (stopped) return {sent: false, ok: false};
       if (response.status === 503) { stale = true; notify(); window.showGlobalAlert(unreachable); }
       else if (!response.ok && response.status !== 403 && !response.chfControlShown) {
         const body = await response.json().catch(() => ({}));
         window.showGlobalAlert(typeof body.detail === 'string' ? body.detail : 'Home Assistant could not finish that request.');
       }
-      await refresh(true);
-      return response.ok;
+      return {sent: true, ok: response.ok};
     } catch {
       if (!stopped) { stale = true; notify(); window.showGlobalAlert(unreachable); }
-      return false;
-    } finally { busy.delete(entityId); }
+      return {sent: false, ok: false};
+    }
   }
-  control.confirmsUnsafe = true;
   function tap(row) {
     if (stale) { window.showGlobalAlert(unreachable); return; }
     if (!row.offered) { showSheet(row); return; }
@@ -392,13 +416,24 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     polling = polling.catch(report).then(() => poll(fresh));
     return polling;
   }
+  // Pushes are drawn once per frame (review M3): a burst of pushes is one restate, one
+  // notify and one render, never one of each per push.
+  function flushPushes() {
+    pushed = false;
+    if (stopped) return;
+    for (const row of rows) Object.assign(row, stateOf(row));
+    try { notify(); } catch (error) { report(error); }
+    try { draw(); view.render(); } catch (error) { report(error); }
+  }
   function subscribeStates() {
     if (stopped || typeof EventSource !== 'function') return;
     const entities = new Set([...rows.map(row => row.entity_id), ...devices.map(row => row.entity_id),
       ...(layout.rooms || []).flatMap(room => room.lights || [])].filter(Boolean));
     if (!entities.size) return;
     try {
-      const url = base() + 'api/ha/stream?entities=' + encodeURIComponent([...entities].join(','));
+      // No entity list in the URL (Ruling C11): the server derives the house's set from
+      // its placements; this layer still applies only what it draws.
+      const url = base() + 'api/ha/stream';
       stream = new EventSource(window.chfAuthUrl ? window.chfAuthUrl(url) : url);
       stream.onmessage = event => {
         if (stopped) return;
@@ -411,13 +446,16 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
         else states[change.entity_id] = state;
         pollChanges?.set(change.entity_id, state);
         stale = false;
-        for (const row of rows) Object.assign(row, stateOf(row));
-        try { notify(); } catch (error) { report(error); }
-        drawn();
+        if (!pushed) { pushed = true; requestAnimationFrame(flushPushes); }
       };
       // EventSource retries transient drops itself; the poll stays armed even
-      // if the browser closes this stream permanently (for example after a 401).
-      stream.onerror = () => {};
+      // if the browser closes this stream permanently (for example after a 401),
+      // and that is said once in the console rather than not at all.
+      stream.onerror = () => {
+        if (warned || stopped || stream?.readyState !== 2) return;
+        warned = true;
+        console.warn('[twin live] the state stream was refused; changes arrive with the 10 s poll.');
+      };
     } catch { /* Polling is also the path for browsers that cannot open a stream. */ }
   }
   function stop() {
@@ -455,15 +493,22 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   const live = {
     refresh, draw, control, openRoom, stop,
-    openRing: row => { roomPanel?.close(); ring?.open(row); },
+    // From the room panel: the ring takes the keyboard focus, and gives it back (review L7).
+    openRing: row => { const from = document.activeElement; roomPanel?.close(); ring?.open(row, {focus: from}); },
     ring: () => ring?.current() || null,
     setMode(name) { mode = modes?.setMode(name || 'all') || 'all'; notify(); draw(); view.render(); },
     closeRoom() { ring?.close(); roomPanel?.close(); closeSheet(); },
     markers: () => rows.map(plain),
+    marker: id => { const row = rows.find(row => row.device_id === id); return row ? plain(row) : null; },
     rooms: roomRows,
     lights: () => modes?.lights() || [],
     devices: area => devices.filter(row => row.area_id === area).map(row => ({ ...row, ...stateOf(row) })),
     states: () => structuredClone(states),
+    // Reads without a copy, for listeners that run on every push (review M3): never
+    // written to by a reader.
+    state: id => states[id],
+    peek: () => states,
+    stale: () => rows.some(row => row.stale),
     layout: () => structuredClone(layout),
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   };

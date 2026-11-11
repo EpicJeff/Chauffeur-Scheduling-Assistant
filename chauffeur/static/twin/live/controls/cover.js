@@ -1,11 +1,16 @@
 import { controls, title } from './shared.js';
+import { kindOf } from '../kinds.js';
 
 export function coverControls(options) {
   const c = controls(options);
   // Older integrations omit the mask but still expose open/close.
   const legacy = c.attrs.supported_features == null;
-  const arcs = c.has(4) || c.has(128);
+  // A garage door gets no position or tilt arc on either surface: a drag to the top would
+  // open it without the Open question (review H1). Open, Stop and Close stay.
+  const garage = kindOf(options.row).id === 'garage';
+  const arcs = !garage && (c.has(4) || c.has(128));
   const slide = () => {
+    if (garage) return;
     if (c.has(4)) c.slider('position', 'Position', 0, 100, 1, s => s?.attributes?.current_position,
       'set_cover_position', v => ({position: v}), false, '%');
     if (c.has(128)) c.slider('tilt', 'Tilt', 0, 100, 1, s => s?.attributes?.current_tilt_position,

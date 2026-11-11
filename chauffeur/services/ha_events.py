@@ -1,10 +1,13 @@
 """One Home Assistant state subscription, shared by the cache and live views."""
 import json
+import logging
 import queue
 import threading
 import time
 
 from services import ha_api
+
+log = logging.getLogger('chauffeur.ha_events')
 
 BACKOFF_BASE = 1.0
 BACKOFF_MAX = 60.0
@@ -14,6 +17,11 @@ _thread = None
 _halt = None
 _connection = None
 _subscribers = {}
+# Where each entity sits in ha_api's cached list, for the list it was built
+# from (review L2): a push replaces one row in place instead of copying the house.
+_index = {'rows': None, 'at': {}}
+# The last failure said in the log; a new reason is said once (review L1).
+_said = {'reason': None}
 
 
 def _connect(url):
@@ -22,10 +30,13 @@ def _connect(url):
     return connect(url, open_timeout=_TIMEOUT, close_timeout=1, max_size=None)
 
 
-def subscribe(entities=None):
+def subscribe(entities=None, wake=None):
+    """A queue of changes for `entities` (every entity when None). `wake`, when
+    given, is called (from the client's thread) after each change is queued, so
+    an async reader can sleep until there is something to read (review L11)."""
     changes = queue.Queue(maxsize=256)
     with _lock:
-        _subscribers[changes] = None if entities is None else frozenset(entities)
+        _subscribers[changes] = (None if entities is None else frozenset(entities), wake)
     return changes
 
 
@@ -42,23 +53,70 @@ def _publish(data):
     if state is not None and not isinstance(state, dict):
         return
     with ha_api._cache_lock:
-        rows = [row for row in ha_api._states_cache['data'] or []
-                if row.get('entity_id') != entity_id]
-        if state is not None:
-            rows.append(state)
-        ha_api._states_cache.update(data=rows, ts=time.time(), failed=False)
-    change = {'entity_id': entity_id, 'state': state}
+        _remember(entity_id, state)
     with _lock:
-        for changes, entities in _subscribers.items():
-            if entities is not None and entity_id not in entities:
-                continue
-            # A sleeping browser cannot hold up HA or grow memory without limit.
-            if changes.full():
-                try:
-                    changes.get_nowait()
-                except queue.Empty:
-                    pass
+        listening = [(changes, wake) for changes, (entities, wake) in _subscribers.items()
+                     if entities is None or entity_id in entities]
+    if not listening:
+        return
+    # A camera's tokens stay in the cache above and never reach a page (C9).
+    change = {'entity_id': entity_id, 'state': ha_api.public_state(state)}
+    for changes, wake in listening:
+        # A sleeping browser cannot hold up HA or grow memory without limit.
+        if changes.full():
+            try:
+                changes.get_nowait()
+            except queue.Empty:
+                pass
+        try:
             changes.put_nowait(change)
+        except queue.Full:
+            continue
+        if wake is not None:
+            try:
+                wake()
+            except Exception:
+                pass
+
+
+def _remember(entity_id, state):
+    """Write one change into ha_api's states cache; the caller holds its lock.
+
+    The row is replaced where it stands (no copy of the whole house per change);
+    the index is rebuilt only when the cache holds a list it was not built
+    from. A removed entity copies the list once, so a reader iterating the old
+    one never skips a row."""
+    rows = ha_api._states_cache.get('data')
+    if not isinstance(rows, list):
+        rows = []
+        ha_api._states_cache['data'] = rows
+    if _index['rows'] is not rows:
+        _index['rows'] = rows
+        _index['at'] = {row.get('entity_id'): i for i, row in enumerate(rows) if isinstance(row, dict)}
+    at = _index['at'].get(entity_id)
+    if at is not None and (at >= len(rows) or rows[at].get('entity_id') != entity_id):
+        _index['at'] = {row.get('entity_id'): i for i, row in enumerate(rows) if isinstance(row, dict)}
+        at = _index['at'].get(entity_id)
+    if state is None:
+        if at is not None:
+            rows = rows[:at] + rows[at + 1:]
+            ha_api._states_cache['data'] = rows
+            _index['rows'] = rows
+            _index['at'] = {row.get('entity_id'): i for i, row in enumerate(rows) if isinstance(row, dict)}
+    elif at is None:
+        _index['at'][entity_id] = len(rows)
+        rows.append(state)
+    else:
+        rows[at] = state
+    ha_api._states_cache.update(ts=time.time(), failed=False)
+
+
+def _say(error):
+    reason = f'{type(error).__name__}: {error}'[:200]
+    if reason == _said['reason']:
+        return
+    _said['reason'] = reason
+    log.warning('Home Assistant state stream: %s; retrying with back-off', reason)
 
 
 def _listen(connection, token, halt):
@@ -87,6 +145,8 @@ def _listen(connection, token, halt):
         if message.get('type') == 'result':
             if not message.get('success'):
                 raise ConnectionError('Home Assistant subscription refused')
+            if message.get('id') == 1:
+                _said['reason'] = None      # subscribed: the next failure is news again
             if message.get('id') == 2 and isinstance(message.get('result'), list):
                 with ha_api._cache_lock:
                     ha_api._states_cache.update(data=message['result'], ts=time.time(), failed=False)
@@ -112,9 +172,12 @@ def _run(halt):
                     return
                 _connection = connection
             _listen(connection, token, halt)
-        except Exception:
-            # HA restarting, unavailable or unconfigured must never break startup.
-            pass
+        except Exception as error:
+            # HA restarting, unavailable or unconfigured must never break startup,
+            # but a failure that keeps happening (a refused token) is said, once
+            # per reason, never once per attempt (review L1).
+            if not halt.is_set():
+                _say(error)
         finally:
             with _lock:
                 if _connection is connection:
@@ -159,3 +222,11 @@ def stop():
             pass
     if thread is not None and thread is not threading.current_thread():
         thread.join(timeout=_TIMEOUT + 2)
+
+
+def restart():
+    """Home Assistant's address or token was saved (review L3): drop any client
+    holding the old ones and start one on the new, or none when HA is gone."""
+    stop()
+    _said['reason'] = None
+    start()

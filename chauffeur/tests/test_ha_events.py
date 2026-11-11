@@ -29,10 +29,16 @@ Interfaces assumed (services/ha_events.py):
 - A pushed change is written into `ha_api`'s states cache (the row replaced,
   the cache marked fresh) BEFORE subscribers hear of it.
 
-The route: `GET /api/ha/stream?entities=a.b,c.d` (WALL_OR_SERVICE), media type
+The route: `GET /api/ha/stream[?area=<area_id>]` (WALL_OR_SERVICE), media type
 text/event-stream; every `data:` line is one JSON change shaped like the queue
 item above (unnamed SSE events, so `EventSource.onmessage` reads them). Comment
-lines (`: ping`) are allowed; nothing else is sent as data.
+lines (`: ping`) are allowed; nothing else is sent as data. The route takes no
+entity list from the URL (Ruling C11, review M4: a house's list overflowed the
+ingress request line): the server derives the page's set from the house's
+placements, `main._house_stream_entities(area)`, which these tests stand in for
+except where the derivation itself is checked. A page may narrow it by area id.
+A camera's access token, and the token in its entity_picture, never reach a
+subscriber (Ruling C9, review M5); the server's own cache keeps them.
 
 Run from chauffeur/:  env -u HA_BASE_URL python tests/test_ha_events.py
 """
@@ -404,10 +410,21 @@ class People:
 
     def __exit__(self, *exc):
         self.patch.stop()
+        patch.stopall()
 
 
 def stream(path, headers):
     return Stream(path, list(headers.items())).open()
+
+
+@contextlib.contextmanager
+def derived(ids):
+    """The house's placements, as the stream route derives them, stood in by a fixed set.
+    The route reads them once its response has started, so the stand-in stays until the
+    test's People() context ends (patch.stopall there)."""
+    import main
+    patch.object(main, '_house_stream_entities', lambda area=None: set(ids)).start()
+    yield
 
 
 # ---------------------------------------------------------------- tests
@@ -416,7 +433,8 @@ def test_state_changed_reaches_a_subscriber_within_a_second():
     with fake_ha() as hub, People() as who:
         started(hub)
         q = _events().subscribe(['light.kitchen'])
-        s = stream(STREAM + '?entities=light.kitchen', who.panel)
+        with derived(['light.kitchen']):
+            s = stream(STREAM, who.panel)
         try:
             check(s.status == 200, f'the panel reads the stream: {s.status} {s.text()[:200]}')
             check(s.media.startswith('text/event-stream'), f'an SSE stream: {s.media!r}')
@@ -445,7 +463,9 @@ def test_filter_by_entities():
         started(hub)
         only = _events().subscribe(['light.kitchen', 'lock.back'])
         every = _events().subscribe()
-        s = stream(STREAM + '?entities=light.kitchen,lock.back', who.panel)
+        # A list in the URL is ignored: the page's set is the server's (C11).
+        with derived(['light.kitchen', 'lock.back']):
+            s = stream(STREAM + '?entities=switch.other', who.panel)
         try:
             time.sleep(0.3)
             hub.push('switch.other', 'on')
@@ -496,7 +516,7 @@ def test_no_ha_no_errors():
             spawned = [t.name for t in threading.enumerate() if t.ident not in before and t.is_alive()]
             check(not spawned, f'no thread starts with no Home Assistant: {spawned}')
             q = ev.subscribe(['light.kitchen'])
-            s = stream(STREAM + '?entities=light.kitchen', who.panel)
+            s = stream(STREAM, who.panel)
             try:
                 check(s.status == 200 and s.media.startswith('text/event-stream'),
                       f'the stream still answers with no HA: {s.status} {s.media!r} {s.text()[:200]!r}')
@@ -523,7 +543,8 @@ def test_reconnects_with_backoff():
     with fake_ha() as hub, People() as who:
         started(hub)
         q = _events().subscribe(['light.kitchen'])
-        s = stream(STREAM + '?entities=light.kitchen', who.panel)
+        with derived(['light.kitchen']):
+            s = stream(STREAM, who.panel)
         try:
             time.sleep(0.3)
             hub.push('light.kitchen', 'on')
@@ -570,16 +591,17 @@ def test_stream_route_auth_tiers():
     with fake_ha() as hub, People() as who:
         started(hub)
         cases = (
-            ('a wall panel', STREAM + '?entities=light.kitchen', who.panel, 200),
-            ('the service', STREAM + '?entities=light.kitchen', who.service, 200),
+            ('a wall panel', STREAM, who.panel, 200),
+            ('the service', STREAM, who.service, 200),
             # EventSource cannot set headers: a person's token rides the query.
-            ('a parent by query token', STREAM + '?entities=light.kitchen&member_token=' + who.mum_token, {}, 200),
-            ('anonymous off the LAN', STREAM + '?entities=light.kitchen', {'CF-Connecting-IP': '203.0.113.9'}, 401),
-            ('a forged device token off the LAN', STREAM + '?entities=light.kitchen',
+            ('a parent by query token', STREAM + '?member_token=' + who.mum_token, {}, 200),
+            ('anonymous off the LAN', STREAM, {'CF-Connecting-IP': '203.0.113.9'}, 401),
+            ('a forged device token off the LAN', STREAM,
              {'CF-Connecting-IP': '203.0.113.9', 'X-Device-Token': 'not-a-token'}, 401),
         )
         for name, path, headers, want in cases:
-            s = stream(path, headers)
+            with derived(['light.kitchen']):
+                s = stream(path, headers)
             try:
                 check(s.status == want, f'{name}: {s.status} (want {want}) {s.text()[:200]!r}')
                 if want == 200:
@@ -620,6 +642,185 @@ def test_the_state_cache_is_warmed():
             _events().unsubscribe(q)
 
 
+def _house(areas=('kitchen', 'garage')):
+    """A twin with a Kitchen room, and Home Assistant's devices: one in each area, one in none."""
+    model = {'buildings': [{'id': 'b', 'rooms': [{'id': 'r', 'level': 'L1', 'ha_area': 'Kitchen'}]}]}
+    catalogue = {'available': True,
+                 'areas': [{'area_id': a, 'name': a.title()} for a in areas],
+                 'devices': [
+                     {'device_id': 'd-light', 'entity_id': 'light.kitchen', 'entities': ['light.kitchen', 'sensor.kitchen_power'],
+                      'area_id': 'kitchen', 'kind': 'light', 'name': 'Kitchen light'},
+                     {'device_id': 'd-lock', 'entity_id': 'lock.back', 'entities': ['lock.back'],
+                      'area_id': 'garage', 'kind': 'lock', 'name': 'Back door'},
+                     {'device_id': 'd-switch', 'entity_id': 'switch.other', 'entities': ['switch.other'],
+                      'area_id': None, 'kind': 'switch', 'name': 'Somewhere'},
+                 ]}
+    return model, catalogue
+
+
+def test_stream_set_is_derived_from_the_house():
+    import main
+    with fake_ha() as hub, People() as who, patch.object(main, '_house_ha_context', lambda settings=None: _house()):
+        got = main._house_stream_entities()
+        check(got == {'light.kitchen', 'lock.back'},
+              f'every device in an area, and each room\'s lights, never one in no area: {sorted(got)}')
+        check(main._house_stream_entities('kitchen') == {'light.kitchen'},
+              f'a page narrows it by area: {sorted(main._house_stream_entities("kitchen"))}')
+        started(hub)
+        long = ','.join(f'light.l{i}' for i in range(800))
+        s = stream(STREAM + '?entities=' + long, who.panel)
+        n = stream(STREAM + '?area=kitchen', who.panel)
+        try:
+            check(s.status == 200 and n.status == 200, f'the stream opens: {s.status} {n.status}')
+            time.sleep(0.3)
+            for eid, st in (('switch.other', 'on'), ('light.kitchen', 'on'), ('lock.back', 'unlocked')):
+                hub.push(eid, st)
+            pairs = lambda x: {(c['entity_id'], (c.get('state') or {}).get('state')) for c in x.changes()}
+            check(wait_until(lambda: {('light.kitchen', 'on'), ('lock.back', 'unlocked')} <= pairs(s), 2),
+                  f'the house stream carries the house: {s.text()[:300]!r}')
+            check(wait_until(lambda: ('light.kitchen', 'on') in pairs(n), 2), f'the kitchen stream: {n.text()[:300]!r}')
+            time.sleep(0.2)
+            check({c['entity_id'] for c in s.changes()} <= {'light.kitchen', 'lock.back'},
+                  f'nothing outside the house, whatever the URL asked: {pairs(s)}')
+            check({c['entity_id'] for c in n.changes()} == {'light.kitchen'}, f'the kitchen only: {pairs(n)}')
+        finally:
+            check(s.close() and n.close(), 'the streams end')
+    with fake_ha(), patch.object(main, '_house_ha_context', lambda settings=None: ({'buildings': []}, {'available': False, 'areas': [], 'devices': []})):
+        check(main._house_stream_entities() == set(), 'no Home Assistant catalogue: an empty set, no error')
+
+
+def test_camera_tokens_never_reach_a_subscriber():
+    with fake_ha() as hub, People() as who:
+        started(hub)
+        q = _events().subscribe(['camera.porch'])
+        with derived(['camera.porch']):
+            s = stream(STREAM, who.panel)
+        try:
+            time.sleep(0.3)
+            hub.push('camera.porch', 'idle', access_token='cafe5eed', supported_features=0,
+                     entity_picture='/api/camera_proxy/camera.porch?token=cafe5eed&width=640')
+            item = q.get(timeout=1)
+            attrs = item['state']['attributes']
+            check('access_token' not in attrs, f'no access_token for a subscriber: {item}')
+            check(attrs.get('entity_picture') == '/api/camera_proxy/camera.porch?width=640',
+                  f'entity_picture keeps its path and other parameters, never the token: {attrs.get("entity_picture")}')
+            check(wait_until(lambda: any(c['entity_id'] == 'camera.porch' for c in s.changes()), 1), 'the stream carries it')
+            check('cafe5eed' not in s.text(), f'and never the token: {s.text()[:300]!r}')
+            row = ha_api.get_state('camera.porch')
+            check(row and row['attributes'].get('access_token') == 'cafe5eed', f'the server\'s own cache keeps it: {row}')
+            hub.push('light.kitchen', 'on', brightness=10, entity_picture='/local/x.png?token=keep')
+            item = q.get(timeout=0.2) if not q.empty() else None
+            check(item is None, 'only the camera was asked for')
+        finally:
+            _events().unsubscribe(q)
+            check(s.close(), 'the stream ends')
+
+
+def test_a_push_replaces_its_row_in_place():
+    with fake_ha() as hub:
+        rows = ha_api.get_states()
+        started(hub)
+        time.sleep(0.3)
+        with ha_api._cache_lock:
+            cache = ha_api._states_cache['data']
+            count = len(cache)
+        q = _events().subscribe(['light.kitchen'])
+        try:
+            for level in range(5):
+                hub.push('light.kitchen', 'on', brightness=level)
+                q.get(timeout=1)
+            with ha_api._cache_lock:
+                now = ha_api._states_cache['data']
+            check(now is cache, 'a push changes the cached list in place: no whole-house copy per change')
+            check(len(now) == count and [r['entity_id'] for r in now].count('light.kitchen') == 1,
+                  f'one row per entity: {[r["entity_id"] for r in now]}')
+            check(ha_api.get_state('light.kitchen')['attributes'].get('brightness') == 4, 'holding the newest state')
+            hub.push('switch.new', 'on')
+            time.sleep(0.2)
+            check(ha_api.get_state('switch.new')['state'] == 'on', 'a new entity is added')
+        finally:
+            _events().unsubscribe(q)
+
+
+class WarnWatch(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.WARNING)
+        self.records = []
+
+    def emit(self, record):
+        if record.levelno == logging.WARNING:
+            self.records.append(record)
+
+
+def test_a_failing_connection_says_why_once_per_reason():
+    watch = WarnWatch()
+    logging.getLogger().addHandler(watch)
+    try:
+        with fake_ha() as hub:
+            hub.token = 'a-different-token'      # HA refuses the token the server holds
+            _events().start()
+            check(wait_until(lambda: len(hub.attempts) >= 4, 6), f'it keeps trying: {len(hub.attempts)}')
+            refused = [r.getMessage() for r in watch.records]
+            check(len(refused) == 1, f'one warning for a refused token, not one per attempt: {refused}')
+            check('auth' in refused[0].lower() or 'token' in refused[0].lower(), f'naming the reason: {refused}')
+            check(TOKEN not in refused[0], 'without the token itself')
+            hub.refuse = True                    # now Home Assistant is away altogether
+            n = len(hub.attempts)
+            check(wait_until(lambda: len(hub.attempts) >= n + 3, 6), 'it keeps trying')
+            check(len(watch.records) == 2, f'a new reason is said once more: {[r.getMessage() for r in watch.records]}')
+            hub.refuse = False
+            hub.token = TOKEN
+            check(wait_until(lambda: hub.subscribed(1), 6), 'and recovers')
+            hub.drop()
+            hub.refuse = False
+            check(wait_until(lambda: hub.subscribed(2), 6), 'and recovers again')
+            check(len(watch.records) == 3, f'after recovering, a failure is news again: {[r.getMessage() for r in watch.records]}')
+    finally:
+        logging.getLogger().removeHandler(watch)
+
+
+def test_saving_home_assistant_settings_starts_the_stream():
+    import main
+    calls = []
+    with People() as who, patch.object(_events(), 'restart', lambda: calls.append('restart')), \
+            patch.object(main, 'trigger_background_refresh', lambda: None), \
+            patch.object(storage, 'update_settings', lambda data: None):
+        from fastapi.testclient import TestClient
+        client = TestClient(main.app)
+        headers = {'X-Member-Token': who.mum_token}
+        r = client.post('/api/settings', json={'ha_base_url': 'http://ha.test:8123', 'ha_token': 'new-token'}, headers=headers)
+        check(r.status_code == 200, f'a parent saves Home Assistant\'s address: {r.status_code} {r.text[:200]}')
+        check(calls == ['restart'], f'the state stream (re)starts at once, no restart of the app needed: {calls}')
+        r = client.post('/api/settings', json={'timezone': 'America/Chicago'}, headers=headers)
+        check(r.status_code == 200 and calls == ['restart'], f'an unrelated save leaves it alone: {calls}')
+
+
+def test_the_stream_waits_without_polling():
+    sleeps = []
+    real = asyncio.sleep
+
+    async def counted(delay, *a, **k):
+        sleeps.append(delay)
+        return await real(delay, *a, **k)
+    with fake_ha() as hub, People() as who:
+        started(hub)
+        with derived(['light.kitchen']):
+            s = stream(STREAM, who.panel)
+        try:
+            time.sleep(0.2)
+            with patch.object(asyncio, 'sleep', counted):
+                time.sleep(1.0)
+                t0 = time.monotonic()
+                hub.push('light.kitchen', 'on')
+                check(wait_until(lambda: any(c['entity_id'] == 'light.kitchen' for c in s.changes()), 1),
+                      'a change is carried at once')
+                took = time.monotonic() - t0
+            check(len(sleeps) <= 2, f'an idle stream does not wake ten times a second: {len(sleeps)} sleeps in ~1 s')
+            check(took < 0.5, f'and a change wakes it: {took:.3f} s')
+        finally:
+            check(s.close(), 'the stream ends')
+
+
 class LogWatch(logging.Handler):
     def __init__(self):
         super().__init__(level=logging.ERROR)
@@ -643,6 +844,12 @@ TESTS = [
     test_reconnects_with_backoff,
     test_stream_route_auth_tiers,
     test_the_state_cache_is_warmed,
+    test_stream_set_is_derived_from_the_house,
+    test_camera_tokens_never_reach_a_subscriber,
+    test_a_push_replaces_its_row_in_place,
+    test_a_failing_connection_says_why_once_per_reason,
+    test_saving_home_assistant_settings_starts_the_stream,
+    test_the_stream_waits_without_polling,
 ]
 
 

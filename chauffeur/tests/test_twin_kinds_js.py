@@ -318,5 +318,43 @@ def run(config=None):
     return R.run(DRIVER, {'pinned': PINNED.as_posix(), **(config or {})}, prefix='chauffeur_twin_kinds_')
 
 
+def _reached(start):
+    """Every module under static/twin that `start` imports, directly or not."""
+    import re
+    twin = R.ROOT / 'static' / 'twin'
+    seen, todo = set(), [twin / start]
+    while todo:
+        path = todo.pop()
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        for spec in re.findall(r"""(?:^|\n)\s*(?:import|export)[^'"]*?from\s*['"](\.[^'"]+)['"]""", path.read_text(encoding='utf-8')):
+            todo.append((path.parent / spec).resolve())
+    return {p.relative_to(twin.resolve()).as_posix()[:-3] for p in (q.resolve() for q in seen)}
+
+
+def _mapped(template):
+    """The static/twin modules a page's import map versions."""
+    import re
+    text = (R.ROOT / 'templates' / template).read_text(encoding='utf-8')
+    names = set(re.findall(r"static/twin/([a-z_/]+)\.js", text))
+    for group in re.findall(r"{%\s*for name in \[([^\]]*)\]", text):
+        names.update(re.findall(r"'([a-z_/]+)'", group))
+    return names
+
+
+def import_maps_version_every_live_module():
+    """A module the live layer loads but a page's import map does not list loads
+    unversioned there, so a stale copy can outlive an upgrade (review L8)."""
+    reached = {m for m in _reached('live/live.js') if m.startswith(('live/', 'bake/'))}
+    for template in ('house_twin.html', 'house_editor.html'):
+        missing = sorted(reached - _mapped(template))
+        if missing:
+            print(f'  FAIL import_maps_version_every_live_module {template} leaves out {missing}')
+            return 1
+    print('  ok   import_maps_version_every_live_module')
+    return 0
+
+
 if __name__ == '__main__':
-    sys.exit(1 if run() else 0)
+    sys.exit(1 if (run() | import_maps_version_every_live_module()) else 0)

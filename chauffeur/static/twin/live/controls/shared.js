@@ -12,7 +12,10 @@ export const title = value => String(value ?? '').replace(/_/g, ' ').replace(/^\
 // A number as a person reads it: no trailing zeros, at most one decimal (a 0.5 step shows 29.5).
 export const figure = value => String(Number(Number(value).toFixed(1)));
 export const SVG = 'http://www.w3.org/2000/svg';
+// The two arcs stop 20 degrees short of the horizontal on each side, so their round ends never
+// touch and a finger at the side of the ring lands on one arc, not both.
 const GAP = Math.PI / 9;
+let gradients = 0;
 const point = (t, lower) => {
   const phi = Math.PI - GAP - t * (Math.PI - 2 * GAP);
   return [140 + 90 * Math.cos(phi), 140 + (lower ? 1 : -1) * 90 * Math.sin(phi)];
@@ -36,11 +39,20 @@ export function glyph(name) {
   svg.append(path); return svg;
 }
 
+// A setpoint HA has not given (null) is missing, never 0.
+export const known = value => value != null && value !== '' && Number.isFinite(Number(value));
+// A thermostat holds a range whenever HA gives it one and no single setpoint, as HA's own
+// card decides, whatever the mode is called (heat_cool, auto: review L4).
+export const holdsRange = state => {
+  const a = state?.attributes || {};
+  return !!(Number(a.supported_features) & 2) && known(a.target_temp_low) && known(a.target_temp_high) && !known(a.temperature);
+};
+
 // Only a capability change rebuilds the controls. Confirmed values update in place, keeping
 // a drag, a question or a hosted card alive across state pushes.
 export function controlShape(state) {
   const attrs = state?.attributes || {};
-  return JSON.stringify([state?.state === 'heat_cool', ...[
+  return JSON.stringify([holdsRange(state), ...[
     'supported_features', 'supported_color_modes', 'effect_list', 'hvac_modes', 'fan_modes',
     'preset_modes', 'available_modes', 'operation_list', 'source_list', 'code_format', 'code_arm_required',
     'min_temp', 'max_temp', 'target_temp_step', 'percentage_step', 'min_humidity', 'max_humidity',
@@ -63,7 +75,7 @@ export function controls({row, state, control, compact = false, surface = 'panel
   const update = next => { confirmed = next; for (const fn of updates) fn(); };
   async function send(service, data = {}) {
     if (!enabled || disposed) return false;
-    if (!control.confirmsUnsafe && !await confirmUnsafe(row.name, service, row)) return false;
+    if (!control.confirmsUnsafe && !await confirmUnsafe(row.name, service, row, data, confirmed)) return false;
     const ok = await control(row.entity_id, service, data);
     if (getState && !disposed) update(getState());
     return ok;
@@ -96,9 +108,10 @@ export function controls({row, state, control, compact = false, surface = 'panel
     });
     parent.append(node); return node;
   }
-  function toggle(name, label, on, service, data = {}) {
+  // `aria` names the control for a screen reader when the visible label is not enough.
+  function toggle(name, label, on, service, data = {}, aria = `${row.name} ${label}`) {
     const node = button(name, label, service, data, ring && name === 'center' ? root : side);
-    node.setAttribute('role', 'switch'); node.setAttribute('aria-label', `${row.name} ${label}`);
+    node.setAttribute('role', 'switch'); node.setAttribute('aria-label', aria);
     updates.push(() => {
       node.setAttribute('aria-checked', String(!!on(confirmed)));
       node.textContent = name === 'center' ? (on(confirmed) ? 'On' : 'Off') : label;
@@ -123,14 +136,32 @@ export function controls({row, state, control, compact = false, surface = 'panel
       updates.push(() => node.setAttribute('aria-pressed', String(normal(current(confirmed)) === normal(value))));
     }
   }
-  function slider(name, label, min, max, step, valueOf, service, dataOf, lower = false, unit = '') {
-    let node, svg, handle, progress, output, dragging = null, editing = false, sending = false, timer = null;
+  // An arc at the marker (a native range in a room row). `look` shapes the light's arcs:
+  // `stroke` paints the track (the kelvin gradient), `fill(state)` colours the filled part
+  // or, false, draws none; `idle(state)` hides the handle and the value while the setting
+  // does not apply (a colour light has no temperature); `caption: false` shows the value
+  // alone. A new drag is taken while the last value is still being sent (Ruling C10):
+  // live.control sends the newest once the first has answered.
+  function slider(name, label, min, max, step, valueOf, service, dataOf, lower = false, unit = '',
+    {stroke = null, fill = () => '', idle = () => false, caption: named = true, aria = `${row.name} ${label}`} = {}) {
+    let node, svg, handle, progress, output, dragging = null, editing = false, sending = 0, timer = null;
     min = Number(min); max = Number(max); step = Number(step) > 0 ? Number(step) : 1;
     if (ring) {
       arcs++; root.classList.add('twin-dial-arcs');
       svg = document.createElementNS(SVG, 'svg'); svg.setAttribute('viewBox', '0 0 280 280');
       svg.setAttribute('class', `twin-light-arc twin-light-arc-${name}`);
       node = document.createElementNS(SVG, 'path'); node.setAttribute('d', arcPath(lower));
+      if (stroke) {
+        const id = `twin-arc-${name}-${++gradients}`, defs = document.createElementNS(SVG, 'defs');
+        const gradient = document.createElementNS(SVG, 'linearGradient');
+        gradient.setAttribute('id', id); gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
+        for (const [key, value] of [['x1', '28'], ['y1', '0'], ['x2', '252'], ['y2', '0']]) gradient.setAttribute(key, value);
+        for (const [offset, colour] of stroke) {
+          const stop = document.createElementNS(SVG, 'stop');
+          stop.setAttribute('offset', offset); stop.setAttribute('stop-color', colour); gradient.append(stop);
+        }
+        defs.append(gradient); svg.append(defs); node.style.stroke = `url(#${id})`;
+      }
       node.setAttribute('role', 'slider'); node.setAttribute('tabindex', enabled ? '0' : '-1');
       node.setAttribute('aria-disabled', String(!enabled));
       node.setAttribute('aria-valuemin', String(min)); node.setAttribute('aria-valuemax', String(max));
@@ -139,46 +170,51 @@ export function controls({row, state, control, compact = false, surface = 'panel
       handle = document.createElementNS(SVG, 'circle'); handle.setAttribute('class', 'twin-light-handle'); handle.setAttribute('r', '8');
       svg.append(node, progress, handle); root.append(svg);
       // The value where the light ring shows its brightness, named in the caption's ink.
-      const readout = element('div');
-      readout.className = `twin-light-value twin-light-${lower ? 'temperature' : 'brightness'} twin-dial-readout`;
-      const caption = element('span', label); caption.className = 'twin-ring-caption';
-      output = element('output'); readout.append(caption, output); root.append(readout);
+      output = element('output');
+      const where = `twin-light-value twin-light-${lower ? 'temperature' : 'brightness'}`;
+      if (named) {
+        const readout = element('div'); readout.className = `${where} twin-dial-readout`;
+        const caption = element('span', label); caption.className = 'twin-ring-caption';
+        readout.append(caption, output); root.append(readout);
+      } else { output.className = where; root.append(output); }
     } else {
       const wrap = element('label', label); node = element('input'); node.type = 'range';
       node.min = String(min); node.max = String(max); node.step = String(step); node.disabled = !enabled;
       wrap.append(node); root.append(wrap);
     }
-    part(node, name); node.setAttribute('aria-label', `${row.name} ${label}`);
-    const show = value => {
+    part(node, name); node.setAttribute('aria-label', aria);
+    const show = (value, quiet = false) => {
       value = clamp(Number(value) || 0, min, max); node.value = String(value);
       if (ring) {
         node.setAttribute('aria-valuenow', String(value)); node.setAttribute('aria-valuetext', `${figure(value)}${unit}`);
         const ratio = max > min ? (value - min) / (max - min) : 0, [x, y] = point(ratio, lower);
         progress.setAttribute('stroke-dasharray', `${ratio * 100} 100`);
         // A zero-length dash still draws its round cap: an empty arc draws no fill at all.
-        progress.style.visibility = ratio > 0 ? 'visible' : 'hidden';
+        progress.style.visibility = fill && ratio > 0 ? 'visible' : 'hidden';
+        if (fill) progress.style.stroke = fill(confirmed) || '';
         handle.setAttribute('cx', x.toFixed(2)); handle.setAttribute('cy', y.toFixed(2));
-        output.textContent = `${figure(value)}${unit}`;
+        handle.style.visibility = quiet ? 'hidden' : 'visible';
+        output.textContent = quiet ? '' : `${figure(value)}${unit}`;
       }
     };
-    const restore = () => { if (!editing && !sending) show(valueOf(confirmed)); };
+    const restore = () => { if (!editing && !sending) show(valueOf(confirmed), idle(confirmed)); };
     updates.push(restore);
     async function commit() {
       clearTimeout(timer); timer = null;
-      if (!enabled || disposed || sending) return;
-      const value = Number(node.value); editing = false; sending = true;
+      if (!enabled || disposed) return;
+      const value = Number(node.value); editing = false; sending++;
       try { await send(service, dataOf(value, confirmed)); }
-      finally { sending = false; if (!disposed) restore(); }
+      finally { sending--; if (!disposed) restore(); }
     }
     const choose = value => {
-      if (!enabled || disposed || sending) return;
+      if (!enabled || disposed) return;
       editing = true; clearTimeout(timer);
       show(clamp(Number((min + Math.round((value - min) / step) * step).toFixed(3)), min, max));
     };
     const schedule = () => { clearTimeout(timer); timer = setTimeout(() => { void commit(); }, 200); };
     if (ring) {
       node.addEventListener('keydown', event => {
-        if (!enabled || sending) return;
+        if (!enabled) return;
         const value = Number(node.value), keys = {ArrowUp: value + step, ArrowRight: value + step,
           ArrowDown: value - step, ArrowLeft: value - step, Home: min, End: max,
           PageUp: value + 10 * step, PageDown: value - 10 * step};
@@ -193,7 +229,7 @@ export function controls({row, state, control, compact = false, surface = 'panel
         choose(min + clamp((angle - GAP) / (Math.PI - 2 * GAP), 0, 1) * (max - min));
       };
       node.addEventListener('pointerdown', event => {
-        if (!enabled || sending || event.button > 0) return;
+        if (!enabled || event.button > 0) return;
         event.preventDefault(); dragging = event.pointerId; node.setPointerCapture?.(dragging); move(event);
       });
       node.addEventListener('pointermove', event => { if (dragging === event.pointerId) move(event); });

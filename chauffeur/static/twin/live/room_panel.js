@@ -34,6 +34,9 @@ export function mountRoomPanel(live) {
   function addMore(widget, row) {
     const kind = kindOf(row).id;
     if (['lock', 'garage', 'alarm'].includes(kind)) return;
+    // A device the grid does not offer is read-only here: HA's own card would draw live
+    // controls the server then refuses (review M1).
+    if (!row.offered) return;
     const more = element('button', 'More'); more.type = 'button'; more.setAttribute('data-more', '');
     const bar = element('div'); bar.className = 'twin-device-actions'; bar.append(more);
     const host = element('div'); host.hidden = true; widget.node.append(bar, host);
@@ -45,13 +48,15 @@ export function mountRoomPanel(live) {
       let mounted = false;
       try {
         host.hidden = false;
+        // The card is drawn with the house as this layer knows it now; renders keep it current.
+        window.ChauffeurHaCards?.setStates?.(live.peek());
         mounted = !!await window.ChauffeurHaCards?.mountBuiltin(host, {
           id: widget.cardId, type, config: {type, entity: row.entity_id}, interactive: true, apiBase: base(),
         });
       } catch { /* Our controls remain available when HA's frontend is away. */ }
       finally { more.disabled = false; }
       if (widget.disposed) { window.ChauffeurHaCards?.unmount(widget.cardId); return; }
-      host.hidden = !mounted;
+      host.hidden = !mounted; widget.hosted = mounted;
       if (!mounted) { host.replaceChildren(); live.openRing(row); }
     });
   }
@@ -59,8 +64,9 @@ export function mountRoomPanel(live) {
   // the poll still lands and focus stays put (review M2).
   function render() {
     if (!room) return;
-    const rows = live.devices(room.area_id), states = live.states();
-    window.ChauffeurHaCards?.setStates(states);
+    // Read without a copy (review M3); HA's own cards hear the house only while one is up.
+    const rows = live.devices(room.area_id), states = live.peek();
+    if ([...widgets.values()].some(widget => widget.hosted)) window.ChauffeurHaCards?.setStates(states);
     const key = JSON.stringify([room.area_id, rows.map(row => [row.device_id, row.offered, row.label,
       states[row.entity_id]?.state, states[row.entity_id]?.attributes])]);
     if (key === shown) return;
@@ -84,7 +90,7 @@ export function mountRoomPanel(live) {
         if (widget) stop(widget);
         node.className = 'twin-room-device'; node.dataset.deviceId = row.device_id; node.dataset.kind = kindOf(row).id;
         const name = element('h3'), status = element('p');
-        const actions = deviceActions(row, state, live.control, {getState: () => live.states()[row.entity_id]});
+        const actions = deviceActions(row, state, live.control, {getState: () => live.state(row.entity_id)});
         node.replaceChildren(name, status, actions);
         widget = {node, name, status, actions, shape}; widgets.set(row.device_id, widget);
         addMore(widget, row);

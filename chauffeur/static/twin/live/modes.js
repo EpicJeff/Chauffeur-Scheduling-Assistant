@@ -116,7 +116,8 @@ export function mountModes(view, live) {
     finally { rig.show(false); view.scene.environment = environment; for (const object of extras) object.visible = false; }
   }
   function update() {
-    const states = live.states(), stale = live.markers().some(row => row.stale);
+    // Read without copying the house: this runs on every push (review M3).
+    const states = live.peek(), stale = live.stale();
     legacyRooms = !realLighting && !stale ? live.rooms() : [];
     for (const lamp of lamps) {
       const state = states[lamp.marker.entity_id];

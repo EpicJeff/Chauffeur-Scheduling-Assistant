@@ -1,4 +1,4 @@
-import { controls, element, glyph, clamp, figure, title, SVG } from './shared.js';
+import { controls, element, glyph, clamp, figure, title, known, holdsRange, SVG } from './shared.js';
 
 // HA's thermostat card at the marker: one 270-degree arc open at the bottom, a handle for the
 // setpoint (two for heat_cool), the arc filled in the mode's colour, a dot at the current
@@ -19,7 +19,7 @@ let gradients = 0;
 export function climateControls(options) {
   const c = controls(options), a = c.attrs;
   const min = Number(a.min_temp ?? 0), max = Number(a.max_temp ?? 100), step = Number(a.target_temp_step) || 1;
-  const range = options.state?.state === 'heat_cool' && c.has(2);
+  const range = holdsRange(options.state);
   const single = !range && (c.has(1) || Number.isFinite(a.temperature));
   if (!c.ring) return panel(c, options, {min, max, step, range, single});
 
@@ -66,7 +66,7 @@ export function climateControls(options) {
       readout.addEventListener('click', () => { if (enabled) select(h); });
     }
     big.append(readout);
-    const h = {name, node, readout, valueOf, dataOf, value: null, editing: false, sending: false, timer: null};
+    const h = {name, node, readout, valueOf, dataOf, value: null, editing: false, sending: 0, timer: null};
     handles.push(h); return h;
   }
   if (range) {
@@ -83,8 +83,6 @@ export function climateControls(options) {
   if (chosen) select(chosen);
 
   const off = () => c.confirmed()?.state === 'off';
-  // A setpoint HA has not given (null) is missing, never 0.
-  const known = value => value != null && value !== '' && Number.isFinite(Number(value));
   const snap = value => clamp(Number((min + Math.round((value - min) / step) * step).toFixed(3)), min, max);
   const ratio = value => max > min ? (value - min) / (max - min) : 0;
   function paint() {
@@ -130,8 +128,10 @@ export function climateControls(options) {
     for (const h of handles) if (!h.editing && !h.sending) h.value = h.valueOf(c.confirmed());
     paint();
   }
+  // A handle takes a new drag while its last value is being sent (Ruling C10): live.control
+  // sends the newest once the first has answered.
   function choose(h, value) {
-    if (!enabled || c.disposed() || h.sending || off()) return;
+    if (!enabled || c.disposed() || off()) return;
     // A range never crosses: the low handle stops at the high one and the other way round.
     const other = handles.find(o => o !== h);
     if (other && known(other.value))
@@ -140,15 +140,15 @@ export function climateControls(options) {
   }
   async function commit(h) {
     clearTimeout(h.timer); h.timer = null;
-    if (!enabled || c.disposed() || h.sending || !h.editing) return;
-    const value = Number(h.value); h.editing = false; h.sending = true;
+    if (!enabled || c.disposed() || !h.editing) return;
+    const value = Number(h.value); h.editing = false; h.sending++;
     try { await c.send('set_temperature', h.dataOf(value, c.confirmed())); }
-    finally { h.sending = false; if (!c.disposed()) restore(); }
+    finally { h.sending--; if (!c.disposed()) restore(); }
   }
   const schedule = (h, wait = 200) => { clearTimeout(h.timer); h.timer = setTimeout(() => { void commit(h); }, wait); };
   for (const h of handles) {
     h.node.addEventListener('keydown', event => {
-      if (!enabled || h.sending) return;
+      if (!enabled) return;
       const value = Number(h.value), keys = {ArrowUp: value + step, ArrowRight: value + step,
         ArrowDown: value - step, ArrowLeft: value - step, Home: min, End: max,
         PageUp: value + 10 * step, PageDown: value - 10 * step};
@@ -175,7 +175,6 @@ export function climateControls(options) {
     const candidates = handles.filter(h => known(h.value) || handles.length === 1);
     if (!candidates.length) return;
     held = candidates.reduce((best, h) => Math.abs(Number(h.value) - value) < Math.abs(Number(best.value) - value) ? h : best);
-    if (held.sending) { held = null; return; }
     event.preventDefault(); dragging = event.pointerId; track.setPointerCapture?.(dragging); choose(held, value);
   });
   track.addEventListener('pointermove', event => { if (dragging === event.pointerId && held) choose(held, valueAt(event)); });
@@ -195,7 +194,7 @@ export function climateControls(options) {
     const node = c.part(element('button'), name); node.type = 'button'; node.disabled = !enabled;
     node.className = 'twin-ring-round'; node.setAttribute('aria-label', label); node.append(glyph(icon));
     node.addEventListener('click', () => {
-      if (!enabled || node.disabled || !chosen || chosen.sending || !known(chosen.value)) return;
+      if (!enabled || node.disabled || !chosen || !known(chosen.value)) return;
       choose(chosen, Number(chosen.value) + delta); schedule(chosen, 800);
     });
     steps.push(node); stepsRow.append(node);

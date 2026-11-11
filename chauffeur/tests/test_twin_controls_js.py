@@ -72,14 +72,22 @@ The interfaces this file assumes beyond Task 3's (keep them few):
     water_heater center (role=switch: on unless the state is off -> turn_on / turn_off);
                  target (min_temp..max_temp, temperature -> set_temperature); modes
                  (operation_list -> set_operation_mode)
-    camera       still: an img (the part or inside it) whose src is page-relative
-                 base() + 'api/house/camera/<entity_id>' (a cache-buster may follow),
-                 replaced every 2 s while the ring is open, never after it closes
+    camera       still: an img (the part or inside it) showing frames fetched from
+                 page-relative base() + 'api/house/camera/<entity_id>' (a cache-buster
+                 may follow) with the page's identity in headers, never a token in the
+                 URL (review L5); the next fetch goes 2 s after the last one answered,
+                 never while one is pending, each with a deadline (review M2); none
+                 after the ring closes; a 403 says why and stops asking
 - a tap on a scene or a script runs it (scene.turn_on / script.turn_on) and opens no
   ring; a tap on any other kind here opens its ring and sends nothing;
 - a sensor's ring shows its value and unit (a contact sensor says open/closed) and
   holds no control;
-- a device the grid does not offer: its ring holds no live control and sends nothing.
+- a device the grid does not offer: its ring holds no live control and sends nothing,
+  and its room row offers no More (review M1);
+- a garage door never gets a position or tilt arc on either surface, and any call
+  that would raise it asks the Open question first (review H1);
+- a thermostat shows two handles whenever it carries target_temp_low/high and no
+  single setpoint, whatever its mode is called (auto included; review L4).
 
 Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_controls_js.py [check ...]
 """
@@ -216,6 +224,12 @@ const BLIND = dev('blind', 'cover.living_blind', 'blinds', 'open', {device_class
   current_tilt_position: 50, supported_features: 255});
 const SHADE = dev('shade', 'cover.porch_shade', 'blinds', 'closed', {device_class: 'shade', supported_features: 1 | 2});
 const GARAGE = dev('garage', 'cover.garage', 'garage', 'closed', {device_class: 'garage', supported_features: 1 | 2});
+// ratgdo, Z-Wave and several Tuya openers report SET_POSITION (and STOP).
+const GARAGE_POS = dev('garagepos', 'cover.garage_two', 'garage', 'closed', {device_class: 'garage', current_position: 0,
+  supported_features: 1 | 2 | 4 | 8 | 128, current_tilt_position: 0});
+const AUTO = dev('auto', 'climate.hall', 'climate', 'auto', {hvac_modes: ['off', 'auto'], min_temp: 50, max_temp: 90,
+  target_temp_step: 1, current_temperature: 70, temperature: null, target_temp_low: 66, target_temp_high: 74,
+  hvac_action: 'idle', supported_features: 2 | 128 | 256});
 const SPEAKER = dev('speaker', 'media_player.kitchen', 'media', 'playing', {volume_level: .3, is_volume_muted: false,
   media_title: 'So What', media_artist: 'Miles Davis', source_list: ['Radio', 'Spotify', 'TV'], source: 'Spotify',
   entity_picture: '/api/media_player_proxy/media_player.kitchen?token=abc123&cache=9',
@@ -432,6 +446,78 @@ check('garage_open_confirms_once', async () => {
   } finally { t.cleanup(); }
 });
 
+check('garage_position_never_skips_the_confirm', async () => {
+  const t = await mount([GARAGE_POS]);
+  try {
+    await open(t, 'garagepos');
+    for (const name of ['position', 'tilt']) assert.equal(part(name), null, `a garage has no ${name} arc on its ring`);
+    assert.ok(action('open') && action('close') && action('stop'), 'Open, Stop and Close stay');
+    await escape();
+    t.live.openRoom('b', 'r');
+    await wait(60);
+    const row = document.getElementById('twin-room-panel')?.querySelector('[data-device-id="garagepos"]');
+    assert.ok(row, "the garage's room row");
+    assert.deepEqual(row.querySelectorAll('input, [role="slider"]').map(n => n.getAttribute('aria-label')), [],
+      'and no position or tilt range in its room row');
+    t.live.closeRoom();
+    // Any other path that would raise the door asks the Open question first, once.
+    t.confirm = false; t.calls.length = 0;
+    let ok = await t.live.control('cover.garage_two', 'set_cover_position', {position: 100});
+    assert.equal(ok, false, 'declined');
+    assert.equal(t.confirms.length, 1, `raising the door asks once: ${JSON.stringify(t.confirms)}`);
+    assert.ok(/open/i.test(t.confirms[0][0]), `the Open question: ${JSON.stringify(t.confirms[0])}`);
+    assert.deepEqual(t.serviceCalls(), [], 'a declined raise sends nothing');
+    t.confirm = true;
+    ok = await t.live.control('cover.garage_two', 'set_cover_position', {position: 40});
+    assert.equal(t.confirms.length, 2, 'asked again, and accepted');
+    assert.deepEqual(t.serviceCalls(), [['cover', 'set_cover_position', {position: 40, entity_id: 'cover.garage_two'}]], JSON.stringify(t.serviceCalls()));
+    t.calls.length = 0;
+    t.states['cover.garage_two'].attributes.current_position = 40; await t.live.refresh(true);
+    await t.live.control('cover.garage_two', 'set_cover_position', {position: 0});
+    assert.equal(t.confirms.length, 2, 'lowering it asks nothing');
+    assert.deepEqual(t.serviceCalls(), [['cover', 'set_cover_position', {position: 0, entity_id: 'cover.garage_two'}]], JSON.stringify(t.serviceCalls()));
+    assert.deepEqual(t.dialogs, [], 'no browser dialog');
+  } finally { t.cleanup(); }
+});
+
+check('climate_two_handles_whenever_a_range_is_carried', async () => {
+  const t = await mount([AUTO]);
+  try {
+    await open(t, 'auto');
+    assert.equal(part('target'), null, 'an auto thermostat carrying a range has no single handle');
+    const low = slider('target-low'), high = slider('target-high');
+    assert.ok(low && high, 'two handles in auto: target-low and target-high');
+    assert.deepEqual([range(low), range(high)], [[50, 90, 66], [50, 90, 74]], 'at the range HA reports');
+    await steps('target-low', 'ArrowUp', 1); await settle();
+    assert.deepEqual(t.serviceCalls(), [['climate', 'set_temperature', {target_temp_low: 67, target_temp_high: 74, entity_id: 'climate.hall'}]],
+      JSON.stringify(t.serviceCalls()));
+    await escape();
+    t.live.openRoom('b', 'r');
+    await wait(60);
+    const row = document.getElementById('twin-room-panel')?.querySelector('[data-device-id="auto"]');
+    assert.equal(row.querySelectorAll('input').filter(n => n.type === 'range').length, 2, "and two ranges in the room's row");
+  } finally { t.cleanup(); }
+});
+
+check('more_only_for_offered_devices', async () => {
+  const t = await mount([FAN, {...FAN_BASIC, offered: false}, {...SPEAKER, offered: false}]);
+  try {
+    window.ChauffeurHaCards = {mounted: [], setStates() {}, unmount() {},
+      async mountBuiltin(host, spec) { this.mounted.push(spec); return true; }};
+    t.live.openRoom('b', 'r');
+    await wait(60);
+    const panel = document.getElementById('twin-room-panel');
+    const more = id => panel.querySelector(`[data-device-id="${id}"] [data-more]`);
+    assert.ok(more('fan'), 'an offered fan has its More');
+    for (const id of ['fanbasic', 'speaker'])
+      assert.equal(more(id), null, `${id}: a device the grid does not offer has no More (its row is read-only)`);
+    await press(more('fan'));
+    await wait(40);
+    assert.deepEqual(window.ChauffeurHaCards.mounted.map(spec => [spec.config.entity, spec.interactive]), [['fan.bedroom', true]],
+      JSON.stringify(window.ChauffeurHaCards.mounted));
+  } finally { delete window.ChauffeurHaCards; t.cleanup(); }
+});
+
 check('media_ring_play_volume_mute_source', async () => {
   const t = await mount([SPEAKER, TV]);
   try {
@@ -609,6 +695,19 @@ check('sensors_are_read_only', async () => {
 });
 
 check('camera_ring_shows_a_still_that_refreshes', async () => {
+  // The server's camera route, faked at fetch: each answer a fresh frame, or held back
+  // (gate), or a refusal (status).
+  const asked = []; let gate = null, status = 200, n = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = window.fetch = async (url, options = {}) => {
+    asked.push({url: String(url), options});
+    if (gate) await gate.promise;
+    if (options.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+    if (status !== 200) return new Response(JSON.stringify({detail: 'This camera is not available here.'}), {status, headers: {'Content-Type': 'application/json'}});
+    return new Response(new Blob([new Uint8Array([137, 80, 78, 71, ++n])], {type: 'image/png'}), {status: 200, headers: {'Content-Type': 'image/png'}});
+  };
+  const hold = () => { let release; const promise = new Promise(r => { release = r; }); gate = {promise, release}; };
+  window.chfPersonToken = () => 'member-sekrit';
   const t = await mount([CAMERA]);
   try {
     await open(t, 'camera');
@@ -617,21 +716,44 @@ check('camera_ring_shows_a_still_that_refreshes', async () => {
     const img = () => { const node = part('still'); return node && (node.localName === 'img' ? node : node.querySelector('img')); };
     const src = () => String(img()?.src || img()?.getAttribute('src') || '');
     assert.ok(img(), 'the still is an img');
-    const first = src();
-    assert.ok(first.includes('api/house/camera/camera.porch'), `through the server's camera route: ${first}`);
-    assert.ok(!first.startsWith('/'), `page-relative (base() + 'api/...'), never root-relative: ${first}`);
-    assert.ok(!/camera_proxy|cafe5eed/.test(first), `never Home Assistant's own path or token: ${first}`);
+    await wait(100);
+    assert.ok(asked.length >= 1, 'the ring asks for a frame');
+    const first = asked[0];
+    assert.ok(first.url.includes('api/house/camera/camera.porch'), `through the server's camera route: ${first.url}`);
+    assert.ok(!first.url.startsWith('/'), `page-relative (base() + 'api/...'), never root-relative: ${first.url}`);
+    assert.ok(!/camera_proxy|cafe5eed|token=/.test(first.url), `no token and never Home Assistant's own path in the URL: ${first.url}`);
+    assert.equal(new Headers(first.options.headers || {}).get('X-Member-Token'), 'member-sekrit', 'the person rides a header, as chfAuthUrl would');
+    assert.ok(first.options.signal && typeof first.options.signal.aborted === 'boolean', 'each frame has a deadline (an AbortSignal)');
+    assert.ok(src().startsWith('blob:'), `the frame is shown from memory: ${src()}`);
+    const shown = src();
     await wait(2400);
-    const second = src();
-    assert.ok(second.includes('api/house/camera/camera.porch') && second !== first, `refreshed within 2 s: ${first} -> ${second}`);
+    assert.ok(asked.length >= 2 && src() !== shown && src().startsWith('blob:'), `refreshed within 2 s: ${asked.length} asks, ${shown} -> ${src()}`);
+    // A camera (or Home Assistant) that does not answer: no pile of requests behind it.
+    hold();
+    await wait(2300);
+    const pending = asked.length;
+    await wait(4500);
+    assert.equal(asked.length, pending, `nothing more is asked while a frame is pending: ${asked.length - pending} more`);
+    gate.release(); gate = null;
+    await wait(2400);
+    assert.ok(asked.length > pending, 'and the refresh carries on once it answers');
     const last = img();
     await escape();
     assert.equal(t.live.ring(), null, 'Escape closes it');
-    const after = String(last.src || last.getAttribute('src') || '');
+    const after = String(last.src || ''), count = asked.length;
     await wait(2400);
-    assert.equal(String(last.src || last.getAttribute('src') || ''), after, 'no refresh once the ring is closed');
+    assert.equal(asked.length, count, 'no frame is asked for once the ring is closed');
+    assert.ok(asked.at(-1).options.signal.aborted || String(last.src || '') === after, 'an open request goes with it');
+    // A refusal by the grid says why and stops asking.
+    status = 403;
+    await open(t, 'camera');
+    await wait(300);
+    assert.ok(/not available here/.test(ringText()), `the refusal is said: ${ringText()}`);
+    const refused = asked.length;
+    await wait(2400);
+    assert.equal(asked.length, refused, 'and nothing more is asked');
     assert.deepEqual(t.serviceCalls(), [], 'a camera sends nothing');
-  } finally { t.cleanup(); }
+  } finally { gate?.release(); globalThis.fetch = window.fetch = realFetch; delete window.chfPersonToken; t.cleanup(); }
 });
 
 check('every_kind_unoffered_is_read_only', async () => {

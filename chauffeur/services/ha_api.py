@@ -159,29 +159,88 @@ def has_service(domain: str, service: str) -> bool:
     return False
 
 
-def fetch_binary(path: str):
+def fetch_binary(path: str, max_bytes: int | None = None, deadline: float | None = None):
     """Fetch a binary asset (entity_picture / media proxy image). HA-relative
     paths go to the HA origin with our token. Absolute URLs (e.g. Music
     Assistant's http://<lan>:8095/imageproxy/...) are fetched directly and
     WITHOUT the HA token — never leak it to non-HA hosts. Returns
-    (content, content_type) or None. Callers validate the target."""
+    (content, content_type) or None. Callers validate the target.
+
+    `max_bytes` and `deadline` (seconds, the whole read) bound a frame a
+    camera route relays every couple of seconds (review M2): the body is
+    streamed and dropped, answering None, once it passes either, so a slow or
+    runaway camera never holds a worker or the Pi's memory."""
+    bounded = max_bytes is not None or deadline is not None
+    resp = None
     try:
+        kw = {'timeout': 10}
+        if bounded:
+            limit = float(deadline or 10)
+            kw = {'timeout': (min(5.0, limit), limit), 'stream': True}
         if path.startswith(('http://', 'https://')):
-            resp = requests.get(path, timeout=10)
+            resp = requests.get(path, **kw)
         else:
             base, token = _base_and_token()
             if not base:
                 return None
             root = base[:-len('/api')] if base.endswith('/api') else base
             resp = requests.get(f"{root}{path}",
-                                headers={'Authorization': f'Bearer {token}'},
-                                timeout=10)
+                                headers={'Authorization': f'Bearer {token}'}, **kw)
         if resp.status_code >= 400:
             return None
-        return resp.content, resp.headers.get('Content-Type', 'image/jpeg')
+        kind = resp.headers.get('Content-Type', 'image/jpeg')
+        if not bounded:
+            return resp.content, kind
+        started, body = time.monotonic(), bytearray()
+        for chunk in resp.iter_content(chunk_size=65536):
+            body += chunk
+            if max_bytes is not None and len(body) > max_bytes:
+                print(f"[ha_api] GET {path.split('?')[0]} (binary) dropped: over {max_bytes} bytes")
+                return None
+            if deadline is not None and time.monotonic() - started > deadline:
+                print(f"[ha_api] GET {path.split('?')[0]} (binary) dropped: slower than {deadline} s")
+                return None
+        return bytes(body), kind
     except Exception as e:
-        print(f"[ha_api] GET {path} (binary) failed: {e}")
+        print(f"[ha_api] GET {path.split('?')[0]} (binary) failed: {e}")
         return None
+    finally:
+        if bounded and resp is not None:
+            try:
+                resp.close()
+            except Exception:
+                pass
+
+
+def public_state(row):
+    """A state row as it may leave the server (Ruling C9, review M5).
+
+    A camera carries `attributes.access_token`, and its `entity_picture` a
+    `?token=` query: either one lets anybody on the LAN fetch the camera from
+    Home Assistant directly, around the household's grid. They stay in the
+    server's cache (its own proxies fetch with the server's bearer and never
+    need them) and are dropped from every copy a page or a stream receives.
+    Any other row is returned as it is, uncopied."""
+    if not isinstance(row, dict) or not str(row.get('entity_id') or '').startswith('camera.'):
+        return row
+    attrs = row.get('attributes')
+    if not isinstance(attrs, dict):
+        return row
+    picture = attrs.get('entity_picture')
+    if 'access_token' not in attrs and not (isinstance(picture, str) and 'token=' in picture):
+        return row
+    attrs = {k: v for k, v in attrs.items() if k != 'access_token'}
+    if isinstance(picture, str):
+        attrs['entity_picture'] = without_token(picture)
+    return {**row, 'attributes': attrs}
+
+
+def without_token(url: str) -> str:
+    """`url` with any `token` query parameter removed, everything else kept."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != 'token']
+    return urlunsplit(parts._replace(query=urlencode(query)))
 
 
 def stream_binary(path: str, timeout: float = 10):

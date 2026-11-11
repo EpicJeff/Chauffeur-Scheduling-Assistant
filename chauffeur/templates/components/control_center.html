@@ -1764,11 +1764,14 @@ function closeChatHelpModal() {
                 okBtn.onclick = cancelBtn.onclick = field.onkeydown = null;
                 resolve(result);
             };
-            okBtn.onclick = () => finish(field.value);
-            cancelBtn.onclick = () => finish(null);
+            // What was typed (an alarm code on the shared wall) leaves the page with the
+            // sheet: it is read once, then the field is cleared.
+            const take = () => { const typed = field.value; field.value = ''; return typed; };
+            okBtn.onclick = () => finish(take());
+            cancelBtn.onclick = () => { field.value = ''; finish(null); };
             field.onkeydown = (e) => {
-                if (e.key === 'Enter') finish(field.value);
-                if (e.key === 'Escape') finish(null);
+                if (e.key === 'Enter') finish(take());
+                if (e.key === 'Escape') { field.value = ''; finish(null); }
             };
             modal.classList.remove('hidden');
             modal.classList.add('flex');

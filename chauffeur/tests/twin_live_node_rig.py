@@ -518,6 +518,8 @@ async function rig({devices, rooms = null, spacing = 8}) {
   };
   t.api = async path => {
     t.requests.push(path);
+    // A check may slow Home Assistant's confirming poll (fresh=1) by t.pollDelay ms.
+    if (t.pollDelay && String(path).includes('fresh=1')) await wait(t.pollDelay);
     return {ok: true, json: async () => structuredClone(path === 'api/house/live' ? layout : {states})};
   };
   const canvas = new El('canvas'), host = new El('main'); host.__host = true; host.append(canvas); document.body.append(host);

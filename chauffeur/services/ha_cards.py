@@ -140,7 +140,10 @@ def entity_ids(config):
 
 
 def _shape(s):
-    """One HA state row, in the shape `hass.states` carries it."""
+    """One HA state row, in the shape `hass.states` carries it. A camera's
+    tokens never ride it (ha_api.public_state, Ruling C9)."""
+    from services import ha_api
+    s = ha_api.public_state(s)
     return {
         'entity_id': s.get('entity_id'),
         'state': s.get('state'),

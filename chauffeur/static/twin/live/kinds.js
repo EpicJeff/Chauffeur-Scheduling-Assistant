@@ -27,10 +27,23 @@ export function kindOf(row) {
 
 const CONTACTS = ['door', 'window', 'opening', 'garage_door'];
 const UNSAFE = { unlock: 'Unlock', open: 'Open', open_cover: 'Open', alarm_disarm: 'Disarm' };
-export async function confirmUnsafe(name, service, row) {
-  const label = row ? kindOf(row).unsafe?.[service] : UNSAFE[service];
+// The question a call needs before it goes, or null. A kind's entry is a label, or a
+// function of the call's data and the confirmed state (a garage raised by position is
+// an Open: review H1).
+export function unsafeLabel(row, service, data = {}, state = null) {
+  const entry = row ? kindOf(row).unsafe?.[service] : UNSAFE[service];
+  return typeof entry === 'function' ? entry(data || {}, state) || null : entry || null;
+}
+export async function confirmUnsafe(name, service, row, data = {}, state = null) {
+  const label = unsafeLabel(row, service, data, state);
   return !label || !!await window.promptConfirm(`${label} ${name}?`, 'Are you sure?', label, 'Cancel');
 }
+// A garage door going up by any path is an Open: a position above the confirmed one
+// (an unknown position counts as closed).
+const raises = (data, state) => {
+  const to = Number(data.position), from = Number(state?.attributes?.current_position);
+  return Number.isFinite(to) && to > (Number.isFinite(from) ? from : 0) ? 'Open' : null;
+};
 
 export function stateLabel(kind, state, attributes) {
   const attrs = attributes || {}, value = String(state ?? 'unknown');
@@ -122,7 +135,7 @@ function legacyPanel(draw) {
     const button = (label, service, data = {}) => {
       const node = element('button', label); node.type = 'button';
       node.addEventListener('click', async () => {
-        if (!control.confirmsUnsafe && !await confirmUnsafe(row.name, service, row)) return;
+        if (!control.confirmsUnsafe && !await confirmUnsafe(row.name, service, row, data, state)) return;
         node.disabled = true;
         try { await control(row.entity_id, service, data); }
         finally { node.disabled = false; }
@@ -140,7 +153,8 @@ for (const [id, icon, panel, quick, unsafe] of [
   ['light', lightIcon, lightControls, 'toggle'], ['switch', switchIcon, lightControls, 'toggle'],
   ['outlet', outletIcon, lightControls, 'toggle'], ['fan', fanIcon, fanControls, 'toggle'],
   ['lock', lockIcon, lockControls, null, {unlock: 'Unlock'}],
-  ['garage', garageIcon, coverControls, null, {open: 'Open', open_cover: 'Open'}], ['blinds', blindsIcon, coverControls],
+  ['garage', garageIcon, coverControls, null, {open: 'Open', open_cover: 'Open', set_cover_position: raises}],
+  ['blinds', blindsIcon, coverControls],
   ['climate', climateIcon, climateControls], ['sensor', sensorIcon, emptyPanel],
   ['camera', cameraIcon, cameraControls], ['media', mediaIcon, mediaControls],
   ['alarm', alarmIcon, alarmControls, null, {alarm_disarm: 'Disarm'}], ['other', otherIcon, emptyPanel],

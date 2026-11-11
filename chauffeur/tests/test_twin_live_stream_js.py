@@ -10,9 +10,16 @@ vendored r187.
 The hook assumed (kept to the browser's own API, nothing new to pass in):
 - When `EventSource` exists, mountLive opens ONE
   `new EventSource(url)` where url is
-  `window.chfAuthUrl(base() + 'api/ha/stream?entities=<ids joined by ",">')`
+  `window.chfAuthUrl(base() + 'api/ha/stream')`
   (chfAuthUrl when the page has it: EventSource cannot set headers, so the
-  wall's token rides the query). The ids are every entity the layer draws.
+  wall's token rides the query). The URL carries no entity list: the server
+  derives the house's set from its placements (Ruling C11, review M4, whose
+  list overflowed the ingress request line); the layer still applies only the
+  entities it draws. A stream the browser gives up on is said once in the
+  console, never silently.
+- Pushes are drawn once per animation frame (review M3): any number of pushes
+  in one frame is one restate, one notify of the listeners and one render, and
+  no listener copies the whole house to read it (live.state(id) / live.peek()).
 - Each message (`onmessage` or a 'message' listener; unnamed SSE events) has
   `data` = JSON `{entity_id, state}` where state is HA's state object (or null).
   The layer applies it to its states and redraws at once, without asking
@@ -161,6 +168,7 @@ async function mount() {
       rooms:[{id:'r', level:'L1', polygon}], stairs:[]}]},
     pick: () => ({kind:'room', building:'b', id:'r'}),
     render() { this.live?.draw(); }};
+  t.view = view;
   t.live = await mountLive(view, {api});
   assert.ok(t.live, 'mountLive mounts');
   t.cleanup = () => { try { t.live.stop(); } catch {} host.remove(); };
@@ -183,8 +191,8 @@ check('live_layer_subscribes_and_updates_without_waiting_for_the_poll', async ()
     const url = new URL(es.url, 'http://house.test/twin/');
     assert.ok(url.pathname.endsWith('/api/ha/stream'), `the stream route: ${es.url}`);
     assert.ok(es.url.startsWith('../api/ha/stream?'), `fetched page-relative through base(), never root-relative: ${es.url}`);
-    const asked = (url.searchParams.get('entities') || '').split(',').filter(Boolean).sort();
-    assert.deepEqual(asked, DEVICES.map(d => d.entity_id).sort(), `it asks for exactly the entities it draws: ${es.url}`);
+    assert.equal(url.searchParams.get('entities'), null, `no entity list rides the URL (the server derives it): ${es.url}`);
+    assert.ok(es.url.length < 200, `a short URL whatever the house holds: ${es.url.length} characters`);
     assert.equal(url.searchParams.get('device_token'), 'panel-tok', `the wall's token rides the query: ${es.url}`);
     assert.ok(ticks.length >= 1, 'the 10 s poll stays armed with the stream up');
 
@@ -250,6 +258,45 @@ check('live_layer_falls_back_to_poll_when_stream_drops', async () => {
     assert.equal(look(t, 'lamp'), 'off', 'the marker shows the confirmed state');
     assert.deepEqual(escaped, [], 'nothing threw');
   } finally { t.cleanup(); }
+});
+
+check('pushes_in_one_frame_are_one_update', async () => {
+  const t = await mount();
+  try {
+    const es = sources.at(-1);
+    let heard = 0, renders = 0, clones = 0;
+    t.live.subscribe(() => { heard++; });
+    const render = t.view.render.bind(t.view);
+    t.view.render = () => { renders++; render(); };
+    const clone = globalThis.structuredClone;
+    globalThis.structuredClone = value => { clones++; return clone(value); };
+    try {
+      for (let i = 1; i <= 10; i++)
+        es.emit({entity_id: 'light.counter_lamp', state: {entity_id: 'light.counter_lamp', state: 'on', attributes: {brightness: i * 20}}});
+      es.emit({entity_id: 'lock.back_door', state: {entity_id: 'lock.back_door', state: 'unlocked', attributes: {}}});
+      await wait(80);
+    } finally { globalThis.structuredClone = clone; }
+    assert.equal(renders, 1, `eleven pushes in one frame are one render: ${renders}`);
+    assert.equal(heard, 1, `and one notify of the listeners: ${heard}`);
+    assert.equal(clones, 0, `and no copy of the whole house (the ring, the room panel, the modes): ${clones} copies`);
+    assert.equal(look(t, 'lamp'), 'on', 'the newest state is drawn');
+    assert.equal(t.live.state('light.counter_lamp').attributes.brightness, 200, 'live.state reads it without a copy');
+    assert.equal(look(t, 'lock'), 'attention', 'and every device pushed in the frame');
+    assert.deepEqual(escaped, [], 'nothing threw');
+  } finally { t.cleanup(); }
+});
+
+check('a_refused_stream_is_said_once', async () => {
+  const warned = [], warn = console.warn;
+  console.warn = (...args) => warned.push(args.join(' '));
+  const t = await mount();
+  try {
+    const es = sources.at(-1);
+    es.fail();
+    es.fail();
+    await wait(30);
+    assert.equal(warned.filter(w => /stream/i.test(w)).length, 1, `the closed stream is said once in the console: ${JSON.stringify(warned)}`);
+  } finally { console.warn = warn; t.cleanup(); }
 });
 
 let passed = 0;

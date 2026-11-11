@@ -41,9 +41,11 @@ The hooks and selectors assumed (beside the harness's and the Task 3 ring's):
   window.promptInput) or the ring's own [data-ring-part="code"] with an input and a
   [data-ring-part="code-submit"]; a confirm is control_center's #cc-confirm-modal;
   never a browser dialog (Playwright's 'dialog' event never fires);
-- the camera's still is an img in [data-ring-part="still"] whose src is the page's
-  base + 'api/house/camera/camera.porch' (plus whatever the page's auth and a
-  cache-buster add), refreshed every 2 s while the ring is open;
+- the camera's still is an img in [data-ring-part="still"] showing frames the page
+  fetches from its base + 'api/house/camera/camera.porch' (a cache-buster may
+  follow) with its identity in headers, never a token in the URL (review L5),
+  shown from memory (a blob: URL), the next asked for 2 s after the last answered
+  while the ring is open (review M2);
 - the twin page loads static/ha_card_host.js (window.ChauffeurHaCards.mountBuiltin);
 - each row of the room panel (#twin-room-panel [data-device-id="<id>"]) offers a
   [data-more] button ("More") that mounts HA's card into the panel through
@@ -523,8 +525,10 @@ def scenario_camera_ring_shows_a_still_and_refreshes():
         check(L.wait_for(page, lambda: (page.evaluate(STILL_JS) or {}).get('loaded'), 8),
               ('the ring shows the camera\'s still', page.evaluate(STILL_JS), FRAMES['n'] - before))
         first = page.evaluate(STILL_JS)
-        check('api/house/camera/' + CAMERA in first['src'], ('the still comes through the server\'s camera route', first))
-        check(not first['attr'].startswith('/'), ('page-relative, never root-relative', first))
+        stills = [url for _m, url, _b in seen if 'api/house/camera/' + CAMERA in url]
+        check(stills, ('the still comes through the server\'s camera route', [u for _m, u, _b in seen][-10:]))
+        check(first['src'].startswith('blob:'), ('the frame is shown from memory', first))
+        check(not [u for u in stills if 'token=' in u], ('no token rides the still\'s URL (the access log keeps none)', stills[:2]))
         check(CAMERA_TOKEN not in first['src'] and 'camera_proxy' not in first['src'], ('never HA\'s own path or token', first))
         check(FRAMES['n'] > before, ('the server fetched HA\'s camera_proxy', FRAMES))
         n1 = FRAMES['n']

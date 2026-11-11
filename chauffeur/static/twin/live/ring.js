@@ -10,7 +10,7 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
   const root = document.createElement('aside'); root.className = 'twin-device-ring'; root.hidden = true;
   root.setAttribute('data-ring', ''); root.setAttribute('role', 'dialog'); document.body.append(root);
   let row = null, builder = null, signature = '', anchor = null, pointer = null, holdTimer = null;
-  let suppressClick = false, suppressTimer = null, placed = '';
+  let suppressClick = false, suppressTimer = null, placed = '', returnFocus = null;
   const options = {signal: events.signal};
   const inside = event => root.contains?.(event.target);
   // The marker labels keep clear of the ring: the layer hears whenever it lands somewhere new.
@@ -18,6 +18,9 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
   function close() {
     builder?.stop?.(); builder = null; row = null; anchor = null; signature = '';
     root.hidden = true; root.replaceChildren(); settle('');
+    // A ring opened from the room panel gives the keyboard focus back (review L7).
+    const back = returnFocus; returnFocus = null;
+    if (back?.isConnected && typeof back.focus === 'function') back.focus();
   }
   // The ring stays whole on screen: inside the viewport and above the wall's shelf and its
   // fade strip. It sits on the marker wherever that fits and slides in from an edge where it
@@ -78,7 +81,8 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
   }
   function update() {
     if (!row) return;
-    const state = live.states()[row.entity_id], kind = kindOf(row);
+    // One entity's confirmed state, read without copying the house (review M3).
+    const state = live.state(row.entity_id), kind = kindOf(row);
     const key = JSON.stringify([row.device_id, row.offered, controlShape(state),
       kind.ring ? null : state]);
     if (signature === key && builder?.update) { builder.update(state); return; }
@@ -88,18 +92,28 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
     const title = document.createElement('h2'); title.textContent = row.name; root.append(title);
     if (!kind.ring) {
       const status = document.createElement('p'); status.className = 'twin-ring-status';
-      status.textContent = live.markers().find(marker => marker.device_id === row.device_id)?.label || state?.state || 'unavailable';
+      status.textContent = live.marker(row.device_id)?.label || state?.state || 'unavailable';
       root.append(status);
     }
+    // The entity is read from this ring's row, not the ring's current one: a send that
+    // answers after the ring closed still reads its own device.
+    const entity = row.entity_id;
     builder = (kind.ring || kind.panel)({row, state, control: live.control, surface: 'ring',
-      getState: () => live.states()[row.entity_id]});
+      getState: () => live.state(entity)});
     // A kind with nothing to control (a sensor) shows its value alone, not an empty card.
     if (!builder.childNodes.length) builder.hidden = true;
     root.append(builder);
     draw();
   }
-  function open(next) {
+  // `focus`: the element that had the keyboard focus when the ring was asked for from the
+  // room panel; the ring's first live control takes it, and close gives it back.
+  function open(next, {focus = null} = {}) {
     close(); dismiss(); row = next; root.hidden = false; update(); draw();
+    if (!focus) return;
+    returnFocus = focus;
+    const first = [...root.querySelectorAll('button, [role="slider"], [role="switch"], input, select')].find(node => !node.disabled
+      && node.getAttribute('aria-disabled') !== 'true' && node.getAttribute('tabindex') !== '-1');
+    first?.focus?.({preventScroll: true});
   }
   function cancel() { clearTimeout(holdTimer); holdTimer = null; pointer = null; }
   function down(event) {

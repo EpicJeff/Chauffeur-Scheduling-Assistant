@@ -1302,6 +1302,28 @@ async def deletion_worker_requests(conn: HTTPConnection):
         yield
 
 
+class _AccessLogTokens(logging.Filter):
+    """Keep credentials out of uvicorn's access log (review L5).
+
+    EventSource and <img> cannot set headers, so a page's member, device or
+    service token rides their query string (nav's chfAuthUrl), and so does a
+    hosted camera element's camera token. uvicorn logs every request line with
+    its query; this blanks each token's value and keeps the rest of the line."""
+    _TOKEN = re.compile(r'((?:member_|device_|service_)?token=)[^&\s"]+')
+
+    def filter(self, record):
+        try:
+            if isinstance(record.args, tuple):
+                record.args = tuple(self._TOKEN.sub(r'\1-', a) if isinstance(a, str) else a for a in record.args)
+            elif isinstance(record.msg, str):
+                record.msg = self._TOKEN.sub(r'\1-', record.msg)
+        except Exception:
+            pass
+        return True
+
+
+logging.getLogger('uvicorn.access').addFilter(_AccessLogTokens())
+
 app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan,
               dependencies=[Depends(_auth_guard), Depends(_feature_gate),
                             Depends(deletion_worker_requests)])
@@ -7488,27 +7510,66 @@ def house_live(request: Request):
     return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices}
 
 
+# A camera frame relayed every couple of seconds is bounded (review M2): past
+# either limit the read is dropped and the page says the camera is unavailable.
+CAMERA_FRAME_BYTES = 4 * 1024 * 1024
+CAMERA_FRAME_SECONDS = 6
+
+
+def _camera_refusal(request) -> str | None:
+    """Why the household's grid keeps this caller from seeing cameras, or None.
+
+    ONE check for every lane a camera's picture leaves by: the house's camera
+    route, the hosted cards' /api/camera_proxy and _stream, and the board tile's
+    /api/ha/image proxy of a camera path (Ruling C9, review H3). A camera is
+    the grid's `other` kind, checked before any request to Home Assistant. An
+    image cannot carry the identify/PIN retry, so a cell that needs one is a
+    refusal here (C6), with copy that says what would show it (review L6)."""
+    from services import control_rules
+    if request is None:
+        return 'This camera is not available here.'
+    # The household switch governs CONTROL, not seeing (Ruling C12): with control
+    # turned off, cameras keep the route tiers they had before the grid reached
+    # them. A rules read that fails falls through to check_kind, which refuses.
+    try:
+        if control_rules.rules().get('enabled') is False:
+            return None
+    except Exception:
+        pass
+    who = control_rules.who_from_request(request.headers, request.query_params)
+    decision = control_rules.check_kind(who, 'other')
+    if decision.allowed:
+        return None
+    if decision.needs == 'identify':
+        return 'Open this camera on your phone to see it.'
+    if decision.needs == 'pin':
+        return 'Sign in on this device with your password or PIN to see this camera.'
+    return 'This camera is not available here.'
+
+
+def _camera_gate(request):
+    refusal = _camera_refusal(request)
+    if refusal:
+        raise HTTPException(status_code=403, detail=refusal)
+
+
 @app.get('/api/house/camera/{entity_id}')
 def house_camera(entity_id: str, request: Request):
-    from services import control_rules, ha_api
+    from services import ha_api
     if not re.fullmatch(r'camera\.[a-z0-9_]+', entity_id):
         raise HTTPException(status_code=400, detail='Not a camera.')
     if ha_api.mode() == 'unconfigured':
         raise HTTPException(status_code=404, detail='No camera is available.')
-    who = control_rules.who_from_request(request.headers, request.query_params)
-    # A camera belongs to the grid's other kind. Check before any HA request;
-    # in particular, an image cannot carry an identify/PIN retry (C6).
-    decision = control_rules.check_kind(who, 'other')
-    if not decision.allowed:
-        message = ('Open this camera on your phone to see it.' if decision.needs
-                   else 'This camera is not available here.')
-        raise HTTPException(status_code=403, detail=message)
-    states = ha_api.get_states(ttl=0)
-    if ha_api.states_unreachable():
+    _camera_gate(request)
+    # Which cameras exist comes from the warm cache (the state stream keeps it
+    # current), never a whole-house read per still (review M2).
+    states = ha_api.get_states(ttl=60)
+    if not states and ha_api.states_unreachable():
         raise HTTPException(status_code=503, detail='Home Assistant is not reachable.')
     if not any(row.get('entity_id') == entity_id for row in states):
         raise HTTPException(status_code=404, detail='Camera not found.')
-    frame = ha_api.fetch_binary(f'/api/camera_proxy/{entity_id}')
+    frame = ha_api.fetch_binary(f'/api/camera_proxy/{entity_id}',
+                                max_bytes=CAMERA_FRAME_BYTES, deadline=CAMERA_FRAME_SECONDS)
     if not frame:
         raise HTTPException(status_code=503, detail='Home Assistant is not reachable.')
     content, content_type = frame
@@ -11669,29 +11730,72 @@ def ha_entities(domain: str):
 
 # --- Hosting a real Home Assistant custom card (services/ha_cards.py) ---
 
+def _house_stream_entities(area: str | None = None) -> set:
+    """What the house's live layer draws, derived here from its placements
+    (Ruling C11, review M4): every Home Assistant device in an area, and each
+    room's lights; `area` narrows it to one area. The page sends no list: a
+    whole house of ids overflowed the ingress request line and the stream
+    silently never opened."""
+    from services import twin_ha
+    try:
+        model, catalogue = _house_ha_context(storage.get_settings() or {})
+    except Exception as e:
+        print(f"[house] stream entities failed: {e}")
+        return set()
+    if not catalogue.get('available'):
+        return set()
+    areas = {a['area_id'] for a in catalogue.get('areas') or []}
+    ids = set()
+    for device in catalogue.get('devices') or []:
+        if device.get('area_id') in areas and (area is None or device.get('area_id') == area) and device.get('entity_id'):
+            ids.add(device['entity_id'])
+    for building in model.get('buildings') or []:
+        for room in building.get('rooms', []):
+            found = twin_ha.resolve_area(room.get('ha_area'), catalogue.get('areas') or [])
+            if not found or area is not None and found != area:
+                continue
+            ids.update(eid for d in catalogue.get('devices') or [] if d.get('area_id') == found
+                       for eid in d.get('entities') or [] if eid.startswith('light.'))
+    return ids
+
+
 @app.get("/api/ha/stream")
-async def ha_state_stream(entities: str | None = None):
-    """Confirmed HA changes; keep the browser connected through HA restarts."""
+async def ha_state_stream(area: str | None = None):
+    """Confirmed HA changes for what the house draws (or one area of it); keep
+    the browser connected through HA restarts. The set is the server's own
+    (C11): any entity list in the URL is ignored."""
     import queue
     from services import ha_events
 
     async def changes():
-        subscriber = ha_events.subscribe(
-            None if entities is None else [entity.strip() for entity in entities.split(',') if entity.strip()])
-        last_ping = time.monotonic()
+        # The response starts at once and the set is derived after, so a page that
+        # goes away while the house is read leaves no half-made response behind.
+        yield ": connected\n\n"
+        entities = await asyncio.to_thread(_house_stream_entities, area or None)
+        # Sleep until a change is queued, or 15 s for a keep-alive ping; never
+        # wake ten times a second per open page (review L11).
+        loop, ready = asyncio.get_running_loop(), asyncio.Event()
+
+        def wake():
+            try:
+                loop.call_soon_threadsafe(ready.set)
+            except RuntimeError:
+                pass        # the loop has closed with the page
+        subscriber = ha_events.subscribe(entities, wake=wake)
         try:
-            yield ": connected\n\n"
             while True:
                 try:
                     change = subscriber.get_nowait()
                 except queue.Empty:
-                    if time.monotonic() - last_ping >= 15:
+                    ready.clear()
+                    if not subscriber.empty():
+                        continue
+                    try:
+                        await asyncio.wait_for(ready.wait(), 15)
+                    except asyncio.TimeoutError:
                         yield ": ping\n\n"
-                        last_ping = time.monotonic()
-                    await asyncio.sleep(0.1)
                     continue
                 yield f"data: {json.dumps(change)}\n\n"
-                last_ping = time.monotonic()
         finally:
             ha_events.unsubscribe(subscriber)
 
@@ -12515,15 +12619,18 @@ _HA_IMAGE_PREFIXES = ('/api/media_player_proxy/', '/api/image_proxy/',
                       '/local/')
 
 @app.get("/api/camera_proxy/{entity_id}")
-def ha_camera_still(entity_id: str, token: str = None):
+def ha_camera_still(entity_id: str, request: Request, token: str = None):
     """One camera frame, on our origin. The hosted camera elements build
-    `/api/camera_proxy/<entity>?token=…` page-relative; HA validates its
-    own access token, we only validate the shape and forward."""
+    `/api/camera_proxy/<entity>?token=…` page-relative. The household's grid
+    decides first (C9); the server's own bearer goes up, so the page needs no
+    camera token (and is never sent one: ha_api.public_state)."""
     from services import ha_api
     if not re.match(r'^camera\.[a-z0-9_]+$', entity_id or ''):
         raise HTTPException(status_code=400, detail="Not a camera")
+    _camera_gate(request)
     q = f'?token={token}' if token and re.match(r'^[0-9a-f]+$', token) else ''
-    got = ha_api.fetch_binary(f'/api/camera_proxy/{entity_id}{q}')
+    got = ha_api.fetch_binary(f'/api/camera_proxy/{entity_id}{q}',
+                              max_bytes=CAMERA_FRAME_BYTES, deadline=CAMERA_FRAME_SECONDS)
     if not got:
         raise HTTPException(status_code=502, detail="No frame from Home Assistant")
     content, content_type = got
@@ -12531,7 +12638,7 @@ def ha_camera_still(entity_id: str, token: str = None):
                     headers={'Cache-Control': 'no-store'})
 
 @app.get("/api/camera_proxy_stream/{entity_id}")
-def ha_camera_stream_proxy(entity_id: str, token: str = None):
+def ha_camera_stream_proxy(entity_id: str, request: Request, token: str = None):
     """The camera's MJPEG stream, PIPED — this is what the hosted camera
     element actually renders as its <img>, and it never ends, so it must
     stream rather than buffer. One upstream connection per watching panel;
@@ -12539,6 +12646,7 @@ def ha_camera_stream_proxy(entity_id: str, token: str = None):
     from services import ha_api
     if not re.match(r'^camera\.[a-z0-9_]+$', entity_id or ''):
         raise HTTPException(status_code=400, detail="Not a camera")
+    _camera_gate(request)
     q = f'?token={token}' if token and re.match(r'^[0-9a-f]+$', token) else ''
     resp = ha_api.stream_binary(f'/api/camera_proxy_stream/{entity_id}{q}',
                                 timeout=15)
@@ -12593,6 +12701,11 @@ def ha_image(path: str, request: Request = None):
     elif not path.startswith(_HA_IMAGE_PREFIXES) or '..' in path:
         print(f"[ha_image] REJECTED path={path[:80]} ua={ua}")
         raise HTTPException(status_code=400, detail="Path not allowed")
+    # The board's camera tile reads its frames through here: the same grid as
+    # every other camera lane (C9). A LAN URL naming HA's camera path too.
+    from urllib.parse import urlsplit
+    if '/api/camera_proxy' in urlsplit(path).path:
+        _camera_gate(request)
     started = _time.time()
     # `/local/` is /config/www, which HA serves as STATIC content and the
     # Supervisor's API proxy does not carry — the same distinction the card
@@ -20690,6 +20803,11 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
     current_before = dict(current)
     current.update(incoming)
     storage.update_settings(current)
+    # Home Assistant configured (or re-pointed) from settings: its state stream
+    # follows now, not at the next restart of the add-on (review L3).
+    if any(k in incoming and incoming[k] != current_before.get(k) for k in ('ha_base_url', 'ha_token')):
+        from services import ha_events
+        background_tasks.add_task(ha_events.restart)
     # Panel-shaped settings (layout, theme, screensaver…) edited on one device
     # must repaint every wall panel — they reload on the `profile` stream
     # event. Everything else rides the generic `update` bump.

@@ -54,6 +54,14 @@ What the live layer gives (the hooks this file assumes; keep them few):
 - The ring follows the marker when the camera moves (live.draw / view.render).
 - Escape, a tap on the scene away from the ring, or a tap elsewhere on the page
   closes it; a tap on the ring itself does not.
+- A press while a call for the same device is still on its way is never lost
+  (Ruling C10, review H2): the newest one goes as soon as the first has
+  answered; a third in the same window replaces the second (whose promise says
+  false); an arc takes a new drag while its last value is being sent, and the
+  latest value wins. An unlock, open or disarm while busy says "Still working
+  on <name>" and asks nothing.
+- A ring opened from the room panel (live.openRing) takes the keyboard focus to
+  its first control and gives it back on close (review L7).
 
 Every control goes through live.control (the fake window.chfControlFetch records
 {domain, service, data}); no browser dialog is used.
@@ -338,6 +346,93 @@ check('arc_drags_are_debounced', async () => {
   } finally { t.cleanup(); }
 });
 
+const brightness = calls => calls.filter(c => c[2].brightness_pct !== undefined).map(c => c[2].brightness_pct);
+
+check('a_press_during_a_send_is_not_lost', async () => {
+  const t = await mount([LAMP, {device_id: 'door', name: 'Back door', entity_id: 'lock.back', kind: 'lock', state: 'locked', attributes: {}}]);
+  try {
+    // Home Assistant, slowed: each call answers after 300 ms, so a person can press again
+    // while one is on its way.
+    const call = window.chfControlFetch;
+    window.chfControlFetch = async (url, options) => { const answer = await call(url, options); await wait(300); return answer; };
+    await t.hold('lamp');
+    // (a) Drag, release, then tap Blue while the drag's value is still on its way.
+    t.calls.length = 0;
+    for (let i = 0; i < 3; i++) { key(slider('brightness'), 'ArrowDown'); await wait(15); }
+    const dragged = now(slider('brightness'));
+    await wait(260);                     // the drag's call has gone and has not answered
+    assert.equal(t.calls.length, 1, `the drag's value is on its way: ${JSON.stringify(t.serviceCalls())}`);
+    const blue = part('swatches')?.querySelectorAll('button').find(n => n.getAttribute('aria-label') === 'Blue');
+    assert.ok(blue, 'a Blue swatch');
+    await press(blue);
+    await settle();
+    const sent = t.serviceCalls();
+    assert.equal(sent.length, 2, `both are sent, in order: ${JSON.stringify(sent)}`);
+    assert.equal(sent[0][2].brightness_pct, dragged, 'first the dragged brightness');
+    assert.ok(sent[1][2].rgb_color || sent[1][2].hs_color, `then Blue: ${JSON.stringify(sent[1])}`);
+    assert.deepEqual(t.alerts, [], 'nothing was refused');
+
+    // (b) Two drags, the second while the first one's value is being sent: the latest wins.
+    t.calls.length = 0;
+    for (let i = 0; i < 2; i++) { key(slider('brightness'), 'ArrowUp'); await wait(15); }
+    await wait(260);
+    assert.equal(t.calls.length, 1, 'the first drag has gone');
+    const before = now(slider('brightness'));
+    for (let i = 0; i < 4; i++) { key(slider('brightness'), 'ArrowUp'); await wait(15); }
+    assert.equal(now(slider('brightness')), before + 4, 'the arc takes the second drag while the first is being sent');
+    const latest = now(slider('brightness'));
+    await settle(); await wait(400);
+    assert.deepEqual(brightness(t.serviceCalls()), [before, latest], `then sends the latest: ${JSON.stringify(t.serviceCalls())}`);
+    assert.equal(now(slider('brightness')), latest, 'and shows it, confirmed');
+
+    // (c) Calls straight to live.control: a third in the window replaces the second.
+    t.calls.length = 0;
+    const first = t.live.control('light.lamp', 'turn_on', {brightness_pct: 40});
+    await wait(100);
+    const second = t.live.control('light.lamp', 'turn_on', {brightness_pct: 60});
+    const third = t.live.control('light.lamp', 'turn_on', {brightness_pct: 80});
+    const results = await Promise.all([first, second, third]);
+    assert.deepEqual(results, [true, false, true], `the replaced call says false: ${JSON.stringify(results)}`);
+    assert.deepEqual(brightness(t.serviceCalls()), [40, 80], `40 then 80, never 60: ${JSON.stringify(t.serviceCalls())}`);
+    // A press after the first call answered, while its confirming poll is still out, is sent.
+    t.calls.length = 0; t.pollDelay = 600;
+    const confirming = t.live.control('light.lamp', 'turn_on', {brightness_pct: 30});
+    await wait(420);
+    const during = await t.live.control('light.lamp', 'turn_on', {brightness_pct: 70});
+    assert.equal(during, true, 'a press during the confirming poll is sent');
+    assert.equal(await confirming, true);
+    assert.deepEqual(brightness(t.serviceCalls()), [30, 70], `both: ${JSON.stringify(t.serviceCalls())}`);
+    t.pollDelay = 0;
+
+    // (d) An unlock while the lock is busy asks nothing and says so.
+    t.calls.length = 0; t.confirms.length = 0;
+    const unlocking = t.live.control('lock.back', 'unlock');
+    await wait(60);
+    assert.equal(t.confirms.length, 1, 'the unlock asks once');
+    const again = await t.live.control('lock.back', 'unlock');
+    assert.equal(again, false, 'a second unlock while the first is on its way is not queued');
+    assert.equal(t.confirms.length, 1, 'and asks nothing more');
+    assert.ok(t.alerts.some(a => /still working on back door/i.test(a)), `it says so: ${JSON.stringify(t.alerts)}`);
+    assert.equal(await unlocking, true, 'the first unlock lands');
+    assert.deepEqual(t.serviceCalls(), [['lock', 'unlock', {entity_id: 'lock.back'}]], JSON.stringify(t.serviceCalls()));
+    assert.deepEqual(domErrors, [], 'no listener threw');
+  } finally { t.cleanup(); }
+});
+
+check('a_ring_opened_from_the_room_takes_the_focus', async () => {
+  const t = await mount(TOGGLES);
+  try {
+    const before = document.createElement('button'); before.textContent = 'More'; document.body.append(before); before.focus();
+    t.live.openRing(t.live.markers().find(m => m.device_id === 'lamp'));
+    await wait(30);
+    assert.ok(ringNode().contains(document.activeElement) && document.activeElement !== ringNode(),
+      `the focus moves to the ring's first control: ${document.activeElement?.getAttribute?.('data-ring-part')}`);
+    key(document, 'Escape'); await wait(30);
+    assert.equal(document.activeElement, before, 'and comes back where it was when the ring closes');
+    before.remove();
+  } finally { t.cleanup(); }
+});
+
 check('unoffered_ring_is_read_only', async () => {
   const t = await mount([{...LAMP, device_id: 'ro', entity_id: 'light.ro', name: 'Guest lamp', offered: false}]);
   try {
@@ -410,5 +505,26 @@ def run(only=()):
     return R.run(DRIVER, {}, prefix='chauffeur_twin_ring_', timeout=240, args=list(only))
 
 
+def light_uses_the_shared_dial():
+    """One builder for one concept (docs/ui_design_guide.md, review L9): the light's arcs
+    are the shared dial's (controls/shared.js), not a second copy of its geometry."""
+    import re
+    text = (R.ROOT / 'static' / 'twin' / 'live' / 'controls' / 'light.js').read_text(encoding='utf-8')
+    problems = []
+    if not re.search(r"import\s*\{[^}]*\bcontrols\b[^}]*\}\s*from\s*'\./shared\.js'", text):
+        problems.append('light.js does not build on controls() from ./shared.js')
+    for own in ('arcPath', 'arcPoint', 'GAP', "createElementNS(SVG, 'path')", 'getBoundingClientRect().width ? box'):
+        if own in text:
+            problems.append(f'light.js keeps its own arc ({own})')
+    if re.search(r'function\s+slider\s*\(', text):
+        problems.append('light.js defines its own slider')
+    print(f"  {'FAIL' if problems else 'ok  '} light_uses_the_shared_dial{' ' + '; '.join(problems) if problems else ''}")
+    return 1 if problems else 0
+
+
 if __name__ == '__main__':
-    sys.exit(1 if run(sys.argv[1:]) else 0)
+    only = sys.argv[1:]
+    code = run(only)
+    if not only or 'light_uses_the_shared_dial' in only:
+        code |= light_uses_the_shared_dial()
+    sys.exit(1 if code else 0)

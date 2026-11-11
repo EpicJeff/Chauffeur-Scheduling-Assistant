@@ -723,6 +723,25 @@ class ReviewRulings(unittest.TestCase):
         self.assertEqual(len(out['inputs']), 2, 'the PIN pad reopens without the alert being dismissed')
         self.assertEqual(out['result'], 'tok-1')
 
+    def test_prompt_input_forgets_what_was_typed(self):
+        """An alarm code typed on the shared wall must not sit in the page after the
+        sheet closes (review L10): the field is cleared on OK, on Cancel and on Enter."""
+        out = self.run_cc(r"""
+          const field = document.getElementById('cc-input-field');
+          const ask = () => window.__realPromptInput('Alarm', 'Enter the code', {type: 'password'});
+          let p = ask(); field.value = '1234'; document.getElementById('cc-input-ok-btn').onclick();
+          out.ok = await p; out.afterOk = field.value;
+          p = ask(); field.value = '5678'; document.getElementById('cc-input-cancel-btn').onclick();
+          out.cancel = await p; out.afterCancel = field.value;
+          p = ask(); field.value = '9012'; field.onkeydown({key: 'Enter'});
+          out.enter = await p; out.afterEnter = field.value;
+        """, [], extra=['window.__realPromptInput = window.promptInput;'])
+        self.assertEqual(out['ok'], '1234', 'OK still answers what was typed')
+        self.assertEqual(out['enter'], '9012', 'and so does Enter')
+        self.assertIsNone(out['cancel'])
+        self.assertEqual([out['afterOk'], out['afterCancel'], out['afterEnter']], ['', '', ''],
+                         'the typed code is gone from the page once the sheet closes')
+
     def test_show_global_alert_returns_nothing(self):
         out = self.run_cc('', [])
         self.assertEqual(out['realAlertReturn'], 'undefined',
