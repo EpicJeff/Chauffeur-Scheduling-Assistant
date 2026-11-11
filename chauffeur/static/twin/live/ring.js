@@ -48,6 +48,10 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
       root.style.left = `${at.x}px`; root.style.top = `${at.y}px`; settle(`${at.x}|${at.y}`); return;
     }
     const width = root.offsetWidth || DIAL, height = root.offsetHeight || DIAL, half = width / 2;
+    // A dial sits centred on the marker; a card with no dial (a camera, a sensor's value) too.
+    const dial = !!root.querySelector?.(':scope > .twin-light-controls');
+    const lift = dial ? DIAL / 2 : Math.round(height / 2);
+    root.style.marginTop = `${-lift}px`;
     const head = title?.localName === 'h2' ? (title.offsetHeight || 0) + 6 : 0;
     const sideWidth = side?.offsetWidth || 0, sideHeight = side?.offsetHeight || 0;
     let place = null;
@@ -59,11 +63,11 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
     const fit = (value, low, high) => Math.max(low, Math.min(high, value));
     const x = fit(at.x, safe.left + half + (place === 'left' ? sideWidth + SPACE : 0),
       safe.right - half - (place === 'right' ? sideWidth + SPACE : 0));
-    const y = fit(at.y, safe.top + head + DIAL / 2,
-      safe.bottom - height + DIAL / 2 - (place === 'below' ? sideHeight + SPACE : 0));
+    const y = fit(at.y, safe.top + head + lift,
+      safe.bottom - height + lift - (place === 'below' ? sideHeight + SPACE : 0));
     root.style.left = `${Math.round(x)}px`; root.style.top = `${Math.round(y)}px`;
     if (side) {
-      const top = y - DIAL / 2;
+      const top = y - lift;
       side.style.left = place === 'right' ? `${width + SPACE}px` : place === 'left' ? `${-sideWidth - SPACE}px` : '0px';
       side.style.top = `${Math.round(place === 'below' ? height + SPACE
         : fit(height / 2 - sideHeight / 2, (safe.bottom - safe.bar >= sideHeight ? safe.bar : safe.top) - top,
@@ -89,6 +93,8 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
     }
     builder = (kind.ring || kind.panel)({row, state, control: live.control, surface: 'ring',
       getState: () => live.states()[row.entity_id]});
+    // A kind with nothing to control (a sensor) shows its value alone, not an empty card.
+    if (!builder.childNodes.length) builder.hidden = true;
     root.append(builder);
     draw();
   }

@@ -5,14 +5,36 @@ export const element = (tag, text) => {
   if (text !== undefined) node.textContent = text;
   return node;
 };
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const normal = value => String(value ?? '').toLowerCase().replace(/[\s_-]+/g, '');
-const title = value => String(value).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-const SVG = 'http://www.w3.org/2000/svg', GAP = Math.PI / 9;
+// HA's own values in sentence case: heat_cool reads "Heat cool", armed_away "Armed away".
+export const title = value => String(value ?? '').replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
+// A number as a person reads it: no trailing zeros, at most one decimal (a 0.5 step shows 29.5).
+export const figure = value => String(Number(Number(value).toFixed(1)));
+export const SVG = 'http://www.w3.org/2000/svg';
+const GAP = Math.PI / 9;
 const point = (t, lower) => {
   const phi = Math.PI - GAP - t * (Math.PI - 2 * GAP);
   return [140 + 90 * Math.cos(phi), 140 + (lower ? 1 : -1) * 90 * Math.sin(phi)];
 };
+const arcPath = lower => {
+  const [[x0, y0], [x1, y1]] = [point(0, lower), point(1, lower)].map(p => p.map(v => v.toFixed(2)));
+  return `M ${x0} ${y0} A 90 90 0 0 ${lower ? 0 : 1} ${x1} ${y1}`;
+};
+
+// The ring's small glyphs (24 px viewBox, a 2 px parchment stroke like the marker icons).
+const GLYPHS = {
+  up: 'M6 15l6-6 6 6', down: 'M6 9l6 6 6-6', stop: 'M7 7h10v10H7z',
+  play: 'M8 5v14l11-7z', pause: 'M8 5v14M16 5v14', previous: 'M18 6v12l-9-6zM6 6v12', next: 'M6 6v12l9-6zM18 6v12',
+  minus: 'M6 12h12', plus: 'M6 12h12M12 6v12',
+};
+export function glyph(name) {
+  const svg = document.createElementNS(SVG, 'svg'); svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('class', 'twin-ring-glyph');
+  svg.setAttribute('data-glyph', name);
+  const path = document.createElementNS(SVG, 'path'); path.setAttribute('d', GLYPHS[name]);
+  svg.append(path); return svg;
+}
 
 // Only a capability change rebuilds the controls. Confirmed values update in place, keeping
 // a drag, a question or a hosted card alive across state pushes.
@@ -26,16 +48,15 @@ export function controlShape(state) {
   ].map(key => attrs[key])]);
 }
 
-// The light builder's dial, 44px arcs, angular gestures and side card, shared by the
-// remaining kinds. Panels use native ranges with the same values and service calls.
+// The light builder's dial (controls/light.js): a 280 px disc, 44 px arcs that stop short of
+// the horizontal and fill to their value, the on/off in the centre, and a side card for the
+// discrete choices. A kind with no arc keeps the disc and puts its state and its verbs in it
+// (the plain dial). Panels use native ranges with the same values and service calls.
 export function controls({row, state, control, compact = false, surface = 'panel', getState}) {
   const ring = surface === 'ring', root = element('div'); root.className = 'twin-device-actions';
-  const side = ring ? element('div') : root, summary = ring ? element('div') : root;
-  if (ring) {
-    root.className += ' twin-light-controls'; side.className = 'twin-ring-side';
-    summary.className = 'twin-control-summary'; root.append(summary);
-  }
-  let confirmed = state, disposed = false;
+  const side = ring ? element('div') : root;
+  if (ring) { root.className += ' twin-light-controls'; side.className = 'twin-ring-side'; }
+  let confirmed = state, disposed = false, arcs = 0;
   const updates = [], stops = [], attrs = state?.attributes || {};
   const enabled = row.offered && !compact;
   const part = (node, name) => { node.setAttribute('data-ring-part', name); return node; };
@@ -47,8 +68,24 @@ export function controls({row, state, control, compact = false, surface = 'panel
     if (getState && !disposed) update(getState());
     return ok;
   }
-  function button(name, label, service, data = {}, parent = side) {
+  // Places in the dial: the centre row of round buttons, the stack of a plain dial (its state,
+  // then its verbs as pills), and the line under the centre. In a room row every place is the row.
+  const places = {};
+  function place(name) {
+    if (!ring) return root;
+    if (!places[name]) {
+      places[name] = element('div'); places[name].className = `twin-dial-${name}`;
+      // A plain dial's verbs sit in its stack, under the state.
+      (name === 'pills' ? place('stack') : root).append(places[name]);
+    }
+    return places[name];
+  }
+  function button(name, label, service, data = {}, parent = side, icon = null) {
     const node = part(element('button', label), name); node.type = 'button'; node.disabled = !enabled;
+    if (ring && icon) {
+      node.textContent = ''; node.append(glyph(icon)); node.setAttribute('aria-label', label);
+      node.classList.add('twin-ring-round');
+    }
     node.addEventListener('click', async () => {
       if (!enabled || disposed || node.disabled) return;
       node.disabled = true;
@@ -71,8 +108,10 @@ export function controls({row, state, control, compact = false, surface = 'panel
     }
     return node;
   }
-  function text(name, valueOf, central = false) {
-    const node = part(element('p'), name); (central ? summary : side).append(node);
+  // A line of text: in the side card, or at a named place in the dial ('stack', 'below').
+  function text(name, valueOf, where = side) {
+    const parent = typeof where === 'string' ? place(where) : where;
+    const node = part(element('p'), name); parent.append(node);
     updates.push(() => { node.textContent = valueOf(confirmed); }); return node;
   }
   function chips(name, label, values, current, service, key) {
@@ -85,21 +124,25 @@ export function controls({row, state, control, compact = false, surface = 'panel
     }
   }
   function slider(name, label, min, max, step, valueOf, service, dataOf, lower = false, unit = '') {
-    let node, svg, handle, output, dragging = null, editing = false, sending = false, timer = null;
+    let node, svg, handle, progress, output, dragging = null, editing = false, sending = false, timer = null;
     min = Number(min); max = Number(max); step = Number(step) > 0 ? Number(step) : 1;
     if (ring) {
+      arcs++; root.classList.add('twin-dial-arcs');
       svg = document.createElementNS(SVG, 'svg'); svg.setAttribute('viewBox', '0 0 280 280');
-      svg.setAttribute('class', 'twin-light-arc');
-      node = document.createElementNS(SVG, 'path');
-      const [[x0, y0], [x1, y1]] = [point(0, lower), point(1, lower)];
-      node.setAttribute('d', `M ${x0} ${y0} A 90 90 0 0 ${lower ? 0 : 1} ${x1} ${y1}`);
+      svg.setAttribute('class', `twin-light-arc twin-light-arc-${name}`);
+      node = document.createElementNS(SVG, 'path'); node.setAttribute('d', arcPath(lower));
       node.setAttribute('role', 'slider'); node.setAttribute('tabindex', enabled ? '0' : '-1');
       node.setAttribute('aria-disabled', String(!enabled));
       node.setAttribute('aria-valuemin', String(min)); node.setAttribute('aria-valuemax', String(max));
+      progress = document.createElementNS(SVG, 'path'); progress.setAttribute('d', arcPath(lower));
+      progress.setAttribute('pathLength', '100'); progress.setAttribute('class', 'twin-light-progress');
       handle = document.createElementNS(SVG, 'circle'); handle.setAttribute('class', 'twin-light-handle'); handle.setAttribute('r', '8');
-      svg.append(node, handle); root.append(svg);
-      output = element('output'); output.className = `twin-light-value twin-light-${lower ? 'temperature' : 'brightness'}`;
-      root.append(output);
+      svg.append(node, progress, handle); root.append(svg);
+      // The value where the light ring shows its brightness, named in the caption's ink.
+      const readout = element('div');
+      readout.className = `twin-light-value twin-light-${lower ? 'temperature' : 'brightness'} twin-dial-readout`;
+      const caption = element('span', label); caption.className = 'twin-ring-caption';
+      output = element('output'); readout.append(caption, output); root.append(readout);
     } else {
       const wrap = element('label', label); node = element('input'); node.type = 'range';
       node.min = String(min); node.max = String(max); node.step = String(step); node.disabled = !enabled;
@@ -109,10 +152,13 @@ export function controls({row, state, control, compact = false, surface = 'panel
     const show = value => {
       value = clamp(Number(value) || 0, min, max); node.value = String(value);
       if (ring) {
-        node.setAttribute('aria-valuenow', String(value)); node.setAttribute('aria-valuetext', `${value}${unit}`);
-        const [x, y] = point(max > min ? (value - min) / (max - min) : 0, lower);
+        node.setAttribute('aria-valuenow', String(value)); node.setAttribute('aria-valuetext', `${figure(value)}${unit}`);
+        const ratio = max > min ? (value - min) / (max - min) : 0, [x, y] = point(ratio, lower);
+        progress.setAttribute('stroke-dasharray', `${ratio * 100} 100`);
+        // A zero-length dash still draws its round cap: an empty arc draws no fill at all.
+        progress.style.visibility = ratio > 0 ? 'visible' : 'hidden';
         handle.setAttribute('cx', x.toFixed(2)); handle.setAttribute('cy', y.toFixed(2));
-        output.textContent = `${label} ${value}${unit}`;
+        output.textContent = `${figure(value)}${unit}`;
       }
     };
     const restore = () => { if (!editing && !sending) show(valueOf(confirmed)); };
@@ -163,12 +209,20 @@ export function controls({row, state, control, compact = false, surface = 'panel
     stops.push(() => clearTimeout(timer));
     return node;
   }
-  return {root, attrs, part, button, toggle, text, chips, slider,
+  return {root, side, attrs, ring, enabled, part, button, toggle, text, chips, slider, place, send,
+    confirmed: () => confirmed, disposed: () => disposed,
     watch: fn => updates.push(() => fn(confirmed)),
+    onStop: fn => stops.push(fn),
     has: bit => !!(Number(attrs.supported_features) & bit),
     finish() {
       if (!ring && (!row.offered || compact)) root.replaceChildren();
-      if (ring && side.childNodes.length) { root.append(side); root.side = side; }
+      if (ring) {
+        // A dial with no arc and no centre switch is a plain dial: its stack sits in the middle.
+        if (!arcs && !root.querySelector('[data-ring-part="center"]')) root.classList.add('twin-dial-plain');
+        // Read-only, a plain dial says the state and offers no dead verbs.
+        if (!row.offered) places.pills?.remove();
+        if (side.childNodes.length) { root.append(side); root.side = side; }
+      }
       root.update = update; root.stop = () => { disposed = true; stops.forEach(stop => stop()); };
       update(state); return root;
     }};

@@ -82,7 +82,7 @@ export function mountRoomPanel(live) {
       if (!widget || shape !== widget.shape || !widget.actions.update) {
         const node = widget?.node || element('section');
         if (widget) stop(widget);
-        node.className = 'twin-room-device'; node.dataset.deviceId = row.device_id;
+        node.className = 'twin-room-device'; node.dataset.deviceId = row.device_id; node.dataset.kind = kindOf(row).id;
         const name = element('h3'), status = element('p');
         const actions = deviceActions(row, state, live.control, {getState: () => live.states()[row.entity_id]});
         node.replaceChildren(name, status, actions);
@@ -91,7 +91,9 @@ export function mountRoomPanel(live) {
       }
       const {node, name, status, actions} = widget;
       name.textContent = row.name; status.textContent = row.label; actions.update?.(state);
-      if (row.kind === 'climate') status.textContent = `${row.label} · Current ${attrs.current_temperature ?? '—'} · Setpoint ${attrs.temperature ?? '—'}`;
+      // The status line says the room's temperature and the setpoint (both ends of a range).
+      if (row.kind === 'climate') status.textContent = `${row.label} · Current ${attrs.current_temperature ?? '—'} · Setpoint ${attrs.temperature
+        ?? (attrs.target_temp_low != null ? `${attrs.target_temp_low}–${attrs.target_temp_high}` : '—')}`;
       if (node.parentElement !== body) body.append(node);
     }
     if (!rows.length) body.append(empty);

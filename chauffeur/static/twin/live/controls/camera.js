@@ -1,6 +1,9 @@
 import { base } from '../../twin_library.js';
 import { element } from './shared.js';
 
+const PHONE = 'Open this camera on your phone to see it.';
+const UNAVAILABLE = 'Camera unavailable';
+
 export function cameraControls({row, compact = false}) {
   const root = element('div'); root.className = 'twin-device-actions';
   root.update = () => {};
@@ -11,20 +14,41 @@ export function cameraControls({row, compact = false}) {
   }
   const img = element('img'); img.setAttribute('data-ring-part', 'still'); img.alt = row.name;
   img.className = 'twin-camera-still'; root.append(img);
-  let stopped = false, timer = null;
+  let stopped = false, timer = null, shown = null, asked = 0;
   const url = base() + 'api/house/camera/' + encodeURIComponent(row.entity_id);
+  const signed = path => window.chfAuthUrl ? window.chfAuthUrl(path) : path;
+  const say = text => { message.textContent = text; root.toggleAttribute('data-missing', !!text); };
+  // A frame read by hand (below) is shown from memory; the next refresh lets it go.
+  const forget = () => { if (shown) { URL.revokeObjectURL?.(shown); shown = null; } };
   const refresh = (fresh = true) => {
     if (stopped) return;
-    const path = url + (fresh ? '?t=' + Date.now() : '');
-    img.src = window.chfAuthUrl ? window.chfAuthUrl(path) : path;
+    img.src = signed(url + (fresh ? '?t=' + Date.now() : ''));
+    forget();
   };
-  img.addEventListener('error', () => {
-    // An image cannot carry the identify/PIN flow (C6). Keep a useful phone path;
-    // subsequent refreshes also let a transient HA outage recover without reopening.
-    message.textContent = 'Open this camera on your phone to see it.';
+  // An img's error cannot tell a refusal from a missing frame, so the route is asked once more
+  // and its answer read: a refusal by the household's grid (C6: identify first, which an img
+  // cannot do) sends the person to their phone and stops asking; anything else is a camera
+  // that is unavailable for now, and the refresh keeps trying.
+  img.addEventListener('error', async () => {
+    if (stopped) return;
+    const mine = ++asked;
+    let status = 0, detail = '', frame = null;
+    try {
+      const response = await fetch(signed(url + '?t=' + Date.now()), {cache: 'no-store', credentials: 'same-origin'});
+      status = response.status;
+      if (response.ok) frame = await response.blob();
+      else detail = (await response.json().catch(() => ({}))).detail;
+    } catch { /* unreachable: the camera is unavailable */ }
+    if (stopped || mine !== asked) return;
+    if (status === 403) {
+      clearInterval(timer); timer = null;
+      say(typeof detail === 'string' && detail ? detail : PHONE);
+    } else if (frame && URL.createObjectURL) {
+      forget(); shown = URL.createObjectURL(frame); img.src = shown;
+    } else say(UNAVAILABLE);
   });
-  img.addEventListener('load', () => { message.textContent = ''; });
+  img.addEventListener('load', () => { say(''); });
   refresh(false); timer = setInterval(refresh, 2000);
-  root.stop = () => { stopped = true; clearInterval(timer); };
+  root.stop = () => { stopped = true; clearInterval(timer); forget(); };
   return root;
 }
