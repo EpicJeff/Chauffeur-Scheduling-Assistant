@@ -1,3 +1,5 @@
+import { svgIcon } from '../live/glance_icons.js';
+
 const noHa = 'Home Assistant is not connected, so areas and devices are hidden.';
 const goneArea = "This room's Home Assistant area is gone; pick another.";
 const unavailable = () => ({ available: false, areas: [], floors: [], rooms: [], unlinked: [], devices: [] });
@@ -96,7 +98,9 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
       if (event.pointerType !== 'mouse' && !event.target?.closest?.('.editor-device-grip')) return;
       placement?.startDrag(event, device);
     }, { signal });
-    row.append(grip, words, actions);
+    row.append(grip);
+    if (device.kind === 'camera') row.append(svgIcon('camera', 'currentColor'));
+    row.append(words, actions);
     return row;
   }
 

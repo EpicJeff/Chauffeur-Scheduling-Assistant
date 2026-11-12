@@ -1,6 +1,35 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.805 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.806 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.806 (2026-11-12, NOT device-verified): cameras appear when linking areas. A device with a camera is a camera, and its spotlight, siren and switches live on the camera's ring.**
+
+**The report.** The user, 2026-11-12: "I'm not seeing any cameras show up when linking areas to rooms. I get things that belong to cameras like spotlights or switches, but not the camera itself."
+
+**Cause.** `services/twin_ha.py` `catalogue()` makes one twin device per HA device and picks its primary entity by `_KINDS`. Camera ranked below light and switch, so a camera with a spotlight, siren or privacy switch became a light or a switch, and every UI path acts on the primary only.
+
+**How it was built.** Claude traced the cause. Codex built the fix. Claude checked it in Chromium; two test waits needed fixing (the marker is now the idle camera, and the spotlight's state is confirmed by the push).
+
+**Now:**
+- **Kind order:** lock > garage > camera > climate > light > fan > outlet > switch > … A garage with a camera stays a garage.
+- **Existing placements:** a placed "spotlight" marker becomes the camera in the same spot, because placements are keyed by device id.
+- **`services/twin_plan.py`:** camera fixture words win over spotlight, switch and sensor words.
+- **Accessories** (light, switch, input_boolean, siren, button) are toggles on the camera's ring (`live/controls/camera.js`) and on its room-panel row: the panel and kiosk hand path.
+  - Names drop the device name ("Spotlight", "Privacy mode").
+  - A siren turns on or off by its confirmed state; a button presses.
+  - **Permissions are per entity:** each accessory gets its own `control_rules.offered` result. A refused camera view never blocks an allowed spotlight, and an allowed camera never enables a refused one. An unoffered accessory shows its state only.
+  - **The camera grid** (C9) and the server-only camera tokens are unchanged.
+- **Lights mode:** a camera's spotlight still counts as a room light in Lights mode and in room facts, without double counting.
+- **Auto-place:** unchanged (only garages and locks attach to obvious openings).
+
+**Tests.**
+- `test_twin_ha` 20/20: camera plus spotlight/privacy/motion; a lock with a battery; a light with power; a garage with a camera.
+- `test_twin_ha_routes` 16/16.
+- `test_twin_ha_link_js` 17/17.
+- `test_twin_camera_route` 11/11.
+- `test_twin_controls_js` 25/25.
+- `test_twin_live_rooms_js` 19/19.
+- Browser `test_house_twin_controls_live` 4/4: camera marker, hold, a Spotlight toggle that sends `light.toggle` while camera viewing is refused, and the room-panel control.
 
 **v2.499.805 (2026-11-12, NOT device-verified): energy ribbons that share an end fan out without crossing.**
 

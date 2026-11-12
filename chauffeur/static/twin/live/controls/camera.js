@@ -1,5 +1,5 @@
 import { base } from '../../twin_library.js';
-import { element } from './shared.js';
+import { controls, element, title } from './shared.js';
 
 const PHONE = 'Open this camera on your phone to see it.';
 const UNAVAILABLE = 'Camera unavailable';
@@ -17,7 +17,41 @@ function identity() {
   return person ? {'X-Member-Token': person, 'X-Device-Token': ''} : {};
 }
 
-export function cameraControls({row, compact = false}) {
+// Both the marker and the room use these same labelled switches and the shared
+// control sender. The frame's permission never lends permission to its siblings.
+export function cameraControls(options) {
+  const {row, compact = false, getEntityState = () => null} = options;
+  const frame = cameraStill(options);
+  if (compact || !row.accessories?.length) return frame;
+  const root = element('div'); root.className = 'twin-device-actions'; root.append(frame);
+  // The ring side card's vertical stack, keeping the frame above its switches.
+  root.style.flexDirection = 'column'; root.style.alignItems = 'stretch';
+  const widgets = row.accessories.map(accessory => {
+    const state = () => getEntityState(accessory.entity_id);
+    if (!accessory.offered) {
+      // Read-only accessories say their state, with no inactive verbs.
+      const node = element('p'); node.setAttribute('data-accessory', accessory.entity_id);
+      node.update = next => { node.textContent = `${accessory.name}: ${title(next?.state || 'unavailable')}`; };
+      root.append(node); return {node, state};
+    }
+    const c = controls({...options, row: accessory, state: state(), surface: 'panel', getState: state});
+    c.root.setAttribute('data-accessory', accessory.entity_id);
+    if (accessory.entity_id.startsWith('button.')) {
+      c.button('press', accessory.name, 'press');
+    } else {
+      const service = accessory.entity_id.startsWith('siren.')
+        ? s => s?.state === 'on' ? 'turn_off' : 'turn_on' : 'toggle';
+      c.toggle('accessory', accessory.name, s => s?.state === 'on', service, {}, accessory.name);
+    }
+    c.finish();
+    root.append(c.root); return {node: c.root, state};
+  });
+  root.update = state => { frame.update?.(state); widgets.forEach(w => w.node.update?.(w.state())); };
+  root.stop = () => { frame.stop?.(); widgets.forEach(w => w.node.stop?.()); };
+  root.update(options.state); return root;
+}
+
+function cameraStill({row, compact = false}) {
   const root = element('div'); root.className = 'twin-device-actions';
   root.update = () => {};
   if (compact) return root;

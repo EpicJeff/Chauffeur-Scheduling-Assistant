@@ -61,9 +61,9 @@ async function readLayout(api, stop) {
 
 // What a layer draws from a layout; a re-read that matches it changes nothing on screen.
 const layoutKey = layout => JSON.stringify([
-  (layout?.markers || []).map(m => [m.device_id, m.name, m.kind, m.entity_id, m.entities, m.building, m.level, m.room, m.at, m.facing_deg, m.orientation, m.outdoor, m.location_valid, m.placed, m.offered]),
+  (layout?.markers || []).map(m => [m.device_id, m.name, m.kind, m.entity_id, m.entities, m.building, m.level, m.room, m.at, m.facing_deg, m.orientation, m.outdoor, m.location_valid, m.placed, m.offered, m.accessories]),
   (layout?.rooms || []).map(r => [r.building, r.room, r.level, r.area_id, r.name, r.lights, r.polygon_world]),
-  (layout?.devices || []).map(d => [d.device_id, d.name, d.kind, d.entity_id, d.entities, d.area_id, d.offered])]);
+  (layout?.devices || []).map(d => [d.device_id, d.name, d.kind, d.entity_id, d.entities, d.area_id, d.offered, d.accessories])]);
 
 // The wall keeps its live layer without a reload. A layer that could not mount (Home Assistant
 // away, a read that failed or timed out) is tried again every 45 s; a mounted one re-reads the
@@ -301,8 +301,10 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   async function control(entityId, service, data = {}) {
     if (stopped) return false;
     if (stale) { window.showGlobalAlert(unreachable); return false; }
-    const device = devices.find(row => row.offered && (row.entity_id === entityId || row.entities?.includes(entityId)));
-    if (!device) return false;
+    const owner = devices.find(row => row.entity_id === entityId || row.entities?.includes(entityId));
+    const device = owner?.kind === 'camera' && owner.entity_id !== entityId
+      ? owner.accessories?.find(row => row.entity_id === entityId) : owner;
+    if (!device?.offered) return false;
     if (busy.has(entityId)) {
       if (unsafeLabel(device, service, data, states[entityId])) {
         window.showGlobalAlert(`Still working on ${device.name}…`);

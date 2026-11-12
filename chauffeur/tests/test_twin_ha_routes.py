@@ -657,6 +657,43 @@ def test_failed_catalogue_remembered_thirty_seconds():
         check(read.call_count == first + 1, 'retry after thirty seconds')
 
 
+def test_camera_accessories_keep_placement_lights_and_independent_permissions():
+    # A previously placed spotlight device keeps its device identity and host.
+    seed(kitchen_area='kitchen', anchors=[ceiling_anchor()])
+    with Ctx() as c:
+        ids = ['camera.front', 'light.front_spotlight', 'switch.front_privacy',
+               'input_boolean.front_ir', 'siren.front', 'button.front_restart', 'binary_sensor.front_motion']
+        c.ha.devices[0]['name'] = 'Front camera'
+        for eid, name in zip(ids, ['Front camera', 'Front camera Spotlight', 'Front camera Privacy mode',
+                                   'Front camera Infrared', 'Front camera Siren', 'Front camera Restart', 'Front camera Motion']):
+            c.ha.entities[eid] = 'dev-k-light'
+            c.ha.states[eid] = _state(eid, 'on' if eid.startswith('light.') else 'off', friendly_name=name)
+        del c.ha.entities['light.kitchen_ceiling']
+        del c.ha.states['light.kitchen_ceiling']
+        grid = cr.default_rules({})
+        grid['places']['panel'].update(other='no', lights='yes', switches='no')
+        c.extra['ha_control'] = grid
+        linked = c.client.get(LINK, headers=c.mum).json()
+        device = next(d for d in linked['devices'] if d['device_id'] == 'dev-k-light')
+        check(device['kind'] == 'camera' and device['entity_id'] == 'camera.front', device)
+        body = c.client.get(LIVE, headers=c.panel).json()
+        marker = marker_for(body, 'dev-k-light')
+        check(marker['kind'] == 'camera' and marker['placed'], marker)
+        check(marker['offered'] is False, marker)
+        accessories = {a['entity_id']: a for a in marker['accessories']}
+        check(set(accessories) == set(ids[1:-1]), accessories)
+        check(accessories['light.front_spotlight']['name'] == 'Spotlight', accessories)
+        check(accessories['switch.front_privacy']['name'] == 'Privacy mode', accessories)
+        check(accessories['light.front_spotlight']['offered'] is True, accessories)
+        check(accessories['switch.front_privacy']['offered'] is False, accessories)
+        check(all(not accessories[eid]['offered'] for eid in ('siren.front', 'button.front_restart')), accessories)
+        check('light.front_spotlight' in next(r for r in body['rooms'] if r['room'] == 'kitchen')['lights'], body['rooms'])
+        grid['places']['panel'].update(other='yes', lights='no', switches='yes')
+        opposite = marker_for(c.client.get(LIVE, headers=c.panel).json(), 'dev-k-light')
+        check(opposite['offered'] is True, opposite)
+        check(next(a for a in opposite['accessories'] if a['entity_id'] == 'light.front_spotlight')['offered'] is False, opposite)
+
+
 TESTS = [v for k, v in sorted(globals().items()) if k.startswith('test_') and callable(v)]
 
 

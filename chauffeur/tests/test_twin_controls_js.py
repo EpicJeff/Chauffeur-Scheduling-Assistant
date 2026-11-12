@@ -153,8 +153,8 @@ function apply(row, {domain, service, data: d}) {
 
 // Markers on a grid that fits the rig's camera (about 29 px per foot, 48 x 34 ft in view).
 const spot = i => [-20 + (i % 9) * 5, [-10, 0, 10][Math.floor(i / 9) % 3], 2];
-async function mount(devices) {
-  const t = await rig({devices: devices.map((d, i) => ({...structuredClone(d), at: d.at || spot(i)}))});
+async function mount(devices, options = {}) {
+  const t = await rig({...options, devices: devices.map((d, i) => ({...structuredClone(d), at: d.at || spot(i)}))});
   globalThis.__live = t.live;
   t.inputs = []; t.code = '1234'; t.dialogs = [];
   window.promptInput = async (...args) => { t.inputs.push(args); return t.code; };
@@ -754,6 +754,85 @@ check('camera_ring_shows_a_still_that_refreshes', async () => {
     assert.equal(asked.length, refused, 'and nothing more is asked');
     assert.deepEqual(t.serviceCalls(), [], 'a camera sends nothing');
   } finally { gate?.release(); globalThis.fetch = window.fetch = realFetch; delete window.chfPersonToken; t.cleanup(); }
+});
+
+const CAMERA_ACCESSORIES = [
+  {entity_id:'light.front_spotlight', name:'Spotlight', kind:'light', offered:true},
+  {entity_id:'switch.front_privacy', name:'Privacy mode', kind:'switch', offered:true},
+  {entity_id:'input_boolean.front_ir', name:'Infrared', kind:'switch', offered:true},
+  {entity_id:'siren.front', name:'Siren', kind:'other', offered:true},
+  {entity_id:'button.front_restart', name:'Restart', kind:'other', offered:true},
+];
+async function accessoryCamera({cameraOffered = false, spotlightOffered = true} = {}) {
+  const accessories = structuredClone(CAMERA_ACCESSORIES); accessories[0].offered = spotlightOffered;
+  const extraStates = Object.fromEntries(accessories.map(a => [a.entity_id, {state:'off', attributes:{}}]));
+  extraStates['binary_sensor.front_motion'] = {state:'on', attributes:{device_class:'motion'}};
+  return mount([{...CAMERA, name:'Front camera', offered:cameraOffered, accessories,
+    entities:[CAMERA.entity_id, ...accessories.map(a => a.entity_id), 'binary_sensor.front_motion']}], {extraStates});
+}
+const accessory = (root, entity) => root.querySelector(`[data-accessory="${entity}"]`);
+check('camera_ring_accessories_use_their_own_entity_and_permission', async () => {
+  const t = await accessoryCamera();
+  try {
+    await open(t, 'camera', 'hold');
+    assert.ok(!part('still'), 'a refused camera never asks for a frame');
+    for (const a of CAMERA_ACCESSORIES) assert.ok(accessory(ringNode(), a.entity_id).textContent.includes(a.name));
+    const spotlight = accessory(ringNode(), 'light.front_spotlight').querySelector('[role="switch"]');
+    assert.equal(spotlight.getAttribute('aria-label'), 'Spotlight');
+    assert.equal(spotlight.getAttribute('aria-checked'), 'false');
+    let calls = await sent(t, () => press(spotlight));
+    assert.deepEqual(calls, [['light','toggle',{entity_id:'light.front_spotlight'}]]);
+    assert.equal(spotlight.getAttribute('aria-checked'), 'true');
+    assert.equal(t.live.ring().device_id, 'camera');
+    const privacy = accessory(ringNode(), 'switch.front_privacy').querySelector('[role="switch"]');
+    calls = await sent(t, () => press(privacy));
+    assert.deepEqual(calls, [['switch','toggle',{entity_id:'switch.front_privacy'}]]);
+    for (const [id, domain, service] of [['input_boolean.front_ir','input_boolean','toggle'],
+      ['siren.front','siren','turn_on'], ['siren.front','siren','turn_off'], ['button.front_restart','button','press']]) {
+      calls = await sent(t, () => press(accessory(ringNode(), id).querySelector('button')));
+      assert.deepEqual(calls, [[domain, service, {entity_id:id}]]);
+    }
+    t.states['light.front_spotlight'].state = 'off'; await t.live.refresh();
+    assert.equal(spotlight.getAttribute('aria-checked'), 'false', 'secondary-only state pushes update in place');
+    assert.ok(!accessory(ringNode(), 'binary_sensor.front_motion'), 'sensors are not accessory controls');
+    assert.equal(await t.live.control('binary_sensor.front_motion', 'toggle'), false);
+    assert.deepEqual(domErrors, []);
+  } finally { t.cleanup(); }
+});
+check('camera_unoffered_accessory_is_state_only_on_both_surfaces', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(new Blob(['frame']), {status:200});
+  const t = await accessoryCamera({cameraOffered:true, spotlightOffered:false});
+  try {
+    await open(t, 'camera', 'hold');
+    assert.ok(part('still'), 'camera allowed independently');
+    let item = accessory(ringNode(), 'light.front_spotlight');
+    assert.match(item.textContent, /Spotlight: Off/);
+    assert.equal(item.querySelector('button'), null);
+    assert.equal(await t.live.control('light.front_spotlight', 'toggle'), false);
+    await escape(); t.live.openRoom('b', 'r'); await wait(50);
+    item = accessory(document.getElementById('twin-room-panel'), 'light.front_spotlight');
+    assert.match(item.textContent, /Spotlight: Off/); assert.equal(item.querySelector('button'), null);
+    t.states['light.front_spotlight'].state = 'on'; await t.live.refresh();
+    assert.match(item.textContent, /Spotlight: On/);
+    assert.deepEqual(t.serviceCalls(), []);
+  } finally { t.cleanup(); globalThis.fetch = realFetch; }
+});
+check('camera_room_row_has_the_same_accessory_controls', async () => {
+  const t = await accessoryCamera();
+  try {
+    t.live.openRoom('b','r'); await wait(50);
+    const panel = document.getElementById('twin-room-panel');
+    const row = panel.querySelector('[data-device-id="camera"]');
+    const spotlight = accessory(row, 'light.front_spotlight').querySelector('[role="switch"]');
+    assert.equal(spotlight.getAttribute('aria-label'), 'Spotlight');
+    const calls = await sent(t, () => press(spotlight));
+    assert.deepEqual(calls, [['light','toggle',{entity_id:'light.front_spotlight'}]]);
+    assert.equal(spotlight.getAttribute('aria-checked'), 'true');
+    t.states['switch.front_privacy'].state = 'on'; await t.live.refresh();
+    assert.equal(accessory(row,'switch.front_privacy').querySelector('[role="switch"]').getAttribute('aria-checked'), 'true');
+    assert.deepEqual(domErrors, []);
+  } finally { t.cleanup(); }
 });
 
 check('every_kind_unoffered_is_read_only', async () => {

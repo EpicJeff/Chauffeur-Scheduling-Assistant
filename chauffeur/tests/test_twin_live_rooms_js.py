@@ -132,6 +132,17 @@ check('room_facts_no_lights_or_empty_readings', () => {
   snapshot['binary_sensor.motion'].state='off';
   assert.deepEqual(roomFacts({...rooms[0],lights:[]},[member],snapshot),[]);
 });
+check('camera_spotlight_still_counts_in_lights_mode_and_room_facts', () => {
+  const room = {...rooms[0], lights:['light.front_spotlight']};
+  const camera = {device_id:'front', kind:'camera', entity_id:'camera.front', area_id:'kitchen',
+    entities:['camera.front','light.front_spotlight']};
+  const snapshot = {'camera.front':{state:'idle'}, 'light.front_spotlight':{state:'on', attributes:{brightness:128}}};
+  assert.deepEqual(roomFacts(room, [camera], snapshot).map(f => f.text), ['1 on']);
+  assert.equal(roomStates([room], snapshot)[0].glow, 128 / 255);
+  snapshot['light.front_spotlight'].state = 'off';
+  assert.deepEqual(roomFacts(room, [camera], snapshot), []);
+  assert.equal(roomStates([room], snapshot)[0].glow, 0);
+});
 check('room_cards_separate_or_collapse_lower_priority', () => {
   const items = [0,1,2].map(priority=>({key:String(priority),x:80,y:40,w:120,h:62,priority}));
   const tight = layoutRoomCards(items,[],150,70);
