@@ -50,13 +50,16 @@ def scenario_wall_building_floor_room_swipe_and_two_pinches():
         pair = page.evaluate('''async bid => {
           const v=window.__twin,b=v.plan.buildings.find(b=>b.id===bid),a=-(b.rotation||0)*Math.PI/180;
           const {roomNeighbour}=await import(new URL(window.chfBase+'static/twin/levels.js',location.href).href);
-          for(const r of b.rooms.filter(r=>r.level==='L1')) {
+          for(const r of b.rooms.filter(r=>r.level==='L1' && v.live.markers().some(m=>m.building===bid&&m.room===r.id))) {
+            const key=JSON.stringify([bid,r.id]);
+            const card=[...document.querySelectorAll('[data-room-card]')].find(node=>node.dataset.roomCard===key);
+            if(!card || card.hidden || !card.getClientRects().length)continue;
             const neighbour=roomNeighbour(b.rooms,r.id,[-Math.cos(a),-Math.sin(a)]);
-            if(neighbour)return {id:r.id,name:r.name,next:neighbour.id};
+            if(neighbour)return {id:r.id,key,next:neighbour.id};
           }
           throw Error('navigation fixture must contain a left neighbour');
         }''', L.POOL)
-        card = page.locator('[data-room-card]').filter(has=page.get_by_text(pair['name'], exact=True))
+        card = page.locator(f"[data-room-card='{pair['key']}']:visible")
         card.click()
         page.wait_for_timeout(450)
         check(page.evaluate('() => window.__twin.levels.snapshot().room') == pair['id'], 'room card enters Room')
@@ -82,14 +85,26 @@ def scenario_time_preview_is_in_the_house_drawer():
     if served is None:
         return
     L.reset()
-    with served.browser(launch_args=L.GPU_ARGS) as page:
-        L.open_twin(page, served, query='tier=low&test=1')
-        check(page.locator('#twin-controls [data-time]').count() == 0, 'time preview left the control strip')
-        page.evaluate("() => window.dispatchEvent(new CustomEvent('chf-settings-open',{detail:{tab:'twin'}}))")
-        for time in ('day', 'night', 'now'):
-            page.locator(f'#twin-time-preview [data-time="{time}"]').click()
-            check(page.evaluate('() => window.__twin.state.time') == time, 'drawer preview works')
-        L.no_errors(served)
+    for query in ('tier=low&test=1', 'tier=low&test=1&panel=true&kiosk=true'):
+        with served.browser(launch_args=L.GPU_ARGS) as page:
+            if 'panel=true' not in query:
+                L.H.signed_in(page)
+            L.open_twin(page, served, query=query)
+            check(page.locator('#twin-controls [data-time]').count() == 0, 'time preview left the control strip')
+            gear = '#twin-preview-gear' if 'panel=true' in query else '#twin-settings-gear'
+            page.locator(gear).click()
+            check(page.locator('[role="dialog"][aria-label="House settings"]').is_visible(), 'shared drawer opens')
+            for time in ('day', 'night', 'now'):
+                control = page.locator(f'#twin-time-preview [data-time="{time}"]')
+                control.click()
+                check(page.evaluate('() => window.__twin.state.time') == time, 'drawer preview works')
+                check(control.get_attribute('aria-pressed') == 'true', 'selected preview is accessible')
+            if 'panel=true' in query:
+                check(page.locator('#twin-glance-settings, #twin-energy-settings').count() == 0,
+                      'wall drawer contains only session-local preview')
+            page.get_by_role('button', name='Close settings', exact=True).click()
+            check(not page.locator('[role="dialog"][aria-label="House settings"]').is_visible(), 'drawer closes')
+            L.no_errors(served)
 
 
 def scenario_second_level_round_trip_adds_no_gpu_programs():

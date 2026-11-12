@@ -114,15 +114,26 @@ await test('level round trips retain every geometry and material identity',async
   before.forEach(([o,g,m])=>{assert.equal(o.geometry,g);assert.equal(o.material,m);});
  }finally{v.dispose();}
 });
+await test('world-space ground probe supplies the camera required by building sprites',async()=>{
+ const v=await mounted();try{
+  v.scene.updateMatrixWorld(true);v.camera.updateMatrixWorld(true);
+  const ray=new T.Raycaster();ray.camera=v.camera;
+  ray.set(new T.Vector3(200*.3048,200,0),new T.Vector3(0,-1,0));
+  assert.doesNotThrow(()=>ray.intersectObject(v.scene,true));
+ }finally{v.dispose();}
+});
 finish();
 """
 BOOT = PRELUDE + r"""
-// A wall template has neither settings nor time controls. Execute the actual
+// A wall template has session-only preview controls. Execute the actual
 // swallowed-exception entry point, not merely mountTwin or a source search.
-for(const id of ['twin-canvas','twin-status','twin-tier','twin-glance-home','twin-controls','twin-idle','twin-idle-clock','twin-idle-next','twin-idle-weather']){
+for(const id of ['twin-canvas','twin-status','twin-tier','twin-glance-home','twin-controls','twin-idle','twin-idle-clock','twin-idle-next','twin-idle-weather','twin-time-preview','twin-preview-gear']){
  const node=new Element();node.id=id;node.style.setProperty=()=>{};document.body.append(node);
 }
 document.getElementById=id=>document.querySelector('#'+id);
+const previews=[];
+window.chfOpenSettings=(...args)=>previews.push(args);
+for(const time of ['now','day','night']){const b=new Element('button');b.dataset.time=time;document.getElementById('twin-time-preview').append(b);}
 location.search='?test=1&tier=low&panel=true&kiosk=true';
 const outline=[[0,0],[30,0],[30,20],[0,20]],b={id:'b',name:'House',position:[0,0],levels:[{id:'L1',elevation:0,ceiling:8,outline}],
  rooms:[{id:'r',name:'Room',level:'L1',polygon:outline}],walls:[],openings:[],lights:[],roof:{sections:[]}};
@@ -130,10 +141,17 @@ globalThis.fetch=async path=>String(path).endsWith('api/house/twin')?{ok:true,js
  :String(path).includes('api/house/twin/kit/')?{ok:true,json:async()=>({materials:{}})}:{ok:false,status:503,json:async()=>({available:false})};
 await import(file('static/twin/twin_view.js'));
 await new Promise(resolve=>setTimeout(resolve,50));
-await test('actual wall boot survives absent drawer, absent HA and starts idle/glance/navigation',()=>{
+await test('actual wall boot survives absent HA and starts idle/glance/navigation',()=>{
  assert.equal(document.getElementById('twin-status').hidden,true,document.getElementById('twin-status').textContent);
  assert.equal(window.__twin?.ready,true);assert.ok(window.__twin.idle);assert.ok(window.__twin.glance);
- assert.equal(window.__twin.levels.snapshot().level,'floor');assert.equal(document.getElementById('twin-time-preview'),null);
+ assert.equal(window.__twin.levels.snapshot().level,'floor');
+});
+await test('wall preview opener and all three controls run without HA',async()=>{
+ await click(document.getElementById('twin-preview-gear'));assert.deepEqual(previews,[['twin','twin-time-preview']]);
+ for(const time of ['day','night','now']){
+  await click(document.querySelector(`[data-time="${time}"]`));assert.equal(window.__twin.state.time,time);
+  for(const button of document.querySelectorAll('[data-time]'))assert.equal(button.getAttribute('aria-pressed'),String(button.dataset.time===time));
+ }
 });
 window.dispatchEvent(new Event('pagehide'));finish();
 """
@@ -185,6 +203,15 @@ await check('real Room swipe snaps left and a swipe past the edge is ignored',as
  const before=t.camera.position.clone();
  pointer('pointerdown',1,700,500);pointer('pointermove',1,600,500);pointer('pointerup',1,600,500);await wait(450);
  assert.equal(l.snapshot().room,'left');assert.ok(before.equals(t.camera.position));assert.equal(t.calls.length,0);
+});
+await check('settled level frames emit no camera changes or rebuilds that could restart or pause baking',async()=>{
+ l.go({building:'b',floor:'L1'},{immediate:true});await wait(450);
+ let changes=0,rebuilt=0;const changed=()=>changes++,rebuild=()=>rebuilt++;
+ controls.addEventListener('change',changed);t.host.addEventListener('twinrebuilt',rebuild);
+ const plan=t.view.plan,pose=t.camera.position.clone();
+ for(let i=0;i<240;i++){controls.update();t.view.render();l.draw();}
+ assert.equal(changes,0);assert.equal(rebuilt,0);assert.equal(t.view.plan,plan);assert.ok(t.camera.position.equals(pose));
+ controls.removeEventListener('change',changed);t.host.removeEventListener('twinrebuilt',rebuild);
 });
 l.stop();controls.dispose();t.cleanup();assert.deepEqual(domErrors,[]);assert.deepEqual(escaped,[]);
 console.log(`${passed}/${total} real-control gesture checks passed`);process.exit(passed===total?0:1);

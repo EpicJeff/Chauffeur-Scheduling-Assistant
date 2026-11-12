@@ -132,8 +132,11 @@ ENTRIES: List[dict] = [
        'Show the clock, weather and a slow house orbit after a minute. Off on desks, on on panels by default.',
        page='house/twin', anchor='twin-glance-settings'),
     _e('twin_import_limit_mb', 'panel', 'Model import size limit',
-       'Maximum size in MB for one model and its textures (1 to 200, default 50).',
+       'Maximum uploaded size in MB for one model and its textures (1 to 200, default 50).',
        page='house/editor', anchor='library-import-settings', ui_marker='library-import-limit'),
+    _e('twin_import_unpacked_limit_mb', 'panel', 'Unpacked model size limit',
+       'Maximum unpacked size in MB for one model (1 to 1000, default 200).',
+       page='house/editor', anchor='library-import-settings', ui_marker='library-import-unpacked-limit'),
     _e('house_twin_energy', 'panel', 'Energy sources',
        'Map solar, Powerwall battery, grid, house load and car charging readings, power signs and roof panels.',
        page='house/twin', anchor='twin-energy-settings'),
@@ -838,7 +841,7 @@ def audit() -> dict:
     # The old schema field remains readable for migration, with no editor.
     # Structured display preferences have a dedicated store and endpoint, like
     # the control rulebook; they never invalidate schedules on a display save.
-    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'twin_import_limit_mb', 'ha_control', 'house_twin_glance', 'house_twin_idle_enabled', 'house_twin_energy'}
+    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'twin_import_limit_mb', 'twin_import_unpacked_limit_mb', 'ha_control', 'house_twin_glance', 'house_twin_idle_enabled', 'house_twin_energy'}
     listed = set(BY_KEY)
     return {'missing': sorted(model - listed), 'stale': sorted(listed - model)}
 

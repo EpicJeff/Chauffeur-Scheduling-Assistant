@@ -46,7 +46,7 @@ def scenario_roof_click_resize_count_source_undo_and_exterior_meter():
     with served.browser(launch_args=L.GPU_ARGS) as page:
         H.open_editor(page,served)
         H.all_floors(page)
-        page.evaluate("() => window.__twin.levels.go({level:'house'},{immediate:true})")
+        page.evaluate("() => {const v=window.__twin;v.setView('ext');v.setCamera('front');}")
         aim(page,bid,point,[point[0],point[1]-20,point[2]+35])
         page.click('#rail-add-solar-zone')
         H.click_world(page,*point,bid)

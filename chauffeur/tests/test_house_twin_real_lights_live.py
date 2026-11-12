@@ -390,7 +390,9 @@ def scenario_lights_mode_keeps_the_day():
         check(all(l['intensity'] == 0 for l in lamps['lamps']), ('decorative room lamps are off', lamps))
         check(all(value == 0 for value in lamps['fixtures']), ('decorative fixture emissive is off', lamps))
 
-        page.get_by_role('button', name='Night', exact=True).locator('visible=true').click()
+        page.locator('#twin-preview-gear').click()
+        page.locator('#twin-time-preview [data-time="night"]').click()
+        page.get_by_role('button', name='Close settings', exact=True).click()
         calm(page)
         night_mean = mean(map(lum, screen_pixels(page, grid)))
         check(night_mean < during_mean * .70, ('Night changes the look at once in Lights mode', during_mean, night_mean))

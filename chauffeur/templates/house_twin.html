@@ -23,7 +23,7 @@
       'three/addons/': twinBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': twinBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'levels', 'viewing', 'unlit', 'twin_roof', 'twin_ground', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
+    {% for name in ['objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'import_loaders', 'twin_view', 'levels', 'viewing', 'unlit', 'twin_roof', 'twin_ground', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
@@ -206,7 +206,7 @@
        into Argyle and tap-to-talk there. */
     html[data-twin-wall] #top-nav-bar,
     html[data-twin-wall] #twin-tier, html[data-twin-wall] #twin-hud,
-    html[data-twin-wall] #twin-controls > fieldset:not(#twin-modes) { display:none !important; }
+    html[data-twin-wall] #twin-controls > fieldset:not(#twin-modes):not(#twin-preview-controls) { display:none !important; }
     html[data-twin-wall] #twin-controls { top:16px; }
     html[data-twin-wall] .twin-device-sheet, html[data-twin-wall] .twin-car-sheet { top:86px; max-height:calc(100dvh - 112px - var(--panel-shelf-h, 0px)); }
     #twin-path { position:fixed; left:16px; top:86px; z-index:47; display:flex; align-items:center; max-width:calc(45vw - 32px); overflow-x:auto; border:1px solid var(--twinBorder); border-radius:16px; padding:2px 8px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); white-space:nowrap; font:400 13px system-ui; }
@@ -316,6 +316,8 @@
     {% if request.query_params.get('panel') != 'true' and request.query_params.get('kiosk') != 'true' %}
     <a id="twin-edit" href="{{ _up }}house/editor">Edit the house</a>
     <fieldset><legend>House settings</legend><button id="twin-settings-gear" type="button" hidden aria-label="House settings">⚙ Settings</button></fieldset>
+    {% else %}
+    <fieldset id="twin-preview-controls"><legend>House preview</legend><button id="twin-preview-gear" type="button" aria-label="House time preview">⚙ Preview</button></fieldset>
     {% endif %}
   </div>
   <div id="twin-glance-home"></div>
@@ -324,10 +326,11 @@
     <div id="twin-idle-next" class="glance-corner-next" hidden></div>
   </section>
   {% from 'components/settings_drawer.html' import settings_drawer, settings_section with context %}
-  {% call settings_drawer('twin', 'House') %}
+  {% call settings_drawer('twin', 'House', preview=true) %}
     {% call settings_section('twin-time-preview', 'Time preview') %}
       <button type="button" data-time="now" aria-pressed="true">Now</button><button type="button" data-time="day" aria-pressed="false">Day</button><button type="button" data-time="night" aria-pressed="false">Night</button>
     {% endcall %}
+    {% if request.query_params.get('panel') != 'true' and request.query_params.get('kiosk') != 'true' and request.query_params.get('tabs') is none %}
     {% call settings_section('twin-glance-settings', 'Live readings and idle face') %}
       <label>Display <select id="twin-glance-panel"><option value="">Household default / desk</option></select></label>
       <label>Glance tiles <select id="twin-glance-source" data-setting="house_twin_glance"><option value="inherit">No tiles</option><option value="custom">Chosen household tiles</option></select></label>
@@ -346,6 +349,7 @@
       <div id="twin-energy-fields" data-setting="house_twin_energy"></div>
       <button id="twin-energy-save" type="button">Save energy sources</button>
     {% endcall %}
+    {% endif %}
   {% endcall %}
   <output id="twin-tier" aria-label="Render tier">Loading</output>
   {% if request.query_params.get('hud') == '1' %}

@@ -238,6 +238,11 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     closeFan(); openRoom(building, room); frameRoom(building, room);
   }
   function tapCluster(ids) {
+    // Room navigation owns its fixed top-down framing. Use 2b's fan rather
+    // than retargeting/zooming the camera beyond that level's allowed range.
+    if (view.levels?.snapshot().level === 'room') {
+      fan = {ids: [...ids]}; revision++; draw(); view.render(); return;
+    }
     const members = rows.filter(row => ids.includes(row.device_id));
     const target = new THREE.Vector3(); members.forEach(row => target.add(row.sprite.position)); target.divideScalar(members.length);
     const minGap = () => {
@@ -460,10 +465,11 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     }
     if (navigation?.level === 'floor' || !navigation && pxPerFoot < 7 && (!mode || mode === 'all')) {
       for (const room of layout.rooms.filter(room => navigation ? room.building === navigation.building && room.level === navigation.floor : levelShown(room))) {
-        // Levels expose every room as a navigation target. Legacy distance LOD
-        // admits empty rooms only when they have facts: a wall of "Room · 0 devices" cards buries the house it is meant to summarise.
+        // Empty rooms remain reachable through their floor, but get a card
+        // only when they have a fact (the 2b rule also applies at Floor).
         if (lod.badges.some(b => b.building === room.building && b.room === room.room) || !room.polygon_world?.length
-          || !navigation && !factRooms.has(JSON.stringify([room.building, room.room]))) continue;
+          || !factRooms.has(JSON.stringify([room.building, room.room]))
+            && !rows.some(row => row.building === room.building && row.room === room.room)) continue;
         const members = rows.filter(row => row.building === room.building && row.room === room.room);
         lod.badges.push({...room, count: members.length, attention: members.some(row => row.look === 'attention')});
       }

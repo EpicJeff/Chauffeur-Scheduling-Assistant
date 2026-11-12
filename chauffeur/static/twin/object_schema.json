@@ -12,7 +12,7 @@
     "elevation": {"type":"number", "default":0, "min":-1000, "max":1000}
   },
   "kinds": {
-    "furniture": {}, "decor": {}, "plant": {}, "door": {}, "window": {},
+    "furniture": {}, "decor": {}, "plant": {}, "door": {}, "window": {}, "car": {},
     "lamp": {
       "emissive": {"type":"boolean", "default":false},
       "emissive_color": {"type":"color", "default":"#ffd89a"},

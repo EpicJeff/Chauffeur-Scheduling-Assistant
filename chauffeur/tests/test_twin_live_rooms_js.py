@@ -322,6 +322,47 @@ check('viewer_levels_filter_actual_sprites_in_every_mode_and_attention_tap_jumps
   assert.equal(document.getElementById('twin-room-panel').hidden,false,'attention opens its room');
  }finally{t.cleanup();}
 });
+check('room_clump_fans_without_moving_fixed_level_camera_and_still_controls', async()=>{
+ const t=await rig({devices:devices()});
+ const state={level:'room',building:'b',floor:'L1',room:'r'};
+ t.view.levels={snapshot:()=>({...state}),tap:()=>false};
+ try {
+  t.live.setMode('all');
+  const before=t.camera.position.clone(), target=t.view.controls.target.clone(), zoom=t.camera.zoom;
+  await t.tapAt(spriteAt(t,cluster(t))); await wait(600);
+  assert.equal(cluster(t),undefined); assert.ok(devices().every(d=>t.sprite(d.device_id).visible));
+  const points=devices().map(d=>spriteAt(t,t.sprite(d.device_id)));
+  for(let i=0;i<points.length;i++)for(let j=i+1;j<points.length;j++)assert.ok(Math.hypot(points[i][0]-points[j][0],points[i][1]-points[j][1])>=52);
+  assert.ok(t.camera.position.equals(before));assert.ok(t.view.controls.target.equals(target));assert.equal(t.camera.zoom,zoom);
+  assert.deepEqual(t.view.levels.snapshot(),state);assert.equal(t.calls.length,0);
+  await t.tapAt(spriteAt(t,t.sprite('a')));assert.equal(t.calls.at(-1).service,'toggle');
+  await t.holdAt(spriteAt(t,t.sprite('a')));assert.equal(t.live.ring().device_id,'a');
+ } finally {t.cleanup();}
+});
+check('empty_unnamed_room_has_no_card_in_DOM_at_floor_level', async()=>{
+ const rooms=[{building:'b',room:'r',level:'L1',name:'Kitchen',area_id:'kitchen',lights:['light.lamp'],polygon_world:[[-5,-5],[5,-5],[5,5],[-5,5]]},
+  {building:'b',room:'empty',level:'L1',name:'Room',area_id:null,lights:[],polygon_world:[[6,-5],[9,-5],[9,5],[6,5]]}];
+ const t=await rig({devices:devices(),rooms});
+ t.view.levels={snapshot:()=>({level:'floor',building:'b',floor:'L1',room:null}),tap:()=>false};
+ try {
+  t.live.setMode('all');
+  const cards=t.host.querySelectorAll('[data-room-card]');
+  assert.equal(cards.length,1);assert.equal(cards[0].dataset.roomCard,JSON.stringify(['b','r']));
+  assert.doesNotMatch(cards.map(n=>n.textContent).join(' '),/0 devices/);
+ } finally {t.cleanup();}
+});
+check('fact_only_card_is_created_and_removed_when_last_fact_disappears', async()=>{
+ const {mountRoomCards}=await import(file('static/twin/live/room_cards.js'));
+ const host=document.createElement('div'), cards=mountRoomCards(host,()=>{}), room={building:'b',room:'empty',name:'Room'};
+ const key=JSON.stringify(['b','empty']);
+ try {
+  cards.update(room,[],0,false);assert.equal(host.querySelectorAll('[data-room-card]').length,0);
+  cards.update(room,[{icon:'thermometer',text:'72\u00b0',tone:'plain'}],0,false);assert.ok(cards.get(key));
+  cards.display(new Set([key]));assert.equal(cards.get(key).node.hidden,false);
+  cards.update(room,[],0,false);assert.equal(cards.get(key),undefined);assert.equal(host.querySelectorAll('[data-room-card]').length,0);
+  cards.update(room,[],1,false);assert.match(cards.get(key).node.textContent,/1 device/);
+ } finally {cards.stop();}
+});
 check('camera_animation_cancels_on_stop', async()=>{
   const t=await rig({devices:devices()});
   await t.tapAt(spriteAt(t,cluster(t))); t.cleanup(); const at=t.camera.position.clone(); await wait(500); assert.ok(t.camera.position.equals(at));

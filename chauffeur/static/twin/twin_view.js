@@ -1100,6 +1100,7 @@ async function boot() {
       sync();
     };
     document.getElementById('twin-time-preview')?.addEventListener('click', click);
+    document.getElementById('twin-preview-gear')?.addEventListener('click', () => window.chfOpenSettings('twin', 'twin-time-preview'));
     host.addEventListener('twinrebuilt', sync);
     sync(); status.hidden = true;
     const hud = document.getElementById('twin-hud');

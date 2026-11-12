@@ -88,6 +88,7 @@ def scenario_now_day_night_buttons_follow_clock_and_aria():
     if served is None:
         return
     with served.browser(launch_args=L.GPU_ARGS) as page:
+        H.signed_in(page)
         L.open_twin(page, served, query='tier=low&test=1')
         pin(page, MIDNIGHT)
         def pressed(name):
@@ -97,7 +98,7 @@ def scenario_now_day_night_buttons_follow_clock_and_aria():
             check(page.evaluate('() => window.__twin.state.time') == name, 'public time state')
         pressed('now')
         dark = exterior_mean(page)
-        page.evaluate("() => window.dispatchEvent(new CustomEvent('chf-settings-open',{detail:{tab:'twin'}}))")
+        page.locator('#twin-settings-gear').click()
         page.click('[data-time="day"]')
         H.settle(page)
         pressed('day')

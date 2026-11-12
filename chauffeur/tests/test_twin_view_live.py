@@ -263,6 +263,8 @@ def scenario_ground_reaches_beyond_the_lot():
         _open(page, s, 'tier=high')
         hit = page.evaluate('''async () => { const THREE = await import('three');
             const r = new THREE.Raycaster(); const FT = 0.3048;
+            // Building icons are sprites; three.js requires their viewing camera even for a world-space ray.
+            r.camera = window.__twin.camera;
             r.set(new THREE.Vector3(200 * FT, 200, -0 * FT), new THREE.Vector3(0, -1, 0));
             const hits = r.intersectObject(window.__twin.scene, true);
             return hits.length ? hits[0].point.y : null; }''')

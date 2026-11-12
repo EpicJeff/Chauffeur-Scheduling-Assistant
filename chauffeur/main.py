@@ -7847,12 +7847,69 @@ async def house_editor_import(request: Request):
             return await asyncio.to_thread(twin_imports.create, files, form.get('name'), form.get('kind'), form.get('thumbnail'))
     except (ValueError, OSError, __import__('zipfile').BadZipFile) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Never a bare 500: the editor shows this reason, and the log keeps the trace.
+        logger.exception('House model import failed')
+        raise HTTPException(status_code=500, detail=f'The model could not be imported ({type(exc).__name__}: {exc}).'[:300]) from exc
+
+
+def _house_upload_call(fn, *args):
+    try:
+        return fn(*args)
+    except (ValueError, OSError, __import__('zipfile').BadZipFile) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception('House model upload failed')
+        raise HTTPException(status_code=500, detail=f'The model could not be imported ({type(exc).__name__}: {exc}).'[:300]) from exc
+
+
+@app.post('/api/house/editor/imports/uploads')
+def house_editor_upload_start(body: dict, request: Request):
+    from services import twin_imports
+    require_parent_token(request.headers.get('x-member-token') or request.query_params.get('member_token'))
+    return _house_upload_call(twin_imports.start_upload, body)
+
+
+@app.put('/api/house/editor/imports/uploads/{upload_id}/{index}')
+async def house_editor_upload_chunk(upload_id: str, index: int, request: Request):
+    from services import twin_imports
+    require_parent_token(request.headers.get('x-member-token') or request.query_params.get('member_token'))
+    try:
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > twin_imports.CHUNK_BYTES:
+                raise ValueError('Send model chunks of at most 4 MB.')
+            raw.extend(chunk)
+        return await asyncio.to_thread(_house_upload_call, twin_imports.upload_chunk, upload_id, index, raw)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception('House model chunk failed')
+        raise HTTPException(status_code=500, detail=f'The model chunk could not be uploaded ({type(exc).__name__}: {exc}).'[:300]) from exc
+
+
+@app.post('/api/house/editor/imports/uploads/{upload_id}/finish')
+def house_editor_upload_finish(upload_id: str, request: Request):
+    from services import twin_imports
+    require_parent_token(request.headers.get('x-member-token') or request.query_params.get('member_token'))
+    return _house_upload_call(twin_imports.finish_upload, upload_id)
+
+
+@app.delete('/api/house/editor/imports/uploads/{upload_id}')
+def house_editor_upload_cancel(upload_id: str, request: Request):
+    from services import twin_imports
+    require_parent_token(request.headers.get('x-member-token') or request.query_params.get('member_token'))
+    return _house_upload_call(twin_imports.cancel_upload, upload_id)
 
 
 @app.patch('/api/house/editor/imports/{asset_id}')
 def house_editor_import_rename(asset_id: str, body: dict = Body(...)):
     from services import twin_imports
-    return _house_editor_call(twin_imports.rename, asset_id, body.get('name'), body.get('kind'), body.get('thumbnail'), lookup=True)
+    return _house_editor_call(twin_imports.rename, asset_id, body.get('name'), body.get('kind'), body.get('thumbnail'), body.get('size'), body.get('triangles'), lookup=True)
 
 
 @app.delete('/api/house/editor/imports/{asset_id}')
@@ -7865,16 +7922,20 @@ def house_editor_import_delete(asset_id: str):
 @app.get('/api/house/editor/import-settings')
 def house_editor_import_settings():
     from services import twin_imports
-    return {'limit_mb': twin_imports.limit_mb()}
+    return {'limit_mb': twin_imports.limit_mb(), 'unpacked_limit_mb': twin_imports.unpacked_limit_mb()}
 
 
 @app.put('/api/house/editor/import-settings')
 def house_editor_import_settings_save(body: dict = Body(...)):
-    value = body.get('limit_mb')
-    if type(value) is not int or not 1 <= value <= 200:
-        raise HTTPException(status_code=400, detail='Choose a limit from 1 to 200 MB.')
-    storage.patch_settings({'twin_import_limit_mb': value})
-    return {'limit_mb': value}
+    changes = {}
+    for field, maximum in [('limit_mb', 200), ('unpacked_limit_mb', 1000)]:
+        if field in body:
+            value = body[field]
+            if type(value) is not int or not 1 <= value <= maximum:
+                raise HTTPException(status_code=400, detail=f'Choose a limit from 1 to {maximum} MB.')
+            changes['twin_import_' + field] = value
+    storage.patch_settings(changes)
+    return house_editor_import_settings()
 
 
 @app.post("/api/house/twin/perf")
