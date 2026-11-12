@@ -55,6 +55,43 @@ await test('wake restores exact view position quaternion target zoom and preview
   assert.deepEqual(view.controls.target.toArray(),saved.target.toArray());assert.equal(view.camera.zoom,saved.zoom);
   assert.deepEqual(view.state,saved.state);assert.equal(view.controls.enabled,true);
 });
+await test('idle orbit and wake preserve a floor pin at exterior distance in Day and Night',()=>{
+  try {
+    for(const preview of ['day','night']) {
+      const floor=view.levelKeys()[0];
+      view.setView(floor);view.setCamera('top');view.setTime(preview);
+      view.camera.position.x+=2;view.controls.target.x+=2;view.camera.zoom=1.7;
+      view.controls.update();view.render();
+      assert.equal(view.viewingState().pinned,floor,'the saved floor is pinned');
+      const before=view.saveView();
+      trigger();assert.equal(idle.active(),true);
+      const orbitStart=view.camera.position.clone();
+      for(const elapsed of [10000,60000,180000]) {
+        current+=elapsed;idle.frame(current);view.render();
+        assert.equal(view.state.view,'ext','the idle orbit uses the exterior');
+      }
+      assert.ok(orbitStart.distanceTo(view.camera.position)>0,'the idle camera actually orbits');
+      idle.wake();
+      assert.equal(view.viewingState().pinned,floor,'wake restores the floor pin');
+      assert.equal(view.viewingState().selected,floor);
+      assert.deepEqual(view.state,before.state);
+      assert.equal(view.camera,before.camera);
+      assert.deepEqual(view.camera.position.toArray(),before.position.toArray());
+      assert.deepEqual(view.camera.quaternion.toArray(),before.quaternion.toArray());
+      assert.deepEqual(view.controls.target.toArray(),before.target.toArray());
+      assert.equal(view.camera.zoom,before.zoom);
+      view.renderer3.loop(++current);
+      assert.equal(view.viewingState().pinned,floor,'the next frame keeps the restored pin');
+      assert.equal(view.state.view,floor);
+      // Restoring a pin must still allow a person's later clear zoom-out.
+      view.camera.position.copy(before.target).add(before.position.clone().sub(before.target).multiplyScalar(1.24));view.render();
+      assert.equal(view.viewingState().pinned,floor,'a small zoom-out keeps the pin');
+      view.camera.position.copy(before.target).add(before.position.clone().sub(before.target).multiplyScalar(1.26));view.render();
+      assert.equal(view.viewingState().pinned,null,'a clear zoom-out releases the pin');
+      assert.equal(view.state.view,'ext');
+    }
+  } finally {idle.wake();view.restoreView(saved);view.setTime(saved.state.time);}
+});
 await test('pointer move touch and key each wake through the installed listener',async()=>{
   for(const name of ['pointermove','pointerdown','touchstart','keydown']) {
     trigger();assert.equal(idle.active(),true);const event=await fire(window,name,{key:'Escape'});

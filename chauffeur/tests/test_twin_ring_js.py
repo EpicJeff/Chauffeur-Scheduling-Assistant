@@ -180,15 +180,15 @@ check('drag_never_opens_a_ring', async () => {
     assert.deepEqual(t.serviceCalls(), [], 'and toggles nothing');
     assert.ok(!ringShown());
   } finally { t.cleanup(); }
-  // Two markers drawn over each other (2 ft apart: each centre lies inside the other's 44 px target):
-  // the one whose centre is under the finger is the one acted on.
+  // Two individual markers, beyond the count-badge split distance:
+  // a hold or tap at a marker's centre acts on that marker.
   const u = await mount([
     {device_id: 'a', name: 'Lamp A', entity_id: 'light.a', kind: 'light', state: 'off', attributes: {supported_color_modes: ['brightness']}, at: [0, 4, 2]},
-    {device_id: 'b', name: 'Lamp B', entity_id: 'light.b', kind: 'light', state: 'off', attributes: {supported_color_modes: ['brightness']}, at: [2, 4, 2]},
+    {device_id: 'b', name: 'Lamp B', entity_id: 'light.b', kind: 'light', state: 'off', attributes: {supported_color_modes: ['brightness']}, at: [8, 4, 2]},
   ]);
   try {
     const [ax] = u.screenOf('a'), [bx] = u.screenOf('b');
-    assert.ok(Math.abs(bx - ax) < 22, `fixture: each marker's centre is inside the other's target (${ax}, ${bx})`);
+    assert.ok(Math.abs(bx - ax) > 48, `fixture: markers stay individual beyond the count-badge split distance (${ax}, ${bx})`);
     await u.hold('b');
     assert.equal(u.live.ring()?.device_id, 'b', `a hold on B's centre opens B's ring, not A's: ${JSON.stringify(u.live.ring())}`);
     await u.hold('a');

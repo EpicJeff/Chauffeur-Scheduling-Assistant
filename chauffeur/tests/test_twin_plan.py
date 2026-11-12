@@ -129,9 +129,24 @@ def scenario_units_must_be_feet():
     raw = _fixture()
     raw['units'] = 'm'
     check(_raises(lambda: tp.normalize(raw), ValueError), 'metres refused')
+
+
+def scenario_a_plan_needs_a_usable_building_or_lot():
+    # 7f4be7319a (slice 1b-i Task 4) intentionally enabled lot-only builds.
     raw = _fixture()
     raw['buildings'] = []
-    check(_raises(lambda: tp.normalize(raw), ValueError), 'no buildings refused')
+    plan, notes = tp.normalize(raw)
+    check(plan['buildings'] == [], 'a lot-only plan never gains a building')
+    check(plan['site']['lot'] == raw['site']['lot'], 'the usable lot is kept')
+    check(notes == [], f'a valid lot-only plan normalizes cleanly: {notes}')
+    for lot in (None, [], [[0, 0], [1, 1]], [[0, 0], [1, 0], ['bad', 1]]):
+        raw['site']['lot'] = lot
+        check(_raises(lambda: tp.normalize(raw), ValueError),
+              f'no usable building or lot is refused: {lot}')
+    raw = _fixture()
+    raw['site']['lot'] = None
+    plan, _ = tp.normalize(raw)
+    check(len(plan['buildings']) == 1, 'a usable building needs no lot polygon')
 
 
 def scenario_merge_director_never_touches_buildings():
@@ -380,6 +395,7 @@ if __name__ == '__main__':
                scenario_roof_pitch_is_bounded,
                scenario_caps_stop_runaway_lists,
                scenario_units_must_be_feet,
+               scenario_a_plan_needs_a_usable_building_or_lot,
                scenario_merge_director_never_touches_buildings,
                scenario_diff_paths_names_leaves,
                scenario_model_shaped_junk_is_coerced_not_crashed,
