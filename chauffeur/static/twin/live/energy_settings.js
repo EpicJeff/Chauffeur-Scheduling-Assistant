@@ -1,6 +1,6 @@
 import { energyLocations, energyAnchors, parkingObjects } from './energy_geometry.js';
 import { base } from '../twin_library.js';
-import { guessEnergy, migrateEnergy, ROLES } from './energy_mapping.js';
+import { guessEnergy, migrateEnergy, carPower, ROLES } from './energy_mapping.js';
 import { energyCheck, renderEnergyCheck } from './energy_check.js';
 
 export function mountEnergySettings(view, {api = (path, init) => fetch(base() + path, init)} = {}) {
@@ -90,9 +90,13 @@ export function mountEnergySettings(view, {api = (path, init) => fetch(base() + 
       const group = document.createElement('fieldset'), legend = document.createElement('legend'); legend.textContent = car.name; group.append(legend);
       const nameLabel = document.createElement('label'), input = document.createElement('input'); input.value = car.name; input.maxLength = 100;
       input.addEventListener('input', () => {car.name = input.value; useCars();}); nameLabel.append(document.createTextNode('Car name'), input); group.append(nameLabel);
-      for (const key of ['charging', 'charge_power', 'battery_level', 'location']) {
+      const fuel=document.createElement('p');fuel.textContent=`Fuel entity: ${car.fuel_level || '—'} (set in Drive setup)`;group.append(fuel);
+      for (const key of [...(carPower(car)==='fuel'?[]:['charging', 'charge_power']), 'battery_level', 'location']) {
         const opts = [['', key === 'location' ? 'No tracker (rests at home)' : 'None'], ...ids.map(id => [id, `${name(id)} (${id})`])];
-        select(group, key==='charge_power'?'Charge power (optional — the car’s own reading)':key==='charging'?'Charging state':caption(key), opts, car[key] || '', value => {car[key] = value || null; useCars();});
+        select(group, key==='charge_power'?'Charge power (optional — the car’s own reading)':key==='charging'?'Charging state':caption(key), opts, car[key] || '', value => {
+          const before=carPower(car);car[key] = value || null;useCars();
+          if(carPower(car)!==before)render();
+        });
       }
       select(group,'Parking spot',[['','Use assigned or first free spot'],...parkingObjects(view).map(s=>[s.id,s.id])],car.parking || '',value=>{car.parking=value || null;useCars();});
       for(const field of group.querySelectorAll('select'))field.addEventListener('change',useCars);

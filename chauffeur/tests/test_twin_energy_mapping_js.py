@@ -3,11 +3,34 @@ import sys
 from twin_live_node_rig import run
 
 DRIVER = r"""
-const {guessEnergy, watts, carHome, mappedEntities, flowReading, migrateEnergy, chargingCar, chargingDecision, assignParking} = await import(file('static/twin/live/energy_mapping.js'));
+const {guessEnergy, watts, carHome, carPower, mappedEntities, flowReading, migrateEnergy, chargingCar, chargingDecision, assignParking} = await import(file('static/twin/live/energy_mapping.js'));
 const {mountGlance} = await import(file('static/twin/live/glance.js'));
 const checks=[], check=(n,f)=>checks.push([n,f]);
 const power=(v=1000, unit='W')=>({state:String(v),attributes:{device_class:'power',unit_of_measurement:unit}});
 const level={state:'80',attributes:{device_class:'battery',unit_of_measurement:'%'}};
+check('car power uses bindings, including unavailable readings; unknown displays as fuel',()=>{
+ for(const binding of ['battery_level','charging','charge_power']){
+  assert.equal(carPower({[binding]:'sensor.ev'}),'electric');
+  assert.equal(carPower({[binding]:'sensor.ev',fuel_level:'sensor.fuel'}),'hybrid');
+ }
+ assert.equal(carPower({fuel_level:'sensor.fuel'}),'fuel');
+ assert.equal(carPower({}),'fuel');assert.equal(carPower({battery_level:null,fuel_level:null}),'fuel');
+});
+check('fuel telemetry matches the fleet stem and never becomes battery, even with charge in its name',()=>{
+ const fuel={state:'41',attributes:{unit_of_measurement:'%',friendly_name:'GLS charge / fuel level'}};
+ for(const fleet of [[{id:'gls',name:'Mercedes GLS',fuel_level:'sensor.gls_fuel_level'}],
+                     [{id:'family',name:'Mercedes GLS',location:'device_tracker.gls'}]]){
+  const m=guessEnergy({'sensor.gls_fuel_level':fuel,'device_tracker.gls':{state:'home'}},{},fleet);
+  assert.equal(m.cars.length,1);assert.equal(m.cars[0].fuel_level,'sensor.gls_fuel_level');
+  assert.ok(!m.cars[0].battery_level);assert.equal(carPower(m.cars[0]),'fuel');
+  assert.ok(mappedEntities(m,true).includes('sensor.gls_fuel_level'));
+ }
+ const m=guessEnergy({'sensor.car_gls_fuel_level':fuel});
+ assert.equal(m.cars.length,1);assert.equal(m.cars[0].fuel_level,'sensor.car_gls_fuel_level');assert.ok(!m.cars[0].battery_level);
+ const saved=guessEnergy({}, {cars:[{id:'gls',name:'GLS',battery_level:null}],chargers:[]},
+  [{id:'gls',fuel_level:'sensor.gls_fuel_level',range_entity:'sensor.gls_range',fuel_warn_pct:45,color:'#123456'}]);
+ assert.equal(saved.cars[0].fuel_level,'sensor.gls_fuel_level');assert.equal(saved.cars[0].fuel_warn_pct,45);
+});
 check('Powerwall names and default signs',()=>{
  const m=guessEnergy({'sensor.powerwall_solar_power':power(),'sensor.powerwall_battery_power':power(),
  'sensor.powerwall_site_power':power(),'sensor.powerwall_load_power':power(),'sensor.powerwall_charge':level});
@@ -94,6 +117,18 @@ const cars=[{id:'a',name:'A',charging:'binary_sensor.a_charging',charge_power:'s
  {id:'b',name:'B',charging:'sensor.b_charging_state',charge_power:'sensor.b_power'}];
 const charger={id:'evse',power:'sensor.evse',at:[0,0,3]},spots=[{id:'p1',car:'a',at:[6,0,0]},{id:'p2',car:'b',at:[20,0,0]}];
 const telemetry=()=>({'sensor.evse':power(7000),'binary_sensor.a_charging':{state:'off'},'sensor.b_charging_state':{state:'idle'},'device_tracker.a':{state:'home'}});
+check('fuel and unknown cars are never charging candidates under any matching rule',()=>{
+ const petrol={id:'petrol',name:'Mercedes GLS',fuel_level:'sensor.gls_fuel_level'},ev={id:'ev',battery_level:'sensor.ev_battery'};
+ const states=telemetry(),parking=[{id:'fuel',car:'petrol',at:[1,0,0]},{id:'electric',car:'ev',at:[20,0,0]}];
+ assert.equal(chargingCar(charger,[petrol,ev],states,parking).id,'ev');
+ assert.equal(chargingCar(charger,[petrol],states,parking),null);
+ assert.equal(chargingCar({...charger,car:'petrol'},[petrol,ev],states,parking),null);
+ assert.equal(chargingDecision({...charger,car:'petrol'},[petrol,ev],states,parking).reason,
+  'Mercedes GLS has no battery reading; a charger can only charge an electric car');
+ assert.equal(chargingCar(charger,[{id:'petrol'}],states,parking),null);
+ assert.equal(chargingCar({...charger,car:'petrol'},[{id:'petrol'}],states,parking),null);
+ assert.equal(chargingCar(charger,[{...ev,fuel_level:'sensor.hybrid_fuel'}],states,parking).id,'ev');
+});
 check('dedicated car wins over charging sensors, but an away car is never selected',()=>{
  const states=telemetry();states['sensor.b_charging_state'].state='charging';
  assert.equal(chargingCar({...charger,car:'a'},cars,states,spots).id,'a');states['device_tracker.a'].state='away';

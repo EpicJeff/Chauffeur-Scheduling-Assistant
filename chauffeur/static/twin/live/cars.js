@@ -2,7 +2,7 @@ import { twinAttention } from '../palette.js';
 import * as THREE from 'three';
 import { LUCIDE } from '../../vendor/lucide/icons.js';
 import { markerSprite } from './markers.js';
-import { guessEnergy, carHome, carCharging, chargingCar, watts } from './energy_mapping.js';
+import { guessEnergy, carHome, carPower, carCharging, chargingCar, watts } from './energy_mapping.js';
 import { energyAnchors, worldPoint } from './energy_geometry.js';
 
 export function carTexture(color, ring = '') {
@@ -40,14 +40,15 @@ export function mountCars({view, live = () => view.live}) {
   function card(row){
     if(!row?.sprite.visible){close();return;}
     selected=row.car.id;
-    const next=JSON.stringify([selected,row.car.name,row.battery,row.range,row.rangeUnit,row.charging,row.power,row.charger?.name]);
+    const next=JSON.stringify([selected,row.car.name,row.kind,row.battery,row.fuel,row.car.range_entity,row.range,row.rangeUnit,row.charging,row.power,row.charger?.name]);
     if(cardKey===next)return;cardKey=next;
     sheet.hidden=false;sheet.setAttribute('aria-label',row.car.name);sheet.dataset.carCard=row.car.id;sheet.replaceChildren();
     const title=document.createElement('h2');title.textContent=row.car.name;sheet.append(title);
-    for(const text of [`Battery: ${row.battery===null?'—':row.battery+'%'}`,
+    for(const text of [...(row.kind==='fuel'?[]:[`Battery: ${row.battery===null?'—':row.battery+'%'}`]),
+      ...(row.kind==='electric'?[]:[`Fuel: ${row.fuel===null?'—':row.fuel+'%'}`]),
       ...(!row.car.range_entity?[]:[`Range: ${row.range===null?'—':row.range+' '+row.rangeUnit}`]),
-      row.charging?`Charging${row.power===null?'':` · ⚡ ${Number((row.power/1000).toFixed(2))} kW`}`:'Not charging',
-      `Charger: ${row.charger?.name || (row.charging?'unknown':'—')}`]){
+      ...(row.kind==='fuel'?[]:[row.charging?`Charging${row.power===null?'':` · ⚡ ${Number((row.power/1000).toFixed(2))} kW`}`:'Not charging',
+      `Charger: ${row.charger?.name || (row.charging?'unknown':'—')}`])]){
       const p=document.createElement('p');p.textContent=text;sheet.append(p);
     }
     const button=document.createElement('button');button.type='button';button.textContent='Close';button.addEventListener('click',close);sheet.append(button);
@@ -74,14 +75,20 @@ export function mountCars({view, live = () => view.live}) {
       row.button.hidden=row.label.hidden=!row.sprite.visible;
       if(!row.sprite.visible)continue;
       row.charger=mapping.chargers.find((c,i)=>watts(c.power,states)>=50 && chargingCar({...c,at:anchors.chargers[i]},mapping.cars,states,anchors.spots)?.id===car.id);
-      row.charging=carCharging(car,states) || !!row.charger || watts(car.charge_power,states)>=50;
+      row.kind=carPower(car);
+      row.charging=row.kind!=='fuel' && (carCharging(car,states) || !!row.charger || watts(car.charge_power,states)>=50);
       row.power=row.charger?watts(row.charger.power,states):watts(car.charge_power,states);
-      row.battery=numeric(states[car.battery_level]);row.range=numeric(states[car.range_entity]);row.rangeUnit=states[car.range_entity]?.attributes?.unit_of_measurement || '';
-      const ring=row.charging?'#9957d2':row.battery!==null && car.battery_warn_pct!=null && row.battery<car.battery_warn_pct?twinAttention:'';
+      row.battery=numeric(states[car.battery_level]);row.fuel=numeric(states[car.fuel_level]);
+      row.range=numeric(states[car.range_entity]);row.rangeUnit=states[car.range_entity]?.attributes?.unit_of_measurement || '';
+      const low=row.battery!==null && car.battery_warn_pct!=null && row.battery<car.battery_warn_pct ||
+        row.fuel!==null && car.fuel_warn_pct!=null && row.fuel<car.fuel_warn_pct;
+      const ring=row.charging?'#9957d2':low?twinAttention:'';
       row.sprite.material.map=texture(car.color,ring);
       row.sprite.position.copy(worldPoint([spot.at[0],spot.at[1],spot.at[2]+4]));
       row.button.setAttribute('aria-label',car.name);
-      row.label.textContent=`${car.name} · ${row.battery===null?'—':row.battery+'%'}${row.charging && row.power!==null?` · ⚡ ${Number((row.power/1000).toFixed(2))} kW`:''}`;
+      const levels=[...(row.kind==='fuel'?[]:[`🔋 ${row.battery===null?'—':row.battery+'%'}`]),
+        ...(row.kind==='electric'?[]:[`⛽ ${row.fuel===null?'—':row.fuel+'%'}`])];
+      row.label.textContent=`${car.name} · ${levels.join(' · ')}${row.charging && row.power!==null?` · ⚡ ${Number((row.power/1000).toFixed(2))} kW`:''}`;
     }
     for(const [id,row] of rows)if(!present.has(id)){row.sprite.removeFromParent();row.sprite.material.dispose();row.button.remove();row.label.remove();rows.delete(id);}
     if(added && typeof view.renderer3.compileAsync==='function'){

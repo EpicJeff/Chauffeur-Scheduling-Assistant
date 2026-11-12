@@ -43,7 +43,7 @@ check('mounted allocation responds to pushes, signs, threshold and presence',asy
  d('grid','sensor.grid_power',-3000,power),d('house','sensor.house_power',3000,power),d('car','sensor.tesla_charge_power',1000,power),
  d('tracker','device_tracker.tesla_location','home'),d('level','sensor.tesla_battery',80,{device_class:'battery',unit_of_measurement:'%'})]});
  try{
-  const bindings={chargers:[{id:'evse',name:'EV charger',power:'sensor.tesla_charge_power',car:'ev'}],cars:[{id:'ev',name:'EV',location:'device_tracker.tesla_location'}]};t.live.configureEnergy({mapping:bindings,cars:[]});
+  const bindings={chargers:[{id:'evse',name:'EV charger',power:'sensor.tesla_charge_power',car:'ev'}],cars:[{id:'ev',name:'EV',battery_level:'sensor.tesla_battery',location:'device_tracker.tesla_location'}]};t.live.configureEnergy({mapping:bindings,cars:[]});
   await press([...document.getElementById('twin-modes').querySelectorAll('button')].find(n=>n.textContent==='Energy'));
   let s=t.live.energy();const visible=()=>Object.fromEntries(t.live.energy().ribbons.filter(r=>r.visible).map(r=>[r.id,r.watts]));
   assert.deepEqual(visible(),{'solar:house':3000,'solar:battery':2000,'solar:grid':3000,'charger:0':1000});assert.equal(s.check.roles.find(r=>r.id==='charger:0').car,'ev');

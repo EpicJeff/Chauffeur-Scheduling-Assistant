@@ -17,11 +17,18 @@ export function migrateEnergy(mapping = {}) {
 }
 export const mappedEntities = (mapping, readingsOnly = false) => [...new Set([
   ...ROLES.map(k => mapping?.[k]), ...(mapping?.chargers || []).map(c=>c.power),
-  ...(mapping?.cars || []).flatMap(c => [c.charge_power, c.battery_level, c.charging, c.range_entity, ...(!readingsOnly ? [c.location] : [])])
+  ...(mapping?.cars || []).flatMap(c => [c.charge_power, c.battery_level, c.fuel_level, c.charging, c.range_entity, ...(!readingsOnly ? [c.location] : [])])
 ].filter(Boolean))];
 const text = (id, row) => `${id} ${row?.attributes?.friendly_name || ''}`.toLowerCase();
 const power = row => row?.attributes?.device_class === 'power' || /^(w|kw|mw)$/i.test(row?.attributes?.unit_of_measurement || '');
-const battery = (id, row) => row?.attributes?.device_class === 'battery' || /charge|battery.*level|state.of.charge|soc/.test(text(id, row)) && row?.attributes?.unit_of_measurement === '%';
+const fuel = (id, row) => /fuel/.test(text(id, row)) && row?.attributes?.unit_of_measurement === '%';
+const battery = (id, row) => !fuel(id, row) && (row?.attributes?.device_class === 'battery' || /charge|battery.*level|state.of.charge|soc/.test(text(id, row)) && row?.attributes?.unit_of_measurement === '%');
+// Bindings describe the drivetrain even when HA is unavailable. With no
+// energy bindings, display unknown fuel and never offer a charger cable.
+export function carPower(car) {
+  const electric = !!(car.battery_level || car.charging || car.charge_power);
+  return electric ? car.fuel_level ? 'hybrid' : 'electric' : 'fuel';
+}
 export function guessEnergy(states = {}, saved = {}, fleet = [], plan = {}) {
   saved = migrateEnergy(saved);
   const ids = Object.keys(states).sort();
@@ -57,13 +64,13 @@ export function guessEnergy(states = {}, saved = {}, fleet = [], plan = {}) {
     panels: {visible: true, plane: null}, cars: [], chargers: []
   };
   const groups = new Map();
-  const telemetryStem = id => (id || '').split('.').pop().replace(/_(?:(?:charger|charging|charge)_power|charging_state|battery_level|device_tracker|charging|power|battery|charge|location|presence|range)$/, '');
+  const telemetryStem = id => (id || '').split('.').pop().replace(/_(?:(?:charger|charging|charge)_power|charging_state|battery_level|fuel_level|device_tracker|charging|power|battery|fuel|charge|location|presence|range)$/, '');
   for (const c of fleet) groups.set(String(c.id), {...c, charge_power: null});
-  // Battery/tracker stems identify a car before generic charger names do.
-  for (const id of ids) if ((battery(id,states[id]) || /^(device_tracker|person)\./.test(id)) &&
+  // Battery/fuel/tracker stems identify a car before generic charger names do.
+  for (const id of ids) if ((battery(id,states[id]) || fuel(id,states[id]) || /^(device_tracker|person)\./.test(id)) &&
       /tesla|vehicle|car[_. ]|ev[_. ]|_ev_/.test(text(id,states[id])) && !/powerwall/.test(id)) {
     const stem = telemetryStem(id);
-    if (![...groups.values()].some(c=>[c.battery_level,c.location].some(e=>telemetryStem(e)===stem)))
+    if (![...groups.values()].some(c=>[c.battery_level,c.fuel_level,c.location].some(e=>e && telemetryStem(e)===stem)))
       groups.set(stem,{id:stem,name:stem.replaceAll('_',' ')});
   }
   // Match fleet telemetry stems before making inferred cars, so Tesla telemetry
@@ -72,7 +79,7 @@ export function guessEnergy(states = {}, saved = {}, fleet = [], plan = {}) {
     const row = states[id], name = text(id, row);
     if (/powerwall/.test(name)) continue;
     const stem = telemetryStem(id);
-    let car = [...groups.values()].find(c => [c.battery_level, c.location].some(e => e && telemetryStem(e)===stem) || c.id===stem);
+    let car = [...groups.values()].find(c => [c.battery_level, c.fuel_level, c.location].some(e => e && telemetryStem(e)===stem) || c.id===stem);
     if (!car && power(row) && /^(w|kw|mw)$/i.test(row.attributes?.unit_of_measurement || 'W') && /wall.?connector|wallbox|charger|evse/.test(name) && !/battery/.test(name)) {
       guessed.chargers.push({id:'charger-'+stem,name:row.attributes?.friendly_name || stem.replaceAll('_',' '),power:id}); continue;
     }
@@ -80,13 +87,14 @@ export function guessEnergy(states = {}, saved = {}, fleet = [], plan = {}) {
     if (!car) { if (!groups.has(stem)) groups.set(stem, {id: stem, name: stem.replaceAll('_', ' ')}); car = groups.get(stem); }
     if (power(row)) car.charge_power ||= id;
     if (battery(id, row)) car.battery_level ||= id;
+    if (fuel(id, row)) car.fuel_level ||= id;
     if (/^binary_sensor\..*charging/.test(id) || /^sensor\..*charging_state/.test(id)) car.charging ||= id;
     if (/^(device_tracker|person)\./.test(id) || row.attributes?.device_class === 'presence') car.location ||= id;
   }
-  guessed.cars = [...groups.values()].filter(c => c.charge_power || c.battery_level || c.location || fleet.some(f => String(f.id) === String(c.id))).slice(0, 12);
+  guessed.cars = [...groups.values()].filter(c => c.charge_power || c.battery_level || c.fuel_level || c.location || fleet.some(f => String(f.id) === String(c.id))).slice(0, 12);
   guessed.chargers = guessed.chargers.slice(0,8);
   const result = {...guessed, ...saved, panels: {...guessed.panels, ...saved.panels}};
-  // Appearance and range belong to the fleet, even after a mapping is saved.
+  // Fleet appearance, warning levels and omitted fuel/range bindings survive a saved mapping.
   result.cars = result.cars.map(c=>({...fleet.find(f=>String(f.id)===String(c.id)),...c}));
   const fleetOrder=new Map(fleet.map((c,i)=>[String(c.id),i]));
   result.cars.sort((a,b)=>(fleetOrder.get(String(a.id)) ?? Infinity)-(fleetOrder.get(String(b.id)) ?? Infinity));
@@ -123,7 +131,9 @@ export const carCharging = (car, states) => {
 // All positions here are lot feet, not WebGL metres. Ties never pick a car
 // arbitrarily. A dedicated but away car does not redirect a dedicated charger.
 export function chargingDecision(charger, cars, states = {}, spots = []) {
-  const home = cars.filter(c=>carHome(c,states));
+  const dedicated = cars.find(c=>c.id===charger.car);
+  if (dedicated && carPower(dedicated)==='fuel') return {car:null,invalid:true,reason:`${dedicated.name || 'Car'} has no battery reading; a charger can only charge an electric car`};
+  const home = cars.filter(c=>carPower(c)!=='fuel' && carHome(c,states));
   if (charger.car && home.some(c=>c.id===charger.car)) return {car:home.find(c=>c.id===charger.car), reason:'dedicated car'};
   const charging = home.filter(c=>carCharging(c,states));
   if (charging.length === 1) return {car:charging[0],reason:'charging sensor'};

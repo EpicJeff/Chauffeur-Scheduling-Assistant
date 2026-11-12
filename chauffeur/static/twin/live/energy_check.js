@@ -68,6 +68,9 @@ export function energyCheck(view, layout, mapping, states = {}, stale = false, a
     const row=role('charger:' + i, charger.power, charger.anchor, 'charger', anchors.chargers[i], 'positive = charging', charger.name);
     row.state += matches[i].car ? `; charging ${matches[i].car.name}` : `; car unknown: ${matches[i].reason}`;
     row.car=matches[i].car?.id || null;row.reason=matches[i].reason;
+    if (matches[i].invalid) {
+      row.status='invalid';row.symbol='⚠';
+    }
   }
   for(const car of mapping.cars || []){
     const spot=anchors.spots.find(s=>s.car===car.id),home=carHome(car,states);

@@ -186,7 +186,73 @@ def scenario_garage_charger_two_coloured_cars_pulse_card_and_program_reuse():
         L.no_errors(served)
 
 
+def scenario_nearer_petrol_car_never_gets_the_ev_cable_and_shows_fuel():
+    """Fuel acceptance scenario for Claude; written only, never run by Codex."""
+    served=setup()
+    if served is None:
+        return
+    from services import storage, twin_store, twin_model_ops, twin_energy
+    from test_house_twin_energy_live import push
+    petrol,ev='garage-gls','garage-ev9'
+    storage.add_car(dict(id=petrol,name='Mercedes GLS',color_code='#cc2222',
+                         ha_fuel_entity='sensor.gls_fuel_level',ha_range_entity='sensor.gls_range'))
+    storage.add_car(dict(id=ev,name='Kia EV9',color_code='#2244cc',ha_battery_entity='sensor.ev9_battery'))
+    for eid,state,attrs in [('sensor.garage_charger_power','7000',dict(device_class='power',unit_of_measurement='W')),
+                            ('sensor.gls_fuel_level','41',dict(unit_of_measurement='%')),
+                            ('sensor.gls_range','180',dict(unit_of_measurement='mi')),
+                            ('sensor.ev9_battery','99',dict(unit_of_measurement='%')),
+                            ('binary_sensor.ev9_charging','off',{})]:
+        L.FAKE.states[eid]=dict(entity_id=eid,state=state,attributes=attrs)
+    mapping=twin_energy.read()
+    def equip(model):
+        model=copy.deepcopy(model)
+        b=next(b for b in model['buildings'] if b['id']==L.POOL);b['name']='Garage'
+        next(r for r in b['rooms'] if r['id']==L.KITCHEN)['name']='Garage'
+        model=twin_model_ops.apply(model,dict(op='add_equipment',building=L.POOL,kind='charger',name='Garage charger',
+            power='sensor.garage_charger_power',host=dict(wall='wall:17ec2a8dad9e47d0aefbfe143524c1c2~2',side='left',at=9,z=3)))[0]
+        charger=next(b for b in model['buildings'] if b['id']==L.POOL)['anchors'][-1]
+        for cid,u in [(petrol,.3),(ev,.7)]:
+            model=twin_model_ops.apply(model,dict(op='add_equipment',building=L.POOL,kind='parking',car=cid,
+                host=dict(floor=L.KITCHEN,u=u,v=.5)))[0]
+        # Omit fuel from this older saved row: it must inherit Drive's binding
+        # and receive fuel updates in the push scope after the mapping is saved.
+        mapping.update(chargers=[dict(id='garage-evse',name='Garage charger',power='sensor.garage_charger_power',
+            anchor=dict(type='object',building=L.POOL,id=charger['id']))],
+            cars=[dict(id=petrol,name='Mercedes GLS'),
+                  dict(id=ev,name='Kia EV9',battery_level='sensor.ev9_battery',charging='binary_sensor.ev9_charging')])
+        twin_energy.save(mapping)
+        return model
+    twin_store.update_model(equip,'edit',note='Browser: petrol nearer than EV to active charger')
+    with served.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page,served,query='tier=low&test=1&panel=true&kiosk=true')
+        page.get_by_role('button',name='Energy',exact=True).click()
+        page.wait_for_function("() => window.__twin.cars?.snapshot().filter(r=>r.visible).length===2 && window.__twin.live.energy().ribbons.some(r=>r.id==='charger:0' && r.visible)")
+        positions=page.evaluate("""() => {
+            const a=window.__twin.live.energy().anchors,c=a.chargers[0];
+            return a.spots.map(s=>({car:s.car,id:s.id,d:Math.hypot(c[0]-s.at[0],c[1]-s.at[1])}));
+        }""")
+        fuel_spot=next(s for s in positions if s['car']==petrol);ev_spot=next(s for s in positions if s['car']==ev)
+        check(fuel_spot['d']<ev_spot['d']<=30,('petrol fixture really is nearer to the charger',positions))
+        links=page.evaluate('() => window.__twin.live.energy().ribbons.filter(r=>r.link && r.visible)')
+        check(all(r['id'].endswith(':'+ev_spot['id']) for r in links),('cable goes to EV or nobody, never petrol',links))
+        check('⛽ 41%' in page.locator('[data-car-label="garage-gls"]').inner_text(),'petrol icon shows fuel')
+        b=next(b for b in twin_store.current_model()['buildings'] if b['id']==L.POOL)
+        room=next(r for r in b['rooms'] if r['id']==L.KITCHEN)
+        centre=[sum(p[i] for p in room['polygon'])/len(room['polygon']) for i in (0,1)]
+        aim(page,L.POOL,[*centre,0],[centre[0],centre[1]-22,35])
+        page.locator('[data-car-icon="garage-gls"]').click()
+        card=page.locator('[data-car-card="garage-gls"]');text=card.inner_text()
+        check('Fuel: 41%' in text and 'Range: 180 mi' in text,'petrol card shows fuel and range')
+        check(all(word not in text.lower() for word in ('battery:','charging','charger:')),'petrol card has no charging lines')
+        # A fuel push updates the visible card and icon through the normal stream.
+        push('sensor.gls_fuel_level','39')
+        page.wait_for_function("() => document.querySelector('[data-car-label=garage-gls]').textContent.includes('⛽ 39%')")
+        check('Fuel: 39%' in card.inner_text(),'fuel push updates the open card')
+        L.no_errors(served)
+
+
 SCENARIOS=[scenario_roof_click_resize_count_source_undo_and_exterior_meter,
            scenario_exact_zone_device_panel_meter_endpoints_and_deleted_meter_prompt,
-           scenario_garage_charger_two_coloured_cars_pulse_card_and_program_reuse]
+           scenario_garage_charger_two_coloured_cars_pulse_card_and_program_reuse,
+           scenario_nearer_petrol_car_never_gets_the_ev_cable_and_shows_fuel]
 if __name__=='__main__':L.run(SCENARIOS)

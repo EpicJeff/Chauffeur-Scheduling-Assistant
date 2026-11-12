@@ -81,8 +81,9 @@ def validate(mapping):
             if 'anchor' in car:
                 result['cars'][-1]['anchor'] = location(car['anchor'], 'charger')
             result['cars'][-1].update({key: entity(car.get(key)) for key in ('charge_power', 'battery_level', 'location')})
-            if 'charging' in car:
-                result['cars'][-1]['charging'] = entity(car['charging'])
+            for key in ('charging', 'fuel_level', 'range_entity'):
+                if key in car:
+                    result['cars'][-1][key] = entity(car[key])
             if 'parking' in car:
                 parking = car['parking']
                 if parking is not None and (not isinstance(parking, str) or not 1 <= len(parking) <= 200):
@@ -114,11 +115,12 @@ def validate(mapping):
 def household_cars():
     # Share cars.py's telemetry bindings and presence rule (no tracker = home).
     from services.cars import warn_thresholds
-    warning, _ = warn_thresholds(storage.get_settings())
+    battery_warning, fuel_warning = warn_thresholds(storage.get_settings())
     return [{'id': str(c.get('id') or c.get('doc_id') or getattr(c, 'doc_id', '')), 'name': c.get('name') or 'Car',
-             'color': c.get('color_code') or '#64748b', 'battery_warn_pct': warning,
+             'color': c.get('color_code') or '#64748b', 'battery_warn_pct': battery_warning, 'fuel_warn_pct': fuel_warning,
              'range_entity': c.get('ha_range_entity'),
              'battery_level': c.get('ha_battery_entity'),
+             'fuel_level': c.get('ha_fuel_entity'),
              'location': c.get('ha_device_tracker')}
             for c in storage.get_all_cars() or [] if not c.get('is_disabled')]
 
@@ -127,8 +129,8 @@ def entities():
     mapping = read()
     ids = {mapping.get(k) for k in ('solar_power', 'battery_power', 'battery_level', 'grid_power', 'house_power')}
     for car in mapping.get('cars', household_cars()):
-        ids.update(car.get(k) for k in ('charge_power', 'battery_level', 'location', 'charging', 'range_entity'))
+        ids.update(car.get(k) for k in ('charge_power', 'battery_level', 'fuel_level', 'location', 'charging', 'range_entity'))
     ids.update(c.get('power') for c in mapping.get('chargers', []))
-    # Saved display rows still receive the household's range telemetry.
-    ids.update(c.get('range_entity') for c in household_cars())
+    # Saved display rows still inherit the household's fuel and range bindings.
+    ids.update(c.get(k) for c in household_cars() for k in ('fuel_level', 'range_entity'))
     return ids - {None, ''}

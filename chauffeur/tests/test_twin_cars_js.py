@@ -43,6 +43,104 @@ check('two cars show fleet colours in every mode, labels, range and a tappable c
   assert.ok(!card.hidden);assert.match(card.textContent,/210 mi/);assert.match(card.textContent,/Garage charger/);assert.doesNotMatch(card.textContent,/Not home/);
  }finally{t.layer.stop();t.cleanup();}
 });
+check('electric, fuel, hybrid and unknown labels and cards follow their configured bindings',async()=>{
+ const t=await fixture();try{
+  t.view.energySources.mapping.chargers=[];
+  const car=t.view.energySources.mapping.cars[0];car.name='Mercedes GLS';car.charging=null;car.battery_level=null;
+  car.fuel_level='sensor.gls_fuel_level';
+  t.states[car.fuel_level]={state:'41',attributes:{unit_of_measurement:'%'}};
+  await t.live.refresh();t.layer.update();assert.equal(t.layer.snapshot()[0].label,'Mercedes GLS · ⛽ 41%');
+  await press(document.querySelector('[data-car-icon="a"]'));let card=document.querySelector('[data-car-card="a"]');
+  assert.match(card.textContent,/Fuel: 41%/);assert.match(card.textContent,/Range: 210 mi/);
+  assert.doesNotMatch(card.textContent,/Battery:|[Cc]harging|Charger:|kW/);
+  car.battery_level='sensor.a_battery';t.layer.update();
+  assert.equal(t.layer.snapshot()[0].label,'Mercedes GLS · 🔋 78% · ⛽ 41%');
+  assert.match(card.textContent,/Battery: 78%/);assert.match(card.textContent,/Fuel: 41%/);assert.match(card.textContent,/Not charging/);
+  t.states[car.fuel_level].state='unavailable';t.states[car.battery_level].state='unknown';await t.live.refresh();t.layer.draw();
+  assert.equal(t.layer.snapshot()[0].label,'Mercedes GLS · 🔋 — · ⛽ —');
+  assert.match(card.textContent,/Battery: —/);assert.match(card.textContent,/Fuel: —/);
+  car.fuel_level=null;car.name='Kia EV9';t.states[car.battery_level].state='99';await t.live.refresh();t.layer.update();
+  assert.equal(t.layer.snapshot()[0].label,'Kia EV9 · 🔋 99%');assert.doesNotMatch(card.textContent,/Fuel:/);
+  car.battery_level=null;t.layer.update();assert.equal(t.layer.snapshot()[0].label,'Kia EV9 · ⛽ —');
+  assert.match(card.textContent,/Fuel: —/);assert.doesNotMatch(card.textContent,/Battery:|[Cc]harging|Charger:/);
+ }finally{t.layer.stop();t.cleanup();}
+});
+check('low fuel uses the household attention threshold, charging wins, and cached textures reuse materials',async()=>{
+ const {twinAttention}=await import(file('static/twin/palette.js'));
+ const t=await fixture();try{
+  const car=t.view.energySources.mapping.cars[0],fleet=t.view.energySources.cars[0];
+  car.fuel_level='sensor.gls_fuel_level';car.battery_level=null;car.charging=null;
+  fleet.fuel_warn_pct=45;t.states[car.fuel_level]={state:'41',attributes:{unit_of_measurement:'%'}};
+  await t.live.refresh();t.layer.update();let sprite;t.view.scene.traverse(o=>{if(o.userData.twinCar==='a')sprite=o;});
+  const material=sprite.material,amber=material.map;
+  assert.ok(amber.image.__log.some(r=>r[0]==='stroke' && r[1].strokeStyle===twinAttention));
+  assert.equal(t.layer.snapshot()[0].charging,false);
+  await press(document.querySelector('[data-car-icon="a"]'));
+  assert.doesNotMatch(document.querySelector('[data-car-card="a"]').textContent,/[Cc]harging|Charger:/);
+  t.states[car.fuel_level].state='45';await t.live.refresh();t.layer.draw();const normal=material.map;assert.notEqual(normal,amber);
+  t.states[car.fuel_level].state='41';await t.live.refresh();t.layer.draw();assert.equal(material.map,amber);
+  car.battery_level='sensor.a_battery';car.charging='binary_sensor.a_charging';t.layer.update();
+  assert.ok(material.map.image.__log.some(r=>r[0]==='stroke' && r[1].strokeStyle==='#9957d2'));
+  assert.equal(sprite.material,material);assert.equal(t.layer.snapshot()[0].label,'Red EV · 🔋 78% · ⛽ 41% · ⚡ 7 kW');
+ }finally{t.layer.stop();t.cleanup();}
+});
+check('a nearer fuel car never receives the charger cable when the EV is not reporting charging',async()=>{
+ const t=await fixture();let effect;try{
+  const car=t.view.energySources.mapping.cars[0];car.battery_level=null;car.charging=null;car.fuel_level='sensor.gls_fuel_level';
+  t.states['binary_sensor.b_charging'].state='off';
+  effect=mountEnergy({view:t.view,live:t.live});effect.update('energy');
+  assert.ok(effect.snapshot().ribbons.filter(r=>r.visible && r.link).every(r=>r.id==='link:0:b:p2'));
+  t.view.energySources.mapping.chargers[0].car='a';effect.update('energy');
+  assert.ok(!effect.snapshot().ribbons.some(r=>r.visible && r.link));
+ }finally{effect?.stop();t.layer.stop();t.cleanup();}
+});
+check('a saved car inherits Drive fuel and accepts its first reading on the live stream',async()=>{
+ const previous=globalThis.EventSource,sources=[];
+ globalThis.EventSource=class{constructor(){sources.push(this);}close(){this.closed=true;}};
+ const t=await fixture();try{
+  const car=t.view.energySources.mapping.cars[0];car.battery_level=null;car.charging=null;
+  t.view.energySources.cars[0].fuel_level='sensor.unusual_remaining';
+  t.view.energySources.cars[0].range_entity='sensor.unusual_distance';
+  t.live.configureEnergy(t.view.energySources);t.layer.update();assert.match(t.layer.snapshot()[0].label,/⛽ —/);
+  const stream=sources.at(-1);assert.ok(stream && !stream.closed);
+  for(const [entity_id,state,unit]of [['sensor.unusual_remaining','41','%'],['sensor.unusual_distance','180','mi']])
+   stream.onmessage({data:JSON.stringify({entity_id,state:{state,attributes:{unit_of_measurement:unit}}})});
+  await wait(60);t.layer.draw();assert.match(t.layer.snapshot()[0].label,/⛽ 41%/);
+  await press(document.querySelector('[data-car-icon="a"]'));
+  assert.match(document.querySelector('[data-car-card="a"]').textContent,/Range: 180 mi/);
+ }finally{t.layer.stop();t.cleanup();if(previous===undefined)delete globalThis.EventSource;else globalThis.EventSource=previous;}
+});
+check('settings show read-only fuel from Drive setup and only chargeable cars offer charging pickers',async()=>{
+ const {mountEnergySettings}=await import(file('static/twin/live/energy_settings.js'));
+ const t=await fixture(),fields=document.createElement('div'),save=document.createElement('button');fields.id='twin-energy-fields';save.id='twin-energy-save';document.body.append(fields,save);
+ const mapping=t.view.energySources.mapping;mapping.cars[0]={id:'a',name:'Mercedes GLS',fuel_level:'sensor.gls_fuel_level'};
+ mapping.cars.push({id:'hybrid',name:'Hybrid',fuel_level:'sensor.hybrid_fuel',battery_level:'sensor.hybrid_battery'});
+ let stored;
+ const settings=mountEnergySettings(t.view,{api:async(path,init)=>{
+  if(init)stored=JSON.parse(init.body);
+  return {ok:true,json:async()=>({mapping,cars:t.view.energySources.cars,can_edit:true})};
+ }});
+ try{
+  await settings.reload();
+  for(const [name,fuel,chargeable]of [['Mercedes GLS','sensor.gls_fuel_level',false],['Blue EV','—',true],['Hybrid','sensor.hybrid_fuel',true]]){
+   const group=fields.querySelectorAll('fieldset').find(g=>g.querySelector('legend')?.textContent===name);assert.ok(group);
+   assert.ok(group.textContent.includes('Fuel entity: '+fuel));assert.ok(group.textContent.includes('Drive setup'));
+   for(const title of ['Charging state','Charge power'])assert.equal(group.querySelectorAll('label').some(l=>l.textContent.startsWith(title)),chargeable);
+   assert.ok(!group.querySelectorAll('label').some(l=>l.textContent.startsWith('Fuel')));
+  }
+  const group=fields.querySelectorAll('fieldset').find(g=>g.querySelector('legend')?.textContent==='Mercedes GLS');
+  const input=group.querySelector('input');input.value='GLS';input.dispatchEvent(new Event('input'));
+  const battery=group.querySelectorAll('label').find(l=>l.textContent.startsWith('Battery level')).querySelector('select');
+  battery.value='sensor.a_battery';battery.dispatchEvent(new Event('change'));
+  let refreshed=fields.querySelectorAll('fieldset').find(g=>g.querySelector('legend')?.textContent==='GLS');
+  assert.ok(refreshed.querySelectorAll('label').some(l=>l.textContent.startsWith('Charging state')));
+  const clear=refreshed.querySelectorAll('label').find(l=>l.textContent.startsWith('Battery level')).querySelector('select');
+  clear.value='';clear.dispatchEvent(new Event('change'));
+  refreshed=fields.querySelectorAll('fieldset').find(g=>g.querySelector('legend')?.textContent==='GLS');
+  assert.ok(!refreshed.querySelectorAll('label').some(l=>l.textContent.startsWith('Charging state')));
+  await press(save);await wait(30);assert.equal(stored.cars.find(c=>c.id==='a').fuel_level,'sensor.gls_fuel_level');
+ }finally{settings.stop();fields.remove();save.remove();t.layer.stop();t.cleanup();}
+});
 check('state pushes hide away and stale cars, preserve sprites/materials and reuse textures',async()=>{
  const t=await fixture();try{
   const objects=[];t.view.scene.traverse(o=>{if(o.userData.twinCar)objects.push([o,o.material]);});

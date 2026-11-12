@@ -64,6 +64,38 @@ class EnergyTests(unittest.TestCase):
                      {'panels': {'visible': 'yes'}}, {'cars': [{}]}, {'cars': [{'id': 'x', 'name': 'X'}] * 2}):
             self.assertEqual(self.client.put(self.url, headers=self.parent, json=body).status_code, 422)
 
+    def test_fuel_mapping_roundtrip_and_stream_scope(self):
+        car = dict(id='gls', name='Mercedes GLS', battery_level=None, charge_power=None,
+                   location=None, fuel_level='sensor.gls_fuel_level', range_entity='sensor.gls_range')
+        mapping = dict(cars=[car], chargers=[])
+        response = self.client.put(self.url, headers=self.parent, json=mapping)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.client.get(self.url, headers=self.panel).json()['mapping'], mapping)
+        self.assertTrue({'sensor.gls_fuel_level', 'sensor.gls_range'} <= twin_energy.entities())
+        for value in ('bad', 41, {}, []):
+            response = self.client.put(self.url, headers=self.parent,
+                                       json=dict(cars=[dict(car, fuel_level=value)], chargers=[]))
+            self.assertEqual(response.status_code, 422)
+        self.assertEqual(twin_energy.validate(dict(cars=[dict(car, fuel_level=None)], chargers=[]))['cars'][0]['fuel_level'], None)
+
+    def test_fleet_fuel_thresholds_and_saved_rows_keep_fuel_in_push_scope(self):
+        fleet = [dict(id='gls', name='Mercedes GLS', ha_fuel_entity='sensor.gls_fuel_level',
+                      ha_range_entity='sensor.gls_range', color_code='#123456')]
+        settings = dict(car_battery_warn_pct=37, car_fuel_warn_pct=45)
+        with patch.object(storage, 'get_all_cars', return_value=fleet), \
+             patch.object(storage, 'get_settings', return_value=settings):
+            cars = self.client.get(self.url, headers=self.panel).json()['cars']
+            self.assertEqual(cars[0]['fuel_level'], 'sensor.gls_fuel_level')
+            self.assertEqual(cars[0]['battery_warn_pct'], 37)
+            self.assertEqual(cars[0]['fuel_warn_pct'], 45)
+            self.assertEqual(cars[0]['range_entity'], 'sensor.gls_range')
+            self.assertEqual(cars[0]['color'], '#123456')
+            twin_energy.save(dict(cars=[dict(id='gls', name='Mercedes GLS')], chargers=[]))
+            self.assertTrue({'sensor.gls_fuel_level', 'sensor.gls_range'} <= twin_energy.entities())
+            with patch.object(main, '_house_ha_context', return_value=({'buildings': []}, {'available': True, 'devices': []})), \
+                 patch('services.ha_api.get_states', return_value=[]):
+                self.assertTrue({'sensor.gls_fuel_level', 'sensor.gls_range'} <= main._house_stream_entities())
+
     def test_reset_and_explicit_none(self):
         for mapping in ({'solar_power': None, 'cars': []}, {}):
             self.assertEqual(self.client.put(self.url, headers=self.parent, json=mapping).status_code, 200)

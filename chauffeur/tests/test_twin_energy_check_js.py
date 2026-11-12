@@ -19,6 +19,16 @@ function fixture(){
  return {view,mapping,states,layout};
 }
 const assess=f=>energyCheck(f.view,f.layout,f.mapping,f.states);
+check('a dedicated fuel car is an explained setup error in the shared Energy check',()=>{
+ const f=fixture();f.mapping.cars=[{id:'gls',name:'Mercedes GLS',fuel_level:'sensor.gls_fuel_level'}];
+ f.mapping.chargers[0].car='gls';
+ const report=assess(f),row=report.roles.find(r=>r.id==='charger:0');
+ assert.equal(row.car,null);assert.equal(row.status,'invalid');
+ assert.ok(row.state.includes('Mercedes GLS has no battery reading; a charger can only charge an electric car'));
+ const host=document.createElement('div');renderEnergyCheck(host,report);
+ assert.equal(host.querySelector('[data-energy-role="charger:0"] [data-energy-mark]').dataset.energyMark,'warning');
+ assert.ok(host.textContent.includes(row.reason));
+});
 const entityKey=id=>id==='charger:0'?'power':id+'_power';
 for(const id of ['solar','battery','grid','house','charger:0'])for(const scenario of ['unset','unavailable','unplaced','ok'])check(id+' '+scenario,()=>{
  const f=fixture(),object=id==='charger:0'?f.mapping.chargers[0]:f.mapping,key=entityKey(id),entity=object[key];

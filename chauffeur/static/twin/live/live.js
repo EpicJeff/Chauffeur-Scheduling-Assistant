@@ -581,9 +581,12 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     try { notify(); } catch (error) { report(error); }
     try { draw(); view.render(); } catch (error) { report(error); }
   }
+  // Older saved rows omit Drive's fuel/range bindings. Accept those pushes
+  // even when the entity had no reading in the initial state response.
+  const energyEntities = () => [...mappedEntities(view.energySources?.mapping), ...mappedEntities({cars:view.energySources?.cars})];
   function subscribeStates() {
     if (stopped || stream || typeof EventSource !== 'function') return;
-    const entities = new Set([...Object.keys(states), ...(live.glanceEntities || []), ...mappedEntities(view.energySources?.mapping), ...rows.map(row => row.entity_id), ...devices.flatMap(row => row.entities || [row.entity_id]),
+    const entities = new Set([...Object.keys(states), ...(live.glanceEntities || []), ...energyEntities(), ...rows.map(row => row.entity_id), ...devices.flatMap(row => row.entities || [row.entity_id]),
       ...(layout.rooms || []).flatMap(room => room.lights || [])].filter(Boolean));
     if (!entities.size) return;
     try {
@@ -596,7 +599,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
         let change;
         try { change = JSON.parse(event.data); } catch { return; }
         if (!change || typeof change.entity_id !== 'string' ||
-          !(entities.has(change.entity_id) || mappedEntities(view.energySources?.mapping).includes(change.entity_id) ||
+          !(entities.has(change.entity_id) || energyEntities().includes(change.entity_id) ||
           view.plan?.buildings?.some(b=>b.solar_zones?.some(z=>z.state!=='ghost' && z.entity===change.entity_id)) || change.entity_id.startsWith('weather.') || isEnergyEntity(change.entity_id, change.state)) || !Object.hasOwn(change, 'state')) return;
         const state = change.state;
         if (state !== null && (typeof state !== 'object' || Array.isArray(state) || typeof state.state !== 'string')) return;
