@@ -1,10 +1,10 @@
 // Geometry/UV density use plan feet; reach queries use world metres.
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { reachLights } from './reach.js';
-import { fingerprint } from './fingerprint.js';
+import { fingerprint, authoredGeometry } from './fingerprint.js';
 export { fingerprint } from './fingerprint.js';
 
-const VERSION = 'reach-atlas-6';
+const VERSION = 'reach-atlas-7';
 const EPS = 1e-6;
 const prepared = new WeakMap();
 const bankPacking = new WeakMap();
@@ -422,12 +422,13 @@ function writeUV(charts, o, name, pageName) {
 }
 
 // A small streaming 128-bit fingerprint; no WebCrypto async boundary, UUIDs, or
-// light records. Hashing generated buffers also captures generator changes.
+// light records. Only tier-independent receivers contribute generated buffers;
+// authoredGeometry also covers render-only terrain and model placements.
 // The surfaces a bake covers: merged, opaque, solid house and yard geometry.
 // Cut-out cards (the Low tier's merged plant cards, alphaTest) are left out on
 // every tier, so a Low panel builds the same atlas key as the desk that baked.
 export function atlasMesh(mesh) {
-  return !!(mesh.isMesh && mesh.userData.merged && !mesh.layers.isEnabled(31) && !Array.isArray(mesh.material) &&
+  return !!(mesh.isMesh && mesh.userData.merged && !mesh.geometry?.userData.bakeExcluded && !mesh.layers.isEnabled(31) && !Array.isArray(mesh.material) &&
     (!mesh.material.transparent || mesh.material.userData.viewingOpaque) && !(mesh.material.alphaTest > 0) && !['fixture', 'glass'].includes(mesh.material.name) &&
     mesh.geometry?.attributes.position);
 }
@@ -562,6 +563,7 @@ export function packBanks(layout, lights, o, assigned) {
 export function buildAtlas(group, plan, { room } = {}) {
   const ro = options(room, 'room'), data = roomData(plan);
   const roomCharts = [], hash = fingerprint();
+  hash.add(authoredGeometry(plan));
   hash.add(JSON.stringify([VERSION, plan.generatorVersion ?? null, ro, [...data.buildings], data.rooms]));
   group.updateMatrixWorld(true);
   group.traverse(mesh => {
