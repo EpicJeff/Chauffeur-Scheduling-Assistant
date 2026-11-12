@@ -78,9 +78,9 @@ console.log('ok no-worker oversized mesh returns no LODs, keeps its original and
 // a manually advanced rAF queue. Generation must wait until after dialog paint.
 const {GLTFExporter}=await import(file('static/vendor/three-r187/addons/exporters/GLTFExporter.js'));
 const modelBytes=await new GLTFExporter().parseAsync(source,{binary:true});
-const picker=new Element(),status=new Element(),scene=new Element(),host=new Element(),canvas=new Element();
+const picker=new Element(),status=new Element(),jobStatus=new Element(),scene=new Element(),host=new Element(),canvas=new Element();
 host.append(scene);picker.files=[new File([modelBytes],'dialog.glb')];
-document.getElementById=id=>({'library-import-files':picker,'library-status':status,'editor-scene':scene}[id]||null);
+document.getElementById=id=>({'library-import-files':picker,'library-status':status,'library-jobs':jobStatus,'editor-scene':scene}[id]||null);
 Element.prototype.focus=function(){};
 Object.defineProperty(Element.prototype,'isConnected',{get(){return !!this.parentElement;}});
 window.twinObjectSchema={kinds:{car:{},furniture:{},door:{},window:{}}};
@@ -174,8 +174,10 @@ const open=async name=>{
  await until(()=>host.children.some(n=>n.role==='dialog'),'next import dialog opens while worker is blocked');
  return host.children.find(n=>n.role==='dialog');
 };
+const added='Model added. Drag its thumbnail onto a floor, the ground or a wall.';
 const accept=async dialog=>{dialog.dispatchEvent(new Event('submit',{cancelable:true}));
- await until(()=>status.textContent!=='Loading model…'&&picker.value==='','accept releases the picker');};
+ await until(()=>status.textContent!=='Loading model…'&&picker.value==='','accept releases the picker');
+ assert.equal(status.textContent,added,'the action confirmation survives background progress');};
 const firstDialog=await open('First');
 firstDialog.children.find(n=>n.textContent==='Name').children[0].value='Kia EV9';
 await accept(firstDialog);
@@ -185,13 +187,22 @@ const cancelled=await open('Cancelled');cancelled.children.find(n=>n.textContent
 await until(()=>!entries.has('import-'+'3'.repeat(32))&&picker.value==='','queued Cancel deletes its import');
 await accept(await open('Deleted'));
 const removed='import-'+'4'.repeat(32);queueControl.cancel(removed);entries.delete(removed);
-assert.match(status.textContent,/Making lighter versions for Kia EV9/);
+assert.match(jobStatus.textContent,/Making lighter versions for Kia EV9/);
+assert.equal(status.textContent,added);
 assert.equal(derived.length,0,'acceptance does not await optional generation');
 assert.equal(activeWorkers,1,'later imports do not start another worker');
+const alerts=[];window.showGlobalAlert=message=>alerts.push(message);
+picker.value='unsupported.skp';picker.files=[new File(['unsupported'],'unsupported.skp')];picker.dispatchEvent(new Event('change'));
+await until(()=>picker.value===''&&/SketchUp/.test(status.textContent),'import errors remain on the action status line');
+const actionError=status.textContent;
+assert.deepEqual(alerts,[actionError]);
+assert.match(jobStatus.textContent,/Making lighter versions for Kia EV9/);
 releaseWorker();
 await until(()=>derived.length===4,'both accepted originals finish their background versions',true);
 await until(()=>activeWorkers===0,'workers are released',true);
 assert.equal(maxWorkers,1);
+assert.equal(status.textContent,actionError,'background completion preserves the action error');
+assert.match(jobStatus.textContent,/Lighter versions ready for Second/);
 assert.deepEqual(derived.map(([id,name])=>[id.at(-1),name]),[['1','lod1.glb'],['1','lod2.glb'],['2','lod1.glb'],['2','lod2.glb']]);
 assert.equal(changes.filter(([,options])=>options?.added).length,3);
 assert.ok(changes.some(([id,options])=>id.endsWith('2')&&!options),'background metadata reaches the library');

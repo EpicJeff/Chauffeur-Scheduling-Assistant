@@ -303,6 +303,57 @@ for(const model of retained){
  let shownMeshes=0;model.traverseVisible(o=>{if(o.isMesh)shownMeshes++;});assert.equal(shownMeshes,1);
 }
 console.log('ok actual buildTwin retains opening/item LOD subtrees, selective level visibility, piece identity/bounds/proxies, and one fetch per GLB');
+
+// Follow the parked-car path: loadModel builds THREE.LOD, then the live layer
+// clones it and placeCarModel supplies the parking translation and rotation.
+const {placeCarModel}=await import(file('static/twin/live/cars.js'));
+function checkParkedCar(source) {
+  const clone=source.clone(true), parked=placeCarModel(clone,{at:[12,-24,3],rotation:37,width:9,depth:18});
+  assert.ok(clone.isLOD); assert.equal(clone.levels.length,3);
+  assert.equal(clone.levels[0].distance,0);
+  const carRadius=new THREE.Box3().setFromObject(source.levels[0].object).getBoundingSphere(new THREE.Sphere()).radius;
+  assert.equal(clone.levels[1].distance,carRadius*LOD_NEAR_RADII);
+  assert.equal(clone.levels[2].distance,carRadius*LOD_FAR_RADII);
+  assert.ok(clone.levels.slice(1).every(l=>l.hysteresis===LOD_HYSTERESIS));
+  assert.deepEqual(parked.scale.toArray(),[1,1,1]);
+  parked.updateMatrixWorld(true);
+  const centre=clone.getWorldPosition(new THREE.Vector3()),near=clone.levels[1].distance,far=clone.levels[2].distance;
+  const resources=clone.levels.map(l=>{let mesh;l.object.traverse(o=>{if(o.isMesh)mesh=o;});return [mesh,mesh.geometry,mesh.material];});
+  for(const [distance,expected] of [[near*.5,0],[(near+far)*.5,1],[far*1.5,2],[near*.5,0]]) {
+    camera.position.copy(centre).add(new THREE.Vector3(0,distance*.25,distance));camera.updateMatrixWorld(true);
+    clone.update(camera);assert.equal(clone.getCurrentLevel(),expected);
+    assert.deepEqual(clone.levels.map(l=>l.object.visible),[0,1,2].map(i=>i===expected));
+  }
+  for(const [mesh,geometry,material] of resources){assert.equal(mesh.geometry,geometry);assert.equal(mesh.material,material);}
+  return clone;
+}
+checkParkedCar(await loadModel(lodId,{},undefined,{tier:'high',shared:true}));
+console.log('ok real car load/clone/parking path selects LOD0/1/2/0 at near/mid/far/near with original resources');
+
+const lateId='import-'+'d'.repeat(32);
+rememberImport({id:lateId,kind:'car',model:'original.gltf',files:{'original.gltf':true,'lod1.glb':true,'lod2.glb':true},
+ lods:[{name:'lod1.glb'},{name:'lod2.glb'}]});
+let releaseOriginal;
+const originalGate=new Promise(resolve=>{releaseOriginal=resolve;});
+globalThis.fetch=async input=>{
+ const url=typeof input==='string'?input:input.url;
+ if(url.startsWith('data:')||url.startsWith('blob:'))return nativeFetch(input);
+ if(url.includes(lateId)&&url.endsWith('original.gltf'))await originalGate;
+ return new Response(url.includes('.glb')?binary:JSON.stringify(doc));
+};
+// Advance only the loader's optional-asset readiness budget; the real parse,
+// late callback, LOD builder and car placement remain production code.
+const nativeTimeout=globalThis.setTimeout;
+globalThis.setTimeout=(fn,ms,...args)=>nativeTimeout(fn,ms===15000?25:ms,...args);
+let deliverLate;
+const lateCar=new Promise(resolve=>{deliverLate=resolve;});
+try {
+  assert.equal(await loadModel(lateId,{},deliverLate,{tier:'high',shared:true}),null,'late LOD0 initially leaves the icon fallback');
+  releaseOriginal();
+  const arrived=await Promise.race([lateCar,new Promise((_,reject)=>nativeTimeout(()=>reject(new Error('late LOD0 was not delivered')),1000))]);
+  checkParkedCar(arrived);
+} finally {globalThis.setTimeout=nativeTimeout;}
+console.log('ok late LOD0 arrival builds ordered real car LOD levels and switches near/mid/far/near');
 assert.deepEqual(escaped,[]); assert.deepEqual(domErrors,[]);
 '''
 

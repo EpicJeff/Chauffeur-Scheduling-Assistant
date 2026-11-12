@@ -92,11 +92,11 @@ function details(entry, suggested, picture, signal, versions, updates) {
 export function mountImports({ canvas, kit, canEdit, signal, changed }) {
   const el = id => document.getElementById(id), picker = el('library-import-files');
   if (!picker) return;
-  const status = el('library-status'); let busy = false;
+  const status = el('library-status'), jobStatus = el('library-jobs'); let busy = false;
   const queue = [], jobs = new Map(), cancelled = new Set();
   let running = false, activeJob = null;
   const backgroundStatus = () => activeJob ? `Making lighter versions for ${activeJob.entry.name}…` : '';
-  const showStatus = () => { if (!busy && !signal.aborted && activeJob) status.textContent = backgroundStatus(); };
+  const showStatus = () => { if (!signal.aborted && activeJob) jobStatus.textContent = backgroundStatus(); };
   function cancel(id) {
     cancelled.add(id);
     const job = jobs.get(id); if (!job) return;
@@ -132,10 +132,13 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
           if (job.source) disposeObject(job.source);
           jobs.delete(job.entry.id); job.resolve(rows);
           activeJob = null; // The next queued job supplies its own status.
-          if (!busy && !signal.aborted) status.textContent = jobSignal.aborted
-            ? `Lighter versions cancelled for ${job.entry.name}.`
-            : rows.length === 2 ? `Lighter versions ready for ${job.entry.name}.`
-              : `${job.entry.name}: ${rows.note || 'Lighter versions could not all be made this time.'}`;
+          if (!signal.aborted) {
+            jobStatus.textContent = jobSignal.aborted
+              ? `Lighter versions cancelled for ${job.entry.name}.`
+              : rows.length === 2 ? `Lighter versions ready for ${job.entry.name}.`
+                : `${job.entry.name}: ${rows.note || 'Lighter versions could not all be made this time.'}`;
+            if (!busy && !jobSignal.aborted && rows.length !== 2) status.textContent = jobStatus.textContent;
+          }
         }
       }
     } finally { running = false; }

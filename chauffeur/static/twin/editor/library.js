@@ -349,7 +349,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       }
     }
     host.querySelectorAll('[data-library-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.libraryTab === tab)));
-    el('library-status').textContent = picking ? pickingWords() : importsQueue?.status() || hint;
+    el('library-status').textContent = picking ? pickingWords() : hint;
   }
   async function changedImport(entry, { added = false, removed = false } = {}) {
     if (signal.aborted) return;

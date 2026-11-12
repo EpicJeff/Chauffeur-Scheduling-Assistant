@@ -128,7 +128,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #library-panel { right: 14px; top: 14px; width: var(--editor-side); height: calc(var(--editor-floor-height) + 60px); display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto minmax(0, 1fr); align-items: center; column-gap: 8px; padding: 10px 14px; background: var(--twinGlassStrong); backdrop-filter: blur(16px); }
 #library-panel [role="tablist"] { display: flex; justify-content: flex-end; gap: 6px; }
 #library-panel [aria-selected="true"] { border-color: var(--editor-accent); color: var(--editor-accent); }
-#library-status { grid-column: 1 / -1; color: var(--editor-muted); font-size: 12px; margin: 6px 0; }
+#library-status, #library-jobs { grid-column: 1 / -1; color: var(--editor-muted); font-size: 12px; margin: 6px 0; }
 #library-entries { grid-column: 1 / -1; align-self: stretch; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-content: start; grid-auto-rows: max-content; gap: 6px; }
 #library-entries button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; font-size: 11px; line-height: 1.25; text-align: center; overflow: hidden; }
 #library-entries img { width: 100%; height: 64px; object-fit: contain; pointer-events: none; }
