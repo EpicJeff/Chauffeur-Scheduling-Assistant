@@ -1,6 +1,26 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.814 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.815 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.815 (2026-11-12, NOT device-verified): the wall panel finds the desk's lighting bake again. One bake key on every tier.**
+
+**Found by Claude**, while running the bake browser test against clean main v2.499.814: 16/18. Both failures were the wall (low tier) computing a different bake key from the desk (high), so the Pi never loaded the stored bake and showed no baked light.
+
+**Causes.** Codex traced them.
+1. `3b64cdce` (slice 3a, v2.499.814) gave baked patio and bed slabs tier-dependent tessellation (1 ft on high, 2 ft on low). The atlas fingerprint hashed those receiver buffers.
+2. `15fb36cd` (imports, v2.499.813) gave low a heavy-model stand-in where high loads the real model. Both could become atlas receivers.
+
+**Fix** (`static/twin/bake/*`, `twin_yard.js`, the common loader).
+- **The key:** both the worker fingerprint and the stored atlas key include a canonical AUTHORED-geometry contribution: geometry, placement, foundation, material and site records. Tier, LOD and annotation metadata never change it. The light keys and addresses keep their existing rules.
+- **Patios and beds:** these slabs use the same 1 ft derivation on every tier, so charts, UVs, page addresses and sticky slots match.
+- **The lawn:** stays on its tiered render grid and is explicitly excluded from baking (it already was, through its vertex-colour material).
+- **Excluded from atlas receivers on every tier:** imported and library models, stand-ins and LODs. They still render and cast shadows; they use scene lighting rather than baked room light. The exclusion survives static merging.
+- **Old pages:** the atlas and worker-cache namespaces are bumped, so old incompatible pages are not reused.
+
+**Tests.**
+- Browser `test_house_twin_bake_live` 19/19, including "the wall polls the very key the desk bakes" and "the wall loads the stored bake".
+- New `test_twin_bake_fingerprint_js` covers the real yard, pads, an auto foundation, and a heavy import with the low stand-in. It checks key equality across tiers, identical atlas UVs, chart IDs and packing, and that high results apply on low. Light, wall, terrain, object and material edits invalidate; LOD and tier do not.
+- Also green: bake runtime and baker node checks, and browser `test_house_twin_ground_live` 2/2.
 
 **v2.499.814 (2026-11-12, NOT device-verified): twin slice 3a, the ground. Terrace pads with blended slopes or sharp edges, a real terrain mesh, foundations that sit on the terrain, and every auto-placed yard item selectable.**
 

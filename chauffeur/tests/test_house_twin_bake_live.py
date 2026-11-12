@@ -846,6 +846,79 @@ def scenario_wall_opened_before_the_bake_picks_it_up():
         L.no_errors(s)
 
 
+def scenario_terraces_foundation_and_heavy_import_share_the_wall_bake():
+    """Written for Claude to run: actual render detail differs; key/UV ownership must not."""
+    import json
+    import struct
+    from services import twin_imports, twin_store
+
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    clear_bakes()
+    # A real indexed heavy import, using the existing objects-live fixture pattern.
+    count = 300001
+    positions = struct.pack('<9f', -1, 0, -1, 1, 0, -1, 0, 2, 1)
+    indices = struct.pack('<3H', 0, 1, 2) * count
+    doc = {'asset': {'version': '2.0'}, 'scene': 0, 'scenes': [{'nodes': [0]}],
+           'nodes': [{'mesh': 0}], 'meshes': [{'primitives': [{'attributes': {'POSITION': 0}, 'indices': 1}]}],
+           'buffers': [{'uri': 'mesh.bin', 'byteLength': len(positions) + len(indices)}],
+           'bufferViews': [{'buffer': 0, 'byteLength': len(positions)},
+                           {'buffer': 0, 'byteOffset': len(positions), 'byteLength': len(indices)}],
+           'accessors': [{'bufferView': 0, 'componentType': 5126, 'count': 3, 'type': 'VEC3',
+                          'min': [-1, 0, -1], 'max': [1, 2, 1]},
+                         {'bufferView': 1, 'componentType': 5123, 'count': count * 3, 'type': 'SCALAR'}]}
+    imported = twin_imports.create({'model.gltf': json.dumps(doc).encode(), 'mesh.bin': positions + indices},
+                                   'Bake key car', 'car')
+    twin_imports.rename(imported['id'], 'Bake key car', size=[2, 2, 2])
+
+    def place(model):
+        lot = model['site']['lot']
+        x, y = lot[0]
+        pad = [[x, y], [x + 12, y], [x + 12, y + 12], [x, y + 12]]
+        model['site']['terraces'].append({'id': 'bake-key-pad', 'polygon': pad, 'height': -2, 'blend': 3,
+                                          'edges': [{'edge': 'slope'} for _ in pad]})
+        model['site']['hardscape'].append({'id': 'bake-key-patio', 'polygon': pad, 'material': 'concrete'})
+        model['site']['furniture'].append({'id': 'bake-key-car', 'asset': imported['id'], 'kind': 'car',
+                                           'at': [x + 6, y + 6], 'scale': 1, 'rotation': 0})
+        H.building(model, L.POOL)['foundation'] = {'mode': 'auto', 'offset_ft': .5, 'thickness_ft': 1}
+        return model
+
+    try:
+        twin_store.update_model(place, 'edit', note='bake identity terrain/import regression')
+        with s.browser(launch_args=L.GPU_ARGS) as wall:
+            seen = bake_requests(wall)
+            wall_models = []
+            wall.on('request', lambda request: wall_models.append(request.url)
+                    if f"/{imported['id']}/model.gltf" in request.url else None)
+            L.open_twin(wall, s, query='tier=low&test=1&panel=true&kiosk=true')
+            wait_bake_hook(wall)
+            wait_until(wall, lambda: bool(state(wall).get('key')), 120, 'wall computes its key')
+            wall_key = state(wall)['key']
+            check(fresh(wall) == set(), 'wall starts without any bake')
+            context, desk = other_page(wall)
+            try:
+                desk_models = []
+                desk.on('request', lambda request: desk_models.append(request.url)
+                        if f"/{imported['id']}/model.gltf" in request.url else None)
+                open_desk(desk, s)
+                check(wait_baked(desk)['key'] == wall_key, 'authored terrain/import key is shared')
+                check(desk_models and not wall_models, 'High fetches the model; Low keeps its stand-in')
+                terrain_count = """() => {let n=0; window.__twin.groups.site.traverse(m=>{
+                    if(m.userData.terrain) n+=m.geometry.attributes.position.count;}); return n;}"""
+                check(desk.evaluate(terrain_count) > wall.evaluate(terrain_count), 'lawn render grids still differ by tier')
+            finally:
+                context.close()
+            wait_until(wall, lambda: set(BAKED) <= fresh(wall), 120, 'wall picks up terrain/import bake')
+            check(writes(seen) == [], 'kiosk wall uploads nothing')
+            check(not state(wall)['baking'] and state(wall)['baked'] == [], 'kiosk wall never bakes')
+            L.no_errors(s)
+    finally:
+        L.reset()
+        twin_imports.delete(imported['id'])
+
+
 def scenario_editor_never_bakes_and_says_when_lights_wait():
     """Ruling B15: the editor never bakes; its chip says when the lights wait to re-bake."""
     from services import twin_bakes, twin_store
@@ -1036,6 +1109,7 @@ SCENARIOS = [
     scenario_progress_words,
     scenario_two_tabs_bake_without_tearing,
     scenario_wall_opened_before_the_bake_picks_it_up,
+    scenario_terraces_foundation_and_heavy_import_share_the_wall_bake,
     scenario_editor_never_bakes_and_says_when_lights_wait,
     scenario_day_ground_is_even_after_the_bake,
 ]

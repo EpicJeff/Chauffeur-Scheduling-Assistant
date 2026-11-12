@@ -77,6 +77,8 @@ class Node extends EventTarget {
 }
 const body = new Node('body'), controls = new Node('div'); controls.id = 'twin-controls'; body.append(controls);
 globalThis.document = Object.assign(new EventTarget(), {body, activeElement:null, createElement: tag => new Node(tag),
+  createTextNode: text => Object.assign(new Node('#text'), {textContent: String(text)}),
+  createElementNS: (ns, tag) => new Node(tag),
   getElementById(id) { const find = n => n.id === id ? n : n.children.map(find).find(Boolean); return find(body); }});
 globalThis.window = {chfBase:'../'};
 globalThis.location = {search:''};
