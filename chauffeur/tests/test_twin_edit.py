@@ -76,7 +76,7 @@ def scenario_editable_fields_are_pinned():
     check(twin_edit.EDITABLE == {
         'wall': ('height', 'thickness', 'exterior'),
         'opening': ('width', 'sill', 'head', 'kind', 'panels', 'at'),
-        'room': ('name', 'ha_area'),
+        'room': ('name', 'ha_area', 'floor_offset_ft'),
         'roof': ('kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'),
         'building': ('name', 'position', 'rotation', 'base'),
         'level': ('name', 'elevation', 'ceiling')}, twin_edit.EDITABLE)

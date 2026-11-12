@@ -224,7 +224,12 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       for (const b of plan.buildings || []) for (const porch of allPorches(b)) if (porch.polygon) {
         const pos = b.position || [0, 0], angle = -(b.rotation || 0) * Math.PI / 180;
         const x = f.at[0] - pos[0], y = f.at[1] - pos[1];
-        if (inside([Math.cos(angle) * x - Math.sin(angle) * y, Math.sin(angle) * x + Math.cos(angle) * y], porch.polygon)) elevation = buildingBase(plan, b) + porch.floor;
+        const point = [Math.cos(angle) * x - Math.sin(angle) * y, Math.sin(angle) * x + Math.cos(angle) * y];
+        if (inside(point, porch.polygon)) {
+          const room = (b.rooms || []).find(r => r.kind === 'porch' && r.state !== 'ghost'
+            && r.level === (porch.level || b.levels[0]?.id) && inside(point, r.polygon));
+          elevation = buildingBase(plan, b) + porch.floor + (room?.floor_offset_ft || 0);
+        }
       }
       model.position.set(f.at[0], elevation + (f.elevation || 0), -f.at[1]);
       if (late) { group.add(model); mergeStatic(model); }

@@ -2,6 +2,7 @@
 // Keep these rules in step with services/twin_model_hosts.world_point.
 // Outdoor parking follows the lot surface rather than the building platform.
 import { buildingBase } from './twin_ground.js';
+import { roomFloor, openingFloor } from './twin_floors.js';
 export function parkingPoint(building, piece, plan, offset = 0, groundAt = () => 0) {
   const point=hostPoint(building,piece.host,offset);
   if(piece.host.ground){
@@ -24,7 +25,7 @@ export function hostPoint(building, host, offset = 0) {
     const xs = room.polygon.map(p => p[0]), ys = room.polygon.map(p => p[1]);
     const x0 = Math.min(...xs), y0 = Math.min(...ys);
     return [x0 + host.u * (Math.max(...xs) - x0), y0 + host.v * (Math.max(...ys) - y0),
-      'ceiling' in host ? elevation + (level.ceiling || 0) - offset : elevation + offset];
+      'ceiling' in host ? elevation + (level.ceiling || 0) - offset : roomFloor(level, room) + offset];
   }
   let a, b;
   if (wall) [a, b] = [wall.from, wall.to];
@@ -40,7 +41,8 @@ export function hostPoint(building, host, offset = 0) {
       const distance = ((wall.thickness || 0) / 2 + offset) * (host.side === 'left' ? 1 : -1);
       x -= dy * distance; y += dx * distance;
     }
-    return [x, y, elevation + (host.sill ?? host.z ?? 0)];
+    const reference = 'width' in host && 'head' in host ? openingFloor(building, wall, host.at).offset : 0;
+    return [x, y, elevation + reference + (host.sill ?? host.z ?? 0)];
   }
   return [x, y, (roof.plate || 0) + (host.z || 0) + offset];
 }

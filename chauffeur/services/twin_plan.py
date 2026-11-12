@@ -323,7 +323,7 @@ def _roof(building, notes):
     return sections
 
 
-def _opening_error(opening, walls, sections):
+def _opening_error(opening, walls, sections, floor_reference=0):
     if not isinstance(opening, dict):
         return 'invalid opening data'
     width, sill, head = (opening.get(key) for key in ('width', 'sill', 'head'))
@@ -344,7 +344,7 @@ def _opening_error(opening, walls, sections):
                        wall['to'][1] - wall['from'][1])
         if not _number(at) or at - width / 2 < -1e-6 or at + width / 2 > length + 1e-6:
             return 'outside the wall span'
-        if head > wall['height'] + 1e-6:
+        if head + floor_reference > wall['height'] + 1e-6:
             return 'head is above the wall height'
     else:
         if opening['gable'] not in ('front', 'rear'):
@@ -379,7 +379,12 @@ def _openings(building, walls, sections, notes):
                 and 'sill' not in opening):
             opening['sill'] = 0
             notes.append(f'Opening {index}: defaulted missing sill to 0 feet.')
-        reason = _opening_error(opening, walls, sections)
+        reference = 0
+        wall = walls.get(opening.get('wall')) if isinstance(opening, dict) else None
+        if wall and _number(opening.get('at')):
+            from services.twin_floors import opening_reference
+            reference = opening_reference(building, wall, opening['at'])[0]
+        reason = _opening_error(opening, walls, sections, reference)
         if (reason in ('unknown wall', 'outside the wall span', 'head is above the wall height',
                        'unknown gable (expected front or rear)', 'unknown gable section',
                        'outside the roof gable span', 'head is above the clipped gable height')
@@ -429,6 +434,12 @@ def _rooms(building, levels, notes):
         if reason:
             notes.append(f'Dropped room {name}: {reason}.')
         else:
+            from services.twin_floors import offset_error
+            value = room.get('floor_offset_ft', 0)
+            if offset_error(value):
+                notes.append(f'Room {name}: defaulted invalid floor_offset_ft to 0.')
+                value = 0
+            room['floor_offset_ft'] = value
             rooms.append(room)
     _piece_meta(rooms, 'room', notes)
     building['rooms'] = rooms
@@ -540,8 +551,8 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
     """Copy a plan, default optional lists, and drop invalid geometry with notes.
 
     Caps retain the first entries, with one aggregate note per truncated list.
-    Gable coordinates use plan x; wall offsets and opening heights are local to
-    the referenced wall, regardless of its level's elevation.
+    Gable coordinates use plan x. Wall openings measure sill and head from the
+    inside room's floor (the higher floor for an interior opening).
     Connected-model extras (joints, footprints, faces, hosts, materials,
     proposals and flags) remain on the copied records without filtering.
     """
@@ -578,8 +589,8 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         twin_terrain.normalize_foundation(building, notes)
         walls = _walls(building, levels, notes)
         sections = _roof(building, notes)
-        _openings(building, walls, sections, notes)
         _rooms(building, levels, notes)
+        _openings(building, walls, sections, notes)
         _details(building, levels, notes)
         buildings.append(building)
     site = raw.get('site')

@@ -75,6 +75,7 @@ def run(cases):
     d = tempfile.mkdtemp(prefix='twin_hosts_js_')
     shutil.copy(MODULE, os.path.join(d, 'twin_hosts.mjs'))
     shutil.copy(os.path.join(ROOT, 'static', 'twin', 'twin_ground.js'), os.path.join(d, 'twin_ground.js'))
+    shutil.copy(os.path.join(ROOT, 'static', 'twin', 'twin_floors.js'), os.path.join(d, 'twin_floors.js'))
     with open(os.path.join(d, 'driver.mjs'), 'w', encoding='utf-8') as f:
         f.write(DRIVER)
     job = os.path.join(d, 'job.json')

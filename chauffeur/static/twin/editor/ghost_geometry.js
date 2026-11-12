@@ -43,7 +43,7 @@ export function pieceGhostGeometry(kind, piece, ctx = {}) {
         .translate(at[0], (num(floor) ? floor : 0) + (piece.head + piece.sill) / 2, -at[1]);
     }
   }
-  if (kind === 'room' && ring(piece.polygon)) return polygon(piece.polygon, elevation + .04);
+  if (kind === 'room' && ring(piece.polygon)) return polygon(piece.polygon, elevation + (piece.floor_offset_ft || 0) + .04);
   if (kind === 'fixture' && point(piece.at)) {
     const z = elevation + (piece.surface === 'ceiling' ? (num(level?.ceiling) ? level.ceiling : 9) : piece.surface === 'wall' ? 4 : .15);
     return new THREE.BoxGeometry(.5, .3, .5).translate(piece.at[0], z, -piece.at[1]);

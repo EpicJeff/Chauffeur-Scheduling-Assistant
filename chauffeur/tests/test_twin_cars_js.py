@@ -214,6 +214,14 @@ check('outdoor parking stays on lot ground despite a raised, rotated building',a
  const view={plan:{buildings:[{id:'garage',base:3,position:[20,40],rotation:90,levels:[],walls:[],anchors:[{id:'yard',kind:'parking',host:{ground:true,at:[10,5]}}]}]}};
  const spot=parkingObjects(view)[0];assert.ok(Math.abs(spot.at[0]-15)<1e-9);assert.ok(Math.abs(spot.at[1]-50)<1e-9);assert.ok(Math.abs(spot.at[2]-.08)<1e-9);
 });
+check('cars follow a sunken garage through the shared parking and energy anchors',async()=>{
+ const t=await fixture();try{
+  const before=t.layer.snapshot().find(r=>r.id==='a').at[1];
+  t.view.plan.buildings[0].rooms.find(r=>r.id==='r').floor_offset_ft=-2;
+  t.layer.update();const after=t.layer.snapshot().find(r=>r.id==='a');
+  assert.ok(after.visible);assert.ok(Math.abs(after.at[1]-before+2*.3048)<1e-6);
+ }finally{t.layer.stop();t.cleanup();}
+});
 let failed=0;for(const [name,fn]of checks)try{await fn();console.log('  ok '+name);}catch(e){failed++;console.log('  FAIL '+name+' '+e.stack);}
 assert.deepEqual(domErrors,[]);assert.deepEqual(escaped,[]);console.log(`${checks.length-failed}/${checks.length} car checks passed`);process.exit(failed?1:0);
 """

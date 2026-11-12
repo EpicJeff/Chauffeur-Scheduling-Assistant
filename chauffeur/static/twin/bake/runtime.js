@@ -200,7 +200,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
         const height = centre.y / FT - (building.base || 0) - buildingGround(round, building);
         const room = building.rooms.find(r => {
           const level = building.levels.find(l => l.id === r.level);
-          return level && height >= level.elevation && height <= level.elevation + level.ceiling &&
+          return level && height >= level.elevation + (r.floor_offset_ft || 0) && height <= level.elevation + level.ceiling &&
             [[0, 0], [.5, 0], [-.5, 0], [0, .5], [0, -.5]].some(([a, b]) => contains(r.polygon, [x + a, y + b]));
         });
         const owner = atlas.room.rooms.findIndex(r => r.building === buildingId && r.id === room?.id);

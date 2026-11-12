@@ -1,3 +1,4 @@
+import { roomFloor, openingFloor } from './twin_floors.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
@@ -154,7 +155,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       let geometry;
       const b = plan.buildings.find(b => b.id === pick.building), r = b?.rooms?.find(r => r.id === pick.id);
       if (r && pick.kind === 'room') {
-        const z = (b.levels.find(l => l.id === r.level)?.elevation || 0) + .04;
+        const z = roomFloor(b.levels.find(l => l.id === r.level), r) + .04;
         geometry = new THREE.BufferGeometry().setFromPoints([...r.polygon, r.polygon[0]].map(p => new THREE.Vector3(p[0], z, -p[1])));
       } else geometry = new THREE.EdgesGeometry(proxy.geometry);
       const line = r && pick.kind === 'room' ? new THREE.Line(geometry, material) : new THREE.LineSegments(geometry, material);
@@ -310,12 +311,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (key === editableLevel) return;
       editableLevel = key; await view.rebuild(plan, { preserveYard: true });
     },
-    floorAt(clientX, clientY, key) {
+    floorAt(clientX, clientY, key, height = 0) {
       const frame = floorFrame(key); if (!frame) return null;
       const r = renderer3.domElement.getBoundingClientRect();
       camera.updateMatrixWorld(true);
       raycaster.setFromCamera(new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, 1 - (clientY - r.top) / r.height * 2), camera);
-      const point = raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -frame.elevation * FT), new THREE.Vector3());
+      const point = raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -(frame.elevation + height) * FT), new THREE.Vector3());
       if (!point) return null;
       const b = frame.building, a = -(b.rotation || 0) * Math.PI / 180;
       const x = point.x / FT - (b.position?.[0] || 0), y = -point.z / FT - (b.position?.[1] || 0);
@@ -715,7 +716,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         if (!proxy) continue;
         line.geometry.dispose();
         const room = line.userData.roomOutline && after.rooms.find(r => r.id === record.data.pieceId);
-        const z = (after.levels.find(l => l.id === room?.level)?.elevation || 0) + .04;
+        const z = roomFloor(after.levels.find(l => l.id === room?.level), room) + .04;
         line.geometry = room ? new THREE.BufferGeometry().setFromPoints([...room.polygon, room.polygon[0]]
           .map(p => new THREE.Vector3(p[0], z, -p[1]))) : new THREE.EdgesGeometry(proxy.geometry);
       }
@@ -759,13 +760,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
               };
               if (kind === 'room') {
                 const holes = stairHoles(building, level).filter(h => h.every(p => contains(piece.polygon, p)));
-                add(polygon(piece.polygon, level.elevation + .012, level.elevation + .012, holes));
+                add(polygon(piece.polygon, roomFloor(level, piece) + .012, roomFloor(level, piece) + .012, holes));
               } else {
                 const [x, y] = piece.position, height = piece.head - piece.sill;
                 const wall = building.walls.find(w => w.id === piece.wall);
                 const angle = wall ? Math.atan2(wall.to[1] - wall.from[1], wall.to[0] - wall.from[0]) : 0;
                 add(new THREE.BoxGeometry(piece.width, height, .08).rotateY(angle)
-                  .translate(x, level.elevation + piece.sill + height / 2, -y));
+                  .translate(x, level.elevation + (wall ? openingFloor(building, wall, piece.at).offset : 0) + piece.sill + height / 2, -y));
               }
               next.pieces.set(key, objects);
               const geometry = objects[0].geometry; geometry.computeBoundingBox();

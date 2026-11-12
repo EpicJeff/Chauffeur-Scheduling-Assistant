@@ -917,6 +917,18 @@ def flatten(model: dict) -> dict:
         for opening in building.get('openings', []):
             if opening.get('state') == 'proposal':
                 continue
+            wall = next((w for w in walls if w['id'] == opening.get('wall')), None)
+            if wall is not None and twin_plan._number(opening.get('at')):
+                from services.twin_floors import opening_reference
+                reference, step = opening_reference(building, wall, opening['at'])
+                if reference:
+                    opening['floor_reference_ft'] = reference
+                else:
+                    opening.pop('floor_reference_ft', None)
+                if step:
+                    opening['step_down_ft'] = step
+                else:
+                    opening.pop('step_down_ft', None)
             if isinstance(opening.get('gable'), dict):
                 host = opening['gable']
                 roof = roof_by_id.get(host.get('roof'))

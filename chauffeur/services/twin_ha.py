@@ -228,7 +228,7 @@ def auto_spots(model, catalogue) -> dict:
         building = next(b for b, r in _rooms(model) if r is room)
         level = next((l for l in building.get('levels', []) if l['id'] == room.get('level')), {})
         for device, point in zip(devices, _grid(room.get('polygon', []), len(devices))):
-            height = level.get('ceiling', 9) if device['kind'] in ('light', 'fan') else 4
+            height = level.get('ceiling', 9) if device['kind'] in ('light', 'fan') else 4 + room.get('floor_offset_ft', 0)
             out[device['device_id']] = {'building': building['id'], 'level': room.get('level'),
                                         'room': room['id'], 'at': point,
                                         'z': level.get('elevation', 0) + height}
