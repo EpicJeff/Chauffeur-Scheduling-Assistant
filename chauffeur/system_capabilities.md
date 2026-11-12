@@ -1,6 +1,30 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.817 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.818 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.818 (2026-11-12, NOT device-verified): sunken and raised rooms. Each room can sit above or below its floor's height.**
+
+**The report.** The user, 2026-11-12: "If the house sits 2 ft above the ground, the garage floor still needs to be down 2 ft so it is flush with the ground. There is no way to achieve that currently."
+
+**How it was built.** Codex built it. Claude checked it in Chromium.
+
+**The rule.**
+- **Data:** rooms take `floor_offset_ft` (-10..+10 ft; missing = 0).
+- **The shelf:** "Floor height (relative to this floor)", with ±0.5 ft nudges, validated through model ops with history.
+- **Effective room floor** = level elevation + room offset. Ceilings, roof bearing, normal wall tops and the floor cut-height datum stay level-relative, so a sunken room is simply taller.
+
+**What follows a room's floor** (shared server rules in `services/twin_floors.py`; client in `static/twin/twin_floors.js`).
+- **Walls:** a wall bottom uses the LOWER adjacent room floor. Walls are partitioned at the boundaries of changed rooms, so one long wall can bound both the living space and a sunken garage.
+- **Openings:** a sill and head are measured from the inside room's floor. Between two rooms they use the higher floor, and record a derived `step_down_ft` (no steps are built yet). A garage door in an outside garage wall reaches the garage floor.
+- **Foundation:** its top follows the room floors (partitioned at room boundaries, with the wall footprint owned by the nearest room), so a garage at grade shows no plinth.
+- **Hosted things:** devices, parking spots and car models on a room floor inherit the offset once. The parking decal keeps its 0.08 ft inset.
+- **Other consumers:** the server host points (`twin_model_hosts.py`), the bridge and plan flattening, energy anchors and the viewer's flat cut all follow the effective floor.
+- **The lighting bake:** the authored-geometry key already includes room records, so an offset change rebakes.
+
+**Tests.**
+- New `test_twin_room_floor` (validation, migration, ops, undo/redo, HTTP), `test_twin_room_floor_js` (the house 2 ft up and the garage at -2: slab at grade, shared wall from the garage floor, garage door at grade, interior door from the higher floor with `step_down_ft` 2, device and parking at grade, flush foundation, the bake key changes, the cut keeps the sunken floor visible) and `test_twin_room_floor_editor_js`.
+- Browser `test_house_twin_room_floor_live` 1/1; editor openings 5/5; viewing 5/5; levels 3/3; rooms 10/10; ground 3/3.
+- Already failing on main, confirmed and not caused by this: `test_twin_guided_editor_js` (stale stub export) and `test_twin_model_devices` 19/20 (the house-design tool schema size check). Queued as cleanup.
 
 **v2.499.817 (2026-11-12, NOT device-verified): twin viewer navigation by levels (slice 2c-1). House → building → floor → room, orbit and zoom only, top-down floors, swipe room to room, a path chip, and attention-only devices above room level.**
 
