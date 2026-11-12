@@ -1,6 +1,49 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.810 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.811 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.811 (2026-11-12, NOT device-verified): twin slice 4a, objects. One object model with scale, turn and properties for every placed thing; glTF/GLB model import into the library; door and window models fitted to their openings.**
+
+**The user's asks.**
+- "There is also no scaling of placed objects, like trees, chairs, etc. Really, there are very few settings for most things."
+- Door and window models, plus a library you import into and drag from.
+- **Rulings (2026-11-12):** import accepts glTF/GLB, Collada and KMZ; no Downloads watcher; .skp is unsupported.
+
+**How it was built.** Codex built it. Claude checked it in Chromium, which found the import broken on real pages. Claude fixed it, fixed two stale tests, and made the refusal words human.
+
+**The object model** (`services/twin_objects.py`, `static/twin/object_schema.json`, `static/twin/objects.js`).
+- **One schema for server and client.** The common fields are position (host-relative), turn (plus pitch and roll for free objects), size 5%–2000% (uniform, or per axis under Advanced), name, tint, casts_shadow and visible_in.
+- **Per-kind fields:** lamps take `emissive` and an optional linked HA light that glows through the existing real-lights pool, not a second light system.
+- **Migration:** existing yard items read the new fields as defaults.
+- **Validation** runs on the server for every field, through model ops with history and undo. Refusals read as words ("Choose a size from 5% to 2000%.").
+
+**Editing** (`editor/object_shelf.js`, `handles.js`).
+- Selecting an object opens a property shelf: size, turn, tint, shadow and per-kind fields.
+- **On-canvas handles:** a rotate ring and a corner scale handle. Each release is one history step.
+- **Keys:** R / Shift+R turn 15°; [ and ] resize 10%; Delete removes.
+- Multi-select was not built.
+
+**Import** (`services/twin_imports.py`, `editor/imports.js`).
+- **Adding a model:** "Import model" in the library takes a dropped or picked .glb/.gltf (with its .bin and textures), within a 50 MB limit set in settings_registry.
+- **Storage:** files go in the household's data dir under `imports/`, served by an authenticated route.
+- **On import:** the model is scale-normalised with its origin at the bottom centre, and gets a thumbnail.
+- **Naming:** a name and kind are asked for, with a door/window guess from the shape.
+- **Limits:** triangles are capped at 300k, with a warning above 100k; textures above 2048 px are downscaled.
+- **Removing:** deleting an import is refused while it is placed (the refusal names the placements).
+- **Collada and KMZ show "not available in this build".** The exact three.js r187 `ColladaLoader`/`KMZLoader`/`fflate` files could not be obtained offline. They were not hand-written or substituted.
+- **Fixed by Claude:** `twin_library.js` `loadModel` resolved the page-relative model URL against the model's own folder. On the real pages (`chfBase = '../'`) the loader therefore refused its own file, and every import failed with "Could not load this model". It now resolves against the page. A node regression test covers the relative base.
+
+**Door and window models.** An opening can take a model: a kit model or an import, with hinge and swing. The model is fitted to the opening's width and height, with its depth clamped to the wall. The cut always follows the opening's own dimensions. The shelf has a Model picker (Generated or a thumbnail grid). Without a model, the generated door or window is unchanged.
+
+**Tests.**
+- `test_twin_objects` 7/7.
+- `test_twin_objects_js`, including the new page-relative base check.
+- `test_twin_object_shelf_js`.
+- `test_twin_model_ops_more` 27/27: the size range is now 5%–2000%, per the user's ask.
+- `test_twin_real_lights_js` 8/8: the fake DOM gained `createTextNode` and `createElementNS`; this was also broken on main.
+- Import maps and Tailwind.
+- Browser `test_twin_objects_live`: import, place by drag, 150% and 90°, undo/redo, reload persists, window model assigned and persisting, no new programs on a second orbit. Its drag now matches the t15 library drag.
+- Browser `test_house_editor_openings_live` 5/5 and `test_house_twin_live_rooms` 10/10.
 
 **v2.499.810 (2026-11-12, NOT device-verified): waking from idle restores the floor you were on; two stale tests corrected.**
 
