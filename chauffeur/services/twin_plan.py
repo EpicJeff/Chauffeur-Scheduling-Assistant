@@ -613,7 +613,23 @@ def _compose_overrides(value, notes):
                    if isinstance(key, str) and _point(at)} if isinstance(moved, dict) else {}
     if removed != valid_removed or moved != valid_moved:
         notes.append('Dropped invalid or duplicate compose_overrides entries.')
-    return {'removed': valid_removed, 'moved': valid_moved}
+    result = {'removed': valid_removed, 'moved': valid_moved}
+    properties = value.get('properties', {})
+    if isinstance(properties, dict):
+        from services import twin_objects
+        valid = {}
+        for item_id, changes in properties.items():
+            if not isinstance(item_id, str) or not isinstance(changes, dict):
+                continue
+            try:
+                candidate = {'object_kind': 'plant'}
+                twin_objects.update(candidate, changes, 'planting')
+                valid[item_id] = changes
+            except ValueError:
+                notes.append('Dropped invalid composed object properties.')
+        if valid:
+            result['properties'] = deepcopy(valid)
+    return result
 
 
 def record_compose_overrides(before: dict, after: dict) -> dict:
@@ -637,6 +653,8 @@ def record_compose_overrides(before: dict, after: dict) -> dict:
         if item_id not in overrides['removed']:
             overrides['removed'].append(item_id)
     overrides['moved'].update(latest['moved'])
+    if latest.get('properties'):
+        overrides.setdefault('properties', {}).update(deepcopy(latest['properties']))
 
     def composed(plan):
         return {item['id']: item for name in ('beds', 'planting', 'edges')
@@ -652,6 +670,14 @@ def record_compose_overrides(before: dict, after: dict) -> dict:
             overrides['moved'].pop(item_id, None)
         elif _point(new[item_id].get('at')) and new[item_id]['at'] != item.get('at'):
             overrides['moved'][item_id] = list(new[item_id]['at'])
+    from services import twin_objects
+    property_names = set(twin_objects.SCHEMA['common']) | {'object_kind'}
+    property_names.update(key for values in twin_objects.SCHEMA['kinds'].values() for key in values)
+    for item_id in old.keys() & new.keys():
+        changes = {key: deepcopy(new[item_id][key]) for key in property_names
+                   if key in new[item_id] and new[item_id][key] != old[item_id].get(key)}
+        if changes:
+            overrides.setdefault('properties', {}).setdefault(item_id, {}).update(changes)
     site['compose_overrides'] = overrides
     return result
 

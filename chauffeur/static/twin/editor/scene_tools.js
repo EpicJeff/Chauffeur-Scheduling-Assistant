@@ -1,3 +1,5 @@
+import { objectOperation, transformObject } from '../objects.js';
+import { isObject } from './object_shelf.js';
 import { report, idleInterval } from './api.js';
 import { createCards, findPiece, feetInches } from './cards.js';
 import { createHaLink } from './ha_link.js';
@@ -334,6 +336,25 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   listen(canvas, 'pointerleave', () => roomSelection.hover(null));
   listen(canvas.parentElement, 'twinerror', event => report(event.detail));
   listen(document, 'keydown', event => {
+    if (event.defaultPrevented || !canEdit() || event.ctrlKey || event.metaKey || event.altKey
+      || event.target.closest?.('input, textarea, select, [contenteditable="true"]')
+      || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), [role="dialog"]')) return;
+    const record = selection && findPiece(getPlan(), selection.pieceId, selection.buildingId);
+    if (!isObject(record) && record?.kind !== 'opening') return;
+    if (event.key === 'Delete') { event.preventDefault(); cards.remove().catch(report); return; }
+    if (!isObject(record)) return;
+    const key = event.key.toLowerCase();
+    if (!['r', '[', ']'].includes(key)) return;
+    event.preventDefault();
+    const target = { id: record.piece.id, building: record.building?.id };
+    cards.queue(() => {
+      if (!canEdit()) return;
+      const current = findPiece(getPlan(), target.id, target.building);
+      if (!current) return;
+      return op(objectOperation(current, transformObject(current.piece, key === 'r' ? 'rotate' : 'scale', key === 'r' ? event.shiftKey : key === '[')));
+    }).catch(report);
+  });
+  listen(document, 'keydown', event => {
     if (event.key !== 'Escape' || event.defaultPrevented || event.target.closest?.('input, textarea, select, [contenteditable="true"]')
       || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), dialog[open]')) return;
     if (gesture?.dragging) { finish({ pointerId }, true); return; }
@@ -353,6 +374,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   }));
   return {
     haLink,
+    deleteSelected: () => cards.remove(),
     select, selected: () => selection, selection: roomSelection.current, dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,
     handles: handles.handles,
     selectedRooms: () => roofRooms.size ? [...roofRooms] : null,

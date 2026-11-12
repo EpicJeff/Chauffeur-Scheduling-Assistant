@@ -1,3 +1,4 @@
+import { drawObjectShelf, isObject } from './object_shelf.js';
 import { solarLayout } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
@@ -104,7 +105,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     const flags = roofFlags(record);
-    const nextLayout = JSON.stringify([record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial]);
+    const nextLayout = JSON.stringify([record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
     if (record && layout === nextLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
@@ -184,6 +185,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       }
     }
     if (kindIsEquipment(record)) equipmentShelf.draw(host, record);
+    if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { canEdit, queue, op, report,
+      getRecord: () => findPiece(getPlan(), piece.id, building?.id) });
     const form = document.createElement('form'); form.addEventListener('submit', event => event.preventDefault()); host.append(form);
     const more = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'More'; more.append(summary);
     const cardFields = (kind === 'roof' && roof && !piece.rect ? []
@@ -258,7 +261,13 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       acceptButton = button('Looks right', async () => { await pending; await edit({ op: 'accept', building: building.id, pieces: [piece.id] }); draw(); });
       host.append(acceptButton);
     }
-    host.append(button('Delete', async () => {
+    host.append(button('Delete', remove));
+  }
+  async function remove() {
+    const record = selection && findPiece(getPlan(), selection.pieceId, selection.buildingId);
+    if (!record) return;
+    const { kind, piece, building } = record;
+    const roof = kind === 'roof' && building.roofs?.find(r => r.id === piece.id);
       if (!canEdit()) return;
       if (!await window.promptConfirm(`Delete ${getLabel(selection)}?`, 'Attached doors or windows may also be removed. The timeline keeps the earlier house.', 'Delete', 'Cancel')) return;
       await pending;
@@ -266,7 +275,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       else if ((kind==='solar_zone' || roof && !piece.rect) && op) await op({ op: 'delete', building: building.id, id: piece.id });
       else await edit({ op: 'delete', building: building.id, piece: piece.id });
       select(null);
-    }));
+
   }
   function drawEdge(next, record, roof) {
     const edge = roof.edges[edgeIndex];
@@ -321,7 +330,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     pending = run.catch(() => {});
     return run;
   }
-  return { draw, queue, edge(handle) {
+  return { draw, queue, remove, edge(handle) {
     const next = { pieceId: handle.id, buildingId: handle.building };
     selection = next; edgeIndex = handle.edge; layout = null; draw(next);
   } };

@@ -84,6 +84,34 @@ export function mountModes(view, live) {
     view.scene.add(bulb);
     lamps.push({ marker, bulb, position, distance: range * FT, intensity: 0, rgb: lightColor(), real: false });
   }
+  // Object lamps join the same fixed-budget real-light pool as HA lamps.
+  // Material instances survive batching and are changed in place on pushes.
+  view.scene.updateMatrixWorld(true);
+  const objectLamps = new Map();
+  view.scene.traverse(mesh => {
+    for (const material of mesh.material ? [].concat(mesh.material) : []) {
+      const object = material.userData?.objectLight;
+      if (!object) continue;
+      if (!objectLamps.has(object.id)) objectLamps.set(object.id, { object, materials: new Set(), box: new THREE.Box3() });
+      const row = objectLamps.get(object.id); row.materials.add(material); row.box.expandByObject(mesh);
+    }
+  });
+  for (const { object, materials, box } of objectLamps.values()) {
+    const existing = object.entity && lamps.find(lamp => lamp.marker.entity_id === object.entity);
+    if (existing) { existing.objectMaterials = [...(existing.objectMaterials || []), ...materials]; continue; }
+    const position = box.getCenter(new THREE.Vector3()); position.y = box.max.y + .05;
+    const at = [position.x / FT, -position.z / FT, position.y / FT];
+    const bulb = new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: object.color, toneMapped: false }));
+    bulb.position.copy(position); bulb.visible = false; view.scene.add(bulb);
+    const rgb = new THREE.Color(object.color).getRGB(new THREE.Color(), THREE.SRGBColorSpace);
+    const owner = view.plan.buildings.find(b => object.id.startsWith(b.id + ':'));
+    const piece = owner && [...(owner.items || []), ...(owner.anchors || [])].find(p => object.id === `${owner.id}:${p.id}`);
+    const level = owner?.walls?.find(w => w.id === piece?.host?.wall)?.level
+      || owner?.rooms?.find(r => r.id === (piece?.host?.floor || piece?.host?.ceiling))?.level;
+    lamps.push({ marker: { device_id: 'object:' + object.id, entity_id: object.entity, at, building: owner?.id, level },
+      bulb, position, distance: 18 * FT, intensity: 0, rgb: [rgb.r * 255, rgb.g * 255, rgb.b * 255], real: false,
+      objectSource: object, objectMaterials: [...materials] });
+  }
   // Use the generator's slab shape, stair holes and building transform. Overlaying the
   // floor keeps shared/merged house materials intact and costs one draw per room.
   for (const room of layout.rooms.filter(room => room.area_id)) {
@@ -136,8 +164,16 @@ export function mountModes(view, live) {
     legacyRooms = !realLighting && !stale ? live.rooms() : [];
     for (const lamp of lamps) {
       const state = states[lamp.marker.entity_id];
-      lamp.intensity = !stale && state?.state === 'on' ? lightIntensity(state.attributes) : 0;
-      lamp.rgb = lightColor(state?.attributes);
+      const object = lamp.objectSource;
+      lamp.intensity = object && !object.entity ? (object.on ? 1 : 0) : !stale && state?.state === 'on' ? lightIntensity(state.attributes) : 0;
+      if (object && !object.entity) {
+        const color = new THREE.Color(object.color).getRGB(new THREE.Color(), THREE.SRGBColorSpace);
+        lamp.rgb = [color.r * 255, color.g * 255, color.b * 255];
+      } else lamp.rgb = lightColor(state?.attributes);
+      for (const material of lamp.objectMaterials || []) {
+        material.emissive.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
+        material.emissiveIntensity = lamp.intensity;
+      }
     }
     revision++;
     for (const floor of floors) floor.climate = roomClimate(floor.room, climateDevices, stale ? {} : states);

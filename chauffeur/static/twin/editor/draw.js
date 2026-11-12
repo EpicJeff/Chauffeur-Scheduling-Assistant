@@ -189,7 +189,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     if (!canEdit()) return;
     const selection = tools.selection(); cancel();
     if (!selection.id) { panel.message('Select a piece to delete first.'); return; }
-    save({ op: 'delete', building: selection.building, id: selection.id }).catch(report);
+    tools.deleteSelected().catch(report);
   }, { signal });
   el('rail-add-level').disabled = false;
   el('rail-add-level').addEventListener('click', async () => {

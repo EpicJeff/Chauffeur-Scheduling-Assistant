@@ -131,6 +131,9 @@ ENTRIES: List[dict] = [
     _e('house_twin_idle_enabled', 'panel', 'House idle face',
        'Show the clock, weather and a slow house orbit after a minute. Off on desks, on on panels by default.',
        page='house/twin', anchor='twin-glance-settings'),
+    _e('twin_import_limit_mb', 'panel', 'Model import size limit',
+       'Maximum size in MB for one model and its textures (1 to 200, default 50).',
+       page='house/editor', anchor='library-import-settings', ui_marker='library-import-limit'),
     _e('house_twin_energy', 'panel', 'Energy sources',
        'Map solar, Powerwall battery, grid, house load and car charging readings, power signs and roof panels.',
        page='house/twin', anchor='twin-energy-settings'),
@@ -835,7 +838,7 @@ def audit() -> dict:
     # The old schema field remains readable for migration, with no editor.
     # Structured display preferences have a dedicated store and endpoint, like
     # the control rulebook; they never invalidate schedules on a display save.
-    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'ha_control', 'house_twin_glance', 'house_twin_idle_enabled', 'house_twin_energy'}
+    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'twin_import_limit_mb', 'ha_control', 'house_twin_glance', 'house_twin_idle_enabled', 'house_twin_energy'}
     listed = set(BY_KEY)
     return {'missing': sorted(model - listed), 'stale': sorted(listed - model)}
 
@@ -955,7 +958,7 @@ def audit_ui(templates_dir: str = None) -> dict:
     # of shopping.html), so the audit has to be told where to read. Kept as a
     # map of exceptions rather than importing main.py's routing table, which
     # would drag the whole app into a test that only wants to read files.
-    PAGE_TEMPLATES = {'meals': 'shopping.html', 'lists': 'shopping.html', 'house/twin': 'house_twin.html',
+    PAGE_TEMPLATES = {'meals': 'shopping.html', 'lists': 'shopping.html', 'house/twin': 'house_twin.html', 'house/editor': 'house_editor.html',
                       'dashboard_v2': 'dashboard.html'}
 
     def _text(page):

@@ -477,6 +477,14 @@ def _pieces(building, notes):
             zone['state'] = 'ghost'
             zone['why'] = reason
             _note(zone, 'Solar zone', reason, notes)
+    from services import twin_objects
+    for opening in building.get('openings', []):
+        for field, spec in twin_objects.SCHEMA['opening'].items():
+            if field in opening:
+                try:
+                    twin_objects.validate(field, opening[field], spec)
+                except ValueError as exc:
+                    _note(opening, 'Opening', str(exc), notes)
     for name, kind in (('anchors', 'anchor'), ('items', 'item')):
         for item in _list(building, name, notes, kind):
             reason = _host_error(item.get('host'), building)
@@ -497,6 +505,8 @@ def _pieces(building, notes):
                 if (not isinstance(item.get('asset'), str) or not twin_plan._number(item['rotation'])
                         or not twin_plan._number(item['scale']) or item['scale'] <= 0):
                     reason = reason or 'invalid item asset, rotation or scale'
+            if name == 'items' or not item.get('device'):
+                reason = reason or twin_objects.error(item)
             if reason:
                 _note(item, kind.capitalize(), reason, notes)
     devices = []

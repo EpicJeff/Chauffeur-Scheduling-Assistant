@@ -348,5 +348,8 @@ def compose(plan: dict, kit: dict, seed: int = 1) -> tuple[dict, list[str]]:
                 else:
                     notes.append(f"Skipped move for {entry['id']}: outside the lot or blocked "
                                  'by a building, porch, hardscape or pool clearance.')
+            if entry['id'] in overrides.get('properties', {}):
+                entry.update(deepcopy(overrides['properties'][entry['id']]))
+                entry.setdefault('src', {})['person'] = True
             site[name].append(entry)
     return result, notes

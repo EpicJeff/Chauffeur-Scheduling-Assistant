@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { normaliseModel, modelBudget } from './objects.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 
 export const base = () => window.chfBase ?? '../';
 export function libUrl(assetId, name) {
-  const url = base() + 'api/house/twin/library/' + encodeURIComponent(assetId) + '/' + name.split('/').map(encodeURIComponent).join('/');
+  const url = base() + (assetId.startsWith('import-') ? 'api/house/twin/imports/' : 'api/house/twin/library/') + encodeURIComponent(assetId) + '/' + name.split('/').map(encodeURIComponent).join('/');
   return window.chfAuthUrl ? window.chfAuthUrl(url) : url;
 }
 
@@ -123,13 +124,35 @@ export function kitMaterial(role, kit, tier) {
   return material;
 }
 
+const imported = new Map();
+let importRead = null;
+export function rememberImport(entry) { imported.set(entry.id, entry); }
+export function forgetImport(assetId) {
+  const asset = imported.get(assetId);
+  if (asset?.model) {
+    const key = libUrl(assetId, asset.model), cached = modelCache.get(key);
+    modelCache.delete(key);
+    cached?.complete.then(model => { if (model) disposeObject(model); });
+  }
+  imported.delete(assetId); importRead = null;
+}
+export async function importedModels(refresh = false) {
+  if (refresh) importRead = null;
+  importRead ||= fetch(base() + 'api/house/twin/imports').then(async response => {
+    if (!response.ok) throw new Error('Could not read imported models.');
+    const entries = await response.json(); entries.forEach(rememberImport); return entries;
+  }).catch(error => { importRead = null; throw error; });
+  return importRead;
+}
 export async function loadModel(assetId, kit, onLate) {
-  const asset = manifest(kit)[assetId];
-  const name = Object.keys(asset?.files || {}).find(n => /\.(gltf|glb)$/i.test(n));
+  const isImport = assetId.startsWith('import-');
+  if (isImport && !imported.has(assetId)) await importedModels();
+  const asset = isImport ? imported.get(assetId) : manifest(kit)[assetId];
+  const name = asset?.model || Object.keys(asset?.files || {}).find(n => /\.(gltf|glb)$/i.test(n));
   if (!name) return null;
   // Authenticate buffers and textures as well as the top-level glTF. Resolving
   // each resource against a query-free directory avoids token loss on relatives.
-  const directory = new URL(base() + 'api/house/twin/library/' + encodeURIComponent(assetId) + '/', window.location.href);
+  const directory = new URL(base() + (assetId.startsWith('import-') ? 'api/house/twin/imports/' : 'api/house/twin/library/') + encodeURIComponent(assetId) + '/', window.location.href);
   const manager = new THREE.LoadingManager();
   manager.setURLModifier(raw => {
     if (/^(data:|blob:)/.test(raw)) return raw;
@@ -138,10 +161,11 @@ export async function loadModel(assetId, kit, onLate) {
       u.search = '';
       return window.chfAuthUrl ? window.chfAuthUrl(u.href) : u.href;
     }
+    if (isImport) throw new Error('Imported models must use their included resources.');
     return raw;
   });
   return optionalAsset(modelCache, libUrl(assetId, name), async () => {
-    const result = await new GLTFLoader(manager).setResourcePath(directory.href).loadAsync(libUrl(assetId, name));
+    const result = await new GLTFLoader(manager).setResourcePath(new URL(name.slice(0, name.lastIndexOf('/') + 1), directory).href).loadAsync(libUrl(assetId, name));
     if (!result) return null;
     result.scene.traverse(o => {
       if (!o.isMesh) return;
@@ -149,18 +173,19 @@ export async function loadModel(assetId, kit, onLate) {
       o.material = [].concat(o.material).map(m => {
         // Library glass is subject to the same single-pass rule as plan glass.
         const out = new THREE.MeshStandardMaterial({
-          name: m.name, color: m.color, map: m.map, normalMap: m.normalMap,
+          name: m.name, color: m.color, map: m.map, normalMap: m.normalMap, vertexColors: m.vertexColors,
           roughnessMap: m.roughnessMap, metalnessMap: m.metalnessMap,
           roughness: m.roughness ?? 0.85, metalness: m.metalness || 0,
           transparent: m.transparent || (m.transmission || 0) > 0,
           opacity: (m.transmission || 0) > 0 ? 0.3 : m.opacity,
-          alphaTest: m.alphaTest, side: m.side,
+          alphaTest: m.alphaTest, side: m.side, emissive: m.emissive, emissiveMap: m.emissiveMap, emissiveIntensity: m.emissiveIntensity,
         });
         m.dispose();
         return out;
       });
       if (o.material.length === 1) o.material = o.material[0];
     });
+    if (isImport) { modelBudget(result.scene); return normaliseModel(result.scene); }
     return result.scene;
   }, copyModel, onLate);
 }

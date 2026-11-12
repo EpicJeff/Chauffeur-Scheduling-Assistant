@@ -601,7 +601,8 @@ def apply_model(model, edit, validated=None, ha_catalogue=None):
             return ops.apply(model, {**edit, 'building': anchors[0][0]['id'], 'id': edit['piece']})
     # A flag_ok set names a building's check, not a piece, so it carries no id.
     if (op in ops.MORE_OPS and (op not in ('set', 'add_opening') or 'id' in edit
-                                or op == 'set' and edit.get('field') == 'flag_ok')
+                                or op == 'set' and edit.get('field') == 'flag_ok'
+                                or op == 'add_opening' and 'model' in edit)
             or op in ('move_joint', 'move_wall', 'move_room', 'split_wall', 'draw_room', 'split_room')
             or op == 'delete' and 'id' in edit):
         return ops.apply(model, edit, ha_catalogue=ha_catalogue)

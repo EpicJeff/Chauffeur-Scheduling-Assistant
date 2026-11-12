@@ -2002,16 +2002,16 @@ def kitchen_page(request: Request):
 @app.get("/house/twin")
 def house_twin_page(request: Request):
     """Hidden plan-driven preview; the existing House remains the front door."""
-    from services import twin_library
+    from services import twin_library, twin_objects
     return templates.TemplateResponse(request=request, name="house_twin.html",
-                                      context={"twin_manifest": twin_library.manifest()})
+                                      context={"twin_manifest": twin_library.manifest(), "twin_object_schema": twin_objects.SCHEMA})
 
 
 @app.get("/house/editor")
 def house_editor_page(request: Request):
-    from services import twin_library
+    from services import twin_library, twin_objects
     return templates.TemplateResponse(request=request, name="house_editor.html",
-                                      context={"twin_manifest": twin_library.manifest()})
+                                      context={"twin_manifest": twin_library.manifest(), "twin_object_schema": twin_objects.SCHEMA})
 
 
 @app.get("/house")
@@ -7800,6 +7800,83 @@ def house_twin_library_file(asset_id: str, name: str):
     return FileResponse(path)
 
 
+@app.get('/api/house/twin/imports')
+def house_twin_imports():
+    from services import twin_imports
+    return twin_imports.catalog()
+
+
+@app.get('/api/house/twin/imports/{asset_id}/{name:path}')
+def house_twin_import_file(asset_id: str, name: str):
+    from services import twin_imports
+    entry = twin_imports.get(asset_id)
+    if not entry or name not in entry['files']:
+        raise HTTPException(status_code=404, detail='No such imported model file.')
+    suffix = name.rsplit('.', 1)[-1].lower()
+    media = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'webp': 'image/webp',
+             'gltf': 'model/gltf+json', 'glb': 'model/gltf-binary'}.get(suffix, 'application/octet-stream')
+    return FileResponse(twin_imports.root() / asset_id / name,
+                        headers={'X-Content-Type-Options': 'nosniff'}, media_type=media)
+
+
+@app.post('/api/house/editor/imports')
+async def house_editor_import(request: Request):
+    from services import twin_imports
+    require_parent_token(request.headers.get('x-member-token') or request.query_params.get('member_token'))
+    cap = twin_imports.limit_mb() * 1024 * 1024
+    try:
+        # Bound the request before the multipart parser spools file parts.
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > cap + 1024 * 1024:
+                raise ValueError(f'Models may be at most {twin_imports.limit_mb()} MB.')
+        request._body = bytes(raw)
+        async with request.form(max_files=512, max_fields=8) as form:
+            files, total = {}, 0
+            for upload in form.getlist('files'):
+                if not hasattr(upload, 'read'):
+                    raise ValueError('Choose model files.')
+                data = await upload.read(cap - total + 1)
+                total += len(data)
+                if total > cap:
+                    raise ValueError(f'Models may be at most {twin_imports.limit_mb()} MB.')
+                if upload.filename in files:
+                    raise ValueError('Duplicate model filename.')
+                files[upload.filename] = data
+            return await asyncio.to_thread(twin_imports.create, files, form.get('name'), form.get('kind'), form.get('thumbnail'))
+    except (ValueError, OSError, __import__('zipfile').BadZipFile) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch('/api/house/editor/imports/{asset_id}')
+def house_editor_import_rename(asset_id: str, body: dict = Body(...)):
+    from services import twin_imports
+    return _house_editor_call(twin_imports.rename, asset_id, body.get('name'), body.get('kind'), body.get('thumbnail'), lookup=True)
+
+
+@app.delete('/api/house/editor/imports/{asset_id}')
+def house_editor_import_delete(asset_id: str):
+    from services import twin_imports
+    _house_editor_call(twin_imports.delete, asset_id, lookup=True)
+    return {'ok': True}
+
+
+@app.get('/api/house/editor/import-settings')
+def house_editor_import_settings():
+    from services import twin_imports
+    return {'limit_mb': twin_imports.limit_mb()}
+
+
+@app.put('/api/house/editor/import-settings')
+def house_editor_import_settings_save(body: dict = Body(...)):
+    value = body.get('limit_mb')
+    if type(value) is not int or not 1 <= value <= 200:
+        raise HTTPException(status_code=400, detail='Choose a limit from 1 to 200 MB.')
+    storage.patch_settings({'twin_import_limit_mb': value})
+    return {'limit_mb': value}
+
+
 @app.post("/api/house/twin/perf")
 def house_twin_perf_post(body: dict = Body(...)):
     from services import twin_store
@@ -8277,7 +8354,9 @@ def house_editor_library(request: Request):
                           ('tree', kit['backdrop_trees'] + kit['specimen_trees'])):
         for preset in presets:
             items[preset] = {'id': preset, 'name': words(preset), 'kind': kind}
+    from services import twin_imports
     return {'materials': materials, 'items': list(items.values()),
+            'imports': twin_imports.catalog(), 'import_limit_mb': twin_imports.limit_mb(),
             'scale': list(twin_library.ITEM_SCALE)}
 
 
@@ -11841,6 +11920,8 @@ def _house_stream_entities(area: str | None = None) -> set:
         from services import ha_api, twin_energy, twin_glance
         ids.update(twin_energy.entities())
         ids.update(twin_glance.entities())
+        ids.update(p['light_entity'] for b in model.get('buildings', []) for p in b.get('items', []) if p.get('light_entity'))
+        ids.update(p['light_entity'] for name in ('planting', 'furniture') for p in model.get('site', {}).get(name, []) if p.get('light_entity'))
         ids.update(z['entity'] for b in model.get('buildings', []) for z in b.get('solar_zones', [])
                    if z.get('entity') and z.get('state') != 'ghost')
         ids.update(p['power'] for b in model.get('buildings', []) for p in b.get('anchors', [])

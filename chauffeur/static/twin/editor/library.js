@@ -3,6 +3,9 @@ import { svgIcon } from '../live/glance_icons.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
+import { rememberImport, forgetImport, libUrl } from '../twin_library.js';
+import { mountImports } from './imports.js';
+import { objectShown } from '../objects.js';
 import { request, report } from './api.js';
 
 export const materialName = id => String(id || 'Material').replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
@@ -78,6 +81,21 @@ export function surfaceOperation(surface, scope, material) {
 }
 
 export function itemOperation(surface, item, ground) {
+  if (item.id.startsWith('import-')) {
+    if (['door', 'window'].includes(item.kind)) {
+      if (surface?.kind !== 'wall') throw new Error('Drop doors and windows onto a wall.');
+      const wall = surface.piece, d = wall.to.map((v, i) => v - wall.from[i]), length = Math.hypot(...d);
+      const at = surface.point.slice(0, 2).reduce((n, v, i) => n + (v - wall.from[i]) * d[i] / length, 0);
+      return { op: 'add_opening', building: surface.building.id, wall: wall.id, kind: item.kind, model: item.id,
+        at, width: item.kind === 'door' ? 3 : 4, sill: item.kind === 'door' ? 0 : 3, head: 7 };
+    }
+    if (item.kind === 'plant' || !surface) {
+      if (!ground) throw new Error('Drop this model onto the ground.');
+      return { op: 'add_site_item', list: item.kind === 'plant' ? 'planting' : 'furniture', asset: item.id, object_kind: item.kind, at: ground };
+    }
+    if (surface.kind !== 'room' || surface.surface === 'ceiling') throw new Error('Drop this model onto a floor or the ground.');
+    return { ...itemOperation(surface, { ...item, id: 'placement-proxy', kind: 'furniture' }, ground), asset: item.id, object_kind: item.kind };
+  }
   if (item.kind !== 'furniture' || !surface) return { op: 'add_site_item',
     list: item.kind === 'furniture' ? 'furniture' : 'planting', asset: item.id, at: ground };
   const { building, piece, kind, point, side } = surface;
@@ -264,12 +282,35 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       button.dataset.equipment=tool;
       button.addEventListener('click',()=>{if(canEdit()){host.hidden=true;el('rail-'+tool)?.click();}});grid.append(button);
     }
-    for (const entry of catalog[tab]) {
+    const imports = tab === 'items' ? (catalog.imports || []).filter(e => !e.archived) : [];
+    imports.forEach(rememberImport);
+    if (el('library-import-limit')) el('library-import-limit').value = catalog.import_limit_mb || 50;
+    const search = el('library-search')?.value?.toLowerCase() || '';
+    for (const entry of [...catalog[tab], ...imports].filter(e => e.name.toLowerCase().includes(search))) {
       const button = document.createElement('button'); button.type = 'button'; button.dataset[tab === 'materials' ? 'material' : 'item'] = entry.id;
       button.setAttribute('aria-label', entry.name); button.style.touchAction = 'none';
       const image = document.createElement('img'); image.alt = ''; image.draggable = false; image.width = 112; image.height = 96;
       const name = document.createElement('span'); name.textContent = entry.name; button.append(image, name); grid.append(button);
-      thumbnails.current.picture(entry, tab === 'materials').then(url => { if (url && !signal.aborted) image.src = url; }).catch(report);
+      if (entry.thumbnail) image.src = libUrl(entry.id, entry.thumbnail);
+      else thumbnails.current.picture(entry, tab === 'materials').then(url => { if (url && !signal.aborted) image.src = url; }).catch(report);
+      if (entry.id.startsWith('import-')) {
+        for (const action of ['Rename', 'Delete']) {
+          const control = document.createElement('button'); control.type = 'button'; control.textContent = `${action} ${entry.name}`;
+          listen(control, 'click', async () => {
+            if (!canEdit()) return;
+            try {
+              if (action === 'Rename') {
+                const name = await window.promptInput('Model name', 'Name this model.', { value: entry.name });
+                if (name?.trim()) await request('imports/' + entry.id, 'PATCH', { name: name.trim() });
+              } else if (await window.promptConfirm(`Delete ${entry.name}?`, 'Placed models must be removed from the scene first. Earlier timeline placements retain their files.', 'Delete', 'Cancel')) {
+                await request('imports/' + entry.id, 'DELETE');
+                forgetImport(entry.id);
+              }
+              catalog = loading = null; await browse();
+            } catch (error) { report(error); }
+          }); grid.append(control);
+        }
+      }
       listen(button, 'pointerdown', event => {
         if (event.button !== 0 || !canEdit()) return;
         onInteract?.(); dismiss(); event.preventDefault(); button.setPointerCapture(event.pointerId);
@@ -281,9 +322,22 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
         choose(picking, entry, { clientX: r.left + r.width / 2, clientY: r.top });
       });
     }
+    if (tab === 'items') {
+      const hidden = [];
+      for (const kind of ['planting', 'furniture']) for (const [index, piece] of (getPlan().site?.[kind] || []).entries())
+        if (!objectShown(piece, true)) hidden.push({ piece, id: piece.id || `${kind}:${index}` });
+      for (const building of getPlan().buildings) for (const piece of [...(building.items || []), ...(building.anchors || []).filter(a => !a.device)])
+        if (!objectShown(piece, true)) hidden.push({ piece, id: piece.id, building: building.id });
+      for (const row of hidden) {
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = `Select hidden: ${row.piece.name || row.id}`;
+        listen(button, 'click', () => tools.select({ pieceId: row.id, buildingId: row.building })); grid.append(button);
+      }
+    }
     host.querySelectorAll('[data-library-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.libraryTab === tab)));
     el('library-status').textContent = picking ? pickingWords() : hint;
   }
+  mountImports({ canvas, kit, canEdit, signal, changed: async () => { catalog = loading = null; tab = 'items'; host.hidden = false; await browse(); } });
+  if (el('library-search')) listen(el('library-search'), 'input', () => browse().catch(report));
   listen(el('rail-library'), 'click', () => {
     host.hidden = !host.hidden; el('rail-library').setAttribute('aria-pressed', String(!host.hidden));
     if (host.hidden) stopPicking();
@@ -300,7 +354,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     const surface = surfaceAt(event);
     if (moved.material) { if (surface) choose(surface, moved.entry, event); return; }
     const at = ground(event); if (!surface && (!at || !contains(getPlan().site?.lot || [], at))) return;
-    op(itemOperation(surface, moved.entry, at)).catch(report);
+    try { op(itemOperation(surface, moved.entry, at)).catch(report); } catch (error) { report(error); }
   }, { capture: true });
   listen(document, 'pointercancel', () => { drag = null; });
   listen(document, 'keydown', event => {
@@ -310,7 +364,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   }, { capture: true });
 
   function siteBox(piece, kind) {
-    const height = kind === 'planting' ? piece.height || 4 : 3, radius = kind === 'planting' ? Math.max(1, height * .18) : 2;
+    const height = (kind === 'planting' ? piece.height || 4 : 3) * (piece.scale ?? 1), radius = (kind === 'planting' ? Math.max(1, height * .18) : 2 * (piece.scale ?? 1));
     const y = groundAt(getPlan(), ...piece.at), [x, z] = piece.at;
     return new THREE.Box3(new THREE.Vector3((x - radius) * FT, y * FT, -(z + radius) * FT),
       new THREE.Vector3((x + radius) * FT, (y + height) * FT, -(z - radius) * FT));
@@ -318,7 +372,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   function pickSite(x, y) {
     const r = ray({ clientX: x, clientY: y }); let nearest = null;
     for (const kind of ['planting', 'furniture']) for (const [index, piece] of (getPlan()?.site?.[kind] || []).entries()) {
-      if (!piece.at) continue;
+      if (!piece.at || !objectShown(piece, true)) continue;
       const point = r.intersectBox(siteBox(piece, kind), new THREE.Vector3());
       if (!point) continue;
       const distance = point.distanceTo(r.origin);
