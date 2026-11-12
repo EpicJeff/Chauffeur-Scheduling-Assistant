@@ -1,6 +1,27 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.797 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.798 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.798 (2026-11-11, NOT device-verified): the house editor gets a viewport lighting control: Day / Night / Now / Unlit (fast). It opens in Day.**
+
+**The ask.** The user, 2026-11-11: "the editor always shows the lighting for the current time, which means it is super dark at night so you can't see anything. There should be some viewport controls to control the lighting (and maybe an unlit setting to make it perform super speedy?)."
+
+**How it was built.** Codex built it; Claude ran the browser checks, fixed two test bugs and made the control's label legible over a bright sky.
+
+**The control** (`static/twin/editor/lighting.js`, in the editor's view controls).
+- Day and Night are fixed looks in the editor and never snap back. Now follows the real sun.
+- The editor defaults to Day. The choice is remembered per device (localStorage `chf.editor.lighting`).
+- `/house/twin` keeps its Now/Day/Night previews, with the 2-minute return.
+
+**Unlit (fast)** (`static/twin/unlit.js`, `view.setUnlit`).
+- No light, shadow or environment work.
+- Materials swap to cheap shaded stand-ins that keep their colour, texture, transparency and alpha test, and they are restored exactly on leave.
+- It survives rebuilds, selection and floor fades.
+- Measured on the desktop: 1.18 ms/frame against Day's 1.42 on the same view. A second toggle compiles no new programs.
+
+**Tests.** test_twin_editor_lighting_js 12/12, test_house_editor_lighting_live 5/5 (screenshots of Day, Night and Unlit), test_twin_editor_history_js 6/6, test_twin_import_maps 2/2, test_twin_sky_js 7/7, test_house_editor_openings_live 5/5, test_tailwind_build 6/6.
+
+**Found while testing.** Leaked Codex helper processes (about 186 node processes, 7.6 GB) had been starving the machine, crashing browser tabs and timing out local connections. They were stopped with the user's approval.
 
 **v2.499.797 (2026-11-11, NOT device-verified): the 3D house loads again after an update; every module is versioned.**
 
