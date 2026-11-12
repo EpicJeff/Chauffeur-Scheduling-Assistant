@@ -33,6 +33,7 @@ await test('enter captures orthographic floor camera and moves one bar',async()=
   assert.equal(idle.active(),true);assert.equal(root.hidden,false);assert.equal(view.state.view,'ext');
   assert.equal(view.state.time,'now');assert.equal(bar.parentElement,card);assert.equal(view.controls.enabled,false);
   assert.equal(document.querySelectorAll('#twin-glance').length,1);assert.ok(clocks>0);
+  assert.notEqual(document.documentElement.getAttribute('data-twin-idle'),null,'idle applies the scene-over-Argyle stacking scope');
 });
 await test('slow orbit emits no human camera change and retains live sun',()=>{
   view.controls.addEventListener('change',()=>updates++);
@@ -43,11 +44,12 @@ await test('slow orbit emits no human camera change and retains live sun',()=>{
   assert.equal(controlsCalls,0,'idle animation never runs OrbitControls.update, so it cannot starve the baker');
   view.controls.update=original;
   assert.equal(updates,0);assert.equal(view.scene.getObjectByName('real-sun'),sun);
-  assert.match(document.getElementById('twin-idle-weather').textContent,/70°F/);
+  assert.match(document.getElementById('twin-idle-weather').textContent,/70 °F/);
   assert.ok(heroes>0,'the shared compact hero builder is called');assert.equal(document.getElementById('twin-idle-next').hidden,false);
 });
 await test('wake restores exact view position quaternion target zoom and preview',()=>{
   idle.wake();assert.equal(root.hidden,true);assert.equal(bar.parentElement,home);
+  assert.equal(document.documentElement.getAttribute('data-twin-idle'),null,'wake restores the original Argyle stacking');
   assert.equal(view.camera,saved.camera);assert.deepEqual(view.camera.position.toArray(),saved.position.toArray());
   assert.deepEqual(view.camera.quaternion.toArray(),saved.quaternion.toArray());
   assert.deepEqual(view.controls.target.toArray(),saved.target.toArray());assert.equal(view.camera.zoom,saved.zoom);

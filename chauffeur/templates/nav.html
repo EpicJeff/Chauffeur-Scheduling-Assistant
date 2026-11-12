@@ -1289,8 +1289,8 @@
                 ssRoot.innerHTML = `
                     <div class="ss-layer"></div><div class="ss-layer"></div>
                     <div id="panel-ss-scrim"></div>
-                    <div id="panel-ss-clock"><div class="ss-time"></div><div class="ss-date"></div></div>
-                    <div id="panel-ss-next" style="display:none"></div>`;
+                    <div id="panel-ss-clock" class="glance-corner-clock"><div class="ss-time"></div><div class="ss-date"></div></div>
+                    <div id="panel-ss-next" class="glance-corner-next" style="display:none"></div>`;
                 document.body.appendChild(ssRoot);
                 ssLayers = [...ssRoot.querySelectorAll('.ss-layer')];
                 ssFront = 0;

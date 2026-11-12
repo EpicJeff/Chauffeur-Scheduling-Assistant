@@ -1,0 +1,22 @@
+{# Shared corner placement for the photo screensaver, old House and twin idle.
+   Included inside panel_skin.html's style element. Keep presentation in each
+   surface; these are the screensaver's original viewport-relative offsets.
+   A surface reserves persistent chrome on its containing box (the twin's
+   panel shelf), so the corner offsets themselves never drift. #}
+    .glance-corner-clock, .glance-corner-next {
+        --glance-edge-x: 4vmin;
+        --glance-edge-y: 3.5vmin;
+        position: absolute;
+        pointer-events: none;
+    }
+
+    .glance-corner-clock {
+        left: var(--glance-edge-x);
+        bottom: var(--glance-edge-y);
+    }
+
+    .glance-corner-next {
+        right: var(--glance-edge-x);
+        top: var(--glance-edge-y);
+        width: min(52vmin, 480px);
+    }

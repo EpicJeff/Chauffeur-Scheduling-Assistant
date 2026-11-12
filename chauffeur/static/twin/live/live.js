@@ -6,7 +6,7 @@ import { deviceActions, confirmUnsafe, mountRoomPanel } from './room_panel.js';
 import { roomStates, mountModes, modeForeground } from './modes.js';
 import { kindOf, unsafeLabel } from './kinds.js';
 import { mountRing } from './ring.js';
-import { defaultEntities, isEnergyEntity } from './glance.js';
+import { isEnergyEntity } from './glance.js';
 import { mappedEntities } from './energy_mapping.js';
 
 const FT = .3048, unreachable = 'Home Assistant is not reachable.';
@@ -428,8 +428,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     try { draw(); view.render(); } catch (error) { report(error); }
   }
   function subscribeStates() {
-    if (stopped || typeof EventSource !== 'function') return;
-    const entities = new Set([...defaultEntities(states), ...mappedEntities(view.energySources?.mapping), ...rows.map(row => row.entity_id), ...devices.flatMap(row => row.entities || [row.entity_id]),
+    if (stopped || stream || typeof EventSource !== 'function') return;
+    const entities = new Set([...Object.keys(states), ...(live.glanceEntities || []), ...mappedEntities(view.energySources?.mapping), ...rows.map(row => row.entity_id), ...devices.flatMap(row => row.entities || [row.entity_id]),
       ...(layout.rooms || []).flatMap(room => room.lights || [])].filter(Boolean));
     if (!entities.size) return;
     try {
@@ -497,6 +497,12 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   const live = {
     refresh, draw, control, openRoom, stop,
+    configureGlance(tiles) {
+      live.glanceEntities = (tiles || []).map(tile => typeof tile === 'string' ? tile : tile.entity);
+      const key = JSON.stringify(live.glanceEntities);
+      if (key === live.glanceStreamKey) return;
+      live.glanceStreamKey = key; stream?.close(); stream = null; subscribeStates();
+    },
     // From the room panel: the ring takes the keyboard focus, and gives it back (review L7).
     openRing: row => { const from = document.activeElement; roomPanel?.close(); ring?.open(row, {focus: from}); },
     ring: () => ring?.current() || null,

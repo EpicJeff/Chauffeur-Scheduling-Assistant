@@ -1,17 +1,14 @@
-import { kindOf } from './kinds.js';
-import { mappedEntities, energyValue } from './energy_mapping.js';
+import { defaultGlanceIcon, glanceIcon } from './glance_icons.js';
 
-const valid = row => row && !['unknown', 'unavailable', ''].includes(String(row.state));
+const valid = row => row && !['unknown', 'unavailable', 'none', ''].includes(String(row.state).trim().toLowerCase());
+const reading = value => value !== null && value !== undefined && String(value).trim() !== '' && Number.isFinite(Number(value)) ? Number(value) : null;
 export const isEnergyEntity = (id, state) => ['power', 'energy', 'battery'].includes(state?.attributes?.device_class) ||
   id.startsWith('sensor.') && /solar|grid|battery|powerwall|car.?charg/i.test(id + ' ' + (state?.attributes?.friendly_name || ''));
-export function defaultEntities(states, devices = [], mapping = {}) {
-  const weather = Object.keys(states).find(id => id.startsWith('weather.') && Number.isFinite(Number(states[id]?.attributes?.temperature)) && states[id]?.attributes?.temperature != null);
-  const energy = [...new Set([...mappedEntities(mapping, true), ...Object.keys(states).filter(id => isEnergyEntity(id, states[id]))])].slice(0, 12 - (weather ? 1 : 0));
-  if (!mappedEntities(mapping, true).length) energy.splice(4);
-  return [...(weather ? [weather] : []), ...energy];
+export function humanise(value) {
+  const text = ({partlycloudy: 'partly cloudy', 'windy-variant': 'windy', 'snowy-rainy': 'snow and rain',
+    'lightning-rainy': 'thunderstorms', 'clear-night': 'clear night'}[value] || String(value).replaceAll('_', ' ').replaceAll('-', ' '));
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
-// HA sends no unit on climate entities: take the house's temperature unit from a
-// temperature sensor (as Climate mode does), else Fahrenheit.
 export function houseTempUnit(states = {}) {
   for (const row of Object.values(states)) {
     const unit = row?.attributes?.unit_of_measurement;
@@ -19,88 +16,116 @@ export function houseTempUnit(states = {}) {
   }
   return '°F';
 }
-export function glanceValue(id, row, stale = false, states = {}, mapping = {}) {
-  if (!valid(row) || stale) return '—';
-  const domain = id.split('.')[0], weather = domain === 'weather', a = row.attributes || {};
-  const reading = v => v !== null && v !== undefined && String(v).trim() !== '' && Number.isFinite(Number(v)) ? v : null;
-  let value = weather ? a.temperature : row.state;
-  let unit = weather ? a.temperature_unit || a.unit_of_measurement || '' : a.unit_of_measurement || '';
+const BINARY_WORDS = {
+  battery: ['Normal', 'Low'], battery_charging: ['Not charging', 'Charging'], cold: ['Normal', 'Cold'],
+  connectivity: ['Disconnected', 'Connected'], door: ['Closed', 'Open'], garage_door: ['Closed', 'Open'],
+  window: ['Closed', 'Open'], opening: ['Closed', 'Open'], lock: ['Locked', 'Unlocked'],
+  gas: ['Clear', 'Detected'], smoke: ['Clear', 'Detected'], motion: ['Clear', 'Detected'],
+  occupancy: ['Clear', 'Detected'], presence: ['Away', 'Home'], moisture: ['Dry', 'Wet'],
+  heat: ['Normal', 'Hot'], light: ['No light', 'Light'], moving: ['Stopped', 'Moving'],
+  plug: ['Unplugged', 'Plugged in'], power: ['Off', 'On'], problem: ['OK', 'Problem'],
+  running: ['Stopped', 'Running'], safety: ['Safe', 'Unsafe'], sound: ['Clear', 'Detected'],
+  tamper: ['Clear', 'Detected'], update: ['Up to date', 'Update available'], vibration: ['Clear', 'Detected'],
+};
+// One formatter for both presentations. Mapping words apply only to mapped power roles.
+export function formatGlanceValue(row, states = {}, mapping = {}) {
+  const entity = row?.entity || row?.entity_id || '';
+  if (row?.entity) row = states[entity];
+  if (!valid(row)) return '—';
+  const id = entity, domain = id.split('.')[0], a = row.attributes || {};
+  let value = row.state, unit = a.unit_of_measurement || '';
+  const temperature = ['climate', 'water_heater', 'weather'].includes(domain) || a.device_class === 'temperature' || /^(°[CF]|[CF])$/.test(unit);
   if (domain === 'climate' || domain === 'water_heater') {
     value = reading(a.current_temperature) ?? reading(a.temperature);
     if (value === null && reading(a.target_temp_low) !== null && reading(a.target_temp_high) !== null)
-      value = `${a.target_temp_low}–${a.target_temp_high}`;
-    unit = a.unit_of_measurement || a.temperature_unit || houseTempUnit(states);
-  } else if (domain === 'humidifier') {
-    value = reading(a.current_humidity) ?? reading(a.humidity); unit = '%';
+      return `${Math.round(Number(a.target_temp_low))}–${Math.round(Number(a.target_temp_high))} ${a.unit_of_measurement || a.temperature_unit || houseTempUnit(states)}`;
+  } else if (domain === 'weather') value = a.temperature;
+  else if (domain === 'humidifier') { value = reading(a.current_humidity) ?? reading(a.humidity); unit = '%'; }
+  if (domain === 'binary_sensor' && ['on', 'off'].includes(value)) return (BINARY_WORDS[a.device_class] || ['Off', 'On'])[value === 'on' ? 1 : 0];
+  if (['lock', 'cover'].includes(domain)) return humanise(value);
+  const n = reading(value);
+  if (temperature) {
+    unit = a.temperature_unit || unit || houseTempUnit(states);
+    if (/^[CF]$/.test(unit)) unit = '°' + unit;
+    return n === null ? '—' : `${Math.round(n)} ${unit}`;
+  }
+  if (unit === '%' || ['battery', 'humidity'].includes(a.device_class)) return n === null ? '—' : `${Math.round(n)} %`;
+  if (!unit && a.device_class === 'power') unit = 'W';
+  if (n !== null && /^(w|kw|mw|wh|kwh|mwh)$/i.test(unit)) {
+    const energy = /h$/i.test(unit), scaled = n * (/^m/i.test(unit) ? 1000000 : /^k/i.test(unit) ? 1000 : 1), magnitude = Math.abs(scaled);
+    const amount = magnitude >= 1000 ? `${(magnitude / 1000).toFixed(1)} k${energy ? 'Wh' : 'W'}` : `${Math.round(magnitude)} ${energy ? 'Wh' : 'W'}`;
+    if (!energy && scaled !== 0) {
+      if (id === mapping.battery_power) return `${(scaled > 0) === (mapping.battery_positive !== 'charge') ? 'discharging' : 'charging'} ${amount}`;
+      if (id === mapping.grid_power) return `${(scaled > 0) === (mapping.grid_positive !== 'export') ? 'importing' : 'exporting'} ${amount}`;
+    }
+    return (scaled < 0 ? '-' : '') + amount;
   }
   if (value === null || value === undefined) return '—';
-  if (!weather && !['climate', 'water_heater', 'humidifier'].includes(domain)) {
-    const energy = energyValue(id, row, mapping); if (energy !== null) return energy;
-  }
-  return `${value}${unit ? ' ' + unit : ''}`;
+  return n === null ? humanise(value) : `${Number(n.toFixed(1))}${unit ? ' ' + unit : ''}`;
+}
+export function glanceValue(id, row, stale = false, states = {}, mapping = {}) {
+  return stale ? '—' : formatGlanceValue(row && {...row, entity_id: id}, states, mapping);
+}
+export function migrateGlanceTiles(tiles, states = {}, devices = []) {
+  return (tiles || []).map(tile => typeof tile === 'string' ? {entity: tile,
+    icon: defaultGlanceIcon(tile, states[tile], devices.find(d => d.entity_id === tile || d.entities?.includes(tile))?.kind), label: ''} : {...tile});
+}
+export function buildGlanceTile(tile) {
+  const cell = document.createElement('div'); cell.setAttribute('role', 'listitem'); cell.dataset.entity = tile.entity;
+  const text = document.createElement('div'), value = document.createElement('strong'); value.dataset.glanceValue = '';
+  text.append(value);
+  if (tile.label) { const label = document.createElement('small'); label.dataset.glanceLabel = ''; label.textContent = tile.label; text.append(label); }
+  cell.append(glanceIcon(tile.icon), text);
+  return cell;
+}
+function setValue(node, text) {
+  const parts = text.match(/^(.*) ([^ ]+)$/);
+  node.replaceChildren();
+  if (parts && /\d/.test(parts[1]) && !/\d/.test(parts[2])) {
+    const unit = document.createElement('span'); unit.dataset.glanceUnit = ''; unit.textContent = parts[2];
+    node.append(document.createTextNode(parts[1] + ' '), unit);
+  } else node.textContent = text;
 }
 export function mountGlance(host) {
-  // This node belongs to the page, not the remountable live layer.
   const bar = document.createElement('div'); bar.id = 'twin-glance'; bar.hidden = true;
   bar.setAttribute('role', 'list'); bar.setAttribute('aria-label', 'House readings'); host.append(bar);
-  let live = null, unsubscribe = null, configured = null, stopped = false, devices = [], energyMapping = {};
-  // Follow the actual Argyle footprint, as control_center.html does for its
-  // scrolling pages. On desks it is the chat bar; panels collapse it to an orb.
-  const chrome = ['panel-chat-orb', 'chat-overlay-container', 'panel-shelf']
-    .map(id => document.getElementById(id)).filter(Boolean);
+  let live = null, unsubscribe = null, configured = [], stopped = false, devices = [], energyMapping = {};
+  const chrome = ['panel-chat-orb', 'chat-overlay-container', 'panel-shelf'].map(id => document.getElementById(id)).filter(Boolean);
   function measure() {
     let floor = 0;
     for (const element of chrome) {
       if (element.id === 'panel-shelf') continue;
       const rect = element.getBoundingClientRect();
-      if (rect.height && getComputedStyle(element).display !== 'none')
-        floor = Math.max(floor, window.innerHeight - rect.top + 12);
+      if (rect.height && getComputedStyle(element).display !== 'none') floor = Math.max(floor, window.innerHeight - rect.top + 12);
     }
     host.style.setProperty('--twin-glance-clearance', `${floor}px`);
   }
   const resize = window.ResizeObserver ? new window.ResizeObserver(measure) : null;
   const mutations = window.MutationObserver ? new window.MutationObserver(measure) : null;
   for (const element of chrome) {
-    resize?.observe(element);
-    mutations?.observe(element, {attributes: true, attributeFilter: ['class', 'style', 'hidden']});
+    resize?.observe(element); mutations?.observe(element, {attributes: true, attributeFilter: ['class', 'style', 'hidden']});
     element.addEventListener('transitionend', measure);
   }
   window.addEventListener('resize', measure); measure();
   function update() {
     if (stopped) return;
     measure();
-    const states = live?.peek() || {};
-    const mapping = live?.energy?.()?.mapping || energyMapping;
-    const ids = configured ?? defaultEntities(states, devices, mapping);
-    // Reuse the same cells while values change; a stream burst never rebuilds icons.
-    if (JSON.stringify(ids) !== bar.dataset.entities) {
-      bar.dataset.entities = JSON.stringify(ids); bar.replaceChildren();
-      for (const id of ids) {
-        const cell = document.createElement('div'); cell.setAttribute('role', 'listitem'); cell.dataset.entity = id;
-        const icon = document.createElement('canvas'); icon.width = icon.height = 96; icon.setAttribute('aria-hidden', 'true');
-        const device = devices.find(d => d.entities?.includes(id) || d.entity_id === id);
-        const row = {...device, entity_id: id, kind: id.startsWith('weather.') ? 'climate' : device?.entity_id === id ? device.kind : id.split('.')[0]};
-        const ctx = icon.getContext('2d'); ctx.strokeStyle = '#f0e6cf'; ctx.lineWidth = 5; kindOf(row).icon(ctx);
-        const name = document.createElement('span'); name.dataset.glanceName = '';
-        const value = document.createElement('strong'); value.dataset.glanceValue = '';
-        cell.append(icon, name, value); bar.append(cell);
-      }
+    const states = live?.peek() || {}, mapping = live?.energy?.()?.mapping || energyMapping;
+    const tiles = migrateGlanceTiles(configured, states, devices);
+    if (JSON.stringify(tiles) !== bar.dataset.tiles) {
+      bar.dataset.tiles = JSON.stringify(tiles); bar.replaceChildren();
+      for (const tile of tiles) bar.append(buildGlanceTile(tile));
     }
-    for (const cell of bar.children) {
-      const id = cell.dataset.entity;
-      cell.querySelector('[data-glance-name]').textContent = states[id]?.attributes?.friendly_name || id.split('.')[1].replaceAll('_', ' ');
-      cell.querySelector('[data-glance-value]').textContent = glanceValue(id, states[id], live?.stale(), states, mapping);
-    }
-    bar.hidden = !ids.length;
+    for (const cell of bar.children) setValue(cell.querySelector('[data-glance-value]'), glanceValue(cell.dataset.entity, states[cell.dataset.entity], !live || live.stale(), states, mapping));
+    bar.hidden = !tiles.length;
   }
   return {bar, update,
-    configure(ids) { configured = ids; update(); },
+    configure(tiles) { configured = tiles || []; live?.configureGlance?.(configured); update(); },
     energy(mapping) { energyMapping = mapping; update(); },
-    attach(next) { unsubscribe?.(); live = next; devices = next?.layout().devices || []; unsubscribe = next?.subscribe(update); update(); },
+    attach(next) { unsubscribe?.(); live = next; devices = next?.layout().devices || []; unsubscribe = next?.subscribe(update); live?.configureGlance?.(configured); update(); },
     move(parent) { parent.append(bar); measure(); },
     stop() {
-      stopped = true; unsubscribe?.(); resize?.disconnect(); mutations?.disconnect();
-      window.removeEventListener('resize', measure);
+      stopped = true; unsubscribe?.(); resize?.disconnect(); mutations?.disconnect(); window.removeEventListener('resize', measure);
       for (const element of chrome) element.removeEventListener('transitionend', measure);
       bar.remove();
     },

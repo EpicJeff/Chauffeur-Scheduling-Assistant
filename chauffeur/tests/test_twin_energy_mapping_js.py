@@ -4,7 +4,7 @@ from twin_live_node_rig import run
 
 DRIVER = r"""
 const {guessEnergy, watts, carHome, mappedEntities, flowReading} = await import(file('static/twin/live/energy_mapping.js'));
-const {defaultEntities} = await import(file('static/twin/live/glance.js'));
+const {mountGlance} = await import(file('static/twin/live/glance.js'));
 const checks=[], check=(n,f)=>checks.push([n,f]);
 const power=(v=1000, unit='W')=>({state:String(v),attributes:{device_class:'power',unit_of_measurement:unit}});
 const level={state:'80',attributes:{device_class:'battery',unit_of_measurement:'%'}};
@@ -41,10 +41,12 @@ check('units, signed watts and missing readings',()=>{
  assert.equal(watts('x',{x:power(-1.5,'kW')}),-1500); assert.equal(watts('x',{x:power(2,'MW')}),2000000);
  for(const v of ['unknown','unavailable','',null]) assert.equal(watts('x',{x:{state:v,attributes:{device_class:'power'}}}),null);
 });
-check('mapped readings feed only automatic glance lists',()=>{
+check('mapped readings remain available to energy without inventing glance tiles',()=>{
  const mapping={solar_power:'sensor.unusual',cars:[{battery_level:'sensor.ev_soc',location:'device_tracker.ev'}]};
- assert.deepEqual(defaultEntities({},[],mapping),['sensor.unusual','sensor.ev_soc']);
+ const host=document.createElement('div'),glance=mountGlance(host);
+ glance.energy(mapping);assert.equal(glance.bar.hidden,true);assert.equal(glance.bar.children.length,0);glance.stop();
  assert.equal(mappedEntities(mapping).length,3);
+ assert.deepEqual(mappedEntities(mapping,true),['sensor.unusual','sensor.ev_soc']);
 });
 let failed=0; for(const [n,f] of checks)try{await f(); console.log('  ok '+n);}catch(e){failed++;console.log('  FAIL '+n+' '+e.stack);}
 console.log(`${checks.length-failed}/${checks.length} energy mapping checks passed`);process.exit(failed?1:0);

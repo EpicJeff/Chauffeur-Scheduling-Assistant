@@ -7495,7 +7495,7 @@ def house_twin_glance(request: Request, panel_id: str | None = None):
 
 
 class TwinGlanceRequest(BaseModel):
-    entities: list[str] | None = None
+    entities: list[dict] | None = None
     idle_enabled: bool = False
     panel_idle_enabled: bool = True
     panel_id: str | None = None
@@ -7503,12 +7503,12 @@ class TwinGlanceRequest(BaseModel):
 
 @app.put('/api/house/twin/glance')
 def save_house_twin_glance(req: TwinGlanceRequest):
-    import re
     from services import twin_glance
-    if req.entities is not None and (len(req.entities) > 12 or len(set(req.entities)) != len(req.entities)
-            or any(not re.fullmatch(r'[a-z_]+\.[a-z0-9_]+', eid) for eid in req.entities)):
-        raise HTTPException(status_code=422, detail='Choose up to twelve different entities.')
-    if twin_glance.save(req.entities, req.idle_enabled, req.panel_id, req.panel_idle_enabled) is None:
+    try:
+        result = twin_glance.save(req.entities, req.idle_enabled, req.panel_id, req.panel_idle_enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if result is None:
         raise HTTPException(status_code=404, detail='Panel not found.')
     return {'saved': True}
 
@@ -11831,11 +11831,12 @@ def _house_stream_entities(area: str | None = None) -> set:
             # battery). Device markers still use one primary entity.
             ids.update(device.get('entities') or [])
     if area is None:
-        from services import ha_api, twin_energy
+        from services import ha_api, twin_energy, twin_glance
         ids.update(twin_energy.entities())
+        ids.update(twin_glance.entities())
         ids.update(z['entity'] for b in model.get('buildings', []) for z in b.get('solar_zones', [])
                    if z.get('entity') and z.get('state') != 'ghost')
-        # The default glance weather is not necessarily assigned to a room.
+        # Current weather and energy telemetry need not be assigned to a room.
         import re
         try:
             glance_states = ha_api.get_states()

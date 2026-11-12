@@ -332,13 +332,11 @@
         pointer-events: none;
     }
 
+    {% include 'components/glance_placement.html' %}
+
     #panel-ss-clock, #house-glance .glance-clock {
-        position: absolute;
-        left: 4vmin;
-        bottom: 3.5vmin;
         color: #fff;
         text-shadow: 0 2px 12px rgba(0, 0, 0, .6);
-        pointer-events: none;
         font-family: Inter, system-ui, sans-serif;
     }
 
@@ -360,11 +358,6 @@
        photo's subject, which tends to live in the middle. The card body is
        components/hero_card.html in compact mode; this only places it. */
     #panel-ss-next, #house-glance .glance-next {
-        position: absolute;
-        right: 4vmin;
-        top: 3.5vmin;
-        width: min(52vmin, 480px);
-        pointer-events: none;
         font-family: Inter, system-ui, sans-serif;
     }
 

@@ -349,6 +349,20 @@ const w = dom.window;
   const out = { appeared: !!before };
   if (before) {
     out.clock = (doc.querySelector('#panel-ss-clock .ss-time') || {}).textContent || '';
+    const clock = doc.getElementById('panel-ss-clock'), clockStyle = w.getComputedStyle(clock);
+    const nextStyle = w.getComputedStyle(doc.getElementById('panel-ss-next'));
+    out.placement = {
+      clockClass: clock.classList.contains('glance-corner-clock'),
+      nextClass: doc.getElementById('panel-ss-next').classList.contains('glance-corner-next'),
+      clockPosition: clockStyle.position, nextPosition: nextStyle.position,
+      edgeX: clockStyle.getPropertyValue('--glance-edge-x').trim(),
+      edgeY: clockStyle.getPropertyValue('--glance-edge-y').trim(),
+      vmin: Math.min(w.innerWidth, w.innerHeight) / 100,
+      left: clockStyle.left, bottom: clockStyle.bottom,
+      right: nextStyle.right, top: nextStyle.top, width: nextStyle.width.replace(/\s+/g, ''),
+      timeSize: w.getComputedStyle(doc.querySelector('#panel-ss-clock .ss-time')).fontSize,
+      timeWeight: w.getComputedStyle(doc.querySelector('#panel-ss-clock .ss-time')).fontWeight,
+    };
     out.gradientPainted = [...before.querySelectorAll('.ss-layer')]
       .some(l => l.style.opacity === '1' && l.style.backgroundImage.includes('gradient'));
     const next = doc.getElementById('panel-ss-next');
@@ -411,6 +425,19 @@ def scenario_jsdom_overlay_appears_and_a_tap_wakes_it():
           "the screensaver never appeared after the idle timeout")
     check(out.get('clock'),
           "the clock is empty — the idle face has no time on it")
+    placement = out.get('placement') or {}
+    check(placement.get('clockClass') and placement.get('nextClass')
+          and placement.get('clockPosition') == placement.get('nextPosition') == 'absolute',
+          f"the real screensaver nodes must use the shared corner placement: {placement}")
+    check(placement.get('edgeX') == '4vmin' and placement.get('edgeY') == '3.5vmin'
+          and placement.get('left') == placement.get('right') == 'var(--glance-edge-x)'
+          and placement.get('bottom') == placement.get('top') == 'var(--glance-edge-y)'
+          and abs(float(placement.get('width', '0').removesuffix('px'))
+                  - min(52 * placement.get('vmin', 0), 480)) < .01,
+          f"the screensaver's original offsets and responsive hero width must not change: {placement}")
+    check(abs(float(placement.get('timeSize', '0').removesuffix('px'))
+              - 9 * placement.get('vmin', 0)) < .01 and placement.get('timeWeight') == '800',
+          f"sharing placement must not restyle the screensaver clock: {placement}")
     check(out.get('gradientPainted'),
           "an empty playlist should paint the gradient, not a black slab")
     check(out.get('slideshowStopped'),
