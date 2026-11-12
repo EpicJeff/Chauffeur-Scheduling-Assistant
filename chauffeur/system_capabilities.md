@@ -1,6 +1,50 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.795 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.796 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.796 (2026-11-11, NOT device-verified): glance tiles are the family's own picks, and the idle face is redesigned at the screensaver's placement.**
+
+**The ask.** The user compared the twin idle card with a reference, 2026-11-11: "Ours is ugly and has too many words to glance and the values are not formatted at all." The user's rulings:
+- "tiles should all be the user's own picks. Don't assume what someone wants to have at a glance";
+- "Current temp and conditions is fine";
+- each tile has "an icon selectable by the user and the linked HA entity/sensor";
+- time/weather sits lower left and the compact hero card upper right, as on the screensaver and the old House page.
+
+**How it was built.** Codex built it; Claude checked the screenshots, sent two fix rounds (the card hugging its content, and the orb) and fixed one test.
+
+**Tiles** (`static/twin/live/glance.js`, `glance_settings.js`, `services/twin_glance.py`).
+- **The tile.** Each tile is `{entity, icon, label?}`, up to 12, kept for the household and, optionally, per panel.
+- **No defaults.** The automatic default list is removed. No tiles means no tile row, and the bottom bar hides.
+- **Old lists** migrate with their entities, taking an icon from the device kind; nothing new is added.
+- **The drawer.** "Live readings and idle face": add a tile (entity search, then an icon grid), change its icon, label or entity, reorder and remove. Household or this panel.
+- **Icons.** 40 Lucide icons (ISC), each with its own tint, vendored as path data under `static/vendor/lucide/` with LICENSE and VENDORED.md, in `glance_icons.js`.
+
+**Formatting** (`formatGlanceValue`).
+- **Numbers:**
+  - percent is whole;
+  - power and energy are kW to one decimal (whole W under 1 kW);
+  - temperatures are whole degrees;
+  - other numbers have at most one decimal.
+- **Direction words:** charging, discharging, importing and exporting only on an energy-mapped battery or grid role; otherwise a minus sign.
+- **Words:** binary sensors read in words by device class; locks and covers in words.
+- **Text** is humanised ("partlycloudy" becomes "Partly cloudy"), and unavailable is an em dash.
+
+**The idle card.**
+- **Look.** Dark glass with blur:
+  - a large thin time and a muted date, on the left;
+  - the weather condition icon, the temperature and the condition in words, on the right, from the household's weather entity (current only);
+  - the tile row below a hairline: each tile is an icon, a large value with a small unit, and the optional label under it.
+- **Size.** The card hugs its content, up to about min(92vw, 880px).
+- **One builder.** The bottom bar uses the same tile builder.
+- **Placement** (`templates/components/glance_placement.html`). The screensaver and the twin idle face share one placement rule: time/weather lower left (clear of the panel shelf) and the compact hero card upper right, matching the screensaver within 1px.
+- **The Argyle orb.** Idle covers it the same way the screensaver does, and restores it on wake.
+
+**Tests.**
+- **Node and server:** test_twin_glance_js 25/25, test_twin_idle_js 6/6, test_twin_glance 16/16, test_screensaver 25/25, test_twin_climate_js 7/7, test_twin_energy_js 20/20, test_twin_energy_mapping_js 8/8.
+- **Browser:** test_house_twin_glance_live 9/9, including formatted tiles, an empty list, 12 tiles wrapping, and the screensaver offsets compared on the real screensaver.
+- **Shared:** test_settings_registry 11/11, test_auth 19/19, test_tailwind_build 6/6.
+
+**Open.** The shared compact hero card counts down far-off events in raw hours ("in 632364 hr"). It was seen with a test fixture; the builder was not changed here.
 
 **v2.499.795 (2026-11-11, NOT device-verified): Energy and Security modes for the 3D house, with solar zones and energy equipment you place.**
 
