@@ -108,7 +108,11 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     const flags = roofFlags(record);
     const nextLayout = JSON.stringify([record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
-    if (record && layout === nextLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
+    // Object properties participate in the layout signature. A completed Size
+    // save must not detach Turn while the person is typing the next edit.
+    const editingItem = record?.kind === 'item' && [...inputs.values()].some(({ input, baseline, queued }) =>
+      document.activeElement === input || queued || raw(input) !== baseline);
+    if (record && (layout === nextLayout || editingItem) && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
       if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
       if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost' && !flags.length;
