@@ -31,6 +31,13 @@ Element.prototype.hasPointerCapture=function(id){return this.capture===id;};
 Element.prototype.releasePointerCapture=function(){this.capture=null;};
 Element.prototype.closest=()=>null;
 window.showGlobalAlert=text=>{throw Error(text);};window.promptConfirm=async()=>true;
+// The library's import panel (main, v2.499.813) reads its settings when the editor mounts.
+// This rig has no server: answer those reads, so a real alert still fails the test.
+const realFetch=globalThis.fetch;
+globalThis.fetch=async(input,init)=>{const url=String(typeof input==='string'?input:input?.url||'');
+  if(/api\/house\/editor\/import-settings/.test(url))return new Response(JSON.stringify({limit_mb:50,unpacked_limit_mb:200}),{status:200,headers:{'content-type':'application/json'}});
+  if(/api\/house\/(editor|twin)\/imports/.test(url))return new Response('[]',{status:200,headers:{'content-type':'application/json'}});
+  return realFetch(input,init);};
 const plan={buildings:[],site:{lot:[[0,0],[40,0],[40,40],[0,40]],terraces:[],beds:[{id:'bed',polygon:[[5,5],[10,5],[10,10],[5,10]]}]},materials:{}};
 const view=await mountTwin(new Element(),{plan,kit,tier:'low',preserveCamera:true});
 view.setCameraState({position:[20*.3048,80*.3048,-19.999*.3048],target:[20*.3048,0,-20*.3048]});
