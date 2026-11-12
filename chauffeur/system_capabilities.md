@@ -1,6 +1,20 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.809 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.810 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.810 (2026-11-12, NOT device-verified): waking from idle restores the floor you were on; two stale tests corrected.**
+
+**Idle wake** (`static/twin/twin_view.js` `restoreView`). This was a real bug: waking from idle returned to the Exterior instead of the pinned floor.
+- `restoreView()` selected the saved floor, which framed it and recorded a pin distance of about 43 ft. It then copied the saved camera back, at about 102 ft.
+- The next `viewing.update()` read that as a person's clear zoom-out (past max(pin × 1.25, span × 1.85)) and released the pin.
+- **Fix:** the restore now calls `viewing.rebasePin()` after placing the camera, as named camera framing already did, so a restore is never mistaken for a zoom-out.
+- **Test:** `test_twin_idle_js` 7/7 saves while pinned, with a panned target and zoom, then idles with real orbit frames and wakes in Day and in Night. The pin, view, camera, quaternion, target and zoom all come back and persist.
+
+**Stale tests, premises corrected and intent kept.**
+- **`test_twin_ring_js` `drag_never_opens_a_ring` (9/9).** Its two markers were 2 ft apart, which merges them into a count badge since v2.499.803. The second marker now sits 8 ft away and stays individual; every drag and hold check is kept.
+- **`test_twin_plan` (24/24).** The refusal of a plan without buildings was narrowed on purpose by `7f4be731` (2026-11-07, lot-only builds), so a plan is valid with a building OR a lot polygon. The test now pins that rule: a lot-only plan normalises; missing, empty, two-point or malformed lots without buildings are refused; and a building with no lot is still valid. The metres refusal is unchanged.
+
+Browser `test_house_twin_glance_live` 10/10.
 
 **v2.499.809 (2026-11-12, NOT device-verified): fuel cars in the house twin. A car is electric, fuel or hybrid, a fuel car shows its fuel, and a charger never charges a fuel car.**
 
