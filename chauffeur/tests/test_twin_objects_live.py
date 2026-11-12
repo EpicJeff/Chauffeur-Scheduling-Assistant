@@ -5,9 +5,11 @@ Uses the existing isolated live server, parent session and household fixture.
 The generated fixture is a 1 x 2 x .1 metre GLB, with no external resources.
 """
 import json
+import io
 import struct
 import sys
 from pathlib import Path
+import zipfile
 
 sys.path.insert(0, str(Path(__file__).parent))
 import house_editor_model_harness as H
@@ -83,6 +85,60 @@ def scenario_import_place_scale_rotate_undo_reload_and_programs():
         page.screenshot(path=str(Path(__file__).parent / 'objects-editor-live.png'))
 
 
+def scenario_six_mb_chunk_zip_survives_one_mb_ingress_and_places_heavy_car():
+    """WRITTEN ONLY: the route hook simulates ingress, never a production bypass."""
+    triangles = 300001
+    positions = struct.pack('<9f', -.5, 0, -.1, .5, 0, -.1, 0, 2, .1)
+    indices = struct.pack('<3H', 0, 1, 2) * triangles
+    binary = positions + indices
+    binary += bytes(6 * 1048576 - len(binary))
+    doc = {'asset': {'version': '2.0'}, 'scene': 0, 'scenes': [{'nodes': [0]}],
+           'nodes': [{'mesh': 0}], 'meshes': [{'primitives': [{'attributes': {'POSITION': 0}, 'indices': 1}]}],
+           'buffers': [{'uri': 'scene.bin', 'byteLength': len(binary)}],
+           'bufferViews': [{'buffer': 0, 'byteOffset': 0, 'byteLength': len(positions)},
+                           {'buffer': 0, 'byteOffset': len(positions), 'byteLength': len(indices)}],
+           'accessors': [{'bufferView': 0, 'componentType': 5126, 'count': 3, 'type': 'VEC3', 'min': [-.5, 0, -.1], 'max': [.5, 2, .1]},
+                         {'bufferView': 1, 'componentType': 5123, 'count': triangles * 3, 'type': 'SCALAR'}]}
+    packed = io.BytesIO()
+    with zipfile.ZipFile(packed, 'w', compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr('scene.gltf', json.dumps(doc)); archive.writestr('scene.bin', binary)
+    served = H.serve()
+    with served.browser(launch_args=H.GPU_ARGS) as page:
+        attempts = []
+        def ingress_limit(route):
+            body = route.request.post_data_buffer or b''
+            if route.request.method == 'PUT':
+                attempts.append((route.request.url.rsplit('/', 1)[-1], len(body)))
+            if len(body) > 1048576:
+                route.fulfill(status=413, content_type='text/plain', body='test ingress limit')
+            else:
+                route.continue_()
+        page.route('**/api/house/editor/imports/uploads/*/*', ingress_limit)
+        H.open_editor(page, served); H.choose_floor(page, 'pool-house:L1'); H.look_down(page, 'pool-house', 8, 8, height=35)
+        page.evaluate("""() => { window.__uploadProgress=[]; new MutationObserver(() => {
+            window.__uploadProgress.push(document.getElementById('library-status').textContent);
+        }).observe(document.getElementById('library-status'),{childList:true}); }""")
+        page.set_input_files('#library-import-files', {'name': 'heavy-car.zip', 'mimeType': 'application/zip', 'buffer': packed.getvalue()})
+        dialog = page.locator('.object-import'); dialog.wait_for(state='visible', timeout=90000)
+        H.check('Heavy model: 300k triangles' in dialog.inner_text(), dialog.inner_text())
+        H.check('wall panel shows a simple stand-in' in dialog.inner_text(), dialog.inner_text())
+        dialog.locator('input').fill('Chunked car'); dialog.locator('select').select_option('car')
+        dialog.get_by_role('button', name='Add to library').click()
+        from services import twin_imports
+        page.locator('#library-status').filter(has_text='Model added').wait_for(timeout=30000)
+        entry = next(e for e in twin_imports.catalog() if e['name'] == 'Chunked car')
+        H.check(entry['triangles'] == triangles and entry['kind'] == 'car', entry)
+        H.check(attempts[:3] == [('0', 4194304), ('0', 2097152), ('0', 1048576)], attempts)
+        H.check(page.evaluate("window.__uploadProgress.some(text => text.startsWith('Uploading 1 of '))"), 'No byte progress')
+        thumb = page.locator(f'#library-panel [data-item="{entry["id"]}"]').first
+        thumb.wait_for(state='visible', timeout=10000); thumb.scroll_into_view_if_needed(); start = thumb.bounding_box()
+        end = H.screen_of_world(page, 8, 8, 0, 'pool-house'); H._on_canvas(page, *end)
+        x, y = start['x'] + start['width'] / 2, start['y'] + start['height'] / 2
+        page.mouse.move(x, y); page.mouse.down(); page.mouse.move(x + 6, y + 6, steps=2)
+        page.mouse.move(*end, steps=16); page.mouse.up(); H.settle(page)
+        page.wait_for_function('(asset) => window.__twin.plan.buildings.some(b => b.items.some(i => i.asset === asset))', arg=entry['id'])
+
+
 def scenario_assign_window_model_and_fit_persists():
     served = H.serve()
     with served.browser(launch_args=H.GPU_ARGS) as page:
@@ -104,5 +160,6 @@ def scenario_assign_window_model_and_fit_persists():
 
 
 if __name__ == '__main__':
+    scenario_six_mb_chunk_zip_survives_one_mb_ingress_and_places_heavy_car()
     scenario_import_place_scale_rotate_undo_reload_and_programs()
     scenario_assign_window_model_and_fit_persists()

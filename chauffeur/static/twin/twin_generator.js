@@ -545,7 +545,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
           const placeholder = localBox(cu, cv, width, height, Math.min(thickness, .08), mat('window_frame'));
           if (placeholder) placeholder.userData.pendingImport = true;
           const openingData = activePiece;
-          pendingModels.push(loadModel(h.model, kit).then(source => {
+          pendingModels.push(loadModel(h.model, kit, undefined, { tier }).then(source => {
             if (!source) return;
             if (root.userData.disposed) { disposeObject(source); return; }
             const livePlaceholder = pieces.get(`${b.id}:${openingData.pieceId}`)?.find(o => o === placeholder);
@@ -1255,7 +1255,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
           models.set(asset, loadModel(asset, kit, model => {
             if (root.userData.disposed) { disposeObject(model); return; }
             for (const update of lateItems.get(asset)) update(model.clone(true), true);
-          }));
+          }, { tier }));
         }
         lateItems.get(asset).push(draw);
         source = await models.get(asset);

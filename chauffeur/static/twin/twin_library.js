@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { normaliseModel, modelBudget } from './objects.js';
+import { normaliseModel, modelBudget, mergeByMaterial, singlePassMaterial, heavyStandIn } from './objects.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 
 export const base = () => window.chfBase ?? '../';
@@ -144,10 +144,11 @@ export async function importedModels(refresh = false) {
   }).catch(error => { importRead = null; throw error; });
   return importRead;
 }
-export async function loadModel(assetId, kit, onLate) {
+export async function loadModel(assetId, kit, onLate, { tier = 'high', kind } = {}) {
   const isImport = assetId.startsWith('import-');
   if (isImport && !imported.has(assetId)) await importedModels();
   const asset = isImport ? imported.get(assetId) : manifest(kit)[assetId];
+  if (isImport && tier === 'low' && asset?.triangles > 300000 && asset?.size) return heavyStandIn(asset.size, kind || asset.kind);
   const name = asset?.model || Object.keys(asset?.files || {}).find(n => /\.(gltf|glb)$/i.test(n));
   if (!name) return null;
   // Authenticate buffers and textures as well as the top-level glTF. Resolving
@@ -169,10 +170,17 @@ export async function loadModel(assetId, kit, onLate) {
   return optionalAsset(modelCache, libUrl(assetId, name), async () => {
     const result = await new GLTFLoader(manager).setResourcePath(new URL(name.slice(0, name.lastIndexOf('/') + 1), directory).href).loadAsync(libUrl(assetId, name));
     if (!result) return null;
+    const converted = new Map();
     result.scene.traverse(o => {
       if (!o.isMesh) return;
       o.castShadow = o.receiveShadow = true;
       o.material = [].concat(o.material).map(m => {
+        if (converted.has(m)) return converted.get(m);
+        if (isImport) {
+          const out = singlePassMaterial(m); converted.set(m, out);
+          if (out !== m) m.dispose();
+          return out;
+        }
         // Library glass is subject to the same single-pass rule as plan glass.
         const out = new THREE.MeshStandardMaterial({
           name: m.name, color: m.color, map: m.map, normalMap: m.normalMap, vertexColors: m.vertexColors,
@@ -183,13 +191,15 @@ export async function loadModel(assetId, kit, onLate) {
           alphaTest: m.alphaTest, side: m.side, emissive: m.emissive, emissiveMap: m.emissiveMap, emissiveIntensity: m.emissiveIntensity,
         });
         m.dispose();
+        converted.set(m, out);
         return out;
       });
       if (o.material.length === 1) o.material = o.material[0];
     });
-    if (isImport) { modelBudget(result.scene); return normaliseModel(result.scene); }
+    if (isImport) { modelBudget(result.scene); return normaliseModel(mergeByMaterial(result.scene)); }
     return result.scene;
-  }, copyModel, onLate);
+  }, model => tier === 'low' && isImport && asset?.triangles > 300000
+    ? heavyStandIn(new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).toArray(), kind || asset.kind) : copyModel(model), onLate);
 }
 
 export async function loadSky(kit, onLate) {

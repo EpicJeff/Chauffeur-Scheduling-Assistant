@@ -3,6 +3,37 @@ import { importedModels, rememberImport, forgetImport, loadModel, disposeObject 
 import { modelBudget, suggestKind, schema } from '../objects.js';
 import { request, report } from './api.js';
 
+// Files form one byte stream; chunk boundaries need not match file boundaries.
+export async function uploadFiles(files, progress, signal, send = request) {
+  const start = await send('imports/uploads', 'POST', {
+    name: files[0].name.replace(/\.[^.]+$/, '').slice(0, 100),
+    size: files.reduce((n, f) => n + f.size, 0),
+    files: files.map(f => ({ name: f.webkitRelativePath || f.name, size: f.size })),
+  });
+  const path = 'imports/uploads/' + start.upload_id, body = new Blob(files);
+  let bytes = Math.min(start.chunk_bytes, 4 * 1024 * 1024), offset = 0, index = 0, finished = false;
+  try {
+    progress(`Uploading 0 of ${Math.ceil(body.size / 1048576)} MB…`);
+    while (offset < body.size) {
+      if (signal?.aborted) throw Object.assign(new Error('Model upload cancelled.'), { cancelled: true });
+      const chunk = body.slice(offset, offset + bytes);
+      try { await send(`${path}/${index}`, 'PUT', chunk); }
+      catch (error) {
+        if (error.status !== 413) throw error;
+        if (bytes <= 256 * 1024) throw new Error('Home Assistant refused even a 256 KB model chunk. Check its ingress upload limit and try again.');
+        bytes = Math.max(256 * 1024, Math.floor(bytes / 2)); continue;
+      }
+      offset += chunk.size; ++index;
+      progress(`Uploading ${Math.ceil(offset / 1048576)} of ${Math.ceil(body.size / 1048576)} MB…`);
+    }
+    if (signal?.aborted) throw Object.assign(new Error('Model upload cancelled.'), { cancelled: true });
+    progress('Preparing model…');
+    const entry = await send(path + '/finish', 'POST'); finished = true; return entry;
+  } finally {
+    if (!finished) await send(path, 'DELETE').catch(() => {});
+  }
+}
+
 function thumbnail(model) {
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
   renderer.setSize(160, 128, false); renderer.setPixelRatio(1);
@@ -45,6 +76,10 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
   if (!picker) return;
   const status = el('library-status'); let busy = false;
   const listen = (node, event, action) => node?.addEventListener(event, action, { signal });
+  request('import-settings').then(settings => {
+    if (signal.aborted) return;
+    if (el('library-import-unpacked-limit')) el('library-import-unpacked-limit').value = settings.unpacked_limit_mb;
+  }).catch(report);
   async function add(files) {
     if (!canEdit() || busy || !files.length) return;
     busy = true; let entry = null, accepted = false, model = null;
@@ -55,18 +90,16 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
       const settings = await request('import-settings');
       if (files.reduce((n, file) => n + file.size, 0) > settings.limit_mb * 1024 * 1024) throw new Error(`Models may be at most ${settings.limit_mb} MB.`);
       status.textContent = 'Loading model…';
-      const form = new FormData(); files.forEach(f => form.append('files', f, f.webkitRelativePath || f.name));
-      form.append('name', files[0].name.replace(/\.[^.]+$/, '').slice(0, 100)); form.append('kind', 'other');
-      entry = await request('imports', 'POST', form); rememberImport(entry);
+      entry = await uploadFiles(files, text => { status.textContent = text; }, signal); rememberImport(entry);
       model = await loadModel(entry.id, kit);
       if (!model) throw new Error('Could not load this model. Check that its buffers and textures are included.');
       const budget = modelBudget(model), size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
       const picture = thumbnail(model);
-      const answer = await details({ ...entry, warning: budget.warning }, suggestKind(size.toArray()), picture, signal);
+      const answer = await details({ ...entry, warning: entry.warning || budget.warning }, suggestKind(size.toArray()), picture, signal);
       if (!answer || !canEdit()) return;
-      rememberImport(await request('imports/' + entry.id, 'PATCH', answer)); accepted = true;
+      rememberImport(await request('imports/' + entry.id, 'PATCH', { ...answer, size: size.toArray() })); accepted = true;
       await importedModels(true); await changed(); status.textContent = 'Model added. Drag its thumbnail onto a floor, the ground or a wall.';
-    } catch (error) { report(error); }
+    } catch (error) { status.textContent = error.message; report(error); }
     finally {
       if (model) disposeObject(model);
       if (entry && !accepted) {
@@ -83,6 +116,11 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
   listen(el('library-import-limit'), 'change', async () => {
     if (!canEdit()) return;
     try { await request('import-settings', 'PUT', { limit_mb: Number(el('library-import-limit').value) }); }
+    catch (error) { report(error); }
+  });
+  listen(el('library-import-unpacked-limit'), 'change', async () => {
+    if (!canEdit()) return;
+    try { await request('import-settings', 'PUT', { unpacked_limit_mb: Number(el('library-import-unpacked-limit').value) }); }
     catch (error) { report(error); }
   });
 }

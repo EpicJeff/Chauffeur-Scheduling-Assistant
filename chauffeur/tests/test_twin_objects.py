@@ -128,7 +128,7 @@ class ObjectTests(unittest.TestCase):
         doc = triangle(); doc['buffers'][0]['uri'] = 'https://example.invalid/tracker.bin'
         with self.assertRaises(ValueError):
             twin_imports.create({'model.gltf': json.dumps(doc).encode()}, 'Remote', 'other')
-        doc = triangle(); doc['accessors'][0]['count'] = 900003
+        doc = triangle(); doc['accessors'][0]['count'] = 3000003
         with self.assertRaises(ValueError):
             twin_imports.create({'model.gltf': json.dumps(doc).encode()}, 'Huge', 'other')
         with patch.object(twin_imports, 'limit_mb', return_value=1), self.assertRaises(ValueError):

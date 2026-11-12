@@ -123,7 +123,8 @@
       <label>Search models<input id="library-search" type="search" aria-label="Search models"></label>
       <p>Import glTF/GLB with buffers and textures, or a zip of them. Collada (.dae) and KMZ are not available in this build. SketchUp .skp is a closed format and is not supported.</p>
       <details id="library-import-settings"><summary>Import settings</summary>
-        <label>Maximum model size (MB)<input id="library-import-limit" type="number" min="1" max="200" value="50"></label>
+        <label>Maximum upload size (MB)<input id="library-import-limit" type="number" min="1" max="200" value="50"></label>
+        <label>Maximum unpacked size (MB)<input id="library-import-unpacked-limit" type="number" min="1" max="1000" value="200"></label>
       </details>
       <p id="library-status" role="status">Opening the library…</p>
       <div id="library-entries" role="tabpanel"></div>
