@@ -1,6 +1,46 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.818 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.819 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.819 (2026-11-12, NOT device-verified): lighter versions of imported models (LODs, made automatically) and a 3D model for each household car.**
+
+**The asks.** The user, 2026-11-12: "Is there a way to assign a model to a vehicle yet?" and "Are there any libraries for LODs or geometry simplification so we could generate lightweight versions automatically." The user approved meshoptimizer in the browser.
+
+**How it was built.** Codex built it in three rounds. Claude vendored the libraries and checked it in Chromium, which caught three problems:
+- the simplifier froze the page;
+- imports blocked each other and the library redrew mid-drag;
+- the "Model added" confirmation was overwritten.
+
+**Vendored** (provenance and checksums in each folder's VENDORED.md): meshoptimizer 1.3.0 `meshopt_simplifier.js` (MIT; npm integrity verified) and three r187 `GLTFExporter` (the same verified three@0.187.0 tarball).
+
+**Lighter versions** (`static/twin/model_lods.js`, `lod_worker.js`, `editor/imports.js`).
+- **Making them:** after load and merge-by-material, LOD1 (about 25% of triangles; textures at most 1024 px) and LOD2 (about 5%; at most 512 px) are made with `simplifyWithAttributes`.
+  - Normal and UV weights hold seams, and borders are locked.
+  - The error cap is 0.01 of the extent, preferring a higher count over a wrecked shape.
+  - Meshes under 1,000 triangles are copied as they are.
+- **The worker:** simplification runs in a module Web Worker, so the editor stays responsive. A 300k-triangle mesh takes about 1.9 s. With no worker available, a mesh over 200k triangles is skipped with a note rather than freezing the page.
+- **Storage:** each version is exported as .glb and uploaded into the same import entry (`lods: [{name, triangles, bytes}]`). Derived files don't count against the user's limits; each is capped at 50 MB.
+- **The import dialog** appears first and shows the three versions side by side with their triangle counts.
+- **The queue:** generation runs in a one-at-a-time background queue that never blocks the next import. Its progress shows on its own line (`#library-jobs`), so "Model added" stays visible. Library entries update in place, never redrawing during a drag. Existing imports without versions get them in the background when the editor opens.
+- **Use by tier:**
+  - High: a THREE.LOD, full near, LOD1 at mid range, LOD2 far (switch distances 8 and 24 bounding radii, hysteresis 0.1);
+  - Medium: LOD1, and the full model near;
+  - Low: LOD2, or the stand-in if there are no versions.
+  - The editor always shows the full model.
+  - All LOD and stand-in meshes stay out of the lighting bake (v2.499.815 rule).
+
+**Car models.**
+- **Data:** `Car.twin_model` holds the id of an imported model of kind `car`, validated. Deleting an import a car uses is refused, naming the car.
+- **Where to set it:** Drive setup's car editor, "3D model in the house" (thumbnail picker, "None: show the icon", "Import a model"). The Energy settings car row shows it read-only.
+- **In the house view** (`live/cars.js`):
+  - when the car is home with a spot, its model sits in the spot, with its long axis along the spot, at real size, by the tier rules;
+  - the status icon and label hover above it, and the icon or the model opens the car card;
+  - away, it hides;
+  - two cars share one loaded import.
+
+**Tests.**
+- Node: `test_model_lods_js` (simplifier ratios, bounds, no NaN normals, small meshes kept, worker protocol, cancel, fallback skip, dialog-first ordering), `test_model_lod_import_js`, `test_car_models_ui_js`, `test_car_models`, `test_twin_cars_js`, `test_twin_bake_fingerprint_js` (now builds the scene the way the viewer does, since only the viewer bakes) and `test_twin_editor_library_js`.
+- Browser: `test_car_models_live` 1/1 (import with three versions, assign in Drive setup, the car model in its spot, low uses LOD2, a second LOD cycle compiles nothing; its LOD probe lifts the viewer's distance clamps while it measures), plus `test_twin_objects_live` and `test_twin_collada_live`.
 
 **v2.499.818 (2026-11-12, NOT device-verified): sunken and raised rooms. Each room can sit above or below its floor's height.**
 

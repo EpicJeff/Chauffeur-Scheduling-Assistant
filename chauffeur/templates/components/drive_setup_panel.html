@@ -215,6 +215,29 @@
                         </div>
                     </div>
                     <div class="mt-4">
+                        <label class="block text-gray-400 mb-1 text-sm">3D model in the house</label>
+                        <div class="flex flex-wrap gap-2" role="group" aria-label="3D model in the house">
+                            <button type="button" @click="newCar.twin_model = ''" :aria-pressed="!newCar.twin_model"
+                                :class="!newCar.twin_model ? 'bg-teal-600/40 border-teal-500 text-teal-200' : 'bg-gray-800 border-gray-600 text-gray-400 hover:border-gray-400'"
+                                class="border rounded px-3 py-3 text-sm">None: show the icon</button>
+                            <template x-for="model in carTwinModels" :key="model.id">
+                                <button type="button" @click="newCar.twin_model = model.id" :aria-pressed="newCar.twin_model === model.id"
+                                    :class="newCar.twin_model === model.id ? 'bg-teal-600/40 border-teal-500 text-teal-200' : 'bg-gray-800 border-gray-600 text-gray-400 hover:border-gray-400'"
+                                    class="border rounded px-3 py-3 text-sm">
+                                    <img x-show="model.thumbnail" :src="carModelThumbnail(model)" alt="" class="w-28 h-20 object-contain">
+                                    <span x-text="model.name"></span>
+                                </button>
+                            </template>
+                        </div>
+                        <p x-show="carModelsLoading" class="text-xs text-gray-500 mt-2" role="status">Loading car models...</p>
+                        <p x-show="carModelsError" class="text-red-400 text-sm mt-2" role="status">
+                            <span x-text="carModelsError"></span>
+                            <button type="button" @click="loadCarModels()" class="text-teal-400 underline">Try again</button>
+                        </p>
+                        <p x-show="newCar.twin_model && !carModelsLoading && !carTwinModels.some(m => m.id === newCar.twin_model)" class="text-xs text-gray-500 mt-2">The saved model is not available in the library. Its assignment is kept until you choose another model.</p>
+                        <a :href="apiBase + 'house/editor?library=1'" target="_blank" rel="noopener" class="text-teal-400 underline text-sm">Import a model</a>
+                    </div>
+                    <div class="mt-4">
                         <label class="block text-gray-400 mb-1 text-sm">Who may drive it</label>
                         <div class="flex flex-wrap gap-2">
                             <template x-for="d in drivers" :key="d.id">
@@ -846,10 +869,13 @@
                 // --- Cars (moved from Config → People) ---
                 members: [],
                 cars: [],
+                carTwinModels: [],
+                carModelsLoading: false,
+                carModelsError: '',
                 showCarForm: false,
                 editCarId: null,
                 carPaxMode: 'any',
-                newCar: { name: '', icon: '', exterior_image: '', house_artwork: '', color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' },
+                newCar: { name: '', icon: '', exterior_image: '', house_artwork: '', twin_model: '', color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' },
                 newCarRange: { start: '', end: '', reason: '' },
                 haStatus: null,
                 haDeviceTrackers: [],
@@ -1067,7 +1093,28 @@
                     }
                 },
                 blankCar() {
-                    return { name: '', icon: '', image: null, exterior_image: null, house_artwork: '', color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '', ha_device_tracker: '', ha_battery_entity: '', ha_fuel_entity: '', ha_range_entity: '' };
+                    return { name: '', icon: '', image: null, exterior_image: null, house_artwork: '', twin_model: '', color_code: '#6b7280', seat_capacity: 4, body_type: '', allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '', ha_device_tracker: '', ha_battery_entity: '', ha_fuel_entity: '', ha_range_entity: '' };
+                },
+                async loadCarModels() {
+                    if (this.carModelsLoading) return;
+                    this.carModelsLoading = true;
+                    this.carModelsError = '';
+                    try {
+                        const response = await fetch(`${this.apiBase}api/house/twin/imports`);
+                        if (!response.ok) throw new Error('Could not load the car model library.');
+                        const entries = await response.json();
+                        if (!Array.isArray(entries)) throw new Error('Could not read the car model library.');
+                        this.carTwinModels = entries.filter(entry => entry.kind === 'car');
+                    } catch (error) {
+                        this.carModelsError = 'Could not load car models. Try again when the house is available.';
+                    } finally {
+                        this.carModelsLoading = false;
+                    }
+                },
+                carModelThumbnail(model) {
+                    if (!model.thumbnail) return '';
+                    const url = `${this.apiBase}api/house/twin/imports/${encodeURIComponent(model.id)}/${model.thumbnail.split('/').map(encodeURIComponent).join('/')}`;
+                    return window.chfAuthUrl ? window.chfAuthUrl(url) : url;
                 },
                 async onCarArtworkPicked(event) {
                     const file = event.target.files?.[0]; event.target.value = '';
@@ -1119,6 +1166,7 @@
                     this.carPaxMode = 'any';
                     this.editCarId = null;
                     this.showCarForm = true;
+                    this.loadCarModels();
                 },
                 editCar(car) {
                     this.newCar = {
@@ -1128,6 +1176,7 @@
                         image: car.image || null,
                         exterior_image: car.exterior_image || null,
                         house_artwork: car.house_artwork || '',
+                        twin_model: car.twin_model || '',
                         color_code: car.color_code || '#6b7280',
                         seat_capacity: car.seat_capacity != null ? car.seat_capacity : 4,
                         body_type: car.body_type || '',
@@ -1145,6 +1194,7 @@
                     this.carPaxMode = car.allowed_passenger_ids ? 'limited' : 'any';
                     this.editCarId = car.doc_id;
                     this.showCarForm = true;
+                    this.loadCarModels();
                     // The usual-driver <option>s are x-for generated from
                     // allowed_driver_ids; a native <select> silently drops a
                     // value set before its option exists, so apply it after
@@ -1192,26 +1242,30 @@
                         payload.default_driver_id = payload.default_driver_id || null;
                         payload.body_type = payload.body_type || null;
                         payload.house_artwork = payload.house_artwork || null;
+                        payload.twin_model = payload.twin_model || null;
                         for (const k of ['ha_device_tracker', 'ha_battery_entity', 'ha_fuel_entity', 'ha_range_entity']) {
                             payload[k] = (payload[k] || '').trim() || null;
                         }
                         if (!payload.id) delete payload.id;
 
-                        if (this.editCarId) {
-                            await fetch(`${this.apiBase}api/cars/${this.editCarId}`, {
-                                method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload)
-                            });
-                        } else {
-                            await fetch(`${this.apiBase}api/cars`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload)
-                            });
+                        const response = await fetch(`${this.apiBase}api/cars${this.editCarId ? '/' + this.editCarId : ''}`, {
+                            method: this.editCarId ? 'PUT' : 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (!response.ok) {
+                            let message = 'Could not save this car. Please try again.';
+                            try {
+                                const error = await response.json();
+                                if (typeof error.detail === 'string') message = error.detail;
+                            } catch (_) { }
+                            showGlobalAlert(message);
+                            return;
                         }
                         this.cancelEditCar();
                         await this.loadCars();
+                    } catch (_) {
+                        showGlobalAlert('Could not reach the house to save this car. Your changes are still here.');
                     } finally {
                         this.saving = false;
                     }

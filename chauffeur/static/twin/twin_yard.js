@@ -240,7 +240,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       models.set(assetId, loadModel(assetId, kit, source => {
         if (group.userData.disposed) { disposeObject(source); return; }
         for (const draw of latePlacements.get(assetId)) draw(source.clone(true), true);
-      }, { tier }));
+      }, { tier, editor: !viewing }));
     }
     latePlacements.get(assetId).push(place);
     const source = await models.get(assetId);

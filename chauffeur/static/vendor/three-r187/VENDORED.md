@@ -17,4 +17,10 @@ Added 2026-11-12 for Collada (.dae) and KMZ model import (sha256, first 16 hex):
 | addons/loaders/KMZLoader.js | 81abc97533bff5b1 |
 | addons/libs/fflate.module.js | 4ab9828cf361a800 |
 
+Added 2026-11-12 for level-of-detail export (same verified tarball):
+
+| File | sha256 |
+| --- | --- |
+| addons/exporters/GLTFExporter.js | 569793baeba62bae |
+
 License: MIT (see LICENSE). fflate is MIT.

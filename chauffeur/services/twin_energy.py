@@ -119,6 +119,7 @@ def household_cars():
     return [{'id': str(c.get('id') or c.get('doc_id') or getattr(c, 'doc_id', '')), 'name': c.get('name') or 'Car',
              'color': c.get('color_code') or '#64748b', 'battery_warn_pct': battery_warning, 'fuel_warn_pct': fuel_warning,
              'range_entity': c.get('ha_range_entity'),
+             'twin_model': c.get('twin_model'),
              'battery_level': c.get('ha_battery_entity'),
              'fuel_level': c.get('ha_fuel_entity'),
              'location': c.get('ha_device_tracker')}

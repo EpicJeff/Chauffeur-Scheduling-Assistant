@@ -43,8 +43,10 @@ const plan={generatorVersion:'test',materials:{},buildings:[building],site:{
 const options={room:{density:1,page:256,gutter:2}};
 const lamp={device:'lamp',building:'house',level:'L1',room:'room',at:[6,6,6]};
 async function scene(tier, source=plan) {
- const house=buildTwin(source,kit,tier);await house.ready;
- const yard=await buildYard(source,kit,tier);house.root.add(yard.group);
+ // Only the viewer bakes (ruling B15): build the scene the way the viewer does. The editor
+ // path always loads the full model (car-models LOD rule) and never bakes.
+ const house=buildTwin(source,kit,tier,{viewing:true});await house.ready;
+ const yard=await buildYard(source,kit,tier,{viewing:true});house.root.add(yard.group);
  house.root.updateMatrixWorld(true);return house.root;
 }
 const low=await scene('low'), before=requests.length;

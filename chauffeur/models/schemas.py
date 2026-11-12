@@ -155,6 +155,7 @@ class Car(BaseModel):
     # sedan|suv|truck|minivan|hatch|wagon|van; None/'' = generic (the house
     # draws the car from this shape — H2, house design spec 2026-09-08)
     body_type: Optional[str] = None
+    twin_model: Optional[str] = None  # imported car model for the house twin
     # Drivers permitted behind the wheel. A driver listed on NO car keeps an
     # implicit personal car (solver ignores cars for them entirely).
     allowed_driver_ids: List[str] = Field(default_factory=list)

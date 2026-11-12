@@ -9,7 +9,7 @@ const {energyCheck}=await import(file('static/twin/live/energy_check.js'));
 const checks=[],check=(name,fn)=>checks.push([name,fn]);
 globalThis.Path2D=class {constructor(path){this.path=path;}};
 const power=v=>({state:String(v),attributes:{device_class:'power',unit_of_measurement:'W'}});
-async function fixture(){
+async function fixture(modelLoader){
  const t=await rig({devices:[]}),b=t.view.plan.buildings[0];
  b.walls=[{id:'w',level:'L1',from:[-20,0],to:[20,0],thickness:.5}];
  b.anchors=[{id:'panel',kind:'electric_panel',host:{wall:'w',side:'left',at:5,z:4}},
@@ -26,7 +26,7 @@ async function fixture(){
   'sensor.a_range':{state:'210',attributes:{unit_of_measurement:'mi'}}});
  t.view.energySources={mapping,cars:[{id:'a',color:'#cc0000',range_entity:'sensor.a_range',battery_warn_pct:20},{id:'b',color:'#0000cc',battery_warn_pct:20}]};
  await t.live.refresh();
- t.layer=mountCars({view:t.view,live:t.live});t.layer.draw();return t;
+ t.layer=mountCars({view:t.view,live:t.live,modelLoader});t.layer.draw();return t;
 }
 check('car glyph textures use colour contrast and rings on the shared disc style',()=>{
  for(const color of ['#ffffff','#000000','#cc0000']){
@@ -209,6 +209,46 @@ check('drawer edits the object-backed charger and removal clears its binding wit
  }finally{settings.stop();fields.remove();save.remove();t.layer.stop();t.cleanup();}
 });
 
+check('two modelled cars share GPU resources, keep transforms, align, tap and hide away',async()=>{
+ const geometry=new THREE.BoxGeometry(5,1.5,2),material=new THREE.MeshStandardMaterial(),source=new THREE.Group();
+ const mesh=new THREE.Mesh(geometry,material);mesh.position.y=.75;source.add(mesh);let loads=0;
+ const t=await fixture(async()=>{loads++;return source;});try{
+  t.view.tier='high';for(const car of t.view.energySources.cars)car.twin_model='import-shared';
+  const spots=t.view.plan.buildings[0].anchors.filter(a=>a.kind==='parking');spots[0].rotation=30;spots[1].rotation=90;
+  t.layer.update();await wait(20);t.layer.draw();assert.equal(loads,1);
+  const models=[];t.view.scene.traverse(o=>{if(o.userData.carModel && o.parent?.userData.twinCars)models.push(o);});
+  assert.equal(models.length,2);assert.notEqual(models[0].position,models[1].position);assert.ok(models[0].position.distanceTo(models[1].position)>1);
+  let a,b;models[0].traverse(o=>{if(o.isMesh)a=o;});models[1].traverse(o=>{if(o.isMesh)b=o;});
+  assert.equal(a.geometry,b.geometry);assert.equal(a.material,b.material);assert.equal(a.geometry,geometry);assert.equal(a.material,material);
+  assert.ok(Math.abs(models[0].rotation.y-(30*Math.PI/180+Math.PI/2))<1e-9);
+  const rows=t.layer.snapshot();assert.ok(rows.every(r=>r.model && r.modelVisible));
+  assert.ok(rows[0].at[1]>models[0].position.y+1.5,'status floats above real roof');
+  await press(document.querySelector('[data-car-icon="a"]'));assert.ok(!document.querySelector('[data-car-card="a"]').hidden);
+  await press(document.querySelector('[data-car-card="a"] button'));
+  t.view.scene.updateMatrixWorld(true);const point=models[0].position.clone();point.y+=.8;point.z+=.4;point.project(t.camera);
+  await t.tapAt([(point.x+1)*700,(1-point.y)*500]);assert.ok(!document.querySelector('[data-car-card="a"]').hidden,'mesh opens same card');
+  spots[0].width=18;spots[0].depth=9;t.layer.update();
+  assert.ok(Math.abs(models[0].rotation.y-30*Math.PI/180)<1e-9,'resizing a bay realigns the model long axis');
+  t.states['device_tracker.a'].state='away';await t.live.refresh();t.layer.update();
+  assert.equal(t.layer.snapshot()[0].modelVisible,false);assert.equal(t.layer.snapshot()[0].visible,false);
+  t.states['device_tracker.a'].state='home';await t.live.refresh();t.layer.update();assert.equal(t.layer.snapshot()[0].modelVisible,true);assert.equal(loads,1);
+ }finally{t.layer.stop();t.cleanup();geometry.dispose();material.dispose();}
+});
+check('a failed car model keeps its original tappable icon',async()=>{
+ const t=await fixture(async()=>{throw new Error('offline');});try{
+  t.view.energySources.cars[0].twin_model='import-missing';t.layer.update();await wait(20);t.layer.draw();
+  assert.equal(t.layer.snapshot()[0].model,false);assert.equal(t.layer.snapshot()[0].visible,true);
+  await press(document.querySelector('[data-car-icon="a"]'));assert.ok(!document.querySelector('[data-car-card="a"]').hidden);
+ }finally{t.layer.stop();t.cleanup();}
+});
+check('a delayed model replaces its icon-only fallback when its load eventually completes',async()=>{
+ let late;const source=new THREE.Mesh(new THREE.BoxGeometry(2,1,4),new THREE.MeshStandardMaterial());source.position.y=.5;
+ const t=await fixture(async(id,kit,onLate)=>{late=onLate;return null;});try{
+  t.view.energySources.cars[0].twin_model='import-delayed';t.layer.update();await wait(20);
+  assert.equal(t.layer.snapshot()[0].model,false);late(source);await wait(20);t.layer.draw();
+  assert.equal(t.layer.snapshot()[0].modelVisible,true);assert.equal(t.layer.snapshot()[0].visible,true);
+ }finally{t.layer.stop();t.cleanup();source.geometry.dispose();source.material.dispose();}
+});
 check('outdoor parking stays on lot ground despite a raised, rotated building',async()=>{
  const {parkingObjects}=await import(file('static/twin/live/energy_geometry.js'));
  const view={plan:{buildings:[{id:'garage',base:3,position:[20,40],rotation:90,levels:[],walls:[],anchors:[{id:'yard',kind:'parking',host:{ground:true,at:[10,5]}}]}]}};

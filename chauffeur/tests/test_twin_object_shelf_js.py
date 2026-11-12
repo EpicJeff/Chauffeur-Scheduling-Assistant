@@ -52,6 +52,7 @@ releaseSize();await until(()=>item().scale===1.5);await wait(10);
 assert.ok(inputFor('Turn')===turn,'finishing Size must retain the focused Turn input');assert.equal(turn.isConnected,true);assert.equal(turn.value,'90');
 turn.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));turn.blur();turn.dispatchEvent(new Event('change',{bubbles:true}));
 await until(()=>item().rotation===90&&!document.getElementById('rail-undo').disabled);
+const savedTurn=inputFor('Turn');savedTurn.dispatchEvent(new Event('change'));savedTurn.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter'}));await wait(10);
 assert.deepEqual(operations,[{op:'set',building:'b',id:'imported-chair',field:'scale',value:1.5},{op:'set',building:'b',id:'imported-chair',field:'rotation',value:90}]);
 await press(document.getElementById('rail-undo'));await until(()=>reverted.length===1&&!document.getElementById('rail-redo').disabled);
 assert.equal(item().rotation,undefined);assert.equal(item().scale,1.5,'one undo removes only Turn');

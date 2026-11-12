@@ -4437,19 +4437,37 @@ def delete_passenger(doc_id: int, background_tasks: BackgroundTasks):
     return {"status": "deleted"}
 
 # --- Cars API ---
+def _validate_car_twin_model(car: Car):
+    if car.twin_model is None:
+        return
+    from services import twin_imports
+    entry = twin_imports.get(car.twin_model)
+    if not entry:
+        raise HTTPException(status_code=400, detail='That 3D model is no longer available. Choose another model or None.')
+    if entry.get('kind') != 'car':
+        raise HTTPException(status_code=400, detail='Choose an imported car model for this vehicle.')
+
+
 @app.get("/api/cars")
 def get_cars():
     return storage.get_all_cars()
 
 @app.post("/api/cars")
 def create_car(car: Car, background_tasks: BackgroundTasks):
-    doc_id = storage.add_car(car.model_dump() if hasattr(car, 'model_dump') else car.dict())
+    from services import twin_store
+    # Keep the validated import alive until its car reference has been saved.
+    with twin_store.LIFECYCLE:
+        _validate_car_twin_model(car)
+        doc_id = storage.add_car(car.model_dump() if hasattr(car, 'model_dump') else car.dict())
     background_tasks.add_task(refresh_schedule_logic)
     return {"doc_id": doc_id, "status": "created"}
 
 @app.put("/api/cars/{doc_id}")
 def update_car(doc_id: int, car: Car, background_tasks: BackgroundTasks):
-    storage.update_car(doc_id, car.model_dump() if hasattr(car, 'model_dump') else car.dict())
+    from services import twin_store
+    with twin_store.LIFECYCLE:
+        _validate_car_twin_model(car)
+        storage.update_car(doc_id, car.model_dump() if hasattr(car, 'model_dump') else car.dict())
     background_tasks.add_task(refresh_schedule_logic)
     return {"status": "updated"}
 
