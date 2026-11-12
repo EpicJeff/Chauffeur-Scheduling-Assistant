@@ -103,7 +103,13 @@ def scenario_time_preview_is_in_the_house_drawer():
                 check(page.locator('#twin-glance-settings, #twin-energy-settings').count() == 0,
                       'wall drawer contains only session-local preview')
             page.get_by_role('button', name='Close settings', exact=True).click()
-            check(not page.locator('[role="dialog"][aria-label="House settings"]').is_visible(), 'drawer closes')
+            # The drawer animates shut: it must be gone within its transition, not the same instant.
+            try:
+                page.locator('[role="dialog"][aria-label="House settings"]').wait_for(state='hidden', timeout=3000)
+                closed = True
+            except Exception:
+                closed = False
+            check(closed, 'drawer closes')
             L.no_errors(served)
 
 
