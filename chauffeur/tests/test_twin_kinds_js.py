@@ -180,6 +180,17 @@ if (config.capture) {
 const checks = [];
 const check = (name, fn) => checks.push([name, fn]);
 
+check('sensor_labels_round_by_precision_then_unit', () => {
+ const label=(value,attrs={})=>markers.markerState('sensor',value,attrs).label;
+ assert.equal(label('21.0717598347897',{display_precision:3,unit_of_measurement:'kW'}),'21.072 kW');
+ assert.equal(label('21.0717598347897',{suggested_display_precision:1}),'21.1');
+ assert.equal(label('21.0717598347897',{display_precision:0,suggested_display_precision:3}),'21');
+ for(const [unit,expected]of [['W','21 W'],['kW','21.07 kW'],['kWh','21.07 kWh'],['\u00b0F','21.1 \u00b0F'],['%','21 %']])
+  assert.equal(label('21.0717598347897',{unit_of_measurement:unit}),expected);
+ assert.equal(label('21.0717598347897'),'21.07');assert.equal(label('unavailable'),'unavailable');
+ assert.equal(label('on',{device_class:'door'}),'open');
+});
+
 check('every_existing_kind_behaves_as_before', async () => {
   const pinned = JSON.parse(readFileSync(config.pinned, 'utf8'));
   // The user's state-colour ruling makes a locked lock green rather than glass.

@@ -5,7 +5,7 @@ import { controlShape } from './controls/shared.js';
 const DIAL = 280, EDGE = 8, SPACE = 12;
 
 // The host owns gestures and positioning; kinds own the controls it mounts.
-export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved = () => {}}) {
+export function mountRing(view, live, {hit, position, tap, scene, dismiss, navigate = () => false, moved = () => {}}) {
   const canvas = view.renderer3.domElement, events = new AbortController();
   const root = document.createElement('aside'); root.className = 'twin-device-ring'; root.hidden = true;
   root.setAttribute('data-ring', ''); root.setAttribute('role', 'dialog'); document.body.append(root);
@@ -145,6 +145,7 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
     }
     if (start.moved) return;
     if (start.row) {
+      if (navigate(start.row)) { close(); return; }
       if (kindOf(start.row).quick) { close(); tap(start.row); }
       else open(start.row);
     } else {

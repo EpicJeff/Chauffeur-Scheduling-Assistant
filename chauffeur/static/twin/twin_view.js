@@ -18,6 +18,7 @@ import { sunPosition, moonPosition, moonIllumination } from './sky/ephemeris.js'
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
 import { createUnlit } from './unlit.js';
 import { createViewing } from './viewing.js';
+import { createLevels } from './levels.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {} } = {}) {
   // Ruling B15: only the 3D house view bakes lights. The editor's scene is the house
@@ -246,6 +247,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   function render() {
     if (disposed) return;
     viewing?.update(performance.now());
+    view.levels?.draw();
     view.live?.draw();
     view.cars?.draw();
     twin?.updateGhosts();
@@ -280,12 +282,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
     saveView() {
       return { camera, position: camera.position.clone(), quaternion: camera.quaternion.clone(), target: controls.target.clone(),
-        zoom: camera.zoom, state: { ...state }, levels: visibleLevels && [...visibleLevels],
+        zoom: camera.zoom, state: { ...state }, navigation: view.levels?.save(), levels: visibleLevels && [...visibleLevels],
         faint: [...new Set([...faded.keys()].map(o => { for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey; }).filter(Boolean))] };
     },
     restoreView(saved) {
       camera = saved.camera; view.camera = camera; controls.object = camera; controls.enableRotate = !camera.isOrthographicCamera;
-      view.setView(saved.state.view); view.showLevels(saved.levels, { faint: saved.faint });
+      view.cancelCameraMotion?.();
+      if (saved.navigation && view.levels) view.levels.restore(saved.navigation);
+      else { view.setView(saved.state.view); view.showLevels(saved.levels, { faint: saved.faint }); }
       Object.assign(state, saved.state); camera.position.copy(saved.position); controls.target.copy(saved.target);
       // Restoring a camera is a framing change, not an outward zoom gesture.
       viewing?.rebasePin();
@@ -454,6 +458,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         if (matches.length === 1) id = matches[0];
       }
       if (!twin || (id !== 'ext' && !twin.groups.levels[id])) return;
+      if (view.levels) {
+        if (id === 'ext') view.levels.go({level: 'house'}, {immediate: true});
+        else { const frame = floorFrame(id); view.levels.go({building: frame.building.id, floor: frame.level.id}, {immediate: true}); }
+        return;
+      }
       if (viewing) {
         if (id === 'ext') { viewing.select(id); view.setCamera('front'); }
         else {
@@ -825,10 +834,18 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         viewing = createViewing(view, twin, b => groundAt(plan, ...(b.position || [0, 0])), key => {
           state.view = key; sun.shadow.needsUpdate = true; applyLights();
           el.dispatchEvent(new CustomEvent('twinviewchange', { detail: key }));
-        });
+        }, {explicit: true});
       }
-      view.setView(twin.groups.levels[state.view] ? state.view : 'ext'); updateTime();
-      if (!(preserveCamera && (framed || cameraMoved))) view.setCamera(state.camera);
+      if (!editor) {
+        const saved = view.levels?.save(); view.levels?.stop();
+        view.levels = createLevels(view, {host: el, visibility: key => {viewing.select(key); applyLights();}});
+        if (!view.levels.go(saved?.state || {level: 'house'}, {immediate: true}))
+          view.levels.go({level: 'house'}, {immediate: true});
+      } else {
+        view.setView(twin.groups.levels[state.view] ? state.view : 'ext');
+        if (!(preserveCamera && (framed || cameraMoved))) view.setCamera(state.camera);
+      }
+      updateTime();
       if (points.length) framed = true;
       if (levelsToRestore) view.showLevels(levelsToRestore, { faint: faintToRestore });
       attachSheet();
@@ -840,6 +857,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     dispose() {
       if (disposed) return;
       disposed = true; ++revision; view.ready = false;
+      view.levels?.stop();
       clearInterval(timeTimer); clearTimeout(previewIdle);
       for (const name of ['pointerdown', 'pointermove', 'keydown', 'input']) document.removeEventListener(name, previewActivity);
       view.bake?.stop();
@@ -1022,7 +1040,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
       }
       if (view.idle?.active()) view.idle.frame(now);
-      else controls.update();
+      else if (!view.cameraTransition) controls.update();
       render();
       ++fpsFrames;
       if (now - fpsSince >= 500) {
@@ -1073,26 +1091,16 @@ async function boot() {
     const kit = await kitResponse.json();
     const view = await mountTwin(host, { plan: snapshot.plan, kit, round: snapshot.round ?? null, site: snapshot.site });
     document.getElementById('twin-tier').textContent = view.tier === 'low' ? 'Low' : 'High';
-    const views = document.getElementById('twin-views');
-    const syncViews = () => {
-      views.replaceChildren();
-      for (const [id, label] of [['ext', 'Exterior'], ...view.plan.buildings.flatMap(b => b.levels.map(l => [`${b.id}:${l.id}`, (view.plan.buildings.length > 1 ? (b.name || b.id) + ' · ' : '') + (l.name || l.id)]))]) {
-        const button = document.createElement('button'); button.type = 'button'; button.dataset.view = id; button.textContent = label; views.appendChild(button);
-      }
-    };
-    syncViews();
-    const sync = () => document.querySelectorAll('[data-view], [data-time], [data-camera]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view ? b.dataset.view === view.state.view : b.dataset.time ? b.dataset.time === view.state.time : b.dataset.camera === view.state.camera)));
+    const sync = () => document.querySelectorAll('[data-time]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.time === view.state.time)));
     host.addEventListener('twintimechange', sync);
     host.addEventListener('twinviewchange', sync);
     const click = event => {
       const button = event.target.closest('button'); if (!button) return;
-      if (button.dataset.view) { view.live?.closeRoom(); view.setView(button.dataset.view); }
       if (button.dataset.time) view.setTime(button.dataset.time);
-      if (button.dataset.camera) view.setCamera(button.dataset.camera);
       sync();
     };
-    document.getElementById('twin-controls').addEventListener('click', click);
-    host.addEventListener('twinrebuilt', () => { syncViews(); sync(); });
+    document.getElementById('twin-time-preview')?.addEventListener('click', click);
+    host.addEventListener('twinrebuilt', sync);
     sync(); status.hidden = true;
     const hud = document.getElementById('twin-hud');
     const hudTimer = hud ? setInterval(() => {

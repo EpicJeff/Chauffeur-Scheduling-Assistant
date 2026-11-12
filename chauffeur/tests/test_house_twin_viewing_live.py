@@ -3,8 +3,8 @@
 Uses the real household fixture, panel auth and fake HA in house_twin_live_harness.
 Run from chauffeur/ with HA_BASE_URL unset, under a 300-second outer timeout.
 TWIN_VIEWING_OUTPUT writes zoom-exterior.png, zoom-floor.png and peel.png.
-The foreground scenario moves only the in-memory rendered detached building so
-the fixture always supplies a blocker within the exterior zoom threshold.
+The peel scenario overlaps an in-memory detached building with the selected
+floor to supply an overhead blocker in the fixed top-down camera.
 """
 import os
 from pathlib import Path
@@ -175,22 +175,21 @@ def place_foreground(page, g):
       if(!b)throw Error('fixture needs detached building');
       const points=b.walls.flatMap(w=>[w.from,w.to]),a=(b.rotation||0)*Math.PI/180;
       const xs=points.map(([x,y])=>Math.cos(a)*x-Math.sin(a)*y),ys=points.map(([x,y])=>Math.sin(a)*x+Math.cos(a)*y);
-      b.position=[g.x+g.span*.9-(Math.min(...xs)+Math.max(...xs))/2,g.y-(Math.min(...ys)+Math.max(...ys))/2];
+      b.position=[g.x-(Math.min(...xs)+Math.max(...xs))/2,g.y-(Math.min(...ys)+Math.max(...ys))/2];
       await v.rebuild(p,{preserveYard:true});v.bake?.stop();return b.id;
     }""", g)
 
 
+def level(page, g, floor=None, house=False):
+    page.evaluate("([g,f,h]) => window.__twin.levels.go(h?{level:'house'}:f?{building:g.building,floor:f.split(':').slice(1).join(':')}:{building:g.building},{immediate:true})", [g,floor,house])
+    page.wait_for_timeout(450)
+
+
 def peel_floor(page, g):
-    page.locator('[data-view]').filter(has_text='Exterior').click()
-    page.locator(f'[data-view="{g["levels"][0]["key"]}"]').click()
-    page.evaluate("""g=>{const v=window.__twin;
-      v.controls.target.set(g.x*.3048,g.height*.3048,-g.y*.3048);
-      v.camera.position.set((g.x+g.span*1.4)*.3048,(g.height+10)*.3048,-g.y*.3048);
-      v.controls.update();v.render();}""", g)
-    page.wait_for_timeout(350)
+    level(page, g, g['levels'][0]['key'])
 
 
-def scenario_zoom_fades_roof_and_cuts_top_floor_flat():
+def scenario_levels_keep_roofs_until_floor_and_cut_wall_tops_flat():
     served = L.serve()
     if served is None:
         return
@@ -200,15 +199,16 @@ def scenario_zoom_fades_roof_and_cuts_top_floor_flat():
         dolly(page, g, 2.2)
         check(roof_opacity(page, g['building']) == 1, 'exterior roof is opaque')
         shot(page, 'zoom-exterior.png')
-        # A real dolly through the band, without a floor-button call.
-        samples = []
-        for ratio in (1.7, 1.5, 1.4, 1.3, 1.23):
+        # Distance no longer fades anything at House or Building.
+        for ratio in (1.7, 1.3, .9):
             dolly(page, g, ratio)
-            samples.append(roof_opacity(page, g['building']))
-        check(all(b <= a + .001 for a, b in zip(samples, samples[1:])), ('smooth inward fade', samples))
-        check(samples[-1] < .001, ('roof reaches zero', samples))
+            check(roof_opacity(page, g['building']) == 1, 'distance never fades House')
+        level(page, g)
+        check(roof_opacity(page, g['building']) == 1, 'Building keeps its roof')
+        level(page, g, g['levels'][-1]['key'])
+        check(roof_opacity(page, g['building']) == 0, 'Floor peels the roof')
         selected = page.evaluate('() => window.__twin.state.view')
-        check(selected == g['levels'][-1]['key'], ('top floor first', selected))
+        check(selected == g['levels'][-1]['key'], ('chosen upper floor', selected))
         caps = page.evaluate("""([key,cut])=>{
           let caps=0,slopes=0;
           window.__twin.groups.levels[key].traverse(g=>{
@@ -227,27 +227,25 @@ def scenario_zoom_fades_roof_and_cuts_top_floor_flat():
         L.no_errors(served)
 
 
-def scenario_deeper_zoom_reveals_next_floor_and_out_restores_roof():
+def scenario_lower_floor_and_level_up_restore_roof():
     served = L.serve()
     if served is None:
         return
     with served.browser(launch_args=L.GPU_ARGS) as page:
         g = open_view(page, served)
-        dolly(page, g, 1.23)
-        dolly(page, g, .98)
+        level(page, g, g['levels'][-1]['key'])
+        level(page, g, g['levels'][-2]['key'])
         selected = page.evaluate('() => window.__twin.state.view')
-        check(selected == g['levels'][-2]['key'], ('next floor revealed', selected))
-        # Finish the upper floor's distance fade before sampling the revealed wall.
-        dolly(page, g, .90)
+        check(selected == g['levels'][-2]['key'], ('lower floor revealed', selected))
         check_wall_pixels(page, g)
         shot(page, 'zoom-floor.png')
-        dolly(page, g, 2.2)
-        check(page.evaluate('() => window.__twin.state.view') == 'ext', 'zoom out restores exterior')
+        level(page, g)
+        check(page.evaluate('() => window.__twin.state.view') == 'ext', 'Building restores exterior')
         check(roof_opacity(page, g['building']) == 1, 'roof returns')
         L.no_errors(served)
 
 
-def scenario_floor_button_peels_foreground_detached_building():
+def scenario_floor_level_peels_overlapping_detached_building():
     served = L.serve()
     if served is None:
         return
@@ -275,19 +273,18 @@ def scenario_full_zoom_round_trip_compiles_no_new_programs_after_first_pass():
     with served.browser(launch_args=L.GPU_ARGS) as page:
         g = open_view(page, served)
         place_foreground(page, g)
-        ratios = (2.2, 1.5, 1.23, .98, .65, .4, .65, .98, 1.23, 1.5, 2.2)
-        for ratio in ratios:
-            dolly(page, g, ratio)
+        for key in [None, *[f['key'] for f in g['levels']], None]:
+            level(page, g, key)
         peel_floor(page, g)
-        page.locator('[data-view]').filter(has_text='Exterior').click()
+        level(page, g, house=True)
         page.wait_for_timeout(350)
         page.evaluate("""()=>{const gl=window.__twin.renderer3.getContext(),create=gl.createProgram.bind(gl);
           window.__viewingPrograms=0;gl.createProgram=(...args)=>{window.__viewingPrograms++;return create(...args);};}""")
         before = page.evaluate('() => window.__twin.renderer3.info.programs.length')
-        for ratio in ratios:
-            dolly(page, g, ratio)
+        for key in [None, *[f['key'] for f in g['levels']], None]:
+            level(page, g, key)
         peel_floor(page, g)
-        page.locator('[data-view]').filter(has_text='Exterior').click()
+        level(page, g, house=True)
         page.wait_for_timeout(350)
         after = page.evaluate('() => [window.__viewingPrograms,window.__twin.renderer3.info.programs.length]')
         check(after == [0, before], ('no new GPU programs after zoom and peel', before, after))
@@ -301,8 +298,8 @@ def scenario_low_tier_frame_time():
     with served.browser(launch_args=L.GPU_ARGS) as page:
         g = open_view(page, served)
         samples = {}
-        for name, ratio in (('exterior', 2.2), ('floor', .98)):
-            dolly(page, g, ratio)
+        for name in ('exterior', 'floor'):
+            level(page, g, g['levels'][0]['key'] if name == 'floor' else None)
             samples[name] = page.evaluate("""async()=>{
               const v=window.__twin,gl=v.renderer3.getContext();await v.renderer3.compileAsync(v.scene,v.camera);
               for(let i=0;i<5;i++)v.render();gl.finish();
@@ -315,9 +312,9 @@ def scenario_low_tier_frame_time():
         L.no_errors(served)
 
 
-SCENARIOS = [scenario_zoom_fades_roof_and_cuts_top_floor_flat,
-             scenario_deeper_zoom_reveals_next_floor_and_out_restores_roof,
-             scenario_floor_button_peels_foreground_detached_building,
+SCENARIOS = [scenario_levels_keep_roofs_until_floor_and_cut_wall_tops_flat,
+             scenario_lower_floor_and_level_up_restore_roof,
+             scenario_floor_level_peels_overlapping_detached_building,
              scenario_full_zoom_round_trip_compiles_no_new_programs_after_first_pass,
              scenario_low_tier_frame_time]
 

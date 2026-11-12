@@ -15,8 +15,8 @@ What the page must give:
 - Attention on every level (twin design 5.1: attention states push through at every
   level). An unlocked lock on a floor the person is not looking at stays drawn: its
   marker sprite is shown while every calm marker of that floor is hidden, and the
-  floor picker's button for its floor carries data-attention. Once the lock is locked
-  again the marker goes back with its floor and the button loses data-attention.
+  attention marker remains visible at every level. Once the lock is locked
+  again the marker hides unless its room is selected.
 
 Run from chauffeur/:  env -u HA_BASE_URL python tests/test_house_twin_wall_live.py
 """
@@ -134,13 +134,11 @@ def scenario_attention_on_a_hidden_floor_still_shows():
         L.open_twin(page, s, query=WALL)
         L.wait_look(page, 'dev-back-lock', 'attention')
         other = _other_floor(page)
-        floor = page.locator(f'[data-view="{other}"]').locator('visible=true')
-        check(floor.count() == 1, ('the wall\'s floor picker offers the other floor', other))
-        floor.first.click()
+        page.evaluate("key => {const v=window.__twin,b=v.plan.buildings.find(b=>b.levels.some(l=>b.id+':'+l.id===key)),f=b.levels.find(l=>b.id+':'+l.id===key);v.levels.go({building:b.id,floor:f.id},{immediate:true});}", other)
         L.H.settle(page, 3)
         check(page.evaluate('() => window.__twin.state.view') == other, 'the floor control picks the other floor')
         shown = page.evaluate(SHOWN_JS)
-        check(shown.get(L.FLOOR) is False, ('the pool house\'s floor is hidden now', shown))
+        check(page.evaluate('() => window.__twin.levels.snapshot().building') != L.POOL, 'viewing another building')
         L.refresh(page)
 
         lock = L.sprite(page, 'dev-back-lock')
@@ -149,18 +147,12 @@ def scenario_attention_on_a_hidden_floor_still_shows():
         for calm in ('dev-k-lamp', 'dev-k-coffee', 'dev-hall-light'):
             row = L.sprite(page, calm)
             check(not row['visible'], ('a calm marker on the hidden floor stays hidden', calm, row))
-        flagged = page.evaluate("() => [...document.querySelectorAll('#twin-views [data-attention]')].map(b => b.dataset.view)")
-        check(L.FLOOR in flagged, ('the floor picker flags the floor that holds the unlocked lock', flagged))
-        check(other not in flagged, ('a floor with nothing wanting attention is not flagged', flagged))
-
         # Locked again: the marker goes back with its floor and the flag clears.
         FAKE.states['lock.back_door']['state'] = 'locked'
         L.refresh(page)
-        L.wait_look(page, 'dev-back-lock', 'off')
+        L.wait_look(page, 'dev-back-lock', 'on')
         lock = L.sprite(page, 'dev-back-lock')
         check(not lock['visible'], ('a locked lock on a hidden floor hides with its floor', lock))
-        flagged = page.evaluate("() => [...document.querySelectorAll('#twin-views [data-attention]')].map(b => b.dataset.view)")
-        check(flagged == [], ('nothing is flagged once the lock is locked', flagged))
         L.no_errors(s)
 
 

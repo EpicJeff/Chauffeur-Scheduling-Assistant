@@ -176,7 +176,7 @@ def scenario_idle_orbits_moves_bar_and_tap_restores_camera():
         page.mouse.move(900, 800)
         before = page.evaluate("""() => {
           const v=window.__twin; window.__originalBar=document.getElementById('twin-glance');
-          return {view:v.state.view,camera:v.cameraKind(),position:v.camera.position.toArray(),
+          return {view:v.state.view,level:v.levels.snapshot(),camera:v.cameraKind(),position:v.camera.position.toArray(),
             quaternion:v.camera.quaternion.toArray(),target:v.controls.target.toArray(),zoom:v.camera.zoom};
         }""")
         page.wait_for_function('() => window.__twin.idle.active()', timeout=10000)
@@ -190,7 +190,7 @@ def scenario_idle_orbits_moves_bar_and_tap_restores_camera():
         check(page.locator('#panel-screensaver').count() == 0, 'no photo screensaver over twin idle')
         shot(page, 'idle-clock-glance-hero.png')
         page.dispatch_event('body', 'pointerdown', {'pointerId': 1, 'pointerType': 'touch', 'clientX': 1200, 'clientY': 900})
-        after = page.evaluate("""() => {const v=window.__twin;return {view:v.state.view,camera:v.cameraKind(),
+        after = page.evaluate("""() => {const v=window.__twin;return {view:v.state.view,level:v.levels.snapshot(),camera:v.cameraKind(),
           position:v.camera.position.toArray(),quaternion:v.camera.quaternion.toArray(),target:v.controls.target.toArray(),zoom:v.camera.zoom};}""")
         check(after == before, ('exact restored camera', before, after))
         check(page.locator('#twin-glance-home #twin-glance').count() == 1, 'bar returns to bottom')
