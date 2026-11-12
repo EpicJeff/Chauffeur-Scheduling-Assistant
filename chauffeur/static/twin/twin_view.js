@@ -17,6 +17,7 @@ import { mountBake } from './bake/runtime.js';
 import { sunPosition, moonPosition, moonIllumination } from './sky/ephemeris.js';
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
 import { createUnlit } from './unlit.js';
+import { createViewing } from './viewing.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {} } = {}) {
   // Ruling B15: only the 3D house view bakes lights. The editor's scene is the house
@@ -35,6 +36,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   renderer3.shadowMap.type = THREE.PCFShadowMap;
   renderer3.toneMapping = THREE.ACESFilmicToneMapping;
   renderer3.info.autoReset = false;
+  renderer3.localClippingEnabled = !editor;
   el.appendChild(renderer3.domElement);
   const scene = new THREE.Scene(), perspective = new THREE.PerspectiveCamera(38, 1, 0.1, 1000);
   const orthographic = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
@@ -67,6 +69,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   scene.environment = environment;
   const state = { view: 'ext', time: editor ? 'day' : 'now', camera: 'front', unlit: false };
   const unlit = createUnlit();
+  let viewing = null;
   let shadowAutoUpdate;
   let clock = null, previewIdle = null, timeTimer = null, timeLook = null, lastShadowUpdate = -Infinity;
   const clockNow = () => clock ? new Date(clock) : new Date();
@@ -242,6 +245,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   function render() {
     if (disposed) return;
+    viewing?.update(performance.now());
     view.live?.draw();
     twin?.updateGhosts();
     if (state.unlit) {
@@ -265,9 +269,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const view = {
     ready: false, scene, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
+    viewingState() {
+      return viewing?.snapshot() || {selected: state.view, pinned: state.view === 'ext' ? null : state.view, channels: []};
+    },
     get site() { return site; },
     get roofSurfaces() { return twin?.roofSurfaces; },
     render,
+    prepareViewingMaterial(source, material) { viewing?.adopt(source, material); },
     cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
     saveView() {
       return { camera, position: camera.position.clone(), quaternion: camera.quaternion.clone(), target: controls.target.clone(),
@@ -442,6 +450,19 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         if (matches.length === 1) id = matches[0];
       }
       if (!twin || (id !== 'ext' && !twin.groups.levels[id])) return;
+      if (viewing) {
+        if (id === 'ext') { viewing.select(id); view.setCamera('front'); }
+        else {
+          const frame = floorFrame(id), focus = floorFocus(frame);
+          // Keep the orbit direction, centring and sizing it on this floor.
+          const offset = camera.position.clone().sub(controls.target).normalize();
+          controls.target.set(focus.x * FT, frame.elevation * FT, -focus.y * FT);
+          camera.position.copy(controls.target).addScaledVector(offset, Math.max(20, focus.span * 1.4) * FT);
+          viewing.select(id);
+          controls.update();
+        }
+        render(); return;
+      }
       restoreSelection(); restoreFloors();
       state.view = id;
       visibleLevels = null;
@@ -496,7 +517,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const positions = { front: [x - 41 * k, 22 * k, y - 69 * k], porch: [x + 59 * k, 22 * k, y - 45 * k], rear: [x + 27 * k, 34 * k, y + 57 * k], top: [x, 105 * k, y - 0.01] };
       const [cx, cy, cz] = positions[name === 'back' ? 'rear' : name === 'orbit' ? 'porch' : name];
       camera.position.set(cx * FT, cy * FT, -cz * FT);
-      controls.target.set(x * FT, (name === 'top' ? 3 : 8) * FT, -y * FT); controls.update(); render();
+      controls.target.set(x * FT, (name === 'top' ? 3 : 8) * FT, -y * FT);
+      // A named camera is a framing change, not an outward zoom gesture.
+      viewing?.rebasePin(); controls.update(); render();
     },
     // Look from one lot point at another (feet; z above the ground). The editor
     // opens this way (M3); later rebuilds keep the camera as it was left.
@@ -698,7 +721,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     async rebuild(nextPlan, { preserveYard = false } = {}) {
       view.bake?.stop();
       const version = ++revision; view.ready = false;
-      const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel });
+      const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor });
       next.editableLevel = editableLevel;
       const extras = new Map();
       try {
@@ -746,7 +769,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
         for (const [parent, group] of extras) mergeStatic(group, { perPiece: !!editableLevel && parent.userData.levelKey === editableLevel });
         if (!preserveYard || !yardGroup) {
-          const yard = await buildYard(nextPlan, kit, tier); next.groups.site.add(yard.group);
+          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor }); next.groups.site.add(yard.group);
           next.yardGroup = yard.group;
         }
         await next.ready;
@@ -760,6 +783,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       restoreSelection(); restoreFloors();
       // The underlay owns its image independently of the rebuilt geometry.
       // Detach before releasing the old scene, then place the same object.
+      viewing?.dispose(); viewing = null;
       sheet?.object?.removeFromParent();
       if (!next.yardGroup && yardGroup) {
         yardGroup.removeFromParent(); next.groups.site.add(yardGroup); next.yardGroup = yardGroup;
@@ -791,6 +815,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       Object.assign(sun.shadow.camera, { left: -reach, right: reach, top: reach, bottom: -reach, near: 0.5, far: reach * 6 }); sun.shadow.camera.updateProjectionMatrix();
       // Geometry invalidation is independent of the once-a-minute clock move.
       sun.shadow.needsUpdate = true;
+      if (!editor) {
+        twin.groups.roof.visible = twin.groups.gableFull.visible = true;
+        twin.groups.gableCut.visible = false;
+        viewing = createViewing(view, twin, b => groundAt(plan, ...(b.position || [0, 0])), key => {
+          state.view = key; sun.shadow.needsUpdate = true; applyLights();
+          el.dispatchEvent(new CustomEvent('twinviewchange', { detail: key }));
+        });
+      }
       view.setView(twin.groups.levels[state.view] ? state.view : 'ext'); updateTime();
       if (!(preserveCamera && (framed || cameraMoved))) view.setCamera(state.camera);
       if (points.length) framed = true;
@@ -817,6 +849,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       clearSheet(); sheetSpec = null;
       restoreSelection();
       restoreFloors();
+      viewing?.dispose(); viewing = null;
       if (twin) { scene.remove(twin.root); release(twin); }
       unlit.dispose();
       sky?.dispose(); environmentTarget?.dispose(); fallbackEnvironment.dispose(); sun.shadow.dispose();
@@ -864,7 +897,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   function updateTime() {
     if (disposed) return;
-    applyTimeLook(); applyLights(); view.onTimeLook?.(); render();
+    applyTimeLook(); applyLights(); view.onTimeLook?.(); viewing?.warm(); render();
     el.dispatchEvent(new CustomEvent('twintimechange', { detail: state.time }));
   }
   function resetPreviewIdle() {
@@ -887,10 +920,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       // Each lamp keeps its own intensity, so leaving Lights mode (even after a
       // rebuild in it) lights it again; visibility follows the shown levels.
       l.userData.intensity ??= l.intensity;
-      l.intensity = state.unlit || liveLamps || !night ? 0 : l.userData.intensity;
+      const intensity = state.unlit || liveLamps || !night ? 0 : l.userData.intensity;
+      l.userData.viewingIntensity = intensity;
+      l.intensity = intensity * (viewing?.levelAlpha(l.userData.level) ?? 1);
       // Live lamps zero the intensity but keep visibility, so the shader's light
       // count never changes and the first tap on Lights recompiles nothing.
-      l.visible = !!twin.groups.levels[l.userData.level]?.visible;
+      l.visible = !editor || !!twin.groups.levels[l.userData.level]?.visible;
     });
     twin.root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'fixture') m.emissiveIntensity = !liveLamps && night ? 2 : 0; });
   }
@@ -1044,9 +1079,10 @@ async function boot() {
     syncViews();
     const sync = () => document.querySelectorAll('[data-view], [data-time], [data-camera]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view ? b.dataset.view === view.state.view : b.dataset.time ? b.dataset.time === view.state.time : b.dataset.camera === view.state.camera)));
     host.addEventListener('twintimechange', sync);
+    host.addEventListener('twinviewchange', sync);
     const click = event => {
       const button = event.target.closest('button'); if (!button) return;
-      if (button.dataset.view) { view.live?.closeRoom(); view.setView(button.dataset.view); if (button.dataset.view !== 'ext') view.setCamera('top'); }
+      if (button.dataset.view) { view.live?.closeRoom(); view.setView(button.dataset.view); }
       if (button.dataset.time) view.setTime(button.dataset.time);
       if (button.dataset.camera) view.setCamera(button.dataset.camera);
       sync();

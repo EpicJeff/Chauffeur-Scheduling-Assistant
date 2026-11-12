@@ -54,6 +54,7 @@ export function occluders(view) {
   view.scene.updateMatrixWorld(true);
   view.scene.traverse(o => {
     if (!atlasMesh(o) || o.material.name === 'glass') return;
+    for (let p = o.parent; p; p = p.parent) if (p.userData.viewingWalls === 'cut') return;
     const mesh = new THREE.Mesh(o.geometry, o.material);
     mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); mesh.frustumCulled = false; scene.add(mesh);
   });

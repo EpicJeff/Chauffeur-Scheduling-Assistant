@@ -30,6 +30,9 @@ export function mergeStatic(group, { perPiece = false } = {}) {
   group.updateMatrixWorld(true);
   const inverse = group.matrixWorld.clone().invert(), buckets = new Map();
   group.traverse(o => {
+    // Independently faded viewing domains must never merge into their parent.
+    for (let p = o.parent; p && p !== group; p = p.parent)
+      if (p.userData.viewingWalls || p.userData.viewingTree) return;
     if (!o.isMesh || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) ||
         !o.geometry?.attributes.position || Object.keys(o.geometry.morphAttributes || {}).length) return;
     let g;
@@ -255,7 +258,7 @@ function footprintPanel(footprint, a, c, lo, ta, tc) {
   });
 }
 
-export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel = null } = {}) {
+export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel = null, viewing = false } = {}) {
   const root = new THREE.Group(); root.scale.setScalar(FT);
   const pieces = new Map(), pieceBounds = new Map(), pickObjects = new Map(), roofSurfaces = new Map(), mergeGroups = [], ghostBatches = [];
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
@@ -309,12 +312,21 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         groups.levels[key].userData.levelId = id;
       }
       const g = local[id] = new THREE.Group(); g.position.set(position[0], base, -position[1]);
+      g.name = key;
       g.rotation.y = (b.rotation || 0) * Math.PI / 180;
       g.userData.buildingId = b.id; g.userData.levelKey = levels[id] ? key : null;
       (groups[id] || groups.levels[key]).add(g);
       if (id !== 'lights') mergeGroups.push(g);
     }
     ordered.forEach(l => { levelElevations[levelKey(l.id)] = base + l.elevation; });
+    const wallFull = {}, wallCut = {};
+    if (viewing) for (const l of ordered) {
+      for (const [kind, collection] of [['full', wallFull], ['cut', wallCut]]) {
+        const group = collection[l.id] = new THREE.Group();
+        group.name = `${levelKey(l.id)}:walls:${kind}`; group.userData.viewingWalls = kind;
+        local[l.id].add(group); mergeGroups.push(group);
+      }
+    }
     const sections = b.roof?.sections || [];
     const envelope = roofMesh(sections);
     const outlines = new Map(ordered.map(l => [l.id, l.outline?.length >= 3 ? [l.outline] : footprints(b.walls.filter(w => w.level === l.id))]));
@@ -409,6 +421,23 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         cuts.push(...crossings); cuts.sort((a, c) => a - c);
       }
       const wallMat = role ? mat(role) : mat(exterior ? 'siding' : 'interior_wall');
+      const panel = (geo, material) => {
+        if (!profile.cutaway) return mesh(group, geo.applyMatrix4(matrix), material);
+        // Cut variants have plain solid tops, without cladding relief. Batch
+        // these triangles into one plan-tone draw per floor at construction.
+        const parts = { side: [], top: [] }, normal = geo.attributes.normal;
+        for (let i = 0; i < normal.count; i += 3)
+          parts[normal.getY(i) > .9 ? 'top' : 'side'].push(i, i + 1, i + 2);
+        for (const [side, indices] of Object.entries(parts)) if (indices.length) {
+          const part = new THREE.BufferGeometry();
+          for (const [name, attr] of Object.entries(geo.attributes))
+            part.setAttribute(name, new THREE.Float32BufferAttribute(indices.flatMap(i =>
+              Array.from({ length: attr.itemSize }, (_, c) => attr.getComponent(i, c))), attr.itemSize));
+          mesh(group, part.applyMatrix4(matrix), side === 'top'
+            ? plain('viewing_wall_top', '#a6a59b') : material);
+        }
+        geo.dispose();
+      };
       // Keep closed wall/batten tops in floor views. Only nudge an extrusion
       // whose top actually coincides with a roof face, rather than removing
       // every cap with a roof somewhere overhead. A slab-limited top embeds
@@ -456,7 +485,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
           if (profile.footprint && !role) {
             for (const [side, geo] of footprintPanel(profile.footprint, a, c, lo, ta, tc)) {
               separateRoofContact(geo, a, c, top(a, mid), top(c, mid), 0, true);
-              mesh(group, geo.applyMatrix4(matrix), profile.materials[side] || wallMat);
+              panel(geo, profile.materials[side] || wallMat);
             }
             continue;
           }
@@ -476,15 +505,15 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
                 const values = indices.flatMap(i => Array.from({ length: attr.itemSize }, (_, c) => attr.getComponent(i, c)));
                 part.setAttribute(name, new THREE.Float32BufferAttribute(values, attr.itemSize));
               }
-              mesh(group, part.applyMatrix4(matrix), profile.materials[side] || wallMat);
+              panel(part, profile.materials[side] || wallMat);
             }
             geo.dispose();
-          } else mesh(group, geo.applyMatrix4(matrix), wallMat);
+          } else panel(geo, wallMat);
         }
       }
       const sign = profile.sign || Math.sign(z.dot(new THREE.Vector3((from[0] + to[0]) / 2 - center[0], 0, -(from[1] + to[1]) / 2 + center[1]))) || 1;
       const localBox = (u, v, w, h, d, material, faceOffset = 0) => mesh(group, boxGeometry(w, h, d).translate(u, v, offset + faceOffset).applyMatrix4(matrix), material);
-      if (exterior && (profile.sidingAsset || materialKit.materials.siding?.asset) === 'board_and_batten' && !role) {
+      if (!profile.cutaway && exterior && (profile.sidingAsset || materialKit.materials.siding?.asset) === 'board_and_batten' && !role) {
         for (let u = 0.5; u < length; u += 1) {
           let intervals = [[0, Infinity]];
           holes.filter(h => u > h.u0 - 0.4 && u < h.u1 + 0.4).forEach(h => {
@@ -628,7 +657,14 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         if (at + o.width / 2 <= 0 || at - o.width / 2 >= length) continue;
         holes.push(opening({ ...o, sill: o.sill + section.plate - l.elevation, head: o.head + section.plate - l.elevation }, at));
       }
-      wall(local[w.level], w.from, w.to, l.elevation, w.thickness, top, holes, w.exterior, null, true, profile);
+      wall(wallFull[w.level] || local[w.level], w.from, w.to, l.elevation, w.thickness, top, holes, w.exterior, null, true, profile);
+      if (viewing) {
+        // Closed plain slabs, including opening notches. Built once;
+        // the view only cross-fades these and the unchanged exterior walls.
+        const height = Math.max(1, (l.ceiling || 8) - 4);
+        wall(wallCut[w.level], w.from, w.to, l.elevation, w.thickness, () => height,
+          holes, w.exterior, null, false, { ...profile, cutaway: true, limits: null, panels: [] });
+      }
       wallProfiles.set(w.id, { panels: profile.panels, elevation: l.elevation });
       if (w.exterior && w.state !== 'ghost') supportingWalls.push({ w, l, outward, dx, dy, panels: profile.panels });
       if (w.exterior && l.elevation > 0 && w.level === first.id) wall(local[w.level], w.from, w.to, 0, w.thickness + 0.12, () => l.elevation, [], false, 'base', false, profile);

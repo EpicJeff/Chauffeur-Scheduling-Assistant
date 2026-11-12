@@ -428,7 +428,7 @@ function writeUV(charts, o, name, pageName) {
 // every tier, so a Low panel builds the same atlas key as the desk that baked.
 export function atlasMesh(mesh) {
   return !!(mesh.isMesh && mesh.userData.merged && !mesh.layers.isEnabled(31) && !Array.isArray(mesh.material) &&
-    !mesh.material.transparent && !(mesh.material.alphaTest > 0) && !['fixture', 'glass'].includes(mesh.material.name) &&
+    (!mesh.material.transparent || mesh.material.userData.viewingOpaque) && !(mesh.material.alphaTest > 0) && !['fixture', 'glass'].includes(mesh.material.name) &&
     mesh.geometry?.attributes.position);
 }
 

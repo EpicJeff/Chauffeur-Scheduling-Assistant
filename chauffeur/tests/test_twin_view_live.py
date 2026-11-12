@@ -167,12 +167,15 @@ def scenario_views_cut_the_house():
         _open(page, s, 'tier=high')
         vis = '() => { const g = window.__twin.groups; return {roof: g.roof.visible, full: g.gableFull.visible, cut: g.gableCut.visible, L2: g.levels.L2.visible, L1: g.levels.L1.visible}; }'
         page.evaluate('() => window.__twin.setView("ext")')
+        page.wait_for_timeout(600)
         v = page.evaluate(vis)
         check(v['roof'] and v['full'] and not v['cut'] and v['L1'] and v['L2'], f'exterior: {v}')
         page.evaluate('() => window.__twin.setView("L2")')
+        page.wait_for_timeout(600)
         v = page.evaluate(vis)
         check(not v['roof'] and not v['full'] and v['cut'] and v['L2'] and v['L1'], f'upstairs: {v}')
         page.evaluate('() => window.__twin.setView("L1")')
+        page.wait_for_timeout(600)
         v = page.evaluate(vis)
         check(not v['roof'] and not v['full'] and not v['cut'] and not v['L2'] and v['L1'], f'ground floor: {v}')
 
