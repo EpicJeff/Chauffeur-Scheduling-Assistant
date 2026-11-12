@@ -24,7 +24,7 @@ const plan={buildings:[],materials:{},site:{beds:[{id:'bed',polygon:[[0,0],[8,0]
  pool:{polygon:[[0,0],[8,0],[8,4],[0,4]],depth:5,coping:1},fire_pit:{at:[4,2],radius:2},fence:{polyline:[[0,0],[8,0]],height:6},planting:[],furniture:[]}};
 let source=structuredClone(plan),selected={kind:'beds',id:'bed',building:null},round=1,commits=0,writable=true;
 const abort=new AbortController(),snapshots=new Map([[1,structuredClone(source)]]),ops=[];
-const history=createHistory({getRound:()=>round,getBuild:()=>null,canEdit:()=>writable,refresh:async()=>{},signal:abort.signal});
+let history=createHistory({getRound:()=>round,getBuild:()=>null,canEdit:()=>writable,refresh:async()=>{},signal:abort.signal});
 const commit=operation=>history.perform(async()=>{
  commits++;ops.push(operation);const p=['pool','fire_pit','fence'].includes(operation.list)?source.site[operation.list]:source.site[operation.list][operation.index];
  if(operation.op==='set_object')Object.assign(p,operation.properties);else Object.assign(p,Object.fromEntries(Object.entries(operation).filter(([k])=>!['op','list','index'].includes(k))));
@@ -75,7 +75,7 @@ const beforeMin=commits;h=handles.handles().find(h=>h.kind==='site_vertex');asse
 assert.equal(vertices.editVertex([[0,0],[1,0],[0,1]],{index:0},[0,0],{remove:true}).length,3);
 h=handles.handles().find(h=>h.kind==='site_scale');assert.ok(handles.begin(event(h.at)));handles.update(event([20,20,0]));await handles.finish(true);assert.equal(commits,beforeMin);
 const alerts=[];window.showGlobalAlert=t=>alerts.push(t);
-globalThis.fetch=async(input,init)=>{const body=JSON.parse(init.body);source=structuredClone(snapshots.get(body.round));return new Response(JSON.stringify({round:++round}),{status:200});};
+globalThis.fetch=async(input,init)=>{const body=JSON.parse(init.body);source=structuredClone(snapshots.get(body.round));snapshots.set(++round,structuredClone(source));return new Response(JSON.stringify({round}),{status:200});};
 const beforeUndo=structuredClone(source);document.getElementById('rail-undo').dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,0));assert.notDeepEqual(source,beforeUndo);
 document.getElementById('rail-redo').dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,0));assert.deepEqual(source,beforeUndo);assert.equal(alerts.length,0);
 console.log('ok minimum three corners, cancelled gesture, real history undo and redo');
@@ -101,13 +101,69 @@ document.querySelectorAll=()=>[];
 const uiAbort=new AbortController(),tools=createSceneTools({view,getPlan:()=>source,getModel:()=>source,getKit:()=>kit,getSheets:()=>({}),op:commit,edit:commit,
  panel:{clearSelection(){},focusSelection(){}},canEdit:()=>true,signal:uiAbort.signal});
 tools.select({kind:'hardscape',id:'patio',building:null});
-const pointer=(type,at,extra={})=>{const e=new Event(type);Object.assign(e,{...event(at),button:0,pointerId:77,...extra});(type==='pointerup'?document:view.renderer3.domElement).dispatchEvent(e);};
+const pointer=(type,at,extra={})=>{const e=new Event(type);Object.assign(e,{...event(at),button:0,pointerId:77,...extra});(type==='pointerup'?window:view.renderer3.domElement).dispatchEvent(e);};
 h=tools.handles().find(h=>h.kind==='site_insert');const cornersBefore=source.site.hardscape[0].polygon.length;
 pointer('pointerdown',h.at);pointer('pointerup',h.at);await new Promise(r=>setTimeout(r,0));assert.equal(source.site.hardscape[0].polygon.length,cornersBefore+1,'real click inserts on release');
 tools.refreshCard();h=tools.handles().find(h=>h.kind==='site_vertex');pointer('pointerdown',h.at,{altKey:true});pointer('pointerup',h.at,{altKey:true});await new Promise(r=>setTimeout(r,0));assert.equal(source.site.hardscape[0].polygon.length,cornersBefore,'real Alt-click removes on release');
 h=tools.handles().find(h=>h.kind==='site_rotate');const origin=shapes.shapeCentre(source.site.hardscape[0]),r=h.at[0]-origin[0],angle=22*Math.PI/180;
 pointer('pointerdown',h.at,{shiftKey:true});pointer('pointermove',[origin[0]+r*Math.cos(angle),origin[1]+r*Math.sin(angle),h.at[2]],{shiftKey:true});pointer('pointerup',[origin[0]+r*Math.cos(angle),origin[1]+r*Math.sin(angle),h.at[2]],{shiftKey:true});await new Promise(r=>setTimeout(r,0));near(source.site.hardscape[0].rotation,22);
-assert.equal(view.controls.enabled,true);uiAbort.abort();view.dispose();
+assert.equal(view.controls.enabled,true);
+// Match the live patio, camera and twelve browser move events. The real
+// scene-tools router owns the real handle module, including release routing.
+source=structuredClone(plan);source.site.hardscape=[{id:'patio',polygon:[[12,117],[28,117],[28,133],[12,133]]}];
+history=createHistory({getRound:()=>round,getBuild:()=>null,canEdit:()=>writable,refresh:async()=>{},signal:uiAbort.signal});snapshots.set(round,structuredClone(source));
+view.setCameraState({position:[20*.3048,80*.3048,-124.999*.3048],target:[20*.3048,0,-125*.3048]});
+tools.select({kind:'hardscape',id:'patio',building:null});
+const states=[structuredClone(source)],tick=()=>new Promise(r=>setTimeout(r,0));
+async function liveNoChange(kind,target){
+ const start=tools.handles().find(h=>h.kind===kind).at,before=commits,original=structuredClone(source);
+ pointer('pointerdown',start);pointer('pointermove',target(start));pointer('pointermove',start);
+ pointer('pointerup',start);pointer('click',start);await tick();
+ assert.equal(commits,before,kind+' no-change release records no history');assert.deepEqual(source,original);
+}
+await liveNoChange('site_rotate',start=>[start[0],start[1]+.3,start[2]]);
+await liveNoChange('site_move',start=>[start[0]+1,start[1],start[2]]);
+await liveNoChange('site_scale',start=>[start[0]+1,start[1]+1,start[2]]);
+async function historyLength(expected){
+ // Exhaust each stack through its actual buttons: exactly N state-changing
+ // reverts, then a disabled Undo, proves the history length without mocks.
+ for(let i=expected-1;i>=0;i--){document.getElementById('rail-undo').dispatchEvent(new Event('click'));await tick();assert.deepEqual(source,states[i],'one undo per gesture');}
+ assert.equal(document.getElementById('rail-undo').disabled,true,'history length is exactly '+expected);
+ for(let i=1;i<=expected;i++){document.getElementById('rail-redo').dispatchEvent(new Event('click'));await tick();assert.deepEqual(source,states[i],'one redo per gesture');}
+ assert.equal(document.getElementById('rail-redo').disabled,true);
+}
+async function liveGesture(kind,target){
+ const start=tools.handles().find(h=>h.kind===kind).at,end=target(start),before=commits;
+ pointer('pointermove',start);
+ pointer('pointerdown',start);
+ for(let i=1;i<=12;i++)pointer('pointermove',start.map((v,j)=>v+(end[j]-v)*i/12));
+ pointer('pointerup',end);
+ // The window capture listener runs before the same release reaches document
+ // and canvas; lostpointercapture and click must not save a second time.
+ for(const surface of [document,view.renderer3.domElement]){const e=new Event('pointerup');Object.assign(e,{...event(end),button:0,pointerId:77});surface.dispatchEvent(e);}
+ pointer('lostpointercapture',end);pointer('click',end);await tick();
+ assert.equal(commits,before+1,kind+' commits exactly once');
+ assert.notDeepEqual(source,states.at(-1),kind+' changes the authored shape');states.push(structuredClone(source));
+ await historyLength(states.length-1);
+}
+await liveGesture('site_rotate',start=>{const radius=start[0]-20;return [20+radius/Math.SQRT2,125+radius/Math.SQRT2,start[2]];});
+await liveGesture('site_scale',start=>[20+(start[0]-20)*1.2,125+(start[1]-125)*1.2,start[2]]);
+await liveGesture('site_vertex',start=>[start[0]+1,start[1],start[2]]);
+await liveNoChange('site_vertex',start=>[start[0]+1,start[1],start[2]]);
+for(let i=2;i>=0;i--){document.getElementById('rail-undo').dispatchEvent(new Event('click'));await tick();assert.deepEqual(source,states[i],'one undo per gesture');}
+assert.equal(document.getElementById('rail-undo').disabled,true,'history has exactly three steps');
+assert.equal(alerts.length,0,'own undo/redo rounds are never treated as outside edits');
+console.log('ok browser-style window release and click: rotate, scale and one-foot corner each add one history step; no-change releases add none; three undos and redos');
+history.clear();
+await commit(shapes.shapeOperation(siteRecord(source,'patio'),shapes.transformShape(source.site.hardscape[0],{rotation:15})));
+source.site.hardscape[0].name='Another person changed this';snapshots.set(++round,structuredClone(source));
+await commit(shapes.shapeOperation(siteRecord(source,'patio'),shapes.transformShape(source.site.hardscape[0],{rotation:30})));
+document.getElementById('rail-undo').dispatchEvent(new Event('click'));await tick();
+const outsideState=structuredClone(source),outsideRound=round;
+document.getElementById('rail-undo').dispatchEvent(new Event('click'));await tick();
+assert.deepEqual(source,outsideState);assert.equal(round,outsideRound);assert.equal(alerts.length,1);assert.match(alerts[0],/Something else changed/);
+console.log('ok an outside edit between two own gestures still blocks undo across that boundary');
+uiAbort.abort();view.dispose();
 console.log('ok actual scene-tools midpoint click, Alt-click, Shift free rotation and camera restoration');
 """
 

@@ -90,8 +90,8 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-progress::-webkit-progress-bar { background: var(--twinHover); }
 #editor-progress::-webkit-progress-value { background: linear-gradient(90deg, #16a45f, #10b2e0); }
 .editor-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-#editor-cameras { position: absolute; left: calc(var(--editor-rail-right, 96px) + 16px); bottom: 160px; display: flex; flex-wrap: wrap; gap: 4px; z-index: 2; }
-#editor-cameras button { background: var(--editor-panel); backdrop-filter: blur(16px); }
+#editor-cameras { position: absolute; left: calc(var(--editor-rail-right, 96px) + 16px); bottom: 160px; display: flex; flex-wrap: wrap; gap: 4px; z-index: 2; pointer-events: none; }
+#editor-cameras button { pointer-events: auto; background: var(--editor-panel); backdrop-filter: blur(16px); }
 #editor-lighting { flex-basis: 100%; }
 /* The label and help sit over the 3D view (bright sky by day): a dark chip keeps them legible. */
 #editor-lighting > span, #editor-lighting-help { color: var(--twinText); font-size: 11px; background: var(--twinGlass); backdrop-filter: blur(16px);

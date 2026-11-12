@@ -265,7 +265,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (delegate?.pointerMove?.(event)) return;
     if (!gesture || gesture.selecting) return;
     if (gesture.dragging) {
-      if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= 3) {
+      if (gesture.moved || Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= 3) {
         gesture.moved = true;
         try { handles.update(event); } catch (error) { finish(event, true); report(error); }
       }
@@ -330,6 +330,8 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   };
   listen(canvas, 'pointerup', finish);
   listen(canvas, 'pointercancel', event => finish(event, true));
+  listen(window, 'pointerup', finish, { capture: true });
+  listen(window, 'pointercancel', event => finish(event, true), { capture: true });
   listen(document, 'pointerup', finish, { capture: true });
   listen(document, 'pointercancel', event => finish(event, true), { capture: true });
   listen(canvas, 'lostpointercapture', event => finish(event, true));

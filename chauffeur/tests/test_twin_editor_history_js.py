@@ -23,6 +23,7 @@ export function createSceneTools(options){
 }
 export const createDraw=()=>({cancel(){}});
 export const createLotTools=()=>({dragging:()=>false,handles:()=>[]});
+export const createTerrainTools=()=>({refresh(){},cancel(){}});
 export const streetView=()=>null,streetSegment=()=>null;
 export const createRoofTools=()=>({cancel(){},addDormer(){}});
 export const createLibrary=()=>({refresh(){}});

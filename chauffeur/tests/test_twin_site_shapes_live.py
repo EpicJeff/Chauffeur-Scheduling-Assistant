@@ -58,7 +58,15 @@ def scenario_patio_ring_scale_corner_three_undos_pool_and_tree():
         drag(start, [20 + (start[0] - 20) * 1.2, 125 + (start[1] - 125) * 1.2, start[2]])
         page.wait_for_function('Math.abs(window.__twin.plan.site.hardscape[0].polygon[0][1]-(125-8*2**.5*1.2))<.02')
         start = handle('site_vertex')
+        pixel = lot_pixel(page, start[:2], start[2])
+        H.check(page.evaluate('(p)=>document.elementFromPoint(...p)===window.__twin.renderer3.domElement', pixel),
+                'The visible corner is covered by editor chrome')
+        before_corner = copy.deepcopy(H.model()['site']['hardscape'][0]['polygon'])
         drag(start, [start[0] + 1, start[1], start[2]])
+        after_corner = H.model()['site']['hardscape'][0]['polygon']
+        H.check(abs(after_corner[0][0] - before_corner[0][0] - 1) < .01
+                and abs(after_corner[0][1] - before_corner[0][1]) < .01
+                and after_corner[1:] == before_corner[1:], 'Corner drag did not move only that corner by one foot')
         H.check(H.model()['site']['hardscape'][0]['polygon'] != original['polygon'], 'Corner did not move')
         for _ in range(3):
             before = H.model()['site']['hardscape'][0]['polygon']

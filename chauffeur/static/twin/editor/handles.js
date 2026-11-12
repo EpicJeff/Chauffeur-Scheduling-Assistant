@@ -11,6 +11,9 @@ import { shapeKey, shapeCentre, transformShape, shapeOperation, closedShape } fr
 
 const FT = .3048;
 const inch = value => Math.round(value * 12) / 12;
+const sameValue = (a, b) => Array.isArray(a) && Array.isArray(b)
+  ? a.length === b.length && a.every((v, i) => sameValue(v, b[i]))
+  : typeof a === 'number' && typeof b === 'number' ? Math.abs(a - b) < 1e-8 : a === b;
 const basis = wall => {
   const d = wall.to.map((v, i) => v - wall.from[i]), length = Math.hypot(...d);
   return { length, axis: d.map(v => v / length), normal: [-d[1] / length, d[0] / length, 0] };
@@ -329,7 +332,12 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       } else if (handle.kind === 'site_scale') {
         const scale = Math.max(.001, Math.hypot(...b) / Math.max(.01, Math.hypot(...a)));
         change = transformShape(piece, { scale: [scale, scale] });
-      } else change = { [shapeKey(piece)]: editVertex(sitePoints(piece), { ...handle, insert: handle.kind === 'site_insert' }, point.slice(0, 2).map(v => inch(v) || 0), { remove: g.remove, closed: closedShape(g.record) }) };
+      } else {
+        // Snap the movement, preserving an already rotated corner's coordinates.
+        const target = handle.kind === 'site_vertex' ? sitePoints(piece)[handle.index].map((v, i) => v + inch(point[i] - g.start[i]))
+          : point.slice(0, 2).map(v => inch(v) || 0);
+        change = { [shapeKey(piece)]: editVertex(sitePoints(piece), { ...handle, insert: handle.kind === 'site_insert' }, target, { remove: g.remove, closed: closedShape(g.record) }) };
+      }
       g.operation = handle.kind === 'site_move'
         ? { op: 'move_site_item', list: g.record.kind, index: g.record.index, by: point.slice(0, 2).map((v, i) => inch(v - g.start[i])) }
         : shapeOperation(g.record, change);
@@ -449,7 +457,9 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     if (g.handle.kind.startsWith('site_')) {
       document.getElementById('editor-drag-outline')?.setAttribute('points', '');
       const cornerClick = clicked && (g.handle.kind === 'site_insert' || g.handle.kind === 'site_vertex' && g.remove);
-      try { if ((!cancel || cornerClick) && g.operation && Object.entries(g.operation).some(([k, v]) => !['op', 'list', 'index'].includes(k) && JSON.stringify(v) !== JSON.stringify(g.piece[k]))) await onCommit(g.operation); }
+      const changed = g.operation && (g.operation.op === 'move_site_item' ? g.operation.by.some(v => Math.abs(v) > 1e-8)
+        : Object.entries(g.operation).some(([k, v]) => !['op', 'list', 'index'].includes(k) && !sameValue(v, g.piece[k] ?? (k === 'rotation' ? 0 : undefined))));
+      try { if ((!cancel || cornerClick) && changed) await onCommit(g.operation); }
       finally { refresh(); }
       return;
     }
