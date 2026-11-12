@@ -1,6 +1,29 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.815 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.816 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.816 (2026-11-12, NOT device-verified): terrace pads layer. Each pad blends into the ground beneath it, not the base level, and pads can be reordered.**
+
+**The report.** The user, 2026-11-12, after v2.499.814: "It seems like I should be able to overlap them and have them blend into each other but they really both try to blend to the underlying terrain." Then: "you should be able to set the order somehow and not just depend on order of creation."
+
+**How it was built.** Codex built it. Claude ruled on sharp corners (taper) and checked it in Chromium.
+
+**The rule** (`static/twin/twin_ground.js` `groundAt`; server parity in `services/twin_terrain.py`).
+- **Layering:** pads stack in their stored order, later on top, over the lot datum 0.
+- **Blending:** for each pad, h = h + w·(pad − h). The weight w is 1 inside the pad, a smoothstep over `blend` by distance to its nearest SLOPE edge, and 0 straight across a sharp edge.
+- **So a pad's slope runs to the surface built so far:** earlier pads, then the datum. A patio overlapping a lower yard slopes from 0 down to −4 into the yard; the yard's outer edge still slopes to the datum. A sharp edge steps to the surface below.
+- **Sharp corners** (Claude's ruling): where a sharp edge meets a slope edge, the slope band tapers smoothly to zero toward the sharp edge's outward side. The only discontinuity is across the sharp edge itself.
+- **Unchanged:** auto foundations still read the highest ground under the footprint; existing pads keep their order (no data rewrite).
+
+**Order.**
+- **The pad's shelf** shows "Layer N of M", with Bring forward and Send back.
+- **Server:** a new `reorder_pad {id, to}` op (zero-based final index) is validated and goes through history, undo and redo.
+
+**Tests.**
+- `test_twin_ground_js`: the yard/patio overlap is monotone, there is no dip to the datum, the reversed order puts the yard on top, a sharp step goes to the pad below, a nested pad slopes to the outer pad, the corner taper is continuous, and the auto foundation follows.
+- `test_twin_terrain`: reorder validation, ops, undo and redo, HTTP.
+- `test_twin_terrain_tools_js` and `test_twin_bake_runtime_js`.
+- Browser `test_house_twin_ground_live` 3/3: overlapping −4/0 pads slope 0 to −4; Send back flips the top.
 
 **v2.499.815 (2026-11-12, NOT device-verified): the wall panel finds the desk's lighting bake again. One bake key on every tier.**
 

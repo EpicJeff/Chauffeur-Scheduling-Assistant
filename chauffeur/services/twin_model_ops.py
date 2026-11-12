@@ -492,7 +492,7 @@ MORE_OPS = ('set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_sour
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
             'move_site_item', 'delete_site_item', 'add_site_item', 'place_device', 'unplace_device',
-            'add_pad', 'update_pad', 'delete_pad', 'set_foundation')
+            'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation')
 
 
 def _item_scale(value):
@@ -1181,7 +1181,7 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
         raise Refused('That operation is not available.')
     op = deepcopy(op)
     model, notes = twin_model.normalize(model)
-    if kind in ('add_pad', 'update_pad', 'delete_pad', 'set_foundation'):
+    if kind in ('add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation'):
         from services import twin_terrain
         if kind == 'set_foundation':
             b = _find(model, 'buildings', op.get('building'))
@@ -1203,6 +1203,14 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
                 pad = _find(model['site'], 'terraces', op.get('id'))
             if kind == 'delete_pad':
                 pads.remove(pad)
+            elif kind == 'reorder_pad':
+                to = op.get('to')
+                if type(to) is not int or not 0 <= to < len(pads):
+                    raise Refused('Choose a pad layer within the stored order (starting at 0).')
+                pads.remove(pad)
+                pads.insert(to, pad)
+                if actor == 'person':
+                    pad['src'] = {'person': True}
             else:
                 for key in ('polygon', 'height', 'blend', 'edges'):
                     if key in op:
