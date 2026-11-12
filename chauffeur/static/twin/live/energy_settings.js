@@ -1,11 +1,22 @@
 import { energyLocations, energyAnchors } from './energy_geometry.js';
 import { base } from '../twin_library.js';
 import { guessEnergy, ROLES } from './energy_mapping.js';
+import { energyCheck, renderEnergyCheck } from './energy_check.js';
 
 export function mountEnergySettings(view, {api = (path, init) => fetch(base() + path, init)} = {}) {
   const editor = document.getElementById('twin-energy-fields'), save = document.getElementById('twin-energy-save');
   const search = document.getElementById('twin-energy-search');
   const events = new AbortController(); let stopped = false, draft = null, preferences = null, ready = false;
+  const check = document.createElement('section'), title = document.createElement('h3'), checkBody = document.createElement('div');
+  check.id = 'twin-energy-check'; check.className = 'twin-energy-check'; title.textContent = 'Energy check'; check.append(title, checkBody);
+  save?.parentNode?.append(check);
+  let subscribedLive = null, unsubscribe = null;
+  function refreshCheck() {
+    if (!preferences) return;
+    const states = view.live?.peek() || {}, mapping = guessEnergy(states, preferences.mapping, preferences.cars);
+    // Saved sources only: these are also the sources used by the ribbons.
+    renderEnergyCheck(checkBody, view.live?.energy?.()?.check || energyCheck(view, view.live?.layout?.(), mapping, states, view.live?.stale?.() ?? true));
+  }
   if (save) save.disabled = true;
   const listen = (node, event, action) => node?.addEventListener(event, action, {signal: events.signal});
   const caption = key => key.replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
@@ -76,6 +87,10 @@ export function mountEnergySettings(view, {api = (path, init) => fetch(base() + 
     preferences = p; view.energySources = p;
     view.live?.configureEnergy(p);
     view.glance?.energy(guessEnergy(view.live?.peek(), p.mapping, p.cars));
+    if (subscribedLive !== view.live) {
+      unsubscribe?.(); subscribedLive = view.live; unsubscribe = view.live?.subscribe?.(refreshCheck);
+    }
+    refreshCheck();
   }
   async function reload() {
     try {
@@ -98,5 +113,5 @@ export function mountEnergySettings(view, {api = (path, init) => fetch(base() + 
     finally {if (!stopped) save.disabled = false;}
   });
   const timer = setInterval(reload, 30000); reload();
-  return {reload, refreshChoices() {if (preferences) {apply(preferences); if (ready) render();}}, stop() {stopped = true; clearInterval(timer); events.abort();}};
+  return {reload, refreshChoices() {if (preferences) {apply(preferences); if (ready) render();}}, stop() {stopped = true; clearInterval(timer); events.abort(); unsubscribe?.(); check.remove();}};
 }

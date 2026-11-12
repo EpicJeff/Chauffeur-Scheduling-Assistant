@@ -39,17 +39,20 @@ export function buildingCentre(building, plan) {
 export function energyLocations(view, layout) {
   const options=[];
   for(const m of layout?.markers || [])if(m.placed && m.location_valid!==false)options.push({ref:{type:'device',id:m.device_id},label:'Placed device: '+(m.name || m.device_id),entities:[m.entity_id,...(m.entities || [])].filter(Boolean),
-    at:[m.at[0],m.at[1],m.at[2]+groundAt(view.plan,...(view.plan.buildings.find(b=>b.id===m.building)?.position || [0,0]))]});
+    marker:m, at:[m.at[0],m.at[1],m.at[2]+groundAt(view.plan,...(view.plan?.buildings.find(b=>b.id===m.building)?.position || [0,0]))]});
   for(const b of view.plan?.buildings || [])for(const p of b.anchors || [])if(['meter','electric_panel'].includes(p.kind) && p.state!=='ghost'){
-    try{options.push({ref:{type:'object',id:p.id,building:b.id},kind:p.kind,label:(p.kind==='meter'?'Meter':'Electric panel')+' object: '+(b.name || b.id)+' / '+p.id,at:lotPoint(b,hostPoint(b,p.host,(p.offset || 0)+.04),view.plan)});}catch{}
+    try{options.push({ref:{type:'object',id:p.id,building:b.id},kind:p.kind,host:p.host,label:(p.kind==='meter'?'Meter':'Electric panel')+' object: '+(b.name || b.id)+' / '+p.id,at:lotPoint(b,hostPoint(b,p.host,(p.offset || 0)+.04),view.plan)});}catch{}
   }
   return options;
+}
+export function resolveEnergyLocation(options,ref,entity,kind) {
+  return ref===undefined?options.find(o=>o.ref.type==='device' && entity && o.entities.includes(entity)):
+    ref && options.find(o=>o.ref.type===ref.type && o.ref.id===ref.id && (ref.type==='device' || o.ref.building===ref.building && o.kind===kind));
 }
 export function energyAnchors(view,layout,mapping) {
   const options=energyLocations(view,layout),locations=mapping.locations || {};
   const resolve=(ref,entity,kind)=>{
-    const option=ref===undefined?options.find(o=>o.ref.type==='device' && entity && o.entities.includes(entity)):
-      ref && options.find(o=>o.ref.type===ref.type && o.ref.id===ref.id && (ref.type==='device' || o.ref.building===ref.building && o.kind===kind));
+    const option=resolveEnergyLocation(options,ref,entity,kind);
     return option?.at || null;
   };
   const zones=(view.plan?.buildings || []).flatMap(b=>solarZones(b).map(z=>({...z,building:b})));

@@ -24,6 +24,10 @@ def setup():
                'grid_power': 'sensor.live_grid', 'house_power': 'sensor.live_house',
                'battery_positive': 'discharge', 'grid_positive': 'import', 'cars': []}
     twin_energy.save(mapping)
+    # The glance bar holds only chosen tiles (v2.499.796): choose the four totals here.
+    from services import twin_glance
+    twin_glance.save([{'entity': 'sensor.live_' + k, 'icon': i, 'label': ''} for k, i in
+                      (('solar', 'solar'), ('battery', 'battery'), ('grid', 'grid'), ('house', 'house'))], False)
     for key, value in (('solar', 4000), ('battery', -2000), ('grid', -1500), ('house', 500)):
         eid = 'sensor.live_' + key
         L.FAKE.states[eid] = {'entity_id': eid, 'state': str(value),
@@ -248,9 +252,44 @@ def scenario_no_programs_on_second_entry_to_either_mode():
         L.no_errors(served)
 
 
+def scenario_energy_check_explains_removed_meter():
+    served = setup()
+    if served is None:
+        return
+    from services import twin_store
+
+    def remove_meter(model):
+        model = copy.deepcopy(model)
+        for building in model['buildings']:
+            building['anchors'] = [p for p in building.get('anchors', []) if p.get('kind') != 'meter']
+        return model
+
+    # Keep the saved grid location pointing at the removed object. Nothing
+    # may silently replace it with a guessed device or a building centre.
+    twin_store.update_model(remove_meter, 'edit', note='Remove meter for Energy check scenario')
+    push_totals(0, -2000, 2500, 500)
+    with served.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
+        page.get_by_role('button', name='Energy', exact=True).click()
+        page.wait_for_function("() => window.__twin.live.energy().check?.summary === 'No ribbons because Meter / grid not placed'")
+        page.get_by_role('link', name='Why no ribbons?', exact=True).click()
+        panel = page.locator('#twin-mode-legend .twin-energy-check')
+        meter = panel.locator('[data-energy-role="grid"]')
+        check(meter.get_attribute('data-status') == 'unplaced', 'removed meter is unplaced')
+        check('sensor.live_grid' in meter.inner_text() and 'add a meter object' in meter.inner_text(), meter.inner_text())
+        for flow in ('grid:house', 'grid:battery'):
+            row = panel.locator('[data-energy-flow="' + flow + '"]')
+            check('no ribbon: Meter / grid not placed' in row.inner_text(), row.inner_text())
+        check(page.evaluate('() => window.__twin.live.energy().ribbons.every(r => !r.visible)'), 'no grid ribbon without its real meter')
+        page.evaluate("() => window.__twin.setTime('night')")
+        shot(page, 'energy-check-removed-meter-night-wall.png')
+        L.no_errors(served)
+
+
 SCENARIOS = [scenario_energy_ribbons_labels_and_grid_push,
              scenario_security_attention_camera_and_lock_push,
-             scenario_no_programs_on_second_entry_to_either_mode]
+             scenario_no_programs_on_second_entry_to_either_mode,
+             scenario_energy_check_explains_removed_meter]
 
 if __name__ == '__main__':
     L.run(SCENARIOS)

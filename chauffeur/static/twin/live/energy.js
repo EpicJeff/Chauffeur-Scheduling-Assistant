@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { isEnergyEntity } from './glance.js';
-import { guessEnergy, energyFlows, carHome, flowReading } from './energy_mapping.js';
+import { guessEnergy, carHome, flowReading } from './energy_mapping.js';
+import { energyCheck, renderEnergyCheck } from './energy_check.js';
 import { energyTopology, energyPlacementLegend, energyAnchors, worldPoint, roofPoints, flowCurve, flowRoute } from './energy_geometry.js';
 
 export const FLOW_COLORS = {solar: '#efbd24', battery: '#31ae62', grid: '#338bd9', house: '#57a8da', car: '#9957d2'};
@@ -72,7 +73,19 @@ export function flowLabelPositions(entries, rect) {
 export function mountEnergy({view, live, warm, overlays = view.scene}) {
   const root = new THREE.Group(); root.userData.twinMode = 'energy'; overlays.add(root);
   const labels = document.createElement('div'); labels.className = 'twin-mode-labels twin-energy-labels'; document.body.append(labels);
-  let key = '', mapping = {}, ribbons = [], cars = [], anchors = null;
+  let key = '', mapping = {}, ribbons = [], cars = [], anchors = null, check = null;
+  const checkControls = document.createElement('div'), checkLink = document.createElement('a'), checkPanel = document.createElement('section');
+  checkLink.href = '#twin-energy-check'; checkLink.textContent = 'Why no ribbons?';
+  checkPanel.className = 'twin-energy-check'; checkPanel.hidden = true; checkPanel.setAttribute('aria-label', 'Energy check');
+  checkLink.setAttribute('aria-expanded', 'false');
+  checkLink.addEventListener('click', event => {
+    event.preventDefault();
+    if (document.getElementById('twin-energy-check') && window.chfOpenSettings) {
+      window.chfOpenSettings('twin', 'twin-energy-check'); return;
+    }
+    checkPanel.hidden = !checkPanel.hidden; checkLink.setAttribute('aria-expanded', String(!checkPanel.hidden));
+  });
+  checkControls.append(checkLink, checkPanel);
   const layout = live.layout();
   const roofFade = createRoofFade(view);
   let source = null, plan = null, highestRoof = 0, roofRevision = 0;
@@ -125,6 +138,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
   }
   const effects = {
     legend:()=>energyPlacementLegend(anchors || energyAnchors(view,layout,mapping),mapping) || 'Yellow: Solar | Green: Battery | Blue: Grid | Purple: Charger | Flow below 50 W hidden',
+    legendContent:()=>checkControls,
     warm: () => roofFade.warm(),
     warmObjects: () => {const objects = []; root.traverse(o => {objects.push(o);}); return objects;},
     update(mode) {
@@ -141,11 +155,14 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       const next = JSON.stringify([anchors, roofRevision, ['solar_power', 'battery_power', 'grid_power', 'house_power'].map(k => !!mapping[k]),
         mapping.cars.map(c => [c.id, !!c.charge_power])]);
       if (key !== next) {key = next; rebuild(anchors);}
-      const flows = live.stale() ? {} : energyFlows(mapping, states, anchors.zoneEntities);
+      check = energyCheck(view, layout, mapping, states, live.stale(), anchors);
+      renderEnergyCheck(checkPanel, check);
+      const flows = new Map(check.flows.map(row => [row.id, row]));
       for (const row of ribbons) {
         const car = row.id.startsWith('car:') ? mapping.cars[Number(row.id.split(':')[1])] : null;
-        row.reading = {...flowReading(flows[row.id] || 0), watts: flows[row.id] || 0};
-        row.halo.visible = row.mesh.visible = mode === 'energy' && row.reading.visible && (!car || carHome(car, states));
+        const flow = flows.get(row.id);
+        row.reading = {...flowReading(flow?.watts || 0), watts: flow?.watts || 0};
+        row.halo.visible = row.mesh.visible = mode === 'energy' && !!flow?.shown;
         row.mesh.material.uniforms.radius.value = row.reading.width / 2;
         row.halo.material.uniforms.radius.value = row.reading.width;
         const names = {house:'home',grid:'grid',battery:'battery',solar:'solar'};
@@ -182,10 +199,10 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       const seconds = performance.now() / 1000;
       for (const r of ribbons) r.halo.material.uniforms.phase.value = r.mesh.material.uniforms.phase.value = seconds * r.reading.speed * r.reading.direction;
     },
-    snapshot: () => ({mapping, anchors: energyAnchors(view, layout, mapping), ribbons: ribbons.map(r => ({id: r.id, ...r.reading, visible: r.mesh.visible,
+    snapshot: () => ({mapping, check, anchors: energyAnchors(view, layout, mapping), ribbons: ribbons.map(r => ({id: r.id, ...r.reading, visible: r.mesh.visible,
       midpoint: r.point.toArray(), from: r.route.from, to: r.route.to, hue: r.hue, path: r.curve.getPoints(15).map(p => p.toArray())})),
       cars: cars.map(r => ({id: r.car.id, visible: r.mesh.visible})), plane: anchors?.source || null, legend:energyPlacementLegend(anchors || {},mapping)}),
-    stop() { clear(); roofFade.stop(); root.removeFromParent(); labels.remove(); }
+    stop() { clear(); roofFade.stop(); root.removeFromParent(); labels.remove(); checkControls.remove(); }
   };
   return effects;
 }

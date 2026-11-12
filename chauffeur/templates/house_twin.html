@@ -25,7 +25,7 @@
     {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'unlit', 'twin_roof', 'twin_ground', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
-    {% for name in ['twin_solar', 'live/climate', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/energy_settings', 'live/security'] %}
+    {% for name in ['twin_solar', 'live/climate', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/energy_check', 'live/energy_settings', 'live/security'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     twinImports[new URL(twinBase + 'static/vendor/lucide/icons.js', location.href).href] = twinBase + {{ 'static/vendor/lucide/icons.js' | ver | tojson }};
@@ -193,7 +193,7 @@
     #twin-tier { bottom:calc(var(--panel-shelf-h, 0px) + 90px); }
     #twin-hud { bottom:calc(var(--panel-shelf-h, 0px) + 136px); }
     #twin-status { bottom:calc(var(--panel-shelf-h, 0px) + 90px); }
-    #twin-mode-legend { align-self:center; padding:8px 12px; background:rgba(28,23,16,.9); border-radius:8px; color:#f0e6cf; max-width:calc(100vw - 32px); }
+    #twin-mode-legend { pointer-events:auto; align-self:center; padding:8px 12px; background:rgba(28,23,16,.9); border-radius:8px; color:#f0e6cf; max-width:calc(100vw - 32px); }
     .twin-mode-labels { position:fixed; inset:0; pointer-events:none; z-index:44; overflow:hidden; }
     .twin-mode-labels span { position:absolute; transform:translate(-50%, -50%); white-space:nowrap; padding:4px 8px; border-radius:8px; background:rgba(28,23,16,.94); color:#f0e6cf; font:600 13px system-ui; }
     #twin-idle { position:fixed; inset:0 0 var(--panel-shelf-h, 0px); z-index:49; pointer-events:none; color:#f3f2f7; }
@@ -238,6 +238,14 @@
     #twin-energy-settings button { min-height:44px; padding:8px 12px; border:1px solid #4b5563; border-radius:8px; color:white; background:#374151; }
     #twin-energy-settings button:disabled { opacity:.4; }
     #twin-energy-settings fieldset { margin:12px 0; padding:10px; border:1px solid #4b5563; border-radius:8px; }
+    /* Energy check reuses the energy drawer's fieldsets; the legend reads the same rows. */
+    .twin-energy-check fieldset { margin:12px 0; padding:10px; border:1px solid #4b5563; border-radius:8px; }
+    .twin-energy-check p { margin:6px 0; overflow-wrap:anywhere; }
+    /* The check's role names are fieldset legends; the controls bar hides its legends, so show these. */
+    #twin-mode-legend legend { position:static; width:auto; height:auto; overflow:visible; clip-path:none; font-weight:700; padding:0 4px; }
+    #twin-mode-legend a { display:inline-block; min-height:44px; padding:10px 0; text-decoration:underline; }
+    #twin-mode-legend .twin-energy-check { max-height:50dvh; overflow-y:auto; }
+    #twin-mode-legend a:focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
   </style>
 </head>
 <body>

@@ -50,7 +50,7 @@ export function carHome(car, states) {
 
 // Instantaneous watts only. Allocate before applying the display threshold so
 // dropping a small flow never redirects it to a different destination.
-export function allocateEnergyFlows(totals, mapping = {}) {
+export function allocateEnergyFlows(totals, mapping = {}, includeHidden = false) {
   const number = value => Number.isFinite(value) ? value : 0;
   const positive = value => Math.max(0, number(value));
   const solar = positive(totals.solar);
@@ -73,10 +73,10 @@ export function allocateEnergyFlows(totals, mapping = {}) {
     ['battery:house', batteryHome], ['grid:house', gridHome],
     ['grid:battery', gridBattery], ['battery:grid', batteryGrid],
     ...chargers.map((value, i) => ['car:' + i, value])
-  ].map(([id, value]) => [id, Math.max(0, value)]).filter(([,value]) => value >= 50));
+  ].map(([id, value]) => [id, Math.max(0, value)]).filter(([,value]) => includeHidden || flowReading(value).visible));
 }
 
-export function energyFlows(mapping, states, zoneEntities = []) {
+export function energyFlows(mapping, states, zoneEntities = [], includeHidden = false) {
   const zoneReadings = zoneEntities.map(id => watts(id, states));
   const solar = mapping.solar_power ? watts(mapping.solar_power, states)
     : zoneReadings.some(value => value === null) ? null : zoneReadings.reduce((sum,value) => sum + Math.max(0, value), 0);
@@ -86,7 +86,7 @@ export function energyFlows(mapping, states, zoneEntities = []) {
   const known = home !== null && solar !== null && (!mapping.battery_power || battery !== null) && (!mapping.grid_power || grid !== null);
   return allocateEnergyFlows({solar: known ? solar : 0, battery: known ? battery : 0,
     grid: known ? grid : 0, home: known ? home : 0,
-    chargers: (mapping.cars || []).map(car => carHome(car, states) ? watts(car.charge_power, states) : 0)}, mapping);
+    chargers: (mapping.cars || []).map(car => carHome(car, states) ? watts(car.charge_power, states) : 0)}, mapping, includeHidden);
 }
 export function flowReading(value, positive = true) {
   const magnitude = Math.abs(value || 0);
