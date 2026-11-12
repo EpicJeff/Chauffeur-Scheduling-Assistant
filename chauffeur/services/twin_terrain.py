@@ -149,25 +149,37 @@ def inside(poly, p):
 
 
 def ground_at(pads, p):
-    for pad in reversed(pads):
-        if inside(pad['polygon'], p):
-            return pad['height']
-    total, weight = 0, 0
+    def smooth(t):
+        t = min(1, max(0, t))
+        return t*t*(3-2*t)
+
+    height = 0
     for pad in pads:
+        poly = pad['polygon']
+        if inside(poly, p):
+            height = pad['height']
+            continue
         blend = pad.get('blend', 6)
         if not blend:
             continue
-        poly = pad['polygon']
         ds = [distance(p, a, poly[(i+1) % len(poly)]) for i, a in enumerate(poly)]
-        d = min(ds)
-        if d >= blend or pad.get('edges', [{'edge': 'slope'}]*len(poly))[ds.index(d)]['edge'] == 'sharp':
+        edges = pad.get('edges', [{'edge': 'slope'}]*len(poly))
+        d = min((v for i, v in enumerate(ds) if edges[i]['edge'] != 'sharp'), default=math.inf)
+        if d >= blend:
             continue
-        t = 1-d/blend
-        influence = t*t*(3-2*t)
-        w = influence/max(1e-12, 1-influence)
-        total += w*pad['height']
-        weight += w
-    return total/(1+weight)
+        weight = smooth(1-d/blend)
+        winding = 1 if sum(cross([0, 0], a, poly[(i+1) % len(poly)]) for i, a in enumerate(poly)) > 0 else -1
+        for i, a in enumerate(poly):
+            if edges[i]['edge'] != 'sharp':
+                continue
+            b = poly[(i+1) % len(poly)]
+            inward = winding*cross(a, b, p)/math.dist(a, b)
+            # Match twin_ground.js: a continuous sharp-corner taper which
+            # reaches full weight at slope boundaries, even on concave pads.
+            clearance = max(0, inward) + max(0, ds[i]-d)
+            weight *= smooth(clearance/d)
+        height += weight*(pad['height']-height)
+    return height
 
 
 def validate_reads(buildings, site, notes):

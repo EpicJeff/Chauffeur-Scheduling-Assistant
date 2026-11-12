@@ -46,7 +46,15 @@ const raises = (data, state) => {
 };
 
 export function stateLabel(kind, state, attributes) {
-  const attrs = attributes || {}, value = String(state ?? 'unknown');
+  const attrs = attributes || {};
+  let value = String(state ?? 'unknown');
+  if (kind === 'sensor' && value.trim() && Number.isFinite(Number(value))) {
+    const explicit = attrs.display_precision ?? attrs.suggested_display_precision;
+    const unit = attrs.unit_of_measurement;
+    const decimals = explicit !== undefined && Number.isFinite(Number(explicit)) ? Math.max(0, Math.min(20, Math.trunc(Number(explicit))))
+      : ['W', '%'].includes(unit) ? 0 : attrs.device_class === 'temperature' || ['°F', '°C', 'K'].includes(unit) ? 1 : 2;
+    value = String(Number(Number(value).toFixed(decimals)));
+  }
   const contact = kind === 'sensor' && CONTACTS.includes(attrs.device_class) && ['on', 'off'].includes(value);
   return contact ? (value === 'on' ? 'open' : 'closed')
     : value + (kind === 'sensor' && attrs.unit_of_measurement ? ` ${attrs.unit_of_measurement}` : '');

@@ -28,6 +28,15 @@ const {buildTwin} = await import(file('static/twin/twin_generator.js'));
 const {disposeObject,cacheModelMaterials} = await import(file('static/twin/twin_library.js'));
 const {parkingPoint} = await import(file('static/twin/twin_hosts.js'));
 const {lotPoint} = await import(file('static/twin/live/energy_geometry.js'));
+// Validation and rendering must agree, including concave pads and both windings.
+for(const {pads,samples} of JSON.parse(readFileSync(process.argv[2])).terrainCases){
+  for(const [x,y,h] of samples)near(groundAt({site:{terraces:pads}},x,y),h);
+  const pad=pads.at(-1);
+  pad.polygon.forEach((a,i)=>{if(pad.edges[i].edge==='sharp')return;const b=pad.polygon[(i+1)%pad.polygon.length];
+    for(const t of [.01,.25,.5,.75,.99]){const p=a.map((v,j)=>v+t*(b[j]-v)),dx=b[0]-a[0],dy=b[1]-a[1],length=Math.hypot(dx,dy);
+      for(const sign of [-1,1])near(groundAt({site:{terraces:pads}},p[0]+sign*dy/length*1e-5,p[1]-sign*dx/length*1e-5),pad.height);}
+  });
+}
 const rect = [[0,0],[10,0],[10,10],[0,10]];
 const modelCache=new Map(), model1=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial()),model2=model1.clone();
 model2.material=model1.material.clone();const replaced=model2.material;let released=false;replaced.addEventListener('dispose',()=>released=true);
@@ -43,11 +52,70 @@ for(let x=-5.75;x<=.25;x+=.25){const h=groundAt(plan,x,5);assert.ok(Math.abs(h-l
 pad.edges[3].edge='sharp';assert.equal(groundAt(plan,-.001,5),0);assert.equal(groundAt(plan,.001,5),-1);
 pad.edges[3].edge='slope';
 plan.site.terraces.push({...structuredClone(pad),id:'later',height:2,polygon:[[5,5],[15,5],[15,15],[5,15]]});
-assert.equal(groundAt(plan,7,7),2);assert.equal(groundAt(plan,2,2),-1);
+assert.equal(groundAt(plan,7,7),2);
+const cornerWeight=(1-Math.hypot(3,3)/6)**2*(3-2*(1-Math.hypot(3,3)/6));
+near(groundAt(plan,2,2),-1+cornerWeight*3,'later band blends into the earlier interior');
 // Two disjoint pad bands overlap; both remain continuous and bounded.
 plan.site.terraces[1].polygon=[[15,0],[25,0],[25,10],[15,10]];
 last=groundAt(plan,10,5);
 for(let x=10.01;x<=15;x+=.01){const h=groundAt(plan,x,5);assert.ok(Math.abs(h-last)<.1);assert.ok(h>=-1&&h<=2);last=h;}
+// Grading layers: the zero-height patio grades into the -4 yard beneath it.
+const square=(x0,y0,x1,y1)=>[[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
+const yardPad={id:'yard',polygon:square(0,0,30,30),height:-4,blend:6};
+const patio={id:'patio',polygon:square(20,5,40,25),height:0,blend:6};
+const layered={site:{terraces:[yardPad,patio]}};
+near(groundAt(layered,25,15),0);near(groundAt(layered,5,15),-4);
+near(groundAt(layered,14,15),-4);near(groundAt(layered,17,15),-2);
+last=-4;
+for(let x=14;x<=20;x+=.01){const h=groundAt(layered,x,15);assert.ok(h>=last-1e-9&&h<=0);last=h;}
+near(groundAt(layered,-3,15),-2);near(groundAt(layered,-6,15),0);
+layered.site.terraces.reverse();near(groundAt(layered,25,15),-4);
+layered.site.terraces.reverse();
+// A nested pad's band ends on the outer pad, including a sharp step.
+const inner={...patio,polygon:square(10,10,20,20)};
+layered.site.terraces=[{...yardPad,polygon:square(-20,-20,40,40)},inner];
+near(groundAt(layered,7,15),-2);near(groundAt(layered,3,15),-4);near(groundAt(layered,15,15),0);
+inner.edges=inner.polygon.map(()=>({edge:'sharp'}));
+near(groundAt(layered,9.999,15),-4);near(groundAt(layered,10.001,15),0);
+// Mixed sharp/slope corner: continuity on a dense 2-D grid and on rings
+// around the endpoint. Only crossings of the sharp segment may jump.
+inner.edges=inner.polygon.map((_,i)=>({edge:i===3?'sharp':'slope'}));
+near(groundAt(layered,10.0001,9),-4,'taper reaches the sharp outward side continuously');
+near(groundAt(layered,10.1,9.99999),0,'taper still meets the sloped boundary at full weight');
+const crossesStep=(a,b)=>((a[0]<10-1e-9)!==(b[0]<10-1e-9))&&Math.min(a[1],b[1])>=10-1e-9&&Math.max(a[1],b[1])<=20+1e-9;
+for(let x=8;x<=12;x+=.005)for(let y=8;y<=12;y+=.005){
+  const a=[x,y];if(Math.hypot(x-10,y-10)<.3)continue;
+  for(const b of [[x+.005,y],[x,y+.005]])if(!crossesStep(a,b))
+    assert.ok(Math.abs(groundAt(layered,...a)-groundAt(layered,...b))<.2,`corner jump at ${a} -> ${b}`);
+}
+for(const radius of [.001,.01,.1,.5,1,3,6]){
+  let a=[10+radius,10];
+  for(let t=.001;t<=Math.PI*2;t+=.001){const b=[10+radius*Math.cos(t),10+radius*Math.sin(t)];
+    if(!crossesStep(a,b))assert.ok(Math.abs(groundAt(layered,...a)-groundAt(layered,...b))<.05,'corner ring continuity');a=b;}
+}
+// The all-slope surface is continuous across interiors, overlapping bands,
+// pad boundaries and the transition back to datum, in both orders.
+delete inner.edges;
+for(const pads of [[yardPad,patio],[patio,yardPad]]){
+  layered.site.terraces=pads;
+  for(const y of [-3,0,3,5,15,25,30,33]){last=groundAt(layered,-7,y);
+    for(let x=-6.99;x<=47;x+=.01){const h=groundAt(layered,x,y);assert.ok(Math.abs(h-last)<.03);last=h;}}
+}
+layered.site.terraces=[{...yardPad,polygon:square(-20,-20,40,40)},inner];
+const bandBuilding={position:[0,0],rotation:0,base:9,foundation:{mode:'auto',offset_ft:.5},
+  levels:[{id:'L1',elevation:0,outline:square(6,14,8,16)}]};
+near(buildingBase(layered,bandBuilding),groundAt(layered,8,15)+.5);
+layered.site.terraces.reverse();near(buildingBase(layered,bandBuilding),-3.5);
+// The existing skirt builder must connect the new layered heights.
+inner.edges=inner.polygon.map(()=>({edge:'sharp'}));
+layered.site.terraces.reverse();
+const layeredGeometry=terrainGeometry(layered,square(5,5,25,25),'low',{skirts:true});
+const lp=layeredGeometry.attributes.position,li=layeredGeometry.index;
+assert.ok(Array.from({length:li.count/3},(_,i)=>[0,1,2].map(j=>lp.getY(li.getX(i*3+j))))
+  .some(ys=>Math.min(...ys)<-3.99&&Math.max(...ys)>-.01),'skirt connects patio to earlier yard, not datum');
+tintGrade(layeredGeometry,true);
+for(let i=0;i<lp.count;i++)near(layeredGeometry.attributes.color.getX(i),.35+.5*(.5+lp.getY(i)/20));
+layeredGeometry.dispose();
 plan.site.terraces=[{...pad,height:4,blend:0,edges:rect.map(()=>({edge:'sharp'}))}];
 const b={id:'b',position:[0,0],rotation:0,base:0,foundation:{mode:'auto',offset_ft:.5,thickness_ft:1},
   levels:[{id:'L1',elevation:0,ceiling:8,outline:[[-2,-2],[12,-2],[12,12],[-2,12]]}],walls:[],rooms:[],roof:{sections:[]},anchors:[],items:[]};
@@ -146,12 +214,25 @@ console.log('Ground, overlap bands, sharp skirts, foundation, parking, real yard
 
 
 def run():
+    from services.twin_terrain import ground_at
+
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
     kit['manifest'] = {}
+    lower = {'polygon': [[-20, -20], [30, -20], [30, 30], [-20, 30]], 'height': -4}
+    shapes = [([[0, 0], [10, 0], [10, 10], [0, 10]], 3),
+              ([[0, 0], [10, 0], [10, 3], [3, 3], [3, 10], [0, 10]], 3)]
+    terrain_cases = []
+    for polygon, sharp in shapes:
+        edges = [{'edge': 'sharp' if i == sharp else 'slope'} for i in range(len(polygon))]
+        pads = [lower, {'polygon': polygon, 'height': 0, 'blend': 6, 'edges': edges}]
+        samples = [[x/2, y/2, ground_at(pads, [x/2, y/2])] for x in range(-12, 33) for y in range(-12, 33)]
+        terrain_cases.append({'pads': pads, 'samples': samples})
+        reversed_pad = {**pads[1], 'polygon': polygon[::-1], 'edges': [edges[(len(edges)-2-i) % len(edges)] for i in range(len(edges))]}
+        terrain_cases.append({'pads': [lower, reversed_pad], 'samples': samples})
     with tempfile.TemporaryDirectory(prefix='chauffeur_ground_node_') as directory:
         driver, data = Path(directory) / 'driver.mjs', Path(directory) / 'input.json'
         driver.write_text(DRIVER, encoding='utf-8')
-        data.write_text(json.dumps({'root': ROOT.as_posix(), 'flat': {}, 'kit': kit}), encoding='utf-8')
+        data.write_text(json.dumps({'root': ROOT.as_posix(), 'flat': {}, 'kit': kit, 'terrainCases': terrain_cases}), encoding='utf-8')
         result = subprocess.run([shutil.which('node'), str(driver), str(data)], capture_output=True, text=True, timeout=300)
         print(result.stdout, end='')
         if result.returncode:

@@ -370,7 +370,7 @@ def scenario_lights_mode_keeps_the_day():
     with s.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, s)
         others_off(page)
-        page.evaluate("() => { window.__twin.setTime('day'); window.__twin.setView('ext'); window.__twin.setCamera('front'); }")
+        page.evaluate("() => { window.__twin.setTime('day'); window.__twin.levels.go({level:'house'},{immediate:true}); }")
         calm(page)
         day = look(page)
         grid = [[x / 10, y / 10] for x in range(2, 9) for y in range(2, 9)]
@@ -390,7 +390,9 @@ def scenario_lights_mode_keeps_the_day():
         check(all(l['intensity'] == 0 for l in lamps['lamps']), ('decorative room lamps are off', lamps))
         check(all(value == 0 for value in lamps['fixtures']), ('decorative fixture emissive is off', lamps))
 
-        page.get_by_role('button', name='Night', exact=True).locator('visible=true').click()
+        page.locator('#twin-preview-gear').click()
+        page.locator('#twin-time-preview [data-time="night"]').click()
+        page.get_by_role('button', name='Close settings', exact=True).click()
         calm(page)
         night_mean = mean(map(lum, screen_pixels(page, grid)))
         check(night_mean < during_mean * .70, ('Night changes the look at once in Lights mode', during_mean, night_mean))
@@ -447,7 +449,7 @@ def scenario_all_after_a_floor_change_in_lights_follows_the_floor():
     L.facts()
     with s.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, s)
-        page.evaluate("() => { window.__twin.setView('ext'); window.__twin.setTime('night'); }")
+        page.evaluate("() => { window.__twin.levels.go({level:'house'},{immediate:true}); window.__twin.setTime('night'); }")
         calm(page)
         check_night_lamps(page, 'night in Ext before Lights')
         lights_mode(page)
@@ -458,7 +460,7 @@ def scenario_all_after_a_floor_change_in_lights_follows_the_floor():
             const v = window.__twin, levels = v.groups.levels, keys = v.levelKeys();
             const lamps = (v.roomLights || []).map(l => l.userData.level);
             for (const key of keys) {
-                v.setView(key);
+                {const b=v.plan.buildings.find(b=>b.levels.some(l=>b.id+':'+l.id===key));const f=b.levels.find(l=>b.id+':'+l.id===key);v.levels.go({building:b.id,floor:f.id},{immediate:true});}
                 await new Promise(resolve => setTimeout(resolve, 600));
                 if (lamps.some(level => !levels[level]?.visible)) return key;
             }
@@ -474,7 +476,7 @@ def scenario_all_after_a_floor_change_in_lights_follows_the_floor():
         calm(page)
         all_mode(page)
         check_night_lamps(page, 'All after a floor change in Lights')
-        page.evaluate("() => window.__twin.setView('ext')")
+        page.evaluate("() => window.__twin.levels.go({level:'house'},{immediate:true})")
         calm(page)
         check_night_lamps(page, 'Ext again after All')
         L.no_errors(s)
@@ -529,7 +531,7 @@ def scenario_a_rebuild_in_lights_keeps_the_night_lamps_after_all():
     L.facts()
     with s.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, s)
-        page.evaluate("() => { window.__twin.setView('ext'); window.__twin.setTime('night'); }")
+        page.evaluate("() => { window.__twin.levels.go({level:'house'},{immediate:true}); window.__twin.setTime('night'); }")
         calm(page)
         check_night_lamps(page, 'night before Lights')
         night = look(page)

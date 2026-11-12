@@ -1,6 +1,59 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.815 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.817 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.817 (2026-11-12, NOT device-verified): twin viewer navigation by levels (slice 2c-1). House → building → floor → room, orbit and zoom only, top-down floors, swipe room to room, a path chip, and attention-only devices above room level.**
+
+**Design:** `docs/superpowers/specs/2026-11-12-twin-viewer-navigation-design.md`, approved by the user 2026-11-12.
+- **Why:** "I don't like the floor buttons"; free camera movement is "too free"; the second floor never faded while zooming.
+- **Rulings:** focusing a building only moves the camera, so nothing ghosts; things disappear only when you go down into a floor. At room level, swipe moves room to room with snapping, and a swipe toward no room is ignored. The user expects to tune all of this after living with it.
+
+**How it was built.** Codex built it in two rounds. Claude checked it in Chromium, fixed test rigs that mounted editor tools as the viewer, and recorded merges the sandbox could not.
+
+**Levels** (`static/twin/levels.js`, the only owner of viewer camera targets and per-level visibility). Every tunable is a named constant in one exported object.
+- **House:** orbit around the centroid of all buildings; one large icon per building.
+- **Building:** orbit around that building; floor icons beside it.
+- **Floor:** top-down on that floor's flat cutaway; room cards. The parts above peel away: upper floors, roofs, and canopies or overhangs directly over the floor.
+- **Room:** top-down, framed to the room, showing all of its devices. 2b clumps fan inside the room rather than moving the fixed camera.
+- **Skips:** a one-building house skips House; a one-floor building skips the floor icons.
+- **Gestures:** pinch or wheel past a level's zoom range commits the next level (springing back below the threshold). Swipe orbits at House and Building, is ignored at Floor, and moves room to room at Room (the neighbour is the room within ±45° of the swipe, nearest, with ties going to the larger shared wall). There is no free pan in the viewer; the editor keeps its free camera.
+- **Attention devices** show at every level and in every mode; tapping one goes to its room. Ordinary devices show only at Room level.
+- **Path chip** (top left): "House › Main House › 2nd floor › Kitchen". Every part is tappable; House is omitted on a one-building house.
+- **Removed (approved):** the floor buttons, the camera buttons (Front/Porch/Rear/Top), and distance-band zoom fades in the viewer.
+- **Now/Day/Night** moved into the house settings drawer.
+- **Idle** orbits at House level; wake restores the exact level, building, floor, room and camera.
+- **Fixed alongside:**
+  - sensor labels round by `display_precision` or by unit (W whole; kW/kWh 2 dp; temperatures 1 dp; % whole);
+  - empty, unnamed rooms never get a hidden "0 devices" card.
+
+**Tests.**
+- Node: `test_twin_levels_js` (transitions, skips, pinch commit and spring-back, the neighbour choice, attention visibility, the path chip, no materials created, idle restore), plus live rooms, markers, idle, ring, viewing and palette.
+- Browser `test_house_twin_levels_live` 3/3: wall → building → 1st floor top-down → room card → swipe → two pinches back, old controls absent, drawer time preview, no new GPU programs on a second round trip.
+- Browser: viewing 5/5, wall 2/2, rooms 10/10, markers 9/9, controls 4/4, glance 10/10, energy 7/7, energy equipment 4/4, real lights 10/10, real sun 4/4, ground 2/2, objects.
+- Browser bake 17/19 under parallel load. The bake probe shows the desk bake starting about 8 s after load and landing lights; the misses were the 60 s start window and a dropped connection.
+
+**v2.499.816 (2026-11-12, NOT device-verified): terrace pads layer. Each pad blends into the ground beneath it, not the base level, and pads can be reordered.**
+
+**The report.** The user, 2026-11-12, after v2.499.814: "It seems like I should be able to overlap them and have them blend into each other but they really both try to blend to the underlying terrain." Then: "you should be able to set the order somehow and not just depend on order of creation."
+
+**How it was built.** Codex built it. Claude ruled on sharp corners (taper) and checked it in Chromium.
+
+**The rule** (`static/twin/twin_ground.js` `groundAt`; server parity in `services/twin_terrain.py`).
+- **Layering:** pads stack in their stored order, later on top, over the lot datum 0.
+- **Blending:** for each pad, h = h + w·(pad − h). The weight w is 1 inside the pad, a smoothstep over `blend` by distance to its nearest SLOPE edge, and 0 straight across a sharp edge.
+- **So a pad's slope runs to the surface built so far:** earlier pads, then the datum. A patio overlapping a lower yard slopes from 0 down to −4 into the yard; the yard's outer edge still slopes to the datum. A sharp edge steps to the surface below.
+- **Sharp corners** (Claude's ruling): where a sharp edge meets a slope edge, the slope band tapers smoothly to zero toward the sharp edge's outward side. The only discontinuity is across the sharp edge itself.
+- **Unchanged:** auto foundations still read the highest ground under the footprint; existing pads keep their order (no data rewrite).
+
+**Order.**
+- **The pad's shelf** shows "Layer N of M", with Bring forward and Send back.
+- **Server:** a new `reorder_pad {id, to}` op (zero-based final index) is validated and goes through history, undo and redo.
+
+**Tests.**
+- `test_twin_ground_js`: the yard/patio overlap is monotone, there is no dip to the datum, the reversed order puts the yard on top, a sharp step goes to the pad below, a nested pad slopes to the outer pad, the corner taper is continuous, and the auto foundation follows.
+- `test_twin_terrain`: reorder validation, ops, undo and redo, HTTP.
+- `test_twin_terrain_tools_js` and `test_twin_bake_runtime_js`.
+- Browser `test_house_twin_ground_live` 3/3: overlapping −4/0 pads slope 0 to −4; Send back flips the top.
 
 **v2.499.815 (2026-11-12, NOT device-verified): the wall panel finds the desk's lighting bake again. One bake key on every tier.**
 

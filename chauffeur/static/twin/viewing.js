@@ -50,7 +50,7 @@ export function peelSet(camera, samples, obstacles) {
   return new Set(obstacles.filter(o => samples.some(p => blocks(camera, p, o.box))).map(o => o.id));
 }
 
-export function createViewing(view, model, ground, changed) {
+export function createViewing(view, model, ground, changed, {explicit = false} = {}) {
   const channels = [], buildings = [], obstacles = [];
   const bindings = new Map(), replacements = [];
   let pinned = null, active = false, signature = '', selected = 'ext', transition = 0, previous = 0;
@@ -130,12 +130,15 @@ export function createViewing(view, model, ground, changed) {
       const distance = Math.hypot(...camera.map((v, i) => v - target[i]));
       // An explicit floor selection is valid even at exterior distance. Only
       // a clear outward zoom after that selection can release it.
-      if (pinned && distance > Math.max(pinnedDistance * 1.25, building.span * 1.85)) {
+      if (!explicit && pinned && distance > Math.max(pinnedDistance * 1.25, building.span * 1.85)) {
         pinned = null; building = focused;
       }
       active = !!building && bandActive(distance, building.span * 1.6, active, building.span * .04);
       let floor = null;
-      if (building && (pinned || active)) {
+      if (explicit) {
+        floor = pinned ? building?.floors.find(f => f.key === pinned) : null;
+        if (!floor) building = null;
+      } else if (building && (pinned || active)) {
         const nearest = nearestFloor(building.floors.map(f => f.l), target[2] - building.base);
         const desired = pinned ? building.floors.findIndex(f => f.key === pinned) : building.floors.findIndex(f => f.l === nearest);
         // Each upper storey has its own distance band. Never descend below the target's level.

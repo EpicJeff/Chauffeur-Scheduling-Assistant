@@ -10,6 +10,7 @@ import { mountRing } from './ring.js';
 import { isEnergyEntity, houseTempUnit } from './glance.js';
 import { mappedEntities } from './energy_mapping.js';
 import { mountCars } from './cars.js';
+import { animateCamera as easeCamera, deviceAtLevel } from '../levels.js';
 
 const FT = .3048, unreachable = 'Home Assistant is not reachable.';
 // Screen sizes in CSS px: a marker is a 44 px tap target (the page's own controls' hit height),
@@ -19,7 +20,7 @@ const MARKER_PX = 44, BADGE_PX = 52, LABEL_GAP = 4, LABEL_H = 23, LABEL_MAX = 19
 // says Home Assistant is not reachable, instead of waiting on a dead network for minutes.
 const REQUEST_MS = 15000;
 // Page chrome drawn over the scene: no label goes under it, and a marker under it gets none.
-const OVERLAYS = '#twin-controls > *, #twin-tier, #twin-hud, #twin-status, #panel-shelf, #panel-chat-orb, #chat-overlay-container, #twin-glance, #twin-room-panel, .twin-device-sheet, [data-ring], [data-ring] .twin-ring-side';
+const OVERLAYS = '#twin-controls > *, #twin-path, #twin-tier, #twin-hud, #twin-status, #panel-shelf, #panel-chat-orb, #chat-overlay-container, #twin-glance, #twin-room-panel, .twin-device-sheet, [data-ring], [data-ring] .twin-ring-side';
 let measurer = null;
 function labelWidth(text) {
   measurer ||= document.createElement('canvas').getContext('2d');
@@ -121,6 +122,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   sheet.setAttribute('role', 'dialog');
   // A control's call on its way, per entity, and the newest press waiting behind it (C10).
   const factRooms = new Set(), textures = markerTextureCache(), badges = new Map(), listeners = new Set(), busy = new Set(), waiting = new Map();
+  const clusterPool = [];
   const raycaster = new THREE.Raycaster(), projected = new THREE.Vector3(), scratch = new THREE.Vector3();
   let states = {}, stopped = false, stale = true, mode = null, timer = null, polling = Promise.resolve();
   let stream = null, pollChanges = null, pushed = false, warned = false, energyStreamKey = '';
@@ -148,7 +150,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   function notify() {
     revision++; overlays = null;
     for (const row of rows) {
-      row.stale = stale; row.dim = stale || !modeForeground(mode, row, states[row.entity_id]);
+      row.stale = stale; row.dim = stale || row.look !== 'attention' && !modeForeground(mode, row, states[row.entity_id]);
       textures.assign(row.sprite, iconKind(row), row.look, null, row.color);
       row.sprite.material.opacity = row.dim ? .4 : 1;
       const text = `${row.name} · ${row.label}`;
@@ -157,7 +159,6 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       const opacity = row.dim ? '.4' : '1';
       if (row.labelNode.style.opacity !== opacity) row.labelNode.style.opacity = opacity;
     }
-    flagFloors();
     const unit = houseTempUnit(states);
     factRooms.clear();
     for (const room of layout.rooms) {
@@ -168,18 +169,6 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     if (selected) showSheet(selected);
     // One broken listener never stops the others, or the polls that follow (review M3).
     for (const listener of [...listeners]) { try { listener(); } catch (error) { report(error); } }
-  }
-  // Attention pushes through at every level (twin design 5.1): the floor picker flags each
-  // floor holding something that wants attention, so a person looking elsewhere sees which.
-  function flagFloors() {
-    if (typeof document.querySelectorAll !== 'function') return;
-    const flagged = new Set(stopped ? [] : rows.filter(row => row.look === 'attention').map(row => `${row.building}:${row.level}`));
-    for (const button of document.querySelectorAll('#twin-views [data-view]')) {
-      const on = flagged.has(button.dataset.view);
-      if (on === button.hasAttribute('data-attention')) continue;
-      if (on) { button.setAttribute('data-attention', ''); button.setAttribute('aria-label', `${button.textContent}, needs attention`); }
-      else { button.removeAttribute('data-attention'); button.removeAttribute('aria-label'); }
-    }
   }
   function closeSheet() { selected = null; sheetKey = null; sheetStatus = null; sheet.hidden = true; sheet.replaceChildren(); }
   // A poll only refreshes the open sheet's status line; its buttons are rebuilt only when the
@@ -223,26 +212,11 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     if (!fan) return;
     fan = null; revision++;
   }
-  const cancelFlight = () => { flight = null; };
-  // No camera tween exists in the view. Both room and cluster taps use this
-  // cancellable ease; OrbitControls still owns its distance/zoom constraints.
+  const cancelFlight = () => { flight?.(); flight = null; };
+  // Room and clump framing share the level controller's cancellable ease.
   function animateCamera(target, distance, zoom = view.camera.zoom, done = () => {}) {
     closeFan();
-    const camera = view.camera, controls = view.controls;
-    const token = {}, from = camera.position.clone(), startTarget = controls.target.clone(), startZoom = camera.zoom;
-    const direction = from.clone().sub(startTarget).normalize();
-    const to = target.clone().addScaledVector(direction, distance);
-    const started = performance.now(); flight = token;
-    const step = () => {
-      if (stopped || flight !== token) return;
-      const t = Math.min(1, (performance.now() - started) / 400), ease = t * t * (3 - 2 * t);
-      camera.position.lerpVectors(from, to, ease); controls.target.lerpVectors(startTarget, target, ease);
-      camera.zoom = startZoom + (zoom - startZoom) * ease; camera.updateProjectionMatrix();
-      camera.lookAt(controls.target); controls.update?.(); draw(); view.render();
-      if (t < 1) requestAnimationFrame(step);
-      else { flight = null; done(); }
-    };
-    requestAnimationFrame(step);
+    flight = easeCamera(view, target, distance, zoom, () => {flight = null; done();});
   }
   function frameRoom(building, room) {
     const info = layout.rooms.find(r => r.building === building && r.room === room);
@@ -260,9 +234,15 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       Math.min(controls.maxDistance ?? Infinity, span * .75 / Math.tan(camera.fov * Math.PI / 360))));
   }
   function tapRoom(building, room) {
+    if (view.levels) { closeFan(); view.levels.go({building, room}); return; }
     closeFan(); openRoom(building, room); frameRoom(building, room);
   }
   function tapCluster(ids) {
+    // Room navigation owns its fixed top-down framing. Use 2b's fan rather
+    // than retargeting/zooming the camera beyond that level's allowed range.
+    if (view.levels?.snapshot().level === 'room') {
+      fan = {ids: [...ids]}; revision++; draw(); view.render(); return;
+    }
     const members = rows.filter(row => ids.includes(row.device_id));
     const target = new THREE.Vector3(); members.forEach(row => target.add(row.sprite.position)); target.divideScalar(members.length);
     const minGap = () => {
@@ -350,10 +330,18 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     }
   }
   function tap(row) {
+    if (navigateAttention(row)) return;
     if (stale) { window.showGlobalAlert(unreachable); return; }
     if (!row.offered) { showSheet(row); return; }
     const service = kindOf(row).quick;
     if (service) { closeSheet(); void control(row.entity_id, service); }
+  }
+  function navigateAttention(row) {
+    if (!view.levels || row.look !== 'attention') return false;
+    const at = view.levels.snapshot();
+    if (at.level === 'room' && at.building === row.building && at.room === row.room) return false;
+    if (!view.levels.go({building: row.building, room: row.room})) return false;
+    openRoom(row.building, row.room, row); return true;
   }
   function changed(camera, rect) {
     let moved = false;
@@ -362,7 +350,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     camera.projectionMatrix.elements.forEach((value, i) => take(16 + i, value));
     const target = view.controls?.target;
     const key = [camera.uuid, rect.left, rect.top, rect.width, rect.height, target?.x, target?.y, target?.z, revision,
-      levelKeys.map(level => view.groups?.levels[level]?.visible === false ? 0 : 1).join('')].join('|');
+      JSON.stringify(view.levels?.snapshot()), levelKeys.map(level => view.groups?.levels[level]?.visible === false ? 0 : 1).join('')].join('|');
     if (key !== lastKey) { lastKey = key; moved = true; }
     return moved;
   }
@@ -386,11 +374,13 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       : 2 * Math.max(.1, -scratch.copy(point).applyMatrix4(camera.matrixWorldInverse).z)
         * Math.tan(camera.fov * Math.PI / 360) / camera.zoom / Math.max(1, rect.height);
     const levelShown = row => view.groups?.levels[`${row.building}:${row.level}`]?.visible !== false;
-    const shown = rows.filter(levelShown);
+    const navigation = view.levels?.snapshot();
+    const shown = rows.filter(row => navigation ? deviceAtLevel(navigation, row) : levelShown(row));
     const pxPerFoot = FT / pixelSize(view.controls.target);
-    const lod = levelOfDetail(shown, pxPerFoot);
+    const lod = navigation ? {markers: shown.map(row => row.device_id), badges: [], labels: pxPerFoot >= 20}
+      : levelOfDetail(shown, pxPerFoot);
     // A marker that wants attention stays drawn on its own while its floor is hidden (twin design 5.1).
-    const pinned = rows.filter(row => row.look === 'attention' && !levelShown(row)).map(row => row.device_id);
+    const pinned = rows.filter(row => row.look === 'attention' && (navigation || !levelShown(row))).map(row => row.device_id);
     const individual = new Set([...lod.markers, ...pinned]), visibleBadges = new Set();
     const place = (sprite, size) => sprite.scale.setScalar(pixelSize(sprite.position) * size);
     const screen = position => {
@@ -401,16 +391,20 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const half = MARKER_PX / 2;
     const onCanvas = at => at.x >= -half && at.y >= -half && at.x <= rect.width + half && at.y <= rect.height + half;
     const covered = at => blocked.some(b => at.x >= b.left && at.x <= b.right && at.y >= b.top && at.y <= b.bottom);
-    const clusters = lod.markers.length ? clusterMarkers(shown.map(row => ({id: row.device_id,
+    const clusters = lod.markers.length ? clusterMarkers(shown.filter(row => !navigation || row.look !== 'attention').map(row => ({id: row.device_id,
       ...screen(row.sprite.position), look: row.look})).filter(point => point.front), previousClusters) : [];
     previousClusters = new Map(clusters.flatMap(cluster => cluster.ids.map(id => [id, cluster.key])));
     const clustered = new Set(clusters.filter(c => c.ids.length > 1).flatMap(c => c.ids));
+    const clusterKeys = new Set(clusters.filter(c => c.ids.length > 1).map(c => `cluster:${c.key}`));
+    for (const [key, sprite] of badges) if (key.startsWith('cluster:') && !clusterKeys.has(key)) {
+      sprite.visible = false; badges.delete(key);
+    }
     const shownBadges = [];
     for (const cluster of clusters.filter(c => c.ids.length > 1)) {
       if (fan && cluster.ids.every(id => fan.ids.includes(id))) continue;
       const key = `cluster:${cluster.key}`; visibleBadges.add(key);
       let sprite = badges.get(key);
-      if (!sprite) { sprite = spriteFor('room', 'off', 1); badges.set(key, sprite); root.add(sprite); }
+      if (!sprite) { sprite = clusterPool.find(s => ![...badges.values()].includes(s)); badges.set(key, sprite); }
       const members = shown.filter(row => cluster.ids.includes(row.device_id));
       sprite.position.set(0, 0, 0); members.forEach(row => sprite.position.add(row.sprite.position)); sprite.position.divideScalar(members.length);
       const look = cluster.attention ? 'attention' : members.some(row => row.look === 'on') ? 'on' : 'off';
@@ -469,19 +463,20 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       if (!members.has(key)) members.set(key, []);
       members.get(key).push(row);
     }
-    if (pxPerFoot < 7 && (!mode || mode === 'all')) {
-      for (const room of layout.rooms.filter(levelShown)) {
-        // A room with no markers earns a card only when it has something to say: a wall of
-        // "Room · 0 devices" cards buries the house it is meant to summarise.
+    if (navigation?.level === 'floor' || !navigation && pxPerFoot < 7 && (!mode || mode === 'all')) {
+      for (const room of layout.rooms.filter(room => navigation ? room.building === navigation.building && room.level === navigation.floor : levelShown(room))) {
+        // Empty rooms remain reachable through their floor, but get a card
+        // only when they have a fact (the 2b rule also applies at Floor).
         if (lod.badges.some(b => b.building === room.building && b.room === room.room) || !room.polygon_world?.length
-          || !factRooms.has(JSON.stringify([room.building, room.room]))) continue;
-        lod.badges.push({...room, count: 0, attention: false});
+          || !factRooms.has(JSON.stringify([room.building, room.room]))
+            && !rows.some(row => row.building === room.building && row.room === room.room)) continue;
+        const members = rows.filter(row => row.building === room.building && row.room === room.room);
+        lod.badges.push({...room, count: members.length, attention: members.some(row => row.look === 'attention')});
       }
     }
     for (const badge of lod.badges) {
       const key = JSON.stringify([badge.building, badge.room]); visibleBadges.add(key);
-      let sprite = badges.get(key);
-      if (!sprite) { sprite = spriteFor('room', 'off', 1); badges.set(key, sprite); root.add(sprite); }
+      const sprite = badges.get(key);
       const inRoom = members.get(key) || [];
       sprite.position.set(0, 0, 0); inRoom.forEach(row => sprite.position.add(row.sprite.position));
       sprite.position.divideScalar(Math.max(1, inRoom.length));
@@ -517,7 +512,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     }
     for (const b of shownBadges) b.sprite.center.set(.5 - b.dx / BADGE_PX, .5 + b.dy / BADGE_PX);
     badges.forEach((sprite, key) => { sprite.visible = visibleBadges.has(key); });
-    if (!mode || mode === 'all') {
+    if (navigation?.level === 'floor' || !navigation && (!mode || mode === 'all')) {
       const candidates = shownBadges.filter(b => b.front && onCanvas(b)).flatMap(b => {
         const card = cards?.get(b.key);
         return card ? [{...b, x: b.x + b.dx, y: b.y + b.dy, w: card.w, h: card.h, priority: card.priority, card}] : [];
@@ -621,10 +616,9 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   function stop() {
     if (stopped) return;
-    stopped = true; flight = null; cards?.stop(); view.glance?.attach(null); clearTimeout(timer); events.abort(); requests.abort(); listeners.clear();
+    stopped = true; cancelFlight(); cards?.stop(); view.glance?.attach(null); clearTimeout(timer); events.abort(); requests.abort(); listeners.clear();
     view.controls?.removeEventListener?.('start', cancelFlight);
     stream?.close(); stream = null;
-    try { flagFloors(); } catch (error) { report(error); }
     resizeObserver?.disconnect();
     for (const part of [ring, roomPanel, modes]) { try { part?.stop(); } catch (error) { report(error); } }
     root.traverse(object => object.material?.dispose()); root.removeFromParent();
@@ -638,6 +632,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       .sort((a, b) => Math.hypot(a.screen.x - x, a.screen.y - y) - Math.hypot(b.screen.x - x, b.screen.y - y))[0];
   }
   function tapScene(event) {
+    if (view.levels?.tap(event)) return;
     draw();
     const rect = canvas.getBoundingClientRect();
     raycaster.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1,
@@ -653,7 +648,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     } else {
       closeFan();
       const room = view.pick(event.clientX, event.clientY);
-      if (room?.kind === 'room') openRoom(room.building, room.id);
+      if (room?.kind === 'room' && (!view.levels || view.levels.snapshot().level === 'room')) openRoom(room.building, room.id);
       else { closeSheet(); roomPanel?.close(); }
     }
   }
@@ -668,7 +663,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     // From the room panel: the ring takes the keyboard focus, and gives it back (review L7).
     openRing: row => { const from = document.activeElement; roomPanel?.close(); ring?.open(row, {focus: from}); },
     ring: () => ring?.current() || null,
-    setMode(name) { closeFan(); flight = null; mode = modes?.setMode(name || 'all') || 'all'; notify(); draw(); view.render(); },
+    setMode(name) { closeFan(); cancelFlight(); mode = modes?.setMode(name || 'all') || 'all'; notify(); draw(); view.render(); },
     closeRoom() { ring?.close(); roomPanel?.close(); closeSheet(); },
     markers: () => rows.map(plain),
     marker: id => { const row = rows.find(row => row.device_id === id); return row ? plain(row) : null; },
@@ -712,15 +707,23 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       const label = document.createElement('span'); labels.append(label);
       return { ...marker, ...markerState(marker.kind, 'unknown'), stale: true, dim: true, sprite, labelNode: label };
     });
+    // Prepare every room badge, and a bounded pool for all possible simultaneous
+    // clumps (each needs at least two devices). A level/zoom change allocates no
+    // materials, even on its first visit to a floor or room.
+    const roomKeys = new Set([...layout.rooms, ...rows].map(row => JSON.stringify([row.building, row.room])));
+    for (const key of roomKeys) {
+      const sprite = spriteFor('room', 'off', 1); sprite.visible = false; badges.set(key, sprite); root.add(sprite);
+    }
+    for (let i = 0; i < Math.floor(rows.length / 2); i++) {
+      const sprite = spriteFor('room', 'off', 1); sprite.visible = false; clusterPool.push(sprite); root.add(sprite);
+    }
     levelKeys = [...new Set(rows.map(row => `${row.building}:${row.level}`))];
-    // A rebuild redraws the floor picker's buttons; flag them again.
-    host?.addEventListener?.('twinrebuilt', () => queueMicrotask(flagFloors), { signal: events.signal });
     document.addEventListener('keydown', event => {
-      if (event.key === 'Escape') { closeFan(); flight = null; closeSheet(); roomPanel?.close(); draw(); view.render(); }
+      if (event.key === 'Escape') { closeFan(); cancelFlight(); closeSheet(); roomPanel?.close(); draw(); view.render(); }
     }, { signal: events.signal });
     view.controls?.addEventListener?.('start', cancelFlight);
     document.addEventListener('pointerdown', event => {
-      flight = null;
+      cancelFlight();
       if (fan && event.target !== canvas && !event.target?.closest?.('[data-ring]')) { closeFan(); draw(); view.render(); }
     }, {signal: events.signal, capture: true});
     // The overlays are read again only when the page resizes, the controls reflow, or a poll lands.
@@ -736,7 +739,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       const row = hitMarker(event);
       if (fan && !fan.ids.includes(row?.device_id)) { closeFan(); draw(); }
       return row;
-    }, tap, scene: tapScene,
+    }, tap, scene: tapScene, navigate: navigateAttention,
       dismiss() { closeSheet(); roomPanel?.close(); },
       // The open ring is one of the page's overlays: the next frame places labels around it.
       moved() { overlays = null; lastKey = ''; },

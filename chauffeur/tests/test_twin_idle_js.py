@@ -28,7 +28,7 @@ await test('desk defaults off and panel opt-in arms the idle timer',async()=>{
   idle.configure(true);assert.equal(typeof trigger,'function');
 });
 await test('enter captures orthographic floor camera and moves one bar',async()=>{
-  view.setView(view.levelKeys()[0]);view.setCamera('top');view.setTime('day');
+  view.levels.go({building:input.plan.buildings[0].id,floor:input.plan.buildings[0].levels[0].id},{immediate:true});view.setTime('day');
   saved=view.saveView();trigger();await Promise.resolve();await Promise.resolve();
   assert.equal(idle.active(),true);assert.equal(root.hidden,false);assert.equal(view.state.view,'ext');
   assert.equal(view.state.time,'now');assert.equal(bar.parentElement,card);assert.equal(view.controls.enabled,false);
@@ -53,13 +53,13 @@ await test('wake restores exact view position quaternion target zoom and preview
   assert.equal(view.camera,saved.camera);assert.deepEqual(view.camera.position.toArray(),saved.position.toArray());
   assert.deepEqual(view.camera.quaternion.toArray(),saved.quaternion.toArray());
   assert.deepEqual(view.controls.target.toArray(),saved.target.toArray());assert.equal(view.camera.zoom,saved.zoom);
-  assert.deepEqual(view.state,saved.state);assert.equal(view.controls.enabled,true);
+  assert.deepEqual(view.state,saved.state);assert.deepEqual(view.levels.save(),saved.navigation);assert.equal(view.controls.enabled,true);
 });
 await test('idle orbit and wake preserve a floor pin at exterior distance in Day and Night',()=>{
   try {
     for(const preview of ['day','night']) {
       const floor=view.levelKeys()[0];
-      view.setView(floor);view.setCamera('top');view.setTime(preview);
+      view.levels.go({building:input.plan.buildings[0].id,floor:input.plan.buildings[0].levels[0].id},{immediate:true});view.setTime(preview);
       view.camera.position.x+=2;view.controls.target.x+=2;view.camera.zoom=1.7;
       view.controls.update();view.render();
       assert.equal(view.viewingState().pinned,floor,'the saved floor is pinned');
@@ -74,7 +74,7 @@ await test('idle orbit and wake preserve a floor pin at exterior distance in Day
       idle.wake();
       assert.equal(view.viewingState().pinned,floor,'wake restores the floor pin');
       assert.equal(view.viewingState().selected,floor);
-      assert.deepEqual(view.state,before.state);
+      assert.deepEqual(view.state,before.state);assert.deepEqual(view.levels.save(),before.navigation);
       assert.equal(view.camera,before.camera);
       assert.deepEqual(view.camera.position.toArray(),before.position.toArray());
       assert.deepEqual(view.camera.quaternion.toArray(),before.quaternion.toArray());
@@ -83,14 +83,28 @@ await test('idle orbit and wake preserve a floor pin at exterior distance in Day
       view.renderer3.loop(++current);
       assert.equal(view.viewingState().pinned,floor,'the next frame keeps the restored pin');
       assert.equal(view.state.view,floor);
-      // Restoring a pin must still allow a person's later clear zoom-out.
-      view.camera.position.copy(before.target).add(before.position.clone().sub(before.target).multiplyScalar(1.24));view.render();
-      assert.equal(view.viewingState().pinned,floor,'a small zoom-out keeps the pin');
+      // Distance alone cannot release an explicit viewer floor. The gesture
+      // threshold is evaluated by the level owner when the zoom ends.
       view.camera.position.copy(before.target).add(before.position.clone().sub(before.target).multiplyScalar(1.26));view.render();
-      assert.equal(view.viewingState().pinned,null,'a clear zoom-out releases the pin');
-      assert.equal(view.state.view,'ext');
+      assert.equal(view.viewingState().pinned,floor);
+      assert.equal(view.levels.zoomEnd(1.24),'spring');view.cancelCameraMotion();
+      assert.equal(view.viewingState().pinned,floor);
+      assert.equal(view.levels.zoomEnd(1.5),'up');view.cancelCameraMotion();
+      assert.equal(view.viewingState().pinned,null);assert.equal(view.state.view,'ext');
     }
   } finally {idle.wake();view.restoreView(saved);view.setTime(saved.state.time);}
+});
+await test('idle restores Room and Building navigation including fitted zoom distance',()=>{
+  const b=input.plan.buildings[0];
+  for(const next of [{building:b.id,room:b.rooms[0].id},{building:b.id}]) {
+    view.levels.go(next,{immediate:true});const before=view.saveView();
+    trigger();assert.equal(view.levels.snapshot().level,'house');
+    current+=10000;idle.frame(current);idle.wake();
+    assert.deepEqual(view.levels.save(),before.navigation);
+    assert.deepEqual(view.camera.position.toArray(),before.position.toArray());
+    assert.deepEqual(view.controls.target.toArray(),before.target.toArray());
+  }
+  view.restoreView(saved);
 });
 await test('pointer move touch and key each wake through the installed listener',async()=>{
   for(const name of ['pointermove','pointerdown','touchstart','keydown']) {
@@ -111,6 +125,8 @@ finish();
 
 if __name__ == '__main__':
     plan = json.loads((ROOT / 'tests/fixtures/twin_poolhouse.plan.json').read_text(encoding='utf-8'))
+    for index, room in enumerate(plan['buildings'][0]['rooms']):
+        room.setdefault('id', 'room-' + str(index))
     code, out = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan})
     print(out)
     sys.exit(code or 0)

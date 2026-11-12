@@ -147,8 +147,8 @@ def scenario_low_tier_holds_its_budget():
         return
     with s.browser(launch_args=GPU_ARGS) as page:
         _open(page, s, 'tier=low')
-        for view, cam in (('ext', 'front'), ('ext', 'porch'), ('L1', 'top'), ('L2', 'top')):
-            page.evaluate(f'() => {{ window.__twin.setView("{view}"); window.__twin.setCamera("{cam}"); }}')
+        for view, cam in (('ext', 'house'), ('ext', 'building'), ('L1', 'floor'), ('L2', 'floor')):
+            page.evaluate("([floor,level]) => {const v=window.__twin,b=v.plan.buildings[0];v.levels.go(level==='house'?{level:'house'}:level==='building'?{building:b.id}:{building:b.id,floor},{immediate:true});}", [view,cam])
             st = _stats(page)
             print(f'    low {view}/{cam}: {st["drawCalls"]} calls, {st["triangles"]} tris')
             check(st['tier'] == 'low', st)
@@ -166,15 +166,15 @@ def scenario_views_cut_the_house():
     with s.browser(launch_args=GPU_ARGS) as page:
         _open(page, s, 'tier=high')
         vis = '() => { const g = window.__twin.groups; return {roof: g.roof.visible, full: g.gableFull.visible, cut: g.gableCut.visible, L2: g.levels.L2.visible, L1: g.levels.L1.visible}; }'
-        page.evaluate('() => window.__twin.setView("ext")')
+        page.evaluate("() => window.__twin.levels.go({level:'house'},{immediate:true})")
         page.wait_for_timeout(600)
         v = page.evaluate(vis)
         check(v['roof'] and v['full'] and not v['cut'] and v['L1'] and v['L2'], f'exterior: {v}')
-        page.evaluate('() => window.__twin.setView("L2")')
+        page.evaluate("() => {const v=window.__twin;v.levels.go({building:v.plan.buildings[0].id,floor:'L2'},{immediate:true});}")
         page.wait_for_timeout(600)
         v = page.evaluate(vis)
         check(not v['roof'] and not v['full'] and v['cut'] and v['L2'] and v['L1'], f'upstairs: {v}')
-        page.evaluate('() => window.__twin.setView("L1")')
+        page.evaluate("() => {const v=window.__twin;v.levels.go({building:v.plan.buildings[0].id,floor:'L1'},{immediate:true});}")
         page.wait_for_timeout(600)
         v = page.evaluate(vis)
         check(not v['roof'] and not v['full'] and not v['cut'] and not v['L2'] and v['L1'], f'ground floor: {v}')
@@ -263,6 +263,8 @@ def scenario_ground_reaches_beyond_the_lot():
         _open(page, s, 'tier=high')
         hit = page.evaluate('''async () => { const THREE = await import('three');
             const r = new THREE.Raycaster(); const FT = 0.3048;
+            // Building icons are sprites; three.js requires their viewing camera even for a world-space ray.
+            r.camera = window.__twin.camera;
             r.set(new THREE.Vector3(200 * FT, 200, -0 * FT), new THREE.Vector3(0, -1, 0));
             const hits = r.intersectObject(window.__twin.scene, true);
             return hits.length ? hits[0].point.y : null; }''')

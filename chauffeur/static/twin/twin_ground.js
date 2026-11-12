@@ -22,21 +22,33 @@ export function segmentIntersection(a, b, c, d) {
 }
 export function groundAt(plan, x, y) {
   const pads = plan?.site?.terraces || [];
-  for (let i = pads.length - 1; i >= 0; i--) if (inPolygon(pads[i].polygon, x, y)) return pads[i].height;
-  let total = 0, weight = 0;
+  const smooth = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+  let height = 0;
   for (const pad of pads) {
+    if (inPolygon(pad.polygon, x, y)) { height = pad.height; continue; }
     const blend = pad.blend ?? 6;
     if (!blend) continue;
     const ds = pad.polygon.map((a, i) => edgeDistance([x, y], a, pad.polygon[(i + 1) % pad.polygon.length]));
-    const d = Math.min(...ds), i = ds.indexOf(d);
-    if (d >= blend || (pad.edges?.[i]?.edge ?? 'slope') === 'sharp') continue;
-    const t = 1 - d / blend, influence = t * t * (3 - 2 * t);
-    // Smoothstep for a lone band; distance odds combine overlapping bands
-    // without exceeding any contributing height or spiking at boundaries.
-    const w = influence / Math.max(1e-12, 1 - influence);
-    total += w * pad.height; weight += w;
+    const d = Math.min(...ds.filter((_, i) => pad.edges?.[i]?.edge !== 'sharp'));
+    if (d >= blend) continue;
+    let weight = smooth(1 - d / blend);
+    const winding = Math.sign(pad.polygon.reduce((area, a, i) => {
+      const b = pad.polygon[(i + 1) % pad.polygon.length]; return area + a[0] * b[1] - a[1] * b[0];
+    }, 0));
+    pad.polygon.forEach((a, i) => {
+      if (pad.edges?.[i]?.edge !== 'sharp') return;
+      const b = pad.polygon[(i + 1) % pad.polygon.length], dx = b[0] - a[0], dy = b[1] - a[1];
+      const inward = winding * (dx * (y - a[1]) - dy * (x - a[0])) / Math.hypot(dx, dy);
+      // Taper continuously toward the outward side of a sharp edge. Scale by
+      // slope distance (not a fixed width), so the weight still reaches 1 at
+      // every sloped boundary. The distance gap limits the taper's reach on
+      // concave pads: a distant sharp line must not cut another slope's band.
+      const clearance = Math.max(0, inward) + Math.max(0, ds[i] - d);
+      weight *= smooth(clearance / d);
+    });
+    height += weight * (pad.height - height);
   }
-  return total / (1 + weight);
+  return height;
 }
 export function buildingFootprint(b) {
   const first = [...(b.levels || [])].sort((a, c) => a.elevation - c.elevation)[0];

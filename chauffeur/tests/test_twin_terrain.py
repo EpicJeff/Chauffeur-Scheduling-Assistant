@@ -42,6 +42,26 @@ def run():
     assert bridge.flatten(twin_model.normalize(updated)[0])['site']['terraces'][-1]['height'] == -3
     deleted, _ = ops.apply(updated, {'op': 'delete_pad', 'id': p['id']})
     assert not deleted['site']['terraces']
+    stacked, _ = ops.apply(changed, {'op': 'add_pad', **pad, 'height': -2})
+    ids = [p['id'] for p in stacked['site']['terraces']]
+    reordered, _ = ops.apply(stacked, {'op': 'reorder_pad', 'id': ids[0], 'to': 1})
+    assert [p['id'] for p in reordered['site']['terraces']] == ids[::-1]
+    assert [p['id'] for p in stacked['site']['terraces']] == ids, 'ops must not mutate their input'
+    restored, _ = ops.apply(reordered, {'op': 'reorder_pad', 'id': ids[0], 'to': 0})
+    assert restored['site']['terraces'] == stacked['site']['terraces']
+    assert bridge.flatten(twin_model.normalize(reordered)[0])['site']['terraces'] == reordered['site']['terraces']
+    for to in (None, -1, 2, 1.0, True, '1', [], {}):
+        try:
+            ops.apply(stacked, {'op': 'reorder_pad', 'id': ids[0], 'to': to})
+            raise AssertionError(f'invalid layer accepted: {to!r}')
+        except ops.Refused:
+            pass
+    for target in (None, 'missing'):
+        try:
+            ops.apply(stacked, {'op': 'reorder_pad', 'id': target, 'to': 0})
+            raise AssertionError('missing pad accepted')
+        except ops.Refused:
+            pass
     cap = copy.deepcopy(model); cap['site']['terraces'] = [dict(copy.deepcopy(p), id=f'pad-{i}') for i in range(41)]
     assert len(twin_model.normalize(cap)[0]['site']['terraces']) == 40
     try:
@@ -74,6 +94,26 @@ def run():
     band['edges'] = [{'edge': 'sharp'}]*4
     assert twin_terrain.crossing_error(simple) is None
     assert twin_terrain.ground_at([p], [510, 510]) == -4
+    rect = lambda x0, y0, x1, y1: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    lower = {'polygon': rect(0, 0, 30, 30), 'height': -4, 'blend': 6}
+    upper = {'polygon': rect(20, 5, 40, 25), 'height': 0, 'blend': 6}
+    assert twin_terrain.ground_at([lower, upper], [17, 15]) == -2
+    assert twin_terrain.ground_at([lower, upper], [25, 15]) == 0
+    assert twin_terrain.ground_at([upper, lower], [25, 15]) == -4
+    # Ordering can expose higher ground; the existing fixed-footprint refusal
+    # must still run on reorder, just as it does on pad edits.
+    covered = copy.deepcopy(model)
+    covered['buildings'] = [copy.deepcopy(b)]
+    covered['buildings'][0]['base'] = 0
+    covered['site']['terraces'] = [
+        {'id': 'raised', 'polygon': poly, 'height': 4},
+        {'id': 'cover', 'polygon': poly, 'height': 0}]
+    assert twin_terrain.crossing_error(covered) is None
+    try:
+        ops.apply(covered, {'op': 'reorder_pad', 'id': 'raised', 'to': 1})
+        raise AssertionError('reorder cut through a fixed building')
+    except ops.Refused:
+        pass
     # Both scalar and polygon yard records use the real move/delete op path.
     yard = copy.deepcopy(model)
     for kind, piece in [('beds', {'polygon': pad['polygon']}), ('hardscape', {'polygon': pad['polygon']}),
@@ -95,6 +135,14 @@ def run():
     assert twin_store.current_model()['site']['terraces'][-1]['height'] == -4
     twin_store.revert(edited_id)
     assert twin_store.current_model()['site']['terraces'][-1]['height'] == -3
+    before_order = twin_store.update_model(lambda m: ops.apply(m, {'op': 'add_pad', **pad, 'height': -2})[0])
+    order = [p['id'] for p in twin_store.current_model()['site']['terraces']]
+    after_order = twin_store.update_model(lambda m: ops.apply(m, {'op': 'reorder_pad', 'id': order[0], 'to': 1})[0])
+    assert [p['id'] for p in twin_store.current_model()['site']['terraces']] == order[::-1]
+    twin_store.revert(before_order)
+    assert [p['id'] for p in twin_store.current_model()['site']['terraces']] == order
+    twin_store.revert(after_order)
+    assert [p['id'] for p in twin_store.current_model()['site']['terraces']] == order[::-1]
     from test_twin_model_ops_more import _client, _people, _enforced
     tokens, client = _people(), _client()
     with _enforced():
@@ -108,6 +156,14 @@ def run():
         assert response.json()['plan']['site']['terraces'][-1]['height'] == -4
         response = client.post('/api/house/editor/op', headers=tokens['parent'], json={'op': {'op': 'set_foundation', 'building': b['id'], 'foundation': {'mode': 'auto'}}})
         assert response.status_code == 200, response.text
+        target = response.json()['plan']['site']['terraces'][-1]['id']
+        before_id = twin_store.current_id()
+        for headers, to, status in ((tokens['child'], 0, 403), (tokens['parent'], -1, 400)):
+            response = client.post('/api/house/editor/op', headers=headers, json={'op': {'op': 'reorder_pad', 'id': target, 'to': to}})
+            assert response.status_code == status and twin_store.current_id() == before_id
+        response = client.post('/api/house/editor/op', headers=tokens['parent'], json={'op': {'op': 'reorder_pad', 'id': target, 'to': 0}})
+        assert response.status_code == 200, response.text
+        assert response.json()['plan']['site']['terraces'][0]['id'] == target
     reread = bridge.assemble(fixture, previous=twin_store.current_model())[0]
     assert next(item for item in reread['buildings'] if item['id'] == b['id'])['foundation']['mode'] == 'auto'
     print('Terrain validation, foundation migration, yard ops and history passed')

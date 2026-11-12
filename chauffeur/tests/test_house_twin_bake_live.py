@@ -545,7 +545,7 @@ def scenario_lit_room_glows_through_its_windows_from_outside():
     L.facts()
     with s.browser(launch_args=L.GPU_ARGS) as page:
         desk_baked(s, page)
-        page.evaluate("() => window.__twin.setView('ext')")
+        page.evaluate("() => window.__twin.levels.go({level:'house'},{immediate:true})")
         aim_local(page, EYE, WINDOW)
         only_on(page, None)
         page.evaluate("() => window.__twin.setTime('night')")
@@ -979,7 +979,7 @@ def scenario_day_ground_is_even_after_the_bake():
                 route.continue_()
         page.route('**/api/house/bakes/**', hold_upload)
         open_desk(page, s)
-        page.evaluate("() => { window.__twin.setTime('day'); window.__twin.setView('ext'); window.__twin.setCamera('front'); }")
+        page.evaluate("() => { window.__twin.setTime('day'); window.__twin.levels.go({level:'house'},{immediate:true}); }")
         H.settle(page, 4)
         points = page.evaluate("""async () => {
             const THREE = await import('three'), v = window.__twin, ray = new THREE.Raycaster();
@@ -1072,7 +1072,7 @@ def scenario_light_spills_through_a_window():
             const a = (b.rotation || 0) * Math.PI / 180;
             const wx = Math.cos(a) * x - Math.sin(a) * y + (b.position?.[0] || 0);
             const wy = Math.sin(a) * x + Math.cos(a) * y + (b.position?.[1] || 0);
-            v.setView(key);
+            {const b=v.plan.buildings.find(b=>b.levels.some(l=>b.id+':'+l.id===key));const f=b.levels.find(l=>b.id+':'+l.id===key);v.levels.go({building:b.id,floor:f.id},{immediate:true});}
             v.aim([wx, wy - 0.5, h], [wx, wy, 0]);
         }""", [L.POOL, L.FLOOR, 2, 15, 75])
         H.settle(page, 3)

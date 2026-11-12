@@ -69,6 +69,10 @@ export function mountRoomCards(host, open) {
     update(room, facts, count, dim) {
       const key = JSON.stringify([room.building, room.room]);
       let card = cards.get(key);
+      // An empty room without a live fact has no summary, even a hidden one.
+      if (!count && !facts.length) {
+        card?.node.remove(); cards.delete(key); return;
+      }
       if (!card) {
         const node = document.createElement('button'); node.type = 'button'; node.hidden = true;
         node.dataset.roomCard = key;
