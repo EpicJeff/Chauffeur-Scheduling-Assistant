@@ -1,0 +1,28 @@
+{
+  "common": {
+    "name": {"type":"text", "default":"", "max":100},
+    "rotation": {"type":"angle", "default":0},
+    "pitch": {"type":"angle", "default":0, "free":true},
+    "roll": {"type":"angle", "default":0, "free":true},
+    "scale": {"type":"number", "default":1, "min":0.05, "max":20},
+    "scale_axes": {"type":"axes", "default":[1,1,1], "min":0.05, "max":20, "advanced":true},
+    "tint": {"type":"color", "default":null},
+    "casts_shadow": {"type":"boolean", "default":true},
+    "visible_in": {"type":"visibility", "default":["viewer","editor"]},
+    "elevation": {"type":"number", "default":0, "min":-1000, "max":1000}
+  },
+  "kinds": {
+    "furniture": {}, "decor": {}, "plant": {}, "door": {}, "window": {},
+    "lamp": {
+      "emissive": {"type":"boolean", "default":false},
+      "emissive_color": {"type":"color", "default":"#ffd89a"},
+      "light_entity": {"type":"light", "default":null}
+    },
+    "other": {}
+  },
+  "opening": {
+    "model": {"type":"model", "default":null},
+    "hinge": {"type":"choice", "choices":["left","right"], "default":"left"},
+    "swing": {"type":"choice", "choices":["in","out","fixed"], "default":"fixed"}
+  }
+}

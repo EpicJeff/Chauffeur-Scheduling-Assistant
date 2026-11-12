@@ -1,3 +1,4 @@
+import { objectOperation, siteRecord, siteShapeKinds, sitePoints } from '../objects.js';
 import { solarPoint, solarFrame, solarUV } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import * as THREE from 'three';
@@ -23,14 +24,14 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   function world(building, point) {
     const a = (building.rotation || 0) * Math.PI / 180, [x, y, z] = point, p = building.position || [0, 0];
     return new THREE.Vector3((Math.cos(a) * x - Math.sin(a) * y + p[0]) * FT,
-      (z + (building.base || 0) + buildingGround(plan(), building)) * FT,
+      (z + (building.base || 0) + (building.id === null ? 0 : buildingGround(plan(), building))) * FT,
       -(Math.sin(a) * x + Math.cos(a) * y + p[1]) * FT);
   }
   function local(building, point) {
     const a = -(building.rotation || 0) * Math.PI / 180, p = building.position || [0, 0];
     const x = point.x / FT - p[0], y = -point.z / FT - p[1];
     return new THREE.Vector3(Math.cos(a) * x - Math.sin(a) * y, Math.sin(a) * x + Math.cos(a) * y,
-      point.y / FT - (building.base || 0) - buildingGround(plan(), building));
+      point.y / FT - (building.base || 0) - (building.id === null ? 0 : buildingGround(plan(), building)));
   }
   function ray(event, building) {
     const rect = canvas.getBoundingClientRect(); view.camera.updateMatrixWorld(true);
@@ -50,11 +51,52 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     const x = rect.left + (p.x + 1) * rect.width / 2, y = rect.top + (1 - p.y) * rect.height / 2;
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom ? [x, y] : null;
   }
+  const coordinateBuilding = id => plan()?.buildings.find(b => b.id === id) || { id: null, position: [0, 0], base: 0 };
+  function objectRecord(source = plan()) {
+    const selected = getSelection();
+    if (['planting', 'furniture'].includes(selected.kind)) {
+      const index = source.site?.[selected.kind]?.findIndex((p, i) => (p.id || `${selected.kind}:${i}`) === selected.id) ?? -1;
+      if (index >= 0) return { piece: source.site[selected.kind][index], kind: selected.kind, index, building: null };
+    }
+    const building = source?.buildings.find(b => b.id === selected.building);
+    if (!building) return null;
+    for (const [list, kind] of [['items', 'item'], ['anchors', 'anchor']]) {
+      const piece = building[list]?.find(p => p.id === selected.id);
+      if (piece && !piece.device) return { piece, kind, building, list };
+    }
+    return null;
+  }
+  function objectDescriptors() {
+    const record = objectRecord(); if (!record || record.piece.state === 'ghost') return [];
+    const { piece, building } = record;
+    let centre;
+    try { centre = building ? hostPoint(building, piece.host, piece.offset || 0)
+      : [...piece.at, groundAt(plan(), ...piece.at)]; } catch { return []; }
+    centre[2] += piece.elevation || 0;
+    let radius = Math.max(.5, 2 * (piece.scale ?? 1));
+    // At lot zoom a two-foot handle can project onto the move target itself.
+    // Keep the transform controls outside that target at every camera distance.
+    const frame = building || coordinateBuilding(null), middle = project(frame, centre);
+    const edge = project(frame, [centre[0] + radius, centre[1], centre[2]]);
+    if (middle && edge) radius *= Math.max(1, 32 / Math.max(.1, Math.hypot(edge[0] - middle[0], edge[1] - middle[1])));
+    const level = building && (building.walls.find(w => w.id === piece.host?.wall)?.level
+      || building.rooms.find(r => r.id === (piece.host?.floor || piece.host?.ceiling))?.level || getSelection().level || building.levels[0]?.id);
+    if (building && view.groups?.levels[`${building.id}:${level}`]?.visible === false) return [];
+    return [['object_rotate', [radius, 0, 0]], ['object_scale', [radius, radius, 0]]].map(([kind, delta]) => ({ kind, id: getSelection().id,
+      at: centre.map((v, i) => v + delta[i]), centre, level, building: building?.id || null }));
+  }
   function descriptors() {
     if (!canEdit()) return [];
     const selected = getSelection(), building = plan()?.buildings.find(b => b.id === selected.building);
-    if (!building) return [];
-    const result = [], add = (kind, id, at, level, extra = {}) => {
+    if (!building) {
+      const record = siteRecord(plan(), selected.id);
+      if (!record || !siteShapeKinds.includes(record.kind)) return objectDescriptors();
+      const ps = sitePoints(record.piece); if (!ps.length) return [];
+      const by = gesture?.handle.kind === 'site_move' && gesture.handle.id === selected.id ? gesture.operation?.by || [0, 0] : [0, 0];
+      const centre = [0, 1].map(i => ps.reduce((sum, p) => sum + p[i], 0) / ps.length + by[i]);
+      return [{ kind: 'site_move', id: selected.id, building: null, at: [...centre, groundAt(plan(), ...centre) + (record.piece.elevation || 0)] }];
+    }
+    const result = objectDescriptors(), add = (kind, id, at, level, extra = {}) => {
       if (view.groups?.levels[`${building.id}:${level}`]?.visible === false) return;
       result.push({ kind, id, at, building: building.id, level, ...extra });
     };
@@ -120,7 +162,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     return result;
   }
   function refresh() {
-    const handles = descriptors(), building = plan()?.buildings.find(b => b.id === getSelection().building);
+    const handles = descriptors(), building = coordinateBuilding(getSelection().building);
     let count = 0;
     for (const handle of handles) {
       const pixel = project(building, handle.at); if (!pixel) continue;
@@ -163,7 +205,17 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   function begin(event) {
     if (gesture) return false;
     const handle = hit(event); if (!handle) return false;
-    const source = getPlan(), building = source.buildings.find(b => b.id === handle.building);
+    const source = getPlan(), building = coordinateBuilding(handle.building);
+    if (handle.kind === 'site_move') {
+      const start = onPlane(event, building, handle.at, [0, 0, 1]); if (!start) return false;
+      gesture = { handle, source, building, record: siteRecord(source, handle.id), start, normal: [0, 0, 1], operation: null }; return true;
+    }
+    if (handle.kind.startsWith('object_')) {
+      const start = onPlane(event, building, handle.centre, [0, 0, 1]);
+      if (!start) return false;
+      const record = objectRecord(source);
+      gesture = { handle, source, building, record, piece: record.piece, normal: [0, 0, 1], start, operation: null }; return true;
+    }
     if (['wall', 'joint', 'room'].includes(handle.kind)) {
       lastFrameMs = null;
       const start = view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`);
@@ -221,6 +273,27 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       drag.update(view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`)); return;
     }
     const point = onPlane(event, building, handle.at, g.normal); if (!point) return;
+    if (handle.kind === 'site_move') {
+      const by = point.slice(0, 2).map((v, i) => inch(v - g.start[i]));
+      g.operation = { op: 'move_site_item', list: g.record.kind, index: g.record.index, by };
+      const points = sitePoints(g.record.piece).map(p => project(building, [p[0] + by[0], p[1] + by[1], handle.at[2]])).filter(Boolean);
+      document.getElementById('editor-drag-outline')?.setAttribute('points', points.map(p => p.join(',')).join(' '));
+      refresh(); return;
+    }
+    if (handle.kind.startsWith('object_')) {
+      const centre = handle.centre, delta = p => p.slice(0, 2).map((v, i) => v - centre[i]);
+      const a = delta(g.start), b = delta(point);
+      const properties = handle.kind === 'object_rotate'
+        ? { rotation: ((piece.rotation || 0) + (Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0])) * 180 / Math.PI + 720) % 360 }
+        : { scale: Math.max(.05, Math.min(20, (piece.scale ?? 1) * Math.hypot(...b) / Math.max(.01, Math.hypot(...a)))) };
+      g.operation = objectOperation(g.record, properties);
+      preview = structuredClone(g.source);
+      const next = g.record.building ? preview.buildings.find(b => b.id === g.building.id)[g.record.list].find(p => p.id === piece.id)
+        : preview.site[g.record.kind][g.record.index];
+      Object.assign(next, properties);
+      if (g.record.building) view.rebuildLevel(g.building.id, handle.level, preview, { [g.record.list]: [piece.id] });
+      onPreview?.(preview, getSelection()); refresh(); lastFrameMs = Math.max(.001, performance.now() - started); return;
+    }
     if (handle.kind === 'roof_edge' || handle.kind.startsWith('dormer_')) {
       const edge = handle.kind === 'roof_edge' ? handle.edge : piece.edge, frame = roofEdge(g.roof, edge);
       const change = point.slice(0, 2).map((v, i) => v - g.start[i]);
@@ -312,6 +385,20 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   async function finish(cancel = false, clicked = false) {
     const g = gesture, released = preview; gesture = null; preview = null;
     if (!g) return;
+    if (g.handle.kind === 'site_move') {
+      document.getElementById('editor-drag-outline')?.setAttribute('points', '');
+      try { if (!cancel && g.operation) await onCommit(g.operation); }
+      finally { refresh(); }
+      return;
+    }
+    if (g.handle.kind.startsWith('object_')) {
+      try { if (!cancel && g.operation) await onCommit(g.operation); }
+      finally {
+        if (g.record.building) view.rebuildLevel(g.building.id, g.handle.level, getPlan(), { [g.record.list]: [g.piece.id] });
+        onPreview?.(getPlan(), getSelection()); refresh();
+      }
+      return;
+    }
     if (g.handle.kind === 'roof_edge' || g.handle.kind.startsWith('dormer_') || g.handle.kind.startsWith('solar_')) {
       document.getElementById('editor-drag-outline')?.setAttribute('points', '');
       if (clicked && g.handle.kind === 'roof_edge') onClick?.(g.handle);

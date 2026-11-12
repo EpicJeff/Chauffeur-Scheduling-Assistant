@@ -287,6 +287,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       camera = saved.camera; view.camera = camera; controls.object = camera; controls.enableRotate = !camera.isOrthographicCamera;
       view.setView(saved.state.view); view.showLevels(saved.levels, { faint: saved.faint });
       Object.assign(state, saved.state); camera.position.copy(saved.position); controls.target.copy(saved.target);
+      // Restoring a camera is a framing change, not an outward zoom gesture.
+      viewing?.rebasePin();
       camera.zoom = saved.zoom; controls.update(); camera.quaternion.copy(saved.quaternion); camera.updateProjectionMatrix(); render();
     },
     screenOfFloor: projectFloor,

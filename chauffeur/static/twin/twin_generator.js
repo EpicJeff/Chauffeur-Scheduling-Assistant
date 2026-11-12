@@ -1,3 +1,4 @@
+import { applyObject, fitOpening, objectShown, objectMaterialKey } from './objects.js';
 // Plan -> geometry. Plan x/y map to world X/-Z; heights are world Y.
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
@@ -34,7 +35,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
     // Independently faded viewing domains must never merge into their parent.
     for (let p = o.parent; p && p !== group; p = p.parent)
       if (p.userData.viewingWalls || p.userData.viewingTree) return;
-    if (!o.isMesh || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) ||
+    if (!o.isMesh || o.userData.pendingImport || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material?.vertexColors ||
         !o.geometry?.attributes.position || Object.keys(o.geometry.morphAttributes || {}).length) return;
     let g;
     try {
@@ -83,7 +84,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
         if (!objects.includes(mesh)) objects.push(mesh);
       }
     });
-    mesh.castShadow = !mat.transparent;
+    mesh.castShadow = (mat.userData?.castsShadow ?? true) && !mat.transparent;
     mesh.receiveShadow = true;
     group.add(mesh);
   }
@@ -114,7 +115,7 @@ export function polygon(poly, z0, z1 = z0, holes = []) {
 }
 export function addMesh(group, geometry, material) {
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.castShadow = !material.transparent; mesh.receiveShadow = true;
+  mesh.castShadow = [].concat(material).some(m => (m.userData?.castsShadow ?? true) && !m.transparent); mesh.receiveShadow = true;
   group.add(mesh); return mesh;
 }
 
@@ -544,6 +545,35 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         if (h.kind === 'passage') continue;
         use({ ...h, state: wallPiece.ghost ? 'ghost' : h.state }, 'opening', `opening:${h.wall || h.section}:${h.u0}`);
         const width = h.u1 - h.u0, height = h.v1 - h.v0, cu = (h.u0 + h.u1) / 2, cv = (h.v0 + h.v1) / 2;
+        if (h.model) {
+          // The hole above has already been cut using opening dimensions alone.
+          const placeholder = localBox(cu, cv, width, height, Math.min(thickness, .08), mat('window_frame'));
+          if (placeholder) placeholder.userData.pendingImport = true;
+          const openingData = activePiece;
+          pendingModels.push(loadModel(h.model, kit).then(source => {
+            if (!source) return;
+            if (root.userData.disposed) { disposeObject(source); return; }
+            const livePlaceholder = pieces.get(`${b.id}:${openingData.pieceId}`)?.find(o => o === placeholder);
+            if (livePlaceholder?.parent) {
+              livePlaceholder.removeFromParent(); livePlaceholder.geometry.dispose();
+              const objects = pieces.get(`${b.id}:${openingData.pieceId}`); objects.splice(objects.indexOf(livePlaceholder), 1);
+            }
+            const fitted = fitOpening(source, width, height, thickness);
+            fitted.position.set(cu, h.v0, offset);
+            if (h.hinge === 'right') fitted.scale.x *= -1;
+            if (h.swing === 'out') fitted.scale.z *= -1;
+            fitted.updateMatrixWorld(true);
+            const saved = activePiece; activePiece = openingData;
+            fitted.traverse(object => {
+              if (object.isMesh) mesh(group, object.geometry.clone().applyMatrix4(object.matrixWorld).applyMatrix4(matrix), object.material);
+            });
+            activePiece = saved;
+            const geometries = new Set(); fitted.traverse(o => { if (o.geometry) geometries.add(o.geometry); }); geometries.forEach(g => g.dispose());
+            registerRecords();
+            mergeStatic(group, { perPiece: !!editableLevel });
+          }));
+          continue;
+        }
         const fw = 0.16;
         for (const u of [h.u0, h.u1]) {
           localBox(u, cv, fw, height, 0.22, mat('window_frame'));
@@ -1033,10 +1063,18 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     const itemIds = new Set((b.items || []).filter(item => item.asset).map(item => item.id));
     const fixtureFallbacks = new Map();
     const drawFixture = (f, index, group = null) => {
+      if (!objectShown(f, showAnchors || !!editableLevel)) return;
       use(f, 'fixture', `fixture:${index}`);
       const l = levels[f.level]; if (!l || !f.rect) return;
       const g = group || local[l.id], [x0, y0, x1, y1] = f.rect, z = l.elevation + (f.z0 || 0), h = f.height || 1;
-      const box = (a, c, d, e, lo, hi, m) => mesh(g, boxRect(a, c, d, e, lo, hi), m);
+      const box = (a, c, d, e, lo, hi, m) => {
+        const origin = [(x0 + x1) / 2, z, -(y0 + y1) / 2];
+        const geometry = boxRect(a, c, d, e, lo, hi).translate(-origin[0], -origin[1], -origin[2]);
+        const object = applyObject(new THREE.Mesh(geometry, m), f, { units: 1, id: `${b.id}:${f.id}` });
+        object.position.set(origin[0], origin[1] + (f.elevation || 0), origin[2]); object.updateMatrixWorld(true);
+        geometry.applyMatrix4(object.matrixWorld);
+        return mesh(g, geometry, object.material);
+      };
       if (['counter', 'vanity'].includes(f.kind)) {
         box(x0, y0, x1, y1, z, z + h - 0.12, plain('cabinet', f.body || '#3a4a52'));
         box(x0 - 0.05, y0 - 0.05, x1 + 0.05, y1 + 0.05, z + h - 0.12, z + h, f.top ? plain('counter', f.top) : mat('counter'));
@@ -1059,6 +1097,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       else drawFixture(f, index);
     }
     for (const [index, l] of (b.lights || []).entries()) {
+      if (!l.device && !objectShown(l, showAnchors || !!editableLevel)) continue;
       use(l, 'light', `light:${index}`);
       const level = levels[l.level] || first;
       const y = l.room === 'Porch' ? level.elevation + level.ceiling - 2 : Math.min(level.elevation + level.ceiling - 0.25, roofHeight(...l.at) - 0.5);
@@ -1067,7 +1106,10 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       light.position.set(l.at[0], y, -l.at[1]); light.lookAt(l.at[0], y - 1, -l.at[1]);
       light.userData.level = levelKey(l.level); light.userData.elevation = base + level.elevation; light.visible = false;
       local.lights.add(light); roomLights.push(light);
-      mesh(local[level.id], boxRect(l.at[0] - size / 2, l.at[1] - size / 2, l.at[0] + size / 2, l.at[1] + size / 2, y, y + 0.05), fixture);
+      const geometry = boxRect(-size / 2, -size / 2, size / 2, size / 2, 0, .05);
+      const object = applyObject(new THREE.Mesh(geometry, fixture), l, { units: 1, id: `${b.id}:${l.id}` });
+      object.position.set(l.at[0], y + (l.elevation || 0), -l.at[1]); object.updateMatrixWorld(true);
+      geometry.applyMatrix4(object.matrixWorld); mesh(local[level.id], geometry, object.material);
     }
     const hostLevel = host => {
       const surface = 'wall' in host ? b.walls.find(w => w.id === host.wall)
@@ -1076,6 +1118,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       return levels[surface?.level] || first;
     };
     for (const anchor of b.anchors || []) {
+      if (!anchor.device && !objectShown(anchor, showAnchors || !!editableLevel)) continue;
       const equipment=['meter','electric_panel','charger'].includes(anchor.kind);
       if(!showAnchors && !equipment)continue;
       // A light already has a fixture registered under this same identity.
@@ -1113,8 +1156,13 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0),
           new THREE.Vector3(-dy * direction, 0, -dx * direction).normalize()));
       }
-      geometry.translate(point[0], point[2], -point[1]);
-      mesh(local[hostLevel(anchor.host).id], geometry, plain(equipment?'equipment':'anchor',equipment?'#8c9399':'#38bdf8'));
+      let anchorMaterial = plain(equipment?'equipment':'anchor',equipment?'#8c9399':'#38bdf8');
+      if (!anchor.device) {
+        const object = applyObject(new THREE.Mesh(geometry, anchorMaterial), anchor, { units: 1, id: `${b.id}:${anchor.id}` });
+        object.updateMatrixWorld(true); geometry.applyMatrix4(object.matrixWorld); anchorMaterial = object.material;
+      }
+      geometry.translate(point[0], point[2] + (anchor.elevation || 0), -point[1]);
+      mesh(local[hostLevel(anchor.host).id], geometry, anchorMaterial);
       if(anchor.kind==='meter' && wall){
         const dial=new THREE.CylinderGeometry(.4,.4,.07,24);
         const dx=wall.to[0]-wall.from[0],dy=wall.to[1]-wall.from[1],direction=anchor.host.side==='right'?-1:1;
@@ -1158,7 +1206,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     registerRecords();
     for (const [key, { data }] of records) if (data.ghost) ghostBatches.push(batchGhost(root, pieces.get(key), ghost, ghostEdges));
     const models = new Map(), lateItems = new Map(), itemGroups = new Map();
-    const jobs = (b.items || []).filter(item => item.asset).map(async item => {
+    const jobs = (b.items || []).filter(item => item.asset && objectShown(item, showAnchors || !!editableLevel)).map(async item => {
       let point, source;
       try { point = hostPoint(b, item.host, item.offset || 0); }
       catch { /* Retain any legacy fixture when its host is unavailable. */ }
@@ -1189,10 +1237,9 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         if (group === holder) local[level.id].add(holder);
         if (source) {
           const model = source;
-          cacheModelMaterials(model, 'item:' + b.id + ':' + item.id, materials);
-          model.scale.multiplyScalar((item.scale ?? 1) / FT);
-          model.position.set(point[0], point[2], -point[1]);
-          model.rotation.y = THREE.MathUtils.degToRad(item.rotation || 0);
+          applyObject(model, item, { id: `${b.id}:${item.id}` });
+          cacheModelMaterials(model, 'item:' + b.id + ':' + item.id + ':' + objectMaterialKey(item, `${b.id}:${item.id}`), materials);
+          model.position.set(point[0], point[2] + (item.elevation || 0), -point[1]);
           model.updateMatrixWorld(true);
           use(item, 'item', item.id);
           model.traverse(object => {

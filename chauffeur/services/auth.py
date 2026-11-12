@@ -475,6 +475,8 @@ RULES = [
     ('POST', '/api/house/twin/perf', WALL_OR_SERVICE, None),
     ('GET', '/api/house/twin/perf', PARENTS, None),
     ('GET', '/api/house/twin/library/{asset_id}/{name:path}', WALL_OR_SERVICE, None),
+    ('GET', '/api/house/twin/imports', WALL_OR_SERVICE, None),
+    ('GET', '/api/house/twin/imports/{asset_id}/{name:path}', WALL_OR_SERVICE, None),
     ('GET', '/api/house/twin/kit/{kit_id}', WALL_OR_SERVICE, None),
     ('POST', '/api/house/twin/sources', PARENTS, None),
     ('GET', '/api/house/twin/sources', PARENTS, None),

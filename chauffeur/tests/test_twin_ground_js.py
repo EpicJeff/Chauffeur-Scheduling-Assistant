@@ -23,6 +23,7 @@ const THREE = await import(three);
 const {groundAt, buildingBase, foundationShape} = await import(file('static/twin/twin_ground.js'));
 const {terrainGeometry,tintGrade} = await import(file('static/twin/twin_terrain_mesh.js'));
 const {buildYard} = await import(file('static/twin/twin_yard.js'));
+const near=(actual,expected)=>assert.ok(Math.abs(actual-expected)<1e-5,`${actual} != ${expected}`);
 const {buildTwin} = await import(file('static/twin/twin_generator.js'));
 const {disposeObject,cacheModelMaterials} = await import(file('static/twin/twin_library.js'));
 const {parkingPoint} = await import(file('static/twin/twin_hosts.js'));
@@ -94,6 +95,52 @@ const tree2=yard2.group.children.find(o=>o.constructor.name==='Tree');assert.equ
 let nextTerrain;yard2.group.traverse(o=>{if(o.userData.terrain)nextTerrain=o;});assert.equal(nextTerrain.material,material);
 disposeObject(yard.group,{keepMaterials:new Set(yard2.group.userData.materials.values())});assert.ok(disposed);
 disposeObject(yard2.group);
+// The merged yard builder applies object transforms on top of terrain height,
+// and retains tinted materials across a terrain rebuild without tinting peers.
+plan.site.planting=[{id:'scaled-tree',at:[5,5],preset:'Pine',height:10,scale:1.5,scale_axes:[2,1,1],rotation:90,tint:'#224466',elevation:1},
+ {id:'plain-tree',at:[8,5],preset:'Pine',height:10}];
+const transformed=await buildYard(plan,kit,'high');
+const trees=transformed.group.children.filter(o=>o.constructor.name==='Tree');
+near(new THREE.Box3().setFromObject(trees[0]).min.y,-3);near(new THREE.Box3().setFromObject(trees[0]).max.y,12);
+near(trees[0].rotation.y,Math.PI/2);assert.equal(trees[0].children[0].material.color.getHexString(),'224466');
+assert.equal(trees[1].children[0].material.color.getHexString(),'ffffff');
+const transformedAgain=await buildYard(plan,kit,'high',{materials:transformed.group.userData.materials});
+assert.equal(transformedAgain.group.children.find(o=>o.constructor.name==='Tree').children[0].material,trees[0].children[0].material);
+disposeObject(transformed.group,{keepMaterials:new Set(transformedAgain.group.userData.materials.values())});disposeObject(transformedAgain.group);
+const treeTexture=new THREE.Texture();let releasedTreeTexture=false;treeTexture.addEventListener('dispose',()=>releasedTreeTexture=true);
+trees[0].children[0].material.map=treeTexture;transformed.group.userData.releasePlants();assert.equal(releasedTreeTexture,false,'EZ-Tree module textures remain owned by EZ-Tree');
+treeTexture.dispose();
+// Cached Low cards keep separate transform wrappers in editor and viewer,
+// without rebaking their texture or replacing a tinted material on a rebuild.
+const cardTexture=new THREE.Texture(),cardMaterial=new THREE.MeshStandardMaterial({name:'cached card',map:cardTexture});cardMaterial.userData.cardAspect=.5;
+const cardCache=new Map([['plant_card:Pine',cardMaterial]]);
+const cardYard=await buildYard(plan,kit,'low',{viewing:true,materials:cardCache});
+const cardPlants=cardYard.group.children.filter(o=>o.userData.placedPlant);assert.equal(cardPlants.length,2);
+near(new THREE.Box3().setFromObject(cardPlants[0]).min.y,-3);near(new THREE.Box3().setFromObject(cardPlants[0]).max.y,13.2);
+const tintedCard=cardPlants[0].children[0].material;assert.equal(tintedCard.color.getHexString(),'224466');assert.equal(cardMaterial.color.getHexString(),'ffffff');
+const cardYardAgain=await buildYard(plan,kit,'low',{materials:cardCache});
+assert.equal(cardYardAgain.group.children.find(o=>o.userData.placedPlant).children[0].material,tintedCard);
+cardYard.group.userData.releasePlants(new Set(cardCache.values()));disposeObject(cardYard.group,{keepMaterials:new Set(cardCache.values())});
+cardYardAgain.group.userData.releasePlants();disposeObject(cardYardAgain.group);
+// Real imported furniture uses its scale/turn/tint and surface offset once,
+// both on bare terrain and on an Auto foundation's porch.
+const {rememberImport}=await import(file('static/twin/twin_library.js'));
+window.location={href:'http://house.test/house/editor'};window.chfBase='../';
+globalThis.ProgressEvent=class {constructor(type,values){this.type=type;Object.assign(this,values);}};
+const asset='import-'+'3'.repeat(32),vertices=new Float32Array([-1,0,-.1,1,0,-.1,0,2,.1]);
+const modelDocument={asset:{version:'2.0'},scene:0,scenes:[{nodes:[0]}],nodes:[{mesh:0}],meshes:[{primitives:[{attributes:{POSITION:0}}]}],
+ buffers:[{uri:'mesh.bin',byteLength:36}],bufferViews:[{buffer:0,byteLength:36}],accessors:[{bufferView:0,componentType:5126,count:3,type:'VEC3',min:[-1,0,-.1],max:[1,2,.1]}]};
+rememberImport({id:asset,model:'model.gltf',files:{'model.gltf':true,'mesh.bin':true}});
+globalThis.fetch=async input=>new Response((typeof input==='string'?input:input.url).includes('mesh.bin')?Buffer.from(vertices.buffer):JSON.stringify(modelDocument),{status:200});
+plan.site.planting=[];plan.site.furniture=[{id:'imported-chair',asset,at:[5,5],scale:1.5,rotation:90,tint:'#ffffff',elevation:1}];
+const importedYard=await buildYard(plan,kit,'high');
+const importedMaterial=[...importedYard.group.userData.materials.entries()].find(([key])=>key.startsWith('model:yard:'))[1];
+const boundsFor=yard=>{const bounds=new THREE.Box3();yard.group.traverse(o=>{if(o.isMesh&&o.material===importedMaterial)bounds.expandByObject(o);});return bounds;};
+const bounds=boundsFor(importedYard);near(bounds.min.y,-3);near(bounds.max.y,-3+3/.3048);near(bounds.max.z-bounds.min.z,3/.3048);
+b.porch={polygon:rect,floor:2};plan.buildings=[b];
+const porchYard=await buildYard(plan,kit,'high',{materials:importedYard.group.userData.materials});
+near(boundsFor(porchYard).min.y,buildingBase(plan,b)+3);
+disposeObject(importedYard.group,{keepMaterials:new Set(porchYard.group.userData.materials.values())});disposeObject(porchYard.group);
 console.log('Ground, overlap bands, sharp skirts, foundation, parking, real yard and material reuse passed');
 """
 

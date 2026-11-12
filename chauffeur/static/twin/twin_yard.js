@@ -1,3 +1,4 @@
+import { applyObject, objectShown, objectMaterialKey } from './objects.js';
 import * as THREE from 'three';
 import { Tree } from '@dgreenheck/ez-tree';
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
@@ -171,10 +172,10 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   try {
     if (tier === 'low' && site.planting?.some(p => !mats.has('plant_card:' + p.preset))) baker = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
     for (let index = 0; index < (site.planting || []).length; index++) {
-      const p = site.planting[index]; if (!p.at || !p.preset || !(p.height > 0)) continue;
+      const p = site.planting[index]; if (!objectShown(p, !viewing)) continue; if (!p.at || !p.preset || !(p.height > 0)) continue;
       if (tier === 'low') {
-        const holder = viewing ? new THREE.Group() : group;
-        if (viewing) { holder.userData.viewingTree = true; holder.name = `tree:${index}`; group.add(holder); }
+        const holder = new THREE.Group(); holder.userData.placedPlant = true; group.add(holder);
+        if (viewing) { holder.userData.viewingTree = true; holder.name = `tree:${index}`; }
         if (!cards.has(p.preset)) {
           const cached = mats.get('plant_card:' + p.preset);
           const card = cached ? { material: cached, texture: cached.map, aspect: cached.userData.cardAspect }
@@ -183,15 +184,20 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         }
         const card = cards.get(p.preset), h = p.height * 1.08;
         for (const angle of [0, Math.PI / 2]) {
-          const geometry = new THREE.PlaneGeometry(h * card.aspect, h).translate(0, h / 2, 0).rotateY(angle + (p.seed || 0) * 2.39996).translate(p.at[0], groundAt(plan, ...p.at), -p.at[1]);
+          const geometry = new THREE.PlaneGeometry(h * card.aspect, h).translate(0, h / 2, 0).rotateY(angle + (p.seed || 0) * 2.39996);
           addMesh(holder, geometry, card.material);
         }
+        applyObject(holder, p, { units: 1 }); holder.position.set(p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0), -p.at[1]);
+        cacheModelMaterials(holder, 'plant-card:' + p.preset + ':' + objectMaterialKey(p, p.id || index), mats);
         if (viewing) mergeStatic(holder);
       } else {
         const tree = new Tree(); tree.loadPreset(p.preset); tree.options.seed = p.seed ?? 1; tree.generate(); standardTree(tree, mats);
         const bounds = new THREE.Box3().setFromObject(tree), h = bounds.max.y - bounds.min.y, scale = p.height / Math.max(0.01, h);
-        tree.scale.setScalar(scale); tree.position.set(p.at[0], groundAt(plan, ...p.at) - bounds.min.y * scale, -p.at[1]);
-        tree.rotation.y = (p.seed || 0) * 2.39996; group.add(tree);
+        tree.scale.setScalar(scale);
+        applyObject(tree, p, { units: 1 });
+        cacheModelMaterials(tree, 'plant:' + p.preset + ':' + objectMaterialKey(p, p.id || index), mats);
+        tree.position.set(p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0) - bounds.min.y * scale * (p.scale ?? 1) * (p.scale_axes?.[1] ?? 1), -p.at[1]);
+        tree.rotation.y += (p.seed || 0) * 2.39996; group.add(tree);
         if (viewing) { tree.userData.viewingTree = true; tree.name = `tree:${index}`; }
       }
       // Let loading/status controls paint while full presets are generated.
@@ -200,24 +206,24 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   } finally { if (baker) { baker.dispose(); baker.forceContextLoss(); } }
   // Merge only the static site and cards. Full trees keep their own materials
   // and EZ-Tree geometry; they are not traversed by this static merge.
-  const plants = group.children.filter(o => o instanceof Tree); plants.forEach(o => o.removeFromParent());
+  const plants = group.children.filter(o => o instanceof Tree || o.userData.placedPlant); plants.forEach(o => o.removeFromParent());
   mergeStatic(group); plants.forEach(o => group.add(o));
 
   const models = new Map(), latePlacements = new Map();
-  const placements = await Promise.all((site.furniture || []).map(async f => {
+  const placements = await Promise.all([...(site.furniture || []), ...(site.planting || []).filter(p => p.asset?.startsWith('import-'))].filter(f => objectShown(f, !viewing)).map(async f => {
     const assetId = (f.asset || kit.furniture?.[f.kind] || '').replace(/^polyhaven:/, '');
     if (!assetId || !f.at) return;
     const place = (model, late = false) => {
       if (group.userData.disposed) { disposeObject(model); return; }
-      cacheModelMaterials(model, 'yard:' + assetId, mats);
-      model.scale.setScalar((f.scale || 1) / FT);
-      let elevation = groundAt(plan, ...f.at) + (f.elevation || 0);
+      applyObject(model, f, { id: `site:${f.id || f.at.join(',')}` });
+      cacheModelMaterials(model, 'yard:' + assetId + ':' + objectMaterialKey(f, `site:${f.id || f.at.join(',')}`), mats);
+      let elevation = groundAt(plan, ...f.at);
       for (const b of plan.buildings || []) for (const porch of allPorches(b)) if (porch.polygon) {
         const pos = b.position || [0, 0], angle = -(b.rotation || 0) * Math.PI / 180;
         const x = f.at[0] - pos[0], y = f.at[1] - pos[1];
         if (inside([Math.cos(angle) * x - Math.sin(angle) * y, Math.sin(angle) * x + Math.cos(angle) * y], porch.polygon)) elevation = buildingBase(plan, b) + porch.floor;
       }
-      model.position.set(f.at[0], elevation, -f.at[1]); model.rotation.y = THREE.MathUtils.degToRad(f.rotation || 0);
+      model.position.set(f.at[0], elevation + (f.elevation || 0), -f.at[1]);
       if (late) { group.add(model); mergeStatic(model); }
       return model;
     };
@@ -265,7 +271,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     for (const [key, material] of mats) if (!keepMaterials.has(material)) {
       material.dispose();
       // EZ-Tree's module retains its bark/leaf textures, even after this view.
-      if (!key.startsWith('tree:')) for (const value of Object.values(material)) if (value?.isTexture && !kept.has(value)) textures.add(value);
+      if (!key.startsWith('tree:') && !key.startsWith('model:plant:')) for (const value of Object.values(material)) if (value?.isTexture && !kept.has(value)) textures.add(value);
     }
     textures.forEach(t => t.dispose());
   };

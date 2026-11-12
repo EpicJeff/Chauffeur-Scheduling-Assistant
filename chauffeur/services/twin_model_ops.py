@@ -487,7 +487,7 @@ def _mark_touched(building, previous, op):
                 _person(piece)
 
 
-MORE_OPS = ('add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
+MORE_OPS = ('set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
@@ -787,6 +787,15 @@ def _set_field(building, op, ha_catalogue=None):
                 building['checked_flags'].append(deepcopy(flag))
         return
     kind, piece = _piece(building, op.get('id'))
+    from services import twin_objects
+    if (kind == 'item' or kind == 'anchor' and not piece.get('device')) and op.get('field') in twin_objects.fields(piece):
+        twin_objects.update(piece, {op['field']: op.get('value')})
+        if kind == 'anchor' and (reason := twin_model.equipment_error(piece)):
+            raise Refused(reason)
+        return
+    if kind == 'opening' and op.get('field') in twin_objects.SCHEMA['opening']:
+        twin_objects.update(piece, {op['field']: op.get('value')}, opening=True)
+        return
     if kind == 'anchor' and piece.get('kind') in ('charger', 'parking'):
         allowed = ('name', 'power', 'car') if piece['kind'] == 'charger' else ('name', 'car', 'rotation', 'width', 'depth')
         if op.get('field') in allowed:
@@ -795,11 +804,6 @@ def _set_field(building, op, ha_catalogue=None):
             if reason:
                 raise Refused(reason)
             return
-    if kind == 'item' and op.get('field') in ('rotation', 'scale'):
-        # The card's Turn and Size fields (spec 5.7), the hand path for add_item's own.
-        piece[op['field']] = (_number(op.get('value')) % 360 if op['field'] == 'rotation'
-                              else _item_scale(op.get('value')))
-        return
     if kind == 'roof':
         # Reuse the established field validation and window-bearing gable guard,
         # then translate the section's changed planes back to its area edges.
@@ -926,6 +930,10 @@ def _more(building, op, ha_catalogue=None):
                  'at': _number(op.get('at')), 'width': _positive(op.get('width', 3)),
                  'sill': _number(op.get('sill', min(2, height / 3) if op['kind'] == 'window' else 0)),
                  'head': _positive(op.get('head', min(7, height))), 'state': 'settled'}
+        from services import twin_objects
+        extra = {k: op[k] for k in twin_objects.SCHEMA['opening'] if k in op}
+        if extra:
+            twin_objects.update(piece, extra, opening=True)
         building['openings'].append(piece)
         noun = {'slider': 'sliding door', 'bifold': 'folding door', 'garage': 'garage door',
                 'passage': 'passage'}.get(op['kind'], op['kind'])
@@ -946,6 +954,15 @@ def _more(building, op, ha_catalogue=None):
         else:
             piece.update(asset=_text(op.get('asset')), rotation=_number(op.get('rotation', 0)) % 360,
                          scale=_item_scale(op.get('scale', 1)))
+        from services import twin_objects
+        if kind == 'add_item':
+            extra = {k: op[k] for k in (*twin_objects.fields({**piece, 'object_kind': op.get('object_kind', 'furniture')}), 'object_kind') if k in op}
+            if extra:
+                twin_objects.update(piece, extra)
+            if piece['asset'].startswith('import-'):
+                from services import twin_imports
+                if not twin_imports.get(piece['asset']):
+                    raise Refused('Choose an imported model from the library.')
         building[collection].append(piece)
         _rehost(building, piece, op.get('host'))
     elif kind in ('move_hosted', 'resize_opening'):
@@ -1099,7 +1116,7 @@ def _site_op(model, op, actor):
             raise Refused('Add plants and furniture through the library.')
         asset = _text(op.get('asset'))
         piece = {'id': _id(model['site'], name), 'asset': asset, 'at': _point(op.get('at'))}
-        if name == 'planting':
+        if name == 'planting' and not asset.startswith('import-'):
             from services import twin_library
             kit = twin_library.kit('modern_farmhouse')
             if asset in kit['shrubs']:
@@ -1110,6 +1127,12 @@ def _site_op(model, op, actor):
                 raise Refused('Choose a plant from the library.')
         if actor == 'person':
             piece['src'] = {'person': True}
+        from services import twin_objects, twin_imports
+        if asset.startswith('import-') and not twin_imports.get(asset):
+            raise Refused('Choose an imported model from the library.')
+        extra = {k: op[k] for k in (*twin_objects.fields({**piece, 'object_kind': op.get('object_kind', 'plant' if name == 'planting' else 'furniture')}, name), 'object_kind') if k in op}
+        if extra:
+            twin_objects.update(piece, extra, name)
         pieces.append(piece)
     else:
         index = next((i for i, p in enumerate(pieces) if p.get('id') == op['id']), -1) if op.get('id') else op.get('index', 0 if singleton else None)
@@ -1193,6 +1216,32 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
         if error:
             raise Refused(error)
         return model, 'Changed the foundation.' if kind == 'set_foundation' else 'Changed the terrace pad.'
+    if kind == 'set_object':
+        from services import twin_objects, twin_plan
+        if op.get('list') in ('planting', 'furniture'):
+            name = op['list']
+            pieces = model.get('site', {}).get(name, [])
+            index = op.get('index')
+            if type(index) is not int or not 0 <= index < len(pieces):
+                raise Refused('That site item is missing.')
+            piece = pieces[index]
+            piece_kind = name
+        else:
+            building = _find(model, 'buildings', op.get('building'))
+            piece_kind, piece = _piece(building, op.get('id'))
+            name = None
+            if piece_kind not in ('item', 'opening', 'anchor') or piece_kind == 'anchor' and piece.get('device'):
+                raise Refused('Choose a placed object without a linked device.')
+        before_object = deepcopy(model)
+        try:
+            twin_objects.update(piece, op.get('properties'), name, opening=piece_kind == 'opening')
+            if piece_kind == 'anchor' and (reason := twin_model.equipment_error(piece)):
+                raise Refused(reason)
+        except ValueError as exc:
+            raise Refused(str(exc)) from exc
+        if actor == 'person':
+            piece.setdefault('src', {})['person'] = True
+        return twin_plan.record_compose_overrides(before_object, model), 'Changed the object.'
     if kind == 'set_solar_source':
         roof = op.get('roof')
         if roof is not None and not any(r['id'] == roof for b in model['buildings'] for r in b.get('roofs', [])):

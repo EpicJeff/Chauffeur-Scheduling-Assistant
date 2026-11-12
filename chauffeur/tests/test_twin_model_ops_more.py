@@ -330,11 +330,12 @@ def test_item_turn_and_size_and_anchor_offset_have_card_ops():
     check(close(_by_id(_b(m2)['items'], chair['id'])['rotation'], 90), _b(m2)['items'])
     m3 = _apply(m2, {'op': 'set', 'building': 'B1', 'id': chair['id'], 'field': 'scale', 'value': 1.5})
     check(close(_by_id(_b(m3)['items'], chair['id'])['scale'], 1.5), _b(m3)['items'])
-    words = _refused(m3, {'op': 'set', 'building': 'B1', 'id': chair['id'], 'field': 'scale', 'value': 3})
-    check(words == 'Choose a size from 50% to 200%.', words)
+    # Slice 4a (user 2026-11-12: "There is also no scaling of placed objects"): sizes run 5% to 2000%.
+    words = _refused(m3, {'op': 'set', 'building': 'B1', 'id': chair['id'], 'field': 'scale', 'value': 25})
+    check(words == 'Choose a size from 5% to 2000%.', words)
     words = _refused(m0, {'op': 'add_item', 'building': 'B1', 'asset': 'mid_century_lounge_chair',
-                          'host': {'floor': 'dining', 'u': 0.5, 'v': 0.5}, 'scale': 0.1})
-    check(words == 'Choose a size from 50% to 200%.', words)
+                          'host': {'floor': 'dining', 'u': 0.5, 'v': 0.5}, 'scale': 0.01})
+    check(words == 'Choose a size from 5% to 2000%.', words)
     m4 = _apply(m3, {'op': 'move_hosted', 'building': 'B1', 'id': chair['id'], 'offset': 1.5})
     check(close(_by_id(_b(m4)['items'], chair['id'])['offset'], 1.5), _b(m4)['items'])
     m5 = _apply(m4, {'op': 'add_anchor', 'building': 'B1', 'kind': 'switch',

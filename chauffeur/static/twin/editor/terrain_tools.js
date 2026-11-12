@@ -1,17 +1,15 @@
 import * as THREE from 'three';
-import { groundAt, edgeDistance, inPolygon } from '../twin_ground.js';
+import { groundAt, edgeDistance } from '../twin_ground.js';
 import { tintGrade } from '../twin_terrain_mesh.js';
 import { report } from './api.js';
 import { twinText } from '../palette.js';
+import { siteRecords, siteShapeKinds, siteShapeLabels } from '../objects.js';
 
-const FT = .3048, singletons = ['pool', 'fire_pit', 'fence'];
-const kinds = ['beds', 'hardscape', 'edges', ...singletons];
-const words = { terraces: 'Terrace pad', beds: 'Planting bed', hardscape: 'Path / hardscape', edges: 'Edge planting', pool: 'Pool', fire_pit: 'Fire pit', fence: 'Fence' };
-const points = piece => piece.polygon || piece.points || piece.polyline || (piece.at ? [piece.at] : []);
+const FT = .3048;
+const words = { terraces: 'Terrace pad', ...siteShapeLabels };
 const mid = poly => [0, 1].map(i => poly.reduce((n, p) => n + p[i], 0) / poly.length);
 export function siteRows(plan) {
-  return kinds.flatMap(kind => (singletons.includes(kind) ? [plan?.site?.[kind]].filter(Boolean) : plan?.site?.[kind] || [])
-    .map((piece, index) => ({ kind, index, piece })));
+  return siteRecords(plan).filter(record => siteShapeKinds.includes(record.kind));
 }
 export function snapPadPoint(point, plan, exclude) {
   const polygons = [plan.site?.lot || [], ...(plan.site?.terraces || []).filter(p => p.id !== exclude).map(p => p.polygon)];
@@ -39,8 +37,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   const listen = (node, type, fn, options = {}) => node.addEventListener(type, fn, { ...options, signal });
   const node = (tag, text) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; return n; };
   const button = (text, fn) => { const b = node('button', text); b.type = 'button'; listen(b, 'click', fn); return b; };
-  const current = () => chosen && (chosen.kind === 'terraces' ? getPlan().site?.terraces?.find(p => p.id === chosen.id)
-    : singletons.includes(chosen.kind) ? getPlan().site?.[chosen.kind] : getPlan().site?.[chosen.kind]?.find(p => p.id === chosen.id));
+  const current = () => chosen && getPlan().site?.terraces?.find(p => p.id === chosen.id);
   function ray(event) {
     const r = canvas.getBoundingClientRect(); view.camera.updateMatrixWorld(true);
     raycaster.setFromCamera(new THREE.Vector2((event.clientX - r.left) / r.width * 2 - 1, 1 - (event.clientY - r.top) / r.height * 2), view.camera);
@@ -79,11 +76,6 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       if (chosen?.id === pad.id) poly.forEach((p, index) => label('•', p, pad.height, { index }));
     }
     if (drawing) { line(drawing, undefined, false); drawing.forEach(p => label('•', p)); }
-    const piece = current();
-    if (piece && chosen.kind !== 'terraces') {
-      const poly = points(piece).map(p => gesture?.by ? p.map((v, i) => v + gesture.by[i]) : p);
-      line(poly, undefined, !!piece.polygon); label('↔', mid(poly), undefined, { move: true });
-    }
   }
   function tint() {
     view.groups.site?.traverse(o => { if (o.userData.terrain) tintGrade(o.geometry, grade); }); view.render();
@@ -149,18 +141,18 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
         const edges = current().polygon.map((_, j) => ({ edge: current().edges?.[j]?.edge || 'slope' })); edges[i] = { edge }; update({ edges });
       }, ['slope', 'sharp']));
       card.append(node('p', 'Drag a corner handle to reshape this pad.'));
-    } else {
-      card.append(node('p', 'Drag the move handle or use the arrow keys (one foot).'));
-      field('Move east (ft)', 0, by => save({ op: 'move_site_item', list: chosen.kind, id: piece.id, by: [by, 0] }));
-      field('Move north (ft)', 0, by => save({ op: 'move_site_item', list: chosen.kind, id: piece.id, by: [0, by] }));
     }
     card.append(button('Delete', remove), button('Ground and yard', show));
   }
-  function choose(kind, id) { prepare(); tools.setTool('select'); tools.select(null); chosen = { kind, id }; menu = false; drawing = null; view.setView('ext'); signature = ''; refresh(); }
+  function choose(kind, id) {
+    prepare(); tools.setTool('select'); view.setView('ext');
+    if (kind !== 'terraces') { close(); tools.select({ kind, id }); return; }
+    tools.select(null); chosen = { kind, id }; menu = false; drawing = null; signature = ''; refresh();
+  }
   async function remove() {
     const piece = current(); if (!piece || !canEdit() || busy) return;
     if (!await window.promptConfirm(`Delete ${words[chosen.kind]}?`, 'Undo restores it.', 'Delete', 'Cancel')) return;
-    await save(chosen.kind === 'terraces' ? { op: 'delete_pad', id: piece.id } : { op: 'delete_site_item', list: chosen.kind, id: piece.id });
+    await save({ op: 'delete_pad', id: piece.id });
     if (!current()) show();
   }
   function show() { prepare(); view.setView('ext'); tools.select(null); menu = true; chosen = null; drawing = null; signature = ''; refresh(); }
@@ -189,15 +181,6 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       // A pad's filled area is selectable only in its own ground menu; its
       // outline is always selectable, leaving house and tree picks reachable.
       const p = ground(event); if (!p) return false;
-      for (const row of [...siteRows(getPlan())].reverse()) {
-        const ps = points(row.piece), hit = row.piece.polygon ? inPolygon(ps, ...p)
-          : row.piece.at ? Math.hypot(p[0] - ps[0][0], p[1] - ps[0][1]) < (row.piece.radius || 2)
-            : ps.some((a, i) => i + 1 < ps.length && edgeDistance(p, a, ps[i + 1]) < .6);
-        if (hit && !view.pick(event.clientX, event.clientY)) {
-          choose(row.kind, row.piece.id); gesture = { kind: 'move', start: p, enabled: view.controls.enabled, pointer: event.pointerId };
-          view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); return true;
-        }
-      }
       for (const pad of [...(getPlan().site?.terraces || [])].reverse()) {
         const q = ground(event, pad.height); if (!q) continue;
         if (pad.polygon.some((a, i) => edgeDistance(q, a, pad.polygon[(i + 1) % pad.polygon.length]) < .6)) { choose('terraces', pad.id); return true; }
@@ -221,7 +204,6 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (!cancel && canEdit() && g.kind !== 'draw') {
       if (g.kind === 'vertex' && g.moved) save({ op: 'update_pad', id: chosen.id, polygon: g.polygon }).catch(report);
-      else if (g.by) save({ op: 'move_site_item', list: chosen.kind, id: chosen.id, by: g.by }).catch(report);
     }
     graphics(); return true;
   }
@@ -235,10 +217,6 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     if (document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), dialog[open]')) return;
     if (event.key === 'Escape') { close(); event.stopImmediatePropagation(); }
     else if (chosen && event.key === 'Delete') { event.stopImmediatePropagation(); remove().catch(report); }
-    else if (chosen && chosen.kind !== 'terraces' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
-      event.preventDefault(); event.stopImmediatePropagation();
-      save({ op: 'move_site_item', list: chosen.kind, id: chosen.id, by: [{ ArrowLeft: -1, ArrowRight: 1 }[event.key] || 0, { ArrowDown: -1, ArrowUp: 1 }[event.key] || 0] }).catch(report);
-    }
   }, { capture: true });
   view.controls.addEventListener('change', graphics);
   listen(canvas.parentElement, 'twinrebuilt', refresh);
