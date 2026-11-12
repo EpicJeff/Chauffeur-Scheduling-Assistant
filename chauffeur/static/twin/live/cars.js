@@ -1,3 +1,4 @@
+import { twinAttention } from '../palette.js';
 import * as THREE from 'three';
 import { LUCIDE } from '../../vendor/lucide/icons.js';
 import { markerSprite } from './markers.js';
@@ -76,7 +77,7 @@ export function mountCars({view, live = () => view.live}) {
       row.charging=carCharging(car,states) || !!row.charger || watts(car.charge_power,states)>=50;
       row.power=row.charger?watts(row.charger.power,states):watts(car.charge_power,states);
       row.battery=numeric(states[car.battery_level]);row.range=numeric(states[car.range_entity]);row.rangeUnit=states[car.range_entity]?.attributes?.unit_of_measurement || '';
-      const ring=row.charging?'#9957d2':row.battery!==null && car.battery_warn_pct!=null && row.battery<car.battery_warn_pct?'#edaa48':'';
+      const ring=row.charging?'#9957d2':row.battery!==null && car.battery_warn_pct!=null && row.battery<car.battery_warn_pct?twinAttention:'';
       row.sprite.material.map=texture(car.color,ring);
       row.sprite.position.copy(worldPoint([spot.at[0],spot.at[1],spot.at[2]+4]));
       row.button.setAttribute('aria-label',car.name);

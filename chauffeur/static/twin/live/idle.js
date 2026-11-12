@@ -1,5 +1,6 @@
 import { glanceValue, humanise } from './glance.js';
 import { svgIcon } from './glance_icons.js';
+import { twinLight } from '../palette.js';
 
 export function weatherConditionIcon(condition) {
   return ({sunny: 'sun', 'clear-night': 'moon', partlycloudy: 'cloud-sun', cloudy: 'cloud',
@@ -21,7 +22,7 @@ export function renderIdleWeather(host, states, entity, stale = false) {
   if (host.hidden) return;
   const reading = document.createElement('div'); reading.className = 'twin-weather-reading';
   const value = document.createElement('strong'); value.textContent = glanceValue(id, row, false, states);
-  reading.append(svgIcon(weatherConditionIcon(row.state), row.state === 'sunny' ? '#facc62' : '#d1d9e6'), value);
+  reading.append(svgIcon(weatherConditionIcon(row.state), row.state === 'sunny' ? twinLight : '#d1d9e6'), value);
   const condition = document.createElement('small'); condition.textContent = humanise(row.state); condition.dataset.weatherCondition = '';
   host.append(reading, condition);
 }

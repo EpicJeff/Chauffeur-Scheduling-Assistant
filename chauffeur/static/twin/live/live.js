@@ -132,9 +132,9 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   // the shown levels, a poll or mode (revision), or the page's overlays.
   const lastCamera = new Float64Array(32);
   let revision = 0, lastKey = '', overlays = null;
-  const texture = (kind, look, count = null) => {
-    const key = JSON.stringify([kind, look, count]);
-    if (!textures.has(key)) textures.set(key, markerTexture(kind, look, count));
+  const texture = (kind, look, count = null, color = undefined) => {
+    const key = JSON.stringify([kind, look, count, color]);
+    if (!textures.has(key)) textures.set(key, markerTexture(kind, look, count, color));
     return textures.get(key);
   };
   const plain = row => {
@@ -149,7 +149,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     revision++; overlays = null;
     for (const row of rows) {
       row.stale = stale; row.dim = stale || !modeForeground(mode, row, states[row.entity_id]);
-      row.sprite.material.map = texture(iconKind(row), row.look);
+      row.sprite.material.map = texture(iconKind(row), row.look, null, row.color);
       row.sprite.material.opacity = row.dim ? .4 : 1;
       const text = `${row.name} · ${row.label}`;
       if (row.labelNode.textContent !== text) { row.labelNode.textContent = text; row.labelBox = null; }

@@ -1,4 +1,5 @@
 import { controls, element, glyph, clamp, figure, title, known, holdsRange, SVG } from './shared.js';
+import { twinHeat, twinCool, twinAuto } from '../../palette.js';
 
 // HA's thermostat card at the marker: one 270-degree arc open at the bottom, a handle for the
 // setpoint (two for heat_cool), the arc filled in the mode's colour, a dot at the current
@@ -36,7 +37,7 @@ export function climateControls(options) {
   const gradient = document.createElementNS(SVG, 'linearGradient');
   gradient.setAttribute('id', id); gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
   for (const [key, value] of [['x1', '28'], ['y1', '0'], ['x2', '252'], ['y2', '0']]) gradient.setAttribute(key, value);
-  for (const [offset, colour] of [['0', '#ff9d3c'], ['1', '#7fb0ff']]) {
+  for (const [offset, colour] of [['0', twinHeat], ['1', twinCool]]) {
     const stop = document.createElementNS(SVG, 'stop');
     stop.setAttribute('offset', offset); stop.setAttribute('stop-color', colour); gradient.append(stop);
   }
@@ -103,12 +104,12 @@ export function climateControls(options) {
     if (!isOff) offText?.remove();
     root.toggleAttribute('data-off', isOff);
     // The fill: up to the setpoint when heating, from it when cooling, between the two for a range.
-    let from = 0, to = 0, colour = '#e3d3ab';
+    let from = 0, to = 0, colour = twinAuto;
     if (!isOff && handles.length && handles.every(h => known(h.value))) {
       const [lo, hi] = handles.map(h => ratio(clamp(Number(h.value), min, max)));
       if (range) { from = lo; to = hi; colour = `url(#${id})`; }
-      else if (mode === 'cool') { from = lo; to = 1; colour = '#7fb0ff'; }
-      else if (['heat', 'auto', 'heat_cool'].includes(mode)) { from = 0; to = lo; colour = mode === 'heat' ? '#ff9d3c' : '#e3d3ab'; }
+      else if (mode === 'cool') { from = lo; to = 1; colour = twinCool; }
+      else if (['heat', 'auto', 'heat_cool'].includes(mode)) { from = 0; to = lo; colour = mode === 'heat' ? twinHeat : twinAuto; }
       else { from = 0; to = lo; }
     }
     fill.setAttribute('stroke-dasharray', `${(to - from) * 100} 100`);

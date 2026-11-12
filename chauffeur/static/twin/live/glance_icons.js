@@ -1,27 +1,28 @@
 import { LUCIDE } from '../../vendor/lucide/icons.js';
+import { twinOpen, twinCyan, twinLight, twinHeat, twinAttention, twinDevice } from '../palette.js';
 
 // Semantic ids are stored with tiles. Geometry stays in the licensed vendor.
 export const GLANCE_ICONS = Object.fromEntries([
-  ['solar', 'sun', '#facc62', 'Solar'], ['house', 'house', '#f3b183', 'House'],
+  ['solar', 'sun', twinLight, 'Solar'], ['house', 'house', twinDevice, 'House'],
   ['battery', 'battery', '#86dca0', 'Battery'], ['battery-charging', 'battery-charging', '#a3e635', 'Battery charging'],
   ['car', 'car', '#c4b5fd', 'Car'], ['ev-plug', 'plug-zap', '#b6a0ff', 'EV charging'],
   ['grid', 'utility-pole', '#93c5fd', 'Grid'], ['plug', 'plug', '#a5b4fc', 'Plug'],
   ['thermometer', 'thermometer', '#fda4af', 'Temperature'], ['humidity', 'droplet', '#7dd3fc', 'Humidity'],
-  ['water', 'droplets', '#67e8f9', 'Water'], ['gas', 'flame', '#fdba74', 'Gas / heat'],
+  ['water', 'droplets', '#67e8f9', 'Water'], ['gas', 'flame', twinHeat, 'Gas / heat'],
   ['fan', 'fan', '#99f6e4', 'Fan'], ['cooling', 'snowflake', '#bae6fd', 'Cooling'],
-  ['bulb', 'lightbulb', '#fde68a', 'Light'], ['lock', 'lock', '#a7f3d0', 'Lock'],
-  ['door', 'door-open', '#d6bfa5', 'Door'], ['window', 'panels-top-left', '#a5d8ff', 'Window'],
+  ['bulb', 'lightbulb', twinLight, 'Light'], ['lock', 'lock', '#a7f3d0', 'Lock'],
+  ['door', 'door-open', twinOpen, 'Door'], ['window', 'panels-top-left', '#a5d8ff', 'Window'],
   ['garage', 'warehouse', '#cbd5e1', 'Garage'], ['camera', 'camera', '#c7d2fe', 'Camera'],
   ['alarm', 'shield', '#fca5a5', 'Alarm'], ['wifi', 'wifi', '#a5f3fc', 'Wi-Fi'],
   ['server', 'server', '#d8b4fe', 'Router / server'], ['trash', 'trash-2', '#bef264', 'Trash'],
-  ['washer', 'washing-machine', '#93d7ee', 'Washer'], ['dryer', 'wind', '#e9c49a', 'Dryer'],
-  ['dishwasher', 'utensils-crossed', '#b3d9cc', 'Dishwasher'], ['oven', 'cooking-pot', '#f7b6a0', 'Oven'],
+  ['washer', 'washing-machine', '#93d7ee', 'Washer'], ['dryer', 'wind', twinCyan, 'Dryer'],
+  ['dishwasher', 'utensils-crossed', '#b3d9cc', 'Dishwasher'], ['oven', 'cooking-pot', twinHeat, 'Oven'],
   ['tv', 'tv', '#c4c9f5', 'TV'], ['speaker', 'speaker', '#f0abfc', 'Speaker'],
   ['sprinkler', 'shower-head', '#6ee7b7', 'Sprinkler'], ['pool', 'waves', '#67cbee', 'Pool'],
   ['leaf', 'leaf', '#bbdf92', 'Tree / leaf'], ['cloud', 'cloud', '#d1d9e6', 'Cloud'],
-  ['gauge', 'gauge', '#fcd5a5', 'Gauge'], ['clock', 'clock', '#ddd6fe', 'Clock'],
+  ['gauge', 'gauge', twinCyan, 'Gauge'], ['clock', 'clock', '#ddd6fe', 'Clock'],
   ['person', 'person-standing', '#fecdd3', 'Person'], ['pet', 'paw-print', '#e5b9e8', 'Pet'],
-  ['bell', 'bell', '#fde09d', 'Bell'], ['power', 'power', '#a5dbc1', 'Power'],
+  ['bell', 'bell', twinAttention, 'Bell'], ['power', 'power', '#a5dbc1', 'Power'],
 ].map(([id, shape, color, name]) => [id, {shape, color, name}]));
 
 export function defaultGlanceIcon(entity, row = {}, kind = '') {

@@ -22,7 +22,7 @@
       'three/addons/': twinBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': twinBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'viewing', 'unlit', 'twin_roof', 'twin_ground', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
+    {% for name in ['palette', 'twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'viewing', 'unlit', 'twin_roof', 'twin_ground', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
@@ -41,59 +41,83 @@
   </script>
   <script defer src="{{ ('../../' if request.url.path.endswith('/') else '../') }}{{ 'static/ha_card_host.js' | ver }}"></script>
   <style>
-    /* House's full-bleed scene and parchment controls (house.html:40-86). */
+    :root {
+      --twinGlass: rgba(17,19,24,.62);
+      --twinGlassStrong: rgba(17,19,24,.82);
+      --twinBorder: rgba(255,255,255,.08);
+      --twinText: #f4f5f7;
+      --twinTextDim: #a3a9b6;
+      --twinSelected: #f4f5f7;
+      --twinSelectedText: #111318;
+      --twinHover: rgba(255,255,255,.08);
+      --twinMarkerOff: rgba(17,19,24,.78);
+      --twinMarkerRing: rgba(255,255,255,.22);
+      --twinMarkerUnavailable: rgba(17,19,24,.5);
+      --twinMarkerUnavailableText: #6b7280;
+      --twinAttention: #f59e0b;
+      --twinAttentionRing: #fde68a;
+      --twinLight: #facc15;
+      --twinCyan: #22d3ee;
+      --twinHeat: #fb923c;
+      --twinCool: #60a5fa;
+      --twinAuto: #a78bfa;
+      --twinOpen: #34d399;
+      --twinDevice: #e5e7eb;
+    }
+    /* House's full-bleed scene and neutral glass controls. */
     html, body { margin:0; height:100%; overflow:hidden; }
     #twin-canvas, #twin-canvas canvas { position:absolute; inset:0; width:100%; height:100%; display:block; }
     #twin-canvas canvas { touch-action:none; }
     #twin-controls { position:fixed; left:16px; top:86px; right:16px; z-index:46; display:flex; flex-wrap:wrap; gap:8px; pointer-events:none; font:600 13px system-ui; }
-    #twin-controls fieldset { margin:0; padding:4px; display:flex; flex-wrap:wrap; gap:4px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.82); color:#f0e6cf; pointer-events:auto; }
+    #twin-controls fieldset { margin:0; padding:4px; display:flex; flex-wrap:wrap; gap:4px; border:1px solid var(--twinBorder); border-radius:16px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); pointer-events:auto; }
     #twin-controls legend { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
     #twin-controls button { border:1px solid transparent; border-radius:999px; padding:6px 11px; min-height:44px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
-    #twin-controls button[aria-pressed="true"] { background:rgba(227,211,171,.2); border-color:rgba(227,211,171,.45); }
-    #twin-controls button:hover, #twin-controls button:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
+    #twin-controls button[aria-pressed="true"] { background:var(--twinSelected); color:var(--twinSelectedText); border-color:var(--twinBorder); }
+    #twin-controls button:hover, #twin-controls button:focus-visible { background:var(--twinHover); outline:2px solid var(--twinSelected); outline-offset:2px; }
+    #twin-controls button[aria-pressed="true"]:is(:hover, :focus-visible) { background:var(--twinSelected); color:var(--twinSelectedText); }
     #twin-bake-controls output { align-self:center; padding:0 10px 0 4px; font-weight:500; white-space:nowrap; }
     /* A floor holding something that wants attention (an unlocked lock, an open door) wears the
        marker's attention colour, so it shows whichever floor is on screen. */
-    #twin-views button[data-attention]::after { content:''; display:inline-block; width:9px; height:9px; margin-left:6px; border-radius:50%; background:#edaa48; box-shadow:0 0 0 2px #fff0d4; vertical-align:middle; }
-    #twin-tier, #twin-status, #twin-hud { padding:8px 12px; border:1px solid rgba(227,211,171,.45); border-radius:8px; background:rgba(28,23,16,.9); color:#f0e6cf; font:13px/1.4 system-ui; }
+    #twin-views button[data-attention]::after { content:''; display:inline-block; width:9px; height:9px; margin-left:6px; border-radius:50%; background:var(--twinAttention); box-shadow:0 0 0 2px var(--twinAttentionRing); vertical-align:middle; }
+    #twin-tier, #twin-status, #twin-hud { padding:8px 12px; border:1px solid var(--twinBorder); border-radius:8px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:13px/1.4 system-ui; }
     #twin-hud { position:fixed; right:16px; bottom:calc(var(--panel-shelf-h, 0px) + 64px); z-index:46; pointer-events:none; }
     #twin-tier { position:fixed; right:16px; bottom:calc(var(--panel-shelf-h, 0px) + 16px); z-index:46; }
     #twin-status { position:fixed; left:16px; bottom:calc(var(--panel-shelf-h, 0px) + 16px); z-index:46; max-width:calc(100vw - 120px); }
-    #twin-edit { pointer-events:auto; display:inline-flex; align-items:center; border:1px solid rgba(227,211,171,.45); border-radius:999px; padding:6px 11px; min-height:44px; background:rgba(28,23,16,.82); color:#f0e6cf; text-decoration:none; }
-    #twin-edit:hover, #twin-edit:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
-    /* The live sheet uses the preview controls' parchment and the editor card's right dock. */
+    #twin-edit { pointer-events:auto; display:inline-flex; align-items:center; border:1px solid var(--twinBorder); border-radius:999px; padding:6px 11px; min-height:44px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); text-decoration:none; }
+    #twin-edit:hover, #twin-edit:focus-visible { background:var(--twinHover); outline:2px solid var(--twinSelected); outline-offset:2px; }
+    /* The live sheet uses the preview controls' glass and the editor card's right dock. */
     .twin-live-labels, .twin-car-labels { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
-    .twin-live-labels span, .twin-car-labels span { position:absolute; box-sizing:border-box; max-width:190px; height:23px; padding:3px 6px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border-radius:8px; background:rgba(28,23,16,.9); color:#f0e6cf; font:12px/1.4 system-ui; }
+    .twin-live-labels span, .twin-car-labels span { position:absolute; box-sizing:border-box; max-width:190px; height:23px; padding:3px 6px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border-radius:8px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:12px/1.4 system-ui; }
     .twin-car-labels { position:fixed; z-index:44; }
     .twin-car-labels span { transform:translate(-50%, -50%); }
-    .twin-device-sheet, .twin-car-sheet { position:fixed; top:154px; right:16px; z-index:47; box-sizing:border-box; width:min(320px, calc(100vw - 32px)); max-height:calc(100dvh - 180px - var(--panel-shelf-h, 0px)); overflow:auto; padding:16px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.94); color:#f0e6cf; font:13px/1.4 system-ui; }
+    .twin-device-sheet, .twin-car-sheet { position:fixed; top:154px; right:16px; z-index:47; box-sizing:border-box; width:min(320px, calc(100vw - 32px)); max-height:calc(100dvh - 180px - var(--panel-shelf-h, 0px)); overflow:auto; padding:16px; border:1px solid var(--twinBorder); border-radius:16px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); color:var(--twinText); font:13px/1.4 system-ui; }
     .twin-device-sheet h2, .twin-car-sheet h2 { margin:0 0 8px; font-size:18px; font-weight:700; }
     .twin-device-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
-    .twin-device-actions button { border:1px solid rgba(227,211,171,.45); border-radius:999px; padding:6px 11px; min-height:44px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+    .twin-device-actions button { border:1px solid var(--twinBorder); border-radius:999px; padding:6px 11px; min-height:44px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
     /* Hover only where there is a mouse: on a touch wall a tapped button would keep it. */
-    @media (hover:hover) { .twin-device-actions button:hover { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; } }
-    .twin-device-actions button:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
+    @media (hover:hover) { .twin-device-actions button:hover { background:var(--twinHover); outline:2px solid var(--twinSelected); outline-offset:2px; } }
+    .twin-device-actions button:focus-visible { background:var(--twinHover); outline:2px solid var(--twinSelected); outline-offset:2px; }
     .twin-device-actions button:disabled { opacity:.5; cursor:default; }
     /* The chosen effect reads as pressed, the way the preview controls show theirs (#twin-controls above). */
-    .twin-device-actions button[aria-pressed="true"] { background:rgba(227,211,171,.2); border-color:#e3d3ab; }
+    .twin-device-actions button[aria-pressed="true"] { background:var(--twinSelected); color:var(--twinSelectedText); border-color:var(--twinSelected); }
     /* A device toggle reads as a switch, not a button named after its state: the track
        is filled when the device is on (aria-checked, the confirmed state). */
     .twin-device-actions button[role="switch"] { position:relative; width:64px; padding:0; border-color:transparent; font-size:0; }
-    .twin-device-actions button[role="switch"]::before { content:''; position:absolute; left:6px; top:50%; width:52px; height:30px; margin-top:-15px; box-sizing:border-box; border:1px solid rgba(227,211,171,.45); border-radius:999px; background:rgba(227,211,171,.08); }
-    .twin-device-actions button[role="switch"]::after { content:''; position:absolute; left:11px; top:50%; width:20px; height:20px; margin-top:-10px; border-radius:50%; background:#c9bb98; transition:transform .15s; }
-    .twin-device-actions button[role="switch"][aria-checked="true"]::before { background:#e3d3ab; border-color:#e3d3ab; }
-    .twin-device-actions button[role="switch"][aria-checked="true"]::after { transform:translateX(22px); background:#2a2117; }
+    .twin-device-actions button[role="switch"]::before { content:''; position:absolute; left:6px; top:50%; width:52px; height:30px; margin-top:-15px; box-sizing:border-box; border:1px solid var(--twinBorder); border-radius:999px; background:var(--twinHover); }
+    .twin-device-actions button[role="switch"]::after { content:''; position:absolute; left:11px; top:50%; width:20px; height:20px; margin-top:-10px; border-radius:50%; background:var(--twinTextDim); transition:transform .15s; }
+    .twin-device-actions button[role="switch"][aria-checked="true"]::before { background:var(--twinSelected); color:var(--twinSelectedText); border-color:var(--twinSelected); }
+    .twin-device-actions button[role="switch"][aria-checked="true"]::after { transform:translateX(22px); background:var(--twinSelectedText); }
     /* The editor's dock and fixed header/scrolling body; rows follow agenda-event. */
     #twin-room-panel { width:min(364px, calc(100vw - 32px)); display:flex; flex-direction:column; overflow:hidden; }
     #twin-room-panel > header { flex-shrink:0; align-items:center; margin-top:0; margin-bottom:12px; }
     #twin-room-panel h2 { flex:1; margin:0; }
-    .twin-room-devices { min-height:0; overflow-y:auto; scrollbar-color:rgba(227,211,171,.28) transparent; }
-    .twin-room-device { margin-bottom:8px; padding:10px; border-radius:8px; background:rgba(227,211,171,.08); border-left:4px solid rgba(227,211,171,.45); }
+    .twin-room-devices { min-height:0; overflow-y:auto; scrollbar-color:var(--twinMarkerRing) transparent; }
+    .twin-room-device { margin-bottom:8px; padding:10px; border-radius:8px; background:var(--twinHover); border-left:4px solid var(--twinBorder); }
     .twin-room-device h3 { margin:0; font-size:14px; font-weight:700; }
     .twin-room-device p { margin:4px 0; }
     .twin-room-device .twin-device-actions { margin-top:8px; align-items:center; }
     .twin-room-device label { display:flex; flex-wrap:wrap; align-items:center; gap:8px; width:100%; }
-    .twin-room-device input[type="range"] { flex:1; min-width:100px; min-height:44px; accent-color:#e3d3ab; }
+    .twin-room-device input[type="range"] { flex:1; min-width:100px; min-height:44px; accent-color:var(--twinSelected); }
     /* A row's choices read as the ring's side card does: captioned groups from the left. The
        state line the dial shows is the row's own status line here, so it is not said twice. */
     .twin-room-device .twin-ring-caption { width:100%; margin:4px 0 0; }
@@ -101,37 +125,37 @@
     .twin-room-device .twin-device-actions > p[data-ring-part="state"],
     .twin-room-device[data-kind="climate"] .twin-device-actions > p[data-ring-part="current"] { display:none; }
     /* The ring at a marker: a dial (the marker's circular glyph at control size) on the sheet's
-       parchment and hairline (.twin-device-sheet above), 44px targets, a name pill like the
+       glass and hairline (.twin-device-sheet above), 44px targets, a name pill like the
        marker labels (.twin-live-labels span), and a side card that is the sheet itself.
        touch-action sits on the ring itself: Chromium ignores it on SVG paths, so a finger on an
        arc would start a pan and cancel the drag. */
-    .twin-device-ring { position:fixed; z-index:48; width:280px; margin-left:-140px; margin-top:-140px; touch-action:none; color:#f0e6cf; font:13px/1.4 system-ui; }
-    .twin-device-ring > h2 { position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%); box-sizing:border-box; max-width:260px; margin:0; padding:3px 10px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border-radius:8px; background:rgba(28,23,16,.94); text-align:center; font-size:14px; font-weight:700; pointer-events:none; }
-    .twin-ring-status { padding:8px 12px; margin:0; border-radius:8px; background:rgba(28,23,16,.94); }
-    .twin-device-ring > .twin-device-actions { margin-top:0; padding:12px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.94); }
+    .twin-device-ring { position:fixed; z-index:48; width:280px; margin-left:-140px; margin-top:-140px; touch-action:none; color:var(--twinText); font:13px/1.4 system-ui; }
+    .twin-device-ring > h2 { position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%); box-sizing:border-box; max-width:260px; margin:0; padding:3px 10px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); text-align:center; font-size:14px; font-weight:700; pointer-events:none; }
+    .twin-ring-status { padding:8px 12px; margin:0; border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); }
+    .twin-device-ring > .twin-device-actions { margin-top:0; padding:12px; border:1px solid var(--twinBorder); border-radius:16px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); }
     .twin-device-ring > .twin-light-controls { position:relative; display:block; box-sizing:border-box; width:280px; height:280px; padding:0; border:0; border-radius:50%; background:transparent; }
-    .twin-light-controls::before { content:''; position:absolute; inset:10px; border:1px solid rgba(227,211,171,.45); border-radius:50%; background:rgba(28,23,16,.98); }
-    .twin-device-ring .twin-light-controls button[data-ring-part="center"] { position:absolute; left:110px; top:110px; width:60px; height:60px; min-width:60px; padding:0; border:1px solid rgba(227,211,171,.45); border-radius:50%; background:rgba(28,23,16,.94); font-size:14px; font-weight:700; }
+    .twin-light-controls::before { content:''; position:absolute; inset:10px; border:1px solid var(--twinBorder); border-radius:50%; background:var(--twinGlassStrong); backdrop-filter:blur(16px); }
+    .twin-device-ring .twin-light-controls button[data-ring-part="center"] { position:absolute; left:110px; top:110px; width:60px; height:60px; min-width:60px; padding:0; border:1px solid var(--twinBorder); border-radius:50%; background:var(--twinGlassStrong); backdrop-filter:blur(16px); font-size:14px; font-weight:700; }
     .twin-device-ring .twin-light-controls button[data-ring-part="center"]::before, .twin-device-ring .twin-light-controls button[data-ring-part="center"]::after { content:none; }
-    .twin-device-ring .twin-light-controls button[data-ring-part="center"][aria-checked="true"] { background:#e3d3ab; border-color:#e3d3ab; color:#1c1710; }
+    .twin-device-ring .twin-light-controls button[data-ring-part="center"][aria-checked="true"] { background:var(--twinSelected); color:var(--twinSelectedText); border-color:var(--twinSelected); color:var(--twinSelectedText); }
     .twin-light-arc { position:absolute; inset:0; width:280px; height:280px; overflow:visible; pointer-events:none; }
-    .twin-light-arc path { fill:none; stroke:rgba(227,211,171,.16); stroke-width:44; stroke-linecap:round; pointer-events:stroke; touch-action:none; cursor:pointer; }
-    .twin-light-arc path:focus-visible { outline:none; filter:drop-shadow(0 0 3px #e3d3ab); }
+    .twin-light-arc path { fill:none; stroke:var(--twinMarkerRing); stroke-width:44; stroke-linecap:round; pointer-events:stroke; touch-action:none; cursor:pointer; }
+    .twin-light-arc path:focus-visible { outline:none; filter:drop-shadow(0 0 3px var(--twinSelected)); }
     .twin-light-arc path[aria-disabled="true"] { opacity:.5; cursor:default; }
-    .twin-light-arc .twin-light-progress { stroke:#e3d3ab; stroke-width:44; pointer-events:none; }
-    .twin-light-handle { r:15px; fill:#f0e6cf; stroke:#1c1710; stroke-width:3; pointer-events:none; }
+    .twin-light-arc .twin-light-progress { stroke:var(--twinSelected); stroke-width:44; pointer-events:none; }
+    .twin-light-handle { r:15px; fill:var(--twinText); stroke:var(--twinSelectedText); stroke-width:3; pointer-events:none; }
     .twin-light-value { position:absolute; left:0; width:100%; text-align:center; font-size:15px; font-weight:700; pointer-events:none; }
     .twin-light-brightness { top:78px; }
     .twin-light-temperature { top:180px; }
-    .twin-ring-side { position:absolute; left:292px; top:0; box-sizing:border-box; width:278px; display:flex; flex-direction:column; gap:8px; padding:12px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.98); }
-    .twin-ring-caption { margin:0; font-size:11px; font-weight:600; color:#c9bb98; }
+    .twin-ring-side { position:absolute; left:292px; top:0; box-sizing:border-box; width:278px; display:flex; flex-direction:column; gap:8px; padding:12px; border:1px solid var(--twinBorder); border-radius:16px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); }
+    .twin-ring-caption { margin:0; font-size:11px; font-weight:600; color:var(--twinTextDim); }
     .twin-ring-side label { display:flex; align-items:center; justify-content:space-between; gap:8px; }
     /* Every kind's dial is the light ring's (controls/shared.js): an arc's value sits where the
        brightness does, named in the caption ink; round 44px buttons in the centre row take the
        centre switch's look; a plain dial (no arc) stacks its state over its verbs as pills. */
     .twin-dial-readout .twin-ring-caption { display:inline; margin-right:4px; }
-    .twin-device-actions .twin-ring-round { display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; width:44px; height:44px; min-width:44px; padding:0; border-radius:50%; background:rgba(28,23,16,.94); }
-    .twin-device-actions .twin-ring-round.twin-ring-primary { width:60px; height:60px; min-width:60px; background:#e3d3ab; border-color:#e3d3ab; color:#1c1710; }
+    .twin-device-actions .twin-ring-round { display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; width:44px; height:44px; min-width:44px; padding:0; border-radius:50%; background:var(--twinGlassStrong); backdrop-filter:blur(16px); }
+    .twin-device-actions .twin-ring-round.twin-ring-primary { width:60px; height:60px; min-width:60px; background:var(--twinSelected); color:var(--twinSelectedText); border-color:var(--twinSelected); color:var(--twinSelectedText); }
     .twin-ring-glyph { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; pointer-events:none; }
     .twin-ring-glyph[data-glyph="play"] path, .twin-ring-glyph[data-glyph="stop"] path, .twin-ring-glyph[data-glyph="previous"] path, .twin-ring-glyph[data-glyph="next"] path { fill:currentColor; }
     .twin-dial-row { position:absolute; left:0; top:118px; width:100%; display:flex; align-items:center; justify-content:center; gap:6px; }
@@ -142,37 +166,37 @@
     .twin-dial-stack > p { margin:0; font-size:20px; font-weight:700; }
     .twin-dial-pills { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; width:208px; }
     .twin-dial-pills .twin-alarm-arm { display:contents; }
-    .twin-dial-pills button { flex:0 0 100px; padding:6px 8px; background:rgba(28,23,16,.94); }
+    .twin-dial-pills button { flex:0 0 100px; padding:6px 8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); }
     /* The verb that matches the confirmed state reads as a chosen chip does. */
-    .twin-device-actions button[data-current] { background:rgba(227,211,171,.2); border-color:#e3d3ab; }
+    .twin-device-actions button[data-current] { background:var(--twinSelected); color:var(--twinSelectedText); border-color:var(--twinSelected); }
     /* The thermostat: HA's card's one open arc, setpoint large in the middle, minus and plus in the opening. */
-    .twin-thermostat-now { fill:#f0e6cf; stroke:#1c1710; stroke-width:2; pointer-events:none; }
-    .twin-thermostat-handle:focus-visible { outline:none; stroke:#e3d3ab; stroke-width:4; }
+    .twin-thermostat-now { fill:var(--twinText); stroke:var(--twinSelectedText); stroke-width:2; pointer-events:none; }
+    .twin-thermostat-handle:focus-visible { outline:none; stroke:var(--twinSelected); stroke-width:4; }
     .twin-dial-thermostat[data-off] .twin-thermostat-track { cursor:default; }
     .twin-thermostat-centre { position:absolute; left:60px; top:74px; width:160px; text-align:center; pointer-events:none; }
     .twin-thermostat-centre p { margin:0; }
-    .twin-thermostat-action { font-size:13px; font-weight:600; color:#c9bb98; }
+    .twin-thermostat-action { font-size:13px; font-weight:600; color:var(--twinTextDim); }
     .twin-thermostat-target { display:flex; align-items:center; justify-content:center; gap:4px; height:62px; font-size:46px; font-weight:700; line-height:1; }
     .twin-thermostat-target[data-off] { font-size:34px; }
-    .twin-device-ring .twin-thermostat-target button { min-width:0; min-height:44px; padding:0 6px; border:0; border-radius:8px; background:transparent; color:#c9bb98; font-size:30px; font-weight:700; pointer-events:auto; }
-    .twin-device-ring .twin-thermostat-target button[aria-pressed="true"] { background:transparent; color:#f0e6cf; text-decoration:underline 2px #e3d3ab; text-underline-offset:6px; }
+    .twin-device-ring .twin-thermostat-target button { min-width:0; min-height:44px; padding:0 6px; border:0; border-radius:8px; background:transparent; color:var(--twinTextDim); font-size:30px; font-weight:700; pointer-events:auto; }
+    .twin-device-ring .twin-thermostat-target button[aria-pressed="true"] { background:transparent; color:var(--twinText); text-decoration:underline 2px var(--twinSelected); text-underline-offset:6px; }
     .twin-thermostat-current { font-size:13px; }
     .twin-thermostat-steps { position:absolute; left:0; top:216px; width:100%; display:flex; justify-content:center; gap:8px; }
-    .twin-camera-still { display:block; box-sizing:border-box; width:100%; aspect-ratio:4 / 3; object-fit:contain; border-radius:8px; background:#0d0b08; }
+    .twin-camera-still { display:block; box-sizing:border-box; width:100%; aspect-ratio:4 / 3; object-fit:contain; border-radius:8px; background:var(--twinSelectedText); }
     /* No frame: the reason sits over the empty frame (controls/camera.js), never a broken image. */
     .twin-device-actions[data-missing] { position:relative; }
     .twin-device-actions[data-missing] > .twin-camera-still { visibility:hidden; }
-    .twin-device-actions[data-missing] > p[role="status"] { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; box-sizing:border-box; margin:0; padding:24px; border-radius:8px; background:#0d0b08; text-align:center; font-size:15px; font-weight:600; }
+    .twin-device-actions[data-missing] > p[role="status"] { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; box-sizing:border-box; margin:0; padding:24px; border-radius:8px; background:var(--twinSelectedText); text-align:center; font-size:15px; font-weight:600; }
     .twin-device-ring > .twin-device-actions[data-missing] > p[role="status"] { inset:12px; }
     .twin-light-swatches, .twin-light-effects { display:flex; flex-wrap:wrap; gap:8px; width:100%; justify-content:center; }
     .twin-ring-side .twin-light-swatches, .twin-ring-side .twin-light-effects { justify-content:flex-start; }
-    .twin-device-actions .twin-light-swatches button { box-sizing:border-box; width:44px; height:44px; min-width:44px; min-height:44px; padding:0; border-radius:50%; font-size:0; box-shadow:inset 0 0 0 3px rgba(28,23,16,.94); }
-    .twin-light-wheel { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:4px; border-radius:8px; background:rgba(28,23,16,.94); }
+    .twin-device-actions .twin-light-swatches button { box-sizing:border-box; width:44px; height:44px; min-width:44px; min-height:44px; padding:0; border-radius:50%; font-size:0; box-shadow:inset 0 0 0 3px var(--twinGlassStrong); }
+    .twin-light-wheel { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:4px; border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); }
     .twin-ring-side .twin-light-wheel { padding:0; background:transparent; }
-    .twin-colour-wheel { position:relative; width:88px; height:88px; min-width:88px; border:1px solid rgba(227,211,171,.45); border-radius:50%; background:radial-gradient(circle, white, transparent), conic-gradient(red, yellow, lime, cyan, blue, magenta, red); touch-action:none; cursor:crosshair; }
+    .twin-colour-wheel { position:relative; width:88px; height:88px; min-width:88px; border:1px solid var(--twinBorder); border-radius:50%; background:radial-gradient(circle, white, transparent), conic-gradient(red, yellow, lime, cyan, blue, magenta, red); touch-action:none; cursor:crosshair; }
     .twin-ring-side .twin-colour-wheel { width:140px; height:140px; min-width:140px; }
-    .twin-colour-wheel span { position:absolute; width:14px; height:14px; margin:-7px; border:2px solid #1c1710; border-radius:50%; box-shadow:0 0 0 2px #f0e6cf; pointer-events:none; }
-    .twin-colour-wheel:focus-visible { outline:2px solid #e3d3ab; outline-offset:2px; }
+    .twin-colour-wheel span { position:absolute; width:14px; height:14px; margin:-7px; border:2px solid var(--twinSelectedText); border-radius:50%; box-shadow:0 0 0 2px var(--twinText); pointer-events:none; }
+    .twin-colour-wheel:focus-visible { outline:2px solid var(--twinSelected); outline-offset:2px; }
     .twin-colour-wheel[aria-disabled="true"] { opacity:.5; cursor:default; }
     /* The chat box stays: on a panel it rests as the Argyle orb (ha_theme.html), the only way
        into Argyle and tap-to-talk there. */
@@ -186,42 +210,42 @@
     [hidden] { display:none !important; }
     #twin-glance-home { position:fixed; bottom:max(calc(var(--panel-shelf-h, 0px) + 16px), var(--twin-glance-clearance, 0px)); left:16px; right:16px; z-index:46; pointer-events:none; }
     /* Shared tiles; glass and thin type follow the approved tiles brief. */
-    #twin-glance { display:flex; flex-wrap:nowrap; gap:12px 28px; padding:12px 18px; border:1px solid rgba(255,255,255,.08); border-radius:24px; background:rgba(15,17,22,.55); backdrop-filter:blur(16px); color:#f3f2f7; font:14px/1.3 system-ui; overflow-x:auto; pointer-events:auto; }
+    #twin-glance { display:flex; flex-wrap:nowrap; gap:12px 28px; padding:12px 18px; border:1px solid var(--twinBorder); border-radius:24px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:14px/1.3 system-ui; overflow-x:auto; pointer-events:auto; }
     #twin-glance > div { display:flex; flex:none; align-items:center; gap:10px; min-width:0; }
     #twin-glance svg { flex:none; width:28px; height:28px; }
     #twin-glance strong { display:block; white-space:nowrap; font-size:22px; font-weight:400; }
     #twin-glance [data-glance-unit] { font-size:.65em; }
-    #twin-glance small { display:block; color:#b9becb; font-size:12px; font-weight:300; overflow-wrap:anywhere; max-width:24ch; }
+    #twin-glance small { display:block; color:var(--twinTextDim); font-size:12px; font-weight:300; overflow-wrap:anywhere; max-width:24ch; }
     #twin-tier { bottom:calc(var(--panel-shelf-h, 0px) + 90px); }
     #twin-hud { bottom:calc(var(--panel-shelf-h, 0px) + 136px); }
     #twin-status { bottom:calc(var(--panel-shelf-h, 0px) + 90px); }
-    #twin-mode-legend { pointer-events:auto; align-self:center; padding:8px 12px; background:rgba(28,23,16,.9); border-radius:8px; color:#f0e6cf; max-width:calc(100vw - 32px); }
+    #twin-mode-legend { pointer-events:auto; align-self:center; padding:8px 12px; background:var(--twinGlass); backdrop-filter:blur(16px); border-radius:8px; color:var(--twinText); max-width:calc(100vw - 32px); }
     .twin-mode-labels { position:fixed; inset:0; pointer-events:none; z-index:44; overflow:hidden; }
-    .twin-mode-labels span { position:absolute; transform:translate(-50%, -50%); white-space:nowrap; padding:4px 8px; border-radius:8px; background:rgba(28,23,16,.94); color:#f0e6cf; font:600 13px system-ui; }
+    .twin-mode-labels span { position:absolute; transform:translate(-50%, -50%); white-space:nowrap; padding:4px 8px; border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); color:var(--twinText); font:600 13px system-ui; }
     /* Room cards use the idle clock's dark glass and the glance bar's thin readings. */
     .twin-room-cards { position:fixed; inset:0; z-index:44; pointer-events:none; overflow:hidden; }
-    .twin-room-cards > button { position:absolute; transform:translate(-50%, -50%); box-sizing:border-box; height:62px; padding:10px 12px; border:1px solid rgba(255,255,255,.08); border-radius:16px; background:rgba(15,17,22,.55); backdrop-filter:blur(16px); color:#f3f2f7; font:300 12px/16px system-ui; text-align:left; cursor:pointer; pointer-events:auto; }
+    .twin-room-cards > button { position:absolute; transform:translate(-50%, -50%); box-sizing:border-box; height:62px; padding:10px 12px; border:1px solid var(--twinBorder); border-radius:16px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:300 12px/16px system-ui; text-align:left; cursor:pointer; pointer-events:auto; }
     .twin-room-cards > button[hidden], .twin-room-cards span[hidden] { display:none; }
-    .twin-room-cards > button[data-attention="true"] { border-color:#edaa48; }
+    .twin-room-cards > button[data-attention="true"] { border-color:var(--twinAttention); }
     .twin-room-cards strong { display:block; max-width:140px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font:400 13px/18px system-ui; }
-    .twin-room-cards button > div { display:flex; gap:10px; margin-top:6px; color:#b9becb; white-space:nowrap; }
+    .twin-room-cards button > div { display:flex; gap:10px; margin-top:6px; color:var(--twinTextDim); white-space:nowrap; }
     .twin-room-cards span { display:flex; flex-direction:row-reverse; align-items:center; gap:4px; }
     .twin-room-cards small { font:inherit; }
     .twin-room-cards svg { width:14px; height:14px; flex-shrink:0; }
-    .twin-room-cards [data-tone="attention"] { color:#edaa48; }
-    .twin-room-cards [data-tone="on"] { color:#e3d3ab; }
-    .twin-room-cards button:focus-visible { outline:2px solid #e3d3ab; outline-offset:2px; }
-    #twin-idle { position:fixed; inset:0 0 var(--panel-shelf-h, 0px); z-index:49; pointer-events:none; color:#f3f2f7; }
-    #twin-idle-clock { box-sizing:border-box; width:max-content; max-width:min(92vw, 880px, calc(100% - var(--glance-edge-x) - var(--glance-edge-x))); padding:clamp(18px, 3vw, 36px); border:1px solid rgba(255,255,255,.08); border-radius:24px; background:rgba(15,17,22,.55); backdrop-filter:blur(16px); }
+    .twin-room-cards [data-tone="attention"] { color:var(--twinAttention); }
+    .twin-room-cards [data-tone="on"] { color:var(--twinLight); }
+    .twin-room-cards button:focus-visible { outline:2px solid var(--twinSelected); outline-offset:2px; }
+    #twin-idle { position:fixed; inset:0 0 var(--panel-shelf-h, 0px); z-index:49; pointer-events:none; color:var(--twinText); }
+    #twin-idle-clock { box-sizing:border-box; width:max-content; max-width:min(92vw, 880px, calc(100% - var(--glance-edge-x) - var(--glance-edge-x))); padding:clamp(18px, 3vw, 36px); border:1px solid var(--twinBorder); border-radius:24px; background:var(--twinGlass); backdrop-filter:blur(16px); }
     #twin-idle-head { display:flex; width:fit-content; max-width:100%; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:20px 48px; }
     #twin-idle .ss-time { font:200 clamp(64px, 9vw, 128px)/1.05 system-ui; letter-spacing:-.04em; }
-    #twin-idle .ss-date { margin-top:8px; color:#b9becb; font:300 clamp(16px, 2vw, 24px)/1.4 system-ui; }
+    #twin-idle .ss-date { margin-top:8px; color:var(--twinTextDim); font:300 clamp(16px, 2vw, 24px)/1.4 system-ui; }
     #twin-idle-weather { margin-left:auto; text-align:right; }
     .twin-weather-reading { display:flex; align-items:center; justify-content:flex-end; gap:14px; }
     .twin-weather-reading svg { width:clamp(36px, 5vw, 64px); height:clamp(36px, 5vw, 64px); }
     .twin-weather-reading strong { white-space:nowrap; font:300 clamp(36px, 5vw, 64px)/1.1 system-ui; }
-    #twin-idle-weather small { display:block; margin-top:8px; color:#b9becb; font:300 clamp(16px, 2vw, 22px)/1.4 system-ui; }
-    #twin-idle #twin-glance { margin-top:24px; padding:22px 0 0; flex-wrap:wrap; gap:20px 32px; border:0; border-top:1px solid rgba(255,255,255,.08); border-radius:0; background:transparent; backdrop-filter:none; overflow:visible; }
+    #twin-idle-weather small { display:block; margin-top:8px; color:var(--twinTextDim); font:300 clamp(16px, 2vw, 22px)/1.4 system-ui; }
+    #twin-idle #twin-glance { margin-top:24px; padding:22px 0 0; flex-wrap:wrap; gap:20px 32px; border:0; border-top:1px solid var(--twinBorder); border-radius:0; background:transparent; backdrop-filter:none; overflow:visible; }
     #twin-idle #twin-glance strong { font-size:clamp(24px, 3vw, 34px); font-weight:400; }
     #twin-idle #twin-glance svg { width:34px; height:34px; }
     html[data-twin-idle] #twin-controls, html[data-twin-idle] #twin-tier, html[data-twin-idle] #twin-hud, html[data-twin-idle] #top-nav-bar, html[data-twin-idle] .twin-mode-labels, html[data-twin-idle] .twin-room-cards { visibility:hidden; }
@@ -232,42 +256,42 @@
     html[data-twin-idle] #twin-canvas { z-index:1; }
     html[data-twin-idle] #panel-chat-orb, html[data-twin-idle] #chat-overlay-container { z-index:0; }
     #twin-glance-settings label { display:block; margin:12px 0; }
-    #twin-glance-settings input[type=search], #twin-glance-settings input[type=text], #twin-glance-settings select { display:block; box-sizing:border-box; width:100%; padding:10px; border:1px solid #4b5563; border-radius:8px; background:#111827; color:white; }
-    #twin-glance-settings button { min-height:44px; padding:8px 12px; border:1px solid #4b5563; border-radius:8px; color:white; background:#374151; }
+    #twin-glance-settings input[type=search], #twin-glance-settings input[type=text], #twin-glance-settings select { display:block; box-sizing:border-box; width:100%; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); color:var(--twinText); }
+    #twin-glance-settings button { min-height:44px; padding:8px 12px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); background:var(--twinHover); }
     #twin-glance-settings button:disabled { opacity:.4; }
     #twin-glance-selected { padding:0; list-style:none; }
-    #twin-glance-selected li { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:12px 0; padding:10px; border:1px solid #4b5563; border-radius:8px; }
+    #twin-glance-selected li { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:12px 0; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; }
     #twin-glance-selected li > span { flex:1; min-width:120px; overflow-wrap:anywhere; }
     #twin-glance-selected li > span > span, #twin-glance-selected small { display:block; }
-    #twin-glance-selected small, #twin-glance-empty { color:#9ca3af; font-size:12px; }
+    #twin-glance-selected small, #twin-glance-empty { color:var(--twinTextDim); font-size:12px; }
     #twin-glance-selected svg { width:24px; height:24px; }
     #twin-glance-selected input[type=text] { flex-basis:100%; }
     #twin-glance-choices { display:flex; flex-direction:column; gap:6px; max-height:280px; overflow:auto; }
     #twin-glance-icons { display:grid; grid-template-columns:repeat(auto-fit, minmax(90px, 1fr)); gap:6px; max-height:320px; overflow:auto; }
     #twin-glance-icons button { display:flex; flex-direction:column; align-items:center; gap:6px; font-size:12px; }
-    #twin-glance-icons button[aria-pressed=true] { border-color:#93c5fd; }
-    #twin-glance-settings :focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
+    #twin-glance-icons button[aria-pressed=true] { border-color:var(--twinSelected); background:var(--twinSelected); color:var(--twinSelectedText); }
+    #twin-glance-settings :focus-visible { outline:2px solid var(--twinText); outline-offset:2px; }
     /* Energy uses the glance drawer's captioned pickers and 44px buttons. */
     #twin-energy-settings label { display:block; margin:12px 0; }
-    #twin-energy-settings select, #twin-energy-settings input:not([type=checkbox]) { display:block; width:100%; padding:10px; border:1px solid #4b5563; border-radius:8px; background:#111827; color:white; }
-    #twin-energy-settings button { min-height:44px; padding:8px 12px; border:1px solid #4b5563; border-radius:8px; color:white; background:#374151; }
+    #twin-energy-settings select, #twin-energy-settings input:not([type=checkbox]) { display:block; width:100%; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); color:var(--twinText); }
+    #twin-energy-settings button { min-height:44px; padding:8px 12px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); background:var(--twinHover); }
     #twin-energy-settings button:disabled { opacity:.4; }
-    #twin-energy-settings fieldset { margin:12px 0; padding:10px; border:1px solid #4b5563; border-radius:8px; }
+    #twin-energy-settings fieldset { margin:12px 0; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; }
     /* Energy check reuses the energy drawer's fieldsets; the legend reads the same rows. */
-    .twin-energy-check { color:#e5e7eb; }
-    .twin-energy-check fieldset, #twin-mode-legend .twin-energy-check fieldset { display:block; margin:12px 0; padding:10px; border:1px solid #4b5563; border-radius:8px; color:#e5e7eb; }
+    .twin-energy-check { color:var(--twinText); }
+    .twin-energy-check fieldset, #twin-mode-legend .twin-energy-check fieldset { display:block; margin:12px 0; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); }
     .twin-energy-check p { margin:6px 0; overflow-wrap:anywhere; }
-    .twin-energy-check legend { color:#e5e7eb; font-weight:700; }
+    .twin-energy-check legend { color:var(--twinText); font-weight:700; }
     .twin-energy-check [data-energy-summary] { font-size:16px; line-height:1.5; font-weight:600; }
     .twin-energy-check [data-energy-mark=ok], .twin-energy-check [data-energy-flow][data-status=shown] { color:#4ade80; }
-    .twin-energy-check [data-energy-mark=warning], .twin-energy-check [data-energy-flow][data-status=blocked] { color:#fbbf24; }
+    .twin-energy-check [data-energy-mark=warning], .twin-energy-check [data-energy-flow][data-status=blocked] { color:var(--twinAttention); }
     .twin-energy-check [data-energy-mark=error] { color:#f87171; }
-    .twin-energy-check [data-energy-flow][data-status=hidden] { color:#9ca3af; }
+    .twin-energy-check [data-energy-flow][data-status=hidden] { color:var(--twinTextDim); }
     /* The check's role names are fieldset legends; the controls bar hides its legends, so show these. */
     #twin-mode-legend legend { position:static; width:auto; height:auto; overflow:visible; clip-path:none; font-weight:700; padding:0 4px; }
     #twin-mode-legend a { display:inline-block; min-height:44px; padding:10px 0; text-decoration:underline; }
     #twin-mode-legend .twin-energy-check { max-height:50dvh; overflow-y:auto; }
-    #twin-mode-legend a:focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
+    #twin-mode-legend a:focus-visible { outline:2px solid var(--twinText); outline-offset:2px; }
   </style>
 </head>
 <body>

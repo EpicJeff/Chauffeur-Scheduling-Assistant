@@ -25,7 +25,7 @@ const arcPath = lower => {
   return `M ${x0} ${y0} A 90 90 0 0 ${lower ? 0 : 1} ${x1} ${y1}`;
 };
 
-// The ring's small glyphs (24 px viewBox, a 2 px parchment stroke like the marker icons).
+// The ring's small glyphs (24 px viewBox, a 2 px white stroke like the marker icons).
 const GLYPHS = {
   up: 'M6 15l6-6 6 6', down: 'M6 9l6 6 6-6', stop: 'M7 7h10v10H7z',
   play: 'M8 5v14l11-7z', pause: 'M8 5v14M16 5v14', previous: 'M18 6v12l-9-6zM6 6v12', next: 'M6 6v12l9-6zM18 6v12',

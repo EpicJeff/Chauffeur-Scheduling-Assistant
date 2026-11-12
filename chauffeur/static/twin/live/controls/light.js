@@ -1,4 +1,5 @@
 import { controls, element, clamp } from './shared.js';
+import { twinText } from '../../palette.js';
 
 const COLOURS = [['Red', [255, 0, 0]], ['Amber', [255, 191, 0]], ['Green', [0, 255, 0]],
   ['Blue', [0, 0, 255]], ['Purple', [128, 0, 255]]];
@@ -6,7 +7,7 @@ const COLOURS = [['Red', [255, 0, 0]], ['Amber', [255, 191, 0]], ['Green', [0, 2
 const KELVIN = [['0', '#ff9d3c'], ['.45', '#ffe4c2'], ['1', '#cfe0ff']];
 // The brightness arc fills in the light's own confirmed colour while it is on.
 const lightColour = s => s?.state === 'on' && Array.isArray(s.attributes?.rgb_color)
-  ? `color-mix(in srgb, rgb(${s.attributes.rgb_color.map(Number).join(',')}) 80%, #f0e6cf)` : '';
+  ? `color-mix(in srgb, rgb(${s.attributes.rgb_color.map(Number).join(',')}) 80%, ${twinText})` : '';
 function hueSat(attrs) {
   if (Array.isArray(attrs.hs_color)) return [...attrs.hs_color];
   const rgb = (attrs.rgb_color || [255, 255, 255]).map(v => v / 255);

@@ -28,6 +28,10 @@ every_existing_kind_behaves_as_before
   recapture the table to make it pass. Tasks 3-4 rebuild some kinds' controls on
   purpose; the commit that does so says which rows of the deviceActions table it
   replaces and why, and the looks and icons stay pinned.
+  Colour-scheme brief (2026-11-12): only the 63 icon hashes were refreshed for
+  neutral glass, per-kind on colours and the unavailable disc's missing ring.
+  State/label and action tables remain unchanged; test_twin_palette_js.py also
+  asserts the actual canvas colours and mounted climate texture reuse.
 
 a_new_kind_registers_without_core_edits
   static/twin/live/kinds.js exports
