@@ -73,11 +73,11 @@ check('flows preserve small allocations, threshold, missing endpoints and the su
  for(const id of ['grid:house','grid:battery'])assert.equal(s.flows.find(r=>r.id===id).status,'no ribbon: Meter / grid not placed');
 });
 check('summary explains missing power and quiet totals without blaming optional roles',()=>{
- const f=fixture();f.mapping.house_power=null;assert.equal(assess(f).summary,'No ribbons because Electric panel / house power not set');
+ const f=fixture();f.mapping.house_power=null;{const a=assess(f);assert.match(a.summary,/Electric panel \/ house worked out from the other three readings/);}
  f.mapping.house_power='sensor.house_power';for(const r of Object.values(f.states))r.state='0';
  f.mapping.battery_power=null;f.mapping.grid_power=null;
- assert.equal(assess(f).summary,'No ribbons because all allocated flows are under 50 W');
- f.states['sensor.house_power'].state='unavailable';assert.equal(assess(f).summary,'No ribbons because Electric panel / house power unavailable');
+ assert.match(assess(f).summary,/^No ribbons because all allocated flows are under 50 W/);
+ f.states['sensor.house_power'].state='unavailable';assert.equal(assess(f).summary,'No ribbons because balance unknown: Meter / grid and Electric panel / house not readable');
 });
 check('object locations name the wall and removed selections do not fall back',()=>{
  const f=fixture(),b=f.view.plan.buildings[0];b.walls=[{id:'outside-wall',level:'L1',from:[0,0],to:[20,0],thickness:.5}];

@@ -1,4 +1,4 @@
-import { energyFlows, flowReading, watts } from './energy_mapping.js';
+import { energyBalance, energyFlows, flowReading, watts } from './energy_mapping.js';
 import { energyAnchors, energyLocations, resolveEnergyLocation, energyTopology } from './energy_geometry.js';
 import { formatGlanceValue } from './glance.js';
 
@@ -55,13 +55,18 @@ export function energyCheck(view, layout, mapping, states = {}, stale = false, a
   for (const [i, car] of (mapping.cars || []).entries())
     role('car:' + i, car.charge_power, car.anchor, null, anchors.cars[i], 'positive = charging', `${car.name} charger`);
 
+  const balance = energyBalance(mapping, states, anchors.zoneEntities);
+  const roleOf = key => key === 'home' ? 'house' : key;  // the balance says home; the role is the house panel
+  const nameOf = key => roles.find(r => r.id === roleOf(key))?.name || roleName(roleOf(key));
+  const unbalanced = balance.known ? '' : `balance unknown: ${balance.missing.map(nameOf).join(' and ')} not readable`;
   const allocated = energyFlows(mapping, states, anchors.zoneEntities, true);
   const topology = new Set(energyTopology(anchors, mapping).map(row => row.id));
   const flows = Object.entries(allocated).map(([id, watts]) => {
     const endpoints = id.startsWith('car:') ? ['house', id] : id.split(':');
     const missing = endpoints.find(id => !roles.find(r => r.id === id)?.location ||
       !(id.startsWith('car:') ? anchors.cars[Number(id.split(':')[1])] : anchors[id]));
-    const status = stale ? 'hidden: live readings unavailable' : !flowReading(watts).visible ? 'hidden (under 50 W)' :
+    const status = stale ? 'hidden: live readings unavailable' : unbalanced && !id.startsWith('car:') ? `hidden: ${unbalanced}` :
+      !flowReading(watts).visible ? 'hidden (under 50 W)' :
       !topology.has(id) ? `no ribbon: ${roles.find(r => r.id === missing)?.name || roleName(missing)} not placed` : 'shown';
     return {id, watts, status, shown:status === 'shown', name:endpoints.map(id => roles.find(r => r.id === id)?.name || roleName(id)).join(' → ')};
   });
@@ -71,9 +76,11 @@ export function energyCheck(view, layout, mapping, states = {}, stale = false, a
   // when every allocated transfer is simply below the display threshold.
   const missingInput = roles.find(r => r.status === 'unavailable' || r.status === 'invalid' ||
     r.status === 'unset' && r.id === 'house');
-  const reason = stale ? 'live readings are unavailable' : blocked?.status.replace(/^no ribbon: /, '') ||
+  const reason = stale ? 'live readings are unavailable' : unbalanced || blocked?.status.replace(/^no ribbon: /, '') ||
     (missingInput ? `${missingInput.name} power ${missingInput.state}` : 'all allocated flows are under 50 W');
-  return {roles, flows, showing, summary:showing ? `Ribbons showing: ${showing}` : `No ribbons because ${reason}`};
+  const derivedNote = stale ? '' : Object.keys(balance.derived).map(key => `${nameOf(key)} worked out from the other three readings`).join('; ');
+  return {roles, flows, showing, derived: derivedNote,
+    summary:(showing ? `Ribbons showing: ${showing}` : `No ribbons because ${reason}`) + (derivedNote ? ` (${derivedNote})` : '')};
 }
 
 // One builder for the drawer and the read-only Energy legend on wall panels.
