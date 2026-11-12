@@ -92,5 +92,54 @@ def scenario_auto_foundation_undo_and_viewer():
         check(page.evaluate("()=>{let n=0;window.__twin.groups.site.traverse(o=>{if(o.userData.terrain)n++;});return n>0;}"), 'viewer draws the sampled terrain')
 
 
+def scenario_layered_pads_order_and_history():
+    served = H.serve()
+    if served is None:
+        return
+    with served.browser(launch_args=H.GPU_ARGS) as page:
+        H.open_editor(page, served)
+        page.evaluate("""()=>{const v=window.__twin;v.bake?.stop();v.setView('ext');
+          v.setCameraState({position:[24*.3048,90*.3048,-124.999*.3048],target:[24*.3048,0,-125*.3048]});}""")
+        shelf = page.locator('#terrain-card')
+        ids = []
+        for height, polygon in [(-4, [[12, 117], [28, 117], [28, 133], [12, 133]]),
+                                (0, [[24, 119], [36, 119], [36, 131], [24, 131]])]:
+            before = page.evaluate('()=>window.__twin.plan.site.terraces.length')
+            page.click('#rail-ground')
+            shelf.get_by_role('button', name='Add pad', exact=True).click()
+            shelf.get_by_label('Pad height (ft)', exact=True).fill(str(height))
+            shelf.get_by_label('Blend (ft)', exact=True).fill('6')
+            for point in polygon:
+                surface = page.evaluate("""async p=>{const {groundAt}=await import('../static/twin/twin_ground.js');
+                  return groundAt(window.__twin.plan,...p);}""", point)
+                page.mouse.click(*lot_pixel(page, point, surface))
+            shelf.get_by_role('button', name='Finish pad', exact=True).click()
+            page.wait_for_function('(n)=>window.__twin.ready&&window.__twin.plan.site.terraces.length===n+1', arg=before)
+            ids.append(page.evaluate('()=>window.__twin.plan.site.terraces.at(-1).id'))
+        heights = page.evaluate("""async()=>{const {groundAt}=await import('../static/twin/twin_ground.js');
+          return Array.from({length:601},(_,i)=>groundAt(window.__twin.plan,18+i*.01,125));}""")
+        check(abs(heights[0] + 4) < .01 and abs(heights[-1]) < .01, ('yard to patio heights', heights[0], heights[-1]))
+        check(all(-4.001 <= h <= .001 for h in heights), 'band stays between the two pad heights')
+        check(all(b >= a-.001 for a, b in zip(heights, heights[1:])), 'patio slopes into yard monotonically without a datum dip')
+        shelf.get_by_role('button', name=f'Pad {ids[1]}: 0 ft', exact=True).click()
+        layers = page.evaluate('()=>window.__twin.plan.site.terraces.length')
+        check(shelf.get_by_text(f'Layer {layers} of {layers}', exact=True).is_visible(), 'shelf shows stored order')
+        shelf.get_by_role('button', name='Send back', exact=True).click()
+        page.wait_for_function('(id)=>window.__twin.ready&&window.__twin.plan.site.terraces.at(-1).id===id', arg=ids[0])
+        def overlap_height():
+            return page.evaluate("""async()=>{const {groundAt}=await import('../static/twin/twin_ground.js');return groundAt(window.__twin.plan,26,125);}""")
+        check(abs(overlap_height()+4) < .01, 'Send back makes the yard the top surface')
+        check(shelf.get_by_text(f'Layer {layers-1} of {layers}', exact=True).is_visible(), 'order label updates after save')
+        page.click('#rail-undo')
+        page.wait_for_function('(id)=>window.__twin.ready&&window.__twin.plan.site.terraces.at(-1).id===id', arg=ids[1])
+        check(abs(overlap_height()) < .01, 'undo restores the patio on top')
+        page.click('#rail-redo')
+        page.wait_for_function('(id)=>window.__twin.ready&&window.__twin.plan.site.terraces.at(-1).id===id', arg=ids[0])
+        check(abs(overlap_height()+4) < .01, 'redo restores the yard on top')
+        # When Claude runs this, retain the rendered UI proof beside the test output.
+        page.screenshot(path=str(Path(__file__).with_name('terrain-layers-live.png')))
+
+
 if __name__ == '__main__':
-    H.run([scenario_draw_negative_pad_tree_undo_and_program_reuse, scenario_auto_foundation_undo_and_viewer])
+    H.run([scenario_draw_negative_pad_tree_undo_and_program_reuse, scenario_auto_foundation_undo_and_viewer,
+           scenario_layered_pads_order_and_history])

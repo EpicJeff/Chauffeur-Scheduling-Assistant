@@ -44,6 +44,7 @@ view.setCameraState({position:[20*.3048,80*.3048,-19.999*.3048],target:[20*.3048
 const abort=new AbortController(),ops=[];let writable=true;
 const op=async operation=>{ops.push(operation);if(operation.op==='add_pad')plan.site.terraces.push({id:'pad',...operation,edges:operation.polygon.map(()=>({edge:'slope'}))});
   if(operation.op==='update_pad')Object.assign(plan.site.terraces[0],operation);
+  if(operation.op==='reorder_pad'){const from=plan.site.terraces.findIndex(p=>p.id===operation.id);plan.site.terraces.splice(operation.to,0,plan.site.terraces.splice(from,1)[0]);}
   if(operation.op==='delete_pad')plan.site.terraces=[];
 };
 let library;
@@ -68,6 +69,20 @@ const drag={button:0,pointerId:2,clientX:h.screen[0],clientY:h.screen[1]};
 const beforeClick=ops.length;assert.ok(terrain.pointerDown(drag));terrain.pointerUp(drag,false);assert.equal(ops.length,beforeClick,'a corner click creates no history round');
 assert.ok(terrain.pointerDown(drag));terrain.pointerMove({...drag,clientX:drag.clientX+15});terrain.pointerUp({...drag,clientX:drag.clientX+15},false);
 await new Promise(r=>setTimeout(r,0));assert.equal(ops.at(-1).op,'update_pad');assert.notDeepEqual(ops.at(-1).polygon,ops[0].polygon);
+plan.site.terraces.push({id:'upper',polygon:[[14,14],[27,14],[27,27],[14,27]],height:0,blend:6},
+  {id:'distant',polygon:[[32,32],[36,32],[36,36],[32,36]],height:2,blend:0});
+terrain.refresh();
+const control=text=>descendants(card).find(n=>n.textContent===text);
+assert.ok(control('Layer 1 of 3'));assert.equal(control('Send back').disabled,true);assert.equal(control('Bring forward').disabled,false);
+const labels=descendants(view.renderer3.domElement.parentElement).filter(n=>n.className==='editor-terrain-label');
+assert.equal(labels[0].textContent,'0 ft','a covered pad label follows the resulting surface');
+click('Bring forward');await new Promise(r=>setTimeout(r,0));
+assert.deepEqual(ops.at(-1),{op:'reorder_pad',id:'pad',to:1});assert.equal(plan.site.terraces[1].id,'pad');assert.ok(control('Layer 2 of 3'));
+click('Bring forward');await new Promise(r=>setTimeout(r,0));assert.equal(plan.site.terraces[2].id,'pad');assert.equal(control('Bring forward').disabled,true);
+click('Send back');await new Promise(r=>setTimeout(r,0));assert.deepEqual(ops.at(-1),{op:'reorder_pad',id:'pad',to:1});
+writable=false;terrain.refresh();assert.equal(control('Send back').disabled,true);assert.equal(control('Bring forward').disabled,true);
+const beforeReadOnly=ops.length;click('Send back');await new Promise(r=>setTimeout(r,0));assert.equal(ops.length,beforeReadOnly);
+writable=true;terrain.refresh();click('Send back');await new Promise(r=>setTimeout(r,0));assert.equal(control('Send back').disabled,true);
 terrain.choose('beds','bed');assert.equal(tools.selection().id,'bed');assert.equal(card.hidden,true,'yard selection uses the shared piece card');
 fieldHost=document.getElementById('piece-card');change('Move east (ft)',3);await new Promise(r=>setTimeout(r,0));assert.deepEqual(ops.at(-1),{op:'move_site_item',list:'beds',index:0,by:[3,0]});
 assert.deepEqual(snapPadPoint([.4,12],plan),[0,12]);

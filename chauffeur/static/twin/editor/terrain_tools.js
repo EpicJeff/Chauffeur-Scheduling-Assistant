@@ -72,8 +72,9 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     const pads = getPlan()?.site?.terraces || [];
     for (const pad of pads) {
       const poly = gesture?.kind === 'vertex' && chosen?.id === pad.id ? gesture.polygon : pad.polygon;
-      line(poly, pad.height, true); label(`${pad.height > 0 ? '+' : ''}${pad.height} ft`, mid(poly), pad.height);
-      if (chosen?.id === pad.id) poly.forEach((p, index) => label('•', p, pad.height, { index }));
+      const centre = mid(poly), height = groundAt(getPlan(), ...centre), shown = Math.round(height * 1000) / 1000;
+      line(poly, undefined, true); label(`${shown > 0 ? '+' : ''}${shown} ft`, centre, height);
+      if (chosen?.id === pad.id) poly.forEach((p, index) => label('•', p, groundAt(getPlan(), ...p), { index }));
     }
     if (drawing) { line(drawing, undefined, false); drawing.forEach(p => label('•', p)); }
   }
@@ -91,9 +92,9 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   async function save(operation) {
     if (!canEdit() || busy) return;
     busy = true; card.querySelectorAll('button,input,select').forEach(n => { n.disabled = true; });
-    try { await op(operation); signature = ''; refresh(); }
+    try { await op(operation); }
     catch (error) { report(error); return false; }
-    finally { busy = false; card.querySelectorAll('button,input,select').forEach(n => { n.disabled = !canEdit(); }); }
+    finally { busy = false; signature = ''; refresh(); }
     return true;
   }
   function field(text, value, saveValue, choices) {
@@ -133,6 +134,15 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     }
     card.append(node('h3', words[chosen.kind]));
     if (chosen.kind === 'terraces') {
+      const pads = getPlan().site.terraces, index = pads.findIndex(p => p.id === piece.id);
+      card.append(node('p', `Layer ${index + 1} of ${pads.length}`));
+      const reorder = by => {
+        const to = getPlan().site.terraces.findIndex(p => p.id === piece.id) + by;
+        if (to >= 0 && to < getPlan().site.terraces.length) return save({ op: 'reorder_pad', id: piece.id, to });
+      };
+      const forward = button('Bring forward', () => reorder(1)), back = button('Send back', () => reorder(-1));
+      forward.disabled = !canEdit() || index === pads.length - 1; back.disabled = !canEdit() || index === 0;
+      card.append(forward, back);
       const update = change => save({ op: 'update_pad', id: piece.id, ...change });
       field('Pad height (ft)', piece.height, height => update({ height }));
       card.append(button('Down 0.5 ft', () => update({ height: current().height - .5 })), button('Up 0.5 ft', () => update({ height: current().height + .5 })));
