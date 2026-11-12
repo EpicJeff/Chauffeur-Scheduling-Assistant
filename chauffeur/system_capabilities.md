@@ -1,6 +1,19 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.796 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.797 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.797 (2026-11-11, NOT device-verified): the 3D house loads again after an update; every module is versioned.**
+
+**The report.** The user, 2026-11-11: "After the energy update, the house preview never loads. It just says it could not load. The editor still functions though."
+
+**Cause.** "The house preview could not load." is the message for a failed import of `twin_view.js`. `twin_roof.js` and `twin_ground.js` were missing from `/house/twin`'s import map, so they loaded by bare URL. v2.499.795 changed `twin_roof.js`, and a browser holding the old cached copy then failed the import. Clean test browsers never cache, so no test saw it. The editor's map also lacked `live/glance_icons.js` and `vendor/lucide/icons.js`.
+
+**Fix.**
+- Both maps list those modules.
+- New `tests/test_twin_import_maps.py` walks the real import graph from each page's entry modules and fails on any module a template does not version. It fails on v2.499.796 and passes now: 58 modules for the house, 86 for the editor.
+- test_twin_kinds_js's older live-layer check skips vendor modules instead of crashing; it had crashed since v2.499.796.
+
+**Tests.** test_twin_import_maps 2/2, test_twin_kinds_js 3/3 plus the map check, test_twin_view_live ok, test_house_editor_openings_live 5/5.
 
 **v2.499.796 (2026-11-11, NOT device-verified): glance tiles are the family's own picks, and the idle face is redesigned at the screensaver's placement.**
 
