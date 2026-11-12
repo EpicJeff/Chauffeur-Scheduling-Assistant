@@ -1,6 +1,52 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.803 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.804 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.804 (2026-11-12, NOT device-verified): cars and chargers in the house twin. Chargers are house equipment, cars park on spots as icons, and the Energy ribbon runs panel → charger with a short cable to the car being charged.**
+
+**The user's design** (2026-11-12): one charger and two EVs must show which car is charging, so chargers are house equipment (more than one allowed) and each car has its own charging state. User ruling: the old procedural car builder "looks terrible". A car in the twin is a real model (later, with the import slice) or an icon, nothing in between; `static/house.js` `buildVehicle` is never ported.
+
+**How it was built.** Codex built it. Claude checked it in Chromium, made a per-push migration copy shallow (one live push had made 5 deep copies), and aligned the program-reuse check with the repo rule (second round trip).
+
+**Data** (`services/twin_energy.py`, `static/twin/live/energy_mapping.js`).
+- **Chargers:** the energy mapping gains `chargers`, at most 8 entries of `{id, name, power, anchor, car}`; `car` is an optional dedicated car.
+- **Cars** gain `charging` (a binary_sensor, or a sensor reading "charging") and `parking`. A car's `charge_power` now means its OWN reported charge power.
+- **Migration** (`migrateEnergy`). A saved mapping with car `charge_power`/`anchor` and no `chargers` key is read as one dedicated charger per such car (`charger-<car id>`, "<name> charger"), with the car's old fields cleared. It is read-only and idempotent; the first save writes the new shape. It copies only what it rewrites, because it runs on every live push.
+- **Guessing:** chargers match `wall.?connector|wallbox|charger|evse` with W/kW/MW units, never battery/Powerwall telemetry. Charging-state sensors are guessed from the car's stem.
+- **Stream scope:** placed charger power entities join the server's push scope (`main.py` `_house_stream_entities`).
+
+**Editor objects** (`twin_model.py`, `editor/equipment_shelf.js`, `library.js`).
+- **`charger`:** a wall-hosted anchor like the meter. Its shelf has the name, the power entity and an optional dedicated car.
+- **`parking`:** a 9 × 18 ft spot hosted on a room floor (a garage) or the lot ground. Its shelf has width, length, turn and an optional assigned car. The editor draws a dashed outline with a flat Lucide car glyph.
+- Both live in `buildings[].anchors`, distinguished by kind, so selection, moves, deletion and history work unchanged.
+
+**Cars in every mode** (`static/twin/live/cars.js`).
+- **The icon:** a 44 px Lucide car glyph on a disc in the car's `color_code` (slate when none). The glyph is black or white by luminance. The ring is purple while charging, otherwise amber below the household battery warning. It sits about 4 ft above its spot, and shows only while the car is home (`carHome`: no tracker = home).
+- **The label:** "Red EV · 78% · ⚡ 7 kW".
+- **Tapping** opens a card with battery, range, charging, power and the matched charger.
+- **Spots:** cars take an assigned spot first, then the car's `parking` id, then unassigned spots in model order, in fleet order. A home car with no spot left has no icon, and the Energy legend and check say "Place a parking spot for <car>".
+- Icons hide while the live layer is stale. With no Home Assistant, untracked cars still show with "—".
+
+**Energy flows.**
+- **The ribbon:** each charger above 50 W gets a purple ribbon panel → charger, labelled "panel to <charger> 7 kW". It keeps the on-top, fanned and apex-label rules.
+- **Which car** (`chargingCar`), considering home cars only, first rule that settles it:
+  1. the dedicated car;
+  2. exactly one car whose charging sensor says charging;
+  3. exactly one car whose own power is within max(20%, 300 W) of the charger's;
+  4. the car on the nearest spot within 30 ft;
+  5. else unknown: the label adds "· car unknown" and the Energy check says why.
+- **The cable:** charger → car's spot is a flat 0.25 ft line at floor height with the ribbon pulse, drawn on top. It is never an arc.
+- **Settings:** the Energy drawer gains a Chargers section (add, rename, remove, power, dedicated car), and car rows gain charging-state and own-power pickers.
+
+**Tests.**
+- `test_twin_energy` (chargers validation, migration, entities).
+- `test_twin_energy_equipment` (charger/parking pieces).
+- `test_twin_cars_js` 8/8.
+- energy mapping, flows, check, mode and editor node files.
+- Browser `test_house_twin_energy_equipment_live` 3/3: garage charger, two coloured cars, one flat cable to the charging car, the car card, away hiding, and a second mode round trip compiling nothing.
+- `test_house_twin_energy_live` 7/7.
+- `test_twin_live_stream_js` 4/4 (no structuredClone per push).
+- `test_house_twin_live_rooms`: the floor-pick test now waits for the camera to rest before locating the Kitchen.
 
 **v2.499.803 (2026-11-12, NOT device-verified): twin viewing slice 2b. Device markers that clump merge into count badges, rooms summarise themselves on status cards when zoomed out, and taps pass through faded and cut-away pieces.**
 
