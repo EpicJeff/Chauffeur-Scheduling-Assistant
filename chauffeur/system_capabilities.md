@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.807 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.808 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.808 (2026-11-12, NOT device-verified): the compact hero card keeps light text under a light panel theme.**
+
+**The report.** The user, 2026-11-12, on the twin's idle face: "Some text on the compact hero card is not the right color (dark text on the dark card background)". The title and time were dark navy; the address stayed light.
+
+**Cause.** The panel theme remaps Tailwind text classes (`html[data-panel] .text-white { color: var(--panel-fg) }`). Under a light theme `--panel-fg` is dark. The compact card (`templates/components/hero_card.html`, `opts.compact`) always paints its own dark backing (`rgba(10,10,14,.55)`), so `text-white` turned dark on dark. `text-white/70` is not remapped, which is why the address stayed light. The screensaver uses the same card and had the same bug.
+
+**Fix.** The compact card's wrapper resets the theme's variables for its contents (`--panel-fg`, `--panel-dim`, `--panel-accent`, `--panel-line`) to light values. Every surface that shows it (the twin idle face, the screensaver, old House) is fixed at the source. Non-compact hero output is unchanged.
+
+**Tests.** The browser scenario `test_house_twin_glance_live` `scenario_compact_hero_stays_light_under_a_light_panel_theme` fakes a light theme: title and time luminance were 0.09 before the fix and are above 0.8 after. The file is 10/10. Also green: `test_hero_card_phone` 11/11 (its byte-identical guard compares against the committed card), `test_screensaver` 25/25, `test_panel_chrome` 33/33.
 
 **v2.499.807 (2026-11-12, NOT device-verified): a new house twin colour scheme. Graphite glass replaces brown and gold, and a marker's colour shows its STATE, never its type.**
 
