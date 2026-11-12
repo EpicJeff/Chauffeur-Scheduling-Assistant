@@ -122,6 +122,92 @@ assert.equal(deleted,true);assert.equal(host.children.some(n=>n.role==='dialog')
 lifecycle.abort();delete globalThis.requestAnimationFrame;
 console.log('ok actual mountImports/add renders details before two fake animation frames start generation; Cancel cleans up without another frame');
 
+// Accept more imports while the first worker is deliberately blocked. The
+// foreground picker must be free, with exactly one background job at a time.
+globalThis.Worker=ProtocolWorker;
+let releaseWorker;
+const workerGate=new Promise(resolve=>{releaseWorker=resolve;});
+let activeWorkers=0,maxWorkers=0;
+globalThis.Worker=class extends ProtocolWorker {
+ constructor(...args){super(...args);activeWorkers++;maxWorkers=Math.max(maxWorkers,activeWorkers);}
+ postMessage(...args){workerGate.then(()=>{if(!this.stopped)super.postMessage(...args);});}
+ terminate(){if(!this.stopped)activeWorkers--;super.terminate();}
+};
+const entries=new Map(),uploads=new Map(),derived=[],changes=[];
+let picked=0,uploadSerial=0;
+globalThis.fetch=async(input,opts={})=>{
+ const url=typeof input==='string'?input:input.url,json=value=>new Response(JSON.stringify(value));
+ if(url.endsWith('/import-settings'))return json({limit_mb:50,unpacked_limit_mb:200});
+ if(url.endsWith('/imports'))return json([...entries.values()]);
+ if(url.endsWith('/imports/uploads')){
+  const body=JSON.parse(opts.body),key='queue'+(++uploadSerial);uploads.set(key,body);
+  return json({upload_id:key,chunk_bytes:4194304});
+ }
+ const chunk=url.match(/\/(queue\d+)\/(0|finish)$/);
+ if(chunk){
+  const body=uploads.get(chunk[1]);if(chunk[2]==='0')return json({});
+  if(body.asset_id){const e=entries.get(body.asset_id);assert.ok(e,'cancelled/deleted entries never upload');
+   e.lods.push({name:body.lod});e.files[body.lod]=true;derived.push([e.id,body.lod]);return json(e);}
+  const e={...fresh,id:'import-'+String(++picked).repeat(32),name:body.name,lods:[],files:{'original.glb':true}};
+  entries.set(e.id,e);return json(e);
+ }
+ const asset=url.match(/\/(import-\d{32})(?:\/original.glb)?$/);
+ if(asset){const e=entries.get(asset[1]);
+  if(url.endsWith('original.glb'))return new Response(modelBytes);
+  if(opts.method==='PATCH'){Object.assign(e,JSON.parse(opts.body));return json(e);}
+  if(opts.method==='DELETE'){entries.delete(asset[1]);return json({});}
+ }
+ throw new Error('unexpected queue request '+url);
+};
+const queueLife=new AbortController();
+const queueControl=mountImports({canvas,kit:{},canEdit:()=>true,signal:queueLife.signal,changed:async(e,options)=>changes.push([e?.id,options])});
+const until=async(test,label,pump=false)=>{
+ for(let i=0;i<2000&&!test();i++){
+  if(pump){const batch=frames.splice(0);batch.forEach(fn=>fn());}
+  await new Promise(r=>setTimeout(r,2));
+ }
+ assert.ok(test(),label);
+};
+globalThis.requestAnimationFrame=fn=>{frames.push(fn);return frames.length;};
+const open=async name=>{
+ picker.value=name+'.glb';picker.files=[new File([modelBytes],name+'.glb')];picker.dispatchEvent(new Event('change'));
+ await until(()=>host.children.some(n=>n.role==='dialog'),'next import dialog opens while worker is blocked');
+ return host.children.find(n=>n.role==='dialog');
+};
+const accept=async dialog=>{dialog.dispatchEvent(new Event('submit',{cancelable:true}));
+ await until(()=>status.textContent!=='Loading model…'&&picker.value==='','accept releases the picker');};
+const firstDialog=await open('First');
+firstDialog.children.find(n=>n.textContent==='Name').children[0].value='Kia EV9';
+await accept(firstDialog);
+await until(()=>activeWorkers===1,'first job reaches the worker',true);
+await accept(await open('Second'));
+const cancelled=await open('Cancelled');cancelled.children.find(n=>n.textContent==='Cancel').dispatchEvent(new Event('click'));
+await until(()=>!entries.has('import-'+'3'.repeat(32))&&picker.value==='','queued Cancel deletes its import');
+await accept(await open('Deleted'));
+const removed='import-'+'4'.repeat(32);queueControl.cancel(removed);entries.delete(removed);
+assert.match(status.textContent,/Making lighter versions for Kia EV9/);
+assert.equal(derived.length,0,'acceptance does not await optional generation');
+assert.equal(activeWorkers,1,'later imports do not start another worker');
+releaseWorker();
+await until(()=>derived.length===4,'both accepted originals finish their background versions',true);
+await until(()=>activeWorkers===0,'workers are released',true);
+assert.equal(maxWorkers,1);
+assert.deepEqual(derived.map(([id,name])=>[id.at(-1),name]),[['1','lod1.glb'],['1','lod2.glb'],['2','lod1.glb'],['2','lod2.glb']]);
+assert.equal(changes.filter(([,options])=>options?.added).length,3);
+assert.ok(changes.some(([id,options])=>id.endsWith('2')&&!options),'background metadata reaches the library');
+let heldWorker=false;
+globalThis.Worker=class extends ProtocolWorker {postMessage(){heldWorker=true;}};
+await accept(await open('Close active'));
+await until(()=>heldWorker,'closing scenario reaches an active worker',true);
+await accept(await open('Close queued'));
+const beforeCloseStops=workerStops;queueLife.abort();
+await until(()=>workerStops>beforeCloseStops,'closing terminates the active worker');
+assert.equal(derived.length,4,'closing cancels active and pending jobs without uploading');
+delete globalThis.requestAnimationFrame;
+const {forgetImport}=await import(file('static/twin/twin_library.js'));
+for(const e of entries.values())forgetImport(e.id);
+console.log('ok accepting consecutive imports frees the picker during a blocked worker; one queue survives imports, cancels and deletion');
+
 // Existing imports take the same worker/export/upload path in background.
 globalThis.Worker=ProtocolWorker;
 const background={...fresh,id:'import-'+'7'.repeat(32),lods:[]};

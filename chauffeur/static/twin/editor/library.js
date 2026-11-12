@@ -168,6 +168,8 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement, host = el('library-panel');
   const raycaster = new THREE.Raycaster(), thumbnails = { current: null };
   let catalog = null, loading = null, tab = 'materials', drag = null, siteDrag = null, chooser = null, picking = null;
+  const importNodes = new Map();
+  let browsePending = false;
   const hint = 'Drag a thumbnail onto the house or yard.';
   const outline = new THREE.Box3Helper(new THREE.Box3(), '#52ccff'); outline.visible = false; view.scene.add(outline);
   const listen = (node, type, action, options = {}) => node.addEventListener(type, action, { ...options, signal });
@@ -270,13 +272,17 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     el('library-entries').querySelector('button')?.focus();
   }
   async function browse() {
+    if (drag) { browsePending = true; return; }
     if (!catalog) {
       loading ||= request('library').catch(error => { loading = null; throw error; });
       catalog = await loading;
     }
     if (signal.aborted) return;
+    if (drag) { browsePending = true; return; }
+    browsePending = false;
     thumbnails.current ||= createThumbnails(kit);
     const grid = el('library-entries'); grid.replaceChildren();
+    importNodes.clear();
     if(tab==='items')for(const [tool,name,icon] of [['add-meter','Meter','gauge'],['add-electric-panel','Electric panel','utility-pole'],['add-charger','Charger','plug-zap'],['add-parking','Parking spot','car']]){
       const button=document.createElement('button');button.type='button';button.setAttribute('aria-label',name);button.append(svgIcon(icon),document.createTextNode(name));
       button.dataset.equipment=tool;
@@ -294,19 +300,28 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       if (entry.thumbnail) image.src = libUrl(entry.id, entry.thumbnail);
       else thumbnails.current.picture(entry, tab === 'materials').then(url => { if (url && !signal.aborted) image.src = url; }).catch(report);
       if (entry.id.startsWith('import-')) {
+        const controls = [];
+        importNodes.set(entry.id, { nodes: [button], update(next) {
+          // Handlers and an active drag keep this same entry object and node.
+          Object.assign(entry, next); name.textContent = entry.name; button.setAttribute('aria-label', entry.name);
+          if (entry.thumbnail) image.src = libUrl(entry.id, entry.thumbnail);
+          controls.forEach((control, i) => { control.textContent = `${i ? 'Delete' : 'Rename'} ${entry.name}`; });
+        } });
         for (const action of ['Rename', 'Delete']) {
           const control = document.createElement('button'); control.type = 'button'; control.textContent = `${action} ${entry.name}`;
+          controls.push(control); importNodes.get(entry.id).nodes.push(control);
           listen(control, 'click', async () => {
             if (!canEdit()) return;
             try {
               if (action === 'Rename') {
                 const name = await window.promptInput('Model name', 'Name this model.', { value: entry.name });
-                if (name?.trim()) await request('imports/' + entry.id, 'PATCH', { name: name.trim() });
+                if (name?.trim()) await changedImport(await request('imports/' + entry.id, 'PATCH', { name: name.trim() }));
               } else if (await window.promptConfirm(`Delete ${entry.name}?`, 'Placed models must be removed from the scene first. Earlier timeline placements retain their files.', 'Delete', 'Cancel')) {
+                importsQueue?.cancel(entry.id);
                 await request('imports/' + entry.id, 'DELETE');
                 forgetImport(entry.id);
+                await changedImport(entry, { removed: true });
               }
-              catalog = loading = null; await browse();
             } catch (error) { report(error); }
           }); grid.append(control);
         }
@@ -334,9 +349,24 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       }
     }
     host.querySelectorAll('[data-library-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.libraryTab === tab)));
-    el('library-status').textContent = picking ? pickingWords() : hint;
+    el('library-status').textContent = picking ? pickingWords() : importsQueue?.status() || hint;
   }
-  mountImports({ canvas, kit, canEdit, signal, changed: async () => { catalog = loading = null; tab = 'items'; host.hidden = false; await browse(); } });
+  async function changedImport(entry, { added = false, removed = false } = {}) {
+    if (signal.aborted) return;
+    if (catalog) {
+      const entries = catalog.imports ||= [], index = entries.findIndex(e => e.id === entry.id);
+      if (removed) { if (index !== -1) entries.splice(index, 1); }
+      else { if (index === -1) entries.push(entry); else entries[index] = entry; }
+    }
+    const row = importNodes.get(entry.id);
+    if (removed) {
+      if (drag) browsePending = true;
+      else { row?.nodes.forEach(node => node.remove()); importNodes.delete(entry.id); }
+    } else row?.update(entry);
+    if (added) { tab = 'items'; host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true'); }
+    if (added && !row) await browse();
+  }
+  const importsQueue = mountImports({ canvas, kit, canEdit, signal, changed: changedImport });
   if (new URLSearchParams(location.search).get('library') === '1') {
     tab = 'items'; host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true');
     browse().catch(report);
@@ -353,14 +383,19 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   listen(document, 'pointerup', event => {
     if (!drag || drag.pointer !== event.pointerId) return;
     const moved = drag; drag = null;
-    if (!canEdit() || Math.hypot(event.clientX - moved.x, event.clientY - moved.y) < 3) return;
-    if (!canvas.contains(document.elementFromPoint(event.clientX, event.clientY))) return;
-    const surface = surfaceAt(event);
-    if (moved.material) { if (surface) choose(surface, moved.entry, event); return; }
-    const at = ground(event); if (!surface && (!at || !contains(getPlan().site?.lot || [], at))) return;
-    try { op(itemOperation(surface, moved.entry, at)).catch(report); } catch (error) { report(error); }
+    try {
+      if (!canEdit() || Math.hypot(event.clientX - moved.x, event.clientY - moved.y) < 3) return;
+      if (!canvas.contains(document.elementFromPoint(event.clientX, event.clientY))) return;
+      const surface = surfaceAt(event);
+      if (moved.material) { if (surface) choose(surface, moved.entry, event); return; }
+      const at = ground(event); if (!surface && (!at || !contains(getPlan().site?.lot || [], at))) return;
+      try { op(itemOperation(surface, moved.entry, at)).catch(report); } catch (error) { report(error); }
+    } finally { if (browsePending) browse().catch(report); }
   }, { capture: true });
-  listen(document, 'pointercancel', () => { drag = null; });
+  listen(document, 'pointercancel', event => {
+    if (!drag || drag.pointer !== event.pointerId) return;
+    drag = null; if (browsePending) browse().catch(report);
+  });
   listen(document, 'keydown', event => {
     if (event.key !== 'Escape' || !chooser && !picking) return;
     if (chooser) dismiss(); else stopPicking();

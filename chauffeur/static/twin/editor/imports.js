@@ -93,22 +93,66 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
   const el = id => document.getElementById(id), picker = el('library-import-files');
   if (!picker) return;
   const status = el('library-status'); let busy = false;
-  const jobs = new AbortController();
-  signal.addEventListener('abort', () => jobs.abort(), { once: true });
-  // Sequential idle work: closing the editor cancels generation and uploads.
+  const queue = [], jobs = new Map(), cancelled = new Set();
+  let running = false, activeJob = null;
+  const backgroundStatus = () => activeJob ? `Making lighter versions for ${activeJob.entry.name}…` : '';
+  const showStatus = () => { if (!busy && !signal.aborted && activeJob) status.textContent = backgroundStatus(); };
+  function cancel(id) {
+    cancelled.add(id);
+    const job = jobs.get(id); if (!job) return;
+    job.controller.abort();
+    const index = queue.indexOf(job);
+    if (index !== -1) {
+      queue.splice(index, 1); jobs.delete(id);
+      if (job.source) disposeObject(job.source);
+      job.resolve([]);
+    }
+  }
+  signal.addEventListener('abort', () => { for (const id of jobs.keys()) cancel(id); }, { once: true });
+  async function drain() {
+    if (running) return;
+    running = true;
+    try {
+      while (queue.length && !signal.aborted) {
+        const job = queue.shift(), jobSignal = job.controller.signal;
+        let rows = [];
+        try {
+          activeJob = job; showStatus();
+          // Keep the dialog's paint opportunity, independently of accepting it.
+          await frame(jobSignal); await frame(jobSignal);
+          if (!canEdit()) continue;
+          job.source ||= await loadModel(job.entry.id, kit, undefined, { editor: true });
+          if (job.source && !jobSignal.aborted) rows = await generateVersions(job.entry, job.source, jobSignal,
+            text => { job.update(text); showStatus(); }, async entry => {
+              job.entry = entry;
+              if (job.accepted && !jobSignal.aborted) await changed(entry);
+            });
+        } catch { /* Optional versions never prevent keeping the original. */ }
+        finally {
+          if (job.source) disposeObject(job.source);
+          jobs.delete(job.entry.id); job.resolve(rows);
+          activeJob = null; // The next queued job supplies its own status.
+          if (!busy && !signal.aborted) status.textContent = jobSignal.aborted
+            ? `Lighter versions cancelled for ${job.entry.name}.`
+            : rows.length === 2 ? `Lighter versions ready for ${job.entry.name}.`
+              : `${job.entry.name}: ${rows.note || 'Lighter versions could not all be made this time.'}`;
+        }
+      }
+    } finally { running = false; }
+  }
+  function enqueue(entry, source = null, update = () => {}, accepted = true) {
+    if (jobs.has(entry.id)) return jobs.get(entry.id);
+    const job = { entry, source, update, accepted, controller: new AbortController() };
+    job.promise = new Promise(resolve => { job.resolve = resolve; });
+    jobs.set(entry.id, job); queue.push(job); drain(); return job;
+  }
+  // Old imports join the very same queue as new picks; only one job runs.
   (async () => {
-    await idle(jobs.signal);
+    await idle(signal);
     for (const entry of await importedModels()) {
-      if (!canEdit() || jobs.signal.aborted) break;
+      if (!canEdit() || signal.aborted) break;
       if (entry.archived || entry.lods?.length === 2) continue;
-      while (busy) await idle(jobs.signal);
-      await idle(jobs.signal);
-      let source;
-      try {
-        source = await loadModel(entry.id, kit, undefined, { editor: true });
-        if (source) await generateVersions(entry, source, jobs.signal);
-      } catch { /* An old import stays usable if deriving a version fails. */ }
-      finally { if (source) disposeObject(source); }
+      if (!jobs.has(entry.id) && !cancelled.has(entry.id)) enqueue(entry);
     }
   })().catch(() => {});
   const listen = (node, event, action) => node?.addEventListener(event, action, { signal });
@@ -118,9 +162,7 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
   }).catch(report);
   async function add(files) {
     if (!canEdit() || busy || !files.length) return;
-    busy = true; let entry = null, accepted = false, model = null, generation;
-    const generationEvents = new AbortController();
-    const cancelGeneration = () => generationEvents.abort(); signal.addEventListener('abort', cancelGeneration, { once: true });
+    busy = true; let entry = null, accepted = false, model = null, job;
     try {
       const names = files.map(f => f.name.toLowerCase());
       if (names.some(n => n.endsWith('.skp'))) throw new Error('SketchUp .skp is not supported; export Collada or glTF from SketchUp.');
@@ -133,30 +175,21 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
       const budget = modelBudget(model, { resizeTextures: false }), size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
       const picture = thumbnail(model);
       const updates = { update: () => {} };
-      generation = (async () => {
-        try {
-          // details() appends synchronously below. A second frame ensures a
-          // paint happens before optional generation can do any CPU work.
-          await frame(generationEvents.signal); await frame(generationEvents.signal);
-          return await generateVersions(entry, model, generationEvents.signal, text => updates.update(text));
-        } catch { return []; }
-      })();
-      const answer = await details({ ...entry, triangles: budget.triangles, heavy: budget.heavy, warning: entry.warning || budget.warning }, suggestKind(size.toArray()), picture, signal, generation, updates);
+      job = enqueue(entry, model, text => updates.update(text), false); model = null; // The queue owns disposal.
+      const answer = await details({ ...entry, triangles: budget.triangles, heavy: budget.heavy, warning: entry.warning || budget.warning }, suggestKind(size.toArray()), picture, signal, job.promise, updates);
       if (!answer || !canEdit()) return;
-      rememberImport(await request('imports/' + entry.id, 'PATCH', { ...answer, size: size.toArray(), triangles: budget.triangles })); accepted = true;
-      await importedModels(true); await changed(); status.textContent = 'Model added. Drag its thumbnail onto a floor, the ground or a wall.';
-      const versions = await generation;
-      if (versions.length < 2 && !signal.aborted) status.textContent += ' ' + (versions.note || 'Lighter versions could not all be made this time.');
-      await changed();
+      job.entry = await request('imports/' + entry.id, 'PATCH', { ...answer, size: size.toArray(), triangles: budget.triangles });
+      rememberImport(job.entry); accepted = job.accepted = true;
+      await changed(job.entry, { added: true }); status.textContent = 'Model added. Drag its thumbnail onto a floor, the ground or a wall.';
     } catch (error) { status.textContent = error.message; report(error); }
     finally {
-      generationEvents.abort(); await generation; signal.removeEventListener('abort', cancelGeneration);
       if (model) disposeObject(model);
       if (entry && !accepted) {
+        cancel(entry.id);
         await request('imports/' + entry.id, 'DELETE').catch(report);
         forgetImport(entry.id);
       }
-      busy = false; picker.value = '';
+      busy = false; picker.value = ''; showStatus();
     }
   }
   listen(el('library-import'), 'click', () => { if (canEdit() && !busy) picker.click(); });
@@ -173,9 +206,10 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
     try { await request('import-settings', 'PUT', { unpacked_limit_mb: Number(el('library-import-unpacked-limit').value) }); }
     catch (error) { report(error); }
   });
+  return { cancel, status: backgroundStatus };
 }
 
-export async function generateVersions(entry, source, signal, progress = () => {}) {
+export async function generateVersions(entry, source, signal, progress = () => {}, changed = () => {}) {
   const rows = [];
   for (const level of [1, 2]) {
     let model;
@@ -191,7 +225,9 @@ export async function generateVersions(entry, source, signal, progress = () => {
       if (signal.aborted) break;
       const name = `lod${level}.glb`;
       if (buffer.byteLength > 50 * 1024 * 1024) throw new Error('Each lighter version may be at most 50 MB.');
-      rememberImport(await uploadFiles([new File([buffer], name)], () => {}, signal, request, { asset_id: entry.id, lod: name }));
+      const updated = await uploadFiles([new File([buffer], name)], () => {}, signal, request, { asset_id: entry.id, lod: name });
+      if (signal.aborted) break;
+      rememberImport(updated); await changed(updated);
       rows.push({ name: `LOD${level}`, picture, triangles });
     } catch (error) {
       // Optional derived files never prevent accepting the original.

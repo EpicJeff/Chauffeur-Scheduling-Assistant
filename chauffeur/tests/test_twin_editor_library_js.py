@@ -32,6 +32,10 @@ Element.prototype.setPointerCapture = function(id) {this.capture = id;};
 Element.prototype.hasPointerCapture = function(id) {return this.capture === id;};
 Element.prototype.releasePointerCapture = function() {this.capture = null;};
 Element.prototype.toDataURL = () => 'data:image/png;base64,preview';
+Element.prototype.remove = function() {
+  if (this.parentElement) this.parentElement.children=this.parentElement.children.filter(n=>n!==this);
+  this.parentElement=null;
+};
 doc.createElement = tag => {const node = new Element(); node.tag = tag; return node;};
 doc.createElementNS = (_namespace, tag) => doc.createElement(tag);
 doc.createTextNode = text => {const node = new Element(); node.textContent = text; return node;};
@@ -47,8 +51,41 @@ const b = flat.buildings.find(b => b.id === 'pool-house'), room = b.rooms.find(r
 const front = b.walls.find(w => w.id === 'wall:44b42dc9c06144adbeaeb88ce33b0430');
 const finish = {id:'red_brick_03',name:'Red brick 03',color:'#ad5946'};
 const chair = {id:'mid_century_lounge_chair',name:'Lounge chair',kind:'furniture'};
+const imported={id:'import-'+'5'.repeat(32),name:'Background chair',kind:'furniture',model:'original.gltf',thumbnail:'preview.png',files:{'original.gltf':true},lods:[]};
+const queuedDelete={...imported,id:'import-'+'6'.repeat(32),name:'Delete queued',files:{...imported.files},lods:[]};
+const vertices=new Float32Array([0,0,0,1,0,0,0,1,0]);
+const originalModel={asset:{version:'2.0'},scene:0,scenes:[{nodes:[0]}],nodes:[{mesh:0}],meshes:[{primitives:[{attributes:{POSITION:0}}]}],
+ buffers:[{uri:'data:application/octet-stream;base64,'+Buffer.from(vertices.buffer).toString('base64'),byteLength:36}],
+ bufferViews:[{buffer:0,byteLength:36}],accessors:[{bufferView:0,componentType:5126,count:3,type:'VEC3',min:[0,0,0],max:[1,1,0]}]};
+globalThis.ProgressEvent=class{constructor(type,values){Object.assign(this,values);}};
+globalThis.FileReader=class{
+ readAsArrayBuffer(blob){blob.arrayBuffer().then(value=>{this.result=value;this.onloadend?.();});}
+ readAsDataURL(blob){blob.arrayBuffer().then(value=>{this.result='data:'+blob.type+';base64,'+Buffer.from(value).toString('base64');this.onloadend?.();});}
+};
+window.location={href:'http://house.test/house/editor'};
+let releaseOriginal,originalRequested=false,derivedName,derivedCount=0,deleted=false,deletedLoads=0;
+const originalGate=new Promise(resolve=>{releaseOriginal=resolve;});
 let fetches = 0;
-globalThis.fetch = async () => {fetches++;return {ok:true,status:200,text:async()=>JSON.stringify({materials:[finish],items:[chair]})};};
+const nativeFetch=globalThis.fetch;
+globalThis.fetch = async (input,options={}) => {
+ const url=typeof input==='string'?input:input.url,json=value=>new Response(JSON.stringify(value));
+ if(url.startsWith('data:'))return nativeFetch(input);
+ if(url.endsWith('/library')){fetches++;return json({materials:[finish],items:[chair],imports:[{...imported},...(deleted?[]:[queuedDelete])]});}
+ if(url.endsWith('/import-settings'))return json({limit_mb:50,unpacked_limit_mb:200});
+ if(url.endsWith('/imports'))return json([imported,...(deleted?[]:[queuedDelete])]);
+ if(url.endsWith('/original.gltf')){if(url.includes(queuedDelete.id))deletedLoads++;originalRequested=true;await originalGate;return json(originalModel);}
+ if(url.endsWith('/imports/uploads')){derivedName=JSON.parse(options.body).lod;return json({upload_id:'background',chunk_bytes:4194304});}
+ if(url.endsWith('/background/0'))return json({});
+ if(url.endsWith('/background/finish')){
+  derivedCount++;imported.lods.push({name:derivedName});imported.files[derivedName]=true;
+  // Metadata can arrive with a background completion too.
+  imported.name='Ready chair';return json(imported);
+ }
+ if(url.endsWith('/imports/'+imported.id)&&options.method==='PATCH'){Object.assign(imported,JSON.parse(options.body));return json(imported);}
+ if(url.endsWith('/imports/'+imported.id)&&options.method==='DELETE')return json({});
+ if(url.endsWith('/imports/'+queuedDelete.id)&&options.method==='DELETE'){deleted=true;return json({});}
+ throw new Error('unexpected library request '+url);
+};
 const ops = [], op = async operation => {ops.push(operation);};
 const abort = new AbortController(), host = new Element(), view = await mountTwin(host,{plan:flat,kit,tier:'high',preserveCamera:true});
 let library;
@@ -110,6 +147,41 @@ assert.ok(equipment.every(n=>n.children.some(c=>c.tag==='svg')));
 let pickedEquipment=null;doc.getElementById('rail-add-charger').addEventListener('click',()=>{pickedEquipment='charger';});
 equipment[2].click();assert.equal(pickedEquipment,'charger');
 ok('equipment library shows four icons and invokes the charger placement tool');
+
+// Complete a real background import while a person holds a library thumbnail.
+// Both metadata updates and a requested full browse must preserve that node.
+for(let i=0;i<1000&&!originalRequested;i++)await new Promise(r=>setTimeout(r,2));
+assert.ok(originalRequested,'background job loads the existing original');
+const grid=doc.getElementById('library-entries'),dragged=grid.children.find(n=>n.dataset.item===imported.id);
+const unrelated=grid.children.find(n=>n.dataset.item===chair.id);
+grid.children.find(n=>n.textContent==='Delete Delete queued').click();await settle();
+assert.equal(deleted,true);assert.ok(!grid.children.some(n=>n.dataset.item===queuedDelete.id));
+dragged.dispatchEvent(event('pointerdown',120,150));
+releaseOriginal();
+for(let i=0;i<1000&&derivedCount<2;i++)await new Promise(r=>setTimeout(r,2));
+await settle();assert.equal(derivedCount,2,'real background exporter uploads both versions');
+assert.equal(deletedLoads,0,'library Delete removes a pending generation job before it loads');
+assert.equal(dragged.parentElement,grid,'background metadata keeps the dragged thumbnail attached');
+assert.equal(unrelated.parentElement,grid,'unrelated thumbnails stay attached too');
+assert.equal(grid.children.find(n=>n.dataset.item===imported.id),dragged);
+assert.equal(dragged.getAttribute('aria-label'),'Ready chair');
+assert.equal(dragged.children[1].textContent,'Ready chair');
+assert.ok(grid.children.some(n=>n.textContent==='Rename Ready chair'));
+doc.getElementById('library-search').value='Lounge';doc.getElementById('library-search').dispatchEvent(new Event('input'));
+await settle();assert.equal(dragged.parentElement,grid,'full browse is deferred during drag');
+const [dropX,dropY]=pixel([8,8,0]);doc.dispatchEvent(event('pointerup',dropX,dropY));await settle();
+const importedDrop=ops.pop();assert.equal(importedDrop.op,'add_item');assert.equal(importedDrop.asset,imported.id);
+assert.equal(importedDrop.object_kind,'furniture');assert.equal(importedDrop.host.floor,room.id);
+assert.equal(dragged.parentElement,null,'deferred search refresh runs after the drop');
+doc.getElementById('library-search').value='';doc.getElementById('library-search').dispatchEvent(new Event('input'));await settle();
+const renamed=grid.children.find(n=>n.dataset.item===imported.id),kept=grid.children.find(n=>n.dataset.item===chair.id);
+window.promptInput=async()=> 'Renamed chair';
+grid.children.find(n=>n.textContent==='Rename Ready chair').click();await settle();
+assert.equal(renamed.parentElement,grid);assert.equal(renamed.children[1].textContent,'Renamed chair');assert.equal(kept.parentElement,grid);
+renamed.dispatchEvent(event('pointerdown',120,150));
+doc.getElementById('library-search').dispatchEvent(new Event('input'));await settle();
+doc.dispatchEvent(event('pointercancel',120,150));await settle();assert.equal(renamed.parentElement,null,'cancel flushes a deferred browse');
+ok('background LOD metadata and rename update in place; a deferred browse preserves the drag through placement or cancel');
 
 tools.select(null);while(!view.ready)await settle();
 const tree=flat.site.planting.find(p=>p.id==='cmp-tree-1'),original=[...tree.at];
