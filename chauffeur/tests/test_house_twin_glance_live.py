@@ -384,6 +384,32 @@ def scenario_idle_corners_match_the_real_screensaver_offsets():
         L.no_errors(served)
 
 
+def scenario_compact_hero_stays_light_under_a_light_panel_theme():
+    """User 2026-11-12: under a light panel theme the idle hero's title and time were dark on
+    the card's own dark backing (html[data-panel] .text-white maps to the theme's --panel-fg).
+    The compact card resets the theme's text variables for its contents."""
+    served = setup()
+    if served is None:
+        return
+    with served.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
+        colours = page.evaluate("""() => {
+          const root = document.documentElement;
+          root.style.setProperty('--panel-fg', '#0f172a'); root.style.setProperty('--panel-dim', '#334155');
+          root.style.setProperty('--panel-accent', '#1d4ed8');
+          const host = document.getElementById('twin-idle-next'); host.hidden = false;
+          host.innerHTML = window.HeroCard.html({title: 'Groceries - Walmart', location: 'Cary', at: '10:30 AM',
+            driver: 'Lorena', color: '#3b82f6'}, {compact: true});
+          const light = el => { const [r, g, b] = getComputedStyle(el).color.match(/[0-9.]+/g).map(Number);
+            return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; };
+          const find = text => [...host.querySelectorAll('div,span')].find(el => el.childNodes[0]?.textContent.trim() === text);
+          return {title: light(find('Groceries - Walmart')), time: light(find('10:30 AM')), label: light(host.querySelector('.panel-label'))};
+        }""")
+        check(colours['title'] > .8 and colours['time'] > .8, ('title and time stay light on the dark card', colours))
+        check(colours['label'] > .5, ('the label stays readable on the dark card', colours))
+        L.no_errors(served)
+
+
 SCENARIOS = [scenario_climate_kitchen_warm_at_80_cool_at_60,
              scenario_glance_order_live_push_and_unavailable,
              scenario_desk_glance_order_live_push_and_unavailable,
@@ -392,7 +418,8 @@ SCENARIOS = [scenario_climate_kitchen_warm_at_80_cool_at_60,
              scenario_three_formatted_tiles_idle_weather_and_shared_glass,
              scenario_no_tiles_keeps_idle_clock_and_unavailable_weather_is_graceful,
              scenario_twelve_tiles_wrap_in_idle_without_truncating_values,
-             scenario_idle_corners_match_the_real_screensaver_offsets]
+             scenario_idle_corners_match_the_real_screensaver_offsets,
+             scenario_compact_hero_stays_light_under_a_light_panel_theme]
 
 if __name__ == '__main__':
     L.run(SCENARIOS)

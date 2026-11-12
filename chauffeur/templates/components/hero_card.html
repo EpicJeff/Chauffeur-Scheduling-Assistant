@@ -220,9 +220,12 @@
             const driveWord = readyMode ? ' min ride' : ' min drive';
 
             if (opts.compact) {
+                // The compact card brings its own dark backing whatever the panel theme, so it
+                // resets the theme's text variables: a light panel theme maps text-white to its
+                // dark --panel-fg, which put dark text on this dark card.
                 return `
                 <div class="rounded-2xl overflow-hidden text-right"
-                    style="background:rgba(10,10,14,.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-right:6px solid ${tone}">
+                    style="--panel-fg:#f9fafb;--panel-dim:rgba(249,250,251,.62);--panel-accent:#7dd3fc;--panel-line:rgba(255,255,255,.12);background:rgba(10,10,14,.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-right:6px solid ${tone}">
                     <div class="px-5 py-4">
                         <div class="flex items-center justify-end gap-3 mb-1">${label}</div>
                         <div class="text-3xl font-black text-white leading-tight">${esc(next.title)}</div>
