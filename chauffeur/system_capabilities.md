@@ -1,6 +1,26 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.799 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.800 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.800 (2026-11-12, NOT device-verified): energy ribbons show when one of the four readings is missing, and the Energy check says why when they cannot.**
+
+**The report.** The user, 2026-11-12: "It is reading 1.5 kW as less than 50 W."
+
+**Cause.** The kW conversion was right. `energyFlows` zeroed every flow whenever any one of solar, battery, grid or house power was unset or unreadable, and the Energy check then called those zeros "under 50 W". Separately, `watts()` read a kWh energy counter carrying device_class power as watts.
+
+**Fix** (`static/twin/live/energy_mapping.js`, `energy_check.js`).
+- **The balance.** The four totals balance: house = solar + battery discharge + grid import, in the mapping's signs.
+- **One missing total** is worked out from the other three. The check's summary says so ("Electric panel / house worked out from the other three readings").
+- **Two or more missing:** the flows stay hidden, and the check names them ("balance unknown: Meter / grid and Electric panel / house not readable") instead of "under 50 W". Direct charger telemetry still shows.
+- **Absent roles.** A house with no battery or no solar treats that role as zero, not unknown.
+- **Power only.** `watts()` accepts only W, kW and MW. Wh and kWh are never a flow.
+
+**Tests.** test_twin_energy_flows_js 14/14:
+- each of the four readings is derived in turn on a Powerwall-style kW night case;
+- with two missing, nothing is drawn;
+- kWh is rejected.
+
+test_twin_energy_check_js 31/31 (expectations moved to the new messages), test_twin_energy_js 20/20, test_twin_energy_mapping_js 8/8, test_house_twin_energy_live 4/4.
 
 **v2.499.799 (2026-11-12, NOT device-verified): an Energy check says why an energy ribbon is missing.**
 
