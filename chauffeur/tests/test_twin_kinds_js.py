@@ -330,7 +330,10 @@ def _reached(start):
         seen.add(path)
         for spec in re.findall(r"""(?:^|\n)\s*(?:import|export)[^'"]*?from\s*['"](\.[^'"]+)['"]""", path.read_text(encoding='utf-8')):
             todo.append((path.parent / spec).resolve())
-    return {p.relative_to(twin.resolve()).as_posix()[:-3] for p in (q.resolve() for q in seen)}
+    # Vendor modules (three, lucide) sit outside static/twin and are covered by
+    # test_twin_import_maps.py; this check is about the twin's own modules.
+    return {p.relative_to(twin.resolve()).as_posix()[:-3] for p in (q.resolve() for q in seen)
+            if p.is_relative_to(twin.resolve())}
 
 
 def _mapped(template):
