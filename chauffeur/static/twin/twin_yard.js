@@ -120,6 +120,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     lawn.vertexColors = true; lawn.side = THREE.DoubleSide;
     const mesh = addMesh(terrain, terrainGeometry(plan, terrainOutline, tier, { holes: pool ? [pool] : [], offset: -.04, skirts: true }), lawn);
     mesh.userData.terrain = true;
+    // Grade's vertex colours already keep this grid out of static merging.
+    // Keep the exclusion explicit if a future merge path accepts colours.
+    mesh.geometry.userData.bakeExcluded = true;
     tintGrade(mesh.geometry, false);
   }
   const pool = site.pool?.polygon;

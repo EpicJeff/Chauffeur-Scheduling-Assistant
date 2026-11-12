@@ -59,7 +59,9 @@ export function mergeStatic(group, { perPiece = false } = {}) {
       g.morphTargetsRelative = false;
       g.clearGroups();
       g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse, o.matrixWorld));
-      const key = perPiece ? `${o.material.uuid}:${o.userData.pieceId || ''}` : o.material;
+      // Models can use stand-ins/LODs: never fold their render-only geometry
+      // into the same receiver as a house surface with a shared material.
+      const key = `${o.material.uuid}:${!!o.geometry.userData.bakeExcluded}:${perPiece ? o.userData.pieceId || '' : ''}`;
       if (!buckets.has(key)) buckets.set(key, []);
       buckets.get(key).push({ geometry: g, mesh: o });
     } catch { g?.dispose(); } // An odd optional model stays independently drawn.
@@ -74,6 +76,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
     if (!geometry) continue;
     entries.forEach(e => { e.mesh.removeFromParent(); old.add(e.mesh.geometry); });
     const mesh = new THREE.Mesh(geometry, mat);
+    geometry.userData.bakeExcluded = !!entries[0].mesh.geometry.userData.bakeExcluded;
     mesh.userData.merged = true;
     // Keep the piece registry pointing at live render objects after batching.
     entries.forEach(e => {

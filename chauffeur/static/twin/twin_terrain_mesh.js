@@ -78,8 +78,10 @@ export function drapeGeometry(geometry, plan, offset = 0) {
 }
 
 export function terrainSlabGeometry(plan, outline, tier, bottom, top, holes = []) {
-  const surface = terrainGeometry(plan, outline, tier, { holes, offset: top, skirts: true });
-  const positions = [], uv = [], step = tier === 'low' ? 2 : 1;
+  // Patios and beds receive baked light. Their topology/UVs must be identical
+  // on every tier; only the much larger, unbaked lawn uses the tiered grid.
+  const surface = terrainGeometry(plan, outline, 'high', { holes, offset: top, skirts: true });
+  const positions = [], uv = [], step = 1;
   const emit = (...points) => { for (const p of points) { positions.push(p[0], p[2], -p[1]); uv.push(p[0], p[2]); } };
   for (const [index, poly] of [outline, ...holes].entries()) {
     const area = poly.reduce((n, p, i) => n + p[0] * poly[(i + 1) % poly.length][1] - p[1] * poly[(i + 1) % poly.length][0], 0);

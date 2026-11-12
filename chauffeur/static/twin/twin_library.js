@@ -145,10 +145,16 @@ export async function importedModels(refresh = false) {
   return importRead;
 }
 export async function loadModel(assetId, kit, onLate, { tier = 'high', kind } = {}) {
+  // Optional models may arrive late or use a tier-specific stand-in/LOD.
+  // They remain visible and cast shadows, but cannot own shared lightmap UVs.
+  const renderOnly = model => {
+    model?.traverse(o => { if (o.geometry) o.geometry.userData.bakeExcluded = true; });
+    return model;
+  };
   const isImport = assetId.startsWith('import-');
   if (isImport && !imported.has(assetId)) await importedModels();
   const asset = isImport ? imported.get(assetId) : manifest(kit)[assetId];
-  if (isImport && tier === 'low' && asset?.triangles > 300000 && asset?.size) return heavyStandIn(asset.size, kind || asset.kind);
+  if (isImport && tier === 'low' && asset?.triangles > 300000 && asset?.size) return renderOnly(heavyStandIn(asset.size, kind || asset.kind));
   const name = asset?.model || Object.keys(asset?.files || {}).find(n => /\.(gltf|glb|dae|kmz)$/i.test(n));
   if (!name) return null;
   // Authenticate buffers and textures as well as the top-level model. Resolving
@@ -215,8 +221,8 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind } = 
     });
     if (isImport) { modelBudget(result.scene); return normaliseModel(mergeByMaterial(result.scene)); }
     return result.scene;
-  }, model => tier === 'low' && isImport && asset?.triangles > 300000
-    ? heavyStandIn(new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).toArray(), kind || asset.kind) : copyModel(model), onLate);
+  }, model => renderOnly(tier === 'low' && isImport && asset?.triangles > 300000
+    ? heavyStandIn(new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).toArray(), kind || asset.kind) : copyModel(model)), onLate);
 }
 
 export async function loadSky(kit, onLate) {
