@@ -1,6 +1,40 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.812 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.813 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.813 (2026-11-12, NOT device-verified): real-world model imports. Chunked uploads past Home Assistant's ingress limit, limits on the uploaded size, heavy models (to 1M triangles) merged by material with a low-tier stand-in, and Collada (.dae) and KMZ import.**
+
+**The report.** The user imported `2024_kia_ev9_gt-line.zip`: 26.2 MB, 52.3 MB unpacked, scene.gltf with 421 meshes, 570,138 triangles, 51 materials and 39 textures.
+- **Through Home Assistant's ingress:** the upload was refused with 413, too large.
+- **Through Cloudflare access:** it got past the size limit but was refused for its triangle count (300k cap).
+- The user also asked: "We need to be able to import Collada files too."
+
+**How it was built.** Codex built the chunking, heavy-model handling and Collada wiring. Claude vendored the loaders, checked it in Chromium, and imported the user's real EV9 zip in the editor: the dialog appeared in about 4 s with the heavy-model warning, the import was stored as a car, it placed on a floor and rendered, and the whole scene took 83 draw calls.
+
+**Uploads** (`services/twin_imports.py`, `main.py`, `editor/imports.js`).
+- **Every upload uses the chunk protocol:** `POST imports/uploads`, `PUT …/{id}/{index}` (raw bytes), `POST …/{id}/finish`, and `DELETE`, all parent-tier.
+- **Client:** 4 MiB chunks; on 413 it halves through 2 MiB, 1 MiB and 512 KiB to 256 KiB.
+- **Server:** staging lives under `imports/.uploads`, is validated (order, sizes, names), and expires after an hour, with at most two uploads at once.
+- **Limits:** the 50 MB limit counts UPLOADED bytes; a new `twin_import_unpacked_limit_mb` (default 200, settable in Import settings) caps the unpacked size; the zip ratio and entry guards stay.
+
+**Heavy models.**
+- **Triangles:** the cap is 1,000,000. Above 300k the dialog warns "Heavy model: 570k triangles. It shows in full on the High setting; the wall panel shows a simple stand-in."
+- **Merge on load:** static meshes are merged by shared material (vendored `BufferGeometryUtils.mergeGeometries`, world transforms baked first), so 421 meshes become about 51. The stored original is untouched.
+- **Transmission** materials become transparent MeshStandardMaterial (the no-double-pass house rule).
+- **Low tier:** an import over 300k draws a stand-in (a car glyph for `car` kind, otherwise a footprint box) and never downloads the model. The `car` object kind is new.
+
+**Collada and KMZ** (`static/twin/import_loaders.js`).
+- **Vendored loaders:** three.js r187 `ColladaLoader` (with `collada/ColladaParser`, `collada/ColladaComposer`), `TGALoader`, `KMZLoader` and `libs/fflate`, copied unchanged from the npm `three@0.187.0` tarball. Its sha512 integrity matched the registry, and its GLTFLoader is byte-identical to ours. Provenance and checksums are in `static/vendor/three-r187/VENDORED.md`.
+- **Accepted uploads:** a loose .dae with textures, a .kmz, or a zip with one .dae. Two model files in one import are refused.
+- **Triangle count:** Collada triangles are counted on the client and validated on confirm against the same limits.
+- **Loading:** the loader is chosen by extension through the same authenticated, page-relative URL modifier. The asset unit and up-axis are honoured once; Phong and Lambert become MeshStandardMaterial; then the same normalise, merge, transmission and stand-in rules apply.
+- **SketchUp .skp stays unsupported** (a closed format). The help text says to export Collada or glTF.
+
+**Tests.**
+- `test_twin_import_chunks` 9/9 and `test_twin_import_chunks_js`.
+- `test_twin_collada` 6/6 and `test_twin_collada_js`.
+- `test_twin_objects` and `test_twin_objects_js`.
+- Browser `test_twin_collada_live` and `test_twin_objects_live`. The latter covers chunking under a simulated 1 MB ingress limit and a heavy car; it now runs the heavy-car scenario last, because the scenarios share one house and drop at the same spot.
 
 **v2.499.812 (2026-11-12, NOT device-verified): model imports say why they failed instead of "The house could not answer".**
 
