@@ -1,6 +1,67 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.793 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.794 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.794 (2026-11-11, NOT device-verified): baked room light reaches what it can see. It crosses invisible walls in open plan and spills through windows outside; real walls still block it.**
+
+**The ask.** The user reported, 2026-11-11: "Are the baked lightmaps clamped to just the room the lights are linked to? It feels weird that the light just stops at the border of the room, especially in an open space or through windows to the outside." This replaces v2.499.787's room clamp (rulings B2/B6/B7/B12).
+
+**How it was built.** Codex took six rounds. Claude reviewed each round in Chromium, and that review drove the rounds:
+- the banks grew with the light count;
+- a whole-light fallback left only 7 lights baked;
+- the atlas worker could not load three;
+- moving one light re-baked every light;
+- slot assignment was not sticky.
+
+Claude also corrected two browser checks for the new design.
+
+**Reach** (`static/twin/bake/reach.js`).
+- A light's receiving surfaces are every atlas chart within its range (the shared `lightRange`, `static/twin/twin_light_math.js`). That includes neighbouring rooms and outdoor ground, patio and paving.
+- Visibility is still the cube-depth shadow test, and glazing does not occlude.
+- The bounce lands in every room the light reaches, scaled by the direct light it received there.
+
+**Slots** (`slots.js`).
+- Every chart has 6 channels (3 banks × 2).
+- The chart's membership is its top 6 lights by estimated contribution.
+- The slot a light takes is sticky: a pure function of the chart's member set ordered by device id, so ranking decides membership, never position.
+- A light beyond the sixth on a chart is unbaked on that chart only, and stays baked everywhere else.
+- Moving a light re-bakes only that light, unless it changes some chart's membership.
+- Geometry-only texel addresses and fixed bank strides keep unchanged texels in place.
+
+**Runtime.**
+- Tint ownership is per chart and per channel, so toggling compiles nothing.
+- A light spans several pages; the manifest entry carries `pages` and `location`, and the server validates them.
+
+**Worker.**
+- The atlas worker resolves its own three.js URLs, because workers do not inherit the page import map.
+- A worker failure now sets an `error` in the bake state and logs it; before, it left a silent null key forever.
+
+**Measured.**
+
+| Lights | Node atlas build | Banks | Lights baked | Estimated GPU |
+|---|---|---|---|---|
+| 4 | about 4.1 s | 3 | 4 | 33.6 MB |
+| 10 | about 3.9 s | 3 | 10 | 44.8 MB |
+| 40 (stress) | about 4.8 s | 3 | 40 | 44.8 MB |
+
+- The 40-light stress case repeats 10 positions, so its worst chart drops about 72% of its estimated light.
+- Stored bakes re-bake once (a new atlas namespace).
+
+**Tests.**
+- **Node and server:**
+  - test_twin_light_reach_js 18/18;
+  - test_twin_bake_atlas_js 13/13, test_twin_baker_js 12/12, test_twin_bake_runtime_js 16/16;
+  - test_twin_lightmap_material_js 8/8, test_twin_bakes 16/16, test_twin_basis_vendor_js 10/10;
+  - test_twin_real_lights_js 8/8.
+- **test_house_twin_bake_live, 18 scenarios.** It includes `scenario_open_plan_light_crosses_the_invisible_wall` and `scenario_light_spills_through_a_window`. 14 passed in one full run; 4 passed on solo reruns after loopback drops and the two check corrections:
+  - `only the Hall light's pages are rewritten`;
+  - a wider camera aim for the window samples.
+- **Other browser:** test_house_twin_real_lights_live 10/10, test_house_twin_glance_live 5/5.
+
+**Open.**
+- On a chart with more than 6 lights, the dropped ones do not show there even while the owners are off.
+- One "Unexpected end of input" console error appeared once in "Bake lighting now" and did not recur in three reruns.
+- GPU memory has been estimated, not measured on the Pi.
 
 **v2.499.793 (2026-11-11, NOT device-verified): the 3D house gains a glance bar, an idle face and Climate mode.**
 
