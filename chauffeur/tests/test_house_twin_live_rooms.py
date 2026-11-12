@@ -187,6 +187,9 @@ def scenario_lights_mode_lights_rooms():
     L.facts()
     with s.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, s)
+        # The twin follows the real sun and Lights mode never changes the time: pin night so
+        # the glow is judged the same whatever hour the test runs.
+        page.evaluate("() => window.__twin.setTime('night')")
         L.aim_kitchen(page)
         lights = page.get_by_role('button', name='Lights', exact=True).locator('visible=true')
         everything = page.get_by_role('button', name='All', exact=True).locator('visible=true')
@@ -282,6 +285,27 @@ KITCHEN_BADGE_JS = """(room) => {
 }"""
 
 
+
+def _visible_room_spot(page, room):
+    """A client pixel where a tap meets the room's floor, nothing drawn over it; None if none."""
+    points = page.evaluate("""(room) => {
+        const b = window.__twin.plan.buildings.find(b => (b.rooms || []).some(r => r.id === room));
+        const poly = b.rooms.find(r => r.id === room).polygon, xs = poly.map(p => p[0]), ys = poly.map(p => p[1]);
+        const out = [], x0 = Math.min(...xs), y0 = Math.min(...ys), w = Math.max(...xs) - x0, h = Math.max(...ys) - y0;
+        for (let i = 1; i < 8; i++) for (let j = 1; j < 8; j++) out.push([x0 + w * i / 8, y0 + h * j / 8]);
+        return out;
+    }""", room)
+    for x, y in [KITCHEN_SAMPLE, *points]:
+        lot = L.lot_of_local(page, x, y)
+        sx, sy = L.screen_of_lot(page, [lot[0], lot[1], 0.0])
+        if page.evaluate("""([x, y, room]) => {
+            const v = window.__twin, canvas = v.renderer3.domElement, p = v.pick(x, y);
+            return document.elementFromPoint(x, y) === canvas && p?.kind === 'room' && p.id === room;
+        }""", [sx, sy, room]):
+            return sx, sy
+    return None
+
+
 def scenario_wall_picks_a_floor_then_opens_the_kitchen():
     """The wall twin lands on the Exterior, where a tap meets the roof. A person picks the
     floor with its own control (no test-code view switching), then taps the Kitchen's room
@@ -301,13 +325,28 @@ def scenario_wall_picks_a_floor_then_opens_the_kitchen():
         floor.first.click()
         L.H.settle(page, 3)
         check(page.evaluate('() => window.__twin.state.view') == L.FLOOR, 'the floor control picks the floor')
+        # Picking a floor moves the camera; locate the Kitchen only once it has come to rest,
+        # or the click lands where the badge was a moment ago.
+        camera = '() => window.__twin.camera.position.toArray().map(v => v.toFixed(3)).join()'
+        for _ in range(20):
+            before = page.evaluate(camera)
+            page.wait_for_timeout(250)
+            if page.evaluate(camera) == before:
+                break
+        L.H.settle(page)
         spot = page.evaluate(KITCHEN_BADGE_JS, L.KITCHEN)
         if spot:
             L.on_canvas(page, *spot)
             page.mouse.click(*spot)
             L.H.settle(page)
         else:
-            L.tap_local_floor(page, *KITCHEN_SAMPLE)
+            # The picked floor's camera is close enough to draw markers one by one, and a cut
+            # wall can stand between the camera and any one floor spot: tap a Kitchen spot the
+            # view itself reports as the Kitchen floor.
+            spot = _visible_room_spot(page, L.KITCHEN)
+            check(spot, 'some part of the Kitchen floor is in view')
+            page.mouse.click(*spot)
+            L.H.settle(page)
         try:
             page.wait_for_selector('#twin-room-panel', state='visible', timeout=8000)
         except Exception:
@@ -421,6 +460,9 @@ def scenario_wall_recovers_when_home_assistant_returns():
             check(not page.evaluate('() => !!window.__twin.live'), 'no live layer while Home Assistant is away')
             loads = [u for m, u, _ in seen if m == 'GET' and '/house/twin?' in u]
             FAKE.available = True
+            # The clock jump is for the live layer's retry; it would also fire the lighting
+            # bake's 30 s worker timeout, which is not under test here.
+            page.evaluate('() => window.__twin.bake?.stop()')
             page.clock.fast_forward(46000)
             try:
                 page.wait_for_function('() => !!(window.__twin && window.__twin.live)', timeout=20000)
@@ -437,7 +479,75 @@ def scenario_wall_recovers_when_home_assistant_returns():
         FAKE.available = True
 
 
+def _far_room_cards(page):
+    L.aim_kitchen(page)
+    page.evaluate('''() => {const v=window.__twin;v.camera.position.sub(v.controls.target).multiplyScalar(7).add(v.controls.target);v.controls.update();v.live.setMode('all');v.render();}''')
+    L.H.settle(page)
+
+
+def scenario_far_all_room_card_has_live_facts_and_climate_keeps_round_badges():
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    body = L.facts()
+    # Exercise the room temperature sensor without a thermostat taking precedence.
+    for row in body['devices']:
+        if row['device_id'] == 'dev-k-thermo':
+            row['area_id'] = 'elsewhere'
+    FAKE.states['light.pendant']['state'] = 'off'
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        page.route('**/api/house/live', lambda route: route.fulfill(json=body))
+        L.open_twin(page, s)
+        _far_room_cards(page)
+        card = page.locator('[data-room-card]').filter(has=page.get_by_text('Kitchen', exact=True))
+        check(card.count() == 1 and card.is_visible(), 'Kitchen has one visible card')
+        check('71°' in card.inner_text() and '1 on' in card.inner_text(), card.inner_text())
+        page.evaluate('''() => {window.__roomCard=document.querySelector('[data-room-card]:not([hidden])');}''')
+        FAKE.states['sensor.kitchen_temperature']['state'] = '73.1'
+        L.refresh(page)
+        check('73°' in card.inner_text(), 'card follows the state poll')
+        page.get_by_role('button', name='Climate', exact=True).click()
+        check(page.locator('[data-room-card]:visible').count() == 0, 'Climate has no room status cards')
+        check(page.evaluate(KITCHEN_BADGE_JS, L.KITCHEN) is not None, 'Climate retains the round room badge')
+        page.get_by_role('button', name='All', exact=True).click()
+        check(card.is_visible(), 'All restores the card')
+        check(page.evaluate('''() => window.__roomCard.isConnected'''), 'mode changes reuse the same room nodes')
+        card.click()
+        page.wait_for_selector('#twin-room-panel', state='visible')
+        check(_panel(page).get_by_role('heading', name='Kitchen', exact=True).count() >= 1, 'card opens room panel')
+        L.no_errors(s)
+
+
+def scenario_room_cards_zoom_round_trip_and_mode_change_compile_no_programs():
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page, s)
+
+        def cycle():
+            _far_room_cards(page)
+            L.aim_kitchen(page)
+            page.get_by_role('button', name='Climate', exact=True).click()
+            L.H.settle(page)
+            _far_room_cards(page)
+
+        cycle()
+        page.evaluate('''() => {const gl=window.__twin.renderer3.getContext(),create=gl.createProgram.bind(gl);
+          window.__roomPrograms=0;gl.createProgram=(...args)=>{window.__roomPrograms++;return create(...args);};}''')
+        before = page.evaluate('() => window.__twin.renderer3.info.programs.length')
+        cycle()
+        after = page.evaluate('() => [window.__roomPrograms,window.__twin.renderer3.info.programs.length]')
+        check(after == [0, before], ('no new programs after first pass', before, after))
+        L.no_errors(s)
+
+
 SCENARIOS = [
+    scenario_far_all_room_card_has_live_facts_and_climate_keeps_round_badges,
+    scenario_room_cards_zoom_round_trip_and_mode_change_compile_no_programs,
     scenario_wall_recovers_when_home_assistant_returns,
     scenario_tap_kitchen_opens_its_devices,
     scenario_brightness_slider_sets_percent,

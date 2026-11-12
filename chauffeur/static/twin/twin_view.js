@@ -351,7 +351,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const candidates = [...twin.pickObjects.values()].filter(o => {
         const room = selectionStyle?.room, data = o.userData;
         if (room && (data.buildingId !== room.building || !room.allowed.includes(data.pieceId))) return false;
-        if (!visible(o) || (state.camera === 'top' && o.userData.kind === 'roof')) return false;
+        if (!visible(o) || viewing?.faded(o) || (state.camera === 'top' && o.userData.kind === 'roof')) return false;
         if (camera.isOrthographicCamera && state.view !== 'ext') {
           for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === state.view;
         }
@@ -360,6 +360,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const hits = raycaster.intersectObjects(candidates, false).filter(hit => {
         const { kind, buildingId, pieceId } = hit.object.userData;
         if (skip.includes(kind)) return false;
+        if (viewing && hit.point.y > viewing.cutAt(hit.object) + .02) return false;
         if (kind !== 'room') return true;
         const room = plan.buildings.find(b => b.id === buildingId)?.rooms?.find(r => r.id === pieceId);
         if (!room?.polygon?.length) return true;

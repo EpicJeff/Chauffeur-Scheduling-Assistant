@@ -1,6 +1,49 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.802 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.803 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.803 (2026-11-12, NOT device-verified): twin viewing slice 2b. Device markers that clump merge into count badges, rooms summarise themselves on status cards when zoomed out, and taps pass through faded and cut-away pieces.**
+
+**Why.** The user's device run showed markers piled into unreadable clumps, and far-zoom rooms said only a device count. Codex built it; Claude checked it in Chromium, which caught a wall of "Room · 0 devices" cards and a slice 2a tap regression.
+
+**Clumps** (`static/twin/live/markers.js` `clusterMarkers`, `live.js`).
+- At the individual-marker zoom (7 px/ft and closer), markers closer than 40 px on screen merge into one 44 px count badge. Members stay merged until they are more than 48 px apart, so orbiting never flickers. Keys are the smallest member id.
+- The badge is amber if any member wants attention, "on" if any member is on, else "off". Members get no labels. Attention markers pinned on a hidden floor stay individual.
+- **Tap a badge:** the camera eases (400 ms, cancelled by any pointer input, mode change or Escape) toward the clump until members are 52 px apart or the zoom limit is reached.
+- **Members on one spot** fan out in a 60 px circle around the clump instead. Each fanned marker taps and holds as usual. Tapping elsewhere, moving the camera, a mode change or Escape closes the fan.
+
+**Room status cards** (`static/twin/live/room_cards.js`).
+- Far zoom (under 7 px/ft), All mode only. Every other mode keeps its round count badges, because Climate, Energy and Security draw their own room labels.
+- `roomFacts(room, rows, states, unit)` gives at most three facts, in this order:
+  1. attention ("1 open", "2 unlocked", or "N need attention");
+  2. temperature in the house unit ("70°");
+  3. lights on ("2 on");
+  4. occupied (motion or occupancy binary sensors only).
+- **The card:** dark glass, the name (ellipsis past 140 px), and icon + value pairs from the vendored Lucide set. Rooms with an attention fact get an amber border.
+- **Which rooms get one.** A room with devices but no facts says "N devices". A room with no markers gets a card only when it has a fact (Claude's fix: unnamed empty rooms had buried the house).
+- **Crowding.** Cards push apart. Remaining overlaps collapse the lower-priority card to the old round badge (attention rooms last, then rooms with a temperature). A card under page chrome collapses straight to the badge.
+- **Tapping** a card or a room badge opens the room panel and frames the room's floor plan.
+- **Updates.** DOM nodes are reused per room, and text changes only when it differs.
+
+**Tap fixes for slice 2a** (`static/twin/viewing.js`, `twin_view.js` `pick`). Since v2.499.801, tapping a room's floor at close zoom hit the faded-out roof, so the room panel never opened. Pick proxies sit outside the faded groups, so plain visibility never caught it.
+- `viewing.faded(object)`: a roof or floor faded more than halfway out is see-through to taps.
+- `viewing.cutAt(object)`: a tap above a cut floor's flat wall tops passes through. The proxies keep the full wall height.
+- The editor has no viewing, so its picks are unchanged.
+
+**Tests.**
+- `test_twin_markers_js` (clustering, hysteresis, chains, stable keys).
+- `test_twin_live_rooms_js` (facts, layout, mounted gestures).
+- Browser `test_house_twin_live_markers` 9/9:
+  - clump count, tap to separate, fan with tap and hold;
+  - the fan test now measures from the fan's own centre, because the tap recentres the camera first.
+- Browser `test_house_twin_live_rooms` 10/10:
+  - cards with live facts;
+  - Climate keeps badges;
+  - no new programs over zoom and mode round trips;
+  - the floor-pick test taps a Kitchen spot the view reports as Kitchen floor;
+  - the HA-recovery test stops the bake before its 46 s clock jump;
+  - the Lights glow test pins night, because the twin follows the real sun.
+- `test_house_twin_viewing_live` 5/5.
 
 **v2.499.802 (2026-11-12, NOT device-verified): energy fixes from the real house. Tesla-safe sensor guessing, unbalanced readings flagged, a readable Energy check, and ribbons on top of everything with gentle, fanned arcs.**
 

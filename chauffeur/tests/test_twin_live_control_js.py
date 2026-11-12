@@ -84,7 +84,8 @@ class Node extends EventTarget {
   getContext() { return new Proxy({measureText: text => ({width:text.length * 6})}, {get: (o, key) => o[key] ?? (() => {})}); }
 }
 const body = new Node('body'), controls = new Node('div'); controls.id = 'twin-controls'; body.append(controls);
-globalThis.document = Object.assign(new EventTarget(), {body, activeElement:null, createElement: tag => new Node(tag),
+globalThis.document = Object.assign(new EventTarget(), {body, activeElement:null, createElement: tag => new Node(tag), createElementNS: (ns, tag) => new Node(tag),
+  createTextNode: text => { const node = new Node("#text"); node.textContent = text; return node; },
   getElementById(id) { const find = n => n.id === id ? n : n.children.map(find).find(Boolean); return find(body); }});
 globalThis.window = {chfBase:'../'};
 globalThis.location = {search:''};

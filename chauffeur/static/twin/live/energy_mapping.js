@@ -1,7 +1,11 @@
 // Pure mapping policy: only instantaneous power drives ribbons; kWh never means kW.
 export const ROLES = ['solar_power', 'battery_power', 'battery_level', 'grid_power', 'house_power'];
 export function migrateEnergy(mapping = {}) {
-  const result = structuredClone(mapping);
+  // Runs on every live push (guessEnergy, the check, the car layer): copy only what migration
+  // rewrites, never the whole mapping (test_twin_live_stream_js counts structuredClone calls).
+  const result = {...(mapping || {})};
+  if (Array.isArray(result.cars)) result.cars = result.cars.map(car => ({...car}));
+  if (Array.isArray(result.chargers)) result.chargers = result.chargers.map(charger => ({...charger}));
   if (!Object.hasOwn(result, 'chargers') && result.cars?.some(c => c.charge_power || c.anchor)) {
     result.chargers = [];
     for (const car of result.cars) if (car.charge_power || car.anchor) {
