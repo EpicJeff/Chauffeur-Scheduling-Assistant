@@ -56,7 +56,7 @@ try {
  // Actual editor delegate -> handle -> op result -> card path, with a slow
  // creation promise still outstanding when the saved zone becomes selectable.
  const ids=['piece-card','editor-floors','editor-drag-hint','editor-drag-outline','draw-note','draw-tools','draw-cancel',
- ...['select','move','rotate','sheet','draw-room','draw-wall','split-room','add-door','add-window','add-anchor','add-solar-zone','add-meter','add-electric-panel','delete','add-level'].map(n=>'rail-'+n)];
+ ...['select','move','rotate','sheet','draw-room','draw-wall','split-room','add-door','add-window','add-anchor','add-solar-zone','add-meter','add-electric-panel','add-charger','add-parking','delete','add-level'].map(n=>'rail-'+n)];
  for(const id of ids)if(!document.getElementById(id)){const n=document.createElement('div');n.id=id;document.body.append(n);}
  let current=structuredClone(p.empty.plan),model=p.empty.model,release,created=false,tools;
  const canvas=t.canvas,view=t.view;view.plan=current;view.controls=new THREE.EventDispatcher();view.controls.enabled=true;

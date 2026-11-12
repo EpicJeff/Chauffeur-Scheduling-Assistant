@@ -630,8 +630,10 @@ def _opening_clear(building, piece, noun):
 
 def _rehost(building, piece, host, opening=False):
     host = deepcopy(host)
-    if piece.get('kind') in ('meter', 'electric_panel') and (not isinstance(host, dict) or 'wall' not in host):
+    if piece.get('kind') in ('meter', 'electric_panel', 'charger') and (not isinstance(host, dict) or 'wall' not in host):
         raise Refused('Choose a wall for the equipment.')
+    if piece.get('kind') == 'parking' and (not isinstance(host, dict) or not ('floor' in host or host.get('ground'))):
+        raise Refused('Choose a floor or the ground for the parking spot.')
     if not isinstance(host, dict):
         raise Refused('Choose a host surface.')
     if opening:
@@ -784,6 +786,14 @@ def _set_field(building, op, ha_catalogue=None):
                 building['checked_flags'].append(deepcopy(flag))
         return
     kind, piece = _piece(building, op.get('id'))
+    if kind == 'anchor' and piece.get('kind') in ('charger', 'parking'):
+        allowed = ('name', 'power', 'car') if piece['kind'] == 'charger' else ('name', 'car', 'rotation', 'width', 'depth')
+        if op.get('field') in allowed:
+            piece[op['field']] = deepcopy(op.get('value'))
+            reason = twin_model.equipment_error(piece)
+            if reason:
+                raise Refused(reason)
+            return
     if kind == 'item' and op.get('field') in ('rotation', 'scale'):
         # The card's Turn and Size fields (spec 5.7), the hand path for add_item's own.
         piece[op['field']] = (_number(op.get('value')) % 360 if op['field'] == 'rotation'
@@ -888,13 +898,20 @@ def _more(building, op, ha_catalogue=None):
         piece['state'] = 'settled'
         return 'Added the solar zone.' if kind == 'add_solar_zone' else 'Updated the solar zone.'
     elif kind == 'add_equipment':
-        if op.get('kind') not in ('meter', 'electric_panel'):
-            raise Refused('Choose a meter or an electric panel.')
+        if op.get('kind') not in ('meter', 'electric_panel', 'charger', 'parking'):
+            raise Refused('Choose a meter, electric panel, charger or parking spot.')
         host = op.get('host')
-        if not isinstance(host, dict) or 'wall' not in host:
+        if op['kind'] != 'parking' and (not isinstance(host, dict) or 'wall' not in host):
             raise Refused('Choose a wall for the equipment.')
         piece = {'id': _id(building, 'anchor'), 'kind': op['kind'], 'offset': 0,
                  'state': 'settled', 'device': None}
+        for field in (('name', 'power', 'car') if op['kind'] == 'charger' else ('name', 'car', 'rotation', 'width', 'depth') if op['kind'] == 'parking' else ()):
+            if field in op:
+                piece[field] = deepcopy(op[field])
+        piece['host'] = deepcopy(host)
+        reason = twin_model.equipment_error(piece)
+        if reason:
+            raise Refused(reason)
         building['anchors'].append(piece)
         _rehost(building, piece, host)
         return 'Added the ' + op['kind'].replace('_', ' ') + '.'

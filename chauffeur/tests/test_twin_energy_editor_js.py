@@ -6,7 +6,7 @@ DRIVER=r"""
 const {createDraw}=await import(file('static/twin/editor/draw.js'));
 const {createCards,findPiece}=await import(file('static/twin/editor/cards.js'));
 const {SOLAR_DEFAULTS}=await import(file('static/twin/twin_solar.js'));
-const ids=['draw-note','draw-tools','editor-drag-outline','draw-cancel','piece-card',...['draw-room','draw-wall','split-room','add-door','add-window','add-anchor','add-solar-zone','add-meter','add-electric-panel','delete','add-level'].map(n=>'rail-'+n)];
+const ids=['draw-note','draw-tools','editor-drag-outline','draw-cancel','piece-card',...['draw-room','draw-wall','split-room','add-door','add-window','add-anchor','add-solar-zone','add-meter','add-electric-panel','add-charger','add-parking','delete','add-level'].map(n=>'rail-'+n)];
 for(const id of ids){const node=document.createElement('div');node.id=id;document.body.append(node);}
 const b={id:'b',levels:[{id:'L1',elevation:0,ceiling:10}],joints:[],rooms:[],anchors:[],items:[],openings:[],
  walls:[{id:'wall',level:'L1',from:[0,0],to:[40,0],kind:'solid',thickness:.5}],
@@ -33,10 +33,30 @@ await press(card.querySelectorAll('button').find(n=>n.textContent==='Solar ribbo
 assert.equal(findPiece(plan,'z','b').kind,'solar_zone');
 console.log('  ok zone card changes count, reports laid-out panels and sets its source roof');
 surface={building:b,kind:'wall',piece:b.walls[0],point:[13,0,4],side:'right'};
-for(const [name,kind]of [['add-meter','meter'],['add-electric-panel','electric_panel']]){
+for(const [name,kind]of [['add-meter','meter'],['add-electric-panel','electric_panel'],['add-charger','charger']]){
  await place(name);assert.equal(ops.at(-1).op,'add_equipment');assert.equal(ops.at(-1).kind,kind);assert.deepEqual(ops.at(-1).host,{wall:'wall',side:'right',at:13,z:4});
 }
-console.log('  ok meter and electric panel use the clicked wall side and height');
-assert.deepEqual(domErrors,[]);assert.deepEqual(escaped,[]);abort.abort();console.log('3/3 energy editor checks passed');process.exit(0);
+console.log('  ok meter, panel and charger use the clicked wall side and height');
+
+b.rooms=[{id:'garage',level:'L1',polygon:[[0,0],[40,0],[40,30],[0,30]]}];
+await place('add-parking');assert.equal(ops.at(-1).kind,'parking');assert.deepEqual(ops.at(-1).host,{floor:'garage',u:.25,v:1/3});
+view.floorAt=()=>[50,50];await place('add-parking');assert.deepEqual(ops.at(-1).host,{ground:true,at:[50,50]});
+console.log('  ok parking clicks use a garage floor or the outdoor ground');
+const {createEquipmentShelf}=await import(file('static/twin/editor/equipment_shelf.js'));
+const changes=[],shelfHost=document.createElement('div'),shelfPiece={id:'evse',kind:'charger',name:'Wallbox',power:'sensor.missing',car:'absent'};
+const shelf=createEquipmentShelf({canEdit:()=>true,queue:fn=>Promise.resolve().then(fn),op:async o=>{changes.push(o);shelfPiece[o.field]=o.value;},
+ report:assert.fail,parseLength:x=>Number(x),feetInches:x=>String(x),api:async path=>({ok:true,json:async()=>path.includes('states')?
+ {states:{'sensor.evse':{attributes:{unit_of_measurement:'W'}},'sensor.energy':{attributes:{unit_of_measurement:'kWh'}}}}:{cars:[{id:'ev',name:'EV'}]}})});
+shelf.draw(shelfHost,{piece:shelfPiece,building:b});await wait(30);
+const picker=shelfHost.querySelector('[data-equipment-field="power"]');assert.equal(picker.value,'sensor.missing');
+assert.ok(picker.querySelectorAll('option').some(o=>o.value==='sensor.evse'));assert.ok(!picker.querySelectorAll('option').some(o=>o.value==='sensor.energy'));
+picker.value='sensor.evse';picker.dispatchEvent(new Event('change'));await wait(30);assert.equal(changes.at(-1).value,'sensor.evse');
+const carPicker=shelfHost.querySelector('[data-equipment-field="car"]');assert.equal(carPicker.value,'absent');carPicker.value='ev';carPicker.dispatchEvent(new Event('change'));await wait(30);
+assert.equal(changes.at(-1).field,'car');assert.equal(changes.at(-1).value,'ev');
+const parkingHost=document.createElement('div');shelf.draw(parkingHost,{piece:{id:'spot',kind:'parking'},building:b});
+const rotation=parkingHost.querySelector('[data-equipment-field="rotation"]');rotation.value='90';rotation.dispatchEvent(new Event('change'));await wait(30);
+assert.equal(changes.at(-1).value,90);assert.equal(changes.at(-1).id,'spot');
+console.log('  ok charger and parking shelves keep saved choices, filter power and save car/rotation');
+assert.deepEqual(domErrors,[]);assert.deepEqual(escaped,[]);abort.abort();console.log('5/5 energy editor checks passed');process.exit(0);
 """
 if __name__=='__main__':sys.exit(run(DRIVER))

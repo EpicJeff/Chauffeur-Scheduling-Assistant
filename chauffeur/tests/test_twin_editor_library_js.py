@@ -33,6 +33,9 @@ Element.prototype.hasPointerCapture = function(id) {return this.capture === id;}
 Element.prototype.releasePointerCapture = function() {this.capture = null;};
 Element.prototype.toDataURL = () => 'data:image/png;base64,preview';
 doc.createElement = tag => {const node = new Element(); node.tag = tag; return node;};
+doc.createElementNS = (_namespace, tag) => doc.createElement(tag);
+doc.createTextNode = text => {const node = new Element(); node.textContent = text; return node;};
+Element.prototype.click = function() {this.dispatchEvent(new Event('click'));};
 doc.getElementById = id => {if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id);};
 doc.querySelector = () => null; doc.querySelectorAll = () => []; globalThis.document = doc;
 window.innerWidth = 1440; window.innerHeight = 900; window.showGlobalAlert = text => {throw Error(text);};
@@ -83,7 +86,7 @@ const browse = async name => {panel.querySelectorAll('[data-library-tab]').find(
 doc.getElementById('rail-library').dispatchEvent(new Event('click'));await settle();
 assert.equal(fetches,1);
 const drop = async point => {
-  const thumb=doc.getElementById('library-entries').children[0];thumb.dispatchEvent(event('pointerdown',120,150));
+  const thumb=doc.getElementById('library-entries').children.find(n=>n.dataset.item || n.dataset.material);thumb.dispatchEvent(event('pointerdown',120,150));
   const [x,y]=pixel(point);doc.dispatchEvent(event('pointerup',x,y));await settle();
 };
 tools.select({pieceId:room.id,buildingId:b.id});while(!view.ready)await settle();
@@ -101,6 +104,12 @@ assert.ok(Math.abs(Math.min(...xs)+added.host.u*(Math.max(...xs)-Math.min(...xs)
 assert.ok(Math.abs(Math.min(...ys)+added.host.v*(Math.max(...ys)-Math.min(...ys))-8)<.1);
 await browse('materials');await browse('items');assert.equal(fetches,1);
 ok('floor drop posts a hosted item with room fractions; browsing reuses its catalog');
+const equipment=doc.getElementById('library-entries').children.filter(n=>n.dataset.equipment);
+assert.deepEqual(equipment.map(n=>n.getAttribute('aria-label')),['Meter','Electric panel','Charger','Parking spot']);
+assert.ok(equipment.every(n=>n.children.some(c=>c.tag==='svg')));
+let pickedEquipment=null;doc.getElementById('rail-add-charger').addEventListener('click',()=>{pickedEquipment='charger';});
+equipment[2].click();assert.equal(pickedEquipment,'charger');
+ok('equipment library shows four icons and invokes the charger placement tool');
 
 tools.select(null);while(!view.ready)await settle();
 const tree=flat.site.planting.find(p=>p.id==='cmp-tree-1'),original=[...tree.at];

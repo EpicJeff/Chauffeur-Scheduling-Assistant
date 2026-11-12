@@ -25,7 +25,7 @@
     {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'viewing', 'unlit', 'twin_roof', 'twin_ground', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
-    {% for name in ['twin_solar', 'live/climate', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/energy_check', 'live/energy_settings', 'live/security'] %}
+    {% for name in ['twin_solar', 'live/climate', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     twinImports[new URL(twinBase + 'static/vendor/lucide/icons.js', location.href).href] = twinBase + {{ 'static/vendor/lucide/icons.js' | ver | tojson }};
@@ -62,10 +62,12 @@
     #twin-edit { pointer-events:auto; display:inline-flex; align-items:center; border:1px solid rgba(227,211,171,.45); border-radius:999px; padding:6px 11px; min-height:44px; background:rgba(28,23,16,.82); color:#f0e6cf; text-decoration:none; }
     #twin-edit:hover, #twin-edit:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
     /* The live sheet uses the preview controls' parchment and the editor card's right dock. */
-    .twin-live-labels { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
-    .twin-live-labels span { position:absolute; box-sizing:border-box; max-width:190px; height:23px; padding:3px 6px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border-radius:8px; background:rgba(28,23,16,.9); color:#f0e6cf; font:12px/1.4 system-ui; }
-    .twin-device-sheet { position:fixed; top:154px; right:16px; z-index:47; box-sizing:border-box; width:min(320px, calc(100vw - 32px)); max-height:calc(100dvh - 180px - var(--panel-shelf-h, 0px)); overflow:auto; padding:16px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.94); color:#f0e6cf; font:13px/1.4 system-ui; }
-    .twin-device-sheet h2 { margin:0 0 8px; font-size:18px; font-weight:700; }
+    .twin-live-labels, .twin-car-labels { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+    .twin-live-labels span, .twin-car-labels span { position:absolute; box-sizing:border-box; max-width:190px; height:23px; padding:3px 6px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border-radius:8px; background:rgba(28,23,16,.9); color:#f0e6cf; font:12px/1.4 system-ui; }
+    .twin-car-labels { position:fixed; z-index:44; }
+    .twin-car-labels span { transform:translate(-50%, -50%); }
+    .twin-device-sheet, .twin-car-sheet { position:fixed; top:154px; right:16px; z-index:47; box-sizing:border-box; width:min(320px, calc(100vw - 32px)); max-height:calc(100dvh - 180px - var(--panel-shelf-h, 0px)); overflow:auto; padding:16px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.94); color:#f0e6cf; font:13px/1.4 system-ui; }
+    .twin-device-sheet h2, .twin-car-sheet h2 { margin:0 0 8px; font-size:18px; font-weight:700; }
     .twin-device-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
     .twin-device-actions button { border:1px solid rgba(227,211,171,.45); border-radius:999px; padding:6px 11px; min-height:44px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
     /* Hover only where there is a mouse: on a touch wall a tapped button would keep it. */
@@ -180,7 +182,7 @@
        floor is the only way to reach a room. Time and camera are preview tools. */
     html[data-twin-wall] #twin-controls > fieldset:not(#twin-modes):not(#twin-view-picker) { display:none !important; }
     html[data-twin-wall] #twin-controls { top:16px; }
-    html[data-twin-wall] .twin-device-sheet { top:86px; max-height:calc(100dvh - 112px - var(--panel-shelf-h, 0px)); }
+    html[data-twin-wall] .twin-device-sheet, html[data-twin-wall] .twin-car-sheet { top:86px; max-height:calc(100dvh - 112px - var(--panel-shelf-h, 0px)); }
     [hidden] { display:none !important; }
     #twin-glance-home { position:fixed; bottom:max(calc(var(--panel-shelf-h, 0px) + 16px), var(--twin-glance-clearance, 0px)); left:16px; right:16px; z-index:46; pointer-events:none; }
     /* Shared tiles; glass and thin type follow the approved tiles brief. */

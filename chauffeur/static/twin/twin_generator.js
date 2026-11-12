@@ -3,10 +3,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial, loadModel, disposeObject } from './twin_library.js';
-import { hostPoint } from './twin_hosts.js';
+import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt } from './twin_ground.js';
+import { LUCIDE } from '../vendor/lucide/icons.js';
 
 import { FT } from './twin_light_math.js';
 export { FT } from './twin_light_math.js';
@@ -274,6 +275,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     return materialKit;
   };
   const materials = new Map();
+  let parkingIcon = null;
   const plain = (name, color, extra = {}) => {
     const key = name + color;
     if (!materials.has(key)) materials.set(key, new THREE.MeshStandardMaterial({ name, color, roughness: 0.8, ...extra }));
@@ -1069,14 +1071,35 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       return levels[surface?.level] || first;
     };
     for (const anchor of b.anchors || []) {
-      const equipment=['meter','electric_panel'].includes(anchor.kind);
+      const equipment=['meter','electric_panel','charger'].includes(anchor.kind);
       if(!showAnchors && !equipment)continue;
       // A light already has a fixture registered under this same identity.
       if (anchor.kind === 'light') continue;
       let point;
-      try { point = hostPoint(b, anchor.host, (anchor.offset || 0) + 0.04); }
+      try { point = anchor.kind==='parking'?parkingPoint(b,anchor,plan,(anchor.offset || 0)+.04,groundAt):hostPoint(b, anchor.host, (anchor.offset || 0) + 0.04); }
       catch { continue; } // Missing hosts remain represented by model flags.
       use(anchor, 'anchor', anchor.id);
+      if(anchor.kind==='parking'){
+        const width=anchor.width || 9,depth=anchor.depth || 18,angle=(anchor.rotation || 0)*Math.PI/180;
+        const material=plain('parking_outline','#d7dbe0');
+        const segment=(x,y,w,d)=>{const g=boxRect(x-w/2,y-d/2,x+w/2,y+d/2,point[2],point[2]+.025);
+          g.rotateY(angle);g.translate(point[0],0,-point[1]);mesh(local[hostLevel(anchor.host).id],g,material);};
+        for(let x=-width/2;x<width/2;x+=1.5)for(const y of [-depth/2,depth/2])segment(Math.min(x+.5,width/2),y,Math.min(1,width/2-x),.12);
+        for(let y=-depth/2;y<depth/2;y+=1.5)for(const x of [-width/2,width/2])segment(x,Math.min(y+.5,depth/2),.12,Math.min(1,depth/2-y));
+        if(!parkingIcon){
+          const canvas=document.createElement('canvas');canvas.width=canvas.height=192;const ctx=canvas.getContext('2d');
+          ctx.scale(8,8);ctx.strokeStyle='#d7dbe0';ctx.lineWidth=1.5;ctx.lineCap='round';ctx.lineJoin='round';
+          for(const [tag,a] of LUCIDE.car){
+            if(tag==='path' && typeof Path2D==='function')ctx.stroke(new Path2D(a.d));
+            if(tag==='circle'){ctx.beginPath();ctx.arc(Number(a.cx),Number(a.cy),Number(a.r),0,Math.PI*2);ctx.stroke();}
+          }
+          const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
+          parkingIcon=plain('parking_icon','#ffffff',{map:texture,transparent:true,alphaTest:.05,depthWrite:false,side:THREE.DoubleSide});
+        }
+        const glyph=new THREE.PlaneGeometry(4,4).rotateX(-Math.PI/2).rotateY(angle).translate(point[0],point[2]+.04,-point[1]);
+        mesh(local[hostLevel(anchor.host).id],glyph,parkingIcon);
+        continue;
+      }
       const geometry = equipment ? new THREE.BoxGeometry(1.2,.4,anchor.kind==='meter'?1.5:2) : new THREE.CylinderGeometry(0.22, 0.22, 0.06, 16);
       const wall = b.walls.find(w => w.id === anchor.host.wall);
       if (wall) {

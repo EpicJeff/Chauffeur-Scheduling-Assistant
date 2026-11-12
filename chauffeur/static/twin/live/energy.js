@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { isEnergyEntity } from './glance.js';
-import { guessEnergy, carHome, flowReading } from './energy_mapping.js';
+import { guessEnergy, chargingCar, flowReading } from './energy_mapping.js';
 import { energyCheck, renderEnergyCheck } from './energy_check.js';
 import { energyTopology, energyPlacementLegend, energyAnchors, worldPoint, flowCurve, flowRoute, flowApex, flowFans } from './energy_geometry.js';
 
@@ -66,7 +66,7 @@ export function flowLabelPositions(entries, rect) {
 export function mountEnergy({view, live, warm, overlays = view.scene}) {
   const root = new THREE.Group(); root.userData.twinMode = 'energy'; overlays.add(root);
   const labels = document.createElement('div'); labels.className = 'twin-mode-labels twin-energy-labels'; document.body.append(labels);
-  let key = '', mapping = {}, ribbons = [], cars = [], anchors = null, check = null;
+  let key = '', mapping = {}, ribbons = [], anchors = null, check = null;
   const checkControls = document.createElement('div'), checkLink = document.createElement('a'), checkPanel = document.createElement('section');
   checkLink.href = '#twin-energy-check'; checkLink.textContent = 'Why no ribbons?';
   checkPanel.className = 'twin-energy-check'; checkPanel.hidden = true; checkPanel.setAttribute('aria-label', 'Energy check');
@@ -83,9 +83,9 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
   const resources = new Set();
   const own = value => { resources.add(value); return value; };
   const label = () => {const node = document.createElement('span'); node.hidden = true; labels.append(node); return node;};
-  function clear() { root.clear(); labels.replaceChildren(); for (const r of resources) r.dispose(); resources.clear(); ribbons = []; cars = []; }
-  function ribbon(id, from, to, color, fan) {
-    const route = flowRoute(from, to), curve = flowCurve(route.from, route.to, fan);
+  function clear() { root.clear(); labels.replaceChildren(); for (const r of resources) r.dispose(); resources.clear(); ribbons = []; }
+  function ribbon(id, from, to, color, fan, link = null) {
+    const route = flowRoute(from, to), curve = link ? new THREE.LineCurve3(worldPoint(from),worldPoint(to)) : flowCurve(route.from, route.to, fan);
     const geometry = own(new THREE.TubeGeometry(curve, 64, flowReading(0).width / 2, 8, false));
     const centres = new Float32Array(geometry.attributes.position.count * 3);
     for (let ring = 0; ring <= 64; ring++) {
@@ -116,18 +116,15 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
     mesh.userData.energyRibbon = id; halo.userData.energyRibbonHalo = id;
     mesh.visible = halo.visible = false; root.add(halo, mesh);
     const node = label(); node.dataset.energyLabel = id;
-    ribbons.push({id, mesh, halo, curve, route, hue: new THREE.Color(color).convertLinearToSRGB().toArray(), label: node, point: flowApex(curve), reading: flowReading(0)});
+    ribbons.push({id, link, mesh, halo, curve, route, hue: new THREE.Color(color).convertLinearToSRGB().toArray(), label: node, point: link?curve.getPoint(.5):flowApex(curve), reading: flowReading(0)});
   }
   function rebuild(anchors) {
     clear(); if (!anchors) return;
     const topology = energyTopology(anchors,mapping), fans = flowFans(topology, flowReading(4000).width);
     for(const row of topology)ribbon(row.id,row.from,row.to,FLOW_COLORS[row.source],fans.get(row.id));
-    for (const [i, car] of mapping.cars.entries()) {
-      if(!anchors.cars[i])continue;
-      const body = new THREE.Group(), at = worldPoint(anchors.cars[i]); body.position.copy(at);
-      // The existing placed HA marker is the charger; no invented parked car.
-      body.userData.energyCar = car.id; root.add(body);
-      cars.push({car, index: i, mesh: body, label: label(), point: at.clone().add(new THREE.Vector3(0, 1.3, 0))});
+    for(const [i,at] of anchors.chargers.entries())if(at)for(const spot of anchors.parking){
+      const from=[at[0],at[1],spot.at[2]],to=[...spot.at];
+      ribbon(`link:${i}:${spot.building}:${spot.id}`,from,to,FLOW_COLORS.car,null,{charger:i,spot});
     }
     warm?.();
   }
@@ -136,22 +133,28 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
     legendContent:()=>checkControls,
     warmObjects: () => {const objects = []; root.traverse(o => {objects.push(o);}); return objects;},
     update(mode) {
-      const states = live.peek(); mapping = guessEnergy(states, view.energySources?.mapping, view.energySources?.cars);
+      const states = live.peek(); mapping = guessEnergy(states, view.energySources?.mapping, view.energySources?.cars, view.plan);
       view.scene.traverse(o=>{for(const m of o.material?[].concat(o.material):[])if(m.name==='solar_panel')m.visible=mapping.panels.visible!==false;});
-      anchors = energyAnchors(view, layout, mapping);
+      anchors = energyAnchors(view, layout, mapping,states);
       // Power, signs, names and panel visibility never rebuild a curve. Only
       // changed anchors or a newly added source/car changes meshes.
-      const next = JSON.stringify([anchors, ['solar_power', 'battery_power', 'grid_power', 'house_power'].map(k => !!mapping[k]),
-        mapping.cars.map(c => [c.id, !!c.charge_power])]);
+      const {spots,homeCars,...physical}=anchors;
+      const next = JSON.stringify([physical, ['solar_power', 'battery_power', 'grid_power', 'house_power'].map(k => !!mapping[k]),
+        mapping.chargers.map(c => [c.id, !!c.power])]);
       if (key !== next) {key = next; rebuild(anchors);}
       check = energyCheck(view, layout, mapping, states, live.stale(), anchors);
       renderEnergyCheck(checkPanel, check);
       const flows = new Map(check.flows.map(row => [row.id, row]));
       for (const row of ribbons) {
-        const car = row.id.startsWith('car:') ? mapping.cars[Number(row.id.split(':')[1])] : null;
-        const flow = flows.get(row.id);
+        const chargerIndex = row.link?.charger ?? (row.id.startsWith('charger:') ? Number(row.id.split(':')[1]) : null);
+        const charger=chargerIndex===null?null:mapping.chargers[chargerIndex];
+        const car=charger?chargingCar({...charger,at:anchors.chargers[chargerIndex]},mapping.cars,states,anchors.spots):null;
+        const flow = flows.get(row.link?'charger:'+chargerIndex:row.id);
         row.reading = {...flowReading(flow?.watts || 0), watts: flow?.watts || 0};
-        row.halo.visible = row.mesh.visible = mode === 'energy' && !!flow?.shown;
+        if(row.link)row.reading.width=.25*.3048;
+        row.halo.visible = row.mesh.visible = mode === 'energy' && (row.link
+          ? !live.stale() && row.reading.visible && !!car && anchors.spots.some(s=>s.car===car.id && s.building===row.link.spot.building && s.id===row.link.spot.id)
+          : !!flow?.shown);
         row.mesh.material.uniforms.radius.value = row.reading.width / 2;
         row.halo.material.uniforms.radius.value = row.reading.width;
         // Keep the full physical diameter in the mesh itself. Updating the
@@ -167,22 +170,16 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
           position.needsUpdate = true; geometry.computeBoundingSphere();
         }
         const names = {house:'home',grid:'grid',battery:'battery',solar:'solar'};
-        const title = car ? `panel to ${car.name}` : row.id.split(':').map(role=>names[role]).join(' to ');
-        row.mesh.userData.flow = {...row.reading}; row.label.textContent = `${title} ${row.reading.label}`;
-      }
-      for (const row of cars) {
-        row.car = mapping.cars[row.index];
-        row.mesh.visible = !live.stale() && carHome(row.car, states);
-        const level = states[row.car.battery_level]?.state;
-        row.label.textContent = `${row.car.name} · ${level != null && level !== '' && Number.isFinite(Number(level)) ? level + '%' : '—'}`;
+        const title = charger ? `panel to ${charger.name}` : row.id.split(':').map(role=>names[role]).join(' to ');
+        row.mesh.userData.flow = {...row.reading}; row.label.textContent = `${title} ${row.reading.label}${charger && !car?' · car unknown':''}`;
       }
     },
     draw(mode) {
       labels.hidden = mode !== 'energy';
       const rect = view.renderer3.domElement.getBoundingClientRect();
       const shown = [], entries = [];
-      for (const row of [...ribbons, ...cars]) {
-        row.label.hidden = !row.mesh.visible || mode !== 'energy';
+      for (const row of ribbons) {
+        row.label.hidden = !!row.link || !row.mesh.visible || mode !== 'energy';
         if (!row.label.hidden) {
           const point = row.point.clone().project(view.camera);
           if (!row.label.hidden) {
@@ -206,9 +203,9 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       const seconds = performance.now() / 1000;
       for (const r of ribbons) r.halo.material.uniforms.phase.value = r.mesh.material.uniforms.phase.value = seconds * r.reading.speed * r.reading.direction;
     },
-    snapshot: () => ({mapping, check, anchors: energyAnchors(view, layout, mapping), ribbons: ribbons.map(r => ({id: r.id, ...r.reading, visible: r.mesh.visible,
+    snapshot: () => ({mapping, check, anchors, ribbons: ribbons.map(r => ({id: r.id, link:!!r.link, ...r.reading, visible: r.mesh.visible,
       apex: r.point.toArray(), labelAnchor: r.point.toArray(), midpoint: r.curve.getPoint(.5).toArray(), from: r.route.from, to: r.route.to, hue: r.hue, path: r.curve.getPoints(15).map(p => p.toArray())})),
-      cars: cars.map(r => ({id: r.car.id, visible: r.mesh.visible})), plane: anchors?.source || null, legend:energyPlacementLegend(anchors || {},mapping)}),
+      cars: view.cars?.snapshot() || [], plane: anchors?.source || null, legend:energyPlacementLegend(anchors || {},mapping)}),
     stop() { clear(); root.removeFromParent(); labels.remove(); checkControls.remove(); }
   };
   return effects;

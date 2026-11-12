@@ -3,7 +3,7 @@ import sys
 from twin_live_node_rig import run
 
 DRIVER = r"""
-const {guessEnergy, watts, carHome, mappedEntities, flowReading} = await import(file('static/twin/live/energy_mapping.js'));
+const {guessEnergy, watts, carHome, mappedEntities, flowReading, migrateEnergy, chargingCar, chargingDecision, assignParking} = await import(file('static/twin/live/energy_mapping.js'));
 const {mountGlance} = await import(file('static/twin/live/glance.js'));
 const checks=[], check=(n,f)=>checks.push([n,f]);
 const power=(v=1000, unit='W')=>({state:String(v),attributes:{device_class:'power',unit_of_measurement:unit}});
@@ -71,6 +71,68 @@ check('mapped readings remain available to energy without inventing glance tiles
  glance.energy(mapping);assert.equal(glance.bar.hidden,true);assert.equal(glance.bar.children.length,0);glance.stop();
  assert.equal(mappedEntities(mapping).length,3);
  assert.deepEqual(mappedEntities(mapping,true),['sensor.unusual','sensor.ev_soc']);
+});
+
+check('legacy read migrates chargers without mutation and preserves own power in the new shape',()=>{
+ const old={cars:[{id:'ev',name:'EV',charge_power:'sensor.ev_power',anchor:{type:'device',id:'evse'}}]};
+ const copy=structuredClone(old),m=migrateEnergy(old);assert.deepEqual(old,copy);
+ assert.deepEqual(m.chargers,[{id:'charger-ev',name:'EV charger',power:'sensor.ev_power',anchor:{type:'device',id:'evse'},car:'ev'}]);
+ assert.equal(m.cars[0].charge_power,null);assert.equal(m.cars[0].anchor,null);assert.deepEqual(migrateEnergy(m),m);
+ const modern={...old,chargers:[]};assert.deepEqual(migrateEnergy(modern),modern);
+ assert.deepEqual(guessEnergy({},old).chargers,m.chargers);
+});
+check('Tesla fixture separates wall connector from car telemetry including charging state',()=>{
+ const states={'sensor.wall_connector_power':power(7000),'sensor.my_ev_charger_power':power(7100),
+ 'binary_sensor.my_ev_charging':{state:'on',attributes:{}},'sensor.my_ev_battery_level':level,'sensor.powerwall_battery_power':power(1000)};
+ const m=guessEnergy(states);assert.equal(m.chargers.length,1);assert.equal(m.chargers[0].power,'sensor.wall_connector_power');
+ assert.equal(m.cars.length,1);assert.equal(m.cars[0].charge_power,'sensor.my_ev_charger_power');assert.equal(m.cars[0].charging,'binary_sensor.my_ev_charging');
+ assert.ok(mappedEntities(m).includes('sensor.wall_connector_power'));assert.ok(mappedEntities(m).includes('binary_sensor.my_ev_charging'));
+ const sensor={...states,'sensor.my_ev_charging_state':{state:'charging',attributes:{}}};delete sensor['binary_sensor.my_ev_charging'];
+ assert.equal(guessEnergy(sensor).cars[0].charging,'sensor.my_ev_charging_state');
+});
+const cars=[{id:'a',name:'A',charging:'binary_sensor.a_charging',charge_power:'sensor.a_power',location:'device_tracker.a'},
+ {id:'b',name:'B',charging:'sensor.b_charging_state',charge_power:'sensor.b_power'}];
+const charger={id:'evse',power:'sensor.evse',at:[0,0,3]},spots=[{id:'p1',car:'a',at:[6,0,0]},{id:'p2',car:'b',at:[20,0,0]}];
+const telemetry=()=>({'sensor.evse':power(7000),'binary_sensor.a_charging':{state:'off'},'sensor.b_charging_state':{state:'idle'},'device_tracker.a':{state:'home'}});
+check('dedicated car wins over charging sensors, but an away car is never selected',()=>{
+ const states=telemetry();states['sensor.b_charging_state'].state='charging';
+ assert.equal(chargingCar({...charger,car:'a'},cars,states,spots).id,'a');states['device_tracker.a'].state='away';
+ assert.notEqual(chargingCar({...charger,car:'a'},cars,states,spots)?.id,'a');
+});
+check('one charging sensor wins, two produce an explained unknown even with nearer spots',()=>{
+ const states=telemetry();states['sensor.b_charging_state'].state='charging';assert.equal(chargingCar(charger,cars,states,spots).id,'b');
+ states['binary_sensor.a_charging'].state='on';assert.equal(chargingCar(charger,cars,states,spots),null);assert.equal(chargingDecision(charger,cars,states,spots).reason,'both cars report charging');
+ states['device_tracker.a'].state='away';assert.equal(chargingCar(charger,cars,states,spots).id,'b');
+});
+check('own power matching uses 20 percent or 300 watts and refuses ties',()=>{
+ const states=telemetry();states['sensor.b_power']=power(5700);assert.equal(chargingCar(charger,cars,states,spots).id,'b');
+ states['sensor.a_power']=power(7000);assert.equal(chargingCar(charger,cars,states,spots),null);
+ states['sensor.evse']=power(1000);states['sensor.b_power']=power(1299);states['sensor.a_power']=power(0);assert.equal(chargingCar(charger,cars,states,spots).id,'b');
+});
+check('nearest home spot within 30 feet wins; tied and far spots stay unknown',()=>{
+ const states=telemetry();assert.equal(chargingCar(charger,cars,states,spots).id,'a');
+ assert.equal(chargingCar(charger,cars,states,[{...spots[0],at:[20,0,0]},spots[1]]),null);
+ assert.equal(chargingCar(charger,cars,states,spots.map(s=>({...s,at:[31,0,0]}))),null);
+ states['device_tracker.a'].state='away';assert.equal(chargingCar(charger,cars,states,spots).id,'b');
+});
+check('parking reserves assigned spots before free spots and follows fleet order',()=>{
+ const order=guessEnergy({}, {cars:[...cars].reverse(),chargers:[]},cars);assert.deepEqual(order.cars.map(c=>c.id),['a','b']);
+ const all=[{id:'free',at:[0,0,0]},{id:'assigned',assigned:'b',at:[10,0,0]},{id:'other',assigned:'away',at:[20,0,0]}];
+ const assigned=assignParking(cars,all,telemetry());assert.equal(assigned.find(s=>s.car==='a').id,'free');assert.equal(assigned.find(s=>s.car==='b').id,'assigned');
+ const reverse=assignParking([...cars].reverse(),all.slice(0,1),telemetry());assert.equal(reverse[0].car,'b');
+ assert.equal(assignParking(cars,[],telemetry()).length,0);
+ const states=telemetry();states['device_tracker.a'].state='away';assert.ok(!assignParking(cars,all,states).some(s=>s.car==='a'));
+});
+
+check('equipment shelf values reconcile with saved chargers and new objects remain discoverable',()=>{
+ const ref={type:'object',building:'b',id:'wallbox'},object={id:'wallbox',kind:'charger',power:'sensor.new',car:'b',name:'Renamed'};
+ const plan={buildings:[{id:'b',anchors:[object]}]};
+ const saved={cars:[],chargers:[{id:'saved',name:'Old',power:'sensor.old',anchor:ref,car:'a'}]};
+ const m=guessEnergy({},saved,[],plan);assert.equal(m.chargers.length,1);assert.equal(m.chargers[0].power,'sensor.new');assert.equal(m.chargers[0].car,'b');assert.equal(m.chargers[0].name,'Renamed');
+ assert.equal(guessEnergy({},{chargers:[]},[],plan).chargers.length,1);
+ object.power=null;assert.equal(guessEnergy({},{chargers:[]},[],plan).chargers.length,0);
+ const bad={'sensor.wall_connector_total':{state:'2',attributes:{device_class:'power',unit_of_measurement:'kWh'}}};assert.equal(guessEnergy(bad).chargers.length,0);
+ const legacy=migrateEnergy({cars:[{id:'ev',name:'x'.repeat(100),charge_power:'sensor.ev'}]});assert.equal(legacy.chargers[0].name.length,100);
 });
 let failed=0; for(const [n,f] of checks)try{await f(); console.log('  ok '+n);}catch(e){failed++;console.log('  FAIL '+n+' '+e.stack);}
 console.log(`${checks.length-failed}/${checks.length} energy mapping checks passed`);process.exit(failed?1:0);

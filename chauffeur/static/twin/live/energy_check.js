@@ -1,4 +1,4 @@
-import { energyBalance, energyFlows, flowReading, watts } from './energy_mapping.js';
+import { energyBalance, energyFlows, flowReading, watts, chargingDecision, carHome, carCharging, migrateEnergy } from './energy_mapping.js';
 import { energyAnchors, energyLocations, resolveEnergyLocation, energyTopology } from './energy_geometry.js';
 import { formatGlanceValue } from './glance.js';
 
@@ -8,7 +8,8 @@ const stem = id => (id || '').replace(/_(?:battery_power|charging_power|charge_p
 
 // The renderer consumes this same decision, including the unfiltered allocation.
 // No diagnostic-only guesses may supply an anchor or change the power balance.
-export function energyCheck(view, layout, mapping, states = {}, stale = false, anchors = energyAnchors(view, layout, mapping)) {
+export function energyCheck(view, layout, mapping, states = {}, stale = false, anchors = energyAnchors(view, layout, mapping, states)) {
+  mapping=migrateEnergy(mapping);
   const options = energyLocations(view, layout), roles = [];
   const buildings = view.plan?.buildings || [];
   const locationName = option => {
@@ -16,7 +17,7 @@ export function energyCheck(view, layout, mapping, states = {}, stale = false, a
       const b = buildings.find(b => b.id === option.ref.building), wall = b?.walls?.find(w => w.id === option.host.wall);
       const floor = b?.levels?.find(l => l.id === wall?.level);
       const where = b?.name ? `${wall?.exterior ? 'exterior wall' : 'wall'} of ${b.name}${floor?.name ? ', ' + floor.name : ''}` : 'a wall';
-      return `${option.kind === 'meter' ? 'meter' : 'electric panel'} object on ${where}`;
+      return `${option.kind.replaceAll('_',' ')} object on ${where}`;
     }
     const m = option.marker, b = buildings.find(b => b.id === m.building);
     const floor = b?.levels?.find(l => l.id === m.level);
@@ -37,7 +38,7 @@ export function energyCheck(view, layout, mapping, states = {}, stale = false, a
     }
     else {
       const selected = resolveEnergyLocation(options, ref, entity, kind);
-      location = at && selected ? locationName(selected) : `not placed: place ${entity || name} in the editor${kind ? ', or add ' + (kind === 'meter' ? 'a meter' : 'an electric panel') + ' object and choose it above' : ''}`;
+      location = at && selected ? locationName(selected) : `not placed: place ${entity || name} in the editor${kind ? ', or add a ' + kind.replaceAll('_',' ') + ' object and choose it above' : ''}`;
       if (!at && entity) {
         // Device identity from the catalogue is stronger evidence than naming.
         // Names/stems only explain a likely mismatch; they never place anything.
@@ -62,8 +63,21 @@ export function energyCheck(view, layout, mapping, states = {}, stale = false, a
     `positive = ${mapping.grid_positive === 'export' ? 'exporting' : 'importing'}`);
   role('house', mapping.house_power, mapping.locations?.house, 'electric_panel', anchors.house,
     `positive = consuming; ${mapping.home_includes_chargers === false ? 'excludes' : 'includes'} car chargers`);
-  for (const [i, car] of (mapping.cars || []).entries())
-    role('car:' + i, car.charge_power, car.anchor, null, anchors.cars[i], 'positive = charging', `${car.name} charger`);
+  const matches=(mapping.chargers || []).map((charger,i)=>chargingDecision({...charger,at:anchors.chargers[i]},mapping.cars || [],states,anchors.spots));
+  for (const [i, charger] of (mapping.chargers || []).entries()) {
+    const row=role('charger:' + i, charger.power, charger.anchor, 'charger', anchors.chargers[i], 'positive = charging', charger.name);
+    row.state += matches[i].car ? `; charging ${matches[i].car.name}` : `; car unknown: ${matches[i].reason}`;
+    row.car=matches[i].car?.id || null;row.reason=matches[i].reason;
+  }
+  for(const car of mapping.cars || []){
+    const spot=anchors.spots.find(s=>s.car===car.id),home=carHome(car,states);
+    roles.push({id:'car:'+car.id,name:car.name,entities:[car.charging,car.charge_power,car.battery_level].filter(Boolean),
+      status:spot || !home?'ok':'unplaced',symbol:spot || !home?'✓':'✗',
+      power:car.charge_power?`${car.charge_power}: ${formatGlanceValue({entity:car.charge_power},states,mapping)}`:'optional — the car’s own reading is not set',
+      state:!home?'away':carCharging(car,states)?'charging':'home; not reporting charging',
+      sign:car.charging?`charging state: ${car.charging} (${states[car.charging]?.state || 'unavailable'})`:'no charging sensor',
+      location:spot?`Parking spot ${spot.id} in ${buildings.find(b=>b.id===spot.building)?.name || 'the house'}`:`Place a parking spot for ${car.name}`});
+  }
 
   const balance = energyBalance(mapping, states, anchors.zoneEntities);
   const roleOf = key => key === 'home' ? 'house' : key;  // the balance says home; the role is the house panel
@@ -77,11 +91,11 @@ export function energyCheck(view, layout, mapping, states = {}, stale = false, a
   const allocated = energyFlows(mapping, states, anchors.zoneEntities, true);
   const topology = new Set(energyTopology(anchors, mapping).map(row => row.id));
   const flows = Object.entries(allocated).map(([id, watts]) => {
-    const endpoints = id.startsWith('car:') ? ['house', id] : id.split(':');
+    const endpoints = id.startsWith('charger:') ? ['house', id] : id.split(':');
     const missing = endpoints.find(id => !roles.find(r => r.id === id)?.location ||
-      !(id.startsWith('car:') ? anchors.cars[Number(id.split(':')[1])] : anchors[id]));
-    const status = stale ? 'hidden: live readings unavailable' : unknownBalance && !id.startsWith('car:') ? `hidden: ${unknownBalance}` :
-      !flowReading(watts).visible ? balance.unbalanced && !id.startsWith('car:') ? "hidden: readings don't balance — check the Electric panel / house sensor" : 'hidden (under 50 W)' :
+      !(id.startsWith('charger:') ? anchors.chargers[Number(id.split(':')[1])] : anchors[id]));
+    const status = stale ? 'hidden: live readings unavailable' : unknownBalance && !id.startsWith('charger:') ? `hidden: ${unknownBalance}` :
+      !flowReading(watts).visible ? balance.unbalanced && !id.startsWith('charger:') ? "hidden: readings don't balance — check the Electric panel / house sensor" : 'hidden (under 50 W)' :
       !topology.has(id) ? `no ribbon: ${roles.find(r => r.id === missing)?.name || roleName(missing)} not placed` : 'shown';
     return {id, watts, status, shown:status === 'shown', name:endpoints.map(id => roles.find(r => r.id === id)?.name || roleName(id)).join(' → ')};
   });

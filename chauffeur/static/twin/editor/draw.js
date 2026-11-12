@@ -5,9 +5,9 @@ import { hostPoint } from '../twin_hosts.js';
 import { contains } from '../twin_generator.js';
 
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-const drawingTools = ['draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-solar-zone', 'add-meter', 'add-electric-panel'];
+const drawingTools = ['draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking'];
 
-export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel, surfaceAt }) {
+export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel, surfaceAt, groundPoint }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let tool = null, points = [], press = null, anchorKind = 'light';
   let saving = Promise.resolve(), inbox = Promise.resolve(), run = 0;
@@ -107,7 +107,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       if(view.state?.camera==='top')view.setCamera?.('front');
     }
     ++run; tool = name; tools.setTool(name); el(`rail-${name}`).setAttribute('aria-pressed', 'true');
-    note(({ 'add-solar-zone':'Click a clear roof plane to place a solar zone.', 'add-meter':'Click the wall face where the meter goes.', 'add-electric-panel':'Click the wall face where the electric panel goes.', 'draw-room': 'Drag a rectangle, or click corners and close on the first corner.',
+    note(({ 'add-charger':'Click the wall face where the charger goes.', 'add-parking':'Click a floor or the ground to place a 9 × 18 ft parking spot.', 'add-solar-zone':'Click a clear roof plane to place a solar zone.', 'add-meter':'Click the wall face where the meter goes.', 'add-electric-panel':'Click the wall face where the electric panel goes.', 'draw-room': 'Drag a rectangle, or click corners and close on the first corner.',
       'draw-wall': 'Click wall corners. Escape or a double click ends the chain.',
       'split-room': 'Click two walls of this room to draw the split.',
       'add-anchor': 'Click a wall or a room surface. Lights and fans go on its ceiling.' })[name]
@@ -220,7 +220,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       if (!tool || !canEdit()) return false;
       // A placement can already be saved and selectable while its scene rebuild
       // is still settling. Its selected handles must own the next gesture.
-      if (['add-solar-zone','add-meter','add-electric-panel'].includes(tool) && tools.handleAt?.(event)) {
+      if (['add-solar-zone','add-meter','add-electric-panel','add-charger','add-parking'].includes(tool) && tools.handleAt?.(event)) {
         cancel(); return false;
       }
       const p = view.floorAt(event.clientX, event.clientY, tools.floor().key);
@@ -250,7 +250,19 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
             polygon: [a, [b[0], a[1]], b, [a[0], b[1]]] }).catch(report);
       } else if (['draw-room', 'draw-wall'].includes(tool)) click(p);
       else {
-        if(['add-solar-zone','add-meter','add-electric-panel'].includes(tool)){
+        if(['add-solar-zone','add-meter','add-electric-panel','add-charger','add-parking'].includes(tool)){
+          if(tool==='add-parking'){
+            const {building,level}=tools.floor(),room=building.rooms.find(r=>r.level===level.id && r.state!=='ghost' && contains(r.polygon,p));
+            let host={ground:true,at:p};
+            if(!room && groundPoint){
+              const at=groundPoint(event);if(!at){note('Click the ground to place the parking spot.');return true;}
+              const pos=building.position || [0,0],angle=-(building.rotation || 0)*Math.PI/180,x=at[0]-pos[0],y=at[1]-pos[1];
+              host={ground:true,at:[Math.cos(angle)*x-Math.sin(angle)*y,Math.sin(angle)*x+Math.cos(angle)*y]};
+            }
+            if(room){const low=[0,1].map(i=>Math.min(...room.polygon.map(p=>p[i]))),high=[0,1].map(i=>Math.max(...room.polygon.map(p=>p[i])));
+              host={floor:room.id,u:(p[0]-low[0])/(high[0]-low[0]),v:(p[1]-low[1])/(high[1]-low[1])};}
+            enqueue(()=>save({op:'add_equipment',building:building.id,kind:'parking',host}).then(done()));return true;
+          }
           const surface=surfaceAt?.(event,{skip:['room']});
           if(tool==='add-solar-zone'){
             if(surface?.kind!=='roof'){note('Click a roof plane.');return true;}
@@ -265,7 +277,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
             const wall=surface.piece,b=surface.building,d=wall.to.map((v,i)=>v-wall.from[i]),length=Math.hypot(...d);
             const elevation=b.levels.find(l=>l.id===wall.level)?.elevation || 0;
             const host={wall:wall.id,side:surface.side,at:Math.round(surface.point.slice(0,2).reduce((s,v,i)=>s+(v-wall.from[i])*d[i]/length,0)*12)/12,z:Math.round((surface.point[2]-elevation)*12)/12};
-            enqueue(()=>save({op:'add_equipment',building:b.id,kind:tool==='add-meter'?'meter':'electric_panel',host}).then(done()));
+            enqueue(()=>save({op:'add_equipment',building:b.id,kind:tool==='add-meter'?'meter':tool==='add-charger'?'charger':'electric_panel',host}).then(done()));
           }return true;
         }
         const hit = ['add-door', 'add-window'].includes(tool) ? wallHit(event) : null;

@@ -8,6 +8,7 @@ import { kindOf, unsafeLabel } from './kinds.js';
 import { mountRing } from './ring.js';
 import { isEnergyEntity } from './glance.js';
 import { mappedEntities } from './energy_mapping.js';
+import { mountCars } from './cars.js';
 
 const FT = .3048, unreachable = 'Home Assistant is not reachable.';
 // Screen sizes in CSS px: a marker is a 44 px tap target (the page's own controls' hit height),
@@ -68,6 +69,7 @@ const layoutKey = layout => JSON.stringify([
 // layout every 5 minutes and remounts only when what it draws changed. One timer at a time.
 export const LIVE_RETRY_MS = 45000, LIVE_LAYOUT_MS = 300000;
 export function keepLive(view, { api = (path, options) => fetch(base() + path, options) } = {}) {
+  const cars = view.cars = mountCars({view});
   const halt = new AbortController();
   let timer = null, busy = null, live = null, readAt = 0;
   const schedule = ms => { clearTimeout(timer); timer = halt.signal.aborted ? null : setTimeout(() => { timer = null; check(); }, ms); };
@@ -102,7 +104,7 @@ export function keepLive(view, { api = (path, options) => fetch(base() + path, o
   return {
     check,
     live: () => live,
-    stop() { if (halt.signal.aborted) return; halt.abort(); clearTimeout(timer); timer = null; },
+    stop() { if (halt.signal.aborted) return; halt.abort(); clearTimeout(timer); timer = null; cars.stop(); if(view.cars===cars)view.cars=null; },
   };
 }
 

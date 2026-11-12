@@ -110,6 +110,83 @@ def scenario_exact_zone_device_panel_meter_endpoints_and_deleted_meter_prompt():
         L.no_errors(served)
 
 
+def scenario_garage_charger_two_coloured_cars_pulse_card_and_program_reuse():
+    """Acceptance scenario for Claude; Codex must not launch Chromium."""
+    served=setup()
+    if served is None:
+        return
+    from services import storage, twin_store, twin_model_ops, twin_energy
+    from test_house_twin_energy_live import push
+    red,blue='garage-red','garage-blue'
+    for cid,name,color,tracker,battery in [(red,'Red EV','#cc2222','device_tracker.garage_red','sensor.garage_red_battery'),
+                                          (blue,'Blue EV','#2244cc',None,'sensor.garage_blue_battery')]:
+        storage.add_car(dict(id=cid,name=name,color_code=color,ha_device_tracker=tracker,ha_battery_entity=battery))
+    for eid,state,attrs in [('sensor.garage_charger_power','7000',dict(device_class='power',unit_of_measurement='W')),
+                            ('sensor.garage_red_battery','78',dict(unit_of_measurement='%')),
+                            ('sensor.garage_blue_battery','65',dict(unit_of_measurement='%')),
+                            ('binary_sensor.garage_red_charging','on',{}),('binary_sensor.garage_blue_charging','off',{}),
+                            ('device_tracker.garage_red','home',{})]:
+        L.FAKE.states[eid]=dict(entity_id=eid,state=state,attributes=attrs)
+    mapping=twin_energy.read()
+    def equip(model):
+        model=copy.deepcopy(model)
+        b=next(b for b in model['buildings'] if b['id']==L.POOL)
+        b['name']='Garage'
+        room=next(r for r in b['rooms'] if r['id']==L.KITCHEN);room['name']='Garage'
+        wall=next(w for w in b['walls'] if w['id']=='wall:17ec2a8dad9e47d0aefbfe143524c1c2~2')
+        model=twin_model_ops.apply(model,dict(op='add_equipment',building=L.POOL,kind='charger',name='Garage charger',
+            power='sensor.garage_charger_power',host=dict(wall=wall['id'],side='left',at=9,z=3)))[0]
+        charger=next(b for b in model['buildings'] if b['id']==L.POOL)['anchors'][-1]
+        for cid,u in [(red,.3),(blue,.7)]:
+            model=twin_model_ops.apply(model,dict(op='add_equipment',building=L.POOL,kind='parking',car=cid,
+                host=dict(floor=L.KITCHEN,u=u,v=.5)))[0]
+        mapping.update(chargers=[dict(id='garage-evse',name='Garage charger',power='sensor.garage_charger_power',
+            anchor=dict(type='object',building=L.POOL,id=charger['id']))],
+            cars=[dict(id=red,name='Red EV',battery_level='sensor.garage_red_battery',location='device_tracker.garage_red',charging='binary_sensor.garage_red_charging'),
+                  dict(id=blue,name='Blue EV',battery_level='sensor.garage_blue_battery',charging='binary_sensor.garage_blue_charging')])
+        twin_energy.save(mapping)
+        return model
+    twin_store.update_model(equip,'edit',note='Browser: garage charger and two parking spots')
+    with served.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page,served,query='tier=low&test=1&panel=true&kiosk=true')
+        page.get_by_role('button',name='All',exact=True).click()
+        page.wait_for_function('() => window.__twin.cars?.snapshot().filter(r=>r.visible).length===2')
+        colors=page.evaluate('() => window.__twin.cars.snapshot().map(r=>r.color)')
+        check(colors==['#cc2222','#2244cc'],('both icons use fleet colours',colors))
+        # Aim at the garage floor so the DOM tap targets are on screen.
+        b=next(b for b in twin_store.current_model()['buildings'] if b['id']==L.POOL)
+        room=next(r for r in b['rooms'] if r['id']==L.KITCHEN)
+        centre=[sum(p[i] for p in room['polygon'])/len(room['polygon']) for i in (0,1)]
+        aim(page,L.POOL,[*centre,0],[centre[0],centre[1]-22,35])
+        page.locator('[data-car-icon="garage-red"]').click()
+        check(page.locator('[data-car-card="garage-red"]').is_visible(),'tap opens car card')
+        card=page.locator('[data-car-card="garage-red"]')
+        check('78%' in card.inner_text() and 'Garage charger' in card.inner_text(),'card explains battery and charger')
+        card.get_by_role('button',name='Close',exact=True).click()
+        page.get_by_role('button',name='Energy',exact=True).click()
+        page.wait_for_function("() => window.__twin.live.energy().ribbons.some(r=>r.id==='charger:0' && r.visible)")
+        links=page.evaluate('() => window.__twin.live.energy().ribbons.filter(r=>r.link && r.visible)')
+        spots=next(b for b in twin_store.current_model()['buildings'] if b['id']==L.POOL)['anchors']
+        red_spot=next(s for s in spots if s.get('kind')=='parking' and s.get('car')==red)
+        check(len(links)==1 and links[0]['id'].endswith(':'+red_spot['id']),('only charging car gets a cable',links))
+        check(max(p[1] for p in links[0]['path'])-min(p[1] for p in links[0]['path'])<.001,'cable is flat, not an arc')
+        # The first visit to each mode may compile its variants; a second round trip compiles
+        # nothing (the repo-wide rule, as in test_house_twin_energy_live's second-entry check).
+        modes=['All','Lights','Energy','All']
+        for mode in modes:
+            page.get_by_role('button',name=mode,exact=True).click()
+        page.wait_for_timeout(200)
+        programs=page.evaluate('() => window.__twin.renderer3.info.programs.length')
+        for mode in modes:
+            page.get_by_role('button',name=mode,exact=True).click()
+        check(page.evaluate('() => window.__twin.renderer3.info.programs.length')==programs,'a second mode round trip compiles no programs')
+        push('device_tracker.garage_red','away')
+        page.wait_for_function("() => window.__twin.cars.snapshot().find(r=>r.id==='garage-red').visible===false")
+        check(page.evaluate("() => window.__twin.cars.snapshot().find(r=>r.id==='garage-blue').visible"),'other home car remains visible')
+        L.no_errors(served)
+
+
 SCENARIOS=[scenario_roof_click_resize_count_source_undo_and_exterior_meter,
-           scenario_exact_zone_device_panel_meter_endpoints_and_deleted_meter_prompt]
+           scenario_exact_zone_device_panel_meter_endpoints_and_deleted_meter_prompt,
+           scenario_garage_charger_two_coloured_cars_pulse_card_and_program_reuse]
 if __name__=='__main__':L.run(SCENARIOS)

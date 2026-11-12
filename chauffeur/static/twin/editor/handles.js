@@ -1,7 +1,7 @@
 import { solarPoint, solarFrame, solarUV } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import * as THREE from 'three';
-import { hostPoint } from '../twin_hosts.js';
+import { hostPoint, parkingPoint } from '../twin_hosts.js';
 import { groundAt } from '../twin_ground.js';
 import { roofEdge } from './roof_tools.js';
 
@@ -114,7 +114,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
         const surface = building.walls.find(w => w.id === hosted.host.wall)
           || building.rooms.find(r => [hosted.host.floor, hosted.host.ceiling].includes(r.id))
           || building.roofs?.find(r => r.id === hosted.host.roof);
-        add('hosted', hosted.id, hostPoint(building, hosted.host, hosted.offset || 0), surface?.level || selected.level);
+        add('hosted', hosted.id, hosted.kind==='parking'?parkingPoint(building,hosted,plan(),hosted.offset || 0,groundAt):hostPoint(building, hosted.host, hosted.offset || 0), surface?.level || selected.level || building.levels[0]?.id);
       } catch { /* Lost hosts are represented by their existing flags. */ }
     }
     return result;
@@ -284,6 +284,8 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       if (!a || !b) return;
       const d = b.map((v, i) => v - a[i]), length = Math.hypot(...d);
       operation.host = { ...piece.host, at: piece.host.at + inch(point.slice(0, 2).reduce((n, v, i) => n + (v - g.start[i]) * d[i] / length, 0)) };
+    } else if (piece.host.ground) {
+      operation.host={ground:true,at:piece.host.at.map((v,i)=>inch(v+point[i]-g.start[i]))};
     } else {
       const rooms = building.rooms.filter(r => r.state !== 'ghost' && r.level === handle.level);
       const room = rooms.find(r => contains(r.polygon, point));

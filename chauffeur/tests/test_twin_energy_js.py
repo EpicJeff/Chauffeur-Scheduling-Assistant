@@ -43,19 +43,20 @@ check('mounted allocation responds to pushes, signs, threshold and presence',asy
  d('grid','sensor.grid_power',-3000,power),d('house','sensor.house_power',3000,power),d('car','sensor.tesla_charge_power',1000,power),
  d('tracker','device_tracker.tesla_location','home'),d('level','sensor.tesla_battery',80,{device_class:'battery',unit_of_measurement:'%'})]});
  try{
+  const bindings={chargers:[{id:'evse',name:'EV charger',power:'sensor.tesla_charge_power',car:'ev'}],cars:[{id:'ev',name:'EV',location:'device_tracker.tesla_location'}]};t.live.configureEnergy({mapping:bindings,cars:[]});
   await press([...document.getElementById('twin-modes').querySelectorAll('button')].find(n=>n.textContent==='Energy'));
   let s=t.live.energy();const visible=()=>Object.fromEntries(t.live.energy().ribbons.filter(r=>r.visible).map(r=>[r.id,r.watts]));
-  assert.deepEqual(visible(),{'solar:house':3000,'solar:battery':2000,'solar:grid':3000,'car:0':1000});assert.ok(s.cars[0].visible);
-  t.live.configureEnergy({mapping:{home_includes_chargers:false},cars:[]});
-  assert.deepEqual(visible(),{'solar:house':4000,'solar:battery':2000,'solar:grid':2000,'car:0':1000});
-  t.live.configureEnergy({mapping:{home_includes_chargers:true},cars:[]});
+  assert.deepEqual(visible(),{'solar:house':3000,'solar:battery':2000,'solar:grid':3000,'charger:0':1000});assert.equal(s.check.roles.find(r=>r.id==='charger:0').car,'ev');
+  t.live.configureEnergy({mapping:{...bindings,home_includes_chargers:false},cars:[]});
+  assert.deepEqual(visible(),{'solar:house':4000,'solar:battery':2000,'solar:grid':2000,'charger:0':1000});
+  t.live.configureEnergy({mapping:{...bindings,home_includes_chargers:true},cars:[]});
   const grid=[];t.view.scene.traverse(o=>{if(o.userData.energyRibbon==='grid:house')grid.push(o);}); const geometry=grid[0].geometry,material=grid[0].material;
   t.states['sensor.solar_power'].state='1000';t.states['sensor.battery_power'].state='2000';t.states['sensor.grid_power'].state='2500';t.states['sensor.house_power'].state='5500';
   t.states['sensor.tesla_charge_power'].state='40';t.states['device_tracker.tesla_location'].state='away';await t.live.refresh();
-  s=t.live.energy();assert.deepEqual(visible(),{'solar:house':1000,'battery:house':2000,'grid:house':2500});assert.equal(s.cars[0].visible,false);
+  s=t.live.energy();assert.deepEqual(visible(),{'solar:house':1000,'battery:house':2000,'grid:house':2500});assert.equal(s.check.roles.find(r=>r.id==='charger:0').car,null);
   assert.equal(grid[0].geometry,geometry);assert.equal(grid[0].material,material);assert.equal(t.live.marker('solar').dim,false);
   t.states['sensor.battery_power'].state='-2000';t.states['sensor.grid_power'].state='-2500';
-  t.live.configureEnergy({mapping:{battery_positive:'charge',grid_positive:'export',cars:[]},cars:[]});await t.live.refresh();
+  t.live.configureEnergy({mapping:{battery_positive:'charge',grid_positive:'export',cars:[],chargers:[]},cars:[]});await t.live.refresh();
   assert.deepEqual(visible(),{'solar:house':1000,'battery:house':2000,'grid:house':2500});
  }finally{t.cleanup();}
 });
@@ -256,28 +257,29 @@ check('ribbons draw over roofs with no mask, offscreen render, or extra warm-up 
    assert.equal(o.material.uniforms.roofDepth,undefined);assert.doesNotMatch(o.material.fragmentShader,/roofDepth|roofFade|sampler2D/);}
  }finally{effect?.stop();t.cleanup();}
 });
-check('warm path sees away cars and cones before entry and on time look',async()=>{
+check('warm path sees chargers for away cars and cones before entry and on time look',async()=>{
  const t=await energyRig({devices:[d('car','sensor.tesla_charge_power',1000,power),d('tracker','device_tracker.tesla_location','away'),d('camera','camera.k','idle',{},'camera')]});
  let extra;
  try{
   t.live.stop(); t.view.tier='low'; let warms=0,sawCar=false,sawCone=false;
-  t.view.renderer3.compileAsync=async(scene)=>{warms++;scene.traverse(o=>{if(o.userData.energyCar)sawCar ||= o.visible;if(o.userData.cameraCone)sawCone ||= o.visible;});};
+  t.view.renderer3.compileAsync=async(scene)=>{warms++;scene.traverse(o=>{if(o.userData.energyRibbon==='charger:0')sawCar ||= o.visible;if(o.userData.cameraCone)sawCone ||= o.visible;});};
   const live={layout:()=>t.layout,peek:()=>t.states,state:id=>t.states[id],stale:()=>false,subscribe:()=>()=>{},rooms:()=>[],setMode(){}};
+  t.view.energySources={mapping:{cars:[],chargers:[{id:'evse',name:'EVSE',power:'sensor.tesla_charge_power'}]},cars:[]};
   extra=mountModes(t.view,live);assert.ok(warms>0);assert.ok(sawCar);assert.ok(sawCone);
   const before=warms;t.view.onTimeLook();assert.equal(warms,before+1);
   extra.setMode('energy');extra.setMode('all');extra.setMode('energy');assert.equal(warms,before+1);
  }finally{extra?.stop();t.cleanup();}
 });
 check('all placed-role combinations obey topology and placement legend',()=>{
- const mapping={battery_power:'sensor.battery',cars:[{name:'EV',charge_power:'sensor.ev'}]};
+ const mapping={battery_power:'sensor.battery',cars:[],chargers:[{id:'evse',name:'the charger',power:'sensor.ev'}]};
  for(let mask=0;mask<32;mask++){
-  const a={solar:mask&1?[1,2,3]:null,battery:mask&2?[4,5,6]:null,house:mask&4?[7,8,9]:null,grid:mask&8?[10,11,12]:null,cars:[mask&16?[13,14,15]:null]};
+  const a={solar:mask&1?[1,2,3]:null,battery:mask&2?[4,5,6]:null,house:mask&4?[7,8,9]:null,grid:mask&8?[10,11,12]:null,chargers:[mask&16?[13,14,15]:null]};
   const rows=energyTopology(a,mapping),ids=rows.map(r=>r.id);
   for(const [source,target] of [['solar','house'],['solar','battery'],['solar','grid'],['battery','house'],['grid','house'],['grid','battery'],['battery','grid']])
    assert.equal(ids.includes(source+':'+target),!!(a[source]&&a[target]));
-  assert.equal(ids.includes('car:0'),!!(a.house&&a.cars[0]));
-  for(const row of rows){const [source,target]=row.id.split(':');assert.deepEqual(row.from,source==='car'?a.house:a[source]);assert.deepEqual(row.to,source==='car'?a.cars[Number(target)]:a[target]);}
-  const legend=energyPlacementLegend(a,mapping);assert.equal(legend.includes('Place the meter'),!a.grid);assert.equal(legend.includes('Place the electric panel'),!a.house);assert.equal(legend.includes('Place the charger'),!a.cars[0]);
+  assert.equal(ids.includes('charger:0'),!!(a.house&&a.chargers[0]));
+  for(const row of rows){const [source,target]=row.id.split(':');assert.deepEqual(row.from,source==='charger'?a.house:a[source]);assert.deepEqual(row.to,source==='charger'?a.chargers[Number(target)]:a[target]);}
+  const legend=energyPlacementLegend(a,mapping);assert.equal(legend.includes('Place the meter'),!a.grid);assert.equal(legend.includes('Place the electric panel'),!a.house);assert.equal(legend.includes('Place the charger'),!a.chargers[0]);
  }
 });
 check('locations match only placed power entities and removed references never guess',async()=>{

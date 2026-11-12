@@ -247,6 +247,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (disposed) return;
     viewing?.update(performance.now());
     view.live?.draw();
+    view.cars?.draw();
     twin?.updateGhosts();
     if (state.unlit) {
       unlit.apply(twin?.root);

@@ -19,7 +19,7 @@ const tables=[
  {name:'grid to home plus solar to home',totals:{solar:1000,battery:0,grid:2500,home:3500},
   flows:{'solar:house':1000,'grid:house':2500}},
  {name:'car charging from the panel',totals:{solar:4000,battery:0,grid:2000,home:6000,chargers:[2000]},
-  flows:{'solar:house':4000,'grid:house':2000,'car:0':2000}}
+  flows:{'solar:house':4000,'grid:house':2000,'charger:0':2000}}
 ];
 for(const table of tables)check(table.name,()=>assert.deepEqual(allocateEnergyFlows(table.totals),table.flows));
 check('home flag adds chargers only when the home sensor excludes them',()=>{
@@ -27,7 +27,7 @@ check('home flag adds chargers only when the home sensor excludes them',()=>{
  const t={solar:4000,battery:0,grid:2000,home:4000,chargers:[2000]};
  assert.deepEqual(allocateEnergyFlows(t,{home_includes_chargers:false}),tables[5].flows);
  assert.deepEqual(allocateEnergyFlows({...t,home:6000},{home_includes_chargers:true}),tables[5].flows);
- assert.deepEqual(allocateEnergyFlows(t),{'solar:house':4000,'car:0':2000});
+ assert.deepEqual(allocateEnergyFlows(t),{'solar:house':4000,'charger:0':2000});
 });
 check('both saved sign conventions normalize before allocation',()=>{
  for(const table of tables){
@@ -45,7 +45,7 @@ check('solar and discharge priorities split charging and export correctly',()=>{
 check('threshold is applied after allocation without redirecting small flows',()=>{
  assert.deepEqual(allocateEnergyFlows({solar:99,home:49,grid:-50}),{'solar:grid':50});
  assert.deepEqual(allocateEnergyFlows({solar:98,home:49,grid:-49}),{});
- assert.deepEqual(allocateEnergyFlows({solar:-1,battery:NaN,grid:Infinity,home:-10,chargers:[-1,49,50]}),{'car:2':50});
+ assert.deepEqual(allocateEnergyFlows({solar:-1,battery:NaN,grid:Infinity,home:-10,chargers:[-1,49,50]}),{'charger:2':50});
 });
 check('residual exports follow the specified priority and grid import never exceeds its total',()=>{
  const tables=[
@@ -60,16 +60,16 @@ check('unbalanced import draws only the reported house consumption without inven
  assert.deepEqual(allocateEnergyFlows({solar:0,battery:0,grid:1800,home:500}),{'grid:house':500});
 });
 check('each table flow has exact source and destination anchors',()=>{
- const a={solar:[11,23,31],battery:[5,17,4],grid:[-12,9,3],house:[20,13,5],cars:[[27,3,2]]};
- const topology=energyTopology(a,{cars:[{charge_power:'sensor.ev'}]});
+ const a={solar:[11,23,31],battery:[5,17,4],grid:[-12,9,3],house:[20,13,5],chargers:[[27,3,2]]};
+ const topology=energyTopology(a,{chargers:[{power:'sensor.ev'}]});
  for(const table of tables)for(const [id,watts]of Object.entries(allocateEnergyFlows(table.totals))){
   const row=topology.find(r=>r.id===id);assert.ok(row,id);
-  const from=id.startsWith('car:')?a.house:a[id.split(':')[0]],to=id.startsWith('car:')?a.cars[0]:a[id.split(':')[1]];
+  const from=id.startsWith('charger:')?a.house:a[id.split(':')[0]],to=id.startsWith('charger:')?a.chargers[0]:a[id.split(':')[1]];
   assert.deepEqual(row.from,from);assert.deepEqual(row.to,to);
   const curve=flowCurve(row.from,row.to,10);assert.ok(curve.getPoint(0).distanceTo(worldPoint(from))<1e-10);assert.ok(curve.getPoint(1).distanceTo(worldPoint(to))<1e-10);
  }
  // Missing battery never reroutes its charging/export to the panel or meter.
- const missing=energyTopology({...a,battery:null},{cars:[{charge_power:'sensor.ev'}]});
+ const missing=energyTopology({...a,battery:null},{chargers:[{power:'sensor.ev'}]});
  assert.ok(!missing.some(r=>r.id.split(':').includes('battery')));
 });
 check('live unit conversion, zone fallback, presence and missing readings use the same allocator',()=>{
@@ -77,10 +77,10 @@ check('live unit conversion, zone fallback, presence and missing readings use th
  const mapping={battery_power:'sensor.b',grid_power:'sensor.g',house_power:'sensor.h',cars:[{charge_power:'sensor.ev',location:'device_tracker.ev'}]};
  const states={'sensor.z':power(4,'kW'),'sensor.b':power(0),'sensor.g':power(2000),'sensor.h':power(6000),'sensor.ev':power(2000),'device_tracker.ev':{state:'home'}};
  assert.deepEqual(energyFlows(mapping,states,['sensor.z']),tables[5].flows);
- states['device_tracker.ev'].state='away';assert.deepEqual(energyFlows(mapping,states,['sensor.z']),{'solar:house':4000,'grid:house':2000});
- states['sensor.z'].attributes.unit_of_measurement='kWh';delete states['sensor.g'];assert.deepEqual(energyFlows(mapping,states,['sensor.z']),{});
- states['device_tracker.ev'].state='home';assert.deepEqual(energyFlows(mapping,states,['sensor.z']),{'car:0':2000});
- delete states['sensor.h'];states['sensor.z']=power(4000);assert.deepEqual(energyFlows(mapping,states,['sensor.z']),{'car:0':2000});
+ states['device_tracker.ev'].state='away';assert.deepEqual(energyFlows(mapping,states,['sensor.z']),tables[5].flows);
+ states['sensor.z'].attributes.unit_of_measurement='kWh';delete states['sensor.g'];assert.deepEqual(energyFlows(mapping,states,['sensor.z']),{'charger:0':2000});
+ states['device_tracker.ev'].state='home';assert.deepEqual(energyFlows(mapping,states,['sensor.z']),{'charger:0':2000});
+ delete states['sensor.h'];states['sensor.z']=power(4000);assert.deepEqual(energyFlows(mapping,states,['sensor.z']),{'charger:0':2000});
 });
 check('one missing total is worked out from the other three; two missing leave the balance unknown',()=>{
  const power=(state,unit='W')=>({state:String(state),attributes:{device_class:'power',unit_of_measurement:unit}});

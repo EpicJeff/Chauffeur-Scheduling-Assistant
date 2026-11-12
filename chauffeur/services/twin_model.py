@@ -483,11 +483,12 @@ def _pieces(building, notes):
             if name == 'anchors':
                 item.setdefault('offset', 0)
                 item.setdefault('device', None)
-                if item.get('kind') in ('meter', 'electric_panel') and (not isinstance(item.get('host'), dict) or 'wall' not in item['host'] or reason):
+                if item.get('kind') in ('meter', 'electric_panel', 'charger') and (not isinstance(item.get('host'), dict) or 'wall' not in item['host'] or reason):
                     reason = 'Choose a wall for the equipment.'
                     item['state'] = 'ghost'
-                if item.get('kind') not in ('light', 'switch', 'outlet', 'fan', 'camera', 'sensor', 'meter', 'electric_panel'):
+                if item.get('kind') not in ('light', 'switch', 'outlet', 'fan', 'camera', 'sensor', 'meter', 'electric_panel', 'charger', 'parking'):
                     reason = reason or 'invalid anchor kind'
+                reason = reason or equipment_error(item)
                 if not twin_plan._number(item['offset']):
                     reason = reason or 'invalid offset'
             else:
@@ -515,6 +516,32 @@ def _pieces(building, notes):
             _note(item, 'Device', reason, notes)
         devices.append(item)
     building['devices'] = devices
+
+
+def equipment_error(piece):
+    """Same field constraints for model reads and editor writes."""
+    kind = piece.get('kind')
+    if kind not in ('charger', 'parking'):
+        return None
+    if kind == 'parking':
+        host = piece.get('host') or {}
+        if not isinstance(host, dict):
+            return 'Choose a floor or the ground for the parking spot.'
+        if 'floor' not in host and not host.get('ground'):
+            return 'Choose a floor or the ground for the parking spot.'
+        for key, default in (('width', 9), ('depth', 18), ('rotation', 0)):
+            piece.setdefault(key, default)
+            if not twin_plan._number(piece[key]) or key != 'rotation' and not 1 <= piece[key] <= 100:
+                return 'Choose a parking size from 1 to 100 feet and a finite rotation.'
+    if 'name' in piece and (not isinstance(piece['name'], str) or not 1 <= len(piece['name']) <= 100):
+        return 'Choose an equipment name.'
+    if piece.get('car') is not None and (not isinstance(piece['car'], str) or not 1 <= len(piece['car']) <= 100):
+        return 'Choose a car id.'
+    if kind == 'charger' and piece.get('power') is not None:
+        import re
+        if not isinstance(piece['power'], str) or not re.fullmatch(r'[a-z_]+\.[a-z0-9_]+', piece['power']):
+            return 'Choose a Home Assistant power entity.'
+    return None
 
 
 def _unique_devices(buildings, notes):

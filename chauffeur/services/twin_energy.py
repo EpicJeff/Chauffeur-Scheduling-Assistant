@@ -1,12 +1,26 @@
 """Household energy display mapping. No solver settings or schedule writes."""
 import re
+from copy import deepcopy
 from services import storage
 
 KEY = 'house_twin_energy'
 
 
 def read():
-    return storage.get_app_state(KEY) or {}
+    return migrate(storage.get_app_state(KEY) or {})
+
+
+def migrate(mapping):
+    """Read old per-car chargers without writing during a GET."""
+    mapping = deepcopy(mapping)
+    if 'chargers' not in mapping and any(c.get('charge_power') or c.get('anchor') for c in mapping.get('cars', []) if isinstance(c, dict)):
+        mapping['chargers'] = []
+        for car in mapping.get('cars', []):
+            if car.get('charge_power') or car.get('anchor'):
+                mapping['chargers'].append(dict(id='charger-' + car['id'], name=car['name'][:92] + ' charger',
+                    power=car.get('charge_power'), anchor=car.get('anchor'), car=car['id']))
+                car.update(charge_power=None, anchor=None)
+    return mapping
 
 
 def save(mapping):
@@ -17,6 +31,7 @@ def save(mapping):
 def validate(mapping):
     if not isinstance(mapping, dict):
         raise ValueError('Energy sources must be a mapping.')
+    # Validate first, then migrate, so malformed legacy input is a 422 too.
     roles = ('solar_power', 'battery_power', 'battery_level', 'grid_power', 'house_power')
     def entity(value):
         if value is not None and (not isinstance(value, str) or not re.fullmatch(r'[a-z_]+\.[a-z0-9_]+', value)):
@@ -27,9 +42,9 @@ def validate(mapping):
             return None
         if (not isinstance(value, dict) or value.get('type') not in ('device', 'object')
                 or not isinstance(value.get('id'), str) or not 1 <= len(value['id']) <= 200
-                or value['type'] == 'object' and (kind not in ('grid', 'house')
+                or value['type'] == 'object' and (kind not in ('grid', 'house', 'charger')
                     or not isinstance(value.get('building'), str) or not 1 <= len(value['building']) <= 64)):
-            raise ValueError('Choose a placed device or a meter or panel object.')
+            raise ValueError('Choose a placed device or an equipment object.')
         return {key: value[key] for key in ('type', 'id', *(['building'] if value['type'] == 'object' else []))}
     result = {key: entity(mapping[key]) for key in roles if key in mapping}
     if 'home_includes_chargers' in mapping:
@@ -64,14 +79,45 @@ def validate(mapping):
             seen.add(car['id'])
             result['cars'].append({key: car[key] for key in ('id', 'name')})
             if 'anchor' in car:
-                result['cars'][-1]['anchor'] = location(car['anchor'])
+                result['cars'][-1]['anchor'] = location(car['anchor'], 'charger')
             result['cars'][-1].update({key: entity(car.get(key)) for key in ('charge_power', 'battery_level', 'location')})
+            if 'charging' in car:
+                result['cars'][-1]['charging'] = entity(car['charging'])
+            if 'parking' in car:
+                parking = car['parking']
+                if parking is not None and (not isinstance(parking, str) or not 1 <= len(parking) <= 200):
+                    raise ValueError('Choose a parking spot.')
+                result['cars'][-1]['parking'] = parking
+    if 'chargers' in mapping:
+        chargers = mapping['chargers']
+        if not isinstance(chargers, list) or len(chargers) > 8:
+            raise ValueError('Choose up to eight chargers.')
+        result['chargers'] = []
+        seen = set()
+        for charger in chargers:
+            if (not isinstance(charger, dict) or not isinstance(charger.get('id'), str) or not 1 <= len(charger['id']) <= 200
+                    or charger['id'] in seen or not isinstance(charger.get('name'), str) or not 1 <= len(charger['name']) <= 100
+                    or charger.get('car') is not None and (not isinstance(charger['car'], str) or not 1 <= len(charger['car']) <= 100)):
+                raise ValueError('Each charger needs a unique id and a name, and an optional car id.')
+            seen.add(charger['id'])
+            row = {key: charger[key] for key in ('id', 'name')}
+            for key in ('power', 'anchor', 'car'):
+                if key in charger:
+                    row[key] = entity(charger[key]) if key == 'power' else location(charger[key], 'charger') if key == 'anchor' else charger[key]
+            result['chargers'].append(row)
+    result = migrate(result)
+    if len(result.get('chargers', [])) > 8:
+        raise ValueError('Choose up to eight chargers.')
     return result
 
 
 def household_cars():
     # Share cars.py's telemetry bindings and presence rule (no tracker = home).
+    from services.cars import warn_thresholds
+    warning, _ = warn_thresholds(storage.get_settings())
     return [{'id': str(c.get('id') or c.get('doc_id') or getattr(c, 'doc_id', '')), 'name': c.get('name') or 'Car',
+             'color': c.get('color_code') or '#64748b', 'battery_warn_pct': warning,
+             'range_entity': c.get('ha_range_entity'),
              'battery_level': c.get('ha_battery_entity'),
              'location': c.get('ha_device_tracker')}
             for c in storage.get_all_cars() or [] if not c.get('is_disabled')]
@@ -81,5 +127,8 @@ def entities():
     mapping = read()
     ids = {mapping.get(k) for k in ('solar_power', 'battery_power', 'battery_level', 'grid_power', 'house_power')}
     for car in mapping.get('cars', household_cars()):
-        ids.update(car.get(k) for k in ('charge_power', 'battery_level', 'location'))
+        ids.update(car.get(k) for k in ('charge_power', 'battery_level', 'location', 'charging', 'range_entity'))
+    ids.update(c.get('power') for c in mapping.get('chargers', []))
+    # Saved display rows still receive the household's range telemetry.
+    ids.update(c.get('range_entity') for c in household_cars())
     return ids - {None, ''}

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { svgIcon } from '../live/glance_icons.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
@@ -258,6 +259,11 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     if (signal.aborted) return;
     thumbnails.current ||= createThumbnails(kit);
     const grid = el('library-entries'); grid.replaceChildren();
+    if(tab==='items')for(const [tool,name,icon] of [['add-meter','Meter','gauge'],['add-electric-panel','Electric panel','utility-pole'],['add-charger','Charger','plug-zap'],['add-parking','Parking spot','car']]){
+      const button=document.createElement('button');button.type='button';button.setAttribute('aria-label',name);button.append(svgIcon(icon),document.createTextNode(name));
+      button.dataset.equipment=tool;
+      button.addEventListener('click',()=>{if(canEdit()){host.hidden=true;el('rail-'+tool)?.click();}});grid.append(button);
+    }
     for (const entry of catalog[tab]) {
       const button = document.createElement('button'); button.type = 'button'; button.dataset[tab === 'materials' ? 'material' : 'item'] = entry.id;
       button.setAttribute('aria-label', entry.name); button.style.touchAction = 'none';
@@ -366,5 +372,5 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     dismiss(); thumbnails.current?.dispose(); if (siteDrag) view.controls.enabled = siteDrag.enabled;
     view.controls.removeEventListener('change', refresh); outline.removeFromParent(); outline.geometry.dispose(); outline.material.dispose();
   }, { once: true });
-  return { pickSite, surfaceAt, ceilingAt, pointerDown, pointerMove, pointerUp, refresh, pick };
+  return { pickSite, surfaceAt, ceilingAt, ground, pointerDown, pointerMove, pointerUp, refresh, pick };
 }

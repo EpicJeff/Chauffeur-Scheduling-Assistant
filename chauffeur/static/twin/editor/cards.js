@@ -1,6 +1,7 @@
 import { solarLayout } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
+import { createEquipmentShelf } from './equipment_shelf.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -60,10 +61,11 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
   let edgeIndex = null;
   let haSection = null;
+  const equipmentShelf = createEquipmentShelf({ canEdit, queue, op, report, parseLength, feetInches, onSaved: () => draw() });
   const endNames = { x0: 'Left end', x1: 'Right end', y0: 'Front end', y1: 'Back end' };
   const fieldValue = (piece, field) => field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
   const title = ({ kind, piece, building }) => {
-    const name = kind==='solar_zone'?'Solar zone':kind==='anchor' && ['meter','electric_panel'].includes(piece.kind)?(piece.kind==='meter'?'Meter':'Electric panel'):kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
+    const name = kind==='solar_zone'?'Solar zone':kind==='anchor' && ['meter','electric_panel','charger','parking'].includes(piece.kind)?(piece.name || ({meter:'Meter',electric_panel:'Electric panel',charger:'Charger',parking:'Parking spot'}[piece.kind])):kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
       : piece.name || piece.preset || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
     if (!['wall', 'opening'].includes(kind)) return name;
     const wall = kind === 'wall' ? piece : building.walls.find(w => w.id === (piece.wall || piece.host?.wall));
@@ -102,7 +104,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     const flags = roofFlags(record);
-    const nextLayout = JSON.stringify([record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind, materials, !!pickMaterial]);
+    const nextLayout = JSON.stringify([record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial]);
     host.hidden = !record;
     if (record && layout === nextLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
@@ -120,6 +122,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         input.disabled = !canEdit();
       }
       drawHaSection(record);
+      if (kindIsEquipment(record)) equipmentShelf.refresh(record);
       return;
     }
     selection = next; layout = nextLayout; host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
@@ -180,6 +183,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         }catch(error){report(error);}});label.append(input);host.append(label);
       }
     }
+    if (kindIsEquipment(record)) equipmentShelf.draw(host, record);
     const form = document.createElement('form'); form.addEventListener('submit', event => event.preventDefault()); host.append(form);
     const more = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'More'; more.append(summary);
     const cardFields = (kind === 'roof' && roof && !piece.rect ? []
@@ -246,7 +250,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       (['ridge', 'low_side'].includes(field) ? more : form).append(label);
     }
     if (more.children.length > 1) form.append(more);
-    if (haLink && ['room', 'building', 'anchor'].includes(kind) && !['meter','electric_panel'].includes(piece.kind)) {
+    if (haLink && ['room', 'building', 'anchor'].includes(kind) && !['meter','electric_panel','charger','parking'].includes(piece.kind)) {
       haSection = document.createElement('section'); host.append(haSection); drawHaSection(record);
     }
     host.append(button('Ask Argyle about this', () => ask(selection)));
@@ -308,6 +312,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     node.disabled = !canEdit();
     node.addEventListener('click', () => Promise.resolve().then(action).catch(report)); return node;
   }
+  function kindIsEquipment(record) { return record.kind === 'anchor' && ['charger', 'parking'].includes(record.piece.kind); }
   // A change from outside the fields (the area pick, Use, a device placement)
   // waits behind any field save still running, as Delete does, rather than
   // being refused while the house finishes that save.

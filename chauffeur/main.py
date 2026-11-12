@@ -11836,6 +11836,8 @@ def _house_stream_entities(area: str | None = None) -> set:
         ids.update(twin_glance.entities())
         ids.update(z['entity'] for b in model.get('buildings', []) for z in b.get('solar_zones', [])
                    if z.get('entity') and z.get('state') != 'ghost')
+        ids.update(p['power'] for b in model.get('buildings', []) for p in b.get('anchors', [])
+                   if p.get('kind') == 'charger' and p.get('power') and p.get('state') != 'ghost')
         # Current weather and energy telemetry need not be assigned to a room.
         import re
         try:
@@ -11846,7 +11848,7 @@ def _house_stream_entities(area: str | None = None) -> set:
             eid = row.get('entity_id', '')
             attrs = row.get('attributes') or {}
             if (eid.startswith('weather.') or attrs.get('device_class') in ('power', 'energy', 'battery')
-                    or eid.startswith(('sensor.', 'device_tracker.', 'binary_sensor.')) and re.search(r'solar|pv|grid|site|load|home|house|battery|powerwall|charger|wallbox|tesla|car',
+                    or eid.startswith(('sensor.', 'device_tracker.', 'binary_sensor.')) and re.search(r'solar|pv|grid|site|load|home|house|battery|powerwall|charg|wall.?connector|wallbox|evse|tesla|car',
                                                               eid + ' ' + attrs.get('friendly_name', ''), re.I)):
                 ids.add(eid)
     for building in model.get('buildings') or []:

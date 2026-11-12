@@ -13,15 +13,15 @@ function fixture(){
  const b={id:'b',name:'Home',position:[0,0],levels:[{id:'L1',name:'Ground floor',elevation:0}],walls:[],anchors:[],
   roof:{sections:[{id:'roof',kind:'flat',rect:[-40,-10,40,20],pitch:0,plate:10,overhang:0,level:'L1'}]},
   solar_zones:[{id:'z',roof:'roof',plane:[0,0,10],rect:[-30,-5,-10,5]}]};
- const view={plan:{buildings:[b]}},mapping={solar_power:'sensor.solar_power',battery_power:'sensor.battery_power',grid_power:'sensor.grid_power',house_power:'sensor.house_power',cars:[{id:'ev',name:'Family EV',charge_power:'sensor.ev_power'}]};
+ const view={plan:{buildings:[b]}},mapping={solar_power:'sensor.solar_power',battery_power:'sensor.battery_power',grid_power:'sensor.grid_power',house_power:'sensor.house_power',cars:[{id:'ev',name:'Family EV'}],chargers:[{id:'evse',name:'Family EV charger',power:'sensor.ev_power'}]};
  const states=Object.fromEntries(keys.map(k=>['sensor.'+k+'_power',power(k==='solar'?4000:k==='house'?2000:k==='battery'?-1000:k==='grid'?-1000:49)]));
  const layout={markers:keys.slice(1).map((k,i)=>({device_id:k,name:k==='battery'?'Powerwall':k,entity_id:'sensor.'+k+'_power',entities:[],placed:true,location_valid:true,building:'b',level:'L1',at:[i*8,0,3]}))};
  return {view,mapping,states,layout};
 }
 const assess=f=>energyCheck(f.view,f.layout,f.mapping,f.states);
-const entityKey=id=>id==='car:0'?'charge_power':id+'_power';
-for(const id of ['solar','battery','grid','house','car:0'])for(const scenario of ['unset','unavailable','unplaced','ok'])check(id+' '+scenario,()=>{
- const f=fixture(),object=id==='car:0'?f.mapping.cars[0]:f.mapping,key=entityKey(id),entity=object[key];
+const entityKey=id=>id==='charger:0'?'power':id+'_power';
+for(const id of ['solar','battery','grid','house','charger:0'])for(const scenario of ['unset','unavailable','unplaced','ok'])check(id+' '+scenario,()=>{
+ const f=fixture(),object=id==='charger:0'?f.mapping.chargers[0]:f.mapping,key=entityKey(id),entity=object[key];
  if(scenario==='unset')object[key]=null;
  if(scenario==='unavailable')f.states[entity].state='unavailable';
  if(scenario==='unplaced'){
@@ -32,12 +32,12 @@ for(const id of ['solar','battery','grid','house','car:0'])for(const scenario of
  assert.equal(row.symbol,scenario==='ok'?'✓':scenario==='unavailable'?'⚠':'✗');
  if(scenario==='unset')assert.equal(row.power,'not set: choose it above');
  else assert.ok(row.power.includes(entity));
- if(scenario==='unavailable')assert.equal(row.state,'unavailable');
+ if(scenario==='unavailable')assert.ok(row.state.startsWith('unavailable'));
  if(scenario==='unplaced')assert.ok(row.location.includes(id==='solar'?'add a solar zone':entity));
  if(scenario==='ok')assert.ok(row.location.includes(id==='solar'?'solar zone on roof of Home (source)':'Ground floor'));
 });
-for(const id of ['battery','grid','house','car:0'])check(id+' placed under another entity',()=>{
- const f=fixture(),entity=(id==='car:0'?f.mapping.cars[0].charge_power:f.mapping[id+'_power']);
+for(const id of ['battery','grid','house','charger:0'])check(id+' placed under another entity',()=>{
+ const f=fixture(),entity=(id==='charger:0'?f.mapping.chargers[0].power:f.mapping[id+'_power']);
  const m=f.layout.markers.find(m=>m.entity_id===entity);m.entity_id=entity.replace(/_power$/,'_charge');
  const row=assess(f).roles.find(r=>r.id===id);assert.equal(row.status,'unplaced');
  assert.ok(row.location.includes('is placed via '+m.entity_id));assert.ok(row.location.includes('role uses '+entity));
@@ -64,8 +64,8 @@ check('missing live state, invalid reading and stale feed are explicit',()=>{
 check('flows preserve small allocations, threshold, missing endpoints and the summary',()=>{
  const f=fixture();let s=assess(f);assert.equal(s.summary,'Ribbons showing: 3');
  assert.deepEqual(s.flows.filter(r=>r.shown).map(r=>[r.id,r.watts]),[['solar:house',2000],['solar:battery',1000],['solar:grid',1000]]);
- assert.equal(s.flows.find(r=>r.id==='car:0').watts,49);assert.equal(s.flows.find(r=>r.id==='car:0').status,'hidden (under 50 W)');
- f.states['sensor.ev_power']=power(50);assert.equal(assess(f).flows.find(r=>r.id==='car:0').status,'shown');
+ assert.equal(s.flows.find(r=>r.id==='charger:0').watts,49);assert.equal(s.flows.find(r=>r.id==='charger:0').status,'hidden (under 50 W)');
+ f.states['sensor.ev_power']=power(50);assert.equal(assess(f).flows.find(r=>r.id==='charger:0').status,'shown');
  f.layout.markers=f.layout.markers.filter(m=>m.device_id!=='grid');s=assess(f);
  assert.equal(s.flows.find(r=>r.id==='solar:grid').status,'no ribbon: Meter / grid not placed');
  f.states['sensor.solar_power']=power(0);f.states['sensor.house_power']=power(500);f.states['sensor.battery_power']=power(-1000);f.states['sensor.grid_power']=power(1500);f.states['sensor.ev_power']=power(0);
@@ -97,7 +97,7 @@ check('unbalanced zero house warns with its sensor and explains why no ribbons s
  assert.match(house.state,/readings don't balance: solar \+ battery \+ grid = 1.8 kW, house reads 0.0 kW — is the house sensor right\?/);
  assert.ok(house.state.includes('sensor.battery_power'));
  assert.equal(s.summary,"No ribbons because the readings don't balance — check the Electric panel / house sensor");
- assert.equal(s.showing,0);assert.ok(s.flows.filter(r=>!r.id.startsWith('car:')).every(r=>r.status.includes("readings don't balance")));
+ assert.equal(s.showing,0);assert.ok(s.flows.filter(r=>!r.id.startsWith('charger:')).every(r=>r.status.includes("readings don't balance")));
  f.mapping.house_power='sensor.house_power';f.states[f.mapping.house_power].state='500';
  const partial=assess(f);assert.equal(partial.roles[3].status,'unbalanced');assert.equal(partial.summary,'Ribbons showing: 1');
  assert.deepEqual(partial.flows.filter(r=>r.shown).map(r=>[r.id,r.watts]),[['grid:house',500]]);
@@ -134,7 +134,7 @@ check('renderer exposes separate status marks, bold names and flow states in bot
   assert.equal(house.querySelector('strong').textContent,'Electric panel / house');
   assert.equal(host.querySelector('[data-energy-flow="solar:house"]').dataset.status,'shown');
   assert.equal(host.querySelector('[data-energy-flow="solar:grid"]').dataset.status,'blocked');
-  assert.equal(host.querySelector('[data-energy-flow="car:0"]').dataset.status,'hidden');
+  assert.equal(host.querySelector('[data-energy-flow="charger:0"]').dataset.status,'hidden');
  }
 });
 check('mounted mode, drawer and wall link show the same decisions on pushes and clean up',async()=>{
