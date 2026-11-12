@@ -5,6 +5,8 @@ import { report } from './api.js';
 import { twinText } from '../palette.js';
 import { siteRecords, siteShapeKinds, siteShapeLabels } from '../objects.js';
 import { vertexHandles, editVertex } from './polygon_handles.js';
+import { createSiteDrawing, snapSitePoint, polygonArea } from './site_drawing.js';
+import { pathPresets, pathOutline } from '../path_shapes.js';
 
 const FT = .3048;
 const words = { terraces: 'Terrace pad', ...siteShapeLabels };
@@ -12,18 +14,7 @@ const mid = poly => [0, 1].map(i => poly.reduce((n, p) => n + p[i], 0) / poly.le
 export function siteRows(plan) {
   return siteRecords(plan).filter(record => siteShapeKinds.includes(record.kind));
 }
-export function snapPadPoint(point, plan, exclude) {
-  const polygons = [plan.site?.lot || [], ...(plan.site?.terraces || []).filter(p => p.id !== exclude).map(p => p.polygon)];
-  let best = point, distance = .75;
-  for (const poly of polygons) for (let i = 0; i < poly.length; i++) {
-    const a = poly[i], b = poly[(i + 1) % poly.length], d = edgeDistance(point, a, b);
-    if (d >= distance) continue;
-    const dx = b[0] - a[0], dy = b[1] - a[1], length = dx * dx + dy * dy;
-    const t = length ? Math.max(0, Math.min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / length)) : 0;
-    best = [a[0] + t * dx, a[1] + t * dy]; distance = d;
-  }
-  return best.map(v => Math.round(v * 1000) / 1000);
-}
+export const snapPadPoint = snapSitePoint;
 
 // Separate lot tools keep the object-library/placed-item merge seam small.
 export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, prepare = () => {}, pickObject }) {
@@ -32,9 +23,14 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   const layer = document.createElement('div'); layer.className = 'editor-handles'; canvas.parentElement.append(layer);
   const group = new THREE.Group(); view.scene.add(group);
   const material = new THREE.LineBasicMaterial({ color: twinText, depthTest: false });
+  // Keep a drawable (degenerate when idle) preview from mount onwards. The
+  // renderer warms its material before the first corner, just like pad lines.
+  const previewLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), material);
+  previewLine.renderOrder = 10; group.add(previewLine);
   const raycaster = new THREE.Raycaster();
   let chosen = null, drawing = null, gesture = null, handles = [], busy = false, grade = false, signature = '', menu = false;
   const drawingOptions = { height: 0, blend: 6 };
+  const draft = createSiteDrawing({ getPlan, commit: save });
   const listen = (node, type, fn, options = {}) => node.addEventListener(type, fn, { ...options, signal });
   const node = (tag, text) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; return n; };
   const button = (text, fn) => { const b = node('button', text); b.type = 'button'; listen(b, 'click', fn); return b; };
@@ -54,12 +50,13 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     const r = canvas.getBoundingClientRect(), v = new THREE.Vector3(p[0] * FT, (height + .08) * FT, -p[1] * FT).project(view.camera);
     return v.z >= -1 && v.z <= 1 ? [r.left + (v.x + 1) * r.width / 2, r.top + (1 - v.y) * r.height / 2] : null;
   }
-  function clearGraphics() { for (const o of [...group.children]) { o.removeFromParent(); o.geometry.dispose(); } layer.replaceChildren(); handles = []; }
-  function line(poly, height, close) {
+  function clearGraphics() { for (const o of [...group.children]) if (o !== previewLine) { o.removeFromParent(); o.geometry.dispose(); } layer.replaceChildren(); handles = []; }
+  function line(poly, height, close, target) {
     if (poly.length < 2) return;
     const ps = close ? [...poly, poly[0]] : poly;
     const geo = new THREE.BufferGeometry().setFromPoints(ps.map(p => new THREE.Vector3(p[0] * FT, ((height ?? groundAt(getPlan(), ...p)) + .08) * FT, -p[1] * FT)));
-    const object = new THREE.Line(geo, material); object.renderOrder = 10; group.add(object);
+    if (target) { target.geometry.dispose(); target.geometry = geo; }
+    else { const object = new THREE.Line(geo, material); object.renderOrder = 10; group.add(object); }
   }
   function label(text, p, height, handle) {
     const screen = project(p, height); if (!screen) return;
@@ -69,6 +66,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   }
   function graphics() {
     clearGraphics();
+    previewLine.geometry.dispose(); previewLine.geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
     group.visible = view.state.view === 'ext'; if (!group.visible) return;
     const pads = getPlan()?.site?.terraces || [];
     for (const pad of pads) {
@@ -77,7 +75,12 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       line(poly, undefined, true); label(`${shown > 0 ? '+' : ''}${shown} ft`, centre, height);
       if (chosen?.id === pad.id) vertexHandles(poly).forEach(h => label(h.insert ? '+' : '•', h.at, groundAt(getPlan(), ...h.at), h));
     }
-    if (drawing) { line(drawing, undefined, false); drawing.forEach(p => label('•', p)); }
+    if (drawing) {
+      const points = draft.preview(), path = drawing.kind === 'path';
+      if (path && points.length >= 2) line(pathOutline({ ...drawing.options, points }), undefined, true, previewLine);
+      line(points, undefined, !path && points.length >= 3, path ? undefined : previewLine); drawing.points.forEach(p => label('•', p));
+      if (points.length >= 3 && !path) label(`${polygonArea(points).toFixed(1)} sq ft`, mid(points));
+    }
   }
   function tint() {
     view.groups.site?.traverse(o => { if (o.userData.terrain) tintGrade(o.geometry, grade); }); view.render();
@@ -88,7 +91,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       view.controls.enabled = g.enabled;
       if (canvas.hasPointerCapture(g.pointer)) canvas.releasePointerCapture(g.pointer);
     }
-    drawing = null; chosen = null; menu = false; card.hidden = true; graphics();
+    draft.cancel(); drawing = null; chosen = null; menu = false; card.hidden = true; graphics();
   }
   async function save(operation) {
     if (!canEdit() || busy) return;
@@ -113,19 +116,32 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     card.replaceChildren(); card.hidden = false;
     card.append(button('Close', close));
     if (drawing) {
-      card.append(node('h3', 'Draw a terrace pad'), node('p', 'Tap corners. Snap to pad edges and the lot boundary. Finish with at least three corners.'));
-      card.append(button('Finish pad', async () => {
-        if (drawing.length < 3) { report(new Error('Add at least three corners.')); return; }
-        const polygon = drawing.map(p => [...p]);
-        if (!await save({ op: 'add_pad', polygon, ...drawingOptions })) return;
-        drawing = null; show();
+      const title = drawing.kind === 'terraces' ? 'a terrace pad' : drawing.kind === 'path' ? 'a path' : words[drawing.kind].toLowerCase();
+      card.append(node('h3', `Draw ${title}`), node('p', 'Tap corners. Snap to yard edges, outside walls and the lot. Hold Shift for free placement. Enter or Finish completes; Backspace removes a point; Escape cancels.'));
+      card.append(button(drawing.kind === 'terraces' ? 'Finish pad' : 'Finish', finishDrawing));
+      if (drawing.kind === 'terraces') {
+        field('Pad height (ft)', drawing.options.height, value => { drawing.options.height = value; });
+        field('Blend (ft)', drawing.options.blend, value => { drawing.options.blend = value; });
+      }
+      if (drawing.kind === 'path') {
+        field('Preset', drawing.options.preset || 'sidewalk', value => { Object.assign(drawing.options, pathPresets[value], { preset: value }); drawCard(); graphics(); }, Object.keys(pathPresets));
+        const width = field('Width (ft)', drawing.options.width, value => { drawing.options.width = value; graphics(); }); width.min = '1'; width.max = '30';
+        field('Corner style', drawing.options.corner, value => { drawing.options.corner = value; graphics(); }, ['mitred', 'rounded']);
+        field('Smooth curve', drawing.options.smooth ? 'yes' : 'no', value => { drawing.options.smooth = value === 'yes'; graphics(); }, ['no', 'yes']);
+      } else if (drawing.kind !== 'terraces') card.append(button('Rectangle', () => {
+        if (drawing.points.length !== 2) { report(new Error('Place two opposite corners, then choose Rectangle.')); return; }
+        const [a, b] = drawing.points; drawing.points = [a, [b[0], a[1]], b, [a[0], b[1]]]; finishDrawing();
       }));
-      field('Pad height (ft)', drawingOptions.height, value => { drawingOptions.height = value; }); field('Blend (ft)', drawingOptions.blend, value => { drawingOptions.blend = value; }); return;
+      return;
     }
     const piece = current();
     if (!piece || menu) {
       card.append(node('h3', 'Ground and yard'));
-      card.append(button('Add pad', () => { if (!canEdit()) return; prepare(); tools.setTool('select'); view.setView('ext'); tools.select(null); drawing = []; chosen = null; menu = false; drawCard(); graphics(); }));
+      card.append(button('Add pad', () => startDrawing('terraces', drawingOptions)));
+      for (const [kind, title] of [['beds', 'Draw bed'], ['hardscape', 'Draw patio / hard surface'], ['pool', 'Draw pool'], ['edges', 'Draw planting edge']])
+        card.append(button(title, () => startDrawing(kind)));
+      for (const [preset, title] of [['sidewalk', 'Sidewalk'], ['paver', 'Paver path'], ['driveway', 'Driveway']])
+        card.append(button(title, () => startDrawing('path', { ...pathPresets[preset], preset })));
       const toggle = button('Grade', () => { grade = !grade; toggle.setAttribute('aria-pressed', String(grade)); tint(); });
       toggle.setAttribute('aria-pressed', String(grade)); card.append(toggle);
       card.append(node('p', 'Grade: blue is lower, orange is higher. Heights are feet from the lot datum.'));
@@ -155,6 +171,17 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     }
     card.append(button('Delete', remove), button('Ground and yard', show));
   }
+  function startDrawing(kind, options = {}) {
+    if (!canEdit() || busy) return;
+    prepare(); tools.setTool('select'); view.setView('ext'); tools.select(null);
+    if (kind === 'terraces') Object.assign(drawingOptions, options);
+    draft.start(kind, kind === 'terraces' ? drawingOptions : { ...options }); drawing = draft.current(); chosen = null; menu = false; drawCard(); graphics();
+  }
+  async function finishDrawing() {
+    if (!canEdit() || busy) return;
+    try { if (await draft.finish()) { drawing = null; show(); } }
+    catch (error) { report(error); }
+  }
   function choose(kind, id) {
     prepare(); tools.setTool('select'); view.setView('ext');
     if (kind !== 'terraces') { close(); tools.select({ kind, id }); return; }
@@ -169,7 +196,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   function show() { prepare(); view.setView('ext'); tools.select(null); menu = true; chosen = null; drawing = null; signature = ''; refresh(); }
   function refresh() {
     if (chosen && !current()) { chosen = null; menu = true; }
-    const key = JSON.stringify([chosen, current(), drawing?.length, menu, canEdit(), getPlan()?.site]);
+    const key = JSON.stringify([chosen, current(), drawing?.points.length, menu, canEdit(), getPlan()?.site]);
     if ((menu || chosen || drawing) && key !== signature) { signature = key; drawCard(); }
     graphics(); tint();
   }
@@ -177,7 +204,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     if (!canEdit() || busy || event.button !== 0 || view.state.view !== 'ext') return false;
     if (!drawing && !['select', 'move'].some(id => document.getElementById(`rail-${id}`)?.getAttribute('aria-pressed') === 'true')) return false;
     if (drawing) {
-      const p = ground(event); if (p) { drawing.push(snapPadPoint(p, getPlan())); drawCard(); graphics(); }
+      const p = ground(event); if (p) { draft.add(p, event.shiftKey); drawCard(); graphics(); }
       gesture = { kind: 'draw', enabled: view.controls.enabled, pointer: event.pointerId }; view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); return true;
     }
     const hit = handles.find(h => Math.hypot(h.screen[0] - event.clientX, h.screen[1] - event.clientY) < 16);
@@ -201,11 +228,12 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); return true;
   }
   function pointerMove(event) {
+    if (drawing && !busy) { const p = ground(event); if (p) { draft.move(p, event.shiftKey); graphics(); } return true; }
     if (!gesture) return false;
     if (gesture.kind === 'draw') return true;
     const p = ground(event, gesture.height); if (!p) return true;
     gesture.moved = !gesture.client || Math.hypot(event.clientX - gesture.client[0], event.clientY - gesture.client[1]) >= 3;
-    if (gesture.kind === 'vertex') gesture.polygon = editVertex(gesture.source, gesture.handle, snapPadPoint(p, getPlan(), chosen.id), { remove: gesture.remove });
+    if (gesture.kind === 'vertex') gesture.polygon = editVertex(gesture.source, gesture.handle, event.shiftKey ? p : snapPadPoint(p, getPlan(), chosen.id), { remove: gesture.remove });
     else gesture.by = p.map((v, i) => v - gesture.start[i]);
     graphics(); return true;
   }
@@ -232,10 +260,13 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     if (card.hidden || event.target.closest?.('input,textarea,select,[contenteditable="true"]')) return;
     if (document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), dialog[open]')) return;
     if (event.key === 'Escape') { close(); event.stopImmediatePropagation(); }
+    else if (drawing && event.key === 'Enter') { event.preventDefault(); event.stopImmediatePropagation(); finishDrawing(); }
+    else if (drawing && event.key === 'Backspace') { event.preventDefault(); event.stopImmediatePropagation(); draft.back(); drawCard(); graphics(); }
     else if (chosen && event.key === 'Delete') { event.stopImmediatePropagation(); remove().catch(report); }
   }, { capture: true });
+  listen(canvas, 'pointermove', event => { if (drawing && !gesture) pointerMove(event); });
   view.controls.addEventListener('change', graphics);
   listen(canvas.parentElement, 'twinrebuilt', refresh);
-  signal.addEventListener('abort', () => { if (gesture) view.controls.enabled = gesture.enabled; clearGraphics(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
-  return { show, choose, refresh, pointerDown, pointerMove, pointerUp, cancel: close, handles: () => handles };
+  signal.addEventListener('abort', () => { if (gesture) view.controls.enabled = gesture.enabled; clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
+  return { show, choose, startDrawing, refresh, pointerDown, pointerMove, pointerUp, cancel: close, handles: () => handles };
 }

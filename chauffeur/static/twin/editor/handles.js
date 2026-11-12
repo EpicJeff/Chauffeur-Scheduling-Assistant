@@ -8,6 +8,7 @@ import { groundAt, buildingGround, edgeDistance } from '../twin_ground.js';
 import { roofEdge } from './roof_tools.js';
 import { vertexHandles, editVertex } from './polygon_handles.js';
 import { shapeKey, shapeCentre, transformShape, shapeOperation, closedShape } from './site_shapes.js';
+import { pathOutline } from '../path_shapes.js';
 
 const FT = .3048;
 const inch = value => Math.round(value * 12) / 12;
@@ -344,7 +345,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       preview = structuredClone(g.source);
       const next = ['pool', 'fire_pit', 'fence'].includes(g.record.kind) ? preview.site[g.record.kind] : preview.site[g.record.kind][g.record.index];
       Object.assign(next, change);
-      const outline = next.at ? Array.from({ length: 33 }, (_, i) => [next.at[0] + next.radius * Math.cos(i * Math.PI / 16), next.at[1] + next.radius * Math.sin(i * Math.PI / 16)]) : sitePoints(next);
+      const outline = next.kind === 'path' ? pathOutline(next) : next.at ? Array.from({ length: 33 }, (_, i) => [next.at[0] + next.radius * Math.cos(i * Math.PI / 16), next.at[1] + next.radius * Math.sin(i * Math.PI / 16)]) : sitePoints(next);
       const points = outline.map(p => project(building, [...p, handle.at[2]])).filter(Boolean);
       document.getElementById('editor-drag-outline')?.setAttribute('points', points.map(p => p.join(',')).join(' '));
       refresh(); lastFrameMs = Math.max(.001, performance.now() - started); return;

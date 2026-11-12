@@ -68,6 +68,14 @@ h=handles.handles().find(h=>h.kind==='site_insert');assert.ok(handles.begin(even
 h=handles.handles().find(h=>h.kind==='site_vertex');assert.ok(handles.begin({...event(h.at),altKey:true}));await handles.finish();assert.equal(source.site.fence.polyline.length,2);
 draw();await change('Height (ft)',8);assert.equal(source.site.fence.height,8);
 console.log('ok pool fields, radius handle and shelf, fence point insert/drag/remove and height');
+source.site.hardscape.push({id:'walk',kind:'path',points:[[0,0],[8,0],[8,8]],width:3,material:'paving'});
+selected={kind:'hardscape',id:'walk',building:null};await gesture('site_vertex',[-1,1,0]);
+h=handles.handles().find(h=>h.kind==='site_insert');assert.ok(handles.begin(event(h.at)));await handles.finish();assert.equal(record().piece.points.length,4);
+for(let i=0;i<2;i++){h=handles.handles().find(h=>h.kind==='site_vertex');assert.ok(handles.begin({...event(h.at),altKey:true}));await handles.finish();}
+assert.equal(record().piece.points.length,2);const pathMinimum=commits;
+h=handles.handles().find(h=>h.kind==='site_vertex');assert.ok(handles.begin({...event(h.at),altKey:true}));await handles.finish();assert.equal(commits,pathMinimum);
+draw();await change('Width (ft)',4);assert.equal(record().piece.width,4);
+console.log('ok path centre-line drag, midpoint insertion, removal to two points and shelf width through history');
 selected={kind:'beds',id:'bed',building:null};
 h=handles.handles().find(h=>h.kind==='site_insert');assert.ok(handles.begin(event(h.at)));await handles.finish();assert.equal(record().piece.polygon.length,5);
 for(let i=0;i<2;i++){h=handles.handles().find(h=>h.kind==='site_vertex');assert.ok(handles.begin({...event(h.at),altKey:true}));await handles.finish();}

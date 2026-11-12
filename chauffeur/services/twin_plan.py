@@ -526,7 +526,14 @@ def _site(site, notes):
             if valid and name == 'terraces':
                 valid = twin_terrain.pad_error(item) is None
             elif valid and name in ('beds', 'hardscape'):
-                valid = _polygon(item.get('polygon')) and _numeric_fields(item, ('height', 'elevation'))
+                if name == 'hardscape' and item.get('kind') == 'path':
+                    from services import twin_site_shapes
+                    try:
+                        twin_site_shapes.validate(name, item)
+                    except ValueError:
+                        valid = False
+                else:
+                    valid = _polygon(item.get('polygon')) and _numeric_fields(item, ('height', 'elevation'))
             elif valid and name == 'edges':
                 points = item.get('polygon', item.get('points', item.get('polyline')))
                 valid = (isinstance(points, list) and len(points) >= (3 if 'polygon' in item else 2) and all(_point(p) for p in points)

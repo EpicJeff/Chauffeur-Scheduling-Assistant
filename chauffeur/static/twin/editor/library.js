@@ -6,6 +6,7 @@ import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
 import { rememberImport, forgetImport, libUrl } from '../twin_library.js';
 import { mountImports } from './imports.js';
 import { objectShown, siteRecords, siteRecord, sitePoints, siteShapeKinds } from '../objects.js';
+import { pathSurfacePolygons } from '../path_shapes.js';
 import { request, report } from './api.js';
 
 export const materialName = id => String(id || 'Material').replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
@@ -432,7 +433,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       const p = ground({ clientX: x, clientY: y });
       if (p) for (const { kind, piece } of siteRecords(getPlan()).filter(r => siteShapeKinds.includes(r.kind)).reverse()) {
         const ps = sitePoints(piece);
-        const hit = piece.polygon ? inPolygon(ps, ...p) : piece.at ? Math.hypot(p[0] - piece.at[0], p[1] - piece.at[1]) < (piece.radius || 2)
+        const hit = piece.kind === 'path' ? pathSurfacePolygons(piece).some(poly => inPolygon(poly, ...p)) : piece.polygon ? inPolygon(ps, ...p) : piece.at ? Math.hypot(p[0] - piece.at[0], p[1] - piece.at[1]) < (piece.radius || 2)
           : ps.some((a, i) => i + 1 < ps.length && edgeDistance(p, a, ps[i + 1]) < .6);
         if (hit) return { kind, id: piece.id };
       }

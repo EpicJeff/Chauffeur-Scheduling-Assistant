@@ -4,11 +4,49 @@ from services import twin_terrain as terrain
 
 
 KINDS = ('beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence')
+MATERIALS = ('mulch', 'patio_concrete', 'paving', 'lawn', 'base', 'fence')
+PATH_PRESETS = {
+    'sidewalk': {'width': 4, 'material': 'patio_concrete', 'corner': 'mitred'},
+    'paver': {'width': 3, 'material': 'paving', 'corner': 'rounded'},
+    'driveway': {'width': 10, 'material': 'patio_concrete', 'corner': 'mitred'},
+}
+
+
+def create(name, values, lot):
+    if name not in ('beds', 'hardscape', 'edges', 'pool'):
+        raise ValueError('Choose a bed, hard surface, planting edge or pool.')
+    path = values.get('kind') == 'path'
+    if path and name != 'hardscape' or values.get('kind') not in (None, 'path'):
+        raise ValueError('Paths belong in hardscape.')
+    defaults = {'material': 'mulch' if name == 'beds' else 'lawn' if name == 'edges' else 'patio_concrete'}
+    allowed = {'polygon', 'material'}
+    if name == 'pool':
+        defaults.update(depth=5, coping=1, material='paving')
+        allowed |= {'depth', 'coping'}
+    if path:
+        preset = values.get('preset')
+        if preset is not None and (not isinstance(preset, str) or preset not in PATH_PRESETS):
+            raise ValueError('Choose Sidewalk, Paver path or Driveway.')
+        defaults.update(width=3, corner='mitred', smooth=False, edging='none')
+        defaults.update(PATH_PRESETS.get(preset, {}))
+        allowed = {'kind', 'points', 'width', 'corner', 'radius', 'smooth', 'material', 'edging', 'preset'}
+    if set(values) - allowed:
+        raise ValueError('Choose supported drawing properties.')
+    piece = {**defaults, **values}
+    if piece['material'] not in MATERIALS:
+        raise ValueError('Choose an existing kit material role.')
+    validate(name, piece)
+    key = 'points' if path else 'polygon'
+    words = update(name, piece, {key: piece[key]}, lot)
+    return piece, words.replace('Changed', 'Added', 1)
 
 
 def validate(name, piece):
     key = next((k for k in ('polygon', 'points', 'polyline') if k in piece), None)
-    closed = name in ('beds', 'hardscape', 'pool') or key == 'polygon'
+    path = name == 'hardscape' and piece.get('kind') == 'path'
+    if path and (key != 'points' or 'polygon' in piece or 'polyline' in piece):
+        raise ValueError('Use a centre line for a path.')
+    closed = not path and (name in ('beds', 'hardscape', 'pool') or key == 'polygon')
     if name == 'fire_pit':
         points = [piece.get('at')]
     else:
@@ -25,6 +63,15 @@ def validate(name, piece):
     sizes = [max(p[i] for p in points) - min(p[i] for p in points) for i in (0, 1)]
     if max(sizes) > 2000 or closed and min(sizes) < .01:
         raise ValueError('Keep shapes between 0.01 and 2000 feet across.')
+    if any(abs(v) > 10000 for p in points for v in p):
+        raise ValueError('Keep lot coordinates within 10000 feet.')
+    if path:
+        for field, default, low, high in [('width', 3, 1, 30), ('radius', piece.get('width', 3), .1, 200)]:
+            value = piece.get(field, default)
+            if not terrain.number(value) or not low <= value <= high:
+                raise ValueError(f'Choose {field} from {low} to {high} feet.')
+        if piece.get('corner', 'mitred') not in ('mitred', 'rounded') or type(piece.get('smooth', False)) is not bool or piece.get('edging', 'none') not in ('none', 'curb'):
+            raise ValueError('Choose mitred or rounded corners, a smooth curve, and none or curb edging.')
     for field, default, low, high in [('rotation', 0, -360, 360),
             *([('depth', 5, 2, 12), ('coping', 1, 0, 3)] if name == 'pool' else []),
             *([('radius', 2, .1, 100)] if name == 'fire_pit' else []),
@@ -42,6 +89,10 @@ def update(name, piece, change, lot):
         raise ValueError('Choose a yard shape.')
     geometry = next((k for k in ('polygon', 'points', 'polyline') if k in piece), None)
     allowed = {geometry, 'rotation'} if geometry else {'rotation'}
+    if name in ('beds', 'hardscape', 'edges', 'pool'):
+        allowed |= {'material'}
+    if name == 'hardscape' and piece.get('kind') == 'path':
+        allowed |= {'width', 'corner', 'radius', 'smooth', 'edging'}
     if name == 'pool':
         allowed |= {'depth', 'coping'}
     if name == 'fire_pit':
@@ -50,6 +101,10 @@ def update(name, piece, change, lot):
         allowed |= {'height'} | ({'style'} if 'style' in piece else set())
     if not change or set(change) - allowed:
         raise ValueError('Choose a supported property of this yard shape.')
+    # Keep legacy read/composed references (e.g. "concrete") editable. New
+    # material choices must name the kit's existing roles.
+    if 'material' in change and change['material'] not in MATERIALS:
+        raise ValueError('Choose an existing kit material role.')
     if 'rotation' in change and geometry and geometry not in change:
         validate(name, {**piece, **change})
         angle = change['rotation']
@@ -83,4 +138,8 @@ def update(name, piece, change, lot):
         if name == 'fire_pit':
             radius = piece.get('radius', 2)
             outside |= any(not inside(lot, [points[0][0]+radius*math.cos(a*math.pi/32), points[0][1]+radius*math.sin(a*math.pi/32)]) for a in range(64))
+        if name == 'hardscape' and piece.get('kind') == 'path':
+            # Include the width, not only the centre-line endpoints, in the warning.
+            radius = piece.get('width', 3)/2 + (.5 if piece.get('edging') == 'curb' else 0)
+            outside |= any(not inside(lot, [p[0]+radius*math.cos(a*math.pi/8), p[1]+radius*math.sin(a*math.pi/8)]) for p in points for a in range(16))
     return 'Changed the yard shape.' + (' Warning: this shape extends outside the lot.' if outside else '')

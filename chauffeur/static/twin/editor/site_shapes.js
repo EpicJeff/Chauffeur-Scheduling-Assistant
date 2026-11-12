@@ -1,7 +1,7 @@
 import { sitePoints } from '../objects.js';
 
 export const shapeKey = piece => ['polygon', 'points', 'polyline'].find(key => piece[key]);
-export const closedShape = record => record.kind !== 'fence' && (record.kind !== 'edges' || !!record.piece.polygon);
+export const closedShape = record => record.piece.kind !== 'path' && record.kind !== 'fence' && (record.kind !== 'edges' || !!record.piece.polygon);
 export function shapeCentre(piece) {
   const points = sitePoints(piece);
   if (piece.polygon) {
