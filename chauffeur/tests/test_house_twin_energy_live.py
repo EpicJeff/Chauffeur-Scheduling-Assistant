@@ -115,7 +115,7 @@ def shot(page, name):
         page.screenshot(path=str(out / name), full_page=True)
 
 
-def ribbon_midpoint_pixels(page):
+def ribbon_apex_pixels(page):
     """Compare actual WebGL pixels with/without ribbons at each world crest.
 
     Reading the same frame twice avoids judging glow against a guessed sky
@@ -124,18 +124,14 @@ def ribbon_midpoint_pixels(page):
     return page.evaluate("""() => {
       const v=window.__twin,r=v.renderer3,gl=r.getContext(),canvas=r.domElement;
       v.camera.updateMatrixWorld(true);
-      const roof=[];
-      for(const[id,surface]of v.roofSurfaces){const b=v.plan.buildings.find(b=>b.id===id),a=(b.rotation||0)*Math.PI/180;
-        for(let i=0;i<surface.positions.length;i+=3){const[x,y,z]=surface.positions.slice(i,i+3),p=v.camera.position.clone();
-          p.set(((b.position?.[0]||0)+Math.cos(a)*x-Math.sin(a)*y)*.3048,(z+(b.base||0))*.3048,
-            -((b.position?.[1]||0)+Math.sin(a)*x+Math.cos(a)*y)*.3048);roof.push(p.project(v.camera).y);}}
-      const top=Math.max(...roof),rect=canvas.getBoundingClientRect(),w=gl.drawingBufferWidth,h=gl.drawingBufferHeight;
+      const w=gl.drawingBufferWidth,h=gl.drawingBufferHeight;
       const samples=v.live.energy().ribbons.filter(x=>x.visible).map(row=>{
-        const p=v.camera.position.clone().fromArray(row.midpoint).project(v.camera);
+        const p=v.camera.position.clone().fromArray(row.apex).project(v.camera);
         const x=Math.round((p.x+1)*w/2),y=Math.round((p.y+1)*h/2),radius=8;
         const path=row.path.map(at=>v.camera.position.clone().fromArray(at).project(v.camera));
         const sign=Math.sign(path.at(-1).x-path[0].x),monotonic=sign!==0&&path.slice(1).every((p,i)=>(p.x-path[i].x)*sign>=-1e-7);
-        return {id:row.id,hue:row.hue.map(c=>c*255),monotonic,above:p.y>top,x:Math.max(0,Math.min(w-17,x-radius)),y:Math.max(0,Math.min(h-17,y-radius)),p:p.toArray()};});
+        const rise=row.apex[1]/.3048-Math.max(row.from[2],row.to[2]);
+        return {id:row.id,hue:row.hue.map(c=>c*255),monotonic,rise,x:Math.max(0,Math.min(w-17,x-radius)),y:Math.max(0,Math.min(h-17,y-radius)),p:p.toArray()};});
       const read=()=>samples.map(s=>{const pixels=new Uint8Array(17*17*4);gl.readPixels(s.x,s.y,17,17,gl.RGBA,gl.UNSIGNED_BYTE,pixels);return pixels;});
       const meshes=[];v.scene.traverse(o=>{if(o.userData.energyRibbon||o.userData.energyRibbonHalo){meshes.push([o,o.visible]);o.visible=false;}});
       let background,lit=[];
@@ -154,7 +150,7 @@ def ribbon_midpoint_pixels(page):
           if(contrast<18)continue; // Unchanged sky pixels cannot pass a hue check.
           const hueDistance=Math.hypot(...rgb.map((v,j)=>v-s.hue[j])),whiteDistance=Math.hypot(...rgb.map(v=>v-255));
           const margin=whiteDistance-hueDistance;if(margin>best){best=margin;selected={rgb,contrast,hueDistance,whiteDistance,delta:brightness-base,peak:Math.max(...rgb)};}}
-        return {id:s.id,monotonic:s.monotonic,above:s.above,onscreen:Math.abs(s.p[0])<1&&Math.abs(s.p[1])<1&&Math.abs(s.p[2])<1,...selected};});
+        return {id:s.id,monotonic:s.monotonic,rise:s.rise,onscreen:Math.abs(s.p[0])<1&&Math.abs(s.p[1])<1&&Math.abs(s.p[2])<1,...selected};});
     }""")
 
 
@@ -194,16 +190,17 @@ def scenario_energy_ribbons_labels_and_grid_push():
         for preview in ('day', 'night'):
             page.evaluate('(mode)=>window.__twin.setTime(mode)', preview)
             page.wait_for_timeout(300)
-            samples = ribbon_midpoint_pixels(page)
-            check(len(samples) == 3 and all(s['above'] and s['onscreen'] for s in samples), (preview, 'crests project above all roof vertices', samples))
+            samples = ribbon_apex_pixels(page)
+            check(len(samples) == 3 and all(2-1e-6 <= s['rise'] <= 10+1e-6 and s['onscreen'] for s in samples), (preview, 'gentle apexes stay within 10 ft of their higher endpoint', samples))
             # Capped source colours can be darker than a day sky. The old >=230
             # white-peak test contradicted hue preservation; require contrast
             # plus distance to the actual source hue instead.
             check(all(s['peak'] >= 90 and s['contrast'] >= 18 for s in samples), (preview, 'ribbon colour contrasts against its actual background', samples))
-            check(all(s['hueDistance'] < s['whiteDistance'] for s in samples), (preview, 'midpoint colour is closer to its source hue than white', samples))
+            check(all(s['hueDistance'] < s['whiteDistance'] for s in samples), (preview, 'apex colour is closer to its source hue than white', samples))
             # Actual anchors take precedence over the old screen-space bus nudges.
             shot(page, 'energy-ribbons-' + preview + '.png')
-        labels = page.locator('.twin-climate-labels span:visible').evaluate_all("nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom};})")
+        labels = page.locator('.twin-energy-labels span:visible').evaluate_all("nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom};})")
+        check(len(labels) == 3, ('three actual energy labels are tested for overlap', labels))
         for i, a in enumerate(labels):
             for b in labels[:i]:
                 check(not (a['left'] < b['right'] and a['right'] > b['left'] and a['top'] < b['bottom'] and a['bottom'] > b['top']), ('labels do not overlap', a, b))
@@ -286,10 +283,174 @@ def scenario_energy_check_explains_removed_meter():
         L.no_errors(served)
 
 
+def scenario_energy_check_warns_about_battery_as_house_and_mapping_repair_shows_ribbon():
+    served = setup()
+    if served is None:
+        return
+    from services import twin_energy
+
+    mapping = twin_energy.read()
+    twin_energy.save({**mapping, 'house_power': 'sensor.live_battery'})
+    push_totals(0, 0, 1800, 1800)
+    with served.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
+        page.get_by_role('button', name='Energy', exact=True).click()
+        expected = "No ribbons because the readings don't balance — check the Electric panel / house sensor"
+        page.wait_for_function('(summary) => window.__twin.live.energy().check?.summary === summary', arg=expected)
+        page.get_by_role('link', name='Why no ribbons?', exact=True).click()
+        panel = page.locator('#twin-mode-legend .twin-energy-check')
+        house = panel.locator('[data-energy-role="house"]')
+        check(house.get_attribute('data-status') == 'unbalanced', house.inner_text())
+        check('sensor.live_battery' in house.inner_text(), 'warning identifies the wrong house sensor')
+        check("readings don't balance: solar + battery + grid = 1.8 kW, house reads 0.0 kW" in house.inner_text(), house.inner_text())
+        check(house.locator('[data-energy-mark]').inner_text() == '⚠', 'house has a warning mark')
+        check(house.locator('[data-energy-mark]').evaluate('(node) => getComputedStyle(node).color') == 'rgb(251, 191, 36)', 'warning mark is amber')
+        check(house.locator('p').first.evaluate('(node) => getComputedStyle(node).color') == 'rgb(229, 231, 235)', 'check text is light')
+        check(house.locator('strong').evaluate('(node) => Number(getComputedStyle(node).fontWeight) >= 700'), 'role name is bold')
+        check(panel.locator('[data-energy-summary]').evaluate('(node) => parseFloat(getComputedStyle(node).fontSize) >= 16'), 'summary is larger')
+        check(page.evaluate('() => window.__twin.live.energy().ribbons.every(r => !r.visible)'), 'wrong zero house produces no invented ribbon')
+        shot(page, 'energy-check-wrong-house.png')
+
+        # Repair through the real parents-only endpoint, then reload the wall's
+        # saved mapping. The panel remains paired with its read-only token.
+        response = page.request.put(served.url('api/house/twin/energy'),
+                                    headers={'X-Member-Token': L.H.STATE['token']}, data=mapping)
+        check(response.status == 200, response.text())
+        L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
+        page.get_by_role('button', name='Energy', exact=True).click()
+        wait_flows(page, {'grid:house': 1800})
+        page.wait_for_function("() => window.__twin.live.energy().check.roles.find(r => r.id === 'house').status === 'ok'")
+        assert_flow_endpoints(page)
+        shot(page, 'energy-check-repaired-house.png')
+        L.no_errors(served)
+
+
+def scenario_energy_ribbon_pixels_cover_an_intervening_real_roof():
+    served = setup()
+    if served is None:
+        return
+    push_totals(0, 0, 1800, 1800)
+    with served.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
+        page.get_by_role('button', name='Energy', exact=True).click()
+        wait_flows(page, {'grid:house': 1800})
+        samples = page.evaluate("""async () => {
+          const THREE=await import('three'),v=window.__twin,r=v.renderer3,gl=r.getContext();
+          v.scene.updateMatrixWorld(true);
+          const visible=o=>{for(let p=o;p;p=p.parent)if(!p.visible)return false;return o.material?.visible!==false;};
+          const roofs=[],saved=[];let core;
+          v.groups.roof.traverse(o=>{if(o.isMesh&&visible(o))roofs.push(o);});
+          v.scene.traverse(o=>{if(o.userData.energyRibbon||o.userData.energyRibbonHalo){saved.push([o,o.visible]);
+            if(o.userData.energyRibbon==='grid:house')core=o;}});
+          if(!core||!roofs.length)throw Error('The fixture must have a visible grid ribbon and real roofs');
+          const roofSet=new Set(roofs),ray=new THREE.Raycaster();ray.layers.enableAll();ray.camera=v.camera;
+          const candidates=[];
+          // Look through the centre of an actual roof triangle toward a low
+          // part of the real ribbon. This proves occlusion rather than merely
+          // sampling a crest against the sky. No roof or ribbon is moved.
+          for(const t of [.02,.05,.95,.98]){
+            const point=core.geometry.parameters.path.getPoint(t);
+            for(const roof of roofs){const pos=roof.geometry.attributes.position,index=roof.geometry.index;
+              const count=index?index.count:pos.count,step=Math.max(3,Math.floor(count/90)*3);
+              for(let i=0;i+2<count;i+=step){
+                const centre=new THREE.Vector3();for(let j=0;j<3;j++)centre.add(new THREE.Vector3().fromBufferAttribute(pos,index?index.getX(i+j):i+j));
+                centre.multiplyScalar(1/3).applyMatrix4(roof.matrixWorld);
+                if(centre.y<=point.y+.3)continue;
+                candidates.push({point,position:centre.clone().add(centre.clone().sub(point).normalize().multiplyScalar(20))});
+              }
+            }
+          }
+          const read=(x,y)=>{const a=new Uint8Array(4);gl.readPixels(x,y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,a);return Array.from(a.slice(0,3));};
+          const hue=v.live.energy().ribbons.find(row=>row.id==='grid:house').hue.map(x=>x*255),results=[];
+          try{
+            for(const {point,position}of candidates){
+              ray.set(position,point.clone().sub(position).normalize());
+              const first=ray.intersectObject(v.scene,true).find(hit=>hit.object.isMesh&&visible(hit.object)&&
+                !hit.object.userData.energyRibbon&&!hit.object.userData.energyRibbonHalo);
+              if(!first||!roofSet.has(first.object)||first.distance>=position.distanceTo(point)-.3)continue;
+              v.setCameraState({position:position.toArray(),target:point.toArray()});v.scene.updateMatrixWorld(true);
+              const p=point.clone().project(v.camera),w=gl.drawingBufferWidth,h=gl.drawingBufferHeight;
+              const x=Math.round((p.x+1)*w/2),y=Math.round((p.y+1)*h/2);
+              if(x<5||y<5||x>=w-5||y>=h-5)continue;
+              const pixels=[];
+              for(let dy=-4;dy<=4;dy++)for(let dx=-4;dx<=4;dx++){
+                ray.setFromCamera(new THREE.Vector2(2*(x+dx+.5)/w-1,2*(y+dy+.5)/h-1),v.camera);
+                const hit=ray.intersectObject(v.scene,true).find(hit=>hit.object.isMesh&&visible(hit.object)&&
+                  !hit.object.userData.energyRibbon&&!hit.object.userData.energyRibbonHalo);
+                if(hit&&roofSet.has(hit.object)&&hit.distance<v.camera.position.distanceTo(point)-.3)pixels.push({x:x+dx,y:y+dy});
+              }
+              for(const[o]of saved)o.visible=false;r.render(v.scene,v.camera);
+              for(const pixel of pixels)pixel.roof=read(pixel.x,pixel.y);
+              for(const[o,shown]of saved)o.visible=shown;r.render(v.scene,v.camera);
+              for(const pixel of pixels){const rgb=read(pixel.x,pixel.y),contrast=Math.max(...rgb.map((c,i)=>Math.abs(c-pixel.roof[i])));
+                const hueDistance=Math.hypot(...rgb.map((c,i)=>c-hue[i])),roofHueDistance=Math.hypot(...pixel.roof.map((c,i)=>c-hue[i]));
+                if(contrast>=18&&hueDistance<roofHueDistance&&hueDistance<Math.hypot(...rgb.map(c=>c-255)))
+                  results.push({rgb,roof:pixel.roof,contrast,hueDistance,roofHueDistance});
+              }
+              // A camera with confirmed roof-covered pixels must pass; do not
+              // search for a camera that happens to escape the old depth mask.
+              if(pixels.length)return results;
+            }
+            throw Error('No roof-covered ribbon pixels found; the scenario must not pass vacuously');
+          }finally{for(const[o,shown]of saved)o.visible=shown;r.render(v.scene,v.camera);}
+        }""")
+        check(len(samples) > 0, ('roof-covered pixels have the ribbon hue instead of the roof colour', samples))
+        shot(page, 'energy-ribbon-over-roof.png')
+        L.no_errors(served)
+
+
+def scenario_energy_fan_apexes_and_labels_follow_the_camera():
+    served = setup()
+    if served is None:
+        return
+    push_totals(0, -2000, 2500, 500)
+    with served.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
+        page.get_by_role('button', name='Energy', exact=True).click()
+        wait_flows(page, {'grid:house': 500, 'grid:battery': 2000})
+        for position in ([0, 18, .1], [.5, 16, 8]):
+            page.evaluate("""async offset => {
+              const THREE=await import('three'),v=window.__twin,rows=v.live.energy().ribbons.filter(r=>r.visible);
+              const centre=rows.reduce((sum,r)=>sum.add(new THREE.Vector3().fromArray(r.apex)),new THREE.Vector3()).multiplyScalar(1/rows.length);
+              v.setCameraState({position:centre.clone().add(new THREE.Vector3().fromArray(offset)).toArray(),target:centre.toArray()});
+            }""", position)
+            page.wait_for_timeout(150)
+            rows = page.evaluate("""() => {
+              const v=window.__twin,rect=v.renderer3.domElement.getBoundingClientRect();v.camera.updateMatrixWorld(true);
+              return v.live.energy().ribbons.filter(row=>row.visible).map(row=>{
+                const node=document.querySelector('[data-energy-label="'+row.id+'"]'),box=node.getBoundingClientRect();
+                const p=v.camera.position.clone().fromArray(row.apex).project(v.camera);
+                const x=rect.left+(p.x+1)*rect.width/2,y=rect.top+(1-p.y)*rect.height/2;
+                const cx=(box.left+box.right)/2,cy=(box.top+box.bottom)/2;
+                const along=[.4,.6,.3,.7,.2,.8,.1,.9].map(t=>{
+                  let core;v.scene.traverse(o=>{if(o.userData.energyRibbon===row.id)core=o;});
+                  const q=core.geometry.parameters.path.getPoint(t).project(v.camera);
+                  return Math.hypot(cx-(rect.left+(q.x+1)*rect.width/2),cy-(rect.top+(1-q.y)*rect.height/2));
+                });
+                return {id:row.id,visible:!node.hidden&&box.width>0,distance:Math.hypot(cx-x,cy-y),
+                  ribbonDistance:Math.min(...along),placement:node.dataset.energyLabelPlacement,
+                  rise:row.apex[1]/.3048-Math.max(row.from[2],row.to[2]),apex:row.apex,width:row.width,
+                  left:box.left,right:box.right,top:box.top,bottom:box.bottom};
+              });
+            }""")
+            check(len(rows) == 2 and all(r['visible'] for r in rows), ('both grid fan labels are visible', rows))
+            check(all(r['distance'] <= 24.01 or r['ribbonDistance'] <= 1 or r['placement'] == 'stack' for r in rows), ('each label follows its own ribbon or uses the visible crowding stack', rows))
+            check(all(2-1e-6 <= r['rise'] <= 10+1e-6 for r in rows), ('apexes never exceed 10 ft above their higher endpoint', rows))
+            a, b = rows
+            separation = sum((x-y)**2 for x, y in zip(a['apex'], b['apex']))**.5
+            check(separation >= 2*max(r['width'] for r in rows), ('shared-meter fan separates apexes by two ribbon widths', rows))
+            check(not (a['left'] < b['right'] and a['right'] > b['left'] and a['top'] < b['bottom'] and a['bottom'] > b['top']), ('fan labels never stack', rows))
+        shot(page, 'energy-gentle-fan-labels.png')
+        L.no_errors(served)
+
+
 SCENARIOS = [scenario_energy_ribbons_labels_and_grid_push,
              scenario_security_attention_camera_and_lock_push,
              scenario_no_programs_on_second_entry_to_either_mode,
-             scenario_energy_check_explains_removed_meter]
+             scenario_energy_check_explains_removed_meter,
+             scenario_energy_check_warns_about_battery_as_house_and_mapping_repair_shows_ribbon,
+             scenario_energy_ribbon_pixels_cover_an_intervening_real_roof,
+             scenario_energy_fan_apexes_and_labels_follow_the_camera]
 
 if __name__ == '__main__':
     L.run(SCENARIOS)

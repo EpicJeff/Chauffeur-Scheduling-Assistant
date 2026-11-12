@@ -8,13 +8,33 @@ const power = row => row?.attributes?.device_class === 'power' || /^(w|kw|mw)$/i
 const battery = (id, row) => row?.attributes?.device_class === 'battery' || /charge|battery.*level|state.of.charge|soc/.test(text(id, row)) && row?.attributes?.unit_of_measurement === '%';
 export function guessEnergy(states = {}, saved = {}, fleet = []) {
   const ids = Object.keys(states).sort();
-  const pick = pattern => ids.find(id => power(states[id]) && pattern.test(text(id, states[id])) &&
-    (!/charger|wallbox|tesla|vehicle|car[_. ]/.test(text(id, states[id])) || /powerwall/.test(text(id, states[id])))) || null;
+  // Saved choices win, including None, and cannot be borrowed by an automatic role.
+  const used = new Set(ROLES.map(key => saved[key]).filter(Boolean));
+  const specific = /load|home|house|battery|grid|site|solar|(?:^|[_. ])pv(?:[_. ]|$)|charg/;
+  const candidates = ids.filter(id => power(states[id]) &&
+    /^(w|kw|mw)$/i.test(states[id].attributes?.unit_of_measurement || 'W') &&
+    (!/charger|wallbox|tesla|vehicle|car[_. ]/.test(text(id, states[id])) || /powerwall/.test(text(id, states[id]))));
+  const pick = (key, patterns, exclude = /$^/) => {
+    if (Object.hasOwn(saved, key)) return saved[key];
+    // A specific id describes the reading; a shared device name such as
+    // "Home Energy Gateway" must not relabel battery or site power as home.
+    for (const pattern of patterns) for (const byId of [true, false]) {
+      const id = candidates.find(id => {
+        if (used.has(id) || !byId && specific.test(id)) return false;
+        const name = byId ? id.toLowerCase() : text(id, states[id]);
+        return pattern.test(name) && !exclude.test(name);
+      });
+      if (id) {used.add(id); return id;}
+    }
+    return null;
+  };
   const guessed = {
-    solar_power: pick(/solar|(?:^|[_. ])pv(?:[_. ]|$)/), battery_power: pick(/battery/),
+    solar_power: pick('solar_power', [/solar|(?:^|[_. ])pv(?:[_. ]|$)/]),
+    battery_power: pick('battery_power', [/battery/]),
     battery_level: ids.find(id => battery(id, states[id]) && /powerwall|battery/.test(text(id, states[id])) &&
       (!/tesla|car[_. ]|vehicle/.test(text(id, states[id])) || /powerwall/.test(text(id, states[id])))) || null,
-    grid_power: pick(/grid|site/), house_power: pick(/load|home|house/),
+    grid_power: pick('grid_power', [/grid|site/], /battery|solar|(?:^|[_. ])pv(?:[_. ]|$)/),
+    house_power: pick('house_power', [/load/, /home|house/], /battery|grid|site|solar|(?:^|[_. ])pv(?:[_. ]|$)|charg/),
     // HA Powerwall: positive battery = discharge; positive site = import.
     battery_positive: 'discharge', grid_positive: 'import', home_includes_chargers: true,
     panels: {visible: true, plane: null}, cars: []
@@ -103,7 +123,11 @@ export function energyBalance(mapping, states, zoneEntities = []) {
     derived[key] = true;
   }
   const missing = unknown.length > 1 ? unknown : [];
-  return {totals, derived, missing, known: !missing.length};
+  const supply = totals.solar + bSign * totals.battery + gSign * totals.grid;
+  // A derived reading cannot independently prove (or disprove) the balance.
+  const residual = unknown.length ? null : totals.home - supply;
+  return {totals, derived, missing, known: !missing.length, supply, residual,
+    unbalanced: residual !== null && Math.abs(residual) > Math.max(200, .2 * Math.abs(totals.home))};
 }
 
 export function energyFlows(mapping, states, zoneEntities = [], includeHidden = false) {

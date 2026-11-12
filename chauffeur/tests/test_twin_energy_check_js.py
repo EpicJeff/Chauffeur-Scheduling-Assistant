@@ -34,7 +34,7 @@ for(const id of ['solar','battery','grid','house','car:0'])for(const scenario of
  else assert.ok(row.power.includes(entity));
  if(scenario==='unavailable')assert.equal(row.state,'unavailable');
  if(scenario==='unplaced')assert.ok(row.location.includes(id==='solar'?'add a solar zone':entity));
- if(scenario==='ok')assert.ok(row.location.includes(id==='solar'?'solar zone on roof roof (source)':'Ground floor'));
+ if(scenario==='ok')assert.ok(row.location.includes(id==='solar'?'solar zone on roof of Home (source)':'Ground floor'));
 });
 for(const id of ['battery','grid','house','car:0'])check(id+' placed under another entity',()=>{
  const f=fixture(),entity=(id==='car:0'?f.mapping.cars[0].charge_power:f.mapping[id+'_power']);
@@ -80,11 +80,62 @@ check('summary explains missing power and quiet totals without blaming optional 
  f.states['sensor.house_power'].state='unavailable';assert.equal(assess(f).summary,'No ribbons because balance unknown: Meter / grid and Electric panel / house not readable');
 });
 check('object locations name the wall and removed selections do not fall back',()=>{
- const f=fixture(),b=f.view.plan.buildings[0];b.walls=[{id:'outside-wall',level:'L1',from:[0,0],to:[20,0],thickness:.5}];
- b.anchors=[{id:'meter',kind:'meter',host:{wall:'outside-wall',side:'right',at:4,z:4}}];
+ const f=fixture(),b=f.view.plan.buildings[0];b.name='Main House';b.levels[0].name='main floor';
+ b.walls=[{id:'wall:eef4~2',exterior:true,level:'L1',from:[0,0],to:[20,0],thickness:.5}];
+ b.anchors=[{id:'meter',kind:'meter',host:{wall:'wall:eef4~2',side:'right',at:4,z:4}}];
  f.mapping.locations={grid:{type:'object',id:'meter',building:'b'}};
- assert.equal(assess(f).roles[2].location,'meter object on wall outside-wall');
+ assert.equal(assess(f).roles[2].location,'meter object on exterior wall of Main House, main floor');
+ delete b.name;assert.equal(assess(f).roles[2].location,'meter object on a wall');
  b.anchors=[];const row=assess(f).roles[2];assert.equal(row.status,'unplaced');assert.ok(row.location.includes('add a meter object'));assert.ok(row.location.includes('selected location'));
+});
+check('unbalanced zero house warns with its sensor and explains why no ribbons show',()=>{
+ const f=fixture();for(const row of Object.values(f.states))row.state='0';
+ f.states[f.mapping.grid_power]={state:'1.8',attributes:{device_class:'power',unit_of_measurement:'kW'}};
+ f.mapping.house_power=f.mapping.battery_power;
+ const s=assess(f),house=s.roles.find(r=>r.id==='house');
+ assert.equal(house.symbol,'⚠');assert.equal(house.status,'unbalanced');
+ assert.match(house.state,/readings don't balance: solar \+ battery \+ grid = 1.8 kW, house reads 0.0 kW — is the house sensor right\?/);
+ assert.ok(house.state.includes('sensor.battery_power'));
+ assert.equal(s.summary,"No ribbons because the readings don't balance — check the Electric panel / house sensor");
+ assert.equal(s.showing,0);assert.ok(s.flows.filter(r=>!r.id.startsWith('car:')).every(r=>r.status.includes("readings don't balance")));
+ f.mapping.house_power='sensor.house_power';f.states[f.mapping.house_power].state='500';
+ const partial=assess(f);assert.equal(partial.roles[3].status,'unbalanced');assert.equal(partial.summary,'Ribbons showing: 1');
+ assert.deepEqual(partial.flows.filter(r=>r.shown).map(r=>[r.id,r.watts]),[['grid:house',500]]);
+});
+check('balanced totals and tolerance have no balance warning, including reversed signs',()=>{
+ const f=fixture();assert.equal(assess(f).roles[3].status,'ok');
+ f.mapping.battery_positive='charge';f.mapping.grid_positive='export';
+ f.states[f.mapping.battery_power].state='1000';f.states[f.mapping.grid_power].state='1000';
+ assert.equal(assess(f).roles[3].status,'ok');
+ f.states[f.mapping.house_power].state='2500';assert.equal(assess(f).roles[3].status,'ok');
+ f.states[f.mapping.house_power].state='2501';assert.equal(assess(f).roles[3].status,'unbalanced');
+ for(const row of Object.values(f.states))row.state='0';
+ f.states[f.mapping.grid_power].state='-200';assert.equal(assess(f).roles[3].status,'ok');
+ f.states[f.mapping.grid_power].state='-201';assert.equal(assess(f).roles[3].status,'unbalanced');
+ delete f.states[f.mapping.house_power];assert.notEqual(assess(f).roles[3].status,'unbalanced');
+});
+check('roof and device locations use plan names or human fallbacks, never location ids',()=>{
+ const f=fixture(),b=f.view.plan.buildings[0];b.name='Pool House';
+ b.roof.sections[0].id='roof:c8d9';b.solar_zones[0].roof='roof:c8d9';
+ let s=assess(f);assert.equal(s.roles[0].location,'solar zone on roof of Pool House (source)');
+ assert.ok(!s.roles[0].location.includes('roof:c8d9'));
+ delete b.name;delete b.levels[0].name;
+ s=assess(f);assert.equal(s.roles[0].location,'solar zone on a roof (source)');
+ assert.ok(!s.roles[1].location.includes('L1'));assert.ok(!s.roles[1].location.includes('on b'));
+});
+check('renderer exposes separate status marks, bold names and flow states in both hosts',()=>{
+ for(const className of ['twin-energy-check','twin-energy-check wall']){
+  const host=document.createElement('div');host.className=className;
+  const f=fixture();f.layout.markers=f.layout.markers.filter(m=>m.device_id!=='grid');
+  renderEnergyCheck(host,assess(f));
+  assert.equal(host.children[0].dataset.energySummary,'');
+  const house=host.querySelector('[data-energy-role="house"]');
+  assert.equal(house.querySelector('[data-energy-mark]').textContent,'✓');
+  assert.equal(house.querySelector('strong').textContent,'Electric panel / house');
+  assert.equal(host.querySelector('[data-energy-flow="solar:house"]').dataset.status,'shown');
+  assert.equal(host.querySelector('[data-energy-flow="solar:grid"]').dataset.status,'blocked');
+  assert.equal(host.querySelector('[data-energy-flow="car:0"]').dataset.status,'hidden');
+ }
 });
 check('mounted mode, drawer and wall link show the same decisions on pushes and clean up',async()=>{
  const f=fixture(),devices=f.layout.markers.map(m=>({...m,state:f.states[m.entity_id].state,attributes:power(0).attributes,kind:'power'}));
@@ -102,6 +153,17 @@ check('mounted mode, drawer and wall link show the same decisions on pushes and 
   assert.equal(document.querySelector('#twin-energy-check [data-energy-summary]').textContent,s.check.summary);
   t.states['sensor.solar_power'].state='0';t.states['sensor.grid_power'].state='1500';t.states['sensor.house_power'].state='500';await t.live.refresh();
   assert.equal(document.querySelector('#twin-energy-check [data-energy-summary]').textContent,t.live.energy().check.summary);
+  // Exercise the actual mounted diagnostic on a bad saved mapping, live pushes,
+  // and its repair, alongside the same ribbons that the wall renders.
+  for(const row of Object.values(t.states))if(row.attributes?.device_class==='power')row.state='0';
+  t.states['sensor.grid_power'].state='1800';t.states['sensor.house_power'].state='1800';
+  preferences.mapping={...f.mapping,house_power:'sensor.battery_power'};t.live.configureEnergy(preferences);await t.live.refresh();
+  assert.equal(t.live.energy().check.summary,"No ribbons because the readings don't balance — check the Electric panel / house sensor");
+  assert.equal(document.querySelector('#twin-energy-check [data-energy-role="house"]').dataset.status,'unbalanced');
+  assert.equal(t.live.energy().ribbons.filter(r=>r.visible).length,0);
+  preferences.mapping=f.mapping;t.live.configureEnergy(preferences);await t.live.refresh();
+  assert.equal(document.querySelector('#twin-energy-check [data-energy-role="house"]').dataset.status,'ok');
+  assert.deepEqual(t.live.energy().ribbons.filter(r=>r.visible).map(r=>[r.id,r.watts]),[['grid:house',1800]]);
   settings.stop();settings=null;await press(link);assert.equal(link.getAttribute('aria-expanded'),'true');
   assert.equal(legend.querySelector('[data-energy-summary]').textContent,t.live.energy().check.summary);
   t.live.setMode('all');assert.equal(legend.querySelector('a'),null);t.live.setMode('energy');assert.ok(legend.querySelector('a'));

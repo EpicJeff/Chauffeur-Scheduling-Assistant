@@ -19,14 +19,46 @@ export function roofPoints(surfaces, plan) {
   return points;
 }
 export const flowRoute = (from,to) => ({from:[...from],to:[...to]});
-export function flowCurve(from, to, highestRoof) {
+export function flowApex(curve) {
+  const {v0:a, v1:c, v2:b} = curve, denominator = a.y - 2 * c.y + b.y;
+  return curve.getPoint(denominator ? Math.max(0, Math.min(1, (a.y - c.y) / denominator)) : .5);
+}
+// Use a fixed width budget, not live power, so a push never moves a route.
+export function flowFans(rows, width) {
+  const groups = new Map();
+  for (const row of rows) for (const key of new Set([JSON.stringify(row.from), JSON.stringify(row.to)])) {
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row.id);
+  }
+  for (const ids of groups.values()) ids.sort();
+  return new Map(rows.map(row => {
+    const departures = groups.get(JSON.stringify(row.from));
+    const peers = departures.length > 1 ? departures : groups.get(JSON.stringify(row.to));
+    const index = peers.indexOf(row.id);
+    // Paired slots: -.5, +.5, -1.5, +1.5, ... . Odd groups must not
+    // leave their middle ribbon on the unfanned centreline either.
+    const lane = peers.length > 1 ? (Math.floor(index / 2) + .5) * (index % 2 ? 1 : -1) : 0;
+    return [row.id, {offset: lane * 3 * width, tilt: Math.sign(lane) * Math.PI / 15}];
+  }));
+}
+export function flowCurve(from, to, fan = {}) {
   const route = flowRoute(from, to), a = worldPoint(route.from), b = worldPoint(route.to);
-  // A single quadratic in the vertical plane through the two routed anchors.
-  // Horizontal progress is linear; a round tube has no billboard twist.
-  const midpointHeight = Math.max(highestRoof, a.y, b.y) + 8 * FT;
+  const span = Math.hypot(b.x - a.x, b.z - a.z) / FT;
+  const rise = (span < 4 ? 2 + span / 4 : Math.max(3, Math.min(10, .3 * span))) * FT;
+  const height = Math.max(a.y, b.y) + rise;
   const control = a.clone().add(b).multiplyScalar(.5);
-  control.y = 2 * midpointHeight - (a.y + b.y) / 2;
-  return new THREE.QuadraticBezierCurve3(a, control, b);
+  // Solve the quadratic's actual maximum, including unequal endpoint heights.
+  control.y = height + Math.sqrt((height - a.y) * (height - b.y));
+  const curve = new THREE.QuadraticBezierCurve3(a, control, b);
+  const t = (a.y - control.y) / (a.y - 2 * control.y + b.y);
+  const lateral = (fan.offset || 0) + Math.tan(fan.tilt || 0) * rise;
+  // A quadratic remains planar through its three control points. Canonical
+  // horizontal orientation keeps lanes consistent even for reversed flows.
+  let dx = b.x - a.x, dz = b.z - a.z;
+  if (dx < 0 || dx === 0 && dz < 0) {dx = -dx; dz = -dz;}
+  const length = Math.hypot(dx, dz), perpendicular = length ? new THREE.Vector3(-dz / length, 0, dx / length) : new THREE.Vector3(1, 0, 0);
+  control.addScaledVector(perpendicular, lateral / (2 * t * (1 - t)));
+  return curve;
 }
 // Security's indoor camera fallback still uses the building centre.
 export function buildingCentre(building, plan) {

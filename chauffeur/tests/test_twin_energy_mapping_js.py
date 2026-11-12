@@ -20,6 +20,30 @@ check('Generic device classes and friendly names',()=>{
  const m=guessEnergy(s); assert.equal(m.solar_power,'sensor.a'); assert.equal(m.grid_power,'sensor.grid'); assert.equal(m.house_power,'sensor.load'); assert.equal(m.battery_power,'sensor.battery');
  assert.equal(guessEnergy({'sensor.pv_power':power()}).solar_power,'sensor.pv_power');
 });
+check('Tesla gateway friendly names keep four distinct power roles and saved choices',()=>{
+ const states=Object.fromEntries(['battery','site','load','solar'].map(role=>['sensor.powerwall_'+role+'_power',
+  {...power(),attributes:{...power().attributes,friendly_name:'Home Energy Gateway '+role[0].toUpperCase()+role.slice(1)+' power'}}]));
+ const m=guessEnergy(states);
+ assert.deepEqual([m.solar_power,m.battery_power,m.grid_power,m.house_power],
+  ['sensor.powerwall_solar_power','sensor.powerwall_battery_power','sensor.powerwall_site_power','sensor.powerwall_load_power']);
+ assert.equal(new Set([m.solar_power,m.battery_power,m.grid_power,m.house_power]).size,4);
+ const saved=guessEnergy(states,{house_power:'sensor.powerwall_battery_power'});
+ assert.equal(saved.house_power,'sensor.powerwall_battery_power');assert.equal(saved.battery_power,null);
+});
+check('specific entity ids beat friendly names and load beats home',()=>{
+ const named=name=>({...power(),attributes:{...power().attributes,friendly_name:name}});
+ const states={'sensor.a':named('Load power'),'sensor.home_power':power(),'sensor.powerwall_load_power':named('Home Energy Gateway power')};
+ assert.equal(guessEnergy(states).house_power,'sensor.powerwall_load_power');
+ delete states['sensor.powerwall_load_power'];assert.equal(guessEnergy(states).house_power,'sensor.a');
+});
+check('home in a device name never turns another power role into the house',()=>{
+ for(const kind of ['battery','grid','site','solar','pv','charge','charger','charging','gateway_battery']){
+  const row={...power(),attributes:{...power().attributes,friendly_name:'Home Energy Gateway '+kind+' power'}};
+  assert.equal(guessEnergy({['sensor.'+kind+'_power']:row}).house_power,null,kind);
+  assert.equal(guessEnergy({'sensor.a':row}).house_power,null,kind+' friendly name');
+ }
+ assert.equal(guessEnergy({'sensor.home_power':power()}).house_power,'sensor.home_power');
+});
 check('energy counters never masquerade as power',()=>{
  const m=guessEnergy({'sensor.solar_energy':{state:'44',attributes:{device_class:'energy',unit_of_measurement:'kWh'}}});
  assert.equal(m.solar_power,null); assert.equal(watts('sensor.solar_energy',{'sensor.solar_energy':{state:'44',attributes:{device_class:'energy'}}}),null);

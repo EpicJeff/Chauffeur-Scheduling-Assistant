@@ -239,8 +239,15 @@
     #twin-energy-settings button:disabled { opacity:.4; }
     #twin-energy-settings fieldset { margin:12px 0; padding:10px; border:1px solid #4b5563; border-radius:8px; }
     /* Energy check reuses the energy drawer's fieldsets; the legend reads the same rows. */
-    .twin-energy-check fieldset { margin:12px 0; padding:10px; border:1px solid #4b5563; border-radius:8px; }
+    .twin-energy-check { color:#e5e7eb; }
+    .twin-energy-check fieldset, #twin-mode-legend .twin-energy-check fieldset { display:block; margin:12px 0; padding:10px; border:1px solid #4b5563; border-radius:8px; color:#e5e7eb; }
     .twin-energy-check p { margin:6px 0; overflow-wrap:anywhere; }
+    .twin-energy-check legend { color:#e5e7eb; font-weight:700; }
+    .twin-energy-check [data-energy-summary] { font-size:16px; line-height:1.5; font-weight:600; }
+    .twin-energy-check [data-energy-mark=ok], .twin-energy-check [data-energy-flow][data-status=shown] { color:#4ade80; }
+    .twin-energy-check [data-energy-mark=warning], .twin-energy-check [data-energy-flow][data-status=blocked] { color:#fbbf24; }
+    .twin-energy-check [data-energy-mark=error] { color:#f87171; }
+    .twin-energy-check [data-energy-flow][data-status=hidden] { color:#9ca3af; }
     /* The check's role names are fieldset legends; the controls bar hides its legends, so show these. */
     #twin-mode-legend legend { position:static; width:auto; height:auto; overflow:visible; clip-path:none; font-weight:700; padding:0 4px; }
     #twin-mode-legend a { display:inline-block; min-height:44px; padding:10px 0; text-decoration:underline; }

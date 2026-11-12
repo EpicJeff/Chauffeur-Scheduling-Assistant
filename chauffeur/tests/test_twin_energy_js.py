@@ -6,8 +6,9 @@ from twin_live_node_rig import run
 
 DRIVER = r"""
 const {flowReading} = await import(file('static/twin/live/energy_mapping.js'));
-const {energyAnchors,energyTopology,energyPlacementLegend,roofPoints,flowCurve,flowRoute,lotPoint,worldPoint} = await import(file('static/twin/live/energy_geometry.js'));
-const {flowLabelPositions,mountEnergy,createRoofFade,FLOW_COLORS}=await import(file('static/twin/live/energy.js'));
+const {energyAnchors,energyTopology,energyPlacementLegend,roofPoints,flowCurve,flowRoute,flowApex,flowFans,lotPoint,worldPoint} = await import(file('static/twin/live/energy_geometry.js'));
+const energyModule=await import(file('static/twin/live/energy.js'));
+const {flowLabelPositions,mountEnergy,FLOW_COLORS}=energyModule;
 const {solarPlanes,solarZones,solarLayout,solarPoint,solarCovered,solarRect}=await import(file('static/twin/twin_solar.js'));
 const {mountModes} = await import(file('static/twin/live/modes.js'));
 const checks=[], check=(n,f)=>checks.push([n,f]);
@@ -89,7 +90,8 @@ check('ribbon has a continuous emissive core and soft additive halo reused for p
  const t=await energyRig({devices:[d('battery','sensor.battery_power',2000,power),d('house','sensor.house_power',8000,power)]});
  try{
   t.live.setMode('energy');let core,halo;t.view.scene.traverse(o=>{if(o.userData.energyRibbon==='battery:house')core=o;if(o.userData.energyRibbonHalo==='battery:house')halo=o;});
-  assert.ok(core.visible && halo.visible);assert.equal(halo.material.blending,THREE.AdditiveBlending);assert.equal(core.material.depthTest,false);
+  assert.ok(core.visible && halo.visible);assert.equal(halo.material.blending,THREE.AdditiveBlending);
+  for(const material of [core.material,halo.material]){assert.equal(material.depthTest,false);assert.equal(material.depthWrite,false);}
   assert.ok(core.renderOrder>halo.renderOrder && halo.renderOrder>20);assert.equal(core.material.toneMapped,false);
   assert.ok(core.material.uniforms.coreGain.value<=1);assert.ok(halo.material.uniforms.edgeAlpha.value<=.6);
   assert.equal(core.material.uniforms.color.value.getHex(),new THREE.Color(FLOW_COLORS.battery).getHex());
@@ -103,11 +105,21 @@ check('ribbon has a continuous emissive core and soft additive halo reused for p
   assert.equal(core.material.uniforms.phase.value,halo.material.uniforms.phase.value);
  }finally{t.cleanup();}
 });
-check('overlapping midpoint labels are separated',()=>{
+check('crowded labels all remain visible, try their ribbon, then stack with a gap',()=>{
  const placed=flowLabelPositions(Array.from({length:8},()=>({x:700,y:400,width:130})),{left:0,right:1400});
- for(let i=0;i<placed.length;i++)for(let j=0;j<i;j++){
-  const a=placed[i],b=placed[j];assert.ok(!(a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top));
+ assert.ok(placed.every(p=>p.visible));
+ const shown=placed.filter(p=>p.visible);
+ for(let i=0;i<shown.length;i++)for(let j=0;j<i;j++){
+  const a=shown[i],b=shown[j];assert.ok(!(a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top));
  }
+ const separate=flowLabelPositions([{x:300,y:400,width:130},{x:700,y:400,width:130}],{left:0,right:1400});
+ assert.ok(separate.every(p=>p.visible));assert.deepEqual(separate.map(p=>[p.x,p.y]),[[300,400],[700,400]]);
+ const pair=flowLabelPositions([{x:700,y:400,width:130},{x:700,y:400,width:130}],{left:0,right:1400});
+ assert.ok(pair.every(p=>p.visible));assert.ok(Math.abs(pair[0].y-pair[1].y)>=26);
+ const along=flowLabelPositions([{x:700,y:400,width:130},{x:700,y:400,width:130,along:[{x:900,y:420}]}],{left:0,right:1400});
+ assert.deepEqual([along[1].x,along[1].y],[900,420]);
+ const edge=flowLabelPositions(Array.from({length:8},()=>({x:10,y:-100,width:130})),{left:0,right:1400,top:0,bottom:1000});
+ assert.ok(edge.every(p=>p.visible&&p.left>=0&&p.top>=0&&p.bottom<=1000),'offscreen apexes retain readable labels inside the viewport');
 });
 check('real household zones draw with physical depth in every mode and actual centroid',async()=>{
  const {buildTwin}=await import(file('static/twin/twin_generator.js'));
@@ -132,19 +144,117 @@ check('arcs preserve coincident and short endpoint coordinates exactly',()=>{
   const a=curve.v0,b=curve.v2;for(const p of curve.getPoints(15))assert.ok(Math.abs((p.x-a.x)*(b.z-a.z)-(p.z-a.z)*(b.x-a.x))<1e-7);
  }
 });
-check('roof-only depth fade warms, caches camera poses, and restores renderer state',()=>{
- let renders=0,warms=0,warmTargetValid=false,target=null,color=new THREE.Color('#182030'),alpha=.5;
- const renderer={autoClear:false,getRenderTarget:()=>target,setRenderTarget:t=>{target=t;},getDrawingBufferSize:v=>v.set(1400,1000),
-  getClearColor:v=>v.copy(color),getClearAlpha:()=>alpha,setClearColor:(c,a)=>{color.set(c);alpha=a;},
-  compileAsync:async()=>{warms++;warmTargetValid=!!target?.isWebGLRenderTarget;},render:(scene)=>{renders++;assert.equal(scene.children.length,1);assert.equal(target.width,700);assert.equal(target.height,500);}};
- const camera=new THREE.PerspectiveCamera(38,1.4,.1,1000),view={renderer3:renderer,camera,groups:{roof:{visible:true}}},fade=createRoofFade(view);
- const original=color.clone();
+check('actual apex uses the gentle span formula, including short spans and unequal endpoints',()=>{
+ for(const span of [0,1,3.9,4,8,20,100])for(const heights of [[0,0],[2,9],[15,1]]){
+  const from=[0,0,heights[0]],to=[span,0,heights[1]],curve=flowCurve(from,to),apex=flowApex(curve);
+  const rise=span<4?2+span/4:Math.max(3,Math.min(10,.3*span));
+  assert.ok(Math.abs(apex.y/FT-Math.max(...heights)-rise)<1e-9,[span,heights,apex.y/FT]);
+  for(const p of curve.getPoints(200))assert.ok(p.y<=apex.y+1e-9);
+  assert.ok(curve.getPoint(0).distanceTo(worldPoint(from))<1e-10);assert.ok(curve.getPoint(1).distanceTo(worldPoint(to))<1e-10);
+ }
+});
+check('shared starts and ends fan deterministically by id, at least two maximum ribbon widths apart',()=>{
+ const width=flowReading(4000).width;
+ for(const reversed of [false,true]){
+  const rows=[{id:'grid:house',from:[0,0,4],to:[20,0,4]},{id:'grid:battery',from:[0,0,4],to:[21,0,4]}]
+   .map(r=>reversed?{...r,from:r.to,to:r.from}:r);
+  const fans=flowFans(rows,width),again=flowFans([...rows].reverse(),width);
+  for(const row of rows)assert.deepEqual(fans.get(row.id),again.get(row.id));
+  const curves=rows.map(row=>flowCurve(row.from,row.to,fans.get(row.id))),apexes=curves.map(flowApex);
+  assert.ok(apexes[0].distanceTo(apexes[1])>=2*width);
+  assert.ok(Math.abs(fans.get(rows[0].id).tilt)*180/Math.PI>=10);assert.ok(Math.abs(fans.get(rows[0].id).tilt)*180/Math.PI<=15);
+  for(const curve of curves){
+   const normal=curve.v1.clone().sub(curve.v0).cross(curve.v2.clone().sub(curve.v0)).normalize();
+   for(const p of curve.getPoints(30))assert.ok(Math.abs(p.clone().sub(curve.v0).dot(normal))<1e-9,'fanned curves stay planar');
+  }
+ }
+});
+check('every member of two- and three-flow shared groups has a non-zero fan offset',()=>{
+ const width=flowReading(4000).width;
+ for(const n of [2,3]){
+  const rows=Array.from({length:n},(_,i)=>({id:'grid:'+i,from:[0,0,4],to:[20+i,0,4]})),fans=flowFans(rows,width);
+  for(const row of rows){
+   assert.notEqual(fans.get(row.id).offset,0,row.id);
+   const natural=flowApex(flowCurve(row.from,row.to)),fanned=flowApex(flowCurve(row.from,row.to,fans.get(row.id)));
+   assert.ok(natural.distanceTo(fanned)>=width,row.id+' actually moves');
+  }
+  if(n===2)assert.equal(fans.get(rows[0].id).offset,-fans.get(rows[1].id).offset);
+ }
+});
+check('rendered mesh cross-sections use the full 0.4–1.5ft power width and a soft halo',async()=>{
+ const t=await energyRig({devices:[d('grid','sensor.grid_power',50,power),d('house','sensor.house_power',50,power)]});
  try{
-  fade.setPoints([new THREE.Vector3(-1,0,0),new THREE.Vector3(1,0,0),new THREE.Vector3(0,0,1)]);fade.warm();assert.equal(warms,1);assert.ok(warmTargetValid,'warm uses the same output target as the roof pass');
-  fade.draw(false);assert.equal(renders,0);fade.draw(true);assert.equal(renders,1);assert.equal(target,null);assert.equal(renderer.autoClear,false);assert.equal(alpha,.5);assert.ok(color.equals(original));
-  fade.draw(true);assert.equal(renders,1);camera.position.x=1;fade.draw(true);assert.equal(renders,2);
-  view.groups.roof.visible=false;fade.draw(true);assert.equal(fade.uniforms.roofFadeEnabled.value,0);assert.equal(renders,2);
- }finally{fade.stop();}
+  t.live.setMode('energy');let core,halo;t.view.scene.traverse(o=>{if(o.userData.energyRibbon==='grid:house')core=o;if(o.userData.energyRibbonHalo==='grid:house')halo=o;});
+  const geometry=core.geometry,material=core.material;
+  for(const watts of [0,50,500,1500,4000,100000]){
+   t.states['sensor.grid_power'].state=t.states['sensor.house_power'].state=String(watts);await t.live.refresh();
+   const width=flowReading(watts).width,positions=core.geometry.attributes.position,centres=core.geometry.attributes.centerline;
+   assert.ok(centres,'actual mesh positions are centred on the curve, not contracted from a 1m tube in the shader');
+   assert.ok(width>=.4*FT&&width<=1.5*FT);assert.equal(core.geometry,geometry);assert.equal(core.material,material);
+   for(let i=0;i<positions.count;i++){
+    const radius=new THREE.Vector3().fromBufferAttribute(positions,i).distanceTo(new THREE.Vector3().fromBufferAttribute(centres,i));
+    assert.ok(Math.abs(2*radius-width)<1e-5,[watts,i,2*radius,width]);
+   }
+   assert.equal(core.material.uniforms.radius.value,width/2);assert.equal(halo.material.uniforms.radius.value,width);
+   assert.equal(halo.material.blending,THREE.AdditiveBlending);assert.ok(halo.material.uniforms.edgeAlpha.value>0);
+  }
+ }finally{t.cleanup();}
+});
+check('the real pool-house meter, panel and battery placements fan both grid flows apart',async()=>{
+ const {hostPoint}=await import(file('static/twin/twin_hosts.js'));
+ const plan=structuredClone(config.harness_plan),b=plan.buildings.find(b=>b.id==='pool-house');
+ const wall='wall:17ec2a8dad9e47d0aefbfe143524c1c2~2';assert.ok(b.walls.some(w=>w.id===wall));
+ b.anchors=[{id:'meter',kind:'meter',host:{wall,side:'right',at:2.5,z:4}},
+  {id:'panel',kind:'electric_panel',host:{wall,side:'left',at:15,z:4}}];
+ const mapping={battery_power:'sensor.live_battery',grid_power:'sensor.live_grid',house_power:'sensor.live_house',cars:[],
+  locations:{battery:{type:'device',id:'battery'},grid:{type:'object',building:b.id,id:'meter'},house:{type:'object',building:b.id,id:'panel'}}};
+ const at=lotPoint(b,hostPoint(b,{floor:'room:5d7de10ca48340ae85c407d22337c6f7',u:.35,v:.65},4),plan);
+ const layout={markers:[{device_id:'battery',entity_id:'sensor.live_battery',building:b.id,placed:true,at}]};
+ const anchors=energyAnchors({plan},layout,mapping),rows=energyTopology(anchors,mapping),width=flowReading(4000).width,fans=flowFans(rows,width);
+ const grid=rows.filter(r=>r.id==='grid:house'||r.id==='grid:battery');assert.equal(grid.length,2);
+ const apexes=grid.map(r=>{assert.notEqual(fans.get(r.id).offset,0);return flowApex(flowCurve(r.from,r.to,fans.get(r.id)));});
+ assert.ok(apexes[0].distanceTo(apexes[1])>=2*width,'actual house placements separate by two maximum widths');
+});
+check('mounted grid fan labels anchor to their own apex and reproject on camera movement',async()=>{
+ const t=await energyRig({devices:[d('solar','sensor.solar_power',0,power),d('battery','sensor.battery_power',-2000,power),
+  d('grid','sensor.grid_power',2500,power),d('house','sensor.house_power',500,power)]});
+ try{
+  t.live.setMode('energy');t.live.draw();
+  const rows=t.live.energy().ribbons.filter(r=>r.visible);assert.deepEqual(rows.map(r=>r.id).sort(),['grid:battery','grid:house']);
+  assert.ok(new THREE.Vector3().fromArray(rows[0].apex).distanceTo(new THREE.Vector3().fromArray(rows[1].apex))>=2*Math.max(...rows.map(r=>r.width)));
+  for(const row of rows){let mesh;t.view.scene.traverse(o=>{if(o.userData.energyRibbon===row.id)mesh=o;});
+   assert.deepEqual(row.apex,flowApex(mesh.geometry.parameters.path).toArray());assert.deepEqual(row.labelAnchor,row.apex);}
+  const before=rows.map(r=>document.querySelector('[data-energy-label="'+r.id+'"]').style.left);
+  t.camera.position.set(10,45,10);t.camera.lookAt(0,0,0);t.camera.updateMatrixWorld(true);t.live.draw();
+  const after=rows.map(r=>document.querySelector('[data-energy-label="'+r.id+'"]').style.left);assert.notDeepEqual(after,before);
+  assert.equal(rows.filter(r=>!document.querySelector('[data-energy-label="'+r.id+'"]').hidden).length,2,'both fan labels fit after camera movement');
+  for(const row of rows){const node=document.querySelector('[data-energy-label="'+row.id+'"]');if(node.hidden)continue;
+   const p=new THREE.Vector3().fromArray(row.apex).project(t.camera);
+   assert.ok(Math.hypot(parseFloat(node.style.left)-(p.x+1)*700,parseFloat(node.style.top)-(1-p.y)*500)<=24+1e-9);}
+ }finally{t.cleanup();}
+});
+check('ribbons draw over roofs with no mask, offscreen render, or extra warm-up pass',async()=>{
+ const t=await energyRig({devices:[d('grid','sensor.grid_power',1800,power),d('house','sensor.house_power',1800,power)]});
+ let effect;
+ try{
+  t.live.stop();t.view.groups.roof=new THREE.Group();
+  t.view.roofSurfaces=new Map([['b',{positions:[-5,-5,10,5,-5,10,0,5,10]}]]);
+  let renders=0,compiles=0,targetChanges=0;
+  Object.assign(t.view.renderer3,{getRenderTarget:()=>null,setRenderTarget:()=>{targetChanges++;},getDrawingBufferSize:v=>v.set(1400,1000),
+   getClearColor:v=>v.set('#182030'),getClearAlpha:()=>1,setClearColor(){},render:()=>{renders++;},compileAsync:async()=>{compiles++;}});
+  const live={layout:()=>t.layout,peek:()=>t.states,stale:()=>false};
+  effect=mountEnergy({view:t.view,live});effect.update('energy');
+  assert.equal(energyModule.createRoofFade,undefined);
+  for(const mode of ['all','energy','energy','all','energy']){t.view.camera.position.x++;effect.draw(mode);effect.warm?.();}
+  t.view.groups.roof.visible=false;effect.draw('energy');
+  t.view.roofSurfaces=new Map(t.view.roofSurfaces);effect.update('energy');effect.draw('energy');
+  assert.equal(renders,0,'the main scene owns the only render pass');
+  assert.equal(compiles,0,'no separate depth shader needs warming');assert.equal(targetChanges,0,'no offscreen target is used');
+  const ribbons=[];t.view.scene.traverse(o=>{if(o.userData.energyRibbon||o.userData.energyRibbonHalo)ribbons.push(o);});
+  assert.ok(ribbons.length>0);assert.ok(effect.snapshot().ribbons.some(r=>r.visible));
+  for(const o of ribbons){assert.equal(o.material.depthTest,false);assert.equal(o.material.depthWrite,false);assert.ok(o.renderOrder>20);
+   assert.equal(o.material.uniforms.roofDepth,undefined);assert.doesNotMatch(o.material.fragmentShader,/roofDepth|roofFade|sampler2D/);}
+ }finally{effect?.stop();t.cleanup();}
 });
 check('warm path sees away cars and cones before entry and on time look',async()=>{
  const t=await energyRig({devices:[d('car','sensor.tesla_charge_power',1000,power),d('tracker','device_tracker.tesla_location','away'),d('camera','camera.k','idle',{},'camera')]});

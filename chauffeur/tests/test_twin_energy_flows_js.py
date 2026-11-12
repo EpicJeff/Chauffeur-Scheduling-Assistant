@@ -55,6 +55,10 @@ check('residual exports follow the specified priority and grid import never exce
  ];
  for(const [totals,flows]of tables)assert.deepEqual(allocateEnergyFlows(totals),flows);
 });
+check('unbalanced import draws only the reported house consumption without inventing a destination',()=>{
+ assert.deepEqual(allocateEnergyFlows({solar:0,battery:0,grid:1800,home:0}),{});
+ assert.deepEqual(allocateEnergyFlows({solar:0,battery:0,grid:1800,home:500}),{'grid:house':500});
+});
 check('each table flow has exact source and destination anchors',()=>{
  const a={solar:[11,23,31],battery:[5,17,4],grid:[-12,9,3],house:[20,13,5],cars:[[27,3,2]]};
  const topology=energyTopology(a,{cars:[{charge_power:'sensor.ev'}]});
