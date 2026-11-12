@@ -458,7 +458,8 @@ def scenario_camera_spotlight_keeps_camera_marker_and_controls():
         check(any(CEILING in r['lights'] for r in body['rooms']), 'spotlight remains a room light')
         with s.browser(launch_args=L.GPU_ARGS) as page:
             seen = L.record(page)
-            _open(page, s, query='tier=low&test=1&panel=true&kiosk=true', ceiling='on')
+            # The marker is the camera now (idle), not its spotlight: wait for the camera's look.
+            _open(page, s, query='tier=low&test=1&panel=true&kiosk=true', ceiling='off')
             L.aim_kitchen(page)
             check(L.marker(page, CEILING_ID)['kind'] == 'camera', 'camera marker, not a light')
             start = len(seen)
@@ -471,7 +472,7 @@ def scenario_camera_spotlight_keeps_camera_marker_and_controls():
             spotlight.click()
             check(L.wait_for(page, lambda: _posts(seen, start) == [('light', 'toggle', {'entity_id': CEILING})], 5),
                   ('toggle uses the spotlight entity', _posts(seen, start)))
-            check(spotlight.get_attribute('aria-checked') == 'true', 'confirmed spotlight is on')
+            check(L.wait_for(page, lambda: spotlight.get_attribute('aria-checked') == 'true', 5), 'confirmed spotlight is on')
             check(ring.get_by_role('switch', name='Privacy mode', exact=True).is_visible(), 'privacy toggle')
             check(ring.locator('[data-ring-part="still"]').count() == 0, 'no camera frame bypasses the household grid')
             page.keyboard.press('Escape')
