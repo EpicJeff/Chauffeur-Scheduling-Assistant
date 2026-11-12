@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { FT } from '../twin_generator.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { hostPoint, parkingPoint } from '../twin_hosts.js';
 import { solarZones, solarPoint } from '../twin_solar.js';
 import { assignParking, migrateEnergy, carHome } from './energy_mapping.js';
@@ -8,7 +8,7 @@ import { assignParking, migrateEnergy, carHome } from './energy_mapping.js';
 export function lotPoint(building, [x, y, z = 0], plan) {
   const a = (building.rotation || 0) * Math.PI / 180, p = building.position || [0, 0];
   return [p[0] + Math.cos(a) * x - Math.sin(a) * y, p[1] + Math.sin(a) * x + Math.cos(a) * y,
-    z + (building.base || 0) + groundAt(plan, ...p)];
+    z + (building.base || 0) + buildingGround(plan, building)];
 }
 export const worldPoint = p => new THREE.Vector3(p[0] * FT, p[2] * FT, -p[1] * FT);
 export function roofPoints(surfaces, plan) {
@@ -167,7 +167,7 @@ export function buildingCentre(building, plan) {
 export function energyLocations(view, layout) {
   const options=[];
   for(const m of layout?.markers || [])if(m.placed && m.location_valid!==false)options.push({ref:{type:'device',id:m.device_id},label:'Placed device: '+(m.name || m.device_id),entities:[m.entity_id,...(m.entities || [])].filter(Boolean),
-    marker:m, at:[m.at[0],m.at[1],m.at[2]+groundAt(view.plan,...(view.plan?.buildings.find(b=>b.id===m.building)?.position || [0,0]))]});
+    marker:m, at:[m.at[0],m.at[1],m.at[2]+buildingGround(view.plan,view.plan?.buildings.find(b=>b.id===m.building))]});
   for(const b of view.plan?.buildings || [])for(const p of b.anchors || [])if(['meter','electric_panel','charger'].includes(p.kind) && p.state!=='ghost'){
     try{options.push({ref:{type:'object',id:p.id,building:b.id},kind:p.kind,host:p.host,label:(p.name || {meter:'Meter',electric_panel:'Electric panel',charger:'Charger'}[p.kind])+' object: '+(b.name || b.id)+' / '+p.id,at:lotPoint(b,hostPoint(b,p.host,(p.offset || 0)+.04),view.plan)});}catch{}
   }

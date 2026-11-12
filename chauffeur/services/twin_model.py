@@ -599,6 +599,8 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
                 building[key] = 0
             building.setdefault(key, 0)
         building['rotation'] %= 360
+        from services import twin_terrain
+        twin_terrain.normalize_foundation(building, notes)
         building.setdefault('materials', {})
         _network(building, levels, notes)
         _list(building, 'rooms', notes, 'room', capped=False)
@@ -619,6 +621,8 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
         site = {}
         notes.append('Coerced invalid site to an empty object.')
     twin_plan._site(site, notes)
+    from services import twin_terrain
+    twin_terrain.validate_reads(buildings, site, notes)
     site.setdefault('fence', None)
     site['compose_overrides'] = twin_plan._compose_overrides(site.get('compose_overrides'), notes)
     if not buildings and not twin_plan._polygon(site.get('lot')):

@@ -3,6 +3,8 @@ import { solarLayout } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
 import { createEquipmentShelf } from './equipment_shelf.js';
+import { foundationShelf } from './foundation_shelf.js';
+import { siteRecord, siteShapeKinds, siteShapeLabels } from '../objects.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -37,10 +39,8 @@ export function parseLength(text) {
   return value;
 }
 export function findPiece(plan, pieceId, buildingId) {
-  for (const kind of ['planting', 'furniture']) {
-    const index = plan?.site?.[kind]?.findIndex((p, i) => (p.id || `${kind}:${i}`) === pieceId) ?? -1;
-    if (index >= 0 && !buildingId) return { piece: { ...plan.site[kind][index], id: pieceId }, kind, index, building: null };
-  }
+  const site = !buildingId && siteRecord(plan, pieceId);
+  if (site) return site;
   const building = plan?.buildings.find(b => b.id === buildingId);
   if (!building) return null;
   if (building.id === pieceId) return { piece: building, building, kind: 'building' };
@@ -57,7 +57,7 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink }) {
+export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview }) {
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
   let edgeIndex = null;
@@ -67,7 +67,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
   const fieldValue = (piece, field) => field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
   const title = ({ kind, piece, building }) => {
     const name = kind==='solar_zone'?'Solar zone':kind==='anchor' && ['meter','electric_panel','charger','parking'].includes(piece.kind)?(piece.name || ({meter:'Meter',electric_panel:'Electric panel',charger:'Charger',parking:'Parking spot'}[piece.kind])):kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
-      : piece.name || piece.preset || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
+      : piece.name || piece.preset || siteShapeLabels[kind] || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
     if (!['wall', 'opening'].includes(kind)) return name;
     const wall = kind === 'wall' ? piece : building.walls.find(w => w.id === (piece.wall || piece.host?.wall));
     const room = building.rooms?.find(r => r.id === getSelection().room);
@@ -105,7 +105,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     const flags = roofFlags(record);
-    const nextLayout = JSON.stringify([record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
+    const nextLayout = JSON.stringify([record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
     if (record && layout === nextLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
@@ -185,8 +185,23 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       }
     }
     if (kindIsEquipment(record)) equipmentShelf.draw(host, record);
+    if (kind === 'building') foundationShelf(host, piece, { getPlan, canEdit, queue, op, report, preview });
     if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { canEdit, queue, op, report,
       getRecord: () => findPiece(getPlan(), piece.id, building?.id) });
+    if (siteShapeKinds.includes(kind)) {
+      const note = document.createElement('p'); note.textContent = 'Drag the move handle or use the arrow keys (one foot).'; host.append(note);
+      for (const [axis, text] of ['Move east (ft)', 'Move north (ft)'].entries()) {
+        const label = document.createElement('label'); label.textContent = text;
+        const input = document.createElement('input'); input.type = 'number'; input.step = 'any'; input.value = '0';
+        input.disabled = !canEdit(); input.setAttribute('aria-label', text); label.append(input); host.append(label);
+        input.addEventListener('change', () => {
+          if (!canEdit() || !input.value.trim()) return;
+          const amount = Number(input.value);
+          if (!Number.isFinite(amount)) { report(new Error('Use a finite number of feet.')); return; }
+          queue(() => canEdit() && op({ op: 'move_site_item', list: kind, index: record.index, by: axis ? [0, amount] : [amount, 0] })).catch(report);
+        });
+      }
+    }
     const form = document.createElement('form'); form.addEventListener('submit', event => event.preventDefault()); host.append(form);
     const more = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'More'; more.append(summary);
     const cardFields = (kind === 'roof' && roof && !piece.rect ? []
@@ -195,7 +210,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     for (const field of cardFields) {
       const end = field.startsWith('ends.') ? field.slice(5) : null;
       const label = document.createElement('label'); label.textContent = end ? endNames[end]
-        : hosted(kind) && hostedLabels[field] || getFieldLabels()[field] || labels[field] || field[0].toUpperCase() + field.slice(1);
+        : field === 'base' && kind === 'building' ? 'Fixed base above lot datum'
+          : hosted(kind) && hostedLabels[field] || getFieldLabels()[field] || labels[field] || field[0].toUpperCase() + field.slice(1);
       let input;
       const choices = field === 'kind' ? (['roof', 'dormer'].includes(kind) ? ['hip', 'gable', 'shed', 'flat'] : ['window', 'door', 'slider', 'bifold', 'passage', 'garage'])
         : end ? ['gable', 'hip', 'clip'] : field === 'ridge' ? ['x', 'y'] : field === 'low_side' ? ['x0', 'x1', 'y0', 'y1'] : null;
@@ -271,7 +287,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       if (!canEdit()) return;
       if (!await window.promptConfirm(`Delete ${getLabel(selection)}?`, 'Attached doors or windows may also be removed. The timeline keeps the earlier house.', 'Delete', 'Cancel')) return;
       await pending;
-      if (['planting', 'furniture'].includes(kind)) await op({ op: 'delete_site_item', list: kind, index: record.index });
+      if (!building) await op({ op: 'delete_site_item', list: kind, index: record.index });
       else if ((kind==='solar_zone' || roof && !piece.rect) && op) await op({ op: 'delete', building: building.id, id: piece.id });
       else await edit({ op: 'delete', building: building.id, piece: piece.id });
       select(null);

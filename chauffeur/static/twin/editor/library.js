@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { svgIcon } from '../live/glance_icons.js';
 import { contains, FT } from '../twin_generator.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround, inPolygon, edgeDistance } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
 import { rememberImport, forgetImport, libUrl } from '../twin_library.js';
 import { mountImports } from './imports.js';
-import { objectShown } from '../objects.js';
+import { objectShown, siteRecords, siteRecord, sitePoints, siteShapeKinds } from '../objects.js';
 import { request, report } from './api.js';
 
 export const materialName = id => String(id || 'Material').replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
@@ -180,7 +180,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     const a = -(building.rotation || 0) * Math.PI / 180, pos = building.position || [0, 0];
     const x = p.x / FT - pos[0], y = -p.z / FT - pos[1];
     return new THREE.Vector3(Math.cos(a) * x - Math.sin(a) * y, Math.sin(a) * x + Math.cos(a) * y,
-      p.y / FT - (building.base || 0) - groundAt(getPlan(), ...pos));
+      p.y / FT - (building.base || 0) - buildingGround(getPlan(), building));
   }
   function ground(event) {
     const r = ray(event), point = r.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3());
@@ -364,8 +364,17 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   }, { capture: true });
 
   function siteBox(piece, kind) {
+    if (siteShapeKinds.includes(kind)) {
+      const ps = sitePoints(piece), box = new THREE.Box3();
+      for (const [x, y] of ps) {
+        const z = groundAt(getPlan(), x, y) + (piece.elevation || 0), radius = piece.at ? (piece.radius || 2) : .3;
+        box.expandByPoint(new THREE.Vector3((x - radius) * FT, z * FT, -(y + radius) * FT));
+        box.expandByPoint(new THREE.Vector3((x + radius) * FT, (z + (piece.height || 1)) * FT, -(y - radius) * FT));
+      }
+      return box;
+    }
     const height = (kind === 'planting' ? piece.height || 4 : 3) * (piece.scale ?? 1), radius = (kind === 'planting' ? Math.max(1, height * .18) : 2 * (piece.scale ?? 1));
-    const y = groundAt(getPlan(), ...piece.at), [x, z] = piece.at;
+    const y = groundAt(getPlan(), ...piece.at) + (piece.elevation || 0), [x, z] = piece.at;
     return new THREE.Box3(new THREE.Vector3((x - radius) * FT, y * FT, -(z + radius) * FT),
       new THREE.Vector3((x + radius) * FT, (y + height) * FT, -(z - radius) * FT));
   }
@@ -378,6 +387,17 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       const distance = point.distanceTo(r.origin);
       if (!nearest || distance < nearest.distance) nearest = { kind, id: piece.id || `${kind}:${index}`, distance };
     }
+    // Shape footprints come after free objects, so a chair or tree remains
+    // reachable even when it stands inside a bed or on a path.
+    if (!nearest && !view.pick(x, y)) {
+      const p = ground({ clientX: x, clientY: y });
+      if (p) for (const { kind, piece } of siteRecords(getPlan()).filter(r => siteShapeKinds.includes(r.kind)).reverse()) {
+        const ps = sitePoints(piece);
+        const hit = piece.polygon ? inPolygon(ps, ...p) : piece.at ? Math.hypot(p[0] - piece.at[0], p[1] - piece.at[1]) < (piece.radius || 2)
+          : ps.some((a, i) => i + 1 < ps.length && edgeDistance(p, a, ps[i + 1]) < .6);
+        if (hit) return { kind, id: piece.id };
+      }
+    }
     if (!nearest) return null;
     const picked = view.pick(x, y), box = picked && view.worldBox(picked.id, picked.building);
     if (box) {
@@ -389,7 +409,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   }
   function refresh() {
     const selected = tools.selection(), kind = selected.kind;
-    const piece = ['planting', 'furniture'].includes(kind) && getPlan()?.site?.[kind]?.find((p, i) => (p.id || `${kind}:${i}`) === selected.id);
+    const piece = !selected.building && siteRecord(getPlan(), selected.id)?.piece;
     outline.visible = !!piece;
     if (piece) outline.box.copy(siteBox(piece, kind));
   }
@@ -398,9 +418,9 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     const picked = pickSite(event.clientX, event.clientY); if (!picked) return false;
     onInteract?.(); tools.select(picked);
     refresh();
-    const index = getPlan().site[picked.kind].findIndex((p, i) => (p.id || `${picked.kind}:${i}`) === picked.id), piece = getPlan().site[picked.kind][index];
+    const { index, piece } = siteRecord(getPlan(), picked.id);
     const start = ground(event); if (!start) return false;
-    siteDrag = { ...picked, index, start, at: [...piece.at], x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
+    siteDrag = { ...picked, index, start, piece, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
     view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); return true;
   }
   function pointerUp(event, cancel) {
@@ -410,14 +430,20 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     refresh();
     if (!cancel && canEdit() && Math.hypot(event.clientX - g.x, event.clientY - g.y) >= 3) {
       const at = ground(event);
-      if (at) op({ op: 'move_site_item', list: g.kind, index: g.index, at: at.map((v, i) => v + g.at[i] - g.start[i]) }).catch(report);
+      if (at) op({ op: 'move_site_item', list: g.kind, index: g.index,
+        ...(g.piece.at ? { at: at.map((v, i) => v + g.piece.at[i] - g.start[i]) } : { by: at.map((v, i) => v - g.start[i]) }) }).catch(report);
     }
     return true;
   }
   function pointerMove(event) {
     if (!siteDrag) return false;
-    const at = ground(event), piece = getPlan().site[siteDrag.kind][siteDrag.index];
-    if (at) outline.box.copy(siteBox({ ...piece, at: at.map((v, i) => v + siteDrag.at[i] - siteDrag.start[i]) }, siteDrag.kind));
+    const at = ground(event);
+    if (at) {
+      const piece = structuredClone(siteDrag.piece), by = at.map((v, i) => v - siteDrag.start[i]);
+      for (const key of ['at', 'polygon', 'points', 'polyline']) if (piece[key])
+        piece[key] = key === 'at' ? piece[key].map((v, i) => v + by[i]) : piece[key].map(p => p.map((v, i) => v + by[i]));
+      outline.box.copy(siteBox(piece, siteDrag.kind));
+    }
     return true;
   }
   view.controls.addEventListener('change', refresh);

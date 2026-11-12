@@ -493,6 +493,7 @@ def _details(building, levels, notes):
 
 
 def _site(site, notes):
+    from services import twin_terrain
     if site.get('lot') is not None and not _polygon(site['lot']):
         site['lot'] = None
         notes.append('Dropped site lot: invalid polygon.')
@@ -512,8 +513,7 @@ def _site(site, notes):
         for index, item in enumerate(_items(site, name, notes)):
             valid = isinstance(item, dict)
             if valid and name == 'terraces':
-                valid = (_polygon(item.get('polygon')) and _number(item.get('height'))
-                         and -50 <= item['height'] <= 50 and _numeric_fields(item, ('elevation',)))
+                valid = twin_terrain.pad_error(item) is None
             elif valid and name in ('beds', 'hardscape'):
                 valid = _polygon(item.get('polygon')) and _numeric_fields(item, ('height', 'elevation'))
             elif valid and name == 'edges':
@@ -574,6 +574,8 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
             base = 0
             notes.append(f"Building {building.get('id', index)}: defaulted invalid base to 0.")
         building['base'] = base
+        from services import twin_terrain
+        twin_terrain.normalize_foundation(building, notes)
         walls = _walls(building, levels, notes)
         sections = _roof(building, notes)
         _openings(building, walls, sections, notes)
@@ -585,6 +587,8 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         notes.append('Coerced invalid site to an empty object.')
     site = site if isinstance(site, dict) else {}
     _site(site, notes)
+    from services import twin_terrain
+    twin_terrain.validate_reads(buildings, site, notes)
     if not buildings and not _polygon(site.get('lot')):
         raise ValueError('Twin plan must contain at least one usable building.')
     site.setdefault('fence', None)

@@ -55,7 +55,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let linkReadAt = 0;
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    op, addDormer, canEdit, select, pickMaterial, haLink, ask: item => panel.focusSelection(item, getLabel(item)) });
+    op, addDormer, canEdit, select, pickMaterial, haLink, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: op,
     onPreview: drawDimensions, onClick: cards.edge, signal });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'
@@ -78,7 +78,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (!item) { roomSelection.clear(); return; }
     const record = findPiece(getPlan(), item.id ?? item.pieceId, item.building ?? item.buildingId);
     if (!record) return;
-    if (['planting', 'furniture'].includes(record.kind)) {
+    if (!record.building) {
       roomSelection.clear(); roomSelection.select({ kind: record.kind, id: record.piece.id }); return;
     }
     const level = record.kind === 'level' ? record.piece.id : record.piece.level
@@ -340,8 +340,13 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       || event.target.closest?.('input, textarea, select, [contenteditable="true"]')
       || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), [role="dialog"]')) return;
     const record = selection && findPiece(getPlan(), selection.pieceId, selection.buildingId);
-    if (!isObject(record) && record?.kind !== 'opening') return;
+    if (!record || !isObject(record) && record.kind !== 'opening' && record.building) return;
     if (event.key === 'Delete') { event.preventDefault(); cards.remove().catch(report); return; }
+    if (!record.building && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+      event.preventDefault();
+      const by = [{ ArrowLeft: -1, ArrowRight: 1 }[event.key] || 0, { ArrowDown: -1, ArrowUp: 1 }[event.key] || 0];
+      cards.queue(() => canEdit() && op({ op: 'move_site_item', list: record.kind, index: record.index, by })).catch(report); return;
+    }
     if (!isObject(record)) return;
     const key = event.key.toLowerCase();
     if (!['r', '[', ']'].includes(key)) return;

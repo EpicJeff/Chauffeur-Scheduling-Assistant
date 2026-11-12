@@ -1,12 +1,13 @@
 // Resolve flat-model hosts in building-local feet: x, y, then height.
 // Keep these rules in step with services/twin_model_hosts.world_point.
 // Outdoor parking follows the lot surface rather than the building platform.
+import { buildingBase } from './twin_ground.js';
 export function parkingPoint(building, piece, plan, offset = 0, groundAt = () => 0) {
   const point=hostPoint(building,piece.host,offset);
   if(piece.host.ground){
     const a=(building.rotation || 0)*Math.PI/180,p=building.position || [0,0];
     const x=p[0]+Math.cos(a)*point[0]-Math.sin(a)*point[1],y=p[1]+Math.sin(a)*point[0]+Math.cos(a)*point[1];
-    point[2]+=groundAt(plan,x,y)-groundAt(plan,...p)-(building.base || 0);
+    point[2]+=groundAt(plan,x,y)-buildingBase(plan,building);
   }
   return point;
 }

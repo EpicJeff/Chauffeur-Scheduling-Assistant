@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { FT } from '../twin_generator.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { buildingCentre, lotPoint } from './energy_geometry.js';
 
 export function securityItem(row, state) {
@@ -35,7 +35,7 @@ export function mountSecurity({view, live, overlays = view.scene}) {
     if (!['lock', 'garage', 'camera', 'alarm', 'sensor'].includes(marker.kind) &&
         !/^(lock|camera|binary_sensor|alarm_control_panel|cover)\./.test(marker.entity_id)) continue;
     const building = view.plan.buildings.find(b => b.id === marker.building);
-    const base = groundAt(view.plan, ...(building?.position || [0, 0]));
+    const base = buildingGround(view.plan, building);
     const at = new THREE.Vector3(marker.at[0] * FT, (marker.at[2] + base) * FT, -marker.at[1] * FT);
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(.42, 12, 8),
       new THREE.MeshBasicMaterial({color: '#ef4949', transparent: true, opacity: .75, depthTest: false, depthWrite: false, toneMapped: false}));

@@ -4,6 +4,16 @@ import { twinGlass, twinText } from './palette.js';
 import { LUCIDE } from '../vendor/lucide/icons.js';
 
 const FT = .3048;
+export const siteShapeLabels = { beds: 'Planting bed', hardscape: 'Path / hardscape', edges: 'Edge planting', pool: 'Pool', fire_pit: 'Fire pit', fence: 'Fence' };
+export const siteShapeKinds = Object.keys(siteShapeLabels);
+export const sitePoints = piece => piece.polygon || piece.points || piece.polyline || (piece.at ? [piece.at] : []);
+export function siteRecords(plan) {
+  return ['planting', 'furniture', ...siteShapeKinds].flatMap(kind => {
+    const value = plan?.site?.[kind], pieces = ['pool', 'fire_pit', 'fence'].includes(kind) ? (value ? [value] : []) : value || [];
+    return pieces.map((piece, index) => ({ kind, index, building: null, piece: { ...piece, id: piece.id || `${kind}:${index}` } }));
+  });
+}
+export const siteRecord = (plan, id) => siteRecords(plan).find(record => record.piece.id === id);
 export const schema = () => window.twinObjectSchema;
 export const objectKind = (piece, collection) => piece.object_kind || (collection === 'planting' || ['tree', 'shrub'].includes(piece.kind) ? 'plant' : 'furniture');
 export function propertyFields(piece, collection) {
@@ -12,6 +22,8 @@ export function propertyFields(piece, collection) {
 }
 export const propertyValue = (piece, field, collection) => piece[field] ?? propertyFields(piece, collection)[field]?.default;
 export const objectShown = (piece, editor) => (piece.visible_in || ['viewer', 'editor']).includes(editor ? 'editor' : 'viewer');
+export const objectMaterialKey = (piece, id) => JSON.stringify([piece.tint, piece.casts_shadow,
+  piece.object_kind === 'lamp' ? [id, piece.emissive, piece.emissive_color, piece.light_entity] : null]);
 
 // glTF is metres, Y up. A wrapper preserves authored transforms and places the
 // origin at bottom-centre without changing the model's physical size.

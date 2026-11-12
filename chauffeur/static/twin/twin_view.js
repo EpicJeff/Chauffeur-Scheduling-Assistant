@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic, contains, stairHoles } from './twin_generator.js';
 import { heightAt } from './twin_roof.js';
-import { groundAt } from './twin_ground.js';
+import { groundAt, buildingGround } from './twin_ground.js';
 import { buildYard } from './twin_yard.js';
 import { base, loadSky, disposeObject } from './twin_library.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
@@ -184,7 +184,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   function floorFrame(key) {
     const building = plan.buildings.find(b => b.levels.some(l => `${b.id}:${l.id}` === key));
     const level = building?.levels.find(l => `${building.id}:${l.id}` === key);
-    return building && { building, level, elevation: groundAt(plan, ...(building.position || [0, 0])) + (building.base || 0) + level.elevation };
+    return building && { building, level, elevation: buildingGround(plan, building) + (building.base || 0) + level.elevation };
   }
   // The selected room on this floor, else the floor's walls, in lot feet.
   function floorFocus(frame) {
@@ -239,7 +239,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const parent = twin?.groups.levels[`${spec.buildingId}:${spec.levelId}`];
     if (!level || !parent) return;
     const position = building.position || [0, 0];
-    sheet.elevationFt = groundAt(plan, ...position) + (building.base || 0) + level.elevation;
+    sheet.elevationFt = buildingGround(plan, building) + (building.base || 0) + level.elevation;
     sheet.object.position.set(position[0], sheet.elevationFt, -position[1]);
     sheet.object.rotation.y = (building.rotation || 0) * Math.PI / 180;
     parent.add(sheet.object);
@@ -426,7 +426,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (!level || !parent || !(spec.reg?.scale > 0)) return;
       if (!spec.masterSize) console.warn('Drawing master size is unavailable; using the displayed image size for this sheet.');
       const version = sheetRevision;
-      const elevation = groundAt(plan, ...(building.position || [0, 0])) + (building.base || 0) + level.elevation;
+      const elevation = buildingGround(plan, building) + (building.base || 0) + level.elevation;
       sheet = { ready: false, object: null, elevationFt: elevation,
         widthFt: (spec.masterSize?.[0] || 0) * spec.reg.scale, depthFt: (spec.masterSize?.[1] || 0) * spec.reg.scale };
       new THREE.TextureLoader().load(spec.url, texture => {
@@ -734,7 +734,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     async rebuild(nextPlan, { preserveYard = false } = {}) {
       view.bake?.stop();
       const version = ++revision; view.ready = false;
-      const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor });
+      const structureKey = p => JSON.stringify([p.materials, p.buildings?.map(b => ({ ...b, foundation: undefined, foundation_src: undefined, base: undefined }))]);
+      const reuseMaterials = twin && structureKey(plan) === structureKey(nextPlan) ? twin.materials : null;
+      const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor, reuseMaterials });
+      const yardMaterials = JSON.stringify(nextPlan.materials) === JSON.stringify(plan.materials) ? yardGroup?.userData.materials : null;
+      const keepMaterials = new Set([...(yardMaterials?.values() || []), ...(reuseMaterials?.values() || [])]);
       next.editableLevel = editableLevel;
       const extras = new Map();
       try {
@@ -782,12 +786,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
         for (const [parent, group] of extras) mergeStatic(group, { perPiece: !!editableLevel && parent.userData.levelKey === editableLevel });
         if (!preserveYard || !yardGroup) {
-          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor }); next.groups.site.add(yard.group);
+          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, materials: yardMaterials }); next.groups.site.add(yard.group);
           next.yardGroup = yard.group;
         }
         await next.ready;
-      } catch (error) { release(next); throw error; }
-      if (disposed || version !== revision) { release(next); return; }
+      } catch (error) { release(next, keepMaterials); throw error; }
+      if (disposed || version !== revision) { release(next, keepMaterials); return; }
       const levelsToRestore = visibleLevels && [...visibleLevels];
       const faintToRestore = [...new Set([...faded.keys()].map(o => {
         for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey;
@@ -796,12 +800,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       restoreSelection(); restoreFloors();
       // The underlay owns its image independently of the rebuilt geometry.
       // Detach before releasing the old scene, then place the same object.
-      viewing?.dispose(); viewing = null;
+      // Keep the old fade programs referenced until the next geometry has
+      // adopted them. Ordinary terrain edits must not delete/recreate shaders.
+      const releaseViewing = viewing?.dispose({ deferMaterials: true }); viewing = null;
       sheet?.object?.removeFromParent();
       if (!next.yardGroup && yardGroup) {
         yardGroup.removeFromParent(); next.groups.site.add(yardGroup); next.yardGroup = yardGroup;
       }
-      if (twin) { scene.remove(twin.root); release(twin); }
+      if (twin) { scene.remove(twin.root); release(twin, keepMaterials); }
       yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);
       // Read-only legacy property access for P0 embeds, never enumerable scene
@@ -831,7 +837,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (!editor) {
         twin.groups.roof.visible = twin.groups.gableFull.visible = true;
         twin.groups.gableCut.visible = false;
-        viewing = createViewing(view, twin, b => groundAt(plan, ...(b.position || [0, 0])), key => {
+        viewing = createViewing(view, twin, b => buildingGround(plan, b), key => {
           state.view = key; sun.shadow.needsUpdate = true; applyLights();
           el.dispatchEvent(new CustomEvent('twinviewchange', { detail: key }));
         }, {explicit: true});
@@ -850,6 +856,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (levelsToRestore) view.showLevels(levelsToRestore, { faint: faintToRestore });
       attachSheet();
       paintSelection();
+      try { await viewing?.warm(); }
+      finally { releaseViewing?.(); }
       view.ready = true;
       startBake();
       el.dispatchEvent(new CustomEvent('twinrebuilt', { detail: view }));
@@ -879,11 +887,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (window.__twin === view) delete window.__twin;
     },
   };
-  function release(model) {
-    model.root.traverse(o => o.userData.releasePlants?.());
-    disposeObject(model.root);
+  function release(model, keepMaterials = new Set()) {
+    model.root.traverse(o => o.userData.releasePlants?.(keepMaterials));
+    disposeObject(model.root, { keepMaterials });
     // Materials with no geometry (e.g. an empty polygon) still own requests.
-    model.materials.forEach(m => m.dispose());
+    model.materials.forEach(m => { if (!keepMaterials.has(m)) m.dispose(); });
   }
   function applyTimeLook() {
     if (state.unlit) {

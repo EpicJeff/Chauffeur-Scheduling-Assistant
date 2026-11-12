@@ -183,8 +183,12 @@ def compose(plan: dict, kit: dict, seed: int = 1) -> tuple[dict, list[str]]:
     """
     result, notes, rng = deepcopy(plan), [], Random(seed)
     site, rules = result['site'], kit['composition']
+    pinned = set()
     for name in ('beds', 'planting', 'edges'):
-        site[name] = [item for item in site.get(name, []) if item.get('by') != 'compose']
+        kept = [item for item in site.get(name, []) if item.get('by') != 'compose'
+                or name != 'planting' and item.get('src', {}).get('person')]
+        pinned.update(item['id'] for item in kept if item.get('by') == 'compose')
+        site[name] = kept
     overrides = site.setdefault('compose_overrides', {'removed': [], 'moved': {}})
     removed, moved = set(overrides.get('removed', [])), overrides.get('moved', {})
     counts = {'bed': 0, 'shrub': 0, 'tree': 0, 'edge': 0}
@@ -339,7 +343,7 @@ def compose(plan: dict, kit: dict, seed: int = 1) -> tuple[dict, list[str]]:
 
     for name, items in generated.items():
         for entry in items:
-            if entry['id'] in removed:
+            if entry['id'] in removed or entry['id'] in pinned:
                 continue
             if 'at' in entry and entry['id'] in moved:
                 target = moved[entry['id']]

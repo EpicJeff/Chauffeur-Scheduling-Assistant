@@ -1,9 +1,9 @@
-import { objectOperation } from '../objects.js';
+import { objectOperation, siteRecord, siteShapeKinds, sitePoints } from '../objects.js';
 import { solarPoint, solarFrame, solarUV } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import * as THREE from 'three';
 import { hostPoint, parkingPoint } from '../twin_hosts.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { roofEdge } from './roof_tools.js';
 
 const FT = .3048;
@@ -24,14 +24,14 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   function world(building, point) {
     const a = (building.rotation || 0) * Math.PI / 180, [x, y, z] = point, p = building.position || [0, 0];
     return new THREE.Vector3((Math.cos(a) * x - Math.sin(a) * y + p[0]) * FT,
-      (z + (building.base || 0) + (building.id === null ? 0 : groundAt(plan(), ...p))) * FT,
+      (z + (building.base || 0) + (building.id === null ? 0 : buildingGround(plan(), building))) * FT,
       -(Math.sin(a) * x + Math.cos(a) * y + p[1]) * FT);
   }
   function local(building, point) {
     const a = -(building.rotation || 0) * Math.PI / 180, p = building.position || [0, 0];
     const x = point.x / FT - p[0], y = -point.z / FT - p[1];
     return new THREE.Vector3(Math.cos(a) * x - Math.sin(a) * y, Math.sin(a) * x + Math.cos(a) * y,
-      point.y / FT - (building.base || 0) - (building.id === null ? 0 : groundAt(plan(), ...p)));
+      point.y / FT - (building.base || 0) - (building.id === null ? 0 : buildingGround(plan(), building)));
   }
   function ray(event, building) {
     const rect = canvas.getBoundingClientRect(); view.camera.updateMatrixWorld(true);
@@ -88,7 +88,14 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   function descriptors() {
     if (!canEdit()) return [];
     const selected = getSelection(), building = plan()?.buildings.find(b => b.id === selected.building);
-    if (!building) return objectDescriptors();
+    if (!building) {
+      const record = siteRecord(plan(), selected.id);
+      if (!record || !siteShapeKinds.includes(record.kind)) return objectDescriptors();
+      const ps = sitePoints(record.piece); if (!ps.length) return [];
+      const by = gesture?.handle.kind === 'site_move' && gesture.handle.id === selected.id ? gesture.operation?.by || [0, 0] : [0, 0];
+      const centre = [0, 1].map(i => ps.reduce((sum, p) => sum + p[i], 0) / ps.length + by[i]);
+      return [{ kind: 'site_move', id: selected.id, building: null, at: [...centre, groundAt(plan(), ...centre) + (record.piece.elevation || 0)] }];
+    }
     const result = objectDescriptors(), add = (kind, id, at, level, extra = {}) => {
       if (view.groups?.levels[`${building.id}:${level}`]?.visible === false) return;
       result.push({ kind, id, at, building: building.id, level, ...extra });
@@ -199,6 +206,10 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     if (gesture) return false;
     const handle = hit(event); if (!handle) return false;
     const source = getPlan(), building = coordinateBuilding(handle.building);
+    if (handle.kind === 'site_move') {
+      const start = onPlane(event, building, handle.at, [0, 0, 1]); if (!start) return false;
+      gesture = { handle, source, building, record: siteRecord(source, handle.id), start, normal: [0, 0, 1], operation: null }; return true;
+    }
     if (handle.kind.startsWith('object_')) {
       const start = onPlane(event, building, handle.centre, [0, 0, 1]);
       if (!start) return false;
@@ -262,6 +273,13 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       drag.update(view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`)); return;
     }
     const point = onPlane(event, building, handle.at, g.normal); if (!point) return;
+    if (handle.kind === 'site_move') {
+      const by = point.slice(0, 2).map((v, i) => inch(v - g.start[i]));
+      g.operation = { op: 'move_site_item', list: g.record.kind, index: g.record.index, by };
+      const points = sitePoints(g.record.piece).map(p => project(building, [p[0] + by[0], p[1] + by[1], handle.at[2]])).filter(Boolean);
+      document.getElementById('editor-drag-outline')?.setAttribute('points', points.map(p => p.join(',')).join(' '));
+      refresh(); return;
+    }
     if (handle.kind.startsWith('object_')) {
       const centre = handle.centre, delta = p => p.slice(0, 2).map((v, i) => v - centre[i]);
       const a = delta(g.start), b = delta(point);
@@ -367,6 +385,12 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   async function finish(cancel = false, clicked = false) {
     const g = gesture, released = preview; gesture = null; preview = null;
     if (!g) return;
+    if (g.handle.kind === 'site_move') {
+      document.getElementById('editor-drag-outline')?.setAttribute('points', '');
+      try { if (!cancel && g.operation) await onCommit(g.operation); }
+      finally { refresh(); }
+      return;
+    }
     if (g.handle.kind.startsWith('object_')) {
       try { if (!cancel && g.operation) await onCommit(g.operation); }
       finally {

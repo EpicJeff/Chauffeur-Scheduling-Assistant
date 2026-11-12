@@ -74,6 +74,7 @@ def run(cases):
         raise AssertionError(f'static/twin/twin_hosts.js does not exist yet ({MODULE})')
     d = tempfile.mkdtemp(prefix='twin_hosts_js_')
     shutil.copy(MODULE, os.path.join(d, 'twin_hosts.mjs'))
+    shutil.copy(os.path.join(ROOT, 'static', 'twin', 'twin_ground.js'), os.path.join(d, 'twin_ground.js'))
     with open(os.path.join(d, 'driver.mjs'), 'w', encoding='utf-8') as f:
         f.write(DRIVER)
     job = os.path.join(d, 'job.json')

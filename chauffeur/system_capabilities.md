@@ -1,6 +1,46 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.813 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.814 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.814 (2026-11-12, NOT device-verified): twin slice 3a, the ground. Terrace pads with blended slopes or sharp edges, a real terrain mesh, foundations that sit on the terrain, and every auto-placed yard item selectable.**
+
+**The user's asks.**
+- "There is no way to edit the lot ... Ideally, you have full control over the terrain".
+- "what happened to the terracing feature ... each building has a foundation that automatically snaps to the terrain (with a configurable offset) and can have a thickness".
+- **Ruling (2026-11-12):** terrace pads, not a sculpt brush.
+
+**How it was built.** Codex built 3a and then merged it with 4a (objects). Claude checked it in Chromium and corrected the browser test's tree lookup: since 4a a tree sits inside its object wrapper, and the vendored tree class name is minified.
+
+**Terrain** (`services/twin_terrain.py`, `static/twin/twin_ground.js`, `twin_terrain_mesh.js`).
+- **A pad:** a polygon at one height (-50..50 ft), with a `blend` (default 6 ft, 0..50) and per-edge `slope|sharp`. Pads live in `site.terraces` (at most 40).
+- **`groundAt` is real now:**
+  - inside a pad it returns the pad's height (a later pad wins where pads overlap);
+  - blend bands fall off smoothly with distance weighting;
+  - sharp edges step;
+  - outside every pad is the 0 datum.
+- **Mesh:** a tiered grid with extra vertices on pad edges, and skirts on sharp edges (3b puts retaining walls there).
+- **Yard items** sit on `groundAt`; beds and hardscape drape. Rebuilds reuse materials and dispose old geometry.
+
+**Foundations.**
+- **Settings:** `foundation: {mode: auto|fixed, offset_ft, thickness_ft}`.
+- **Auto:** base = the highest ground under the footprint + offset.
+- **Fixed:** the stored base, which is kept when auto is chosen.
+- **Drawing:** a concrete slab whose top is at the base and whose bottom is at min(lowest ground, base - thickness), exposed downhill like a walk-out.
+- **Migration:** buildings without a foundation read as fixed at their current base, so nothing moves until a person chooses auto.
+
+**Editor:**
+- terrain tools: add pad (snapping to pad edges and the lot), height with 0.5 ft nudges, blend, edge type, vertex handles, delete, undo and redo;
+- a Grade tint;
+- pad labels;
+- a Foundation group on the building shelf.
+
+**Yard selection.** Before this slice only planting and furniture were selectable. Beds, hardscape (paths included), edge planting, the pool, the fire pit and fences now select, move and delete through the ONE object path from 4a (`objects.js` site-record adapter), with no second selection system. New pool, fire pit and retaining-wall object types remain slice 3b.
+
+**Tests.**
+- `test_twin_terrain`, `test_twin_ground_js` (continuity, sharp step, overlap, the blend midpoint, auto base) and `test_twin_terrain_tools_js`.
+- Model ops, plan and import maps.
+- Browser `test_house_twin_ground_live` 2/2: a -4 ft pad steps and slopes, a tree rests at -4 ft, undo and redo, no new programs; an auto foundation follows the pad and the viewer agrees.
+- Browser `test_twin_objects_live`, `test_house_editor_openings_live` 5/5 and `test_house_twin_viewing_live` 5/5.
 
 **v2.499.813 (2026-11-12, NOT device-verified): real-world model imports. Chunked uploads past Home Assistant's ingress limit, limits on the uploaded size, heavy models (to 1M triangles) merged by material with a low-tier stand-in, and Collada (.dae) and KMZ import.**
 

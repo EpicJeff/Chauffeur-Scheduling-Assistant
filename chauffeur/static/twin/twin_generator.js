@@ -1,13 +1,13 @@
-import { applyObject, fitOpening, objectShown } from './objects.js';
+import { applyObject, fitOpening, objectShown, objectMaterialKey } from './objects.js';
 // Plan -> geometry. Plan x/y map to world X/-Z; heights are world Y.
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { kitMaterial, loadModel, disposeObject } from './twin_library.js';
+import { kitMaterial, loadModel, disposeObject, cacheModelMaterials } from './twin_library.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
-import { groundAt } from './twin_ground.js';
+import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
 import { LUCIDE } from '../vendor/lucide/icons.js';
 
 import { FT } from './twin_light_math.js';
@@ -260,7 +260,7 @@ function footprintPanel(footprint, a, c, lo, ta, tc) {
   });
 }
 
-export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel = null, viewing = false } = {}) {
+export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel = null, viewing = false, reuseMaterials = null } = {}) {
   const root = new THREE.Group(); root.scale.setScalar(FT);
   const pieces = new Map(), pieceBounds = new Map(), pickObjects = new Map(), roofSurfaces = new Map(), mergeGroups = [], ghostBatches = [];
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
@@ -275,8 +275,8 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     }
     return materialKit;
   };
-  const materials = new Map();
-  let parkingIcon = null;
+  const materials = new Map(reuseMaterials || []);
+  let parkingIcon = materials.get('parking_icon#ffffff') || null;
   const plain = (name, color, extra = {}) => {
     const key = name + color;
     if (!materials.has(key)) materials.set(key, new THREE.MeshStandardMaterial({ name, color, roughness: 0.8, ...extra }));
@@ -286,8 +286,8 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
   const screen = plain('screen', '#59615d', { transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide });
   const fixture = plain('fixture', '#fff4e0', { emissive: '#ffd59a', emissiveIntensity: 0 });
   const ghost = plain('ghost', '#38bdf8', { opacity: 0.35, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-  const ghostEdges = new THREE.LineDashedMaterial({ color: '#38bdf8', dashSize: 0.4, gapSize: 0.25, transparent: true, opacity: 0.8, depthWrite: false });
-  const pickMaterial = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+  const ghostEdges = materials.get('ghostEdges') || new THREE.LineDashedMaterial({ color: '#38bdf8', dashSize: 0.4, gapSize: 0.25, transparent: true, opacity: 0.8, depthWrite: false });
+  const pickMaterial = materials.get('pick') || new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
   const roomLights = [], levelElevations = {}, notes = [], pendingModels = [];
   for (const b of plan.buildings || []) {
     const materialKit = materialKitFor({ ...plan.materials, ...b.materials });
@@ -304,7 +304,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     if (!first) continue;
     const local = {};
     const position = b.position || [0, 0];
-    const base = groundAt(plan, ...position) + (b.base || 0);
+    const base = buildingBase(plan, b);
     const levelKey = id => `${b.id}:${id}`;
     // Every independently switchable domain gets the same rigid placement.
     for (const id of ['roof', 'gableFull', 'gableCut', 'lights', ...b.levels.map(l => l.id)]) {
@@ -333,6 +333,11 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     const sections = b.roof?.sections || [];
     const envelope = roofMesh(sections);
     const outlines = new Map(ordered.map(l => [l.id, l.outline?.length >= 3 ? [l.outline] : footprints(b.walls.filter(w => w.level === l.id))]));
+    // This belongs to the lowest floor domain, including its viewing fade and
+    // peel. Concrete never inherits siding or room wall materials.
+    const foundation = foundationShape(plan, b);
+    if (foundation.polygon.length >= 3 && foundation.top > foundation.bottom)
+      addMesh(local[first.id], polygon(foundation.polygon, foundation.bottom - base, 0), mat('patio_concrete'));
     // Triangulate concave floor outlines into convex roof cutters. A floor at
     // the roof's plate also occupies the space above that roof (e.g. L2).
     const floorCutters = new Map(ordered.map(l => [l.id, outlines.get(l.id).flatMap(poly => {
@@ -1233,6 +1238,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         if (source) {
           const model = source;
           applyObject(model, item, { id: `${b.id}:${item.id}` });
+          cacheModelMaterials(model, 'item:' + b.id + ':' + item.id + ':' + objectMaterialKey(item, `${b.id}:${item.id}`), materials);
           model.position.set(point[0], point[2] + (item.elevation || 0), -point[1]);
           model.updateMatrixWorld(true);
           use(item, 'item', item.id);

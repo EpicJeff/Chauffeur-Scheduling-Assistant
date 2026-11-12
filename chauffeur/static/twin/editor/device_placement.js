@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { hostPoint } from '../twin_hosts.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { markerTexture, markerSprite } from '../live/markers.js';
 import { itemOperation, wallFace } from './library.js';
 import { report } from './api.js';
@@ -223,7 +223,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
       if (row.at) {
         const { building, point } = row.at, a = (building.rotation || 0) * Math.PI / 180, p = building.position || [0, 0];
         row.sprite.position.set((Math.cos(a) * point[0] - Math.sin(a) * point[1] + p[0]) * FT,
-          (point[2] + (building.base || 0) + groundAt(getPlan(), ...p)) * FT,
+          (point[2] + (building.base || 0) + buildingGround(getPlan(), building)) * FT,
           -(Math.sin(a) * point[0] + Math.cos(a) * point[1] + p[1]) * FT);
       }
     }
