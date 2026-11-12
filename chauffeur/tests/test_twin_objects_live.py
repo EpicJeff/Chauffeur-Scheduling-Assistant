@@ -160,6 +160,8 @@ def scenario_assign_window_model_and_fit_persists():
 
 
 if __name__ == '__main__':
-    scenario_six_mb_chunk_zip_survives_one_mb_ingress_and_places_heavy_car()
+    # The scenarios share one served house: the heavy car lands where the chair scenario
+    # clicks, so it runs last.
     scenario_import_place_scale_rotate_undo_reload_and_programs()
     scenario_assign_window_model_and_fit_persists()
+    scenario_six_mb_chunk_zip_survives_one_mb_ingress_and_places_heavy_car()
