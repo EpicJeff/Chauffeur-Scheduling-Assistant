@@ -4,8 +4,8 @@ Only room-light charts are built: uv3, lmRoom and lmLightPage. No sky atlas,
 uv2 or lmSkyPage is generated. Opaque solid geometry is retained; fixtures,
 glass and alpha-tested plant cards are excluded. Faces are clipped to room
 outlines, with one coplanar connected chart per patch and isometric density.
-Rooms keep their own regions, gutters and bank-zero reservations; extra banks
-hold only rooms needing more than two lights. Keys are stable across processes
+Rooms and exterior tile groups keep regions, gutters and bank-zero reservations;
+extra banks cover the groups reserved by overlapping light reaches. Keys are stable across processes
 and device movement, and change with geometry or room-layout parameters.
 The household fixture exercises floors, ceilings, walls on both sides,
 openings, exterior faces, sparse banks and bounded memory.
@@ -187,7 +187,7 @@ function summarise(atlas, o) {
           const len = P(g, i).distanceTo(P(g, j));
           if (len < 0.05) continue;
           const t = Math.hypot((uv.getX(i) - uv.getX(j)) * lo.page, (uv.getY(i) - uv.getY(j)) * lo.page);
-          const ratio = t / (len * lo.density);
+          const ratio = t / (len * c.density);
           if (Math.abs(ratio - 1) > 0.01) { push(E('density'), { ci, f, len, texels: t, ratio }); break; }
         }
       }
@@ -237,6 +237,8 @@ function summarise(atlas, o) {
       }
     });
     return { pages: L?.pages, charts: charts.length, chartedFaces, rectArea,
+             interiorRectArea: charts.filter(c => !c.outdoor).reduce((n,c) => n+c.rect.w*c.rect.h,0),
+             outdoorRectArea: charts.filter(c => c.outdoor).reduce((n,c) => n+c.rect.w*c.rect.h,0),
              pagesUsed: [...perPage.keys()].sort((a, b) => a - b) };
   };
   const room = layout('room', atlas.room, o.room, 'uv3');
@@ -263,7 +265,7 @@ function summarise(atlas, o) {
              roomChart: roomChartOf.get(m)[f], mesh: index.get(m), face: f };
   });
   return { key: atlas.key, hasSky: Object.hasOwn(atlas, 'sky'), hasUV2: merged.some(m => m.geometry.attributes.uv2 || m.geometry.attributes.lmSkyPage), room, roomFaces, solidFaces, meshes, probes, errors,
-           rooms: rooms.map(r => ({ building: r.building, level: r.level, id: r.id, region: r.region ?? null })) };
+           rooms: rooms.map(r => ({ building: r.building ?? null, level: r.level ?? null, outdoor: !!r.outdoor, id: r.id, region: r.region ?? null })) };
 }
 
 output.atlases = [];
@@ -513,7 +515,9 @@ def scenario_texel_density_matches_world_size():
         check(not bad, (f'atlas {i} ({MAIN_ATLASES[i]}): each layout at its own texels per foot, rects fit their '
                         f'chart, each chart one coplanar connected patch', bad))
     d, high = main_run()[DEFAULT], main_run()[HIGH]
-    check(3.0 < high['room']['rectArea'] / d['room']['rectArea'] < 4.6, ('room at 8 (High) is about four times room at 4', d['room'], high['room']))
+    check(3.0 < high['room']['interiorRectArea'] / d['room']['interiorRectArea'] < 4.6,
+          'interior density 8 uses about four times the texels of density 4')
+    check(high['room']['outdoorRectArea'] == d['room']['outdoorRectArea'], 'outdoor density stays capped at one texel/ft')
 
 
 def scenario_every_interior_face_has_uv3():
@@ -528,7 +532,7 @@ def scenario_every_interior_face_has_uv3():
     bad = errors_of(s, 'attrs', 'faceValues', 'room.uncharted', 'room.twice', 'room.stray', 'room.faceRoom', 'room.facePage')
     check(not bad, ('every room face in one chart of its room; no other face '
                     'in a room chart', bad))
-    check(0 < s['roomFaces'] < s['solidFaces'], ('some faces are room faces, not all', s['roomFaces'], s['solidFaces']))
+    check(0 < s['roomFaces'] == s['solidFaces'], 'all solid faces now have receiving charts, including outdoors')
     check(not errors_of(main_run()[HIGH], 'attrs', 'faceValues', 'room.uncharted', 'room.twice', 'room.stray',
                         'room.faceRoom', 'room.facePage'), ('High room layout keeps the same coverage',
                         errors_of(main_run()[HIGH], 'attrs', 'faceValues', 'room.')))
@@ -537,7 +541,7 @@ def scenario_every_interior_face_has_uv3():
               (f'{kind}: charts join coplanar connected faces, not one per triangle', s[kind]))
     plan_rooms = [(b['id'], r['level'], r['id']) for b in household()['buildings'] for r in b['rooms']
                   if len(r.get('polygon') or []) >= 3]
-    check([(r['building'], r['level'], r['id']) for r in s['rooms']] == plan_rooms,
+    check([(r['building'], r['level'], r['id']) for r in s['rooms'] if not r['outdoor']] == plan_rooms,
           'atlas.room.rooms is every plan room with a polygon, in plan order')
     check(all(r['region'] for r in s['rooms'] if r['level'] == 'L1' and r['building'] == HOUSE),
           'every main-house L1 room has a region')
@@ -570,8 +574,8 @@ def _room_face(p, room, s, what):
 
 
 def _no_room(p, what):
-    check(p['lmRoom'] == -1, (what, 'lmRoom is -1', p))
-    check(p['roomChart'] == -1, (what, 'the face is in no room chart (no uv3)', p))
+    check(p['lmRoom'] >= 0 and p['roomChart'] == p['lmRoom'],
+          (what, 'exterior surfaces now have their own receiving chart group', p))
 
 
 def scenario_room_faces_belong_to_their_room():
@@ -681,7 +685,7 @@ def scenario_horizontal_faces_are_clipped_and_buffers_rebuilt():
     room_faces = []
     for f in range(len(pos) // 3):
         tri = pos[3 * f:3 * f + 3]
-        rs = s['room'][3 * f:3 * f + 3]
+        rs = [r if r < 3 else -1 for r in s['room'][3 * f:3 * f + 3]]
         check(rs[0] == rs[1] == rs[2] and rs[0] in areas, ('one lower-level room per face', rs))
         r = rs[0]
         if r >= 0:
@@ -698,7 +702,7 @@ def scenario_horizontal_faces_are_clipped_and_buffers_rebuilt():
             check(r == expected, ('no triangle spans two room regions or exterior', f, r, expected, x, y))
     check(all(abs(areas[k] - v) < 1e-4 for k, v in {-1: 46, 0: 30, 1: 24}.items()),
           ('clipping conserves the whole slab, including exterior', areas))
-    check(sorted(s['chartFaces']) == room_faces, 'each clipped room face gets one room chart')
+    check(sorted(s['chartFaces']) == list(range(len(pos) // 3)), 'each clipped face, including exterior, gets one chart')
     for i, (x, h, z) in enumerate(pos):
         check(abs(h - (10 + x * 0.1)) < 2e-6, 'sloped height interpolated')
         check(abs(s['uv'][2 * i] - x) < 2e-6 and abs(s['uv'][2 * i + 1] + z) < 2e-6, 'source uv interpolated')
@@ -781,8 +785,11 @@ if __name__ == '__main__':
     if not _node():
         print('  skip  node is not available')
         sys.exit(0)
+    wanted = set(sys.argv[1:])
+    selected = [fn for fn in SCENARIOS if not wanted or fn.__name__ in wanted]
+    check(not wanted - {fn.__name__ for fn in selected}, 'unknown atlas scenario')
     failed = []
-    for fn in SCENARIOS:
+    for fn in selected:
         try:
             fn()
         except Exception:
@@ -791,5 +798,5 @@ if __name__ == '__main__':
             traceback.print_exc()
         else:
             print('  ok  ', fn.__name__)
-    print(f'{len(SCENARIOS) - len(failed)}/{len(SCENARIOS)} passed')
+    print(f'{len(selected) - len(failed)}/{len(selected)} passed')
     sys.exit(1 if failed else 0)

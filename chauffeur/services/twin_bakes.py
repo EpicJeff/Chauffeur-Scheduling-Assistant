@@ -105,6 +105,12 @@ def _check_manifest(body):
             raise ValueError('Bake entry page is outside the manifest.')
         if type(channel) is not int or not 0 <= channel <= 3:
             raise ValueError('Bake channel must be between 0 and 3.')
+        if 'pages' in entry:
+            reached = entry['pages']
+            if (not isinstance(reached, list) or not reached or
+                    any(type(p) is not int or not 0 <= p < pages for p in reached) or
+                    len(set(reached)) != len(reached) or page != reached[0]):
+                raise ValueError('Bake reach pages must be unique, in range, and start with page.')
     for entry in lights.values():
         check_key(entry.get('key'))
     # Old PNG manifests remain readable and writable during the transition.

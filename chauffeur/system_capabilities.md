@@ -1,6 +1,142 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.793 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.795 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.795 (2026-11-11, NOT device-verified): Energy and Security modes for the 3D house, with solar zones and energy equipment you place.**
+
+**The ask.** The user, 2026-11-11, asked for "solar, car charging, Powerwall and grid flows; panels on the roof; cars in the garage; ribbon flows", and then this equipment design:
+- "solar panels on the roof be objects like doors and windows where you can configure one or more zones";
+- "one roof should be designated as the solar source";
+- the meter and electric panel can be an HA entity or a plain object, and the car charger is an HA entity;
+- "the ribbons have to go between these things wherever they are located";
+- "Powerwall can charge from and send energy to the grid too".
+
+This is slice 1c of modes and the glance bar (spec `docs/superpowers/specs/2026-11-06-house-digital-twin-design.md` §5.3).
+
+**How it was built.** Codex built it over eight rounds. Claude reviewed each in Chromium and from screenshots, and that review drove the rounds:
+- ribbons that were thin dashed lines, then white scribbles;
+- panels floating over trees;
+- solar zones that never reached the twin;
+- a lost quick second edit;
+- a duplicate label layer.
+
+**Solar zones** (`services/twin_solar.py`, `static/twin/twin_solar.js`, editor cards and handles). They are roof objects in the house model, like openings.
+- **The zone.** A rectangle in a roof plane's own coordinates, with:
+  - panel size (65 × 39 in by default) and portrait or landscape;
+  - gap (1 in) and setback;
+  - an optional count (empty fills the zone);
+  - an optional production sensor.
+- **Layout.** Whole panels, centred, never crossing the roof outline or its cutouts.
+- **Editing.** Click a roof in the editor to place a zone, drag it and resize it with handles. The card shows "N panels".
+- **Refusals.** A zone outside the roof, or overlapping another, is refused in plain words.
+- **Solar source.** `solar_source_roof` is set from the card ("Solar ribbon starts here"); a single roof that carries zones is the default.
+- **Drawing.** Panels are drawn in every mode, with normal depth. Undo and redo cover zones and the source.
+
+**Equipment anchors** (`services/twin_energy.py`, the twin drawer's "Energy sources").
+- Each role has a power entity and a location:
+  - **solar** is the source roof's zone centroid;
+  - **battery/inverter** is a placed HA device;
+  - **meter** and **electric panel** are a placed HA device or a plain `meter` / `electric_panel` object on a wall;
+  - **car chargers** are placed HA devices.
+- The mapping is guessed from states (Powerwall-style names, device_class, generic names, the household's cars) and corrected in the drawer.
+- PARENTS edit; WALL_OR_SERVICE reads. Saving never dirties schedules.
+
+**Flows** (`energy.js`, `energy_geometry.js`). They follow the power balance the way Tesla's screen does:
+- solar goes to home, then charges the battery, then exports;
+- the home deficit is covered by the battery, then the grid;
+- the grid charges the battery, and the battery exports;
+- each charger draws from the electric panel (`home_includes_chargers`, default true).
+
+Flows under 50 W hide. Each flow is one coloured planar arc above the roofline: solar yellow, battery green, grid blue, car purple. Width and pulse speed follow the power, and each arc carries a kW label. Ribbons stay readable over foliage. A role that is not placed draws nothing, and the legend says what to place.
+
+**Glance bar.** Power shows as kW to one decimal (watts under 1 kW). Battery and grid read as words: charging, discharging, importing, exporting.
+
+**Security mode** (`security.js`).
+- It brings locks, contacts, garages, alarms and cameras forward.
+- Open or unlocked shows a red emphasis; resting things stay quiet.
+- Cameras get a 25 ft translucent view cone.
+
+**Editor history** (shared): an edit made while a save is in flight is queued in order, never dropped, and a failure reaches the status line.
+
+**Tests.**
+
+| Group | Files and results |
+|---|---|
+| Energy node | test_twin_energy_js 20/20, energy_mapping_js 8/8, energy_flows_js 13/13, energy_editor_js 3/3 |
+| Energy routes | energy_route_js 8/8, energy_history_route_js 4/4 |
+| Other node | test_twin_editor_history_js 6/6, test_twin_security_js 6/6 |
+| Server | test_twin_energy 10/10, test_twin_energy_equipment 10/10 |
+| Browser | test_house_twin_energy_live 3/3, test_house_twin_energy_equipment_live 2/2, test_house_twin_glance_live 5/5 |
+| Editor browser | openings 5/5, guided 6/6, steps 8/8, model_t11 3/3 |
+| Twin browser | real_sun 4/4; bake smoke passes on a solo rerun |
+| Shared | editor drag, handles and snap pass; test_twin_place 25/25; test_auth 19/19; test_tailwind_build 6/6 |
+
+**Open.**
+- Cars appear as a simple body with their battery % while home, plus a charger flow. They are not yet modelled per garage bay.
+- Panels do not yet glow with production.
+- Pi cost is unmeasured.
+- The idle time/weather/glance card needs a redesign. It is being discussed with the user.
+
+**v2.499.794 (2026-11-11, NOT device-verified): baked room light reaches what it can see. It crosses invisible walls in open plan and spills through windows outside; real walls still block it.**
+
+**The ask.** The user reported, 2026-11-11: "Are the baked lightmaps clamped to just the room the lights are linked to? It feels weird that the light just stops at the border of the room, especially in an open space or through windows to the outside." This replaces v2.499.787's room clamp (rulings B2/B6/B7/B12).
+
+**How it was built.** Codex took six rounds. Claude reviewed each round in Chromium, and that review drove the rounds:
+- the banks grew with the light count;
+- a whole-light fallback left only 7 lights baked;
+- the atlas worker could not load three;
+- moving one light re-baked every light;
+- slot assignment was not sticky.
+
+Claude also corrected two browser checks for the new design.
+
+**Reach** (`static/twin/bake/reach.js`).
+- A light's receiving surfaces are every atlas chart within its range (the shared `lightRange`, `static/twin/twin_light_math.js`). That includes neighbouring rooms and outdoor ground, patio and paving.
+- Visibility is still the cube-depth shadow test, and glazing does not occlude.
+- The bounce lands in every room the light reaches, scaled by the direct light it received there.
+
+**Slots** (`slots.js`).
+- Every chart has 6 channels (3 banks × 2).
+- The chart's membership is its top 6 lights by estimated contribution.
+- The slot a light takes is sticky: a pure function of the chart's member set ordered by device id, so ranking decides membership, never position.
+- A light beyond the sixth on a chart is unbaked on that chart only, and stays baked everywhere else.
+- Moving a light re-bakes only that light, unless it changes some chart's membership.
+- Geometry-only texel addresses and fixed bank strides keep unchanged texels in place.
+
+**Runtime.**
+- Tint ownership is per chart and per channel, so toggling compiles nothing.
+- A light spans several pages; the manifest entry carries `pages` and `location`, and the server validates them.
+
+**Worker.**
+- The atlas worker resolves its own three.js URLs, because workers do not inherit the page import map.
+- A worker failure now sets an `error` in the bake state and logs it; before, it left a silent null key forever.
+
+**Measured.**
+
+| Lights | Node atlas build | Banks | Lights baked | Estimated GPU |
+|---|---|---|---|---|
+| 4 | about 4.1 s | 3 | 4 | 33.6 MB |
+| 10 | about 3.9 s | 3 | 10 | 44.8 MB |
+| 40 (stress) | about 4.8 s | 3 | 40 | 44.8 MB |
+
+- The 40-light stress case repeats 10 positions, so its worst chart drops about 72% of its estimated light.
+- Stored bakes re-bake once (a new atlas namespace).
+
+**Tests.**
+- **Node and server:**
+  - test_twin_light_reach_js 18/18;
+  - test_twin_bake_atlas_js 13/13, test_twin_baker_js 12/12, test_twin_bake_runtime_js 16/16;
+  - test_twin_lightmap_material_js 8/8, test_twin_bakes 16/16, test_twin_basis_vendor_js 10/10;
+  - test_twin_real_lights_js 8/8.
+- **test_house_twin_bake_live, 18 scenarios.** It includes `scenario_open_plan_light_crosses_the_invisible_wall` and `scenario_light_spills_through_a_window`. 14 passed in one full run; 4 passed on solo reruns after loopback drops and the two check corrections:
+  - `only the Hall light's pages are rewritten`;
+  - a wider camera aim for the window samples.
+- **Other browser:** test_house_twin_real_lights_live 10/10, test_house_twin_glance_live 5/5.
+
+**Open.**
+- On a chart with more than 6 lights, the dropped ones do not show there even while the owners are off.
+- One "Unexpected end of input" console error appeared once in "Bake lighting now" and did not recur in three reruns.
+- GPU memory has been estimated, not measured on the Pi.
 
 **v2.499.793 (2026-11-11, NOT device-verified): the 3D house gains a glance bar, an idle face and Climate mode.**
 

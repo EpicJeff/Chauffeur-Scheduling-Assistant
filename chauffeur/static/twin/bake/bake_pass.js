@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { FT } from '../twin_generator.js';
-import { groundAt } from '../twin_ground.js';
-import { lightRange, LAMP_HEIGHT } from '../live/modes.js';
+import { lightSource } from './reach.js';
 import { CANDELA } from '../live/real_lights.js';
 import { atlasMesh } from './atlas.js';
 
@@ -14,6 +13,7 @@ wn = normalize(mat3(modelMatrix) * normal); gl_Position = vec4(bakeUV * 2.0 - 1.
 const pointFragment = `uniform samplerCube depthCube; uniform vec3 source; uniform float reach;
 uniform float farPlane; uniform float weight; varying vec3 wp; varying vec3 wn;
 void main() { vec3 delta = source - wp; float d = length(delta);
+if (d >= reach) discard;
 float stored = textureCube(depthCube, -delta).r * farPlane;
 float visibility = step(d - 0.025, stored);
 float attenuation = pow(clamp(1.0 - pow(d / reach, 4.0), 0.0, 1.0), 2.0) / max(d*d, 0.01);
@@ -49,18 +49,18 @@ function proxies(charts, size, layout) {
   return scene;
 }
 
-function occluders(view) {
+export function occluders(view) {
   const scene = new THREE.Scene();
   view.scene.updateMatrixWorld(true);
   view.scene.traverse(o => {
-    if (!atlasMesh(o)) return;
+    if (!atlasMesh(o) || o.material.name === 'glass') return;
     const mesh = new THREE.Mesh(o.geometry, o.material);
     mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); mesh.frustumCulled = false; scene.add(mesh);
   });
   return scene;
 }
 
-export async function renderPage(view, renderer, charts, size, light, layout, atlas) {
+export async function renderPage(view, renderer, charts, size, light, layout, atlas, { deferBounce = false } = {}) {
   const target = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false, type: THREE.HalfFloatType });
   const scene = proxies(charts, size, atlas), blockers = occluders(view);
   const saved = { target: renderer.getRenderTarget(), color: renderer.getClearColor(new THREE.Color()),
@@ -81,14 +81,7 @@ export async function renderPage(view, renderer, charts, size, light, layout, at
   try {
     renderer.toneMapping = THREE.NoToneMapping; renderer.xr.enabled = false;
     renderer.setClearColor(0, 0); renderer.setRenderTarget(target); renderer.clear();
-    const b = view.plan.buildings.find(b => b.id === light.building), l = b?.levels.find(l => l.id === light.level);
-    const r = b?.rooms?.find(r => r.id === light.room), floor = (b?.base || 0) + (l?.elevation || 0);
-    const at = [...light.at];
-    if (l && at[2] <= floor + .1) at[2] = floor + LAMP_HEIGHT;
-    else if (l && at[2] >= floor + l.ceiling - .1) at[2] -= .2;
-    const span = r ? Math.max(...[0, 1].map(k => Math.max(...r.polygon.map(p => p[k])) - Math.min(...r.polygon.map(p => p[k]))), 1) : 10;
-    const reach = lightRange({ at }, b, l, r, span) * FT, far = Math.max(reach * 2, 30);
-    const source = new THREE.Vector3(at[0] * FT, (at[2] + groundAt(view.plan, ...(b?.position || [0, 0]))) * FT, -at[1] * FT);
+    const { source, range: reach } = lightSource(view.plan, light), far = Math.max(reach * 2, 30);
     shadow = new THREE.WebGLCubeRenderTarget(512, { type: THREE.HalfFloatType,
       minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
     const cube = new THREE.CubeCamera(.02, far, shadow);
@@ -118,7 +111,7 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
     else renderer.readRenderTargetPixels(target, 0, 0, size, size, raw);
     const bytes = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) bytes[i] = Math.round(Math.min(1, Math.max(0, THREE.DataUtils.fromHalfFloat(raw[i]))) * 255);
-    // A small chart-local bilateral filter keeps shadow edges and never crosses a room.
+    // A small chart-local bilateral filter keeps shadow edges.
     const copy = bytes.slice();
     for (const c of charts) {
       const r = c.rect;
@@ -128,27 +121,42 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
           const sx = Math.max(r.x, Math.min(r.x + r.w - 1, x + dx)), sy = Math.max(r.y, Math.min(r.y + r.h - 1, y + dy));
           const v = copy[(sy * size + sx) * 4]; if (Math.abs(v - centre) < 20) { sum += v; n++; }
         }
-        bytes[p] = Math.round(sum / n);
+        if (copy[p + 3]) bytes[p] = Math.round(sum / n);
       }
     }
-    // One cheap diffuse bounce within this room. Its average lit albedo
-    // scales the room fill, so even the bounce cannot cross a room boundary.
-    let energy = 0, albedo = 0, count = 0;
-    for (const c of charts) {
-      const color = c.mesh.material.color, reflectance = color ? (color.r + color.g + color.b) / 3 : .5;
-      for (let y = c.rect.y; y < c.rect.y + c.rect.h; y++) for (let x = c.rect.x; x < c.rect.x + c.rect.w; x++) {
-        const v = bytes[(y * size + x) * 4]; energy += v; albedo += v * reflectance; count++;
-      }
-    }
-    const bounce = count ? Math.min(4, albedo / count * .08) : 0;
-    if (energy > 0) for (const c of charts)
-      for (let y = c.rect.y; y < c.rect.y + c.rect.h; y++) for (let x = c.rect.x; x < c.rect.x + c.rect.w; x++) {
-        const p = (y * size + x) * 4; bytes[p] = Math.min(255, Math.round(bytes[p] + bounce));
-      }
+    if (!deferBounce) addRoomBounce(bytes, charts, size);
     return bytes;
   } finally {
     restore();
     for (const o of scene.children) o.geometry.dispose();
     material?.dispose(); depth?.dispose(); target.dispose(); shadow?.dispose();
+  }
+}
+
+export function addRoomBounce(bytes, charts, size) {
+  addRoomBounceAcrossPages([{bytes, charts}], size);
+}
+
+export function addRoomBounceAcrossPages(pages, size) {
+  // Each reached room gets fill proportional to its own direct energy. A
+  // shadowed room gets none. Outdoors retains direct shadows, without fill.
+  const rooms = new Set(pages.flatMap(p => p.charts.filter(c => !c.outdoor).map(c => c.room)));
+  for (const room of rooms) {
+    const mine = pages.flatMap(p => p.charts.filter(c => c.room === room).map(c => ({c, bytes:p.bytes})));
+    let energy = 0, albedo = 0, count = 0;
+    for (const {c, bytes} of mine) {
+      const color = c.mesh.material.color, reflectance = color ? (color.r + color.g + color.b) / 3 : .5;
+      for (let y = c.rect.y; y < c.rect.y + c.rect.h; y++) for (let x = c.rect.x; x < c.rect.x + c.rect.w; x++) {
+        const p = (y * size + x) * 4;
+        if (!bytes[p + 3]) continue;
+        const v = bytes[p]; energy += v; albedo += v * reflectance; count++;
+      }
+    }
+    const bounce = count ? Math.min(4, albedo / count * .08) : 0;
+    if (energy > 0) for (const {c, bytes} of mine)
+      for (let y = c.rect.y; y < c.rect.y + c.rect.h; y++) for (let x = c.rect.x; x < c.rect.x + c.rect.w; x++) {
+        const p = (y * size + x) * 4;
+        if (bytes[p + 3]) bytes[p] = Math.min(255, Math.round(bytes[p] + bounce));
+      }
   }
 }

@@ -206,10 +206,15 @@ def test_manifest_round_trip_and_checks():
         check(got.status_code == 200, (got.status_code, got.text))
         data = got.json()
         check({k: data.get(k) for k in ('pages', 'lights', 'sky')} == body, ('the manifest round-trips', data))
+        body['ownership'] = {'version': 1, 'charts': 1, 'lights': {'dev-k-light': 'CA=='}}
+        check(c.put_manifest(key, body).status_code == 200, 'compact channel history is accepted')
+        check(c.client.get(manifest_url(key), headers=c.panel).json()['ownership'] == body['ownership'],
+              'sticky ownership survives storage and a panel read')
 
         # A newer manifest replaces the old one whole (a light gone is gone).
         smaller = manifest()
         del smaller['lights']['dev-hall']
+        smaller['lights']['dev-k-light']['pages'] = [smaller['lights']['dev-k-light']['page']]
         check(c.put_manifest(key, smaller).status_code == 200, 'replace the manifest')
         check(c.client.get(manifest_url(key), headers=c.mum).json()['lights'] == smaller['lights'], 'replaced whole')
 
@@ -220,6 +225,8 @@ def test_manifest_round_trip_and_checks():
         m = manifest(); m['lights']['dev-k-light']['key'] = '../../x'; bad.append(('light key not a key', m))
         m = manifest(); m['pages'] = 0; bad.append(('no pages', m))
         m = manifest(); m['lights'] = ['dev-k-light']; bad.append(('lights not a map', m))
+        for pages_ in ([], [0, 0], [0, 999], [0, True], '0'):
+            m = manifest(); m['lights']['dev-k-light']['pages'] = pages_; bad.append(('invalid reach pages', m))
         bad.append(('not an object', [1, 2, 3]))
         for why, body_ in bad:
             r = c.put_manifest(key, body_)
@@ -527,7 +534,7 @@ def test_editor_state_says_when_lights_wait_to_rebake():
 
 
 BAKE_MODULES = ('bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker',
-                'bake/bake_pass', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker',
+                'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker',
                 'bake/codec_worker', 'live/real_lights')
 
 
@@ -543,8 +550,8 @@ def test_bake_modules_are_versioned():
                       (page, f'{name}.js is in the import map with ?v='))
             check("three-r187/three.module.js', location.href).href]" in r.text,
                   (page, 'the relative three import maps onto the same versioned three'))
-        for name in ('atlas', 'atlas_transport', 'codec'):
-            r = c.client.get(f'/static/twin/bake/{name}.js')
+        for name in ('bake/atlas', 'bake/atlas_transport', 'bake/codec', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math'):
+            r = c.client.get(f'/static/twin/{name}.js')
             check(r.status_code == 200, (name, r.status_code))
             check('no-cache' in r.headers.get('cache-control', ''), (name, 'bake modules are revalidated', r.headers.get('cache-control')))
 
@@ -587,8 +594,11 @@ TESTS = (
 
 
 if __name__ == '__main__':
+    wanted = set(sys.argv[1:])
+    selected = [fn for fn in TESTS if not wanted or fn.__name__ in wanted]
+    check(not wanted - {fn.__name__ for fn in selected}, 'unknown bake test')
     failed = []
-    for fn in TESTS:
+    for fn in selected:
         try:
             fn()
         except Exception:
@@ -597,5 +607,5 @@ if __name__ == '__main__':
             traceback.print_exc()
         else:
             print('  ok  ', fn.__name__)
-    print(f'{len(TESTS) - len(failed)}/{len(TESTS)} passed')
+    print(f'{len(selected) - len(failed)}/{len(selected)} passed')
     sys.exit(1 if failed else 0)
