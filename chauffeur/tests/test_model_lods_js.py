@@ -25,7 +25,7 @@ const attrs = g => Object.fromEntries(Object.entries(g.attributes).map(([k,a]) =
 const sphere = new THREE.SphereGeometry(2, 224, 224), original = attrs(sphere), originalIndex = Array.from(sphere.index.array);
 sphere.computeBoundingBox();
 assert.ok(triangles(sphere) >= 99000 && triangles(sphere) <= 101000);
-const reductions = [];
+const reductions = [], reductionBounds = [];
 for (const ratio of LOD_RATIOS) {
   const result = await simplifyGeometry(sphere, ratio), count = triangles(result);
   assert.ok(count <= triangles(sphere) * ratio * 1.10, `ratio ${ratio}: got ${count} of ${triangles(sphere)}`);
@@ -37,7 +37,7 @@ for (const ratio of LOD_RATIOS) {
   assert.ok([...result.attributes.normal.array].every(Number.isFinite), 'normals stay finite');
   assert.ok([...result.attributes.uv.array].every(Number.isFinite), 'UVs stay finite');
   assert.ok(result.attributes.position.count < sphere.attributes.position.count * .5, 'unused vertices are removed');
-  reductions.push(count); result.dispose();
+  reductions.push(count); reductionBounds.push([result.boundingBox.min.toArray(),result.boundingBox.max.toArray()]); result.dispose();
 }
 assert.deepEqual(attrs(sphere), original); assert.deepEqual(Array.from(sphere.index.array), originalIndex);
 console.log(`ok real MeshoptSimplifier: ${triangles(sphere)} -> ${reductions.join(' / ')} triangles, bounds within 2%, finite normals/UVs, source unchanged`);
@@ -50,6 +50,118 @@ for (const ratio of LOD_RATIOS) {
   result.dispose();
 }
 console.log('ok small meshes retain every vertex, attribute and triangle in both versions');
+
+// Real isolated CPU work behind the browser Worker protocol. Transfer lists
+// detach the COPIES; the original arrays must stay readable and unchanged.
+const {Worker: NodeWorker} = await import('node:worker_threads');
+window.chfLodWorker = {worker:file('static/twin/lod_worker.js')+'?v=worker-test', simplifier:file('static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js')+'?v=wasm-test'};
+const workerInstances=[];
+class LodWorker {
+  constructor(url, options) {
+    assert.equal(url,window.chfLodWorker.worker);assert.equal(options.type,'module');
+    this.node=new NodeWorker(new URL('data:text/javascript,'+encodeURIComponent(`
+      import {parentPort} from 'node:worker_threads';
+      globalThis.WorkerGlobalScope=Object;
+      globalThis.postMessage=(message,transfers)=>parentPort.postMessage(message,transfers);
+      await import(${JSON.stringify(url)});
+      parentPort.on('message',data=>globalThis.onmessage({data}));
+    `)),{type:'module'});
+    this.node.on('message',data=>this.onmessage?.({data}));
+    this.node.on('error',error=>this.onerror?.(error));
+    workerInstances.push(this);
+  }
+  postMessage(message, transfers) {
+    this.sent=message;this.transfers=transfers;
+    assert.equal(message.simplifierUrl,window.chfLodWorker.simplifier);
+    assert.equal(message.mesh.error,.01);assert.equal(message.mesh.lockBorder,true);
+    assert.deepEqual(message.mesh.weights,[.5,.5,.5,.1,.1]);
+    assert.ok(transfers.includes(message.mesh.indices.buffer));
+    for(const attr of Object.values(message.mesh.attributes)) assert.ok(transfers.includes(attr.array.buffer));
+    this.node.postMessage(message,transfers);assert.ok(transfers.every(b=>b.byteLength===0));
+    this.onPosted?.();
+  }
+  terminate(){this.terminated=true;this.node.terminate();}
+}
+globalThis.Worker=LodWorker;
+for(const [i,ratio] of LOD_RATIOS.entries()) {
+  const result=await simplifyGeometry(sphere,ratio);
+  assert.equal(triangles(result),reductions[i],'worker and fallback give identical triangle counts');
+  assert.deepEqual([result.boundingBox.min.toArray(),result.boundingBox.max.toArray()],reductionBounds[i],'worker bounds equal fallback bounds');
+  for(const edge of ['min','max']) for(const axis of ['x','y','z'])
+    assert.ok(Math.abs(result.boundingBox[edge][axis]-sphere.boundingBox[edge][axis])<.08);
+  assert.ok([...result.attributes.normal.array,...result.attributes.uv.array].every(Number.isFinite));
+  result.dispose();
+}
+assert.ok(workerInstances.every(w=>w.terminated));
+assert.deepEqual(attrs(sphere),original);assert.deepEqual(Array.from(sphere.index.array),originalIndex);
+const beforeSmall=workerInstances.length;await simplifyGeometry(small,.25);
+assert.equal(workerInstances.length,beforeSmall,'small mesh avoids worker entirely');
+console.log('ok real module worker protocol: versioned WASM URL, transferred copies, exact fallback counts, bounds, source immutability and small-mesh bypass');
+
+delete globalThis.Worker;
+const noNormals=new THREE.SphereGeometry(2,48,48).toNonIndexed();noNormals.deleteAttribute('normal');
+const colour=new Uint8Array(noNormals.attributes.position.count*3);
+for(let i=0;i<colour.length;i+=3)colour.set([64,128,255],i);
+noNormals.setAttribute('color',new THREE.BufferAttribute(colour,3,true));
+const cpuNoNormals=await simplifyGeometry(noNormals,.25);
+globalThis.Worker=LodWorker;
+const workerNoNormals=await simplifyGeometry(noNormals,.25);
+assert.deepEqual(attrs(workerNoNormals),attrs(cpuNoNormals));assert.deepEqual(Array.from(workerNoNormals.index.array),Array.from(cpuNoNormals.index.array));
+assert.ok([...workerNoNormals.attributes.normal.array].every(Number.isFinite));
+assert.equal(workerNoNormals.attributes.color.array[0],64,'normalised attributes retain their original representation');
+assert.equal(noNormals.attributes.normal,undefined,'normal generation never mutates LOD0');
+cpuNoNormals.dispose();workerNoNormals.dispose();noNormals.dispose();
+const reuseSource=new THREE.Group(),reuseMaterial=new THREE.MeshStandardMaterial();
+reuseSource.add(new THREE.Mesh(sphere,reuseMaterial),new THREE.Mesh(sphere,reuseMaterial));
+const reuseBefore=workerInstances.length,reuseLod=await makeLod(reuseSource,1);
+assert.equal(workerInstances.length-reuseBefore,1,'one worker handles all large meshes of a version');
+assert.ok(workerInstances.at(-1).terminated);reuseLod.traverse(o=>{if(o.isMesh)o.geometry.dispose();});reuseLod.children[0].material.dispose();reuseMaterial.dispose();
+console.log('ok worker and fallback agree for non-indexed missing-normal geometry and normalized colours; one worker is reused across meshes');
+
+// Abort after transfer, while CPU work belongs to the worker, must terminate it.
+const workerAbort=new AbortController();
+class CancellingWorker extends LodWorker {
+  postMessage(...args){this.onPosted=()=>workerAbort.abort();super.postMessage(...args);}
+}
+globalThis.Worker=CancellingWorker;
+await assert.rejects(simplifyGeometry(sphere,.25,workerAbort.signal),e=>e.cancelled===true);
+assert.equal(workerInstances.at(-1).terminated,true);
+assert.equal(sphere.attributes.position.array.byteLength>0,true);
+console.log('ok in-flight worker cancellation terminates CPU work and preserves LOD0');
+
+// Failed worker startup, execution and postMessage all take the bounded fallback.
+for(const FailureWorker of [
+  class {constructor(){throw new Error('workers denied');}},
+  class {postMessage(){queueMicrotask(()=>this.onerror({message:'worker crashed'}));} terminate(){this.terminated=true;}},
+  class {postMessage(){throw new Error('transfer failed');} terminate(){this.terminated=true;}},
+  class {postMessage({id}){queueMicrotask(()=>this.onmessage({data:{id,error:'WASM unavailable'}}));} terminate(){this.terminated=true;}},
+]) {
+  globalThis.Worker=FailureWorker;
+  const result=await simplifyGeometry(sphere,.05);assert.equal(triangles(result),reductions[1]);result.dispose();
+}
+delete globalThis.Worker;
+const heavy=new THREE.SphereGeometry(2,390,390).toNonIndexed();
+assert.ok(triangles(heavy)>300000);
+await assert.rejects(simplifyGeometry(heavy,.25),e=>e.lodSkipped&&e.message.includes('200,000'));
+const nativeSimplify=MeshoptSimplifier.simplifyWithAttributes;
+let synchronousMs=0;
+MeshoptSimplifier.simplifyWithAttributes=(...args)=>{const start=performance.now();try{return nativeSimplify(...args);}finally{synchronousMs=performance.now()-start;}};
+const bounded=new THREE.SphereGeometry(2,316,316),boundedLod=await simplifyGeometry(bounded,.05);
+assert.ok(triangles(bounded)<200000);assert.ok(triangles(boundedLod)<triangles(bounded)*.1);
+MeshoptSimplifier.simplifyWithAttributes=nativeSimplify;
+bounded.dispose();boundedLod.dispose();
+console.log(`timing bounded fallback (~199k triangles): single synchronous WASM call ${synchronousMs.toFixed(1)} ms`);
+console.log('ok worker failures fall back without changing counts; unavailable workers skip a >300k mesh with a quiet note');
+
+globalThis.Worker=LodWorker;
+let ticks=0,last=performance.now(),maxGap=0;
+const heartbeat=setInterval(()=>{const now=performance.now();maxGap=Math.max(maxGap,now-last);last=now;ticks++;},10);
+const started=performance.now(),heavyLod=await simplifyGeometry(heavy,.25);
+clearInterval(heartbeat);
+assert.ok(ticks>2,'page event loop remains live during heavy simplification');
+assert.ok(triangles(heavyLod)<triangles(heavy)*.3);
+console.log(`timing heavy 300k non-indexed mesh: ${(performance.now()-started).toFixed(0)} ms total; parent heartbeat max gap ${maxGap.toFixed(1)} ms; ${ticks} interactive ticks`);
+heavyLod.dispose();heavy.dispose();delete globalThis.Worker;
 
 // A real Texture clone shares THREE.Source. The derived canvas must not replace
 // LOD0's source image, including when two mesh/material slots share one texture.

@@ -1,11 +1,12 @@
 import * as THREE from 'three';
-import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MeshoptSimplifier } from '../vendor/meshoptimizer-1.3.0/meshopt_simplifier.js';
+import { simplifyMesh } from './lod_worker.js';
 
 export const LOD_RATIOS = [.25, .05];
 export const LOD_TEXTURE_SIZES = [1024, 512];
 export const LOD_MAX_ERROR = .01;
 export const LOD_SMALL_TRIANGLES = 1000;
+export const LOD_FALLBACK_MAX_TRIANGLES = 200000;
 export const LOD_NEAR_RADII = 8;
 export const LOD_FAR_RADII = 24;
 export const LOD_HYSTERESIS = .1;
@@ -24,40 +25,120 @@ export function idle(signal) {
   });
 }
 
-export async function simplifyGeometry(source, ratio) {
-  if ((source.index?.count || source.attributes.position.count) / 3 < LOD_SMALL_TRIANGLES) return source.clone();
+// rAF callbacks precede paint; two frames let the dialog/progress actually paint.
+export async function frame(signal) {
+  cancelled(signal);
+  await new Promise((resolve, reject) => {
+    const finish = () => { signal?.removeEventListener('abort', abort); resolve(); };
+    const abort = () => {
+      if (globalThis.requestAnimationFrame) globalThis.cancelAnimationFrame?.(handle); else clearTimeout(handle);
+      signal?.removeEventListener('abort', abort);
+      reject(Object.assign(new Error('Making lighter versions cancelled.'), { cancelled: true }));
+    };
+    const handle = globalThis.requestAnimationFrame ? requestAnimationFrame(finish) : setTimeout(finish, 0);
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+  cancelled(signal);
+}
+
+function workerSession(signal) {
+  let worker, pending, disabled = false, serial = 0;
+  const close = () => { worker?.terminate(); worker = null; clearTimeout(pending?.timer); };
+  const abort = () => { close(); pending?.reject(Object.assign(new Error('Making lighter versions cancelled.'), { cancelled: true })); pending = null; };
+  signal?.addEventListener('abort', abort, { once: true });
+  return {
+    async run(mesh) {
+      cancelled(signal);
+      const urls = globalThis.window?.chfLodWorker;
+      if (disabled || !globalThis.Worker || !urls) return null;
+      try {
+        if (!worker) {
+          worker = new Worker(urls.worker, { type: 'module', name: 'model-lods' });
+          worker.onmessage = ({ data }) => {
+            if (!pending || data.id !== pending.id) return;
+            const job = pending; clearTimeout(job.timer); pending = null;
+            data.error ? job.reject(new Error(data.error)) : job.resolve(data);
+          };
+          worker.onerror = worker.onmessageerror = () => { clearTimeout(pending?.timer); pending?.reject(new Error('Lighter-version worker failed.')); pending = null; };
+        }
+        return await new Promise((resolve, reject) => {
+          const id = ++serial; pending = { id, resolve, reject };
+          pending.timer = setTimeout(() => reject(new Error('Lighter-version worker did not answer.')), 60000);
+          const transfers = [mesh.indices.buffer, ...Object.values(mesh.attributes).map(a => a.array.buffer)];
+          worker.postMessage({ id, mesh, simplifierUrl: urls.simplifier }, transfers);
+        });
+      } catch (error) {
+        close(); pending = null; disabled = true;
+        cancelled(signal); return null;
+      }
+    },
+    dispose() { close(); signal?.removeEventListener('abort', abort); },
+  };
+}
+
+async function meshCopy(source, ratio, signal) {
+  const count = source.index?.count || source.attributes.position.count;
+  const indices = new Uint32Array(count), attributes = {};
+  for (let start = 0; start < count; start += 8192) {
+    for (let i = start; i < Math.min(start + 8192, count); ++i) indices[i] = source.index ? source.index.getX(i) : i;
+    await frame(signal);
+  }
+  for (const [name, attr] of Object.entries(source.attributes)) {
+    const array = new Float32Array(attr.count * attr.itemSize);
+    for (let start = 0; start < attr.count; start += 8192) {
+      for (let i = start; i < Math.min(start + 8192, attr.count); ++i)
+        for (let c = 0; c < attr.itemSize; ++c) array[i * attr.itemSize + c] = attr.getComponent(i, c);
+      await frame(signal);
+    }
+    attributes[name] = { array, itemSize: attr.itemSize };
+  }
+  return { indices, attributes, ratio, error: LOD_MAX_ERROR, weights: attributes.uv ? [.5, .5, .5, .1, .1] : [.5, .5, .5], lockBorder: true };
+}
+
+export async function simplifyGeometry(source, ratio, signal, session) {
+  cancelled(signal);
+  const triangles = (source.index?.count || source.attributes.position.count) / 3;
+  if (triangles < LOD_SMALL_TRIANGLES) return source.clone();
   if (Object.keys(source.morphAttributes).length) throw new Error('Animated models keep their original version.');
-  await MeshoptSimplifier.ready;
-  // Welding all attributes restores the indexing lost by the material merge,
-  // while retaining discontinuities at UV and normal seams.
-  const geometry = mergeVertices(source), position = geometry.attributes.position;
-  if (!geometry.attributes.normal) geometry.computeVertexNormals();
-  const normal = geometry.attributes.normal, uv = geometry.attributes.uv, stride = uv ? 5 : 3;
-  const attributes = new Float32Array(position.count * stride);
-  for (let i = 0; i < position.count; ++i) {
-    attributes.set([normal.getX(i), normal.getY(i), normal.getZ(i)], i * stride);
-    if (uv) attributes.set([uv.getX(i), uv.getY(i)], i * stride + 3);
-  }
-  const [indices] = MeshoptSimplifier.simplifyWithAttributes(new Uint32Array(geometry.index.array),
-    new Float32Array(position.array), 3, attributes, stride, uv ? [.5, .5, .5, .1, .1] : [.5, .5, .5],
-    null, Math.max(3, Math.floor(geometry.index.count * ratio / 3) * 3), LOD_MAX_ERROR, ['LockBorder']);
-  // Compact every attribute as well as the indices; otherwise GLB still stores
-  // all of LOD0's vertices and is not actually lighter.
-  const used = [...new Set(indices)], remap = new Map(used.map((v, i) => [v, i])), out = new THREE.BufferGeometry();
-  for (const [name, attr] of Object.entries(geometry.attributes)) {
-    const values = new attr.array.constructor(used.length * attr.itemSize);
-    used.forEach((v, i) => { for (let c = 0; c < attr.itemSize; ++c) values[i * attr.itemSize + c] = attr.getComponent(v, c); });
-    out.setAttribute(name, new THREE.BufferAttribute(values, attr.itemSize, attr.normalized));
-  }
-  out.setIndex(Array.from(indices, v => remap.get(v))); out.computeBoundingBox(); out.computeBoundingSphere(); geometry.dispose();
-  return out;
+  const ownSession = !session; session ||= workerSession(signal);
+  const skip = () => { throw Object.assign(new Error('Original kept. Lighter versions skipped: this mesh exceeds 200,000 triangles and a worker is unavailable.'), { lodSkipped: true }); };
+  let out;
+  try {
+    // Reject an oversized fallback BEFORE copying or welding its vertices.
+    if (triangles > LOD_FALLBACK_MAX_TRIANGLES && (!globalThis.Worker || !globalThis.window?.chfLodWorker)) skip();
+    let result = await session.run(await meshCopy(source, ratio, signal));
+    if (!result) {
+      if (triangles > LOD_FALLBACK_MAX_TRIANGLES) skip();
+      // The worker may have detached its inputs before failing. Recopy LOD0.
+      result = await simplifyMesh(await meshCopy(source, ratio, signal), MeshoptSimplifier, () => frame(signal));
+    }
+    cancelled(signal);
+    out = new THREE.BufferGeometry();
+    for (const [name, attr] of Object.entries(source.attributes)) {
+      const array = new attr.array.constructor(result.vertices.length * attr.itemSize);
+      const copy = new THREE.BufferAttribute(array, attr.itemSize, attr.normalized);
+      for (let start = 0; start < result.vertices.length; start += 8192) {
+        for (let i = start; i < Math.min(start + 8192, result.vertices.length); ++i)
+          for (let c = 0; c < attr.itemSize; ++c) copy.setComponent(i, c, attr.getComponent(result.vertices[i], c));
+        await frame(signal);
+      }
+      out.setAttribute(name, copy);
+    }
+    if (result.normal) out.setAttribute('normal', new THREE.BufferAttribute(result.normal, 3));
+    out.setIndex(new THREE.BufferAttribute(result.indices, 1)); out.computeBoundingBox(); out.computeBoundingSphere();
+    return out;
+  } catch (error) { out?.dispose(); throw error; }
+  finally { if (ownSession) session.dispose(); }
 }
 
 export async function makeLod(source, level, signal) {
+  cancelled(signal);
+  const session = workerSession(signal);
   const root = source.clone(true), materials = new Map(), textures = new Map(), meshes = [];
   root.traverse(o => { if (o.isMesh) meshes.push(o); });
-  const textureCopy = texture => {
+  const textureCopy = async texture => {
     if (!textures.has(texture)) {
+      await frame(signal);
       const copy = texture.clone(), image = texture.image, max = LOD_TEXTURE_SIZES[level - 1];
       if (image && Math.max(image.width, image.height) > max) {
         const canvas = document.createElement('canvas'), ratio = max / Math.max(image.width, image.height);
@@ -74,23 +155,25 @@ export async function makeLod(source, level, signal) {
     for (const mesh of meshes) {
       await idle(signal);
       if (mesh.isSkinnedMesh || mesh.isInstancedMesh) throw new Error('Animated models keep their original version.');
-      mesh.geometry = await simplifyGeometry(mesh.geometry, LOD_RATIOS[level - 1]);
-      const copy = material => {
+      mesh.geometry = await simplifyGeometry(mesh.geometry, LOD_RATIOS[level - 1], signal, session);
+      const copy = async material => {
         if (!materials.has(material)) {
           const out = material.clone();
-          for (const [key, value] of Object.entries(out)) if (value?.isTexture) out[key] = textureCopy(value);
           materials.set(material, out);
+          for (const [key, value] of Object.entries(out)) if (value?.isTexture) out[key] = await textureCopy(value);
         }
         return materials.get(material);
       };
-      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(copy) : copy(mesh.material);
+      const copies = [];
+      for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) copies.push(await copy(material));
+      mesh.material = Array.isArray(mesh.material) ? copies : copies[0];
     }
     cancelled(signal); return root;
   } catch (error) {
     // Unprocessed meshes still reference the original; release only our copies.
     root.traverse(o => { if (o.geometry && !meshes.some(m => m !== o && m.geometry === o.geometry) && !hasGeometry(source, o.geometry)) o.geometry.dispose(); });
     materials.forEach(m => m.dispose()); textures.forEach(t => t.dispose()); throw error;
-  }
+  } finally { session.dispose(); }
 }
 function hasGeometry(root, geometry) { let found = false; root.traverse(o => { if (o.geometry === geometry) found = true; }); return found; }
 

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { importedModels, rememberImport, forgetImport, loadModel, disposeObject } from '../twin_library.js';
 import { modelBudget, suggestKind, schema } from '../objects.js';
 import { request, report } from './api.js';
-import { makeLod, idle } from '../model_lods.js';
+import { makeLod, idle, frame } from '../model_lods.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
 // Files form one byte stream; chunk boundaries need not match file boundaries.
@@ -52,7 +52,7 @@ function thumbnail(model) {
 }
 
 // This uses the piece card's native labels and controls. No browser dialogs.
-function details(entry, suggested, picture, signal, versions) {
+function details(entry, suggested, picture, signal, versions, updates) {
   if (signal.aborted) return Promise.resolve(null);
   return new Promise(resolve => {
     const card = document.createElement('form'); card.className = 'object-import'; card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', 'Import model');
@@ -66,10 +66,11 @@ function details(entry, suggested, picture, signal, versions) {
     preview('Original', picture, entry.triangles);
     let warningNote = null;
     const progress = document.createElement('p'); progress.textContent = 'Making lighter versions…'; card.append(progress);
+    updates.update = text => { if (card.isConnected) progress.textContent = text; };
     versions.then(rows => {
       if (!card.isConnected) return;
       rows.forEach(row => preview(row.name, row.picture, row.triangles));
-      progress.textContent = rows.length === 2 ? 'Lighter versions ready.' : 'Model kept. Lighter versions could not be made this time.';
+      progress.textContent = rows.note || (rows.length === 2 ? 'Lighter versions ready.' : 'Model kept. Lighter versions could not be made this time.');
       if (rows.length === 2 && entry.heavy && warningNote) warningNote.textContent = 'Heavy original. The wall panel will use the lightest real version.';
     });
     const nameLabel = document.createElement('label'); nameLabel.textContent = 'Name';
@@ -131,13 +132,21 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
       if (!model) throw new Error('Could not load this model. Check that its buffers and textures are included.');
       const budget = modelBudget(model, { resizeTextures: false }), size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
       const picture = thumbnail(model);
-      generation = generateVersions(entry, model, generationEvents.signal);
-      const answer = await details({ ...entry, triangles: budget.triangles, heavy: budget.heavy, warning: entry.warning || budget.warning }, suggestKind(size.toArray()), picture, signal, generation);
+      const updates = { update: () => {} };
+      generation = (async () => {
+        try {
+          // details() appends synchronously below. A second frame ensures a
+          // paint happens before optional generation can do any CPU work.
+          await frame(generationEvents.signal); await frame(generationEvents.signal);
+          return await generateVersions(entry, model, generationEvents.signal, text => updates.update(text));
+        } catch { return []; }
+      })();
+      const answer = await details({ ...entry, triangles: budget.triangles, heavy: budget.heavy, warning: entry.warning || budget.warning }, suggestKind(size.toArray()), picture, signal, generation, updates);
       if (!answer || !canEdit()) return;
       rememberImport(await request('imports/' + entry.id, 'PATCH', { ...answer, size: size.toArray(), triangles: budget.triangles })); accepted = true;
       await importedModels(true); await changed(); status.textContent = 'Model added. Drag its thumbnail onto a floor, the ground or a wall.';
       const versions = await generation;
-      if (versions.length < 2 && !signal.aborted) status.textContent += ' Lighter versions could not all be made this time.';
+      if (versions.length < 2 && !signal.aborted) status.textContent += ' ' + (versions.note || 'Lighter versions could not all be made this time.');
       await changed();
     } catch (error) { status.textContent = error.message; report(error); }
     finally {
@@ -166,20 +175,28 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
   });
 }
 
-export async function generateVersions(entry, source, signal) {
+export async function generateVersions(entry, source, signal, progress = () => {}) {
   const rows = [];
   for (const level of [1, 2]) {
     let model;
     try {
+      if (signal.aborted) break;
+      progress(`Making lighter versions… ${level} of 2`);
+      await frame(signal);
       model = await makeLod(source, level, signal);
+      await frame(signal);
       const triangles = modelBudget(model, { resizeTextures: false }).triangles, picture = thumbnail(model);
+      await frame(signal);
       const buffer = await new GLTFExporter().parseAsync(model, { binary: true, onlyVisible: true });
       if (signal.aborted) break;
       const name = `lod${level}.glb`;
       if (buffer.byteLength > 50 * 1024 * 1024) throw new Error('Each lighter version may be at most 50 MB.');
       rememberImport(await uploadFiles([new File([buffer], name)], () => {}, signal, request, { asset_id: entry.id, lod: name }));
       rows.push({ name: `LOD${level}`, picture, triangles });
-    } catch { /* Import acceptance is independent of optional derived files. */ }
+    } catch (error) {
+      // Optional derived files never prevent accepting the original.
+      if (error.lodSkipped) { rows.note = error.message; progress(error.message); break; }
+    }
     finally { if (model) disposeObject(model); }
     if (signal.aborted) break;
   }

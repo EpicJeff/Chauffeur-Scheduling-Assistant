@@ -11,7 +11,12 @@ Run: python tests/test_twin_import_maps.py
 """
 import os
 import re
+import json
+import shutil
+import subprocess
 import sys
+
+from jinja2 import Environment
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -67,8 +72,37 @@ def test_house_editor_page():
     return check_page('house_editor.html', entries + ['twin/editor/editor.js'])
 
 
+def test_lod_worker_urls():
+    # A worker cannot see an import map. Execute the actual rendered config
+    # against trailing-slash and HA ingress pages, using a distinct ver per file.
+    node = shutil.which('node')
+    assert node, 'Node is required to verify the worker URL configuration'
+    env = Environment()
+    env.filters['ver'] = lambda path: path + '?v=' + ('worker123' if path.endswith('/lod_worker.js') else 'wasm456')
+    scripts = []
+    for template, page in [('house_editor.html', 'editor'), ('house_twin.html', 'twin')]:
+        text = open(os.path.join(ROOT, 'templates', template), encoding='utf-8').read()
+        config = re.search(r'window\.chfLodWorker = \{.*?\n    \};', text, re.S)
+        assert config, f'{template}: missing explicit versioned worker configuration'
+        rendered = env.from_string(config.group()).render()
+        for prefix in ['', '/api/hassio_ingress/session']:
+            for slash in ['', '/']:
+                href = f'https://house.test{prefix}/house/{page}{slash}'
+                base = '../../' if slash else '../'
+                scripts.append(f'''{{
+                  const location={{href:{json.dumps(href)}}},window={{chfBase:{json.dumps(base)}}};
+                  {rendered}
+                  assert.equal(window.chfLodWorker.worker, 'https://house.test{prefix}/static/twin/lod_worker.js?v=worker123');
+                  assert.equal(window.chfLodWorker.simplifier, 'https://house.test{prefix}/static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js?v=wasm456');
+                }}''')
+    result = subprocess.run([node, '--input-type=module', '-e', "import assert from 'node:assert/strict';\n" + '\n'.join(scripts)],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    return len(scripts)
+
+
 if __name__ == '__main__':
-    tests = [test_house_twin_page, test_house_editor_page]
+    tests = [test_house_twin_page, test_house_editor_page, test_lod_worker_urls]
     passed = 0
     for fn in tests:
         try:
