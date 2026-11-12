@@ -21,7 +21,7 @@
     {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'viewing', 'unlit', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/lighting', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/library', 'editor/flags'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
-    {% for name in ['twin_solar', 'live/climate', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_geometry', 'live/energy_mapping', 'live/energy_settings', 'live/security'] %}
+    {% for name in ['twin_solar', 'live/climate', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_geometry', 'live/energy_mapping', 'live/energy_check', 'live/energy_settings', 'live/security'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/editor/flags.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/flags.js' | ver | tojson }};

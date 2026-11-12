@@ -3,7 +3,7 @@ import sys
 from twin_live_node_rig import run
 
 DRIVER=r"""
-const {allocateEnergyFlows,energyFlows,guessEnergy}=await import(file('static/twin/live/energy_mapping.js'));
+const {allocateEnergyFlows,energyFlows,energyBalance,watts,guessEnergy}=await import(file('static/twin/live/energy_mapping.js'));
 const {energyTopology,flowCurve,worldPoint}=await import(file('static/twin/live/energy_geometry.js'));
 const checks=[],check=(name,f)=>checks.push([name,f]);
 // Watts. B > 0 discharges; G > 0 imports; H already includes chargers.
@@ -77,6 +77,23 @@ check('live unit conversion, zone fallback, presence and missing readings use th
  states['sensor.z'].attributes.unit_of_measurement='kWh';delete states['sensor.g'];assert.deepEqual(energyFlows(mapping,states,['sensor.z']),{});
  states['device_tracker.ev'].state='home';assert.deepEqual(energyFlows(mapping,states,['sensor.z']),{'car:0':2000});
  delete states['sensor.h'];states['sensor.z']=power(4000);assert.deepEqual(energyFlows(mapping,states,['sensor.z']),{'car:0':2000});
+});
+check('one missing total is worked out from the other three; two missing leave the balance unknown',()=>{
+ const power=(state,unit='W')=>({state:String(state),attributes:{device_class:'power',unit_of_measurement:unit}});
+ const mapping={solar_power:'sensor.s',battery_power:'sensor.b',grid_power:'sensor.g',house_power:'sensor.h',cars:[]};
+ // Night: no sun, the Powerwall idle, the house drawing 1.5 kW from the grid (Powerwall-style kW sensors).
+ const states={'sensor.s':power(0,'kW'),'sensor.b':power(0,'kW'),'sensor.g':power(1.5,'kW'),'sensor.h':power(1.5,'kW')};
+ assert.deepEqual(energyFlows(mapping,states),{'grid:house':1500});
+ for(const key of ['sensor.s','sensor.b','sensor.g','sensor.h']){
+  const partial={...states};delete partial[key];
+  const balance=energyBalance(mapping,partial);
+  assert.equal(balance.known,true,key);assert.equal(Object.keys(balance.derived).length,1,key);
+  assert.deepEqual(energyFlows(mapping,partial),{'grid:house':1500},key);
+ }
+ const two={...states};delete two['sensor.g'];delete two['sensor.h'];
+ assert.equal(energyBalance(mapping,two).known,false);assert.deepEqual(energyFlows(mapping,two),{});
+ // An energy counter is never read as a flow, even with device_class power.
+ assert.equal(watts('sensor.e',{'sensor.e':power(4,'kWh')}),null);
 });
 let failures=0;for(const [name,f]of checks)try{f();console.log('  ok '+name);}catch(e){failures++;console.log('  FAIL '+name+' '+e.stack);}
 assert.deepEqual(escaped,[]);assert.deepEqual(domErrors,[]);console.log(`${checks.length-failures}/${checks.length} energy flow checks passed`);process.exit(failures?1:0);

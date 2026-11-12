@@ -41,6 +41,7 @@ export function mountModes(view, live) {
   document.getElementById('twin-controls').append(strip);
   const climateLabels = document.createElement('div'); climateLabels.className = 'twin-mode-labels twin-climate-labels';
   const modeLegend = document.createElement('output'); modeLegend.id = 'twin-mode-legend'; modeLegend.hidden = true;
+  const legendText = document.createElement('span'), legendContent = document.createElement('div'); modeLegend.append(legendText, legendContent);
   document.getElementById('twin-controls').append(modeLegend);
   document.body.append(climateLabels);
   let mode = 'all', lastKey = '', revision = 0;
@@ -141,7 +142,10 @@ export function mountModes(view, live) {
     revision++;
     for (const floor of floors) floor.climate = roomClimate(floor.room, climateDevices, stale ? {} : states);
     for (const effect of effects.values()) effect.update?.(mode);
-    modeLegend.textContent = effects.get(mode)?.legend?.() || registry.get(mode)?.legend || ''; modeLegend.hidden = !modeLegend.textContent;
+    legendText.textContent = effects.get(mode)?.legend?.() || registry.get(mode)?.legend || '';
+    const content = effects.get(mode)?.legendContent?.();
+    if (legendContent.firstChild !== (content || null)) legendContent.replaceChildren(...(content ? [content] : []));
+    modeLegend.hidden = !modeLegend.textContent;
     for (const [value, button] of buttons) button.setAttribute('aria-pressed', String(value === mode));
     registry.get(mode)?.update?.(context);
     draw();

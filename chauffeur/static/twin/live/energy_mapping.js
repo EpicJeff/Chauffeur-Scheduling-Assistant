@@ -40,6 +40,8 @@ export function watts(id, states) {
   const row = states[id], value = row?.state;
   if (value == null || String(value).trim() === '' || !Number.isFinite(Number(value)) || !power(row)) return null;
   const unit = (row.attributes?.unit_of_measurement || 'W').toLowerCase();
+  // Instantaneous power only: an energy counter (Wh/kWh) is not a flow, even with device_class power.
+  if (!['w', 'kw', 'mw'].includes(unit)) return null;
   return Number(value) * (unit === 'kw' ? 1000 : unit === 'mw' ? 1000000 : 1);
 }
 export function carHome(car, states) {
@@ -50,7 +52,7 @@ export function carHome(car, states) {
 
 // Instantaneous watts only. Allocate before applying the display threshold so
 // dropping a small flow never redirects it to a different destination.
-export function allocateEnergyFlows(totals, mapping = {}) {
+export function allocateEnergyFlows(totals, mapping = {}, includeHidden = false) {
   const number = value => Number.isFinite(value) ? value : 0;
   const positive = value => Math.max(0, number(value));
   const solar = positive(totals.solar);
@@ -73,20 +75,43 @@ export function allocateEnergyFlows(totals, mapping = {}) {
     ['battery:house', batteryHome], ['grid:house', gridHome],
     ['grid:battery', gridBattery], ['battery:grid', batteryGrid],
     ...chargers.map((value, i) => ['car:' + i, value])
-  ].map(([id, value]) => [id, Math.max(0, value)]).filter(([,value]) => value >= 50));
+  ].map(([id, value]) => [id, Math.max(0, value)]).filter(([,value]) => includeHidden || flowReading(value).visible));
 }
 
-export function energyFlows(mapping, states, zoneEntities = []) {
+// The four totals always balance: home = solar + battery discharge + grid import
+// (in the mapping's signs). One unknown total is derived from the other three;
+// with two or more unknown the balance cannot be split, and energyBalance says why.
+export function energyBalance(mapping, states, zoneEntities = []) {
   const zoneReadings = zoneEntities.map(id => watts(id, states));
-  const solar = mapping.solar_power ? watts(mapping.solar_power, states)
-    : zoneReadings.some(value => value === null) ? null : zoneReadings.reduce((sum,value) => sum + Math.max(0, value), 0);
-  const battery = watts(mapping.battery_power, states), grid = watts(mapping.grid_power, states), home = watts(mapping.house_power, states);
-  // An unavailable total is unknown, not zero consumption/production. Direct
-  // charger telemetry can still be shown when the balance cannot be inferred.
-  const known = home !== null && solar !== null && (!mapping.battery_power || battery !== null) && (!mapping.grid_power || grid !== null);
-  return allocateEnergyFlows({solar: known ? solar : 0, battery: known ? battery : 0,
-    grid: known ? grid : 0, home: known ? home : 0,
-    chargers: (mapping.cars || []).map(car => carHome(car, states) ? watts(car.charge_power, states) : 0)}, mapping);
+  const read = id => id ? watts(id, states) : undefined;  // undefined = not set, null = unreadable
+  const totals = {
+    solar: mapping.solar_power ? read(mapping.solar_power)
+      : zoneEntities.length ? (zoneReadings.some(v => v === null) ? null : zoneReadings.reduce((s, v) => s + Math.max(0, v), 0)) : undefined,
+    battery: read(mapping.battery_power), grid: read(mapping.grid_power), home: read(mapping.house_power)};
+  // Roles that do not exist in this house (no battery, no solar) are zero, not unknown.
+  const absent = {solar: !mapping.solar_power && !zoneEntities.length, battery: !mapping.battery_power};
+  for (const key of ['solar', 'battery']) if (absent[key]) totals[key] = 0;
+  const bSign = mapping.battery_positive === 'charge' ? -1 : 1, gSign = mapping.grid_positive === 'export' ? -1 : 1;
+  const unknown = Object.keys(totals).filter(key => totals[key] === undefined || totals[key] === null);
+  const derived = {};
+  if (unknown.length === 1) {
+    const [key] = unknown, t = totals;
+    if (key === 'home') t.home = Math.max(0, t.solar + bSign * t.battery + gSign * t.grid);
+    else if (key === 'grid') t.grid = gSign * (t.home - t.solar - bSign * t.battery);
+    else if (key === 'battery') t.battery = bSign * (t.home - t.solar - gSign * t.grid);
+    else if (key === 'solar') t.solar = Math.max(0, t.home - bSign * t.battery - gSign * t.grid);
+    derived[key] = true;
+  }
+  const missing = unknown.length > 1 ? unknown : [];
+  return {totals, derived, missing, known: !missing.length};
+}
+
+export function energyFlows(mapping, states, zoneEntities = [], includeHidden = false) {
+  const balance = energyBalance(mapping, states, zoneEntities), t = balance.totals;
+  // An unknown balance is not zero consumption: only direct charger telemetry can still show.
+  return allocateEnergyFlows({solar: balance.known ? t.solar : 0, battery: balance.known ? t.battery : 0,
+    grid: balance.known ? t.grid : 0, home: balance.known ? t.home : 0,
+    chargers: (mapping.cars || []).map(car => carHome(car, states) ? watts(car.charge_power, states) : 0)}, mapping, includeHidden);
 }
 export function flowReading(value, positive = true) {
   const magnitude = Math.abs(value || 0);

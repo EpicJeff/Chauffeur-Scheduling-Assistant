@@ -1,6 +1,88 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.798 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.801 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.801 (2026-11-12, NOT device-verified): viewing slice 2a. Zooming fades the roof and upper floors, a chosen floor peels away what blocks it, and cut floors have flat, capped wall tops.**
+
+**The ask.** The user's feedback, 2026-11-11:
+- "roof and top-floor fade on zoom like the reference";
+- "selecting a floor should focus and peel away what obscures it";
+- "room walls should be flat-topped in cutaway".
+
+This follows spec `docs/superpowers/specs/2026-11-06-house-digital-twin-design.md` §5.1 and decision 3.
+
+**How it was built.** Codex built it over three rounds; Claude reviewed each in Chromium:
+- the first round's open sawtooth wall tops and a milky 12% peel veil;
+- a regression where the zoom logic undid every chosen floor, so floor buttons did nothing;
+- three tests updated for fades and for the new rule that detached buildings stay visible.
+
+**Zoom level of detail** (`static/twin/viewing.js`, `/house/twin` only; the editor keeps its explicit controls).
+- Closing in on a building fades its roof, then its upper floors, revealing the floor at the orbit target's height. Zooming out reverses it.
+- Fades are eased over about 250 ms, with hysteresis at the thresholds.
+- Detached buildings fade independently.
+
+**A chosen floor** (button, `setView`, or zoom) is pinned at once, whatever the camera distance. It holds through orbit, pan, zoom-in and camera presets. It releases on Exterior, on another floor, or on zooming out past a margin beyond the distance when pinned. The floor button no longer jumps to the Top camera.
+
+**Peel.** Whatever lies between the camera and the chosen floor fades fully out and is then hidden, so it costs no draws: floors above, roofs, buildings in front, and trees in front (Low-tier trees are now one card each, so they can fade on their own). The set is recomputed only when the camera or the selection changes.
+
+**Cutaway.** The shown floor's walls are cut flat at one height and capped solid in a slightly darker plan tone, with no hollow or cladding teeth. Gables and sloped tops are trimmed flat.
+
+**Shaders.** No new shader programs across a full zoom in and out after the first pass.
+
+**Measured.** Low tier on the desktop GPU held 60 fps: exterior 2.0 ms and 84 draw calls, floor 1.0 ms and 31 draw calls.
+
+**Tests.**
+- **Browser:** test_house_twin_viewing_live 5/5, test_twin_view_live ok (waits for the fade), test_house_twin_real_lights_live 10/10, test_house_twin_controls_live 3/3, test_house_twin_glance_live 9/9, test_house_editor_openings_live 5/5, test_house_twin_energy_live 4/4, bake smoke 2/2.
+- **Node:** test_twin_viewing_js 19/19, test_twin_import_maps 2/2, test_twin_editor_lighting_js 12/12, test_tailwind_build 6/6.
+- In test_house_twin_real_lights_live, `scenario_all_after_a_floor_change_in_lights_follows_the_floor` now returns as not applicable when no floor view hides a lamp: this house's lamps all sit on ground floors of buildings that stay shown.
+
+**Open.**
+- A few small teeth remain on the cut near the stairs.
+- Occlusion uses coarse boxes, so it can over-peel concave buildings and sparse canopies.
+- The cut-wall geometry needs a fresh light bake.
+- Pi frame time is unmeasured.
+- Room status cards and marker count badges come next (slice 2b).
+
+**v2.499.800 (2026-11-12, NOT device-verified): energy ribbons show when one of the four readings is missing, and the Energy check says why when they cannot.**
+
+**The report.** The user, 2026-11-12: "It is reading 1.5 kW as less than 50 W."
+
+**Cause.** The kW conversion was right. `energyFlows` zeroed every flow whenever any one of solar, battery, grid or house power was unset or unreadable, and the Energy check then called those zeros "under 50 W". Separately, `watts()` read a kWh energy counter carrying device_class power as watts.
+
+**Fix** (`static/twin/live/energy_mapping.js`, `energy_check.js`).
+- **The balance.** The four totals balance: house = solar + battery discharge + grid import, in the mapping's signs.
+- **One missing total** is worked out from the other three. The check's summary says so ("Electric panel / house worked out from the other three readings").
+- **Two or more missing:** the flows stay hidden, and the check names them ("balance unknown: Meter / grid and Electric panel / house not readable") instead of "under 50 W". Direct charger telemetry still shows.
+- **Absent roles.** A house with no battery or no solar treats that role as zero, not unknown.
+- **Power only.** `watts()` accepts only W, kW and MW. Wh and kWh are never a flow.
+
+**Tests.** test_twin_energy_flows_js 14/14:
+- each of the four readings is derived in turn on a Powerwall-style kW night case;
+- with two missing, nothing is drawn;
+- kWh is rejected.
+
+test_twin_energy_check_js 31/31 (expectations moved to the new messages), test_twin_energy_js 20/20, test_twin_energy_mapping_js 8/8, test_house_twin_energy_live 4/4.
+
+**v2.499.799 (2026-11-12, NOT device-verified): an Energy check says why an energy ribbon is missing.**
+
+**The ask.** The user, 2026-11-11: "I'm not seeing any energy ribbons in Energy mode. I am pretty sure I added all the necessary items in the editor ... Is there any way to determine what is going wrong?"
+
+**How it was built.** Codex built it. Claude ran the browser check and made these fixes:
+- the "Why no ribbons?" link sat under the 3D canvas and could not be clicked;
+- the role names were hidden by the controls bar's legend rule;
+- the energy scenario now chooses its glance tiles, since v2.499.796 shows only chosen tiles.
+
+**What it shows** (`static/twin/live/energy_check.js`; in the twin drawer's Energy sources section, and behind "Why no ribbons?" in the Energy legend).
+- **Summary.** "Ribbons showing: N", or "No ribbons because …", naming the first missing piece.
+- **Roles** (solar, battery/inverter, meter/grid, electric panel/house, and each charger): each gets ✓, ⚠ or ✗ with:
+  - the mapped power entity and its live, formatted value;
+  - its availability;
+  - the sign convention;
+  - where its location comes from. When it is not placed, it names the exact entity to place, and flags a device that is placed under a different entity than the role uses.
+- **Flows.** Every allocated flow with its watts, marked shown, hidden (under 50 W) or "no ribbon: <role> not placed".
+- **One source of truth.** It is derived from the same mapping, anchor and flow functions Energy mode draws with, so it cannot disagree with what is drawn.
+
+**Tests.** test_twin_energy_check_js 31/31, test_house_twin_energy_live 4/4 (including a removed meter), test_twin_import_maps 2/2, test_tailwind_build 6/6, and the energy node suites.
 
 **v2.499.798 (2026-11-11, NOT device-verified): the house editor gets a viewport lighting control: Day / Night / Now / Unlit (fast). It opens in Day.**
 
