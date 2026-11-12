@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.811 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.812 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.812 (2026-11-12, NOT device-verified): model imports say why they failed instead of "The house could not answer".**
+
+**The report.** The user, 2026-11-12: "Importing a gtlf zip or individual files gives 'The house could not answer'." That message is the editor's fallback for a reply that is not JSON: a bare server crash, or something in front of the add-on (Home Assistant's ingress proxy) rejecting the upload. The add-on log was not reachable from the dev session, and loose glTF (.gltf + .bin + texture) and zipped folders import correctly through the route in tests. So the cause on the device is still unknown, and this release makes it visible.
+
+**Now:**
+- **`main.py` `house_editor_import`:** any unexpected failure is logged with its trace (`House model import failed`) and answered as JSON 500, "The model could not be imported (<Type>: <message>)". Expected refusals stay 400 with their words.
+- **`static/twin/editor/api.js` `request`:** a non-JSON reply now names its HTTP status ("The house could not answer (HTTP 502)"). A 413 says "That upload is larger than Home Assistant lets through. Try a smaller model or a zip."
+
+**Tests.** `test_twin_objects` 8/8. The new route test imports a loose .gltf + .bin and a zipped folder, then proves an unexpected error answers as JSON 500 with its reason. It fails without the fix.
 
 **v2.499.811 (2026-11-12, NOT device-verified): twin slice 4a, objects. One object model with scale, turn and properties for every placed thing; glTF/GLB model import into the library; door and window models fitted to their openings.**
 
