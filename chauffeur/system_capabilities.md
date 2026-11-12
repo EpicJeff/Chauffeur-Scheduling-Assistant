@@ -1,6 +1,42 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.806 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.807 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.807 (2026-11-12, NOT device-verified): a new house twin colour scheme. Graphite glass replaces brown and gold, and a marker's colour shows its STATE, never its type.**
+
+**The rulings.** The user, 2026-11-12:
+- "We have to change the color scheme. Brown and gold ... is not very pretty." The user approved neutral dark glass, white text and a white selected pill.
+- Then: "Coloring should show state, not type". Lights take their light's colour, thermostats their mode, and locks show locked or unlocked. The icon says what a thing is; the colour says what it is doing.
+
+**How it was built.** Codex built it in two rounds. Claude checked it in Chromium (screenshots of the state colours).
+
+**Palette** (`static/twin/palette.js`, mirrored as `--twin…` CSS custom properties on `:root` in `house_twin.html` and `house_editor.html`; a test keeps them equal).
+- **Chrome:** glass `rgba(17,19,24,.62)` with a 16 px blur and a hairline `rgba(255,255,255,.08)`; the strong glass is `.82`.
+- **Text:** `#f4f5f7`; dim text `#a3a9b6`.
+- **Selected:** a white pill with dark text.
+- **Scope:** viewer and editor chrome, labels, sheets, the ring, chips and legends all use it.
+
+**Marker state colours** (`markers.js`, `palette.js`):
+- **Off:** a glass disc with a white glyph and a faint ring.
+- **Unavailable:** dim glass with a grey glyph and no ring.
+- **Attention:** amber `#f59e0b`; it wins over everything except unavailable.
+- **Light on:** its `rgb_color`, else its kelvin as black-body white (2700 K warm through 6500 K cool; mireds converted), else `#ffd89a`. Brightness never changes the hue.
+- **Thermostat:** by MODE. Heat `#fb923c`, cool `#60a5fa`, heat_cool/auto `#a78bfa`, dry/fan_only `#2dd4bf`; an idle thermostat in heat stays orange. The thermostat arc uses the same values.
+- **Lock:** locked green `#34d399`, unlocked/locking/unlocking amber, jammed red `#f87171`.
+- **Garage:** open amber, closed off. **Blinds:** open `#e5e7eb`, closed off.
+- **Alarm:** armed green, disarmed off, pending/arming amber, triggered red.
+- **Anything else on** (switch, outlet, fan, motion, media playing, camera recording): white `#f4f5f7` with a dark glyph. Paused or idle media is off.
+- **The glyph** is dark or light by the disc's luminance.
+
+**Unchanged:** energy ribbon colours and car discs (fleet colours).
+
+**Textures.** Light colours quantise to steps of 16 per channel. Colour-keyed textures share a 48-entry LRU that never disposes a texture still assigned to a sprite. No material is created per update, and sprites only swap `.map`.
+
+**Tests.**
+- `test_twin_palette_js` 13/13: CSS and module agree; banned old colours are gone; light rgb/kelvin, climate modes, lock states, blinds, garage, generic white; the LRU never disposes in-use textures.
+- `test_twin_kinds_js` 3/3: 15 colour-dependent icon hashes refreshed. The locked lock's look is now "on" (green).
+- Also green: markers, live rooms, controls, live control, stream, energy and import-map node tests.
+- Browser: `test_house_twin_live_markers` 9/9, `test_house_twin_live_rooms` 10/10, `test_house_twin_controls_live` 4/4, `test_house_twin_energy_live` 7/7.
 
 **v2.499.806 (2026-11-12, NOT device-verified): cameras appear when linking areas. A device with a camera is a camera, and its spotlight, siren and switches live on the camera's ring.**
 
