@@ -39,14 +39,21 @@ def scenario_patio_ring_scale_corner_three_undos_pool_and_tree():
             page.mouse.up()
             H.settle(page)
 
-        # Count program creations during handle movement, after warming.
+        # Count program creations WHILE the handle moves (the brief's rule). Releasing commits an
+        # op and the editor rebuilds its scene, as it does after every applied edit; that rebuild
+        # is outside this check.
         page.evaluate("""async()=>{const v=window.__twin;await v.renderer3.compileAsync(v.scene,v.camera);
           const gl=v.renderer3.getContext(),create=gl.createProgram.bind(gl);window.__yardPrograms=0;
           gl.createProgram=(...args)=>{window.__yardPrograms++;return create(...args);};}""")
         start = handle('site_rotate'); radius = start[0] - 20
-        drag(start, [20 + radius / 2**.5, 125 + radius / 2**.5, start[2]])
+        end = [20 + radius / 2**.5, 125 + radius / 2**.5, start[2]]
+        page.mouse.move(*lot_pixel(page, start[:2], start[2])); page.mouse.down()
+        page.mouse.move(*lot_pixel(page, end[:2], end[2]), steps=12)
+        page.wait_for_timeout(300)
+        dragging_programs = page.evaluate('window.__yardPrograms')
+        page.mouse.up(); H.settle(page)
         page.wait_for_function('window.__twin.plan.site.hardscape[0].rotation===45')
-        H.check(page.evaluate('window.__yardPrograms') == 0, 'Rotating the patio compiled a shader')
+        H.check(dragging_programs == 0, ('Rotating the patio compiled a shader while dragging', dragging_programs))
         start = handle('site_scale')
         drag(start, [20 + (start[0] - 20) * 1.2, 125 + (start[1] - 125) * 1.2, start[2]])
         page.wait_for_function('Math.abs(window.__twin.plan.site.hardscape[0].polygon[0][1]-(125-8*2**.5*1.2))<.02')
@@ -56,6 +63,7 @@ def scenario_patio_ring_scale_corner_three_undos_pool_and_tree():
         for _ in range(3):
             before = H.model()['site']['hardscape'][0]['polygon']
             page.click('#rail-undo')
+
             page.wait_for_function('(before)=>JSON.stringify(window.__twin.plan.site.hardscape[0].polygon)!==JSON.stringify(before)', arg=before)
         H.check(H.model()['site']['hardscape'][0] == original, 'Three undos did not restore the original patio')
         page.click('#rail-ground')
