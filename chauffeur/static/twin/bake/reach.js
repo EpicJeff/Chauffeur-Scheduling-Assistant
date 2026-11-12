@@ -6,14 +6,14 @@ import { fingerprint } from './fingerprint.js';
 // Match the live lamp's bulb height and range, including the ceiling inset.
 export function lightSource(plan, light) {
   const b = plan.buildings?.find(b => b.id === light.building), l = b?.levels?.find(l => l.id === light.level);
-  const r = b?.rooms?.find(r => r.id === light.room), floor = (b?.base || 0) + (l?.elevation || 0);
+  const r = b?.rooms?.find(r => r.id === light.room), floor = (b?.base || 0) + (l?.elevation || 0) + (r?.floor_offset_ft || 0);
   const standing = !!l && light.at[2] <= floor + .1;
   const z = standing ? floor + LAMP_HEIGHT : light.at[2];
   const span = r ? Math.max(...[0, 1].map(k => Math.max(...r.polygon.map(p => p[k])) - Math.min(...r.polygon.map(p => p[k]))), 1) : 10;
   const range = lightRange({ at: [light.at[0], light.at[1], z] }, b, l, r, span) * FT;
   const source = new THREE.Vector3(light.at[0] * FT,
     (z + buildingGround(plan, b)) * FT, -light.at[1] * FT);
-  if (l && !standing && light.at[2] >= floor + l.ceiling - .1) source.y -= .2 * FT;
+  if (l && !standing && light.at[2] >= (b?.base || 0) + l.elevation + l.ceiling - .1) source.y -= .2 * FT;
   return { source, range };
 }
 

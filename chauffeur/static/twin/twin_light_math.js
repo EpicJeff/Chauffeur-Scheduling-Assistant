@@ -12,7 +12,7 @@ export const LAMP_HEIGHT = 4.5;
 export function lightRange(marker, building, level, room, span) {
   if (!room?.polygon?.length || !building) return span * 1.5;
   const angle = (building.rotation || 0) * Math.PI / 180, [px, py] = building.position || [0, 0];
-  const floor = (building.base || 0) + (level?.elevation || 0), dz = Math.max(0, marker.at[2] - floor);
+  const floor = (building.base || 0) + (level?.elevation || 0) + (room?.floor_offset_ft || 0), dz = Math.max(0, marker.at[2] - floor);
   const reach = Math.max(...room.polygon.map(([x, y]) => Math.hypot(
     Math.cos(angle) * x - Math.sin(angle) * y + px - marker.at[0],
     Math.sin(angle) * x + Math.cos(angle) * y + py - marker.at[1], dz)));

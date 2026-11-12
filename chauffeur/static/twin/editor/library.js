@@ -214,7 +214,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       room ||= wallFace(building, piece, side === 'left' ? 'right' : 'left').room;
     } else if (kind === 'room') {
       surface = direction.z > 0 ? 'ceiling' : 'floor'; role = surface === 'floor' ? 'floor' : 'porch_ceiling';
-      point = r.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -elevation - (surface === 'ceiling' ? building.levels.find(l => l.id === piece.level).ceiling : 0)), new THREE.Vector3());
+      point = r.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -elevation - (surface === 'ceiling' ? building.levels.find(l => l.id === piece.level).ceiling : (piece.floor_offset_ft || 0))), new THREE.Vector3());
     } else {
       point = picked.point && local(building, new THREE.Vector3(...picked.point));
       if(!point){const hit=raycaster.intersectObjects(view.scene.children,true).find(h=>h.object.userData.kind==='roof' && h.object.userData.buildingId===building.id);point=hit && local(building,hit.point);}

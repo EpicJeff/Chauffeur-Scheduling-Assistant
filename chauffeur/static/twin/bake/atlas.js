@@ -66,13 +66,14 @@ function roomData(plan) {
       for (let i = 0; i < poly.length; i++) area += cross2([0, 0], poly[i], poly[(i + 1) % poly.length]);
       if (area < 0) poly.reverse();
       const parts = convexParts(poly);
-      const entry = { index: rooms.length, level: r.level, poly, parts,
+      const entry = { index: rooms.length, level: r.level,
+        floor: (levels.find(l => l.id === r.level)?.elevation || 0) + (r.floor_offset_ft || 0), poly, parts,
         bounds: [Math.min(...poly.map(p => p[0])), Math.min(...poly.map(p => p[1])),
           Math.max(...poly.map(p => p[0])), Math.max(...poly.map(p => p[1]))] };
       list.push(entry);
       rooms.push({ building: b.id, level: r.level, id: r.id, region: null });
     }
-    buildings.set(b.id, { levels, rooms: list });
+    buildings.set(b.id, { levels, rooms: list, hasOffsets: (b.rooms || []).some(r => r.floor_offset_ft) });
   }
   return { rooms, buildings };
 }
@@ -215,10 +216,14 @@ function prepare(mesh, data) {
     // Downward faces use the highest occupied room below each clipped piece,
     // even when a slab was batched in L2 or a soffit in the roof group.
     let level;
-    for (const l of building.levels) if (l.elevation <= center[1] + 0.05) level = l;
-    const candidates = n.y < -0.1 ? [...building.levels].reverse().flatMap(l =>
-      Math.max(...tri.map(p => p[1])) > l.elevation + 0.05
-        ? building.rooms.filter(r => r.level === l.id) : []) : building.rooms.filter(r => r.level === level?.id);
+    for (const l of building.levels) if (l.elevation <= center[1] + .05) level = l;
+    const candidates = !building.hasOffsets ? (n.y < -0.1 ? [...building.levels].reverse().flatMap(l =>
+      Math.max(...tri.map(p => p[1])) > l.elevation + .05 ? building.rooms.filter(r => r.level === l.id) : [])
+      : building.rooms.filter(r => r.level === level?.id))
+      : n.y < -0.1 ? [...building.rooms].sort((a, b) => b.floor - a.floor)
+      .filter(r => Math.max(...tri.map(p => p[1])) > r.floor + .05)
+      : building.rooms.filter(r => r.floor <= center[1] + .05)
+        .sort((a, b) => b.floor - a.floor);
     if (Math.abs(n.y) < 0.1) {
       const x = center[0] + n.x * 0.04, y = -center[2] - n.z * 0.04;
       emit(tri, candidates.find(r => inside(r.poly, x, y))?.index ?? -1);
@@ -236,7 +241,7 @@ function prepare(mesh, data) {
         for (const part of r.parts) {
           const out = [];
           for (const piece of remainder) {
-            const elevation = building.levels.find(l => l.id === r.level)?.elevation ?? 0;
+            const elevation = r.floor;
             const split = cut(piece, part, n.y < -0.1 ? elevation + 0.05 : -Infinity);
             if (hasArea(split.inside)) hits.push(split.inside);
             out.push(...split.outside.filter(hasArea));

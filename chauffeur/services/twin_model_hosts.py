@@ -24,7 +24,7 @@ def snapshot(building) -> dict:
     for room in building.get('rooms', []):
         polygon = room.get('polygon', [])
         if polygon and room.get('state') != 'ghost':
-            rooms[room['id']] = {'level': room.get('level'),
+            rooms[room['id']] = {'level': room.get('level'), 'floor_offset_ft': room.get('floor_offset_ft', 0),
                                  'polygon': deepcopy(polygon),
                                  'bounds': [min(p[0] for p in polygon), min(p[1] for p in polygon),
                                             max(p[0] for p in polygon), max(p[1] for p in polygon)]}
@@ -110,7 +110,7 @@ def _point(geometry, host, offset=0):
     if 'floor' in host or 'ceiling' in host:
         x0, y0, x1, y1 = surface['bounds']
         z = (elevation + level.get('ceiling', 0) - offset
-             if 'ceiling' in host else elevation + offset)
+             if 'ceiling' in host else elevation + surface.get('floor_offset_ft', 0) + offset)
         return [x0 + host['u'] * (x1 - x0), y0 + host['v'] * (y1 - y0), z]
     line = _line(geometry, host)
     if line is None:
@@ -125,7 +125,12 @@ def _point(geometry, host, offset=0):
         if side in ('left', 'right'):
             sign = 1 if side == 'left' else -1
             x, y = x - sign * dy * distance, y + sign * dx * distance
-        return [x, y, elevation + host.get('sill', host.get('z', 0))]
+        reference = 0
+        if 'width' in host and 'head' in host:
+            from services.twin_floors import opening_reference
+            reference = opening_reference({'rooms': list(geometry['rooms'].values())},
+                {**surface, 'from': a, 'to': b}, host['at'])[0]
+        return [x, y, elevation + reference + host.get('sill', host.get('z', 0))]
     # Roof hosts record a distance along an area edge, at its plate.
     return [x, y, surface.get('plate', 0) + host.get('z', 0) + offset]
 

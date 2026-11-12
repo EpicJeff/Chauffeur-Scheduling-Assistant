@@ -1,3 +1,4 @@
+import { roomFloor, openingFloor } from '../twin_floors.js';
 import { objectOperation, siteRecord, siteShapeKinds, sitePoints } from '../objects.js';
 import { solarPoint, solarFrame, solarUV } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
@@ -116,7 +117,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     };
     const room = building.rooms.find(r => r.id === selected.room || selected.kind === 'room' && r.id === selected.id);
     if (room && room.state !== 'ghost') {
-      const z = building.levels.find(l => l.id === room.level)?.elevation || 0;
+      const z = roomFloor(building.levels.find(l => l.id === room.level), room);
       for (const id of room.joints || []) {
         const joint = building.joints.find(j => j.id === id);
         if (joint) add('joint', id, [...joint.at, z], room.level);
@@ -132,7 +133,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     if (opening && opening.state !== 'ghost') {
       const wall = building.walls.find(w => w.id === opening.wall);
       if (wall) {
-        const { axis } = basis(wall), elevation = building.levels.find(l => l.id === wall.level)?.elevation || 0;
+        const { axis } = basis(wall), elevation = (building.levels.find(l => l.id === wall.level)?.elevation || 0) + openingFloor(building, wall, opening.at).offset;
         const addOpening = (kind, at, height) => add(kind, opening.id,
           [...wall.from.map((v, i) => v + axis[i] * at), elevation + height], wall.level);
         const middle = (opening.sill + opening.head) / 2;
@@ -259,7 +260,8 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     }
     if (['wall', 'joint', 'room'].includes(handle.kind)) {
       lastFrameMs = null;
-      const start = view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`);
+      const floorOffset = handle.at[2] - (building.levels.find(l => l.id === handle.level)?.elevation || 0);
+      const start = view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`, floorOffset);
       if (!drag.begin({ ...getSelection(), ...handle }, start)) return false;
       gesture = { handle, source, building }; return true;
     }
@@ -311,7 +313,8 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     if (!gesture) return;
     const started = performance.now(), g = gesture, { handle, building, piece } = g;
     if (['wall', 'joint', 'room'].includes(handle.kind)) {
-      drag.update(view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`)); return;
+      const floorOffset = handle.at[2] - (building.levels.find(l => l.id === handle.level)?.elevation || 0);
+      drag.update(view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`, floorOffset)); return;
     }
     const point = onPlane(event, building, handle.at, g.normal); if (!point) return;
     if (handle.kind.startsWith('site_')) {

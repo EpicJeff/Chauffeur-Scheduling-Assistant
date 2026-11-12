@@ -608,7 +608,8 @@ def _opening(building, piece):
     flat = twin_model_bridge.flatten({'buildings': [building]})['buildings'][0]
     opening = next(o for o in flat['openings'] if o['id'] == piece['id'])
     reason = twin_plan._opening_error(opening, {w['id']: w for w in flat['walls']},
-                                      {r['id']: r for r in flat['roof']['sections']})
+                                      {r['id']: r for r in flat['roof']['sections']},
+                                      opening.get('floor_reference_ft', 0))
     if reason:
         raise Refused(f'Invalid opening: {reason}.')
 
@@ -624,7 +625,8 @@ def _opening_clear(building, piece, noun):
             continue
         across = (min(other['at'] + other['width'] / 2, new['at'] + new['width'] / 2)
                   - max(other['at'] - other['width'] / 2, new['at'] - new['width'] / 2))
-        up = min(other['head'], new['head']) - max(other['sill'], new['sill'])
+        other_ref, new_ref = other.get('floor_reference_ft', 0), new.get('floor_reference_ft', 0)
+        up = min(other['head'] + other_ref, new['head'] + new_ref) - max(other['sill'] + other_ref, new['sill'] + new_ref)
         if across > _EPS and up > _EPS:
             raise Refused(f'There is already a door or window there. Pick a clear stretch of wall for the {noun}.')
 
@@ -1364,6 +1366,8 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
     if terrain_error:
         raise Refused(terrain_error)
     twin_model.filter_checked_flags(building)
+    from services import twin_floors
+    twin_floors.derive_openings(building)
     if actor == 'person':
         _mark_touched(building, previous, op)
     if kind == 'set' and op.get('field') == 'ha_area':
