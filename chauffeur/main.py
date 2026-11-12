@@ -7847,6 +7847,12 @@ async def house_editor_import(request: Request):
             return await asyncio.to_thread(twin_imports.create, files, form.get('name'), form.get('kind'), form.get('thumbnail'))
     except (ValueError, OSError, __import__('zipfile').BadZipFile) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Never a bare 500: the editor shows this reason, and the log keeps the trace.
+        logger.exception('House model import failed')
+        raise HTTPException(status_code=500, detail=f'The model could not be imported ({type(exc).__name__}: {exc}).'[:300]) from exc
 
 
 @app.patch('/api/house/editor/imports/{asset_id}')

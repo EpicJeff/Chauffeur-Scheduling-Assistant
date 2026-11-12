@@ -39,7 +39,10 @@ export async function request(path, method = 'GET', body, area = 'editor') {
     let data;
     try { data = JSON.parse(await response.text()); }
     catch {
-      const error = new Error(response.status === 401 ? signedOut : 'The house could not answer. Try again.');
+      // Not JSON: something in front of the add-on answered (or it crashed). Say which.
+      const error = new Error(response.status === 401 ? signedOut
+        : response.status === 413 ? 'That upload is larger than Home Assistant lets through. Try a smaller model or a zip.'
+        : `The house could not answer (HTTP ${response.status}). Try again.`);
       error.status = response.status;
       if (response.status === 401) {
         if (!session.signedOut) {
