@@ -1,6 +1,29 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.808 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.809 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.809 (2026-11-12, NOT device-verified): fuel cars in the house twin. A car is electric, fuel or hybrid, a fuel car shows its fuel, and a charger never charges a fuel car.**
+
+**The report.** The user, 2026-11-12: "the house assumes all cars are electric, which is incorrect. We should be showing fuel info for regular cars." Their Mercedes GLS read "Mercedes GLS · —".
+
+**Cause.** `services/twin_energy.py` `household_cars()` passed only the battery entity and tracker. The car record's `ha_fuel_entity`, `ha_range_entity` and the household warn levels never reached the twin.
+
+**How it was built.** Codex built it. Claude checked it in Chromium.
+
+**Now:**
+- **Data:** `household_cars()` and the fleet carry `fuel_level`, `range_entity`, `battery_warn_pct` and `fuel_warn_pct` (from `cars.warn_thresholds()`). The mapping validates and round-trips `fuel_level`, and `entities()` pushes it.
+- **`carPower(car)`** (`energy_mapping.js`):
+  - electric: battery, charging or its own charge power;
+  - fuel: fuel only, or no readings;
+  - hybrid: both.
+- **Labels:** "Kia EV9 · 🔋 99%" (plus " · ⚡ 7.2 kW" while charging), "Mercedes GLS · ⛽ 41%", hybrids show both. A missing reading is "—".
+- **The ring:** purple while charging, else amber below the household's battery or fuel warning level.
+- **The card:** fuel cars show Fuel and Range with no charging lines; hybrids show both blocks.
+- **Charging:** `chargingCar` considers only electric and hybrid cars, under every rule. A fuel car parked nearest the charger, dedicated to it, or the only car home is never chosen. A charger dedicated to a fuel car is explained in the Energy check ("<car> has no battery reading; a charger can only charge an electric car").
+- **Settings:** fuel cars hide the charging-state and own-power pickers. Every car row shows its fuel entity read-only, with a pointer to Drive setup, which still owns that setting.
+- **Guessing:** a `*fuel*` percentage on a car's stem is `fuel_level`, never `battery_level`.
+
+**Tests.** 170 checks across `test_twin_energy`, `test_twin_energy_equipment`, `test_twin_cars_js`, energy mapping, check, flows, mode and editor node files, `test_twin_import_maps`, `test_twin_palette_js` and `test_twin_live_stream_js`. Browser `test_house_twin_energy_equipment_live` 4/4: a petrol car nearer the charger never gets the cable, and its icon reads "⛽ 41%".
 
 **v2.499.808 (2026-11-12, NOT device-verified): the compact hero card keeps light text under a light panel theme.**
 
