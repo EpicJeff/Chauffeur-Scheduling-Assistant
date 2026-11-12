@@ -182,6 +182,88 @@ check('every member of two- and three-flow shared groups has a non-zero fan offs
   if(n===2)assert.equal(fans.get(rows[0].id).offset,-fans.get(rows[1].id).offset);
  }
 });
+// Intersect every sampled xz segment, with independent parameters on the two
+// curves: comparing only points at matching t misses unequal-length crossings.
+function groundTracksCross(a,b,shared){
+ const eps=1e-9,cross=(a,b)=>a.x*b.z-a.z*b.x,sub=(a,b)=>({x:a.x-b.x,z:a.z-b.z});
+ const atShared=p=>Math.hypot(p.x-shared.x,p.z-shared.z)<eps;
+ for(let i=1;i<a.length;i++)for(let j=1;j<b.length;j++){
+  const p=a[i-1],q=b[j-1],r=sub(a[i],p),s=sub(b[j],q),delta=sub(q,p),den=cross(r,s);
+  if(Math.abs(den)>1e-12){
+   const t=cross(delta,s)/den,u=cross(delta,r)/den;
+   if(t>=-eps&&t<=1+eps&&u>=-eps&&u<=1+eps&&!atShared({x:p.x+t*r.x,z:p.z+t*r.z}))return true;
+  }else if(Math.abs(cross(delta,r))<1e-12){
+   const axis=Math.abs(r.x)>Math.abs(r.z)?'x':'z';if(Math.abs(r[axis])<1e-12)continue;
+   const low=Math.max(Math.min(p[axis],a[i][axis]),Math.min(q[axis],b[j][axis]));
+   const high=Math.min(Math.max(p[axis],a[i][axis]),Math.max(q[axis],b[j][axis]));
+   if(high-low>eps)return true;
+   if(high>=low-eps){const t=(low-p[axis])/r[axis];if(!atShared({x:p.x+t*r.x,z:p.z+t*r.z}))return true;}
+  }
+ }
+ return false;
+}
+const solarFanRows=(angles,lengths,rotation=0)=>angles.map((angle,i)=>{
+ const a=(angle+rotation)*Math.PI/180;
+ return {id:['solar:grid','solar:house','solar:battery','solar:charger'][i],from:[0,0,12],
+  to:[Math.cos(a)*lengths[i],-Math.sin(a)*lengths[i],4+i]};
+});
+function assertGroundFan(rows){
+ const width=flowReading(4000).width,fans=flowFans(rows,width),again=flowFans([...rows].reverse(),width);
+ const tracks=rows.map(row=>flowCurve(row.from,row.to,fans.get(row.id)).getPoints(160));
+ for(const row of rows){assert.deepEqual(fans.get(row.id),again.get(row.id));assert.notEqual(fans.get(row.id).offset,0);}
+ for(let i=0;i<rows.length;i++)for(let j=i+1;j<rows.length;j++)
+  assert.equal(groundTracksCross(tracks[i],tracks[j],worldPoint([0,0,12])),false,rows[i].id+' crosses '+rows[j].id);
+ return fans;
+}
+check('solar fans two nearby targets without crossing while the third heads away',()=>{
+ const width=flowReading(4000).width,rows=solarFanRows([160,0,20],[30,28,18]);
+ // Prove the intersection check sees the original swapped-lane failure.
+ const swapped=rows.slice(1).map((row,i)=>flowCurve(row.from,row.to,
+  {offset:(i?-1:1)*1.5*width,tilt:(i?-1:1)*Math.PI/15}).getPoints(160));
+ assert.equal(groundTracksCross(...swapped,worldPoint(rows[0].from)),true);
+ for(const rotation of [0,175,-70])for(const reverse of [false,true]){
+  const rows=solarFanRows([160,0,20],[30,28,18],rotation).map((row,i)=>reverse&&i!==1?{...row,from:row.to,to:row.from}:row);
+  const fans=assertGroundFan(rows);
+  for(const row of rows.slice(1))assert.ok(flowApex(flowCurve(row.from,row.to,fans.get(row.id)))
+   .distanceTo(flowApex(flowCurve(row.from,row.to)))>1e-6,'both nearby routes actually fan');
+ }
+});
+check('adding a fourth ribbon preserves non-crossing pairs across unequal spans and reversed ends',()=>{
+ for(const a of [8,20,60])for(const b of [8,20,60])for(const c of [8,20,60])
+  for(const angles of [[160,0,20,10],[0,10,20,30]])for(const rotation of [0,175]){
+   const rows=solarFanRows(angles,[30,a,b,c],rotation).map((row,i)=>i%2?{...row,from:row.to,to:row.from}:row);
+   assertGroundFan(rows.slice(0,3));assertGroundFan(rows);
+  }
+});
+check('collinear fans nest same-side lanes without crossing when a fourth route is added',()=>{
+ for(const lengths of [[20,21,22,23],[60,8,20,9],[8,60,9,20],[20,20.1,20.2,20.3]]){
+  const rows=solarFanRows([0,0,0,0],lengths);
+  assertGroundFan(rows.slice(0,3));assertGroundFan(rows);
+ }
+});
+check('reverse transfers share one physical fan lane while independent same-direction routes still fan',()=>{
+ const anchors={battery:[-16,4,2],grid:[-8,4,2],house:[0,4,2]},width=flowReading(4000).width;
+ const rows=energyTopology(anchors,{cars:[]}),fans=flowFans(rows,width),again=flowFans([...rows].reverse(),width);
+ for(const row of rows)assert.deepEqual(fans.get(row.id),again.get(row.id));
+ assert.deepEqual(fans.get('grid:battery'),fans.get('battery:grid'));
+ const curves=['grid:battery','battery:grid'].map(id=>{const row=rows.find(r=>r.id===id);return flowCurve(row.from,row.to,fans.get(id));});
+ for(let i=0;i<=100;i++)assert.ok(curves[0].getPoint(i/100).distanceTo(curves[1].getPoint(1-i/100))<1e-9);
+ const parallel=[{id:'a',from:[0,0,4],to:[20,0,4]},{id:'b',from:[0,0,4],to:[20,0,4]}],lanes=flowFans(parallel,width);
+ assert.notEqual(lanes.get('a').offset,0);assert.equal(lanes.get('a').offset,-lanes.get('b').offset);
+});
+check('collinear topology nests lanes consistently when routes share both fan ends',()=>{
+ const permutations=xs=>xs.length?xs.flatMap((x,i)=>permutations(xs.filter((_,j)=>j!==i)).map(rest=>[x,...rest])):[[]];
+ for(const positions of permutations([0,8,16,24])){
+  const anchors=Object.fromEntries(['solar','battery','grid','house'].map((role,i)=>[role,[positions[i],0,4]]));
+  // Keep one representative of the mutually exclusive battery/grid pair.
+  const rows=energyTopology(anchors,{cars:[]}).filter(r=>r.id!=='grid:battery'),fans=flowFans(rows,flowReading(4000).width);
+  const tracks=rows.map(r=>flowCurve(r.from,r.to,fans.get(r.id)).getPoints(160));
+  for(let i=0;i<rows.length;i++)for(let j=i+1;j<rows.length;j++){
+   const a=rows[i],b=rows[j],shared=[a.from,a.to].find(p=>[b.from,b.to].some(q=>JSON.stringify(p)===JSON.stringify(q)));
+   if(shared)assert.equal(groundTracksCross(tracks[i],tracks[j],worldPoint(shared)),false,positions+': '+a.id+' crosses '+b.id);
+  }
+ }
+});
 check('rendered mesh cross-sections use the full 0.4–1.5ft power width and a soft halo',async()=>{
  const t=await energyRig({devices:[d('grid','sensor.grid_power',50,power),d('house','sensor.house_power',50,power)]});
  try{
