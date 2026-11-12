@@ -48,7 +48,10 @@ def scenario_draw_negative_pad_tree_undo_and_program_reuse():
         page.evaluate("""async()=>{await window.__twinEditor.op({op:'add_site_item',list:'planting',asset:'Pine Medium',at:[20,125]});}""")
         page.wait_for_function('()=>window.__twin.ready')
         tree_bottom = page.evaluate("""async()=>{const T=await import('three'),v=window.__twin;
-          const tree=v.groups.site.children[0].children.find(o=>o.constructor.name==='Tree'&&Math.abs(o.position.x-20)<.01&&Math.abs(o.position.z+125)<.01);
+          // Since slice 4a a tree sits inside its object wrapper: find it by world position (ft).
+          const p=new T.Vector3();let tree=null;v.groups.site.updateMatrixWorld(true);
+          v.groups.site.traverse(o=>{if(tree||(o.name!=='Tree'&&o.constructor.name!=='Tree'))return;o.getWorldPosition(p);
+            if(Math.abs(p.x/.3048-20)<.5&&Math.abs(p.z/.3048+125)<.5)tree=o;});
           if(!tree)throw Error('tree on pad was not drawn');const bounds=new T.Box3().setFromObject(tree);return bounds.min.y/.3048;}""")
         check(abs(tree_bottom + 4) < .02, ('tree rests on -4 ft pad', tree_bottom))
         # Warm the first terrain edit before counting actual program creations.
