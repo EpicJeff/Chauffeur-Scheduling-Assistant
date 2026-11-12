@@ -17,10 +17,10 @@ CAPS = {'walls': 400, 'openings': 400, 'rooms': 120, 'planting': 300,
 def fixture_kind(value):
     """Use the same fixture identity when reading, merging and hosting."""
     words = set(re.findall(r'[a-z]+', str(value).lower()))
-    for names, kind in (({'smoke', 'co', 'detector', 'thermostat', 'sensor'}, 'sensor'),
+    for names, kind in (({'camera'}, 'camera'),
+                        ({'smoke', 'co', 'detector', 'thermostat', 'sensor'}, 'sensor'),
                         ({'fan'}, 'fan'), ({'light', 'lamp', 'pendant'}, 'light'),
-                        ({'outlet', 'receptacle'}, 'outlet'), ({'switch', 'dimmer'}, 'switch'),
-                        ({'camera'}, 'camera')):
+                        ({'outlet', 'receptacle'}, 'outlet'), ({'switch', 'dimmer'}, 'switch')):
         if words & names:
             return kind
     return str(value).lower().strip()

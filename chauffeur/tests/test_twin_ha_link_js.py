@@ -210,6 +210,7 @@ const ids = new Map();
 globalThis.window = globalThis;
 globalThis.document = {
   createElement: tag => new El(tag),
+  createElementNS: (ns, tag) => new El(tag),
   createTextNode: text => { const t = new El('#text'); t._text = String(text); return t; },
   createDocumentFragment: () => new El('#fragment'),
   getElementById: id => ids.get(id) || null,
@@ -298,6 +299,21 @@ let passed = 0;
 const ok = label => { passed++; console.log('  ok ' + label); };
 const checks = [];
 const check = (name, fn) => checks.push([name, fn]);
+
+check('camera_device_row_keeps_camera_identity_and_icon', async () => {
+  const body = linked();
+  body.devices = [{device_id:'front', name:'Front camera', kind:'camera', entity_id:'camera.front',
+    entities:['light.front_spotlight','switch.front_privacy','camera.front'], area_id:'kitchen'}];
+  const {link, abort} = mount(body);
+  try {
+    await link.refresh();
+    const section = link.roomSection(BUILDING.rooms[0]);
+    assert.ok(words(section).includes('Front camera') && words(section).includes('camera'));
+    assert.ok(descendants(section).some(n => n.localName === 'svg' && n.dataset.glanceIcon === 'camera'));
+    assert.equal(buttonNamed(section, 'Blink'), null, 'camera is not guessed from its spotlight');
+    assert.ok(buttonNamed(section, 'Pick a spot'), 'camera keeps manual placement');
+  } finally {abort.abort();}
+});
 
 check('pick_list_groups_by_floor', async () => {
   const { link, commits, abort } = mount(linked({ 'r-dining': { suggested: 'dining_area' } }));

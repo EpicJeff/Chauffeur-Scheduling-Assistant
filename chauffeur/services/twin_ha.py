@@ -5,6 +5,7 @@ Placement helpers only describe choices; model operations own all writes.
 from collections import Counter
 from copy import deepcopy
 import math
+import re
 import logging
 import threading
 import time
@@ -14,10 +15,28 @@ from services import control_rules, ha_api, house, twin_model
 
 # What a device IS, most telling first: a lock that also reports its battery
 # is a lock, and a light that also reports its energy is a light.
-_KINDS = ('lock', 'garage', 'climate', 'light', 'fan', 'outlet', 'switch', 'camera',
+_KINDS = ('lock', 'garage', 'camera', 'climate', 'light', 'fan', 'outlet', 'switch',
           'media', 'blinds', 'sensor', 'other')
 _PLURALS = {'light': 'lights', 'switch': 'switches', 'fan': 'fans',
             'camera': 'cameras', 'sensor': 'sensors', 'outlet': 'outlets'}
+
+
+def camera_accessories(device, states):
+    """The camera's controllable siblings; sensors remain ordinary device facts."""
+    if device['kind'] != 'camera':
+        return []
+    out = []
+    for eid in device['entities']:
+        domain = eid.partition('.')[0]
+        if domain not in ('light', 'switch', 'input_boolean', 'siren', 'button'):
+            continue
+        attrs = (states.get(eid) or {}).get('attributes') or {}
+        name = attrs.get('friendly_name') or eid.partition('.')[2].replace('_', ' ')
+        name = re.sub(r'^' + re.escape(device['name']) + r'(?:[\s:–—-]+|$)', '', name,
+                      flags=re.IGNORECASE).strip()
+        out.append({'entity_id': eid, 'name': name or domain.capitalize(),
+                    'kind': 'light' if domain == 'light' else 'switch' if domain in ('switch', 'input_boolean') else 'other'})
+    return out
 
 
 def _entity_kind(entity, registry=None):

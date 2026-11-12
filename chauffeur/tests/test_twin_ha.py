@@ -16,6 +16,7 @@ import os
 import sys
 import tempfile
 import traceback
+from unittest.mock import patch
 
 if not os.environ.get('CHAUFFEUR_DATA_DIR', '').startswith(tempfile.gettempdir()):
     os.environ['CHAUFFEUR_DATA_DIR'] = tempfile.mkdtemp(prefix='chauffeur_twin_ha_')
@@ -412,6 +413,7 @@ def _garage_building(extra_door=False, ha_area='garage'):
 def test_obvious_places_garage_and_lock():
     c = cat(dev('gd1', 'garage', 'garage'), dev('gd2', 'garage', 'garage'), dev('gd3', 'garage', 'garage'),
             dev('lk1', 'lock', 'garage'), dev('lamp', 'light', 'garage'),
+            dev('cam', 'camera', 'garage'),
             dev('gd_elsewhere', 'garage', 'bedroom'))
     out = twin_ha.obvious(model(_garage_building()), 'rg', c)
     got = {row['device']: row for row in out}
@@ -514,7 +516,43 @@ def test_m1_smart_plug_is_an_outlet():
           twin_ha.count_notes(model(b), 'r1', c))
 
 
+def _mixed_device(*entities):
+    members = [{'entity_id': eid, 'domain': eid.split('.')[0], 'name': eid,
+                '_device_id': 'mixed', '_device_name': 'Front camera', 'area': 'Kitchen',
+                '_state': {'attributes': attrs}} for eid, attrs in entities]
+    with FakeHA(), patch.object(twin_ha.house, '_catalogue', return_value=members):
+        return twin_ha.catalogue()['devices'][0]
+
+
+def test_camera_outweighs_its_spotlight_privacy_and_motion():
+    ids = ['light.front_spotlight', 'switch.front_privacy', 'binary_sensor.front_motion', 'camera.front']
+    row = _mixed_device(*[(eid, {}) for eid in ids])
+    check(row['kind'] == 'camera' and row['entity_id'] == 'camera.front', row)
+    check(set(row['entities']) == set(ids) and len(row['entities']) == 4, row)
+    from services.twin_plan import fixture_kind
+    check(fixture_kind('camera spotlight') == 'camera', 'plan fixtures use camera identity too')
+
+
+def test_lock_keeps_priority_over_battery():
+    row = _mixed_device(('sensor.front_battery', {'device_class': 'battery'}), ('lock.front', {}))
+    check(row['kind'] == 'lock' and row['entity_id'] == 'lock.front', row)
+
+
+def test_light_keeps_priority_over_power():
+    row = _mixed_device(('sensor.front_power', {'device_class': 'power'}), ('light.front', {}))
+    check(row['kind'] == 'light' and row['entity_id'] == 'light.front', row)
+
+
+def test_garage_keeps_priority_over_camera():
+    row = _mixed_device(('camera.front', {}), ('cover.front', {'device_class': 'garage'}))
+    check(row['kind'] == 'garage' and row['entity_id'] == 'cover.front', row)
+
+
 TESTS = (
+    test_camera_outweighs_its_spotlight_privacy_and_motion,
+    test_lock_keeps_priority_over_battery,
+    test_light_keeps_priority_over_power,
+    test_garage_keeps_priority_over_camera,
     test_floor_registry_reads_floors_and_is_empty_without_ha,
     test_catalogue_groups_entities_by_device,
     test_catalogue_without_ha_is_empty_and_quiet,

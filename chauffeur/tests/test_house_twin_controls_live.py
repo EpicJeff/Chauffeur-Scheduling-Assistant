@@ -437,10 +437,61 @@ def scenario_ring_works_on_the_wall_panel():
         L.no_errors(s)
 
 
+def scenario_camera_spotlight_keeps_camera_marker_and_controls():
+    """Written for the controller's Chromium run; camera refusal stays in force."""
+    s = L.serve()
+    if s is None:
+        return
+    L.reset(L.grid(panel={'other': 'no', 'lights': 'yes', 'switches': 'yes'}))
+    device = next(d for d in FAKE.devices if d['id'] == CEILING_ID)
+    before = copy.deepcopy(device)
+    camera, privacy = 'camera.front', 'switch.front_privacy'
+    try:
+        device['name'] = 'Front camera'
+        device['entities'].extend([(camera, 'idle', {}), (privacy, 'off', {})])
+        FAKE.states[CEILING]['attributes']['friendly_name'] = 'Front camera Spotlight'
+        FAKE.states[camera] = {'entity_id': camera, 'state': 'idle', 'attributes': {'friendly_name': 'Front camera'}}
+        FAKE.states[privacy] = {'entity_id': privacy, 'state': 'off', 'attributes': {'friendly_name': 'Front camera Privacy mode'}}
+        body = L.facts()
+        marker = next(m for m in body['markers'] if m['device_id'] == CEILING_ID)
+        check(marker['kind'] == 'camera' and marker['entity_id'] == camera and marker['placed'], marker)
+        check(any(CEILING in r['lights'] for r in body['rooms']), 'spotlight remains a room light')
+        with s.browser(launch_args=L.GPU_ARGS) as page:
+            seen = L.record(page)
+            _open(page, s, query='tier=low&test=1&panel=true&kiosk=true', ceiling='on')
+            L.aim_kitchen(page)
+            check(L.marker(page, CEILING_ID)['kind'] == 'camera', 'camera marker, not a light')
+            start = len(seen)
+            _hold(page, CEILING_ID)
+            check(_ring(page)['device_id'] == CEILING_ID, 'hold opens the camera ring')
+            check(_posts(seen, start) == [], 'opening the ring sends no control')
+            ring = page.locator('[data-ring]')
+            spotlight = ring.get_by_role('switch', name='Spotlight', exact=True)
+            check(spotlight.is_visible(), 'Spotlight is available while camera viewing is refused')
+            spotlight.click()
+            check(L.wait_for(page, lambda: _posts(seen, start) == [('light', 'toggle', {'entity_id': CEILING})], 5),
+                  ('toggle uses the spotlight entity', _posts(seen, start)))
+            check(spotlight.get_attribute('aria-checked') == 'true', 'confirmed spotlight is on')
+            check(ring.get_by_role('switch', name='Privacy mode', exact=True).is_visible(), 'privacy toggle')
+            check(ring.locator('[data-ring-part="still"]').count() == 0, 'no camera frame bypasses the household grid')
+            page.keyboard.press('Escape')
+            page.evaluate('([building, room]) => window.__twin.live.openRoom(building, room)', [marker['building'], marker['room']])
+            row = page.locator(f'#twin-room-panel [data-device-id="{CEILING_ID}"]')
+            row.get_by_role('switch', name='Spotlight', exact=True).click()
+            check(L.wait_for(page, lambda: len(_posts(seen, start)) == 2, 5), 'room panel also toggles spotlight')
+            check(_posts(seen, start)[-1] == ('light', 'toggle', {'entity_id': CEILING}), _posts(seen, start))
+            L.no_errors(s)
+    finally:
+        device.clear()
+        device.update(before)
+        L.reset()
+
+
 SCENARIOS = [
     scenario_tap_toggles_kitchen_light,
     scenario_hold_opens_ring_and_sets_brightness_and_colour,
     scenario_ring_works_on_the_wall_panel,
+    scenario_camera_spotlight_keeps_camera_marker_and_controls,
 ]
 
 

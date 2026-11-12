@@ -480,11 +480,11 @@ const THREE = await import('three');
 const FT = .3048;
 const liveModule = await import(file('static/twin/live/live.js'));
 
-async function rig({devices, rooms = null, spacing = 8}) {
-  const states = Object.fromEntries(devices.map(d => [d.entity_id, {entity_id: d.entity_id, state: d.state,
-    attributes: structuredClone(d.attributes || {})}]));
+async function rig({devices, rooms = null, spacing = 8, extraStates = {}}) {
+  const states = {...structuredClone(extraStates), ...Object.fromEntries(devices.map(d => [d.entity_id, {entity_id: d.entity_id, state: d.state,
+    attributes: structuredClone(d.attributes || {})}]))};
   const layoutDevices = devices.map(d => ({device_id: d.device_id, name: d.name, entity_id: d.entity_id,
-    entities: [d.entity_id], kind: d.kind, offered: d.offered !== false, area_id: d.area_id || 'kitchen'}));
+    entities: d.entities || [d.entity_id], accessories: d.accessories, kind: d.kind, offered: d.offered !== false, area_id: d.area_id || 'kitchen'}));
   const roomRows = rooms || [{building: 'b', room: 'r', level: 'L1', name: 'Kitchen', area_id: 'kitchen',
     lights: devices.filter(d => d.kind === 'light').map(d => d.entity_id)}];
   const layout = {available: true, rooms: roomRows, devices: layoutDevices,

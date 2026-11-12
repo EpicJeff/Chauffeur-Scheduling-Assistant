@@ -83,7 +83,7 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
     if (!row) return;
     // One entity's confirmed state, read without copying the house (review M3).
     const state = live.state(row.entity_id), kind = kindOf(row);
-    const key = JSON.stringify([row.device_id, row.offered, controlShape(state),
+    const key = JSON.stringify([row.device_id, row.offered, row.accessories, controlShape(state),
       kind.ring ? null : state]);
     if (signature === key && builder?.update) { builder.update(state); return; }
     if (signature === key) return;
@@ -99,7 +99,7 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, moved
     // answers after the ring closed still reads its own device.
     const entity = row.entity_id;
     builder = (kind.ring || kind.panel)({row, state, control: live.control, surface: 'ring',
-      getState: () => live.state(entity)});
+      getState: () => live.state(entity), getEntityState: live.state});
     // A kind with nothing to control (a sensor) shows its value alone, not an empty card.
     if (!builder.childNodes.length) builder.hidden = true;
     root.append(builder);

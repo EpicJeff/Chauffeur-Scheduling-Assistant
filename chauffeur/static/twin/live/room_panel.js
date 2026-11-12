@@ -9,8 +9,8 @@ const element = (tag, text) => {
   return node;
 };
 
-export function deviceActions(row, state, control, { compact = false, getState } = {}) {
-  return kindOf(row).panel({row, state, control, compact, getState});
+export function deviceActions(row, state, control, { compact = false, getState, getEntityState } = {}) {
+  return kindOf(row).panel({row, state, control, compact, getState, getEntityState});
 }
 
 export function mountRoomPanel(live) {
@@ -68,7 +68,8 @@ export function mountRoomPanel(live) {
     const rows = live.devices(room.area_id), states = live.peek();
     if ([...widgets.values()].some(widget => widget.hosted)) window.ChauffeurHaCards?.setStates(states);
     const key = JSON.stringify([room.area_id, rows.map(row => [row.device_id, row.offered, row.label,
-      states[row.entity_id]?.state, states[row.entity_id]?.attributes])]);
+      states[row.entity_id]?.state, states[row.entity_id]?.attributes,
+      row.accessories?.map(a => [a, states[a.entity_id]])])]);
     if (key === shown) return;
     shown = key;
     const active = document.activeElement;
@@ -83,14 +84,14 @@ export function mountRoomPanel(live) {
     }
     for (const row of rows) {
       const state = states[row.entity_id], attrs = state?.attributes || {};
-      const shape = JSON.stringify([kindOf(row).id, row.offered, controlShape(state)]);
+      const shape = JSON.stringify([kindOf(row).id, row.offered, row.accessories, controlShape(state)]);
       let widget = widgets.get(row.device_id);
       if (!widget || shape !== widget.shape || !widget.actions.update) {
         const node = widget?.node || element('section');
         if (widget) stop(widget);
         node.className = 'twin-room-device'; node.dataset.deviceId = row.device_id; node.dataset.kind = kindOf(row).id;
         const name = element('h3'), status = element('p');
-        const actions = deviceActions(row, state, live.control, {getState: () => live.state(row.entity_id)});
+        const actions = deviceActions(row, state, live.control, {getState: () => live.state(row.entity_id), getEntityState: live.state});
         node.replaceChildren(name, status, actions);
         widget = {node, name, status, actions, shape}; widgets.set(row.device_id, widget);
         addMore(widget, row);

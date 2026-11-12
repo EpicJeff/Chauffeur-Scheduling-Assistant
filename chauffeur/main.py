@@ -7558,6 +7558,11 @@ def house_live(request: Request):
         # Area membership is independent of a person's chosen marker position.
         devices.append({**device, 'offered': control_rules.offered(
             who, device['entity_id'], settings, states=states)})
+        if device['kind'] == 'camera':
+            devices[-1]['accessories'] = [
+                {**accessory, 'offered': control_rules.offered(
+                    who, accessory['entity_id'], settings, states=states)}
+                for accessory in twin_ha.camera_accessories(device, states)]
         device_id = device['device_id']
         placement = placed.get(device_id)
         if placement:
@@ -7576,6 +7581,8 @@ def house_live(request: Request):
                            placed=placement is not None,
                            offered=devices[-1]['offered'])
         markers[-1]['location_valid'] = spot.get('location_valid', True)
+        if 'accessories' in devices[-1]:
+            markers[-1]['accessories'] = devices[-1]['accessories']
         if 'facing_deg' in spot:
             markers[-1]['facing_deg'] = spot['facing_deg']
         if 'outdoor' in spot:
