@@ -39,7 +39,10 @@ globalThis.fetch=async(input,init)=>{const url=String(typeof input==='string'?in
   if(/api\/house\/(editor|twin)\/imports/.test(url))return new Response('[]',{status:200,headers:{'content-type':'application/json'}});
   return realFetch(input,init);};
 const plan={buildings:[],site:{lot:[[0,0],[40,0],[40,40],[0,40]],terraces:[],beds:[{id:'bed',polygon:[[5,5],[10,5],[10,10],[5,10]]}]},materials:{}};
-const view=await mountTwin(new Element(),{plan,kit,tier:'low',preserveCamera:true});
+// Terrain tools live in the editor: mount inside an editor shell, so the viewer's levels
+// camera (slice 2c) never takes over the scene.
+const editorHost=new Element();editorHost.closest=selector=>selector==='.editor-shell'?editorHost:null;
+const view=await mountTwin(editorHost,{plan,kit,tier:'low',preserveCamera:true});
 view.setCameraState({position:[20*.3048,80*.3048,-19.999*.3048],target:[20*.3048,0,-20*.3048]});
 const abort=new AbortController(),ops=[];let writable=true;
 const op=async operation=>{ops.push(operation);if(operation.op==='add_pad')plan.site.terraces.push({id:'pad',...operation,edges:operation.polygon.map(()=>({edge:'slope'}))});
