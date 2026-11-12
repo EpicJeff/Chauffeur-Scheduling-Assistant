@@ -14,6 +14,7 @@ import struct
 import time
 import uuid
 import zipfile
+import xml.etree.ElementTree as ET
 
 from services import storage, twin_store, twin_objects
 
@@ -234,6 +235,49 @@ def _thumbnail(thumbnail):
     return thumbnail_bytes
 
 
+def _xml(data, label):
+    # No DTD/entities, including UTF-16 declarations, in uploaded XML.
+    try:
+        text = data.decode('utf-8-sig')
+        if '<!DOCTYPE' in text.upper() or '<!ENTITY' in text.upper():
+            raise ValueError('Export model XML without DTDs or entities.')
+        return ET.fromstring(text)
+    except (UnicodeError, ET.ParseError) as exc:
+        raise ValueError(f'The {label} XML is invalid. Export it as UTF-8.') from exc
+
+
+def _resource(model, uri, files):
+    from urllib.parse import urlsplit, unquote
+    import posixpath
+    uri = unquote(uri.strip())
+    parts = urlsplit(uri)
+    if (not uri or parts.scheme or parts.netloc or parts.query or parts.fragment
+            or uri.startswith('/') or '\\' in uri):
+        raise ValueError('Models must use their included textures; outside paths are not allowed.')
+    resource = path_name(posixpath.normpath(posixpath.join(str(PurePosixPath(model).parent), uri)))
+    if resource not in files:
+        raise ValueError(f'Include the model resource: {resource}')
+    return resource
+
+
+def _inspect_collada(name, files):
+    doc = _xml(files[name], 'Collada')
+    if doc.tag.rsplit('}', 1)[-1] != 'COLLADA':
+        raise ValueError('Use a Collada (.dae) model.')
+    for image in doc.findall('.//{*}library_images/{*}image'):
+        source = image.find('{*}init_from')
+        if source is None or not source.text:
+            raise ValueError('Include a filename for each Collada image.')
+        _resource(name, source.text, files)
+
+
+def _triangle_metadata(triangles):
+    return {'triangles': triangles, 'heavy': triangles is not None and triangles > 300000,
+            'warning': (f'Heavy model: {triangles / 1000:.0f}k triangles. It shows in full on the High setting; the wall panel shows a simple stand-in.'
+                        if triangles is not None and triangles > 300000 else
+                        'Large model (over 100,000 triangles).' if triangles is not None and triangles > 100000 else None)}
+
+
 def create(files, name, kind, thumbnail=None):
     if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
         raise ValueError('Give the model a name of at most 100 characters.')
@@ -244,17 +288,21 @@ def create(files, name, kind, thumbnail=None):
         raise ValueError(f'Models may be at most {limit_mb()} MB.')
     files = {path_name(n): d for n, d in files.items()}
     original = dict(files)
-    unpacked = sum(len(d) for n, d in files.items() if not n.lower().endswith('.zip'))
+    unpacked = sum(len(d) for n, d in files.items() if not n.lower().endswith(('.zip', '.kmz')))
     entries = len(files)
+    kmz_models = {}
     def check_unpacked():
         if unpacked > unpacked_limit_mb() * 1024 * 1024:
             raise ValueError(f'This model unpacks to {unpacked / (1024 * 1024):.0f} MB; the limit is {unpacked_limit_mb()} MB.')
     check_unpacked()
     for filename, data in original.items():
-        if filename.lower().endswith(('.dae', '.kmz')):
-            raise ValueError('Collada and KMZ are not available in this build; use glTF or GLB.')
-        if filename.lower().endswith('.zip'):
-            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        if filename.lower().endswith(('.zip', '.kmz')):
+            contained = {}
+            try:
+                archive = zipfile.ZipFile(io.BytesIO(data))
+            except zipfile.BadZipFile as exc:
+                raise ValueError('The model archive is invalid. Use a valid zip or KMZ file.') from exc
+            with archive:
                 entries += len(archive.infolist())
                 if entries > MAX_FILES:
                     raise ValueError('Models may contain at most 512 files and zip entries.')
@@ -266,26 +314,46 @@ def create(files, name, kind, thumbnail=None):
                     if entry.is_dir():
                         continue
                     resource = path_name(entry.filename)
+                    if resource in contained:
+                        raise ValueError('Duplicate model resource name.')
                     if resource in files:
                         raise ValueError('Duplicate model resource name.')
                     try:
-                        files[resource] = archive.read(entry)
+                        contained[resource] = archive.read(entry)
+                    except zipfile.BadZipFile as exc:
+                        raise ValueError('The model archive contains a damaged resource.') from exc
                     except RuntimeError as exc:
                         raise ValueError('Use a zip without encrypted resources.') from exc
-    models = [n for n in files if n.lower().endswith(('.glb', '.gltf'))]
+            files.update(contained)
+            if filename.lower().endswith('.kmz'):
+                kmz_models[filename] = contained
+    models = [n for n in files if n.lower().endswith(('.glb', '.gltf', '.dae'))]
     if len(models) != 1:
-        raise ValueError('Include exactly one .glb or .gltf model, with its buffers and textures.')
+        raise ValueError('Include exactly one .dae, .glb or .gltf model, with its buffers and textures.')
+    model = models[0]
+    if kmz_models:
+        if len(kmz_models) != 1 or model not in next(iter(kmz_models.values())) or not model.lower().endswith('.dae'):
+            raise ValueError('A KMZ must contain exactly one Collada (.dae) model and its textures.')
+        archive_files = next(iter(kmz_models.values()))
+        # KMZLoader follows doc.kml when present, otherwise the single .dae.
+        if 'doc.kml' in archive_files:
+            kml = _xml(archive_files['doc.kml'], 'KMZ')
+            href = kml.find('.//{*}Placemark/{*}Model/{*}Link/{*}href')
+            if href is None or _resource('doc.kml', href.text or '', archive_files) != model:
+                raise ValueError('The KMZ doc.kml must link to its Collada model.')
     try:
-        triangles = _inspect(models[0], files)
+        if model.lower().endswith('.dae'):
+            _inspect_collada(model, archive_files if kmz_models else files)
+            triangles = None  # Confirm must supply the count from the loaded scene.
+        else:
+            triangles = _inspect(model, files)
     except (KeyError, IndexError, TypeError, AttributeError, UnicodeError, json.JSONDecodeError, struct.error) as exc:
         raise ValueError('The glTF model is invalid or incomplete.') from exc
     thumbnail_bytes = _thumbnail(thumbnail)
     asset_id = 'import-' + uuid.uuid4().hex
-    entry = {'id': asset_id, 'name': name.strip(), 'kind': kind, 'model': models[0],
-             'files': {n: True for n in files}, 'triangles': triangles,
-             'heavy': triangles > 300000,
-             'warning': (f'Heavy model: {triangles / 1000:.0f}k triangles. It shows in full on the High setting; the wall panel shows a simple stand-in.'
-                         if triangles > 300000 else 'Large model (over 100,000 triangles).' if triangles > 100000 else None)}
+    entry = {'id': asset_id, 'name': name.strip(), 'kind': kind,
+             'model': next(iter(kmz_models)) if kmz_models else model,
+             'files': {n: True for n in files}, **_triangle_metadata(triangles)}
     with twin_store.LIFECYCLE, twin_store._LOCK:
         root().mkdir(parents=True, exist_ok=True)
         stage = root() / ('.' + asset_id)
@@ -307,7 +375,7 @@ def create(files, name, kind, thumbnail=None):
     return entry
 
 
-def rename(asset_id, name, kind=None, thumbnail=None, size=None):
+def rename(asset_id, name, kind=None, thumbnail=None, size=None, triangles=None):
     if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
         raise ValueError('Give the model a name of at most 100 characters.')
     if size is not None and (not isinstance(size, list) or len(size) != 3
@@ -317,6 +385,12 @@ def rename(asset_id, name, kind=None, thumbnail=None, size=None):
         entry = get(asset_id)
         if not entry:
             raise KeyError(asset_id)
+        if entry['model'].lower().endswith(('.dae', '.kmz')):
+            if type(triangles) is not int or triangles < 0:
+                raise ValueError('Load the Collada or KMZ model and send its triangle count before confirming.')
+            if triangles > MAX_TRIANGLES:
+                raise ValueError('This model exceeds 1,000,000 triangles. Simplify it before importing.')
+            entry.update(_triangle_metadata(triangles))
         entry['name'] = name.strip()
         if size is not None:
             entry['size'] = size

@@ -85,8 +85,7 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
     busy = true; let entry = null, accepted = false, model = null;
     try {
       const names = files.map(f => f.name.toLowerCase());
-      if (names.some(n => n.endsWith('.skp'))) throw new Error('SketchUp .skp is a closed format and is not supported. Export glTF/GLB.');
-      if (names.some(n => /\.(dae|kmz)$/.test(n))) throw new Error('Collada and KMZ are not available in this build. Export glTF/GLB.');
+      if (names.some(n => n.endsWith('.skp'))) throw new Error('SketchUp .skp is not supported; export Collada or glTF from SketchUp.');
       const settings = await request('import-settings');
       if (files.reduce((n, file) => n + file.size, 0) > settings.limit_mb * 1024 * 1024) throw new Error(`Models may be at most ${settings.limit_mb} MB.`);
       status.textContent = 'Loading model…';
@@ -97,7 +96,7 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
       const picture = thumbnail(model);
       const answer = await details({ ...entry, warning: entry.warning || budget.warning }, suggestKind(size.toArray()), picture, signal);
       if (!answer || !canEdit()) return;
-      rememberImport(await request('imports/' + entry.id, 'PATCH', { ...answer, size: size.toArray() })); accepted = true;
+      rememberImport(await request('imports/' + entry.id, 'PATCH', { ...answer, size: size.toArray(), triangles: budget.triangles })); accepted = true;
       await importedModels(true); await changed(); status.textContent = 'Model added. Drag its thumbnail onto a floor, the ground or a wall.';
     } catch (error) { status.textContent = error.message; report(error); }
     finally {

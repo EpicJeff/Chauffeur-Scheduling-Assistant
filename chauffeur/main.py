@@ -7909,7 +7909,7 @@ def house_editor_upload_cancel(upload_id: str, request: Request):
 @app.patch('/api/house/editor/imports/{asset_id}')
 def house_editor_import_rename(asset_id: str, body: dict = Body(...)):
     from services import twin_imports
-    return _house_editor_call(twin_imports.rename, asset_id, body.get('name'), body.get('kind'), body.get('thumbnail'), body.get('size'), lookup=True)
+    return _house_editor_call(twin_imports.rename, asset_id, body.get('name'), body.get('kind'), body.get('thumbnail'), body.get('size'), body.get('triangles'), lookup=True)
 
 
 @app.delete('/api/house/editor/imports/{asset_id}')

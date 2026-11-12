@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { modelLoader, colladaTexturesReady } from './import_loaders.js';
 import { normaliseModel, modelBudget, mergeByMaterial, singlePassMaterial, heavyStandIn } from './objects.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 
@@ -149,9 +149,9 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind } = 
   if (isImport && !imported.has(assetId)) await importedModels();
   const asset = isImport ? imported.get(assetId) : manifest(kit)[assetId];
   if (isImport && tier === 'low' && asset?.triangles > 300000 && asset?.size) return heavyStandIn(asset.size, kind || asset.kind);
-  const name = asset?.model || Object.keys(asset?.files || {}).find(n => /\.(gltf|glb)$/i.test(n));
+  const name = asset?.model || Object.keys(asset?.files || {}).find(n => /\.(gltf|glb|dae|kmz)$/i.test(n));
   if (!name) return null;
-  // Authenticate buffers and textures as well as the top-level glTF. Resolving
+  // Authenticate buffers and textures as well as the top-level model. Resolving
   // each resource against a query-free directory avoids token loss on relatives.
   const directory = new URL(base() + (assetId.startsWith('import-') ? 'api/house/twin/imports/' : 'api/house/twin/library/') + encodeURIComponent(assetId) + '/', window.location.href);
   const manager = new THREE.LoadingManager();
@@ -161,6 +161,8 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind } = 
     // through setResourcePath. Resolving against the page keeps both right.
     const u = new URL(raw, window.location.href);
     if (u.origin === directory.origin && u.pathname.startsWith(directory.pathname)) {
+      const path = decodeURIComponent(u.pathname.slice(directory.pathname.length));
+      if (isImport && !Object.hasOwn(asset.files || {}, path)) throw new Error('Imported models must use their included resources.');
       u.search = '';
       return window.chfAuthUrl ? window.chfAuthUrl(u.href) : u.href;
     }
@@ -168,7 +170,15 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind } = 
     return raw;
   });
   return optionalAsset(modelCache, libUrl(assetId, name), async () => {
-    const result = await new GLTFLoader(manager).setResourcePath(new URL(name.slice(0, name.lastIndexOf('/') + 1), directory).href).loadAsync(libUrl(assetId, name));
+    const loader = modelLoader(name, manager, asset.files || {});
+    let result;
+    try {
+      result = await loader.setResourcePath(new URL(name.slice(0, name.lastIndexOf('/') + 1), directory).href).loadAsync(libUrl(assetId, name));
+      if (result && /\.(dae|kmz)$/i.test(name)) await colladaTexturesReady(result.scene);
+    } catch (error) {
+      if (result?.scene) disposeObject(result.scene);
+      throw error;
+    } finally { loader.release?.(); }
     if (!result) return null;
     const converted = new Map();
     result.scene.traverse(o => {
@@ -177,7 +187,14 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind } = 
       o.material = [].concat(o.material).map(m => {
         if (converted.has(m)) return converted.get(m);
         if (isImport) {
-          const out = singlePassMaterial(m); converted.set(m, out);
+          const out = /\.(dae|kmz)$/i.test(name) && (m.isMeshPhongMaterial || m.isMeshLambertMaterial || m.isMeshBasicMaterial)
+            ? new THREE.MeshStandardMaterial({
+              name: m.name, color: m.color, map: m.map, normalMap: m.normalMap,
+              opacity: m.opacity, transparent: m.transparent, alphaTest: m.alphaTest,
+              side: m.side, vertexColors: m.vertexColors, roughness: .7, metalness: 0,
+              ...(m.emissive ? { emissive: m.emissive, emissiveMap: m.emissiveMap } : {}),
+            }) : singlePassMaterial(m);
+          converted.set(m, out);
           if (out !== m) m.dispose();
           return out;
         }
