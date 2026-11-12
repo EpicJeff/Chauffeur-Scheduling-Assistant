@@ -28,10 +28,10 @@ every_existing_kind_behaves_as_before
   recapture the table to make it pass. Tasks 3-4 rebuild some kinds' controls on
   purpose; the commit that does so says which rows of the deviceActions table it
   replaces and why, and the looks and icons stay pinned.
-  Colour-scheme brief (2026-11-12): only the 63 icon hashes were refreshed for
-  neutral glass, per-kind on colours and the unavailable disc's missing ring.
-  State/label and action tables remain unchanged; test_twin_palette_js.py also
-  asserts the actual canvas colours and mounted climate texture reuse.
+  State-colour brief (2026-11-12): only colour-dependent icon hashes are refreshed.
+  The original state/label and action fixtures stay intact; the single approved
+  look change (a locked lock is green/on) is explicit in the comparison below.
+  test_twin_palette_js.py asserts the actual colours and mounted texture reuse.
 
 a_new_kind_registers_without_core_edits
   static/twin/live/kinds.js exports
@@ -182,6 +182,9 @@ const check = (name, fn) => checks.push([name, fn]);
 
 check('every_existing_kind_behaves_as_before', async () => {
   const pinned = JSON.parse(readFileSync(config.pinned, 'utf8'));
+  // The user's state-colour ruling makes a locked lock green rather than glass.
+  assert.equal(pinned.states['lock|locked|{}|'], 'off|locked');
+  pinned.states['lock|locked|{}|'] = 'on|locked';
   const now = await table();
   for (const part of ['states', 'icons', 'actions']) {
     const want = pinned[part], got = now[part];

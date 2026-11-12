@@ -1,5 +1,5 @@
 import { controls, element, glyph, clamp, figure, title, known, holdsRange, SVG } from './shared.js';
-import { twinHeat, twinCool, twinAuto } from '../../palette.js';
+import { climateModeColor } from '../../palette.js';
 
 // HA's thermostat card at the marker: one 270-degree arc open at the bottom, a handle for the
 // setpoint (two for heat_cool), the arc filled in the mode's colour, a dot at the current
@@ -15,7 +15,6 @@ const TRACK = (() => {
   const [[x0, y0], [x1, y1]] = [at(0), at(1)].map(p => p.map(v => v.toFixed(2)));
   return `M ${x0} ${y0} A ${R} ${R} 0 1 1 ${x1} ${y1}`;
 })();
-let gradients = 0;
 
 export function climateControls(options) {
   const c = controls(options), a = c.attrs;
@@ -32,18 +31,8 @@ export function climateControls(options) {
   track.setAttribute('class', 'twin-thermostat-track'); track.setAttribute('aria-hidden', 'true');
   const fill = document.createElementNS(SVG, 'path'); fill.setAttribute('d', TRACK);
   fill.setAttribute('pathLength', '100'); fill.setAttribute('class', 'twin-light-progress');
-  // Warm at the low end to cool at the high end, the light ring's kelvin colours.
-  const id = `twin-thermostat-${++gradients}`, defs = document.createElementNS(SVG, 'defs');
-  const gradient = document.createElementNS(SVG, 'linearGradient');
-  gradient.setAttribute('id', id); gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
-  for (const [key, value] of [['x1', '28'], ['y1', '0'], ['x2', '252'], ['y2', '0']]) gradient.setAttribute(key, value);
-  for (const [offset, colour] of [['0', twinHeat], ['1', twinCool]]) {
-    const stop = document.createElementNS(SVG, 'stop');
-    stop.setAttribute('offset', offset); stop.setAttribute('stop-color', colour); gradient.append(stop);
-  }
-  defs.append(gradient);
   const now = document.createElementNS(SVG, 'circle'); now.setAttribute('r', '4'); now.setAttribute('class', 'twin-thermostat-now');
-  svg.append(defs, track, fill, now); root.append(svg);
+  svg.append(track, fill, now); root.append(svg);
 
   const centre = element('div'); centre.className = 'twin-thermostat-centre'; root.append(centre);
   const action = c.part(element('p'), 'action'); action.className = 'twin-thermostat-action';
@@ -104,17 +93,16 @@ export function climateControls(options) {
     if (!isOff) offText?.remove();
     root.toggleAttribute('data-off', isOff);
     // The fill: up to the setpoint when heating, from it when cooling, between the two for a range.
-    let from = 0, to = 0, colour = twinAuto;
+    let from = 0, to = 0;
     if (!isOff && handles.length && handles.every(h => known(h.value))) {
       const [lo, hi] = handles.map(h => ratio(clamp(Number(h.value), min, max)));
-      if (range) { from = lo; to = hi; colour = `url(#${id})`; }
-      else if (mode === 'cool') { from = lo; to = 1; colour = twinCool; }
-      else if (['heat', 'auto', 'heat_cool'].includes(mode)) { from = 0; to = lo; colour = mode === 'heat' ? twinHeat : twinAuto; }
+      if (range) { from = lo; to = hi; }
+      else if (mode === 'cool') { from = lo; to = 1; }
       else { from = 0; to = lo; }
     }
     fill.setAttribute('stroke-dasharray', `${(to - from) * 100} 100`);
     fill.setAttribute('stroke-dashoffset', String(-from * 100));
-    fill.style.stroke = colour; fill.style.visibility = to - from > 0 ? 'visible' : 'hidden';
+    fill.style.stroke = climateModeColor(mode); fill.style.visibility = to - from > 0 ? 'visible' : 'hidden';
     const room = Number(s?.attributes?.current_temperature);
     if (Number.isFinite(room) && room >= min && room <= max) {
       const [x, y] = at(ratio(room)); now.setAttribute('cx', x.toFixed(2)); now.setAttribute('cy', y.toFixed(2));

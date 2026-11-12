@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import { kindOf, stateLabel } from './kinds.js';
 import { markerOnColor, markerInk, twinMarkerOff, twinMarkerRing, twinMarkerUnavailable,
-  twinMarkerUnavailableText, twinAttention, twinAttentionRing, twinSelectedText, twinText } from '../palette.js';
+  twinMarkerUnavailableText, twinAttention, twinAttentionRing, twinDanger, twinSelectedText, twinText } from '../palette.js';
 
 export function markerState(kind, state, attributes, entityId = '') {
   const resolved = kindOf({kind, entity_id: entityId});
@@ -48,7 +48,9 @@ export function clusterMarkers(points, previous = new Map()) {
 export function markerTexture(kind, look, count = null, color = markerOnColor(kind)) {
   const canvas = document.createElement('canvas'); canvas.width = canvas.height = 96;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = { on: color, off: twinMarkerOff, attention: twinAttention, unavailable: twinMarkerUnavailable }[look];
+  // Faults keep attention semantics (badges, hidden-floor pins), with their specified red disc.
+  ctx.fillStyle = { on: color, off: twinMarkerOff, attention: color === twinDanger ? color : twinAttention,
+    unavailable: twinMarkerUnavailable }[look];
   ctx.beginPath(); ctx.arc(48, 48, 42, 0, Math.PI * 2); ctx.fill();
   if (look !== 'unavailable') {
     ctx.strokeStyle = look === 'attention' ? twinAttentionRing : twinMarkerRing;
@@ -68,4 +70,48 @@ export function markerSprite(texture) {
   const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false, toneMapped: false });
   const sprite = new THREE.Sprite(material); sprite.renderOrder = 20;
   return sprite;
+}
+
+// Only colour-bearing device textures enter the bounded LRU. Off/unavailable/count
+// textures ignore state colours. Owners pin entries even when their sprites are hidden.
+export function markerTextureCache(limit = 48) {
+  const textures = new Map(), colors = new Map(), owners = new Map();
+  function prune() {
+    for (const [key, entry] of colors) {
+      if (colors.size <= limit) break;
+      if (entry.users) continue;
+      colors.delete(key); textures.delete(key); entry.texture.dispose();
+    }
+  }
+  return {
+    assign(sprite, kind, look, count = null, color = markerOnColor(kind)) {
+      if (kind === 'light' && look === 'on') {
+        // Sixteen-channel steps, with 255 retained as the top bucket (pure primaries).
+        color = '#' + color.slice(1).match(/../g).map(v =>
+          Math.min(255, Math.round(parseInt(v, 16) / 16) * 16).toString(16).padStart(2, '0')).join('');
+      }
+      const keyed = count === null && (look === 'on' || look === 'attention');
+      const key = JSON.stringify([kind, look, count, keyed ? color : null]);
+      let entry = textures.get(key);
+      if (!entry) {
+        entry = {texture: markerTexture(kind, look, count, color), users: 0};
+        textures.set(key, entry);
+      }
+      if (keyed) { colors.delete(key); colors.set(key, entry); }
+      const previous = owners.get(sprite);
+      if (previous !== entry) {
+        if (previous) previous.users--;
+        entry.users++; owners.set(sprite, entry);
+      }
+      // Re-key before disposing anything: no sprite ever holds an evicted map.
+      sprite.material.map = entry.texture;
+      prune();
+      return entry.texture;
+    },
+    dispose() {
+      for (const sprite of owners.keys()) sprite.material.map = null;
+      owners.clear();
+      textures.forEach(entry => entry.texture.dispose()); textures.clear(); colors.clear();
+    },
+  };
 }

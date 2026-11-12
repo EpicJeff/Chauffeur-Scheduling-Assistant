@@ -14,7 +14,7 @@ What this file assumes of markers.js (the implementer matches these):
 - `kind` is the catalogue's device kind (twin_ha: light, switch, fan, lock,
   garage, climate, sensor, ...); a binary sensor is kind 'sensor' and its
   class rides in attributes.device_class.
-- attention: a lock 'unlocked', 'unlocking', 'open', 'opening' or 'jammed'; a
+- attention: a lock 'unlocked', 'locking', 'unlocking', 'open', 'opening' or 'jammed'; a
   garage 'open' or 'opening'; an alarm panel (kind 'alarm', or a fourth argument
   entity id in the alarm_control_panel domain) 'triggered', 'pending' or 'arming',
   and 'disarmed' reads 'off'; a sensor whose device_class is smoke, moisture or
@@ -83,7 +83,7 @@ check('marker_states_cover_attention_and_unavailable', () => {
   assert.equal(S('fan', 'off').look, 'off');
   // A lock wants attention when unlocked, not when locked.
   assert.equal(S('lock', 'unlocked').look, 'attention');
-  assert.ok(['on', 'off'].includes(S('lock', 'locked').look), 'a locked lock is calm');
+  assert.equal(S('lock', 'locked').look, 'on', 'a locked lock is calm and green');
   // A garage door wants attention while open or opening.
   assert.equal(S('garage', 'open', {device_class: 'garage'}).look, 'attention');
   assert.equal(S('garage', 'opening', {device_class: 'garage'}).look, 'attention');
@@ -97,7 +97,8 @@ check('marker_states_cover_attention_and_unavailable', () => {
     assert.notEqual(S('sensor', 'on', {device_class: cls}).look, 'attention', `${cls} on is not an alarm`);
   }
   // A jammed, open or opening lock, and one mid-unlock, want attention too (review M7).
-  for (const state of ['jammed', 'open', 'opening', 'unlocking']) assert.equal(S('lock', state).look, 'attention', `lock ${state}`);
+  for (const state of ['jammed', 'open', 'opening', 'locking', 'unlocking']) assert.equal(S('lock', state).look, 'attention', `lock ${state}`);
+  assert.equal(S('media', 'paused').look, 'off');
   // An alarm panel is known by its domain: triggered, pending and arming want attention;
   // disarmed is calm 'off'; armed is not attention.
   const A = state => markerState('other', state, {}, 'alarm_control_panel.house');

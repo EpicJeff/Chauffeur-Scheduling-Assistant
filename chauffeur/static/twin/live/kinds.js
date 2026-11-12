@@ -55,11 +55,12 @@ export function stateLabel(kind, state, attributes) {
 function look(kind, state) {
   const attrs = state?.attributes || {}, value = String(state?.state ?? 'unknown');
   if (['unknown', 'unavailable'].includes(value)) return 'unavailable';
-  const attention = kind === 'lock' && ['unlocked', 'unlocking', 'open', 'opening', 'jammed'].includes(value)
+  const attention = kind === 'lock' && ['unlocked', 'locking', 'unlocking', 'open', 'opening', 'jammed'].includes(value)
     || kind === 'garage' && ['open', 'opening'].includes(value)
     || kind === 'alarm' && ['triggered', 'pending', 'arming'].includes(value)
     || kind === 'sensor' && [...CONTACTS, 'smoke', 'moisture', 'gas'].includes(attrs.device_class) && value === 'on';
-  const off = ['off', 'closed', 'locked', 'idle', 'standby'].includes(value) || kind === 'alarm' && value === 'disarmed';
+  const off = ['off', 'closed', 'idle', 'standby'].includes(value) || value === 'locked' && kind !== 'lock'
+    || kind === 'media' && value === 'paused' || kind === 'alarm' && value === 'disarmed';
   return attention ? 'attention' : off ? 'off' : 'on';
 }
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { base } from '../twin_library.js';
 import { groundAt } from '../twin_ground.js';
-import { markerState, levelOfDetail, clusterMarkers, markerTexture, markerSprite } from './markers.js';
+import { markerState, levelOfDetail, clusterMarkers, markerTextureCache, markerSprite } from './markers.js';
 import { roomFacts, layoutRoomCards, mountRoomCards } from './room_cards.js';
 import { deviceActions, confirmUnsafe, mountRoomPanel } from './room_panel.js';
 import { roomStates, mountModes, modeForeground } from './modes.js';
@@ -120,7 +120,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   const sheet = document.createElement('aside'); sheet.className = 'twin-device-sheet'; sheet.hidden = true;
   sheet.setAttribute('role', 'dialog');
   // A control's call on its way, per entity, and the newest press waiting behind it (C10).
-  const factRooms = new Set(), textures = new Map(), badges = new Map(), listeners = new Set(), busy = new Set(), waiting = new Map();
+  const factRooms = new Set(), textures = markerTextureCache(), badges = new Map(), listeners = new Set(), busy = new Set(), waiting = new Map();
   const raycaster = new THREE.Raycaster(), projected = new THREE.Vector3(), scratch = new THREE.Vector3();
   let states = {}, stopped = false, stale = true, mode = null, timer = null, polling = Promise.resolve();
   let stream = null, pollChanges = null, pushed = false, warned = false, energyStreamKey = '';
@@ -132,10 +132,10 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   // the shown levels, a poll or mode (revision), or the page's overlays.
   const lastCamera = new Float64Array(32);
   let revision = 0, lastKey = '', overlays = null;
-  const texture = (kind, look, count = null, color = undefined) => {
-    const key = JSON.stringify([kind, look, count, color]);
-    if (!textures.has(key)) textures.set(key, markerTexture(kind, look, count, color));
-    return textures.get(key);
+  const spriteFor = (kind, look, count = null) => {
+    const sprite = markerSprite(null);
+    textures.assign(sprite, kind, look, count);
+    return sprite;
   };
   const plain = row => {
     const { sprite, labelNode, labelBox, labelAt, screen, ...data } = row;
@@ -149,7 +149,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     revision++; overlays = null;
     for (const row of rows) {
       row.stale = stale; row.dim = stale || !modeForeground(mode, row, states[row.entity_id]);
-      row.sprite.material.map = texture(iconKind(row), row.look, null, row.color);
+      textures.assign(row.sprite, iconKind(row), row.look, null, row.color);
       row.sprite.material.opacity = row.dim ? .4 : 1;
       const text = `${row.name} · ${row.label}`;
       if (row.labelNode.textContent !== text) { row.labelNode.textContent = text; row.labelBox = null; }
@@ -408,11 +408,11 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       if (fan && cluster.ids.every(id => fan.ids.includes(id))) continue;
       const key = `cluster:${cluster.key}`; visibleBadges.add(key);
       let sprite = badges.get(key);
-      if (!sprite) { sprite = markerSprite(texture('room', 'off', 1)); badges.set(key, sprite); root.add(sprite); }
+      if (!sprite) { sprite = spriteFor('room', 'off', 1); badges.set(key, sprite); root.add(sprite); }
       const members = shown.filter(row => cluster.ids.includes(row.device_id));
       sprite.position.set(0, 0, 0); members.forEach(row => sprite.position.add(row.sprite.position)); sprite.position.divideScalar(members.length);
       const look = cluster.attention ? 'attention' : members.some(row => row.look === 'on') ? 'on' : 'off';
-      sprite.material.map = texture('room', look, members.length); sprite.material.opacity = members.every(row => row.dim) ? .4 : 1;
+      textures.assign(sprite, 'room', look, members.length); sprite.material.opacity = members.every(row => row.dim) ? .4 : 1;
       sprite.userData.cluster = [...cluster.ids]; sprite.userData.count = members.length;
       // A perspective world centroid need not project to the screen centroid.
       const at = screen(sprite.position);
@@ -479,7 +479,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     for (const badge of lod.badges) {
       const key = JSON.stringify([badge.building, badge.room]); visibleBadges.add(key);
       let sprite = badges.get(key);
-      if (!sprite) { sprite = markerSprite(texture('room', 'off', 1)); badges.set(key, sprite); root.add(sprite); }
+      if (!sprite) { sprite = spriteFor('room', 'off', 1); badges.set(key, sprite); root.add(sprite); }
       const inRoom = members.get(key) || [];
       sprite.position.set(0, 0, 0); inRoom.forEach(row => sprite.position.add(row.sprite.position));
       sprite.position.divideScalar(Math.max(1, inRoom.length));
@@ -490,7 +490,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
         sprite.position.divideScalar(Math.max(1, room?.polygon_world?.length || 0));
         sprite.position.y = ((b?.base || 0) + (level?.elevation || 0) + groundAt(view.plan, ...(b?.position || [0, 0]))) * FT;
       }
-      sprite.material.map = texture('room', badge.attention ? 'attention' : 'off', badge.count);
+      textures.assign(sprite, 'room', badge.attention ? 'attention' : 'off', badge.count);
       sprite.material.opacity = inRoom.every(row => row.dim) ? .4 : 1;
       sprite.userData.room = { building: badge.building, room: badge.room };
       sprite.visible = true; place(sprite, BADGE_PX);
@@ -623,7 +623,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     resizeObserver?.disconnect();
     for (const part of [ring, roomPanel, modes]) { try { part?.stop(); } catch (error) { report(error); } }
     root.traverse(object => object.material?.dispose()); root.removeFromParent();
-    textures.forEach(value => value.dispose()); textures.clear(); labels.remove(); sheet.remove();
+    textures.dispose(); labels.remove(); sheet.remove();
   }
   function hitMarker(event) {
     draw();
@@ -698,7 +698,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       else tapRoom(building, room);
     });
     rows = layout.markers.map(marker => {
-      const sprite = markerSprite(texture(iconKind(marker), 'unavailable'));
+      const sprite = spriteFor(iconKind(marker), 'unavailable');
       sprite.userData.deviceId = marker.device_id;
       const building = view.plan.buildings.find(b => b.id === marker.building);
       const ground = groundAt(view.plan, ...(building?.position || [0, 0]));
