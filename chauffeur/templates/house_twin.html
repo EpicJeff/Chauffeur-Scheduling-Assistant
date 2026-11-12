@@ -25,7 +25,7 @@
     {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'viewing', 'unlit', 'twin_roof', 'twin_ground', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
-    {% for name in ['twin_solar', 'live/climate', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/energy_check', 'live/energy_settings', 'live/security'] %}
+    {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/energy_check', 'live/energy_settings', 'live/security'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     twinImports[new URL(twinBase + 'static/vendor/lucide/icons.js', location.href).href] = twinBase + {{ 'static/vendor/lucide/icons.js' | ver | tojson }};
@@ -196,6 +196,19 @@
     #twin-mode-legend { pointer-events:auto; align-self:center; padding:8px 12px; background:rgba(28,23,16,.9); border-radius:8px; color:#f0e6cf; max-width:calc(100vw - 32px); }
     .twin-mode-labels { position:fixed; inset:0; pointer-events:none; z-index:44; overflow:hidden; }
     .twin-mode-labels span { position:absolute; transform:translate(-50%, -50%); white-space:nowrap; padding:4px 8px; border-radius:8px; background:rgba(28,23,16,.94); color:#f0e6cf; font:600 13px system-ui; }
+    /* Room cards use the idle clock's dark glass and the glance bar's thin readings. */
+    .twin-room-cards { position:fixed; inset:0; z-index:44; pointer-events:none; overflow:hidden; }
+    .twin-room-cards > button { position:absolute; transform:translate(-50%, -50%); box-sizing:border-box; height:62px; padding:10px 12px; border:1px solid rgba(255,255,255,.08); border-radius:16px; background:rgba(15,17,22,.55); backdrop-filter:blur(16px); color:#f3f2f7; font:300 12px/16px system-ui; text-align:left; cursor:pointer; pointer-events:auto; }
+    .twin-room-cards > button[hidden], .twin-room-cards span[hidden] { display:none; }
+    .twin-room-cards > button[data-attention="true"] { border-color:#edaa48; }
+    .twin-room-cards strong { display:block; max-width:140px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font:400 13px/18px system-ui; }
+    .twin-room-cards button > div { display:flex; gap:10px; margin-top:6px; color:#b9becb; white-space:nowrap; }
+    .twin-room-cards span { display:flex; flex-direction:row-reverse; align-items:center; gap:4px; }
+    .twin-room-cards small { font:inherit; }
+    .twin-room-cards svg { width:14px; height:14px; flex-shrink:0; }
+    .twin-room-cards [data-tone="attention"] { color:#edaa48; }
+    .twin-room-cards [data-tone="on"] { color:#e3d3ab; }
+    .twin-room-cards button:focus-visible { outline:2px solid #e3d3ab; outline-offset:2px; }
     #twin-idle { position:fixed; inset:0 0 var(--panel-shelf-h, 0px); z-index:49; pointer-events:none; color:#f3f2f7; }
     #twin-idle-clock { box-sizing:border-box; width:max-content; max-width:min(92vw, 880px, calc(100% - var(--glance-edge-x) - var(--glance-edge-x))); padding:clamp(18px, 3vw, 36px); border:1px solid rgba(255,255,255,.08); border-radius:24px; background:rgba(15,17,22,.55); backdrop-filter:blur(16px); }
     #twin-idle-head { display:flex; width:fit-content; max-width:100%; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:20px 48px; }
@@ -209,7 +222,7 @@
     #twin-idle #twin-glance { margin-top:24px; padding:22px 0 0; flex-wrap:wrap; gap:20px 32px; border:0; border-top:1px solid rgba(255,255,255,.08); border-radius:0; background:transparent; backdrop-filter:none; overflow:visible; }
     #twin-idle #twin-glance strong { font-size:clamp(24px, 3vw, 34px); font-weight:400; }
     #twin-idle #twin-glance svg { width:34px; height:34px; }
-    html[data-twin-idle] #twin-controls, html[data-twin-idle] #twin-tier, html[data-twin-idle] #twin-hud, html[data-twin-idle] #top-nav-bar, html[data-twin-idle] .twin-mode-labels { visibility:hidden; }
+    html[data-twin-idle] #twin-controls, html[data-twin-idle] #twin-tier, html[data-twin-idle] #twin-hud, html[data-twin-idle] #top-nav-bar, html[data-twin-idle] .twin-mode-labels, html[data-twin-idle] .twin-room-cards { visibility:hidden; }
     /* The photo screensaver covers Argyle with its opaque scene (panel_skin,
        z 300 over Argyle's 80); it never toggles the orb's hidden/open state.
        Our opaque WebGL scene provides that cover while the house stays live.

@@ -37,6 +37,7 @@ What the page must give (the brief):
 Run from chauffeur/:  env -u HA_BASE_URL python tests/test_house_twin_live_markers.py
 """
 import math
+import copy
 import os
 import sys
 
@@ -417,7 +418,96 @@ def scenario_no_ha_twin_renders_without_markers():
         FAKE.available = True
 
 
+CLUMP_IDS = ['dev-k-lamp', 'dev-k-coffee', 'dev-k-temp']
+
+
+def clump_fixture(page, body, stacked=False):
+    """Only change the live layout response; never the household's saved placements."""
+    fixture = copy.deepcopy(body)
+    origin = next(row['at'] for row in fixture['markers'] if row['device_id'] == CLUMP_IDS[0])
+    for index, row in enumerate(fixture['markers']):
+        if row['device_id'] in CLUMP_IDS:
+            offset = 0 if stacked else CLUMP_IDS.index(row['device_id']) * .45
+            row['at'] = [origin[0] + offset, origin[1], 2]
+        else:
+            row['at'] = [origin[0] + 200 + index * 20, origin[1], 2]
+    page.route('**/api/house/live', lambda route: route.fulfill(json=fixture))
+
+
+CLUMP_BADGE_JS = """(ids) => {
+    const v=window.__twin,r=v.renderer3.domElement.getBoundingClientRect();let result=null;
+    v.camera.updateMatrixWorld(true);
+    v.scene.traverse(o=>{
+        if(!o.isSprite || !o.visible || !o.userData.cluster || ids.some(id=>!o.userData.cluster.includes(id)))return;
+        const p=o.position.clone().project(v.camera);
+        result={count:o.userData.count,canvasText:o.material.map.image.getContext('2d').getImageData(0,0,96,96).data.some(n=>n>0),
+          x:r.left+(p.x+1)*r.width/2+(.5-o.center.x)*44,y:r.top+(1-p.y)*r.height/2+(o.center.y-.5)*44};
+    });return result;
+}"""
+
+
+def scenario_mid_zoom_clump_is_one_count_then_tap_separates_it():
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    body = L.facts()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        clump_fixture(page, body)
+        L.open_twin(page, s)
+        L.aim_kitchen(page)
+        # About 10 px/ft: individual-marker LOD with this half-foot clump.
+        page.evaluate('''() => {const v=window.__twin;v.camera.position.sub(v.controls.target).multiplyScalar(2.5).add(v.controls.target);v.controls.update();v.render();}''')
+        L.H.settle(page)
+        badge = page.evaluate(CLUMP_BADGE_JS, CLUMP_IDS)
+        check(badge and badge['count'] == 3 and badge['canvasText'], ('one textured badge reads 3', badge))
+        check(all(not L.sprite(page, did)['visible'] for did in CLUMP_IDS), 'members are hidden')
+        check(page.locator('.twin-live-labels span:visible').count() == 0, 'no labels at mid zoom')
+        page.mouse.click(badge['x'], badge['y'])
+        check(L.wait_for(page, lambda: all(L.sprite(page, did)['visible'] for did in CLUMP_IDS), 8), 'tap reveals all three')
+        positions = [L.sprite(page, did)['screen'] for did in CLUMP_IDS]
+        check(all(math.dist(a, b) >= 52 for i, a in enumerate(positions) for b in positions[i + 1:]), positions)
+        L.no_errors(s)
+
+
+def scenario_stacked_clump_fans_and_member_controls_still_work():
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    body = L.facts()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        clump_fixture(page, body, stacked=True)
+        L.open_twin(page, s)
+        L.aim_kitchen(page)
+        page.evaluate('''() => {const v=window.__twin;v.controls.minDistance=v.camera.position.distanceTo(v.controls.target);}''')
+        badge = page.evaluate(CLUMP_BADGE_JS, CLUMP_IDS)
+        check(badge and badge['count'] == 3, badge)
+        page.mouse.click(badge['x'], badge['y'])
+        check(L.wait_for(page, lambda: all(L.sprite(page, did)['visible'] for did in CLUMP_IDS), 8), 'stacked members fan at limit')
+        # The sprite's world position stays saved; sprite.center offsets its drawn and hit centre.
+        points = page.evaluate('''ids=>{const v=window.__twin,r=v.renderer3.domElement.getBoundingClientRect(),out=[];
+          v.scene.traverse(o=>{if(!o.isSprite||!ids.includes(o.userData.deviceId))return;const p=o.position.clone().project(v.camera);
+          out.push([r.left+(p.x+1)*r.width/2+(.5-o.center.x)*44,r.top+(1-p.y)*r.height/2+(o.center.y-.5)*44,o.userData.deviceId]);});return out;}''', CLUMP_IDS)
+        # The tap recentres the camera on the clump first, so the fan circles the clump's
+        # current centre, not where the badge was before the tap.
+        centre = [sum(p[0] for p in points) / len(points), sum(p[1] for p in points) / len(points)]
+        check(len(points) == 3 and all(abs(math.dist(p[:2], centre) - 60) < 1 for p in points), points)
+        check(page.locator('.twin-live-labels span:visible').count() >= 3, 'fan members have labels')
+        lamp = next(p for p in points if p[2] == 'dev-k-lamp')
+        page.mouse.click(*lamp[:2])
+        check(L.wait_for(page, lambda: len(FAKE.calls_on('light.counter_lamp')) == 1), 'fan tap toggles')
+        page.mouse.move(*lamp[:2]); page.mouse.down(); page.wait_for_timeout(650); page.mouse.up()
+        check(page.locator('[data-ring]:visible').count() == 1, 'fan hold opens ring')
+        page.keyboard.press('Escape')
+        L.H.settle(page)
+        check(page.evaluate(CLUMP_BADGE_JS, CLUMP_IDS) is not None, 'Escape closes the fan')
+        L.no_errors(s)
+
+
 SCENARIOS = [
+    scenario_mid_zoom_clump_is_one_count_then_tap_separates_it,
+    scenario_stacked_clump_fans_and_member_controls_still_work,
     scenario_markers_sit_at_placed_positions,
     scenario_tap_light_toggles_through_the_card_service,
     scenario_unlock_asks_first,

@@ -85,7 +85,8 @@ class Node extends EventTarget {
   getContext() { return new Proxy({measureText: text => ({width:text.length * 6})}, {get: (o, key) => o[key] ?? (() => {})}); }
 }
 const body = new Node('body'), controls = new Node('div'); controls.id = 'twin-controls'; body.append(controls);
-globalThis.document = Object.assign(new EventTarget(), {body, activeElement:null, createElement: tag => new Node(tag),
+globalThis.document = Object.assign(new EventTarget(), {body, activeElement:null, createElement: tag => new Node(tag), createElementNS: (ns, tag) => new Node(tag),
+  createTextNode: text => { const node = new Node("#text"); node.textContent = text; return node; },
   getElementById(id) { const find = n => n.id === id ? n : n.children.map(find).find(Boolean); return find(body); }});
 globalThis.window = {chfBase:'../'};
 globalThis.location = {search:''};
@@ -177,6 +178,10 @@ async function mount() {
 const statePolls = t => t.requests.filter(p => p.startsWith('api/ha/card/states'));
 const marker = (t, id) => t.live.markers().find(m => m.device_id === id);
 const look = (t, id) => marker(t, id).look;
+const roomCard = () => {
+  const find = node => node.dataset.roomCard ? node : node.children.map(find).find(Boolean);
+  return find(body);
+};
 
 const checks = [];
 const check = (name, fn) => checks.push([name, fn]);
@@ -187,6 +192,7 @@ check('live_layer_subscribes_and_updates_without_waiting_for_the_poll', async ()
     assert.equal(look(t, 'lamp'), 'off', 'the first poll was drawn');
     assert.equal(sources.length, 1, `the layer opens one stream (${sources.length})`);
     const es = sources[0];
+    const cardNode = roomCard(), originalFact = cardNode.children[1].children[0];
     assert.ok(!es.closed, 'and leaves it open');
     const url = new URL(es.url, 'http://house.test/twin/');
     assert.ok(url.pathname.endsWith('/api/ha/stream'), `the stream route: ${es.url}`);
@@ -202,6 +208,9 @@ check('live_layer_subscribes_and_updates_without_waiting_for_the_poll', async ()
     es.emit({entity_id:'light.counter_lamp', state:{entity_id:'light.counter_lamp', state:'on', attributes:{brightness:180}}});
     await wait(60);
     assert.equal(look(t, 'lamp'), 'on', 'the pushed state is drawn at once');
+    assert.equal(roomCard(), cardNode, 'push reuses the room card');
+    assert.equal(cardNode.children[1].children[0], originalFact, 'push reuses fact slots');
+    assert.match(cardNode.textContent, /1 on/, 'room facts update on the same stream push');
     assert.equal(t.live.states()['light.counter_lamp']?.attributes?.brightness, 180, 'and kept with its attributes');
     assert.ok(heard >= 1, 'listeners (the room panel, the modes) hear it');
     assert.equal(statePolls(t).length, polls, `without asking api/ha/card/states (${statePolls(t).length - polls} polls)`);

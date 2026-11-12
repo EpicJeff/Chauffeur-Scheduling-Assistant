@@ -197,6 +197,26 @@ export function createViewing(view, model, ground, changed) {
       active = false; signature = ''; selected = key; changed(key);
     },
     rebasePin() { if (pinned) pinnedDistance = distanceToTarget(); },
+    // A piece faded more than halfway out is see-through: taps pass through it to what is behind
+    // (its pick proxy is not inside the faded group, so plain visibility does not catch it).
+    // World height (m) where the object's floor is cut away; Infinity when it is not cut.
+    // Pick proxies keep the full wall height, so a tap above the cut must pass through.
+    cutAt(object) {
+      for (let o = object; o; o = o.parent) if (o.userData.levelKey) {
+        const floor = buildings.flatMap(b => b.floors).find(f => f.key === o.userData.levelKey);
+        return floor ? floor.body.plane.constant : Infinity;
+      }
+      return Infinity;
+    },
+    faded(object) {
+      for (let o = object; o; o = o.parent) if (o.userData.levelKey) {
+        const floor = buildings.flatMap(b => b.floors).find(f => f.key === o.userData.levelKey);
+        return !!floor && floor.body.alpha < .5;
+      }
+      if (object.userData.kind !== 'roof') return false;
+      const b = buildings.find(b => b.b.id === object.userData.buildingId);
+      return !!b?.roofs.length && Math.max(...b.roofs.map(c => c.alpha)) < .5;
+    },
     snapshot() { return {selected, pinned, channels: channels.map(c => ({name: c.group.name, alpha: c.alpha, target: c.to}))}; },
     adopt(source, material) {
       const record = bindings.get(source); if (!record) return;

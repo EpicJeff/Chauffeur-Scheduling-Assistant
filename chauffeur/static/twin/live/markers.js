@@ -20,6 +20,27 @@ export function levelOfDetail(markers, pxPerFoot) {
   return { badges: [...rooms.values()], markers: [], labels: false };
 }
 
+// Single-link components, with a wider release distance for yesterday's neighbours.
+// Sorting makes both the greedy sweep and the keys independent of placement order.
+export function clusterMarkers(points, previous = new Map()) {
+  const sorted = [...points].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const parent = sorted.map((_, i) => i);
+  const find = i => parent[i] === i ? i : (parent[i] = find(parent[i]));
+  for (let i = 0; i < sorted.length; i++) for (let j = i + 1; j < sorted.length; j++) {
+    const a = sorted[i], b = sorted[j], distance = Math.hypot(a.x - b.x, a.y - b.y);
+    const held = previous.has(a.id) && previous.get(a.id) === previous.get(b.id);
+    if (distance < 40 || held && distance <= 48) parent[find(j)] = find(i);
+  }
+  const groups = new Map();
+  sorted.forEach((p, i) => {
+    const key = sorted[find(i)].id;
+    if (!groups.has(key)) groups.set(key, {key, ids: [], x: 0, y: 0, attention: false});
+    const group = groups.get(key);
+    group.ids.push(p.id); group.x += p.x; group.y += p.y; group.attention ||= p.look === 'attention';
+  });
+  return [...groups.values()].map(g => ({...g, x: g.x / g.ids.length, y: g.y / g.ids.length}));
+}
+
 // All textures are owned by the mounted layer's cache, not by its sprites.
 export function markerTexture(kind, look, count = null) {
   const canvas = document.createElement('canvas'); canvas.width = canvas.height = 96;

@@ -59,7 +59,7 @@ registerHooks({resolve(spec, ctx, next) {
 }});
 
 const mod = await import(file('static/twin/live/markers.js'));
-const {markerState, levelOfDetail} = mod;
+const {markerState, levelOfDetail, clusterMarkers} = mod;
 let passed = 0;
 const checks = [];
 const check = (name, fn) => checks.push([name, fn]);
@@ -172,6 +172,34 @@ check('room_badge_merges_at_far_zoom', () => {
 
   const empty = levelOfDetail([], 2);
   assert.deepEqual(empty.badges, [], 'no markers, no badges');
+});
+
+const points = (gap, look = 'off') => [{id:'b',x:gap,y:0,look}, {id:'a',x:0,y:0,look:'off'}];
+const previous = groups => new Map(groups.flatMap(g => g.ids.map(id => [id,g.key])));
+check('cluster_merges_under_40_at_screen_centroid', () => {
+  assert.deepEqual(clusterMarkers(points(30)), [{key:'a',ids:['a','b'],x:15,y:0,attention:false}]);
+});
+check('cluster_hysteresis_holds_45_but_not_fresh', () => {
+  assert.equal(clusterMarkers(points(45)).length,2);
+  assert.equal(clusterMarkers(points(45),previous(clusterMarkers(points(30)))).length,1);
+});
+check('cluster_splits_above_48', () => {
+  const held = previous(clusterMarkers(points(30)));
+  assert.equal(clusterMarkers(points(48),held).length,1);
+  assert.equal(clusterMarkers(points(50),held).length,2);
+  assert.equal(clusterMarkers(points(40)).length,2);
+});
+check('cluster_keys_are_stable_across_order_and_calls', () => {
+  const before = clusterMarkers(points(30));
+  assert.deepEqual(clusterMarkers(points(35).reverse(),previous(before)).map(g=>[g.key,g.ids]), before.map(g=>[g.key,g.ids]));
+  assert.deepEqual(clusterMarkers([]),[]);
+});
+check('cluster_attention_propagates', () => {
+  assert.equal(clusterMarkers(points(30,'attention'))[0].attention,true);
+});
+check('cluster_single_link_chain', () => {
+  const out = clusterMarkers([...points(35),{id:'c',x:70,y:0,look:'on'}]);
+  assert.deepEqual(out,[{key:'a',ids:['a','b','c'],x:35,y:0,attention:false}]);
 });
 
 for (const [name, fn] of checks) {
