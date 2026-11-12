@@ -1,3 +1,4 @@
+import { roomFloor } from '../twin_floors.js';
 import * as THREE from 'three';
 import { FT, polygon, contains, stairHoles } from '../twin_generator.js';
 import { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
@@ -70,7 +71,7 @@ export function mountModes(view, live) {
     // A light standing on the floor is a floor lamp: its bulb, and so its light,
     // hangs LAMP_HEIGHT above the floor (a bulb on the floor makes one hot spot
     // and lights nothing). The marker stays where the person put it.
-    const floor = (building?.base || 0) + (level?.elevation || 0);
+    const floor = (building?.base || 0) + roomFloor(level, room);
     const standing = !!level && marker.at[2] <= floor + .1;
     const z = standing ? floor + LAMP_HEIGHT : marker.at[2];
     const range = lightRange({ ...marker, at: [marker.at[0], marker.at[1], z] }, building, level, room, span);
@@ -78,7 +79,7 @@ export function mountModes(view, live) {
       (z + buildingGround(view.plan, building)) * FT, -marker.at[1] * FT);
     // Ceiling placements sit just below the slab so their own fixture cannot
     // occlude them. Wall placements retain the person's chosen height.
-    if (level && !standing && marker.at[2] >= floor + level.ceiling - .1) position.y -= .2 * FT;
+    if (level && !standing && marker.at[2] >= (building?.base || 0) + level.elevation + level.ceiling - .1) position.y -= .2 * FT;
     const bulb = new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: '#fff1c9', toneMapped: false }));
     bulb.position.copy(position); bulb.userData.bulb = marker.device_id; bulb.visible = false;
     view.scene.add(bulb);
@@ -123,7 +124,7 @@ export function mountModes(view, live) {
     const cuts = stairHoles(building, level).filter(h => h.every(p => contains(planRoom.polygon, p)));
     const material = new THREE.MeshBasicMaterial({ color: '#fff1c9', transparent: true, opacity: 0,
       depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(polygon(planRoom.polygon, level.elevation + .035, level.elevation + .035, cuts), material);
+    const mesh = new THREE.Mesh(polygon(planRoom.polygon, roomFloor(level, planRoom) + .035, roomFloor(level, planRoom) + .035, cuts), material);
     mesh.userData.lightWash = { building: room.building, room: room.room };
     const group = new THREE.Group(); group.scale.setScalar(FT);
     const position = building.position || [0, 0];
@@ -132,7 +133,7 @@ export function mountModes(view, live) {
     group.visible = false;
     const label = document.createElement('span'); label.hidden = true; climateLabels.append(label);
     const centre = planRoom.polygon.reduce((sum, p) => [sum[0] + p[0], sum[1] + p[1]], [0, 0]).map(v => v / planRoom.polygon.length);
-    const point = new THREE.Vector3(centre[0], level.elevation + .1, -centre[1]);
+    const point = new THREE.Vector3(centre[0], roomFloor(level, planRoom) + .1, -centre[1]);
     group.add(mesh); view.scene.add(group); floors.push({ room, mesh, group, parent, label, point });
   }
   // Compile Lights mode's shader programs now, with the pool, bulbs and washes

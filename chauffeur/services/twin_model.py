@@ -612,7 +612,15 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
         if len(building['flags']) != len(flags):
             notes.append('Dropped flags with invalid text or position.')
         _derive(building, notes, persist_t_splits=persist_t_splits)
+        from services import twin_floors
+        for room in building['rooms']:
+            value = room.get('floor_offset_ft', 0)
+            if twin_floors.offset_error(value):
+                notes.append(f"Room {room['id']}: defaulted invalid floor_offset_ft to 0.")
+                value = 0
+            room['floor_offset_ft'] = value
         _pieces(building, notes)
+        twin_floors.derive_openings(building)
         filter_checked_flags(building)
         buildings.append(building)
     _unique_devices(buildings, notes)

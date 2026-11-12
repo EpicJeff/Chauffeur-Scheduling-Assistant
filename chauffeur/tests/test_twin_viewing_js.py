@@ -305,6 +305,32 @@ await test('editor retains explicit floor visibility and no viewing cut domains'
     let cuts=0;v.scene.traverse(o=>{if(o.userData.viewingWalls)cuts++;});assert.equal(cuts,0);
   } finally {v.dispose();}
 });
+await test('a sunken room keeps its floor under the level cut and its wall cap stays at the level height',async()=>{
+  const p=plan();p.buildings.length=1;
+  p.buildings[0].base=2;p.buildings[0].rooms[0].floor_offset_ft=-2;
+  const v=await mountTwin(new Element(),{plan:p,kit:{materials:{}},tier:'low',bake:false});
+  try {
+    v.setView('main:L1');settle(v);zoom(v,20,0);settle(v);
+    assert.equal(v.viewingState().selected,'main:L1');
+    assert.equal(v.groups.levels['main:L2'].visible,false);
+    let floorSeen=false,capSeen=false;
+    v.groups.levels['main:L1'].traverse(o=>{
+      if(!o.isMesh||o.layers.isEnabled(31)||!o.material.clippingPlanes?.length)return;
+      const p=o.geometry.attributes.position,n=o.geometry.attributes.normal;
+      for(let i=0;i<p.count;i++){
+        const q=new THREE.Vector3().fromBufferAttribute(p,i).applyMatrix4(o.matrixWorld);
+        if(o.material.name==='floor'&&Math.abs(q.y)<1e-5){
+          assert.ok(o.material.clippingPlanes.every(plane=>plane.distanceToPoint(q)>=0));floorSeen=true;
+        }
+        if(o.material.name==='viewing_wall_top'&&n.getY(i)>.9){
+          assert.ok(q.y/.3048<=8.001,'notch and wall caps stay below the level cut');
+          if(Math.abs(q.y/.3048-8)<.001)capSeen=true;
+        }
+      }
+    });
+    assert.ok(floorSeen&&capSeen,'actual floor receiver and closed cut cap were checked');
+  }finally{v.dispose();}
+});
 finish();
 """
 

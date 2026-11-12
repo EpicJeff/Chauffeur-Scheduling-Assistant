@@ -10,7 +10,7 @@ from services import twin_joints, twin_plan, twin_register
 EDITABLE = {
     'wall': ('height', 'thickness', 'exterior'),
     'opening': ('width', 'sill', 'head', 'kind', 'panels', 'at'),
-    'room': ('name', 'ha_area'),
+    'room': ('name', 'ha_area', 'floor_offset_ft'),
     'roof': ('kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'),
     'building': ('name', 'position', 'rotation', 'base'),
     'level': ('name', 'elevation', 'ceiling'),
@@ -144,9 +144,12 @@ def _wall_vector(wall):
 
 
 def _opening_valid(building, piece):
+    from services.twin_floors import opening_reference
+    wall = next((w for w in building['walls'] if w['id'] == piece.get('wall')), None)
+    reference = opening_reference(building, wall, piece['at'])[0] if wall else 0
     reason = twin_plan._opening_error(
         piece, {w['id']: w for w in building['walls']},
-        {s['id']: s for s in building['roof']['sections']})
+        {s['id']: s for s in building['roof']['sections']}, reference)
     if reason:
         raise ValueError(f'Invalid opening: {reason}.')
 
@@ -171,6 +174,11 @@ def _set(kind, piece, building, field, value, ha_catalogue=None):
         raise ValueError(f'Cannot set {field} on a {kind}.')
     if field == 'ha_area':
         value = _ha_area(value, ha_catalogue)
+    elif field == 'floor_offset_ft':
+        from services.twin_floors import offset_error
+        reason = offset_error(value)
+        if reason:
+            raise ValueError(reason)
     elif field == 'name':
         if not isinstance(value, str):
             raise ValueError(f'{field} must be text.')

@@ -1,3 +1,4 @@
+import { roomFloor, roomAt } from './twin_floors.js';
 // Viewing LOD uses lot feet (x, y, height). No work here depends on frame rate.
 import * as THREE from 'three';
 
@@ -154,7 +155,9 @@ export function createViewing(view, model, ground, changed, {explicit = false} =
       const outline = floor?.outline || [], center = outline.length ? outline.reduce((a, p) => [a[0] + p[0] / outline.length, a[1] + p[1] / outline.length], [0, 0]) : [];
       // Centre and four inset outline vertices, a bounded five rays per obstacle.
       const samples = floor ? [center, ...outline.filter((_, i) => i % Math.max(1, Math.ceil(outline.length / 4)) === 0).slice(0, 4)
-        .map(p => p.map((v, i) => v * .8 + center[i] * .2))].map(p => [...p, building.base + floor.l.elevation + 1]) : [];
+        .map(p => p.map((v, i) => v * .8 + center[i] * .2))].map(p => { const local = p.map((v, i) => v - (building.b.position?.[i] || 0)), a = -(building.b.rotation || 0) * Math.PI / 180;
+          const room = roomAt(building.b, floor.l.id, [local[0] * Math.cos(a) - local[1] * Math.sin(a), local[0] * Math.sin(a) + local[1] * Math.cos(a)]);
+          return [...p, building.base + roomFloor(floor.l, room) + 1]; }) : [];
       const peeled = floor ? peelSet(camera, samples, obstacles.filter(o => o.id !== building.b.id)) : new Set();
       channels.forEach(c => { c.from = c.alpha; set(c, 1); });
       for (const b of buildings) {

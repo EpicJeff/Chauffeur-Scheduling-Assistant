@@ -8,6 +8,7 @@ import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
+import { roomFloor, roomAt, openingFloor, wallFloorProfile, foundationPieces } from './twin_floors.js';
 import { LUCIDE } from '../vendor/lucide/icons.js';
 
 import { FT } from './twin_light_math.js';
@@ -339,8 +340,14 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     // This belongs to the lowest floor domain, including its viewing fade and
     // peel. Concrete never inherits siding or room wall materials.
     const foundation = foundationShape(plan, b);
-    if (foundation.polygon.length >= 3 && foundation.top > foundation.bottom)
-      addMesh(local[first.id], polygon(foundation.polygon, foundation.bottom - base, 0), mat('patio_concrete'));
+    const lowered = (b.rooms || []).filter(r => r.level === first.id && r.state !== 'ghost' && r.floor_offset_ft);
+    if (foundation.polygon.length >= 3 && foundation.top > foundation.bottom) {
+      const triangles = THREE.ShapeUtils.triangulateShape(foundation.polygon.map(p => new THREE.Vector2(...p)), [])
+        .map(indices => indices.map(i => foundation.polygon[i]));
+      const parts = lowered.length ? foundationPieces(b, first, triangles) : [{polygon: foundation.polygon, top: 0}];
+      for (const {polygon: area, top} of parts)
+        addMesh(local[first.id], polygon(area, Math.min(foundation.bottom - base, top - (b.foundation?.thickness_ft ?? 1)), top), mat('patio_concrete'));
+    }
     // Triangulate concave floor outlines into convex roof cutters. A floor at
     // the roof's plate also occupies the space above that roof (e.g. L2).
     const floorCutters = new Map(ordered.map(l => [l.id, outlines.get(l.id).flatMap(poly => {
@@ -426,7 +433,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       // Partition the surface at opening edges. This treats doors touching the
       // floor as notches (not invalid polygon holes), and clips all upper pieces
       // under the sampled roof, including gable windows near a slope.
-      const cuts = [...new Set([start, end, ...samples, ...holes.flatMap(h => [h.u0, h.u1])].filter(u => u >= start && u <= end))].sort((a, c) => a - c);
+      const cuts = [...new Set([start, end, ...samples, ...(profile.floorCuts || []), ...holes.flatMap(h => [h.u0, h.u1])].filter(u => u >= start && u <= end))].sort((a, c) => a - c);
       // Between face boundaries each height limit is linear. Split where
       // the two faces (or a slab cap) exchange which one is lower.
       if (profile.limits) {
@@ -494,7 +501,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         const a = cuts[i], c = cuts[i + 1], mid = (a + c) / 2;
         if (c - a < 0.0001) continue;
         if (!role) profile.panels?.push([a, c, top(a, mid), top(c, mid)]);
-        let intervals = [[0, Infinity]];
+        let intervals = [[profile.bottom?.(mid) ?? 0, Infinity]];
         holes.filter(h => mid > h.u0 && mid < h.u1).forEach(h => {
           intervals = intervals.flatMap(([lo, hi]) => [[lo, Math.min(hi, h.v0)], [Math.max(lo, h.v1), hi]].filter(([p, q]) => q > p));
         });
@@ -536,7 +543,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       const localBox = (u, v, w, h, d, material, faceOffset = 0) => mesh(group, boxGeometry(w, h, d).translate(u, v, offset + faceOffset).applyMatrix4(matrix), material);
       if (!profile.cutaway && exterior && (profile.sidingAsset || materialKit.materials.siding?.asset) === 'board_and_batten' && !role) {
         for (let u = 0.5; u < length; u += 1) {
-          let intervals = [[0, Infinity]];
+          let intervals = [[profile.bottom?.(u) ?? 0, Infinity]];
           holes.filter(h => u > h.u0 - 0.4 && u < h.u1 + 0.4).forEach(h => {
             intervals = intervals.flatMap(([a, c]) => [[a, Math.min(c, h.v0 - 0.35)], [Math.max(a, h.v1 + 0.35), c]].filter(([a, c]) => c - a > 0.1));
           });
@@ -680,7 +687,9 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         return [...roof, ...visible, cap];
       };
       const top = (u, toward = u) => Math.max(0, Math.min(...limits(u, toward)));
-      const profile = { offset: w.footprint ? 0 : w.exterior ? -sign * w.thickness / 2 : 0, sign,
+      const floorProfile = wallFloorProfile(b, w);
+      const profile = { bottom: floorProfile.bottom, floorCuts: floorProfile.cuts,
+        offset: w.footprint ? 0 : w.exterior ? -sign * w.thickness / 2 : 0, sign,
         slabCap: next ? next.elevation - 0.8 : NaN,
         slabOutlines: above,
         extendStart: extension(w.from), extendEnd: extension(w.to), faces, limits, positions: storeyRoof.positions,
@@ -701,7 +710,11 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         const x = p[0] - w.from[0], y = p[1] - w.from[1];
         return [x * dx + y * dy, x * dy - y * dx];
       });
-      const holes = (b.openings || []).filter(o => o.wall === w.id).map(o => opening(o));
+      const holes = (b.openings || []).filter(o => o.wall === w.id).map(o => {
+        const reference = openingFloor(b, w, o.at);
+        return opening({ ...o, step_down_ft: reference.step_down_ft,
+          sill: o.sill + reference.offset, head: o.head + reference.offset });
+      });
       for (const { section, end, axis } of gables) for (const o of b.openings || []) {
         if (o.section !== section.id || o.gable !== (end === section.rect[axis] ? 'front' : 'rear')) continue;
         // Gable sill/head are relative to the plate. Project its span onto
@@ -988,11 +1001,12 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       for (const room of surfaces) {
         const poly = room.polygon;
         const porch = room.kind === 'porch' && porches.find(po => po.polygon && porchRoom(po) === room);
-        const elevation = porch ? porch.floor : l.elevation;
+        const elevation = (porch ? porch.floor : l.elevation) + (room.floor_offset_ft || 0);
         use(room.id ? room : { ...l, id: `floor:${l.id}` }, room.id ? 'room' : 'floor', `floor:${l.id}`);
         // Only insert stair holes fully contained in this footprint.
         const cuts = holes.filter(h => h.every(p => contains(poly, p)));
-        mesh(local[l.id], polygon(poly, l.id === first.id ? 0 : elevation - 0.8, elevation - 0.02, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'));
+        const slabBottom = l.id === first.id && !room.floor_offset_ft ? 0 : elevation - .8;
+        mesh(local[l.id], polygon(poly, slabBottom, elevation - 0.02, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'));
         mesh(local[l.id], polygon(poly, elevation, elevation, cuts), mat(porch ? 'patio_concrete' : 'floor', l, room.floor_material));
       }
       // Room boundaries stop at the wall lines. Their slab plus these mitred
@@ -1000,7 +1014,11 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       if (l.id !== first.id) for (const wall of b.walls.filter(w => w.level === l.id && w.exterior
         && w.kind !== 'separator' && w.state !== 'ghost' && w.footprint?.length === 4)) {
         use({ ...l, id: `floor:${l.id}` }, 'floor', `floor:${l.id}`);
-        mesh(local[l.id], polygon(wall.footprint, l.elevation - 0.8, l.elevation), mat('siding', l));
+        const triangles = THREE.ShapeUtils.triangulateShape(wall.footprint.map(p => new THREE.Vector2(...p)), [])
+          .map(indices => indices.map(i => wall.footprint[i]));
+        const parts = rooms.some(r => r.floor_offset_ft) ? foundationPieces(b, l, triangles)
+          : [{polygon: wall.footprint, top: l.elevation}];
+        for (const {polygon: area, top} of parts) mesh(local[l.id], polygon(area, top - .8, top), mat('siding', l));
       }
     }
     for (const [index, po] of porches.entries()) {
@@ -1083,7 +1101,10 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       if (!objectShown(f, showAnchors || !!editableLevel)) return;
       use(f, 'fixture', `fixture:${index}`);
       const l = levels[f.level]; if (!l || !f.rect) return;
-      const g = group || local[l.id], [x0, y0, x1, y1] = f.rect, z = l.elevation + (f.z0 || 0), h = f.height || 1;
+      const g = group || local[l.id], [x0, y0, x1, y1] = f.rect;
+      const floorRoom = f.host && !f.host.floor ? null
+        : b.rooms?.find(r => r.id === f.host?.floor) || roomAt(b, l.id, [(x0+x1)/2, (y0+y1)/2]);
+      const z = roomFloor(l, floorRoom) + (f.z0 || 0), h = f.height || 1;
       const box = (a, c, d, e, lo, hi, m) => {
         const origin = [(x0 + x1) / 2, z, -(y0 + y1) / 2];
         const geometry = boxRect(a, c, d, e, lo, hi).translate(-origin[0], -origin[1], -origin[2]);

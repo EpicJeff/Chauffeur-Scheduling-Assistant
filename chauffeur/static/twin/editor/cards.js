@@ -13,15 +13,15 @@ const report = error => {
 // Keep this list aligned with twin_edit.EDITABLE; the server validates every save.
 const fields = {
   wall: ['height', 'thickness', 'exterior'], opening: ['width', 'sill', 'head', 'kind', 'panels', 'at'],
-  room: ['name'], roof: ['kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'],
+  room: ['name', 'floor_offset_ft'], roof: ['kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'],
   building: ['name', 'position', 'rotation', 'base'], level: ['name', 'elevation', 'ceiling'],
   // Hosted pieces save through model ops (twin_model_ops: set, move_hosted).
   anchor: ['offset'], item: ['rotation', 'scale', 'offset'],
 };
-const lengths = new Set(['height', 'thickness', 'width', 'sill', 'head', 'at', 'plate', 'overhang', 'base', 'elevation', 'ceiling', 'offset']);
+const lengths = new Set(['height', 'thickness', 'width', 'sill', 'head', 'at', 'plate', 'overhang', 'base', 'elevation', 'ceiling', 'offset', 'floor_offset_ft']);
 const labels = { low_side: 'Low side', at: 'Distance along the wall', ridge: 'Ridge',
   sill: 'Height above floor', head: 'Top of opening', plate: 'Wall height under the roof', base: 'Height above ground', elevation: 'Height above ground',
-  offset: 'Distance from surface' };
+  offset: 'Distance from surface', floor_offset_ft: 'Floor height (relative to this floor)' };
 const hostedLabels = { rotation: 'Turn', scale: 'Size' };
 const units = { pitch: 'in 12', rotation: '°', scale: '%' };
 export function feetInches(value) {
@@ -265,6 +265,16 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       input.addEventListener('change', save);
       input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); save(); } });
       label.append(input);
+      if (field === 'floor_offset_ft') for (const [text, delta] of [['Down 0.5 ft', -.5], ['Up 0.5 ft', .5]]) {
+        const nudge = button(text, () => queue(async () => {
+          if (!canEdit()) return;
+          const current = findPiece(getPlan(), piece.id, building.id)?.piece;
+          if (current) await op({ op: 'set', building: building.id, id: piece.id, field,
+            value: (current.floor_offset_ft || 0) + delta });
+          draw();
+        }));
+        nudge.type = 'button'; label.append(nudge);
+      }
       if (field === 'pitch' || hosted(kind) && units[field]) { const unit = document.createElement('span'); unit.textContent = units[field]; label.append(unit); }
       (['ridge', 'low_side'].includes(field) ? more : form).append(label);
     }
