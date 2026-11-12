@@ -1,4 +1,5 @@
 import { mountTwin } from '../twin_view.js';
+import { mountLighting } from './lighting.js';
 import { runDirector } from '../twin_director.js';
 import { request, createPolling, idleInterval, buildInterval, checkpoint, plain, report, active, session } from './api.js';
 import * as api from './api.js';
@@ -507,6 +508,7 @@ export async function boot() {
     await loadSheets();
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
     view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true, bake: false });
+    mountLighting(view, el('editor-lighting'), { signal: lifecycle.signal });
     buildGhosts = createBuildGhosts(view);
     if (new URLSearchParams(location.search).get('test') === '1') hooks.buildGhosts = buildGhosts;
     view.showAnchors = true;

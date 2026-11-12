@@ -90,15 +90,17 @@ try {
   else assert.fail('unexpected mutation '+JSON.stringify(op));
   record();return response(200,{...state(),words:'Saved the change.',summary:'Saved the change.'});
  };
- globalThis.editorView={scene:{},plan:null,dispose(){},rebuild:async p=>{
+ globalThis.editorView={scene:{},plan:null,state:{time:'now',unlit:false},
+  setTime(time){this.state.time=time;},setUnlit(on){this.state.unlit=on;},dispose(){},rebuild:async p=>{
   editorView.plan=p;if(holdRender){const gate=holdRender;holdRender=null;await gate.promise;}
  }};
  const stubs='data:text/javascript,'+encodeURIComponent(config.stubs.replace('CARDS_URL',file('static/twin/editor/cards.js')));
  registerHooks({resolve(spec,ctx,next){
-  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js'].includes(spec))return {url:stubs,shortCircuit:true};
+  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js'].includes(spec))return {url:stubs,shortCircuit:true};
   return next(spec,ctx);
  }});
  const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready);
+ assert.equal(editorView.state.time,'day');assert.equal(editorView.state.unlit,false);
  const hooks=window.__twinEditor,card=document.getElementById('piece-card');
  const button=text=>card.querySelectorAll('button').find(b=>b.textContent===text);
  const current=()=>rounds.at(-1).id;

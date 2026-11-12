@@ -16,11 +16,13 @@ import { mountEnergySettings } from './live/energy_settings.js';
 import { mountBake } from './bake/runtime.js';
 import { sunPosition, moonPosition, moonIllumination } from './sky/ephemeris.js';
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
+import { createUnlit } from './unlit.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {} } = {}) {
   // Ruling B15: only the 3D house view bakes lights. The editor's scene is the house
   // mid-edit (a focused floor, faded floors, editable geometry), so it never bakes.
-  const bakes = bake && !el.closest?.('.editor-shell');
+  const editor = !!el.closest?.('.editor-shell');
+  const bakes = bake && !editor;
   const probe = document.createElement('canvas').getContext('webgl2');
   if (!probe) throw new Error('This screen needs WebGL 2 to show the house.');
   tier = new URLSearchParams(location.search).get('tier') || tier;
@@ -63,7 +65,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   fallbackEnvironment.needsUpdate = true;
   let twin = null, disposed = false, revision = 0, sky = null, environment = fallbackEnvironment, environmentTarget = null;
   scene.environment = environment;
-  const state = { view: 'ext', time: 'now', camera: 'front' };
+  const state = { view: 'ext', time: editor ? 'day' : 'now', camera: 'front', unlit: false };
+  const unlit = createUnlit();
+  let shadowAutoUpdate;
   let clock = null, previewIdle = null, timeTimer = null, timeLook = null, lastShadowUpdate = -Infinity;
   const clockNow = () => clock ? new Date(clock) : new Date();
   let liveLamps = false;
@@ -79,6 +83,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let editableLevel = null, selectionStyle = null;
   const selectedMaterials = new Map(), selectionMaterials = new Set(), selectionLines = [];
   function restoreSelection() {
+    unlit.restore();
     for (const line of selectionLines) { line.removeFromParent(); line.geometry.dispose(); line.material.dispose(); }
     selectionLines.length = 0;
     for (const [object, material] of selectedMaterials) object.material = material;
@@ -87,7 +92,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   function paintSelection() {
     restoreSelection();
-    if (!twin || !selectionStyle) return;
+    if (!twin || !selectionStyle) {
+      if (state.unlit) unlit.apply(twin?.root);
+      return;
+    }
     const { selected, hover, room } = selectionStyle;
     const allowed = new Set(room?.allowed || []), walls = new Set(room?.walls || []);
     const style = getComputedStyle(el.closest('.editor-shell') || el);
@@ -163,6 +171,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     render();
   }
   function restoreFloors() {
+    unlit.restore();
     for (const [object, material] of faded) {
       [].concat(object.material).forEach(m => m.dispose()); object.material = material;
     }
@@ -235,6 +244,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (disposed) return;
     view.live?.draw();
     twin?.updateGhosts();
+    if (state.unlit) {
+      unlit.apply(twin?.root);
+      // Skip the entire shadow pass, including an invalidation from a rebuild.
+      renderer3.shadowMap.needsUpdate = false; sun.shadow.needsUpdate = false;
+    }
     renderer3.info.reset();
     renderer3.render(scene, camera);
     lastStats = { drawCalls: renderer3.info.render.calls, triangles: renderer3.info.render.triangles, tier, fps };
@@ -445,6 +459,22 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (!['now', 'day', 'night'].includes(time)) return;
       state.time = time;
       resetPreviewIdle(); updateTime();
+    },
+    setUnlit(on) {
+      on = !!on;
+      if (state.unlit === on) return;
+      unlit.restore();
+      state.unlit = on;
+      if (on) {
+        shadowAutoUpdate = renderer3.shadowMap.autoUpdate;
+        renderer3.shadowMap.autoUpdate = false;
+        view.bake?.stop();
+      } else {
+        renderer3.shadowMap.autoUpdate = shadowAutoUpdate;
+        sun.shadow.needsUpdate = true;
+      }
+      updateTime();
+      if (!on && twin) startBake();
     },
     setSite(next) {
       if (JSON.stringify(site) === JSON.stringify(next || {})) return;
@@ -788,6 +818,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       restoreSelection();
       restoreFloors();
       if (twin) { scene.remove(twin.root); release(twin); }
+      unlit.dispose();
       sky?.dispose(); environmentTarget?.dispose(); fallbackEnvironment.dispose(); sun.shadow.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();
       if (window.__twin === view) delete window.__twin;
@@ -800,6 +831,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     model.materials.forEach(m => m.dispose());
   }
   function applyTimeLook() {
+    if (state.unlit) {
+      timeLook = lookAt(45);
+      scene.background = new THREE.Color().setRGB(...timeLook.background, THREE.SRGBColorSpace);
+      scene.environment = null; scene.environmentIntensity = 0;
+      sun.intensity = moon.intensity = ambient.intensity = 0;
+      renderer3.toneMappingExposure = 1;
+      return;
+    }
     const now = clockNow(), located = resolveSite(site, now), date = previewDate(now, state.time, located);
     const solar = sunPosition(date, located.lat, located.lon), lunar = moonPosition(date, located.lat, located.lon);
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: moonIllumination(date).fraction });
@@ -830,14 +869,15 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   function resetPreviewIdle() {
     clearTimeout(previewIdle);
-    if (state.time !== 'now') previewIdle = setTimeout(() => view.setTime('now'), 120000);
+    if (!editor && state.time !== 'now') previewIdle = setTimeout(expireTimePreview, 120000);
   }
+  function expireTimePreview() { if (!editor && state.time !== 'now') view.setTime('now'); }
   function previewActivity() {
     if (state.time !== 'now') resetPreviewIdle();
   }
   function startBake() {
     view.bake?.stop();
-    if (!bakes) return;
+    if (!bakes || state.unlit) return;
     mountBake(view, twin.root, { host: document.getElementById('twin-controls') });
   }
   function applyLights() {
@@ -847,7 +887,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       // Each lamp keeps its own intensity, so leaving Lights mode (even after a
       // rebuild in it) lights it again; visibility follows the shown levels.
       l.userData.intensity ??= l.intensity;
-      l.intensity = liveLamps || !night ? 0 : l.userData.intensity;
+      l.intensity = state.unlit || liveLamps || !night ? 0 : l.userData.intensity;
       // Live lamps zero the intensity but keep visibility, so the shader's light
       // count never changes and the first tap on Lights recompiles nothing.
       l.visible = !!twin.groups.levels[l.userData.level]?.visible;
@@ -855,6 +895,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     twin.root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'fixture') m.emissiveIntensity = !liveLamps && night ? 2 : 0; });
   }
   if (new URLSearchParams(location.search).get('test') === '1') Object.assign(view, {
+    expireTimePreview,
     setClock(isoString) {
       if (isoString !== null && !Number.isFinite(Date.parse(isoString))) throw new Error('Give an ISO clock time or null.');
       clock = isoString; updateTime();

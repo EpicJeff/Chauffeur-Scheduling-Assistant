@@ -18,7 +18,7 @@
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/library', 'editor/flags'] %}
+    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'unlit', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/lighting', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/library', 'editor/flags'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     {% for name in ['twin_solar', 'live/climate', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_geometry', 'live/energy_mapping', 'live/energy_settings', 'live/security'] %}
@@ -92,10 +92,17 @@
       <p id="library-status" role="status">Opening the library…</p>
       <div id="library-entries" role="tabpanel"></div>
     </aside>
-    <nav id="editor-cameras" aria-label="Camera views">
+    <nav id="editor-cameras" aria-label="Viewport controls">
       {% for camera in ['Top', 'Front', 'Back', 'Orbit'] %}
       <button type="button" data-editor-camera="{{ camera | lower }}">{{ camera }}</button>
       {% endfor %}
+      <div id="editor-lighting" role="group" aria-label="Lighting" aria-describedby="editor-lighting-help">
+        <span>Lighting</span>
+        <div>{% for mode, label in [('day', 'Day'), ('night', 'Night'), ('now', 'Now'), ('unlit', 'Unlit (fast)')] %}
+          <button type="button" data-editor-lighting="{{ mode }}" aria-pressed="{{ 'true' if mode == 'day' else 'false' }}">{{ label }}</button>
+        {% endfor %}</div>
+        <p id="editor-lighting-help">Day/Night/Now light the house; Unlit is fastest.</p>
+      </div>
     </nav>
     <section id="draw-tools" aria-label="Drawing tools" hidden>
       <p id="draw-note" role="status"></p>

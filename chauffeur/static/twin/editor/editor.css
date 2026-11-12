@@ -92,6 +92,12 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 #editor-cameras { position: absolute; left: calc(var(--editor-rail-right, 96px) + 16px); bottom: 160px; display: flex; flex-wrap: wrap; gap: 4px; z-index: 2; }
 #editor-cameras button { background: var(--editor-panel); }
+#editor-lighting { flex-basis: 100%; }
+/* The label and help sit over the 3D view (bright sky by day): a dark chip keeps them legible. */
+#editor-lighting > span, #editor-lighting-help { color: #e5e7eb; font-size: 11px; background: rgba(15,17,22,.72);
+  padding: 2px 8px; border-radius: 6px; width: fit-content; }
+#editor-lighting > div { display: flex; flex-wrap: wrap; gap: 4px; }
+#editor-lighting button[aria-pressed="true"] { border-color: var(--editor-accent); color: var(--editor-accent); }
 #draw-tools, #roof-tools, #device-tools { position: absolute; left: var(--editor-rail-right, 96px); top: var(--editor-header-bottom, 130px); right: calc(var(--editor-side) + 28px); z-index: 3; padding: 10px; background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 12px; }
 #draw-tools > div, #roof-tools > div, #pause-card > div { display: flex; flex-wrap: wrap; gap: 6px; }
 #draw-note, #roof-note, #device-note { color: var(--editor-muted); margin-top: 6px; }
