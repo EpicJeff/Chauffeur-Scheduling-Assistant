@@ -133,6 +133,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     // materials; props sharing a kit material must not sample uninitialised UVs.
     for (const m of covered(root)) {
       const original = m.material, material = original.clone();
+      view.prepareViewingMaterial?.(original, material);
       m.material = material; clones.push({ mesh: m, original, material }); materials.add(material);
     }
     patchLightmaps([...materials], pages, uniforms);
@@ -214,6 +215,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       mesh.geometry.setAttribute('glowRoom', new THREE.BufferAttribute(owners, 1));
       mesh.geometry.setAttribute('glowUV', new THREE.BufferAttribute(glowUV, 2));
       const original = mesh.material, material = original.clone(); mesh.material = material;
+      view.prepareViewingMaterial?.(original, material);
       clones.push({ mesh, original, material });
       const banks = pages.banks;
       material.onBeforeCompile = shader => {

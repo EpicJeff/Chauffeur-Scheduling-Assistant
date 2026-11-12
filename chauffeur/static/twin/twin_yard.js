@@ -77,7 +77,7 @@ async function bakePreset(preset, seed, renderer) {
   return result;
 }
 
-export async function buildYard(plan, kit, tier) {
+export async function buildYard(plan, kit, tier, { viewing = false } = {}) {
   const group = new THREE.Group(); group.name = 'yard';
   const site = plan.site || {}, mats = new Map();
   const surface = (poly, z0, z1 = z0, holes = []) => {
@@ -153,17 +153,21 @@ export async function buildYard(plan, kit, tier) {
     for (let index = 0; index < (site.planting || []).length; index++) {
       const p = site.planting[index]; if (!p.at || !p.preset || !(p.height > 0)) continue;
       if (tier === 'low') {
+        const holder = viewing ? new THREE.Group() : group;
+        if (viewing) { holder.userData.viewingTree = true; holder.name = `tree:${index}`; group.add(holder); }
         if (!cards.has(p.preset)) cards.set(p.preset, await bakePreset(p.preset, p.seed ?? 1, baker));
         const card = cards.get(p.preset), h = p.height * 1.08;
         for (const angle of [0, Math.PI / 2]) {
           const geometry = new THREE.PlaneGeometry(h * card.aspect, h).translate(0, h / 2, 0).rotateY(angle + (p.seed || 0) * 2.39996).translate(p.at[0], groundAt(plan, ...p.at), -p.at[1]);
-          addMesh(group, geometry, card.material);
+          addMesh(holder, geometry, card.material);
         }
+        if (viewing) mergeStatic(holder);
       } else {
         const tree = new Tree(); tree.loadPreset(p.preset); tree.options.seed = p.seed ?? 1; tree.generate(); standardTree(tree);
         const bounds = new THREE.Box3().setFromObject(tree), h = bounds.max.y - bounds.min.y, scale = p.height / Math.max(0.01, h);
         tree.scale.setScalar(scale); tree.position.set(p.at[0], groundAt(plan, ...p.at) - bounds.min.y * scale, -p.at[1]);
         tree.rotation.y = (p.seed || 0) * 2.39996; group.add(tree);
+        if (viewing) { tree.userData.viewingTree = true; tree.name = `tree:${index}`; }
       }
       // Let loading/status controls paint while full presets are generated.
       if (index % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));

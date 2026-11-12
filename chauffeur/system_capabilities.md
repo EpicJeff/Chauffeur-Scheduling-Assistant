@@ -1,6 +1,93 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.800 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.802 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.802 (2026-11-12, NOT device-verified): energy fixes from the real house. Tesla-safe sensor guessing, unbalanced readings flagged, a readable Energy check, and ribbons on top of everything with gentle, fanned arcs.**
+
+**The reports.** The user, 2026-11-12, on the real Powerwall house:
+- the house role had been guessed as `sensor.powerwall_battery_power`, so every flow read 0;
+- "Coloring is not great here";
+- "The ribbons in the reference are on top of everything including the roofs";
+- "the height of the ribbon may be a little much ... like 1/3 of the height";
+- two blue ribbons lay almost on top of each other ("Fan out is good");
+- "The labels are a little offset".
+
+**How it was built.** Codex built it over four rounds. Claude traced the wrong guess and checked each round in Chromium, which caught a width regression, a hidden label and a zero fan offset.
+
+**Guessing** (`static/twin/live/energy_mapping.js`).
+- **Cause.** The Tesla integration names its device "Home Energy Gateway", so the old house rule (`load|home|house` over the id and friendly name) matched the battery sensor.
+- **Order.** Roles are now guessed in order (solar, battery, grid, then house), one entity per role.
+- **House.** It prefers `load`, and accepts home/house only when the name does not also say battery, grid, site, solar, PV or charger.
+- **Precedence.** A specific entity id wins over a friendly-name match, and a role the user saved keeps its value.
+
+**Balance check** (`energy_check.js`). When all four readings are present and house − (solar + battery discharge + grid import) is more than max(200 W, 20% of house) off, the house role shows ⚠ "readings don't balance … is the house sensor right?" and the summary names it.
+
+**Readable check.**
+- Light text and bold role names.
+- Coloured marks: ✓ green, ⚠ amber, ✗ red.
+- Role cards with a large summary line; flows coloured by state.
+- Locations named in words ("exterior wall of Pool House, main floor", "roof of Main House"), never raw ids.
+
+**Ribbons** (`energy.js`).
+- **On top:** they draw over everything, roofs included; the roof-depth mask pass is gone (one render pass fewer).
+- **Arcs:**
+  - the apex rises max(3 ft, min(10 ft, 0.3 × span)) above the higher end;
+  - ends closer than about 4 ft get a 2-3 ft hump;
+  - widths stay 0.4-1.5 ft by power;
+  - flows sharing an endpoint fan apart with symmetric lateral offsets and slight plane tilts.
+- **Labels:** each kW label sits on its own ribbon's apex, re-projected as the camera moves; crowded labels shift and are never hidden.
+- **Colours:** unchanged, as the user confirmed.
+
+**Tests.**
+- **Node:** test_twin_energy_js 26/26, test_twin_energy_check_js 35/35, test_twin_energy_flows_js 15/15, test_twin_energy_mapping_js 11/11 (a Tesla "Home Energy Gateway" fixture).
+- **Browser:** test_house_twin_energy_live 7/7. It covers:
+  - the battery-as-house warning, and the repair showing a ribbon;
+  - a ribbon pixel over a real roof;
+  - fan apexes and labels following the camera.
+- **Shared:** test_twin_import_maps 2/2, test_tailwind_build 6/6. test_house_twin_viewing_live 5/5 after merging slice 2a.
+
+**Open.** Cars and chargers as separate things (house chargers, per-car charging, a charger → car link, cars in the garage) is proposed to the user and waiting on their go-ahead.
+
+**v2.499.801 (2026-11-12, NOT device-verified): viewing slice 2a. Zooming fades the roof and upper floors, a chosen floor peels away what blocks it, and cut floors have flat, capped wall tops.**
+
+**The ask.** The user's feedback, 2026-11-11:
+- "roof and top-floor fade on zoom like the reference";
+- "selecting a floor should focus and peel away what obscures it";
+- "room walls should be flat-topped in cutaway".
+
+This follows spec `docs/superpowers/specs/2026-11-06-house-digital-twin-design.md` §5.1 and decision 3.
+
+**How it was built.** Codex built it over three rounds; Claude reviewed each in Chromium:
+- the first round's open sawtooth wall tops and a milky 12% peel veil;
+- a regression where the zoom logic undid every chosen floor, so floor buttons did nothing;
+- three tests updated for fades and for the new rule that detached buildings stay visible.
+
+**Zoom level of detail** (`static/twin/viewing.js`, `/house/twin` only; the editor keeps its explicit controls).
+- Closing in on a building fades its roof, then its upper floors, revealing the floor at the orbit target's height. Zooming out reverses it.
+- Fades are eased over about 250 ms, with hysteresis at the thresholds.
+- Detached buildings fade independently.
+
+**A chosen floor** (button, `setView`, or zoom) is pinned at once, whatever the camera distance. It holds through orbit, pan, zoom-in and camera presets. It releases on Exterior, on another floor, or on zooming out past a margin beyond the distance when pinned. The floor button no longer jumps to the Top camera.
+
+**Peel.** Whatever lies between the camera and the chosen floor fades fully out and is then hidden, so it costs no draws: floors above, roofs, buildings in front, and trees in front (Low-tier trees are now one card each, so they can fade on their own). The set is recomputed only when the camera or the selection changes.
+
+**Cutaway.** The shown floor's walls are cut flat at one height and capped solid in a slightly darker plan tone, with no hollow or cladding teeth. Gables and sloped tops are trimmed flat.
+
+**Shaders.** No new shader programs across a full zoom in and out after the first pass.
+
+**Measured.** Low tier on the desktop GPU held 60 fps: exterior 2.0 ms and 84 draw calls, floor 1.0 ms and 31 draw calls.
+
+**Tests.**
+- **Browser:** test_house_twin_viewing_live 5/5, test_twin_view_live ok (waits for the fade), test_house_twin_real_lights_live 10/10, test_house_twin_controls_live 3/3, test_house_twin_glance_live 9/9, test_house_editor_openings_live 5/5, test_house_twin_energy_live 4/4, bake smoke 2/2.
+- **Node:** test_twin_viewing_js 19/19, test_twin_import_maps 2/2, test_twin_editor_lighting_js 12/12, test_tailwind_build 6/6.
+- In test_house_twin_real_lights_live, `scenario_all_after_a_floor_change_in_lights_follows_the_floor` now returns as not applicable when no floor view hides a lamp: this house's lamps all sit on ground floors of buildings that stay shown.
+
+**Open.**
+- A few small teeth remain on the cut near the stairs.
+- Occlusion uses coarse boxes, so it can over-peel concave buildings and sparse canopies.
+- The cut-wall geometry needs a fresh light bake.
+- Pi frame time is unmeasured.
+- Room status cards and marker count badges come next (slice 2b).
 
 **v2.499.800 (2026-11-12, NOT device-verified): energy ribbons show when one of the four readings is missing, and the Energy check says why when they cannot.**
 
