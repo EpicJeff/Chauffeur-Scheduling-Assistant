@@ -178,9 +178,13 @@ def switch_lod(page, level):
       if(!lod)throw new Error('Car has no THREE.LOD');
       const centre=lod.getWorldPosition(v.camera.position.clone());
       const distance=level===0?lod.levels[1].distance*.5:level===1?(lod.levels[1].distance+lod.levels[2].distance)*.5:lod.levels[2].distance*1.5;
+      // This measures LOD switch distances, not navigation: lift the viewer's distance clamps
+      // (levels set them per level) for the probe, then restore them.
+      const limits=[v.controls.minDistance,v.controls.maxDistance];v.controls.minDistance=0;v.controls.maxDistance=Infinity;
       v.controls.target.copy(centre);v.camera.position.copy(centre).add(centre.clone().set(0,distance*.25,distance));v.controls.update();
       v.camera.updateMatrixWorld(true);lod.update(v.camera);v.renderer3.render(v.scene,v.camera);
-      return {level:lod.getCurrentLevel(),programs:v.renderer3.info.programs.length};
+      const out={level:lod.getCurrentLevel(),programs:v.renderer3.info.programs.length};
+      [v.controls.minDistance,v.controls.maxDistance]=limits;return out;
     }""", [CAR, level])
 
 
