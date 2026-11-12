@@ -1,5 +1,6 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { packBanks, fingerprint, atlasMesh } from './atlas.js';
+import { authoredGeometry } from './fingerprint.js';
 
 export function covered(root) {
   const meshes = [];
@@ -35,7 +36,7 @@ export function atlasJob(root, plan, layout) {
   });
   const hash = fingerprint();
   // Geometry and room outlines drive the cache. Device movement does not.
-  hash.add('atlas-worker-reach-7'); hash.add(JSON.stringify([layout, plan.generatorVersion, plan.buildings?.map(b => ({
+  hash.add('atlas-worker-reach-8'); hash.add(authoredGeometry(plan)); hash.add(JSON.stringify([layout, plan.generatorVersion, plan.buildings?.map(b => ({
     id: b.id, rooms: b.rooms, levels: b.levels }))]));
   for (const m of meshes) {
     hash.add(JSON.stringify([m.matrix, m.name, m.buildingId]));
