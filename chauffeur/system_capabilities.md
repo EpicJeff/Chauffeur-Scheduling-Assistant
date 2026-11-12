@@ -1,6 +1,27 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.798 (2026-11-11).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.799 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.799 (2026-11-12, NOT device-verified): an Energy check says why an energy ribbon is missing.**
+
+**The ask.** The user, 2026-11-11: "I'm not seeing any energy ribbons in Energy mode. I am pretty sure I added all the necessary items in the editor ... Is there any way to determine what is going wrong?"
+
+**How it was built.** Codex built it. Claude ran the browser check and made these fixes:
+- the "Why no ribbons?" link sat under the 3D canvas and could not be clicked;
+- the role names were hidden by the controls bar's legend rule;
+- the energy scenario now chooses its glance tiles, since v2.499.796 shows only chosen tiles.
+
+**What it shows** (`static/twin/live/energy_check.js`; in the twin drawer's Energy sources section, and behind "Why no ribbons?" in the Energy legend).
+- **Summary.** "Ribbons showing: N", or "No ribbons because …", naming the first missing piece.
+- **Roles** (solar, battery/inverter, meter/grid, electric panel/house, and each charger): each gets ✓, ⚠ or ✗ with:
+  - the mapped power entity and its live, formatted value;
+  - its availability;
+  - the sign convention;
+  - where its location comes from. When it is not placed, it names the exact entity to place, and flags a device that is placed under a different entity than the role uses.
+- **Flows.** Every allocated flow with its watts, marked shown, hidden (under 50 W) or "no ribbon: <role> not placed".
+- **One source of truth.** It is derived from the same mapping, anchor and flow functions Energy mode draws with, so it cannot disagree with what is drawn.
+
+**Tests.** test_twin_energy_check_js 31/31, test_house_twin_energy_live 4/4 (including a removed meter), test_twin_import_maps 2/2, test_tailwind_build 6/6, and the energy node suites.
 
 **v2.499.798 (2026-11-11, NOT device-verified): the house editor gets a viewport lighting control: Day / Night / Now / Unlit (fast). It opens in Day.**
 
