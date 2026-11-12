@@ -57,8 +57,11 @@ def validate(field, value, spec):
         asset = twin_imports.get(value) if value.startswith('import-') else twin_library.manifest().get(value)
         valid = asset is not None and (value.startswith('import-') or asset.get('kind') == 'model')
     if not valid:
-        bounds = f" ({spec['min']} to {spec['max']})" if 'min' in spec else ''
-        raise ValueError(f'Invalid {field.replace("_", " ")}{bounds}.')
+        # Words a person can act on, matching the card ops' own size refusal.
+        if field == 'scale' and 'min' in spec:
+            raise ValueError(f"Choose a size from {round(spec['min'] * 100)}% to {round(spec['max'] * 100)}%.")
+        name = field.replace('_', ' ')
+        raise ValueError(f"Choose a {name} from {spec['min']} to {spec['max']}." if 'min' in spec else f'Choose a valid {name}.')
     return deepcopy(value)
 
 

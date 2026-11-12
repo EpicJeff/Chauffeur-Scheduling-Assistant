@@ -48,9 +48,13 @@ def scenario_import_place_scale_rotate_undo_reload_and_programs():
     with served.browser(launch_args=H.GPU_ARGS) as page:
         H.open_editor(page, served); H.choose_floor(page, 'pool-house:L1'); H.look_down(page, 'pool-house', 8, 8, height=35)
         asset = import_model(page, 'Imported chair', 'furniture')
-        thumb = page.locator(f'[data-item="{asset}"]'); start = thumb.bounding_box()
-        end = H.screen_of_world(page, 8, 8, 0, 'pool-house')
-        page.mouse.move(start['x'] + start['width'] / 2, start['y'] + start['height'] / 2); page.mouse.down(); page.mouse.move(*end, steps=10); page.mouse.up()
+        # The same press, nudge, travel and release as the editor's own library drag test (t15).
+        thumb = page.locator(f'#library-panel [data-item="{asset}"]').first
+        thumb.wait_for(state='visible', timeout=10000); thumb.scroll_into_view_if_needed(); start = thumb.bounding_box()
+        end = H.screen_of_world(page, 8, 8, 0, 'pool-house'); H._on_canvas(page, *end)
+        x, y = start['x'] + start['width'] / 2, start['y'] + start['height'] / 2
+        page.mouse.move(x, y); page.mouse.down(); page.mouse.move(x + 6, y + 6, steps=2)
+        page.mouse.move(*end, steps=16); page.mouse.up(); H.settle(page)
         page.wait_for_function('(asset) => window.__twin.plan.buildings.some(b => b.items.some(i => i.asset === asset))', arg=asset)
         item = next(p for b in H.model()['buildings'] for p in b['items'] if p.get('asset') == asset)
         if page.locator('#library-panel').is_visible(): page.click('#rail-library')

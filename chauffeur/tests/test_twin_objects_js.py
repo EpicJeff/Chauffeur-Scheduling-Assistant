@@ -55,6 +55,16 @@ const imported=await loadModel(asset,{});assert.ok(imported);
 assert.ok(fetched.some(u=>u.includes('/imports/'+asset+'/mesh.bin?member_token=test')));
 near(new THREE.Box3().setFromObject(imported).min.y,0);
 console.log('ok authenticated nested glTF import loads its included relative buffer');
+// The real pages use a page-relative base ('../'): the model URL must resolve against the
+// page, not the model's folder, or the loader refuses its own file (browser bug 2026-11-12).
+window.location={href:'http://house.test/house/editor'};window.chfBase='../';
+const relativeAsset='import-'+'2'.repeat(32);
+rememberImport({id:relativeAsset,model:'nested/model.gltf',files:{'nested/model.gltf':true,'mesh.bin':true}});
+fetched.length=0;
+assert.ok(await loadModel(relativeAsset,{}),'a page-relative base still loads the import');
+assert.ok(fetched.some(u=>u.includes('/imports/'+relativeAsset+'/nested/model.gltf')),fetched.join(' '));
+window.location={href:'http://house.test/ingress/house/editor'};window.chfBase='/ingress/';
+console.log('ok a page-relative base loads an import');
 
 const {buildTwin}=await import(file('static/twin/twin_generator.js'));
 const openingBuilding=flat.buildings.find(b=>b.openings.some(o=>o.wall && o.state!=='ghost'));

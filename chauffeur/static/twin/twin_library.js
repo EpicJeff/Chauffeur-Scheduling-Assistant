@@ -156,7 +156,9 @@ export async function loadModel(assetId, kit, onLate) {
   const manager = new THREE.LoadingManager();
   manager.setURLModifier(raw => {
     if (/^(data:|blob:)/.test(raw)) return raw;
-    const u = new URL(raw, directory);
+    // The model URL itself is page-relative (libUrl); resources arrive already absolute
+    // through setResourcePath. Resolving against the page keeps both right.
+    const u = new URL(raw, window.location.href);
     if (u.origin === directory.origin && u.pathname.startsWith(directory.pathname)) {
       u.search = '';
       return window.chfAuthUrl ? window.chfAuthUrl(u.href) : u.href;
