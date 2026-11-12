@@ -237,7 +237,10 @@ class Element {
   scrollIntoView() {} scrollTo() {}
   getBoundingClientRect() { return {left: 0, top: 0, right: 1440, bottom: 900, width: 1440, height: 900, x: 0, y: 0}; }
   getClientRects() { return shown(this) ? [this.getBoundingClientRect()] : []; }
-  getContext() { return {getExtension: () => null}; }
+  getContext(kind) {
+    if (kind !== '2d') return {getExtension: () => null};
+    return new Proxy({measureText: text => ({width: String(text).length * 6})}, {get: (o, key) => o[key] ?? (() => {})});
+  }
   hasPointerCapture() { return false; } setPointerCapture() {} releasePointerCapture() {}
   showModal() { this.open = true; } show() { this.open = true; } close() { this.open = false; }
   animate() { return {finished: Promise.resolve(), cancel() {}}; }

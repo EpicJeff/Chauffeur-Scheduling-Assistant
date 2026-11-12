@@ -95,6 +95,8 @@ def scenario_markers_sit_at_placed_positions():
         # Each placed device's sprite sits where its `at` projects (12 px); unplaced ones at their auto spot.
         for did in ('dev-k-ceiling', 'dev-k-coffee', 'dev-k-lamp', 'dev-back-lock', 'dev-changing-light',
                     'dev-hall-light', 'dev-k-pendant'):
+            page.evaluate('row => window.__twin.levels.go({building:row.building,room:row.room},{immediate:true})', route[did])
+            L.H.settle(page)
             sprite = L.sprite(page, did)
             want = L.screen_of_lot(page, route[did]['at'])
             check(sprite['visible'], ('zoomed in, the marker stands alone (not merged into a badge)', did, sprite))
@@ -456,16 +458,20 @@ def scenario_mid_zoom_clump_is_one_count_then_tap_separates_it():
         clump_fixture(page, body)
         L.open_twin(page, s)
         L.aim_kitchen(page)
-        # About 10 px/ft: individual-marker LOD with this half-foot clump.
-        page.evaluate('''() => {const v=window.__twin;v.camera.position.sub(v.controls.target).multiplyScalar(2.5).add(v.controls.target);v.controls.update();v.render();}''')
+        # Ordinary devices live inside Room; keep the level's fitted camera.
+        page.evaluate('state => window.__twin.levels.go(state,{immediate:true})', {'building':L.POOL,'room':L.KITCHEN})
         L.H.settle(page)
         badge = page.evaluate(CLUMP_BADGE_JS, CLUMP_IDS)
         check(badge and badge['count'] == 3 and badge['canvasText'], ('one textured badge reads 3', badge))
         check(all(not L.sprite(page, did)['visible'] for did in CLUMP_IDS), 'members are hidden')
         check(page.locator('.twin-live-labels span:visible').count() == 0, 'no labels at mid zoom')
+        pose = page.evaluate('() => window.__twin.camera.position.toArray()')
         page.mouse.click(badge['x'], badge['y'])
         check(L.wait_for(page, lambda: all(L.sprite(page, did)['visible'] for did in CLUMP_IDS), 8), 'tap reveals all three')
-        positions = [L.sprite(page, did)['screen'] for did in CLUMP_IDS]
+        check(page.evaluate('() => window.__twin.camera.position.toArray()') == pose, 'fan preserves Room framing')
+        positions = page.evaluate('''ids=>{const v=window.__twin,r=v.renderer3.domElement.getBoundingClientRect(),out=[];
+          v.scene.traverse(o=>{if(!o.isSprite||!ids.includes(o.userData.deviceId))return;const p=o.position.clone().project(v.camera);
+          out.push([r.left+(p.x+1)*r.width/2+(.5-o.center.x)*44,r.top+(1-p.y)*r.height/2+(o.center.y-.5)*44]);});return out;}''', CLUMP_IDS)
         check(all(math.dist(a, b) >= 52 for i, a in enumerate(positions) for b in positions[i + 1:]), positions)
         L.no_errors(s)
 

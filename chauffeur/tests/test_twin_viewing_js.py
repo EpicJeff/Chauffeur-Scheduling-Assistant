@@ -171,28 +171,28 @@ await test('mounted cut caps stay strictly inside the clip plane at fractional w
     assert.ok(caps>0,'renderable cap geometry exists');
   } finally {v.dispose();}
 });
-await test('mounted viewer fades roof, descends one floor, restores exterior and stays independent',async()=>{
+await test('viewer levels peel roofs and upper floors; distance alone never changes levels',async()=>{
   const v=await mounted();try {
-    zoom(v,70);assert.equal(v.state.view,'ext');assert.equal(opacity(roof(v)),1);
-    zoom(v,38);assert.equal(v.state.view,'main:L2');assert.ok(opacity(roof(v))<.05);
-    assert.equal(opacity(roof(v,'detached')),1);
-    zoom(v,25);assert.equal(v.state.view,'main:L1');assert.equal(v.groups.levels['main:L2'].visible,false);
-    for(const d of [34,33.9,34.1,34]){zoom(v,d);assert.equal(v.state.view,'main:L1');}
-    zoom(v,70);assert.equal(v.state.view,'ext');assert.equal(opacity(roof(v)),1);
-    zoom(v,25,1,55);assert.equal(v.state.view,'detached:L1');assert.equal(opacity(roof(v)),1);
+    for(const d of [70,38,25]){zoom(v,d);assert.equal(v.state.view,'ext');assert.equal(opacity(roof(v)),1);}
+    v.levels.go({building:'main'},{immediate:true});settle(v);assert.equal(opacity(roof(v)),1);
+    v.levels.go({building:'main',floor:'L2'},{immediate:true});settle(v);
+    assert.equal(v.state.view,'main:L2');assert.equal(opacity(roof(v)),0);assert.equal(opacity(roof(v,'detached')),1);
+    v.levels.go({building:'main',floor:'L1'},{immediate:true});settle(v);assert.equal(v.groups.levels['main:L2'].visible,false);
+    for(const d of [34,33.9,34.1,70]){zoom(v,d);assert.equal(v.state.view,'main:L1');}
+    v.levels.go({level:'house'},{immediate:true});settle(v);assert.equal(opacity(roof(v)),1);
+    v.levels.go({building:'detached',floor:'L1'},{immediate:true});settle(v);assert.equal(opacity(roof(v)),1);
   } finally {v.dispose();}
 });
-await test('buttons focus and pin a floor; foreground building peels; outwards zoom releases pin',async()=>{
+await test('floor level pins cutaway and peels foreground; level up restores it',async()=>{
   const v=await mounted();try {
-    v.setView('main:L1');settle(v);assert.equal(v.viewingState().pinned,'main:L1');
+    v.levels.go({building:'main',floor:'L1'},{immediate:true});settle(v);assert.equal(v.viewingState().pinned,'main:L1');
     assert.ok(Math.abs(v.controls.target.x/.3048-15)<.01);
     v.controls.target.set(15*.3048,.3048,-10*.3048);v.camera.position.set(60*.3048,15*.3048,-10*.3048);v.render();settle(v);
     assert.equal(opacity(roof(v,'detached')),0);assert.equal(roof(v,'detached').visible,false);
-    assert.equal(v.groups.levels['detached:L1'].visible,false);
-    assert.equal(v.groups.levels['main:L2'].visible,false);
-    zoom(v,40,10);assert.equal(v.state.view,'main:L1');
-    zoom(v,70);assert.equal(v.viewingState().pinned,null);assert.equal(v.state.view,'ext');
-    v.setView('main:L1');v.setView('ext');settle(v);assert.equal(v.viewingState().pinned,null);assert.equal(v.state.view,'ext');
+    assert.equal(v.groups.levels['detached:L1'].visible,false);assert.equal(v.groups.levels['main:L2'].visible,false);
+    zoom(v,70);assert.equal(v.viewingState().pinned,'main:L1');
+    v.levels.up();fakeNow+=401;tick();settle(v);assert.equal(v.viewingState().pinned,null);assert.equal(v.state.view,'ext');
+    assert.equal(roof(v,'detached').visible,true);
   } finally {v.dispose();}
 });
 await test('an exterior-distance pin survives orbit, pan, zoom-in and return to its starting distance',async()=>{
@@ -216,16 +216,13 @@ await test('an exterior-distance pin survives orbit, pan, zoom-in and return to 
     c.select('ext');update();assert.equal(c.snapshot().pinned,null);assert.equal(selected,'ext');
   } finally {c.dispose();}
 });
-await test('release requires both the relative margin and exterior band; another floor resets the margin',async()=>{
+await test('viewer zoom release uses the level range and commit threshold; another floor reframes',async()=>{
   const v=await mounted();try {
-    v.setView('main:L1');settle(v);zoom(v,54);assert.equal(v.viewingState().pinned,'main:L1');
-    zoom(v,56);assert.equal(v.viewingState().pinned,null);
-    v.setView('main:L1');v.setCamera('top');settle(v);
-    const d=v.camera.position.distanceTo(v.controls.target)/.3048;
-    assert.equal(v.viewingState().pinned,'main:L1','camera presets preserve explicit floor selection');
-    zoom(v,d*1.24);assert.equal(v.viewingState().pinned,'main:L1');
-    v.setView('main:L2');settle(v);assert.equal(v.viewingState().pinned,'main:L2');
-    zoom(v,56);assert.equal(v.viewingState().pinned,null,'new floor records its own focused distance');
+    v.levels.go({building:'main',floor:'L1'},{immediate:true});settle(v);
+    assert.equal(v.levels.zoomEnd(1.24),'spring');fakeNow+=401;tick();settle(v);assert.equal(v.viewingState().pinned,'main:L1');
+    v.levels.go({building:'main',floor:'L2'},{immediate:true});settle(v);assert.equal(v.viewingState().pinned,'main:L2');
+    assert.equal(v.levels.zoomEnd(1.5),'up');fakeNow+=401;tick();settle(v);assert.equal(v.viewingState().pinned,null);
+    assert.equal(v.levels.snapshot().level,'building');
   } finally {v.dispose();}
 });
 await test('production setView exposes state and preserves legacy single-building visibility within the fade',async()=>{
@@ -246,7 +243,7 @@ await test('production setView exposes state and preserves legacy single-buildin
 });
 await test('fade advances while camera keeps moving and finishes at 250ms',async()=>{
   const v=await mounted();try {
-    zoom(v,70);
+    v.levels.go({building:'main',floor:'L1'},{immediate:true});
     for(let i=0;i<12;i++){fakeNow+=16;step(v,38-i*.1);}
     assert.ok(opacity(roof(v))<.15,opacity(roof(v)));
     settle(v);assert.equal(opacity(roof(v)),0);
@@ -256,8 +253,8 @@ await test('prepared materials retain atlas eligibility and baked clones follow 
   const v=await mounted();try {
     let mesh;roof(v).traverse(o=>{if(o.isMesh&&atlasMesh(o))mesh??=o;});assert.ok(mesh);
     const source=mesh.material, baked=source.clone();v.prepareViewingMaterial(source,baked);mesh.material=baked;
-    zoom(v,37);assert.equal(baked.opacity,0);assert.equal(baked.clippingPlanes[0],source.clippingPlanes[0]);
-    zoom(v,70);assert.equal(baked.opacity,1);assert.equal(atlasMesh(mesh),true);
+    v.levels.go({building:'main',floor:'L1'},{immediate:true});settle(v);assert.equal(baked.opacity,0);assert.equal(baked.clippingPlanes[0],source.clippingPlanes[0]);
+    v.levels.go({level:'house'},{immediate:true});settle(v);assert.equal(baked.opacity,1);assert.equal(atlasMesh(mesh),true);
     const blocked=occluders(v);assert.ok(blocked.children.length>0);
     const cuts=new Set();v.scene.traverse(o=>{if(o.userData.viewingWalls==='cut')o.traverse(m=>{if(m.geometry)cuts.add(m.geometry);});});
     assert.ok(blocked.children.every(m=>!cuts.has(m.geometry)));
@@ -269,10 +266,10 @@ await test('real r187 program-key set never grows after warm across zoom and flo
     const keys=[...v.renderer3.keys].sort(), before=v.renderer3.newPrograms;
     for(let pass=0;pass<3;pass++) {
       for(const d of [70,47,40,38,34,28,20,28,34,40,47,70])zoom(v,d);
-      v.setView('main:L1');settle(v);
+      v.levels.go({building:'main',floor:'L1'},{immediate:true});settle(v);
       v.controls.target.set(15*.3048,.3048,-10*.3048);v.camera.position.set(60*.3048,15*.3048,-10*.3048);
       v.render();settle(v);assert.equal(roof(v,'detached').visible,false);
-      v.setView('main:L2');settle(v);v.setView('ext');settle(v);
+      v.levels.go({building:'main',floor:'L2'},{immediate:true});settle(v);v.levels.go({level:'house'},{immediate:true});settle(v);
     }
     assert.deepEqual([...v.renderer3.keys].sort(),keys);assert.equal(v.renderer3.newPrograms,before);
     console.log(`    real r187 keys=${keys.length}, new after warm=${v.renderer3.newPrograms-before}`);

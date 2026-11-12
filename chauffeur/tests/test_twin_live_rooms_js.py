@@ -304,6 +304,65 @@ check('far_cards_reuse_nodes_across_updates_modes_and_camera_frames', async()=>{
     assert.equal(document.getElementById('twin-room-panel').hidden,false);assert.ok(t.camera.position.y<100);
   } finally {t.cleanup();}
 });
+check('viewer_levels_filter_actual_sprites_in_every_mode_and_attention_tap_jumps', async()=>{
+ const t=await rig({devices:[...devices(),{device_id:'lock',name:'Lock',kind:'lock',entity_id:'lock.door',state:'unlocked',at:[10,0,2]}]});
+ const materials=()=>{const all=[];t.view.scene.traverse(o=>{if(o.material)all.push(o.material);});return all;};const originalMaterials=materials();
+ let state={level:'house',building:null,floor:null,room:null},jumps=[];
+ t.view.levels={snapshot:()=>({...state}),tap:()=>false,go:next=>{jumps.push(next);state={level:'room',building:next.building,floor:'L1',room:next.room};return true;}};
+ try {
+  for(const level of ['house','building','floor','room'])for(const mode of ['all','lights','climate','energy','security']){
+   state={level,building:'b',floor:'L1',room:level==='room'?'r':null};
+   t.live.setMode(mode);assert.deepEqual(materials(),originalMaterials,'first level visits allocate no materials');assert.equal(t.sprite('lock').visible,true,level+'/'+mode);
+   assert.equal(t.sprite('lock').material.opacity,1,'attention never dims by mode');
+   assert.equal(t.sprite('a').visible||!!cluster(t),level==='room','ordinary markers only inside Room');
+  }
+  state={level:'building',building:'b',floor:null,room:null};t.live.setMode('all');
+  await t.tap('lock');assert.deepEqual(jumps.at(-1),{building:'b',room:'r'});
+  assert.equal(t.calls.length,0,'attention navigation never sends a device command');
+  assert.equal(document.getElementById('twin-room-panel').hidden,false,'attention opens its room');
+ }finally{t.cleanup();}
+});
+check('room_clump_fans_without_moving_fixed_level_camera_and_still_controls', async()=>{
+ const t=await rig({devices:devices()});
+ const state={level:'room',building:'b',floor:'L1',room:'r'};
+ t.view.levels={snapshot:()=>({...state}),tap:()=>false};
+ try {
+  t.live.setMode('all');
+  const before=t.camera.position.clone(), target=t.view.controls.target.clone(), zoom=t.camera.zoom;
+  await t.tapAt(spriteAt(t,cluster(t))); await wait(600);
+  assert.equal(cluster(t),undefined); assert.ok(devices().every(d=>t.sprite(d.device_id).visible));
+  const points=devices().map(d=>spriteAt(t,t.sprite(d.device_id)));
+  for(let i=0;i<points.length;i++)for(let j=i+1;j<points.length;j++)assert.ok(Math.hypot(points[i][0]-points[j][0],points[i][1]-points[j][1])>=52);
+  assert.ok(t.camera.position.equals(before));assert.ok(t.view.controls.target.equals(target));assert.equal(t.camera.zoom,zoom);
+  assert.deepEqual(t.view.levels.snapshot(),state);assert.equal(t.calls.length,0);
+  await t.tapAt(spriteAt(t,t.sprite('a')));assert.equal(t.calls.at(-1).service,'toggle');
+  await t.holdAt(spriteAt(t,t.sprite('a')));assert.equal(t.live.ring().device_id,'a');
+ } finally {t.cleanup();}
+});
+check('empty_unnamed_room_has_no_card_in_DOM_at_floor_level', async()=>{
+ const rooms=[{building:'b',room:'r',level:'L1',name:'Kitchen',area_id:'kitchen',lights:['light.lamp'],polygon_world:[[-5,-5],[5,-5],[5,5],[-5,5]]},
+  {building:'b',room:'empty',level:'L1',name:'Room',area_id:null,lights:[],polygon_world:[[6,-5],[9,-5],[9,5],[6,5]]}];
+ const t=await rig({devices:devices(),rooms});
+ t.view.levels={snapshot:()=>({level:'floor',building:'b',floor:'L1',room:null}),tap:()=>false};
+ try {
+  t.live.setMode('all');
+  const cards=t.host.querySelectorAll('[data-room-card]');
+  assert.equal(cards.length,1);assert.equal(cards[0].dataset.roomCard,JSON.stringify(['b','r']));
+  assert.doesNotMatch(cards.map(n=>n.textContent).join(' '),/0 devices/);
+ } finally {t.cleanup();}
+});
+check('fact_only_card_is_created_and_removed_when_last_fact_disappears', async()=>{
+ const {mountRoomCards}=await import(file('static/twin/live/room_cards.js'));
+ const host=document.createElement('div'), cards=mountRoomCards(host,()=>{}), room={building:'b',room:'empty',name:'Room'};
+ const key=JSON.stringify(['b','empty']);
+ try {
+  cards.update(room,[],0,false);assert.equal(host.querySelectorAll('[data-room-card]').length,0);
+  cards.update(room,[{icon:'thermometer',text:'72\u00b0',tone:'plain'}],0,false);assert.ok(cards.get(key));
+  cards.display(new Set([key]));assert.equal(cards.get(key).node.hidden,false);
+  cards.update(room,[],0,false);assert.equal(cards.get(key),undefined);assert.equal(host.querySelectorAll('[data-room-card]').length,0);
+  cards.update(room,[],1,false);assert.match(cards.get(key).node.textContent,/1 device/);
+ } finally {cards.stop();}
+});
 check('camera_animation_cancels_on_stop', async()=>{
   const t=await rig({devices:devices()});
   await t.tapAt(spriteAt(t,cluster(t))); t.cleanup(); const at=t.camera.position.clone(); await wait(500); assert.ok(t.camera.position.equals(at));

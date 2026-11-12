@@ -39,7 +39,7 @@ The household grid is the default (panel: lights, switches, climate yes;
 locks and garage no) unless a scenario sets it.
 
 The camera. aim_kitchen() shows the pool house's ground floor
-(view.setView('pool-house:L1')) from 50 ft straight above the Kitchen's
+(view.levels.go({building:'pool-house',room:KITCHEN})) from 50 ft straight above the Kitchen's
 middle, local (15.5, 9): on a 1400 x 1000 viewport that is about 29 px per
 foot at the floor. That counts as zoomed in: markers stand alone, not merged.
 
@@ -403,14 +403,14 @@ def refresh(page):
 
 def aim_kitchen(page):
     """The pool house's ground floor from 50 ft above the Kitchen's middle."""
-    page.evaluate("""([bid, key, x, y, h]) => {
-        const v = window.__twin, b = v.plan.buildings.find(item => item.id === bid);
+    page.evaluate("""([bid, key, x, y, h, rid]) => {
+        const v = window.__twin, FT=.3048, b = v.plan.buildings.find(item => item.id === bid);
         const a = (b.rotation || 0) * Math.PI / 180;
         const wx = Math.cos(a) * x - Math.sin(a) * y + (b.position?.[0] || 0);
         const wy = Math.sin(a) * x + Math.cos(a) * y + (b.position?.[1] || 0);
-        v.setView(key);
-        v.aim([wx, wy - 0.5, h], [wx, wy, 0]);
-    }""", [POOL, FLOOR, AIM_AT[0], AIM_AT[1], AIM_HEIGHT])
+        v.levels.go({building:bid,room:rid},{immediate:true});
+        v.setCameraState({position:[wx*FT,h*FT,-(wy-.5)*FT],target:[wx*FT,0,-wy*FT]});
+    }""", [POOL, FLOOR, AIM_AT[0], AIM_AT[1], AIM_HEIGHT, KITCHEN])
     H.settle(page, 3)
 
 

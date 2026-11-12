@@ -54,7 +54,8 @@ export function mountIdle(view, glance, {enabled = false, timeout = 60000,
     active = true; window._chfTwinIdleActive = true;
     view.controls.enabled = false; view.live?.closeRoom();
     view.setTime('now');
-    view.setView('ext'); view.setCamera('front');
+    if (view.levels) view.levels.go({level: 'house'}, {immediate: true, idle: true});
+    else {view.setView('ext'); view.setCamera('front');}
     offset = view.camera.position.clone().sub(view.controls.target); start = now();
     root.hidden = false; glance.move(card); document.documentElement.setAttribute('data-twin-idle', '');
     fetchHero(); frame(now());

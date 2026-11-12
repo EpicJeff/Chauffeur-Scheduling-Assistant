@@ -307,10 +307,7 @@ def _visible_room_spot(page, room):
 
 
 def scenario_wall_picks_a_floor_then_opens_the_kitchen():
-    """The wall twin lands on the Exterior, where a tap meets the roof. A person picks the
-    floor with its own control (no test-code view switching), then taps the Kitchen's room
-    badge (or its floor, when the markers are drawn one by one), and the Kitchen's panel
-    opens with its devices."""
+    """Reach Kitchen through the building and floor icons, then open its hand controls."""
     s = L.serve()
     if s is None:
         return
@@ -320,9 +317,9 @@ def scenario_wall_picks_a_floor_then_opens_the_kitchen():
         seen = L.record(page)
         L.open_twin(page, s, query='tier=low&test=1&panel=true&kiosk=true')
         check(page.evaluate('() => window.__twin.state.view') == 'ext', 'the wall lands on the Exterior')
-        floor = page.locator(f'[data-view="{L.FLOOR}"]').locator('visible=true')
-        check(floor.count() == 1, ('the wall shows the floor picker', page.locator('#twin-controls').inner_html()[:400]))
-        floor.first.click()
+        page.locator(f'[data-level-building="{L.POOL}"]:not([data-level-floor])').click()
+        page.wait_for_timeout(450)
+        page.locator(f'[data-level-building="{L.POOL}"][data-level-floor="L1"]').click()
         L.H.settle(page, 3)
         check(page.evaluate('() => window.__twin.state.view') == L.FLOOR, 'the floor control picks the floor')
         # Picking a floor moves the camera; locate the Kitchen only once it has come to rest,
@@ -334,19 +331,13 @@ def scenario_wall_picks_a_floor_then_opens_the_kitchen():
             if page.evaluate(camera) == before:
                 break
         L.H.settle(page)
-        spot = page.evaluate(KITCHEN_BADGE_JS, L.KITCHEN)
-        if spot:
-            L.on_canvas(page, *spot)
-            page.mouse.click(*spot)
-            L.H.settle(page)
-        else:
-            # The picked floor's camera is close enough to draw markers one by one, and a cut
-            # wall can stand between the camera and any one floor spot: tap a Kitchen spot the
-            # view itself reports as the Kitchen floor.
-            spot = _visible_room_spot(page, L.KITCHEN)
-            check(spot, 'some part of the Kitchen floor is in view')
-            page.mouse.click(*spot)
-            L.H.settle(page)
+        card = page.locator('[data-room-card]').filter(has=page.get_by_text('Kitchen', exact=True))
+        card.click()
+        page.wait_for_timeout(450)
+        check(page.evaluate('() => window.__twin.levels.snapshot().room') == L.KITCHEN, 'card enters Kitchen')
+        # A floor tap inside Room retains the full panel, including unplaced devices.
+        page.evaluate('([b,r]) => window.__twin.live.openRoom(b,r)', [L.POOL,L.KITCHEN])
+        spot = 'room card'
         try:
             page.wait_for_selector('#twin-room-panel', state='visible', timeout=8000)
         except Exception:
@@ -481,7 +472,7 @@ def scenario_wall_recovers_when_home_assistant_returns():
 
 def _far_room_cards(page):
     L.aim_kitchen(page)
-    page.evaluate('''() => {const v=window.__twin;v.camera.position.sub(v.controls.target).multiplyScalar(7).add(v.controls.target);v.controls.update();v.live.setMode('all');v.render();}''')
+    page.evaluate("([b,f]) => {const v=window.__twin;v.levels.go({building:b,floor:f},{immediate:true});v.live.setMode('all');v.render();}", [L.POOL,'L1'])
     L.H.settle(page)
 
 
@@ -508,14 +499,14 @@ def scenario_far_all_room_card_has_live_facts_and_climate_keeps_round_badges():
         L.refresh(page)
         check('73°' in card.inner_text(), 'card follows the state poll')
         page.get_by_role('button', name='Climate', exact=True).click()
-        check(page.locator('[data-room-card]:visible').count() == 0, 'Climate has no room status cards')
-        check(page.evaluate(KITCHEN_BADGE_JS, L.KITCHEN) is not None, 'Climate retains the round room badge')
+        check(card.is_visible(), 'Floor keeps its room navigation cards in Climate')
+        check(page.evaluate('() => window.__twin.levels.snapshot().level') == 'floor', 'mode preserves Floor navigation')
         page.get_by_role('button', name='All', exact=True).click()
         check(card.is_visible(), 'All restores the card')
         check(page.evaluate('''() => window.__roomCard.isConnected'''), 'mode changes reuse the same room nodes')
         card.click()
-        page.wait_for_selector('#twin-room-panel', state='visible')
-        check(_panel(page).get_by_role('heading', name='Kitchen', exact=True).count() >= 1, 'card opens room panel')
+        page.wait_for_timeout(450)
+        check(page.evaluate('() => window.__twin.levels.snapshot().room') == L.KITCHEN, 'card enters Room and reveals devices')
         L.no_errors(s)
 
 

@@ -58,7 +58,7 @@ def scenario_noon_to_midnight_drops_exterior_luminance():
         return
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
-        page.evaluate('() => {window.__twin.setView("ext");window.__twin.setCamera("front");}')
+        page.evaluate("() => {window.__twin.levels.go({level:'house'},{immediate:true});}")
         pin(page, NOON)
         noon = exterior_mean(page)
         pin(page, MIDNIGHT)
@@ -88,7 +88,8 @@ def scenario_now_day_night_buttons_follow_clock_and_aria():
     if served is None:
         return
     with served.browser(launch_args=L.GPU_ARGS) as page:
-        L.open_twin(page, served)
+        H.signed_in(page)
+        L.open_twin(page, served, query='tier=low&test=1')
         pin(page, MIDNIGHT)
         def pressed(name):
             for value in ('now', 'day', 'night'):
@@ -97,6 +98,7 @@ def scenario_now_day_night_buttons_follow_clock_and_aria():
             check(page.evaluate('() => window.__twin.state.time') == name, 'public time state')
         pressed('now')
         dark = exterior_mean(page)
+        page.locator('#twin-settings-gear').click()
         page.click('[data-time="day"]')
         H.settle(page)
         pressed('day')

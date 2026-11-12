@@ -19,9 +19,11 @@
 
   The behaviour lives in static/settings_drawer.js (chfSettingsDrawer).
 #}
-{% macro settings_drawer(tabs, title, sections=none) -%}
+{% macro settings_drawer(tabs, title, sections=none, preview=false) -%}
 {%- set _q = request.query_params if request is defined else {} -%}
-{%- if _q.get('kiosk') != 'true' and _q.get('tabs') is none and _q.get('panel') != 'true' -%}
+{# Viewer-only, session-local previews may use the same shell on a wall.
+   Callers opting in must omit persistent settings there. #}
+{%- if preview or (_q.get('kiosk') != 'true' and _q.get('tabs') is none and _q.get('panel') != 'true') -%}
 <div data-settings-for="{{ tabs }}" x-data="chfSettingsDrawer()" x-show="drawerOpen" x-cloak
     :data-open="drawerOpen ? 'true' : null"
     @chf-settings-open.window="drawerOpenFor($event.detail)"
