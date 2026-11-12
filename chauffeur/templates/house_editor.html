@@ -47,7 +47,7 @@
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'viewing', 'unlit', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'twin_terrain_mesh', 'twin_director', 'editor/editor', 'editor/lighting', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/object_shelf', 'editor/imports', 'editor/equipment_shelf', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/terrain_tools', 'editor/foundation_shelf', 'editor/library', 'editor/flags'] %}
+    {% for name in ['objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'import_loaders', 'twin_view', 'viewing', 'unlit', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'twin_terrain_mesh', 'twin_director', 'editor/editor', 'editor/lighting', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/object_shelf', 'editor/imports', 'editor/equipment_shelf', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/terrain_tools', 'editor/foundation_shelf', 'editor/library', 'editor/flags'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_geometry', 'live/energy_mapping', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
@@ -119,11 +119,12 @@
         <button type="button" role="tab" data-library-tab="items" aria-selected="false" aria-controls="library-entries">Items</button>
       </div>
       <button id="library-import" type="button">Import model</button>
-      <input id="library-import-files" type="file" accept=".glb,.gltf,.bin,.png,.jpg,.jpeg,.webp,.zip,.dae,.kmz" multiple hidden>
+      <input id="library-import-files" type="file" accept=".glb,.gltf,.bin,image/*,.tga,.zip,.dae,.kmz" multiple hidden>
       <label>Search models<input id="library-search" type="search" aria-label="Search models"></label>
-      <p>Import glTF/GLB with buffers and textures, or a zip of them. Collada (.dae) and KMZ are not available in this build. SketchUp .skp is a closed format and is not supported.</p>
+      <p>Import glTF/GLB, Collada (.dae) or KMZ. A zip of a model folder works. SketchUp .skp is not supported; export Collada or glTF from SketchUp.</p>
       <details id="library-import-settings"><summary>Import settings</summary>
-        <label>Maximum model size (MB)<input id="library-import-limit" type="number" min="1" max="200" value="50"></label>
+        <label>Maximum upload size (MB)<input id="library-import-limit" type="number" min="1" max="200" value="50"></label>
+        <label>Maximum unpacked size (MB)<input id="library-import-unpacked-limit" type="number" min="1" max="1000" value="200"></label>
       </details>
       <p id="library-status" role="status">Opening the library…</p>
       <div id="library-entries" role="tabpanel"></div>

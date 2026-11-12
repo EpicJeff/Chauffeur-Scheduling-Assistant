@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { twinGlass, twinText } from './palette.js';
+import { LUCIDE } from '../vendor/lucide/icons.js';
 
 const FT = .3048;
 export const siteShapeLabels = { beds: 'Planting bed', hardscape: 'Path / hardscape', edges: 'Edge planting', pool: 'Pool', fire_pit: 'Fire pit', fence: 'Fence' };
@@ -50,7 +53,7 @@ export function modelBudget(root, { resizeTextures = true } = {}) {
     for (const material of o.material ? [].concat(o.material) : [])
       for (const texture of Object.values(material)) if (texture?.isTexture) textures.add(texture);
   });
-  if (triangles > 300000) throw new Error('This model exceeds 300,000 triangles. Simplify it before importing.');
+  if (triangles > 1000000) throw new Error('This model exceeds 1,000,000 triangles. Simplify it before importing.');
   if (resizeTextures) for (const texture of textures) {
     const image = texture.image, width = image?.width, height = image?.height;
     if (!(Math.max(width, height) > 2048)) continue;
@@ -59,7 +62,110 @@ export function modelBudget(root, { resizeTextures = true } = {}) {
     canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
     texture.image = canvas; texture.needsUpdate = true;
   }
-  return { triangles, warning: triangles > 100000 ? 'Large model: over 100,000 triangles.' : null };
+  return { triangles, heavy: triangles > 300000,
+    warning: triangles > 300000 ? `Heavy model: ${Math.round(triangles / 1000)}k triangles. It shows in full on the High setting; the wall panel shows a simple stand-in.`
+      : triangles > 100000 ? 'Large model: over 100,000 triangles.' : null };
+}
+
+// Preserve physical material extensions except transmission, which would add
+// a scene pre-pass. Reuse the converted instance across all matching meshes.
+export function singlePassMaterial(material) {
+  if (!(material.transmission > 0)) return material;
+  const out = new THREE.MeshStandardMaterial();
+  THREE.MeshStandardMaterial.prototype.copy.call(out, material);
+  out.transparent = true;
+  out.opacity = Math.max(.05, (material.opacity ?? 1) * (1 - material.transmission));
+  out.depthWrite = false;
+  return out;
+}
+
+export function mergeByMaterial(source) {
+  source.updateMatrixWorld(true);
+  const groups = new Map(), originals = new Set(), meshes = [];
+  source.traverse(mesh => {
+    // Animated/deformed geometry must retain its hierarchy and skin bindings.
+    if (!mesh.isMesh || mesh.isSkinnedMesh || mesh.instanceColor || mesh.morphTexture || Object.keys(mesh.geometry.morphAttributes).length) return;
+    if (!mesh.geometry.attributes.position) return;
+    for (let p = mesh; p; p = p.parent) if (!p.visible) return;
+    meshes.push(mesh); originals.add(mesh.geometry);
+    const geo = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+    if (!geo.attributes.normal) geo.computeVertexNormals();
+    const materials = [].concat(mesh.material);
+    const ranges = Array.isArray(mesh.material) ? geo.groups : [{ start: 0, count: geo.attributes.position.count, materialIndex: 0 }];
+    for (let instance = 0; instance < (mesh.isInstancedMesh ? mesh.count : 1); ++instance) {
+      const matrix = mesh.matrixWorld.clone();
+      if (mesh.isInstancedMesh) { const local = new THREE.Matrix4(); mesh.getMatrixAt(instance, local); matrix.multiply(local); }
+      for (const range of ranges) {
+        const start = Math.max(range.start, geo.drawRange.start), end = Math.min(range.start + range.count, geo.drawRange.start + geo.drawRange.count, geo.attributes.position.count);
+        const material = materials[range.materialIndex];
+        if (!material || end <= start) continue;
+        const part = new THREE.BufferGeometry();
+        for (const [key, attr] of Object.entries(geo.attributes)) {
+          const values = new Float32Array((end - start) * attr.itemSize);
+          for (let i = start; i < end; ++i) for (let c = 0; c < attr.itemSize; ++c) values[(i - start) * attr.itemSize + c] = attr.getComponent(i, c);
+          part.setAttribute(key, new THREE.BufferAttribute(values, attr.itemSize));
+        }
+        part.applyMatrix4(matrix);
+        // Mirroring changes winding. Restore it after baking the transform.
+        if (matrix.determinant() < 0) for (const attr of Object.values(part.attributes)) {
+          for (let i = 0; i + 2 < attr.count; i += 3) for (let c = 0; c < attr.itemSize; ++c) {
+            const v = attr.getComponent(i, c); attr.setComponent(i, c, attr.getComponent(i + 2, c)); attr.setComponent(i + 2, c, v);
+          }
+        }
+        if (!groups.has(material)) groups.set(material, []);
+        groups.get(material).push(part);
+      }
+    }
+    geo.dispose();
+  });
+  const result = new THREE.Group();
+  result.add(source);
+  for (const [material, parts] of groups) {
+    const attributes = new Map();
+    parts.forEach(part => Object.entries(part.attributes).forEach(([key, attr]) => attributes.set(key, Math.max(attributes.get(key) || 0, attr.itemSize))));
+    // glTF can omit an optional attribute on some primitives of one material.
+    for (const part of parts) for (const [key, size] of attributes) if (part.attributes[key]?.itemSize !== size) {
+      const old = part.attributes[key];
+      const values = new Float32Array(part.attributes.position.count * size);
+      if (key === 'color') values.fill(1);
+      if (key === 'tangent') for (let i = 0; i < values.length; i += size) { values[i] = 1; values[i + 3] = 1; }
+      if (old) for (let i = 0; i < old.count; ++i) for (let c = 0; c < old.itemSize; ++c) values[i * size + c] = old.getComponent(i, c);
+      part.setAttribute(key, new THREE.BufferAttribute(values, size));
+    }
+    const geometry = mergeGeometries(parts);
+    if (!geometry) throw new Error('Could not merge the model geometry.');
+    const mesh = new THREE.Mesh(geometry, material); mesh.castShadow = mesh.receiveShadow = true; result.add(mesh);
+    parts.forEach(part => part.dispose());
+  }
+  // Keep non-mesh descendants and their transforms in the original hierarchy.
+  for (const mesh of meshes) {
+    const replacement = new THREE.Group(); THREE.Object3D.prototype.copy.call(replacement, mesh, false);
+    if (mesh.children.length) replacement.add(...mesh.children);
+    mesh.parent?.add(replacement); mesh.removeFromParent();
+  }
+  const retained = new Set(); source.traverse(o => { if (o.geometry) retained.add(o.geometry); });
+  originals.forEach(g => { if (!retained.has(g)) g.dispose(); });
+  return result;
+}
+
+export function heavyStandIn(size, kind) {
+  const group = new THREE.Group(); group.userData.heavyStandIn = true;
+  const rgb = twinGlass.match(/[\d.]+/g).map(Number);
+  const material = new THREE.MeshStandardMaterial({ color: new THREE.Color().setRGB(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, THREE.SRGBColorSpace), transparent: true, opacity: rgb[3], depthWrite: false });
+  const box = new THREE.Mesh(new THREE.BoxGeometry(...size.map(n => Math.max(.001, n))), material);
+  box.position.y = size[1] / 2; group.add(box);
+  if (kind === 'car') {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 192;
+    const ctx = canvas.getContext('2d'); ctx.scale(8, 8); ctx.strokeStyle = twinText; ctx.lineWidth = 1.5; ctx.lineCap = ctx.lineJoin = 'round';
+    for (const [tag, a] of LUCIDE.car) {
+      if (tag === 'path' && typeof Path2D === 'function') ctx.stroke(new Path2D(a.d));
+      if (tag === 'circle') { ctx.beginPath(); ctx.arc(Number(a.cx), Number(a.cy), Number(a.r), 0, Math.PI * 2); ctx.stroke(); }
+    }
+    const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
+    const glyph = new THREE.Mesh(new THREE.PlaneGeometry(Math.max(size[0], .1), Math.max(size[0], .1)), new THREE.MeshStandardMaterial({ map: texture, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
+    glyph.rotation.x = -Math.PI / 2; glyph.position.y = size[1] + .01; group.add(glyph);
+  }
+  return group;
 }
 
 // Dimensions are plan feet. Model dimensions are metres; after fitting the

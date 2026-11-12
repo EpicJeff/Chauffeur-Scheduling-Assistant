@@ -128,7 +128,7 @@ class ObjectTests(unittest.TestCase):
         doc = triangle(); doc['buffers'][0]['uri'] = 'https://example.invalid/tracker.bin'
         with self.assertRaises(ValueError):
             twin_imports.create({'model.gltf': json.dumps(doc).encode()}, 'Remote', 'other')
-        doc = triangle(); doc['accessors'][0]['count'] = 900003
+        doc = triangle(); doc['accessors'][0]['count'] = 3000003
         with self.assertRaises(ValueError):
             twin_imports.create({'model.gltf': json.dumps(doc).encode()}, 'Huge', 'other')
         with patch.object(twin_imports, 'limit_mb', return_value=1), self.assertRaises(ValueError):
@@ -167,6 +167,41 @@ class ObjectTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn('1 MB', response.text)
         self.assertEqual(auth.resolve('GET', '/api/house/twin/imports/{asset_id}/{name:path}'), auth.WALL_OR_SERVICE)
+
+    def test_import_route_takes_gltf_folders_and_zips_and_never_answers_bare_500(self):
+        """User 2026-11-12: a glTF zip or loose files gave "The house could not answer" (a
+        non-JSON reply). Real glTF shapes import through the route, and any unexpected failure
+        is a JSON reason the editor can show."""
+        import io, struct, zipfile
+        from fastapi.testclient import TestClient
+        import main
+        storage.add_member({'id': 'gltf-parent', 'name': 'Parent', 'role': 'parent'})
+        parent = {'X-Member-Token': storage.create_member_token('gltf-parent')}
+        positions = [0, 0, 0, 1, 0, 0, 1, 1, 0]
+        binary = struct.pack('<9f', *positions)
+        doc = {'asset': {'version': '2.0'}, 'scene': 0, 'scenes': [{'nodes': [0]}], 'nodes': [{'mesh': 0}],
+               'meshes': [{'primitives': [{'attributes': {'POSITION': 0}}]}],
+               'buffers': [{'uri': 'scene.bin', 'byteLength': len(binary)}],
+               'bufferViews': [{'buffer': 0, 'byteLength': len(binary)}],
+               'accessors': [{'bufferView': 0, 'componentType': 5126, 'count': 3, 'type': 'VEC3', 'min': [0, 0, 0], 'max': [1, 1, 0]}]}
+        loose = {'scene.gltf': json.dumps(doc).encode(), 'scene.bin': binary}
+        client = TestClient(main.app, raise_server_exceptions=False)
+        response = client.post('/api/house/editor/imports', headers=parent, data={'name': 'Loose', 'kind': 'other'},
+                               files=[('files', (n, d, 'application/octet-stream')) for n, d in loose.items()])
+        self.assertEqual(response.status_code, 200, response.text)
+        packed = io.BytesIO()
+        with zipfile.ZipFile(packed, 'w') as archive:
+            for n, d in loose.items():
+                archive.writestr('chair/' + n, d)
+        response = client.post('/api/house/editor/imports', headers=parent, data={'name': 'Zipped', 'kind': 'other'},
+                               files={'files': ('chair.zip', packed.getvalue(), 'application/zip')})
+        self.assertEqual(response.status_code, 200, response.text)
+        with patch.object(twin_imports, 'create', side_effect=KeyError('images')):
+            response = client.post('/api/house/editor/imports', headers=parent, data={'name': 'Broken', 'kind': 'other'},
+                                   files=[('files', (n, d, 'application/octet-stream')) for n, d in loose.items()])
+        self.assertEqual(response.status_code, 500)
+        self.assertIn('could not be imported', response.json()['detail'])
+        self.assertIn('KeyError', response.json()['detail'])
 
 
 if __name__ == '__main__':

@@ -32,14 +32,17 @@ export async function checkpoint(detail) {
 export async function request(path, method = 'GET', body, area = 'editor') {
   for (;;) {
     const response = await fetch((window.chfBase ?? '../') + `api/house/${area}/` + path, {
-      method, ...(body === undefined ? {} : body instanceof FormData ? { body } : {
+      method, ...(body === undefined ? {} : body instanceof Blob ? { headers: { 'Content-Type': 'application/octet-stream' }, body } : body instanceof FormData ? { body } : {
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       }),
     });
     let data;
     try { data = JSON.parse(await response.text()); }
     catch {
-      const error = new Error(response.status === 401 ? signedOut : 'The house could not answer. Try again.');
+      // Not JSON: something in front of the add-on answered (or it crashed). Say which.
+      const error = new Error(response.status === 401 ? signedOut
+        : response.status === 413 ? 'That upload is larger than Home Assistant lets through. Try a smaller model or a zip.'
+        : `The house could not answer (HTTP ${response.status}). Try again.`);
       error.status = response.status;
       if (response.status === 401) {
         if (!session.signedOut) {
