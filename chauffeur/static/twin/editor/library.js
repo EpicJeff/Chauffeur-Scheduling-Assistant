@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { svgIcon } from '../live/glance_icons.js';
 import { contains, FT } from '../twin_generator.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
 import { request, report } from './api.js';
 
@@ -162,7 +162,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     const a = -(building.rotation || 0) * Math.PI / 180, pos = building.position || [0, 0];
     const x = p.x / FT - pos[0], y = -p.z / FT - pos[1];
     return new THREE.Vector3(Math.cos(a) * x - Math.sin(a) * y, Math.sin(a) * x + Math.cos(a) * y,
-      p.y / FT - (building.base || 0) - groundAt(getPlan(), ...pos));
+      p.y / FT - (building.base || 0) - buildingGround(getPlan(), building));
   }
   function ground(event) {
     const r = ray(event), point = r.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3());

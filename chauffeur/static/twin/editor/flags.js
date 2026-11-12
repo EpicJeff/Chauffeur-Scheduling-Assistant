@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { FT, polygon } from '../twin_generator.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { hostPoint } from '../twin_hosts.js';
 import { findPiece } from './cards.js';
 import { report } from './api.js';
@@ -29,7 +29,7 @@ export function createFlags({ view, getModel, getPlan, tools, panel, op, canEdit
   function world(b, point) {
     const a = (b.rotation || 0) * Math.PI / 180, [x, y, z = 0] = point, p = b.position || [0, 0];
     return new THREE.Vector3((Math.cos(a) * x - Math.sin(a) * y + p[0]) * FT,
-      (z + (b.base || 0) + groundAt(getPlan(), ...p)) * FT,
+      (z + (b.base || 0) + buildingGround(getPlan(), b)) * FT,
       -(Math.sin(a) * x + Math.cos(a) * y + p[1]) * FT);
   }
   function clearGeometry(group) {

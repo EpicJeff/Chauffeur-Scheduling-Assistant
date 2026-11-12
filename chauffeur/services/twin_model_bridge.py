@@ -782,6 +782,9 @@ def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]
     for building in flat.get('buildings', []):
         old = old_buildings.get(building['id'], {})
         source = deepcopy(building)
+        if old.get('foundation_src', {}).get('person'):
+            building['foundation'] = deepcopy(old['foundation'])
+            building['foundation_src'] = deepcopy(old['foundation_src'])
         building['solar_zones'] = deepcopy(old.get('solar_zones', source.get('solar_zones', [])))
         building['proposals'] = deepcopy(old.get('proposals', source.get('proposals', [])))
         for proposal in building['proposals']:

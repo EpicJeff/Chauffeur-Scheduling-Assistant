@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { base } from '../twin_library.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { markerState, levelOfDetail, clusterMarkers, markerTextureCache, markerSprite } from './markers.js';
 import { roomFacts, layoutRoomCards, mountRoomCards } from './room_cards.js';
 import { deviceActions, confirmUnsafe, mountRoomPanel } from './room_panel.js';
@@ -249,7 +249,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const polygon = info?.polygon_world;
     if (!polygon?.length) return;
     const b = view.plan.buildings.find(b => b.id === building), level = b?.levels?.find(l => l.id === info.level);
-    const y = ((b?.base || 0) + (level?.elevation || 0) + groundAt(view.plan, ...(b?.position || [0, 0]))) * FT;
+    const y = ((b?.base || 0) + (level?.elevation || 0) + buildingGround(view.plan, b)) * FT;
     const points = polygon.map(([x, z]) => new THREE.Vector3(x * FT, y, -z * FT));
     const bounds = new THREE.Box3().setFromPoints(points), center = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3()), camera = view.camera, controls = view.controls;
@@ -490,7 +490,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
         const b = view.plan.buildings.find(b => b.id === badge.building), level = b?.levels?.find(l => l.id === room?.level);
         for (const [x, z] of room?.polygon_world || []) sprite.position.add(new THREE.Vector3(x * FT, 0, -z * FT));
         sprite.position.divideScalar(Math.max(1, room?.polygon_world?.length || 0));
-        sprite.position.y = ((b?.base || 0) + (level?.elevation || 0) + groundAt(view.plan, ...(b?.position || [0, 0]))) * FT;
+        sprite.position.y = ((b?.base || 0) + (level?.elevation || 0) + buildingGround(view.plan, b)) * FT;
       }
       textures.assign(sprite, 'room', badge.attention ? 'attention' : 'off', badge.count);
       sprite.material.opacity = inRoom.every(row => row.dim) ? .4 : 1;
@@ -706,7 +706,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       const sprite = spriteFor(iconKind(marker), 'unavailable');
       sprite.userData.deviceId = marker.device_id;
       const building = view.plan.buildings.find(b => b.id === marker.building);
-      const ground = groundAt(view.plan, ...(building?.position || [0, 0]));
+      const ground = buildingGround(view.plan, building);
       sprite.position.set(marker.at[0] * FT, (marker.at[2] + ground) * FT, -marker.at[1] * FT);
       root.add(sprite);
       const label = document.createElement('span'); labels.append(label);

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { base } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, chartLookupGLSL, patchLightmaps, setLightTint, pickTranscode, lightSwizzle } from './lightmap_material.js';
 import { createBaker, bakeLayout } from './baker.js';
 import { mayBake } from './bake_lock.js';
@@ -197,7 +197,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
         centre.multiplyScalar(1 / 3).applyMatrix4(mesh.matrixWorld);
         const dx = centre.x / FT - (building.position?.[0] || 0), dy = -centre.z / FT - (building.position?.[1] || 0);
         const x = Math.cos(angle) * dx - Math.sin(angle) * dy, y = Math.sin(angle) * dx + Math.cos(angle) * dy;
-        const height = centre.y / FT - (building.base || 0) - groundAt(round, ...(building.position || [0, 0]));
+        const height = centre.y / FT - (building.base || 0) - buildingGround(round, building);
         const room = building.rooms.find(r => {
           const level = building.levels.find(l => l.id === r.level);
           return level && height >= level.elevation && height <= level.elevation + level.ceiling &&

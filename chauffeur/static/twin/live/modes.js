@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { FT, polygon, contains, stairHoles } from '../twin_generator.js';
 import { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 export { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { lightColor, lightIntensity, createRealLights } from './real_lights.js';
 import { registerClimate, roomClimate } from './climate.js';
 import { registerEnergy } from './energy.js';
@@ -75,7 +75,7 @@ export function mountModes(view, live) {
     const z = standing ? floor + LAMP_HEIGHT : marker.at[2];
     const range = lightRange({ ...marker, at: [marker.at[0], marker.at[1], z] }, building, level, room, span);
     const position = new THREE.Vector3(marker.at[0] * FT,
-      (z + groundAt(view.plan, ...(building?.position || [0, 0]))) * FT, -marker.at[1] * FT);
+      (z + buildingGround(view.plan, building)) * FT, -marker.at[1] * FT);
     // Ceiling placements sit just below the slab so their own fixture cannot
     // occlude them. Wall placements retain the person's chosen height.
     if (level && !standing && marker.at[2] >= floor + level.ceiling - .1) position.y -= .2 * FT;
@@ -99,7 +99,7 @@ export function mountModes(view, live) {
     mesh.userData.lightWash = { building: room.building, room: room.room };
     const group = new THREE.Group(); group.scale.setScalar(FT);
     const position = building.position || [0, 0];
-    group.position.set(position[0] * FT, ((building.base || 0) + groundAt(view.plan, ...position)) * FT, -position[1] * FT);
+    group.position.set(position[0] * FT, ((building.base || 0) + buildingGround(view.plan, building)) * FT, -position[1] * FT);
     group.rotation.y = (building.rotation || 0) * Math.PI / 180;
     group.visible = false;
     const label = document.createElement('span'); label.hidden = true; climateLabels.append(label);

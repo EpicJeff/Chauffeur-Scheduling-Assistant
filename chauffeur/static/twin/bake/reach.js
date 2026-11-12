@@ -1,6 +1,6 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { FT, lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { fingerprint } from './fingerprint.js';
 
 // Match the live lamp's bulb height and range, including the ceiling inset.
@@ -12,7 +12,7 @@ export function lightSource(plan, light) {
   const span = r ? Math.max(...[0, 1].map(k => Math.max(...r.polygon.map(p => p[k])) - Math.min(...r.polygon.map(p => p[k]))), 1) : 10;
   const range = lightRange({ at: [light.at[0], light.at[1], z] }, b, l, r, span) * FT;
   const source = new THREE.Vector3(light.at[0] * FT,
-    (z + groundAt(plan, ...(b?.position || [0, 0]))) * FT, -light.at[1] * FT);
+    (z + buildingGround(plan, b)) * FT, -light.at[1] * FT);
   if (l && !standing && light.at[2] >= floor + l.ceiling - .1) source.y -= .2 * FT;
   return { source, range };
 }

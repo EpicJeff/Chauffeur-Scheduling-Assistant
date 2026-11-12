@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { FT } from '../twin_generator.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { pieceGhostGeometry, ghostGroup, fadeGhost } from './ghost_geometry.js';
 
 // Like flags.js's proposals, these are an editor layer in building feet.
@@ -51,7 +51,7 @@ export function createBuildGhosts(view) {
       if (!shape) throw new Error('the piece has too little to draw');
       const { group } = ghostGroup(shape), position = b.position || [0, 0];
       group.scale.setScalar(FT); group.rotation.y = (b.rotation || 0) * Math.PI / 180;
-      group.position.set(position[0] * FT, ((b.base || 0) + groundAt(view.plan, ...position)) * FT, -position[1] * FT);
+      group.position.set(position[0] * FT, ((b.base || 0) + buildingGround(view.plan, b)) * FT, -position[1] * FT);
       root.add(group);
       pieces.set(event.seq, { group, step: event.step, level: p.level || (event.kind === 'level' ? p.id : null), building: b.id });
     } catch (error) {

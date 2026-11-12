@@ -2,6 +2,7 @@ import { solarLayout } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
 import { createEquipmentShelf } from './equipment_shelf.js';
+import { foundationShelf } from './foundation_shelf.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -56,7 +57,7 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink }) {
+export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview }) {
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
   let edgeIndex = null;
@@ -104,7 +105,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     const flags = roofFlags(record);
-    const nextLayout = JSON.stringify([record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial]);
+    const nextLayout = JSON.stringify([record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial]);
     host.hidden = !record;
     if (record && layout === nextLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
@@ -184,6 +185,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       }
     }
     if (kindIsEquipment(record)) equipmentShelf.draw(host, record);
+    if (kind === 'building') foundationShelf(host, piece, { getPlan, canEdit, queue, op, report, preview });
     const form = document.createElement('form'); form.addEventListener('submit', event => event.preventDefault()); host.append(form);
     const more = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'More'; more.append(summary);
     const cardFields = (kind === 'roof' && roof && !piece.rect ? []
@@ -192,7 +194,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     for (const field of cardFields) {
       const end = field.startsWith('ends.') ? field.slice(5) : null;
       const label = document.createElement('label'); label.textContent = end ? endNames[end]
-        : hosted(kind) && hostedLabels[field] || getFieldLabels()[field] || labels[field] || field[0].toUpperCase() + field.slice(1);
+        : field === 'base' && kind === 'building' ? 'Fixed base above lot datum'
+          : hosted(kind) && hostedLabels[field] || getFieldLabels()[field] || labels[field] || field[0].toUpperCase() + field.slice(1);
       let input;
       const choices = field === 'kind' ? (['roof', 'dormer'].includes(kind) ? ['hip', 'gable', 'shed', 'flat'] : ['window', 'door', 'slider', 'bifold', 'passage', 'garage'])
         : end ? ['gable', 'hip', 'clip'] : field === 'ridge' ? ['x', 'y'] : field === 'low_side' ? ['x0', 'x1', 'y0', 'y1'] : null;

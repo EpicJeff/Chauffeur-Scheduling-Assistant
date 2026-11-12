@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { contains } from '../twin_generator.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingBase } from '../twin_ground.js';
 import { snapRotation } from './snap.js';
 import { plotSuggestionCard } from './place.js';
 import { request, report } from './api.js';
@@ -303,7 +303,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     if (b.unbuilt) return;
     const groups = [view.groups.roof, view.groups.gableFull, view.groups.gableCut, view.groups.lights, ...Object.values(view.groups.levels)];
     for (const parent of groups) for (const g of parent?.children || []) if (g.userData.buildingId === b.id) {
-      g.position.set(b.position[0], groundAt(getPlan(), ...b.position) + (b.base || 0), -b.position[1]);
+      g.position.set(b.position[0], buildingBase(getPlan(), b), -b.position[1]);
       g.rotation.y = (b.rotation || 0) * Math.PI / 180; g.updateMatrixWorld(true);
     }
   }
@@ -422,6 +422,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
   }, { once: true });
   refresh();
   const tools = { pointerDown: begin, pointerMove: update, pointerUp: finish, focusBuilding, showLot,
+    cancel() { if (gesture) finish({ pointerId: gesture.pointer }, true); drawing = null; selected = null; closeCard(); },
     dragging: () => !!gesture?.hit || !!gesture?.drawing,
     lotHandles: handles,
     handles: () => handles().map(h => ({ kind: `building_${h.kind}`, id: h.building, at: [...h.at, 0] })),

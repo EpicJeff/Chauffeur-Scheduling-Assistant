@@ -12,6 +12,7 @@ import { createTimeline } from './timeline.js';
 import { createPlace } from './place.js';
 import { createRoofTools } from './roof_tools.js';
 import { createLotTools, streetView, streetSegment } from './lot_tools.js';
+import { createTerrainTools } from './terrain_tools.js';
 import { createLibrary } from './library.js';
 import { createFlags } from './flags.js';
 import { createDevicePlacement } from './device_placement.js';
@@ -32,7 +33,7 @@ export async function boot() {
   let resuming = false, stopping = false;
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
   let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, library = null, previewing = false, lastSummary = '';
-  let roofTools = null, lot = null, flags = null, devices = null, aimed = false;
+  let roofTools = null, lot = null, flags = null, devices = null, terrain = null, aimed = false;
   let buildGhosts = null, checks = null, drawingStarted = false;
   const statusChip = createStatusChip(el('editor-chip')), seenBuildRounds = new Set();
   const lifecycle = new AbortController();
@@ -546,19 +547,23 @@ export async function boot() {
     devices = createDevicePlacement({ view, tools, library, getPlan: () => timeline?.preview() || snapshot.plan,
       op: applyOp, canEdit, signal: lifecycle.signal,
       prepare() { onInteract(); roofTools.cancel(); draw.cancel(); } });
+    terrain = createTerrainTools({ view, tools, getPlan: () => timeline?.preview() || snapshot.plan,
+      op: applyOp, canEdit, signal: lifecycle.signal,
+      pickObject: (x, y) => library.pickSite(x, y),
+      prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });
     view.live = { draw: devices.draw, stop: devices.stop };
     tools.delegate({
       pick: flags.pick,
-      pointerDown: event => devices.pointerDown(event) || lot.pointerDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event) || library.pointerDown(event),
-      pointerMove: event => lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event) || library.pointerMove(event),
-      pointerUp: (event, cancel) => devices.pointerUp(event, cancel) || lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
-      floorChanged() { devices.cancel(); roofTools.cancel(); draw.floorChanged(); }, cancel() { devices.cancel(); roofTools.cancel(); draw.cancel(); },
+      pointerDown: event => terrain.pointerDown(event) || devices.pointerDown(event) || lot.pointerDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event) || library.pointerDown(event),
+      pointerMove: event => terrain.pointerMove(event) || lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event) || library.pointerMove(event),
+      pointerUp: (event, cancel) => terrain.pointerUp(event, cancel) || devices.pointerUp(event, cancel) || lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
+      floorChanged() { terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.floorChanged(); }, cancel() { terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.cancel(); },
     });
     timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
       canScrub: () => !menuBusy && !directing,
       log(summary) { const line = document.createElement('li'); line.textContent = summary; el('editor-log').append(line); lastSummary = summary; },
       onPreview(value) {
-        previewing = value; devices.cancel(); roofTools.cancel(); draw.cancel(); tools.select(null); pauses.dismiss(); panel.readOnly(value);
+        previewing = value; terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.cancel(); tools.select(null); pauses.dismiss(); panel.readOnly(value);
         tools.refreshCard(); syncBuildButton();
         for (const id of ['move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-level', 'delete', 'roof']) el(`rail-${id}`).disabled = value;
         if (!value) pauses.resume();
@@ -577,6 +582,7 @@ export async function boot() {
     if (new URLSearchParams(location.search).get('test') === '1') window.__twinEditor = {
       haLink: tools.haLink,
       selection: tools.selection, handles: () => [...tools.handles(), ...lot.handles()], op: applyOp,
+      terrain,
       underlay: lot.underlay, lotHandles: lot.lotHandles, lotSuggestions: lot.lotSuggestions,
       flags: flags.flags, proposals: flags.proposals,
       get lastDragFrameMs() { return tools.lastDragFrameMs; },

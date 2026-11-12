@@ -228,17 +228,20 @@ export function createViewing(view, model, ground, changed) {
         bindings.delete(material);
       });
     },
-    dispose() {
+    dispose({ deferMaterials = false } = {}) {
       domainVisibility.forEach(([group, visible]) => { group.visible = visible; });
       for (const {object, source, next} of replacements) if (object.material === next) object.material = source;
       for (const c of channels) for (const {object, cast} of c.shadows) object.castShadow = cast;
-      for (const material of [...bindings.keys()]) material.dispose();
+      const materials = [...bindings.keys()];
+      const release = () => materials.forEach(material => material.dispose());
+      if (!deferMaterials) release();
       bindings.clear();
+      return release;
     },
     warm() {
       if (!view.renderer3.compileAsync) return;
       const visible = []; model.root.traverse(o => { visible.push([o, o.visible]); o.visible = true; });
-      try { view.renderer3.compileAsync(view.scene, view.camera).catch(() => {}); }
+      try { return view.renderer3.compileAsync(view.scene, view.camera).catch(() => {}); }
       finally { visible.forEach(([o, value]) => { o.visible = value; }); }
     },
   };

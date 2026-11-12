@@ -491,7 +491,8 @@ MORE_OPS = ('add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equi
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
-            'move_site_item', 'delete_site_item', 'add_site_item', 'place_device', 'unplace_device')
+            'move_site_item', 'delete_site_item', 'add_site_item', 'place_device', 'unplace_device',
+            'add_pad', 'update_pad', 'delete_pad', 'set_foundation')
 
 
 def _item_scale(value):
@@ -1089,10 +1090,13 @@ def _site_op(model, op, actor):
     from services import twin_plan
     before = deepcopy(model)
     name = op.get('list')
-    if name not in ('planting', 'furniture'):
-        raise Refused('Choose plants or furniture.')
-    pieces = model['site'].setdefault(name, [])
+    if name not in ('planting', 'furniture', 'beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence'):
+        raise Refused('Choose a yard item.')
+    singleton = name in ('pool', 'fire_pit', 'fence')
+    pieces = ([model['site'][name]] if model['site'].get(name) else []) if singleton else model['site'].setdefault(name, [])
     if op['op'] == 'add_site_item':
+        if name not in ('planting', 'furniture'):
+            raise Refused('Add plants and furniture through the library.')
         asset = _text(op.get('asset'))
         piece = {'id': _id(model['site'], name), 'asset': asset, 'at': _point(op.get('at'))}
         if name == 'planting':
@@ -1108,15 +1112,30 @@ def _site_op(model, op, actor):
             piece['src'] = {'person': True}
         pieces.append(piece)
     else:
-        index = op.get('index')
+        index = next((i for i, p in enumerate(pieces) if p.get('id') == op['id']), -1) if op.get('id') else op.get('index', 0 if singleton else None)
         if type(index) is not int or not 0 <= index < len(pieces):
             raise Refused('That site item is missing.')
         if op['op'] == 'move_site_item':
-            pieces[index]['at'] = _point(op.get('at'))
+            piece = pieces[index]
+            if 'by' in op:
+                by = _point(op['by'])
+                for key in ('at', 'polygon', 'points', 'polyline'):
+                    if key not in piece:
+                        continue
+                    if key == 'at':
+                        piece[key] = [piece[key][i] + by[i] for i in (0, 1)]
+                    else:
+                        piece[key] = [[p[i] + by[i] for i in (0, 1)] for p in piece[key]]
+            elif 'at' in piece:
+                piece['at'] = _point(op.get('at'))
+            else:
+                raise Refused('Move this shape by a distance in lot feet.')
             if actor == 'person':
                 pieces[index].setdefault('src', {})['person'] = True
         else:
             pieces.pop(index)
+            if singleton:
+                model['site'][name] = None
     return twin_plan.record_compose_overrides(before, model), 'Changed the site item.'
 
 
@@ -1139,6 +1158,41 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
         raise Refused('That operation is not available.')
     op = deepcopy(op)
     model, notes = twin_model.normalize(model)
+    if kind in ('add_pad', 'update_pad', 'delete_pad', 'set_foundation'):
+        from services import twin_terrain
+        if kind == 'set_foundation':
+            b = _find(model, 'buildings', op.get('building'))
+            value = deepcopy(op.get('foundation'))
+            error = twin_terrain.foundation_error(value)
+            if error:
+                raise Refused(error)
+            b['foundation'] = value
+            if actor == 'person':
+                b['foundation_src'] = {'person': True}
+        else:
+            pads = model['site'].setdefault('terraces', [])
+            if kind == 'add_pad':
+                if len(pads) >= 40:
+                    raise Refused('A lot can have at most 40 pads.')
+                pad = {'id': _id(model['site'], 'pad'), 'polygon': op.get('polygon'), 'height': op.get('height', 0)}
+                pads.append(pad)
+            else:
+                pad = _find(model['site'], 'terraces', op.get('id'))
+            if kind == 'delete_pad':
+                pads.remove(pad)
+            else:
+                for key in ('polygon', 'height', 'blend', 'edges'):
+                    if key in op:
+                        pad[key] = deepcopy(op[key])
+                error = twin_terrain.pad_error(pad)
+                if error:
+                    raise Refused(error)
+                if actor == 'person':
+                    pad['src'] = {'person': True}
+        error = twin_terrain.crossing_error(model)
+        if error:
+            raise Refused(error)
+        return model, 'Changed the foundation.' if kind == 'set_foundation' else 'Changed the terrace pad.'
     if kind == 'set_solar_source':
         roof = op.get('roof')
         if roof is not None and not any(r['id'] == roof for b in model['buildings'] for r in b.get('roofs', [])):
@@ -1231,6 +1285,10 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
     notes.extend(hosts.follow(building, before))
     _follow_dormers(building, before)
     solar_clear(building, previous)
+    from services import twin_terrain
+    terrain_error = twin_terrain.crossing_error(model)
+    if terrain_error:
+        raise Refused(terrain_error)
     twin_model.filter_checked_flags(building)
     if actor == 'person':
         _mark_touched(building, previous, op)

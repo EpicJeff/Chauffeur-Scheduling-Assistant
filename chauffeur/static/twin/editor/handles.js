@@ -2,7 +2,7 @@ import { solarPoint, solarFrame, solarUV } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import * as THREE from 'three';
 import { hostPoint, parkingPoint } from '../twin_hosts.js';
-import { groundAt } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { roofEdge } from './roof_tools.js';
 
 const FT = .3048;
@@ -23,14 +23,14 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   function world(building, point) {
     const a = (building.rotation || 0) * Math.PI / 180, [x, y, z] = point, p = building.position || [0, 0];
     return new THREE.Vector3((Math.cos(a) * x - Math.sin(a) * y + p[0]) * FT,
-      (z + (building.base || 0) + groundAt(plan(), ...p)) * FT,
+      (z + (building.base || 0) + buildingGround(plan(), building)) * FT,
       -(Math.sin(a) * x + Math.cos(a) * y + p[1]) * FT);
   }
   function local(building, point) {
     const a = -(building.rotation || 0) * Math.PI / 180, p = building.position || [0, 0];
     const x = point.x / FT - p[0], y = -point.z / FT - p[1];
     return new THREE.Vector3(Math.cos(a) * x - Math.sin(a) * y, Math.sin(a) * x + Math.cos(a) * y,
-      point.y / FT - (building.base || 0) - groundAt(plan(), ...p));
+      point.y / FT - (building.base || 0) - buildingGround(plan(), building));
   }
   function ray(event, building) {
     const rect = canvas.getBoundingClientRect(); view.camera.updateMatrixWorld(true);

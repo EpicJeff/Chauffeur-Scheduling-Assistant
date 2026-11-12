@@ -175,13 +175,38 @@ export async function loadSky(kit, onLate) {
     () => new HDRLoader(manager).loadAsync(libUrl(entry[0], name)), texture => texture.clone(), onLate) : null;
 }
 
-export function disposeObject(root) {
+// Geometry rebuilds of the same asset keep its compiled material instances.
+// The caller owns this cache and releases it with the rest of its view.
+export function cacheModelMaterials(root, key, cache) {
+  const seen = new Map(), retired = new Set();
+  root.traverse(o => {
+    const reuse = m => {
+      if (!seen.has(m)) {
+        const id = `model:${key}:${seen.size}`, cached = cache.get(id);
+        if (cached && cached !== m) retired.add(m);
+        const material = cached || m; cache.set(id, material); seen.set(m, material);
+      }
+      return seen.get(m);
+    };
+    if (o.material) o.material = Array.isArray(o.material) ? o.material.map(reuse) : reuse(o.material);
+  });
+  const keepTextures = new Set([...cache.values()].flatMap(m => Object.values(m).filter(v => v?.isTexture)));
+  const textures = new Set();
+  for (const m of retired) {
+    for (const value of Object.values(m)) if (value?.isTexture && !keepTextures.has(value)) textures.add(value);
+    m.dispose();
+  }
+  textures.forEach(t => t.dispose()); return root;
+}
+
+export function disposeObject(root, { keepMaterials = new Set() } = {}) {
   const geometries = new Set(), materials = new Set(), textures = new Set();
   root.traverse(o => {
     o.userData.disposed = true;
     if (o.isInstancedMesh) o.dispose();
     if (o.geometry) geometries.add(o.geometry);
     for (const m of o.material ? [].concat(o.material) : []) {
+      if (keepMaterials.has(m)) continue;
       materials.add(m);
       for (const value of Object.values(m)) if (value?.isTexture) textures.add(value);
     }
