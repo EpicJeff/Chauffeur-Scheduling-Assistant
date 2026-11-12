@@ -95,7 +95,7 @@ export function guessEnergy(states = {}, saved = {}, fleet = [], plan = {}) {
   guessed.chargers = guessed.chargers.slice(0,8);
   const result = {...guessed, ...saved, panels: {...guessed.panels, ...saved.panels}};
   // Fleet appearance, warning levels and omitted fuel/range bindings survive a saved mapping.
-  result.cars = result.cars.map(c=>({...fleet.find(f=>String(f.id)===String(c.id)),...c}));
+  result.cars = result.cars.map(c=>{const household=fleet.find(f=>String(f.id)===String(c.id));return {...household,...c,twin_model:household?.twin_model || null};});
   const fleetOrder=new Map(fleet.map((c,i)=>[String(c.id),i]));
   result.cars.sort((a,b)=>(fleetOrder.get(String(a.id)) ?? Infinity)-(fleetOrder.get(String(b.id)) ?? Infinity));
   for(const b of plan.buildings || [])for(const p of b.anchors || [])if(p.kind==='charger' && p.state!=='ghost'){

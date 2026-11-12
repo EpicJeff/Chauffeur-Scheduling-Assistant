@@ -337,6 +337,10 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     el('library-status').textContent = picking ? pickingWords() : hint;
   }
   mountImports({ canvas, kit, canEdit, signal, changed: async () => { catalog = loading = null; tab = 'items'; host.hidden = false; await browse(); } });
+  if (new URLSearchParams(location.search).get('library') === '1') {
+    tab = 'items'; host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true');
+    browse().catch(report);
+  }
   if (el('library-search')) listen(el('library-search'), 'input', () => browse().catch(report));
   listen(el('rail-library'), 'click', () => {
     host.hidden = !host.hidden; el('rail-library').setAttribute('aria-pressed', String(!host.hidden));

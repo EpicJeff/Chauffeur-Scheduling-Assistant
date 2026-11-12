@@ -307,10 +307,14 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-terrain-label { position: fixed; z-index: 3; transform: translate(-50%, -50%); padding: 2px 6px; border-radius: 5px; background: var(--twinGlassStrong); color: var(--twinText); font-size: 12px; white-space: nowrap; pointer-events: none; }
 
 /* Import confirmation uses the piece card/library panel's glass and controls. */
-.object-import { position: fixed; z-index: 10; top: 12%; left: 50%; transform: translateX(-50%); width: min(360px, calc(100vw - 28px)); max-height: 76dvh; overflow-y: auto; padding: 14px; border: 1px solid var(--editor-accent); border-radius: 16px; background: var(--editor-panel); backdrop-filter: blur(16px); }
+.object-import { position: fixed; z-index: 10; top: 12%; left: 50%; transform: translateX(-50%); width: min(560px, calc(100vw - 28px)); max-height: 76dvh; overflow-y: auto; padding: 14px; border: 1px solid var(--editor-accent); border-radius: 16px; background: var(--editor-panel); backdrop-filter: blur(16px); }
 .object-import label { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0; }
 .object-import input, .object-import select { width: 160px; min-width: 0; }
 .object-import > img { display: block; width: 160px; height: 128px; margin: 0 auto; object-fit: contain; }
+.object-import-versions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.object-import-versions figure { margin: 0; min-width: 0; }
+.object-import-versions img { display: block; width: 100%; aspect-ratio: 5 / 4; object-fit: contain; }
+.object-import-versions figcaption { font-size: .75rem; overflow-wrap: anywhere; }
 .object-import button { margin: 8px 6px 0 0; }
 .object-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .object-model-grid button { display: flex; flex-direction: column; align-items: center; }

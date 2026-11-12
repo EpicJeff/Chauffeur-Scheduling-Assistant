@@ -20,16 +20,18 @@
     }
     const twinImports = {
       'three': twinBase + {{ 'static/vendor/three-r187/three.module.js' | ver | tojson }},
+      'three/addons/exporters/GLTFExporter.js': twinBase + {{ 'static/vendor/three-r187/addons/exporters/GLTFExporter.js' | ver | tojson }},
       'three/addons/': twinBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': twinBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'import_loaders', 'twin_view', 'viewing', 'unlit', 'twin_roof', 'twin_ground', 'twin_terrain_mesh', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
+    {% for name in ['model_lods', 'objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'import_loaders', 'twin_view', 'viewing', 'unlit', 'twin_roof', 'twin_ground', 'twin_terrain_mesh', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     twinImports[new URL(twinBase + 'static/vendor/lucide/icons.js', location.href).href] = twinBase + {{ 'static/vendor/lucide/icons.js' | ver | tojson }};
+    twinImports[new URL(twinBase + 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js', location.href).href] = twinBase + {{ 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js' | ver | tojson }};
     // Bake modules import three by its path; map that path onto the one versioned three.
     twinImports[new URL(twinBase + 'static/vendor/three-r187/three.module.js', location.href).href] = twinImports.three;
     const twinMap = document.createElement('script'); twinMap.type = 'importmap';

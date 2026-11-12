@@ -35,7 +35,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
     // Independently faded viewing domains must never merge into their parent.
     for (let p = o.parent; p && p !== group; p = p.parent)
       if (p.userData.viewingWalls || p.userData.viewingTree) return;
-    if (!o.isMesh || o.userData.pendingImport || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material?.vertexColors ||
+    if (!o.isMesh || o.userData.modelLod || o.userData.pendingImport || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material?.vertexColors ||
         !o.geometry?.attributes.position || Object.keys(o.geometry.morphAttributes || {}).length) return;
     let g;
     try {
@@ -362,18 +362,28 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     let activePiece = null;
     const records = new Map(), wallProfiles = new Map();
     const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || fallback, kind, buildingId: b.id, ghost: piece.state === 'ghost' }; };
-    const mesh = (group, geometry, material) => {
+    const mesh = (group, geometry, material, retained = null) => {
       const data = activePiece || { pieceId: 'structure', kind: 'building', buildingId: b.id };
       const key = `${b.id}:${data.pieceId}`;
-      const object = addMesh(group, geometry, data.ghost ? ghost : material);
+      const object = retained || addMesh(group, geometry, data.ghost ? ghost : material);
+      if (retained && data.ghost) object.material = ghost;
       Object.assign(object.userData, data);
       if (!pieces.has(key)) pieces.set(key, []);
       const objects = pieces.get(key); objects.push(object);
       // Non-enumerable: this back-reference is used only while merging.
       Object.defineProperty(object.userData, 'pieceObjects', { value: objects });
       if (!records.has(key)) records.set(key, { data, group, box: new THREE.Box3() });
-      geometry.computeBoundingBox(); records.get(key).box.union(geometry.boundingBox);
+      geometry.computeBoundingBox(); const bounds = geometry.boundingBox.clone();
+      if (retained) {
+        object.updateWorldMatrix(true, false); group.updateWorldMatrix(true, false);
+        bounds.applyMatrix4(group.matrixWorld.clone().invert().multiply(object.matrixWorld));
+      }
+      records.get(key).box.union(bounds);
       return object;
+    };
+    const retainLod = (group, model) => {
+      group.add(model); model.updateWorldMatrix(true, true);
+      model.traverse(object => { if (object.isMesh) mesh(group, object.geometry, object.material, object); });
     };
     const center = b.walls.length ? b.walls.reduce((a, w) => [a[0] + w.from[0] / b.walls.length, a[1] + w.from[1] / b.walls.length], [0, 0]) : [0, 0];
     const wallNormal = w => {
@@ -550,7 +560,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
           const placeholder = localBox(cu, cv, width, height, Math.min(thickness, .08), mat('window_frame'));
           if (placeholder) placeholder.userData.pendingImport = true;
           const openingData = activePiece;
-          pendingModels.push(loadModel(h.model, kit, undefined, { tier }).then(source => {
+          pendingModels.push(loadModel(h.model, kit, undefined, { tier, editor: !viewing }).then(source => {
             if (!source) return;
             if (root.userData.disposed) { disposeObject(source); return; }
             const livePlaceholder = pieces.get(`${b.id}:${openingData.pieceId}`)?.find(o => o === placeholder);
@@ -564,6 +574,10 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
             if (h.swing === 'out') fitted.scale.z *= -1;
             fitted.updateMatrixWorld(true);
             const saved = activePiece; activePiece = openingData;
+            if (source.isLOD) {
+              const transform = new THREE.Group(); transform.applyMatrix4(matrix); transform.add(fitted);
+              retainLod(group, transform); activePiece = saved; registerRecords(); return;
+            }
             fitted.traverse(object => {
               if (object.isMesh) mesh(group, object.geometry.clone().applyMatrix4(object.matrixWorld).applyMatrix4(matrix), object.material);
             });
@@ -1242,6 +1256,9 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
           model.position.set(point[0], point[2] + (item.elevation || 0), -point[1]);
           model.updateMatrixWorld(true);
           use(item, 'item', item.id);
+          if (model.isLOD) {
+            retainLod(group, model); registerRecords(); return;
+          }
           model.traverse(object => {
             if (object.isMesh) mesh(group, object.geometry.clone().applyMatrix4(object.matrixWorld), object.material);
           });
@@ -1261,7 +1278,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
           models.set(asset, loadModel(asset, kit, model => {
             if (root.userData.disposed) { disposeObject(model); return; }
             for (const update of lateItems.get(asset)) update(model.clone(true), true);
-          }, { tier }));
+          }, { tier, editor: !viewing }));
         }
         lateItems.get(asset).push(draw);
         source = await models.get(asset);

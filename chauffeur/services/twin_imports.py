@@ -24,6 +24,11 @@ CHUNK_BYTES = 4 * 1024 * 1024
 MAX_FILES = 512
 UPLOAD_TTL = 3600
 META = '.asset.json'
+LOD_MAX_BYTES = 50 * 1024 * 1024
+
+
+def car_users(asset_id):
+    return [c.get('name') or 'Unnamed car' for c in storage.get_all_cars() or [] if c.get('twin_model') == asset_id]
 
 
 def limit_mb():
@@ -64,6 +69,12 @@ def _upload(upload_id):
 
 def start_upload(body):
     name, size, files = body.get('name'), body.get('size'), body.get('files')
+    derived = body.get('asset_id') is not None
+    if derived:
+        if not get(body['asset_id']):
+            raise ValueError('This imported model no longer exists.')
+        if body.get('lod') not in ('lod1.glb', 'lod2.glb') or files != [{'name': body.get('lod'), 'size': size}]:
+            raise ValueError('Upload one lighter version named lod1.glb or lod2.glb.')
     if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
         raise ValueError('Give the model a name of at most 100 characters.')
     if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
@@ -79,7 +90,9 @@ def start_upload(body):
         declared.append({'name': filename, 'size': row['size']})
     if type(size) is not int or size <= 0 or size != sum(row['size'] for row in declared):
         raise ValueError('The declared model sizes do not match.')
-    if size > limit_mb() * 1024 * 1024:
+    if derived and size > LOD_MAX_BYTES:
+        raise ValueError('Each lighter version may be at most 50 MB.')
+    if not derived and size > limit_mb() * 1024 * 1024:
         raise ValueError(f'Models may be at most {limit_mb()} MB uploaded.')
     with twin_store.LIFECYCLE, twin_store._LOCK:
         folder = _uploads()
@@ -90,7 +103,8 @@ def start_upload(body):
         folder.mkdir()
         (folder / 'body').write_bytes(b'')
         (folder / 'meta.json').write_text(json.dumps({'name': name.strip(), 'size': size,
-            'files': declared, 'received': 0, 'index': 0, 'expires': time.time() + UPLOAD_TTL}), encoding='utf-8')
+            'files': declared, 'received': 0, 'index': 0, 'expires': time.time() + UPLOAD_TTL,
+            **({'asset_id': body['asset_id'], 'lod': body['lod']} if derived else {})}), encoding='utf-8')
     return {'upload_id': upload_id, 'chunk_bytes': CHUNK_BYTES}
 
 
@@ -101,7 +115,9 @@ def upload_chunk(upload_id, index, data):
             raise ValueError(f"Send model chunk {meta['index']} next.")
         if not data or len(data) > CHUNK_BYTES or meta['received'] + len(data) > meta['size']:
             raise ValueError('This chunk exceeds the declared model size or the 4 MB chunk limit.')
-        if meta['size'] > limit_mb() * 1024 * 1024:
+        if meta.get('asset_id') and meta['size'] > LOD_MAX_BYTES:
+            raise ValueError('Each lighter version may be at most 50 MB.')
+        if not meta.get('asset_id') and meta['size'] > limit_mb() * 1024 * 1024:
             raise ValueError(f'Models may be at most {limit_mb()} MB uploaded.')
         # Truncate any unacknowledged append left by an interrupted write.
         with (folder / 'body').open('r+b') as stream:
@@ -124,6 +140,8 @@ def finish_upload(upload_id):
         try:
             with (folder / 'body').open('rb') as stream:
                 files = {row['name']: stream.read(row['size']) for row in meta['files']}
+            if meta.get('asset_id'):
+                return attach_lod(meta['asset_id'], meta['lod'], files[meta['lod']])
             return create(files, meta['name'], 'other')
         finally:
             shutil.rmtree(folder)
@@ -159,6 +177,29 @@ def get(asset_id):
         return json.loads((root() / asset_id / META).read_text(encoding='utf-8'))
     except FileNotFoundError:
         return None
+
+
+def attach_lod(asset_id, name, data):
+    if name not in ('lod1.glb', 'lod2.glb') or len(data) > LOD_MAX_BYTES:
+        raise ValueError('Each lighter GLB version may be at most 50 MB.')
+    entry = get(asset_id)
+    if not entry:
+        raise ValueError('This imported model no longer exists.')
+    if name == entry['model'] or name in entry['files'] and not any(l['name'] == name for l in entry.get('lods', [])):
+        raise ValueError('The original already uses this filename. Keep the original model untouched.')
+    try:
+        triangles = _inspect(name, {name: data})
+    except (KeyError, IndexError, TypeError, AttributeError, UnicodeError, json.JSONDecodeError, struct.error) as exc:
+        raise ValueError('The lighter GLB is invalid or incomplete.') from exc
+    target = root() / asset_id
+    temp = target / ('.' + name + '.tmp')
+    temp.write_bytes(data); os.replace(temp, target / name)
+    entry['lods'] = sorted([l for l in entry.get('lods', []) if l['name'] != name] +
+                           [{'name': name, 'triangles': triangles, 'bytes': len(data)}], key=lambda l: l['name'])
+    entry['files'][name] = True
+    temp = target / '.asset.tmp'
+    temp.write_text(json.dumps(entry), encoding='utf-8'); os.replace(temp, target / META)
+    return entry
 
 
 def catalog():
@@ -399,6 +440,8 @@ def rename(asset_id, name, kind=None, thumbnail=None, size=None, triangles=None)
                 raise ValueError('Choose a model kind.')
             if kind != entry['kind'] and twin_objects.placements(twin_store.current_model(), asset_id):
                 raise ValueError('Remove placements before changing the model kind.')
+            if kind != 'car' and car_users(asset_id):
+                raise ValueError('Remove this model from these cars first: ' + '; '.join(car_users(asset_id)))
             entry['kind'] = kind
         if thumbnail:
             (root() / asset_id / '.thumbnail.png').write_bytes(_thumbnail(thumbnail))
@@ -415,6 +458,8 @@ def delete(asset_id):
     with twin_store.LIFECYCLE, twin_store._LOCK:
         if not get(asset_id):
             raise KeyError(asset_id)
+        if car_users(asset_id):
+            raise ValueError('Remove this model from these cars first: ' + '; '.join(car_users(asset_id)))
         places = twin_objects.placements(twin_store.current_model(), asset_id)
         if places:
             raise ValueError('Remove its placements first: ' + '; '.join(places))

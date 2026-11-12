@@ -7,6 +7,7 @@ export function mountEnergySettings(view, {api = (path, init) => fetch(base() + 
   const editor = document.getElementById('twin-energy-fields'), save = document.getElementById('twin-energy-save');
   const search = document.getElementById('twin-energy-search');
   const events = new AbortController(); let stopped = false, draft = null, preferences = null, ready = false;
+  let carModels = new Map();
   const check = document.createElement('section'), title = document.createElement('h3'), checkBody = document.createElement('div');
   check.id = 'twin-energy-check'; check.className = 'twin-energy-check'; title.textContent = 'Energy check'; check.append(title, checkBody);
   save?.parentNode?.append(check);
@@ -91,6 +92,10 @@ export function mountEnergySettings(view, {api = (path, init) => fetch(base() + 
       const nameLabel = document.createElement('label'), input = document.createElement('input'); input.value = car.name; input.maxLength = 100;
       input.addEventListener('input', () => {car.name = input.value; useCars();}); nameLabel.append(document.createTextNode('Car name'), input); group.append(nameLabel);
       const fuel=document.createElement('p');fuel.textContent=`Fuel entity: ${car.fuel_level || '—'} (set in Drive setup)`;group.append(fuel);
+      const fleetCar=preferences.cars.find(c=>String(c.id)===String(car.id)),model=fleetCar?.twin_model;
+      const modelNote=document.createElement('p'),driveLink=document.createElement('a');
+      modelNote.textContent=`3D model in the house: ${model ? carModels.get(model) || 'Saved car model' : 'None: show the icon'}. `;
+      driveLink.href=base()+'drive_setup#cars';driveLink.textContent='Set in Drive setup';modelNote.append(driveLink);group.append(modelNote);
       for (const key of [...(carPower(car)==='fuel'?[]:['charging', 'charge_power']), 'battery_level', 'location']) {
         const opts = [['', key === 'location' ? 'No tracker (rests at home)' : 'None'], ...ids.map(id => [id, `${name(id)} (${id})`])];
         select(group, key==='charge_power'?'Charge power (optional — the car’s own reading)':key==='charging'?'Charging state':caption(key), opts, car[key] || '', value => {
@@ -127,7 +132,16 @@ export function mountEnergySettings(view, {api = (path, init) => fetch(base() + 
       if (!ready && editor && p.can_edit) {draft = newDraft(p); ready = true; save.disabled = false; render();}
     } catch { /* Keep the last mapping through HA or network outages. */ }
   }
+  async function reloadCarModels() {
+    try {
+      const response=await api('api/house/twin/imports');if(!response.ok)return;
+      const entries=await response.json();if(stopped || !Array.isArray(entries))return;
+      carModels=new Map(entries.filter(entry=>entry.kind==='car').map(entry=>[entry.id,entry.name]));
+      if(ready)render();
+    } catch { /* The saved assignment stays visible while the library is unavailable. */ }
+  }
   listen(window, 'chf-settings-opened', event => {if (event.detail?.tab === 'twin' && ready) {draft = newDraft(preferences); render();}});
+  listen(window, 'chf-settings-opened', event => {if(event.detail?.tab==='twin')reloadCarModels();});
   listen(search, 'input', render);
   listen(save, 'click', async () => {
     if (!ready || stopped) return;
@@ -157,6 +171,6 @@ export function mountEnergySettings(view, {api = (path, init) => fetch(base() + 
     } catch {window.chfSettingsSaved?.(false, 'Could not save energy sources.');}
     finally {if (!stopped) save.disabled = false;}
   });
-  const timer = setInterval(reload, 30000); reload();
+  const timer = setInterval(reload, 30000); reload(); reloadCarModels();
   return {reload, refreshChoices() {if (preferences) {apply(preferences); if (ready) render();}}, stop() {stopped = true; clearInterval(timer); events.abort(); unsubscribe?.(); check.remove();}};
 }

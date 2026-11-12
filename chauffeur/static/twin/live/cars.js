@@ -4,6 +4,18 @@ import { LUCIDE } from '../../vendor/lucide/icons.js';
 import { markerSprite } from './markers.js';
 import { guessEnergy, carHome, carPower, carCharging, chargingCar, watts } from './energy_mapping.js';
 import { energyAnchors, worldPoint } from './energy_geometry.js';
+import { loadModel } from '../twin_library.js';
+
+export function placeCarModel(model, spot) {
+  // Imported models are metres, bottom centred. Parking's zero turn has its
+  // long edge along plan Y (world -Z); preserve the authored physical scale.
+  const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+  const wrapper = new THREE.Group(); wrapper.add(model);
+  wrapper.userData.longAxisX = size.x > size.z;
+  wrapper.rotation.y = carTurn(wrapper, spot);
+  wrapper.position.copy(worldPoint(spot.at)); return wrapper;
+}
+const carTurn = (model, spot) => (spot.rotation || 0) * Math.PI / 180 + (model.userData.longAxisX === (spot.depth >= spot.width) ? Math.PI / 2 : 0);
 
 export function carTexture(color, ring = '') {
   color = /^#[\da-f]{6}$/i.test(color || '') ? color : '#64748b';
@@ -28,11 +40,40 @@ const numeric = row => row?.state != null && String(row.state).trim()!=='' && Nu
 
 // Mounted once by the live keeper, including a house with no HA. The live
 // state is read at draw time, so pushes and layer recovery use the same path.
-export function mountCars({view, live = () => view.live}) {
+export function mountCars({view, live = () => view.live, modelLoader = loadModel}) {
   const root=new THREE.Group();root.userData.twinCars=true;view.scene.add(root);
   const labels=document.createElement('div');labels.className='twin-car-labels';document.body.append(labels);
   const sheet=document.createElement('aside');sheet.className='twin-car-sheet';sheet.hidden=true;sheet.setAttribute('role','dialog');document.body.append(sheet);
   const events=new AbortController(),textures=new Map(),rows=new Map();let selected=null,stopped=false;
+  const models=new Map();
+  function modelFor(row, spot) {
+    const id=row.car.twin_model, key=id ? `${id}:${view.tier}` : null;
+    if(row.modelKey!==key){row.model?.removeFromParent();row.model=null;row.modelKey=key;row.pending=false;}
+    if(!key || row.model || row.pending)return;
+    row.pending=true;
+    if(!models.has(key))models.set(key,modelLoader(id,view.kit || {},source=>{
+      if(stopped)return;models.set(key,Promise.resolve(source));
+      for(const carRow of rows.values())if(carRow.modelKey===key && !carRow.model){carRow.pending=false;modelFor(carRow,carRow.spot || spot);}
+    },{tier:view.tier,shared:true}).catch(()=>null));
+    const attach=source=>{
+      if(stopped || row.modelKey!==key || !rows.has(row.car.id) || !source)return;
+      const model=source.clone(true);row.model=placeCarModel(model,row.spot || spot);root.add(row.model);
+      row.height=new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).y;
+      row.model.traverse(o=>{o.userData.carModel=row.car.id;});
+      // Warm all levels once; a distance switch reuses these programs.
+      view.renderer3.compileAsync?.(view.scene,view.camera).catch(()=>{});dirty=true;
+    };
+    models.get(key).then(attach);
+  }
+  const canvas=view.renderer3.domElement, raycaster=new THREE.Raycaster();let down=null;
+  canvas.addEventListener('pointerdown',e=>{down=[e.clientX,e.clientY];},{signal:events.signal});
+  canvas.addEventListener('pointerup',e=>{
+    if(!down || Math.hypot(e.clientX-down[0],e.clientY-down[1])>6)return;down=null;
+    const rect=canvas.getBoundingClientRect();view.camera.updateMatrixWorld(true);root.updateMatrixWorld(true);
+    raycaster.setFromCamera(new THREE.Vector2((e.clientX-rect.left)/rect.width*2-1,1-(e.clientY-rect.top)/rect.height*2),view.camera);
+    const hit=raycaster.intersectObjects([...rows.values()].filter(r=>r.model?.visible && r.sprite.visible).map(r=>r.model),true)[0];
+    if(hit){e.stopPropagation();card(rows.get(hit.object.userData.carModel));}
+  },{signal:events.signal,capture:true});
   let dirty=true,lastLive=null,lastPlan=null,lastSources=null,unsubscribe=null;
   const texture=(color,ring)=>{const key=JSON.stringify([color,ring]);if(!textures.has(key))textures.set(key,carTexture(color,ring));return textures.get(key);};
   let cardKey='';
@@ -71,7 +112,11 @@ export function mountCars({view, live = () => view.live}) {
       }
       row.car=car;
       const spot=anchors.spots.find(s=>s.car===car.id);
+      row.spot=spot;
+      if(spot)modelFor(row,spot);
       row.sprite.visible=!!spot && carHome(car,states) && !current?.stale();
+      if(row.model){row.model.visible=row.sprite.visible;if(spot){row.model.position.copy(worldPoint(spot.at));
+        row.model.rotation.y=carTurn(row.model,spot);}}
       row.button.hidden=row.label.hidden=!row.sprite.visible;
       if(!row.sprite.visible)continue;
       row.charger=mapping.chargers.find((c,i)=>watts(c.power,states)>=50 && chargingCar({...c,at:anchors.chargers[i]},mapping.cars,states,anchors.spots)?.id===car.id);
@@ -84,13 +129,13 @@ export function mountCars({view, live = () => view.live}) {
         row.fuel!==null && car.fuel_warn_pct!=null && row.fuel<car.fuel_warn_pct;
       const ring=row.charging?'#9957d2':low?twinAttention:'';
       row.sprite.material.map=texture(car.color,ring);
-      row.sprite.position.copy(worldPoint([spot.at[0],spot.at[1],spot.at[2]+4]));
+      row.sprite.position.copy(worldPoint(spot.at));row.sprite.position.y+=row.model?(row.height || 1.5)+.45:4*.3048;
       row.button.setAttribute('aria-label',car.name);
       const levels=[...(row.kind==='fuel'?[]:[`🔋 ${row.battery===null?'—':row.battery+'%'}`]),
         ...(row.kind==='electric'?[]:[`⛽ ${row.fuel===null?'—':row.fuel+'%'}`])];
       row.label.textContent=`${car.name} · ${levels.join(' · ')}${row.charging && row.power!==null?` · ⚡ ${Number((row.power/1000).toFixed(2))} kW`:''}`;
     }
-    for(const [id,row] of rows)if(!present.has(id)){row.sprite.removeFromParent();row.sprite.material.dispose();row.button.remove();row.label.remove();rows.delete(id);}
+    for(const [id,row] of rows)if(!present.has(id)){row.model?.removeFromParent();row.sprite.removeFromParent();row.sprite.material.dispose();row.button.remove();row.label.remove();rows.delete(id);}
     if(added && typeof view.renderer3.compileAsync==='function'){
       const shown=[...rows.values()].map(r=>[r.sprite,r.sprite.visible]);
       try{shown.forEach(([sprite])=>{sprite.visible=true;});view.renderer3.compileAsync(view.scene,view.camera).catch(()=>{});}
@@ -110,7 +155,7 @@ export function mountCars({view, live = () => view.live}) {
       if(!row.sprite.visible)continue;
       const depth=-row.sprite.position.clone().applyMatrix4(camera.matrixWorldInverse).z;
       const size=camera.isOrthographicCamera?(camera.top-camera.bottom)/camera.zoom/Math.max(1,rect.height):2*Math.max(.1,depth)*Math.tan(camera.fov*Math.PI/360)/camera.zoom/Math.max(1,rect.height);
-      row.sprite.scale.setScalar(size*44);
+      row.sprite.scale.setScalar(size*(row.model?34:44));
       const p=row.sprite.position.clone().project(camera),x=rect.left+(p.x+1)*rect.width/2,y=rect.top+(1-p.y)*rect.height/2;
       row.button.hidden=row.label.hidden=p.z < -1 || p.z > 1;
       row.button.style.left=`${x}px`;row.button.style.top=`${y}px`;
@@ -118,6 +163,6 @@ export function mountCars({view, live = () => view.live}) {
     }
     if(selected)card(rows.get(selected));
   }
-  return {draw,update(){dirty=true;draw();},snapshot:()=>[...rows.values()].map(r=>({id:r.car.id,color:r.car.color,visible:r.sprite.visible,charging:r.charging,at:r.sprite.position.toArray(),label:r.label.textContent})),
+  return {draw,update(){dirty=true;draw();},snapshot:()=>[...rows.values()].map(r=>({id:r.car.id,color:r.car.color,visible:r.sprite.visible,charging:r.charging,at:r.sprite.position.toArray(),label:r.label.textContent,model:!!r.model,modelVisible:!!r.model?.visible})),
     stop(){stopped=true;unsubscribe?.();events.abort();close();for(const r of rows.values())r.sprite.material.dispose();textures.forEach(t=>t.dispose());root.removeFromParent();labels.remove();sheet.remove();}};
 }

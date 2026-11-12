@@ -180,7 +180,7 @@ export function resolveEnergyLocation(options,ref,entity,kind) {
 export function parkingObjects(view) {
   const spots=[];
   for(const b of view.plan?.buildings || [])for(const p of b.anchors || [])if(p.kind==='parking' && p.state!=='ghost'){
-    try{spots.push({id:p.id,building:b.id,assigned:p.car || null,at:lotPoint(b,parkingPoint(b,p,view.plan,(p.offset || 0)+.08,groundAt),view.plan)});}catch{}
+    try{spots.push({id:p.id,building:b.id,assigned:p.car || null,rotation:(b.rotation || 0)+(p.rotation || 0),width:p.width || 9,depth:p.depth || 18,at:lotPoint(b,parkingPoint(b,p,view.plan,(p.offset || 0)+.08,groundAt),view.plan)});}catch{}
   }
   return spots;
 }
