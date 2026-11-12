@@ -57,7 +57,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: op,
     onPreview: drawDimensions, onClick: cards.edge, signal });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'
-    && (['wall', 'joint', 'room', 'roof', 'dormer'].includes(kind)
+    && (['wall', 'joint', 'room', 'roof', 'dormer', 'solar_zone'].includes(kind)
       || kind === 'opening' && building.walls.some(w => w.id === piece.wall)
       || ['anchor', 'item'].includes(kind) && !!piece.host);
   const listen = (node, event, fn, options = {}) => node.addEventListener(event, fn, { ...options, signal });
@@ -81,7 +81,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     }
     const level = record.kind === 'level' ? record.piece.id : record.piece.level
       || record.building.walls.find(w => w.id === (record.piece.wall || record.piece.host?.wall))?.level;
-    if (['roof', 'dormer'].includes(record.kind) && roomSelection.current().room) roomSelection.clear();
+    if (['roof', 'dormer', 'solar_zone'].includes(record.kind) && roomSelection.current().room) roomSelection.clear();
     roomSelection.select({ kind: record.kind, id: record.piece.id, building: record.building.id, level });
   }
   function pick(x, y) {
@@ -101,14 +101,14 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       && record.building.roof.flags?.some(flag => flag.block_rect?.length === 4
         && flag.block_rect.every((v, i) => Math.abs(v - record.piece.block[i]) <= 1)));
     // Existing needs-checking markers still open their own correction card.
-    if (item && !markedRoof && view.state.view === 'ext' && !roomSelection.current().id)
+    if (item && !['solar_zone','anchor'].includes(item.kind) && !markedRoof && view.state.view === 'ext' && !roomSelection.current().id)
       return { kind: 'building', id: item.building, building: item.building, level: null };
     return item;
   }
   function setTool(name) {
     if (name !== 'select') haLink.cancelPlacement();
     tool = name; onInteract?.();
-    for (const id of ['select', 'move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor']) el(`rail-${id}`).setAttribute('aria-pressed', String(id === name));
+    for (const id of ['select', 'move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-solar-zone', 'add-meter', 'add-electric-panel']) el(`rail-${id}`).setAttribute('aria-pressed', String(id === name));
     canvas.style.cursor = name === 'move' ? 'grab' : name === 'select' ? '' : 'crosshair';
   }
   async function sheet(key = floor()?.key, show = !sheetOn) {

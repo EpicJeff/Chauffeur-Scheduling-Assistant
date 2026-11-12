@@ -5,6 +5,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial, loadModel, disposeObject } from './twin_library.js';
 import { hostPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
+import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt } from './twin_ground.js';
 
 export const FT = 0.3048;
@@ -643,7 +644,18 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       geometry.computeVertexNormals(); return geometry;
     };
     // Retain the actual envelope geometry for diagnostics after it is merged.
-    roofSurfaces.set(b.id, { sections, positions: envelope.positions });
+    roofSurfaces.set(b.id, { sections, positions: envelope.positions, section: envelope.section });
+    for (const {zone,panels} of solarZones(b,envelope)) {
+      const positions=[];
+      for(const rect of panels){const corners=solarRect(rect).map(p=>solarPoint(zone.plane,p,.15));
+        for(const i of [0,1,2,0,2,3])positions.push(...corners[i]);}
+      // A zero-count zone remains selectable and resizable in the editor.
+      use(zone,'solar_zone',zone.id);
+      if(positions.length)mesh(local.roof,roofGeometry(positions),plain('solar_panel','#285888'));
+      else if(showAnchors){const p=solarRect(zone.rect).map(p=>solarPoint(zone.plane,p,.15)),empty=[];
+        for(const i of [0,1,2,0,2,3])empty.push(...p[i]);
+        const object=mesh(local.roof,roofGeometry(empty),plain('solar_zone','#285888')); object.material.transparent=true; object.material.opacity=.2;}
+    }
     for (let index = 0; index < sections.length; index++) {
       const section = sections[index], positions = [];
       use(section, 'roof', `roof:${index}`);
@@ -1019,14 +1031,16 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         : (b.roofs || []).find(r => r.id === host.roof);
       return levels[surface?.level] || first;
     };
-    if (showAnchors) for (const anchor of b.anchors || []) {
+    for (const anchor of b.anchors || []) {
+      const equipment=['meter','electric_panel'].includes(anchor.kind);
+      if(!showAnchors && !equipment)continue;
       // A light already has a fixture registered under this same identity.
       if (anchor.kind === 'light') continue;
       let point;
       try { point = hostPoint(b, anchor.host, (anchor.offset || 0) + 0.04); }
       catch { continue; } // Missing hosts remain represented by model flags.
       use(anchor, 'anchor', anchor.id);
-      const geometry = new THREE.CylinderGeometry(0.22, 0.22, 0.06, 16);
+      const geometry = equipment ? new THREE.BoxGeometry(1.2,.4,anchor.kind==='meter'?1.5:2) : new THREE.CylinderGeometry(0.22, 0.22, 0.06, 16);
       const wall = b.walls.find(w => w.id === anchor.host.wall);
       if (wall) {
         const dx = wall.to[0] - wall.from[0], dy = wall.to[1] - wall.from[1];
@@ -1035,7 +1049,15 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
           new THREE.Vector3(-dy * direction, 0, -dx * direction).normalize()));
       }
       geometry.translate(point[0], point[2], -point[1]);
-      mesh(local[hostLevel(anchor.host).id], geometry, plain('anchor', '#38bdf8'));
+      mesh(local[hostLevel(anchor.host).id], geometry, plain(equipment?'equipment':'anchor',equipment?'#8c9399':'#38bdf8'));
+      if(anchor.kind==='meter' && wall){
+        const dial=new THREE.CylinderGeometry(.4,.4,.07,24);
+        const dx=wall.to[0]-wall.from[0],dy=wall.to[1]-wall.from[1],direction=anchor.host.side==='right'?-1:1;
+        const normal=new THREE.Vector3(-dy*direction,0,-dx*direction).normalize();
+        dial.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),normal));
+        dial.translate(point[0]+normal.x*.25,point[2],-point[1]+normal.z*.25);
+        mesh(local[hostLevel(anchor.host).id],dial,plain('meter_dial','#e7e9e5'));
+      }
     }
     // Proxies retain identity after settled render meshes are merged. Their
     // layer is never enabled on a rendering camera (including shadow cameras).

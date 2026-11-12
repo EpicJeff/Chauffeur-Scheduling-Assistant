@@ -460,6 +460,8 @@ RULES = [
     ('GET', '/api/house/twin', WALL_OR_SERVICE, None),
     ('GET', '/api/house/twin/glance', WALL, None),
     ('PUT', '/api/house/twin/glance', PARENTS, None),
+    ('GET', '/api/house/twin/energy', WALL_OR_SERVICE, None),
+    ('PUT', '/api/house/twin/energy', PARENTS, None),
     ('POST', '/api/house/bakes/{key}/{page}.png', PARENTS, None),
     ('GET', '/api/house/bakes/{key}/{page}.png', WALL_OR_SERVICE, None),
     ('GET', '/api/house/bakes/{key}', WALL_OR_SERVICE, None),

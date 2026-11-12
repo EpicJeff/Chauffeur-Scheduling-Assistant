@@ -1,3 +1,4 @@
+import { solarPoint, solarFrame, solarUV } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import * as THREE from 'three';
 import { hostPoint } from '../twin_hosts.js';
@@ -86,6 +87,12 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
         addOpening('opening_edge_bottom', opening.at, opening.sill);
       }
     }
+    const zone=building.solar_zones?.find(z=>selected.kind==='solar_zone' && z.id===selected.id);
+    if(zone && zone.state!=='ghost'){
+      const r=zone.rect,roof=building.roofs?.find(p=>p.id===zone.roof);
+      for(const [kind,uv,edge] of [['solar_middle',[(r[0]+r[2])/2,(r[1]+r[3])/2]],['solar_left',[r[0],(r[1]+r[3])/2],0],['solar_right',[r[2],(r[1]+r[3])/2],2],['solar_bottom',[(r[0]+r[2])/2,r[1]],1],['solar_top',[(r[0]+r[2])/2,r[3]],3]])
+        add(kind,zone.id,solarPoint(zone.plane,uv,.15),roof?.level,{edge});
+    }
     const roof = building.roofs?.find(r => selected.kind === 'roof' && r.id === selected.id);
     if (roof && roof.state !== 'ghost') roof.edges.forEach((edge, index) => {
       const { a, b } = roofEdge(roof, index);
@@ -162,6 +169,11 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       const start = view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`);
       if (!drag.begin({ ...getSelection(), ...handle }, start)) return false;
       gesture = { handle, source, building }; return true;
+    }
+    if(handle.kind.startsWith('solar_')){
+      const piece=building.solar_zones.find(z=>z.id===handle.id),normal=solarFrame(piece.plane).n;
+      const start=onPlane(event,building,handle.at,normal);if(!start)return false;
+      gesture={handle,source,building,piece,list:'solar_zones',normal,start,operation:null};return true;
     }
     if (handle.kind === 'roof_edge' || handle.kind.startsWith('dormer_')) {
       // Start from the shown plan: a released drag is still held while it saves.
@@ -244,6 +256,16 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       onPreview?.(preview, getSelection()); refresh();
       lastFrameMs = Math.max(.001, performance.now() - started); return;
     }
+    if(handle.kind.startsWith('solar_')){
+      const a=solarUV(piece.plane,g.start),b=solarUV(piece.plane,point),delta=b.map((v,i)=>inch(v-a[i])),rect=[...piece.rect];
+      if(handle.kind==='solar_middle')for(let i=0;i<4;i++)rect[i]+=delta[i%2];
+      else rect[handle.edge]+=delta[handle.edge%2];
+      g.operation={op:'update_solar_zone',building:building.id,id:piece.id,rect};
+      preview=structuredClone(g.source);preview.buildings.find(b=>b.id===building.id).solar_zones.find(z=>z.id===piece.id).rect=rect;
+      const points=[[rect[0],rect[1]],[rect[2],rect[1]],[rect[2],rect[3]],[rect[0],rect[3]]].map(p=>project(building,solarPoint(piece.plane,p,.15))).filter(Boolean);
+      document.getElementById('editor-drag-outline')?.setAttribute('points',points.map(p=>p.join(',')).join(' '));
+      onPreview?.(preview,getSelection());refresh();lastFrameMs=Math.max(.001,performance.now()-started);return;
+    }
     const operation = { op: handle.kind.startsWith('opening_edge') ? 'resize_opening' : 'move_hosted', building: building.id, id: piece.id };
     if (handle.kind.startsWith('opening')) {
       const { axis } = basis(g.wall), along = inch((point[0] - g.start[0]) * axis[0] + (point[1] - g.start[1]) * axis[1]);
@@ -288,7 +310,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   async function finish(cancel = false, clicked = false) {
     const g = gesture, released = preview; gesture = null; preview = null;
     if (!g) return;
-    if (g.handle.kind === 'roof_edge' || g.handle.kind.startsWith('dormer_')) {
+    if (g.handle.kind === 'roof_edge' || g.handle.kind.startsWith('dormer_') || g.handle.kind.startsWith('solar_')) {
       document.getElementById('editor-drag-outline')?.setAttribute('points', '');
       if (clicked && g.handle.kind === 'roof_edge') onClick?.(g.handle);
       const saving = !cancel && g.operation;

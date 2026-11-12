@@ -47,7 +47,7 @@ class Element extends EventTarget {
   getContext(){return {getExtension:()=>null};}
 }
 globalThis.window = new Element();
-globalThis.document = {createElement:()=>new Element(),getElementById:()=>null};
+globalThis.document = Object.assign(new EventTarget(),{createElement:()=>new Element(),getElementById:()=>null});
 globalThis.location = {search:'?test=1&tier=low'};
 globalThis.getComputedStyle = ()=>({getPropertyValue:()=>''});
 globalThis.CustomEvent = class extends Event {constructor(name,opts){super(name);this.detail=opts.detail;}};

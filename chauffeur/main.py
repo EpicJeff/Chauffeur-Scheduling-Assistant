@@ -7439,9 +7439,11 @@ def _house_ha_placed_spot(building, device_id, placement, geometry):
     host = piece.get('host', {})
     surface = twin_model_hosts._surface(geometry, host) or {}
     level = surface.get('level', piece.get('level'))
+    location_valid = piece.get('state') != 'ghost' and bool(surface)
     try:
         point = twin_model_hosts._point(geometry, host, piece.get('offset', 0))
     except ValueError:
+        location_valid = False
         # Lost hosts retain their last position in the model's flag.
         flag = next((f for f in building.get('flags', []) if f.get('piece') == piece['id']), None)
         if flag is None:
@@ -7459,8 +7461,17 @@ def _house_ha_placed_spot(building, device_id, placement, geometry):
         wall = host.get('wall', opening.get('wall'))
         room = next((r for r in rooms if wall and any(w['id'] == wall
                      for w in twin_ha._room_walls(building, r))), None)
-    return {'building': building['id'], 'level': level,
-            'room': room['id'] if room else None, 'at': point[:2], 'z': point[2]}
+    result = {'building': building['id'], 'level': level, 'location_valid': location_valid,
+              'room': room['id'] if room else None, 'at': point[:2], 'z': point[2],
+              'outdoor': not any(twin_ha._inside(point[:2], r.get('polygon', [])) for r in rooms)}
+    # Preserve an optional placed facing. Old placements have none and use the
+    # room/outdoor rule. The stored angle is building-local, +X toward +Y.
+    facing = piece.get('facing_deg', piece.get('orientation', piece.get('rotation')))
+    if isinstance(facing, (int, float)):
+        import math
+        if math.isfinite(facing):
+            result['facing_deg'] = (facing + building.get('rotation', 0)) % 360
+    return result
 
 
 @app.get('/api/house/twin/glance')
@@ -7498,6 +7509,23 @@ def save_house_twin_glance(req: TwinGlanceRequest):
         raise HTTPException(status_code=422, detail='Choose up to twelve different entities.')
     if twin_glance.save(req.entities, req.idle_enabled, req.panel_id, req.panel_idle_enabled) is None:
         raise HTTPException(status_code=404, detail='Panel not found.')
+    return {'saved': True}
+
+
+@app.get('/api/house/twin/energy')
+def house_twin_energy(request: Request):
+    from services import auth, twin_energy
+    return {'mapping': twin_energy.read(), 'cars': twin_energy.household_cars(),
+            'can_edit': auth.identify(request.headers, request.query_params)['tier'] == auth.PARENT}
+
+
+@app.put('/api/house/twin/energy')
+def save_house_twin_energy(body: dict = Body(...)):
+    from services import twin_energy
+    try:
+        twin_energy.save(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {'saved': True}
 
 
@@ -7546,6 +7574,11 @@ def house_live(request: Request):
                            at=_house_lot_point(building, [*spot['at'], spot['z']]),
                            placed=placement is not None,
                            offered=devices[-1]['offered'])
+        markers[-1]['location_valid'] = spot.get('location_valid', True)
+        if 'facing_deg' in spot:
+            markers[-1]['facing_deg'] = spot['facing_deg']
+        if 'outdoor' in spot:
+            markers[-1]['outdoor'] = spot['outdoor']
     return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices}
 
 
@@ -11797,7 +11830,10 @@ def _house_stream_entities(area: str | None = None) -> set:
             # battery). Device markers still use one primary entity.
             ids.update(device.get('entities') or [])
     if area is None:
-        from services import ha_api
+        from services import ha_api, twin_energy
+        ids.update(twin_energy.entities())
+        ids.update(z['entity'] for b in model.get('buildings', []) for z in b.get('solar_zones', [])
+                   if z.get('entity') and z.get('state') != 'ghost')
         # The default glance weather is not necessarily assigned to a room.
         import re
         try:
@@ -11808,7 +11844,7 @@ def _house_stream_entities(area: str | None = None) -> set:
             eid = row.get('entity_id', '')
             attrs = row.get('attributes') or {}
             if (eid.startswith('weather.') or attrs.get('device_class') in ('power', 'energy', 'battery')
-                    or eid.startswith('sensor.') and re.search(r'solar|grid|battery|powerwall|car.?charg',
+                    or eid.startswith(('sensor.', 'device_tracker.', 'binary_sensor.')) and re.search(r'solar|pv|grid|site|load|home|house|battery|powerwall|charger|wallbox|tesla|car',
                                                               eid + ' ' + attrs.get('friendly_name', ''), re.I)):
                 ids.add(eid)
     for building in model.get('buildings') or []:

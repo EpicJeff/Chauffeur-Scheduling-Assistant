@@ -16,6 +16,33 @@ check('defaults weather then at most four energy readings in state order',()=>{
   assert.deepEqual(defaultEntities({}),[]); assert.deepEqual(defaultEntities({'weather.x':state('sunny')}),[]);
   assert.equal(glanceValue('weather.home',states['weather.home']),'73 °F');
 });
+check('power and energy readings use one-decimal kilo units and preserve unknown direction signs',()=>{
+  for (const [v,unit,expected] of [[4000,'W','4.0 kW'],[-2000,'W','-2.0 kW'],[999,'W','999 W'],[1000,'W','1.0 kW'],
+    [4,'kW','4.0 kW'],[-.5,'kW','-500 W'],[1500,'Wh','1.5 kWh'],[4,'kWh','4.0 kWh'],[-2500,'Wh','-2.5 kWh'],[2,'MWh','2000.0 kWh']])
+    assert.equal(glanceValue('sensor.reading',state(v,{unit_of_measurement:unit})),expected);
+  assert.equal(glanceValue('sensor.reading',state('unavailable',{unit_of_measurement:'W'})),'—');
+  assert.equal(glanceValue('sensor.reading',state(4000,{unit_of_measurement:'W'}),true),'—');
+});
+check('mapped battery and grid signs become charging/discharging/importing/exporting words',()=>{
+  const m={battery_power:'sensor.battery',grid_power:'sensor.grid'};
+  const value=(id,v,map=m)=>glanceValue(id,state(v,{unit_of_measurement:'W'}),false,{},map);
+  assert.equal(value('sensor.battery',-2000),'charging 2.0 kW');assert.equal(value('sensor.battery',2000),'discharging 2.0 kW');
+  assert.equal(value('sensor.grid',-1500),'exporting 1.5 kW');assert.equal(value('sensor.grid',1500),'importing 1.5 kW');
+  assert.equal(value('sensor.battery',2000,{...m,battery_positive:'charge'}),'charging 2.0 kW');
+  assert.equal(value('sensor.grid',1500,{...m,grid_positive:'export'}),'exporting 1.5 kW');
+  assert.equal(value('sensor.battery',0),'0 W');assert.equal(value('sensor.unknown',-2000),'-2.0 kW');
+});
+check('mounted glance uses the live mapping and updates direction words after a push',async()=>{
+  const fixture=await rig({devices:[{device_id:'battery',name:'Battery',kind:'sensor',entity_id:'sensor.battery',state:'-2000',attributes:{device_class:'power',unit_of_measurement:'W'}}]});
+  const home=document.createElement('div');document.body.append(home);const g=mountGlance(home);fixture.view.glance=g;
+  try{
+    g.attach(fixture.live);g.configure(['sensor.battery']);assert.equal(g.bar.querySelector('strong').textContent,'charging 2.0 kW');
+    fixture.live.configureEnergy({mapping:{battery_power:'sensor.battery',battery_positive:'charge'},cars:[]});
+    assert.equal(g.bar.querySelector('strong').textContent,'discharging 2.0 kW');
+    sources.at(-1).onmessage({data:JSON.stringify({entity_id:'sensor.battery',state:state(2000,{device_class:'power',unit_of_measurement:'W'})})});
+    await wait(40);assert.equal(g.bar.querySelector('strong').textContent,'charging 2.0 kW');
+  }finally{g.stop();fixture.cleanup();home.remove();}
+});
 check('climate shows the current temperature before the target or mode',()=>{
   assert.equal(glanceValue('climate.kitchen',state('heat',{current_temperature:71,temperature:68,unit_of_measurement:'°F'})),'71 °F');
   assert.equal(glanceValue('climate.kitchen',state('off',{current_temperature:0,temperature:20,unit_of_measurement:'°C'})),'0 °C');
@@ -80,7 +107,7 @@ check('idle moves the same bar and preserves its cells and stream listener',asyn
   const bar=glance.bar,cell=bar.children[0];glance.move(card);
   assert.equal(document.querySelectorAll('#twin-glance').length,1);assert.equal(bar.parentElement,card);assert.equal(bar.children[0],cell);
   sources.at(-1).onmessage({data:JSON.stringify({entity_id:'sensor.power',state:state(6,{unit_of_measurement:'kW'})})});
-  await wait(40);assert.match(bar.textContent,/6 kW/);
+  await wait(40);assert.match(bar.textContent,/6\.0 kW/);
   glance.move(document.getElementById('twin-glance-home'));assert.equal(glance.bar,bar);
 });
 check('empty list hides and remount attaches once without duplicating bar',async()=>{

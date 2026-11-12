@@ -740,6 +740,8 @@ def apply_model(model, edit, validated=None, ha_catalogue=None):
                 piece['state'] = 'settled'
                 _mark(piece)
         ops._follow_dormers(building, before)
+        prior = next(b for b in model['buildings'] if b['id'] == building['id'])
+        ops.solar_clear(building, prior)
     return result, summary
 
 

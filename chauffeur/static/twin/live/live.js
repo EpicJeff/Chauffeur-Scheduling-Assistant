@@ -7,6 +7,7 @@ import { roomStates, mountModes, modeForeground } from './modes.js';
 import { kindOf, unsafeLabel } from './kinds.js';
 import { mountRing } from './ring.js';
 import { defaultEntities, isEnergyEntity } from './glance.js';
+import { mappedEntities } from './energy_mapping.js';
 
 const FT = .3048, unreachable = 'Home Assistant is not reachable.';
 // Screen sizes in CSS px: a marker is a 44 px tap target (the page's own controls' hit height),
@@ -58,7 +59,7 @@ async function readLayout(api, stop) {
 
 // What a layer draws from a layout; a re-read that matches it changes nothing on screen.
 const layoutKey = layout => JSON.stringify([
-  (layout?.markers || []).map(m => [m.device_id, m.name, m.kind, m.entity_id, m.entities, m.building, m.level, m.room, m.at, m.placed, m.offered]),
+  (layout?.markers || []).map(m => [m.device_id, m.name, m.kind, m.entity_id, m.entities, m.building, m.level, m.room, m.at, m.facing_deg, m.orientation, m.outdoor, m.location_valid, m.placed, m.offered]),
   (layout?.rooms || []).map(r => [r.building, r.room, r.level, r.area_id, r.name, r.lights, r.polygon_world]),
   (layout?.devices || []).map(d => [d.device_id, d.name, d.kind, d.entity_id, d.entities, d.area_id, d.offered])]);
 
@@ -119,7 +120,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   const textures = new Map(), badges = new Map(), listeners = new Set(), busy = new Set(), waiting = new Map();
   const raycaster = new THREE.Raycaster(), projected = new THREE.Vector3(), scratch = new THREE.Vector3();
   let states = {}, stopped = false, stale = true, mode = null, timer = null, polling = Promise.resolve();
-  let stream = null, pollChanges = null, pushed = false, warned = false;
+  let stream = null, pollChanges = null, pushed = false, warned = false, energyStreamKey = '';
   let selected = null, sheetKey = null, sheetStatus = null;
   let roomPanel = null, modes = null, ring = null, rows = [], levelKeys = [], resizeObserver = null;
   // Layout runs only when something it reads changed (review M1): the camera, the canvas,
@@ -428,7 +429,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   function subscribeStates() {
     if (stopped || typeof EventSource !== 'function') return;
-    const entities = new Set([...defaultEntities(states), ...rows.map(row => row.entity_id), ...devices.flatMap(row => row.entities || [row.entity_id]),
+    const entities = new Set([...defaultEntities(states), ...mappedEntities(view.energySources?.mapping), ...rows.map(row => row.entity_id), ...devices.flatMap(row => row.entities || [row.entity_id]),
       ...(layout.rooms || []).flatMap(room => room.lights || [])].filter(Boolean));
     if (!entities.size) return;
     try {
@@ -441,7 +442,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
         let change;
         try { change = JSON.parse(event.data); } catch { return; }
         if (!change || typeof change.entity_id !== 'string' ||
-          !(entities.has(change.entity_id) || change.entity_id.startsWith('weather.') || isEnergyEntity(change.entity_id, change.state)) || !Object.hasOwn(change, 'state')) return;
+          !(entities.has(change.entity_id) || mappedEntities(view.energySources?.mapping).includes(change.entity_id) ||
+          view.plan?.buildings?.some(b=>b.solar_zones?.some(z=>z.state!=='ghost' && z.entity===change.entity_id)) || change.entity_id.startsWith('weather.') || isEnergyEntity(change.entity_id, change.state)) || !Object.hasOwn(change, 'state')) return;
         const state = change.state;
         if (state !== null && (typeof state !== 'object' || Array.isArray(state) || typeof state.state !== 'string')) return;
         if (state === null) delete states[change.entity_id];
@@ -504,6 +506,15 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     marker: id => { const row = rows.find(row => row.device_id === id); return row ? plain(row) : null; },
     rooms: roomRows,
     lights: () => modes?.lights() || [],
+    energy: () => modes?.energy(),
+    configureEnergy(value) {
+      const nextKey = JSON.stringify([value.mapping, value.cars]);
+      view.energySources = value; modes?.update(); view.glance?.update();
+      // The server derives stream scope at connection time. A corrected mapping
+      // must reconnect so newly chosen, unusually named entities push too.
+      if (nextKey !== energyStreamKey) {energyStreamKey = nextKey; stream?.close(); stream = null; subscribeStates();}
+      view.render();
+    },
     devices: area => devices.filter(row => row.area_id === area).map(row => ({ ...row, ...stateOf(row) })),
     states: () => structuredClone(states),
     // Reads without a copy, for listeners that run on every push (review M3): never
@@ -560,6 +571,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   await refresh();
   view.glance?.attach(live);
   view.glanceSettings?.refreshChoices();
+  view.energySettings?.refreshChoices();
   subscribeStates();
   const schedule = () => {
     timer = setTimeout(async () => {

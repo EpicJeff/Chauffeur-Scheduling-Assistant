@@ -11,7 +11,7 @@ from services import twin_plan
 
 SCHEMA = 'chauffeur.twin.plan/3'
 CAPS = {'walls': 400, 'joints': 800, 'openings': 400, 'rooms': 120,
-        'roofs': 40, 'anchors': 400, 'items': 600}
+        'solar_zones': 200, 'roofs': 40, 'anchors': 400, 'items': 600}
 NOT_CLOSED = "This room isn't closed: a wall is missing here."
 _EPS = 1e-9
 
@@ -467,13 +467,26 @@ def _pieces(building, notes):
             reason = 'invalid opening dimensions'
         if reason:
             _note(opening, 'Opening', reason, notes)
+    from services import twin_solar
+    zones = _list(building, 'solar_zones', notes, 'solar_zone')
+    for zone in zones:
+        for key, value in twin_solar.DEFAULTS.items():
+            zone.setdefault(key, value)
+        reason = twin_solar.error(building, zone, zones)
+        if reason:
+            zone['state'] = 'ghost'
+            zone['why'] = reason
+            _note(zone, 'Solar zone', reason, notes)
     for name, kind in (('anchors', 'anchor'), ('items', 'item')):
         for item in _list(building, name, notes, kind):
             reason = _host_error(item.get('host'), building)
             if name == 'anchors':
                 item.setdefault('offset', 0)
                 item.setdefault('device', None)
-                if item.get('kind') not in ('light', 'switch', 'outlet', 'fan', 'camera', 'sensor'):
+                if item.get('kind') in ('meter', 'electric_panel') and (not isinstance(item.get('host'), dict) or 'wall' not in item['host'] or reason):
+                    reason = 'Choose a wall for the equipment.'
+                    item['state'] = 'ghost'
+                if item.get('kind') not in ('light', 'switch', 'outlet', 'fan', 'camera', 'sensor', 'meter', 'electric_panel'):
                     reason = reason or 'invalid anchor kind'
                 if not twin_plan._number(item['offset']):
                     reason = reason or 'invalid offset'
@@ -578,4 +591,7 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
         materials = {}
         notes.append('Coerced invalid materials to an empty object.')
     return {'schema': SCHEMA, 'units': 'ft', 'materials': materials,
-            'buildings': buildings, 'site': site}, notes
+            'buildings': buildings, 'site': site,
+            'solar_source_building': model.get('solar_source_building'),
+            'solar_source_roof': model.get('solar_source_roof') if any(
+                r['id'] == model.get('solar_source_roof') for b in buildings for r in b.get('roofs', [])) else None}, notes

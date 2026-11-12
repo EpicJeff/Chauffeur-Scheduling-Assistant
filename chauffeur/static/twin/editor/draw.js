@@ -1,10 +1,11 @@
+import { solarPlanes, solarUV } from '../twin_solar.js';
 import { report } from './api.js';
 import { snapTo } from './snap.js';
 import { hostPoint } from '../twin_hosts.js';
 import { contains } from '../twin_generator.js';
 
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-const drawingTools = ['draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor'];
+const drawingTools = ['draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-solar-zone', 'add-meter', 'add-electric-panel'];
 
 export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel, surfaceAt }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
@@ -101,8 +102,12 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       if (!kind || !canEdit()) return;
       anchorKind = kind;
     }
+    if(name==='add-solar-zone'){
+      tools.select(null);view.setView?.('ext');
+      if(view.state?.camera==='top')view.setCamera?.('front');
+    }
     ++run; tool = name; tools.setTool(name); el(`rail-${name}`).setAttribute('aria-pressed', 'true');
-    note(({ 'draw-room': 'Drag a rectangle, or click corners and close on the first corner.',
+    note(({ 'add-solar-zone':'Click a clear roof plane to place a solar zone.', 'add-meter':'Click the wall face where the meter goes.', 'add-electric-panel':'Click the wall face where the electric panel goes.', 'draw-room': 'Drag a rectangle, or click corners and close on the first corner.',
       'draw-wall': 'Click wall corners. Escape or a double click ends the chain.',
       'split-room': 'Click two walls of this room to draw the split.',
       'add-anchor': 'Click a wall or a room surface. Lights and fans go on its ceiling.' })[name]
@@ -213,6 +218,11 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     cancel, floorChanged: cancel,
     pointerDown(event) {
       if (!tool || !canEdit()) return false;
+      // A placement can already be saved and selectable while its scene rebuild
+      // is still settling. Its selected handles must own the next gesture.
+      if (['add-solar-zone','add-meter','add-electric-panel'].includes(tool) && tools.handleAt?.(event)) {
+        cancel(); return false;
+      }
       const p = view.floorAt(event.clientX, event.clientY, tools.floor().key);
       if (!p) return true;
       onInteract?.();
@@ -240,6 +250,24 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
             polygon: [a, [b[0], a[1]], b, [a[0], b[1]]] }).catch(report);
       } else if (['draw-room', 'draw-wall'].includes(tool)) click(p);
       else {
+        if(['add-solar-zone','add-meter','add-electric-panel'].includes(tool)){
+          const surface=surfaceAt?.(event,{skip:['room']});
+          if(tool==='add-solar-zone'){
+            if(surface?.kind!=='roof'){note('Click a roof plane.');return true;}
+            const b=surface.building,roof=surface.piece.roof || surface.piece.id;
+            const planes=solarPlanes(b).filter(p=>p.roof===roof);
+            const plane=planes.sort((a,b)=>Math.abs(a.plane[0]*surface.point[0]+a.plane[1]*surface.point[1]+a.plane[2]-surface.point[2])-Math.abs(b.plane[0]*surface.point[0]+b.plane[1]*surface.point[1]+b.plane[2]-surface.point[2]))[0];
+            if(!plane){note('Choose a clear roof plane.');return true;}
+            const [u,v]=solarUV(plane.plane,surface.point).map(n=>Math.round(n*12)/12);
+            enqueue(()=>save({op:'add_solar_zone',building:b.id,roof,plane:plane.plane,rect:[u-2,v-3,u+2,v+3]}).then(done()));
+          }else{
+            if(surface?.kind!=='wall'){note('Click a wall face.');return true;}
+            const wall=surface.piece,b=surface.building,d=wall.to.map((v,i)=>v-wall.from[i]),length=Math.hypot(...d);
+            const elevation=b.levels.find(l=>l.id===wall.level)?.elevation || 0;
+            const host={wall:wall.id,side:surface.side,at:Math.round(surface.point.slice(0,2).reduce((s,v,i)=>s+(v-wall.from[i])*d[i]/length,0)*12)/12,z:Math.round((surface.point[2]-elevation)*12)/12};
+            enqueue(()=>save({op:'add_equipment',building:b.id,kind:tool==='add-meter'?'meter':'electric_panel',host}).then(done()));
+          }return true;
+        }
         const hit = ['add-door', 'add-window'].includes(tool) ? wallHit(event) : null;
         enqueue(() => click(p, hit));
       }

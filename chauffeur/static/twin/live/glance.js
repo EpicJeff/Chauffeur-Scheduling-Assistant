@@ -1,11 +1,13 @@
 import { kindOf } from './kinds.js';
+import { mappedEntities, energyValue } from './energy_mapping.js';
 
 const valid = row => row && !['unknown', 'unavailable', ''].includes(String(row.state));
 export const isEnergyEntity = (id, state) => ['power', 'energy', 'battery'].includes(state?.attributes?.device_class) ||
   id.startsWith('sensor.') && /solar|grid|battery|powerwall|car.?charg/i.test(id + ' ' + (state?.attributes?.friendly_name || ''));
-export function defaultEntities(states, devices = []) {
+export function defaultEntities(states, devices = [], mapping = {}) {
   const weather = Object.keys(states).find(id => id.startsWith('weather.') && Number.isFinite(Number(states[id]?.attributes?.temperature)) && states[id]?.attributes?.temperature != null);
-  const energy = Object.keys(states).filter(id => isEnergyEntity(id, states[id])).slice(0, 4);
+  const energy = [...new Set([...mappedEntities(mapping, true), ...Object.keys(states).filter(id => isEnergyEntity(id, states[id]))])].slice(0, 12 - (weather ? 1 : 0));
+  if (!mappedEntities(mapping, true).length) energy.splice(4);
   return [...(weather ? [weather] : []), ...energy];
 }
 // HA sends no unit on climate entities: take the house's temperature unit from a
@@ -17,7 +19,7 @@ export function houseTempUnit(states = {}) {
   }
   return '°F';
 }
-export function glanceValue(id, row, stale = false, states = {}) {
+export function glanceValue(id, row, stale = false, states = {}, mapping = {}) {
   if (!valid(row) || stale) return '—';
   const domain = id.split('.')[0], weather = domain === 'weather', a = row.attributes || {};
   const reading = v => v !== null && v !== undefined && String(v).trim() !== '' && Number.isFinite(Number(v)) ? v : null;
@@ -32,13 +34,16 @@ export function glanceValue(id, row, stale = false, states = {}) {
     value = reading(a.current_humidity) ?? reading(a.humidity); unit = '%';
   }
   if (value === null || value === undefined) return '—';
+  if (!weather && !['climate', 'water_heater', 'humidifier'].includes(domain)) {
+    const energy = energyValue(id, row, mapping); if (energy !== null) return energy;
+  }
   return `${value}${unit ? ' ' + unit : ''}`;
 }
 export function mountGlance(host) {
   // This node belongs to the page, not the remountable live layer.
   const bar = document.createElement('div'); bar.id = 'twin-glance'; bar.hidden = true;
   bar.setAttribute('role', 'list'); bar.setAttribute('aria-label', 'House readings'); host.append(bar);
-  let live = null, unsubscribe = null, configured = null, stopped = false, devices = [];
+  let live = null, unsubscribe = null, configured = null, stopped = false, devices = [], energyMapping = {};
   // Follow the actual Argyle footprint, as control_center.html does for its
   // scrolling pages. On desks it is the chat bar; panels collapse it to an orb.
   const chrome = ['panel-chat-orb', 'chat-overlay-container', 'panel-shelf']
@@ -65,7 +70,8 @@ export function mountGlance(host) {
     if (stopped) return;
     measure();
     const states = live?.peek() || {};
-    const ids = configured ?? defaultEntities(states, devices);
+    const mapping = live?.energy?.()?.mapping || energyMapping;
+    const ids = configured ?? defaultEntities(states, devices, mapping);
     // Reuse the same cells while values change; a stream burst never rebuilds icons.
     if (JSON.stringify(ids) !== bar.dataset.entities) {
       bar.dataset.entities = JSON.stringify(ids); bar.replaceChildren();
@@ -83,12 +89,13 @@ export function mountGlance(host) {
     for (const cell of bar.children) {
       const id = cell.dataset.entity;
       cell.querySelector('[data-glance-name]').textContent = states[id]?.attributes?.friendly_name || id.split('.')[1].replaceAll('_', ' ');
-      cell.querySelector('[data-glance-value]').textContent = glanceValue(id, states[id], live?.stale(), states);
+      cell.querySelector('[data-glance-value]').textContent = glanceValue(id, states[id], live?.stale(), states, mapping);
     }
     bar.hidden = !ids.length;
   }
   return {bar, update,
     configure(ids) { configured = ids; update(); },
+    energy(mapping) { energyMapping = mapping; update(); },
     attach(next) { unsubscribe?.(); live = next; devices = next?.layout().devices || []; unsubscribe = next?.subscribe(update); update(); },
     move(parent) { parent.append(bar); measure(); },
     stop() {

@@ -21,7 +21,7 @@ export function endKind(section, end) {
 
 // A section is the minimum of its side planes, restricted to its footprint.
 // Distances are signed: extending a plane past the plate lowers the eave.
-function planes(section) {
+export function planes(section) {
   const [x0, y0, x1, y1] = section.rect;
   const plate = section.plate;
   const side = name => (section.pitches?.[name] ?? section.pitch) / 12;

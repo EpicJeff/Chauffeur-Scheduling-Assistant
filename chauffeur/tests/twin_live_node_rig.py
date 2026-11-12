@@ -50,8 +50,8 @@ registerHooks({resolve(spec, ctx, next) {
 }});
 
 const escaped = [], domErrors = [];
-process.on('uncaughtException', error => escaped.push(String(error && error.stack || error)));
-process.on('unhandledRejection', error => escaped.push(String(error && error.stack || error)));
+process.on('uncaughtException', error => {escaped.push(String(error && error.stack || error)); process.exitCode=1; console.error(error);});
+process.on('unhandledRejection', error => {escaped.push(String(error && error.stack || error)); process.exitCode=1; console.error(error);});
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ------------------------------------------------------------------ fake DOM

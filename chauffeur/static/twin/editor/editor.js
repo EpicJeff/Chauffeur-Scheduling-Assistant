@@ -513,6 +513,7 @@ export async function boot() {
     const onInteract = () => { checks?.dismiss(); pauses?.dismiss(); syncBuildButton(); };
     history = createHistory({ getRound: currentRound, getBuild: () => currentBuild,
       canEdit, signal: lifecycle.signal, latest: () => polling.refreshState(),
+      onError: error => setStatus(error.message || 'Could not save this change. Try again.'),
       refresh: async () => { draw?.cancel(); await polling.refreshState(); await renderScene(); } });
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
       pickSite: (x, y) => library?.pickSite(x, y), pickMaterial: surface => library?.pick(surface),

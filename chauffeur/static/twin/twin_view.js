@@ -12,6 +12,7 @@ import { keepLive } from './live/live.js';
 import { mountGlance } from './live/glance.js';
 import { mountIdle } from './live/idle.js';
 import { mountGlanceSettings } from './live/glance_settings.js';
+import { mountEnergySettings } from './live/energy_settings.js';
 import { mountBake } from './bake/runtime.js';
 import { sunPosition, moonPosition, moonIllumination } from './sky/ephemeris.js';
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
@@ -250,6 +251,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const view = {
     ready: false, scene, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
+    get site() { return site; },
+    get roofSurfaces() { return twin?.roofSurfaces; },
     render,
     cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
     saveView() {
@@ -361,7 +364,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const { pieceId, kind, buildingId } = hit.object.userData;
       let level = null;
       for (let p = hit.object; p; p = p.parent) if (p.userData.levelKey) { level = p.userData.levelKey.slice(buildingId.length + 1); break; }
-      return { kind, id: pieceId, building: buildingId, level, pieceId, buildingId };
+      return { kind, id: pieceId, building: buildingId, level, pieceId, buildingId, point: hit.point.toArray() };
     },
     worldBox(id, buildingId) {
       const box = pieceBox(id, buildingId); if (!box) return null;
@@ -776,6 +779,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       view.bake?.stop();
       view.live?.stop();
       view.idle?.stop(); view.glance?.stop(); view.glanceSettings?.stop();
+      view.energySettings?.stop();
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
@@ -1024,6 +1028,7 @@ async function boot() {
       timeout: idleQuery.get('test') !== '1' ? 60000
         : idleQuery.has('idle_ms') ? Math.max(50, Number(idleQuery.get('idle_ms')) || 60000) : 2147483647});
     view.glanceSettings = mountGlanceSettings(view, view.glance, view.idle);
+    view.energySettings = mountEnergySettings(view);
     const keeper = keepLive(view, { api: (path, options) => fetch(base() + path, options) });
     window.addEventListener('pagehide', () => { keeper.stop(); clearInterval(hudTimer); view.dispose(); }, { once: true });
     const query = new URLSearchParams(location.search);

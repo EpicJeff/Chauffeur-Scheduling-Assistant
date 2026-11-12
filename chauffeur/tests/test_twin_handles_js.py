@@ -153,6 +153,18 @@ view.scene.traverse(o=>{
   submissions+=Array.isArray(o.material)?o.geometry.groups.length:1;
 });
 console.log(`Focused household CPU house mesh/line submissions (yard stubbed): ${submissions}`);
+// Roof-plane handles use actual perspective rays and inch snapping.
+refuse=false;
+const {solarPoint}=await import(file('static/twin/twin_solar.js'));
+building.solar_zones=[{id:'solar:test',roof:'roof:test',plane:[0,.5,15],rect:[5,5,15,15]}];
+select('solar_zone','solar:test');selected.room=null;view.setView('ext');
+look([10,-40,60],solarPoint([0,.5,15],[10,10]));handles.show(null);ops.length=0;
+assert.equal(handles.handles().filter(h=>h.kind.startsWith('solar_')).length,5);
+down(solarPoint([0,.5,15],[10,10],.15));handles.update(event(solarPoint([0,.5,15],[11.13,12.14],.15)));await handles.finish();
+assert.equal(ops.at(-1).op,'update_solar_zone');near(ops.at(-1).rect[0],6+2/12);near(ops.at(-1).rect[1],7+2/12);
+ops.length=0;handles.show(null);down(solarPoint([0,.5,15],[15,10],.15));handles.update(event(solarPoint([0,.5,15],[17,10],.15)));await handles.finish();
+near(ops[0].rect[2],17);near(ops[0].rect[0],5);
+ok('five solar handles move and resize in roof coordinates with inch snapping');
 abort.abort();view.dispose();
 console.log(`${passed}/${passed} passed`);
 """

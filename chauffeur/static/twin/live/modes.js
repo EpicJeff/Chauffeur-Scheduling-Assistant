@@ -3,6 +3,8 @@ import { FT, polygon, contains, stairHoles } from '../twin_generator.js';
 import { groundAt } from '../twin_ground.js';
 import { lightColor, lightIntensity, createRealLights } from './real_lights.js';
 import { registerClimate, roomClimate } from './climate.js';
+import { registerEnergy } from './energy.js';
+import { registerSecurity } from './security.js';
 
 const registry = new Map();
 export function registerMode(mode) { registry.set(mode.id, mode); return mode; }
@@ -14,6 +16,8 @@ registerMode({id: 'lights', label: 'Lights',
   enter: ({lighting}) => lighting(true), update() {}, leave: ({lighting}) => lighting(false)});
 registerMode({id: 'all', label: 'All', enter() {}, update() {}, leave() {}});
 registerClimate(registerMode);
+registerEnergy(registerMode);
+registerSecurity(registerMode);
 
 export function roomStates(rooms, states) {
   return rooms.filter(room => room.area_id).map(room => {
@@ -51,7 +55,7 @@ export function mountModes(view, live) {
     button.addEventListener('click', () => live.setMode(mode.id)); strip.append(button); buttons.set(mode.id, button);
   }
   document.getElementById('twin-controls').append(strip);
-  const climateLabels = document.createElement('div'); climateLabels.className = 'twin-climate-labels';
+  const climateLabels = document.createElement('div'); climateLabels.className = 'twin-mode-labels twin-climate-labels';
   const modeLegend = document.createElement('output'); modeLegend.id = 'twin-mode-legend'; modeLegend.hidden = true;
   document.getElementById('twin-controls').append(modeLegend);
   document.body.append(climateLabels);
@@ -62,7 +66,10 @@ export function mountModes(view, live) {
   const realLighting = !!view.tier;
   let legacyRooms = [];
   const rig = createRealLights(view);
-  const context = {view, live, lighting(on) { view.setLiveLamps?.(on); rig.show(on); }};
+  const effects = new Map();
+  const overlays = new THREE.Group(); overlays.userData.twinMode = 'modes'; view.scene.add(overlays);
+  const context = {view, live, warm, overlays, lighting(on) { view.setLiveLamps?.(on); rig.show(on); }};
+  for (const definition of modes()) if (definition.mount) effects.set(definition.id, definition.mount(context));
   registry.get(mode).enter(context);
   const layout = live.layout();
   const climateDevices = layout.devices || layout.markers;
@@ -125,10 +132,14 @@ export function mountModes(view, live) {
   // exactly what was shown, whether Lights mode is on or not.
   function warm() {
     if (!realLighting || typeof view.renderer3?.compileAsync !== 'function' || !view.camera) return;
-    const extras = [...lamps.map(lamp => lamp.bulb), ...floors.map(floor => floor.group)];
+    const extras = [...lamps.map(lamp => lamp.bulb), ...floors.map(floor => floor.group),
+      ...[...effects.values()].flatMap(effect => effect.warmObjects?.() || [])];
     const shown = extras.map(object => object.visible), poolShown = rig.shown?.();
     rig.show(true); for (const object of extras) object.visible = true;
-    try { view.renderer3.compileAsync(view.scene, view.camera).catch(() => {}); }
+    try {
+      view.renderer3.compileAsync(view.scene, view.camera).catch(() => {});
+      for (const effect of effects.values()) effect.warm?.();
+    }
     catch { /* a failed warm-up only leaves the first entry its compile */ }
     finally { rig.show(!!poolShown); extras.forEach((object, i) => { object.visible = shown[i]; }); }
   }
@@ -145,12 +156,15 @@ export function mountModes(view, live) {
     }
     revision++;
     for (const floor of floors) floor.climate = roomClimate(floor.room, climateDevices, stale ? {} : states);
-    modeLegend.textContent = registry.get(mode)?.legend || ''; modeLegend.hidden = !modeLegend.textContent;
+    for (const effect of effects.values()) effect.update?.(mode);
+    modeLegend.textContent = effects.get(mode)?.legend?.() || registry.get(mode)?.legend || ''; modeLegend.hidden = !modeLegend.textContent;
     for (const [value, button] of buttons) button.setAttribute('aria-pressed', String(value === mode));
     registry.get(mode)?.update?.(context);
     draw();
   }
   function draw() {
+    climateLabels.hidden = mode !== 'climate';
+    for (const effect of effects.values()) effect.draw?.(mode);
     const target = view.controls?.target;
     const key = [revision, mode, target?.x, target?.y, target?.z,
       ...floors.map(floor => floor.parent.visible),
@@ -208,7 +222,8 @@ export function mountModes(view, live) {
       update();
       return mode;
     },
-    draw,
+    draw, update,
+    energy: () => effects.get('energy')?.snapshot(),
     lights: () => lamps.map(lamp => ({ device: lamp.marker.device_id, at: [...lamp.marker.at],
       rgb: [...lamp.rgb], intensity: lamp.intensity, real: lamp.real, baked: !!lamp.baked })),
     stop() {
@@ -216,6 +231,9 @@ export function mountModes(view, live) {
       unsubscribe(); strip.remove(); climateLabels.remove(); modeLegend.remove();
       registry.get(mode)?.leave?.(context);
       rig.stop();
+      for (const effect of effects.values()) effect.stop?.();
+      overlays.removeFromParent();
+      if (view.onTimeLook === warm) view.onTimeLook = null;
       for (const { bulb } of lamps) { bulb.removeFromParent(); bulb.material.dispose(); }
       bulbGeometry.dispose();
       for (const { group, mesh } of floors) { group.removeFromParent(); mesh.geometry.dispose(); mesh.material.dispose(); }

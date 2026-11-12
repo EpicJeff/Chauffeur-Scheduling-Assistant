@@ -1,3 +1,4 @@
+import { solarLayout } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
 
@@ -41,7 +42,7 @@ export function findPiece(plan, pieceId, buildingId) {
   const building = plan?.buildings.find(b => b.id === buildingId);
   if (!building) return null;
   if (building.id === pieceId) return { piece: building, building, kind: 'building' };
-  for (const [list, kind] of [['levels', 'level'], ['walls', 'wall'], ['openings', 'opening'], ['rooms', 'room'], ['stairs', 'stair'], ['anchors', 'anchor'], ['items', 'item'], ['fixtures', 'fixture'], ['lights', 'light']]) {
+  for (const [list, kind] of [['solar_zones', 'solar_zone'], ['levels', 'level'], ['walls', 'wall'], ['openings', 'opening'], ['rooms', 'room'], ['stairs', 'stair'], ['anchors', 'anchor'], ['items', 'item'], ['fixtures', 'fixture'], ['lights', 'light']]) {
     const piece = building[list]?.find(p => p.id === pieceId);
     if (piece) return { piece, building, kind };
   }
@@ -62,7 +63,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
   const endNames = { x0: 'Left end', x1: 'Right end', y0: 'Front end', y1: 'Back end' };
   const fieldValue = (piece, field) => field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
   const title = ({ kind, piece, building }) => {
-    const name = kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
+    const name = kind==='solar_zone'?'Solar zone':kind==='anchor' && ['meter','electric_panel'].includes(piece.kind)?(piece.kind==='meter'?'Meter':'Electric panel'):kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
       : piece.name || piece.preset || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
     if (!['wall', 'opening'].includes(kind)) return name;
     const wall = kind === 'wall' ? piece : building.walls.find(w => w.id === (piece.wall || piece.host?.wall));
@@ -101,7 +102,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     const flags = roofFlags(record);
-    const nextLayout = JSON.stringify([record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind, materials, !!pickMaterial]);
+    const nextLayout = JSON.stringify([record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind, materials, !!pickMaterial]);
     host.hidden = !record;
     if (record && layout === nextLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
@@ -158,6 +159,25 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
           edgeIndex = index; layout = null; draw();
         })));
         if (addDormer) host.append(button('Add dormer', addDormer));
+      }
+    }
+    if(kind==='roof' || kind==='solar_zone'){
+      host.append(button('Solar ribbon starts here',()=>op({op:'set_solar_source',building:building.id,roof:kind==='solar_zone'?piece.roof:piece.roof || piece.id})));
+    }
+    if(kind==='solar_zone'){
+      const total=document.createElement('p');total.textContent=`${solarLayout(piece).length} panels`;host.append(total);
+      const saveZone=change=>{pending=pending.then(()=>op({op:'update_solar_zone',building:building.id,id:piece.id,...change})).catch(report);return pending;};
+      for(const [field,text] of [['rect','Zone rectangle (u, v, u2, v2 in feet)'],['panel_width','Panel width'],['panel_height','Panel height'],['orientation','Orientation'],['gap','Gap'],['setback','Setback'],['count','Panel count (empty fills zone)'],['entity','Production sensor (optional)']]){
+        const label=document.createElement('label');label.textContent=text;
+        const input=document.createElement(field==='orientation'?'select':'input');
+        if(field==='orientation')for(const value of ['portrait','landscape']){const option=document.createElement('option');option.value=value;option.textContent=value;input.append(option);}
+        else input.type='text';
+        input.value=field==='rect'?piece.rect.join(', '):['panel_width','panel_height','gap','setback'].includes(field)?feetInches(piece[field]):piece[field] ?? '';
+        input.disabled=!canEdit();input.setAttribute('aria-label',text);
+        input.addEventListener('change',()=>{if(!canEdit())return;try{
+          const value=field==='rect'?input.value.split(',').map(parseLength):['panel_width','panel_height','gap','setback'].includes(field)?parseLength(input.value):field==='count'?(input.value.trim()?Number(input.value):null):input.value || null;
+          saveZone({[field]:value}).then(()=>{layout=null;draw();});
+        }catch(error){report(error);}});label.append(input);host.append(label);
       }
     }
     const form = document.createElement('form'); form.addEventListener('submit', event => event.preventDefault()); host.append(form);
@@ -226,7 +246,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       (['ridge', 'low_side'].includes(field) ? more : form).append(label);
     }
     if (more.children.length > 1) form.append(more);
-    if (haLink && ['room', 'building', 'anchor'].includes(kind)) {
+    if (haLink && ['room', 'building', 'anchor'].includes(kind) && !['meter','electric_panel'].includes(piece.kind)) {
       haSection = document.createElement('section'); host.append(haSection); drawHaSection(record);
     }
     host.append(button('Ask Argyle about this', () => ask(selection)));
@@ -239,7 +259,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       if (!await window.promptConfirm(`Delete ${getLabel(selection)}?`, 'Attached doors or windows may also be removed. The timeline keeps the earlier house.', 'Delete', 'Cancel')) return;
       await pending;
       if (['planting', 'furniture'].includes(kind)) await op({ op: 'delete_site_item', list: kind, index: record.index });
-      else if (roof && !piece.rect && op) await op({ op: 'delete', building: building.id, id: piece.id });
+      else if ((kind==='solar_zone' || roof && !piece.rect) && op) await op({ op: 'delete', building: building.id, id: piece.id });
       else await edit({ op: 'delete', building: building.id, piece: piece.id });
       select(null);
     }));

@@ -131,6 +131,9 @@ ENTRIES: List[dict] = [
     _e('house_twin_idle_enabled', 'panel', 'House idle face',
        'Show the clock, weather and a slow house orbit after a minute. Off on desks, on on panels by default.',
        page='house/twin', anchor='twin-glance-settings'),
+    _e('house_twin_energy', 'panel', 'Energy sources',
+       'Map solar, Powerwall battery, grid, house load and car charging readings, power signs and roof panels.',
+       page='house/twin', anchor='twin-energy-settings'),
     _e('house_hybrid_enabled', 'panel', 'Use the new House experience',
        'Use the photographic rooms for everyone opening The House. Turn off to return to the original 3D house.',
        page='config', anchor='boards'),
@@ -832,7 +835,7 @@ def audit() -> dict:
     # The old schema field remains readable for migration, with no editor.
     # Structured display preferences have a dedicated store and endpoint, like
     # the control rulebook; they never invalidate schedules on a display save.
-    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'ha_control', 'house_twin_glance', 'house_twin_idle_enabled'}
+    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'ha_control', 'house_twin_glance', 'house_twin_idle_enabled', 'house_twin_energy'}
     listed = set(BY_KEY)
     return {'missing': sorted(model - listed), 'stale': sorted(listed - model)}
 

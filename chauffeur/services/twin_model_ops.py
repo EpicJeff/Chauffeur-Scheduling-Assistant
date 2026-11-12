@@ -455,9 +455,11 @@ def _delete(building, pid, before):
         building['walls'] = [w for w in building['walls'] if w not in exclusive]
         building['rooms'].remove(room)
         return f"Deleted the {room['name']}."
-    for name in ('openings', 'anchors', 'items', 'roofs', 'dormers', 'extensions', 'stairs'):
+    for name in ('openings', 'anchors', 'items', 'roofs', 'dormers', 'extensions', 'stairs', 'solar_zones'):
         piece = next((p for p in building.get(name, []) if p['id'] == pid), None)
         if piece is not None:
+            if name == 'roofs' and any(z.get('roof') == pid for z in building.get('solar_zones', [])):
+                raise Refused('Delete the solar zones on this roof before deleting the roof.')
             if name == 'anchors':
                 release_anchor_device(building, piece, before)
             building[name].remove(piece)
@@ -469,7 +471,7 @@ def _delete(building, pid, before):
 
 def _mark_touched(building, previous, op):
     old_geometry, geometry = hosts.snapshot(previous), hosts.snapshot(building)
-    for name in ('joints', 'walls', 'rooms', 'openings', 'anchors', 'items', 'roofs', 'dormers', 'levels'):
+    for name in ('joints', 'walls', 'rooms', 'openings', 'anchors', 'items', 'roofs', 'dormers', 'levels', 'solar_zones'):
         old = {p['id']: p for p in previous.get(name, [])}
         for piece in building.get(name, []):
             prior = old.get(piece['id'])
@@ -485,7 +487,7 @@ def _mark_touched(building, previous, op):
                 _person(piece)
 
 
-MORE_OPS = ('add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
+MORE_OPS = ('add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
@@ -593,7 +595,7 @@ def _piece(building, pid):
         return 'building', building
     for collection, kind in (('walls', 'wall'), ('rooms', 'room'), ('roofs', 'roof'),
                              ('openings', 'opening'), ('levels', 'level'),
-                             ('anchors', 'anchor'), ('items', 'item'), ('dormers', 'dormer')):
+                             ('anchors', 'anchor'), ('items', 'item'), ('dormers', 'dormer'), ('solar_zones', 'solar_zone')):
         for piece in building.get(collection, []):
             if piece['id'] == pid:
                 return kind, piece
@@ -628,6 +630,8 @@ def _opening_clear(building, piece, noun):
 
 def _rehost(building, piece, host, opening=False):
     host = deepcopy(host)
+    if piece.get('kind') in ('meter', 'electric_panel') and (not isinstance(host, dict) or 'wall' not in host):
+        raise Refused('Choose a wall for the equipment.')
     if not isinstance(host, dict):
         raise Refused('Choose a host surface.')
     if opening:
@@ -867,7 +871,34 @@ def _proposal(building, op):
 
 def _more(building, op, ha_catalogue=None):
     kind = op['op']
-    if kind == 'add_opening':
+    if kind in ('add_solar_zone', 'update_solar_zone'):
+        from services import twin_solar
+        if kind == 'add_solar_zone':
+            piece = {'id': _id(building, 'solar_zone'), 'kind': 'solar_zone',
+                     'state': 'settled', **deepcopy(twin_solar.DEFAULTS)}
+            building.setdefault('solar_zones', []).append(piece)
+        else:
+            piece = _find(building, 'solar_zones', op.get('id'))
+        for field in ('roof', 'plane', 'rect', *twin_solar.DEFAULTS):
+            if field in op:
+                piece[field] = deepcopy(op[field])
+        reason = twin_solar.error(building, piece, building['solar_zones'])
+        if reason:
+            raise Refused(reason)
+        piece['state'] = 'settled'
+        return 'Added the solar zone.' if kind == 'add_solar_zone' else 'Updated the solar zone.'
+    elif kind == 'add_equipment':
+        if op.get('kind') not in ('meter', 'electric_panel'):
+            raise Refused('Choose a meter or an electric panel.')
+        host = op.get('host')
+        if not isinstance(host, dict) or 'wall' not in host:
+            raise Refused('Choose a wall for the equipment.')
+        piece = {'id': _id(building, 'anchor'), 'kind': op['kind'], 'offset': 0,
+                 'state': 'settled', 'device': None}
+        building['anchors'].append(piece)
+        _rehost(building, piece, host)
+        return 'Added the ' + op['kind'].replace('_', ' ') + '.'
+    elif kind == 'add_opening':
         from services.twin_edit import _OPENING_KINDS
         wall = _find(building, 'walls', op.get('wall'))
         if op.get('kind') not in _OPENING_KINDS or wall.get('kind') == 'separator':
@@ -1072,6 +1103,15 @@ def _site_op(model, op, actor):
     return twin_plan.record_compose_overrides(before, model), 'Changed the site item.'
 
 
+def solar_clear(building, previous):
+    # A structural edit must never silently strand a person's roof objects.
+    from services import twin_solar
+    for zone in previous.get('solar_zones', []):
+        current = next((z for z in building.get('solar_zones', []) if z['id'] == zone['id']), None)
+        if current and zone.get('state') != 'ghost' and twin_solar.error(building, current, building.get('solar_zones', [])):
+            raise Refused('That would move a solar zone off its roof plane. Move or delete the zone before changing the roof.')
+
+
 def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple[dict, str]:
     """Return an edited model and plain words, leaving the input untouched."""
     if not isinstance(op, dict):
@@ -1082,6 +1122,17 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
         raise Refused('That operation is not available.')
     op = deepcopy(op)
     model, notes = twin_model.normalize(model)
+    if kind == 'set_solar_source':
+        roof = op.get('roof')
+        if roof is not None and not any(r['id'] == roof for b in model['buildings'] for r in b.get('roofs', [])):
+            raise Refused('Choose a roof for the solar ribbon.')
+        matches = [b['id'] for b in model['buildings'] for r in b.get('roofs', []) if r['id'] == roof]
+        owner = op.get('building') or (matches[0] if len(matches) == 1 else None)
+        if roof is not None and owner not in matches:
+            raise Refused('Choose the roof in its building for the solar ribbon.')
+        model['solar_source_roof'] = roof
+        model['solar_source_building'] = owner if roof is not None else None
+        return model, 'Set the solar ribbon source.'
     if kind in ('place_device', 'unplace_device'):
         device = _device_id(op.get('device'))
         if kind == 'place_device':
@@ -1162,6 +1213,7 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
                          for r in building.get('roofs', [])]
     notes.extend(hosts.follow(building, before))
     _follow_dormers(building, before)
+    solar_clear(building, previous)
     twin_model.filter_checked_flags(building)
     if actor == 'person':
         _mark_touched(building, previous, op)

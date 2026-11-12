@@ -21,7 +21,7 @@
     {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/library', 'editor/flags'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
-    {% for name in ['live/climate', 'live/glance', 'live/idle', 'live/glance_settings'] %}
+    {% for name in ['twin_solar', 'live/climate', 'live/glance', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_geometry', 'live/energy_mapping', 'live/energy_settings', 'live/security'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/editor/flags.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/flags.js' | ver | tojson }};
@@ -77,7 +77,7 @@
       <nav id="editor-steps" aria-label="Build your house"></nav>
     </header>
     <nav id="editor-rail" aria-label="House tools">
-      {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('draw-room', 'Draw room'), ('draw-wall', 'Draw wall'), ('split-room', 'Split room'), ('add-door', 'Add door'), ('add-window', 'Add window'), ('add-anchor', 'Add anchor'), ('roof', 'Roof'), ('add-level', 'Add floor'), ('delete', 'Delete'), ('undo', 'Undo'), ('redo', 'Redo'), ('sheet', 'Sheet')] %}
+      {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('draw-room', 'Draw room'), ('draw-wall', 'Draw wall'), ('split-room', 'Split room'), ('add-door', 'Add door'), ('add-window', 'Add window'), ('add-anchor', 'Add anchor'), ('add-solar-zone', 'Add solar zone'), ('add-meter', 'Add meter'), ('add-electric-panel', 'Add electric panel'), ('roof', 'Roof'), ('add-level', 'Add floor'), ('delete', 'Delete'), ('undo', 'Undo'), ('redo', 'Redo'), ('sheet', 'Sheet')] %}
       <button id="rail-{{ tool }}" type="button" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool != 'select' %}disabled{% endif %}>{{ label }}</button>
       {% endfor %}
       <button id="rail-library" type="button" aria-pressed="false" aria-controls="library-panel">Library</button>
