@@ -3,8 +3,10 @@ import { solarPoint, solarFrame, solarUV } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import * as THREE from 'three';
 import { hostPoint, parkingPoint } from '../twin_hosts.js';
-import { groundAt, buildingGround } from '../twin_ground.js';
+import { groundAt, buildingGround, edgeDistance } from '../twin_ground.js';
 import { roofEdge } from './roof_tools.js';
+import { vertexHandles, editVertex } from './polygon_handles.js';
+import { shapeKey, shapeCentre, transformShape, shapeOperation, closedShape } from './site_shapes.js';
 
 const FT = .3048;
 const inch = value => Math.round(value * 12) / 12;
@@ -18,8 +20,9 @@ const basis = wall => {
 export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCommit, onPreview, onClick, signal }) {
   const canvas = view.renderer3.domElement, host = canvas.parentElement;
   const layer = document.createElement('div'); layer.className = 'editor-handles'; host.append(layer);
+  const ring = document.createElement('span'); ring.className = 'editor-site-ring'; ring.hidden = true; layer.append(ring);
   const raycaster = new THREE.Raycaster();
-  let rows = [], gesture = null, preview = null, lastFrameMs = null;
+  let rows = [], gesture = null, preview = null, lastFrameMs = null, ringPoints = [];
   const plan = () => preview || getPlan();
   function world(building, point) {
     const a = (building.rotation || 0) * Math.PI / 180, [x, y, z] = point, p = building.position || [0, 0];
@@ -92,9 +95,20 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       const record = siteRecord(plan(), selected.id);
       if (!record || !siteShapeKinds.includes(record.kind)) return objectDescriptors();
       const ps = sitePoints(record.piece); if (!ps.length) return [];
-      const by = gesture?.handle.kind === 'site_move' && gesture.handle.id === selected.id ? gesture.operation?.by || [0, 0] : [0, 0];
-      const centre = [0, 1].map(i => ps.reduce((sum, p) => sum + p[i], 0) / ps.length + by[i]);
-      return [{ kind: 'site_move', id: selected.id, building: null, at: [...centre, groundAt(plan(), ...centre) + (record.piece.elevation || 0)] }];
+      const centre = shapeCentre(record.piece), z = groundAt(plan(), ...centre) + (record.piece.elevation || 0);
+      const radius = record.kind === 'fire_pit' ? record.piece.radius : Math.max(2, ...ps.map(p => Math.hypot(p[0] - centre[0], p[1] - centre[1]) + 2));
+      const add = (kind, at, extra = {}) => ({ kind, id: selected.id, building: null, at: [...at, z], centre: [...centre, z], ...extra });
+      let move = centre;
+      if (!closedShape(record) && record.kind !== 'fire_pit') {
+        const frame = coordinateBuilding(null), middle = project(frame, [...centre, z]), edge = project(frame, [centre[0], centre[1] - 2, z]);
+        const distance = middle && edge ? Math.max(2, 64 / Math.max(.1, Math.hypot(edge[0] - middle[0], edge[1] - middle[1]))) : 2;
+        move = [centre[0], centre[1] - distance];
+      }
+      const result = [add('site_move', move)];
+      if (record.kind === 'fire_pit') return [...result, add('site_radius', [centre[0] + radius, centre[1]])];
+      result.push(...vertexHandles(ps, closedShape(record)).map(({ at, ...h }) => add(h.insert ? 'site_insert' : 'site_vertex', at, h)));
+      if (record.kind !== 'fence') result.push(add('site_rotate', [centre[0] + radius, centre[1]]), add('site_scale', [centre[0] + radius, centre[1] + radius]));
+      return result;
     }
     const result = objectDescriptors(), add = (kind, id, at, level, extra = {}) => {
       if (view.groups?.levels[`${building.id}:${level}`]?.visible === false) return;
@@ -163,6 +177,23 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   }
   function refresh() {
     const handles = descriptors(), building = coordinateBuilding(getSelection().building);
+    const turn = handles.find(h => h.kind === 'site_rotate');
+    ring.hidden = !turn;
+    ringPoints = [];
+    if (turn) {
+      const radius = turn.at[0] - turn.centre[0];
+      ringPoints = Array.from({ length: 49 }, (_, i) => project(building, [turn.centre[0] + radius * Math.cos(i * Math.PI / 24), turn.centre[1] + radius * Math.sin(i * Math.PI / 24), turn.at[2]]));
+    }
+    let segments = 0;
+    for (let i = 1; i < ringPoints.length; i++) {
+      const a = ringPoints[i - 1], b = ringPoints[i]; if (!a || !b) continue;
+      let line = ring.children[segments++];
+      if (!line) { line = document.createElement('span'); ring.append(line); }
+      line.style.left = `${a[0]}px`; line.style.top = `${a[1]}px`;
+      line.style.width = `${Math.hypot(b[0] - a[0], b[1] - a[1])}px`;
+      line.style.transform = `rotate(${Math.atan2(b[1] - a[1], b[0] - a[0])}rad)`;
+    }
+    while (ring.children.length > segments) ring.children[ring.children.length - 1].remove();
     let count = 0;
     for (const handle of handles) {
       const pixel = project(building, handle.at); if (!pixel) continue;
@@ -174,6 +205,8 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       row.node.className = `editor-handle editor-handle-${handle.kind}`;
       row.node.style.left = `${pixel[0]}px`; row.node.style.top = `${pixel[1]}px`;
       row.node.setAttribute('aria-hidden', 'true');
+      if (handle.kind === 'site_insert') row.node.textContent = '+';
+      else row.node.textContent = '';
     }
     while (rows.length > count) rows.pop().node.remove();
   }
@@ -183,6 +216,10 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       .sort((a, b) => (a.handle.kind === 'joint' ? -1 : 0) - (b.handle.kind === 'joint' ? -1 : 0)
         || Math.hypot(a.pixel[0] - event.clientX, a.pixel[1] - event.clientY) - Math.hypot(b.pixel[0] - event.clientX, b.pixel[1] - event.clientY));
     if (close.length) return close[0].handle;
+    const turn = descriptors().find(h => h.kind === 'site_rotate');
+    if (turn) {
+      if (ringPoints.some((p, i) => i && p && ringPoints[i - 1] && edgeDistance([event.clientX, event.clientY], ringPoints[i - 1], p) <= 8)) return turn;
+    }
     const all = descriptors(), selected = getSelection(), building = plan()?.buildings.find(b => b.id === selected.building);
     const wallHandle = all.find(h => h.kind === 'wall');
     if (wallHandle) {
@@ -206,9 +243,13 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     if (gesture) return false;
     const handle = hit(event); if (!handle) return false;
     const source = getPlan(), building = coordinateBuilding(handle.building);
-    if (handle.kind === 'site_move') {
+    if (handle.kind.startsWith('site_')) {
       const start = onPlane(event, building, handle.at, [0, 0, 1]); if (!start) return false;
-      gesture = { handle, source, building, record: siteRecord(source, handle.id), start, normal: [0, 0, 1], operation: null }; return true;
+      const record = siteRecord(source, handle.id);
+      gesture = { handle, source, building, record, piece: record.piece, start, normal: [0, 0, 1], operation: null, remove: !!event.altKey };
+      // Midpoint click inserts; Alt-click removes. Both post only on release.
+      if (handle.kind === 'site_insert' || handle.kind === 'site_vertex' && event.altKey) update(event);
+      return true;
     }
     if (handle.kind.startsWith('object_')) {
       const start = onPlane(event, building, handle.centre, [0, 0, 1]);
@@ -273,12 +314,29 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       drag.update(view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`)); return;
     }
     const point = onPlane(event, building, handle.at, g.normal); if (!point) return;
-    if (handle.kind === 'site_move') {
-      const by = point.slice(0, 2).map((v, i) => inch(v - g.start[i]));
-      g.operation = { op: 'move_site_item', list: g.record.kind, index: g.record.index, by };
-      const points = sitePoints(g.record.piece).map(p => project(building, [p[0] + by[0], p[1] + by[1], handle.at[2]])).filter(Boolean);
+    if (handle.kind.startsWith('site_')) {
+      const centre = handle.centre, a = g.start.slice(0, 2).map((v, i) => v - centre[i]), b = point.slice(0, 2).map((v, i) => v - centre[i]);
+      let change;
+      if (handle.kind === 'site_move') change = transformShape(piece, { centre: centre.slice(0, 2).map((v, i) => v + inch(point[i] - g.start[i])) });
+      else if (handle.kind === 'site_radius') change = { radius: Math.max(.1, Math.hypot(...b)) };
+      else if (handle.kind === 'site_rotate') {
+        let angle = (piece.rotation || 0) + (Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0])) * 180 / Math.PI;
+        if (!event.shiftKey) angle = Math.round(angle / 15) * 15;
+        change = transformShape(piece, { rotation: angle });
+      } else if (handle.kind === 'site_scale') {
+        const scale = Math.max(.001, Math.hypot(...b) / Math.max(.01, Math.hypot(...a)));
+        change = transformShape(piece, { scale: [scale, scale] });
+      } else change = { [shapeKey(piece)]: editVertex(sitePoints(piece), { ...handle, insert: handle.kind === 'site_insert' }, point.slice(0, 2).map(v => inch(v) || 0), { remove: g.remove, closed: closedShape(g.record) }) };
+      g.operation = handle.kind === 'site_move'
+        ? { op: 'move_site_item', list: g.record.kind, index: g.record.index, by: point.slice(0, 2).map((v, i) => inch(v - g.start[i])) }
+        : shapeOperation(g.record, change);
+      preview = structuredClone(g.source);
+      const next = ['pool', 'fire_pit', 'fence'].includes(g.record.kind) ? preview.site[g.record.kind] : preview.site[g.record.kind][g.record.index];
+      Object.assign(next, change);
+      const outline = next.at ? Array.from({ length: 33 }, (_, i) => [next.at[0] + next.radius * Math.cos(i * Math.PI / 16), next.at[1] + next.radius * Math.sin(i * Math.PI / 16)]) : sitePoints(next);
+      const points = outline.map(p => project(building, [...p, handle.at[2]])).filter(Boolean);
       document.getElementById('editor-drag-outline')?.setAttribute('points', points.map(p => p.join(',')).join(' '));
-      refresh(); return;
+      refresh(); lastFrameMs = Math.max(.001, performance.now() - started); return;
     }
     if (handle.kind.startsWith('object_')) {
       const centre = handle.centre, delta = p => p.slice(0, 2).map((v, i) => v - centre[i]);
@@ -385,9 +443,10 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   async function finish(cancel = false, clicked = false) {
     const g = gesture, released = preview; gesture = null; preview = null;
     if (!g) return;
-    if (g.handle.kind === 'site_move') {
+    if (g.handle.kind.startsWith('site_')) {
       document.getElementById('editor-drag-outline')?.setAttribute('points', '');
-      try { if (!cancel && g.operation) await onCommit(g.operation); }
+      const cornerClick = clicked && (g.handle.kind === 'site_insert' || g.handle.kind === 'site_vertex' && g.remove);
+      try { if ((!cancel || cornerClick) && g.operation && Object.entries(g.operation).some(([k, v]) => !['op', 'list', 'index'].includes(k) && JSON.stringify(v) !== JSON.stringify(g.piece[k]))) await onCommit(g.operation); }
       finally { refresh(); }
       return;
     }

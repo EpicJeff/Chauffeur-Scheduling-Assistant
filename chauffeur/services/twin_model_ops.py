@@ -491,7 +491,7 @@ MORE_OPS = ('set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_sour
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
-            'move_site_item', 'delete_site_item', 'add_site_item', 'place_device', 'unplace_device',
+            'move_site_item', 'delete_site_item', 'add_site_item', 'update_site_shape', 'place_device', 'unplace_device',
             'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation')
 
 
@@ -1106,6 +1106,7 @@ def _more(building, op, ha_catalogue=None):
 def _site_op(model, op, actor):
     from services import twin_plan
     before = deepcopy(model)
+    words = 'Changed the site item.'
     name = op.get('list')
     if name not in ('planting', 'furniture', 'beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence'):
         raise Refused('Choose a yard item.')
@@ -1138,7 +1139,16 @@ def _site_op(model, op, actor):
         index = next((i for i, p in enumerate(pieces) if p.get('id') == op['id']), -1) if op.get('id') else op.get('index', 0 if singleton else None)
         if type(index) is not int or not 0 <= index < len(pieces):
             raise Refused('That site item is missing.')
-        if op['op'] == 'move_site_item':
+        if op['op'] == 'update_site_shape':
+            from services import twin_site_shapes
+            change = {k: v for k, v in op.items() if k not in ('op', 'list', 'id', 'index')}
+            try:
+                words = twin_site_shapes.update(name, pieces[index], change, model['site'].get('lot'))
+            except ValueError as exc:
+                raise Refused(str(exc)) from exc
+            if actor == 'person':
+                pieces[index].setdefault('src', {})['person'] = True
+        elif op['op'] == 'move_site_item':
             piece = pieces[index]
             if 'by' in op:
                 by = _point(op['by'])
@@ -1153,13 +1163,20 @@ def _site_op(model, op, actor):
                 piece['at'] = _point(op.get('at'))
             else:
                 raise Refused('Move this shape by a distance in lot feet.')
+            if name in ('beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence'):
+                from services import twin_site_shapes
+                key = next((k for k in ('polygon', 'points', 'polyline', 'at') if k in piece), None)
+                try:
+                    words = twin_site_shapes.update(name, piece, {key: piece[key]}, model['site'].get('lot'))
+                except ValueError as exc:
+                    raise Refused(str(exc)) from exc
             if actor == 'person':
                 pieces[index].setdefault('src', {})['person'] = True
         else:
             pieces.pop(index)
             if singleton:
                 model['site'][name] = None
-    return twin_plan.record_compose_overrides(before, model), 'Changed the site item.'
+    return twin_plan.record_compose_overrides(before, model), words
 
 
 def solar_clear(building, previous):
@@ -1277,7 +1294,7 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
             if not _unplace_device(model, device, actor):
                 raise Refused('Nothing changed.')
         return model, 'Placed the device.' if kind == 'place_device' else 'Removed the device placement.'
-    if kind in ('move_site_item', 'delete_site_item', 'add_site_item'):
+    if kind in ('move_site_item', 'delete_site_item', 'add_site_item', 'update_site_shape'):
         return _site_op(model, op, actor)
     building = _find(model, 'buildings', op.get('building'))
     before = hosts.snapshot(building)

@@ -66,6 +66,10 @@ const applied=applyAtlas(packed,freshLow,options);
 assert.equal(applied.key,b.key,'a High worker/cache result applies on Low');
 assert.deepEqual(bakeLayout(applied,options,[lamp]).entries,bakeLayout(b,options,[lamp]).entries);
 const changed=structuredClone(plan);changed.buildings[0].walls[0].to[0]=10;
+const {transformShape}=await import(file('static/twin/editor/site_shapes.js'));
+const rotated=structuredClone(plan);Object.assign(rotated.site.hardscape[0],transformShape(rotated.site.hardscape[0],{rotation:90}));
+assert.notEqual(atlasJob(await scene('low',rotated),rotated,options).cacheKey,atlasJob(low,plan,options).cacheKey,'polygon rotation changes authored worker bake key');
+assert.notEqual(buildAtlas(await scene('high',rotated),rotated,options).key,b.key,'polygon rotation changes stored atlas key');
 assert.notEqual(buildAtlas(await scene('high',changed),changed,options).key,b.key,'authored wall geometry invalidates');
 assert.notEqual(bakeLayout(b,options,[{...lamp,at:[7,6,6]}]).entries.lamp.key,
  bakeLayout(b,options,[lamp]).entries.lamp.key,'moving the light invalidates its bake');

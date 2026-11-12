@@ -4,6 +4,7 @@ import { tintGrade } from '../twin_terrain_mesh.js';
 import { report } from './api.js';
 import { twinText } from '../palette.js';
 import { siteRecords, siteShapeKinds, siteShapeLabels } from '../objects.js';
+import { vertexHandles, editVertex } from './polygon_handles.js';
 
 const FT = .3048;
 const words = { terraces: 'Terrace pad', ...siteShapeLabels };
@@ -74,7 +75,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       const poly = gesture?.kind === 'vertex' && chosen?.id === pad.id ? gesture.polygon : pad.polygon;
       const centre = mid(poly), height = groundAt(getPlan(), ...centre), shown = Math.round(height * 1000) / 1000;
       line(poly, undefined, true); label(`${shown > 0 ? '+' : ''}${shown} ft`, centre, height);
-      if (chosen?.id === pad.id) poly.forEach((p, index) => label('•', p, groundAt(getPlan(), ...p), { index }));
+      if (chosen?.id === pad.id) vertexHandles(poly).forEach(h => label(h.insert ? '+' : '•', h.at, groundAt(getPlan(), ...h.at), h));
     }
     if (drawing) { line(drawing, undefined, false); drawing.forEach(p => label('•', p)); }
   }
@@ -150,7 +151,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       piece.polygon.forEach((_, i) => field(`Edge ${i + 1}`, piece.edges?.[i]?.edge || 'slope', edge => {
         const edges = current().polygon.map((_, j) => ({ edge: current().edges?.[j]?.edge || 'slope' })); edges[i] = { edge }; update({ edges });
       }, ['slope', 'sharp']));
-      card.append(node('p', 'Drag a corner handle to reshape this pad.'));
+      card.append(node('p', 'Drag corners to reshape. Tap + to add a corner. Alt-click a corner to remove it (at least three remain).'));
     }
     card.append(button('Delete', remove), button('Ground and yard', show));
   }
@@ -186,7 +187,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     const piece = current();
     if (hit && piece) {
       const start = ground(event, chosen.kind === 'terraces' ? piece.height : undefined); if (!start) return false;
-      gesture = { kind: hit.move ? 'move' : 'vertex', index: hit.index, polygon: piece.polygon?.map(p => [...p]), start, enabled: view.controls.enabled, height: chosen.kind === 'terraces' ? piece.height : undefined, client: [event.clientX, event.clientY], pointer: event.pointerId };
+      gesture = { kind: 'vertex', index: hit.index, handle: hit, source: piece.polygon, remove: event.altKey, polygon: editVertex(piece.polygon, hit, hit.at, { remove: event.altKey }), start, enabled: view.controls.enabled, height: piece.height, client: [event.clientX, event.clientY], pointer: event.pointerId };
     } else {
       // A pad's filled area is selectable only in its own ground menu; its
       // outline is always selectable, leaving house and tree picks reachable.
@@ -204,7 +205,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     if (gesture.kind === 'draw') return true;
     const p = ground(event, gesture.height); if (!p) return true;
     gesture.moved = !gesture.client || Math.hypot(event.clientX - gesture.client[0], event.clientY - gesture.client[1]) >= 3;
-    if (gesture.kind === 'vertex') gesture.polygon[gesture.index] = snapPadPoint(p, getPlan(), chosen.id);
+    if (gesture.kind === 'vertex') gesture.polygon = editVertex(gesture.source, gesture.handle, snapPadPoint(p, getPlan(), chosen.id), { remove: gesture.remove });
     else gesture.by = p.map((v, i) => v - gesture.start[i]);
     graphics(); return true;
   }
@@ -213,7 +214,12 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     const g = gesture; gesture = null; view.controls.enabled = g.enabled;
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (!cancel && canEdit() && g.kind !== 'draw') {
-      if (g.kind === 'vertex' && g.moved) save({ op: 'update_pad', id: chosen.id, polygon: g.polygon }).catch(report);
+      if (g.kind === 'vertex' && (g.moved || g.handle.insert || g.remove) && JSON.stringify(g.polygon) !== JSON.stringify(g.source)) {
+        const edges = current().edges?.map(e => ({ ...e })) || g.source.map(() => ({ edge: 'slope' }));
+        if (g.remove && g.polygon.length < g.source.length) edges.splice(g.index, 1);
+        else if (g.handle.insert) edges.splice(g.index + 1, 0, { ...edges[g.index] });
+        save({ op: 'update_pad', id: chosen.id, polygon: g.polygon, edges }).catch(report);
+      }
     }
     graphics(); return true;
   }

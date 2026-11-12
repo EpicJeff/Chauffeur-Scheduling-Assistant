@@ -517,8 +517,8 @@ def _site(site, notes):
             elif valid and name in ('beds', 'hardscape'):
                 valid = _polygon(item.get('polygon')) and _numeric_fields(item, ('height', 'elevation'))
             elif valid and name == 'edges':
-                points = item.get('points', item.get('polyline'))
-                valid = (isinstance(points, list) and len(points) >= 2 and all(_point(p) for p in points)
+                points = item.get('polygon', item.get('points', item.get('polyline')))
+                valid = (isinstance(points, list) and len(points) >= (3 if 'polygon' in item else 2) and all(_point(p) for p in points)
                          and _numeric_fields(item, ('elevation',)))
             elif valid:
                 valid = (_point(item.get('at'))

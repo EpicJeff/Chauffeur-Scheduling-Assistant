@@ -233,7 +233,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (event.button !== 0 || !canEdit()) return;
     pointerId = event.pointerId;
     if (delegate?.pointerDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
-    if (event.shiftKey && tool === 'select') {
+    if (event.shiftKey && tool === 'select' && !handles.hit(event)) {
       gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true, addRoom: true }; return;
     }
     if (handles.begin(event)) {
