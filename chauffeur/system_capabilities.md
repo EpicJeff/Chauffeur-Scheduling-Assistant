@@ -1,6 +1,32 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.804 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.805 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.805 (2026-11-12, NOT device-verified): energy ribbons that share an end fan out without crossing.**
+
+**The report.** The user, on the real house: "The fan out isn't quite right. Some ribbons from the same anchor point cross over each other." Solar → home and solar → battery crossed just above the solar roof.
+
+**Cause.** `flowFans` handed out lanes by row id, and `flowCurve` pushed each ribbon along its own canonical perpendicular. Lane order ignored the heading, so two ribbons leaving one end in similar directions could take swapped sides.
+
+**How it was built.** Claude traced the cause and drafted the heading-ordered fan; Codex finished it. Claude checked it in Chromium.
+
+**Now** (`static/twin/live/energy_geometry.js` `flowFans`, `flowCurve`):
+- **Reversed transfers** (a:b and b:a) are one physical member. They never flow together, so they share a lane.
+- **At each shared end**, members are ordered by outward heading (ties by id), with the walk starting after the widest gap.
+- **Grouping:** neighbours whose headings are within 35°, or whose natural apexes are within four maximum ribbon widths, fan as one group.
+- **Slots:** half-integer slots in heading order, never zero. A pair is equal and opposite; an odd group shifts half a slot. A lone ribbon at a shared end bends to its own left.
+- **The bend** is bounded by the angular sector halfway to the neighbouring headings at both ends, so the whole ground track stays inside it.
+- **Collinear routes:** ones joined through shared ends separate by world side, then nest by span.
+- **Unchanged:** endpoints, the gentle apex height, planarity, labels at their own apex, and the fixed width budget (a push never moves a route).
+
+**Tests.** `test_twin_energy_js` 31/31. The five new checks are:
+- the user's 160°/0°/20° layout, with rotations and mixed ends;
+- a fourth route over 8/20/60 ft spans;
+- collinear three and four members;
+- reversed pairs sharing a lane;
+- all 24 orderings of solar, battery, grid and house on a line, checked by sampled xz segment intersection.
+
+Also green: `test_twin_energy_flows_js` 15/15, browser `test_house_twin_energy_live` 7/7 and `test_house_twin_energy_equipment_live` 3/3.
 
 **v2.499.804 (2026-11-12, NOT device-verified): cars and chargers in the house twin. Chargers are house equipment, cars park on spots as icons, and the Energy ribbon runs panel → charger with a short cable to the car being charged.**
 
