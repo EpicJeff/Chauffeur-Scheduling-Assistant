@@ -1,6 +1,6 @@
 # Material library: design
 
-Date: 2026-11-13. Status: draft for the user's approval.
+Date: 2026-11-13. Status: draft for the user's approval; revised after Codex adversarial review (identity, deletion, invalidation, bake roles, tint, offsets, bounded downloads, server-side decode).
 
 ## Why
 
@@ -49,13 +49,29 @@ A material is a Library entry with this shape (stored on the server; names are t
   - `random_offset`: a boolean; each surface gets a stable pseudo-random UV offset so long runs do not show the repeat.
 - `thumbnail`: a small PNG rendered in the browser from the preview.
 
-**The twelve shipped materials and the kit roles stay.** They are read-only Library entries (`source: builtin`). "Duplicate" makes an editable user copy. Existing slot values `{id, color?}` keep working: `color` remains a tint override on top of the material's own tint.
+**The twelve shipped materials and the kit roles stay.** They are read-only Library entries (`source: builtin`). "Duplicate" makes an editable user copy.
+
+**Tint composition (revised after review).** The final colour is the base colour map multiplied by the effective tint. The effective tint is the slot's `color` when the slot has one, which *replaces* the material's tint (as `color` behaves today); otherwise it is the material's own `tint`.
+- Today the chooser copies the catalogue swatch colour into every slot it saves (`editor/material_slot.js`, `editor/library.js`). From now on an ordinary pick saves `{id}` only, so Library tint edits reach it.
+- A per-surface tint is an explicit "Override tint" control with a "Clear override" that keeps the material.
+- Existing saved `{id, color}` values keep rendering exactly as today. They count as overrides, and the slot shows "Clear override" so a person can hand them back to the material's tint.
 
 **Ownership.** The Library belongs to the household, not to one house, so it outlives house save and load when that ships. Parents create, edit and delete; everyone who can see the house can read.
 
-**Editing a material updates every surface that uses it.** Downloaded materials are starting points: editing a Poly Haven material's parameters or swapping one of its maps saves it as the household's own material (copy on write, keeping `based_on`), so the downloaded original is never altered.
+**Identity (revised after review).** Every assignable Library entry is a household material with a stable `id` that never changes when it is edited. Slots and surface overrides store that id.
+- Adding from Poly Haven or ambientCG downloads the *source* map files once, immutable and content-addressed, and creates a household material whose maps point at them. Editing that material changes the material itself (its `revision` goes up), so every surface using it updates. The downloaded source files are never altered, and "Reset to source" puts the material's maps and parameters back to what was downloaded.
+- "Duplicate" makes a new material with a new id, for when the person wants two variants.
+- There is no copy-on-write rebinding of house references.
 
-**Deleting a material in use** is refused with the count of places that use it, unless the person confirms. On confirm those slots and overrides return to their defaults, in one undoable house edit. Use `promptConfirm`, never a browser dialog.
+**Revisions.** Each material save writes a new `revision` (parameters plus the content hashes of its maps). Map files are immutable and content-addressed (the URL contains the hash), so replacing a map never reuses a URL and no cache can serve old pixels. The Library page's undo and redo step through a material's revisions.
+
+**Material edits are not house edits.** House history rounds store material ids, not revisions. Undoing a house edit restores which material a surface uses, and that material renders at its current revision. This is deliberate and should be stated in the UI: "Changes here apply everywhere this material is used."
+
+**Deleting.**
+- A material the current house uses cannot be deleted. The refusal lists where it is used (for example "Used on 14 surfaces: Main house walls, Fence boards…"), and the person reassigns those first.
+- A material used only by house history or saved houses is *archived*. It leaves the Library list, but its record and files are kept, so undo and loading a saved house still render it.
+- Files are purged only when nothing references the material any more, following the same rule `twin_imports` uses for imported models referenced by historical rounds.
+- Confirm with `promptConfirm`, never a browser dialog.
 
 ### 2. Getting materials in
 
@@ -63,6 +79,13 @@ A material is a Library entry with this shape (stored on the server; names are t
 - A search over Poly Haven (`api.polyhaven.com`) and ambientCG (`ambientcg.com/api/v2/full_json`), both CC0.
 - Search by text and category, show thumbnails, pick a resolution (1k, 2k, 4k), then Add.
 - The server downloads the chosen maps, unzipping ambientCG's archives with the standard library, into the household Library. It reuses the atomic fetch-once pattern of `twin_library.ensure()`.
+- **Downloads are bounded (revised after review),** because today's `ensure()` reads whole responses with no ceiling:
+  - streamed reads with a byte cap per file and per material;
+  - an overall deadline;
+  - one download job at a time, with the others queued;
+  - for archives: limits on entry count and expanded size, rejection of path traversal, and extraction only of the image entries we map, matching the protections `twin_imports.create` already has;
+  - staging cleaned up on any failure before the atomic publish;
+  - the Library page shows download progress and failure reasons.
 - Each source's map names map to our slots: Poly Haven `diff`, `nor_gl`, `rough`, `arm` and `ao`; ambientCG `Color`, `NormalGL`, `Roughness`, `Metalness` and `AmbientOcclusion`. The builder confirms against the live APIs.
 - Thumbnails and search go through the server, so the page never talks to third-party hosts directly. That keeps it working under Home Assistant ingress and the add-on's content security policy, and it caches results.
 - With no internet, the search says so, and the rest of the Library still works.
@@ -81,10 +104,13 @@ A material is a Library entry with this shape (stored on the server; names are t
 - From it we take `baseColorTexture` and `baseColorFactor` (which becomes the tint), `metallicRoughnessTexture` (glTF packs it G = roughness, B = metalness) together with its roughness and metalness factors, `normalTexture` and its `scale`, and `occlusionTexture` and its `strength`.
 - glTF normals are GL. Parsing reuses the vendored `GLTFLoader` in the browser, which then uploads the extracted images like loose textures.
 
-**Upload handling.**
-- Images are decoded and resized in the browser before upload, to one stored master per map with a cap of 4096 px. The server has no image library and must not gain one: `requirements.txt` stays as it is.
-- The server validates the type, the size and that the image decodes as declared (by reading the PNG, JPEG or WebP header), and stores the files.
+**Upload handling (revised after review).**
+- Pillow is already a twin dependency (`requirements-twin.txt`; `twin_imports._thumbnail` uses it), so the server fully decodes every uploaded or downloaded image before publishing it.
+- The server enforces limits of its own: bytes per file, pixel dimensions (master cap 4096 px; larger images are downscaled server-side), files per material, and total bytes per material.
+- Malformed, truncated or oversized images are refused with the reason.
+- The browser may pre-resize to save upload time, but the server never trusts that.
 - Large uploads reuse the chunked upload path of model imports (`twin_imports` start, chunk and finish).
+- No new packages.
 
 ### 3. The Library page (all editing happens here)
 
@@ -112,16 +138,25 @@ The house editor's Library and every material slot chooser show the household Li
 
 - **Maps:** `map` from base colour (sRGB); `normalMap` with `normalScale` (the y component negated for DX); `roughnessMap`, `metalnessMap` and `aoMap`, either as separate maps or one ORM texture shared by all three (three's standard material reads AO from R, roughness from G and metalness from B, which matches ORM).
 - **Parameters:** `color` takes the tint (and a slot's `color` overrides it); `roughness` and `metalness` take the multipliers; `aoMapIntensity` takes the AO strength.
-- **Tiling:** generator UVs are in feet, so `repeat` is `1/tile_ft`, together with `rotation` and the random offset. Tiling is per material, replacing the hardcoded 4 ft (8 ft for lawn). Built-ins keep exactly their current scales.
-- **AO needs a second UV set** in three r187 unless it is mapped through UV0. The builder checks and keeps AO on UV0 if the generator gives no `uv1`.
+- **Tiling:** generator UVs are in feet, so `repeat` is `1/tile_ft`, together with `rotation`. Tiling is per material, replacing the hardcoded 4 ft (8 ft for lawn). Built-ins keep exactly their current scales.
+- **Random offset (revised after review)** cannot live on the shared texture, because every surface sharing it would get the same offset. Instead it is applied to each surface's geometry UVs when the geometry is generated, before batching, from a stable seed (a hash of the surface's piece id), so batching by material is kept. Where a builder or feature has no stable surface id, it gets no offset; that is acceptable.
+- **AO:** vendored three r187 maps `aoMap` through UV0 by default (`texture.channel` 0), so no second UV set is needed.
 - **Quality tiers keep their caps:**
   - low: base colour only, at 512 px at most;
   - medium: all maps at 1024 px at most;
   - high: all maps at 2048 px at most.
   - The server serves the stored master, and the browser downsamples once per tier and caches the result. Storing tier variants at upload instead is the builder's call.
-- **Cache and share:** materials are cached by id plus a parameter hash, so twenty walls in one material are one material, which keeps draw-call batching intact. That matters because the twin is draw-call bound.
-- **Live updates:** editing a material on the Library page updates open house views at their next layout or catalogue read. The editor rereads on focus.
-- **Baked lighting:** if the bake depends on material colour or roughness, a material edit marks the bake stale the same way a geometry edit does. The builder checks and states which.
+- **Cache and share (revised after review):**
+  - The cache key is the material id, its revision, the tier, the receiving role, and any role-specific shader behaviour (granite's neutral-light shader, lattice cutouts, roof metalness).
+  - The receiving role is in the key because the bake classifies geometry by `material.name`: `bake/atlas.js` reads it to treat `roof` and `base` as outdoors. One shared instance must never carry two roles.
+  - Twenty walls in one material and one role remain one material, so draw-call batching is kept as it is today. That matters because the twin is draw-call bound.
+  - Moving the bake's role classification onto mesh `userData` is allowed if the builder prefers it, as long as the bake's results are unchanged.
+- **Live updates (revised after review):**
+  - The Library has a catalogue revision.
+  - An open house view or editor learns of a change on the next catalogue read, on focus, and on the server's existing update push.
+  - For each changed material it rebuilds only the cached materials with that id: textures come from the new hashed URLs, uniforms are updated, and thumbnails refresh.
+  - Today `twin_view.js` reuses materials when the plan is unchanged and the live layer ignores unchanged layouts, so the material revision must be part of what decides reuse.
+- **Baked lighting (revised after review):** bake clones materials, and `bake/reach.js` caches inputs that depend on colour. A revision change on a material the bake uses marks the bake stale, refreshes the affected clones, and clears those reach entries, the same way a geometry edit does.
 
 ### 6. Argyle
 
@@ -134,7 +169,13 @@ Argyle can list materials and assign them through the existing slot ops, since e
 - Page JavaScript fetches with `base() + 'api/...'`, never a root-relative URL, because of ingress.
 - Tailwind is precompiled: rebuild after template class changes.
 - The page works with no Home Assistant present, and online browsing degrades cleanly with no internet.
-- Tests: Python and node tests per piece, at least one runtime test per entry point, and Chromium screenshots of the Library page and of a house surface wearing a user material.
+- Tests: Python and node tests per piece, at least one runtime test per entry point, and Chromium screenshots of the Library page and of a house surface wearing a user material. Required runtime acceptance cases from the review:
+  - restoring a house history round, and loading a saved house, that use an archived material;
+  - two roles (for example `roof` and `interior_wall`) given the same material: each keeps its bake classification;
+  - replacing a map shows new pixels in a view that had the old map cached;
+  - a tint edit reaches two open views;
+  - malformed, truncated, oversized and too-many-files uploads are refused;
+  - a hostile archive (path traversal, a zip bomb) and an oversized download are refused with nothing published.
 - New settings, if any (for example the cap on master resolution), go in `settings_registry.py` and the Library page, never `config.html`.
 
 ## Decided by the user
@@ -147,9 +188,11 @@ Argyle can list materials and assign them through the existing slot ops, since e
 ## My calls (the user can override any of these)
 
 - The Library belongs to the household and outlives individual houses.
-- Downloaded materials are copy-on-write; the original stays intact.
+- Material ids are stable across edits; downloaded source files are immutable and "Reset to source" restores them.
+- Material edits are not house edits: house history stores ids, and an undone house edit renders the material's current revision.
+- Deleting a material the current house uses is refused (reassign first); a material used only by history is archived, not destroyed.
 - Built-ins stay read-only and can be duplicated.
-- Images are resized in the browser, with a 4096 px master cap, and the server stays free of image libraries.
+- The server decodes and validates every image with Pillow (already a twin dependency), with a 4096 px master cap.
 - Tier caps are 512, 1024 and 2048 px, with low tier loading base colour only (as today).
 - Height maps are stored but not rendered in this version.
 - KTX2 texture compression is a later step. The vendored basis encoder makes it possible, but it adds normal-map quality tuning this version does not need.
