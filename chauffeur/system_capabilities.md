@@ -1,6 +1,38 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.820 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.821 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.821 (2026-11-12, NOT device-verified): draw ground features as outlines, paths along a line, fire pits of any shape, and fences.**
+
+**The asks.** The user, 2026-11-12:
+- "Plant beds, hardscapes, pools, and other ground features would benefit from being able to be drawn out like pads are now ... Bonus points for also being able to extrude them along paths for sidewalks, paver paths, driveways";
+- then "Firepits can only be circular? And how are you supposed to add new ground features?" Before this, new ground features could not be added at all; they came only from the automatic build.
+
+**How it was built.** Codex built it in two rounds. Claude checked it in Chromium.
+
+**Ground panel** (the rail's Ground button, `static/twin/editor/terrain_tools.js`). Every tool is drawn with ONE shared drawing module (`editor/site_drawing.js`), which the terrace pad tool now uses too.
+- **Draw bed, Draw patio / hard surface, Draw pool, Draw planting edge:**
+  - click corners, snapping to pad edges, other shapes, outside wall faces and the lot (Shift for free), with a live outline and its area;
+  - Enter or Finish closes, Escape cancels, Backspace removes the last corner;
+  - new shapes take their kind's default material; pools default to 5 ft deep with a 1 ft coping;
+  - existing ways to add things remain.
+- **Paths** (`static/twin/path_shapes.js`):
+  - click a centre line; set width (1..30 ft), corners (mitred or rounded arcs), an optional smooth curve (sampled every 1 ft), material and an optional curb;
+  - presets: Sidewalk (4 ft concrete), Paver path (3 ft pavers, rounded) and Driveway (10 ft);
+  - mitres stop at twice the half-width, and sharper reversals bevel;
+  - edit afterwards with centre-line point handles;
+  - paths drape over layered pads and are baked receivers on the same tier-independent tessellation.
+- **Add fire pit** (`static/twin/fire_pits.js`):
+  - shapes: Round (radius 2 ft), Square (4 ft), Rectangle (4 × 6 ft) or Drawn outline;
+  - a stone ring wall follows the outline, with the bowl inset;
+  - existing pits read as round and are unchanged.
+- **Draw fence:** a polyline, height 6 ft (2..10).
+- **History:** every completed drawing or placement is one history step.
+
+**Tests.**
+- `test_twin_site_drawing_js`: a five-corner bed with wall and pad snaps in one step, no materials created while drawing, path offsets, arcs and curves, hairpins, the drape over a -2 ft pad, the curb, tier-identical receivers, fire pit shapes and fence drawing.
+- `test_twin_site_shapes`, `test_twin_site_shapes_js` and `test_twin_terrain_tools_js` (the pad tool on the shared module).
+- Browser `test_twin_site_drawing_live` 1/1 (an L-shaped patio, a curved paver path, fire pits, a fence, undo) and `test_twin_site_shapes_live` 1/1.
 
 **v2.499.820 (2026-11-12, NOT device-verified): yard shapes reshape, resize and turn. A general editor undo fix rides along.**
 
