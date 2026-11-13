@@ -70,10 +70,24 @@ export function kitMaterial(role, kit, tier) {
   const id = ref.id || ref.asset;
   const asset = manifest(kit)[id];
   const material = new THREE.MeshStandardMaterial({
-    name: role, color: ref.color || '#c3c6c2', roughness: role === 'roof' ? 0.45 : 0.85,
+    name: role, color: ref.color || '#c3c6c2', roughness: ref.roughness ?? (role === 'roof' ? 0.45 : 0.85),
     metalness: role === 'roof' ? 0.45 : 0,
     side: THREE.FrontSide,
   });
+  if (role === 'granite') {
+    // Keep a neutral stone response under orange firelight/reflections. Retain
+    // the chosen tint and luminance/speckle, rather than baking in a warm cast.
+    material.onBeforeCompile = shader => {
+      shader.uniforms.graniteTint = { value: material.color };
+      shader.fragmentShader = 'uniform vec3 graniteTint;\n' + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+        vec3 graniteLuma = vec3(.2126,.7152,.0722);
+        vec3 neutralStone = vec3(dot(outgoingLight,graniteLuma)) * graniteTint / max(dot(graniteTint,graniteLuma),.001);
+        outgoingLight = mix(outgoingLight,neutralStone,.95);
+        #include <opaque_fragment>`);
+    };
+    material.customProgramCacheKey = () => 'granite-neutral-light-1';
+  }
   if (asset?.kind !== 'material') return material;
   const pending = [];
   // A failed set is entirely plain kit colour, even if another map succeeds.
@@ -111,7 +125,7 @@ export function kitMaterial(role, kit, tier) {
           texture.anisotropy = tier === 'low' ? 1 : 4;
           if (property === 'map') texture.colorSpace = THREE.SRGBColorSpace;
           material[property] = texture;
-          if (property === 'map') material.color.set('#ffffff');
+          if (property === 'map') material.color.set(role === 'granite' ? ref.color || '#3b3d40' : '#ffffff');
           material.needsUpdate = true;
         }
         completions.delete(resolve);

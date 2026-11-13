@@ -649,7 +649,7 @@ def _read_fixtures(building, fixtures):
 
 
 def _details(building, flat, previous):
-    for name in ('anchors', 'items'):
+    for name in ('anchors', 'items', 'stairs'):
         pinned = [deepcopy(p) for p in previous.get(name, []) if _person(p)]
         ids = {p['id'] for p in pinned}
         building[name] = pinned + [deepcopy(p) for p in flat.get(name, []) if p.get('id') not in ids]

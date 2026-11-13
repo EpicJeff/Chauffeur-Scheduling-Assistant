@@ -207,6 +207,16 @@ def _no_dropped(notes, what):
 
 # ---------------------------------------------------------------- household migration
 
+
+def _expected_site():
+    """The schema-2 site as normalize now returns it: since v2.499.821 a fire pit without a
+    shape reads as round (twin_plan sets shape: 'round'). Nothing else may change."""
+    site = copy.deepcopy(_household()['site'])
+    pits = site.get('fire_pit')
+    for pit in pits if isinstance(pits, list) else [pits] if pits else []:
+        pit.setdefault('shape', 'round')
+    return site
+
 def test_household_migrates_and_keeps_every_room_name_and_opening():
     old = _by_id(_household()['buildings'])
     model, _notes = _migrated()
@@ -275,7 +285,7 @@ def test_household_migrates_and_keeps_every_room_name_and_opening():
     lounge = _by_id(pool['rooms'])['room:5d7de10ca48340ae85c407d22337c6f7']
     check(lounge.get('ha_area') == 'Pool Lounge', f"Pool Lounge lost its area: {lounge.get('ha_area')}")
     check((lounge.get('src') or {}).get('person') is True, 'Pool Lounge was a person edit and must stay one')
-    check(model['site'] == _household()['site'], 'the site must carry over exactly as in schema 2')
+    check(model['site'] == _expected_site(), 'the site must carry over exactly as in schema 2')
 
 
 def test_household_walls_stay_within_a_foot():
@@ -432,7 +442,7 @@ def test_flatten_normalizes_and_keeps_extras():
     model = copy.deepcopy(_migrated()[0])
     flat = b.flatten(copy.deepcopy(model))
     check(flat['schema'] == 'chauffeur.twin.plan/2', f"flatten schema {flat.get('schema')}")
-    check(flat['site'] == _household()['site'], 'flatten must give the site back unchanged')
+    check(flat['site'] == _expected_site(), 'flatten must give the site back unchanged')
     norm, notes = twin_plan.normalize(flat)
     _no_dropped(notes, 'household')
     fb, nbs, mb = _by_id(flat['buildings']), _by_id(norm['buildings']), _by_id(model['buildings'])

@@ -63,7 +63,7 @@ async function readLayout(api, stop) {
 
 // What a layer draws from a layout; a re-read that matches it changes nothing on screen.
 const layoutKey = layout => JSON.stringify([
-  (layout?.markers || []).map(m => [m.device_id, m.name, m.kind, m.entity_id, m.entities, m.building, m.level, m.room, m.at, m.facing_deg, m.orientation, m.outdoor, m.location_valid, m.placed, m.offered, m.accessories]),
+  (layout?.markers || []).map(m => [m.device_id, m.name, m.kind, m.entity_id, m.entities, m.building, m.level, m.room, m.at, m.fire_pit, m.facing_deg, m.orientation, m.outdoor, m.location_valid, m.placed, m.offered, m.accessories]),
   (layout?.rooms || []).map(r => [r.building, r.room, r.level, r.area_id, r.name, r.lights, r.polygon_world]),
   (layout?.devices || []).map(d => [d.device_id, d.name, d.kind, d.entity_id, d.entities, d.area_id, d.offered, d.accessories])]);
 
@@ -702,7 +702,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       const sprite = spriteFor(iconKind(marker), 'unavailable');
       sprite.userData.deviceId = marker.device_id;
       const building = view.plan.buildings.find(b => b.id === marker.building);
-      const ground = buildingGround(view.plan, building);
+      const ground = marker.fire_pit ? groundAt(view.plan, ...marker.at) : buildingGround(view.plan, building);
       sprite.position.set(marker.at[0] * FT, (marker.at[2] + ground) * FT, -marker.at[1] * FT);
       root.add(sprite);
       const label = document.createElement('span'); labels.append(label);

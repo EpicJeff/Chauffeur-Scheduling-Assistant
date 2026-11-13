@@ -258,6 +258,10 @@ import { registerHooks } from 'node:module';
 // that dependency from the real source when this driver copies the card.
 registerHooks({resolve(spec, ctx, next) {
   if (spec === '../twin_generator.js') return {url: pathToFileURL(process.argv[3] + '/twin_generator.js').href, shortCircuit: true};
+  // cards keeps gaining shelf modules: a relative import from the copied card loads from
+  // the real editor folder (siblings) or the twin folder (../).
+  if (ctx.parentURL === pathToFileURL(process.argv[2]).href && /^\.\.?\//.test(spec))
+    return {url: pathToFileURL(process.argv[3] + (spec.startsWith('../') ? '/' + spec.slice(3) : '/editor/' + spec.slice(2))).href, shortCircuit: true};
   if (spec === 'three') return {url: pathToFileURL(process.argv[4] + '/three.module.js').href, shortCircuit: true};
   if (spec.startsWith('three/addons/')) return {url: pathToFileURL(process.argv[4] + '/addons/' + spec.slice(13)).href, shortCircuit: true};
   return next(spec, ctx);

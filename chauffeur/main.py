@@ -7605,6 +7605,25 @@ def house_live(request: Request):
             markers[-1]['facing_deg'] = spot['facing_deg']
         if 'outdoor' in spot:
             markers[-1]['outdoor'] = spot['outdoor']
+    # Ground features need no HA area/device-registry membership. Their marker
+    # uses exactly the same offered/control gate as a placed switch.
+    from services import twin_site_shapes
+    for index, pit in enumerate(twin_site_shapes.pieces(model.get('site', {}).get('fire_pit'))):
+        eid = pit.get('entity')
+        if not eid or not catalogue['available']:
+            continue
+        points = pit.get('polygon') or [pit['at']]
+        at = [sum(p[i] for p in points) / len(points) for i in (0, 1)]
+        height = twin_site_shapes.fire_properties(pit)['height_in'] / 12
+        row = {'device_id': 'fire_pit:' + str(pit.get('id', index)),
+               'entity_id': eid, 'entities': [eid], 'kind': 'switch',
+               'name': pit.get('name') or 'Fire pit', 'fire_pit': True,
+               'offered': control_rules.offered(who, eid, settings, states=states)}
+        # A linked entity may already have a room marker. The pit marker is an
+        # additional hand path at the physical feature, sharing the same entity.
+        devices.insert(0, row)
+        markers.append({**row, 'building': None, 'level': None, 'room': None,
+                        'at': [*at, height + (pit.get('elevation') or 0)], 'placed': True})
     return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices}
 
 
@@ -12001,6 +12020,8 @@ def _house_stream_entities(area: str | None = None) -> set:
         ids.update(twin_glance.entities())
         ids.update(p['light_entity'] for b in model.get('buildings', []) for p in b.get('items', []) if p.get('light_entity'))
         ids.update(p['light_entity'] for name in ('planting', 'furniture') for p in model.get('site', {}).get(name, []) if p.get('light_entity'))
+        from services import twin_site_shapes
+        ids.update(p['entity'] for p in twin_site_shapes.pieces(model.get('site', {}).get('fire_pit')) if p.get('entity'))
         ids.update(z['entity'] for b in model.get('buildings', []) for z in b.get('solar_zones', [])
                    if z.get('entity') and z.get('state') != 'ghost')
         ids.update(p['power'] for b in model.get('buildings', []) for p in b.get('anchors', [])

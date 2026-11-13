@@ -65,6 +65,11 @@
       "asset": "red_brick_03",
       "color": "#a56b52"
     },
+    "granite": {
+      "asset": "granite_tile",
+      "color": "#3b3d40",
+      "roughness": 0.22
+    },
     "retaining_block": {
       "asset": "concrete_floor_02",
       "color": "#96958e"

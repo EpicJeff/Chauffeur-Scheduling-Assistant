@@ -471,7 +471,7 @@ def _delete(building, pid, before):
 
 def _mark_touched(building, previous, op):
     old_geometry, geometry = hosts.snapshot(previous), hosts.snapshot(building)
-    for name in ('joints', 'walls', 'rooms', 'openings', 'anchors', 'items', 'roofs', 'dormers', 'levels', 'solar_zones'):
+    for name in ('joints', 'walls', 'rooms', 'openings', 'anchors', 'items', 'roofs', 'dormers', 'levels', 'solar_zones', 'stairs'):
         old = {p['id']: p for p in previous.get(name, [])}
         for piece in building.get(name, []):
             prior = old.get(piece['id'])
@@ -487,7 +487,7 @@ def _mark_touched(building, previous, op):
                 _person(piece)
 
 
-MORE_OPS = ('set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
+MORE_OPS = ('add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
@@ -888,6 +888,42 @@ def _proposal(building, op):
 
 def _more(building, op, ha_catalogue=None):
     kind = op['op']
+    if kind in ('add_stair', 'update_stair'):
+        adding = kind == 'add_stair'
+        piece = ({'id': _id(building, 'stair'), 'width': 3, 'style': 'solid', 'rail': 'both'}
+                 if adding else _find(building, 'stairs', op.get('id')))
+        for field in ('level', 'from', 'to', 'width', 'to_level', 'rise_to', 'style', 'rail'):
+            if field in op:
+                piece[field] = deepcopy(op[field])
+        level = _find(building, 'levels', piece.get('level'))
+        piece['from'], piece['to'] = _point(piece.get('from')), _point(piece.get('to'))
+        piece['width'] = _number(piece['width'])
+        if not 2 <= piece['width'] <= 8:
+            raise Refused('Choose a stair width from 2 to 8 ft.')
+        if 'rise_to' in op and 'to_level' not in op:
+            piece.pop('to_level', None)
+        if 'to_level' in piece:
+            target = next((l for l in building['levels'] if l['id'] == piece['to_level']), None)
+            if target is None or target['elevation'] <= level['elevation']:
+                raise Refused('Choose a To level that exists above the starting level.')
+            piece['rise_to'] = target['elevation']
+        rise = _number(piece.get('rise_to')) - level['elevation']
+        if rise <= 0:
+            raise Refused('The stair must reach above its starting level.')
+        run = math.dist(piece['from'], piece['to'])
+        if rise > run + _EPS:
+            raise Refused('Make the stair longer (maximum pitch is 45 degrees).')
+        if rise < run * math.tan(math.radians(20)) - _EPS:
+            raise Refused('Make the stair shorter (minimum pitch is 20 degrees).')
+        if piece.get('style', 'solid') not in ('solid', 'open'):
+            raise Refused('Choose solid or open stairs.')
+        if piece.get('rail', 'none') not in ('none', 'left', 'right', 'both'):
+            raise Refused('Choose rails: none, left, right or both.')
+        piece['risers'] = math.ceil(rise / (7.5 / 12))
+        piece['state'] = 'settled'
+        if adding:
+            building.setdefault('stairs', []).append(piece)
+        return 'Added the stair.' if adding else 'Updated the stair.'
     if kind in ('add_solar_zone', 'update_solar_zone'):
         from services import twin_solar
         if kind == 'add_solar_zone':

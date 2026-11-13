@@ -25,8 +25,8 @@ const {groundAt, buildingBase, foundationShape} = await import(file('static/twin
 const {terrainGeometry,terrainSlabGeometry,tintGrade} = await import(file('static/twin/twin_terrain_mesh.js'));
 const {buildYard} = await import(file('static/twin/twin_yard.js'));
 const near=(actual,expected)=>assert.ok(Math.abs(actual-expected)<1e-5,`${actual} != ${expected}`);
-const {buildTwin,polygon} = await import(file('static/twin/twin_generator.js'));
-const {disposeObject,cacheModelMaterials} = await import(file('static/twin/twin_library.js'));
+const {buildTwin,polygon,contains} = await import(file('static/twin/twin_generator.js'));
+const {disposeObject,cacheModelMaterials,kitMaterial} = await import(file('static/twin/twin_library.js'));
 const {parkingPoint} = await import(file('static/twin/twin_hosts.js'));
 const {lotPoint} = await import(file('static/twin/live/energy_geometry.js'));
 // Validation and rendering must agree, including concave pads and both windings.
@@ -203,6 +203,96 @@ for(const f of sides){
 const caps=fireFaces.filter(f=>Math.abs(f.normal.y)>=.5),yTop=Math.max(...caps.map(f=>f.centre.y)),yBottom=Math.min(...caps.map(f=>f.centre.y));
 for(const f of caps)assert.ok(f.centre.y>(yTop+yBottom)/2?f.normal.y>0:f.normal.y<0,'fire pit top faces up and bottom faces down');
 console.log('Passed: fire pit wall outward normals');
+const {buildFirePit,firePitOptions,firePitLayout,gasTableLayout,placedPit,fireFlameMaterial}=await import(file('static/twin/fire_pits.js'));
+const {authoredGeometry}=await import(file('static/twin/bake/fingerprint.js'));
+const fireMaterials=new Map(),fireMat=name=>{if(!fireMaterials.has(name))fireMaterials.set(name,kitMaterial(name,kit,'low'));return fireMaterials.get(name);};
+const firePlain=(name,color,extra={})=>{if(!fireMaterials.has(name))fireMaterials.set(name,extra.fireShader?fireFlameMaterial():new THREE.MeshStandardMaterial({name,color,...extra}));return fireMaterials.get(name);};
+const fireBuild=pit=>{const group=new THREE.Group();return {group,...buildFirePit(group,pit,-2,{mat:fireMat,plain:firePlain,id:'pit:'+pit.id})};};
+assert.deepEqual(firePitOptions({fuel:'gas'}),{fuel:'gas',body:'stone',top:'granite',height:1.5,glass:'amber',detailed:true});
+near(firePitOptions({fuel:'wood'}).height,1.4);assert.equal(firePitOptions({}).top,'none');
+for(const outline of [null,[[0,0],[6,0],[6,2],[2,2],[2,6],[0,6]],[[0,6],[2,6],[2,2],[6,2],[6,0],[0,0]],placedPit('rect',[0,0],{width:6,depth:3}).polygon]){
+ const pit=outline?{id:'drawn',shape:'outline',polygon:outline,fuel:'gas',entity:'switch.fire'}:{id:'round',at:[4,4],radius:2,fuel:'gas',entity:'switch.fire'};
+ const built=fireBuild(pit),layout=firePitLayout(pit),table=gasTableLayout(pit),top=-.5,finish=top+1.5/12,panFloor=finish-2/12;
+ checkBoundaryNormals(built.body.geometry,table.outer,{holes:[table.pan],top,bottom:-2,label:'solid gas body'});
+ built.cap.geometry.computeBoundingBox();near(built.cap.geometry.boundingBox.min.y,top);near(built.cap.geometry.boundingBox.max.y,finish);
+ checkBoundaryNormals(built.cap.geometry,table.slab,{holes:[table.pan],top:finish,bottom:top,label:'gas table slab'});
+ const area=ps=>Math.abs(ps.reduce((s,p,i)=>{const q=ps[(i+1)%ps.length];return s+p[0]*q[1]-q[0]*p[1];},0))/2;
+ const capArea=trianglesOf(built.cap.geometry).filter(t=>t.normal.y>.99).reduce((s,t)=>s+new THREE.Vector3().crossVectors(t.vertices[1].clone().sub(t.vertices[0]),t.vertices[2].clone().sub(t.vertices[0])).length()/2,0);
+ near(capArea,area(table.slab)-area(table.pan),'whole tabletop covered except the pan');
+ const {edgeDistance}=await import(file('static/twin/twin_ground.js'));
+ table.slab.forEach((p,i)=>{const q=table.slab[(i+1)%table.slab.length],m=p.map((n,k)=>(n+q[k])/2);near(Math.min(...table.outer.map((a,j)=>edgeDistance(m,a,table.outer[(j+1)%table.outer.length]))),table.overhang);});
+ near(table.overhang,1/12);assert.ok(table.border>=.25&&table.border<=2/3);
+ for(const {normal,centre} of trianglesOf(built.body.geometry))if(Math.abs(normal.y)<.1&&contains(table.pan,[centre.x,-centre.z]))assert.ok(centre.y>=panFloor-1e-5,'no open bowl walls below shallow pan');
+ built.group.updateMatrixWorld(true);const down=new THREE.Raycaster(new THREE.Vector3(table.centre[0],10,-table.centre[1]),new THREE.Vector3(0,-1,0));
+ near(down.intersectObject(built.body)[0].point.y,panFloor,'solid body reaches underside of pan');
+ built.rim.geometry.computeBoundingBox();near(built.rim.geometry.boundingBox.max.y,finish+.004);assert.ok(built.rim.material.metalness>.8);
+ built.panWalls.geometry.computeBoundingBox();near(built.panWalls.geometry.boundingBox.min.y,panFloor);near(built.panWalls.geometry.boundingBox.max.y,finish);
+ assert.ok(built.cap.material.roughness<.3);assert.equal(built.cap.material.color.getHexString(),'3b3d40');
+ assert.ok(built.veneer.material.vertexColors);assert.ok(new Set(built.veneer.geometry.attributes.color.array).size>10,'varied stones share one vertex-colour material');
+ assert.equal(built.vents.length,outline?table.outer.length===4?6:table.outer.length+2:4);
+ for(const vent of built.vents){near(vent.geometry.parameters.width,.25);near(vent.geometry.parameters.height,1/6);for(const {normal,centre} of trianglesOf(vent.geometry))assert.ok(!contains(table.outer,[centre.x+normal.x*.02,-centre.z-normal.z*.02]),'vent faces outward on body');}
+ assert.equal(built.cap.material.name,'granite');assert.ok(built.chips.length>=12);
+ assert.ok(built.glassBed.material.roughness>built.glass.material.roughness,'dark backing has less sheen than glass facets');
+ const bedArea=trianglesOf(built.glassBed.geometry).filter(t=>t.normal.y>.99).reduce((s,t)=>s+new THREE.Vector3().crossVectors(t.vertices[1].clone().sub(t.vertices[0]),t.vertices[2].clone().sub(t.vertices[0])).length()/2,0);
+ near(bedArea,area(table.glass),'glass bed fills the entire pan inside the metal rim');
+ for(const mesh of [built.glassBed,built.glass,built.pan]){
+  assert.equal(mesh.material.emissive.getHex(),0,'gas bed, chips and pan are never self-lit');
+  assert.equal(mesh.material.userData.objectLight,undefined,'pool state must not make the glass emissive');
+ }
+ assert.equal(built.glass.material.emissiveIntensity,0);assert.equal(built.glassBed.material.emissiveIntensity,0);
+ if(!outline){assert.ok(built.glass.count>1500&&built.glass.count<=4096,'dense bed remains one budgeted instanced draw');assert.ok(built.glass.geometry.parameters.radius<.06,'chips are smaller than the former 0.075 ft radius');}
+ built.pan.geometry.computeBoundingBox();near(built.pan.geometry.boundingBox.min.y,panFloor);near(built.pan.geometry.boundingBox.max.y,panFloor+.01);
+ const matrix=new THREE.Matrix4();for(let i=0;i<built.glass.count;i++){
+  built.glass.getMatrixAt(i,matrix);const vertex=new THREE.Vector3();const positions=built.glass.geometry.attributes.position;
+  for(let j=0;j<positions.count;j++){vertex.fromBufferAttribute(positions,j).applyMatrix4(matrix);assert.ok(contains(table.glass,[vertex.x,-vertex.z]),'every chip vertex inside recessed pan');assert.ok(vertex.y>panFloor&&vertex.y<finish+.05,'glass fills pan almost to rim');}
+ }
+ assert.equal(built.flame.material.userData.objectLight.entity,'switch.fire');assert.equal(built.flame.material.toneMapped,false);
+ assert.equal(built.flame.material.uniforms.gas.value,1);
+ assert.equal(built.flame.material.uniforms.tongues.value,table.tongues);// Fix round 3: fewer, wider, jittered wisps, about 3.5 per foot of burner (3 to 64).
+assert.equal(table.tongues,Math.max(3,Math.min(64,Math.round(table.burnerLength*3.5))));
+ // Fix round 3: round tables get jittered wisps around the ring (one merged mesh), not a cylinder strip.
+ if(!outline)assert.equal(built.flame.geometry.type,'BufferGeometry');
+ const fp=built.flame.geometry.attributes.position;
+ if(!outline)for(let i=0;i<fp.count;i++)assert.ok(Math.abs(Math.hypot(fp.getX(i),fp.getZ(i))-table.burnerRadius)<.35,'round flames stay near the burner ring');
+ built.flame.geometry.computeBoundingBox();assert.ok(built.flame.position.y+built.flame.geometry.boundingBox.max.y>top+.5,'flame tips clear the cap');
+ const fu=built.flame.geometry.attributes.uv;near(Math.min(...Array.from({length:fu.count},(_,i)=>fu.getX(i))),0);near(Math.max(...Array.from({length:fu.count},(_,i)=>fu.getX(i))),1);
+ near(built.flame.material.userData.objectLight.fireLightAt[1],top+(pit.top==='none'?0:table.slabThickness)+4,'firelight 4 ft above the finished top');
+ const wood={...pit,fuel:'wood',entity:null};delete wood.entity;
+ const a=fireBuild(wood),b=fireBuild(wood);assert.equal(a.logs.length,4);assert.deepEqual(a.logs,b.logs,'deterministic logs');
+ const logs=g=>g.children.filter(o=>o.material?.name==='fire logs');assert.equal(logs(a.group).length,4);
+ assert.deepEqual(logs(a.group).map(o=>[...o.geometry.attributes.position.array]),logs(b.group).map(o=>[...o.geometry.attributes.position.array]),'actual log geometry is deterministic');
+ for(const mesh of logs(a.group))for(const {vertices} of trianglesOf(mesh.geometry))for(const v of vertices)assert.ok(contains(layout.inner,[v.x,-v.z]));
+ assert.equal(a.cap,null);assert.equal(a.flame,null);
+ for(const mesh of a.group.children)if(mesh.material?.emissive)assert.ok(mesh.material.emissiveIntensity===0||mesh.material.emissive.getHex()===0,'unlinked wood and embers have no glow');
+ for(const log of a.logs)for(const sign of [-1,1]){
+  const x=log.at[0]+sign*Math.cos(log.angle)*log.length/2,y=log.at[1]+sign*Math.sin(log.angle)*log.length/2;
+  for(let k=0;k<16;k++)assert.ok(contains(layout.inner,[x+log.radius*Math.cos(k*Math.PI/8),y+log.radius*Math.sin(k*Math.PI/8)]),'logs fit bowl');
+ }
+ const key=authoredGeometry({site:{fire_pit:pit}});
+ for(const change of [{fuel:'wood'},{body:'brick'},{top:'concrete'},{height_in:25}])assert.notEqual(authoredGeometry({site:{fire_pit:{...pit,...change}}}),key);
+}
+const shortTable=gasTableLayout({...placedPit('rect',[0,0],{width:4,depth:3}),fuel:'gas'}),longTable=gasTableLayout({...placedPit('rect',[0,0],{width:8,depth:3}),fuel:'gas'});
+assert.ok(longTable.tongues>shortTable.tongues,'long burner has more independently phased tongues');
+const rectangular=fireBuild({...placedPit('rect',[0,0],{width:6,depth:3}),id:'north-star',fuel:'gas',entity:'switch.fire'});
+near(rectangular.table.border,.6);assert.equal(rectangular.table.pan.length,4);assert.ok(rectangular.table.lineLength>4);
+rectangular.flame.geometry.computeBoundingBox();const rowBox=rectangular.flame.geometry.boundingBox;
+// Fix round 3: jittered wisps 5 to 14 in tall over a narrow band along the whole burner.
+assert.ok(rowBox.max.x-rowBox.min.x>=.8*rectangular.table.lineLength&&rowBox.max.x-rowBox.min.x<=rectangular.table.lineLength+1e-6,'flames run the burner length');assert.ok(rowBox.max.y-rowBox.min.y>=5/12&&rowBox.max.y-rowBox.min.y<=14/12,'wisps 5 to 14 in tall');assert.ok(rowBox.max.z-rowBox.min.z<=.6,'long narrow row, not a circular central flame');
+const rowPoints=rectangular.flame.geometry.attributes.position;
+for(let i=0;i<rowPoints.count;i++)assert.ok(contains(rectangular.table.glass,[rowPoints.getX(i)+rectangular.flame.position.x,-rowPoints.getZ(i)-rectangular.flame.position.z]));
+const rotatedPit={...placedPit('rect',[0,0],{width:6,depth:3}),id:'turned',fuel:'gas',entity:'switch.fire'};
+rotatedPit.polygon=rotatedPit.polygon.map(([x,y])=>[x*Math.cos(.4)-y*Math.sin(.4),x*Math.sin(.4)+y*Math.cos(.4)]);
+const turned=fireBuild(rotatedPit),turnedPoints=turned.flame.geometry.attributes.position;
+for(let i=0;i<turnedPoints.count;i++)assert.ok(contains(turned.table.glass,[turnedPoints.getX(i)+turned.flame.position.x,-turnedPoints.getZ(i)-turned.flame.position.z]),'rotated flame row stays inside rotated pan');
+assert.equal(rectangular.veneer.material,fireBuild({at:[0,0],radius:2,id:'peer',fuel:'gas'}).veneer.material,'all stone tables share one material');
+const oldFire=fireBuild({at:[0,0],radius:2});assert.equal(oldFire.logs.length,0);assert.equal(oldFire.cap,null,'legacy look preserved');
+const cachedFires=new Map(),pitPlan={buildings:[],site:{fire_pit:[{id:'live',at:[1,1],radius:2,fuel:'gas',entity:'switch.fire'}]}};
+const builtFires=await buildYard(pitPlan,kit,'low',{materials:cachedFires});
+const nextFires=await buildYard(pitPlan,kit,'low',{materials:cachedFires});
+const flameMeshes=group=>{const out=[];group.traverse(o=>{if(o.userData.fireFlame)out.push(o);assert.ok(!o.isPointLight);});return out;};
+assert.equal(flameMeshes(builtFires.group).length,1,'gas flame ring survives static batching');
+assert.equal(flameMeshes(builtFires.group)[0].material,flameMeshes(nextFires.group)[0].material,'yard role cache reused');
+console.log('Passed: gas body/cap normals, pan/chip containment, deterministic wood logs, legacy look, cache/batching and fire bake keys');
 const tree=yard.group.children.find(o=>o.constructor.name==='Tree');
 assert.equal(new THREE.Box3().setFromObject(tree).min.y,-4);
 let terrain;yard.group.traverse(o=>{if(o.userData.terrain)terrain=o;});assert.ok(terrain);

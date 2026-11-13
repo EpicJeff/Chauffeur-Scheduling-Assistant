@@ -5,6 +5,24 @@ import { request } from './api.js';
 const labels = { rotation: 'Yaw (degrees)', pitch: 'Pitch (degrees)', roll: 'Roll (degrees)', scale: 'Scale (factor)', scale_axes: 'X, Y, Z scale', casts_shadow: 'Casts shadow', visible_in: 'Visible in', tint: 'Material tint', elevation: 'Height above surface (ft)', emissive: 'Emissive', emissive_color: 'Glow colour', light_entity: 'Linked HA light (optional)', object_kind: 'Object kind' };
 export const isObject = record => record && (['item', 'planting', 'furniture'].includes(record.kind) || record.kind === 'anchor' && !record.piece.device);
 
+let entityList = 0;
+// Text entry always works, including when HA is disconnected or the linked
+// entity is temporarily missing. Suggestions use the existing entity endpoint.
+export function linkEntityPicker(input, domains = ['light', 'switch', 'input_boolean', 'fan']) {
+  const list = document.createElement('datalist'); list.id = 'twin-entity-' + ++entityList;
+  input.setAttribute('list', list.id); input.placeholder = 'switch.fire_pit'; input.parentElement.append(list);
+  Promise.allSettled(domains.map(async domain => {
+    const response = await fetch((window.chfBase ?? '../') + 'api/ha/entities?domain=' + domain);
+    if (!response.ok) return [];
+    const rows = await response.json(); return Array.isArray(rows) ? rows : [];
+  })).then(results => {
+    for (const row of results.flatMap(r => r.status === 'fulfilled' ? r.value : [])) {
+      const option = document.createElement('option'); option.value = row.entity_id;
+      option.label = row.attributes?.friendly_name || row.name || row.entity_id; list.append(option);
+    }
+  });
+}
+
 export function drawObjectShelf(host, record, { canEdit, queue, op, report, getRecord = () => record }) {
   const { piece, kind } = record;
   const section = document.createElement('section'); section.setAttribute('aria-label', 'Object properties'); host.append(section);
@@ -55,6 +73,7 @@ export function drawObjectShelf(host, record, { canEdit, queue, op, report, getR
       save({ [field]: next });
     });
     label.append(input); (spec.advanced ? advanced : section).append(label);
+    if (field === 'light_entity') linkEntityPicker(input, ['light', 'switch']);
   }
   if (kind !== 'opening') { section.append(advanced); return; }
   const title = document.createElement('h4'); title.textContent = 'Model'; section.append(title);

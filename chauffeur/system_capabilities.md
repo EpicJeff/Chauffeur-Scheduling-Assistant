@@ -1,6 +1,91 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.827 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.829 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.829 (2026-11-13, NOT device-verified): fire pits are gas tables or wood pits, and a pit linked to a Home Assistant switch shows flames and casts firelight when the switch is on.**
+
+**The ask.** The user, 2026-11-13: "Seems like our fire pits are basically just pits. I have a gas fire pit that is stone masonry with a granite top and a gas burner with fire glass rocks... The wood burning firepit should have some logs in it too, right?" Then: "The fire pit has a switch in HA too. If we can have it linked and show an effect when it is on, you win the awesome agent contest for today." Both an effect and light. They sent a photo of their own gas table as "the north star".
+
+**How it was built.** Codex built it in three fix rounds against Claude's Chromium screenshots and the photo. Codex's usage ran out partway through round 3, so Claude finished that round's test updates.
+
+**Data** (`services/twin_site_shapes.py`, `services/twin_plan.py`).
+- **Fields:** a fire pit may carry `fuel: wood|gas`, `body: stone|brick|concrete`, `top: none|granite|concrete`, `height_in: 6..30`, `glass: amber|blue|clear` (gas only) and `entity` (an HA entity id; null unlinks).
+- **Defaults:**
+  - wood: stone, no top, 16.8 in;
+  - gas: stone, granite, 18 in, amber.
+- **Legacy pits:** a pit with none of the fields looks as before. New pits are written as `fuel: wood`.
+- **Ops:** the existing site-shape ops carry the fields, with history and undo.
+
+**Gas table** (`static/twin/fire_pits.js`).
+- **Body:** a solid stacked-stone body with running courses of varied grey stones (one vertex-coloured mesh, one shared material) and small dark vents: two per long side and one per short side, or four round a round table.
+- **Top:** a charcoal granite slab (`granite` role `#3b3d40`, roughness 0.22), 1.5 in thick, overhanging 1 in, with a 6 to 8 in border.
+- **Pan and glass:**
+  - the pan is a recessed stainless pan with a rim, its floor 2 in below the top: rectangular along the longest edge, or round on a round table;
+  - the glass is a dense instanced bed of glossy chips that is never self-lit.
+- **Flames:** about 3.5 jittered wisps per foot of burner, 1.5 to 5 in wide and 5.5 to 9 in tall, with independent phases over a soft base glow. They are in one animated mesh driven by uniforms only.
+
+**Wood pit.** Four deterministic logs with end grain, plus ash and embers. A taller plume when lit.
+
+**Live fire** (`static/twin/live/modes.js`, `live/live.js`, `main.py`).
+- **Flame:** shows in every mode only while the linked entity's fresh state is `on`. Off, missing, unavailable or stale hide it, and nothing glows.
+- **Firelight:**
+  - the pit joins the fixed real-light pool as an object lamp at 4 ft above its finished top, at half a lamp's intensity, with 18 ft reach;
+  - it shows in Lights and All;
+  - the pool size never changes and toggling recompiles nothing;
+  - the flames are in the mode layer's warm-up.
+- **Tap control:** a linked pit gets a switch marker at the pit in the house view. Tapping it uses the existing permission-checked `api/ha/card/service` path with the entity's own domain. The entity joins the whole-house live stream.
+
+**Editor.** The fire pit shelf (`editor/site_shape_shelf.js`) has Fuel, Body, Top, Height (in), Fire glass (gas) and Linked switch, an HA entity field with suggestions. The lamp object's entity field now uses the same shared picker (`editor/object_shelf.js`). With HA absent, it is a plain text field.
+
+**Agent.** The `house_design` docs list the new fire pit fields in one clause.
+
+**Tests.**
+- New: `test_twin_fire_pits` (defaults, validation, legacy, ops with undo, the HTTP marker and its permission gate, the live entity set, HA-absent fallback).
+- Extended:
+  - `test_twin_ground_js`: the gas table body, slab, pan, glass bed, vents, veneer and flame layout; wood logs; normals; the bake key;
+  - `test_twin_real_lights_js` 10/10: the fire anchor, the fixed pool, no recompiles, on/off/stale, two pits sharing one switch;
+  - `test_twin_site_shapes_js`;
+  - `test_twin_library_js`: the granite tint survives texture loads.
+- Neighbours: `test_twin_site_shapes`, `test_twin_site_drawing_js`, `test_twin_live_rooms_js`, `test_twin_live_control_js`, `test_twin_model_devices`, `test_house_design_tool`, `test_twin_import_maps`, `test_tailwind_build`, `test_twin_ha_routes`, `test_twin_levels_js`, `test_twin_objects_js`, `test_twin_energy_js`.
+- Chromium screenshots of a 6 × 3 ft gas table, day and night, and a lit wood pit.
+
+**v2.499.828 (2026-11-13, NOT device-verified): stairs can be added and edited in the house editor, as solid or open with handrails. Doorways between rooms at different floor heights get steps.**
+
+**The ask.** The house editor scope list (`docs/superpowers/specs/2026-11-12-twin-editor-scope.md`): "Stairs between floors and steps between floor heights. Not built. Sunken rooms already record where a step is needed." Before this, stairs came only from plan reading and drew as solid stacked boxes, with nothing able to change them.
+
+**How it was built.** Codex built it. Claude checked an open stair with two handrails in Chromium and fixed two test files that were already red on main.
+
+**Data and ops** (`services/twin_model_ops.py`, `services/twin_plan.py`).
+- **`add_stair`:** `{building, level, from, to, width?=3, to_level? | rise_to?, style?, rail?}`.
+- **`update_stair`:** takes the same fields. Generic delete removes a stair.
+- **Validation:**
+  - width 2 to 8 ft;
+  - pitch 20° to 45°, with plain messages to make the stair longer or shorter;
+  - `to_level` must exist and sit above `level`.
+- **Risers:** derived as `ceil(rise / 7.5 in)`; a 9 ft rise gives 15 risers of 7.2 in.
+- **Legacy stairs:** they read as `style: solid`, `rail: none`, without rewriting stored data, so their geometry is byte-identical. Hand-edited stairs survive a drawing reread.
+
+**Drawing** (`static/twin/twin_stairs.js`, `twin_generator.js`).
+- **Styles:** `solid` is today's look. `open` has treads on two stringers and no risers.
+- **Rails:** `none | left | right | both`, with posts and a top rail following the pitch 36 in above the nosing line.
+- **Floor holes:** they follow an edited stair; the stair's own starting floor is never cut.
+- **Doorway steps:** a door between rooms of different floor heights (`opening.step_down_ft`) gets derived closed steps on the lower side. They are as wide as the opening, with `ceil(step / 7.5 in)` risers on 11 in treads, in the lower room's floor finish. Windows and level doorways get none.
+- **Bake:** stairs and steps are authored geometry in the bake key, the same on every tier.
+
+**Editor** (`editor/stair_shelf.js`, `draw.js`, `handles.js`, `scene_tools.js`, `cards.js`).
+- **Add stair:** a two-click tool. Its card has Width, To level, Style and Rails.
+- **A selected stair** gets the same card and two end handles. One drag is one `update_stair`; cancelled, unchanged and read-only gestures send nothing.
+
+**Agent.** `add_stair` and `update_stair` are in the `house_design` tool docs. The schema is 5,376 characters, and its cap rises from 5,200 to 5,600 in the three tests that hold it.
+
+**Old red tests fixed here.**
+- `test_twin_model_bridge`: since v2.499.821 a fire pit without a shape normalizes to round; the test's expected site now includes that.
+- `test_twin_roof_flags_js`: its copied `cards.js` now loads the card's sibling shelf modules from the real editor folder.
+
+**Tests.**
+- New: `test_twin_stairs` (validation, pitch limits and messages, derived risers, legacy defaults, bridge, HTTP, undo and redo), `test_twin_stairs_js` (open and solid geometry, rails, floor holes, doorway steps, windows, normals, the bake key) and `test_twin_stair_editor_js` (two-click add, end drags, card fields, read-only).
+- Neighbours: `test_twin_room_floor`, `test_twin_model_devices`, `test_house_design_tool`, `test_twin_retaining_wall`, `test_twin_energy_editor_js`, `test_twin_model_bridge` 32/32, `test_twin_roof_flags_js` 6/6, `test_twin_ground_js`, `test_twin_terrain_tools_js`, `test_twin_import_maps`, `test_tailwind_build`.
+- Chromium: an open stair with both rails, added by op.
 
 **v2.499.827 (2026-11-13, NOT device-verified): the terrain card lists every pad, topmost first, and a pad can be dragged to a new layer.**
 

@@ -1,7 +1,8 @@
 import { sitePoints } from '../objects.js';
 import { editVertex } from './polygon_handles.js';
 import { shapeKey, shapeCentre, shapeSize, transformShape, shapeOperation, closedShape } from './site_shapes.js';
-import { roundPit } from '../fire_pits.js';
+import { roundPit, firePitOptions } from '../fire_pits.js';
+import { linkEntityPicker } from './object_shelf.js';
 
 // Uses the object shelf's labels, number inputs and Advanced disclosure.
 export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, onSaved = () => {} }) {
@@ -12,12 +13,12 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
     const current = getRecord(); if (!current) return;
     await op(shapeOperation(current, typeof change === 'function' ? change(current.piece) : change));
   }).catch(report).finally(onSaved);
-  function field(text, value, change, parent = section, numeric = true) {
+  function field(text, value, change, parent = section, numeric = true, allowEmpty = false) {
     const label = document.createElement('label'); label.textContent = text;
     const input = document.createElement('input'); input.type = numeric ? 'number' : 'text'; input.step = 'any'; input.value = value; input.disabled = !canEdit(); input.setAttribute('aria-label', text);
     input.addEventListener('change', () => {
       if (!canEdit()) return;
-      if (!input.value.trim() || numeric && !Number.isFinite(Number(input.value))) { report(new Error('Use a finite number.')); onSaved(); return; }
+      if (!allowEmpty && !input.value.trim() || numeric && !Number.isFinite(Number(input.value))) { report(new Error('Use a finite number.')); onSaved(); return; }
       save(p => change(p, numeric ? Number(input.value) : input.value));
     });
     label.append(input); parent.append(label); return input;
@@ -25,12 +26,23 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
   function choice(text, value, values, change) {
     const label = document.createElement('label'); label.textContent = text;
     const input = document.createElement('select'); input.setAttribute('aria-label', text); input.disabled = !canEdit();
-    for (const [id, title] of values) { const option = document.createElement('option'); option.value = id; option.textContent = title; input.append(option); }
+    for (const [id, title] of values) { const option = document.createElement('option'); option.value = id; option.textContent = title; option.disabled = id === ''; input.append(option); }
     input.value = value; input.addEventListener('change', () => { if (canEdit()) save(change(input.value)); });
     label.append(input); section.append(label);
   }
   const { piece, kind } = record, centre = shapeCentre(piece), size = shapeSize(piece);
   const path = piece.kind === 'path';
+  if (kind === 'fire_pit') {
+    const gas = piece.fuel === 'gas';
+    const legacy = !firePitOptions(piece).detailed;
+    choice('Fuel', legacy ? '' : piece.fuel || 'wood', [...(legacy ? [['', 'Wood (original ring)']] : []), ['wood', 'Wood'], ['gas', 'Gas']], fuel => ({fuel}));
+    choice('Body', piece.body || 'stone', [['stone', 'Stone'], ['brick', 'Brick'], ['concrete', 'Concrete']], body => ({body}));
+    choice('Top', piece.top ?? (gas ? 'granite' : 'none'), [['none', 'None'], ['granite', 'Granite'], ['concrete', 'Concrete']], top => ({top}));
+    const height = field('Height (in)', piece.height_in ?? (gas ? 18 : 16.8), (_, height_in) => ({height_in})); height.min = '6'; height.max = '30';
+    if (gas) choice('Fire glass colour', piece.glass || 'amber', [['amber', 'Amber'], ['blue', 'Blue'], ['clear', 'Clear']], glass => ({glass}));
+    const entity = field('Linked switch', piece.entity || '', (_, entity) => ({entity: entity.trim() || null}), section, false, true);
+    linkEntityPicker(entity);
+  }
   if (['beds', 'hardscape', 'edges', 'pool'].includes(kind)) choice('Material', piece.material === 'concrete' ? 'patio_concrete' : piece.material || (kind === 'beds' ? 'mulch' : kind === 'edges' ? 'lawn' : 'paving'),
     [['mulch', 'Mulch'], ['patio_concrete', 'Concrete'], ['paving', 'Pavers'], ['lawn', 'Grass'], ['base', 'Stone'], ['fence', 'Wood']], material => ({ material }));
   if (path) {
