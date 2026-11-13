@@ -1,6 +1,33 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.841 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.842 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.842 (2026-11-13, NOT device-verified): fences, fire pits, patios, paths, beds and retaining walls take Library materials per part.**
+
+**The ask.** The user, about porch foundations: "Why doesn't everything just have a material slot you can assign a material from the library to?" Porch foundations got slots first; this moves the yard features onto the same shared slots.
+
+**Slots.** Each slot is empty (the feature's own default look, unchanged) or `{id, color?}` from the Library. Existing choices (wall kind, fire pit body and top, path material) still set the default.
+- Fence: boards, posts, rails.
+- Fire pit: body, and top when it has one. A gas pit with a stone body drops its default stacked-stone veneer when a body material is chosen, so the choice shows.
+- Patio and path: surface, and curb for a path with a curb.
+- Planting bed: fill.
+- Retaining wall: a face slot per walled pad edge; its default is the wall kind.
+
+**Server** (`twin_site_shapes.py` `SLOTS` / `material_slots`, `twin_terrain.py`, `twin_plan.py`).
+- A change merges per part (`materials: {part: slot or null}`; null returns that part to the default) and is one undoable edit.
+- Unknown parts and materials not in the Library are refused.
+- On load, a slot naming a material the Library no longer has resets with a note; the feature is kept.
+
+**Where a person does it.** The yard shape card shows each part through the shared `editor/material_slot.js` builder, with "Use default"; retaining wall faces are in the terrain tool's pad card. Argyle: one compact `house_design` clause (schema 5,955 of the 6,000 cap).
+
+**Not covered yet:** pool coping, the lawn edge strips, and the card for yard rooms made from features.
+
+**Tests.**
+- New `test_twin_yard_material_slots` 5/5 (per-feature changes, refusals, retaining wall faces, legacy load, undo and redo, parent-only over HTTP) and `test_twin_yard_material_slots_js` (the real yard build: each slot changes the material and not the shape; no slot draws as before; fails on the old code).
+- `test_twin_material_slot_js` and `test_twin_terrain_tools_js` cover the editor slots.
+- Neighbours green: retaining wall, fire pits, porch foundation, model bridge 32/32, yard rooms, site shapes, library, model devices 20/20, stairs, house_design tool, import maps, HA display 5/5.
+- Two TestClient files (fire pits, house_design tool) intermittently hang at exit under load with no CPU use; both pass in about 10 s alone. Cause unknown.
+- Chromium: fence boards, posts and rails, both pit kinds, a patio, a path curb and a wall face each show their chosen material, with no page errors.
 
 **v2.499.841 (2026-11-13, NOT device-verified): a device shows with its controls or as separate entities, and anything can be hidden from the house view without touching Home Assistant.**
 
