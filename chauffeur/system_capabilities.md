@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.843 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.844 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.844 (2026-11-13): test-only. The camera-ring browser scenario passes again.**
+
+**What was failing.** `test_house_twin_controls_more_live` `scenario_camera_ring_shows_a_still_and_refreshes` had failed since before v2.499.823 with "the marker is drawn at this camera (not merged into a room badge)".
+
+**The cause.** The fixture placed the porch camera on the Kitchen floor at (.5, .45), almost under the Kitchen pendant's automatic ceiling spot. At the scenario's camera the two markers sat 48 px apart on screen, inside the clustering hysteresis (`markers.js` `clusterMarkers`: under 40 px joins, and 48 px or less holds an existing cluster). The camera therefore drew as a cluster badge. The product behaved correctly.
+
+**The fix.** The fixture moves the camera to (.5, .65). The file passes 9/9.
 
 **v2.499.843 (2026-11-13, NOT device-verified): the pool and lawn edges take Library materials, and a yard room made from a feature links to that feature's materials.**
 
