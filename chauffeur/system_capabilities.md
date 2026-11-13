@@ -1,6 +1,30 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.821 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.822 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.822 (2026-11-12, NOT device-verified): porches can sit on a solid stone, brick or concrete base. Slab walls on patios and beds now face outward.**
+
+**The report.** The user, 2026-11-12: "If your porch is stone or brick or something, then it needs to have a solid foundation. Porches have no foundations currently. That should be an option."
+
+**How it was built.** Codex built it in two rounds. Claude checked it in Chromium, which caught the base's walls being wound inside out.
+
+**Porch foundations** (`services/twin_porches.py`, `static/twin/twin_porch_foundation.js`, `editor/porch_foundation_shelf.js`).
+- **Data:** porches take `foundation: {type: posts|solid, material: stone|brick|concrete, lip_in: 0..4}`, validated through `set_porch_foundation` with history. A missing foundation reads as posts, so existing porches are unchanged.
+- **Solid:**
+  - the porch floor sits on a plinth: its outline, inset by the lip (mitred, either winding), from the floor's underside down to `groundAt` per vertex;
+  - it follows sloped and layered terrain, with skirts at sharp steps;
+  - posts below the floor go; roof supports and stairs stay.
+- **Materials:** stone and concrete use existing kit roles; brick uses a new `porch_brick` role (the kit's `red_brick_03` asset).
+- **The shelf:** "Foundation: Posts / Solid", with material and lip shown when solid.
+- **The bake:** the plinth is authored geometry, so it is part of the bake key.
+
+**Winding fix.** The plinth's side walls were wound inside out, which would have shown their inside and vanished from outside views. The same defect was on hardscape and bed slab walls already on main; both are fixed with outward normals. Fire pit ring walls (new in v2.499.821) are checked: the outer face faces out, the inner face faces the bowl, the top faces up and the bottom down.
+
+**Tests.**
+- `test_twin_porch_foundation` and `test_twin_porch_foundation_js`: the posts geometry digest is unchanged; terrain contact on slopes, layers and steps; the lip inset; roof supports; materials; bake invalidation.
+- The new `twin_solid_normals` helper (outward normals, caps, and a FrontSide raycast from outside).
+- `test_twin_ground_js`: the fire pit ring faces.
+- Browser: `test_house_twin_porch_foundation_live` 1/1 (solid stone reaches the ground, inset 1 in; undo restores posts), `test_house_twin_ground_live` 3/3, `test_twin_site_drawing_live` 1/1, `test_twin_site_shapes_live` 1/1 and `test_house_twin_viewing_live` 5/5.
 
 **v2.499.821 (2026-11-12, NOT device-verified): draw ground features as outlines, paths along a line, fire pits of any shape, and fences.**
 
