@@ -6,7 +6,7 @@ import { kitMaterial, loadModel, disposeObject, cacheModelMaterials } from './tw
 import { groundAt, buildingBase } from './twin_ground.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
 import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
-import { firePitRings, roundPit } from './fire_pits.js';
+import { firePitRings, roundPit, buildFirePit, fireFlameMaterial } from './fire_pits.js';
 
 function random(seed) {
   let n = seed | 0;
@@ -99,7 +99,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   };
   const mat = role => { if (!mats.has(role)) mats.set(role, kitMaterial(role === 'terrain_lawn' ? 'lawn' : role, materialKit, tier)); return mats.get(role); };
   const plain = (name, color, extra = {}) => {
-    if (!mats.has(name)) mats.set(name, new THREE.MeshStandardMaterial({ name, color, roughness: 0.85, ...extra }));
+    if (!mats.has(name)) mats.set(name, extra.fireShader ? fireFlameMaterial() : new THREE.MeshStandardMaterial({ name, color, roughness: 0.85, ...extra }));
     return mats.get(name);
   };
   if (site.lot?.length >= 3) {
@@ -168,12 +168,11 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     }
     addMesh(group, poolSurface(pool, -0.25), plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false }));
   }
-  for (const f of sitePieces(site.fire_pit)) {
-    const { outer, inner } = firePitRings(f);
+  for (const [index, f] of sitePieces(site.fire_pit).entries()) {
+    const { outer } = firePitRings(f);
     const centre = outer.reduce((s,p)=>s.map((v,i)=>v+p[i]/outer.length),[0,0]);
     const height = groundAt(plan, ...centre) + (f.elevation || 0);
-    addMesh(group, polygon(outer, height, height + 1.4, inner.length ? [inner] : []), mat('base'));
-    if (inner.length) addMesh(group, polygon(inner, height + .05, height + .15), mat('counter'));
+    buildFirePit(group,f,height,{mat,plain,id:'fire_pit:'+(f.id || index)});
     if (roundPit(f)) addMesh(group, drapeGeometry(new THREE.CircleGeometry((f.radius ?? 2) + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plan, f.elevation || 0), plain('gravel', '#a59c8f'));
   }
   for (const bed of site.beds || []) if (bed.polygon?.length >= 3) addMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(kit.materials?.[bed.material] ? bed.material : 'mulch'));

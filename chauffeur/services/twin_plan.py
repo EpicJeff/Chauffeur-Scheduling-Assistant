@@ -526,6 +526,7 @@ def _site(site, notes):
                 if not isinstance(piece, dict) or not _numeric_fields(piece, ('elevation',)):
                     raise ValueError('invalid ground feature')
                 if name == 'fire_pit':
+                    twin_site_shapes.fire_properties(piece)
                     piece.setdefault('shape', 'round')
                     if piece['shape'] == 'round':
                         piece.setdefault('radius', 2)

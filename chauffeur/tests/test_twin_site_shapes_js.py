@@ -72,6 +72,22 @@ for(const shape of ['square','rect','outline']) {
  draw();await change('Angle (degrees)',30);assert.equal(record().piece.rotation,30);
 }
 console.log('ok round pit radius/turn and polygon pit corners, insert/remove and turn through history');
+const formerFetch=globalThis.fetch,entityQueries=[];
+globalThis.fetch=async url=>{entityQueries.push(url);return {ok:true,json:async()=>[{entity_id:url.split('domain=')[1]+'.fire',name:'Backyard fire'}]};};
+selected={kind:'fire_pit',id:'pit-square',building:null};draw();await new Promise(r=>setTimeout(r,0));
+const legacyFuel=descendants(shelf).find(n=>n['aria-label']==='Fuel');assert.equal(legacyFuel.value,'');
+assert.ok(entityQueries.some(url=>url.endsWith('domain=input_boolean'))&&entityQueries.some(url=>url.endsWith('domain=fan')));
+assert.ok(descendants(shelf).some(n=>n.value==='switch.fire'&&n.label==='Backyard fire'),'HA suggestions loaded into shared text picker');
+await change('Fuel','wood');assert.equal(record().piece.fuel,'wood','legacy ring can explicitly opt into wood logs');
+assert.ok(!descendants(shelf).some(n=>n['aria-label']==='Fire glass colour'));
+await change('Fuel','gas');await change('Body','brick');await change('Top','granite');await change('Height (in)',22);
+await change('Fire glass colour','blue');await change('Linked switch','switch.fire');
+assert.equal(record().piece.fuel,'gas');assert.equal(record().piece.body,'brick');assert.equal(record().piece.height_in,22);
+assert.equal(record().piece.glass,'blue');assert.equal(record().piece.entity,'switch.fire');
+const picker=descendants(shelf).find(n=>n['aria-label']==='Linked switch');assert.ok(picker.list,'HA picker keeps text fallback');
+await change('Linked switch','');assert.equal(record().piece.entity,null);
+globalThis.fetch=formerFetch;
+console.log('ok fire pit fuel, finishes, height, gas-only glass and linked switch/unlink shelf events');
 selected={kind:'fence',id:'fence:0',building:null};
 await gesture('site_vertex',[0,2,0]);assert.deepEqual(source.site.fence.polyline[0],[0,2]);
 h=handles.handles().find(h=>h.kind==='site_insert');assert.ok(handles.begin(event(h.at)));await handles.finish();assert.equal(source.site.fence.polyline.length,3);

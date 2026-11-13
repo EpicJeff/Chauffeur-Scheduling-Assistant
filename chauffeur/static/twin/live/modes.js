@@ -113,19 +113,33 @@ export function mountModes(view, live) {
   // Material instances survive batching and are changed in place on pushes.
   view.scene.updateMatrixWorld(true);
   const objectLamps = new Map();
+  const flames = [];
   view.scene.traverse(mesh => {
+    if (mesh.userData.fireFlame) flames.push(mesh);
     for (const material of mesh.material ? [].concat(mesh.material) : []) {
       const object = material.userData?.objectLight;
       if (!object) continue;
-      if (!objectLamps.has(object.id)) objectLamps.set(object.id, { object, materials: new Set(), box: new THREE.Box3() });
+      if (!objectLamps.has(object.id)) objectLamps.set(object.id, { object, materials: new Set(), box: new THREE.Box3(), firePosition: null });
       const row = objectLamps.get(object.id); row.materials.add(material); row.box.expandByObject(mesh);
+      if (object.fireLightAt) row.firePosition = mesh.parent.localToWorld(new THREE.Vector3(...object.fireLightAt));
     }
   });
-  for (const { object, materials, box } of objectLamps.values()) {
-    const existing = object.entity && lamps.find(lamp => lamp.marker.entity_id === object.entity);
-    if (existing) { existing.objectMaterials = [...(existing.objectMaterials || []), ...materials]; continue; }
-    const position = box.getCenter(new THREE.Vector3()); position.y = box.max.y + .05;
+  for (const { object, materials, box, firePosition } of objectLamps.values()) {
+    const position = firePosition || box.getCenter(new THREE.Vector3());
+    if (!firePosition) position.y = box.max.y + .05;
     const at = [position.x / FT, -position.z / FT, position.y / FT];
+    const existing = object.entity && lamps.find(lamp => lamp.marker.entity_id === object.entity && (!object.fire || !lamp.objectSource));
+    if (existing) {
+      existing.objectMaterials = [...(existing.objectMaterials || []), ...materials];
+      if (object.fire) {
+        // A light-domain pit can also have an auto-placed room marker. Its
+        // physical fire owns the light position, and never an indoor bake.
+        existing.objectSource = object; existing.position.copy(position); existing.distance = 18 * FT;
+        existing.marker = { device_id: 'object:' + object.id, entity_id: object.entity, at };
+        existing.bulb.position.copy(position);
+      }
+      continue;
+    }
     const bulb = new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: object.color, toneMapped: false }));
     bulb.position.copy(position); bulb.visible = false; view.scene.add(bulb);
     const rgb = new THREE.Color(object.color).getRGB(new THREE.Color(), THREE.SRGBColorSpace);
@@ -170,7 +184,7 @@ export function mountModes(view, live) {
   // exactly what was shown, whether Lights mode is on or not.
   function warm() {
     if (!realLighting || typeof view.renderer3?.compileAsync !== 'function' || !view.camera) return;
-    const extras = [...lamps.map(lamp => lamp.bulb), ...floors.map(floor => floor.group),
+    const extras = [...flames, ...lamps.map(lamp => lamp.bulb), ...floors.map(floor => floor.group),
       ...[...effects.values()].flatMap(effect => effect.warmObjects?.() || [])];
     const shown = extras.map(object => object.visible), poolShown = rig.shown?.();
     rig.show(true); for (const object of extras) object.visible = true;
@@ -191,16 +205,19 @@ export function mountModes(view, live) {
   function update() {
     // Read without copying the house: this runs on every push (review M3).
     const states = live.peek(), stale = live.stale();
+    for (const flame of flames) flame.visible = !stale && states[flame.material.userData.objectLight.entity]?.state === 'on';
     legacyRooms = !realLighting && !stale ? live.rooms() : [];
     for (const lamp of lamps) {
       const state = states[lamp.marker.entity_id];
       const object = lamp.objectSource;
       lamp.intensity = object && !object.entity ? (object.on ? 1 : 0) : !stale && state?.state === 'on' ? lightIntensity(state.attributes) : 0;
-      if (object && !object.entity) {
+      if (object?.fire) lamp.intensity *= object.intensityScale ?? .5;
+      if (object && (!object.entity || object.fire)) {
         const color = new THREE.Color(object.color).getRGB(new THREE.Color(), THREE.SRGBColorSpace);
         lamp.rgb = [color.r * 255, color.g * 255, color.b * 255];
       } else lamp.rgb = lightColor(state?.attributes);
       for (const material of lamp.objectMaterials || []) {
+        if (!material.emissive) continue; // Flame shaders carry the lamp tag too.
         material.emissive.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
         material.emissiveIntensity = lamp.intensity;
       }
@@ -217,6 +234,7 @@ export function mountModes(view, live) {
     draw();
   }
   function draw() {
+    for (const flame of flames) flame.material.uniforms.time.value = performance.now() / 1000;
     climateLabels.hidden = !modeShows(mode, 'climate');
     for (const effect of effects.values()) effect.draw?.(mode);
     const target = view.controls?.target;
@@ -251,7 +269,7 @@ export function mountModes(view, live) {
       if (baked || lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, baked && shown ? lamp.intensity : 0);
       lamp.baked = baked;
       lamp.real = selected.has(lamp.marker.device_id);
-      lamp.bulb.visible = shown;
+      lamp.bulb.visible = shown && !lamp.objectSource?.fire;
       lamp.bulb.material.color.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
     }
     for (const floor of floors) {
@@ -284,6 +302,7 @@ export function mountModes(view, live) {
     lights: () => lamps.map(lamp => ({ device: lamp.marker.device_id, at: [...lamp.marker.at],
       rgb: [...lamp.rgb], intensity: lamp.intensity, real: lamp.real, baked: !!lamp.baked })),
     stop() {
+      for (const flame of flames) flame.visible = false;
       for (const lamp of lamps) if (lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, 0);
       unsubscribe(); strip.remove(); climateLabels.remove(); modeLegend.remove();
       registry.get(mode)?.leave?.(context);

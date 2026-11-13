@@ -74,6 +74,15 @@ assert.equal(takeRequests().length, 0); assert.ok(cachedMaterial.map);
 assert.notEqual(cachedMaterial.map, normalMap, 'a scene owns its copies of cached textures');
 ok('material success caches images and clears its deadline');
 
+const graniteKit={materials:{granite:{asset:'table_granite',color:'#3b3d40',roughness:.22}},manifest:{table_granite:{kind:'material',files}}};
+const granite=lib.kitMaterial('granite',graniteKit,'high'),graniteRequests=takeRequests();
+assert.equal(granite.color.getHexString(),'3b3d40');assert.equal(granite.roughness,.22);
+graniteRequests.forEach(r=>r.success(r.texture));await granite.userData.ready;
+assert.ok(granite.map&&granite.normalMap&&granite.roughnessMap);
+assert.equal(granite.color.getHexString(),'3b3d40','loaded granite texture keeps charcoal tint');
+assert.equal(granite.roughness,.22,'loaded roughness map retains low base roughness');
+granite.dispose();ok('granite keeps charcoal colour and sheen with actual texture callbacks');
+
 const building = {id: 'house', levels: [{id: 'L1', elevation: 0, ceiling: 9}], walls: [],
   rooms: [{id: 'room', level: 'L1', polygon: [[0,0],[10,0],[10,10],[0,10]], floor_material: {id: 'slow_finish', color: '#123456'}}]};
 const slowKit = materialKit('slow_finish');

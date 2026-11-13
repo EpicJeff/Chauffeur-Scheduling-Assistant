@@ -1,10 +1,36 @@
 """Validation for authored yard edits; polygon topology is owned by terrain."""
 import math
+import re
 from services import twin_terrain as terrain
 
 
 KINDS = ('beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence')
 MATERIALS = ('mulch', 'patio_concrete', 'paving', 'lawn', 'base', 'fence')
+FIRE_FIELDS = {'fuel', 'body', 'top', 'height_in', 'glass', 'entity'}
+
+
+def fire_properties(piece):
+    """Validate optional finishes without materializing defaults on legacy pits."""
+    for field, choices, default in [('fuel', ('wood', 'gas'), 'wood'),
+            ('body', ('stone', 'brick', 'concrete'), 'stone'),
+            ('top', ('none', 'granite', 'concrete'), 'none'),
+            ('glass', ('amber', 'blue', 'clear'), 'amber')]:
+        if piece.get(field, default) not in choices:
+            raise ValueError(f'Choose a supported fire pit {field}.')
+    if 'glass' in piece and piece.get('fuel', 'wood') != 'gas':
+        raise ValueError('Fire glass belongs in a gas pit.')
+    if 'height_in' in piece and (not terrain.number(piece['height_in']) or not 6 <= piece['height_in'] <= 30):
+        raise ValueError('Choose a fire pit height from 6 to 30 inches.')
+    entity = piece.get('entity')
+    if entity is not None and (not isinstance(entity, str) or len(entity) > 255 or not re.fullmatch(r'(switch|light|input_boolean|fan)\.[a-z0-9_]+', entity)):
+        raise ValueError('Choose a switch, light, input boolean or fan entity.')
+    gas = piece.get('fuel') == 'gas'
+    return {'fuel': piece.get('fuel', 'wood'), 'body': piece.get('body', 'stone'),
+            'top': piece.get('top', 'granite' if gas else 'none'),
+            'height_in': piece.get('height_in', 18 if gas else 16.8),
+            **({'glass': piece.get('glass', 'amber')} if gas else {})}
+
+
 PATH_PRESETS = {
     'sidewalk': {'width': 4, 'material': 'patio_concrete', 'corner': 'mitred'},
     'paver': {'width': 3, 'material': 'paving', 'corner': 'rounded'},
@@ -32,7 +58,7 @@ def create(name, values, lot):
         shape = values.get('shape', 'round')
         if shape not in ('round', 'square', 'rect', 'outline'):
             raise ValueError('Choose Round, Square, Rectangle or Drawn outline.')
-        defaults = {'shape': shape}
+        defaults = {'shape': shape, 'fuel': 'wood'}
         if shape == 'round':
             defaults['radius'] = 2
             allowed = {'shape', 'at', 'radius'}
@@ -43,14 +69,15 @@ def create(name, values, lot):
             if (not isinstance(at, list) or len(at) != 2 or not all(terrain.number(v) for v in at)
                     or any(not terrain.number(v) or not .1 <= v <= 200 for v in (width, depth))):
                 raise ValueError('Choose a ground point and pit dimensions from 0.1 to 200 feet.')
-            allowed = {'shape', 'at', 'side'} if shape == 'square' else {'shape', 'at', 'width', 'depth'}
+            allowed = ({'shape', 'at', 'side'} if shape == 'square' else {'shape', 'at', 'width', 'depth'}) | FIRE_FIELDS
             if set(values) - allowed:
                 raise ValueError('Choose supported fire pit properties.')
             x, y = at
-            values = {'shape': shape, 'polygon': [[x-width/2, y-depth/2], [x+width/2, y-depth/2], [x+width/2, y+depth/2], [x-width/2, y+depth/2]]}
+            values = {**{k: v for k, v in values.items() if k in FIRE_FIELDS}, 'shape': shape, 'polygon': [[x-width/2, y-depth/2], [x+width/2, y-depth/2], [x+width/2, y+depth/2], [x-width/2, y+depth/2]]}
             allowed = {'shape', 'polygon'}
         else:
             allowed = {'shape', 'polygon'}
+        allowed |= FIRE_FIELDS
     if name == 'fence':
         defaults = {'height': 6}
         allowed = {'polyline', 'height', 'style'}
@@ -79,6 +106,7 @@ def validate(name, piece, *, legacy_height=False):
         raise ValueError('Use a centre line for a path.')
     round_pit = name == 'fire_pit' and piece.get('shape', 'round') == 'round'
     if name == 'fire_pit':
+        fire_properties(piece)
         if piece.get('shape', 'round') not in ('round', 'square', 'rect', 'outline'):
             raise ValueError('Choose a fire pit shape.')
         if (round_pit and key is not None or not round_pit and (key != 'polygon' or 'at' in piece or 'radius' in piece)):
@@ -133,6 +161,7 @@ def update(name, piece, change, lot):
     if name == 'pool':
         allowed |= {'depth', 'coping'}
     if name == 'fire_pit':
+        allowed |= FIRE_FIELDS
         if piece.get('shape', 'round') == 'round':
             allowed |= {'at', 'radius'}
     if name == 'fence':
@@ -144,6 +173,10 @@ def update(name, piece, change, lot):
     if 'material' in change and change['material'] not in MATERIALS:
         raise ValueError('Choose an existing kit material role.')
     legacy_height = name == 'fence' and 'height' not in change
+    # Switching fuel also clears a former gas-only bed colour, including when
+    # the same operation rotates a drawn pit.
+    if name == 'fire_pit' and change.get('fuel') == 'wood' and 'glass' not in change:
+        piece.pop('glass', None)
     if 'rotation' in change and geometry and geometry not in change:
         validate(name, {**piece, **change}, legacy_height=legacy_height)
         angle = change['rotation']
@@ -161,6 +194,8 @@ def update(name, piece, change, lot):
         change[geometry] = [[round(origin[0]+(p[0]-origin[0])*math.cos(a)-(p[1]-origin[1])*math.sin(a), 9),
                              round(origin[1]+(p[0]-origin[0])*math.sin(a)+(p[1]-origin[1])*math.cos(a), 9)] for p in points]
     piece.update(change)
+    if name == 'fire_pit' and piece.get('entity') is None:
+        piece.pop('entity', None)
     points = validate(name, piece, legacy_height=legacy_height)
     # Lots need not be rectangular. Check edges too, including a segment
     # crossing a concave boundary even when both endpoints are inside.

@@ -56,6 +56,7 @@ export function roomNeighbour(rooms, current, direction) {
   return candidates[0]?.room || null;
 }
 export function deviceAtLevel(state, row) {
+  if (row.fire_pit) return state.level === 'house';
   return row.look === 'attention' || state.level === 'room' && row.building === state.building && row.room === state.room;
 }
 

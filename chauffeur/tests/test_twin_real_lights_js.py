@@ -415,6 +415,78 @@ check('floor_lamp_light_hangs_at_lamp_height', async () => {
   }
 });
 
+check('fire_flames_warm_freshness_marker_control_and_fixed_pool', async () => {
+  const {buildFirePit,fireFlameMaterial}=await import(file('static/twin/fire_pits.js'));
+  const {deviceAtLevel}=await import(file('static/twin/levels.js'));
+  const marker={device_id:'fire_pit:gas',name:'Fire pit',entity_id:'switch.fire',entities:['switch.fire'],kind:'switch',fire_pit:true,
+    at:[8,5,1.5],offered:true,placed:true,building:null,level:null,room:null};
+  layout.markers.push(marker);layout.devices.push(marker);
+  const view=makeView('low'),yard=new THREE.Group();yard.scale.setScalar(FT);view.scene.add(yard);
+  const cache=new Map(),mat=name=>{if(!cache.has(name))cache.set(name,new THREE.MeshStandardMaterial({name}));return cache.get(name);};
+  const plain=(name,color,extra={})=>{if(!cache.has(name))cache.set(name,extra.fireShader?fireFlameMaterial():new THREE.MeshStandardMaterial({name,color,...extra}));return cache.get(name);};
+  const gas=buildFirePit(yard,{id:'gas',at:[8,5],radius:2,fuel:'gas',entity:'switch.fire'},0,{mat,plain,id:'fire_pit:gas'});
+  buildFirePit(yard,{id:'unlinked',at:[16,5],radius:2,fuel:'wood'},0,{mat,plain,id:'fire_pit:unlinked'});
+  const unlinkedGas=buildFirePit(yard,{id:'unlinked-gas',at:[16,10],radius:2,fuel:'gas',glass:'blue'},0,{mat,plain,id:'fire_pit:unlinked-gas'});
+  assert.equal(unlinkedGas.flame,null);assert.equal(unlinkedGas.glass.material.emissiveIntensity,0);assert.equal(unlinkedGas.glassBed.material.emissiveIntensity,0);
+  buildFirePit(yard,{id:'wood',at:[12,5],radius:2,fuel:'wood',entity:'switch.fire'},0,{mat,plain,id:'fire_pit:wood'});
+  const flames=[];yard.traverse(o=>{if(o.userData.fireFlame)flames.push(o);});assert.equal(flames.length,3,'gas ring and both wood planes');
+  const noStaticGlow=()=>yard.traverse(o=>{for(const m of o.material?[].concat(o.material):[])if(m.emissive)assert.ok(m.emissiveIntensity===0||m.emissive.getHex()===0,'off/stale/unlinked materials only reflect scene light');});
+  assert.equal(gas.glassBed.material.emissiveIntensity,0);assert.equal(gas.glass.material.emissiveIntensity,0);
+  let compiles=0;
+  view.renderer3.compileAsync=async()=>{compiles++;assert.ok(flames.every(o=>o.visible),'warm compiles with every flame shown');};
+  states=initialStates();states['switch.fire']={state:'off',attributes:{}};reachable=true;
+  window.showGlobalAlert=()=>{};
+  const sends=[];window.chfControlFetch=async(path,options)=>{sends.push(JSON.parse(options.body));return {ok:true};};
+  let live;
+  try {
+    live=await mountLive(view,{api});assert.ok(live);assert.ok(compiles>=2);
+    const warmed=compiles;
+    assert.ok(flames.every(o=>!o.visible));
+    noStaticGlow();
+    assert.ok(deviceAtLevel({level:'house'},marker));assert.ok(!deviceAtLevel({level:'room'},marker));
+    assert.equal(live.marker(marker.device_id).entity_id,'switch.fire');
+    const lights=pool(view),identity=lights.map(o=>o.uuid),poolSize=lights.length;assert.equal(poolSize,4);
+    const samePool=()=>{assert.deepEqual(pool(view).map(o=>o.uuid),identity);assert.ok(pool(view).every(o=>o.visible));assert.equal(compiles,warmed);};
+    live.setMode('lights');
+    states['switch.fire'].state='on';await live.refresh();live.draw();samePool();
+    assert.ok(flames.every(o=>o.visible));assert.ok(flames[0].material.uniforms.time.value>0);
+    const fire=live.lights().find(l=>l.device==='object:fire_pit:gas');assert.ok(fire?.real);assert.deepEqual(fire.rgb.map(Math.round),[255,154,60]);
+    // Fix round 3: the firelight sits 4 ft above the finished top so near surfaces keep their material.
+    assert.ok(Math.abs(fire.at[2]-5.625)<1e-5,'gas light is 4 ft above its 1.5 ft wall and 1.5 in slab '+fire.at[2]);
+    const wood=live.lights().find(l=>l.device==='object:fire_pit:wood');assert.ok(wood?.real);assert.ok(Math.abs(wood.at[2]-5.4)<1e-5,'wood light is 4 ft above its 1.4 ft wall '+wood.at[2]);
+    const gasLight=pool(view).find(l=>l.intensity>0&&Math.abs(l.position.x-8*FT)<1e-5&&Math.abs(l.position.z+5*FT)<1e-5);
+    assert.ok(gasLight);assert.ok(Math.abs(gasLight.position.y-5.625*FT)<1e-5,'pool light at the raised fire anchor');assert.equal(gasLight.distance,18*FT,'patio reach preserved');
+    noStaticGlow();
+    assert.ok(await live.control('switch.fire','toggle'));
+    assert.deepEqual(sends.at(-1),{domain:'switch',service:'toggle',data:{entity_id:'switch.fire'}});
+    states['switch.fire'].state='off';await live.refresh();samePool();assert.ok(flames.every(o=>!o.visible));noStaticGlow();
+    assert.equal(live.lights().find(l=>l.device==='object:fire_pit:gas').intensity,0);assert.equal(live.lights().find(l=>l.device==='object:fire_pit:wood').intensity,0);
+    states['switch.fire'].state='on';await live.refresh();samePool();assert.ok(flames.every(o=>o.visible));
+    reachable=false;await live.refresh();samePool();assert.ok(flames.every(o=>!o.visible));noStaticGlow();
+    assert.equal(live.lights().find(l=>l.device==='object:fire_pit:gas').intensity,0);
+    reachable=true;await live.refresh();live.setMode('all');samePool();assert.ok(flames.every(o=>o.visible));
+    live.stop();live=null;assert.ok(flames.every(o=>!o.visible));assert.equal(pool(view).length,0);
+  } finally {
+    live?.stop();layout.markers.pop();layout.devices.pop();reachable=true;
+  }
+});
+
+check('light_domain_fire_uses_yard_position_and_two_pits_can_share_a_switch', async () => {
+  const {buildFirePit,fireFlameMaterial}=await import(file('static/twin/fire_pits.js'));
+  const view=makeView('low'),yard=new THREE.Group();yard.scale.setScalar(FT);view.scene.add(yard);
+  const mat=name=>new THREE.MeshStandardMaterial({name}),plain=(name,color,extra={})=>extra.fireShader?fireFlameMaterial():new THREE.MeshStandardMaterial({name,color,...extra});
+  for(const [id,x] of [['one',35],['two',40]])buildFirePit(yard,{id,at:[x,35],radius:2,fuel:'gas',entity:'light.a1'},0,{mat,plain,id:'fire_pit:'+id});
+  states=initialStates();reachable=true;setTarget(view,35,35);view.bake={fresh:()=>['a1']};
+  const live=await mountLive(view,{api});assert.ok(live);
+  try {
+    const a=live.lights().find(l=>l.device==='object:fire_pit:one'),b=live.lights().find(l=>l.device==='object:fire_pit:two');
+    assert.ok(a?.real&&b?.real);assert.deepEqual(a.at.slice(0,2),[35,35]);assert.deepEqual(b.at.slice(0,2),[40,35]);
+    assert.ok(Math.abs(a.at[2]-5.625)<1e-5&&Math.abs(b.at[2]-5.625)<1e-5,'deduplicated light-domain pits use raised yard lights');
+    assert.ok(!a.baked&&!b.baked);assert.ok(!live.lights().some(l=>l.device==='a1'));
+    assert.equal(pool(view).length,4);assert.deepEqual(a.rgb.map(Math.round),[255,154,60]);
+  } finally {live.stop();}
+});
+
 let passed = 0;
 for (const [name, fn] of checks) {
   try { await fn(); passed++; console.log('  ok   ' + name); }
