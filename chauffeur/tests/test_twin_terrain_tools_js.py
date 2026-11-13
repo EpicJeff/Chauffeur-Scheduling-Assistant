@@ -46,6 +46,8 @@ const view=await mountTwin(editorHost,{plan,kit,tier:'low',preserveCamera:true})
 view.setCameraState({position:[20*.3048,80*.3048,-19.999*.3048],target:[20*.3048,0,-20*.3048]});
 const abort=new AbortController(),ops=[];let writable=true;
 const op=async operation=>{ops.push(operation);if(operation.op==='add_pad')plan.site.terraces.push({id:'pad',...operation,edges:operation.polygon.map(()=>({edge:'slope'}))});
+  if(operation.op==='add_site_shape'){const value=plan.site[operation.list],created={id:'drawn-'+ops.length,...operation};
+    if(Array.isArray(value))value.push(created);else plan.site[operation.list]=value?[value,created]:created;}
   if(operation.op==='update_pad')Object.assign(plan.site.terraces[0],operation);
   if(operation.op==='reorder_pad'){const from=plan.site.terraces.findIndex(p=>p.id===operation.id);plan.site.terraces.splice(operation.to,0,plan.site.terraces.splice(from,1)[0]);}
   if(operation.op==='delete_pad')plan.site.terraces=[];
@@ -108,6 +110,44 @@ for(const [kind,id,point] of [['beds','bed',[7,7]],['hardscape','path',[13,7]],[
   const del=new Event('keydown');del.key='Delete';document.dispatchEvent(del);await new Promise(r=>setTimeout(r,0));
   assert.equal(ops.at(-1).op,'delete_site_item');assert.equal(ops.at(-1).list,kind);assert.equal(tools.selection().id,null);
 }
+// Exercise the shared drawer's real pointer and keyboard entry points too.
+terrain.show();click('Draw bed');const drawStart=ops.length,matStart=new THREE.MeshStandardMaterial().id;
+for(const p of [[18,28],[22,28],[24,31],[22,34],[18,33]]){terrain.pointerDown({...event(p),shiftKey:true});terrain.pointerUp(event(p),false);}
+terrain.pointerMove({...event([17,30]),shiftKey:true});
+assert.ok(descendants(view.renderer3.domElement.parentElement).some(n=>n.textContent?.includes('sq ft')),'live area label');
+assert.equal(ops.length,drawStart);assert.equal(new THREE.MeshStandardMaterial().id,matStart+1,'draw preview reuses its material');
+let key=new Event('keydown');key.key='Enter';document.dispatchEvent(key);await new Promise(r=>setTimeout(r,0));
+assert.equal(ops.length,drawStart+1);assert.equal(ops.at(-1).op,'add_site_shape');assert.equal(ops.at(-1).polygon.length,5);
+terrain.show();click('Draw patio / hard surface');
+for(const p of [[1,20],[4,24]]){terrain.pointerDown({...event(p),shiftKey:true});terrain.pointerUp(event(p),false);}
+click('Rectangle');await new Promise(r=>setTimeout(r,0));assert.equal(ops.at(-1).polygon.length,4);assert.equal(ops.at(-1).list,'hardscape');
+terrain.show();click('Paver path');
+for(const p of [[18,20],[24,20],[24,24]]){terrain.pointerDown({...event(p),shiftKey:true});terrain.pointerUp(event(p),false);}
+key=new Event('keydown');key.key='Backspace';document.dispatchEvent(key);click('Finish');await new Promise(r=>setTimeout(r,0));
+assert.equal(ops.at(-1).points.length,2);assert.equal(ops.at(-1).width,3);assert.equal(ops.at(-1).corner,'rounded');
+terrain.show();click('Draw bed');const cancelStart=ops.length;
+terrain.pointerDown(event([20,20]));terrain.pointerUp(event([20,20]),false);
+key=new Event('keydown');key.key='Escape';document.dispatchEvent(key);assert.equal(ops.length,cancelStart);assert.equal(card.hidden,true);
+fieldHost=card;
+for(const shape of ['round','square','rect','outline']) {
+ terrain.show();click('Add fire pit');change('Shape',shape);
+ const before=ops.length,materials=new THREE.MeshStandardMaterial().id;
+ terrain.pointerMove({...event([20,20]),shiftKey:true});
+ const points=shape==='outline'?[[17,17],[23,17],[23,21],[17,21]]:[[20,20]];
+ for(const p of points){terrain.pointerDown({...event(p),shiftKey:true});assert.equal(ops.length,before);terrain.pointerUp(event(p),false);}
+ assert.equal(new THREE.MeshStandardMaterial().id,materials+1,'pit placement/drawing uses the shared preview material');
+ if(shape==='outline'){assert.equal(ops.length,before);key=new Event('keydown');key.key='Enter';document.dispatchEvent(key);}
+ await new Promise(r=>setTimeout(r,0));assert.equal(ops.length,before+1);assert.equal(ops.at(-1).shape,shape);
+ if(shape==='round')assert.equal(ops.at(-1).radius,2);
+ if(shape==='square')assert.equal(ops.at(-1).side,4);
+ if(shape==='rect'){assert.equal(ops.at(-1).width,4);assert.equal(ops.at(-1).depth,6);}
+}
+plan.site.fence.style='wood';terrain.show();click('Draw fence');const beforeFence=ops.length, fenceMaterial=new THREE.MeshStandardMaterial().id;
+change('Height (ft)',7);change('Style','rail');
+for(const p of [[28,20],[32,20],[32,24]]){terrain.pointerDown({...event(p),shiftKey:true});terrain.pointerUp(event(p),false);}
+assert.equal(ops.length,beforeFence);assert.equal(new THREE.MeshStandardMaterial().id,fenceMaterial+1);
+key=new Event('keydown');key.key='Enter';document.dispatchEvent(key);await new Promise(r=>setTimeout(r,0));
+assert.equal(ops.length,beforeFence+1);assert.equal(ops.at(-1).list,'fence');assert.equal(ops.at(-1).polyline.length,3);assert.equal(ops.at(-1).height,7);assert.equal(ops.at(-1).style,'rail');
 const host=new Element(), building={id:'b',base:0,foundation:{mode:'fixed',offset_ft:0,thickness_ft:1}};
 let preview;
 foundationShelf(host,building,{getPlan:()=>({buildings:[building]}),canEdit:()=>true,queue:fn=>Promise.resolve().then(fn),op,report:error=>{throw error;},preview:async plan=>{preview=plan;}});

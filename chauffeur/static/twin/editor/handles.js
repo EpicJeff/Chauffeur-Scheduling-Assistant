@@ -1,5 +1,5 @@
 import { roomFloor, openingFloor } from '../twin_floors.js';
-import { objectOperation, siteRecord, siteShapeKinds, sitePoints } from '../objects.js';
+import { objectOperation, siteRecord, siteShapeKinds, sitePoints, sitePieces } from '../objects.js';
 import { solarPoint, solarFrame, solarUV } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import * as THREE from 'three';
@@ -8,6 +8,8 @@ import { groundAt, buildingGround, edgeDistance } from '../twin_ground.js';
 import { roofEdge } from './roof_tools.js';
 import { vertexHandles, editVertex } from './polygon_handles.js';
 import { shapeKey, shapeCentre, transformShape, shapeOperation, closedShape } from './site_shapes.js';
+import { pathOutline } from '../path_shapes.js';
+import { roundPit, firePitOutline } from '../fire_pits.js';
 
 const FT = .3048;
 const inch = value => Math.round(value * 12) / 12;
@@ -100,7 +102,8 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       if (!record || !siteShapeKinds.includes(record.kind)) return objectDescriptors();
       const ps = sitePoints(record.piece); if (!ps.length) return [];
       const centre = shapeCentre(record.piece), z = groundAt(plan(), ...centre) + (record.piece.elevation || 0);
-      const radius = record.kind === 'fire_pit' ? record.piece.radius : Math.max(2, ...ps.map(p => Math.hypot(p[0] - centre[0], p[1] - centre[1]) + 2));
+      const round = record.kind === 'fire_pit' && roundPit(record.piece);
+      const radius = round ? record.piece.radius ?? 2 : Math.max(2, ...ps.map(p => Math.hypot(p[0] - centre[0], p[1] - centre[1]) + 2));
       const add = (kind, at, extra = {}) => ({ kind, id: selected.id, building: null, at: [...at, z], centre: [...centre, z], ...extra });
       let move = centre;
       if (!closedShape(record) && record.kind !== 'fire_pit') {
@@ -109,7 +112,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
         move = [centre[0], centre[1] - distance];
       }
       const result = [add('site_move', move)];
-      if (record.kind === 'fire_pit') return [...result, add('site_radius', [centre[0] + radius, centre[1]])];
+      if (round) return [...result, add('site_radius', [centre[0] + radius, centre[1]]), add('site_rotate', [centre[0] + radius + 2, centre[1]])];
       result.push(...vertexHandles(ps, closedShape(record)).map(({ at, ...h }) => add(h.insert ? 'site_insert' : 'site_vertex', at, h)));
       if (record.kind !== 'fence') result.push(add('site_rotate', [centre[0] + radius, centre[1]]), add('site_scale', [centre[0] + radius, centre[1] + radius]));
       return result;
@@ -342,9 +345,9 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
         ? { op: 'move_site_item', list: g.record.kind, index: g.record.index, by: point.slice(0, 2).map((v, i) => inch(v - g.start[i])) }
         : shapeOperation(g.record, change);
       preview = structuredClone(g.source);
-      const next = ['pool', 'fire_pit', 'fence'].includes(g.record.kind) ? preview.site[g.record.kind] : preview.site[g.record.kind][g.record.index];
+      const next = sitePieces(preview.site[g.record.kind])[g.record.index];
       Object.assign(next, change);
-      const outline = next.at ? Array.from({ length: 33 }, (_, i) => [next.at[0] + next.radius * Math.cos(i * Math.PI / 16), next.at[1] + next.radius * Math.sin(i * Math.PI / 16)]) : sitePoints(next);
+      const outline = g.record.kind === 'fire_pit' ? firePitOutline(next) : next.kind === 'path' ? pathOutline(next) : sitePoints(next);
       const points = outline.map(p => project(building, [...p, handle.at[2]])).filter(Boolean);
       document.getElementById('editor-drag-outline')?.setAttribute('points', points.map(p => p.join(',')).join(' '));
       refresh(); lastFrameMs = Math.max(.001, performance.now() - started); return;

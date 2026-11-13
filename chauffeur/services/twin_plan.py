@@ -517,12 +517,29 @@ def _site(site, notes):
                              or not _numeric_fields(pool, ('depth', 'coping', 'elevation'))):
         site['pool'] = None
         notes.append('Dropped site pool: invalid polygon or dimensions.')
-    fire = site.get('fire_pit')
-    if fire is not None and (not isinstance(fire, dict) or not _point(fire.get('at'))
-                             or not _number(fire.get('radius')) or fire['radius'] <= 0
-                             or not _numeric_fields(fire, ('elevation',))):
-        site['fire_pit'] = None
-        notes.append('Dropped site fire_pit: invalid at, radius or elevation.')
+    from services import twin_site_shapes
+    for name in ('fire_pit', 'fence'):
+        value = site.get(name)
+        kept = []
+        for piece in value if isinstance(value, list) else [value] if value is not None else []:
+            try:
+                if not isinstance(piece, dict) or not _numeric_fields(piece, ('elevation',)):
+                    raise ValueError('invalid ground feature')
+                if name == 'fire_pit':
+                    piece.setdefault('shape', 'round')
+                    if piece['shape'] == 'round':
+                        piece.setdefault('radius', 2)
+                        # Preserve the old read contract: a legacy positive
+                        # radius is not dropped when an unrelated edit normalizes.
+                        if not _point(piece.get('at')) or not _number(piece['radius']) or piece['radius'] <= 0:
+                            raise ValueError('invalid round pit')
+                # Legacy fence heights remain readable. New drawings/edits use 2..10.
+                if name != 'fire_pit' or piece['shape'] != 'round':
+                    twin_site_shapes.validate(name, piece, legacy_height=name == 'fence')
+                kept.append(piece)
+            except ValueError:
+                notes.append(f'Dropped site {name}: invalid outline or dimensions.')
+        site[name] = kept if isinstance(value, list) else kept[0] if kept else None
     for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape', 'terraces'):
         kept = []
         for index, item in enumerate(_items(site, name, notes)):
@@ -530,7 +547,14 @@ def _site(site, notes):
             if valid and name == 'terraces':
                 valid = twin_terrain.pad_error(item) is None
             elif valid and name in ('beds', 'hardscape'):
-                valid = _polygon(item.get('polygon')) and _numeric_fields(item, ('height', 'elevation'))
+                if name == 'hardscape' and item.get('kind') == 'path':
+                    from services import twin_site_shapes
+                    try:
+                        twin_site_shapes.validate(name, item)
+                    except ValueError:
+                        valid = False
+                else:
+                    valid = _polygon(item.get('polygon')) and _numeric_fields(item, ('height', 'elevation'))
             elif valid and name == 'edges':
                 points = item.get('polygon', item.get('points', item.get('polyline')))
                 valid = (isinstance(points, list) and len(points) >= (3 if 'polygon' in item else 2) and all(_point(p) for p in points)
@@ -546,6 +570,7 @@ def _site(site, notes):
         site[name] = kept
     pieces = [item for name in ('pool', 'fire_pit', 'fence')
               if isinstance((item := site.get(name)), dict)]
+    pieces.extend(item for name in ('fire_pit', 'fence') if isinstance(site.get(name), list) for item in site[name])
     pieces.extend(item for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape', 'terraces')
                   for item in site[name])
     _piece_meta(pieces, 'site', notes)

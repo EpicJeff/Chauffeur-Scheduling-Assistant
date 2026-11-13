@@ -7,9 +7,10 @@ const FT = .3048;
 export const siteShapeLabels = { beds: 'Planting bed', hardscape: 'Path / hardscape', edges: 'Edge planting', pool: 'Pool', fire_pit: 'Fire pit', fence: 'Fence' };
 export const siteShapeKinds = Object.keys(siteShapeLabels);
 export const sitePoints = piece => piece.polygon || piece.points || piece.polyline || (piece.at ? [piece.at] : []);
+export const sitePieces = value => Array.isArray(value) ? value : value ? [value] : [];
 export function siteRecords(plan) {
   return ['planting', 'furniture', ...siteShapeKinds].flatMap(kind => {
-    const value = plan?.site?.[kind], pieces = ['pool', 'fire_pit', 'fence'].includes(kind) ? (value ? [value] : []) : value || [];
+    const value = plan?.site?.[kind], pieces = sitePieces(value);
     return pieces.map((piece, index) => ({ kind, index, building: null, piece: { ...piece, id: piece.id || `${kind}:${index}` } }));
   });
 }

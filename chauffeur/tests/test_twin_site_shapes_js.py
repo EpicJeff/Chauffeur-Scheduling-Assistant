@@ -26,7 +26,7 @@ let source=structuredClone(plan),selected={kind:'beds',id:'bed',building:null},r
 const abort=new AbortController(),snapshots=new Map([[1,structuredClone(source)]]),ops=[];
 let history=createHistory({getRound:()=>round,getBuild:()=>null,canEdit:()=>writable,refresh:async()=>{},signal:abort.signal});
 const commit=operation=>history.perform(async()=>{
- commits++;ops.push(operation);const p=['pool','fire_pit','fence'].includes(operation.list)?source.site[operation.list]:source.site[operation.list][operation.index];
+ commits++;ops.push(operation);const value=source.site[operation.list],p=Array.isArray(value)?value[operation.index]:value;
  if(operation.op==='set_object')Object.assign(p,operation.properties);else Object.assign(p,Object.fromEntries(Object.entries(operation).filter(([k])=>!['op','list','index'].includes(k))));
  snapshots.set(++round,structuredClone(source));
 });
@@ -62,12 +62,30 @@ await change('Angle (degrees)',0);assert.equal(record().piece.rotation,0);near(s
 console.log('ok shelf X/Y scale, bounding dimensions, centre and angle round trip');
 selected={kind:'pool',id:'pool:0',building:null};draw();await change('Pool depth (ft)',6);await change('Coping (ft)',0);assert.equal(source.site.pool.depth,6);assert.equal(source.site.pool.coping,0);
 selected={kind:'fire_pit',id:'fire_pit:0',building:null};await gesture('site_radius',[7,2,0]);near(source.site.fire_pit.radius,3);draw();await change('Radius (ft)',4);near(source.site.fire_pit.radius,4);
+await gesture('site_rotate',[4,8,0]);assert.equal(source.site.fire_pit.rotation,90);draw();await change('Angle (degrees)',45);assert.equal(source.site.fire_pit.rotation,45);
+source.site.fire_pit=[source.site.fire_pit];
+for(const shape of ['square','rect','outline']) {
+ const pit={id:'pit-'+shape,shape,polygon:[[0,0],[8,0],[8,6],[0,6]]};source.site.fire_pit.push(pit);selected={kind:'fire_pit',id:pit.id,building:null};
+ assert.equal(handles.handles().some(h=>h.kind==='site_radius'),false);assert.ok(handles.handles().some(h=>h.kind==='site_rotate'));
+ await gesture('site_vertex',[-1,1,0]);h=handles.handles().find(h=>h.kind==='site_insert');assert.ok(handles.begin(event(h.at)));await handles.finish();assert.equal(record().piece.polygon.length,5);
+ h=handles.handles().find(h=>h.kind==='site_vertex');assert.ok(handles.begin({...event(h.at),altKey:true}));await handles.finish();assert.equal(record().piece.polygon.length,4);
+ draw();await change('Angle (degrees)',30);assert.equal(record().piece.rotation,30);
+}
+console.log('ok round pit radius/turn and polygon pit corners, insert/remove and turn through history');
 selected={kind:'fence',id:'fence:0',building:null};
 await gesture('site_vertex',[0,2,0]);assert.deepEqual(source.site.fence.polyline[0],[0,2]);
 h=handles.handles().find(h=>h.kind==='site_insert');assert.ok(handles.begin(event(h.at)));await handles.finish();assert.equal(source.site.fence.polyline.length,3);
 h=handles.handles().find(h=>h.kind==='site_vertex');assert.ok(handles.begin({...event(h.at),altKey:true}));await handles.finish();assert.equal(source.site.fence.polyline.length,2);
 draw();await change('Height (ft)',8);assert.equal(source.site.fence.height,8);
 console.log('ok pool fields, radius handle and shelf, fence point insert/drag/remove and height');
+source.site.hardscape.push({id:'walk',kind:'path',points:[[0,0],[8,0],[8,8]],width:3,material:'paving'});
+selected={kind:'hardscape',id:'walk',building:null};await gesture('site_vertex',[-1,1,0]);
+h=handles.handles().find(h=>h.kind==='site_insert');assert.ok(handles.begin(event(h.at)));await handles.finish();assert.equal(record().piece.points.length,4);
+for(let i=0;i<2;i++){h=handles.handles().find(h=>h.kind==='site_vertex');assert.ok(handles.begin({...event(h.at),altKey:true}));await handles.finish();}
+assert.equal(record().piece.points.length,2);const pathMinimum=commits;
+h=handles.handles().find(h=>h.kind==='site_vertex');assert.ok(handles.begin({...event(h.at),altKey:true}));await handles.finish();assert.equal(commits,pathMinimum);
+draw();await change('Width (ft)',4);assert.equal(record().piece.width,4);
+console.log('ok path centre-line drag, midpoint insertion, removal to two points and shelf width through history');
 selected={kind:'beds',id:'bed',building:null};
 h=handles.handles().find(h=>h.kind==='site_insert');assert.ok(handles.begin(event(h.at)));await handles.finish();assert.equal(record().piece.polygon.length,5);
 for(let i=0;i<2;i++){h=handles.handles().find(h=>h.kind==='site_vertex');assert.ok(handles.begin({...event(h.at),altKey:true}));await handles.finish();}

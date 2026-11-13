@@ -1,10 +1,12 @@
-import { applyObject, objectShown, objectMaterialKey } from './objects.js';
+import { applyObject, objectShown, objectMaterialKey, sitePieces } from './objects.js';
 import * as THREE from 'three';
 import { Tree } from '@dgreenheck/ez-tree';
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
 import { kitMaterial, loadModel, disposeObject, cacheModelMaterials } from './twin_library.js';
 import { groundAt, buildingBase } from './twin_ground.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
+import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
+import { firePitRings, roundPit } from './fire_pits.js';
 
 function random(seed) {
   let n = seed | 0;
@@ -127,9 +129,23 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   }
   const pool = site.pool?.polygon;
   const inside = (p, poly) => { let v = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) v = !v; return v; };
-  for (const h of site.hardscape || []) if (h.polygon?.length >= 3) {
-    const holes = pool && pool.every(p => inside(p, h.polygon)) ? [pool] : [];
+  for (const h of site.hardscape || []) if (h.kind === 'path' || h.polygon?.length >= 3) {
     const role = h.material === 'concrete' ? 'patio_concrete' : kit.materials?.[h.material] ? h.material : 'paving';
+    if (h.kind === 'path') {
+      // Swept pieces retain user-drawn crossings without even/odd cancellation.
+      for (const poly of pathSurfacePolygons(h)) addMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0)), mat(role));
+      if (h.edging === 'curb') {
+        const inner = pathBoundaries(h), outer = pathBoundaries(h, (h.width ?? 3) / 2 + .5);
+        for (const side of ['left', 'right']) for (let i = 1; i < inner[side].length; i++) {
+          const poly = [inner[side][i - 1], inner[side][i], outer[side][i], outer[side][i - 1]];
+          // Both offsets have the same mitre/bevel topology.
+          const curb = addMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0)), mat('patio_concrete'));
+          curb.geometry.userData.pathCurb = true;
+        }
+      }
+      continue;
+    }
+    const holes = pool && pool.every(p => inside(p, h.polygon)) ? [pool] : [];
     addMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role));
   }
   if (pool?.length >= 3) {
@@ -145,22 +161,30 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       const a = normal(pool[(i + pool.length - 1) % pool.length], p), b = normal(p, pool[(i + 1) % pool.length]), factor = coping / Math.max(0.1, 1 + a[0] * b[0] + a[1] * b[1]);
       return [p[0] + (a[0] + b[0]) * factor, p[1] + (a[1] + b[1]) * factor];
     });
-    if (coping > 0) addMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat('paving'));
+    if (coping > 0) addMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving'));
     for (let i = 0; i < pool.length; i++) {
       const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
       addMesh(group, poolSurface([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), plain('pool tile', '#5fa8c4'));
     }
     addMesh(group, poolSurface(pool, -0.25), plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false }));
   }
-  if (site.fire_pit?.at) {
-    const f = site.fire_pit;
-    const height = groundAt(plan, ...f.at) + (f.elevation || 0);
-    addMesh(group, new THREE.CylinderGeometry(f.radius, f.radius + 0.2, 1.4, 24, 1, true).translate(f.at[0], height + 0.7, -f.at[1]), mat('base'));
-    addMesh(group, drapeGeometry(new THREE.CircleGeometry(f.radius + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plan, f.elevation || 0), plain('gravel', '#a59c8f'));
+  for (const f of sitePieces(site.fire_pit)) {
+    const { outer, inner } = firePitRings(f);
+    const centre = outer.reduce((s,p)=>s.map((v,i)=>v+p[i]/outer.length),[0,0]);
+    const height = groundAt(plan, ...centre) + (f.elevation || 0);
+    addMesh(group, polygon(outer, height, height + 1.4, inner.length ? [inner] : []), mat('base'));
+    if (inner.length) addMesh(group, polygon(inner, height + .05, height + .15), mat('counter'));
+    if (roundPit(f)) addMesh(group, drapeGeometry(new THREE.CircleGeometry((f.radius ?? 2) + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plan, f.elevation || 0), plain('gravel', '#a59c8f'));
   }
-  for (const bed of site.beds || []) if (bed.polygon?.length >= 3) addMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat('mulch'));
-  if (site.fence?.polyline?.length > 1) {
-    const f = site.fence, height = f.height || 6;
+  for (const bed of site.beds || []) if (bed.polygon?.length >= 3) addMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(kit.materials?.[bed.material] ? bed.material : 'mulch'));
+  for (const edge of site.edges || []) if (edge.polygon?.length >= 3) {
+    // Edge planting remains a closed border. Give its ground strip the same
+    // authored finish on every tier; High also keeps the existing grass blades.
+    for (const poly of pathSurfacePolygons({ points: [...edge.polygon, edge.polygon[0]], width: .5 }))
+      addMesh(group, surface(poly, edge.elevation || 0, .06 + (edge.elevation || 0)), mat(kit.materials?.[edge.material] ? edge.material : 'lawn'));
+  }
+  for (const f of sitePieces(site.fence).filter(f => f.polyline?.length > 1)) {
+    const height = f.height || 6;
     const fenceMesh = geometry => addMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), mat('fence'));
     for (let i = 0; i < f.polyline.length - 1; i++) {
       const a = f.polyline[i], b = f.polyline[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);

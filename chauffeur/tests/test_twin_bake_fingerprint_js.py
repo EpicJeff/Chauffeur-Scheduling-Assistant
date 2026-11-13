@@ -72,6 +72,12 @@ const {transformShape}=await import(file('static/twin/editor/site_shapes.js'));
 const rotated=structuredClone(plan);Object.assign(rotated.site.hardscape[0],transformShape(rotated.site.hardscape[0],{rotation:90}));
 assert.notEqual(atlasJob(await scene('low',rotated),rotated,options).cacheKey,atlasJob(low,plan,options).cacheKey,'polygon rotation changes authored worker bake key');
 assert.notEqual(buildAtlas(await scene('high',rotated),rotated,options).key,b.key,'polygon rotation changes stored atlas key');
+const drawn=structuredClone(plan);drawn.site.hardscape.push({id:'drawn-walk',kind:'path',points:[[-3,2],[-3,8],[3,10]],width:3,corner:'rounded',material:'paving',edging:'curb'});
+const drawnLow=await scene('low',drawn),drawnHigh=await scene('high',drawn);
+assert.notEqual(atlasJob(drawnLow,drawn,options).cacheKey,atlasJob(low,plan,options).cacheKey,'adding a path changes the worker bake key');
+const pathLow=buildAtlas(drawnLow,drawn,options),pathHigh=buildAtlas(drawnHigh,drawn,options);
+assert.notEqual(pathLow.key,b.key,'adding a path changes the stored atlas key');assert.equal(pathLow.key,pathHigh.key,'path receivers use one tier-independent atlas');
+assert.ok(covered(drawnLow).reduce((n,m)=>n+m.geometry.attributes.position.count,0)>covered(low).reduce((n,m)=>n+m.geometry.attributes.position.count,0),'path and curb are baked receivers');
 assert.notEqual(buildAtlas(await scene('high',changed),changed,options).key,b.key,'authored wall geometry invalidates');
 assert.notEqual(bakeLayout(b,options,[{...lamp,at:[7,6,6]}]).entries.lamp.key,
  bakeLayout(b,options,[lamp]).entries.lamp.key,'moving the light invalidates its bake');

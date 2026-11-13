@@ -491,7 +491,7 @@ MORE_OPS = ('set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_sour
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
-            'move_site_item', 'delete_site_item', 'add_site_item', 'update_site_shape', 'place_device', 'unplace_device',
+            'move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape', 'place_device', 'unplace_device',
             'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation', 'set_porch_foundation')
 
 
@@ -1112,9 +1112,26 @@ def _site_op(model, op, actor):
     name = op.get('list')
     if name not in ('planting', 'furniture', 'beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence'):
         raise Refused('Choose a yard item.')
-    singleton = name in ('pool', 'fire_pit', 'fence')
+    singleton = name in ('pool', 'fire_pit', 'fence') and not isinstance(model['site'].get(name), list)
     pieces = ([model['site'][name]] if model['site'].get(name) else []) if singleton else model['site'].setdefault(name, [])
-    if op['op'] == 'add_site_item':
+    if op['op'] == 'add_site_shape':
+        from services import twin_site_shapes
+        if name == 'pool' and pieces:
+            raise Refused('A pool already exists. Edit or delete it before drawing another.')
+        try:
+            piece, words = twin_site_shapes.create(name, {k: v for k, v in op.items() if k not in ('op', 'list')}, model['site'].get('lot'))
+        except ValueError as exc:
+            raise Refused(str(exc)) from exc
+        piece['id'] = _id({**model['site'], '_legacy_singletons': [p for p in model['site'].values() if isinstance(p, dict)]}, name)
+        if actor == 'person':
+            piece['src'] = {'person': True}
+        if singleton and pieces:
+            model['site'][name] = [*pieces, piece]
+        elif singleton:
+            model['site'][name] = piece
+        else:
+            pieces.append(piece)
+    elif op['op'] == 'add_site_item':
         if name not in ('planting', 'furniture'):
             raise Refused('Add plants and furniture through the library.')
         asset = _text(op.get('asset'))
@@ -1309,7 +1326,7 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
             if not _unplace_device(model, device, actor):
                 raise Refused('Nothing changed.')
         return model, 'Placed the device.' if kind == 'place_device' else 'Removed the device placement.'
-    if kind in ('move_site_item', 'delete_site_item', 'add_site_item', 'update_site_shape'):
+    if kind in ('move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape'):
         return _site_op(model, op, actor)
     building = _find(model, 'buildings', op.get('building'))
     before = hosts.snapshot(building)
