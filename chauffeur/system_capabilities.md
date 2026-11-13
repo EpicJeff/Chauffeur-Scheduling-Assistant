@@ -1,6 +1,21 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.839 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.840 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.840 (2026-11-13, NOT device-verified): fixes the lighting bake failing with "wave.waveDir.value.set is not a function".**
+
+**The report.** With v2.499.839's reason in the message, the user's house showed "Could not bake lighting (wave.waveDir.value.set is not a function)". This was the cause of their earlier "Could not bake lighting" too.
+
+**The cause.** v2.499.832 and .833 kept the panel pulse's uniforms in the panel material's `userData`. The bake clones materials, and three's `Material.clone()` deep-copies `userData` as plain JSON. A cloned panel material therefore arrived with a "wave" whose `waveDir` was a plain object with no `set`, and the energy layer, seeing a wave already "installed", threw in draw.
+
+**The fix** (`static/twin/live/energy.js`).
+- Wave uniforms are kept in a `WeakMap` by material (`solarWaveOf(material)`), never in `userData`.
+- A clone gets its own working wave the first time the energy layer sees it, and any stale `userData.solarWave` is removed on install.
+
+**Tests.**
+- `test_twin_energy_js` 38/38: a cloned panel material has no wave in `userData`, gets its own wave with a real `Vector2`, and renders without throwing. The old code fails this.
+- `test_twin_bake_runtime_js` 17/17; browser `test_house_twin_energy_live` 7/7.
+- Chromium: two bakes end with nothing stale and no error.
 
 **v2.499.839 (2026-11-13, NOT device-verified): yard and fire-pit lights are no longer baked, and a bake failure now says why.**
 
