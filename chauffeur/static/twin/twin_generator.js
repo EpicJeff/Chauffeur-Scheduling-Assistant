@@ -100,8 +100,8 @@ export function mergeStatic(group, { perPiece = false } = {}) {
 
 // BoxGeometry's face UVs span 0..1; the kit repeats every 4 (or 8) feet.
 // Scale before rotating so each face has the same physical texture density.
-export function boxGeometry(width, height, depth) {
-  const g = new THREE.BoxGeometry(width, height, depth), uv = g.attributes.uv, normal = g.attributes.normal;
+export function boxGeometry(width, height, depth, widthSegments = 1) {
+  const g = new THREE.BoxGeometry(width, height, depth, widthSegments), uv = g.attributes.uv, normal = g.attributes.normal;
   for (let i = 0; i < uv.count; i++) {
     const xFace = Math.abs(normal.getX(i)) > 0.5, yFace = Math.abs(normal.getY(i)) > 0.5;
     uv.setXY(i, uv.getX(i) * (xFace ? depth : width), uv.getY(i) * (yFace ? depth : height));

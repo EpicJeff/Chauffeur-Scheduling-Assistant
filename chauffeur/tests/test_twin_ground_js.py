@@ -187,6 +187,19 @@ plan.site.planting=[{id:'tree',at:[5,5],preset:'Pine',height:10}];
 plan.site.beds=[{polygon:rect}];plan.site.hardscape=[{polygon:[[0,0],[2,0],[2,2],[0,2]]}];
 plan.site.fire_pit={at:[5,5],radius:1};
 const yard=await buildYard(plan,kit,'high');
+// Fence rails follow the ground at the slat spacing (user, 2026-11-13: "it is just building one
+// long piece instead of having it follow the slats"). The fence crosses the -4 ft pad's edge.
+{
+ const fencePlan={...plan,site:{...plan.site,fence:[{id:'f',polyline:[[-30,5],[30,5]],height:6}]}};
+ const fenced=await buildYard(fencePlan,kit,'high'),rail=[];
+ fenced.group.updateMatrixWorld(true);
+ fenced.group.traverse(o=>{if(!o.isMesh||o.material.name!=='fence')return;const p=o.geometry.attributes.position,v=new THREE.Vector3();
+  for(let i=0;i<p.count;i++){v.fromBufferAttribute(p,i);const off=v.y-groundAt(fencePlan,v.x,-v.z);
+   if(off>5.2&&off<5.6)rail.push(v.x);}});
+ const xs=[...new Set(rail.map(x=>Math.round(x*1000)/1000))].sort((a,b)=>a-b);
+ assert.ok(xs.length>100,'top rail has vertices along its length: '+xs.length);
+ assert.ok(xs.slice(1).every((x,i)=>x-xs[i]<=.5+1e-6),'no rail span longer than the slat spacing, so it rides the ground');
+}
 // Since v2.499.821 a fire pit is a ring wall: an outer face, an inner face toward the bowl and
 // a top. Each faces its own way; none may face into the wall (the inside-out bug).
 const fireFaces=[];

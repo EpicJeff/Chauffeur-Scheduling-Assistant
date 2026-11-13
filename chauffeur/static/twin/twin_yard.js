@@ -195,7 +195,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       if (!length) continue;
       for (let d = 0.25; d < length; d += 0.5) fenceMesh(boxGeometry(0.46, height, 0.06).rotateY(angle).translate(a[0] + dx * d / length, height / 2 + 0.15, -a[1] - dy * d / length));
       for (let d = 0; d <= length; d += 8) fenceMesh(boxRect(a[0] + dx * d / length - 0.17, a[1] + dy * d / length - 0.17, a[0] + dx * d / length + 0.17, a[1] + dy * d / length + 0.17, 0, height + 0.3));
-      for (const y of [1, height - 0.6]) fenceMesh(boxGeometry(length, 0.3, 0.12).rotateY(angle).translate((a[0] + b[0]) / 2, y, -(a[1] + b[1]) / 2));
+      // Rails bend with the ground at the slat spacing, so on a slope or a pad step they ride
+      // the slat tops instead of spanning end to end in one straight piece.
+      for (const y of [1, height - 0.6]) fenceMesh(boxGeometry(length, 0.3, 0.12, Math.max(1, Math.ceil(length / 0.5))).rotateY(angle).translate((a[0] + b[0]) / 2, y, -(a[1] + b[1]) / 2));
     }
   }
   const cards = new Map();
