@@ -1,6 +1,37 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.819 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.820 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.820 (2026-11-12, NOT device-verified): yard shapes reshape, resize and turn. A general editor undo fix rides along.**
+
+**The report.** The user, 2026-11-12: "Ground and yard objects can't be resized or rotated, just moved. That's not very useful."
+
+**How it was built.** Codex built it in three rounds. Claude checked it in Chromium, which caught three problems: corner drags that never committed, a dead undo step, and a regression where a typed Turn on items stopped applying.
+
+**Shapes** (`services/twin_site_shapes.py`; `editor/site_shapes.js`, `polygon_handles.js`, `site_shape_shelf.js`).
+- **Beds, hardscape (patios, paths), edge planting and the pool:**
+  - corner handles: drag, add a corner on an edge midpoint, remove one (keeping at least 3), using the pads' polygon handle helper;
+  - a rotate ring about the centroid, snapping to 15° (Shift for free);
+  - a uniform scale handle, plus X/Y scale under Advanced;
+  - shelf fields for the angle, width, depth and centre.
+- **The pool** also has depth (2..12 ft) and coping (0..3 ft). A coping of 0 now draws no coping strip; it used to draw 1 ft.
+- **The fire pit** has a radius handle and field, plus a turn.
+- **Fences** have point handles and height.
+- **Edge planting drawn as an outline** renders as a closed border.
+- **Storage:** transforms rewrite the authored polygon, with `rotation` kept for the shelf. Everything goes through `update_site_shape`, validated and with history.
+- **The bake:** shape edits change the authored bake key.
+
+**Editor fixes found along the way.**
+- **Undo after an undo was refused:** a stale "changed since" guard made the second undo in a row a silent no-op. History now tracks contiguity correctly. This affected every editor edit kind, not only yard shapes.
+- **Gestures:** a gesture records exactly one history step on release, and none when nothing changed (a missing rotation counts as 0). A drag that returns to its start still updates. Releases on `window`, `lostpointercapture` and the trailing click save once.
+- **A typed Turn on building items** commits again.
+
+**Tests.**
+- `test_twin_site_shapes` and `test_twin_site_shapes_js`: rotate, scale, X/Y, corners, the pool, the fire pit, fences, one step per release, the bake key.
+- `test_twin_editor_history_js` 6/6 (its stub gained the missing export) and `test_twin_object_shelf_js` (a typed Turn commits one step).
+- Browser:
+  - `test_twin_site_shapes_live` 1/1: rotate 45° with the ring, then scale 120%, then a corner drag; three undos restore the original; pool depth; a tree resize; no shader compiled WHILE dragging. The editor's rebuild after release recompiles as it does after every applied edit.
+  - `test_twin_objects_live`, `test_house_twin_ground_live` 3/3 and `test_house_editor_openings_live` 5/5.
 
 **v2.499.819 (2026-11-12, NOT device-verified): lighter versions of imported models (LODs, made automatically) and a 3D model for each household car.**
 

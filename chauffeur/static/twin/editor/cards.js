@@ -6,6 +6,7 @@ import { createEquipmentShelf } from './equipment_shelf.js';
 import { foundationShelf } from './foundation_shelf.js';
 import { porchFoundationShelf } from './porch_foundation_shelf.js';
 import { siteRecord, siteShapeKinds, siteShapeLabels } from '../objects.js';
+import { drawSiteShapeShelf } from './site_shape_shelf.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -108,9 +109,13 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     const flags = roofFlags(record);
     const porchLayout = record?.kind === 'room' && record.piece.kind === 'porch'
       ? JSON.stringify([record.piece.foundation, canEdit()]) : '';
-    const nextLayout = JSON.stringify([record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
+    const nextLayout = JSON.stringify([record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
-    if (record && layout === nextLayout + porchLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
+    // Object properties participate in the layout signature. A completed Size
+    // save must not detach Turn while the person is typing the next edit.
+    const editingItem = record?.kind === 'item' && [...inputs.values()].some(({ input, baseline, queued }) =>
+      document.activeElement === input || queued || raw(input) !== baseline);
+    if (record && (layout === nextLayout + porchLayout || editingItem) && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
       if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
       if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost' && !flags.length;
@@ -194,6 +199,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { canEdit, queue, op, report,
       getRecord: () => findPiece(getPlan(), piece.id, building?.id) });
     if (siteShapeKinds.includes(kind)) {
+      drawSiteShapeShelf(host, record, { canEdit, queue, op, report,
+        getRecord: () => findPiece(getPlan(), piece.id, null), onSaved: () => { layout = null; draw(); } });
       const note = document.createElement('p'); note.textContent = 'Drag the move handle or use the arrow keys (one foot).'; host.append(note);
       for (const [axis, text] of ['Move east (ft)', 'Move north (ft)'].entries()) {
         const label = document.createElement('label'); label.textContent = text;

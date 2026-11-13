@@ -133,7 +133,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     addMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role));
   }
   if (pool?.length >= 3) {
-    const d = site.pool.depth || 5, coping = site.pool.coping || 1;
+    const d = site.pool.depth ?? 5, coping = site.pool.coping ?? 1;
     const poolHeight = groundAt(plan, ...pool[0]) + (site.pool.elevation || 0);
     const poolSurface = (poly, z0, z1 = z0, holes = []) => polygon(poly, poolHeight + z0, poolHeight + z1, holes);
     addMesh(group, poolSurface(pool, -d - 0.2, -d), plain('pool tile', '#5fa8c4', { roughness: 0.35 }));
@@ -145,7 +145,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       const a = normal(pool[(i + pool.length - 1) % pool.length], p), b = normal(p, pool[(i + 1) % pool.length]), factor = coping / Math.max(0.1, 1 + a[0] * b[0] + a[1] * b[1]);
       return [p[0] + (a[0] + b[0]) * factor, p[1] + (a[1] + b[1]) * factor];
     });
-    addMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat('paving'));
+    if (coping > 0) addMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat('paving'));
     for (let i = 0; i < pool.length; i++) {
       const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
       addMesh(group, poolSurface([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), plain('pool tile', '#5fa8c4'));
@@ -254,7 +254,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   if (tier === 'high') {
     const placements = [], rng = random(1);
     for (const edge of site.edges || []) {
-      const line = edge.points || edge.polyline || [];
+      const line = edge.polygon ? [...edge.polygon, edge.polygon[0]] : edge.points || edge.polyline || [];
       for (let i = 0; i < line.length - 1; i++) {
         const a = line[i], b = line[i + 1], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
         for (let d = 0; d < length; d += 0.18) placements.push([a[0] + (b[0] - a[0]) * d / length + (rng() - 0.5) * 0.4, -a[1] - (b[1] - a[1]) * d / length + (rng() - 0.5) * 0.4, rng()]);

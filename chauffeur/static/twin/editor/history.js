@@ -32,7 +32,8 @@ export function createHistory({ getRound, getBuild, canEdit, refresh, latest, si
       finally {
         const after = getRound();
         if (before !== null && after !== null && before !== after) {
-          undo.push({ before, after, at: after }); redo.length = 0;
+          const connected = undo[undo.length - 1]?.at === before;
+          undo.push({ before, after, at: after, connected }); redo.length = 0;
         }
       }
     });
@@ -49,6 +50,10 @@ export function createHistory({ getRound, getBuild, canEdit, refresh, latest, si
     const result = await request('revert', 'POST', { round: back ? step.before : step.after }, 'twin');
     step.at = result?.round ?? null;
     source.pop(); destination.push(step);
+    // Revert writes a fresh round for the same state the next step expects.
+    // Advance only that adjacent step; later outside edits still fail the guard.
+    const next = source[source.length - 1];
+    if (next && (back ? step.connected : next.connected)) next.at = step.at;
     await refresh();
   }
   // A press made while a change is still being saved or redrawn waits its

@@ -90,8 +90,8 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-progress::-webkit-progress-bar { background: var(--twinHover); }
 #editor-progress::-webkit-progress-value { background: linear-gradient(90deg, #16a45f, #10b2e0); }
 .editor-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-#editor-cameras { position: absolute; left: calc(var(--editor-rail-right, 96px) + 16px); bottom: 160px; display: flex; flex-wrap: wrap; gap: 4px; z-index: 2; }
-#editor-cameras button { background: var(--editor-panel); backdrop-filter: blur(16px); }
+#editor-cameras { position: absolute; left: calc(var(--editor-rail-right, 96px) + 16px); bottom: 160px; display: flex; flex-wrap: wrap; gap: 4px; z-index: 2; pointer-events: none; }
+#editor-cameras button { pointer-events: auto; background: var(--editor-panel); backdrop-filter: blur(16px); }
 #editor-lighting { flex-basis: 100%; }
 /* The label and help sit over the 3D view (bright sky by day): a dark chip keeps them legible. */
 #editor-lighting > span, #editor-lighting-help { color: var(--twinText); font-size: 11px; background: var(--twinGlass); backdrop-filter: blur(16px);
@@ -319,9 +319,12 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .object-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .object-model-grid button { display: flex; flex-direction: column; align-items: center; }
 .object-model-grid img { width: 96px; height: 64px; object-fit: contain; }
-.editor-handle-object_rotate { width: 24px; height: 24px; border-width: 2px; }
-.editor-handle-object_rotate::after { content: '\21bb'; display: block; text-align: center; line-height: 20px; color: var(--twinText); }
-.editor-handle-object_scale { width: 14px; height: 14px; border-radius: 2px; }
+.editor-handle-object_rotate, .editor-handle-site_rotate { width: 24px; height: 24px; border-width: 2px; }
+.editor-handle-object_rotate::after, .editor-handle-site_rotate::after { content: '\21bb'; display: block; text-align: center; line-height: 20px; color: var(--twinText); }
+.editor-handle-object_scale, .editor-handle-site_scale, .editor-handle-site_radius { width: 14px; height: 14px; border-radius: 2px; }
+.editor-handle-site_insert { text-align: center; line-height: 10px; color: var(--twinText); }
+.editor-site-ring { pointer-events: none; }
+.editor-site-ring > span { position: fixed; z-index: 2; border-top: 1px solid var(--twinMarkerRing); transform-origin: left center; }
 #library-panel > label, #library-panel > p, #library-import-settings { grid-column: 1 / -1; }
 #library-panel > label { display: flex; gap: 8px; align-items: center; }
 #library-search { min-width: 0; width: 100%; }
