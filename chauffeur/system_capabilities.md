@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.833 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.834 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.834 (2026-11-13, NOT device-verified): fence rails follow the ground with the slats instead of spanning a slope in one straight piece.**
+
+**The report.** The user, 2026-11-13, with a screenshot of a fence crossing a pad step: "Tops of fences can get a little weird when the elevation changes. It is just building one long piece instead of having it follow the slats."
+
+**The cause.** Each fence segment's two rails were single boxes with corner points only at the two ends. Draping onto the terrain moved just those ends, while every slat sat on the ground under itself. So on a slope or a pad step the slats stepped and the rail cut straight across them.
+
+**The fix** (`static/twin/twin_yard.js`, `twin_generator.js`). Rails are subdivided every half foot (the slat spacing; `boxGeometry` takes an optional width segment count, default 1), so the drape bends them with the ground exactly as the slat tops follow it. Posts and slats are unchanged.
+
+**Tests.** `test_twin_ground_js`: a fence across the -4 ft pad's edge has top-rail vertices at least every 0.5 ft along its 60 ft, where the old rail had only its two ends. Neighbours: `test_twin_site_drawing_js`, `test_twin_site_shapes_js`, `test_twin_retaining_wall_js`, browser `test_twin_site_drawing_live` 1/1.
 
 **v2.499.833 (2026-11-13, NOT device-verified): one cyan pulse rushes across all the panels in under a second, then the next one fires.**
 
