@@ -19,8 +19,9 @@ function split(poly, a, b) {
   return result.filter(r => r.length >= 3);
 }
 const centre = poly => [0, 1].map(i => poly.reduce((n, p) => n + p[i], 0) / poly.length);
-export function terrainGeometry(plan, outline, tier = 'high', { holes = [], offset = 0, skirts = false } = {}) {
-  const pads = plan.site?.terraces || [], step = tier === 'low' ? 2 : 1;
+export const TERRAIN_STEP_FT = 1;
+export function terrainGeometry(plan, outline, tier = 'high', { holes = [], offset = 0, skirts = false, retainWallSkirts = false } = {}) {
+  const pads = plan.site?.terraces || [], step = tier === 'low' ? 2 : TERRAIN_STEP_FT;
   const all = [outline, ...holes, ...pads.map(p => p.polygon)];
   const edges = all.flatMap(poly => poly.map((a, i) => [a, poly[(i + 1) % poly.length]]));
   const xs = outline.map(p => p[0]), ys = outline.map(p => p[1]);
@@ -52,6 +53,9 @@ export function terrainGeometry(plan, outline, tier = 'high', { holes = [], offs
     }
   }
   if (skirts) for (const pad of pads) pad.polygon.forEach((a, i) => {
+    // Lawn yields its earth face to the wall. Slabs and plinth undersides
+    // still need their own vertical closure across the same terrain step.
+    if (!retainWallSkirts && pad.edges?.[i]?.edge === 'sharp' && pad.edges[i].wall) return;
     if ((pad.edges?.[i]?.edge ?? 'slope') !== 'sharp' && pad.blend !== 0) return;
     const b = pad.polygon[(i + 1) % pad.polygon.length], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
     const n = [(b[1] - a[1]) / length * 1e-5, -(b[0] - a[0]) / length * 1e-5];
@@ -80,7 +84,7 @@ export function drapeGeometry(geometry, plan, offset = 0) {
 export function terrainSlabGeometry(plan, outline, tier, bottom, top, holes = []) {
   // Patios and beds receive baked light. Their topology/UVs must be identical
   // on every tier; only the much larger, unbaked lawn uses the tiered grid.
-  const surface = terrainGeometry(plan, outline, 'high', { holes, offset: top, skirts: true });
+  const surface = terrainGeometry(plan, outline, 'high', { holes, offset: top, skirts: true, retainWallSkirts: true });
   const positions = [], uv = [], step = 1;
   const emit = (...points) => { for (const p of points) { positions.push(p[0], p[2], -p[1]); uv.push(p[0], p[2]); } };
   for (const [index, poly] of [outline, ...holes].entries()) {

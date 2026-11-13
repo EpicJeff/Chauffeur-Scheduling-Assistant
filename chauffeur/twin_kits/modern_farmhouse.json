@@ -70,6 +70,14 @@
       "color": "#3b3d40",
       "roughness": 0.22
     },
+    "retaining_block": {
+      "asset": "concrete_floor_02",
+      "color": "#96958e"
+    },
+    "retaining_timber": {
+      "asset": "wood_planks",
+      "color": "#88715a"
+    },
     "patio_concrete": {
       "asset": "concrete_floor_02",
       "color": "#cfc8bc"

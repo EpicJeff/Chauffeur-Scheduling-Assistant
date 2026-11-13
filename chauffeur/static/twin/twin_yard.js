@@ -7,6 +7,7 @@ import { groundAt, buildingBase } from './twin_ground.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
 import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
 import { firePitRings, roundPit, buildFirePit, fireFlameMaterial } from './fire_pits.js';
+import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.js';
 
 function random(seed) {
   let n = seed | 0;
@@ -127,6 +128,10 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     mesh.geometry.userData.bakeExcluded = true;
     tintGrade(mesh.geometry, false);
   }
+  for (const pad of site.terraces || []) pad.polygon.forEach((_, edge) => {
+    if (pad.edges?.[edge]?.edge !== 'sharp' || !pad.edges[edge].wall) return;
+    addMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(pad.edges[edge].wall.material)));
+  });
   const pool = site.pool?.polygon;
   const inside = (p, poly) => { let v = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) v = !v; return v; };
   for (const h of site.hardscape || []) if (h.kind === 'path' || h.polygon?.length >= 3) {

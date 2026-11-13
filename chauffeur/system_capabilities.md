@@ -1,6 +1,102 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.825 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.828 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.828 (2026-11-13, NOT device-verified): stairs can be added and edited in the house editor, as solid or open with handrails. Doorways between rooms at different floor heights get steps.**
+
+**The ask.** The house editor scope list (`docs/superpowers/specs/2026-11-12-twin-editor-scope.md`): "Stairs between floors and steps between floor heights. Not built. Sunken rooms already record where a step is needed." Before this, stairs came only from plan reading and drew as solid stacked boxes, with nothing able to change them.
+
+**How it was built.** Codex built it. Claude checked an open stair with two handrails in Chromium and fixed two test files that were already red on main.
+
+**Data and ops** (`services/twin_model_ops.py`, `services/twin_plan.py`).
+- **`add_stair`:** `{building, level, from, to, width?=3, to_level? | rise_to?, style?, rail?}`.
+- **`update_stair`:** takes the same fields. Generic delete removes a stair.
+- **Validation:**
+  - width 2 to 8 ft;
+  - pitch 20° to 45°, with plain messages to make the stair longer or shorter;
+  - `to_level` must exist and sit above `level`.
+- **Risers:** derived as `ceil(rise / 7.5 in)`; a 9 ft rise gives 15 risers of 7.2 in.
+- **Legacy stairs:** they read as `style: solid`, `rail: none`, without rewriting stored data, so their geometry is byte-identical. Hand-edited stairs survive a drawing reread.
+
+**Drawing** (`static/twin/twin_stairs.js`, `twin_generator.js`).
+- **Styles:** `solid` is today's look. `open` has treads on two stringers and no risers.
+- **Rails:** `none | left | right | both`, with posts and a top rail following the pitch 36 in above the nosing line.
+- **Floor holes:** they follow an edited stair; the stair's own starting floor is never cut.
+- **Doorway steps:** a door between rooms of different floor heights (`opening.step_down_ft`) gets derived closed steps on the lower side. They are as wide as the opening, with `ceil(step / 7.5 in)` risers on 11 in treads, in the lower room's floor finish. Windows and level doorways get none.
+- **Bake:** stairs and steps are authored geometry in the bake key, the same on every tier.
+
+**Editor** (`editor/stair_shelf.js`, `draw.js`, `handles.js`, `scene_tools.js`, `cards.js`).
+- **Add stair:** a two-click tool. Its card has Width, To level, Style and Rails.
+- **A selected stair** gets the same card and two end handles. One drag is one `update_stair`; cancelled, unchanged and read-only gestures send nothing.
+
+**Agent.** `add_stair` and `update_stair` are in the `house_design` tool docs. The schema is 5,376 characters, and its cap rises from 5,200 to 5,600 in the three tests that hold it.
+
+**Old red tests fixed here.**
+- `test_twin_model_bridge`: since v2.499.821 a fire pit without a shape normalizes to round; the test's expected site now includes that.
+- `test_twin_roof_flags_js`: its copied `cards.js` now loads the card's sibling shelf modules from the real editor folder.
+
+**Tests.**
+- New: `test_twin_stairs` (validation, pitch limits and messages, derived risers, legacy defaults, bridge, HTTP, undo and redo), `test_twin_stairs_js` (open and solid geometry, rails, floor holes, doorway steps, windows, normals, the bake key) and `test_twin_stair_editor_js` (two-click add, end drags, card fields, read-only).
+- Neighbours: `test_twin_room_floor`, `test_twin_model_devices`, `test_house_design_tool`, `test_twin_retaining_wall`, `test_twin_energy_editor_js`, `test_twin_model_bridge` 32/32, `test_twin_roof_flags_js` 6/6, `test_twin_ground_js`, `test_twin_terrain_tools_js`, `test_twin_import_maps`, `test_tailwind_build`.
+- Chromium: an open stair with both rails, added by op.
+
+**v2.499.827 (2026-11-13, NOT device-verified): the terrain card lists every pad, topmost first, and a pad can be dragged to a new layer.**
+
+**The ask.** The user, 2026-11-12: "If layered pads are going to be order-specific, you should be able to set the order somehow". v2.499.816 added Bring forward and Send back one step at a time; this adds the whole list.
+
+**How it was built.** Codex built it. Claude checked it in Chromium: a drag from top to bottom reordered the pads, and one undo restored the order.
+
+**The list** (`static/twin/editor/terrain_tools.js`, `editor/editor.css`).
+- **Contents:** a "Pads" list in the terrain card, in reverse stored order, so the top layer reads first. Each row has a grip, `Pad N · ±H ft` (N is the stored layer number, matching "Layer N of M") and a Wall badge when an edge carries a retaining wall.
+- **Selecting:** a row is a button with `aria-pressed`. Clicking it selects that pad (`choose('terraces', id)`) and shows its fields.
+- **Dragging:**
+  - pointer events: a mouse drags from anywhere on the row, touch and pen from the grip, so the words still scroll;
+  - a drop line shows the target;
+  - one changed drop is one `reorder_pad` op `{id, to}`, with `to = padCount − 1 − displayIndex`, and one undo step;
+  - dropping in place, cancelling, a busy editor or lost permission do nothing.
+- **Keyboard:** Alt+ArrowUp and Alt+ArrowDown move the focused pad one layer. Bring forward and Send back remain.
+- **Read-only users** see the list and can select pads; there are no grips and no reordering.
+
+**Tests.**
+- `test_twin_terrain_tools_js` (real module in node) covers:
+  - list order, labels, heights and the wall badge; selection;
+  - a drag from position 0 to 2 giving one op with the right stored index, and the reverse drag;
+  - the no-op drop (an 18 px drag within the same slot), cancellation, and suppression of the synthesized click;
+  - keyboard and focus, the touch grip, permission loss and read-only.
+- Neighbours: `test_twin_terrain`, `test_twin_ground_js`, `test_twin_retaining_wall_js`, `test_twin_import_maps`, `test_tailwind_build`.
+- Chromium: a drag and undo with three pads, plus a screenshot.
+
+**v2.499.826 (2026-11-13, NOT device-verified): a sharp pad edge can carry a retaining wall of stone, block, concrete, brick or timber.**
+
+**The ask.** The house editor scope list (`docs/superpowers/specs/2026-11-12-twin-editor-scope.md`) marks "retaining walls on sharp pad edges" as planned, slice 3b. Before this, a sharp edge showed only an earth face textured like the lawn.
+
+**How it was built.** Codex built it. Claude restored the `house_design` tool docs, which Codex had compressed to fit an old size cap, and checked the walls in Chromium.
+
+**Data** (`services/twin_terrain.py`).
+- **The field:** a pad edge may hold `wall:{material:stone|block|concrete|brick|timber, thickness_in:4..24 (default 8), above_in:0..36 (default 0)}`.
+- **Rules:**
+  - only a `sharp` edge keeps a wall; switching an edge to slope drops it;
+  - an invalid wall on a sharp edge is refused;
+  - an edge without a wall is unchanged.
+- **Ops:** it travels through `update_pad` and `add_pad`, so undo and history are unchanged.
+
+**Geometry** (`static/twin/twin_retaining_wall.js`, drawn by `twin_yard.js`).
+- **Shape:** each wall is a closed solid sampled every foot along the edge. Its face is on the edge line, and its body extends `thickness_in` toward the higher side, so a raised pad's wall is inside the pad and a sunken pad's is outside.
+- **Height:** it runs from the lower side's ground minus a 0.5 ft footing up to the higher side's ground plus `above_in`. It follows sloped and layered terrain.
+- **Faces:** they are outward, with caps. The lawn's earth skirt is left out on walled edges; slab and plinth closures keep theirs.
+- **Materials:** stone, concrete and brick reuse existing kit roles. New `retaining_block` (concrete texture) and `retaining_timber` (wood planks) roles are in `modern_farmhouse.json`, with no new assets.
+- **Bake:** the wall is authored geometry and is part of the bake key.
+- **Shaders:** editing a wall compiled 0 new GPU programs in Chromium.
+
+**Editor.** In the terrain card, each sharp edge has a Wall choice (None, Stone, Block, Concrete, Brick, Timber), with Thickness (in) and Above ground (in) fields when a material is chosen. Read-only users see the values without controls.
+
+**Agent.** The `house_design` tool describes the wall in one clause; the tool schema is 5,193 characters, under the 5,200 cap.
+
+**Tests.**
+- New: `test_twin_retaining_wall` (validation, defaults, API refusals, round trip, undo and redo, slope removal, tool docs) and `test_twin_retaining_wall_js` (raised, sunken and sloped walls, the footing, outward normals and caps, skirts, the bake key).
+- Extended: `test_twin_terrain_tools_js`.
+- Neighbours: `test_twin_ground_js`, `test_twin_terrain`, `test_twin_porch_foundation` and `test_twin_porch_foundation_js`, `test_twin_model_devices`, `test_house_design_tool`, `test_twin_import_maps`, `test_tailwind_build`.
+- Chromium screenshots of a raised pad with four materials and a sunken concrete pad.
 
 **v2.499.825 (2026-11-13, NOT device-verified): in Energy and All, solar zones on other roofs are linked to the source roof by a glowing conduit, and panels glow while they generate.**
 

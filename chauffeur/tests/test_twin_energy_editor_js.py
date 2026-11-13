@@ -6,7 +6,7 @@ DRIVER=r"""
 const {createDraw}=await import(file('static/twin/editor/draw.js'));
 const {createCards,findPiece}=await import(file('static/twin/editor/cards.js'));
 const {SOLAR_DEFAULTS}=await import(file('static/twin/twin_solar.js'));
-const ids=['draw-note','draw-tools','editor-drag-outline','draw-cancel','piece-card',...['draw-room','draw-wall','split-room','add-door','add-window','add-anchor','add-solar-zone','add-meter','add-electric-panel','add-charger','add-parking','delete','add-level'].map(n=>'rail-'+n)];
+const ids=['draw-note','draw-tools','editor-drag-outline','draw-cancel','piece-card',...['draw-room','draw-wall','split-room','add-door','add-window','add-anchor','add-stair','add-solar-zone','add-meter','add-electric-panel','add-charger','add-parking','delete','add-level'].map(n=>'rail-'+n)];
 for(const id of ids){const node=document.createElement('div');node.id=id;document.body.append(node);}
 const b={id:'b',levels:[{id:'L1',elevation:0,ceiling:10}],joints:[],rooms:[],anchors:[],items:[],openings:[],
  walls:[{id:'wall',level:'L1',from:[0,0],to:[40,0],kind:'solid',thickness:.5}],
