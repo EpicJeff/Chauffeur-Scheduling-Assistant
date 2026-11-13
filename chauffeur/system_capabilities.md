@@ -1,6 +1,39 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.824 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.825 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.825 (2026-11-13, NOT device-verified): in Energy and All, solar zones on other roofs are linked to the source roof by a glowing conduit, and panels glow while they generate.**
+
+**The ask.** The user, 2026-11-12, queued as energy polish: solar zones are linked by conduit running along the house surfaces, from the satellite zones to the source zone, glowing and pulsing like the ribbons while generating; the panels glow too.
+
+**How it was built.** Codex built it. Claude checked it in Chromium, with satellite zones added on every roof face of the fixture house.
+
+**Routes** (`static/twin/live/solar_conduit.js`, pure maths in lot feet).
+- **Satellite zones:** every zone not on the source roof (`plan.solar_source_roof`, `solar_source_building`) gets one route, ending at the shared solar anchor that the ribbons start from.
+- **Same building:** the route goes down the zone's roof plane (downhill, or to the nearest exposed edge on a flat roof), along the eave line by the shorter way round the offset wall perimeter, then up the source roof.
+- **Another building:** the route goes down to the eave and down the wall, across the ground (sampled with `groundAt`, stepping at sharp pad edges), up the source building's wall, then up its roof.
+- **Clearance:** every point sits 2 in off its surface.
+- **No route** when there is no source, no satellites, ghost zones or an ambiguous owner.
+
+**Drawing** (`static/twin/live/energy.js`).
+- **The tube:** a 1.5 in solar-yellow core with an additive halo, using the ribbon shader. It is depth-tested, so the house hides it.
+- **Visibility:** shown in Energy and All.
+- **Generating:** at or above 50 W the pulse runs toward the source. Below 50 W, or when the stream is stale, the conduit is dim (15%) and still.
+- **Readings:** a zone's own power entity, including a zero reading, wins over the total.
+- **Panel glow:** the `solar_panel` emissive rises linearly to 0.25 at 4 kW in Energy and All. The original is restored exactly on leaving and on stop. Only values change, never shaders.
+- **Lifecycle:** conduits are in `warmObjects`, are disposed through the effect's `own()`/`clear()`, and rebuild when solar zones, the source or building geometry change.
+
+**Layout fix (from v2.499.823).** On a wide screen the right-hand controls (Preview and the mode legend) now stack in a column, and stay clear of the centred mode icons. Before this, the Energy legend pushed the Preview button underneath the icons on the wall panel.
+
+**Tests.**
+- Node: `test_twin_solar_conduit_js` 7/7 (route shape, eave height, offsets, a rotated building, the cross-building ground run, no-source cases) and `test_twin_energy_js` 36/36 (mode visibility, pulse and dim, panel emissive and restore, rebuild disposal, warm objects). Also `test_twin_import_maps`.
+- Browser:
+  - `test_house_twin_energy_live` 7/7: one flaky loopback scenario was rerun alone and passed;
+  - `test_house_twin_live_rooms` 10/10;
+  - `test_house_twin_glance_live` 10/10;
+  - `test_house_twin_levels_live` 3/3;
+  - `test_house_twin_controls_live` 4/4.
+- Screenshots on desk, wall and phone.
 
 **v2.499.824 (2026-11-12): tests only. Seven test files that had gone red on main are green again; no app behaviour changes.**
 

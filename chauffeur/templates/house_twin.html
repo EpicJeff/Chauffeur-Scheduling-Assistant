@@ -27,7 +27,7 @@
     {% for name in ['model_lods', 'lod_worker', 'objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_floors', 'twin_yard', 'twin_tiers', 'twin_library', 'import_loaders', 'twin_view', 'levels', 'viewing', 'unlit', 'twin_roof', 'twin_ground', 'path_shapes', 'fire_pits', 'twin_porch_foundation', 'twin_retaining_wall', 'twin_terrain_mesh', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
-    {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
+    {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/solar_conduit', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     twinImports[new URL(twinBase + 'static/vendor/lucide/icons.js', location.href).href] = twinBase + {{ 'static/vendor/lucide/icons.js' | ver | tojson }};
@@ -220,7 +220,8 @@
     #twin-path button { flex:none; min-height:44px; border:0; padding:0 6px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
     #twin-path button[aria-current] { font-weight:600; }
     #twin-path button:focus-visible, .twin-level-targets button:focus-visible { outline:2px solid var(--twinSelected); outline-offset:2px; }
-    #twin-controls { left:auto; width:max-content; max-width:55vw; }
+    /* Right-hand controls stack in a column and stay clear of the centred mode icons (v2.499.825). */
+    #twin-controls { left:auto; width:max-content; max-width:calc(50vw - 160px); flex-direction:column; align-items:flex-end; }
     html[data-twin-wall] #twin-path { top:16px; }
     .twin-level-targets { position:fixed; inset:0; z-index:44; pointer-events:none; }
     .twin-level-targets button { position:absolute; transform:translateX(-50%); min-width:64px; min-height:72px; padding:54px 6px 6px; border:0; border-radius:12px; background:transparent; color:var(--twinText); text-shadow:0 1px 4px var(--twinSelectedText); font:500 13px system-ui; cursor:pointer; pointer-events:auto; }
