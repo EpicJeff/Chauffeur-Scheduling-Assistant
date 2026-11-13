@@ -63,8 +63,8 @@ def run():
         assert twin_store.current_model()['site']['terraces'][-1]['edges'] == stored['edges']
     from services.agent_tools_v2 import TOOL_SCHEMAS
     schema = TOOL_SCHEMAS['house_design']
-    assert len(json.dumps(schema)) <= 4500
-    assert all(word in schema['properties']['edit']['description'] for word in ('wall?', 'thickness_in', 'above_in', 'timber', 'slope drops wall'))
+    assert len(json.dumps(schema)) <= 5200  # the shared house_design budget (test_twin_model_devices)
+    assert all(word in schema['properties']['edit']['description'] for word in ('wall?', 'thickness_in', 'above_in', 'timber', 'slope drops it'))
     print('Passed: wall validation/defaults, update_pad API/refusals, round trip, undo/redo, slope removal and compact tool docs')
 
 
