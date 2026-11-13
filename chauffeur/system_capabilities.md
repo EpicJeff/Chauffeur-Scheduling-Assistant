@@ -1,6 +1,31 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.837 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.838 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.838 (2026-11-13, NOT device-verified): every controllable entity of a device is a control under it. A pool controller shows its light, pump, waterfall, spa jets and heater, not just the light.**
+
+**The report.** The user, 2026-11-13: "The integration for the pool is a single device for the controller and then lots of entities for the various things you can control - pumps, heaters, waterfalls, spa jets, lights, etc. When I make a yard room for the pool, it pulls in the light entity and nothing else." Each HA device was one marker built from its most telling entity, and only cameras listed their other controllable entities.
+
+**How it was built.** Codex built it. Claude checked a fake pool controller in a yard room in Chromium.
+
+**What changed** (`services/twin_ha.py`, `main.py` `house_live`, `live/controls/device.js`, `live/controls/inputs.js`, `live/room_panel.js`, `live/ring.js`, `live/live.js`, `live/kinds.js`).
+- **Accessories:** `twin_ha.device_accessories(device, states)` replaces the camera-only helper.
+  - **Domains:** every entity in light, switch, input_boolean, fan, climate, water_heater, cover, valve, number, input_number, select, input_select, button, siren, humidifier or lock, other than the primary.
+  - **Order and names:** registry order, with the device-name prefix stripped.
+  - **Not controls:** sensors stay device facts.
+- **Permissions:** every live device and marker carries `accessories`, each with its own `control_rules.offered`. The client checks permission and unsafe-action confirmation against that entity, never the primary; locks keep their stricter rule.
+- **Panel and ring:** both show the primary control, then each accessory with the control for its domain, reusing the light, fan, climate, cover, water-heater, humidifier and lock builders. New compact number, select, valve, button and siren controls are in `controls/inputs.js`. Past four accessories, the rest fold under a "More controls" disclosure; nothing is hidden for good.
+- **Unchanged:** one marker per device, with the device name and the primary's icon. The camera still, its refresh and its overlay are unchanged.
+- **No HA:** no devices, markers or accessories, and no errors.
+
+**Tests.**
+- New: `test_twin_device_controls` 4/4 (the pool controller fixture gives the light as primary plus three switches and a heater, with the sensor excluded; per-accessory permissions; a lock accessory's rule; HA absent).
+- `test_twin_controls_js` 30/30: panel and ring rendering, one service call per press, the More controls disclosure, number and select controls, camera unchanged.
+- Neighbours: `test_twin_live_control_js`, `test_twin_live_rooms_js`, `test_twin_ha_routes`, `test_twin_yard_rooms` and `test_twin_yard_rooms_js`, `test_twin_fire_pits`, `test_twin_import_maps`, `test_tailwind_build`.
+- Browser:
+  - `test_house_twin_controls_live` 4/4;
+  - `test_house_twin_controls_more_live` 8/9. The HA light-card scenario timed out once under load and passed alone. The camera-marker scenario also fails on main before this change and is queued as its own fix.
+- Chromium: a "Pool deck" yard room shows Pool controller with the light switch and brightness, Pump, Waterfall and Spa jets switches, and the Heater with target, current temperature and mode.
 
 **v2.499.837 (2026-11-13, NOT device-verified): an enclosed porch skirt is one surface per opening, and the material decides its look. Lattice is a library material.**
 
