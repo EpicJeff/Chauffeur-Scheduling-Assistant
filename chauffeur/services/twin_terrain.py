@@ -44,6 +44,21 @@ def pad_error(pad):
     if (not isinstance(pad['edges'], list) or len(pad['edges']) != len(poly)
             or any(not isinstance(e, dict) or e.get('edge') not in ('sharp', 'slope') for e in pad['edges'])):
         return 'Choose slope or sharp for each pad edge.'
+    for edge in pad['edges']:
+        if edge['edge'] == 'slope':
+            edge.pop('wall', None)
+            continue
+        if 'wall' not in edge:
+            continue
+        wall = edge['wall']
+        if not isinstance(wall, dict) or wall.get('material') not in ('stone', 'block', 'concrete', 'brick', 'timber'):
+            return 'Choose stone, block, concrete, brick or timber for the retaining wall.'
+        for key, default, low, high, title in (
+                ('thickness_in', 8, 4, 24, 'wall thickness'),
+                ('above_in', 0, 0, 36, 'wall height above ground')):
+            wall.setdefault(key, default)
+            if not number(wall[key]) or not low <= wall[key] <= high:
+                return f'Choose {title} from {low} to {high} inches.'
     return None
 
 

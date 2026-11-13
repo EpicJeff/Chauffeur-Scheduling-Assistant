@@ -62,7 +62,7 @@ export function porchPlinthGeometry(plan, building, porch, top, base) {
     .rotateX(-Math.PI / 2).translate(0, top, 0);
   // Close the underside against the same layered terrain, including its step
   // skirts. All tiers use this same authored tessellation for baked lighting.
-  const ground = terrainGeometry(plan, points, 'high', { skirts: true });
+  const ground = terrainGeometry(plan, points, 'high', { skirts: true, retainWallSkirts: true });
   const gp = ground.attributes.position;
   for (let i = 0; i < gp.count; i++) gp.setY(i, Math.min(base + top, gp.getY(i)));
   const index = ground.index;

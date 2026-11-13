@@ -7757,7 +7757,8 @@ class HouseDesignTool(BaseModel):
         "move_site_item (list, index, at:[x,y]); delete_site_item (list, index); add_site_item (list, asset, at:[x,y]); "
         "site list is planting|furniture|beds|hardscape|edges|pool|fire_pit|fence; index is 0-based, or use id. "
         "Polygon yard items move with by:[dx,dy]. Adding site items is limited to plants/furniture. "
-        "add_pad (polygon in lot feet, height -50..50, blend 0..50 default 6, edges:[{edge:slope|sharp}] one per polygon edge); "
+        "add_pad (polygon in lot feet, height -50..50, blend 0..50 default 6, edges:[{edge:slope|sharp, wall?}] one per polygon edge); "
+        "a sharp edge may hold wall:{material:stone|block|concrete|brick|timber, thickness_in:4..24=8, above_in:0..36=0}; slope drops it. "
         "update_pad (id, polygon?, height?, blend?, edges?); delete_pad (id). Later pads win overlaps; maximum 40. "
         "set_foundation (building, foundation:{mode:auto|fixed,offset_ft:0,thickness_ft:1}); auto follows the highest ground plus offset, fixed keeps base. "
         "set_porch_foundation (building, id:porch room, foundation:{type:posts|solid,material:stone|brick|concrete,lip_in:0..4}); missing means posts, lip defaults to 1 inch."))

@@ -188,9 +188,25 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       field('Pad height (ft)', piece.height, height => update({ height }));
       card.append(button('Down 0.5 ft', () => update({ height: current().height - .5 })), button('Up 0.5 ft', () => update({ height: current().height + .5 })));
       field('Blend (ft)', piece.blend ?? 6, blend => update({ blend }));
-      piece.polygon.forEach((_, i) => field(`Edge ${i + 1}`, piece.edges?.[i]?.edge || 'slope', edge => {
-        const edges = current().polygon.map((_, j) => ({ edge: current().edges?.[j]?.edge || 'slope' })); edges[i] = { edge }; update({ edges });
-      }, ['slope', 'sharp']));
+      piece.polygon.forEach((_, i) => {
+        const edge = piece.edges?.[i] || { edge: 'slope' };
+        const updateEdge = change => {
+          const edges = current().polygon.map((_, j) => structuredClone(current().edges?.[j] || { edge: 'slope' }));
+          edges[i] = { ...edges[i], ...change };
+          if (edges[i].edge === 'slope' || !edges[i].wall) delete edges[i].wall;
+          update({ edges });
+        };
+        field(`Edge ${i + 1}`, edge.edge, edge => updateEdge({ edge }), ['slope', 'sharp']);
+        if (edge.edge !== 'sharp') return;
+        field(`Edge ${i + 1} Wall`, edge.wall?.material || '', material => updateEdge({ wall: material
+          ? { thickness_in: 8, above_in: 0, ...edge.wall, material } : null }),
+          [['', 'None'], ['stone', 'Stone'], ['block', 'Block'], ['concrete', 'Concrete'], ['brick', 'Brick'], ['timber', 'Timber']]);
+        if (!edge.wall) return;
+        for (const [key, title, fallback, min, max] of [['thickness_in', 'Thickness (in)', 8, 4, 24], ['above_in', 'Above ground (in)', 0, 0, 36]]) {
+          const input = field(`Edge ${i + 1} ${title}`, edge.wall[key] ?? fallback, value => updateEdge({ wall: { ...edge.wall, [key]: value } }));
+          input.min = String(min); input.max = String(max);
+        }
+      });
       card.append(node('p', 'Drag corners to reshape. Tap + to add a corner. Alt-click a corner to remove it (at least three remain).'));
     }
     card.append(button('Delete', remove), button('Ground and yard', show));
