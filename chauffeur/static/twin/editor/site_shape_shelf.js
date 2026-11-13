@@ -1,6 +1,7 @@
 import { sitePoints } from '../objects.js';
 import { editVertex } from './polygon_handles.js';
 import { shapeKey, shapeCentre, shapeSize, transformShape, shapeOperation, closedShape } from './site_shapes.js';
+import { roundPit } from '../fire_pits.js';
 
 // Uses the object shelf's labels, number inputs and Advanced disclosure.
 export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, onSaved = () => {} }) {
@@ -40,7 +41,10 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
     choice('Edging', piece.edging || 'none', [['none', 'None'], ['curb', 'Curb (0.25 ft high, 0.5 ft wide)']], edging => ({ edging }));
   }
   for (const [i, axis] of ['X', 'Y'].entries()) field(`Centre ${axis} (ft)`, centre[i], (p, v) => transformShape(p, { centre: shapeCentre(p).map((n, j) => j === i ? v : n) }));
-  if (kind === 'fire_pit') field('Radius (ft)', piece.radius, (_, radius) => ({ radius }));
+  if (kind === 'fire_pit' && roundPit(piece)) {
+    field('Radius (ft)', piece.radius ?? 2, (_, radius) => ({ radius }));
+    field('Angle (degrees)', piece.rotation || 0, (p, rotation) => transformShape(p, { rotation }));
+  }
   else {
     if (kind !== 'fence') {
       field('Angle (degrees)', piece.rotation || 0, (p, rotation) => transformShape(p, { rotation }));
@@ -71,7 +75,7 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
     field('Coping (ft)', piece.coping ?? 1, (_, coping) => ({ coping }));
   }
   if (kind === 'fence') {
-    field('Height (ft)', piece.height ?? 6, (_, height) => ({ height }));
+    const height = field('Height (ft)', piece.height ?? 6, (_, height) => ({ height })); height.min = '2'; height.max = '10';
     if ('style' in piece) field('Style', piece.style, (_, style) => ({ style }), section, false);
   }
   section.append(advanced);

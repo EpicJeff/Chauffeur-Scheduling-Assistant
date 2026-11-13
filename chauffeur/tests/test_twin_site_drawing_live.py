@@ -9,7 +9,7 @@ from test_house_twin_ground_live import lot_pixel
 
 
 def seed(plan):
-    plan['site'].update(hardscape=[], beds=[], edges=[])
+    plan['site'].update(hardscape=[], beds=[], edges=[], fire_pit=None, fence=None)
     return plan
 
 
@@ -58,6 +58,32 @@ def scenario_l_patio_curved_paver_path_width_and_undo():
         page.click('#rail-undo')
         page.wait_for_function('window.__twin.plan.site.hardscape.length===0')
         H.check(H.model()['site']['hardscape'] == original, 'Undo did not restore the yard')
+        page.click('#rail-ground')
+        page.locator('#terrain-card').get_by_role('button', name='Add fire pit', exact=True).click()
+        page.locator('#terrain-card').get_by_label('Shape', exact=True).select_option('rect')
+        page.keyboard.down('Shift'); page.mouse.click(*lot_pixel(page, [12, 122], 0)); page.keyboard.up('Shift')
+        page.wait_for_function("window.__twin.plan.site.fire_pit?.shape==='rect'")
+        pit = H.model()['site']['fire_pit']
+        H.check(pit['polygon'] == [[10, 119], [14, 119], [14, 125], [10, 125]], 'Rectangle fire pit dimensions or placement were wrong')
+        page.locator('#terrain-card').get_by_role('button', name='Add fire pit', exact=True).click()
+        page.locator('#terrain-card').get_by_label('Shape', exact=True).select_option('outline')
+        page.keyboard.down('Shift')
+        for p in [[24, 120], [30, 120], [30, 124], [27, 128], [24, 126]]:
+            page.mouse.click(*lot_pixel(page, p, 0))
+        page.keyboard.up('Shift'); page.keyboard.press('Enter')
+        page.wait_for_function("Array.isArray(window.__twin.plan.site.fire_pit)&&window.__twin.plan.site.fire_pit.length===2")
+        pits = H.model()['site']['fire_pit']
+        H.check(pits[0] == pit and pits[1]['shape'] == 'outline' and len(pits[1]['polygon']) == 5, 'Adding an outline pit changed the first pit')
+        page.locator('#terrain-card').get_by_role('button', name='Draw fence', exact=True).click()
+        page.keyboard.down('Shift')
+        for p in [[6, 118], [6, 132], [18, 134]]:
+            page.mouse.click(*lot_pixel(page, p, 0))
+        page.keyboard.up('Shift'); page.keyboard.press('Enter')
+        page.wait_for_function('window.__twin.plan.site.fence?.polyline?.length===3')
+        H.check(H.model()['site']['fence']['height'] == 6, 'Fence default height did not persist')
+        page.click('#rail-undo'); page.wait_for_function('!window.__twin.plan.site.fence')
+        page.click('#rail-undo'); page.wait_for_function("window.__twin.plan.site.fire_pit?.shape==='rect'")
+        page.click('#rail-undo'); page.wait_for_function('!window.__twin.plan.site.fire_pit')
 
 
 if __name__ == '__main__':

@@ -1,4 +1,4 @@
-import { applyObject, objectShown, objectMaterialKey } from './objects.js';
+import { applyObject, objectShown, objectMaterialKey, sitePieces } from './objects.js';
 import * as THREE from 'three';
 import { Tree } from '@dgreenheck/ez-tree';
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
@@ -6,6 +6,7 @@ import { kitMaterial, loadModel, disposeObject, cacheModelMaterials } from './tw
 import { groundAt, buildingBase } from './twin_ground.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
 import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
+import { firePitRings, roundPit } from './fire_pits.js';
 
 function random(seed) {
   let n = seed | 0;
@@ -167,11 +168,13 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     }
     addMesh(group, poolSurface(pool, -0.25), plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false }));
   }
-  if (site.fire_pit?.at) {
-    const f = site.fire_pit;
-    const height = groundAt(plan, ...f.at) + (f.elevation || 0);
-    addMesh(group, new THREE.CylinderGeometry(f.radius, f.radius + 0.2, 1.4, 24, 1, true).translate(f.at[0], height + 0.7, -f.at[1]), mat('base'));
-    addMesh(group, drapeGeometry(new THREE.CircleGeometry(f.radius + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plan, f.elevation || 0), plain('gravel', '#a59c8f'));
+  for (const f of sitePieces(site.fire_pit)) {
+    const { outer, inner } = firePitRings(f);
+    const centre = outer.reduce((s,p)=>s.map((v,i)=>v+p[i]/outer.length),[0,0]);
+    const height = groundAt(plan, ...centre) + (f.elevation || 0);
+    addMesh(group, polygon(outer, height, height + 1.4, inner.length ? [inner] : []), mat('base'));
+    if (inner.length) addMesh(group, polygon(inner, height + .05, height + .15), mat('counter'));
+    if (roundPit(f)) addMesh(group, drapeGeometry(new THREE.CircleGeometry((f.radius ?? 2) + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plan, f.elevation || 0), plain('gravel', '#a59c8f'));
   }
   for (const bed of site.beds || []) if (bed.polygon?.length >= 3) addMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(kit.materials?.[bed.material] ? bed.material : 'mulch'));
   for (const edge of site.edges || []) if (edge.polygon?.length >= 3) {
@@ -180,8 +183,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     for (const poly of pathSurfacePolygons({ points: [...edge.polygon, edge.polygon[0]], width: .5 }))
       addMesh(group, surface(poly, edge.elevation || 0, .06 + (edge.elevation || 0)), mat(kit.materials?.[edge.material] ? edge.material : 'lawn'));
   }
-  if (site.fence?.polyline?.length > 1) {
-    const f = site.fence, height = f.height || 6;
+  for (const f of sitePieces(site.fence).filter(f => f.polyline?.length > 1)) {
+    const height = f.height || 6;
     const fenceMesh = geometry => addMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), mat('fence'));
     for (let i = 0; i < f.polyline.length - 1; i++) {
       const a = f.polyline[i], b = f.polyline[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);

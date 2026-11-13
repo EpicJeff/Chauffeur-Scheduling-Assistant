@@ -1112,20 +1112,22 @@ def _site_op(model, op, actor):
     name = op.get('list')
     if name not in ('planting', 'furniture', 'beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence'):
         raise Refused('Choose a yard item.')
-    singleton = name in ('pool', 'fire_pit', 'fence')
+    singleton = name in ('pool', 'fire_pit', 'fence') and not isinstance(model['site'].get(name), list)
     pieces = ([model['site'][name]] if model['site'].get(name) else []) if singleton else model['site'].setdefault(name, [])
     if op['op'] == 'add_site_shape':
         from services import twin_site_shapes
-        if singleton and pieces:
+        if name == 'pool' and pieces:
             raise Refused('A pool already exists. Edit or delete it before drawing another.')
         try:
             piece, words = twin_site_shapes.create(name, {k: v for k, v in op.items() if k not in ('op', 'list')}, model['site'].get('lot'))
         except ValueError as exc:
             raise Refused(str(exc)) from exc
-        piece['id'] = _id(model['site'], name)
+        piece['id'] = _id({**model['site'], '_legacy_singletons': [p for p in model['site'].values() if isinstance(p, dict)]}, name)
         if actor == 'person':
             piece['src'] = {'person': True}
-        if singleton:
+        if singleton and pieces:
+            model['site'][name] = [*pieces, piece]
+        elif singleton:
             model['site'][name] = piece
         else:
             pieces.append(piece)

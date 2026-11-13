@@ -12,9 +12,14 @@ PATH_PRESETS = {
 }
 
 
+def pieces(value):
+    """Read legacy singleton site fields and authored collections uniformly."""
+    return value if isinstance(value, list) else [value] if isinstance(value, dict) else []
+
+
 def create(name, values, lot):
-    if name not in ('beds', 'hardscape', 'edges', 'pool'):
-        raise ValueError('Choose a bed, hard surface, planting edge or pool.')
+    if name not in KINDS:
+        raise ValueError('Choose a ground feature.')
     path = values.get('kind') == 'path'
     if path and name != 'hardscape' or values.get('kind') not in (None, 'path'):
         raise ValueError('Paths belong in hardscape.')
@@ -23,6 +28,32 @@ def create(name, values, lot):
     if name == 'pool':
         defaults.update(depth=5, coping=1, material='paving')
         allowed |= {'depth', 'coping'}
+    if name == 'fire_pit':
+        shape = values.get('shape', 'round')
+        if shape not in ('round', 'square', 'rect', 'outline'):
+            raise ValueError('Choose Round, Square, Rectangle or Drawn outline.')
+        defaults = {'shape': shape}
+        if shape == 'round':
+            defaults['radius'] = 2
+            allowed = {'shape', 'at', 'radius'}
+        elif shape in ('square', 'rect') and 'polygon' not in values:
+            at = values.get('at')
+            width = values.get('side', 4) if shape == 'square' else values.get('width', 4)
+            depth = width if shape == 'square' else values.get('depth', 6)
+            if (not isinstance(at, list) or len(at) != 2 or not all(terrain.number(v) for v in at)
+                    or any(not terrain.number(v) or not .1 <= v <= 200 for v in (width, depth))):
+                raise ValueError('Choose a ground point and pit dimensions from 0.1 to 200 feet.')
+            allowed = {'shape', 'at', 'side'} if shape == 'square' else {'shape', 'at', 'width', 'depth'}
+            if set(values) - allowed:
+                raise ValueError('Choose supported fire pit properties.')
+            x, y = at
+            values = {'shape': shape, 'polygon': [[x-width/2, y-depth/2], [x+width/2, y-depth/2], [x+width/2, y+depth/2], [x-width/2, y+depth/2]]}
+            allowed = {'shape', 'polygon'}
+        else:
+            allowed = {'shape', 'polygon'}
+    if name == 'fence':
+        defaults = {'height': 6}
+        allowed = {'polyline', 'height', 'style'}
     if path:
         preset = values.get('preset')
         if preset is not None and (not isinstance(preset, str) or preset not in PATH_PRESETS):
@@ -33,25 +64,31 @@ def create(name, values, lot):
     if set(values) - allowed:
         raise ValueError('Choose supported drawing properties.')
     piece = {**defaults, **values}
-    if piece['material'] not in MATERIALS:
+    if 'material' in piece and piece['material'] not in MATERIALS:
         raise ValueError('Choose an existing kit material role.')
     validate(name, piece)
-    key = 'points' if path else 'polygon'
+    key = 'at' if name == 'fire_pit' and piece['shape'] == 'round' else 'polyline' if name == 'fence' else 'points' if path else 'polygon'
     words = update(name, piece, {key: piece[key]}, lot)
     return piece, words.replace('Changed', 'Added', 1)
 
 
-def validate(name, piece):
+def validate(name, piece, *, legacy_height=False):
     key = next((k for k in ('polygon', 'points', 'polyline') if k in piece), None)
     path = name == 'hardscape' and piece.get('kind') == 'path'
     if path and (key != 'points' or 'polygon' in piece or 'polyline' in piece):
         raise ValueError('Use a centre line for a path.')
-    closed = not path and (name in ('beds', 'hardscape', 'pool') or key == 'polygon')
+    round_pit = name == 'fire_pit' and piece.get('shape', 'round') == 'round'
     if name == 'fire_pit':
+        if piece.get('shape', 'round') not in ('round', 'square', 'rect', 'outline'):
+            raise ValueError('Choose a fire pit shape.')
+        if (round_pit and key is not None or not round_pit and (key != 'polygon' or 'at' in piece or 'radius' in piece)):
+            raise ValueError('Round pits use a centre and radius; other pits use an outline.')
+    closed = not path and (name in ('beds', 'hardscape', 'pool') or key == 'polygon')
+    if round_pit:
         points = [piece.get('at')]
     else:
         points = piece.get(key) if key else None
-    if (not isinstance(points, list) or not (1 if name == 'fire_pit' else 3 if closed else 2) <= len(points) <= 200
+    if (not isinstance(points, list) or not (1 if round_pit else 3 if closed else 2) <= len(points) <= 200
             or any(not isinstance(p, (list, tuple)) or len(p) != 2 or not all(terrain.number(v) for v in p) for p in points)):
         raise ValueError('Use finite lot points: 3 to 200 corners for polygons, 2 to 200 for lines.')
     if closed:
@@ -74,8 +111,8 @@ def validate(name, piece):
             raise ValueError('Choose mitred or rounded corners, a smooth curve, and none or curb edging.')
     for field, default, low, high in [('rotation', 0, -360, 360),
             *([('depth', 5, 2, 12), ('coping', 1, 0, 3)] if name == 'pool' else []),
-            *([('radius', 2, .1, 100)] if name == 'fire_pit' else []),
-            *([('height', 6, .1, 50)] if name == 'fence' else [])]:
+            *([('radius', 2, .1, 100)] if round_pit else []),
+            *([('height', 6, .1 if legacy_height else 2, 50 if legacy_height else 10)] if name == 'fence' else [])]:
         value = piece.get(field, default)
         if not terrain.number(value) or not low <= value <= high:
             raise ValueError(f'Choose {field} from {low} to {high}.')
@@ -96,17 +133,19 @@ def update(name, piece, change, lot):
     if name == 'pool':
         allowed |= {'depth', 'coping'}
     if name == 'fire_pit':
-        allowed |= {'at', 'radius'}
+        if piece.get('shape', 'round') == 'round':
+            allowed |= {'at', 'radius'}
     if name == 'fence':
-        allowed |= {'height'} | ({'style'} if 'style' in piece else set())
+        allowed |= {'height', 'style'}
     if not change or set(change) - allowed:
         raise ValueError('Choose a supported property of this yard shape.')
     # Keep legacy read/composed references (e.g. "concrete") editable. New
     # material choices must name the kit's existing roles.
     if 'material' in change and change['material'] not in MATERIALS:
         raise ValueError('Choose an existing kit material role.')
+    legacy_height = name == 'fence' and 'height' not in change
     if 'rotation' in change and geometry and geometry not in change:
-        validate(name, {**piece, **change})
+        validate(name, {**piece, **change}, legacy_height=legacy_height)
         angle = change['rotation']
         if not terrain.number(angle) or not -360 <= angle <= 360:
             raise ValueError('Choose rotation from -360 to 360.')
@@ -122,7 +161,7 @@ def update(name, piece, change, lot):
         change[geometry] = [[round(origin[0]+(p[0]-origin[0])*math.cos(a)-(p[1]-origin[1])*math.sin(a), 9),
                              round(origin[1]+(p[0]-origin[0])*math.sin(a)+(p[1]-origin[1])*math.cos(a), 9)] for p in points]
     piece.update(change)
-    points = validate(name, piece)
+    points = validate(name, piece, legacy_height=legacy_height)
     # Lots need not be rectangular. Check edges too, including a segment
     # crossing a concave boundary even when both endpoints are inside.
     outside = False
@@ -135,7 +174,7 @@ def update(name, piece, change, lot):
                 crosses = terrain.cross(a, b, c)*terrain.cross(a, b, d) < 0 and terrain.cross(c, d, a)*terrain.cross(c, d, b) < 0
                 if crosses or intersects(a, b, c, d) and not all(inside(lot, p) for p in [a, b, [(a[i]+b[i])/2 for i in (0, 1)]]):
                     outside = True
-        if name == 'fire_pit':
+        if name == 'fire_pit' and piece.get('shape', 'round') == 'round':
             radius = piece.get('radius', 2)
             outside |= any(not inside(lot, [points[0][0]+radius*math.cos(a*math.pi/32), points[0][1]+radius*math.sin(a*math.pi/32)]) for a in range(64))
         if name == 'hardscape' and piece.get('kind') == 'path':

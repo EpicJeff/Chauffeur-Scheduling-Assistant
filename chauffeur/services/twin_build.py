@@ -21,6 +21,7 @@ import uuid
 from services import (llm_stream, twin_blocks, twin_compose, twin_cost, twin_draft, twin_library,
                       twin_joints, twin_place, twin_plan, twin_reads, twin_register,
                       twin_model, twin_roof_derive, twin_roof_issues, twin_store, twin_stream)
+from services.twin_site_shapes import pieces as site_pieces
 
 _LOCK = threading.RLock()
 _BUILDS = {}
@@ -2804,12 +2805,12 @@ def _settle(build, step, result, decision=None):
                     fields = ({'polygon': [_map(crop, reg, p) for p in raw['polygon']], 'depth': raw.get('depth_ft', 5)}
                               if name == 'pool' else {'at': _map(crop, reg, raw['at']), 'radius': raw['radius_ft']})
                     piece = _piece(build, step, 'site', name, **fields, state='settled')
-                    if not (old or {}).get('src', {}).get('person'):
-                        pieces = _merge_list([old] if old else [], [piece], 'site', house, build, step)
-                        site[name] = pieces[-1] if pieces else None
-                elif ((step.get('reread') or build.get('existing')) and old and not old.get('src', {}).get('person')
-                      and old.get('src', {}).get('step') == step['id']):
-                    site[name] = None
+                    if isinstance(old, list) or not (old or {}).get('src', {}).get('person'):
+                        pieces = _merge_list(site_pieces(old), [piece], 'site', house, build, step)
+                        site[name] = pieces if isinstance(old, list) else pieces[-1] if pieces else None
+                elif (step.get('reread') or build.get('existing')) and old:
+                    kept = [p for p in site_pieces(old) if p.get('src', {}).get('person') or p.get('src', {}).get('step') != step['id']]
+                    site[name] = kept if isinstance(old, list) else kept[0] if kept else None
             incoming = [_piece(build, step, 'site', i, kind=h['kind'], polygon=[_map(crop, reg, p) for p in h['polygon']], state='settled')
                         for i, h in enumerate(fragment.get('hardscape', []))]
             site['hardscape'] = _merge_list(site['hardscape'], incoming, 'site', house, build, step)
@@ -2903,7 +2904,7 @@ def _settle(build, step, result, decision=None):
             checked.append((plan['site'].get(name, []), normalized['site'][name], singular, plural))
         for name, noun in (('pool', 'pool'), ('fire_pit', 'fire pit')):
             before, after = plan['site'].get(name), normalized['site'].get(name)
-            checked.append(([before] if before else [], [after] if after else [], noun, noun + 's'))
+            checked.append((site_pieces(before), site_pieces(after), noun, noun + 's'))
         dropped = set()
         summaries = []
         for pieces, kept_pieces, singular, plural in checked:
@@ -2931,8 +2932,8 @@ def _settle(build, step, result, decision=None):
             settled.append(next(l for l in target['levels'] if l['id'] == step['level']))
         for name in ('hardscape', 'edges', 'planting', 'beds', 'furniture'):
             settled.extend(p for p in normalized['site'][name] if p.get('src', {}).get('step') == step['id'])
-        settled.extend(p for name in ('pool', 'fire_pit') if isinstance((p := normalized['site'].get(name)), dict)
-                       and p.get('src', {}).get('step') == step['id'])
+        settled.extend(p for name in ('pool', 'fire_pit') for p in site_pieces(normalized['site'].get(name))
+                       if p.get('src', {}).get('step') == step['id'])
         return normalized
 
     def publish_state(row):

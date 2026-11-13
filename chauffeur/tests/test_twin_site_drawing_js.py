@@ -16,6 +16,8 @@ const {closedShape}=await import(file('static/twin/editor/site_shapes.js'));
 const {drawSiteShapeShelf}=await import(file('static/twin/editor/site_shape_shelf.js'));
 const {createHistory}=await import(file('static/twin/editor/history.js'));
 const {vertexHandles,editVertex}=await import(file('static/twin/editor/polygon_handles.js'));
+const {firePitRings,placedPit}=await import(file('static/twin/fire_pits.js'));
+const {inPolygon}=await import(file('static/twin/twin_ground.js'));
 const nodes=new Map();document.getElementById=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};document.querySelector=()=>null;
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,`${a} near ${b}`);
 const plan={buildings:[{position:[0,0],rotation:0,levels:[{id:'L1',outline:[[0,0],[10,0],[10,10],[0,10]]}],
@@ -38,6 +40,26 @@ draw.start('terraces',{height:-2,blend:6});for(const p of [[1,1],[5,1],[5,5],[1,
 draw.back();assert.equal(draw.current().points.length,3);await draw.finish();assert.equal(ops.at(-1).op,'add_pad');
 draw.start('beds');draw.add([1,.1],true);near(draw.current().points[0][1],.1);draw.cancel();assert.equal(draw.current(),null);
 draw.start('path',pathPresets.paver);draw.add([1,1],true);draw.add([8,1],true);await draw.finish();assert.equal(ops.at(-1).kind,'path');
+for(const shape of ['round','square','rect','outline']) {
+ const before=round, materials=new THREE.MeshStandardMaterial().id;
+ const options={shape,...(shape==='round'?{radius:2}:shape==='square'?{side:4}:shape==='rect'?{width:4,depth:6}:{})};
+ draw.start('fire_pit',options);
+ for(const p of shape==='outline'?[[0,0],[6,0],[6,2],[2,2],[2,6],[0,6]]:[[5,5]])draw.add(p,true);
+ draw.move([6,6],true);assert.equal(round,before);assert.equal(new THREE.MeshStandardMaterial().id,materials+1);
+ await draw.finish();assert.equal(round,before+1);assert.equal(ops.at(-1).shape,shape);
+ const pit=shape==='outline'?{shape,polygon:ops.at(-1).polygon}:placedPit(shape,ops.at(-1).at,options);
+ const {outer,inner}=firePitRings(pit);assert.equal(inner.length,outer.length);assert.ok(inner.every(p=>inPolygon(outer,...p)));
+ assert.ok(inner.flat().every(Number.isFinite));
+ const site=await buildYard({buildings:[],site:{fire_pit:pit}},kit,'low');site.group.updateMatrixWorld(true);
+ const wall=site.group.children.find(o=>o.material?.name==='base'),bowl=site.group.children.find(o=>o.material?.name==='counter');assert.ok(wall&&bowl,shape+' wall and inset bowl');
+ const positions=wall.geometry.attributes.position;
+ for(const p of outer)assert.ok(Array.from({length:positions.count},(_,i)=>[positions.getX(i),-positions.getZ(i)]).some(q=>Math.hypot(q[0]-p[0],q[1]-p[1])<1e-5),shape+' wall follows authored outline');
+ const bp=bowl.geometry.attributes.position;for(let i=0;i<bp.count;i++)assert.ok(inPolygon(outer,bp.getX(i),-bp.getZ(i)),shape+' bowl stays inside');
+ const ray=new THREE.Raycaster(new THREE.Vector3(1,10,-1),new THREE.Vector3(0,-1,0));
+ const centre=shape==='outline'?[1,1]:[5,5];ray.ray.origin.set(centre[0],10,-centre[1]);
+ assert.equal(ray.intersectObject(wall).length,0,shape+' ring is hollow');assert.ok(ray.intersectObject(bowl).length,shape+' inset fire bowl is present');
+}
+let beforeFence=round;draw.start('fence',{height:6,style:'wood'});for(const p of [[1,1],[5,1],[5,5]])draw.add(p,true);assert.equal(round,beforeFence);await draw.finish();assert.equal(round,beforeFence+1);assert.equal(ops.at(-1).polyline.length,3);
 let path={kind:'path',points:[[0,0],[10,0]],width:4};
 assert.deepEqual(pathOutline(path),[[0,2],[10,2],[10,-2],[0,-2]]);
 path.points.push([10,10]);let outline=pathOutline(path);assert.equal(outline.length,6);assert.ok(outline.every(p=>p.every(Number.isFinite)));assert.ok(Math.max(...outline.flat())<=12);

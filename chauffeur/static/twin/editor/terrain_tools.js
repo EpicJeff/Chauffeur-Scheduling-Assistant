@@ -3,10 +3,11 @@ import { groundAt, edgeDistance } from '../twin_ground.js';
 import { tintGrade } from '../twin_terrain_mesh.js';
 import { report } from './api.js';
 import { twinText } from '../palette.js';
-import { siteRecords, siteShapeKinds, siteShapeLabels } from '../objects.js';
+import { siteRecords, siteShapeKinds, siteShapeLabels, sitePieces } from '../objects.js';
 import { vertexHandles, editVertex } from './polygon_handles.js';
 import { createSiteDrawing, snapSitePoint, polygonArea } from './site_drawing.js';
 import { pathPresets, pathOutline } from '../path_shapes.js';
+import { placedPit, firePitOutline } from '../fire_pits.js';
 
 const FT = .3048;
 const words = { terraces: 'Terrace pad', ...siteShapeLabels };
@@ -76,10 +77,14 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       if (chosen?.id === pad.id) vertexHandles(poly).forEach(h => label(h.insert ? '+' : '•', h.at, groundAt(getPlan(), ...h.at), h));
     }
     if (drawing) {
-      const points = draft.preview(), path = drawing.kind === 'path';
+      const points = draft.preview(), path = drawing.kind === 'path', fence = drawing.kind === 'fence';
+      if (drawing.kind === 'fire_pit' && drawing.options.shape !== 'outline') {
+        if (points.length) line(firePitOutline(placedPit(drawing.options.shape, points.at(-1), drawing.options)), undefined, true, previewLine);
+        return;
+      }
       if (path && points.length >= 2) line(pathOutline({ ...drawing.options, points }), undefined, true, previewLine);
-      line(points, undefined, !path && points.length >= 3, path ? undefined : previewLine); drawing.points.forEach(p => label('•', p));
-      if (points.length >= 3 && !path) label(`${polygonArea(points).toFixed(1)} sq ft`, mid(points));
+      line(points, undefined, !path && !fence && points.length >= 3, path ? undefined : previewLine); drawing.points.forEach(p => label('•', p));
+      if (points.length >= 3 && !path && !fence) label(`${polygonArea(points).toFixed(1)} sq ft`, mid(points));
     }
   }
   function tint() {
@@ -101,21 +106,31 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     finally { busy = false; signature = ''; refresh(); }
     return true;
   }
-  function field(text, value, saveValue, choices) {
+  function field(text, value, saveValue, choices, numeric = true) {
     const l = node('label', text), input = node(choices ? 'select' : 'input');
-    if (choices) for (const value of choices) { const o = node('option', value); o.value = value; input.append(o); }
-    else { input.type = 'number'; input.step = '.5'; input.required = true; }
+    if (choices) for (const choice of choices) { const [value, title] = Array.isArray(choice) ? choice : [choice, choice]; const o = node('option', title); o.value = value; input.append(o); }
+    else { input.type = numeric ? 'number' : 'text'; input.step = '.5'; input.required = true; }
     input.value = value; input.setAttribute('aria-label', text); input.disabled = !canEdit();
     listen(input, 'change', () => {
       if (!canEdit()) return;
-      if (!choices && (!input.value.trim() || !Number.isFinite(Number(input.value)))) { report(new Error('Use a finite number of feet.')); return; }
-      saveValue(choices ? input.value : Number(input.value));
+      if (!choices && numeric && (!input.value.trim() || !Number.isFinite(Number(input.value)))) { report(new Error('Use a finite number of feet.')); return; }
+      saveValue(choices || !numeric ? input.value : Number(input.value));
     }); l.append(input); card.append(l); return input;
   }
   function drawCard() {
     card.replaceChildren(); card.hidden = false;
     card.append(button('Close', close));
     if (drawing) {
+      if (drawing.kind === 'fire_pit') {
+        field('Shape', drawing.options.shape, shape => startDrawing('fire_pit', shape === 'round' ? { shape, radius: 2 } : shape === 'square' ? { shape, side: 4 } : shape === 'rect' ? { shape, width: 4, depth: 6 } : { shape }),
+          [['round', 'Round'], ['square', 'Square'], ['rect', 'Rectangle'], ['outline', 'Drawn outline']]);
+        if (drawing.options.shape !== 'outline') {
+          card.append(node('h3', 'Add fire pit'), node('p', 'Click the ground to place the fire pit. Hold Shift for free placement. Escape cancels.'));
+          for (const [key, title] of drawing.options.shape === 'round' ? [['radius', 'Radius (ft)']] : drawing.options.shape === 'square' ? [['side', 'Side (ft)']] : [['width', 'Width (ft)'], ['depth', 'Depth (ft)']])
+            field(title, drawing.options[key], value => { drawing.options[key] = value; graphics(); });
+          return;
+        }
+      }
       const title = drawing.kind === 'terraces' ? 'a terrace pad' : drawing.kind === 'path' ? 'a path' : words[drawing.kind].toLowerCase();
       card.append(node('h3', `Draw ${title}`), node('p', 'Tap corners. Snap to yard edges, outside walls and the lot. Hold Shift for free placement. Enter or Finish completes; Backspace removes a point; Escape cancels.'));
       card.append(button(drawing.kind === 'terraces' ? 'Finish pad' : 'Finish', finishDrawing));
@@ -123,12 +138,16 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
         field('Pad height (ft)', drawing.options.height, value => { drawing.options.height = value; });
         field('Blend (ft)', drawing.options.blend, value => { drawing.options.blend = value; });
       }
+      if (drawing.kind === 'fence') {
+        const height = field('Height (ft)', drawing.options.height, value => { drawing.options.height = value; }); height.min = '2'; height.max = '10';
+        if ('style' in drawing.options) field('Style', drawing.options.style, value => { drawing.options.style = value; }, undefined, false);
+      }
       if (drawing.kind === 'path') {
         field('Preset', drawing.options.preset || 'sidewalk', value => { Object.assign(drawing.options, pathPresets[value], { preset: value }); drawCard(); graphics(); }, Object.keys(pathPresets));
         const width = field('Width (ft)', drawing.options.width, value => { drawing.options.width = value; graphics(); }); width.min = '1'; width.max = '30';
         field('Corner style', drawing.options.corner, value => { drawing.options.corner = value; graphics(); }, ['mitred', 'rounded']);
         field('Smooth curve', drawing.options.smooth ? 'yes' : 'no', value => { drawing.options.smooth = value === 'yes'; graphics(); }, ['no', 'yes']);
-      } else if (drawing.kind !== 'terraces') card.append(button('Rectangle', () => {
+      } else if (!['terraces', 'fence'].includes(drawing.kind)) card.append(button('Rectangle', () => {
         if (drawing.points.length !== 2) { report(new Error('Place two opposite corners, then choose Rectangle.')); return; }
         const [a, b] = drawing.points; drawing.points = [a, [b[0], a[1]], b, [a[0], b[1]]]; finishDrawing();
       }));
@@ -142,6 +161,11 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
         card.append(button(title, () => startDrawing(kind)));
       for (const [preset, title] of [['sidewalk', 'Sidewalk'], ['paver', 'Paver path'], ['driveway', 'Driveway']])
         card.append(button(title, () => startDrawing('path', { ...pathPresets[preset], preset })));
+      card.append(button('Add fire pit', () => startDrawing('fire_pit', { shape: 'round', radius: 2 })));
+      card.append(button('Draw fence', () => {
+        const existing = sitePieces(getPlan().site?.fence).find(f => f.style);
+        startDrawing('fence', { height: 6, ...(existing ? { style: existing.style } : {}) });
+      }));
       const toggle = button('Grade', () => { grade = !grade; toggle.setAttribute('aria-pressed', String(grade)); tint(); });
       toggle.setAttribute('aria-pressed', String(grade)); card.append(toggle);
       card.append(node('p', 'Grade: blue is lower, orange is higher. Heights are feet from the lot datum.'));
@@ -248,6 +272,9 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
         else if (g.handle.insert) edges.splice(g.index + 1, 0, { ...edges[g.index] });
         save({ op: 'update_pad', id: chosen.id, polygon: g.polygon, edges }).catch(report);
       }
+    }
+    if (g.kind === 'draw' && drawing?.kind === 'fire_pit' && drawing.options.shape !== 'outline') {
+      if (cancel) draft.back(); else finishDrawing();
     }
     graphics(); return true;
   }

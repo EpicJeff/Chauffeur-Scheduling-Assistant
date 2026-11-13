@@ -69,7 +69,7 @@ export function pathBoundaries(path, half = (path.width ?? 3) / 2) {
 }
 export function pathOutline(path) { const { left, right } = pathBoundaries(path); return [...left, ...right.reverse()]; }
 
-function simpleOutline(poly) {
+export function simpleOutline(poly) {
   const on = (p, a, b) => Math.abs(cross(sub(b, a), sub(p, a))) < 1e-8
     && p.every((v, i) => v >= Math.min(a[i], b[i]) - 1e-8 && v <= Math.max(a[i], b[i]) + 1e-8);
   for (let i = 0; i < poly.length; i++) {

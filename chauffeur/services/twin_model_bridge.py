@@ -860,6 +860,10 @@ def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]
                              or f['piece'] in live_ids]
     # The bridge must not rewrite site facts while changing the building schema.
     normalized['site'] = deepcopy(flat.get('site', {}))
+    fire = normalized['site'].get('fire_pit')
+    for pit in fire if isinstance(fire, list) else [fire] if isinstance(fire, dict) else []:
+        if isinstance(pit, dict):
+            pit.setdefault('shape', 'round')
     return normalized, notes + validation_notes
 
 
