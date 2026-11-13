@@ -59,7 +59,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: op,
     onPreview: drawDimensions, onClick: cards.edge, signal });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'
-    && (['wall', 'joint', 'room', 'roof', 'dormer', 'solar_zone'].includes(kind)
+    && (['wall', 'joint', 'room', 'roof', 'dormer', 'solar_zone', 'stair'].includes(kind)
       || kind === 'opening' && building.walls.some(w => w.id === piece.wall)
       || ['anchor', 'item'].includes(kind) && !!piece.host);
   const listen = (node, event, fn, options = {}) => node.addEventListener(event, fn, { ...options, signal });
@@ -110,7 +110,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   function setTool(name) {
     if (name !== 'select') haLink.cancelPlacement();
     tool = name; onInteract?.();
-    for (const id of ['select', 'move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking']) el(`rail-${id}`).setAttribute('aria-pressed', String(id === name));
+    for (const id of ['select', 'move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-stair', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking']) el(`rail-${id}`).setAttribute('aria-pressed', String(id === name));
     canvas.style.cursor = name === 'move' ? 'grab' : name === 'select' ? '' : 'crosshair';
   }
   async function sheet(key = floor()?.key, show = !sheetOn) {

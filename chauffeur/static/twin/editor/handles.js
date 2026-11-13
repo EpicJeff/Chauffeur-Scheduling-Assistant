@@ -133,6 +133,10 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       add('room', room.id, [...centre, z], room.level);
     }
     const wall = building.walls.find(w => selected.kind === 'wall' && w.id === selected.id);
+    const stair = building.stairs?.find(s => selected.kind === 'stair' && s.id === selected.id);
+    if (stair && stair.state !== 'ghost') for (const end of ['from', 'to'])
+      add('stair_end', stair.id, [...stair[end], end === 'to' ? stair.rise_to
+        : building.levels.find(l => l.id === stair.level)?.elevation || 0], stair.level, { end });
     if (wall && wall.state !== 'ghost') add('wall', wall.id, [...wall.from.map((v, i) => (v + wall.to[i]) / 2),
       building.levels.find(l => l.id === wall.level)?.elevation || 0], wall.level);
     const opening = building.openings.find(o => selected.kind === 'opening' && o.id === selected.id);
@@ -250,6 +254,11 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     if (gesture) return false;
     const handle = hit(event); if (!handle) return false;
     const source = getPlan(), building = coordinateBuilding(handle.building);
+    if (handle.kind === 'stair_end') {
+      const piece = building.stairs.find(s => s.id === handle.id), normal = [0, 0, 1];
+      const start = onPlane(event, building, handle.at, normal); if (!start) return false;
+      gesture = { handle, source, building, piece, normal, start, operation: null }; return true;
+    }
     if (handle.kind.startsWith('site_')) {
       const start = onPlane(event, building, handle.at, [0, 0, 1]); if (!start) return false;
       const record = siteRecord(source, handle.id);
@@ -323,6 +332,18 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       drag.update(view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`, floorOffset)); return;
     }
     const point = onPlane(event, building, handle.at, g.normal); if (!point) return;
+    if (handle.kind === 'stair_end') {
+      const to = piece[handle.end].map((v, i) => v + inch(point[i] - g.start[i]));
+      g.operation = sameValue(to, piece[handle.end]) ? null
+        : { op: 'update_stair', building: building.id, id: piece.id, [handle.end]: to };
+      preview = structuredClone(g.source);
+      const next = preview.buildings.find(b => b.id === building.id).stairs.find(s => s.id === piece.id);
+      next[handle.end] = to;
+      const points = [next.from, next.to].map((p, i) => project(building, [...p, i ? next.rise_to
+        : building.levels.find(l => l.id === next.level)?.elevation || 0])).filter(Boolean);
+      document.getElementById('editor-drag-outline')?.setAttribute('points', points.map(p => p.join(',')).join(' '));
+      onPreview?.(preview, getSelection()); refresh(); lastFrameMs = Math.max(.001, performance.now() - started); return;
+    }
     if (handle.kind.startsWith('site_')) {
       const centre = handle.centre, a = g.start.slice(0, 2).map((v, i) => v - centre[i]), b = point.slice(0, 2).map((v, i) => v - centre[i]);
       let change;
@@ -457,6 +478,14 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   async function finish(cancel = false, clicked = false) {
     const g = gesture, released = preview; gesture = null; preview = null;
     if (!g) return;
+    if (g.handle.kind === 'stair_end') {
+      document.getElementById('editor-drag-outline')?.setAttribute('points', '');
+      const saving = !cancel && canEdit() && g.operation;
+      if (saving) preview = released;
+      try { if (saving) await onCommit(g.operation); }
+      finally { if (preview === released) preview = null; onPreview?.(plan(), getSelection()); refresh(); }
+      return;
+    }
     if (g.handle.kind.startsWith('site_')) {
       document.getElementById('editor-drag-outline')?.setAttribute('points', '');
       const cornerClick = clicked && (g.handle.kind === 'site_insert' || g.handle.kind === 'site_vertex' && g.remove);

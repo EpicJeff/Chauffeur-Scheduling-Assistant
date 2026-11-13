@@ -485,6 +485,9 @@ def _details(building, levels, notes):
                          and all(_number(item.get(k)) and item[k] > 0 for k in ('width', 'risers'))
                          and _number(item.get('rise_to'))
                          and _lookup(levels, item.get('level')) is not None)
+                if valid:
+                    valid = (item.get('style', 'solid') in ('solid', 'open')
+                             and item.get('rail', 'none') in ('none', 'left', 'right', 'both'))
             elif valid and name == 'lights':
                 valid = _point(item.get('at')) and _lookup(levels, item.get('level')) is not None
             elif valid and name == 'fixtures' and 'rect' not in item:

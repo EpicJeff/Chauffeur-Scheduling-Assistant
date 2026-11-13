@@ -5,6 +5,7 @@ import { materialLines } from './library.js';
 import { createEquipmentShelf } from './equipment_shelf.js';
 import { foundationShelf } from './foundation_shelf.js';
 import { porchFoundationShelf } from './porch_foundation_shelf.js';
+import { stairShelf } from './stair_shelf.js';
 import { siteRecord, siteShapeKinds, siteShapeLabels } from '../objects.js';
 import { drawSiteShapeShelf } from './site_shape_shelf.js';
 
@@ -100,6 +101,12 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (haSection) haLink.draw(haSection, record);
   }
   function draw(next = selection) {
+    // The two-click add tool temporarily owns the same card surface. Polling
+    // selection/HA while no piece is selected must leave its fields in place.
+    if (!next && host.dataset.stairDraft) {
+      host.querySelectorAll('input, select').forEach(input => { input.disabled = !canEdit(); });
+      return;
+    }
     if (next?.pieceId !== selection?.pieceId || next?.buildingId !== selection?.buildingId) edgeIndex = null;
     const record = next && findPiece(getPlan(), next.pieceId, next.buildingId);
     if (record?.kind === 'proposal') { host.hidden = true; return; }
@@ -109,7 +116,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     const flags = roofFlags(record);
     const porchLayout = record?.kind === 'room' && record.piece.kind === 'porch'
       ? JSON.stringify([record.piece.foundation, canEdit()]) : '';
-    const nextLayout = JSON.stringify([record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
+    const nextLayout = JSON.stringify([record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
     // save must not detach Turn while the person is typing the next edit.
@@ -141,6 +148,12 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     const heading = headingNode = document.createElement('h3'); heading.textContent = title(record);
     const close = button('Close', () => select(null)); close.setAttribute('aria-label', 'Close piece card');
     host.append(heading, close);
+    if (kind === 'stair') stairShelf(host, piece, building, { canEdit, report,
+      change: (field, value) => queue(async () => {
+        if (!canEdit()) return;
+        await op({ op: 'update_stair', building: building.id, id: piece.id, [field]: value });
+        layout = null; draw();
+      }) });
     for (const material of materials) {
       const row = document.createElement('div'); row.className = 'editor-material-line';
       const words = document.createElement('div'), label = document.createElement('span'), text = document.createElement('p');

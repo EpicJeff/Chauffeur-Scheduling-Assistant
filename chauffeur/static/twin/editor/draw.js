@@ -3,13 +3,15 @@ import { report } from './api.js';
 import { snapTo } from './snap.js';
 import { hostPoint } from '../twin_hosts.js';
 import { contains } from '../twin_generator.js';
+import { stairShelf } from './stair_shelf.js';
 
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-const drawingTools = ['draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking'];
+const drawingTools = ['draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-stair', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking'];
 
 export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel, surfaceAt, groundPoint }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let tool = null, points = [], press = null, anchorKind = 'light';
+  let stair = null;
   let saving = Promise.resolve(), inbox = Promise.resolve(), run = 0;
   // A click that places something on a wall or a room waits until the changes
   // before it are saved, so it sees the walls they made and is never dropped.
@@ -31,6 +33,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     if (canvas.hasPointerCapture(previous.id)) canvas.releasePointerCapture(previous.id);
   }
   function cancel() {
+    if (tool === 'add-stair') { delete el('piece-card').dataset.stairDraft; el('piece-card').hidden = true; stair = null; }
     ++run; release(); tool = null; points = []; outline([]); note(''); tools.setTool('select');
     for (const name of drawingTools) el(`rail-${name}`).setAttribute('aria-pressed', 'false');
   }
@@ -96,6 +99,16 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     cancel();
     if (!tools.floor()) { panel.message('Add a floor before drawing.'); return; }
     if (name === 'split-room' && !tools.selection().room) { panel.message('Select the room to split first.'); return; }
+    if (name === 'add-stair') {
+      const { building, level } = tools.floor();
+      const target = building.levels.filter(l => l.elevation > level.elevation).sort((a, b) => a.elevation - b.elevation)[0];
+      if (!target) { panel.message('Add a floor above this one before adding stairs.'); return; }
+      tools.select(null);
+      stair = { level: level.id, width: 3, to_level: target.id, style: 'solid', rail: 'both' };
+      const card = el('piece-card'); card.replaceChildren(); card.hidden = false; card.dataset.stairDraft = 'true';
+      const title = document.createElement('h3'); title.textContent = 'Add stair'; card.append(title);
+      stairShelf(card, stair, building, { canEdit, report, change: (field, value) => { if (stair) stair[field] = value; } });
+    }
     if (name === 'add-anchor') {
       const kind = await window.promptChoice('Add anchor', 'What belongs here?',
         ['light', 'switch', 'outlet', 'fan', 'camera', 'sensor'].map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) })));
@@ -107,7 +120,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       if(view.state?.camera==='top')view.setCamera?.('front');
     }
     ++run; tool = name; tools.setTool(name); el(`rail-${name}`).setAttribute('aria-pressed', 'true');
-    note(({ 'add-charger':'Click the wall face where the charger goes.', 'add-parking':'Click a floor or the ground to place a 9 × 18 ft parking spot.', 'add-solar-zone':'Click a clear roof plane to place a solar zone.', 'add-meter':'Click the wall face where the meter goes.', 'add-electric-panel':'Click the wall face where the electric panel goes.', 'draw-room': 'Drag a rectangle, or click corners and close on the first corner.',
+    note(({ 'add-stair': 'Click the start of the stair on this floor.', 'add-charger':'Click the wall face where the charger goes.', 'add-parking':'Click a floor or the ground to place a 9 × 18 ft parking spot.', 'add-solar-zone':'Click a clear roof plane to place a solar zone.', 'add-meter':'Click the wall face where the meter goes.', 'add-electric-panel':'Click the wall face where the electric panel goes.', 'draw-room': 'Drag a rectangle, or click corners and close on the first corner.',
       'draw-wall': 'Click wall corners. Escape or a double click ends the chain.',
       'split-room': 'Click two walls of this room to draw the split.',
       'add-anchor': 'Click a wall or a room surface. Lights and fans go on its ceiling.' })[name]
@@ -134,6 +147,13 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
   }
   function click(p, hit = null) {
     const { building, level } = tools.floor();
+    if (tool === 'add-stair') {
+      const point = snap(p, points[0]);
+      if (!points.length) { points = [point]; outline(points); note('Click the end at the upper landing.'); return; }
+      if (distance(points[0], point) < .01) return;
+      save({ op: 'add_stair', building: building.id, ...stair, from: points[0], to: point }).then(done()).catch(report);
+      return;
+    }
     if (tool === 'draw-room') {
       if (points.length >= 3 && distance(p, points[0]) <= 1) {
         const polygon = points; points = []; outline([]);

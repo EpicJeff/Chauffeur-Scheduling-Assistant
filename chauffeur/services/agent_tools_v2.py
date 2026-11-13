@@ -7736,6 +7736,7 @@ class HouseDesignTool(BaseModel):
         "move_joint (joint, to:[x,y]); move_wall (wall, by:distance); move_room (room, by:[dx,dy]); "
         "split_wall (wall, at); add_wall (level, from:[x,y], to:[x,y], kind?, exterior?); "
         "draw_room (level, polygon:[[x,y],...], name?); split_room (room, from:[x,y], to:[x,y]); "
+        "add_stair (level, from, to, width?=3, to_level|rise_to, style? solid|open, rail? none|left|right|both), update_stair (id, same optional fields; risers derived, pitch 20..45 degrees); "
         "add_opening (wall, kind, at, width?=3, sill?, head?); "
         "move_hosted (id, host?, at?, z?, offset?); resize_opening (id, width?, sill?, head?, at?); "
         "add_anchor (kind, host); add_item (asset, host, rotation?, scale?); "

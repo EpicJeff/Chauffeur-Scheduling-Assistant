@@ -9,6 +9,7 @@ import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
 import { PORCH_SLAB_FT, porchFoundationRole, porchPlinthGeometry } from './twin_porch_foundation.js';
+import { stairGeometry, doorwaySteps } from './twin_stairs.js';
 import { roomFloor, roomAt, openingFloor, wallFloorProfile, foundationPieces } from './twin_floors.js';
 import { LUCIDE } from '../vendor/lucide/icons.js';
 
@@ -163,8 +164,8 @@ export function contains(poly, [x, y]) {
 
 // The same stair cutouts serve authoritative floors and drag previews.
 export function stairHoles(building, level) {
-  const first = Math.min(...building.levels.map(l => l.elevation));
-  return (building.stairs || []).filter(s => s.rise_to >= level.elevation && level.elevation > first).map(s => {
+  return (building.stairs || []).filter(s => s.rise_to >= level.elevation
+    && level.elevation > (building.levels.find(l => l.id === s.level)?.elevation ?? Infinity)).map(s => {
     const dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy);
     const nx = -dy / length * s.width / 2, ny = dx / length * s.width / 2;
     return [[s.from[0] + nx, s.from[1] + ny], [s.to[0] + nx, s.to[1] + ny],
@@ -1095,11 +1096,13 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     }
     for (const [index, s] of (b.stairs || []).entries()) {
       use(s, 'stair', `stair:${index}`);
-      const l = levels[s.level] || first, dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
-      for (let i = 0; i < s.risers; i++) {
-        const run = length / s.risers, height = (s.rise_to - l.elevation) * (i + 1) / s.risers;
-        mesh(local[l.id], boxGeometry(run, height, s.width).rotateY(angle).translate(s.from[0] + dx * (i + 0.5) / s.risers, l.elevation + height / 2, -s.from[1] - dy * (i + 0.5) / s.risers), mat('floor'));
-      }
+      const l = levels[s.level] || first;
+      for (const part of stairGeometry(s, l.elevation, boxGeometry)) mesh(local[l.id], part.geometry, mat(part.role));
+    }
+    for (const opening of b.openings || []) {
+      use(opening, 'opening', `opening:${opening.wall}:${opening.at}`);
+      for (const step of doorwaySteps(b, opening)) mesh(local[step.level], polygon(step.polygon, step.bottom, step.top),
+        mat('floor', levels[step.level], step.room.floor_material));
     }
     const itemIds = new Set((b.items || []).filter(item => item.asset).map(item => item.id));
     const fixtureFallbacks = new Map();
