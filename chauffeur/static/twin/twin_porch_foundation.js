@@ -51,7 +51,8 @@ export function porchPlinthGeometry(plan, building, porch, top, base) {
       const p = point(lo), q = point(hi), epsilon = Math.min(1e-7, (hi - lo) * 1e-5);
       const p0 = [p, bottom(lo + epsilon), lo * length], q0 = [q, bottom(hi - epsilon), hi * length];
       const p1 = [p, top, lo * length], q1 = [q, top, hi * length];
-      emit(p0, q1, q0, p0, p1, q1);
+      // insetPorch is CCW in lot XY; mapping Y to -Z makes this order outward.
+      emit(p0, q0, q1, p0, q1, p1);
     }
   });
   const sides = new THREE.BufferGeometry();

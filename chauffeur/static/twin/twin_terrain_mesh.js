@@ -100,7 +100,8 @@ export function terrainSlabGeometry(plan, outline, tier, bottom, top, holes = []
         const point = t => a.map((v, k) => v + (b[k] - v) * t);
         const p = point(lo), q = point(hi), h0 = groundAt(plan, ...point(lo + (hi - lo) * 1e-7)), h1 = groundAt(plan, ...point(hi - (hi - lo) * 1e-7));
         const p0 = [...p, h0 + bottom], p1 = [...p, h0 + top], q0 = [...q, h1 + bottom], q1 = [...q, h1 + top];
-        emit(p0, q1, q0, p0, p1, q1);
+        // Outer boundaries are CCW and holes CW; both face out of the solid.
+        emit(p0, q0, q1, p0, q1, p1);
       }
     });
   }

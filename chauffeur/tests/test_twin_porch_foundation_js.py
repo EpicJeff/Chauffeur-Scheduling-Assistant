@@ -3,19 +3,36 @@ import json
 import sys
 from pathlib import Path
 from twin_editor_dom import PRELUDE, run_node
+from twin_solid_normals import NORMAL_CHECKS
 
 ROOT = Path(__file__).resolve().parents[1]
-DRIVER = PRELUDE + r"""
+DRIVER = PRELUDE + NORMAL_CHECKS + r"""
 const THREE=await import(three);
 const {createHash}=await import('node:crypto');
 const {buildTwin}=await import(file('static/twin/twin_generator.js'));
 const {groundAt,buildingBase}=await import(file('static/twin/twin_ground.js'));
-const {insetPorch,porchFoundationRole,PORCH_SLAB_FT}=await import(file('static/twin/twin_porch_foundation.js'));
+const {insetPorch,porchPlinthGeometry,porchFoundationRole,PORCH_SLAB_FT}=await import(file('static/twin/twin_porch_foundation.js'));
 const {atlasJob,covered}=await import(file('static/twin/bake/atlas_transport.js'));
 const {buildAtlas}=await import(file('static/twin/bake/atlas.js'));
 const {disposeObject}=await import(file('static/twin/twin_library.js'));
 const near=(a,b,why='')=>assert.ok(Math.abs(a-b)<2e-5,`${why}: ${a} != ${b}`);
 const square=(x0,y0,x1,y1)=>[[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
+// Test actual triangle winding: lighting normals alone cannot prove FrontSide visibility.
+for(const [label,polygon] of [
+ ['CCW rectangle',square(0,-6,10,0)],['CW rectangle',square(0,-6,10,0).reverse()],
+ ['L-shaped porch',[[0,-6],[10,-6],[10,-2],[4,-2],[4,0],[0,0]]],
+ ['CW L-shaped porch',[[0,0],[4,0],[4,-2],[10,-2],[10,-6],[0,-6]]]]){
+ const porch={polygon,foundation:{lip_in:1}},outline=insetPorch(polygon,1/12);
+ const geometry=porchPlinthGeometry({site:{terraces:[]}}, {}, porch,1.75,0);
+ checkBoundaryNormals(geometry,outline,{top:1.75,bottom:0,label});
+ const material=new THREE.MeshBasicMaterial({side:THREE.FrontSide}),mesh=new THREE.Mesh(geometry,material);
+ const hits=new THREE.Raycaster(new THREE.Vector3(2,1,9),new THREE.Vector3(0,0,-1)).intersectObject(mesh);
+ assert.ok(hits.length,`${label}: front is visible from outside`);
+ near(-hits[0].point.z,-6+1/12,`${label}: first hit is inset front edge`);
+ assert.ok(hits[0].face.normal.z>0,`${label}: front normal faces the ray`);
+ geometry.dispose();material.dispose();
+}
+console.log('Passed: outward porch sides, up/down caps and FrontSide front raycast (rectangle and L, both windings)');
 const po={id:'porch',polygon:square(0,-6,10,0),floor:2,columns:[{at:[.5,-5.5],size:.5},{at:[9.5,-5.5],size:.5}]};
 const b={id:'b',position:[7,-3],rotation:27,base:3,levels:[{id:'L1',elevation:0,ceiling:10,outline:square(0,0,10,10)},
  {id:'L2',elevation:10,ceiling:8,outline:square(0,0,10,10)}],walls:[],rooms:[],openings:[],

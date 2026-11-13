@@ -12,19 +12,20 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from test_twin_drag_js import DRIVER as BASE
+from twin_solid_normals import NORMAL_CHECKS
 
 PREFIX = '\n'.join(line for line in BASE.split('const {createDrag, piecesOnMovedJoints}')[0].splitlines()
                    if "if (spec === './twin_yard.js')" not in line)
 PREFIX = PREFIX.replace("if (spec === 'three')", """if (spec === '@dgreenheck/ez-tree') return {url: data(`import {Group,Mesh,BoxGeometry,MeshStandardMaterial} from '${three}';
   export class Tree extends Group {constructor(){super();this.options={};} loadPreset(){} generate(){this.add(new Mesh(new BoxGeometry(1,2,1).translate(0,1,0),new MeshStandardMaterial()));}}`),shortCircuit:true};
   if (spec === 'three')""")
-DRIVER = PREFIX + r"""
+DRIVER = PREFIX + NORMAL_CHECKS + r"""
 const THREE = await import(three);
 const {groundAt, buildingBase, foundationShape} = await import(file('static/twin/twin_ground.js'));
-const {terrainGeometry,tintGrade} = await import(file('static/twin/twin_terrain_mesh.js'));
+const {terrainGeometry,terrainSlabGeometry,tintGrade} = await import(file('static/twin/twin_terrain_mesh.js'));
 const {buildYard} = await import(file('static/twin/twin_yard.js'));
 const near=(actual,expected)=>assert.ok(Math.abs(actual-expected)<1e-5,`${actual} != ${expected}`);
-const {buildTwin} = await import(file('static/twin/twin_generator.js'));
+const {buildTwin,polygon} = await import(file('static/twin/twin_generator.js'));
 const {disposeObject,cacheModelMaterials} = await import(file('static/twin/twin_library.js'));
 const {parkingPoint} = await import(file('static/twin/twin_hosts.js'));
 const {lotPoint} = await import(file('static/twin/live/energy_geometry.js'));
@@ -38,6 +39,29 @@ for(const {pads,samples} of JSON.parse(readFileSync(process.argv[2])).terrainCas
   });
 }
 const rect = [[0,0],[10,0],[10,10],[0,10]];
+for(const outline of [rect,[...rect].reverse(),[[0,0],[10,0],[10,4],[4,4],[4,10],[0,10]],[[0,10],[4,10],[4,4],[10,4],[10,0],[0,0]]]){
+ const hole=[[1,1],[2,1],[2,2],[1,2]];
+ for(const holes of [[],[hole],[hole.slice().reverse()]]){
+  const slab=terrainSlabGeometry({},outline,'high',0,.3,holes);
+  checkBoundaryNormals(slab,outline,{holes,top:.3,label:'hardscape/bed slab'});slab.dispose();
+ }
+ const foundation=polygon(outline,-2,0);
+ checkBoundaryNormals(foundation,outline,{top:0,bottom:-2,label:'building foundation extrusion'});foundation.dispose();
+}
+// Sharp retaining skirts face the lower surface, for raised and sunken pads
+// and either polygon winding. Check geometric face normals (not smoothed normals).
+for(const outline of [rect,[...rect].reverse()])for(const height of [-2,2]){
+ const shape={site:{terraces:[{polygon:outline,height,blend:0}]}};
+ const skirt=terrainGeometry(shape,[[-2,-2],[12,-2],[12,12],[-2,12]],'high',{skirts:true});
+ let count=0;
+ for(const {normal,centre} of trianglesOf(skirt))if(Math.abs(normal.y)<1e-5){
+  const low=groundAt(shape,centre.x+normal.x*.001,-centre.z-normal.z*.001);
+  const high=groundAt(shape,centre.x-normal.x*.001,-centre.z+normal.z*.001);
+  assert.ok(high>low,'retaining skirt faces lower ground');count++;
+ }
+ assert.ok(count,'retaining skirts checked');skirt.dispose();
+}
+console.log('Passed: hardscape/bed boundaries and holes, building foundation caps/sides, raised/sunken retaining skirts');
 const modelCache=new Map(), model1=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial()),model2=model1.clone();
 model2.material=model1.material.clone();const replaced=model2.material;let released=false;replaced.addEventListener('dispose',()=>released=true);
 cacheModelMaterials(model1,'same-asset',modelCache);cacheModelMaterials(model2,'same-asset',modelCache);
@@ -139,11 +163,20 @@ assert.ok(skirt,'sharp edge gets a vertical face');
 const normal=geometry.attributes.normal;assert.ok([...normal.array].every(Number.isFinite));
 tintGrade(geometry,false);assert.ok([...geometry.attributes.color.array].every(c=>c===1));tintGrade(geometry,true);
 assert.ok([...geometry.attributes.color.array].some(c=>c!==1));geometry.dispose();
-const twin=buildTwin(plan,kit,'low',{viewing:true});await twin.ready;
+const twin=buildTwin(plan,kit,'low',{viewing:true,editableLevel:'b:L1'});await twin.ready;
 const low=twin.groups.levels['b:L1'].children.find(g=>g.userData.buildingId==='b');
 assert.equal(low.position.y,4.5);
 const foundationBounds=new THREE.Box3();
-low.traverse(o=>{if(o.isMesh&&o.material.name==='patio_concrete'){o.geometry.computeBoundingBox();foundationBounds.union(o.geometry.boundingBox);}});
+let checkedFoundation=0;
+low.traverse(o=>{if(o.isMesh&&o.material.name==='patio_concrete'){
+ // Per-piece merging keeps the foundation separate from the level's floor slab.
+ o.geometry.computeBoundingBox();
+ if(o.geometry.boundingBox.min.y<-1){
+  checkBoundaryNormals(o.geometry,foundationShape(plan,b).polygon,{top:0,bottom:-4.5,label:'generated building foundation'});checkedFoundation++;
+ }
+ foundationBounds.union(o.geometry.boundingBox);
+}});
+assert.ok(checkedFoundation,'actual foundation mesh checked');
 assert.ok(Math.abs(foundationBounds.min.y+4.5)<1e-6&&Math.abs(foundationBounds.max.y)<1e-6,'actual concrete extends from the base down to the lowest ground');
 const rebuilt=buildTwin(plan,kit,'low',{viewing:true,reuseMaterials:twin.materials});await rebuilt.ready;
 assert.equal(rebuilt.materials.get('patio_concrete'),twin.materials.get('patio_concrete'),'terrain/foundation changes retain the concrete material');
@@ -154,6 +187,13 @@ plan.site.planting=[{id:'tree',at:[5,5],preset:'Pine',height:10}];
 plan.site.beds=[{polygon:rect}];plan.site.hardscape=[{polygon:[[0,0],[2,0],[2,2],[0,2]]}];
 plan.site.fire_pit={at:[5,5],radius:1};
 const yard=await buildYard(plan,kit,'high');
+let fireTriangles=0;
+yard.group.traverse(o=>{if(!o.isMesh||o.material.name!=='base')return;
+ for(const {normal,centre} of trianglesOf(o.geometry)){
+  assert.ok(normal.dot(new THREE.Vector3(centre.x-5,0,centre.z+5))>0,'fire pit wall faces radially outward');fireTriangles++;
+ }});
+assert.ok(fireTriangles,'actual fire pit walls checked');
+console.log('Passed: fire pit wall outward normals');
 const tree=yard.group.children.find(o=>o.constructor.name==='Tree');
 assert.equal(new THREE.Box3().setFromObject(tree).min.y,-4);
 let terrain;yard.group.traverse(o=>{if(o.userData.terrain)terrain=o;});assert.ok(terrain);
