@@ -187,12 +187,21 @@ plan.site.planting=[{id:'tree',at:[5,5],preset:'Pine',height:10}];
 plan.site.beds=[{polygon:rect}];plan.site.hardscape=[{polygon:[[0,0],[2,0],[2,2],[0,2]]}];
 plan.site.fire_pit={at:[5,5],radius:1};
 const yard=await buildYard(plan,kit,'high');
-let fireTriangles=0;
+// Since v2.499.821 a fire pit is a ring wall: an outer face, an inner face toward the bowl and
+// a top. Each faces its own way; none may face into the wall (the inside-out bug).
+const fireFaces=[];
 yard.group.traverse(o=>{if(!o.isMesh||o.material.name!=='base')return;
- for(const {normal,centre} of trianglesOf(o.geometry)){
-  assert.ok(normal.dot(new THREE.Vector3(centre.x-5,0,centre.z+5))>0,'fire pit wall faces radially outward');fireTriangles++;
- }});
-assert.ok(fireTriangles,'actual fire pit walls checked');
+ for(const {normal,centre} of trianglesOf(o.geometry))fireFaces.push({normal,centre,r:Math.hypot(centre.x-5,centre.z+5)});});
+assert.ok(fireFaces.length,'actual fire pit walls checked');
+const sides=fireFaces.filter(f=>Math.abs(f.normal.y)<.5),rMax=Math.max(...sides.map(f=>f.r)),rMin=Math.min(...sides.map(f=>f.r));
+assert.ok(rMax-rMin>.05,'the ring has an outer and an inner face');
+for(const f of sides){
+ const radial=f.normal.dot(new THREE.Vector3(f.centre.x-5,0,f.centre.z+5).normalize());
+ if(f.r>(rMax+rMin)/2)assert.ok(radial>0,'fire pit outer wall faces radially outward');
+ else assert.ok(radial<0,'fire pit inner wall faces the bowl');
+}
+const caps=fireFaces.filter(f=>Math.abs(f.normal.y)>=.5),yTop=Math.max(...caps.map(f=>f.centre.y)),yBottom=Math.min(...caps.map(f=>f.centre.y));
+for(const f of caps)assert.ok(f.centre.y>(yTop+yBottom)/2?f.normal.y>0:f.normal.y<0,'fire pit top faces up and bottom faces down');
 console.log('Passed: fire pit wall outward normals');
 const tree=yard.group.children.find(o=>o.constructor.name==='Tree');
 assert.equal(new THREE.Box3().setFromObject(tree).min.y,-4);
