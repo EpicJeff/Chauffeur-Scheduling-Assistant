@@ -1,6 +1,43 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.835 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.836 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.836 (2026-11-13, NOT device-verified): outdoor yard rooms. Draw an area on the lot (or make one from the pool, a patio or the fire pit), link it to a Home Assistant area, and its devices show and work like a room's.**
+
+**The ask.** The user, 2026-11-13: "We need lot features as rooms". They chose option B: outdoor rooms drawn on the lot, plus a "Make this a room" shortcut from a pool, patio or fire pit.
+
+**How it was built.** Codex built it. Claude merged it with the porch-slot work and checked a linked "Pool deck" in Chromium: its House-level target, the tap, the panel controls and the marker.
+
+**Data and ops** (`services/twin_site_shapes.py`, `twin_model_ops.py`, `twin_plan.py`).
+- **Shape:** `site.yard_rooms[]` holds `{id, name, polygon (3..200 simple corners), ha_area?}`.
+- **Ops:** add, update and delete use the site-shape ops. `make_yard_room` copies the outline of a pool, patio or hardscape, bed or path, or a round fire pit sampled at its radius plus 1.5 ft so it takes in the seating. Each is one history step.
+- **Placed devices:** `site.devices[]` with `host: {yard_room, u, v}` (fractions of the outline's bounding box; the point must lie inside) and a 0 to 100 ft height above the ground, via `place_device` and `unplace_device`.
+- **Rules:**
+  - deleting a yard room unplaces its devices and says so; it never deletes HA devices;
+  - an outline edit that would strand a placed device outside is refused;
+  - yard rooms are regions only, with no geometry.
+
+**Home Assistant and the live view** (`main.py` `house_live`, `services/twin_ha.py`, `live/live.js`, `live/modes.js`, `levels.js`, `live/room_cards.js`, `live/room_panel.js`).
+- **Linking:** area suggestions and linking cover yard rooms.
+- **Live feed:** a linked yard room's devices and its placed devices come back as markers on the ground, with the same permission gate as a placed switch, and join the live stream.
+- **Lights:** outdoor lights join the real-light pool.
+- **House level:** yard rooms are targets beside the buildings. Tapping one opens its room panel with the device controls, and swiping includes yard rooms.
+- **Markers:** they show at House level and in their own room, never inside a building's floor view.
+- **No HA:** without Home Assistant there are no markers and no errors.
+
+**Editor** (`editor/site_drawing.js`, `site_shape_shelf.js`, `device_placement.js`, `ha_link.js`, `cards.js`).
+- **Drawing:** "Yard room" is a choice in ground drawing, with the shared shape handles.
+- **Shelf:** name, an HA area picker and delete.
+- **"Make this a room":** on the shelves of pools, patios, beds, paths and fire pits.
+- **Devices:** placed by drag and drop or "Pick a spot", with a height-above-ground field.
+
+**Agent.** The `house_design` tool can add, edit and discover yard rooms. Stairs, porch slots and yard rooms together bring the schema to 5,689 characters, so the shared cap rises from 5,600 to 6,000 in the four tests that hold it.
+
+**Tests.**
+- New: `test_twin_yard_rooms` 8/8 (validation, ops with undo, make-a-room from pool, patio and round pit, delete unplacing, house_live markers and permission, HA absent, stream entities), `test_twin_yard_rooms_js` (navigation and live) and `test_twin_yard_rooms_editor_js` (drawing, shelf, make-a-room, placement).
+- Neighbours: `test_twin_site_shapes` and `test_twin_site_shapes_js`, `test_twin_site_drawing_js`, `test_twin_levels_js`, `test_twin_live_rooms_js`, `test_twin_live_control_js`, `test_twin_fire_pits`, `test_twin_ha_routes`, `test_twin_model_devices`, `test_house_design_tool`, `test_twin_retaining_wall`, `test_twin_stairs`, `test_twin_porch_foundation_js`, `test_twin_material_slot_js`, `test_twin_real_lights_js`, `test_twin_import_maps`, `test_tailwind_build`.
+- Chromium: a "Pool deck" made from the pool and linked to a fake HA area. It shows a House-level target; tapping opens its panel with the pool light's switch and brightness; the light's marker sits on the pool.
+- To tune: the camera framing on tap barely zooms in.
 
 **v2.499.835 (2026-11-13, NOT device-verified): porch foundations are posts, enclosed or solid, and they use the new shared material slot. Posts now actually draws posts.**
 

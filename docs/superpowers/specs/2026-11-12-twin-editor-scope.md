@@ -23,7 +23,7 @@ The user said: "Sometimes it feels like I am just asking for a stripped down ver
 - Ground features drawn as outlines: beds, patios and other hardscape, pools. *Shipped (v2.499.821).*
 - Paths drawn along a line with a width: sidewalks, paver paths, driveways. *Shipped (v2.499.821).*
 - Fences, plants and trees. *Shipped.*
-- **Lot features as rooms** (pool area, fire pit, grill), so they can hold devices: outdoor rooms drawn on the lot. *In progress.*
+- Lot features as rooms: outdoor yard rooms drawn on the lot, linked to HA areas. *Shipped (v2.499.836).*
 
 **Objects**
 - One object model with size, turn and properties. *Shipped.*
