@@ -1,6 +1,45 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.829 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.830 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.830 (2026-11-13, NOT device-verified): the solar conduit lies on the house. It routes along roof ridges, edges and walls, computed off the main thread.**
+
+**The report.** The user, on their own house, about v2.499.825: "Conduit is not great... it's not even on the surface of the building for the most part." Their rule: "go from solar zone up to ridge of its roof, then follow ridge towards main solar zone... conduit must always lay on the surface of the building." The v2.499.825 route went around the wall footprint at one eave height. On a house with several roof levels, dormers and porches, it floated in the air and cut across lower roofs.
+
+**How it was built.**
+- Codex wrote the surface router.
+- Claude's Chromium check found it routed nothing on the fixture house. The rendered siding produced 24,434 triangles, and the graph hit its work limit after about 3 s on the main thread.
+- Codex moved it to coarse plan surfaces in a worker, then ran out of usage.
+- Claude found the last two missing routes (a 1 ft gap at a gable ridge) and finished.
+
+**The route** (`static/twin/live/solar_conduit_core.js`, `solar_conduit.js`, `solar_conduit_worker.js`).
+- **Surfaces:** coarse plan surfaces, not render meshes.
+  - Roofs are the roof planes (`solarPlanes`), clipped where a higher roof covers them.
+  - Walls are the exterior wall faces from the plan, with each building's transform applied.
+  - The fixture house is 200 triangles for the main house and 28 for the pool house.
+- **Graph:**
+  - vertices welded within 1 in; T-junctions within 4 in split and joined;
+  - islands joined across their shortest gap up to 1.5 ft, where plan roof planes stop short of each other and the rendered roofs overlap.
+- **Costs:**
+  - feature edges (ridges, hips, valleys, eaves, rakes, wall corners) cost their length;
+  - edges crossing a flat face cost 2.5 times;
+  - walls cost 1.3 times, so the path climbs a wall where a roof meets it.
+- **Path:** Dijkstra from each satellite zone to the source anchor, projected onto its roof, lifted 2 in along the surface normal.
+- **On-surface check:** every point must be within 2.5 in of a surface (a short island bridge excepted), or no conduit is drawn. The old floating perimeter is gone.
+- **Two buildings:** they are joined over the ground only between them.
+- **Off the main thread:** the routing runs in a module worker (in both import maps). The energy effect draws the conduits when the result arrives and drops stale results. Without a worker it runs after first paint, never inside mount.
+- **Timing:** 26 of 26 satellites in about 80 ms in node on the fixture household. In Chromium, entering Energy shows no main-thread task over about 180 ms.
+- **Unchanged:** the tube, halo, pulse toward the source, 50 W threshold, dim when idle, panel glow, disposal and rebuild key.
+
+**Tests.**
+- `test_twin_solar_conduit_js` 18/18:
+  - ridge preference, climbing a wall to an upper roof, and on-surface points;
+  - hips over diagonals, the ground only between buildings, no path giving no conduit;
+  - plan-derived surfaces;
+  - the worker path and dropped stale results;
+  - the fixture household routing 26 of 26 within the timing budget.
+- Also `test_twin_energy_js` 37/37 and `test_twin_import_maps`.
+- Chromium: the fixture house with a satellite zone on every roof face, by day and by night.
 
 **v2.499.829 (2026-11-13, NOT device-verified): fire pits are gas tables or wood pits, and a pit linked to a Home Assistant switch shows flames and casts firelight when the switch is on.**
 
