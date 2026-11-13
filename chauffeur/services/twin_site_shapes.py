@@ -4,7 +4,7 @@ import re
 from services import twin_terrain as terrain
 
 
-KINDS = ('beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence')
+KINDS = ('beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence', 'yard_rooms')
 MATERIALS = ('mulch', 'patio_concrete', 'paving', 'lawn', 'base', 'fence')
 FIRE_FIELDS = {'fuel', 'body', 'top', 'height_in', 'glass', 'entity'}
 
@@ -43,6 +43,43 @@ def pieces(value):
     return value if isinstance(value, list) else [value] if isinstance(value, dict) else []
 
 
+def yard_device_point(site, device):
+    """Resolve a floor-style bounding-box host, rejecting points outside concave rooms."""
+    host = device.get('host')
+    if not isinstance(host, dict) or set(host) != {'yard_room', 'u', 'v'}:
+        raise ValueError('Pick the ground inside a yard room.')
+    room = next((r for r in site.get('yard_rooms', []) if r['id'] == host['yard_room']), None)
+    if room is None or any(not terrain.number(host[k]) or not 0 <= host[k] <= 1 for k in ('u', 'v')):
+        raise ValueError('Pick the ground inside a yard room.')
+    offset = device.get('offset', 0)
+    if not terrain.number(offset) or not 0 <= offset <= 100:
+        raise ValueError('Choose a height above ground from 0 to 100 feet.')
+    polygon = room['polygon']
+    low = [min(p[i] for p in polygon) for i in (0, 1)]
+    high = [max(p[i] for p in polygon) for i in (0, 1)]
+    point = [low[i] + (high[i]-low[i])*host[k] for i, k in enumerate(('u', 'v'))]
+    if not terrain.inside(polygon, point):
+        raise ValueError('Pick the ground inside the yard room outline.')
+    return point
+
+
+def room_from_feature(name, piece):
+    """Copy a ground feature's footprint without changing its physical geometry."""
+    if name not in ('pool', 'hardscape', 'beds', 'fire_pit'):
+        raise ValueError('Choose a pool, patio, planting bed or fire pit.')
+    if name == 'fire_pit' and piece.get('shape', 'round') == 'round':
+        x, y = piece['at']
+        radius = piece.get('radius', 2) + 1.5
+        polygon = [[x + radius*math.cos(i*math.pi/16), y + radius*math.sin(i*math.pi/16)] for i in range(32)]
+    else:
+        polygon = piece.get('polygon')
+    if not polygon:
+        raise ValueError('Choose a feature with a closed outline.')
+    from copy import deepcopy
+    return {'name': (piece.get('name') or {'pool': 'Pool', 'hardscape': 'Patio', 'beds': 'Planting bed', 'fire_pit': 'Fire pit'}[name]).strip()[:40],
+            'polygon': deepcopy(polygon)}
+
+
 def create(name, values, lot):
     if name not in KINDS:
         raise ValueError('Choose a ground feature.')
@@ -51,6 +88,9 @@ def create(name, values, lot):
         raise ValueError('Paths belong in hardscape.')
     defaults = {'material': 'mulch' if name == 'beds' else 'lawn' if name == 'edges' else 'patio_concrete'}
     allowed = {'polygon', 'material'}
+    if name == 'yard_rooms':
+        defaults = {'name': 'Yard room'}
+        allowed = {'polygon', 'name', 'ha_area'}
     if name == 'pool':
         defaults.update(depth=5, coping=1, material='paving')
         allowed |= {'depth', 'coping'}
@@ -100,6 +140,14 @@ def create(name, values, lot):
 
 
 def validate(name, piece, *, legacy_height=False):
+    if name == 'yard_rooms':
+        if not isinstance(piece.get('name'), str) or not 1 <= len(piece['name'].strip()) <= 40:
+            raise ValueError('Use a room name of 1 to 40 characters.')
+        area = piece.get('ha_area')
+        if area is not None and (not isinstance(area, str) or len(area) > 255):
+            raise ValueError('Choose a Home Assistant area.')
+        if not isinstance(piece.get('polygon'), list):
+            raise ValueError('Draw a yard room outline.')
     key = next((k for k in ('polygon', 'points', 'polyline') if k in piece), None)
     path = name == 'hardscape' and piece.get('kind') == 'path'
     if path and (key != 'points' or 'polygon' in piece or 'polyline' in piece):
@@ -111,7 +159,7 @@ def validate(name, piece, *, legacy_height=False):
             raise ValueError('Choose a fire pit shape.')
         if (round_pit and key is not None or not round_pit and (key != 'polygon' or 'at' in piece or 'radius' in piece)):
             raise ValueError('Round pits use a centre and radius; other pits use an outline.')
-    closed = not path and (name in ('beds', 'hardscape', 'pool') or key == 'polygon')
+    closed = not path and (name in ('beds', 'hardscape', 'pool', 'yard_rooms') or key == 'polygon')
     if round_pit:
         points = [piece.get('at')]
     else:
@@ -154,6 +202,8 @@ def update(name, piece, change, lot):
         raise ValueError('Choose a yard shape.')
     geometry = next((k for k in ('polygon', 'points', 'polyline') if k in piece), None)
     allowed = {geometry, 'rotation'} if geometry else {'rotation'}
+    if name == 'yard_rooms':
+        allowed |= {'name', 'ha_area'}
     if name in ('beds', 'hardscape', 'edges', 'pool'):
         allowed |= {'material'}
     if name == 'hardscape' and piece.get('kind') == 'path':
@@ -194,6 +244,8 @@ def update(name, piece, change, lot):
         change[geometry] = [[round(origin[0]+(p[0]-origin[0])*math.cos(a)-(p[1]-origin[1])*math.sin(a), 9),
                              round(origin[1]+(p[0]-origin[0])*math.sin(a)+(p[1]-origin[1])*math.cos(a), 9)] for p in points]
     piece.update(change)
+    if name == 'yard_rooms' and isinstance(piece.get('name'), str):
+        piece['name'] = piece['name'].strip()
     if name == 'fire_pit' and piece.get('entity') is None:
         piece.pop('entity', None)
     points = validate(name, piece, legacy_height=legacy_height)

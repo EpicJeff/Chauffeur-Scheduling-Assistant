@@ -56,6 +56,7 @@ export function roomNeighbour(rooms, current, direction) {
   return candidates[0]?.room || null;
 }
 export function deviceAtLevel(state, row) {
+  if (row.yard) return state.level === 'house' || state.level === 'room' && state.building == null && row.room === state.room;
   if (row.fire_pit) return state.level === 'house';
   return row.look === 'attention' || state.level === 'room' && row.building === state.building && row.room === state.room;
 }
@@ -93,9 +94,13 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
   let orbit = new THREE.Vector3(Math.sin(LEVEL_TUNING.orbitYawDefault) * Math.sin(LEVEL_TUNING.orbitPolarDefault),
     Math.cos(LEVEL_TUNING.orbitPolarDefault), Math.cos(LEVEL_TUNING.orbitYawDefault) * Math.sin(LEVEL_TUNING.orbitPolarDefault));
   const buildings = () => view.plan.buildings || [];
+  const yardRooms = () => view.plan.site?.yard_rooms || [];
+  const yardRoom = () => state.building == null && state.room != null ? yardRooms().find(r => r.id === state.room) : null;
   const building = () => buildings().find(b => b.id === state.building);
   const floors = b => [...(b?.levels || [])].sort((a, b) => a.elevation - b.elevation);
   function normalize(next, idle = false) {
+    const yard = next.building == null && next.room != null ? yardRooms().find(r => r.id === next.room) : null;
+    if (yard) return {level: 'room', building: null, floor: null, room: yard.id};
     let b = buildings().find(b => b.id === next.building), f = b?.levels.find(l => l.id === next.floor);
     if (next.building != null && !b) return null;
     const r = next.room != null ? b?.rooms?.find(r => r.id === next.room) : null;
@@ -103,7 +108,7 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     if (next.room != null && !r || next.floor != null && !f) return null;
     let level = next.level || (r ? 'room' : f ? 'floor' : b ? 'building' : 'house');
     if (!['house', 'building', 'floor', 'room'].includes(level)) return null;
-    if (!idle && level === 'house' && buildings().length === 1) { b = buildings()[0]; level = 'building'; }
+    if (!idle && level === 'house' && buildings().length === 1 && !yardRooms().length) { b = buildings()[0]; level = 'building'; }
     if (!idle && level === 'building' && b?.levels.length === 1) { level = 'floor'; f = b.levels[0]; }
     if (level !== 'house' && !b || ['floor', 'room'].includes(level) && !f || level === 'room' && !r) return null;
     return {level, building: level === 'house' ? null : b.id, floor: ['floor', 'room'].includes(level) ? f.id : null, room: level === 'room' ? r.id : null};
@@ -116,19 +121,20 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     return box.isEmpty() ? [base(b), base(b) + Math.max(0, ...b.levels.map(l => l.elevation + (l.ceiling || 8)))] : [box.min.y / FT, box.max.y / FT];
   }
   function framing() {
-    const b = building(), f = b?.levels.find(l => l.id === state.floor), r = b?.rooms?.find(r => r.id === state.room);
+    const b = building(), f = b?.levels.find(l => l.id === state.floor), yard = yardRoom(), r = yard || b?.rooms?.find(r => r.id === state.room);
     const list = b ? [b] : buildings();
-    const points = r ? r.polygon.map(p => transform(b, p)) : list.flatMap(b => (f ? [f] : b.levels).flatMap(l => floorOutline(b, l)));
+    const points = r ? yard ? r.polygon : r.polygon.map(p => transform(b, p))
+      : [...list.flatMap(b => (f ? [f] : b.levels).flatMap(l => floorOutline(b, l))), ...(state.level === 'house' ? yardRooms().flatMap(r => r.polygon) : [])];
     const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
     const x0 = Math.min(...xs, ...(points.length ? [] : [0])), x1 = Math.max(...xs, ...(points.length ? [] : [20]));
     const y0 = Math.min(...ys, ...(points.length ? [] : [0])), y1 = Math.max(...ys, ...(points.length ? [] : [20]));
     const top = ['floor', 'room'].includes(state.level);
     const ranges = top ? [] : list.map(heights), low = ranges.length ? Math.min(...ranges.map(r => r[0])) : 0,
       high = ranges.length ? Math.max(...ranges.map(r => r[1])) : 0;
-    const height = top ? base(b) + f.elevation : (low + high) / 2;
+    const height = yard ? groundAt(view.plan, ...centroid(yard.polygon)) : top ? base(b) + f.elevation : (low + high) / 2;
     // At House, orbit the centroid of building centroids, rather than a lot or an outlier's bbox centre.
     const centres = list.map(b => centroid(floorOutline(b, floors(b)[0] || {})));
-    const at = state.level === 'house' && centres.length ? [0, 1].map(i => centres.reduce((sum, p) => sum + p[i], 0) / centres.length) : [(x0 + x1) / 2, (y0 + y1) / 2];
+    const at = yard ? centroid(yard.polygon) : state.level === 'house' && centres.length ? [0, 1].map(i => centres.reduce((sum, p) => sum + p[i], 0) / centres.length) : [(x0 + x1) / 2, (y0 + y1) / 2];
     const span = Math.max(LEVEL_TUNING.minSpanFeet, 2 * Math.max(at[0] - x0, x1 - at[0]) / (view.camera.aspect || 1),
       2 * Math.max(at[1] - y0, y1 - at[1]), top ? 0 : high - low);
     return {target: new THREE.Vector3(at[0] * FT, height * FT, -at[1] * FT),
@@ -142,11 +148,11 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     controls.minDistance = distance * LEVEL_TUNING.zoomHardMin; controls.maxDistance = distance * LEVEL_TUNING.zoomHardMax;
   }
   function path() {
-    const b = building(), f = b?.levels.find(l => l.id === state.floor), r = b?.rooms?.find(r => r.id === state.room);
-    return [ ...(buildings().length !== 1 ? [{text: 'House', state: {level: 'house'}}] : []),
+    const b = building(), f = b?.levels.find(l => l.id === state.floor), r = yardRoom() || b?.rooms?.find(r => r.id === state.room);
+    return [ ...(buildings().length !== 1 || yardRooms().length ? [{text: 'House', state: {level: 'house'}}] : []),
       ...(b ? [{text: b.name || b.id, state: {building: b.id}}] : []),
       ...(f ? [{text: f.name || f.id, state: {building: b.id, floor: f.id}}] : []),
-      ...(r ? [{text: r.name || r.id, state: {building: b.id, room: r.id}}] : [])];
+      ...(r ? [{text: r.name || r.id, state: {building: b?.id || null, room: r.id}}] : [])];
   }
   function syncPath() {
     chip.replaceChildren();
@@ -166,7 +172,8 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
       orbit.copy(view.camera.position).sub(controls.target).normalize();
     state = resolved; view.live?.closeRoom();
     const frame = framing(); distance = frame.distance;
-    configure(); visibility(frame.top ? `${state.building}:${state.floor}` : 'ext');
+    configure(); visibility(frame.top && state.building != null ? `${state.building}:${state.floor}` : 'ext');
+    for (const icon of icons) if (icon.outline) icon.outline.visible = icon.r === state.room && state.building == null;
     view.state.camera = frame.top ? 'top' : 'orbit'; syncPath();
     const axis = frame.top ? new THREE.Vector3(0, 1, LEVEL_TUNING.topOffsetFeet / (distance / FT)).normalize() : orbit;
     if (immediate) {
@@ -174,15 +181,16 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
       view.camera.updateProjectionMatrix(); controls.update(); view.render();
     } else animateCamera(view, frame.target, distance, 1, () => { configure(); view.render(); }, axis);
     host.dispatchEvent(new CustomEvent('twinlevelchange', {detail: snapshot()}));
+    if (yardRoom()) view.live?.openRoom(null, state.room);
     return true;
   }
   function down(point = center) {
     if (state.level === 'house') {
-      const rect = canvas.getBoundingClientRect(), at = [rect.left + rect.width / 2, rect.top + rect.height / 2];
-      const nearest = buildings().map(b => { const p = framingBuilding(b).clone().project(view.camera);
-        return {b, d: Math.hypot(rect.left + (p.x + 1) * rect.width / 2 - at[0], rect.top + (1 - p.y) * rect.height / 2 - at[1])};
+      const rect = canvas.getBoundingClientRect(), at = point || [rect.left + rect.width / 2, rect.top + rect.height / 2];
+      const nearest = icons.filter(i => !i.f).map(icon => { const p = icon.sprite.position.clone().project(view.camera);
+        return {icon, d: Math.hypot(rect.left + (p.x + 1) * rect.width / 2 - at[0], rect.top + (1 - p.y) * rect.height / 2 - at[1])};
       }).sort((a, b) => a.d - b.d)[0];
-      return nearest ? go({building: nearest.b.id}) : false;
+      return nearest ? go(nearest.icon.r ? {room: nearest.icon.r} : {building: nearest.icon.b}) : false;
     }
     if (state.level === 'building') return go({building: state.building, floor: floors(building())[0]?.id});
     if (state.level === 'floor') {
@@ -196,7 +204,8 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     return false;
   }
   function up() {
-    if (buildings().length === 1 && (state.level === 'building' || state.level === 'floor' && building()?.levels.length === 1)) return false;
+    if (yardRoom()) return go({level: 'house'});
+    if (!yardRooms().length && buildings().length === 1 && (state.level === 'building' || state.level === 'floor' && building()?.levels.length === 1)) return false;
     if (state.level === 'room') return go({building: state.building, floor: state.floor});
     if (state.level === 'floor') return building()?.levels.length === 1 ? go({level: 'house'}) : go({building: state.building});
     if (state.level === 'building') return go({level: 'house'});
@@ -215,11 +224,19 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
   }
   function swipe(dx, dy) {
     if (state.level !== 'room' || Math.hypot(dx, dy) < LEVEL_TUNING.swipeMinPx) return false;
-    const b = building(), a = -(b.rotation || 0) * Math.PI / 180;
+    const b = building();
+    if (!b) {
+      const next = roomNeighbour(yardRooms(), state.room, [dx, -dy]);
+      return next ? go({room: next.id}) : false;
+    }
+    const a = -(b.rotation || 0) * Math.PI / 180;
     // The top camera's screen right is world +x, screen down is world -y.
     const direction = [Math.cos(a) * dx + Math.sin(a) * dy, Math.sin(a) * dx - Math.cos(a) * dy];
     const next = roomNeighbour(b.rooms || [], state.room, direction);
-    return next ? go({building: b.id, room: next.id}) : false;
+    if (next) return go({building: b.id, room: next.id});
+    const current = b.rooms.find(r => r.id === state.room);
+    const outdoor = current && roomNeighbour([{...current, level: undefined, polygon: current.polygon.map(p => transform(b, p))}, ...yardRooms()], state.room, [dx, -dy]);
+    return outdoor ? go({room: outdoor.id}) : false;
   }
   function framingBuilding(b) {
     const at = centroid(floorOutline(b, floors(b)[0] || {}));
@@ -249,6 +266,23 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     }
     sprite.position.copy(position); icons.push({b: b.id, f: f?.id, sprite, button});
   }
+  for (const room of yardRooms()) {
+    const at = centroid(room.polygon), sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: texture('floor'), depthTest: false, depthWrite: false, toneMapped: false}));
+    sprite.renderOrder = 21; sprite.position.set(at[0] * FT, groundAt(view.plan, ...at) * FT, -at[1] * FT); root.add(sprite);
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = room.name || room.id;
+    button.dataset.levelRoom = room.id; button.setAttribute('aria-label', `Open ${button.textContent}`);
+    button.addEventListener('click', () => go({room: room.id})); targets.append(button);
+    const points = [];
+    for (let i = 0; i < room.polygon.length; i++) {
+      const p = room.polygon[i], q = room.polygon[(i + 1) % room.polygon.length], steps = Math.max(1, Math.min(128, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]))));
+      for (let j = 0; j < steps; j++) { const x = p[0] + (q[0] - p[0]) * j / steps, y = p[1] + (q[1] - p[1]) * j / steps;
+        points.push(new THREE.Vector3(x * FT, (groundAt(view.plan, x, y) + .04) * FT, -y * FT)); }
+    }
+    if (points.length) points.push(points[0].clone());
+    const outline = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({color: twinText, transparent: true, opacity: .5, depthWrite: false}));
+    outline.name = `yard-room-outline:${room.id}`; outline.visible = false; root.add(outline);
+    icons.push({r: room.id, sprite, button, outline});
+  }
   // Include both target kinds in initial warm-up, including a house which skips
   // straight to its sole floor. A later idle House pose introduces no program.
   view.renderer3.compileAsync?.(view.scene, view.camera).catch(() => {});
@@ -272,7 +306,7 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     ray.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2), view.camera);
     const icon = ray.intersectObjects(icons.filter(i => i.sprite.visible).map(i => i.sprite), false)[0]?.object;
     const target = icons.find(i => i.sprite === icon);
-    if (target) return go({building: target.b, ...(target.f ? {floor: target.f} : {})});
+    if (target) return go(target.r ? {room: target.r} : {building: target.b, ...(target.f ? {floor: target.f} : {})});
     const pick = view.pick(event.clientX, event.clientY);
     if (state.level === 'house' && pick?.building) return go({building: pick.building});
     if (state.level === 'floor' && pick?.kind === 'room' && pick.building === state.building) return go({building: pick.building, room: pick.id});
@@ -314,7 +348,7 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     restore(saved) {go(saved.state, {immediate: true, idle: saved.state.level === 'house'}); distance = saved.distance; configure();},
     save: () => ({state: snapshot(), distance}),
     stop() {view.cancelCameraMotion?.(); clearTimeout(wheelTimer); events.abort(); controls.removeEventListener('start', cancelMotion);
-      root.removeFromParent(); icons.forEach(i => i.sprite.material.dispose()); textures.forEach(t => t.dispose()); targets.remove(); chip.remove();},
+      root.removeFromParent(); icons.forEach(i => { i.sprite.material.dispose(); i.outline?.geometry.dispose(); i.outline?.material.dispose(); }); textures.forEach(t => t.dispose()); targets.remove(); chip.remove();},
   };
 }
 function inside(poly, [x, y]) {

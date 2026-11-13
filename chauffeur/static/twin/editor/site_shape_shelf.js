@@ -3,9 +3,10 @@ import { editVertex } from './polygon_handles.js';
 import { shapeKey, shapeCentre, shapeSize, transformShape, shapeOperation, closedShape } from './site_shapes.js';
 import { roundPit, firePitOptions } from '../fire_pits.js';
 import { linkEntityPicker } from './object_shelf.js';
+import { pathOutline } from '../path_shapes.js';
 
 // Uses the object shelf's labels, number inputs and Advanced disclosure.
-export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, onSaved = () => {} }) {
+export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, onSaved = () => {}, haAvailable = false, onMakeRoom = () => {} }) {
   const section = document.createElement('section'); section.setAttribute('aria-label', 'Yard shape properties'); host.append(section);
   const advanced = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Advanced'; advanced.append(summary);
   const save = change => queue(async () => {
@@ -32,6 +33,23 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
   }
   const { piece, kind } = record, centre = shapeCentre(piece), size = shapeSize(piece);
   const path = piece.kind === 'path';
+  if (kind === 'yard_rooms') {
+    const name = field('Name', piece.name, (_, name) => ({ name: name.trim() }), section, false);
+    name.maxLength = 40; name.minLength = 1;
+    if (!haAvailable) field('Home Assistant area', piece.ha_area || '', (_, ha_area) => ({ ha_area: ha_area.trim() || null }), section, false, true);
+  }
+  if (['pool', 'hardscape', 'beds', 'fire_pit'].includes(kind) && (piece.polygon || path || kind === 'fire_pit')) {
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Make this a room'; button.disabled = !canEdit();
+    button.addEventListener('click', () => queue(async () => {
+      if (!canEdit()) return;
+      const current = getRecord(); if (!current) return;
+      await op(current.piece.kind === 'path'
+        ? { op: 'add_site_shape', list: 'yard_rooms', name: (current.piece.name || 'Path').slice(0, 40), polygon: pathOutline(current.piece) }
+        : { op: 'make_yard_room', list: current.kind, id: current.piece.id });
+      onMakeRoom();
+    }).catch(report));
+    section.append(button);
+  }
   if (kind === 'fire_pit') {
     const gas = piece.fuel === 'gas';
     const legacy = !firePitOptions(piece).detailed;

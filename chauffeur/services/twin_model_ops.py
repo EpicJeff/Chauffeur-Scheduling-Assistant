@@ -491,7 +491,7 @@ MORE_OPS = ('add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
-            'move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape', 'place_device', 'unplace_device',
+            'move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape', 'make_yard_room', 'place_device', 'unplace_device',
             'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation', 'set_porch_foundation')
 
 
@@ -540,6 +540,9 @@ def _device_id(value):
 
 def _unplace_device(model, device, actor):
     changed = False
+    yard = model.get('site', {}).get('devices', [])
+    model['site']['devices'] = [p for p in yard if p['device'] != device]
+    changed |= len(yard) != len(model['site']['devices'])
     for building in model['buildings']:
         for anchor in building.get('anchors', []):
             if anchor.get('device') == device:
@@ -558,6 +561,17 @@ def _unplace_device(model, device, actor):
 
 def _place_device(model, op, actor):
     device = _device_id(op.get('device'))
+    if isinstance(op.get('host'), dict) and 'yard_room' in op['host']:
+        from services import twin_site_shapes
+        piece = {'id': f'device:{device}', 'device': device, 'host': deepcopy(op['host']), 'offset': op.get('offset', 0)}
+        try:
+            twin_site_shapes.yard_device_point(model['site'], piece)
+        except ValueError as exc:
+            raise Refused(str(exc)) from exc
+        _unplace_device(model, device, actor)
+        piece['src'] = {'person': True} if actor == 'person' else {'auto': True} if actor == 'auto' else {}
+        model['site'].setdefault('devices', []).append(piece)
+        return
     if 'anchor' in op:
         matches = [(b, a) for b in model['buildings'] for a in b.get('anchors', [])
                    if a['id'] == op['anchor'] and (not op.get('building') or b['id'] == op['building'])]
@@ -1146,7 +1160,7 @@ def _site_op(model, op, actor):
     before = deepcopy(model)
     words = 'Changed the site item.'
     name = op.get('list')
-    if name not in ('planting', 'furniture', 'beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence'):
+    if name not in ('planting', 'furniture', 'beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence', 'yard_rooms'):
         raise Refused('Choose a yard item.')
     singleton = name in ('pool', 'fire_pit', 'fence') and not isinstance(model['site'].get(name), list)
     pieces = ([model['site'][name]] if model['site'].get(name) else []) if singleton else model['site'].setdefault(name, [])
@@ -1218,7 +1232,7 @@ def _site_op(model, op, actor):
                 piece['at'] = _point(op.get('at'))
             else:
                 raise Refused('Move this shape by a distance in lot feet.')
-            if name in ('beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence'):
+            if name in ('beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence', 'yard_rooms'):
                 from services import twin_site_shapes
                 key = next((k for k in ('polygon', 'points', 'polyline', 'at') if k in piece), None)
                 try:
@@ -1228,9 +1242,23 @@ def _site_op(model, op, actor):
             if actor == 'person':
                 pieces[index].setdefault('src', {})['person'] = True
         else:
+            if name == 'yard_rooms':
+                room_id = pieces[index]['id']
+                devices = model['site'].get('devices', [])
+                kept = [d for d in devices if d.get('host', {}).get('yard_room') != room_id]
+                model['site']['devices'] = kept
+                count = len(devices) - len(kept)
+                words = f'Deleted the yard room. Unplaced {count} device' + ('' if count == 1 else 's') + '; they remain in Home Assistant.'
             pieces.pop(index)
             if singleton:
                 model['site'][name] = None
+    if name == 'yard_rooms':
+        from services import twin_site_shapes
+        for device in model['site'].get('devices', []):
+            try:
+                twin_site_shapes.yard_device_point(model['site'], device)
+            except ValueError as exc:
+                raise Refused('That outline would leave a device outside its yard room. Move or unplace it first.') from exc
     return twin_plan.record_compose_overrides(before, model), words
 
 
@@ -1362,7 +1390,25 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
             if not _unplace_device(model, device, actor):
                 raise Refused('Nothing changed.')
         return model, 'Placed the device.' if kind == 'place_device' else 'Removed the device placement.'
+    if kind == 'make_yard_room':
+        from services import twin_site_shapes
+        name = op.get('list')
+        pieces = twin_site_shapes.pieces(model['site'].get(name))
+        piece = next((p for p in pieces if p.get('id') == op['id']), None) if op.get('id') else next((p for i, p in enumerate(pieces) if i == op.get('index', 0)), None)
+        if piece is None:
+            raise Refused('That ground feature is missing.')
+        try:
+            values = twin_site_shapes.room_from_feature(name, piece)
+        except ValueError as exc:
+            raise Refused(str(exc)) from exc
+        return _site_op(model, {'op': 'add_site_shape', 'list': 'yard_rooms', **values}, actor)
     if kind in ('move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape'):
+        if op.get('list') == 'yard_rooms' and 'ha_area' in op and op['ha_area'] is not None:
+            from services import twin_edit
+            try:
+                op = {**op, 'ha_area': twin_edit._ha_area(op['ha_area'], ha_catalogue)}
+            except ValueError as exc:
+                raise Refused(str(exc)) from exc
         return _site_op(model, op, actor)
     building = _find(model, 'buildings', op.get('building'))
     before = hosts.snapshot(building)

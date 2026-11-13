@@ -599,7 +599,8 @@ def apply_model(model, edit, validated=None, ha_catalogue=None):
     if not isinstance(edit, dict):
         raise ValueError('An edit must be an object.')
     op = edit.get('op')
-    if (op == 'set' and edit.get('field') == 'ha_area' or op == 'place_device') and ha_catalogue is None:
+    if (op == 'set' and edit.get('field') == 'ha_area' or op == 'place_device'
+            or edit.get('list') == 'yard_rooms' and 'ha_area' in edit) and ha_catalogue is None:
         from services import twin_ha
         ha_catalogue = twin_ha.safe_catalogue()
     if op == 'delete' and 'piece' in edit:
@@ -882,7 +883,8 @@ def save(edit, actor_id, reason=''):
         raise ValueError('An edit must be an object.')
     edit = deepcopy(edit)
     ha_catalogue = None
-    if edit.get('op') == 'set' and edit.get('field') == 'ha_area' or edit.get('op') == 'place_device':
+    if (edit.get('op') == 'set' and edit.get('field') == 'ha_area' or edit.get('op') == 'place_device'
+            or edit.get('list') == 'yard_rooms' and 'ha_area' in edit):
         from services import twin_ha
         ha_catalogue = twin_ha.safe_catalogue()
     # Same lock order as update_current/start_over. Keep the snapshot, new round,

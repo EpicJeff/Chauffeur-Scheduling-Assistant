@@ -4,7 +4,7 @@ import { twinGlass, twinText } from './palette.js';
 import { LUCIDE } from '../vendor/lucide/icons.js';
 
 const FT = .3048;
-export const siteShapeLabels = { beds: 'Planting bed', hardscape: 'Path / hardscape', edges: 'Edge planting', pool: 'Pool', fire_pit: 'Fire pit', fence: 'Fence' };
+export const siteShapeLabels = { beds: 'Planting bed', hardscape: 'Path / hardscape', edges: 'Edge planting', pool: 'Pool', fire_pit: 'Fire pit', fence: 'Fence', yard_rooms: 'Yard room' };
 export const siteShapeKinds = Object.keys(siteShapeLabels);
 export const sitePoints = piece => piece.polygon || piece.points || piece.polyline || (piece.at ? [piece.at] : []);
 export const sitePieces = value => Array.isArray(value) ? value : value ? [value] : [];

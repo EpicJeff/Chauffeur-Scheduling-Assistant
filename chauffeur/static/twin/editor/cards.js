@@ -116,7 +116,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     const flags = roofFlags(record);
     const porchLayout = record?.kind === 'room' && record.piece.kind === 'porch'
       ? JSON.stringify([record.piece.foundation, canEdit()]) : '';
-    const nextLayout = JSON.stringify([record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
+    const nextLayout = JSON.stringify([record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
     // save must not detach Turn while the person is typing the next edit.
@@ -213,6 +213,12 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       getRecord: () => findPiece(getPlan(), piece.id, building?.id) });
     if (siteShapeKinds.includes(kind)) {
       drawSiteShapeShelf(host, record, { canEdit, queue, op, report,
+        haAvailable: !!haLink?.state()?.available,
+        onMakeRoom: () => {
+          const room = getPlan().site?.yard_rooms?.at(-1);
+          if (room) { select({ pieceId: room.id, buildingId: null }); layout = null; draw({ pieceId: room.id, buildingId: null });
+            host.querySelector('input[aria-label="Name"]')?.focus(); host.querySelector('input[aria-label="Name"]')?.select(); }
+        },
         getRecord: () => findPiece(getPlan(), piece.id, null), onSaved: () => { layout = null; draw(); } });
       const note = document.createElement('p'); note.textContent = 'Drag the move handle or use the arrow keys (one foot).'; host.append(note);
       for (const [axis, text] of ['Move east (ft)', 'Move north (ft)'].entries()) {
@@ -304,7 +310,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       (['ridge', 'low_side'].includes(field) ? more : form).append(label);
     }
     if (more.children.length > 1) form.append(more);
-    if (haLink && ['room', 'building', 'anchor'].includes(kind) && !['meter','electric_panel','charger','parking'].includes(piece.kind)) {
+    if (haLink && ['room', 'yard_rooms', 'building', 'anchor'].includes(kind) && !['meter','electric_panel','charger','parking'].includes(piece.kind)) {
       haSection = document.createElement('section'); host.append(haSection); drawHaSection(record);
     }
     host.append(button('Ask Argyle about this', () => ask(selection)));
@@ -320,7 +326,10 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     const { kind, piece, building } = record;
     const roof = kind === 'roof' && building.roofs?.find(r => r.id === piece.id);
       if (!canEdit()) return;
-      if (!await window.promptConfirm(`Delete ${getLabel(selection)}?`, 'Attached doors or windows may also be removed. The timeline keeps the earlier house.', 'Delete', 'Cancel')) return;
+      const count = kind === 'yard_rooms' ? (getPlan().site?.devices || []).filter(d => d.host?.yard_room === piece.id).length : 0;
+      if (!await window.promptConfirm(`Delete ${getLabel(selection)}?`, kind === 'yard_rooms'
+        ? `${count} device${count === 1 ? '' : 's'} will be unplaced and remain in Home Assistant. Undo restores the room and its placements.`
+        : 'Attached doors or windows may also be removed. The timeline keeps the earlier house.', 'Delete', 'Cancel')) return;
       await pending;
       if (!building) await op({ op: 'delete_site_item', list: kind, index: record.index });
       else if ((kind==='solar_zone' || roof && !piece.rect) && op) await op({ op: 'delete', building: building.id, id: piece.id });

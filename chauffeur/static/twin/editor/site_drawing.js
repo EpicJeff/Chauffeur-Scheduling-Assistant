@@ -4,7 +4,7 @@ import { pathOutline } from '../path_shapes.js';
 export function snapSitePoint(point, plan, exclude) {
   const segments = [], polygon = ps => { if (ps?.length) ps.forEach((p, i) => segments.push([p, ps[(i + 1) % ps.length]])); };
   polygon(plan.site?.lot);
-  for (const kind of ['terraces', 'beds', 'hardscape', 'edges']) for (const piece of plan.site?.[kind] || []) if (!exclude || piece.id !== exclude) {
+  for (const kind of ['terraces', 'beds', 'hardscape', 'edges', 'yard_rooms']) for (const piece of plan.site?.[kind] || []) if (!exclude || piece.id !== exclude) {
     if (piece.kind === 'path') polygon(pathOutline(piece));
     else if (piece.polygon) polygon(piece.polygon);
     else for (let i = 1; i < (piece.points || []).length; i++) segments.push([piece.points[i - 1], piece.points[i]]);
@@ -56,7 +56,7 @@ export function createSiteDrawing({ getPlan, commit }) {
       const d = draft, path = d.kind === 'path', fence = d.kind === 'fence', placement = d.kind === 'fire_pit' && d.options.shape !== 'outline';
       if (d.points.length < (placement ? 1 : path || fence ? 2 : 3)) throw new Error(`Add at least ${placement ? 'one point' : path || fence ? 'two points' : 'three corners'}.`);
       const operation = d.kind === 'terraces' ? { op: 'add_pad', polygon: d.points, ...d.options }
-        : { op: 'add_site_shape', list: path ? 'hardscape' : d.kind, ...(placement ? { at: d.points[0] } : fence ? { polyline: d.points } : path ? { kind: 'path', points: d.points } : { polygon: d.points }), ...d.options };
+        : { op: 'add_site_shape', list: path ? 'hardscape' : d.kind, ...(d.kind === 'yard_rooms' ? { name: 'Yard room' } : {}), ...(placement ? { at: d.points[0] } : fence ? { polyline: d.points } : path ? { kind: 'path', points: d.points } : { polygon: d.points }), ...d.options };
       saving = true;
       try { if (await commit(operation) === false) return false; draft = null; hover = null; return true; }
       finally { saving = false; }

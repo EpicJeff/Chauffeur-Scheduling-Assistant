@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { hostPoint } from '../twin_hosts.js';
-import { groundAt, buildingGround } from '../twin_ground.js';
+import { groundAt, buildingGround, inPolygon } from '../twin_ground.js';
 import { markerTexture, markerSprite } from '../live/markers.js';
 import { itemOperation, wallFace } from './library.js';
 import { report } from './api.js';
@@ -64,7 +64,23 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     return out;
   }
 
-  function operation(device, event, surfaceKind = null) {
+  // Yard hosts use the same normalized floor coordinates, in the lot's frame.
+  function yardOperation(device, event, roomId = null) {
+    const at = library.ground(event);
+    const room = at && getPlan()?.site?.yard_rooms?.find(r => (!roomId || r.id === roomId) && inPolygon(r.polygon, ...at));
+    if (!room) return null;
+    const low = [0, 1].map(i => Math.min(...room.polygon.map(p => p[i])));
+    const high = [0, 1].map(i => Math.max(...room.polygon.map(p => p[i])));
+    return { op: 'place_device', device: device.device_id,
+      host: { yard_room: room.id, u: (at[0] - low[0]) / (high[0] - low[0]), v: (at[1] - low[1]) / (high[1] - low[1]) }, offset: 0 };
+  }
+
+  function operation(device, event, surfaceKind = null, roomId = null) {
+    if (surfaceKind === 'yard_room') {
+      const yard = yardOperation(device, event, roomId);
+      if (!yard) throw new Error('Pick a spot inside this yard room.');
+      return yard;
+    }
     const picked = view.pick(event.clientX, event.clientY);
     const building = getPlan()?.buildings.find(b => b.id === (picked?.building ?? picked?.buildingId));
     if (!surfaceKind && building) {
@@ -80,6 +96,10 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     }
     const surface = surfaceKind === 'ceiling' ? library.ceilingAt(event)
       : library.surfaceAt(event) || (!surfaceKind && library.ceilingAt(event, true));
+    if (!surfaceKind && !['wall', 'room'].includes(surface?.kind)) {
+      const yard = yardOperation(device, event);
+      if (yard) return yard;
+    }
     if (!surface || !['wall', 'room'].includes(surface.kind)
       || surfaceKind === 'wall' && surface.kind !== 'wall'
       || surfaceKind === 'ceiling' && (surface.kind !== 'room' || surface.surface !== 'ceiling')) throw new Error(badHost);
@@ -102,14 +122,14 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     armed = null; el('device-tools').hidden = true; el('device-tools').classList.remove('editor-device-dragging');
     canvas.style.cursor = ''; document.body.style.cursor = '';
   }
-  function arm(device, kind) {
+  function arm(device, kind, room = null) {
     cancel(); prepare(); tools.setTool('select');
-    armed = { device, kind };
-    el('device-note').textContent = `Click ${kind === 'wall' ? 'a wall' : 'the ceiling'} for ${device.name}. Escape cancels.`;
+    armed = { device, kind, room };
+    el('device-note').textContent = `Click ${kind === 'yard_room' ? 'inside the yard room' : kind === 'wall' ? 'a wall' : 'the ceiling'} for ${device.name}. Escape cancels.`;
     el('device-tools').hidden = false; canvas.style.cursor = 'crosshair';
   }
   function startDrag(event, device) {
-    if (event.button !== 0 || !canEdit() || event.target.closest('button')) return;
+    if (event.button !== 0 || !canEdit() || event.target.closest('button, input, select')) return;
     cancel(); prepare(); tools.setTool('select');
     event.preventDefault();
     const row = event.currentTarget; row.setPointerCapture(event.pointerId);
@@ -121,7 +141,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     if (!drag || drag.pointer !== event.pointerId || drag.moved
       || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 3) return;
     drag.moved = true;
-    el('device-note').textContent = `Drop ${drag.device.name} on a wall, the floor, the ceiling or a spot. Escape cancels.`;
+    el('device-note').textContent = `Drop ${drag.device.name} on a wall, the floor, the ceiling or inside a yard room. Escape cancels.`;
     el('device-tools').classList.add('editor-device-dragging');
     el('device-tools').hidden = false; document.body.style.cursor = 'grabbing';
   }, { capture: true });
@@ -135,7 +155,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     if (!press || press.pointer !== event.pointerId) return false;
     const previous = press; releasePress();
     if (!cancelled && armed && canEdit() && Math.hypot(event.clientX - previous.x, event.clientY - previous.y) < 3) {
-      try { const next = operation(armed.device, event, armed.kind); cancel(); op(next).catch(report); }
+      try { const next = operation(armed.device, event, armed.kind, armed.room); cancel(); op(next).catch(report); }
       catch (error) { report(error); }
     }
     return true;
@@ -183,7 +203,18 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
         return { building, point, level: surface?.level, room };
       } catch { return null; }
     }
+    const piece = plan?.site?.devices?.find(d => d.device === device.device_id);
+    if (piece) {
+      const room = plan.site.yard_rooms?.find(r => r.id === piece.host?.yard_room);
+      if (!room?.polygon?.length) return null;
+      const low = [0, 1].map(i => Math.min(...room.polygon.map(p => p[i])));
+      const high = [0, 1].map(i => Math.max(...room.polygon.map(p => p[i])));
+      return { building: null, point: [low[0] + (high[0] - low[0]) * piece.host.u,
+        low[1] + (high[1] - low[1]) * piece.host.v, piece.offset || 0], level: null, room: room.id };
+    }
     const auto = device.auto, building = plan?.buildings.find(b => b.id === auto?.building);
+    if (auto?.yard && auto.at && plan?.site?.yard_rooms?.some(r => r.id === auto.room))
+      return { building: null, point: [...auto.at, auto.z || 0], level: null, room: auto.room };
     return building && auto ? { building, point: [...auto.at, auto.z], level: auto.level, room: auto.room } : null;
   }
   function draw() {
@@ -191,25 +222,27 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     const selected = tools.selection(), camera = view.camera, rect = canvas.getBoundingClientRect();
     camera.updateMatrixWorld(true);
     for (const { at, sprite } of sprites.values()) {
-      sprite.visible = !!at && view.groups?.levels[`${at.building.id}:${at.level}`]?.visible !== false;
+      sprite.visible = !!at && (!at.building || view.groups?.levels[`${at.building.id}:${at.level}`]?.visible !== false);
       if (!at || !sprite.visible) continue;
       const pixel = camera.isOrthographicCamera ? (camera.top - camera.bottom) / camera.zoom / Math.max(1, rect.height)
         : 2 * Math.max(.1, -sprite.position.clone().applyMatrix4(camera.matrixWorldInverse).z)
           * Math.tan(camera.fov * Math.PI / 360) / camera.zoom / Math.max(1, rect.height);
       sprite.scale.setScalar(pixel * 22);
-      const inRoom = !selected.room || selected.building === at.building.id && at.room === selected.room;
+      const selectedRoom = selected.kind === 'yard_rooms' ? selected.id : selected.room;
+      const inRoom = !selectedRoom || (selected.building ?? null) === (at.building?.id ?? null) && at.room === selectedRoom;
       sprite.material.opacity = inRoom ? 1 : .2;
     }
   }
   const saved = device => getPlan()?.buildings.some(b => b.anchors?.some(a => a.device === device.device_id)
-    || b.devices?.some(d => d.device === device.device_id));
+    || b.devices?.some(d => d.device === device.device_id))
+    || getPlan()?.site?.devices?.some(d => d.device === device.device_id);
   // Like the wall: a device in a Home Assistant area draws; with no room linked to its area
   // only a saved placement says where (the building card flags it to move or remove).
   function refresh() {
     if (stopped) return;
     const state = link.state(), shown = new Set();
     for (const device of state?.available ? state.devices || [] : []) {
-      if (!state.areas?.some(a => a.area_id === device.area_id)) continue;
+      if (!state.areas?.some(a => a.area_id === device.area_id) && !saved(device)) continue;
       if (!state.rooms?.some(r => r.ha_area === device.area_id && !r.gone) && !saved(device)) continue;
       shown.add(device.device_id);
       let row = sprites.get(device.device_id);
@@ -221,7 +254,12 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
       }
       row.at = spot(device);
       if (row.at) {
-        const { building, point } = row.at, a = (building.rotation || 0) * Math.PI / 180, p = building.position || [0, 0];
+        const { building, point } = row.at;
+        if (!building) {
+          row.sprite.position.set(point[0] * FT, (groundAt(getPlan(), point[0], point[1]) + point[2]) * FT, -point[1] * FT);
+          continue;
+        }
+        const a = (building.rotation || 0) * Math.PI / 180, p = building.position || [0, 0];
         row.sprite.position.set((Math.cos(a) * point[0] - Math.sin(a) * point[1] + p[0]) * FT,
           (point[2] + (building.base || 0) + buildingGround(getPlan(), building)) * FT,
           -(Math.sin(a) * point[0] + Math.cos(a) * point[1] + p[1]) * FT);

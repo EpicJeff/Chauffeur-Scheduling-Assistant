@@ -63,9 +63,9 @@ async function readLayout(api, stop) {
 
 // What a layer draws from a layout; a re-read that matches it changes nothing on screen.
 const layoutKey = layout => JSON.stringify([
-  (layout?.markers || []).map(m => [m.device_id, m.name, m.kind, m.entity_id, m.entities, m.building, m.level, m.room, m.at, m.fire_pit, m.facing_deg, m.orientation, m.outdoor, m.location_valid, m.placed, m.offered, m.accessories]),
-  (layout?.rooms || []).map(r => [r.building, r.room, r.level, r.area_id, r.name, r.lights, r.polygon_world]),
-  (layout?.devices || []).map(d => [d.device_id, d.name, d.kind, d.entity_id, d.entities, d.area_id, d.offered, d.accessories])]);
+  (layout?.markers || []).map(m => [m.device_id, m.name, m.kind, m.entity_id, m.entities, m.building, m.level, m.room, m.yard, m.at, m.fire_pit, m.facing_deg, m.orientation, m.outdoor, m.location_valid, m.placed, m.offered, m.accessories]),
+  (layout?.rooms || []).map(r => [r.building, r.room, r.level, r.yard, r.area_id, r.name, r.lights, r.polygon_world]),
+  (layout?.devices || []).map(d => [d.device_id, d.name, d.kind, d.entity_id, d.entities, d.area_id, d.building, d.room, d.yard, d.offered, d.accessories])]);
 
 // The wall keeps its live layer without a reload. A layer that could not mount (Home Assistant
 // away, a read that failed or timed out) is tried again every 45 s; a mounted one re-reads the
@@ -204,7 +204,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const row = layout.rooms.find(r => r.building === building && r.room === room);
     const event = new CustomEvent('twinroom', { detail: row, cancelable: true });
     if (canvas.dispatchEvent(event)) {
-      if (row?.area_id) roomPanel?.open(row);
+      if (row?.area_id || row?.yard) roomPanel?.open(row);
       else if (fallback) showSheet(fallback);
       else roomPanel?.close();
     }
@@ -224,7 +224,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const polygon = info?.polygon_world;
     if (!polygon?.length) return;
     const b = view.plan.buildings.find(b => b.id === building), level = b?.levels?.find(l => l.id === info.level);
-    const y = ((b?.base || 0) + roomFloor(level, b?.rooms?.find(r => r.id === room)) + buildingGround(view.plan, b)) * FT;
+    const at = polygon.reduce((sum, p) => [sum[0] + p[0] / polygon.length, sum[1] + p[1] / polygon.length], [0, 0]);
+    const y = (info.yard ? groundAt(view.plan, ...at) : (b?.base || 0) + roomFloor(level, b?.rooms?.find(r => r.id === room)) + buildingGround(view.plan, b)) * FT;
     const points = polygon.map(([x, z]) => new THREE.Vector3(x * FT, y, -z * FT));
     const bounds = new THREE.Box3().setFromPoints(points), center = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3()), camera = view.camera, controls = view.controls;
@@ -381,7 +382,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const lod = navigation ? {markers: shown.map(row => row.device_id), badges: [], labels: pxPerFoot >= 20}
       : levelOfDetail(shown, pxPerFoot);
     // A marker that wants attention stays drawn on its own while its floor is hidden (twin design 5.1).
-    const pinned = rows.filter(row => row.look === 'attention' && (navigation || !levelShown(row))).map(row => row.device_id);
+    const pinned = rows.filter(row => row.look === 'attention' && (navigation ? deviceAtLevel(navigation, row) : !levelShown(row))).map(row => row.device_id);
     const individual = new Set([...lod.markers, ...pinned]), visibleBadges = new Set();
     const place = (sprite, size) => sprite.scale.setScalar(pixelSize(sprite.position) * size);
     const screen = position => {
@@ -486,7 +487,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
         const b = view.plan.buildings.find(b => b.id === badge.building), level = b?.levels?.find(l => l.id === room?.level);
         for (const [x, z] of room?.polygon_world || []) sprite.position.add(new THREE.Vector3(x * FT, 0, -z * FT));
         sprite.position.divideScalar(Math.max(1, room?.polygon_world?.length || 0));
-        sprite.position.y = ((b?.base || 0) + roomFloor(level, b?.rooms?.find(r => r.id === badge.room)) + buildingGround(view.plan, b)) * FT;
+        sprite.position.y = room?.yard ? groundAt(view.plan, sprite.position.x / FT, -sprite.position.z / FT) * FT
+          : ((b?.base || 0) + roomFloor(level, b?.rooms?.find(r => r.id === badge.room)) + buildingGround(view.plan, b)) * FT;
       }
       textures.assign(sprite, 'room', badge.attention ? 'attention' : 'off', badge.count);
       sprite.material.opacity = inRoom.every(row => row.dim) ? .4 : 1;
@@ -679,7 +681,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       if (nextKey !== energyStreamKey) {energyStreamKey = nextKey; stream?.close(); stream = null; subscribeStates();}
       view.render();
     },
-    devices: area => devices.filter(row => row.area_id === area).map(row => ({ ...row, ...stateOf(row) })),
+    devices: (area, room) => devices.filter(row => area != null && row.area_id === area
+      || room && row.building === room.building && row.room === room.room).map(row => ({ ...row, ...stateOf(row) })),
     states: () => structuredClone(states),
     // Reads without a copy, for listeners that run on every push (review M3): never
     // written to by a reader.
@@ -702,7 +705,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       const sprite = spriteFor(iconKind(marker), 'unavailable');
       sprite.userData.deviceId = marker.device_id;
       const building = view.plan.buildings.find(b => b.id === marker.building);
-      const ground = marker.fire_pit ? groundAt(view.plan, ...marker.at) : buildingGround(view.plan, building);
+      const ground = marker.fire_pit || marker.yard ? groundAt(view.plan, ...marker.at) : buildingGround(view.plan, building);
       sprite.position.set(marker.at[0] * FT, (marker.at[2] + ground) * FT, -marker.at[1] * FT);
       root.add(sprite);
       const label = document.createElement('span'); labels.append(label);

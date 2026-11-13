@@ -544,11 +544,16 @@ def _site(site, notes):
             except ValueError:
                 notes.append(f'Dropped site {name}: invalid outline or dimensions.')
         site[name] = kept if isinstance(value, list) else kept[0] if kept else None
-    for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape', 'terraces'):
+    for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape', 'terraces', 'yard_rooms'):
         kept = []
         for index, item in enumerate(_items(site, name, notes)):
             valid = isinstance(item, dict)
-            if valid and name == 'terraces':
+            if valid and name == 'yard_rooms':
+                try:
+                    twin_site_shapes.validate(name, item)
+                except ValueError:
+                    valid = False
+            elif valid and name == 'terraces':
                 valid = twin_terrain.pad_error(item) is None
             elif valid and name in ('beds', 'hardscape'):
                 if name == 'hardscape' and item.get('kind') == 'path':
@@ -575,9 +580,22 @@ def _site(site, notes):
     pieces = [item for name in ('pool', 'fire_pit', 'fence')
               if isinstance((item := site.get(name)), dict)]
     pieces.extend(item for name in ('fire_pit', 'fence') if isinstance(site.get(name), list) for item in site[name])
-    pieces.extend(item for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape', 'terraces')
+    pieces.extend(item for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape', 'terraces', 'yard_rooms')
                   for item in site[name])
     _piece_meta(pieces, 'site', notes)
+    kept = []
+    seen = set()
+    for item in _items(site, 'devices', notes):
+        try:
+            twin_site_shapes.yard_device_point(site, item)
+            if not isinstance(item.get('device'), str) or not item['device'].strip() or item['device'] in seen:
+                raise ValueError('Choose a device once.')
+            item.setdefault('id', 'device:' + item['device'])
+            seen.add(item['device'])
+            kept.append(item)
+        except (ValueError, TypeError, KeyError):
+            notes.append('Dropped site device: invalid yard room placement.')
+    site['devices'] = kept
 
 
 def normalize(raw: dict) -> tuple[dict, list[str]]:

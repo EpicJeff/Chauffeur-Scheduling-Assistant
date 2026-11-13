@@ -22,8 +22,10 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     listen(node, 'click', action);
     return node;
   };
-  const commit = (room, value) => onCommit({ op: 'set', building: room.building,
-    id: room.id, field: 'ha_area', value });
+  const yardRoom = room => room.yard || room.building === null;
+  const commit = (room, value) => onCommit(yardRoom(room)
+    ? { op: 'update_site_shape', list: 'yard_rooms', id: room.id, ha_area: value || null }
+    : { op: 'set', building: room.building, id: room.id, field: 'ha_area', value });
   const byLevel = floors => [...floors || []].sort((a, b) =>
     (a.level ?? Infinity) - (b.level ?? Infinity) || String(a.name).localeCompare(String(b.name)));
 
@@ -31,8 +33,9 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
   function placedIn(device, building) {
     const plan = getPlan?.();
     if (!plan) return !!device.placed && (!building || device.placed.building === building.id);
-    return plan.buildings.some(b => (!building || b.id === building.id)
-      && (b.anchors?.some(a => a.device === device.device_id) || b.devices?.some(d => d.device === device.device_id)));
+    return (plan.buildings || []).some(b => (!building || b.id === building.id)
+      && (b.anchors?.some(a => a.device === device.device_id) || b.devices?.some(d => d.device === device.device_id)))
+      || (!building && !!plan.site?.devices?.some(d => d.device === device.device_id));
   }
   const isPlaced = device => placedIn(device);
   // A device whose Home Assistant area no room links (the area was moved or never linked).
@@ -56,6 +59,7 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
   async function pickSpot(room, device) {
     if (!canEdit()) return;
     placement?.cancel();
+    if (room && yardRoom(room)) { placement?.arm(device, 'yard_room', room.id); return; }
     const anchors = room && placement?.anchors(room).filter(a => !a.device && a.kind === device.kind) || [];
     const doors = room && ['lock', 'sensor'].includes(device.kind) && placement?.doors?.(room) || [];
     const choice = await window.promptChoice('Pick a spot', `Where does ${device.name} belong?`, [
@@ -94,6 +98,18 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     if (placed) actions.append(button('Remove', () => {
       if (canEdit()) return onCommit({ op: 'unplace_device', device: device.device_id });
     }, `remove:${device.device_id}`));
+    const yard = getPlan?.()?.site?.devices?.find(d => d.device === device.device_id);
+    if (yard) {
+      const label = element('label', 'Height above ground (ft)'), input = element('input');
+      input.type = 'number'; input.min = '0'; input.max = '100'; input.step = 'any'; input.value = yard.offset || 0;
+      input.setAttribute('aria-label', 'Height above ground (ft)');
+      listen(input, 'change', () => {
+        const offset = Number(input.value);
+        if (!input.value.trim() || !Number.isFinite(offset) || offset < 0 || offset > 100) throw new Error('Choose a height above ground from 0 to 100 feet.');
+        if (canEdit()) return onCommit({ op: 'place_device', device: device.device_id, host: yard.host, offset });
+      });
+      label.append(input); words.append(label);
+    }
     row.addEventListener('pointerdown', event => {
       if (event.pointerType !== 'mouse' && !event.target?.closest?.('.editor-device-grip')) return;
       placement?.startDrag(event, device);
@@ -107,7 +123,9 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
   function devicesSection(room, area, notes) {
     const section = element('section');
     section.append(element('h3', 'Devices'));
-    for (const device of latest.devices || []) if (device.area_id === area) section.append(deviceRow(device, room));
+    const placed = yardRoom(room) ? getPlan?.()?.site?.devices || [] : [];
+    for (const device of latest.devices || []) if ((area && device.area_id === area)
+      || placed.some(d => d.device === device.device_id && d.host?.yard_room === room.id)) section.append(deviceRow(device, room));
     for (const note of notes || []) section.append(element('p', note));
     return section;
   }
@@ -195,18 +213,20 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
         section.append(suggestion);
       }
     }
-    if (selected && !row?.gone && known) section.append(devicesSection(room, selected, row?.notes));
+    if ((selected && !row?.gone && known) || yardRoom(room)) section.append(devicesSection(room, known ? selected : null, row?.notes));
     return section;
   }
 
   // Rooms a person can link: never a ghost the build only proposed. Each names
   // its floor, because two floors often hold rooms of the same name.
   function choosable(building) {
-    const levels = building.levels || [];
-    return (building.rooms || []).filter(r => r.state !== 'ghost').map(r => {
+    const levels = building?.levels || [];
+    return [...(building?.rooms || []).filter(r => r.state !== 'ghost').map(r => {
       const level = levels.find(l => l.id === r.level);
-      return { room: r, label: level?.name ? `${r.name || 'Room'} · ${level.name}` : r.name || 'Room' };
-    });
+      return { room: { ...r, building: building.id }, label: level?.name ? `${r.name || 'Room'} · ${level.name}` : r.name || 'Room' };
+    }), ...(getPlan?.()?.site?.yard_rooms || []).map(r => ({
+      room: { ...r, building: null, yard: true }, label: `${r.name || 'Yard room'} · Yard`,
+    }))];
   }
 
   function buildingSection(building) {
@@ -221,7 +241,7 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
           rooms.map(({ room, label }) => ({ value: room.id, label })));
         if (signal?.aborted || id == null) return;
         const room = rooms.find(r => r.room.id === id)?.room;
-        if (room) await commit({ ...room, building: building.id }, area.area_id);
+        if (room) await commit(room, area.area_id);
       }, `unlinked:${area.area_id}`));
       section.append(actions);
     }
@@ -242,11 +262,12 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
       const device = latest.devices?.find(d => d.device_id === piece.device);
       return JSON.stringify([...base, piece.device || null, device?.name || null]);
     }
-    if (kind === 'room') {
-      const { row, selected } = chosen({ ...piece, room: piece.id, building: building.id });
+    if (kind === 'room' || kind === 'yard_rooms') {
+      const { row, selected } = chosen({ ...piece, room: piece.id, building: building?.id ?? null });
       const devices = (latest.devices || []).filter(d => d.area_id === selected)
         .map(d => [d.device_id, d.name, d.kind, isPlaced(d)]);
-      return JSON.stringify([...base, piece.ha_area, row, latest.areas, latest.floors, devices]);
+      const yardDevices = kind === 'yard_rooms' ? getPlan?.()?.site?.devices?.filter(d => d.host?.yard_room === piece.id) : null;
+      return JSON.stringify([...base, piece.ha_area, row, latest.areas, latest.floors, devices, yardDevices]);
     }
     return JSON.stringify([...base, latest.unlinked, choosable(building).map(({ room, label }) => [room.id, label]),
       strays(building).map(d => [d.device_id, d.name, d.kind, strayFlag(d)])]);
@@ -259,8 +280,8 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     const next = key(record);
     if (drawn.get(host) === next) return false;
     drawn.set(host, next);
-    const fresh = record.kind === 'room'
-      ? roomSection({ ...record.piece, room: record.piece.id, building: record.building.id })
+    const fresh = record.kind === 'room' || record.kind === 'yard_rooms'
+      ? roomSection({ ...record.piece, room: record.piece.id, building: record.building?.id ?? null })
       : record.kind === 'anchor' ? anchorSection(record.piece) : buildingSection(record.building);
     const focused = document.activeElement, old = host.firstElementChild;
     const inside = focused && focused !== host && host.contains(focused) ? focused : null;
@@ -277,7 +298,7 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
       const name = inside?.dataset?.haFocus;
       if (name) [...host.querySelectorAll('select, button')].find(n => n.dataset.haFocus === name)?.focus();
     }
-    host.querySelectorAll('select, button').forEach(node => { node.disabled = !canEdit(); });
+    host.querySelectorAll('input, select, button').forEach(node => { node.disabled = !canEdit(); });
     return true;
   }
 

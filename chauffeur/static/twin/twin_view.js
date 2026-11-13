@@ -146,6 +146,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   function outline(pick, isHover) {
     if (!pick) return;
     const accent = new THREE.Color(getComputedStyle(el.closest('.editor-shell') || el).getPropertyValue('--editor-accent').trim() || '#52ccff');
+    const yard = !pick.building && plan.site?.yard_rooms?.find(r => r.id === pick.id);
+    if (yard) {
+      const geometry = new THREE.BufferGeometry().setFromPoints([...yard.polygon, yard.polygon[0]].map(p =>
+        new THREE.Vector3(p[0], groundAt(plan, ...p) + .06, -p[1])));
+      const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: isHover ? .4 : .65, depthTest: false }));
+      line.userData.isHover = isHover; line.renderOrder = 10; twin.root.add(line); selectionLines.push(line); return;
+    }
     const keys = [...twin.pieceBounds].filter(([, { data }]) => data.buildingId === pick.building
       && (data.pieceId === pick.id || pick.kind === 'building' || pick.kind === 'level'
         && plan.buildings.find(b => b.id === pick.building)?.levels.some(l => l.id === pick.id)

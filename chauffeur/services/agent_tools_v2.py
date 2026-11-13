@@ -7757,6 +7757,7 @@ class HouseDesignTool(BaseModel):
         "accept_proposal (id:'<piece>:proposal'); dismiss_proposal (id:'<piece>:proposal'); "
         "move_site_item (list, index, at:[x,y]); delete_site_item (list, index); add_site_item (list, asset, at:[x,y]); "
         "site list is planting|furniture|beds|hardscape|edges|pool|fire_pit|fence; index is 0-based, or use id. "
+        "yard_rooms:add/update_site_shape(name,polygon,ha_area);make_yard_room;host:yard_room,u,v. "
         "Pit fields: fuel wood|gas,body stone|brick|concrete,top none|granite|concrete,height_in 6..30,glass amber|blue|clear (gas),entity. "
         "Polygon yard items move with by:[dx,dy]. Adding site items is limited to plants/furniture. "
         "add_pad (polygon in lot feet, height -50..50, blend 0..50 default 6, edges:[{edge:slope|sharp, wall?}] one per polygon edge); "
@@ -9657,7 +9658,8 @@ def _house_design_room_devices(room) -> tuple[str, list]:
     placed = twin_ha.placements(twin_store.current_model() or {'buildings': []})
     devices = [{'device_id': d['device_id'], 'name': d['name'], 'kind': d['kind'],
                 'placed': d['device_id'] in placed}
-               for d in catalogue['devices'] if d.get('area_id') == area]
+               for d in catalogue['devices'] if d.get('area_id') == area
+               or placed.get(d['device_id'], {}).get('host', {}).get('yard_room') == room['id']]
     name = next((a['name'] for a in catalogue['areas'] if a['area_id'] == area), area)
     rows = '; '.join(f"{d['name']} (device {d['device_id']}, {d['kind']}, "
                      f"{'placed' if d['placed'] else 'not placed'})" for d in devices)
@@ -9686,9 +9688,12 @@ def house_design_status() -> dict:
         ]
         summaries.extend(_house_design_building_summary(building)
                          for building in (plan or {}).get('buildings', []))
+        yards = (plan or {}).get('site', {}).get('yard_rooms', [])
+        if yards:
+            summaries.append('Yard rooms: ' + ', '.join(f"{r['name']} ({r['id']})" for r in yards) + '.')
         linked = ', '.join(f"{room.get('name') or room['id']} ({room['id']})"
-                           for building in (plan or {}).get('buildings', [])
-                           for room in building.get('rooms', []) if room.get('ha_area'))
+                           for room in [r for b in (plan or {}).get('buildings', []) for r in b.get('rooms', [])] + yards
+                           if room.get('ha_area'))
         if linked:
             summaries.append(f'Rooms linked to Home Assistant: {linked}. '
                              'Describe one for its device ids.')
@@ -9771,6 +9776,11 @@ def handle_house_design(args: dict, actor=None) -> dict:
             plan = twin_store.current()
             if plan is None:
                 raise ValueError('Build a house before describing a piece.')
+            yard = next((r for r in plan.get('site', {}).get('yard_rooms', []) if r['id'] == params.piece), None) if params.building is None else None
+            if yard:
+                extra, devices = _house_design_room_devices(yard)
+                return {'status': 'ok', 'summary': f"Yard room {yard['name']} ({yard['id']}): {yard['polygon']}." + extra,
+                        'devices': devices}
             kind, piece, building, _ = twin_edit._find(plan, params.piece, params.building)
             if kind == 'building':
                 return {'status': 'ok', 'summary': _house_design_building_summary(building)}

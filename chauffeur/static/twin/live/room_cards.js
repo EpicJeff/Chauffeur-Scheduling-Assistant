@@ -4,8 +4,8 @@ import { formatGlanceValue } from './glance.js';
 import { defaultGlanceIcon, GLANCE_ICONS, svgIcon } from './glance_icons.js';
 
 export function roomFacts(room, rows, states, unit) {
-  const members = rows.filter(row => room.area_id ? row.area_id === room.area_id
-    : row.building === room.building && row.room === room.room);
+  const members = rows.filter(row => room.area_id && row.area_id === room.area_id
+    || row.building === room.building && row.room === room.room);
   const facts = [], attention = members.filter(row => kindOf(row).look(states[row.entity_id]) === 'attention');
   if (attention.length) {
     const words = attention.map(row => stateLabel(row.kind, states[row.entity_id]?.state, states[row.entity_id]?.attributes));

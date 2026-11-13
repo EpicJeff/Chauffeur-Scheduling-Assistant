@@ -88,7 +88,7 @@ export function mountModes(view, live) {
   const bulbGeometry = new THREE.SphereGeometry(.1, 8, 6);
   for (const marker of layout.markers.filter(row => row.kind === 'light')) {
     const building = view.plan.buildings.find(b => b.id === marker.building);
-    const room = building?.rooms?.find(r => r.id === marker.room);
+    const room = marker.yard ? view.plan.site?.yard_rooms?.find(r => r.id === marker.room) : building?.rooms?.find(r => r.id === marker.room);
     const xs = room?.polygon?.map(p => p[0]) || [], ys = room?.polygon?.map(p => p[1]) || [];
     const span = xs.length ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 1) : 10;
     const level = building?.levels.find(l => l.id === marker.level);
@@ -100,7 +100,7 @@ export function mountModes(view, live) {
     const z = standing ? floor + LAMP_HEIGHT : marker.at[2];
     const range = lightRange({ ...marker, at: [marker.at[0], marker.at[1], z] }, building, level, room, span);
     const position = new THREE.Vector3(marker.at[0] * FT,
-      (z + buildingGround(view.plan, building)) * FT, -marker.at[1] * FT);
+      (z + (marker.yard ? groundAt(view.plan, marker.at[0], marker.at[1]) : buildingGround(view.plan, building))) * FT, -marker.at[1] * FT);
     // Ceiling placements sit just below the slab so their own fixture cannot
     // occlude them. Wall placements retain the person's chosen height.
     if (level && !standing && marker.at[2] >= (building?.base || 0) + level.elevation + level.ceiling - .1) position.y -= .2 * FT;

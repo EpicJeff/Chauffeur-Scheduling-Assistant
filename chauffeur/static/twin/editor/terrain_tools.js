@@ -249,7 +249,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     if (!piece || menu) {
       card.append(node('h3', 'Ground and yard'));
       card.append(button('Add pad', () => startDrawing('terraces', drawingOptions)));
-      for (const [kind, title] of [['beds', 'Draw bed'], ['hardscape', 'Draw patio / hard surface'], ['pool', 'Draw pool'], ['edges', 'Draw planting edge']])
+      for (const [kind, title] of [['yard_rooms', 'Draw yard room'], ['beds', 'Draw bed'], ['hardscape', 'Draw patio / hard surface'], ['pool', 'Draw pool'], ['edges', 'Draw planting edge']])
         card.append(button(title, () => startDrawing(kind)));
       for (const [preset, title] of [['sidewalk', 'Sidewalk'], ['paver', 'Paver path'], ['driveway', 'Driveway']])
         card.append(button(title, () => startDrawing('path', { ...pathPresets[preset], preset })));
@@ -310,7 +310,8 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   }
   async function finishDrawing() {
     if (!canEdit() || busy) return;
-    try { if (await draft.finish()) { drawing = null; show(); } }
+    try { const yard = drawing?.kind === 'yard_rooms'; if (await draft.finish()) { drawing = null;
+      if (yard) choose('yard_rooms', getPlan().site.yard_rooms.at(-1).id); else show(); } }
     catch (error) { report(error); }
   }
   function choose(kind, id) {

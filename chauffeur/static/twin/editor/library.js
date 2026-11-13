@@ -433,7 +433,8 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       const p = ground({ clientX: x, clientY: y });
       if (p) for (const { kind, piece } of siteRecords(getPlan()).filter(r => siteShapeKinds.includes(r.kind)).reverse()) {
         const ps = sitePoints(piece);
-        const hit = piece.kind === 'path' ? pathSurfacePolygons(piece).some(poly => inPolygon(poly, ...p)) : piece.polygon ? inPolygon(ps, ...p) : piece.at ? Math.hypot(p[0] - piece.at[0], p[1] - piece.at[1]) < (piece.radius || 2)
+        const hit = kind === 'yard_rooms' ? ps.some((a, i) => edgeDistance(p, a, ps[(i + 1) % ps.length]) < .6)
+          : piece.kind === 'path' ? pathSurfacePolygons(piece).some(poly => inPolygon(poly, ...p)) : piece.polygon ? inPolygon(ps, ...p) : piece.at ? Math.hypot(p[0] - piece.at[0], p[1] - piece.at[1]) < (piece.radius || 2)
           : ps.some((a, i) => i + 1 < ps.length && edgeDistance(p, a, ps[i + 1]) < .6);
         if (hit) return { kind, id: piece.id };
       }
@@ -450,7 +451,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   function refresh() {
     const selected = tools.selection(), kind = selected.kind;
     const piece = !selected.building && siteRecord(getPlan(), selected.id)?.piece;
-    outline.visible = !!piece;
+    outline.visible = !!piece && kind !== 'yard_rooms';
     if (piece) outline.box.copy(siteBox(piece, kind));
   }
   function pointerDown(event) {

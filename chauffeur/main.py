@@ -7401,11 +7401,10 @@ def _house_ha_context(settings=None):
     model = twin_store.current_model(settings=settings) or {'buildings': []}
     catalogue = twin_ha.safe_catalogue()
     # Resolve legacy area names on this read only; the model operations own writes.
-    for building in model['buildings']:
-        for room in building.get('rooms', []):
-            area = twin_ha.resolve_area(room.get('ha_area'), catalogue['areas'])
-            if area:
-                room['ha_area'] = area
+    for _, room in twin_ha._rooms(model):
+        area = twin_ha.resolve_area(room.get('ha_area'), catalogue['areas'])
+        if area:
+            room['ha_area'] = area
     return model, catalogue
 
 
@@ -7419,17 +7418,18 @@ def house_ha_link():
     auto = twin_ha.auto_spots(model, catalogue)
     rooms = []
     linked = set()
-    for building in model['buildings']:
-        for room in building.get('rooms', []):
-            area = room.get('ha_area') or None
-            linked.add(area)
-            row = {'building': building['id'], 'level': room.get('level'),
-                   'room': room['id'], 'name': room.get('name', ''), 'ha_area': area,
-                   'gone': room['id'] in gone,
-                   'notes': twin_ha.count_notes(model, room['id'], catalogue)}
-            if room['id'] in suggestions:
-                row['suggested'] = suggestions[room['id']]
-            rooms.append(row)
+    for building, room in twin_ha._rooms(model):
+        area = room.get('ha_area') or None
+        linked.add(area)
+        row = {'building': building['id'], 'level': room.get('level'),
+               'room': room['id'], 'name': room.get('name', ''), 'ha_area': area,
+               'gone': room['id'] in gone,
+               'notes': twin_ha.count_notes(model, room['id'], catalogue)}
+        if building['id'] is None:
+            row['yard'] = True
+        if room['id'] in suggestions:
+            row['suggested'] = suggestions[room['id']]
+        rooms.append(row)
     return {**catalogue, 'rooms': rooms,
             'unlinked': [{'area_id': a['area_id'], 'name': a['name']}
                          for a in catalogue['areas'] if a['area_id'] not in linked],
@@ -7560,18 +7560,30 @@ def house_live(request: Request):
     states = {row['entity_id']: row for row in ha_api.get_states()} if catalogue['available'] else {}
     geometry = {}
     rooms, markers, devices = [], [], []
-    for building in model['buildings']:
-        for room in building.get('rooms', []):
-            area = twin_ha.resolve_area(room.get('ha_area'), catalogue['areas']) if catalogue['available'] else None
-            lights = [eid for d in catalogue['devices'] if area and d.get('area_id') == area
-                      for eid in d['entities'] if eid.startswith('light.')]
-            rooms.append({'room': room['id'], 'building': building['id'],
-                          'level': room.get('level'), 'area_id': area,
-                          'name': room.get('name', ''), 'lights': lights,
-                          'polygon_world': [_house_lot_point(building, p) for p in room.get('polygon', [])]})
+    yard_areas = {}
+    for building, room in twin_ha._rooms(model):
+        area = twin_ha.resolve_area(room.get('ha_area'), catalogue['areas']) if catalogue['available'] else None
+        yard = building['id'] is None
+        if yard and area:
+            yard_areas[room['id']] = area
+        lights = [eid for d in catalogue['devices'] if area and (d.get('area_id') == area
+                  or yard and placed.get(d['device_id'], {}).get('host', {}).get('yard_room') == room['id'])
+                  for eid in d['entities'] if eid.startswith('light.')]
+        row = {'room': room['id'], 'building': building['id'],
+               'level': room.get('level'), 'area_id': area,
+               'name': room.get('name', ''), 'lights': lights,
+               'polygon_world': [list(p) if yard else _house_lot_point(building, p)
+                                 for p in room.get('polygon', [])]}
+        if yard:
+            row['yard'] = True
+        rooms.append(row)
     areas = {a['area_id'] for a in catalogue['areas']}
     for device in catalogue['devices'] if catalogue['available'] else []:
-        if device.get('area_id') not in areas:
+        device_id = device['device_id']
+        placement = placed.get(device_id)
+        yard_room = (placement or {}).get('host', {}).get('yard_room')
+        yard_linked = yard_room in yard_areas
+        if device.get('area_id') not in areas and not yard_linked:
             continue
         # Area membership is independent of a person's chosen marker position.
         devices.append({**device, 'offered': control_rules.offered(
@@ -7581,21 +7593,28 @@ def house_live(request: Request):
                 {**accessory, 'offered': control_rules.offered(
                     who, accessory['entity_id'], settings, states=states)}
                 for accessory in twin_ha.camera_accessories(device, states)]
-        device_id = device['device_id']
-        placement = placed.get(device_id)
         if placement:
-            building = buildings[placement['building']]
-            if building['id'] not in geometry:
-                geometry[building['id']] = twin_model_hosts.snapshot(building)
-            spot = _house_ha_placed_spot(building, device_id, placement, geometry[building['id']])
+            if yard_room:
+                spot = twin_ha.yard_spot(model, placement) if yard_linked else None
+            else:
+                building = buildings[placement['building']]
+                if building['id'] not in geometry:
+                    geometry[building['id']] = twin_model_hosts.snapshot(building)
+                spot = _house_ha_placed_spot(building, device_id, placement, geometry[building['id']])
         else:
             spot = auto.get(device_id)
         if spot is None:
             continue
-        building = buildings[spot['building']]
+        yard = spot.get('yard', False)
+        at = [*spot['at'], spot['z']]
+        if yard:
+            # Keep HA membership and physical room independently, as indoors.
+            devices[-1].update(building=None, level=None, room=spot['room'], yard=True)
+        else:
+            at = _house_lot_point(buildings[spot['building']], at)
         markers.append({key: device[key] for key in ('device_id', 'name', 'kind', 'entity_id', 'entities')})
         markers[-1].update(building=spot['building'], level=spot['level'], room=spot['room'],
-                           at=_house_lot_point(building, [*spot['at'], spot['z']]),
+                           at=at,
                            placed=placement is not None,
                            offered=devices[-1]['offered'])
         markers[-1]['location_valid'] = spot.get('location_valid', True)
@@ -7605,6 +7624,8 @@ def house_live(request: Request):
             markers[-1]['facing_deg'] = spot['facing_deg']
         if 'outdoor' in spot:
             markers[-1]['outdoor'] = spot['outdoor']
+        if yard:
+            markers[-1]['yard'] = True
     # Ground features need no HA area/device-registry membership. Their marker
     # uses exactly the same offered/control gate as a placed switch.
     from services import twin_site_shapes
@@ -12007,9 +12028,16 @@ def _house_stream_entities(area: str | None = None) -> set:
     if not catalogue.get('available'):
         return set()
     areas = {a['area_id'] for a in catalogue.get('areas') or []}
+    placed = twin_ha.placements(model)
+    yard_areas = {room['id']: found for building, room in twin_ha._rooms(model)
+                  if building['id'] is None and
+                  (found := twin_ha.resolve_area(room.get('ha_area'), catalogue.get('areas') or []))}
     ids = set()
     for device in catalogue.get('devices') or []:
-        if device.get('area_id') in areas and (area is None or device.get('area_id') == area) and device.get('entity_id'):
+        yard_area = yard_areas.get(placed.get(device['device_id'], {}).get('host', {}).get('yard_room'))
+        in_area = device.get('area_id') in areas and (area is None or device.get('area_id') == area)
+        in_yard = yard_area is not None and (area is None or yard_area == area)
+        if (in_area or in_yard) and device.get('entity_id'):
             ids.add(device['entity_id'])
             # Climate and glance read secondary entities too (temperature, energy,
             # battery). Device markers still use one primary entity.
@@ -12039,13 +12067,12 @@ def _house_stream_entities(area: str | None = None) -> set:
                     or eid.startswith(('sensor.', 'device_tracker.', 'binary_sensor.')) and re.search(r'solar|pv|grid|site|load|home|house|battery|powerwall|charg|wall.?connector|wallbox|evse|tesla|car',
                                                               eid + ' ' + attrs.get('friendly_name', ''), re.I)):
                 ids.add(eid)
-    for building in model.get('buildings') or []:
-        for room in building.get('rooms', []):
-            found = twin_ha.resolve_area(room.get('ha_area'), catalogue.get('areas') or [])
-            if not found or area is not None and found != area:
-                continue
-            ids.update(eid for d in catalogue.get('devices') or [] if d.get('area_id') == found
-                       for eid in d.get('entities') or [] if eid.startswith('light.'))
+    for _, room in twin_ha._rooms(model):
+        found = twin_ha.resolve_area(room.get('ha_area'), catalogue.get('areas') or [])
+        if not found or area is not None and found != area:
+            continue
+        ids.update(eid for d in catalogue.get('devices') or [] if d.get('area_id') == found
+                   for eid in d.get('entities') or [] if eid.startswith('light.'))
     return ids
 
 

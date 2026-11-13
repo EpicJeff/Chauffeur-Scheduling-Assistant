@@ -129,6 +129,11 @@ def _rooms(model):
     for building in model.get('buildings', []):
         for room in building.get('rooms', []):
             yield building, room
+    # Yard regions share room linking and auto-placement, without a building's
+    # coordinate transform or floor. Keep the actual room objects for callers.
+    yard = {'id': None, 'levels': []}
+    for room in model.get('site', {}).get('yard_rooms', []):
+        yield yard, room
 
 
 def _name(value):
@@ -161,10 +166,12 @@ def suggest(model, areas) -> dict:
     return out
 
 
-def rooms_for_area(model, area_id) -> list:
+def rooms_for_area(model, area_id, areas=None) -> list:
     if not area_id:
         return []
-    return sorted((r for _, r in _rooms(model) if r.get('ha_area') == area_id),
+    return sorted((r for _, r in _rooms(model)
+                   if r.get('ha_area') == area_id or areas is not None
+                   and resolve_area(r.get('ha_area'), areas) == area_id),
                   key=lambda r: twin_model._area(r.get('polygon', [])), reverse=True)
 
 
@@ -180,7 +187,29 @@ def placements(model) -> dict:
                 out[device['device']] = {'kind': 'host', 'building': building['id'],
                                          'host': deepcopy(device.get('host', {})),
                                          'offset': device.get('offset', 0)}
+    for device in model.get('site', {}).get('devices', []):
+        if device.get('device') and device.get('host', {}).get('yard_room'):
+            out[device['device']] = {'kind': 'host', 'building': None, 'yard': True,
+                                    'host': deepcopy(device['host']),
+                                    'offset': device.get('offset', 0)}
     return out
+
+
+def yard_spot(model, placement):
+    """A floor-like yard host in lot feet; z is height above local ground."""
+    from services import twin_site_shapes
+    host = placement.get('host', {})
+    room = next((r for r in model.get('site', {}).get('yard_rooms', [])
+                 if r['id'] == host.get('yard_room')), None)
+    if room is None:
+        return None
+    try:
+        at = twin_site_shapes.yard_device_point(model['site'], placement)
+    except (ValueError, KeyError, TypeError):
+        return None
+    return {'building': None, 'level': None, 'room': room['id'], 'yard': True,
+            'outdoor': True, 'at': at, 'z': placement.get('offset', 0),
+            'location_valid': True}
 
 
 def _inside(point, polygon):
@@ -221,13 +250,18 @@ def auto_spots(model, catalogue) -> dict:
             grouped.setdefault(device['area_id'], []).append(device)
     out = {}
     for area_id, devices in grouped.items():
-        rooms = rooms_for_area(model, area_id)
+        rooms = rooms_for_area(model, area_id, catalogue.get('areas'))
         if not rooms:
             continue
         room = rooms[0]
         building = next(b for b, r in _rooms(model) if r is room)
         level = next((l for l in building.get('levels', []) if l['id'] == room.get('level')), {})
         for device, point in zip(devices, _grid(room.get('polygon', []), len(devices))):
+            if building['id'] is None:
+                out[device['device_id']] = {'building': None, 'level': None,
+                                            'room': room['id'], 'yard': True,
+                                            'outdoor': True, 'at': point, 'z': 0}
+                continue
             height = level.get('ceiling', 9) if device['kind'] in ('light', 'fan') else 4 + room.get('floor_offset_ft', 0)
             out[device['device_id']] = {'building': building['id'], 'level': room.get('level'),
                                         'room': room['id'], 'at': point,
