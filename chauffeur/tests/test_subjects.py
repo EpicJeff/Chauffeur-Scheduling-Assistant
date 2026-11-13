@@ -24,6 +24,7 @@ Run from chauffeur/:  python tests/test_subjects.py
 import time
 
 from harness import check  # noqa: F401
+from program_fixture import add_run
 from services import storage
 
 MOM = {'id': 'mom', 'name': 'Mom', 'role': 'parent'}
@@ -33,7 +34,7 @@ KID = {'id': 'kid', 'name': 'Kate', 'role': 'child', 'is_child': True}
 
 TABLES = ('trip_metadata_table', 'trips_cache_table', 'occasions_table', 'occasion_guests_table', 'members_table',
           'assist_contacts_table', 'threads_table', 'programs_table', 'shopping_lists_table', 'shopping_items_table',
-          'cache_table', 'missions_table', 'mission_steps_table', 'app_state_table')
+          'cache_table', 'missions_table', 'mission_steps_table', 'app_state_table', 'library_programs_table')
 
 
 def _reset():
@@ -71,8 +72,9 @@ def _seed():
     storage.add_shopping_list({'id': 'l1', 'name': 'Groceries'})
     storage.add_shopping_list({'id': 'l2', 'name': 'Kate gifts', 'audience': 'private', 'shared_with': ['mom'],
                                'occasion_id': 'o1'})
-    storage.add_program({'id': 'pr1', 'member_id': 'kid', 'title': 'Piano', 'state': 'active'})
-    storage.add_program({'id': 'pr2', 'member_id': 'mom', 'title': 'Run a 10k', 'state': 'active'})
+    # Program titles now belong to the library; seed real library-backed runs.
+    add_run({'id': 'pr1', 'member_id': 'kid', 'title': 'Piano', 'state': 'active'})
+    add_run({'id': 'pr2', 'member_id': 'mom', 'title': 'Run a 10k', 'state': 'active'})
     storage.add_thread({'id': 'th1', 'title': 'Disney dining', 'goal': 'book the restaurants', 'kind': 'project',
                         'state': 'open', 'owner_member_id': 'mom', 'created_by': 'mom'})
     storage.add_thread({'id': 'th2', 'title': 'Pest control', 'kind': 'vendor', 'state': 'done',
@@ -182,7 +184,7 @@ def scenario_find_all_excludes_kinds_before_ranking_and_limits():
     s = _fresh()
     for i in range(5):
         storage.add_thread({'id': f'crowd-t{i}', 'title': 'Crowded', 'owner_member_id': 'mom'})
-        storage.add_program({'id': f'crowd-p{i}', 'title': 'Crowded', 'member_id': 'mom'})
+        add_run({'id': f'crowd-p{i}', 'title': 'Crowded', 'member_id': 'mom'})
     storage.save_occasion({'id': 'crowd-occasion', 'title': 'Crowded party', 'audience': 'parents'})
     unfiltered = s.find_all('Crowded', MOM)
     check(len(unfiltered) == 8 and all(c['kind'] in ('thread', 'program') for c in unfiltered),

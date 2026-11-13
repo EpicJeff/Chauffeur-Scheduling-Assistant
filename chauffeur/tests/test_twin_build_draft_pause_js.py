@@ -128,6 +128,7 @@ export function createPolling(config) {
   return { refreshState: async () => {}, resume: async () => {}, stop() {}, follow: async () => {}, pollNow: async () => {} };
 }
 export const mountTwin = async () => ({ scene: {}, rebuild: async p => { globalThis.rendered = p; } });
+export const mountLighting = () => {};
 export const runDirector = async () => {};
 export const createPanel = () => ({ message() {}, readOnly() {}, events() {}, reset() {} });
 const tools = { refresh() {}, drawFloors() {}, delegate() {}, selected() {}, dragging: () => false, refreshLink: async () => {} };
@@ -135,6 +136,8 @@ export const createSceneTools = () => tools;
 export const createHistory = () => ({ perform: action => action(), sync() {}, clear() {} });
 export const createDraw = () => ({ cancel() {} });
 export const createLotTools = () => ({ dragging: () => false });
+export const createTerrainTools = () => ({ refresh() {}, cancel() {},
+  pointerDown: () => false, pointerMove: () => false, pointerUp: () => false });
 export const streetView = () => null, streetSegment = () => null;
 export const createRoofTools = () => ({ cancel() {}, addDormer() {},
   pointerDown: () => false, pointerMove: () => false, pointerUp: () => false });
@@ -231,10 +234,20 @@ if __name__ == '__main__':
     loader = work / 'loader.mjs'
     twin = ROOT.parent.as_uri()
     vendor = (ROOT.parents[1] / 'vendor' / 'three-r187').as_uri()
+    editor = ROOT.as_uri()
+    # cards keeps gaining shelf modules (object, site shape, foundation shelves). A sibling the
+    # test does not copy or stub loads from the real editor (or twin) folder.
     loader.write_text(f"""
 import {{registerHooks}} from 'node:module';
+import {{existsSync}} from 'node:fs';
+import {{fileURLToPath}} from 'node:url';
+const work = '{work.as_uri()}/';
 registerHooks({{resolve(spec, ctx, next) {{
   if (spec === '../twin_generator.mjs') return {{url: '{twin}/twin_generator.js', shortCircuit: true}};
+  if (ctx.parentURL?.startsWith(work) && spec.endsWith('.mjs') && !existsSync(fileURLToPath(new URL(spec, ctx.parentURL)))) {{
+    const name = spec.replace(/^\\.\\.?\\//, '').replace(/\\.mjs$/, '.js');
+    return {{url: (spec.startsWith('../') ? '{twin}/' : '{editor}/') + name, shortCircuit: true}};
+  }}
   if (spec === 'three') return {{url: '{vendor}/three.module.js', shortCircuit: true}};
   if (spec.startsWith('three/addons/')) return {{url: '{vendor}/addons/' + spec.slice(13), shortCircuit: true}};
   return next(spec, ctx);

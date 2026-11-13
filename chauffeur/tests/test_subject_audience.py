@@ -135,7 +135,8 @@ def scenario_the_endpoints_apply_it():
         main.missions_detail(mid, request=_as('aunt'))
         check(False, "an adult may not read a transcript about a parents-only occasion")
     except HTTPException as e:
-        check(e.status_code == 403, f"403, got {e.status_code}")
+        # Since v2.499.527 a piece the caller may not see answers 404, so its existence is not leaked.
+        check(e.status_code == 404, f"404, got {e.status_code}")
     check(main.missions_detail(mid, request=_as('mom'))['id'] == mid, "a parent may")
     active = main.missions_admin(request=_as('aunt'))['active']
     check(mid not in [m['id'] for m in active], "the admin list omits it for the adult")
@@ -157,7 +158,7 @@ def scenario_the_endpoints_apply_it():
         main.mission_shot(mid, 'turn_1.png', request=req)
         check(False, "an adult may not see a parents-only mission's screenshots")
     except HTTPException as e:
-        check(e.status_code == 403, f"403 for the screenshot, got {e.status_code}")
+        check(e.status_code == 404, f"404 for the screenshot, got {e.status_code}")
     req = _as('mom'); req.query_params = {'member_id': 'mom'}
     check(main.mission_shot(mid, 'turn_1.png', request=req) is not None, "mom may")
 

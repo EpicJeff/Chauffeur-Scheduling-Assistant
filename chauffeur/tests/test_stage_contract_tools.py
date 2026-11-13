@@ -111,11 +111,13 @@ def scenario_household_tasks_and_errands_once():
 
 def scenario_propose_program_says_which_program():
     _fresh()
+    # Piano is now a seeded library program. Keep this direct-creation check
+    # on an unmatched title so it does not enter the Use / Make new flow.
     from services import programs_curate
     orig = programs_curate.curate
     programs_curate.curate = lambda *a, **k: {'phases': [], 'source': {'origin': 'none', 'reason': 'test', 'plan_name': '', 'url': ''}}
     try:
-        out = tools.execute_tool('propose_program', {'title': 'Learn piano', 'for_member_name': 'Kate', 'sessions_per_week': 3, 'minutes': 20},
+        out = tools.execute_tool('propose_program', {'title': 'Learn the clarinet', 'for_member_name': 'Kate', 'sessions_per_week': 3, 'minutes': 20},
                                  actor=ACTOR)
     finally:
         programs_curate.curate = orig
