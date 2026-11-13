@@ -1,6 +1,46 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.834 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.835 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.835 (2026-11-13, NOT device-verified): porch foundations are posts, enclosed or solid, and they use the new shared material slot. Posts now actually draws posts.**
+
+**The report.** The user, 2026-11-13: "Posts does nothing that I can see. I expected it to add posts to hold up the porch." Confirmed: a non-solid porch drew its floor as a concrete block from the lot datum (not even the terrain) up to the floor, with no posts. They asked for posts (configurable width and material), enclosed (columns plus a surface between them, empty inside) and solid (configurable material). Then: "Why doesn't everything just have a material slot you can assign a material from the library to?" They approved porch foundations first, built on a new shared slot, with the other features moving onto it next.
+
+**How it was built.** Codex built it. Claude checked posts, lattice, panel and solid in Chromium (raycasts and screenshots) and updated the browser test for the slot.
+
+**Shared material slot** (the API later features adopt).
+- **Value:** `null` (the feature's default) or `{id, color?}`, the same reference walls, rooms and roofs use, with an id from the same library list as `set_material`.
+- **Python:** `services/twin_library.py` has `material_choices(kit_id)` (moved from the editor Library route), `material_slot_error(value)` and `normalize_material_slot(value)`. Unknown ids are refused, and `set_material` uses the same normalizer.
+- **Rendering:** `twin_library.js` `materialSlot(slotValue, defaultRole, kit, tier, materialsCache, roleMaterial)`. Equal references share one cached material; explicit tints survive texture loading. The yard's `mat(role, slot)` takes a slot too.
+- **Editor:** `editor/material_slot.js` (with `material_catalog.js`): `materialSlot({label, value, defaultLabel, defaultColor, kit, quickPicks, onChange, readOnly, report})`.
+  - It shows a swatch and name, or "Default: …";
+  - Change opens an in-place chooser of library materials, with "Use default" and Tint;
+  - one change is one op. No browser dialogs.
+
+**Porch foundations** (`services/twin_porches.py`, `static/twin/twin_porch_foundation.js`, `twin_generator.js`, `editor/porch_foundation_shelf.js`).
+- **Schema:** `foundation: {type: posts|enclosed|solid, lip_in, post_in 4..16 (6), post_shape square|round, spacing_ft 4..12 (8), skirt lattice|panel, materials: {posts, skirt, solid}}`.
+- **Posts:**
+  - posts stand on the terrain at their own spot, one at each corner plus even spacing along every edge, inset from the lip;
+  - a beam runs along the outline under a 4 in floor slab;
+  - posts, piers and beam are one merged support geometry.
+- **Enclosed:** the same posts, plus a skirt between neighbouring posts from the ground to the beam, with the inside empty. Lattice is crossed 45° strips with real gaps; panel is a continuous surface. Both follow the terrain.
+- **Solid:** the plinth as before, with a `solid` slot instead of the stone/brick/concrete list.
+- **Slab on grade:** a porch whose corners are all within 9 in of the ground draws as a terrain-contacting slab, whatever its type, and the shelf says so.
+- **Legacy:**
+  - a missing foundation renders as posts, so existing porches now show posts, as the user expected;
+  - the old `material` value maps to `materials.solid`, and the solid plinth's geometry is byte-identical.
+- **Bake:** all of it is authored geometry in the bake key.
+- **Agent:** the `house_design` docs carry the new fields; the schema is 5,599 characters against the 5,600 cap.
+
+**Note for low porches.** On the test house's 1.5 ft porch the skirt is only about 6 in tall. A raycast hits the panel skirt, but the High tier's grass blades hide it in screenshots; the white lattice shows above them.
+
+**Docs.** `docs/superpowers/specs/2026-11-12-twin-editor-scope.md` statuses are refreshed: stairs, porch foundations, retaining walls, ground features, paths and mode icons are shipped, and materials are slot-based.
+
+**Tests.**
+- New: `test_twin_material_slot_js`.
+- Updated: `test_twin_porch_foundation` and `test_twin_porch_foundation_js` (posts, enclosed lattice and panel, the slab rule, legacy mapping, solid golden digests), and `test_twin_library_js` 13/13.
+- Neighbours: `test_twin_model_bridge` 32/32, `test_twin_model_devices`, `test_house_design_tool`, `test_twin_retaining_wall`, `test_twin_ground_js`, `test_twin_editor_library_js`, `test_twin_stairs_js`, `test_twin_import_maps`, `test_tailwind_build`.
+- Browser: `test_house_twin_porch_foundation_live` 1/1, updated for the slot. A Chromium raycast hit posts, lattice, panel and solid in turn.
 
 **v2.499.834 (2026-11-13, NOT device-verified): fence rails follow the ground with the slats instead of spanning a slope in one straight piece.**
 

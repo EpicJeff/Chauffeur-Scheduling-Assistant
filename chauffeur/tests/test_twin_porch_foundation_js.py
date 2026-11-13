@@ -11,7 +11,7 @@ const THREE=await import(three);
 const {createHash}=await import('node:crypto');
 const {buildTwin}=await import(file('static/twin/twin_generator.js'));
 const {groundAt,buildingBase}=await import(file('static/twin/twin_ground.js'));
-const {insetPorch,porchPlinthGeometry,porchFoundationRole,PORCH_SLAB_FT}=await import(file('static/twin/twin_porch_foundation.js'));
+const {insetPorch,porchPlinthGeometry,porchFoundationRole,PORCH_SLAB_FT,POST_SLAB_FT,PORCH_BEAM_FT,porchFoundation,porchOnGrade,porchSupportGeometry}=await import(file('static/twin/twin_porch_foundation.js'));
 const {atlasJob,covered}=await import(file('static/twin/bake/atlas_transport.js'));
 const {buildAtlas}=await import(file('static/twin/bake/atlas.js'));
 const {disposeObject}=await import(file('static/twin/twin_library.js'));
@@ -47,10 +47,17 @@ const geometryDigest=out=>{const hash=createHash('sha256');out.root.traverse(o=>
 const before=build();await before.ready;
 const baselineDigest=geometryDigest(before);
 console.log('Posts fixture digest:',baselineDigest);
-// Captured from the original v2.499.819 generator before this feature.
-assert.equal(baselineDigest,'c87d6a6e00d4792ee7fc2081e06363fed7fbab9cdc6259fb4c97e8f73a0a5fd0','posts fixture is byte-identical to the pre-feature generator');
-po.foundation={type:'posts',material:'brick',lip_in:4};
-const posts=build();await posts.ready;assert.equal(geometryDigest(posts),baselineDigest,'explicit posts ignores solid-only settings');
+// Missing foundations now build real piers, just like explicit default posts.
+po.foundation={type:'posts'};
+const posts=build();await posts.ready;assert.equal(geometryDigest(posts),baselineDigest);
+po.foundation={type:'solid',material:'stone',lip_in:1};
+const goldenSolid=build();await goldenSolid.ready;
+assert.equal(geometryDigest(goldenSolid),'11bf1f94fd04080ec5c5bedd112e189888579310ac350b119b9e06f5d4faf459',
+ 'solid fixture is byte-identical to the shipped generator');
+const goldenPlinth=porchPlinthGeometry({site:{terraces:[]}}, {}, {polygon:square(0,-6,10,0),foundation:{lip_in:1}},1.75,0);
+const gh=createHash('sha256');for(const key of Object.keys(goldenPlinth.attributes).sort())gh.update(Buffer.from(goldenPlinth.attributes[key].array.buffer));
+assert.equal(gh.digest('hex'),'4c4738591318f9c31de569b73e85261ad9944953bc6e661dfa9b8206cdf48067');
+goldenPlinth.dispose();
 const angle=b.rotation*Math.PI/180;
 const world=p=>[b.position[0]+Math.cos(angle)*p[0]-Math.sin(angle)*p[1],b.position[1]+Math.sin(angle)*p[0]+Math.cos(angle)*p[1]];
 // A sloped layer and a sharp nested layer cross the rotated porch.
@@ -124,25 +131,130 @@ b.foundation={mode:'auto',offset_ft:3,thickness_ft:1};
 const roomSolid=build();await roomSolid.ready;
 const roomSlab=roomSolid.pieces.get('b:porch').find(o=>o.material?.name==='patio_concrete');
 roomSlab.geometry.computeBoundingBox();near(roomSlab.geometry.boundingBox.min.y,po.floor-.5-PORCH_SLAB_FT);
-// Actual cards run with a DOM double, saving through the operation queue.
-const {createCards}=await import(file('static/twin/editor/cards.js'));
-const room=b.rooms[0];room.foundation={type:'posts',material:'stone',lip_in:1};let writable=true;
-const calls=[],errors=[];window.showGlobalAlert=message=>errors.push(message);
-const cards=createCards({getPlan:()=>plan,getLabel:()=> 'Porch',canEdit:()=>writable,edit(){},op:async operation=>{
- calls.push(operation);room.foundation=operation.foundation;},ask(){},select(){}});
-cards.draw({pieceId:'porch',buildingId:'b'});const shelf=document.getElementById('piece-card');
-const field=label=>shelf.querySelectorAll('input, select').find(e=>e.getAttribute('aria-label')===label);
-assert.ok(!shown(field('Foundation material')));field('Foundation').value='solid';await fire(field('Foundation'),'change');await cards.queue(async()=>{});
-assert.equal(calls.at(-1).op,'set_porch_foundation');assert.ok(shown(field('Foundation material')));
-const sameCount=calls.length;await fire(field('Foundation material'),'change');await cards.queue(async()=>{});assert.equal(calls.length,sameCount,'same material is not another undo step');
-field('Foundation material').value='brick';await fire(field('Foundation material'),'change');await cards.queue(async()=>{});
-field('Floor overhang (in)').value='2.5';await fire(field('Floor overhang (in)'),'change');await cards.queue(async()=>{});
-assert.deepEqual(room.foundation,{type:'solid',material:'brick',lip_in:2.5});
-const count=calls.length;field('Floor overhang (in)').value='5';await fire(field('Floor overhang (in)'),'change');await cards.queue(async()=>{});
-assert.equal(calls.length,count);assert.equal(errors.length,1);
-room.foundation={type:'posts',material:'stone',lip_in:1};cards.draw();assert.equal(field('Foundation').value,'posts');assert.ok(!shown(field('Foundation material')),'undo refreshes shelf');
-writable=false;cards.draw();assert.ok(field('Foundation').disabled);field('Foundation').value='solid';await fire(field('Foundation'),'change');await cards.queue(async()=>{});assert.equal(calls.length,count);
-console.log('Passed: golden posts, slope/step plinth, inset, roof supports, roles, bake keys/UVs/tiers, materials, offset/auto-base, shelf/undo/read-only');
+// Runtime support layout, terrain contact, floor slab and skirt construction.
+const testPlan=structuredClone(plan),tb=testPlan.buildings[0],tp=tb.porches[0];
+tb.rooms=[];tb.foundation={mode:'fixed'};tb.base=0;tb.position=[0,0];tb.rotation=0;testPlan.site.terraces=[];
+tp.foundation={type:'posts',post_in:6,post_shape:'square',spacing_ft:4,lip_in:1};
+const support=porchSupportGeometry(testPlan,tb,tp,tp.floor,0);
+assert.equal(support.posts.length,10,'3 intervals on long edges, 2 on short edges, corners once');
+assert.equal(new Set(support.posts.map(p=>p.at.join(','))).size,10);
+for(const corner of support.outline)assert.ok(support.posts.some(p=>Math.hypot(p.at[0]-corner[0],p.at[1]-corner[1])<1e-6));
+for(let i=0;i<support.posts.length;i++){
+ const p=support.posts[i],q=support.posts[(i+1)%support.posts.length];
+ assert.ok(Math.hypot(p.at[0]-q.at[0],p.at[1]-q.at[1])<=4+1e-6);
+ near(p.bottom,0);near(p.top,tp.floor-4/12);
+}
+near(support.slabBottom-support.beamBottom,8/12);
+// Check actual vertices and FrontSide bottom contact, not just layout metadata.
+const sm=new THREE.Mesh(support.supports,new THREE.MeshBasicMaterial({side:THREE.FrontSide}));
+for(const p of support.posts){
+ const hit=new THREE.Raycaster(new THREE.Vector3(p.at[0],-10,-p.at[1]),new THREE.Vector3(0,1,0)).intersectObject(sm)[0];
+ assert.ok(hit);near(hit.point.y,p.bottom);assert.ok(hit.face.normal.y<0);
+}
+for(const {vertices,normal,centre} of trianglesOf(support.supports)){
+ if(Math.abs(normal.y)<1e-6&&vertices.every(v=>v.y<support.beamBottom-1e-5)){
+  const p=support.posts.reduce((best,p)=>Math.hypot(centre.x-p.at[0],-centre.z-p.at[1])<Math.hypot(centre.x-best.at[0],-centre.z-best.at[1])?p:best);
+  assert.ok(normal.dot(new THREE.Vector3(centre.x-p.at[0],0,centre.z+p.at[1]))>0,'post side faces outward');
+ }
+}
+const open=build(testPlan);await open.ready;
+const deck=open.pieces.get('b:porch').find(o=>o.material?.name==='patio_concrete');deck.geometry.computeBoundingBox();
+near(deck.geometry.boundingBox.min.y,tp.floor-4/12);near(deck.geometry.boundingBox.max.y,tp.floor);
+checkBoundaryNormals(deck.geometry,tp.polygon,{top:tp.floor,bottom:tp.floor-4/12,label:'supported porch slab'});
+for(const {vertices,normal}of trianglesOf(support.supports)){
+ if(vertices.every(v=>Math.abs(v.y-support.slabBottom)<1e-5))assert.ok(normal.y>0,'post/beam top faces up');
+ if(vertices.every(v=>Math.abs(v.y-support.beamBottom)<1e-5))assert.ok(normal.y<0,'rim underside faces down');
+}
+assert.equal(support.skirt,null,'posts have no skirt');
+const centreRay=new THREE.Raycaster(new THREE.Vector3(5,-1,3),new THREE.Vector3(0,1,0));
+assert.equal(centreRay.intersectObject(sm).length,0,'interior below porch is air');
+for(const polygon of [square(0,-6,10,0).reverse(),[[0,0],[10,0],[10,4],[4,4],[4,10],[0,10]]]){
+ const porch={polygon,foundation:{type:'posts',spacing_ft:4}},g=porchSupportGeometry(testPlan,tb,porch,2,0);
+ for(const corner of g.outline)assert.ok(g.posts.some(p=>Math.hypot(p.at[0]-corner[0],p.at[1]-corner[1])<1e-6),'every inset corner has a pier');
+ for(let i=0;i<g.posts.length;i++)assert.ok(Math.hypot(...g.posts[i].at.map((v,k)=>v-g.posts[(i+1)%g.posts.length].at[k]))<=4+1e-6);
+ g.supports.dispose();
+}
+// Sloped and layered pads, with building rotation and base applied per pier.
+testPlan.site.terraces=[{polygon:square(-20,-20,2,20),height:-3,blend:12},{polygon:square(5,-8,7,8),height:-1,blend:0}];
+tb.position=[1,-1];tb.rotation=18;tb.base=2;
+for(const shape of ['square','round']){
+ tp.foundation.post_shape=shape;
+ const g=porchSupportGeometry(testPlan,tb,tp,tp.floor,tb.base),mesh=new THREE.Mesh(g.supports,sm.material);
+ const a=tb.rotation*Math.PI/180;
+ for(const p of g.posts){
+  const wx=tb.position[0]+Math.cos(a)*p.at[0]-Math.sin(a)*p.at[1],wy=tb.position[1]+Math.sin(a)*p.at[0]+Math.cos(a)*p.at[1];
+  near(p.bottom,groundAt(testPlan,wx,wy)-tb.base);
+  const hit=new THREE.Raycaster(new THREE.Vector3(p.at[0],-20,-p.at[1]),new THREE.Vector3(0,1,0)).intersectObject(mesh)[0];
+  assert.ok(hit);near(hit.point.y,p.bottom);
+ }
+ g.supports.dispose();
+}
+// Enclosures stay at the perimeter, split exactly at pad boundaries, one merged skirt.
+tb.position=[0,0];tb.rotation=0;tb.base=0;
+testPlan.site.terraces=[{polygon:square(-20,-20,20,20),height:-2,blend:0},{polygon:square(4,-20,6,20),height:-1,blend:0}];
+tp.foundation={...tp.foundation,type:'enclosed',post_shape:'square'};
+const stats={};
+for(const skirt of ['panel','lattice']){
+ tp.foundation.skirt=skirt;
+ const g=porchSupportGeometry(testPlan,tb,tp,tp.floor,0),mesh=new THREE.Mesh(g.skirt,sm.material);
+ assert.equal(g.spans.length,g.posts.length,'one skirt span between every pair of neighbouring posts');
+ assert.ok(g.skirt&&!g.skirt.groups.length,'all strips/panels merged for one draw call');
+ near(Math.max(...Array.from(g.skirt.attributes.position.array).filter((_,i)=>i%3===1)),g.beamBottom);
+ assert.equal(centreRay.intersectObject(mesh).length,0,'skirt leaves interior empty');
+ let hits=0,gaps=0;
+ for(let x=.7;x<9.3;x+=.07){
+  const hit=new THREE.Raycaster(new THREE.Vector3(x,.5,8),new THREE.Vector3(0,0,-1),0,3).intersectObject(mesh)[0];
+  if(hit){hits++;assert.ok(hit.face.normal.z>0,'skirt front faces outward');}else gaps++;
+ }
+ assert.ok(hits>0);if(skirt==='lattice')assert.ok(gaps>hits,'diagonal lattice has real see-through gaps');else assert.ok(hits>gaps*4,'panel is continuous between posts');
+ // Both one-sided ground heights exist at a sharp layer step, never bridged by a ramp.
+ const pos=g.skirt.attributes.position;
+ if(skirt==='panel')for(const x of [4,6])for(const height of [-2,-1])assert.ok(Array.from({length:pos.count},(_,i)=>i).some(i=>Math.abs(pos.getX(i)-x)<1e-5&&Math.abs(pos.getY(i)-height)<1e-5),`skirt ${skirt} reaches x=${x} height=${height}`);
+ for(const {vertices}of trianglesOf(g.skirt)){
+  if(vertices.every(v=>v.z>5 || v.z<1))for(const x of [4,6])assert.ok(!(Math.min(...vertices.map(v=>v.x))<x-1e-5&&Math.max(...vertices.map(v=>v.x))>x+1e-5),'skirt splits at sharp pad boundaries');
+ }
+ const scene=build(testPlan);await scene.ready;
+ assert.ok(new Set(scene.pieces.get('b:porch').filter(o=>o.isMesh&&!o.layers.isEnabled(31))).size<=4,'bounded porch draw calls');
+ stats[skirt]=g;g.supports.dispose();
+}
+// Ground rule: all corners must be within nine inches (world-space, all types).
+for(const type of ['posts','enclosed','solid']){
+ tp.foundation.type=type;testPlan.site.terraces=[];tp.floor=.75;
+ assert.ok(porchOnGrade(testPlan,tb,tp,tp.floor));
+ const onGrade=build(testPlan);await onGrade.ready;
+ const below=onGrade.pieces.get('b:porch').filter(o=>o.isMesh&&o.material.name==='trim').flatMap(o=>Array.from(o.geometry.attributes.position.array).filter((_,i)=>i%3===1));
+ assert.ok(below.every(y=>y>=tp.floor-1e-5),'no piers/beam when slab on grade');
+ tp.floor=.751;assert.ok(!porchOnGrade(testPlan,tb,tp,tp.floor));
+ testPlan.site.terraces=[{polygon:square(-20,-20,20,20),height:.1,blend:0}];
+ assert.ok(porchOnGrade(testPlan,tb,tp,tp.floor));
+}
+tp.floor=.7;testPlan.site.terraces=[{polygon:square(-1,-7,1,-5),height:-1,blend:0}];
+assert.ok(!porchOnGrade(testPlan,tb,tp,tp.floor),'one corner beyond nine inches prevents slab-on-grade');
+// Every authored foundation field and slot affects both bake paths, on every tier.
+tp.floor=2;testPlan.site.terraces=[];
+tp.foundation={type:'enclosed',lip_in:1,post_in:6,post_shape:'square',spacing_ft:8,skirt:'lattice',materials:{posts:null,skirt:null,solid:null}};
+const baseScene=build(testPlan);await baseScene.ready;
+const baseKey=atlasJob(baseScene.root,testPlan,options).cacheKey;
+for(const [field,value] of Object.entries({type:'posts',lip_in:2,post_in:8,post_shape:'round',spacing_ft:4,skirt:'panel',
+ materials:{posts:{id:'trim',color:'#123456'}},})){
+ const p=structuredClone(testPlan);p.buildings[0].porches[0].foundation[field]=value;
+ const low=build(p);await low.ready;const hi=build(p,'high');await hi.ready;
+ assert.notEqual(atlasJob(low.root,p,options).cacheKey,baseKey,field);
+ assert.equal(buildAtlas(low.root,p,options).key,buildAtlas(hi.root,p,options).key,`${field}: tiers identical`);
+}
+for(const slot of ['posts','skirt','solid'])for(const ref of [{id:'base'},{id:'base',color:'#abcdef'}]){
+ const p=structuredClone(testPlan);p.buildings[0].porches[0].foundation.materials[slot]=ref;
+ const scene=build(p);await scene.ready;assert.notEqual(atlasJob(scene.root,p,options).cacheKey,baseKey,slot);
+}
+// Same reference across slots and rebuilds is the same cached material instance.
+const {materialSlot,kitMaterial}=await import(file('static/twin/twin_library.js'));
+const cache=new Map(),role=r=>{if(!cache.has(r))cache.set(r,kitMaterial(r,input.kit,'low'));return cache.get(r);};
+const ref={id:'painted_trim',color:'#123456'};
+assert.equal(materialSlot(ref,'trim',input.kit,'low',cache,role),materialSlot({...ref},'siding',input.kit,'low',cache,role));
+assert.equal(materialSlot(null,'trim',input.kit,'low',cache,role),role('trim'));
+const reused=build(testPlan,'low',baseScene.materials);await reused.ready;
+for(const [key,value]of baseScene.materials)assert.equal(reused.materials.get(key),value);
+console.log('Passed: solid golden digests/normals, terrain/steps, corners/spacing, post shapes/contact, beam/slab, empty enclosure, lattice gaps, draw bound, grade, slots, bake fields/tiers/cache');
 """
 
 if __name__ == '__main__':

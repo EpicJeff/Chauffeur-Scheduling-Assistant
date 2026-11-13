@@ -125,7 +125,7 @@ export function kitMaterial(role, kit, tier) {
           texture.anisotropy = tier === 'low' ? 1 : 4;
           if (property === 'map') texture.colorSpace = THREE.SRGBColorSpace;
           material[property] = texture;
-          if (property === 'map') material.color.set(role === 'granite' ? ref.color || '#3b3d40' : '#ffffff');
+          if (property === 'map') material.color.set(role === 'granite' ? ref.color || '#3b3d40' : ref.tint ? ref.color || '#ffffff' : '#ffffff');
           material.needsUpdate = true;
         }
         completions.delete(resolve);
@@ -137,6 +137,23 @@ export function kitMaterial(role, kit, tier) {
   material.userData.ready = Promise.all(pending).then(() => clearTimeout(timer));
   material.addEventListener('dispose', clear);
   return material;
+}
+
+// Feature slots share the scene's role cache, including across rebuilds and yard.
+// Explicit references have one key independent of the receiving feature/role.
+export function materialSlot(value, defaultRole, kit, tier, cache, roleMaterial) {
+  if (!value) return roleMaterial(defaultRole);
+  const refs = kit.materials || {}, named = refs[value.id];
+  const role = named ? value.id : Object.keys(refs).find(key => refs[key].asset === value.id);
+  const ref = named || (role && refs[role]) || { asset: value.id, color: '#b8b0a4' };
+  const key = JSON.stringify(['material-slot', value.id, value.color || null, named || null]);
+  if (!cache.has(key)) {
+    const material = !value.color && role ? roleMaterial(role)
+      : kitMaterial(role || 'material', { ...kit, materials: { ...refs,
+        [role || 'material']: { ...ref, asset: ref.asset || value.id, color: value.color || ref.color, tint: true } } }, tier);
+    cache.set(key, material);
+  }
+  return cache.get(key);
 }
 
 const imported = new Map();

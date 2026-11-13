@@ -13,17 +13,17 @@ The user said: "Sometimes it feels like I am just asking for a stripped down ver
 - Sunken and raised rooms. *Shipped.*
 - Doors and windows, including models fitted to openings. *Shipped.*
 - Roofs. *Shipped.*
-- **Stairs between floors and steps between floor heights.** *Not built.* Sunken rooms already record where a step is needed.
+- Stairs between floors and steps between floor heights. *Shipped (v2.499.828).*
 - **Railings on porches and decks.** *Not built.*
 
 **Site**
 - Terrace pads with layering. *Shipped.*
-- Foundations for buildings. *Shipped.* Porches: *in progress.*
-- **Retaining walls on sharp pad edges.** *Planned.*
-- **Ground features drawn as outlines:** beds, patios and other hardscape, pools. *Planned.*
-- **Paths drawn along a line with a width:** sidewalks, paver paths, driveways. *Planned.*
+- Foundations for buildings. *Shipped.* Porches: posts, enclosed (lattice or panel skirt) and solid. *Shipped (v2.499.835).*
+- Retaining walls on sharp pad edges. *Shipped (v2.499.826).*
+- Ground features drawn as outlines: beds, patios and other hardscape, pools. *Shipped (v2.499.821).*
+- Paths drawn along a line with a width: sidewalks, paver paths, driveways. *Shipped (v2.499.821).*
 - Fences, plants and trees. *Shipped.*
-- **Lot features as rooms** (pool area, fire pit, grill), so they can hold devices. *Planned.*
+- **Lot features as rooms** (pool area, fire pit, grill), so they can hold devices: outdoor rooms drawn on the lot. *In progress.*
 
 **Objects**
 - One object model with size, turn and properties. *Shipped.*
@@ -37,7 +37,7 @@ The user said: "Sometimes it feels like I am just asking for a stripped down ver
 
 **Views**
 - Viewer navigation: house, building, floor, room. *Shipped.*
-- Mode icons and the new All mode. *Next.*
+- Mode icons and the new All mode. *Shipped (v2.499.823).*
 - The editor's free camera. *Shipped.*
 - Dimensions and measuring in the editor. *Exists. Extend if needed.*
 
@@ -51,7 +51,7 @@ The user said: "Sometimes it feels like I am just asking for a stripped down ver
 
 ## Keep light: a little, on purpose
 
-- **Materials:** choose from the kit's materials and tint them. No material editor and no texture painting.
+- **Materials:** choose from the kit's materials and tint them, through one shared material slot on every part (porch foundations first, v2.499.835; other features move to it next). No material editor and no texture painting.
 - **Furniture:** a small built-in library; anything specific comes in by import. No large catalogue.
 - **Interior finishes:** floor and wall material per room. No wallpaper, curtain or trim designers.
 - **Landscaping:** placed plants and trees with sizes. No growth or seasons simulation.

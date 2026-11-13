@@ -83,6 +83,20 @@ assert.equal(granite.color.getHexString(),'3b3d40','loaded granite texture keeps
 assert.equal(granite.roughness,.22,'loaded roughness map retains low base roughness');
 granite.dispose();ok('granite keeps charcoal colour and sheen with actual texture callbacks');
 
+// Feature slots retain their explicit tint after real texture callbacks and share
+// one instance across target roles/rebuild caches, without changing defines.
+const slotKit={materials:{siding:{asset:'slot_finish',color:'#abcdef'}},manifest:{slot_finish:{kind:'material',files}}};
+const slotCache=new Map(),slotRole=r=>{if(!slotCache.has(r))slotCache.set(r,lib.kitMaterial(r,slotKit,'high'));return slotCache.get(r);};
+const slotRef={id:'slot_finish',color:'#234567'};
+const slotMaterial=lib.materialSlot(slotRef,'siding',slotKit,'high',slotCache,slotRole);
+const slotRequests=takeRequests();assert.ok(slotRequests.length);slotRequests.forEach(r=>r.success(r.texture));await slotMaterial.userData.ready;
+assert.equal(slotMaterial.color.getHexString(),'234567','explicit slot tint survives texture completion');
+assert.ok(slotMaterial.map&&slotMaterial.normalMap&&slotMaterial.roughnessMap);
+const slotVersion=slotMaterial.version,slotProgram=slotMaterial.customProgramCacheKey();
+assert.equal(lib.materialSlot({...slotRef},'trim',slotKit,'high',slotCache,slotRole),slotMaterial);
+assert.equal(slotMaterial.version,slotVersion);assert.equal(slotMaterial.customProgramCacheKey(),slotProgram);
+assert.equal(takeRequests().length,0);slotMaterial.dispose();ok('shared material slot caches and loaded tint');
+
 const building = {id: 'house', levels: [{id: 'L1', elevation: 0, ceiling: 9}], walls: [],
   rooms: [{id: 'room', level: 'L1', polygon: [[0,0],[10,0],[10,10],[0,10]], floor_material: {id: 'slow_finish', color: '#123456'}}]};
 const slowKit = materialKit('slow_finish');

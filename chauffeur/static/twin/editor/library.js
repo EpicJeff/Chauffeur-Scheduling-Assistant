@@ -9,7 +9,8 @@ import { objectShown, siteRecords, siteRecord, sitePoints, siteShapeKinds } from
 import { pathSurfacePolygons } from '../path_shapes.js';
 import { request, report } from './api.js';
 
-export const materialName = id => String(id || 'Material').replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
+import { materialName, readLibraryCatalog } from './material_catalog.js';
+export { materialName } from './material_catalog.js';
 
 export function wallFace(building, wall, side) {
   const [a, b] = [wall.from, wall.to], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -275,7 +276,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   async function browse() {
     if (drag) { browsePending = true; return; }
     if (!catalog) {
-      loading ||= request('library').catch(error => { loading = null; throw error; });
+      loading ||= readLibraryCatalog().catch(error => { loading = null; throw error; });
       catalog = await loading;
     }
     if (signal.aborted) return;

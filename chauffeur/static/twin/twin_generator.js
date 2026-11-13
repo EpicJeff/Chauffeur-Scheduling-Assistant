@@ -3,12 +3,12 @@ import { applyObject, fitOpening, objectShown, objectMaterialKey } from './objec
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { kitMaterial, loadModel, disposeObject, cacheModelMaterials } from './twin_library.js';
+import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials } from './twin_library.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
-import { PORCH_SLAB_FT, porchFoundationRole, porchPlinthGeometry } from './twin_porch_foundation.js';
+import { PORCH_SLAB_FT, POST_SLAB_FT, porchFoundation, porchOnGrade, porchSupportGeometry, porchPlinthGeometry } from './twin_porch_foundation.js';
 import { stairGeometry, doorwaySteps } from './twin_stairs.js';
 import { roomFloor, roomAt, openingFloor, wallFloorProfile, foundationPieces } from './twin_floors.js';
 import { LUCIDE } from '../vendor/lucide/icons.js';
@@ -275,9 +275,10 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     const materialKit = { ...kit, materials: { ...kit.materials } };
     for (const [role, ref] of Object.entries(refs || {})) {
       const known = kit.manifest || window.twinManifest || {};
-      // Semantic ids resolve through the kit's role; actual asset ids win.
-      materialKit.materials[role] = { ...kit.materials?.[role], color: ref.color || kit.materials?.[role]?.color,
-        asset: known[ref.id] ? ref.id : kit.materials?.[role]?.asset };
+      // Kit-role ids and asset ids are the same references accepted by slots.
+      const source = kit.materials?.[ref.id] || kit.materials?.[role];
+      materialKit.materials[role] = { ...source, color: ref.color || source?.color,
+        asset: known[ref.id] ? ref.id : source?.asset };
     }
     return materialKit;
   };
@@ -1007,7 +1008,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         use(room.id ? room : { ...l, id: `floor:${l.id}` }, room.id ? 'room' : 'floor', `floor:${l.id}`);
         // Only insert stair holes fully contained in this footprint.
         const cuts = holes.filter(h => h.every(p => contains(poly, p)));
-        const slabBottom = porch?.foundation?.type === 'solid' ? elevation - PORCH_SLAB_FT
+        const slabBottom = porch ? elevation - (porchFoundation(porch.foundation).type === 'solid' ? PORCH_SLAB_FT : POST_SLAB_FT)
           : l.id === first.id && !room.floor_offset_ft ? 0 : elevation - .8;
         mesh(local[l.id], polygon(poly, slabBottom, elevation - 0.02, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'));
         mesh(local[l.id], polygon(poly, elevation, elevation, cuts), mat(porch ? 'patio_concrete' : 'floor', l, room.floor_material));
@@ -1027,10 +1028,19 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     for (const [index, po] of porches.entries()) {
       if (!po.polygon) continue;
       use(po, 'porch', po === b.porch ? 'porch' : `porch:${index}`);
-      const room = porchRoom(po), solid = po.foundation?.type === 'solid';
-      const floor = po.floor + (solid ? room?.floor_offset_ft || 0 : 0);
-      if (!room) mesh(local[first.id], polygon(po.polygon, solid ? floor - PORCH_SLAB_FT : 0, floor), mat('patio_concrete'));
-      if (solid) mesh(local[first.id], porchPlinthGeometry(plan, b, po, floor - PORCH_SLAB_FT, base), mat(porchFoundationRole(po.foundation.material)));
+      const room = porchRoom(po), foundation = porchFoundation(po.foundation), solid = foundation.type === 'solid';
+      const floor = po.floor + (room?.floor_offset_ft || 0);
+      const slabBottom = floor - (solid ? PORCH_SLAB_FT : POST_SLAB_FT);
+      const slot = (name, role) => materialSlot(foundation.materials[name], role, materialKit, tier, materials, mat);
+      if (!room) mesh(local[first.id], polygon(po.polygon, slabBottom, floor), mat('patio_concrete'));
+      if (solid || porchOnGrade(plan, b, po, floor, base)) {
+        mesh(local[first.id], porchPlinthGeometry(plan, b, po, slabBottom, base),
+          solid ? slot('solid', 'base') : mat('patio_concrete'));
+      } else {
+        const geometry = porchSupportGeometry(plan, b, po, floor, base);
+        if (geometry.supports) mesh(local[first.id], geometry.supports, slot('posts', 'trim'));
+        if (geometry.skirt) mesh(local[first.id], geometry.skirt, slot('skirt', foundation.skirt === 'panel' ? 'siding' : 'trim'));
+      }
       const shed = b.roof?.extensions?.find(e => e.kind === 'shed_continuation');
       const section = sections.find(s => s.id === shed?.section);
       const main = section && { plate: section.plate, x1: section.rect[2] };

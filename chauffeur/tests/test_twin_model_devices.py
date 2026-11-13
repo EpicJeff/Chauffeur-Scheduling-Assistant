@@ -641,7 +641,7 @@ def test_house_design_places_a_device():
     # Terrain pads/foundations (3b64cdce) and porch foundations (5aa80b75)
     # add 681 characters to the former 4,376-character schema. Keep a bounded
     # budget with comparable headroom (5,057 today; previously capped at 4,500).
-    check(len(json.dumps(agent_tools_v2.TOOL_SCHEMAS['house_design'])) <= 5600, 'keep the tool schema compact')  # stairs added
+    check(len(json.dumps(agent_tools_v2.TOOL_SCHEMAS['house_design'])) <= 6000, 'keep the tool schema compact')  # stairs, porch slots and yard rooms added (5,689 at v2.499.836)
 
 
 def test_i1a_catalogue_failure_keeps_the_area_link():

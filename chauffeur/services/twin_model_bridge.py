@@ -987,11 +987,8 @@ def flatten(model: dict) -> dict:
                 continue
             porch = next((p for p in building['porches'] if p.get('id') == room['id']), None)
             if porch is None:
-                if room.get('foundation', {}).get('type') != 'solid':
-                    continue
                 porch = {'id': room['id'], 'floor': next(l['elevation'] for l in building['levels'] if l['id'] == room['level']), 'columns': []}
                 building['porches'].append(porch)
             porch['foundation'] = deepcopy(room.get('foundation', twin_porches.DEFAULT))
-            if porch['foundation']['type'] == 'solid':
-                porch.update(polygon=deepcopy(room['polygon']), level=room['level'])
+            porch.update(polygon=deepcopy(room['polygon']), level=room['level'])
     return flat

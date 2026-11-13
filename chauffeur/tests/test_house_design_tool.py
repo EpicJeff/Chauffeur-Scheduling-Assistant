@@ -140,7 +140,7 @@ def scenario_tool_documents_connected_operation_arguments():
                   '0-based', '<piece>:proposal', 'planting|furniture', 'lot feet'):
         check(shape in description, f'missing shape or coordinate convention: {shape}')
     # Same budget as test_twin_model_devices: 5,057 characters after terrain pads and porch foundations.
-    check(len(json.dumps(schema)) <= 5600, 'keep the tool schema compact')  # stairs added
+    check(len(json.dumps(schema)) <= 6000, 'keep the tool schema compact')  # stairs, porch slots and yard rooms added (5,689 at v2.499.836)
 
 
 def scenario_tool_edits_through_the_same_operations():
