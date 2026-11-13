@@ -79,7 +79,13 @@ check('zone power overrides total, invalid or missing readings fall back, and st
 check('panels keep their colour; a cyan wave scales with generation and never changes the program again',async()=>{
  const t=await conduitRig();try{
   t.live.setMode('security');const m=t.panel.material,original={color:m.emissive.clone(),intensity:m.emissiveIntensity};
-  t.live.setMode('energy');const wave=m.userData.solarWave;assert.ok(wave,'wave installed on the panel material');
+  t.live.setMode('energy');const wave=energyModule.solarWaveOf(m);assert.ok(wave,'wave installed on the panel material');
+  // A cloned panel material (the bake copies materials; clone() deep-copies userData as plain
+  // data) gets its own working wave and never throws in draw (user, 2026-11-13).
+  const copy=m.clone();assert.equal(copy.userData.solarWave,undefined,'the wave is not in userData');
+  const copyMesh=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),copy);t.view.scene.add(copyMesh);t.live.refresh&&await t.live.refresh();t.live.setMode('energy');
+  t.view.render();const own=energyModule.solarWaveOf(copy);assert.ok(own&&own!==wave&&typeof own.waveDir.value.set==='function','the copy has its own wave');
+  copyMesh.removeFromParent();copyMesh.geometry.dispose();
   const key=m.customProgramCacheKey(),version=m.version;assert.ok(key.endsWith('|solarWave'));
   const values=[];for(const watts of [0,1000,2000,100000]){
    t.states['sensor.solar_power'].state=String(watts);await t.live.refresh();t.live.setMode('energy');values.push(wave.waveStrength.value);

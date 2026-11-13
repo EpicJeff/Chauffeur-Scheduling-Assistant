@@ -97,8 +97,14 @@ const placeShown = (view, place) => !place || (place.roof ? view.roofShown?.(pla
 // PULSE_SECONDS. Installed once per panel material; only uniforms change, never the program.
 export const PULSE_SECONDS = .9;
 const WAVE_COLOR = new THREE.Color('#4df0ff');
+// Kept by material, never in userData: Material.clone() deep-copies userData as plain data, so
+// a baked copy of a panel material carried a broken wave (no Vector2) and threw in draw
+// ("wave.waveDir.value.set is not a function", user 2026-11-13). A copy gets its own wave.
+const waves = new WeakMap();
+export const solarWaveOf = material => waves.get(material) || null;
 export function solarWave(material) {
-  if (material.userData.solarWave) return material.userData.solarWave;
+  if (waves.has(material)) return waves.get(material);
+  delete material.userData.solarWave;
   const uniforms = {waveHead: {value: -1e6}, waveWidth: {value: 1}, waveDir: {value: new THREE.Vector2(1, 0)}, waveStrength: {value: 0}, waveColor: {value: WAVE_COLOR}};
   const before = material.onBeforeCompile, key = material.customProgramCacheKey;
   material.onBeforeCompile = (shader, renderer) => {
@@ -115,7 +121,7 @@ export function solarWave(material) {
         + 'totalEmissiveRadiance += waveColor * solarBand * waveStrength;');
   };
   material.customProgramCacheKey = () => (key ? key.call(material) : '') + '|solarWave';
-  material.userData.solarWave = uniforms; material.needsUpdate = true;
+  waves.set(material, uniforms); material.needsUpdate = true;
   return uniforms;
 }
 
@@ -230,7 +236,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
   }
   function restorePanels() {
     for (const [material, original] of panels) {
-      if (material.userData.solarWave) material.userData.solarWave.waveStrength.value = 0;
+      if (waves.has(material)) waves.get(material).waveStrength.value = 0;
       material.emissive.copy(original.color); material.emissiveIntensity = original.intensity;
     }
   }
@@ -344,7 +350,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
         const phase = (performance.now() / 1000 % PULSE_SECONDS) / PULSE_SECONDS;
         const head = sweep.from - sweep.width + (sweep.to - sweep.from + 4 * sweep.width) * phase;
         for (const m of panels.keys()) {
-          const wave = m.userData.solarWave; if (!wave) continue;
+          const wave = waves.get(m); if (!wave) continue;
           wave.waveHead.value = head; wave.waveWidth.value = sweep.width; wave.waveDir.value.set(...sweep.dir);
         }
       }
