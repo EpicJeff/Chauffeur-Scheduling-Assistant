@@ -1,6 +1,32 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.826 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.827 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.827 (2026-11-13, NOT device-verified): the terrain card lists every pad, topmost first, and a pad can be dragged to a new layer.**
+
+**The ask.** The user, 2026-11-12: "If layered pads are going to be order-specific, you should be able to set the order somehow". v2.499.816 added Bring forward and Send back one step at a time; this adds the whole list.
+
+**How it was built.** Codex built it. Claude checked it in Chromium: a drag from top to bottom reordered the pads, and one undo restored the order.
+
+**The list** (`static/twin/editor/terrain_tools.js`, `editor/editor.css`).
+- **Contents:** a "Pads" list in the terrain card, in reverse stored order, so the top layer reads first. Each row has a grip, `Pad N · ±H ft` (N is the stored layer number, matching "Layer N of M") and a Wall badge when an edge carries a retaining wall.
+- **Selecting:** a row is a button with `aria-pressed`. Clicking it selects that pad (`choose('terraces', id)`) and shows its fields.
+- **Dragging:**
+  - pointer events: a mouse drags from anywhere on the row, touch and pen from the grip, so the words still scroll;
+  - a drop line shows the target;
+  - one changed drop is one `reorder_pad` op `{id, to}`, with `to = padCount − 1 − displayIndex`, and one undo step;
+  - dropping in place, cancelling, a busy editor or lost permission do nothing.
+- **Keyboard:** Alt+ArrowUp and Alt+ArrowDown move the focused pad one layer. Bring forward and Send back remain.
+- **Read-only users** see the list and can select pads; there are no grips and no reordering.
+
+**Tests.**
+- `test_twin_terrain_tools_js` (real module in node) covers:
+  - list order, labels, heights and the wall badge; selection;
+  - a drag from position 0 to 2 giving one op with the right stored index, and the reverse drag;
+  - the no-op drop (an 18 px drag within the same slot), cancellation, and suppression of the synthesized click;
+  - keyboard and focus, the touch grip, permission loss and read-only.
+- Neighbours: `test_twin_terrain`, `test_twin_ground_js`, `test_twin_retaining_wall_js`, `test_twin_import_maps`, `test_tailwind_build`.
+- Chromium: a drag and undo with three pads, plus a screenshot.
 
 **v2.499.826 (2026-11-13, NOT device-verified): a sharp pad edge can carry a retaining wall of stone, block, concrete, brick or timber.**
 
