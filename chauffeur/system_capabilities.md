@@ -1,6 +1,18 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.838 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.839 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.839 (2026-11-13, NOT device-verified): yard and fire-pit lights are no longer baked, and a bake failure now says why.**
+
+**The report.** The user, 2026-11-13, after adding areas with lights: the house showed "Could not bake lighting. Try Bake lighting now."
+
+**What Claude found in Chromium.** A light placed in a yard room (v2.499.836) has a room but no building, and the bake took it (`lightsOf` required only a room). Baked light lands on indoor surfaces, so that light never baked. It stayed stale on every pass, the bake never settled, and each Bake lighting now left it pending. One run also failed once with "Failed to fetch" on an upload, which a retry cleared. The user's exact reason was not visible: the status said only "Could not bake lighting", the reason went only to the browser console, and the add-on runs in Home Assistant's own machine.
+
+**The fix** (`static/twin/bake/runtime.js`).
+- `lightsOf` (now exported) takes only lights placed in a building. Yard-room and fire-pit lights keep lighting the lot through the live real-light pool.
+- The failure status names the reason: "Could not bake lighting (<reason>). Try Bake lighting now." A failure on a real house can now be reported and fixed.
+
+**Tests.** `test_twin_bake_runtime_js` 17/17, with the new `yard_and_fire_pit_lights_are_not_baked`. Chromium: a bake with an indoor house plus a yard-room light ends with nothing stale and no error, twice.
 
 **v2.499.838 (2026-11-13, NOT device-verified): every controllable entity of a device is a control under it. A pool controller shows its light, pump, waterfall, spa jets and heater, not just the light.**
 
