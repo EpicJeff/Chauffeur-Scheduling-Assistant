@@ -1,6 +1,21 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.832 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.833 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.833 (2026-11-13, NOT device-verified): one cyan pulse rushes across all the panels in under a second, then the next one fires.**
+
+**The correction.** The user, about v2.499.832's repeating stripes: "I envisioned one wave rushing across the entire surface of all of the panels. Only a single wave visible at a time. Once it reaches the end of the panels, it starts again... It should move all the way across all the panels in a second or less."
+
+**The pulse** (`static/twin/live/energy.js`).
+- **Shape:** one front with a sharp leading edge and a tail of about three widths. The width is 6% of the panel span, at least 0.25 m.
+- **Path:** it sweeps along the longer horizontal side of the bounding box of every panel on the house. The panels share one material, so the whole house sees a single front.
+- **Timing:** it enters before the first panel and leaves past the last in `PULSE_SECONDS` (0.9 s); the next fires straight away.
+- **Measurement:** the panel extent is measured when panel meshes are first seen, and again when new ones appear.
+- **Unchanged:** strength still scales with power (0 below 50 W and outside Energy and All). The shader is installed once and only uniforms change (`waveHead`, `waveWidth`, `waveDir`), so it never recompiles.
+
+**Tests.**
+- `test_twin_energy_js` 38/38. The panel check adds that `PULSE_SECONDS` is at most 1, that the front moves forward through one cycle, that the next cycle restarts from the start, and that the shader uses the single-front form.
+- Chromium frames 250 ms apart: one front lit the panels on two roofs at once, and the frames either side were clear.
 
 **v2.499.832 (2026-11-13, NOT device-verified): energy visualizations hide with the geometry they are tied to. Generating panels show a cyan wave instead of a yellow tint.**
 
