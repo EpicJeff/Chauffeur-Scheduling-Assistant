@@ -1,6 +1,38 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.825 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.826 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.826 (2026-11-13, NOT device-verified): a sharp pad edge can carry a retaining wall of stone, block, concrete, brick or timber.**
+
+**The ask.** The house editor scope list (`docs/superpowers/specs/2026-11-12-twin-editor-scope.md`) marks "retaining walls on sharp pad edges" as planned, slice 3b. Before this, a sharp edge showed only an earth face textured like the lawn.
+
+**How it was built.** Codex built it. Claude restored the `house_design` tool docs, which Codex had compressed to fit an old size cap, and checked the walls in Chromium.
+
+**Data** (`services/twin_terrain.py`).
+- **The field:** a pad edge may hold `wall:{material:stone|block|concrete|brick|timber, thickness_in:4..24 (default 8), above_in:0..36 (default 0)}`.
+- **Rules:**
+  - only a `sharp` edge keeps a wall; switching an edge to slope drops it;
+  - an invalid wall on a sharp edge is refused;
+  - an edge without a wall is unchanged.
+- **Ops:** it travels through `update_pad` and `add_pad`, so undo and history are unchanged.
+
+**Geometry** (`static/twin/twin_retaining_wall.js`, drawn by `twin_yard.js`).
+- **Shape:** each wall is a closed solid sampled every foot along the edge. Its face is on the edge line, and its body extends `thickness_in` toward the higher side, so a raised pad's wall is inside the pad and a sunken pad's is outside.
+- **Height:** it runs from the lower side's ground minus a 0.5 ft footing up to the higher side's ground plus `above_in`. It follows sloped and layered terrain.
+- **Faces:** they are outward, with caps. The lawn's earth skirt is left out on walled edges; slab and plinth closures keep theirs.
+- **Materials:** stone, concrete and brick reuse existing kit roles. New `retaining_block` (concrete texture) and `retaining_timber` (wood planks) roles are in `modern_farmhouse.json`, with no new assets.
+- **Bake:** the wall is authored geometry and is part of the bake key.
+- **Shaders:** editing a wall compiled 0 new GPU programs in Chromium.
+
+**Editor.** In the terrain card, each sharp edge has a Wall choice (None, Stone, Block, Concrete, Brick, Timber), with Thickness (in) and Above ground (in) fields when a material is chosen. Read-only users see the values without controls.
+
+**Agent.** The `house_design` tool describes the wall in one clause; the tool schema is 5,193 characters, under the 5,200 cap.
+
+**Tests.**
+- New: `test_twin_retaining_wall` (validation, defaults, API refusals, round trip, undo and redo, slope removal, tool docs) and `test_twin_retaining_wall_js` (raised, sunken and sloped walls, the footing, outward normals and caps, skirts, the bake key).
+- Extended: `test_twin_terrain_tools_js`.
+- Neighbours: `test_twin_ground_js`, `test_twin_terrain`, `test_twin_porch_foundation` and `test_twin_porch_foundation_js`, `test_twin_model_devices`, `test_house_design_tool`, `test_twin_import_maps`, `test_tailwind_build`.
+- Chromium screenshots of a raised pad with four materials and a sunken concrete pad.
 
 **v2.499.825 (2026-11-13, NOT device-verified): in Energy and All, solar zones on other roofs are linked to the source roof by a glowing conduit, and panels glow while they generate.**
 
