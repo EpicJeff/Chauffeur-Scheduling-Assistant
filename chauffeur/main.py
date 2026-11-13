@@ -7588,11 +7588,10 @@ def house_live(request: Request):
         # Area membership is independent of a person's chosen marker position.
         devices.append({**device, 'offered': control_rules.offered(
             who, device['entity_id'], settings, states=states)})
-        if device['kind'] == 'camera':
-            devices[-1]['accessories'] = [
-                {**accessory, 'offered': control_rules.offered(
-                    who, accessory['entity_id'], settings, states=states)}
-                for accessory in twin_ha.camera_accessories(device, states)]
+        devices[-1]['accessories'] = [
+            {**accessory, 'offered': control_rules.offered(
+                who, accessory['entity_id'], settings, states=states)}
+            for accessory in twin_ha.device_accessories(device, states)]
         if placement:
             if yard_room:
                 spot = twin_ha.yard_spot(model, placement) if yard_linked else None
@@ -7638,7 +7637,7 @@ def house_live(request: Request):
         height = twin_site_shapes.fire_properties(pit)['height_in'] / 12
         row = {'device_id': 'fire_pit:' + str(pit.get('id', index)),
                'entity_id': eid, 'entities': [eid], 'kind': 'switch',
-               'name': pit.get('name') or 'Fire pit', 'fire_pit': True,
+               'name': pit.get('name') or 'Fire pit', 'fire_pit': True, 'accessories': [],
                'offered': control_rules.offered(who, eid, settings, states=states)}
         # A linked entity may already have a room marker. The pit marker is an
         # additional hand path at the physical feature, sharing the same entity.

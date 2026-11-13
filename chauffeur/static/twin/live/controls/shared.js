@@ -57,6 +57,7 @@ export function controlShape(state) {
     'preset_modes', 'available_modes', 'operation_list', 'source_list', 'code_format', 'code_arm_required',
     'min_temp', 'max_temp', 'target_temp_step', 'percentage_step', 'min_humidity', 'max_humidity',
     'min_color_temp_kelvin', 'max_color_temp_kelvin', 'min_mireds', 'max_mireds',
+    'min', 'max', 'step', 'options', 'unit_of_measurement',
   ].map(key => attrs[key])]);
 }
 

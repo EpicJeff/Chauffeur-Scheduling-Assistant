@@ -835,6 +835,150 @@ check('camera_room_row_has_the_same_accessory_controls', async () => {
   } finally { t.cleanup(); }
 });
 
+
+const POOL_ACCESSORIES = [
+  ...['pump', 'waterfall', 'spa_jets'].map(name => ({entity_id:'switch.' + name,
+    name:name.replaceAll('_',' '), kind:'switch', offered:true})),
+  {entity_id:'water_heater.pool', name:'Heater', kind:'water_heater', offered:true},
+];
+async function poolController(extra = [], {offered = true, blocked = null} = {}) {
+  const accessories = structuredClone([...POOL_ACCESSORIES, ...extra]);
+  for (const a of accessories) if (a.entity_id === blocked) a.offered = false;
+  const extraStates = Object.fromEntries(accessories.map(a => [a.entity_id, {state:'off', attributes:{}}]));
+  extraStates['water_heater.pool'] = {state:'eco', attributes:structuredClone(WATER.attributes)};
+  return mount([{...dev('pool', 'light.pool', 'light', 'off', {supported_color_modes:['brightness'], brightness:128}),
+    name:'Pool controller', offered, accessories, entities:['light.pool', ...accessories.map(a => a.entity_id), 'sensor.pool']}], {extraStates});
+}
+check('pool_primary_and_accessories_work_on_room_and_ring', async () => {
+  const t = await poolController();
+  try {
+    for (const surface of ['room', 'ring']) {
+      if (surface === 'room') { t.live.openRoom('b','r'); await wait(50); }
+      else { await open(t, 'pool', 'hold'); }
+      const root = surface === 'room' ? document.getElementById('twin-room-panel') : ringNode();
+      assert.ok(root.querySelector('[data-ring-part="brightness"]'), 'primary light keeps brightness');
+      assert.equal(root.querySelectorAll('[data-accessory]').length, 4);
+      assert.equal(root.querySelector('details'), null, 'four secondaries need no fold');
+      for (const a of POOL_ACCESSORIES.slice(0,3)) {
+        const node = accessory(root, a.entity_id);
+        assert.ok(node.textContent.includes(a.name));
+        const calls = await sent(t, () => press(node.querySelector('[role="switch"]')));
+        assert.deepEqual(calls, [['switch','toggle',{entity_id:a.entity_id}]]);
+      }
+      const heater = accessory(root, 'water_heater.pool');
+      assert.equal(heater.querySelector('input')?.type, 'range', 'heater target, not a generic toggle');
+      const eco = heater.querySelector('[aria-pressed="true"]'); assert.ok(eco);
+      const range = heater.querySelector('input'); range.value = '124';
+      const calls = await sent(t, () => range.dispatchEvent(new Event('change', {bubbles:true})));
+      assert.deepEqual(calls, [['water_heater','set_temperature',{temperature:124,entity_id:'water_heater.pool'}]]);
+      assert.ok(!accessory(root, 'sensor.pool'));
+      assert.equal(await t.live.control('sensor.pool', 'toggle'), false, 'facts never inherit primary permission');
+    }
+    assert.deepEqual(domErrors, []);
+  } finally { t.cleanup(); }
+});
+check('pool_more_controls_and_secondary_permissions_on_both_surfaces', async () => {
+  const extra = [{entity_id:'switch.extra', name:'Extra', kind:'switch', offered:true},
+    {entity_id:'lock.pool_gate', name:'Pool gate', kind:'lock', offered:false}];
+  const t = await poolController(extra);
+  try {
+    for (const surface of ['room','ring']) {
+      if (surface === 'room') { t.live.openRoom('b','r'); await wait(50); }
+      else await open(t, 'pool', 'hold');
+      const root = surface === 'room' ? document.getElementById('twin-room-panel') : ringNode();
+      const fold = root.querySelector('details');
+      assert.equal(fold.querySelector('summary').textContent, 'More controls');
+      assert.ok(!fold.open);
+      assert.equal(fold.querySelectorAll('[data-accessory]').length, 2);
+      assert.ok(!accessory(root,'switch.pump').closest('details'));
+      fold.open = true;
+      const calls = await sent(t, () => press(accessory(fold,'switch.extra').querySelector('button')));
+      assert.deepEqual(calls, [['switch','toggle',{entity_id:'switch.extra'}]]);
+      assert.ok(fold.open, 'confirmed state refresh keeps the disclosure open');
+      assert.equal(accessory(root,'lock.pool_gate').querySelector('button'), null);
+      assert.equal(await t.live.control('lock.pool_gate','unlock'), false);
+    }
+    assert.deepEqual(t.confirms, []);
+    assert.deepEqual(domErrors, []);
+  } finally { t.cleanup(); }
+});
+check('pool_accessory_capability_changes_rebuild_controls', async () => {
+  const t = await poolController();
+  try {
+    for (const surface of ['room','ring']) {
+      t.states['water_heater.pool'].attributes.supported_features = 11;
+      await t.live.refresh();
+      if (surface === 'room') { t.live.openRoom('b','r'); await wait(50); }
+      else await open(t,'pool','hold');
+      t.states['water_heater.pool'].attributes.supported_features = 8;
+      await t.live.refresh();
+      const root = surface === 'room' ? document.getElementById('twin-room-panel') : ringNode();
+      const heater = accessory(root,'water_heater.pool');
+      assert.equal(heater.querySelector('input'),null);
+      assert.ok(heater.querySelector('[role="switch"]'));
+    }
+    assert.deepEqual(domErrors, []);
+  } finally { t.cleanup(); }
+});
+
+
+check('accessory_number_select_valve_and_lock_use_domain_controls', async () => {
+  const extra = [
+    ...['number','input_number'].map(domain => ({entity_id:domain+'.speed',kind:'number',name:domain,offered:true})),
+    ...['select','input_select'].map(domain => ({entity_id:domain+'.mode',kind:'select',name:domain,offered:true})),
+    {entity_id:'valve.pool',kind:'valve',name:'Valve',offered:true},
+    {entity_id:'lock.pool',kind:'lock',name:'Pool lock',offered:true},
+  ];
+  const t = await poolController(extra);
+  try {
+    for (const a of extra.slice(0,2)) t.states[a.entity_id] = {state:'40',attributes:{min:10,max:80,step:5}};
+    for (const a of extra.slice(2,4)) t.states[a.entity_id] = {state:'eco',attributes:{options:['eco','boost']}};
+    t.states['valve.pool'] = {state:'open',attributes:{supported_features:15,current_position:50}};
+    t.states['lock.pool'] = {state:'locked',attributes:{}};
+    await t.live.refresh();
+    for (const surface of ['room','ring']) {
+      if (surface === 'room') { t.live.openRoom('b','r'); await wait(50); }
+      else await open(t,'pool','hold');
+      const root = surface === 'room' ? document.getElementById('twin-room-panel') : ringNode();
+      root.querySelector('details').open = true;
+      for (const a of extra.slice(0,2)) {
+        const input = accessory(root,a.entity_id).querySelector('input');
+        assert.deepEqual([input.min,input.max,input.step],['10','80','5']);
+        input.value = '55';
+        const calls = await sent(t, () => input.dispatchEvent(new Event('change',{bubbles:true})));
+        assert.deepEqual(calls, [[a.entity_id.split('.')[0],'set_value',{value:55,entity_id:a.entity_id}]]);
+      }
+      for (const a of extra.slice(2,4)) {
+        const boost = buttonsIn(accessory(root,a.entity_id)).find(b => nameOf(b) === 'boost');
+        const calls = await sent(t, () => press(boost));
+        assert.deepEqual(calls, [[a.entity_id.split('.')[0],'select_option',{option:'boost',entity_id:a.entity_id}]]);
+      }
+      const valve = accessory(root,'valve.pool');
+      const calls = await sent(t, () => press(valve.querySelector('[data-ring-part="close"]')));
+      assert.deepEqual(calls, [['valve','close_valve',{entity_id:'valve.pool'}]]);
+      const before = t.confirms.length;
+      const unlock = accessory(root,'lock.pool').querySelector('[data-ring-part="unlock"]');
+      const lockCalls = await sent(t, () => press(unlock));
+      assert.deepEqual(lockCalls, [['lock','unlock',{entity_id:'lock.pool'}]]);
+      assert.equal(t.confirms.length,before+1,'secondary unlock confirms once');
+    }
+    assert.deepEqual(domErrors, []);
+  } finally { t.cleanup(); }
+});
+check('pool_primary_permission_does_not_lend_to_or_block_siblings', async () => {
+  const t = await poolController([], {offered:false, blocked:'switch.waterfall'});
+  try {
+    await t.live.refresh(); await open(t,'pool','hold');
+    assert.equal(await t.live.control('light.pool','toggle'),false);
+    assert.equal(await t.live.control('switch.waterfall','toggle'),false);
+    const pump = accessory(ringNode(),'switch.pump');
+    assert.deepEqual(await sent(t, () => press(pump.querySelector('button'))),
+      [['switch','toggle',{entity_id:'switch.pump'}]]);
+    assert.equal(accessory(ringNode(),'switch.waterfall').querySelector('button'),null);
+    assert.deepEqual(domErrors, []);
+  } finally { t.cleanup(); }
+});
+
 check('every_kind_unoffered_is_read_only', async () => {
   const rows = [HEAT, FAN, BLIND, GARAGE, SPEAKER, LOCK, ALARM, VACUUM, HUMID, WATER, SCENE, SCRIPT]
     .map(row => ({...row, offered: false}));

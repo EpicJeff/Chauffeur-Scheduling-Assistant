@@ -1,5 +1,5 @@
 import { kindOf } from './kinds.js';
-import { controlShape } from './controls/shared.js';
+import { deviceControls, deviceControlShape } from './controls/device.js';
 
 // The dial's size (its CSS box), the gap kept from the screen's edges, and the gap to the side card.
 const DIAL = 280, EDGE = 8, SPACE = 12;
@@ -47,6 +47,10 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
     if (!at) { close(); return; }
     anchor = {device_id: row.device_id, x: at.x, y: at.y};
     const safe = safeArea(), side = builder?.side || null, title = root.firstElementChild;
+    // A controller can fill the side card (or camera card) with many controls.
+    // Scroll within the same usable space that positioning keeps above the shelf.
+    if (builder?.querySelector('.twin-accessories') && safe.bottom > safe.top)
+      (side || builder).style.maxHeight = `${safe.bottom - safe.top}px`;
     if (!(safe.right > safe.left && safe.bottom > safe.top)) {
       root.style.left = `${at.x}px`; root.style.top = `${at.y}px`; settle(`${at.x}|${at.y}`); return;
     }
@@ -83,7 +87,7 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
     if (!row) return;
     // One entity's confirmed state, read without copying the house (review M3).
     const state = live.state(row.entity_id), kind = kindOf(row);
-    const key = JSON.stringify([row.device_id, row.offered, row.accessories, controlShape(state),
+    const key = JSON.stringify([row.device_id, deviceControlShape(row, state, live.state),
       kind.ring ? null : state]);
     if (signature === key && builder?.update) { builder.update(state); return; }
     if (signature === key) return;
@@ -98,7 +102,7 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
     // The entity is read from this ring's row, not the ring's current one: a send that
     // answers after the ring closed still reads its own device.
     const entity = row.entity_id;
-    builder = (kind.ring || kind.panel)({row, state, control: live.control, surface: 'ring',
+    builder = deviceControls({row, state, control: live.control, surface: 'ring',
       getState: () => live.state(entity), getEntityState: live.state});
     // A kind with nothing to control (a sensor) shows its value alone, not an empty card.
     if (!builder.childNodes.length) builder.hidden = true;

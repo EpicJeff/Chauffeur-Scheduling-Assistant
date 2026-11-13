@@ -10,10 +10,12 @@ import { humidifierControls } from './controls/humidifier.js';
 import { waterHeaterControls } from './controls/water_heater.js';
 import { sceneControls } from './controls/scene.js';
 import { cameraControls } from './controls/camera.js';
+import { numberControls, selectControls, buttonControls, sirenControls, valveControls } from './controls/inputs.js';
 
 const registrations = new Map();
 const DOMAINS = {alarm: 'alarm_control_panel', vacuum: 'vacuum', humidifier: 'humidifier',
-  water_heater: 'water_heater', scene: 'scene', script: 'script'};
+  water_heater: 'water_heater', scene: 'scene', script: 'script', number: 'number',
+  select: 'select', button: 'button', siren: 'siren', valve: 'valve'};
 
 export function registerKind(kind) {
   registrations.set(kind.id, kind);
@@ -170,6 +172,9 @@ for (const [id, icon, panel, quick, unsafe] of [
   ['vacuum', otherIcon, vacuumControls], ['humidifier', otherIcon, humidifierControls],
   ['water_heater', otherIcon, waterHeaterControls], ['scene', otherIcon, sceneControls, 'turn_on'],
   ['script', otherIcon, sceneControls, 'turn_on'],
+  ['number', otherIcon, numberControls], ['select', otherIcon, selectControls],
+  ['button', otherIcon, buttonControls], ['siren', otherIcon, sirenControls],
+  ['valve', otherIcon, valveControls],
 ]) {
   registerKind({id, icon, quick: quick || null, unsafe: unsafe || {},
     match: row => row.kind === id || !!DOMAINS[id] && String(row.entity_id || '').startsWith(DOMAINS[id] + '.'),

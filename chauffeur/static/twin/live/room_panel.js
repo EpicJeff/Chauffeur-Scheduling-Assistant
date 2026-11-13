@@ -1,6 +1,6 @@
 import { kindOf } from './kinds.js';
 import { base } from '../twin_library.js';
-import { controlShape } from './controls/shared.js';
+import { deviceControls, deviceControlShape } from './controls/device.js';
 export { confirmUnsafe } from './kinds.js';
 
 const element = (tag, text) => {
@@ -10,7 +10,7 @@ const element = (tag, text) => {
 };
 
 export function deviceActions(row, state, control, { compact = false, getState, getEntityState } = {}) {
-  return kindOf(row).panel({row, state, control, compact, getState, getEntityState});
+  return deviceControls({row, state, control, compact, getState, getEntityState});
 }
 
 export function mountRoomPanel(live) {
@@ -84,7 +84,7 @@ export function mountRoomPanel(live) {
     }
     for (const row of rows) {
       const state = states[row.entity_id], attrs = state?.attributes || {};
-      const shape = JSON.stringify([kindOf(row).id, row.offered, row.accessories, controlShape(state)]);
+      const shape = deviceControlShape(row, state, live.state);
       let widget = widgets.get(row.device_id);
       if (!widget || shape !== widget.shape || !widget.actions.update) {
         const node = widget?.node || element('section');

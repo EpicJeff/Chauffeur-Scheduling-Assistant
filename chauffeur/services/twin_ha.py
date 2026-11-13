@@ -16,26 +16,29 @@ from services import control_rules, ha_api, house, twin_model
 # What a device IS, most telling first: a lock that also reports its battery
 # is a lock, and a light that also reports its energy is a light.
 _KINDS = ('lock', 'garage', 'camera', 'climate', 'light', 'fan', 'outlet', 'switch',
-          'media', 'blinds', 'sensor', 'other')
+          'media', 'blinds', 'water_heater', 'valve', 'number', 'select', 'humidifier', 'sensor', 'other')
 _PLURALS = {'light': 'lights', 'switch': 'switches', 'fan': 'fans',
             'camera': 'cameras', 'sensor': 'sensors', 'outlet': 'outlets'}
 
 
-def camera_accessories(device, states):
-    """The camera's controllable siblings; sensors remain ordinary device facts."""
-    if device['kind'] != 'camera':
-        return []
+_CONTROL_DOMAINS = frozenset(('light', 'switch', 'input_boolean', 'fan', 'climate',
+    'water_heater', 'cover', 'valve', 'number', 'input_number', 'select', 'input_select',
+    'button', 'siren', 'humidifier', 'lock'))
+
+
+def device_accessories(device, states):
+    """Every controllable sibling of the primary; sensors remain device facts."""
     out = []
     for eid in device['entities']:
         domain = eid.partition('.')[0]
-        if domain not in ('light', 'switch', 'input_boolean', 'siren', 'button'):
+        if eid == device['entity_id'] or domain not in _CONTROL_DOMAINS:
             continue
         attrs = (states.get(eid) or {}).get('attributes') or {}
         name = attrs.get('friendly_name') or eid.partition('.')[2].replace('_', ' ')
         name = re.sub(r'^' + re.escape(device['name']) + r'(?:[\s:–—-]+|$)', '', name,
                       flags=re.IGNORECASE).strip()
         out.append({'entity_id': eid, 'name': name or domain.capitalize(),
-                    'kind': 'light' if domain == 'light' else 'switch' if domain in ('switch', 'input_boolean') else 'other'})
+                    'kind': _entity_kind({'entity_id': eid, 'domain': domain, '_state': states.get(eid)})})
     return out
 
 
@@ -53,7 +56,9 @@ def _entity_kind(entity, registry=None):
     return {'light': 'light', 'switch': 'switch', 'input_boolean': 'switch',
             'fan': 'fan', 'camera': 'camera', 'binary_sensor': 'sensor',
             'sensor': 'sensor', 'lock': 'lock', 'climate': 'climate',
-            'media_player': 'media'}.get(domain, 'other')
+            'media_player': 'media', 'water_heater': 'water_heater', 'valve': 'valve',
+            'number': 'number', 'input_number': 'number', 'select': 'select',
+            'input_select': 'select', 'humidifier': 'humidifier'}.get(domain, 'other')
 
 
 def catalogue() -> dict:

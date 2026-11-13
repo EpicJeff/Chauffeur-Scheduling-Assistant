@@ -284,7 +284,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     if (stopped) return false;
     if (stale) { window.showGlobalAlert(unreachable); return false; }
     const owner = devices.find(row => row.entity_id === entityId || row.entities?.includes(entityId));
-    const device = owner?.kind === 'camera' && owner.entity_id !== entityId
+    const device = owner && owner.entity_id !== entityId
       ? owner.accessories?.find(row => row.entity_id === entityId) : owner;
     if (!device?.offered) return false;
     if (busy.has(entityId)) {
