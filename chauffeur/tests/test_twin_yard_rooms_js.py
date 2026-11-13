@@ -45,6 +45,20 @@ await test('yard attention markers are limited to House and their own room',()=>
  assert.ok(deviceAtLevel({level:'room',building:null,room:'pool'},row));
  assert.equal(deviceAtLevel({level:'room',building:null,room:'grill'},row),false);
 });
+await test('level navigation keeps yard and indoor rooms equally framed from above',async()=>{
+ const THREE=await import('three'),sizes=[];
+ for(const outdoor of [false,true]){
+  v.levels.go({building:outdoor?null:'b',room:outdoor?'pool':'inside'},{immediate:true});
+  v.camera.updateMatrixWorld(true);
+  const points=rect(outdoor?20:0,0).map(([x,y])=>new THREE.Vector3(x*.3048,(outdoor?4:0)*.3048,-y*.3048).project(v.camera));
+  assert.ok(points.every(p=>Math.abs(p.x)<1&&Math.abs(p.y)<1&&Math.abs(p.z)<1));
+  const size=[(Math.max(...points.map(p=>p.x))-Math.min(...points.map(p=>p.x)))*v.camera.aspect/2,
+    (Math.max(...points.map(p=>p.y))-Math.min(...points.map(p=>p.y)))/2];
+  const short=Math.min(v.camera.aspect,1);assert.ok(Math.min(...size)/short>=.5);
+  sizes.push(size);
+ }
+ assert.ok(sizes[0].every((n,i)=>Math.abs(n-sizes[1][i])<1e-6),'indoor level navigation stays unchanged');
+});
 await test('editor yard selection outline uses lot feet once and clears on deselection',async()=>{
  const THREE = await import('three');
  const shell = new Element(); shell.className = 'editor-shell';
@@ -106,6 +120,39 @@ check('yard card and room panel include explicit devices outside the HA area',as
  const toggle = explicit.querySelector('button[role="switch"]'); assert.ok(toggle); assert.equal(toggle.getAttribute('aria-checked'),'true');
  await press(toggle); assert.equal(t.calls.at(-1).data.entity_id,'light.moved'); assert.equal(t.calls.at(-1).service,'toggle');
  assert.equal(t.states['light.moved'].state,'off');
+});
+check('small yard and indoor room cards fill the viewport without clipping',async()=>{
+ const {LEVEL_TUNING}=await import(file('static/twin/levels.js'));
+ const results={};
+ for(const outdoor of [false,true]){
+  const polygon=[[20,0],[26,0],[26,6],[20,6]],row={building:outdoor?null:'b',room:'r',level:outdoor?null:'L1',
+    yard:outdoor,name:outdoor?'Pool deck':'Inside',area_id:'kitchen',lights:['light.test'],polygon_world:polygon};
+  const t=await rig({rooms:[row],devices:[{device_id:'lamp',name:'Lamp',kind:'light',entity_id:'light.test',state:'on'}]});
+  try{
+   t.view.plan.buildings[0].rooms[0].polygon=polygon;
+   t.view.plan.site={yard_rooms:outdoor?[{id:'r',name:'Pool deck',polygon}]:[],terraces:[]};
+   const target=new THREE.Vector3(23*FT,0,-3*FT);
+   const axis=outdoor?new THREE.Vector3(Math.sin(LEVEL_TUNING.orbitYawDefault)*Math.sin(LEVEL_TUNING.orbitPolarDefault),
+     Math.cos(LEVEL_TUNING.orbitPolarDefault),Math.cos(LEVEL_TUNING.orbitYawDefault)*Math.sin(LEVEL_TUNING.orbitPolarDefault)):new THREE.Vector3(0,1,0);
+   t.view.controls.target.copy(target);t.camera.up.set(0,outdoor?1:0,outdoor?0:-1);
+   t.camera.position.copy(target).addScaledVector(axis,100);t.camera.lookAt(target);t.live.draw();
+   const card=t.host.querySelector('[data-room-card]');assert.ok(card&&!card.hidden);
+   await press(card);await wait(550);t.camera.updateMatrixWorld(true);
+   const projected=polygon.map(([x,y])=>new THREE.Vector3(x*FT,0,-y*FT).project(t.camera));
+   const width=(Math.max(...projected.map(p=>p.x))-Math.min(...projected.map(p=>p.x)))*1400/2;
+   const height=(Math.max(...projected.map(p=>p.y))-Math.min(...projected.map(p=>p.y)))*1000/2;
+   const distance=t.camera.position.distanceTo(t.view.controls.target);
+   results[outdoor?'yard':'indoor']={width:width/1000,height:height/1000,distance};
+   console.log(`framing ${outdoor?'yard':'indoor'}: ${JSON.stringify(results[outdoor?'yard':'indoor'])}`);
+   assert.ok(projected.every(p=>Math.abs(p.x)<1&&Math.abs(p.y)<1&&Math.abs(p.z)<1),'all corners stay inside the real camera frustum');
+   assert.ok(Math.min(width,height)>=500,`${row.name}: both projected dimensions span at least half the shorter viewport side`);
+   if(!outdoor){
+    const oldDistance=6*FT*.75/Math.tan(t.camera.fov*Math.PI/360);
+    assert.ok(Math.abs(distance-oldDistance)<1e-6,'indoor framing distance stays unchanged');
+   }
+  }finally{t.cleanup();}
+ }
+ assert.ok(Math.min(results.yard.width,results.yard.height)>=Math.min(results.indoor.width,results.indoor.height)*.75,'comparable footprint on screen');
 });
 let failed = 0;
 try { for (const [name,fn] of checks) { try { await fn(); console.log('  ok  ',name); } catch(error) {failed++;console.error('  FAIL',name,error.stack);} } }

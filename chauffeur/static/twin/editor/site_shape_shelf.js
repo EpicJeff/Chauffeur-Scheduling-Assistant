@@ -1,4 +1,4 @@
-import { sitePoints } from '../objects.js';
+import { sitePoints, siteRecords } from '../objects.js';
 import { editVertex } from './polygon_handles.js';
 import { shapeKey, shapeCentre, shapeSize, transformShape, shapeOperation, closedShape } from './site_shapes.js';
 import { roundPit, firePitOptions } from '../fire_pits.js';
@@ -19,8 +19,27 @@ export function siteMaterialSlots(kind, piece) {
   if (kind === 'hardscape') return [['surface', 'Surface', ROLE_WORDS[role || 'paving'] || title(role)],
     ...(piece.kind === 'path' && piece.edging === 'curb' ? [['edging', 'Curb', 'Concrete']] : [])];
   if (kind === 'beds') return [['fill', 'Fill', ROLE_WORDS[role || 'mulch'] || title(role)]];
+  if (kind === 'pool') return [['coping', 'Coping', ROLE_WORDS[role || 'paving'] || title(role)], ['interior', 'Interior', 'Pool tile']];
+  if (kind === 'edges') return [['strip', 'Strip', ROLE_WORDS[role || 'lawn'] || title(role)]];
   if (kind === 'fence') return [['boards', 'Boards', 'Wood'], ['posts', 'Posts', 'Wood'], ['rails', 'Rails', 'Wood']];
   return [];
+}
+
+// Old rooms kept only the copied outline. New ones retain the source id even
+// after either outline is edited. Never guess another feature after deletion.
+export function yardRoomFeatures(plan, room) {
+  const features = siteRecords(plan).filter(r => ['pool', 'hardscape', 'beds', 'fire_pit'].includes(r.kind));
+  if (room.feature) return features.filter(r => r.kind === room.feature.list && r.piece.id === room.feature.id);
+  const same = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
+  return features.filter(({kind, piece}) => {
+    const polygon = kind === 'fire_pit' && roundPit(piece)
+      ? Array.from({length: 32}, (_, i) => [piece.at[0] + ((piece.radius ?? 2) + 1.5) * Math.cos(i * Math.PI / 16),
+        piece.at[1] + ((piece.radius ?? 2) + 1.5) * Math.sin(i * Math.PI / 16)])
+      : piece.kind === 'path' ? pathOutline(piece) : piece.polygon;
+    if (!polygon || polygon.length !== room.polygon.length) return false;
+    return polygon.some((p, start) => same(p, room.polygon[0]) && [1, -1].some(direction =>
+      room.polygon.every((q, i) => same(q, polygon[(start + direction * i + polygon.length) % polygon.length]))));
+  });
 }
 
 // Uses the object shelf's labels, number inputs and Advanced disclosure.

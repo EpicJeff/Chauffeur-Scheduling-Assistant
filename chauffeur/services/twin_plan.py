@@ -541,6 +541,7 @@ def _site(site, notes):
                 if not isinstance(value, dict) or set(value) - {'face'} or any(material_slot_error(v) for v in value.values()):
                     wall.pop('materials')
                     notes.append('Reset retaining wall materials: unknown Library material.')
+    slots('pool', site.get('pool'))
     for name in ('fire_pit', 'fence'):
         value = site.get(name)
         kept = []

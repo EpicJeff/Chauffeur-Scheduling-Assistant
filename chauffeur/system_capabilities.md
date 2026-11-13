@@ -1,6 +1,30 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.842 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.844 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.844 (2026-11-13): test-only. The camera-ring browser scenario passes again.**
+
+**What was failing.** `test_house_twin_controls_more_live` `scenario_camera_ring_shows_a_still_and_refreshes` had failed since before v2.499.823 with "the marker is drawn at this camera (not merged into a room badge)".
+
+**The cause.** The fixture placed the porch camera on the Kitchen floor at (.5, .45), almost under the Kitchen pendant's automatic ceiling spot. At the scenario's camera the two markers sat 48 px apart on screen, inside the clustering hysteresis (`markers.js` `clusterMarkers`: under 40 px joins, and 48 px or less holds an existing cluster). The camera therefore drew as a cluster badge. The product behaved correctly.
+
+**The fix.** The fixture moves the camera to (.5, .65). The file passes 9/9.
+
+**v2.499.843 (2026-11-13, NOT device-verified): the pool and lawn edges take Library materials, and a yard room made from a feature links to that feature's materials.**
+
+**Slots** (the same shared slots as v2.499.842):
+- **Pool:** `coping`, and `interior` for the tiled walls and floor. With no interior slot the pool keeps its plain pool-tile look exactly, and water is not a slot.
+- **Lawn edge strips:** `strip`.
+- Server validation, load-time reset of unknown materials, one undoable edit per change, and parents only all work as for the other features.
+- Argyle's `house_design` description is extended in place: 5,987 of the 6,000-character cap.
+
+**Yard rooms from features.**
+- "Make this a room" now records which feature the room came from (`feature: {list, id}`).
+- The yard room's editor card shows "Edit <feature> materials", which selects that feature. Older rooms are matched by identical outline, and nothing is guessed after the feature is deleted.
+
+**Yard room framing, partial.** `live.js` `frameRoom` now fits a yard room's corners in camera space (`LEVEL_TUNING.yardFramePadding` 1.1). Node measure: 43.7% of the viewport height before, 61.2% after, with indoor rooms unchanged. That path only runs when there is no levels controller. The house view's normal tap goes through `levels.js` `framing()`, so the user's "tapping a yard room barely zooms" is not fixed by this. Chromium also showed the page stalling for about 3 s right after a yard room opens; investigation continues.
+
+**Tests.** `test_twin_yard_material_slots` 6/6, `test_twin_yard_material_slots_js`, `test_twin_material_slot_js`, `test_twin_yard_rooms` 8/8, and `test_twin_yard_rooms_js` 3/3 (the framing check fails on the old code). Neighbours green: live rooms 10/10, live control 8/8, model bridge 32/32, house_design tool, model devices 20/20, retaining wall, stairs, terrain tools, and import maps 3/3.
 
 **v2.499.842 (2026-11-13, NOT device-verified): fences, fire pits, patios, paths, beds and retaining walls take Library materials per part.**
 
