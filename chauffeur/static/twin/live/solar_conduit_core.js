@@ -1,429 +1,210 @@
-// Pure triangle graph and routes. No browser, renderer or import-map dependencies.
-export const CONDUIT_OFFSET = 2 / 12;
-const WELD = 1 / 12, JOIN = 4 / 12, BRIDGE = 1.5, MAX_TRIANGLES = 50000, MAX_WORK = 2000000;
-const FEATURE_COS = Math.cos(10 * Math.PI / 180);
+// Ridge routing for solar conduit, in lot feet with z up. Pure: no THREE, no DOM.
+//
+// The user's rule (2026-11-13): "go from solar zone up to ridge of its roof, then
+// follow ridge towards main solar zone as far as that ridge goes, when you hit the
+// end of that ridge go up whatever you ran into until you hit another ridge, then
+// follow that ridge towards the main solar zone, repeat until you reach the main
+// solar zone, conduit must always lay on the surface of the building."
+//
+// So a conduit may only travel (1) straight up a roof plane, (2) along a ridge, and
+// (3) up whatever a ridge end runs into: the roof surface it meets, or the wall
+// below that roof. Those moves form a small network; each satellite roof takes the
+// shortest way through it to the main solar roof. Nothing ever runs down to eaves
+// or along walls, so a route cannot wander. All zones on one roof count as one.
+export const CONDUIT_OFFSET = 2.5 / 12;
+const TOP = 0.05, JOIN = 1, REACH = 1.5, RISE = 0.3, SNAP = 0.02;
+
 const sub = (a, b) => a.map((v, i) => v - b[i]);
 const add = (a, b) => a.map((v, i) => v + b[i]);
 const mul = (a, s) => a.map(v => v * s);
 const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
-const cross3 = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
-const unit = a => mul(a, 1 / (Math.hypot(...a) || 1));
+const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const unit = a => { const l = Math.hypot(...a) || 1; return a.map(v => v / l); };
 const distance = (a, b) => Math.hypot(...sub(a, b));
-const cross = (a, b) => a[0]*b[1]-a[1]*b[0];
-function projection(p, a, b) {
-  const d = sub(b, a), t = Math.max(0, Math.min(1, dot(sub(p, a), d) / (dot(d, d) || 1)));
-  return {t, at: add(a, mul(d, t))};
+const key = p => p.map(v => v.toFixed(4)).join(',');
+
+function plane(input, index) {
+  const tris = input.tris.filter(t => t.every(p => p.every(Number.isFinite)));
+  let n = [0, 0, 1];
+  for (const t of tris) { const c = cross(sub(t[1], t[0]), sub(t[2], t[0])); if (Math.hypot(...c) > 1e-9) { n = unit(c); break; } }
+  if (n[2] < 0) n = mul(n, -1);
+  const origin = tris[0]?.[0] || [0, 0, 0], counts = new Map();
+  for (const t of tris) for (let i = 0; i < 3; i++) {
+    const a = t[i], b = t[(i + 1) % 3], k = [key(a), key(b)].sort().join('|');
+    const row = counts.get(k) || { a, b, n: 0 }; row.n++; counts.set(k, row);
+  }
+  const boundary = [...counts.values()].filter(e => e.n === 1).map(({ a, b }) => ({ a, b }));
+  const maxZ = Math.max(...tris.flat().map(p => p[2]));
+  const flat = Math.hypot(n[0], n[1]) < 0.02;
+  for (const e of boundary) e.top = !flat && e.a[2] >= maxZ - TOP && e.b[2] >= maxZ - TOP;
+  const zAt = (x, y) => origin[2] - (n[0] * (x - origin[0]) + n[1] * (y - origin[1])) / n[2];
+  const centroid = tris.length ? mul(tris.flat().reduce(add, [0, 0, 0]), 1 / (tris.length * 3)) : origin;
+  return { index, building: input.building, roof: input.roof, tris, n, boundary, maxZ, flat, zAt,
+    centroid: [centroid[0], centroid[1], zAt(centroid[0], centroid[1])], uphill: unit([-n[0], -n[1], 0]).slice(0, 2) };
 }
 
-// Closest point on a filled triangle, including its boundary.
-export function trianglePoint(p, [a, b, c]) {
-  const ab = sub(b, a), ac = sub(c, a), n = cross3(ab, ac);
-  const q = sub(p, mul(n, dot(sub(p, a), n) / (dot(n, n) || 1)));
-  const v = sub(q, a), aa = dot(ab, ab), bb = dot(ab, ac), cc = dot(ac, ac), den = aa*cc-bb*bb;
-  const u = (dot(v, ab)*cc-dot(v, ac)*bb)/den, w = (dot(v, ac)*aa-dot(v, ab)*bb)/den;
-  if (u >= -1e-9 && w >= -1e-9 && u+w <= 1+1e-9) return q;
-  return [projection(p,a,b).at, projection(p,b,c).at, projection(p,c,a).at]
-    .sort((a,b) => distance(p,a)-distance(p,b))[0];
+function insideTriangle([x, y], [a, b, c], tol = 1e-6) {
+  const d = (b[1]-c[1])*(a[0]-c[0]) + (c[0]-b[0])*(a[1]-c[1]); if (Math.abs(d) < 1e-12) return false;
+  const l1 = ((b[1]-c[1])*(x-c[0]) + (c[0]-b[0])*(y-c[1])) / d, l2 = ((c[1]-a[1])*(x-c[0]) + (a[0]-c[0])*(y-c[1])) / d;
+  return l1 >= -tol && l2 >= -tol && 1 - l1 - l2 >= -tol;
+}
+function segmentPoint2(p, a, b) {
+  const d = [b[0]-a[0], b[1]-a[1]], l = d[0]*d[0] + d[1]*d[1];
+  const t = l ? Math.max(0, Math.min(1, ((p[0]-a[0])*d[0] + (p[1]-a[1])*d[1]) / l)) : 0;
+  return { t, at: [a[0] + d[0]*t, a[1] + d[1]*t] };
+}
+function segmentPoint3(p, a, b) {
+  const d = sub(b, a), l = dot(d, d), t = l ? Math.max(0, Math.min(1, dot(sub(p, a), d) / l)) : 0;
+  return { t, at: add(a, mul(d, t)) };
+}
+// Nearest point of a plane's footprint to (x, y), in plan view.
+function nearestOn(pl, [x, y]) {
+  if (pl.tris.some(t => insideTriangle([x, y], t))) return { at: [x, y], d: 0 };
+  let best = { at: null, d: Infinity };
+  for (const e of pl.boundary) { const q = segmentPoint2([x, y], e.a, e.b), d = Math.hypot(q.at[0]-x, q.at[1]-y); if (d < best.d) best = { at: q.at, d }; }
+  return best;
+}
+// First boundary edge hit by a ray in plan view.
+function rayExit(edges, p, dir) {
+  let best = null;
+  for (const e of edges) {
+    const ex = e.b[0]-e.a[0], ey = e.b[1]-e.a[1], den = dir[0]*ey - dir[1]*ex; if (Math.abs(den) < 1e-12) continue;
+    const wx = e.a[0]-p[0], wy = e.a[1]-p[1], t = (wx*ey - wy*ex) / den, s = (wx*dir[1] - wy*dir[0]) / den;
+    if (t > 1e-6 && s >= -1e-9 && s <= 1 + 1e-9 && (!best || t < best.t)) best = { t, s: Math.max(0, Math.min(1, s)), e };
+  }
+  return best;
 }
 
-// Bounding trees avoid vertex x edge/triangle scans on detailed cladding.
-function bounds(points) {
-  return {lo: [0,1,2].map(i => Math.min(...points.map(p => p[i]))),
-    hi: [0,1,2].map(i => Math.max(...points.map(p => p[i])))};
-}
-function tree(items) {
-  if (!items.length) return null;
-  const box = {lo:[Infinity,Infinity,Infinity],hi:[-Infinity,-Infinity,-Infinity]};
-  for (const item of items) for (let i=0;i<3;i++) {
-    box.lo[i]=Math.min(box.lo[i],item.lo[i]); box.hi[i]=Math.max(box.hi[i],item.hi[i]);
+export function ridgeNetwork(input) {
+  const planes = input.planes.map(plane), nodes = [], links = [], grid = new Map(), segments = [];
+  function node(p) {
+    const cell = p.map(v => Math.round(v / SNAP)).join(',');
+    if (grid.has(cell)) return grid.get(cell);
+    const id = nodes.length; nodes.push(p); links.push(new Map()); grid.set(cell, id); return id;
   }
-  if (items.length <= 8) return {...box, items};
-  const axis = [0,1,2].sort((a,b) => box.hi[b]-box.lo[b]-(box.hi[a]-box.lo[a]))[0];
-  items.sort((a,b) => a.lo[axis]+a.hi[axis]-b.lo[axis]-b.hi[axis]);
-  const mid = items.length >> 1;
-  return {...box, children: [tree(items.slice(0,mid)), tree(items.slice(mid))]};
-}
-const boxDistance = (p,b) => Math.hypot(...p.map((v,i) => Math.max(b.lo[i]-v,0,v-b.hi[i])));
-function nearby(root, p, radius, visit) {
-  if (!root || boxDistance(p,root) > radius) return;
-  if (root.items) { for (const item of root.items) if (boxDistance(p,item) <= radius) visit(item); }
-  else for (const child of root.children) nearby(child,p,radius,visit);
-}
-function normalAt(normals) {
-  const unique = [];
-  for (const n of normals) if (!unique.some(m => dot(n,m) > .999)) unique.push(n);
-  return unit(unique.reduce(add,[0,0,0]));
-}
-
-function clip(poly,value) {
-  const out=[];
-  for (let i=0;i<poly.length;i++) {
-    const a=poly[i], b=poly[(i+1)%poly.length], va=value(a), vb=value(b);
-    if (va>=0) out.push(a);
-    if ((va>=0)!==(vb>=0)) out.push(add(a,mul(sub(b,a),va/(va-vb))));
-  }
-  return out;
-}
-// The generator retains lower roofs for peeled floors. Clip those hidden
-// parts using the rendered triangles themselves, so a dormant lower face
-// cannot carry a conduit through a dormer. New edges remain on the same face.
-function exposedRoofs(triangles,budget) {
-  const roofs=triangles.filter(t=>t.kind==='roof').flatMap(t=>{
-    const [a,b,c]=t.points, n=cross3(sub(b,a),sub(c,a));
-    const width=Math.hypot(...n)/Math.max(distance(a,b),distance(b,c),distance(c,a));
-    if (Math.abs(n[2])<1e-8 || width<WELD) return []; // sub-inch standing-seam relief
-    const height=p=>a[2]-(n[0]*(p[0]-a[0])+n[1]*(p[1]-a[1]))/n[2];
-    return [{...t,...bounds(t.points),height}];
-  });
-  const index=tree([...roofs]), output=triangles.filter(t=>t.kind!=='roof');
-  function overlaps(root,box,visit) {
-    if (!root || [0,1].some(i=>root.hi[i]<box.lo[i] || root.lo[i]>box.hi[i])) return;
-    if (root.items) for (const item of root.items) {
-      if ([0,1].every(i=>item.hi[i]>=box.lo[i] && item.lo[i]<=box.hi[i])) visit(item);
-    } else for (const child of root.children) overlaps(child,box,visit);
-  }
-  for (const roof of roofs) {
-    let pieces=[roof.points];
-    overlaps(index,roof,other=>{
-      budget(); if (other===roof || !pieces.length) return;
-      let cutter=clip(other.points,p=>other.height(p)-roof.height(p)-1e-4);
-      if (cutter.length<3) return;
-      const winding=Math.sign(cutter.reduce((s,p,i)=>s+cross(p,cutter[(i+1)%cutter.length]),0));
-      if (!winding) return;
-      const next=[];
-      for (const piece of pieces) {
-        let rest=piece;
-        for (let i=0;i<cutter.length && rest.length;i++) {
-          budget(); const a=cutter[i], d=sub(cutter[(i+1)%cutter.length],a);
-          const side=p=>winding*cross(d,sub(p,a));
-          const outside=clip(rest,p=>-side(p));
-          if (outside.length>=3) next.push(outside);
-          rest=clip(rest,side);
-        }
-      }
-      pieces=next;
-    });
-    for (const piece of pieces) for (let i=1;i+1<piece.length;i++) {
-      output.push({points:[piece[0],piece[i],piece[i+1]],kind:'roof',building:roof.building});
-      budget();
+  function link(a, b) { if (a === b) return; const c = distance(nodes[a], nodes[b]); if (c < (links[a].get(b) ?? Infinity)) { links[a].set(b, c); links[b].set(a, c); } }
+  // A point on a ridge is on every coincident ridge too: the two sides of a gable each
+  // carry their own top edge, and a route must cross over at the point, not the ends.
+  function onSegment(seg, p) {
+    const q = segmentPoint3(p, seg.a, seg.b), id = node(q.at); seg.pts.push({ t: q.t, id });
+    for (const other of segments) if (other !== seg) {
+      const r = segmentPoint3(q.at, other.a, other.b);
+      if (distance(r.at, q.at) <= 0.05) { const o = node(r.at); other.pts.push({ t: r.t, id: o }); link(id, o); }
     }
-  }
-  return output;
-}
-
-export function buildSurfaceGraph(triangles) {
-  const counts=new Map();
-  for (const t of triangles) counts.set(t.building,(counts.get(t.building)||0)+1);
-  if (!triangles.length || triangles.length>MAX_TRIANGLES*2 || [...counts.values()].some(n=>n>MAX_TRIANGLES)) return null;
-  const nodes = [], faces = [], edges = [], edgeMap = new Map(), cells = new Map();
-  let work = 0;
-  const budget = () => { if (++work > MAX_WORK) throw new Error('surface work limit'); };
-  function node(p, normals = [], weld = false) {
-    budget();
-    const cell = p.map(v => Math.floor(v/WELD));
-    if (weld) for (let x=-1;x<=1;x++) for (let y=-1;y<=1;y++) for (let z=-1;z<=1;z++) {
-      for (const id of cells.get([cell[0]+x,cell[1]+y,cell[2]+z].join(',')) || []) {
-        if (distance(nodes[id].p,p) <= WELD) {nodes[id].normals.push(...normals); return id;}
-      }
-    }
-    const id = nodes.length; nodes.push({p:[...p], normals:[...normals], links:new Map()});
-    if (weld) {const key=cell.join(','); if (!cells.has(key)) cells.set(key,[]); cells.get(key).push(id);}
     return id;
   }
-  function link(a,b,factor) {
-    budget();
-    if (a===b) return;
-    const cost=distance(nodes[a].p,nodes[b].p)*factor;
-    if (cost < (nodes[a].links.get(b) ?? Infinity)) {nodes[a].links.set(b,cost); nodes[b].links.set(a,cost);}
+  // Ridges: the horizontal top edges of every sloped plane.
+  for (const pl of planes) for (const e of pl.boundary) if (e.top) {
+    const seg = { a: e.a, b: e.b, plane: pl, pts: [] }; seg.pts.push({ t: 0, id: node(e.a) }, { t: 1, id: node(e.b) }); segments.push(seg); e.segment = seg;
   }
-  try {
-    for (const triangle of exposedRoofs(triangles,budget)) {
-      const p=triangle.points, n=unit(cross3(sub(p[1],p[0]),sub(p[2],p[0])));
-      if (!p.flat().every(Number.isFinite) || Math.hypot(...n)<.9) continue;
-      if (triangle.kind==='roof' && n[2]<0) for (let i=0;i<3;i++) n[i]*=-1;
-      const planeKey=[...n,dot(n,p[0])].map(v=>Math.round(v*1e4)).join(',');
-      const f={...bounds(p), points:p, n, planeKey, kind:triangle.kind, building:triangle.building,
-        ids:p.map(p=>node(p,[n],true)), edges:[], inside:[]};
-      if (new Set(f.ids).size<3) continue;
-      faces.push(f);
-      for (let i=0;i<3;i++) {
-        const a=f.ids[i], b=f.ids[(i+1)%3], key=[a,b].sort((a,b)=>a-b).join(':');
-        if (!edgeMap.has(key)) {
-          const e={...bounds([nodes[a].p,nodes[b].p]), a,b,faces:[],splits:[{t:0,id:a},{t:1,id:b}]};
-          edgeMap.set(key,e); edges.push(e);
-        }
-        const e=edgeMap.get(key); e.faces.push(f); f.edges.push(e);
-      }
-    }
-    const faceTree=tree([...faces]), edgeTree=tree([...edges]);
-    for (const e of edges) {
-      const feature=e.faces.length===1 || e.faces.some(a=>e.faces.some(b=>dot(a.n,b.n)<FEATURE_COS));
-      e.factor=(feature?1:2.5)*(e.faces.every(f=>f.kind==='wall')?1.3:1);
-    }
-    function split(e, at, t) {
-      const old=e.splits.find(s=>distance(nodes[s.id].p,at)<1e-6);
-      if (old) return old.id;
-      const id=node(at,e.faces.map(f=>f.n)); e.splits.push({t,id}); return id;
-    }
-    const vertexCount=nodes.length, incidentNormals=nodes.map(v=>[...v.normals]);
-    for (let id=0;id<vertexCount;id++) {
-      const v=nodes[id], nearestEdges=new Map(),nearestFaces=new Map();
-      // T junctions: actually split the receiving edge, retaining its cost.
-      nearby(edgeTree,v.p,JOIN,e=>{
-        budget(); if (e.a===id || e.b===id) return;
-        const q=projection(v.p,nodes[e.a].p,nodes[e.b].p);
-        const d=distance(q.at,v.p); if (d>JOIN) return;
-        for (const f of e.faces) if (d<(nearestEdges.get(f.planeKey)?.d??Infinity)) nearestEdges.set(f.planeKey,{e,q,d});
-      });
-      for (const {e,q,d} of new Set(nearestEdges.values())) {
-        const other=split(e,q.at,q.t); link(id,other,1.3);
-        // A coincident junction uses both surface normals for the lift.
-        if (d<1e-6) v.normals.push(...nodes[other].normals);
-      }
-      // A roof endpoint can hit the interior of a tall wall triangle, rather
-      // than its edges. Attach there as well; never bridge a large gap.
-      nearby(faceTree,v.p,JOIN,f=>{
-        budget(); if (f.ids.includes(id) || incidentNormals[id].every(n=>Math.abs(dot(n,f.n))>FEATURE_COS)) return;
-        const at=trianglePoint(v.p,f.points),d=distance(at,v.p); if (d>JOIN) return;
-        if (d<(nearestFaces.get(f.planeKey)?.d??Infinity)) nearestFaces.set(f.planeKey,{f,at,d});
-      });
-      for (const {f,at} of nearestFaces.values()) {
-        const other=node(at,[f.n]); f.inside.push(other); link(id,other,1.3);
-      }
-    }
-    function edgeLinks(e) {
-      e.splits.sort((a,b)=>a.t-b.t);
-      for (let i=1;i<e.splits.length;i++) link(e.splits[i-1].id,e.splits[i].id,e.factor);
-    }
-    for (const e of edges) edgeLinks(e);
-    function faceLinks(f,id) {
-      const factor=2.5*(f.kind==='wall'?1.3:1);
-      for (const e of f.edges) for (const s of e.splits) link(id,s.id,factor);
-      for (const other of f.inside) link(id,other,factor);
-    }
-    for (const f of faces) for (const id of f.inside) faceLinks(f,id);
-    // Plan roof planes can stop short of each other where the rendered roofs
-    // overlap (a gable ridge ending a foot before the roof it meets). Join each
-    // island to the main surface across its shortest gap, up to BRIDGE feet.
-    const component=new Int32Array(nodes.length).fill(-1), sizes=[];
-    for (let start=0;start<nodes.length;start++) {
-      if (component[start]>=0) continue;
-      const c=sizes.length, stack=[start]; component[start]=c; let size=0;
-      while (stack.length) {const n=stack.pop(); size++; for (const m of nodes[n].links.keys()) if (component[m]<0) {component[m]=c; stack.push(m);}}
-      sizes.push(size);
-    }
-    if (sizes.length>1) {
-      const main=sizes.indexOf(Math.max(...sizes)), mainIds=[];
-      for (let id=0;id<nodes.length;id++) if (component[id]===main) mainIds.push(id);
-      const mainTree=tree(mainIds.map(id=>({...bounds([nodes[id].p]),id})));
-      for (let c=0;c<sizes.length;c++) {
-        if (c===main) continue;
-        let best=null;
-        for (let id=0;id<nodes.length;id++) {
-          if (component[id]!==c) continue;
-          nearby(mainTree,nodes[id].p,BRIDGE,item=>{
-            budget(); const d=distance(nodes[id].p,nodes[item.id].p);
-            if (d<=BRIDGE && d<(best?.d??Infinity)) best={a:id,b:item.id,d};
-          });
-        }
-        if (best) link(best.a,best.b,3);
-      }
-    }
-    const attached=new Map();
-    function attach(p, kind='roof') {
-      try {
-        const key=JSON.stringify([kind,p]); if (attached.has(key)) return attached.get(key);
-        let best=[], span=JOIN;
-        nearby(faceTree,p,JOIN,f=>{
-          if (kind && f.kind!==kind) return;
-          const at=trianglePoint(p,f.points), d=distance(at,p);
-          if (d<span-1e-7) {span=d; best=[{f,at}];}
-          else if (Math.abs(d-span)<1e-7) best.push({f,at});
-        });
-        if (!best.length) return null;
-        const id=node(best[0].at,best.map(({f})=>f.n));
-        // Project onto the triangle's edges so long ridges need no detour to
-        // their endpoints just to enter or leave the ridge.
-        for (const {f,at} of best) {
-          for (const e of f.edges) {
-            const q=projection(at,nodes[e.a].p,nodes[e.b].p), other=split(e,q.at,q.t);
-            link(id,other,2.5*(f.kind==='wall'?1.3:1)); edgeLinks(e);
-          }
-          faceLinks(f,id); f.inside.push(id);
-        }
-        attached.set(key,id); return id;
-      } catch (error) {
-        if (error.message==='surface work limit') return null;
-        throw error;
-      }
-    }
-    return {nodes,faces,edges,faceTree,attach};
-  } catch (error) {
-    if (error.message==='surface work limit') return null;
-    throw error;
+  const hubs = new Map(); // flat planes: everything on them meets at their centroid
+  const hub = pl => { if (!hubs.has(pl)) hubs.set(pl, node(pl.centroid)); return hubs.get(pl); };
+  // Straight up a plane from p (on its surface) to its ridge. Returns the top node.
+  function climb(pl, p, from) {
+    if (pl.flat) { const h = hub(pl); link(from, h); return h; }
+    const hit = rayExit(pl.boundary, p, pl.uphill); if (!hit) return null;
+    const at2 = [p[0] + pl.uphill[0] * hit.t, p[1] + pl.uphill[1] * hit.t], e = hit.e;
+    const at = [...at2, e.a[2] + (e.b[2] - e.a[2]) * hit.s];
+    if (e.top) { const id = onSegment(e.segment, at); link(from, id); return id; }
+    // A hip or rake edge: follow it up to its high end, which meets the ridge.
+    const x = node(at), high = e.a[2] >= e.b[2] ? e.a : e.b, h = node(high);
+    link(from, x); link(x, h); return h;
   }
+  // Key points: ridge ends, plus the apex of planes with no ridge (hip ends).
+  const keys = [];
+  for (const seg of segments) keys.push({ p: seg.a, id: seg.pts[0].id, plane: seg.plane }, { p: seg.b, id: seg.pts[1].id, plane: seg.plane });
+  for (const pl of planes) if (!pl.flat && !pl.boundary.some(e => e.top)) {
+    const apex = pl.tris.flat().reduce((a, b) => b[2] > a[2] ? b : a); keys.push({ p: apex, id: node(apex), plane: pl });
+  }
+  // Ridges that meet (both sides of one gable, T and hip junctions) join.
+  for (const k of keys) for (const seg of segments) {
+    if (seg.pts.slice(0, 2).some(s => s.id === k.id)) continue;
+    const q = segmentPoint3(k.p, seg.a, seg.b); if (distance(q.at, k.p) <= JOIN) link(k.id, onSegment(seg, k.p));
+  }
+  // A ridge end runs into another roof: climb that roof, or the wall below it first.
+  for (const k of keys) for (const pl of planes) {
+    if (pl === k.plane || pl.maxZ < k.p[2] + RISE) continue;
+    const near = nearestOn(pl, k.p); if (near.d > REACH) continue;
+    const z = pl.zAt(...near.at); if (z < k.p[2] - RISE) continue;
+    let from = k.id;
+    if (z > k.p[2] + RISE) { const r = node([...near.at, k.p[2]]); link(from, r); from = r; }
+    const s = node([...near.at, z]); link(from, s); climb(pl, [...near.at, z], s);
+  }
+  // Flat roofs: a ridge end at their level steps onto them.
+  for (const pl of planes) if (pl.flat) for (const k of keys) {
+    const near = nearestOn(pl, k.p); if (near.d <= REACH && Math.abs(pl.zAt(...near.at) - k.p[2]) <= RISE) link(k.id, hub(pl));
+  }
+  // A flat roof's edge meets a neighbour: another flat roof at its level, or a
+  // taller roof whose wall or surface it runs into.
+  for (const f of planes) if (f.flat) for (const pl of planes) {
+    if (pl === f) continue;
+    let best = null;
+    for (const e of f.boundary) for (const t of [0, .25, .5, .75, 1]) {
+      const p = add(e.a, mul(sub(e.b, e.a), t)), near = nearestOn(pl, p);
+      if (near.d <= REACH && (!best || near.d < best.near.d)) best = { p, near };
+    }
+    if (!best) continue;
+    const z = pl.zAt(...best.near.at);
+    if (pl.flat) { if (Math.abs(z - best.p[2]) <= RISE && f.index < pl.index) link(hub(f), hub(pl)); continue; }
+    if (z < best.p[2] - RISE) continue;
+    const edge = node(best.p); link(hub(f), edge);
+    let from = edge;
+    if (z > best.p[2] + RISE) { const r = node([...best.near.at, best.p[2]]); link(from, r); from = r; }
+    const s = node([...best.near.at, z]); link(from, s); climb(pl, [...best.near.at, z], s);
+  }
+  function finish() {
+    for (const seg of segments) { seg.pts.sort((a, b) => a.t - b.t); for (let i = 1; i < seg.pts.length; i++) link(seg.pts[i-1].id, seg.pts[i].id); }
+  }
+  // A zone enters the network at the top edge of its panels, straight up-slope.
+  function enter(zone) {
+    const pl = planes[zone.plane]; if (!pl) return null;
+    const rect = zone.rect.map((p, i) => ({ a: p, b: zone.rect[(i + 1) % zone.rect.length] }));
+    let start = zone.centre;
+    if (!pl.flat) { const hit = rayExit(rect, zone.centre, pl.uphill); if (hit) { const x = zone.centre[0] + pl.uphill[0] * hit.t, y = zone.centre[1] + pl.uphill[1] * hit.t; start = [x, y, pl.zAt(x, y)]; } }
+    const id = node(start); return climb(pl, start, id) === null ? null : id;
+  }
+  return { planes, nodes, links, segments, enter, finish };
 }
 
-// Binary heap reverse Dijkstra, shared by a building pair during a rebuild.
-function shortest(graph,start,end) {
-  const cached=graph.search;
-  if (cached?.end===end && cached.size===graph.nodes.length) {
-    if (!cached.dist.has(start)) return null;
-    const path=[start]; while (path.at(-1)!==end) path.push(cached.prev.get(path.at(-1))); return path;
-  }
-  const heap=[], dist=new Map([[end,0]]), prev=new Map();
-  function push(item) {
-    let i=heap.length; heap.push(item);
-    while (i) {const parent=(i-1)>>1; if (heap[parent][0]<=item[0]) break; heap[i]=heap[parent]; i=parent;}
-    heap[i]=item;
-  }
-  push([0,end]);
+function shortest(links, from, targets) {
+  const dist = new Map([[from, 0]]), prev = new Map(), heap = [[0, from]], done = new Set();
   while (heap.length) {
-    const [cost,id]=heap[0], last=heap.pop();
-    if (heap.length) {
-      let i=0;
-      while (i*2+1<heap.length) {
-        let j=i*2+1; if (j+1<heap.length && heap[j+1][0]<heap[j][0]) j++;
-        if (heap[j][0]>=last[0]) break; heap[i]=heap[j]; i=j;
-      }
-      heap[i]=last;
-    }
-    if (cost!==dist.get(id)) continue;
-    for (const [next,weight] of graph.nodes[id].links) if (cost+weight<(dist.get(next)??Infinity)) {
-      dist.set(next,cost+weight); prev.set(next,id); push([cost+weight,next]);
-    }
+    let bi = 0; for (let i = 1; i < heap.length; i++) if (heap[i][0] < heap[bi][0]) bi = i;
+    const [d, n] = heap.splice(bi, 1)[0]; if (done.has(n)) continue; done.add(n);
+    if (targets.has(n)) { const path = [n]; while (prev.has(path[0])) path.unshift(prev.get(path[0])); return { cost: d, path }; }
+    for (const [m, c] of links[n]) { const nd = d + c; if (nd < (dist.get(m) ?? Infinity)) { dist.set(m, nd); prev.set(m, n); heap.push([nd, m]); } }
   }
-  graph.search={end,size:graph.nodes.length,dist,prev};
-  if (!dist.has(start)) return null;
-  const path=[start]; while (path.at(-1)!==end) path.push(prev.get(path.at(-1))); return path;
+  return null;
 }
+
 function compact(points) {
-  const out=[];
+  const out = [];
   for (const p of points) {
-    if (out.length && distance(out.at(-1),p)<1e-6) continue;
-    while (out.length>1) {
-      const a=out.at(-2), b=out.at(-1), q=projection(b,a,p);
-      if (distance(q.at,b)>1e-7) break;
-      out.pop();
+    if (out.length && distance(out.at(-1), p) < 1e-6) continue;
+    if (out.length >= 2) {
+      const a = out.at(-2), b = out.at(-1), u = unit(sub(b, a)), v = unit(sub(p, b));
+      if (dot(u, v) > 1 - 1e-9) { out[out.length - 1] = p; continue; }
     }
     out.push(p);
   }
   return out;
 }
-function liftedPath(graph,ids) {
-  return ids?.map(id=>{const v=graph.nodes[id]; return add(v.p,mul(normalAt(v.normals),CONDUIT_OFFSET));});
-}
-function onSurface(graph,points) {
-  const cache=graph.surfaceNear ||= new Map(),limit=2.5/12;
-  const facesAt=p=>{
-    const key=p.join(',');if(cache.has(key))return cache.get(key);
-    const faces=new Set();
-    nearby(graph.faceTree,p,limit+1e-7,f=>{if(distance(p,trianglePoint(p,f.points))<=limit+1e-7)faces.add(f);});
-    cache.set(key,faces);return faces;
-  };
-  // Distance to a convex triangle is convex. If both ends are close to the
-  // SAME triangle, the whole span is close: this proves clearance without
-  // inch-by-inch sampling. Short seam bridges subdivide until covered too.
-  const covered=(a,b,depth=0)=>{
-    const left=facesAt(a),right=facesAt(b);
-    if(!left.size||!right.size)return false;
-    // A short island bridge (see BRIDGE): both ends lie on the surface.
-    if(depth===0&&distance(a,b)<=BRIDGE+limit)return true;
-    for(const f of left)if(right.has(f))return true;
-    if(depth===10)return false;
-    const mid=mul(add(a,b),.5);
-    return covered(a,mid,depth+1)&&covered(mid,b,depth+1);
-  };
-  for(let i=0;i<points.length;i++)if(!covered(points[Math.max(0,i-1)],points[i]))return false;
-  return true;
-}
-export function surfacePath(graph,from,to,{keepEnd=false}={}) {
-  if (!graph) return null;
-  const a=graph.attach(from), b=graph.attach(to);
-  if (a===null || b===null) return null;
-  const points=liftedPath(graph,shortest(graph,a,b)); if (!points) return null;
-  if (keepEnd) points[points.length-1]=[...to];
-  const result=compact(points); return onSurface(graph,result)?result:null;
-}
 
-function groundRun(plan,a,b,groundAt) {
-  const ts=new Set([0,1]), length=Math.hypot(a[0]-b[0],a[1]-b[1]);
-  for (let i=1;i<Math.ceil(length);i++) ts.add(i/Math.ceil(length));
-  const delta=sub(b,a);
-  for (const pad of plan.site?.terraces||[]) for (let i=0;i<pad.polygon.length;i++) {
-    const p=pad.polygon[i], q=pad.polygon[(i+1)%pad.polygon.length], edge=sub(q,p), den=cross(delta,edge);
-    if (Math.abs(den)<1e-9) continue;
-    const v=sub(p,a), t=cross(v,edge)/den, u=cross(v,delta)/den;
-    if (t>0 && t<1 && u>=0 && u<=1) for (const d of [-1e-6,0,1e-6]) ts.add(Math.max(0,Math.min(1,t+d)));
+// input: {planes:[{building, roof, tris}], groups:[{id, entity, zones:[{plane, centre, rect}]}],
+//         sources:[{plane, centre, rect}], source:[x, y, z]}
+export function routeConduits(input, { debug = message => console.debug(message) } = {}) {
+  if (!input?.groups?.length || !input.sources?.length) return [];
+  const net = ridgeNetwork(input), targets = new Set();
+  for (const s of input.sources) { const id = net.enter(s); if (id !== null) targets.add(id); }
+  const entries = input.groups.map(g => ({ g, ids: g.zones.map(z => net.enter(z)).filter(id => id !== null) }));
+  net.finish();
+  const routes = []; let logged = false;
+  for (const { g, ids } of entries) {
+    let best = null;
+    for (const id of ids) { const r = targets.size && shortest(net.links, id, targets); if (r && (!best || r.cost < best.cost)) best = r; }
+    if (!best) { if (!logged) { debug('Solar conduit skipped: a solar roof has no ridge path to the main solar roof'); logged = true; } continue; }
+    const points = compact(best.path.map(id => net.nodes[id])).map(p => [p[0], p[1], p[2] + CONDUIT_OFFSET]);
+    routes.push({ id: g.id, entity: g.entity ?? null, points, source: input.source });
   }
-  return [...ts].sort((a,b)=>a-b).map(t=>{
-    const x=a[0]+delta[0]*t, y=a[1]+delta[1]*t;
-    return [x,y,groundAt(plan,x,y)+CONDUIT_OFFSET];
-  });
-}
-
-function groundPath(graph,from,to,fromBuilding,toBuilding,plan,groundAt) {
-  const a=graph.attach(from), b=graph.attach(to); if (a===null || b===null) return null;
-  if (shortest(graph,a,b)) return null; // Ground is only for disconnected buildings.
-  const bases=id=>graph.edges.filter(e=>e.faces.some(f=>f.building===id && f.kind==='wall') &&
-    [e.a,e.b].every(i=>Math.abs(graph.nodes[i].p[2]-groundAt(plan,...graph.nodes[i].p))<JOIN));
-  const left=bases(fromBuilding), right=bases(toBuilding); let best=null, span=Infinity, work=0;
-  for (const e of left) for (const f of right) {
-    if (++work>MAX_WORK) return null;
-    const x=graph.nodes[e.a].p, y=graph.nodes[e.b].p, u=graph.nodes[f.a].p, v=graph.nodes[f.b].p;
-    for (const p of [x,y]) {const q=projection(p,u,v).at, r=projection(q,x,y).at, d=distance(q,r);
-      if (d<span) {span=d; best=[r,q];}}
-    for (const p of [u,v]) {const q=projection(p,x,y).at, r=projection(q,u,v).at, d=distance(q,r);
-      if (d<span) {span=d; best=[q,r];}}
-  }
-  if (!best) return null;
-  const c=graph.attach(best[0],'wall'), d=graph.attach(best[1],'wall'); if (c===null || d===null) return null;
-  const down=liftedPath(graph,shortest(graph,a,c)), up=liftedPath(graph,shortest(graph,d,b));
-  if (!down || !up) return null;
-  up[up.length-1]=[...to];
-  if (!onSurface(graph,down) || !onSurface(graph,up)) return null;
-  return compact([...down,...groundRun(plan,down.at(-1),up[0],groundAt),...up]);
-}
-
-function sourceTarget(graph,anchor,planes) {
-  if (!graph) return null;
-  let best=null, span=Infinity;
-  for (const f of graph.faces) {
-    if (f.kind!=='roof' || !planes.some(s=>f.building===s.building && dot(f.n,s.n)>.999 && Math.abs(dot(sub(f.points[0],s.p),s.n))<.1)) continue;
-    const at=trianglePoint(anchor,f.points), d=distance(at,anchor);
-    if (d<span) {span=d; best={at,n:f.n};}
-  }
-  if (!best) return null;
-  // The weighted centre of zones on opposite slopes can be inside the roof.
-  // Preserve existing valid anchors; otherwise put their shared end on the
-  // rendered source roof instead of abandoning every satellite connection.
-  return span<=2.5/12?[...anchor]:add(best.at,mul(best.n,CONDUIT_OFFSET));
-}
-
-export function routeConduits(input,{groundAt=()=>0,debug=message=>console.debug(message)}={}) {
-  const timer=globalThis.CONDUIT_PROFILE?performance.now():0;
-  const {triangles,zones,sourcePlanes,anchor,sourceBuilding,site}=input;
-  if (!anchor || !sourceBuilding || !zones.length) return [];
-  const graphs=new Map(),targets=new Map(),prepared=[],routes=[],plan={site}; let logged=false;
-  const skip=()=>{if (!logged) {debug('Solar conduit skipped: no connected house surface or surface budget exceeded'); logged=true;}};
-  for (const zone of zones) {
-    const ids=[...new Set([zone.building,sourceBuilding])].sort(),key=JSON.stringify(ids);
-    if (!graphs.has(key)) graphs.set(key,buildSurfaceGraph(triangles.filter(t=>ids.includes(t.building))));
-    const graph=graphs.get(key);
-    if (!targets.has(key)) targets.set(key,sourceTarget(graph,anchor,sourcePlanes));
-    const target=targets.get(key);
-    graph?.attach(zone.start); if (target) graph?.attach(target);
-    prepared.push({zone,ids,graph,target});
-  }
-  for (const {zone,ids,graph,target} of prepared) {
-    if (globalThis.CONDUIT_PROFILE && zone===zones[0]) console.log('    build/attach',performance.now()-timer,'nodes',[...graphs.values()].map(g=>g?.nodes.length));
-    if (!target) {skip();continue;}
-    let points=surfacePath(graph,zone.start,target,{keepEnd:true});
-    if (!points && graph && ids.length===2) points=groundPath(graph,zone.start,target,zone.building,sourceBuilding,plan,groundAt);
-    if (!points) {skip();continue;}
-    routes.push({id:zone.id,entity:zone.entity,points});
-  }
-  if (globalThis.CONDUIT_PROFILE) console.log('    route total',performance.now()-timer);
   return routes;
 }
-

@@ -8,7 +8,7 @@ DRIVER = r"""
 const {flowReading} = await import(file('static/twin/live/energy_mapping.js'));
 const {energyAnchors,energyTopology,energyPlacementLegend,roofPoints,flowCurve,flowRoute,flowApex,flowFans,lotPoint,worldPoint} = await import(file('static/twin/live/energy_geometry.js'));
 const energyModule=await import(file('static/twin/live/energy.js'));
-const {flowLabelPositions,mountEnergy,FLOW_COLORS}=energyModule;
+const {flowLabelPositions,mountEnergy,FLOW_COLORS,CONDUIT_COLOR}=energyModule;
 const {solarPlanes,solarZones,solarLayout,solarPoint,solarCovered,solarRect}=await import(file('static/twin/twin_solar.js'));
 const {mountModes} = await import(file('static/twin/live/modes.js'));
 const checks=[], check=(n,f)=>checks.push([n,f]);
@@ -39,7 +39,7 @@ check('conduit mode visibility, threshold, idle dimming, forward pulse and retai
  const t=await conduitRig();try{
   let mesh,halo;t.view.scene.traverse(o=>{if(o.userData.solarConduit)mesh=o;if(o.userData.solarConduitHalo)halo=o;});
   assert.ok(mesh&&halo);assert.equal(mesh.geometry,halo.geometry);assert.equal(mesh.material.depthTest,true);
-  assert.equal(mesh.material.uniforms.color.value.getHex(),new THREE.Color(FLOW_COLORS.solar).getHex());
+  assert.equal(CONDUIT_COLOR,'#4df0ff');assert.equal(mesh.material.uniforms.color.value.getHex(),new THREE.Color(CONDUIT_COLOR).getHex(),'conduit is electric blue');
   assert.ok(Math.abs(mesh.material.uniforms.radius.value-1.5/12*FT)<1e-9);
   const original=[mesh.geometry,mesh.material,mesh.material.customProgramCacheKey(),mesh.material.version];
   for(const mode of ['energy','all','lights','climate','security','energy']){
@@ -58,7 +58,8 @@ check('conduit mode visibility, threshold, idle dimming, forward pulse and retai
    const centre=new THREE.Vector3();for(let side=0;side<8;side++)centre.add(new THREE.Vector3().fromBufferAttribute(position,ring*4*9+side));
    centre.multiplyScalar(1/8);assert.ok(centre.distanceTo(worldPoint(route.points[ring]))<1e-5,'every bend has a tube ring');
   }
-  assert.deepEqual(route.points.at(-1),t.live.energy().anchors.solar);
+  // Ridge routing: the conduit ends on the main solar zone (a flat roof: its centre), lifted off the roof.
+  const tail=route.points.at(-1);assert.ok(Math.abs(tail[0]+20)<1e-6&&Math.abs(tail[1])<1e-6&&Math.abs(tail[2]-10-2.5/12)<1e-6,JSON.stringify(tail));
  }finally{t.cleanup();t.panel.geometry.dispose();t.panel.material.dispose();}
 });
 check('zone power overrides total, invalid or missing readings fall back, and stale data idles',async()=>{
@@ -128,7 +129,7 @@ check('opposite source slopes share a surface endpoint with the ribbon and retai
   roof=new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({name:'roof'}));roof.userData.buildingId=b.id;t.view.scene.add(roof);
   effect=mountEnergy({view:t.view,live:{layout:()=>t.layout,peek:()=>t.states,stale:()=>false}});effect.update('energy');await effect.ready();
   const raw=energyAnchors(t.view,t.layout,{cars:[]}).solar,first=effect.snapshot();assert.equal(first.conduits.length,1);
-  const end=first.conduits[0].points.at(-1);assert.ok(worldPoint(end).distanceTo(worldPoint(raw))>FT);
+  const end=first.conduits[0].source;assert.ok(worldPoint(end).distanceTo(worldPoint(raw))>FT);
   assert.deepEqual(first.anchors.solar,end);assert.deepEqual(first.ribbons.find(r=>r.id==='solar:house').from,end);
   const objects=effect.warmObjects();t.states['sensor.solar_power'].state='2000';effect.update('all');
   assert.deepEqual(effect.snapshot().anchors.solar,end);assert.deepEqual(effect.warmObjects(),objects);

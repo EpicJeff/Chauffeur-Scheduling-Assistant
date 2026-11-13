@@ -8,6 +8,8 @@ import { energyTopology, energyPlacementLegend, energyAnchors, worldPoint, flowC
 import { createConduitRouter } from './solar_conduit.js';
 
 export const FLOW_COLORS = {solar: '#efbd24', battery: '#31ae62', grid: '#338bd9', house: '#57a8da', car: '#9957d2'};
+// Conduit is electric blue (user, 2026-11-13), clear of grid blue and the panels.
+export const CONDUIT_COLOR = '#4df0ff';
 
 // Prefer the apex, then the same ribbon and nearby positions. Crowding must
 // never discard a reading: the last resort is a visible stack with a gap.
@@ -149,8 +151,8 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       const u = (lengths[edge] + fraction * (lengths[edge + 1] - lengths[edge])) / lengths.at(-1);
       for (let side = 0; side <= 8; side++) geometry.attributes.uv.setX(ring * 9 + side, u);
     }
-    const mesh = new THREE.Mesh(geometry, flowMaterial(FLOW_COLORS.solar, false, true));
-    const halo = new THREE.Mesh(geometry, flowMaterial(FLOW_COLORS.solar, true, true));
+    const mesh = new THREE.Mesh(geometry, flowMaterial(CONDUIT_COLOR, false, true));
+    const halo = new THREE.Mesh(geometry, flowMaterial(CONDUIT_COLOR, true, true));
     mesh.userData.solarConduit = route.id; halo.userData.solarConduitHalo = route.id;
     for (const object of [halo, mesh]) {
       object.material.uniforms.radius.value = radius; object.visible = false;
@@ -181,9 +183,9 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       if (stopped || serial !== rebuildSerial || routes === null) return;
       conduitPending = false;
       if (!routes.length) return;
-      // A weighted source centre on opposite slopes can be below the roof.
-      // Move its ribbon origin together with the resolved surface endpoint.
-      conduitSolar = routes[0].points.at(-1);
+      // A weighted source centre on opposite slopes can be below the roof:
+      // the ribbons start from the same centre lifted onto the main solar roof.
+      conduitSolar = routes[0].source || anchors.solar;
       if (JSON.stringify(conduitSolar) !== JSON.stringify(anchors.solar)) {
         clear(); drawRibbons({...anchors, solar: conduitSolar});
       }
@@ -291,7 +293,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       for (const r of conduits) r.halo.material.uniforms.phase.value = r.mesh.material.uniforms.phase.value = r.reading.visible ? seconds * r.reading.speed : 0;
       for (const r of ribbons) r.halo.material.uniforms.phase.value = r.mesh.material.uniforms.phase.value = seconds * r.reading.speed * r.reading.direction;
     },
-    snapshot: () => ({mapping, check, anchors, conduitPending, conduits: conduits.map(r => ({id: r.id, entity: r.entity, points: r.points,
+    snapshot: () => ({mapping, check, anchors, conduitPending, conduits: conduits.map(r => ({id: r.id, entity: r.entity, points: r.points, source: r.source,
       ...r.reading, visible: r.mesh.visible})), ribbons: ribbons.map(r => ({id: r.id, link:!!r.link, ...r.reading, visible: r.mesh.visible,
       apex: r.point.toArray(), labelAnchor: r.point.toArray(), midpoint: r.curve.getPoint(.5).toArray(), from: r.route.from, to: r.route.to, hue: r.hue, path: r.curve.getPoints(15).map(p => p.toArray())})),
       cars: view.cars?.snapshot() || [], plane: anchors?.source || null, legend:energyPlacementLegend(anchors || {},mapping)}),
