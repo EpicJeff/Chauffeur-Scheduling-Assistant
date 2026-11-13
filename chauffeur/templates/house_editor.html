@@ -48,7 +48,7 @@
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['model_lods', 'lod_worker', 'objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_floors', 'twin_stairs', 'twin_yard', 'twin_tiers', 'twin_library', 'import_loaders', 'twin_view', 'levels', 'viewing', 'unlit', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'path_shapes', 'fire_pits', 'twin_porch_foundation', 'twin_retaining_wall', 'twin_terrain_mesh', 'twin_director', 'editor/editor', 'editor/lighting', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/object_shelf', 'editor/site_shape_shelf', 'editor/site_shapes', 'editor/polygon_handles', 'editor/imports', 'editor/equipment_shelf', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/terrain_tools', 'editor/site_drawing', 'editor/foundation_shelf', 'editor/porch_foundation_shelf', 'editor/material_slot', 'editor/material_catalog', 'editor/stair_shelf', 'editor/library', 'editor/flags'] %}
+    {% for name in ['model_lods', 'lod_worker', 'objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_floors', 'twin_stairs', 'twin_yard', 'twin_tiers', 'twin_library', 'import_loaders', 'twin_view', 'levels', 'viewing', 'unlit', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'path_shapes', 'fire_pits', 'twin_porch_foundation', 'twin_retaining_wall', 'twin_terrain_mesh', 'twin_director', 'editor/editor', 'editor/lighting', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/object_shelf', 'editor/site_shape_shelf', 'editor/site_shapes', 'editor/polygon_handles', 'editor/imports', 'editor/equipment_shelf', 'editor/snap', 'editor/draw', 'editor/history', 'editor/houses', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/terrain_tools', 'editor/site_drawing', 'editor/foundation_shelf', 'editor/porch_foundation_shelf', 'editor/material_slot', 'editor/material_catalog', 'editor/stair_shelf', 'editor/library', 'editor/flags'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_geometry', 'live/solar_conduit', 'live/solar_conduit_core', 'live/solar_conduit_worker', 'live/energy_mapping', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
@@ -105,6 +105,7 @@
       <button id="editor-check-step" type="button" hidden>Check this step</button>
       <button id="editor-resume" type="button" hidden>Resume</button>
       <button id="editor-stop" type="button" aria-label="Stop build" hidden>Stop</button>
+      <button id="editor-houses" type="button">Houses</button>
       <details id="editor-menu">
         <summary aria-label="House menu">Menu</summary>
         <div><button id="editor-manage-sources" type="button">Your place</button>
@@ -274,6 +275,18 @@
         <div class="editor-actions"><button id="place-confirm-pages" data-place-step="Your files" type="button" disabled>Confirm pages</button>
           <button id="place-build" data-place-step="Build" class="place-primary" type="button" disabled>Build your place</button></div>
       </footer>
+    </section>
+    <section id="houses-panel" class="houses-panel" role="dialog" aria-modal="true" aria-labelledby="houses-title" hidden>
+      <header class="place-header"><h2 id="houses-title">Houses</h2><button id="houses-close" type="button">Close</button></header>
+      <div class="place-scroll">
+        <div class="editor-actions"><button id="houses-save" type="button">Save current house</button>
+          <button id="houses-download-current" type="button">Download current house</button>
+          <button id="houses-upload" type="button">Upload a house file</button></div>
+        <input id="houses-file" type="file" accept=".chauffeur-house.json,application/json" hidden>
+        <p class="place-muted">House files keep photo and Library references. They do not include those files.</p>
+        <div id="houses-list"></div>
+      </div>
+      <footer class="place-footer"><p id="houses-status" role="status">Opening saved houses…</p></footer>
     </section>
   </main>
   {% include 'components/control_center.html' %}

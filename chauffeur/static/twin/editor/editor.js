@@ -7,6 +7,7 @@ import { createPanel } from './panel.js';
 import { createSceneTools } from './scene_tools.js';
 import { createDraw } from './draw.js';
 import { createHistory } from './history.js';
+import { mountHouses } from './houses.js';
 import { createPauses, applyRegistration, invertRegistration } from './pauses.js';
 import { createTimeline } from './timeline.js';
 import { createPlace } from './place.js';
@@ -34,7 +35,7 @@ export async function boot() {
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
   let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, library = null, previewing = false, lastSummary = '';
   let roofTools = null, lot = null, flags = null, devices = null, terrain = null, aimed = false;
-  let buildGhosts = null, checks = null, drawingStarted = false;
+  let buildGhosts = null, checks = null, houses = null, drawingStarted = false;
   const statusChip = createStatusChip(el('editor-chip')), seenBuildRounds = new Set();
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
@@ -114,6 +115,7 @@ export async function boot() {
     el('editor-front-door').hidden = drawingStarted || !!sheets.place?.buildings?.length || !!sheets.sources?.length
       || !!snapshot.model?.buildings?.length || !!sheets.place?.lot?.read || !!snapshot.plan?.site?.lot?.length;
     history?.sync();
+    houses?.sync();
     // Reaching ready requires successful parent-only editor API requests.
     el('menu-record').hidden = !hooks.ready || session.signedOut;
     el('menu-record').disabled = !hooks.ready || session.signedOut || downloading;
@@ -517,7 +519,22 @@ export async function boot() {
     history = createHistory({ getRound: currentRound, getBuild: () => currentBuild,
       canEdit, signal: lifecycle.signal, latest: () => polling.refreshState(),
       onError: error => setStatus(error.message || 'Could not save this change. Try again.'),
-      refresh: async () => { draw?.cancel(); await polling.refreshState(); await renderScene(); } });
+      refresh: async () => { draw?.cancel(); await polling.refreshState(); await loadSheets(); await renderScene(); } });
+    houses = mountHouses({ history, signal: lifecycle.signal,
+      canLoad: () => canEdit() && !active(currentBuild),
+      async capture() {
+        view.renderer3.render(view.scene, view.camera);
+        const canvas = document.createElement('canvas'); canvas.width = 240; canvas.height = 160;
+        canvas.getContext('2d').drawImage(view.renderer3.domElement, 0, 0, 240, 160);
+        return canvas.toDataURL('image/png');
+      },
+      async afterLoad(result) {
+        tools?.select(null); draw?.cancel(); pauses?.dismiss();
+        // The write succeeded: preserve its Undo step even if a read or redraw fails.
+        if (!snapshot.rounds.some(row => row.id === result.round)) snapshot.rounds.push({ id: result.round, kind: 'load' });
+        await polling.refreshState(); await loadSheets(); await renderScene();
+      },
+    });
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
       pickSite: (x, y) => library?.pickSite(x, y), pickMaterial: surface => library?.pick(surface),
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });

@@ -1,6 +1,51 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.843 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.845 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.845 (2026-11-13, NOT device-verified): save, load, download and upload houses in the house editor.**
+
+**The ask.** The user: "If I could quickly save and load a house, I would be willing to run the art director and see what it comes up with." It is also how a real house can be handed over for profiling slow edits.
+
+**What a person does.** The editor's top bar has a **Houses** control, which opens a centred panel.
+- **Save current house** asks for a name through `promptInput` (1-80 characters; duplicate names are allowed).
+- Each saved house shows a canvas thumbnail, its date, building and room counts, and its size, with:
+  - **Load**, which confirms through `promptConfirm` and says Undo brings the current house back;
+  - **Rename**;
+  - **Download**, as `<name>.chauffeur-house.json`;
+  - **Delete**, which confirms first.
+- **Download current house** and **Upload a house file**. An upload creates a save and never loads it automatically.
+- The panel notes that house files keep photo and Library references but not the files themselves.
+- No browser dialogs. Everything is parents only.
+
+**What a save contains** (`services/twin_house_saves.py`, stored as `<data>/houses/<id>.json` with atomic writes; format `chauffeur-house` version 1):
+- **Included:** the complete current model, plus the editor's place state: the building registry, lot, front bearing, source references, sheet roles and registrations.
+- **Left out:** round history, fixes, tombstones, build and run state, performance results, spend, and source bytes.
+- **Limits:** files up to 20 MB (an oversized upload gets 413); thumbnails PNG only, at most 256 KB and 512 px.
+- **Validation:** malformed and unsupported files are refused with a reason. A schema 2 upload goes through the bridge. Invalid fields reset with notes, which the panel shows.
+
+**Load and Undo.**
+- A load is exactly one history round, with kind `load` and note `Loaded "<name>"`.
+- Load is refused while a build is running.
+- Undo and redo across a load restore the place state on the other side of it. These moves use state companions (`rounds/<id>.state.json`), written only for the load round and the round just before it.
+- Ordinary undo is unchanged: it never touches sources, sheet roles or registrations, so a photo added after an edit survives undoing that edit.
+- Ordinary edits write no companion, so no extra disk write is added per edit. (Codex's first version wrote one on every round and restored it on every undo. Review caught it, and a regression test now pins it.)
+- Keyboard Undo is suppressed while the panel is open.
+
+**Tests.**
+- `test_twin_house_saves` 19/19 (HTTP): save, list, load, undo and redo of model and place, rename, delete, download and upload round trip, bad and oversized files, every route's auth, normalization notes, refusal during a build, plus the fix round's ordinary-undo and load-crossing cases.
+- `test_twin_house_saves_js` 12/12 (the real panel modules).
+- `test_twin_editor_history_js` 8/8.
+- Neighbours green: model bridge 32/32, twin store, import maps 3/3, Tailwind build 6/6, build-draft pause.
+- `test_twin_store_model` (14/15) and `test_twin_director` fail the same way on main before this branch; both are queued separately.
+- Chromium, as a parent: saved "Before the art director" (thumbnail, 2 buildings, 37 rooms, 155 KB), listed it and loaded it, with no page errors.
+
+**v2.499.844 (2026-11-13): test-only. The camera-ring browser scenario passes again.**
+
+**What was failing.** `test_house_twin_controls_more_live` `scenario_camera_ring_shows_a_still_and_refreshes` had failed since before v2.499.823 with "the marker is drawn at this camera (not merged into a room badge)".
+
+**The cause.** The fixture placed the porch camera on the Kitchen floor at (.5, .45), almost under the Kitchen pendant's automatic ceiling spot. At the scenario's camera the two markers sat 48 px apart on screen, inside the clustering hysteresis (`markers.js` `clusterMarkers`: under 40 px joins, and 48 px or less holds an existing cluster). The camera therefore drew as a cluster badge. The product behaved correctly.
+
+**The fix.** The fixture moves the camera to (.5, .65). The file passes 9/9.
 
 **v2.499.843 (2026-11-13, NOT device-verified): the pool and lawn edges take Library materials, and a yard room made from a feature links to that feature's materials.**
 

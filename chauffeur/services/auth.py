@@ -494,6 +494,14 @@ RULES = [
     ('PUT', '/api/house/editor/imports/uploads/{upload_id}/{index}', PARENTS, None),
     ('POST', '/api/house/editor/imports/uploads/{upload_id}/finish', PARENTS, None),
     ('DELETE', '/api/house/editor/imports/uploads/{upload_id}', PARENTS, None),
+    ('GET', '/api/house/editor/houses', PARENTS, None),
+    ('POST', '/api/house/editor/houses', PARENTS, None),
+    ('POST', '/api/house/editor/houses/upload', PARENTS, None),
+    ('GET', '/api/house/editor/houses/current/download', PARENTS, None),
+    ('GET', '/api/house/editor/houses/{sid}/download', PARENTS, None),
+    ('POST', '/api/house/editor/houses/{sid}/load', PARENTS, None),
+    ('PATCH', '/api/house/editor/houses/{sid}', PARENTS, None),
+    ('DELETE', '/api/house/editor/houses/{sid}', PARENTS, None),
     (ANY, '/api/house/editor/*', PARENTS, None),
     # The facade generator (spec 2026-09-15 §3.2): reads are family-safe
     # (a wall builds from the active facade); every write is a parent's.

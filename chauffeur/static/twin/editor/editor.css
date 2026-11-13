@@ -324,6 +324,16 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .object-import-versions img { display: block; width: 100%; aspect-ratio: 5 / 4; object-fit: contain; }
 .object-import-versions figcaption { font-size: .75rem; overflow-wrap: anywhere; }
 .object-import button { margin: 8px 6px 0 0; }
+/* Centre and width: .object-import; chrome/scrolling/rows: Your place. */
+.houses-panel { position: fixed; z-index: 90; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(760px, calc(100vw - 28px)); max-height: 90dvh; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); backdrop-filter: blur(16px); }
+.houses-panel .place-header h2 { font-size: 20px; }
+.houses-panel .place-scroll > p { margin: 12px 0; }
+#houses-list { display: grid; gap: 12px; }
+.houses-row { display: flex; flex-direction: row; align-items: center; }
+.houses-row > img { width: 120px; height: 80px; object-fit: contain; border-radius: 8px; }
+.houses-row > div { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.houses-row .editor-actions { margin-top: 8px; }
+@media (max-width: 500px) { .houses-row { flex-direction: column; align-items: stretch; } }
 .object-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .object-model-grid button { display: flex; flex-direction: column; align-items: center; }
 .object-model-grid img { width: 96px; height: 64px; object-fit: contain; }

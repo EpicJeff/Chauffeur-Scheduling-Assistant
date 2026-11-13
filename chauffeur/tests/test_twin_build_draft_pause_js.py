@@ -134,6 +134,7 @@ export const createPanel = () => ({ message() {}, readOnly() {}, events() {}, re
 const tools = { refresh() {}, drawFloors() {}, delegate() {}, selected() {}, dragging: () => false, refreshLink: async () => {} };
 export const createSceneTools = () => tools;
 export const createHistory = () => ({ perform: action => action(), sync() {}, clear() {} });
+export const mountHouses = () => ({ sync() {} });
 export const createDraw = () => ({ cancel() {} });
 export const createLotTools = () => ({ dragging: () => false });
 export const createTerrainTools = () => ({ refresh() {}, cancel() {},

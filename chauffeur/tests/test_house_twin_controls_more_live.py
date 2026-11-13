@@ -14,7 +14,9 @@ docstring. This file adds four Kitchen devices to that fake before the app is se
     Kitchen speaker  media_player.kitchen_speaker   playing, volume 0.3, title and artist, sources   (.15, .45)
     House alarm      alarm_control_panel.house      disarmed, code_format number, code_arm_required,
                                                     ARM_HOME|ARM_AWAY                                (.9, .85)
-    Porch camera     camera.porch                   idle, entity_picture with HA's access token      (.5, .45)
+    Porch camera     camera.porch                   idle, entity_picture with HA's access token      (.5, .65)
+                     (clear of the Kitchen pendant's automatic ceiling spot, which it once
+                     clustered with on screen)
 
 and teaches the fake the services they take (set_hvac_mode, set_cover_position,
 volume_set, alarm_arm_*, alarm_disarm, ...). The camera's still comes from a patched
@@ -98,7 +100,7 @@ EXTRA = [
     (CAMERA_ID, 'Porch camera', 'kitchen', CAMERA, 'idle',
      {'entity_picture': f'/api/camera_proxy/{CAMERA}?token={CAMERA_TOKEN}', 'access_token': CAMERA_TOKEN,
       'frontend_stream_type': None, 'supported_features': 0},
-     ('floor', L.KITCHEN, .5, .45)),
+     ('floor', L.KITCHEN, .5, .65)),
 ]
 
 

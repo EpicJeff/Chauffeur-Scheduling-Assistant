@@ -8180,6 +8180,65 @@ def _house_editor_call(operation, *args, lookup=False, **kwargs):
         raise HTTPException(status_code=500, detail='The house could not finish this request. Please try again.') from exc
 
 
+@app.get('/api/house/editor/houses')
+def house_saves_list():
+    from services import twin_house_saves as saves
+    return {'saves': saves.list_saves()}
+
+
+@app.post('/api/house/editor/houses')
+def house_saves_create(request: Request, body: dict = Body(default={})):
+    from services import twin_house_saves as saves
+    return {'save': _house_editor_call(saves.save_current, body.get('name'),
+                                     _acting_id(request, None), body.get('thumbnail'))}
+
+
+@app.post('/api/house/editor/houses/upload')
+def house_saves_upload(request: Request, file: UploadFile = File(...)):
+    from services import twin_house_saves as saves
+    data = file.file.read(saves.MAX_BYTES + 1)
+    if len(data) > saves.MAX_BYTES:
+        raise HTTPException(status_code=413, detail='House files may be at most 20 MB.')
+    return _house_editor_call(saves.upload, data, _acting_id(request, None))
+
+
+def _house_download(sid=None):
+    from services import twin_house_saves as saves
+    from urllib.parse import quote
+    document = _house_editor_call(saves.download, sid)
+    return Response(content=json.dumps(document, ensure_ascii=False, allow_nan=False), media_type='application/json',
+                    headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(saves.filename(document['name'])),
+                             'Cache-Control': 'no-store'})
+
+
+@app.get('/api/house/editor/houses/current/download')
+def house_saves_download_current():
+    return _house_download()
+
+
+@app.get('/api/house/editor/houses/{sid}/download')
+def house_saves_download(sid: str):
+    return _house_download(sid)
+
+
+@app.post('/api/house/editor/houses/{sid}/load')
+def house_saves_load(sid: str):
+    from services import twin_house_saves as saves
+    return _house_editor_call(saves.load, sid)
+
+
+@app.patch('/api/house/editor/houses/{sid}')
+def house_saves_rename(sid: str, body: dict = Body(default={})):
+    from services import twin_house_saves as saves
+    return {'save': _house_editor_call(saves.rename, sid, body.get('name'))}
+
+
+@app.delete('/api/house/editor/houses/{sid}')
+def house_saves_delete(sid: str):
+    from services import twin_house_saves as saves
+    return _house_editor_call(saves.delete, sid)
+
+
 @app.get('/api/house/editor/sheets')
 def house_editor_sheets():
     return _house_editor_call(_house_editor_sheets)
