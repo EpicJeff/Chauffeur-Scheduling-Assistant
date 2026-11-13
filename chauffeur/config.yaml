@@ -1,6 +1,6 @@
 ﻿name: "Chauffeur"
 description: "A smart Graph-based Calendar Assistant for mapping overlapping family driving routes."
-version: "2.499.842"
+version: "2.499.843"
 slug: "chauffeur"
 init: false
 arch:
