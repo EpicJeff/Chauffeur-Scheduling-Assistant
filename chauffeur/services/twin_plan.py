@@ -453,6 +453,10 @@ def _details(building, levels, notes):
             return None
         else:
             porch.setdefault('floor', 0)
+            from services import twin_porches
+            # Legacy flat porches keep their exact shape; absence means posts.
+            if 'foundation' in porch:
+                twin_porches.normalize_foundation(porch, notes)
             columns = []
             for index, column in enumerate(_items(porch, 'columns', notes)):
                 if (isinstance(column, dict) and _point(column.get('at'))

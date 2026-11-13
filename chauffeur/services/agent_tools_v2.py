@@ -7759,7 +7759,8 @@ class HouseDesignTool(BaseModel):
         "Polygon yard items move with by:[dx,dy]. Adding site items is limited to plants/furniture. "
         "add_pad (polygon in lot feet, height -50..50, blend 0..50 default 6, edges:[{edge:slope|sharp}] one per polygon edge); "
         "update_pad (id, polygon?, height?, blend?, edges?); delete_pad (id). Later pads win overlaps; maximum 40. "
-        "set_foundation (building, foundation:{mode:auto|fixed,offset_ft:0,thickness_ft:1}); auto follows the highest ground plus offset, fixed keeps base."))
+        "set_foundation (building, foundation:{mode:auto|fixed,offset_ft:0,thickness_ft:1}); auto follows the highest ground plus offset, fixed keeps base. "
+        "set_porch_foundation (building, id:porch room, foundation:{type:posts|solid,material:stone|brick|concrete,lip_in:0..4}); missing means posts, lip defaults to 1 inch."))
     step: Optional[str] = Field(None, description="Build step id to reread.")
     piece: Optional[str] = Field(None, description="Piece id to describe.")
     building: Optional[str] = Field(None, description=(

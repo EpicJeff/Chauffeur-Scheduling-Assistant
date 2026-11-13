@@ -61,6 +61,10 @@
       "asset": "metal_plate",
       "color": "#b8bcc0"
     },
+    "porch_brick": {
+      "asset": "red_brick_03",
+      "color": "#a56b52"
+    },
     "patio_concrete": {
       "asset": "concrete_floor_02",
       "color": "#cfc8bc"

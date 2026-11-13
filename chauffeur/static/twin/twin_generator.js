@@ -8,6 +8,7 @@ import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
+import { PORCH_SLAB_FT, porchFoundationRole, porchPlinthGeometry } from './twin_porch_foundation.js';
 import { roomFloor, roomAt, openingFloor, wallFloorProfile, foundationPieces } from './twin_floors.js';
 import { LUCIDE } from '../vendor/lucide/icons.js';
 
@@ -1005,7 +1006,8 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         use(room.id ? room : { ...l, id: `floor:${l.id}` }, room.id ? 'room' : 'floor', `floor:${l.id}`);
         // Only insert stair holes fully contained in this footprint.
         const cuts = holes.filter(h => h.every(p => contains(poly, p)));
-        const slabBottom = l.id === first.id && !room.floor_offset_ft ? 0 : elevation - .8;
+        const slabBottom = porch?.foundation?.type === 'solid' ? elevation - PORCH_SLAB_FT
+          : l.id === first.id && !room.floor_offset_ft ? 0 : elevation - .8;
         mesh(local[l.id], polygon(poly, slabBottom, elevation - 0.02, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'));
         mesh(local[l.id], polygon(poly, elevation, elevation, cuts), mat(porch ? 'patio_concrete' : 'floor', l, room.floor_material));
       }
@@ -1024,7 +1026,10 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     for (const [index, po] of porches.entries()) {
       if (!po.polygon) continue;
       use(po, 'porch', po === b.porch ? 'porch' : `porch:${index}`);
-      if (!porchRoom(po)) mesh(local[first.id], polygon(po.polygon, 0, po.floor), mat('patio_concrete'));
+      const room = porchRoom(po), solid = po.foundation?.type === 'solid';
+      const floor = po.floor + (solid ? room?.floor_offset_ft || 0 : 0);
+      if (!room) mesh(local[first.id], polygon(po.polygon, solid ? floor - PORCH_SLAB_FT : 0, floor), mat('patio_concrete'));
+      if (solid) mesh(local[first.id], porchPlinthGeometry(plan, b, po, floor - PORCH_SLAB_FT, base), mat(porchFoundationRole(po.foundation.material)));
       const shed = b.roof?.extensions?.find(e => e.kind === 'shed_continuation');
       const section = sections.find(s => s.id === shed?.section);
       const main = section && { plate: section.plate, x1: section.rect[2] };
@@ -1037,10 +1042,11 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       };
       for (const c of po.columns || []) {
         const top = topAt(...c.at);
-        mesh(local[first.id], boxRect(c.at[0] - c.size / 2, c.at[1] - c.size / 2, c.at[0] + c.size / 2, c.at[1] + c.size / 2, po.floor, top), mat('trim'));
+        if (solid && top <= floor) continue;
+        mesh(local[first.id], boxRect(c.at[0] - c.size / 2, c.at[1] - c.size / 2, c.at[0] + c.size / 2, c.at[1] + c.size / 2, floor, top), mat('trim'));
       }
-      const porchWalls = b.walls.filter(w => w.exterior && (levels[w.level]?.elevation ?? 0) <= po.floor
-        && (levels[w.level]?.elevation ?? 0) + w.height > po.floor);
+      const porchWalls = b.walls.filter(w => w.exterior && (levels[w.level]?.elevation ?? 0) <= floor
+        && (levels[w.level]?.elevation ?? 0) + w.height > floor);
       if (po.screened === true) for (let i = 0; i < po.polygon.length; i++) {
         const a = po.polygon[i], endPoint = po.polygon[(i + 1) % po.polygon.length];
         const dx = endPoint[0] - a[0], dy = endPoint[1] - a[1], length = Math.hypot(dx, dy);
@@ -1056,7 +1062,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         for (let j = 1; j < posts.length; j++) {
           const c = posts[j - 1], d = posts[j], span = Math.hypot(d.at[0] - c.at[0], d.at[1] - c.at[1]);
           if (span <= (c.size + d.size) / 2) continue;
-          const basis = wallBasis(c.at, d.at, po.floor);
+          const basis = wallBasis(c.at, d.at, floor);
           // Subtract wall spans so an attached side never receives a screen.
           let gaps = [[c.size / 2, span - d.size / 2]];
           for (const w of porchWalls) {
@@ -1069,7 +1075,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
             const count = Math.max(1, Math.ceil((end - start) * 2));
             for (let k = count; k >= 0; k--) {
               const t = start + (end - start) * k / count;
-              shape.lineTo(t, Math.max(0, topAt(c.at[0] + (d.at[0] - c.at[0]) * t / span, c.at[1] + (d.at[1] - c.at[1]) * t / span) - po.floor));
+              shape.lineTo(t, Math.max(0, topAt(c.at[0] + (d.at[0] - c.at[0]) * t / span, c.at[1] + (d.at[1] - c.at[1]) * t / span) - floor));
             }
             shape.closePath();
             mesh(local[first.id], new THREE.ShapeGeometry(shape).applyMatrix4(basis.matrix), screen);

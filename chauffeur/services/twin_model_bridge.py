@@ -5,6 +5,7 @@ import math
 
 from services import twin_model, twin_model_graph as graph
 from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_plan
+from services import twin_porches
 
 
 _EPS = 1e-6
@@ -803,8 +804,12 @@ def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]
             room = {k: deepcopy(v) for k, v in porch.items() if k in ('id', 'polygon', 'src', 'state')}
             room.update(kind='porch', name=porch.get('name', 'Porch'),
                         level=porch.get('level', building['levels'][0]['id']))
+            room['foundation'] = deepcopy(porch.get('foundation', twin_porches.DEFAULT))
             if not any(r['id'] == room['id'] for r in building['rooms']):
                 building['rooms'].append(room)
+            else:
+                existing = next(r for r in building['rooms'] if r['id'] == room['id'])
+                existing.setdefault('foundation', room['foundation'])
         building['rooms'] = _displace_derived(building['rooms'])
         replaced = []
         walls = _walls(building, source.get('walls', []), old, replaced)
@@ -971,4 +976,18 @@ def flatten(model: dict) -> dict:
                                       point[0] + width / 2, point[1] + depth / 2]
                 building[target].append(detail)
         building['porches'] = deepcopy(building.get('porches_detail', []))
+        # The room owns person edits; the detail supplies the read columns and
+        # deck height. Never let a stale detail undo a foundation shelf edit.
+        for room in building['rooms']:
+            if room.get('kind') != 'porch' or room.get('state') == 'ghost' or not twin_plan._polygon(room.get('polygon')):
+                continue
+            porch = next((p for p in building['porches'] if p.get('id') == room['id']), None)
+            if porch is None:
+                if room.get('foundation', {}).get('type') != 'solid':
+                    continue
+                porch = {'id': room['id'], 'floor': next(l['elevation'] for l in building['levels'] if l['id'] == room['level']), 'columns': []}
+                building['porches'].append(porch)
+            porch['foundation'] = deepcopy(room.get('foundation', twin_porches.DEFAULT))
+            if porch['foundation']['type'] == 'solid':
+                porch.update(polygon=deepcopy(room['polygon']), level=room['level'])
     return flat

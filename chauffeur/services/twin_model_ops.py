@@ -492,7 +492,7 @@ MORE_OPS = ('set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_sour
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
             'move_site_item', 'delete_site_item', 'add_site_item', 'place_device', 'unplace_device',
-            'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation')
+            'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation', 'set_porch_foundation')
 
 
 def _item_scale(value):
@@ -1183,6 +1183,19 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
         raise Refused('That operation is not available.')
     op = deepcopy(op)
     model, notes = twin_model.normalize(model)
+    if kind == 'set_porch_foundation':
+        from services import twin_porches
+        building = _find(model, 'buildings', op.get('building'))
+        room = _find(building, 'rooms', op.get('id'))
+        if room.get('kind') != 'porch':
+            raise Refused('Choose a porch.')
+        value = deepcopy(op.get('foundation'))
+        if error := twin_porches.foundation_error(value):
+            raise Refused(error)
+        room['foundation'] = value
+        if actor == 'person':
+            _person(room)
+        return model, 'Changed the porch foundation.'
     if kind in ('add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation'):
         from services import twin_terrain
         if kind == 'set_foundation':

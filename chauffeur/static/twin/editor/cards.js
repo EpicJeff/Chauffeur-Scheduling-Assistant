@@ -4,6 +4,7 @@ import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
 import { createEquipmentShelf } from './equipment_shelf.js';
 import { foundationShelf } from './foundation_shelf.js';
+import { porchFoundationShelf } from './porch_foundation_shelf.js';
 import { siteRecord, siteShapeKinds, siteShapeLabels } from '../objects.js';
 
 const report = error => {
@@ -105,9 +106,11 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     const flags = roofFlags(record);
+    const porchLayout = record?.kind === 'room' && record.piece.kind === 'porch'
+      ? JSON.stringify([record.piece.foundation, canEdit()]) : '';
     const nextLayout = JSON.stringify([record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind==='solar_zone'?JSON.stringify(record.piece):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
-    if (record && layout === nextLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
+    if (record && layout === nextLayout + porchLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
       if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
       if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost' && !flags.length;
@@ -126,7 +129,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       if (kindIsEquipment(record)) equipmentShelf.refresh(record);
       return;
     }
-    selection = next; layout = nextLayout; host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
+    selection = next; layout = nextLayout + porchLayout; host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
     haSection = null;
     if (!record) return;
     const { piece, kind, building } = record;
@@ -186,6 +189,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     }
     if (kindIsEquipment(record)) equipmentShelf.draw(host, record);
     if (kind === 'building') foundationShelf(host, piece, { getPlan, canEdit, queue, op, report, preview });
+    if (kind === 'room' && piece.kind === 'porch') porchFoundationShelf(host, piece, building,
+      { getPlan, canEdit, queue, op, report, onSaved: () => draw() });
     if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { canEdit, queue, op, report,
       getRecord: () => findPiece(getPlan(), piece.id, building?.id) });
     if (siteShapeKinds.includes(kind)) {
