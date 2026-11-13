@@ -48,7 +48,9 @@ function writeLayer(texture, layer, page) {
   });
   texture.addLayerUpdate(layer); texture.needsUpdate = true;
 }
-const lightsOf = layout => (layout?.markers || []).filter(m => m.kind === 'light' && m.placed && m.at && m.room)
+// Baked light lands on indoor surfaces only. Yard and fire-pit lights (no building) light the
+// lot through the live pool; baking them never completes and kept the bake from settling.
+export const lightsOf = layout => (layout?.markers || []).filter(m => m.kind === 'light' && m.placed && m.at && m.room && m.building)
   .map(m => ({ device: m.device_id, building: m.building, level: m.level, room: m.room, at: [...m.at] }));
 
 export function mountBake(view, root, { host, controls = view.controls, layout: requestedLayout, poll: pollMs = 10000,
@@ -67,7 +69,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   function reportError(error) {
     if (!valid()) return;
     errorReason=error?.message || String(error);
-    failure='Could not bake lighting. Try Bake lighting now.';
+    // Say why, so a failure can be reported and fixed (user, 2026-11-13).
+    failure=`Could not bake lighting (${errorReason}). Try Bake lighting now.`;
     console.error('House lighting bake failed:', error);
     showProgress();
   }

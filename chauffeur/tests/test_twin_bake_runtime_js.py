@@ -20,7 +20,7 @@ DRIVER += B.DRIVER[B.DRIVER.index('// --- the fake GPU'):B.DRIVER.index('// --- 
 DRIVER += B.DRIVER[B.DRIVER.index('const building ='):B.DRIVER.index('async function setup')]
 DRIVER += r"""
 const B = await import(file('static/twin/bake/baker.js'));
-const { mountBake } = await import(file('static/twin/bake/runtime.js'));
+const { mountBake, lightsOf } = await import(file('static/twin/bake/runtime.js'));
 class CodecWorker {
   postMessage(job) {
     setImmediate(async () => {
@@ -74,6 +74,16 @@ async function check(name, fn) {
   try { await fn(); passed++; console.log('  ok   ' + name); }
   catch (error) { console.log('  FAIL ' + name + ' ' + error.stack); }
 }
+await check('yard_and_fire_pit_lights_are_not_baked', async () => {
+  // Yard-room and fire-pit lights have no building: baked light lands indoors only, and a
+  // building-less light never baked, so the bake never settled (user, 2026-11-13).
+  const layout={markers:[
+    {device_id:'indoor',kind:'light',placed:true,at:[1,2,8],room:'r',building:'b',level:'L1'},
+    {device_id:'yard',kind:'light',placed:true,at:[30,40,8],room:'yard_rooms:1',building:null,level:null},
+    {device_id:'pit',kind:'light',placed:true,at:[5,5,2],room:null,building:null,level:null},
+    {device_id:'unplaced',kind:'light',placed:false,at:[1,1,8],room:'r',building:'b',level:'L1'}]};
+  assert.deepEqual(lightsOf(layout).map(l=>l.device),['indoor']);
+});
 await check('worker_failures_are_visible_in_state_and_console', async () => {
   const Worker=globalThis.Worker, db=globalThis.indexedDB, log=console.error, timeout=globalThis.setTimeout, errors=[];
   let c;
