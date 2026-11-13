@@ -92,12 +92,14 @@ export function energyPlace(plan, p) {
 }
 const placeShown = (view, place) => !place || (place.roof ? view.roofShown?.(place.roof) !== false : view.levelShown?.(place.level) !== false);
 
-// A cyan wave pulses across the panels while they generate (user, 2026-11-13). Installed
-// once per panel material; generation only changes its uniforms, never the program.
+// While the panels generate, one cyan pulse rushes across all of them, then the next fires
+// (user, 2026-11-13): a single bright front with a short fading tail, crossing every panel in
+// PULSE_SECONDS. Installed once per panel material; only uniforms change, never the program.
+export const PULSE_SECONDS = .9;
 const WAVE_COLOR = new THREE.Color('#4df0ff');
 export function solarWave(material) {
   if (material.userData.solarWave) return material.userData.solarWave;
-  const uniforms = {waveTime: {value: 0}, waveStrength: {value: 0}, waveColor: {value: WAVE_COLOR}};
+  const uniforms = {waveHead: {value: -1e6}, waveWidth: {value: 1}, waveDir: {value: new THREE.Vector2(1, 0)}, waveStrength: {value: 0}, waveColor: {value: WAVE_COLOR}};
   const before = material.onBeforeCompile, key = material.customProgramCacheKey;
   material.onBeforeCompile = (shader, renderer) => {
     before?.call(material, shader, renderer);
@@ -105,10 +107,11 @@ export function solarWave(material) {
     shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vSolarWave;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSolarWave = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     shader.fragmentShader = shader.fragmentShader.replace('#include <common>',
-      '#include <common>\nvarying vec3 vSolarWave;\nuniform float waveTime;\nuniform float waveStrength;\nuniform vec3 waveColor;')
+      '#include <common>\nvarying vec3 vSolarWave;\nuniform float waveHead;\nuniform float waveWidth;\nuniform vec2 waveDir;\nuniform float waveStrength;\nuniform vec3 waveColor;')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n'
-        + 'float solarPhase = fract(dot(vSolarWave.xz, vec2(.55, .35)) * .45 - waveTime * .35);\n'
-        + 'float solarBand = smoothstep(0., .08, solarPhase) * (1. - smoothstep(.08, .3, solarPhase));\n'
+        // Distance behind the front: a sharp leading edge and a tail of about three widths.
+        + 'float solarBehind = waveHead - dot(vSolarWave.xz, waveDir);\n'
+        + 'float solarBand = (1. - smoothstep(0., 3. * waveWidth, solarBehind)) * smoothstep(-.25 * waveWidth, 0., solarBehind);\n'
         + 'totalEmissiveRadiance += waveColor * solarBand * waveStrength;');
   };
   material.customProgramCacheKey = () => (key ? key.call(material) : '') + '|solarWave';
@@ -136,11 +139,12 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
   });
   checkControls.append(checkLink, checkPanel);
   const layout = live.layout();
-  const panels = new Map();
+  const panels = new Map(), panelMeshes = new Set();
+  let sweep = null; // {dir:[x,z], from, to, width} in world metres across all panels
   const resources = new Set();
   const own = value => { resources.add(value); return value; };
   const label = () => {const node = document.createElement('span'); node.hidden = true; labels.append(node); return node;};
-  function clear() { root.clear(); labels.replaceChildren(); for (const r of resources) r.dispose(); resources.clear(); ribbons = []; conduits = []; }
+  function clear() { sweep = null; root.clear(); labels.replaceChildren(); for (const r of resources) r.dispose(); resources.clear(); ribbons = []; conduits = []; }
   const flowMaterial = (color, glow, surface = false) => own(new THREE.ShaderMaterial({transparent: true, depthTest: surface, depthWrite: false, toneMapped: false,
       blending: glow ? THREE.AdditiveBlending : THREE.NormalBlending,
       uniforms: {color: {value: new THREE.Color(color)}, phase: {value: 0}, radius: {value: .1}, glow: {value: glow ? 1 : 0},
@@ -211,6 +215,15 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
     halo.renderOrder = 998; mesh.renderOrder = 999;
     conduits.push({...route, place: {roof: String(route.id).split(':')[0]}, mesh, halo, reading: flowReading(0)});
   }
+  // The sweep runs along the longer horizontal side of all panels together.
+  function panelSweep() {
+    const box = new THREE.Box3();
+    for (const mesh of panelMeshes) if (mesh.parent) box.expandByObject(mesh);
+    if (box.isEmpty()) return {dir: [1, 0], from: 0, to: 1, width: .3};
+    const x = box.max.x - box.min.x, z = box.max.z - box.min.z, along = x >= z;
+    const from = along ? box.min.x : box.min.z, to = along ? box.max.x : box.max.z;
+    return {dir: along ? [1, 0] : [0, 1], from, to, width: Math.max(.25, (to - from) * .06)};
+  }
   function applyShown() {
     for (const row of conduits) row.mesh.visible = row.halo.visible = !!row.wanted && placeShown(view, row.place);
     for (const row of ribbons) row.mesh.visible = row.halo.visible = !!row.wanted && row.ends.some(place => placeShown(view, place));
@@ -264,6 +277,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
         m.visible = mapping.panels.visible !== false;
         if (!m.emissive) continue;
         if (!panels.has(m)) panels.set(m, {color: m.emissive.clone(), intensity: m.emissiveIntensity});
+        if (!panelMeshes.has(o)) { panelMeshes.add(o); sweep = null; }
         // No tint: the panels keep their own colour; a cyan wave runs while they generate.
         solarWave(m).waveStrength.value = shown && total >= 50 ? .35 + .65 * Math.min(1, total / 4000) : 0;
       }});
@@ -324,8 +338,16 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       // Hide what is tied only to hidden geometry: conduits with their roof, a ribbon
       // when both of its ends are hidden.
       applyShown();
-      const waveTime = performance.now() / 1000;
-      for (const m of panels.keys()) if (m.userData.solarWave) m.userData.solarWave.waveTime.value = waveTime;
+      if (panels.size) {
+        if (!sweep) sweep = panelSweep();
+        // One front at a time: it enters before the first panel and leaves past the last.
+        const phase = (performance.now() / 1000 % PULSE_SECONDS) / PULSE_SECONDS;
+        const head = sweep.from - sweep.width + (sweep.to - sweep.from + 4 * sweep.width) * phase;
+        for (const m of panels.keys()) {
+          const wave = m.userData.solarWave; if (!wave) continue;
+          wave.waveHead.value = head; wave.waveWidth.value = sweep.width; wave.waveDir.value.set(...sweep.dir);
+        }
+      }
       const rect = view.renderer3.domElement.getBoundingClientRect();
       const shown = [], entries = [];
       for (const row of ribbons) {

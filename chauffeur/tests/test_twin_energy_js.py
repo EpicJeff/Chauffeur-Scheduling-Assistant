@@ -88,11 +88,22 @@ check('panels keep their colour; a cyan wave scales with generation and never ch
   assert.equal(values[0],0);assert.ok(values[1]>0&&values[2]>values[1]&&values[3]<=1,JSON.stringify(values));
   t.live.setMode('all');assert.equal(wave.waveStrength.value,values[3]);
   for(const mode of ['lights','climate','security']){t.live.setMode(mode);assert.equal(wave.waveStrength.value,0,mode+': no wave');}
-  t.live.setMode('energy');assert.ok(wave.waveStrength.value>0);t.live.stop();assert.equal(wave.waveStrength.value,0,'stop ends the wave');
+  t.live.setMode('energy');assert.ok(wave.waveStrength.value>0);const realNow=performance.now.bind(performance);let clock=0;performance.now=()=>clock;
+  try{
+   const cycle=energyModule.PULSE_SECONDS*1000,heads=[];
+   for(const f of [.02,.25,.5,.75,.98]){clock=cycle*7+f*cycle;t.view.render();heads.push(wave.waveHead.value);}
+   for(let i=1;i<heads.length;i++)assert.ok(heads[i]>heads[i-1],'one front moves forward through the cycle '+JSON.stringify(heads));
+   clock=cycle*8+.02*cycle;t.view.render();assert.ok(Math.abs(wave.waveHead.value-heads[0])<1e-9,'the next pulse fires from the start');
+   assert.ok(wave.waveWidth.value>0&&Math.abs(wave.waveDir.value.length()-1)<1e-9);
+  }finally{performance.now=realNow;}
+  t.live.stop();assert.equal(wave.waveStrength.value,0,'stop ends the wave');
   assert.equal(m.emissive.getHex(),original.color.getHex());assert.equal(m.emissiveIntensity,original.intensity);
   assert.equal(m.customProgramCacheKey(),key);assert.equal(m.version,version,'power and mode changes never recompile');
   const shader={uniforms:{},vertexShader:'#include <common>\n#include <begin_vertex>',fragmentShader:'#include <common>\n#include <emissivemap_fragment>'};
   m.onBeforeCompile(shader,null);assert.ok(shader.uniforms.waveStrength===wave.waveStrength&&shader.fragmentShader.includes('totalEmissiveRadiance += waveColor'));
+  // One pulse at a time, crossing all panels in under a second, then the next fires.
+  assert.ok(energyModule.PULSE_SECONDS<=1);assert.ok(shader.fragmentShader.includes('waveHead - dot(vSolarWave.xz, waveDir)'));
+
  }finally{t.cleanup();t.panel.geometry.dispose();t.panel.material.dispose();}
 });
 check('visualizations hide with the geometry they are tied to: conduits with their roof, ribbons when both ends hide',async()=>{
