@@ -8,16 +8,23 @@ import { lightColor, lightIntensity, createRealLights } from './real_lights.js';
 import { registerClimate, roomClimate } from './climate.js';
 import { registerEnergy } from './energy.js';
 import { registerSecurity } from './security.js';
+import { svgIcon } from './glance_icons.js';
 
 const registry = new Map();
 export function registerMode(mode) { registry.set(mode.id, mode); return mode; }
 export function modes() { return [...registry.values()]; }
 export const modeForeground = (id, row, state) => registry.get(id)?.foreground?.(row, state) ?? true;
+// A visualization shows in its own mode and in All.
+export const modeShows = (mode, id) => mode === id || mode === 'all';
+const MODE_ICONS = {all: 'layers', lights: 'lightbulb', climate: 'thermometer', energy: 'zap', security: 'shield'};
 
-registerMode({id: 'lights', label: 'Lights',
+// All is every visualization at once: lit rooms, temperature tint, energy ribbons, security
+// emphasis and camera cones (user, 2026-11-12). It is registered first so its icon leads.
+registerMode({id: 'all', label: 'All', icon: 'layers',
+  enter: ({lighting}) => lighting(true), update() {}, leave: ({lighting}) => lighting(false)});
+registerMode({id: 'lights', label: 'Lights', icon: 'lightbulb',
   foreground: row => row.kind === 'light',
   enter: ({lighting}) => lighting(true), update() {}, leave: ({lighting}) => lighting(false)});
-registerMode({id: 'all', label: 'All', enter() {}, update() {}, leave() {}});
 registerClimate(registerMode);
 registerEnergy(registerMode);
 registerSecurity(registerMode);
@@ -32,14 +39,31 @@ export function roomStates(rooms, states) {
 }
 
 export function mountModes(view, live) {
+  // Mode icons, centred at the top: the viewer's only controls besides the path chip (spec).
+  // Each keeps its mode's name as its accessible name and tooltip; a long press shows the
+  // name on touch screens, where there is no hover.
   const strip = document.createElement('fieldset'); strip.id = 'twin-modes';
-  const legend = document.createElement('legend'); legend.textContent = 'Devices'; strip.append(legend);
+  const legend = document.createElement('legend'); legend.textContent = 'Show'; strip.append(legend);
   const buttons = new Map();
   for (const mode of modes()) {
-    const button = document.createElement('button'); button.type = 'button'; button.textContent = mode.label;
+    const button = document.createElement('button'); button.type = 'button';
+    button.setAttribute('aria-label', mode.label); button.dataset.mode = mode.id;
+    const shape = mode.icon || MODE_ICONS[mode.id];
+    if (shape && typeof document.createElementNS === 'function') {
+      button.append(svgIcon(shape, 'currentColor', 'mode-' + mode.id));
+      // The name as a tooltip: hover on desk, a long press on touch.
+      const tip = document.createElement('span'); tip.className = 'twin-mode-tip'; tip.textContent = mode.label; tip.hidden = true;
+      button.append(tip);
+      let hold = null;
+      button.addEventListener('pointerdown', event => {
+        if (event.pointerType !== 'touch') return;
+        hold = setTimeout(() => { tip.hidden = false; setTimeout(() => { tip.hidden = true; }, 1500); }, 500);
+      });
+      for (const name of ['pointerup', 'pointerleave', 'pointercancel']) button.addEventListener(name, () => clearTimeout(hold));
+    } else button.textContent = mode.label;
     button.addEventListener('click', () => live.setMode(mode.id)); strip.append(button); buttons.set(mode.id, button);
   }
-  document.getElementById('twin-controls').append(strip);
+  (document.getElementById('twin-mode-bar') || document.getElementById('twin-controls')).append(strip);
   const climateLabels = document.createElement('div'); climateLabels.className = 'twin-mode-labels twin-climate-labels';
   const modeLegend = document.createElement('output'); modeLegend.id = 'twin-mode-legend'; modeLegend.hidden = true;
   const legendText = document.createElement('span'), legendContent = document.createElement('div'); modeLegend.append(legendText, legendContent);
@@ -152,6 +176,11 @@ export function mountModes(view, live) {
     rig.show(true); for (const object of extras) object.visible = true;
     try {
       view.renderer3.compileAsync(view.scene, view.camera).catch(() => {});
+      // Programs are keyed on the light set too. All shows the pool and the effects at
+      // once (slice 2c-2), so compile the overlays a second time with the pool hidden,
+      // the light set Climate, Energy and Security draw them under.
+      rig.show(false);
+      view.renderer3.compileAsync(view.scene, view.camera).catch(() => {});
       for (const effect of effects.values()) effect.warm?.();
     }
     catch { /* a failed warm-up only leaves the first entry its compile */ }
@@ -188,7 +217,7 @@ export function mountModes(view, live) {
     draw();
   }
   function draw() {
-    climateLabels.hidden = mode !== 'climate';
+    climateLabels.hidden = !modeShows(mode, 'climate');
     for (const effect of effects.values()) effect.draw?.(mode);
     const target = view.controls?.target;
     const key = [revision, mode, target?.x, target?.y, target?.z,
@@ -196,7 +225,7 @@ export function mountModes(view, live) {
       ...lamps.map(lamp => view.groups.levels[`${lamp.marker.building}:${lamp.marker.level}`]?.visible !== false)].join('|');
     // Labels follow the camera, including the idle orbit; their floors are reused.
     for (const floor of floors) {
-      const show = mode === 'climate' && floor.parent.visible && !!floor.climate?.label;
+      const show = modeShows(mode, 'climate') && floor.parent.visible && !!floor.climate?.label;
       floor.label.hidden = !show;
       if (show) {
         floor.group.updateMatrixWorld(true); view.camera.updateMatrixWorld(true);
@@ -210,7 +239,7 @@ export function mountModes(view, live) {
     }
     if (key === lastKey) return;
     lastKey = key;
-    const candidates = lamps.filter(lamp => mode === 'lights' && lamp.intensity > 0 &&
+    const candidates = lamps.filter(lamp => modeShows(mode, 'lights') && lamp.intensity > 0 &&
       view.groups.levels[`${lamp.marker.building}:${lamp.marker.level}`]?.visible !== false)
       .map(lamp => ({ device: lamp.marker.device_id, at: lamp.marker.at, ...lamp }));
     const fresh = new Set(view.bake?.fresh() || []);
@@ -231,9 +260,12 @@ export function mountModes(view, live) {
         lamp.marker.building === room.building && lamp.marker.room === room.room);
       const legacy = legacyRooms.find(row => row.building === room.building && row.room === room.room);
       const glow = realLighting ? (overflow.length ? overflow.reduce((sum, lamp) => sum + lamp.intensity, 0) / overflow.length : 0) : legacy?.glow || 0;
-      group.visible = parent.visible && (mode === 'climate' || mode === 'lights' && glow > 0);
-      mesh.material.opacity = mode === 'climate' ? .72 : glow * .85;
-      const rgb = mode === 'climate' ? floor.climate.rgb : (realLighting ? overflow[0]?.rgb : legacy?.rgb) || [255, 241, 201];
+      // In All a room with a temperature reading carries the tint; any other room glows as in
+      // Lights. Light also shows through the real lights, the bake and the bulbs.
+      const tint = mode === 'climate' || mode === 'all' && !!floor.climate?.label;
+      group.visible = parent.visible && (tint || modeShows(mode, 'lights') && glow > 0);
+      mesh.material.opacity = tint ? .72 : glow * .85;
+      const rgb = tint ? floor.climate.rgb : (realLighting ? overflow[0]?.rgb : legacy?.rgb) || [255, 241, 201];
       mesh.material.color.setRGB(...rgb.map(value => value / 255), THREE.SRGBColorSpace);
     }
   }

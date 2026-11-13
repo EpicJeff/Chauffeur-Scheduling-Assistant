@@ -242,7 +242,9 @@ def lights_mode(page):
 
 
 def all_mode(page):
-    mode_button(page, 'All').click()
+    # Slice 2c-2: All shows every visualization, lights included, so the mode that hands the
+    # look back to the house's own lamps is one without lighting. Security is that mode here.
+    mode_button(page, 'Security').click()
     calm(page)
 
 
@@ -369,6 +371,7 @@ def scenario_lights_mode_keeps_the_day():
     L.facts()
     with s.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, s)
+        all_mode(page)
         others_off(page)
         page.evaluate("() => { window.__twin.setTime('day'); window.__twin.levels.go({level:'house'},{immediate:true}); }")
         calm(page)
@@ -402,14 +405,14 @@ def scenario_lights_mode_keeps_the_day():
         night = look(page)
         check(night['time'] == 'night', night)
         all_mode(page)
-        check(look(page) == night, ('All keeps the current Night time look', night, look(page)))
-        check_night_lamps(page, 'All restores decorative night lamps')
+        check(look(page) == night, ('Security keeps the current Night time look', night, look(page)))
+        check_night_lamps(page, 'Security restores decorative night lamps')
         page.evaluate("() => window.__twin.setTime('day')")
         calm(page)
         for _ in range(2):
             lights_mode(page)
             all_mode(page)
-        check(look(page) == day, ('repeated Lights/All keeps Day', day, look(page)))
+        check(look(page) == day, ('repeated Lights/Security keeps Day', day, look(page)))
         L.no_errors(s)
 
 
@@ -449,6 +452,7 @@ def scenario_all_after_a_floor_change_in_lights_follows_the_floor():
     L.facts()
     with s.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, s)
+        all_mode(page)
         page.evaluate("() => { window.__twin.levels.go({level:'house'},{immediate:true}); window.__twin.setTime('night'); }")
         calm(page)
         check_night_lamps(page, 'night in Ext before Lights')
@@ -475,10 +479,10 @@ def scenario_all_after_a_floor_change_in_lights_follows_the_floor():
             return
         calm(page)
         all_mode(page)
-        check_night_lamps(page, 'All after a floor change in Lights')
+        check_night_lamps(page, 'Security after a floor change in Lights')
         page.evaluate("() => window.__twin.levels.go({level:'house'},{immediate:true})")
         calm(page)
-        check_night_lamps(page, 'Ext again after All')
+        check_night_lamps(page, 'Ext again after Security')
         L.no_errors(s)
 
 
@@ -517,8 +521,8 @@ def scenario_a_sky_arriving_in_lights_is_the_sky_after_all():
         calm(page)
         current = look(page)
         check(after['environment'] is not None and after['environment'] != before,
-              ('All lights the day with the sky that arrived, not the one it found', before, after['environment']))
-        check(after == current, ('All is the day as the view draws it now', after, current))
+              ('Security lights the day with the sky that arrived, not the one it found', before, after['environment']))
+        check(after == current, ('Security is the day as the view draws it now', after, current))
         L.no_errors(s)
 
 
@@ -531,6 +535,7 @@ def scenario_a_rebuild_in_lights_keeps_the_night_lamps_after_all():
     L.facts()
     with s.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, s)
+        all_mode(page)
         page.evaluate("() => { window.__twin.levels.go({level:'house'},{immediate:true}); window.__twin.setTime('night'); }")
         calm(page)
         check_night_lamps(page, 'night before Lights')
@@ -541,11 +546,11 @@ def scenario_a_rebuild_in_lights_keeps_the_night_lamps_after_all():
         state = room_lamps(page)
         check(all(l['intensity'] == 0 for l in state['lamps']), ('the rebuilt night lamps stay off in Lights', state))
         all_mode(page)
-        check_night_lamps(page, 'All after a rebuild in Lights')
+        check_night_lamps(page, 'Security after a rebuild in Lights')
         after = look(page)
         check({k: after[k] for k in ('background', 'environment', 'exposure', 'time')}
               == {k: night[k] for k in ('background', 'environment', 'exposure', 'time')},
-              ('All after a rebuild is the night it found', night, after))
+              ('Security after a rebuild is the night it found', night, after))
         L.no_errors(s)
 
 
@@ -710,10 +715,10 @@ def scenario_wall_panel_lights_mode():
         check(len(lit_pool(page)) == 3, ('three lit PointLights', lit_pool(page)))
         check(len(pool(page)) == count, ('the pool did not grow', count, len(pool(page))))
         check(look(page) == day, ('Lights keeps the wall time look', look(page)))
-        mode_button(page, 'All').click()   # one tap back
+        mode_button(page, 'Security').click()   # one tap to a mode without lighting
         calm(page)
-        check(look(page) == day, ('All restores the wall\'s look', day, look(page)))
-        check(lit_pool(page) == [], ('All: no pool light lit', lit_pool(page)))
+        check(look(page) == day, ('Security restores the wall\'s look', day, look(page)))
+        check(lit_pool(page) == [], ('Security: no pool light lit', lit_pool(page)))
         L.no_errors(s)
 
 

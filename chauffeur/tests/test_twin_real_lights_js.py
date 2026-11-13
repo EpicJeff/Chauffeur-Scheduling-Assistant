@@ -199,9 +199,9 @@ check('lights_mode_never_requests_a_time_look_change', async () => {
     live.setMode('lights'); live.draw(); await live.refresh();
     assert.deepEqual(timeChanges, [], 'lighting(true) must never change the time look');
     assert.equal(lampOwnership.at(-1), true, 'Lights owns the lamps');
-    live.setMode('all');
+    live.setMode('security');
     assert.deepEqual(timeChanges, [], 'leaving Lights must never change the time look');
-    assert.equal(lampOwnership.at(-1), false, 'All releases the lamps');
+    assert.equal(lampOwnership.at(-1), false, 'a mode without lighting releases the lamps');
   } finally { live.stop(); }
 });
 
@@ -364,26 +364,29 @@ check('over_budget_lights_fall_back_to_glow_and_wash', async () => {
   } finally { live.stop(); }
 });
 
-check('all_mode_restores_previous_lighting', async () => {
+// Slice 2c-2 (user, 2026-11-12): All is every visualization at once, so it lights rooms as
+// Lights does. A mode without lighting (Security) is where the look is released.
+check('all_mode_lights_and_other_modes_release_lighting', async () => {
   const {view, live} = await mounted('low');
   try {
-    assert.deepEqual(lampOwnership, [], 'mounting does not change the look');
+    assert.equal(lampOwnership.at(-1), true, 'mounting in All takes lamp ownership: view.setLiveLamps(true)');
     live.setMode('lights');
-    assert.equal(lampOwnership.at(-1), true, 'Lights takes lamp ownership: view.setLiveLamps(true)');
+    assert.equal(lampOwnership.at(-1), true, 'Lights keeps lamp ownership');
     assert.ok(pool(view).some(l => l.intensity > 0), 'Lights mode lights the pool');
-    live.setMode(null);
-    assert.equal(lampOwnership.at(-1), false, 'All releases lamp ownership: view.setLiveLamps(false)');
-    assert.ok(pool(view).every(l => l.intensity === 0), 'All: every pool light is dark');
-    assert.equal(tagged(view, 'lightWash').some(shown), false, 'All: no wash');
-    // A poll while in All mode lights nothing.
+    live.setMode('security');
+    assert.equal(lampOwnership.at(-1), false, 'Security releases lamp ownership: view.setLiveLamps(false)');
+    assert.ok(pool(view).every(l => l.intensity === 0), 'Security: every pool light is dark');
+    assert.equal(tagged(view, 'lightWash').some(shown), false, 'Security: no wash');
+    // A poll while in Security mode lights nothing.
     states['light.c1'] = {state:'on', attributes:{brightness:255}}; await live.refresh();
-    assert.ok(pool(view).every(l => l.intensity === 0), 'All: a poll lights nothing');
-    assert.equal(lampOwnership.at(-1), false, 'All: a poll does not dim the scene');
-    live.setMode('lights'); live.setMode(null);
-    assert.equal(lampOwnership.at(-1), false, 'the last word after All is always false');
+    assert.ok(pool(view).every(l => l.intensity === 0), 'Security: a poll lights nothing');
+    assert.equal(lampOwnership.at(-1), false, 'Security: a poll does not dim the scene');
+    live.setMode(null);
+    assert.equal(lampOwnership.at(-1), true, 'All takes lamp ownership again');
+    assert.ok(pool(view).some(l => l.intensity > 0), 'All lights the pool like Lights');
     live.setMode('lights');
   } finally { live.stop(); }
-  assert.equal(lampOwnership.at(-1), false, 'stopping the layer in Lights mode gives the look back');
+  assert.equal(lampOwnership.at(-1), false, 'stopping the layer gives the look back');
 });
 
 check('floor_lamp_light_hangs_at_lamp_height', async () => {

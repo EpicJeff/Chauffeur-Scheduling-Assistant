@@ -228,6 +228,14 @@
     #twin-time-preview button[aria-pressed=true] { color:var(--twinSelectedText); background:var(--twinSelected); }
     html[data-twin-idle] #twin-path, html[data-twin-idle] .twin-level-targets { visibility:hidden; }
     @media (max-width:800px) { #twin-path { max-width:calc(100vw - 32px); } #twin-controls { top:142px; right:16px; max-width:calc(100vw - 32px); } html[data-twin-wall] #twin-controls { top:72px; } }
+    /* Mode icons, centred at the top (2c-2). Name as tooltip on hover; a long press shows it on touch. */
+    #twin-controls #twin-modes { position:fixed; left:50%; top:86px; transform:translateX(-50%); z-index:47; flex-wrap:nowrap; }
+    html[data-twin-wall] #twin-controls #twin-modes { top:16px; }
+    #twin-modes button { position:relative; min-width:48px; padding:6px 12px; display:inline-flex; align-items:center; justify-content:center; }
+    #twin-modes button svg { width:22px; height:22px; flex:none; }
+    .twin-mode-tip { position:absolute; top:calc(100% + 8px); left:50%; transform:translateX(-50%); white-space:nowrap; padding:4px 10px; border-radius:8px; border:1px solid var(--twinBorder); background:var(--twinGlassStrong); color:var(--twinText); font:500 12px system-ui; pointer-events:none; }
+    #twin-modes button:hover .twin-mode-tip { display:block !important; }
+    @media (max-width:800px) { #twin-controls #twin-modes { top:206px; } html[data-twin-wall] #twin-controls #twin-modes { top:72px; } }
     [hidden] { display:none !important; }
     #twin-glance-home { position:fixed; bottom:max(calc(var(--panel-shelf-h, 0px) + 16px), var(--twin-glance-clearance, 0px)); left:16px; right:16px; z-index:46; pointer-events:none; }
     /* Shared tiles; glass and thin type follow the approved tiles brief. */

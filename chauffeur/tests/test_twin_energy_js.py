@@ -348,8 +348,9 @@ check('warm path sees chargers for away cars and cones before entry and on time 
   const live={layout:()=>t.layout,peek:()=>t.states,state:id=>t.states[id],stale:()=>false,subscribe:()=>()=>{},rooms:()=>[],setMode(){}};
   t.view.energySources={mapping:{cars:[],chargers:[{id:'evse',name:'EVSE',power:'sensor.tesla_charge_power'}]},cars:[]};
   extra=mountModes(t.view,live);assert.ok(warms>0);assert.ok(sawCar);assert.ok(sawCone);
-  const before=warms;t.view.onTimeLook();assert.equal(warms,before+1);
-  extra.setMode('energy');extra.setMode('all');extra.setMode('energy');assert.equal(warms,before+1);
+  // One warm-up compiles twice: with the pool shown (Lights, All) and hidden (the other modes).
+  const before=warms;t.view.onTimeLook();assert.equal(warms,before+2);
+  extra.setMode('energy');extra.setMode('all');extra.setMode('energy');assert.equal(warms,before+2);
  }finally{extra?.stop();t.cleanup();}
 });
 check('all placed-role combinations obey topology and placement legend',()=>{
