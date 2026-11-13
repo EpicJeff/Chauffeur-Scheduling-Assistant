@@ -11,7 +11,7 @@ export const LEVEL_TUNING = Object.freeze({
   zoom: Object.freeze({house: [.85, 1.15], building: [.85, 1.15], floor: [.9, 1.1], room: [.8, 1.2]}),
   zoomCommit: .18, zoomHardMin: .45, zoomHardMax: 1.8, wheelEndMs: 160,
   swipeConeDegrees: 45, swipeMinPx: 32, tapSlopPx: 6, neighbourTieFeet: .01,
-  framePadding: 1.35, minSpanFeet: 3, iconPx: 52, iconGapPx: 72, iconOffsetFeet: 7,
+  framePadding: 1.35, yardFramePadding: 1.1, minSpanFeet: 3, iconPx: 52, iconGapPx: 72, iconOffsetFeet: 7,
   topOffsetFeet: .001,
   topPolarMax: .0001,
 });

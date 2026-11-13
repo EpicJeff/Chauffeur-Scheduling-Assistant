@@ -48,22 +48,61 @@ console.log('Passed: shared slot catalogue, swatch/name, choose, quick picks, ti
     ['hardscape',{id:'h',polygon:square},['Surface']],
     ['hardscape',{id:'w',kind:'path',points:[[0,0],[9,0]],width:3,edging:'curb'},['Surface','Curb']],
     ['beds',{id:'b',polygon:square},['Fill']],
-    ['pool',{id:'pool',polygon:square},[]]]){
+    ['pool',{id:'pool',polygon:square},['Coping','Interior']],
+    ['edges',{id:'edge',polygon:square},['Strip']]]){
     const host=document.createElement('div'),sent=[];document.body.append(host);
     drawSiteShapeShelf(host,{kind,index:0,piece},{canEdit:()=>true,queue:work=>Promise.resolve().then(work),op:async o=>sent.push(o),
       report:e=>{throw e;},getKit:()=>input.kit,getRecord:()=>({kind,index:0,piece})});
     assert.deepEqual(host.querySelectorAll('[data-material-slot]').map(n=>n.dataset.materialSlot),parts,`${kind} slots`);
     if(!parts.length)continue;
-    const slot=host.querySelectorAll('[data-material-slot]')[0];
-    await click(byText(slot,'Change'));await click(slot.querySelector('[data-material="wood_planks"]'));
-    const part={Boards:'boards',Body:'body',Surface:'surface',Fill:'fill'}[parts[0]];
-    assert.deepEqual(sent,[{op:'update_site_shape',list:kind,index:0,materials:{[part]:{id:'wood_planks',color:'#998877'}}}],`${kind}: one op`);
+    for(const label of parts){
+      const slot=host.querySelector(`[data-material-slot="${label}"]`),before=sent.length;
+      await click(byText(slot,'Change'));await click(slot.querySelector('[data-material="wood_planks"]'));
+      const part={Boards:'boards',Posts:'posts',Rails:'rails',Body:'body',Top:'top',Surface:'surface',Curb:'edging',Fill:'fill',Coping:'coping',Interior:'interior',Strip:'strip'}[label];
+      assert.equal(sent.length,before+1);
+      assert.deepEqual(sent.at(-1),{op:'update_site_shape',list:kind,index:0,materials:{[part]:{id:'wood_planks',color:'#998877'}}},`${kind} ${label}: one op`);
+      await click(byText(slot,'Change'));await click(byText(slot,'Use default'));
+      assert.equal(sent.length,before+2);assert.deepEqual(sent.at(-1).materials,{[part]:null});
+    }
   }
   const host=document.createElement('div');document.body.append(host);
   drawSiteShapeShelf(host,{kind:'beds',index:0,piece:{id:'b',polygon:square,materials:{fill:{id:'wood_planks'}}}},{canEdit:()=>false,queue:w=>w(),op:()=>{throw Error('read-only wrote');},report:e=>{throw e;}});
   const slot=host.querySelector('[data-material-slot]');
   assert.ok(textOf(slot).includes('Wood planks'));assert.equal(slot.querySelectorAll('button,input').length,0,'read-only');
   console.log('Passed: yard shape card slots per feature, one op per choice, read-only');
+}
+
+// Real yard room card -> source feature -> shared material slot. Legacy rooms
+// match their copied outline; new references survive an independent room move.
+{
+  const square=[[0,0],[6,0],[6,4],[0,4]], sent=[], selections=[];
+  const plan={buildings:[],site:{pool:{id:'pool',polygon:square},hardscape:[{id:'patio',polygon:square.map(p=>[p[0]+20,p[1]])}],
+    fire_pit:[{id:'pit',at:[40,0],radius:2,fuel:'gas'}],yard_rooms:[]}};
+  let writable=true;
+  const cards=createCards({getPlan:()=>plan,getKit:()=>input.kit,getLabel:()=> 'Yard room',canEdit:()=>writable,
+    edit(){},op:async o=>sent.push(o),ask(){},select:s=>selections.push(s)});
+  const host=document.getElementById('piece-card');
+  for(const [kind,id,label,part,polygon] of [
+    ['pool','pool','Pool','coping',square],
+    ['hardscape','patio','Path / hardscape','surface',plan.site.hardscape[0].polygon],
+    ['fire_pit','pit','Fire pit','body',Array.from({length:32},(_,i)=>[40+3.5*Math.cos(i*Math.PI/16),3.5*Math.sin(i*Math.PI/16)])]]){
+    const room={id:'yard-'+id,name:'Yard room',polygon};plan.site.yard_rooms=[room];
+    for(const referenced of [false,true]){
+      if(referenced){room.feature={list:kind,id};room.polygon=polygon.map(p=>[p[0]+100,p[1]+100]);}
+      cards.draw({pieceId:room.id,buildingId:null});
+      const link=byText(host,`Edit ${label} materials`);assert.ok(link,`${id}: ${referenced?'referenced':'legacy'} room has a material link`);
+      const before=sent.length;await click(link);assert.equal(sent.length,before,'navigation is not a history step');
+      assert.deepEqual(selections.at(-1),{pieceId:id,buildingId:null});
+      const slot=host.querySelector('[data-material-slot]');assert.ok(slot);
+      await click(byText(slot,'Change'));await click(slot.querySelector('[data-material="wood_planks"]'));await cards.queue(async()=>{});
+      assert.equal(sent.length,before+1);assert.deepEqual(sent.at(-1),{op:'update_site_shape',list:kind,index:0,materials:{[part]:{id:'wood_planks',color:'#998877'}}});
+    }
+    writable=false;cards.draw({pieceId:room.id,buildingId:null});
+    assert.ok(byText(host,`Edit ${label} materials`).disabled,'read-only room card');writable=true;
+  }
+  plan.site.yard_rooms=[{id:'gone',name:'Deleted source',polygon:square,feature:{list:'pool',id:'missing'}}];
+  cards.draw({pieceId:'gone',buildingId:null});assert.equal(byText(host,'Edit Pool materials'),undefined,'deleted source never retargets a different feature');
+  console.log('Passed: pool/patio/fire-pit yard room card links, legacy and moved references, no-op navigation, one material op, read-only and deleted source');
 }
 
 const square=[[0,0],[12,0],[12,8],[0,8]];

@@ -29,6 +29,8 @@ def _model():
     model = bridge.assemble(fixture)[0]
     model['site'].update(lot=[[0, 0], [40, 0], [40, 40], [0, 40]],
         beds=[{'id': 'bed', 'polygon': RECT, 'material': 'mulch'}],
+        pool={'id': 'pool', 'polygon': RECT, 'material': 'paving'},
+        edges=[{'id': 'edge', 'polygon': RECT, 'material': 'lawn'}],
         hardscape=[{'id': 'patio', 'polygon': RECT}, {'id': 'walk', 'kind': 'path', 'points': [[2, 20], [12, 20]], 'width': 3, 'edging': 'curb'}],
         fire_pit=[{'id': 'pit', 'at': [20, 20], 'radius': 2, 'fuel': 'wood', 'top': 'concrete'}],
         fence=[{'id': 'fence', 'polyline': [[2, 2], [30, 2]], 'height': 6}],
@@ -39,6 +41,9 @@ def _model():
 
 
 def _piece(model, name, pid):
+    if isinstance(model['site'][name], dict):
+        assert model['site'][name]['id'] == pid
+        return model['site'][name]
     return next(p for p in model['site'][name] if p['id'] == pid)
 
 
@@ -57,7 +62,9 @@ def test_each_feature_takes_its_parts_and_null_returns_the_default():
                              ('fire_pit', 'pit', {'body': BRICK, 'top': OAK}),
                              ('hardscape', 'patio', {'surface': BRICK}),
                              ('hardscape', 'walk', {'surface': BRICK, 'edging': OAK}),
-                             ('beds', 'bed', {'fill': BRICK})]:
+                             ('beds', 'bed', {'fill': BRICK}),
+                             ('pool', 'pool', {'coping': BRICK, 'interior': OAK}),
+                             ('edges', 'edge', {'strip': BRICK})]:
         changed, words = ops.apply(model, {'op': 'update_site_shape', 'list': name, 'id': pid, 'materials': slots})
         assert _piece(changed, name, pid)['materials'] == slots, (name, _piece(changed, name, pid))
         assert words
@@ -79,7 +86,12 @@ def test_unknown_parts_ids_and_features_are_refused():
     _refused(model, {'op': 'update_site_shape', 'list': 'beds', 'id': 'bed', 'materials': {'fill': {'id': 'red_brick_03', 'shine': 1}}})
     _refused(model, {'op': 'update_site_shape', 'list': 'beds', 'id': 'bed', 'materials': ['fill']})
     from services import twin_site_shapes
-    for name in ('pool', 'edges', 'yard_rooms'):
+    for name, pid, part in [('pool', 'pool', 'water'), ('edges', 'edge', 'fill')]:
+        _refused(model, {'op': 'update_site_shape', 'list': name, 'id': pid, 'materials': {part: BRICK}})
+        for bad in ({'id': 'gold'}, {'id': 'red_brick_03', 'shine': 1}, 'red_brick_03'):
+            _refused(model, {'op': 'update_site_shape', 'list': name, 'id': pid,
+                             'materials': {('coping' if name == 'pool' else 'strip'): bad}})
+    for name in ('yard_rooms',):
         try:
             twin_site_shapes.material_slots(name, {})
         except ValueError:
@@ -110,12 +122,19 @@ def test_saved_models_load_unchanged_and_a_missing_material_resets_only_the_slot
     for name in ('fence', 'fire_pit', 'hardscape', 'beds', 'terraces'):
         assert normalized['site'][name] == twin_plan.normalize(plain)[0]['site'][name]
         assert all('materials' not in piece for piece in normalized['site'][name])
+    assert normalized['site']['pool'] == plain['site']['pool']
+    assert normalized['site']['edges'] == plain['site']['edges']
+    model['site']['pool']['materials'] = {'interior': {'id': 'retired_material'}}
+    model['site']['edges'][0]['materials'] = {'strip': {'id': 'retired_material'}}
     model['site']['beds'][0]['materials'] = {'fill': {'id': 'retired_material'}}
     model['site']['fence'][0]['materials'] = {'boards': BRICK}
     model['site']['terraces'][0]['edges'][0]['wall']['materials'] = {'face': {'id': 'retired_material'}}
     normalized, notes = twin_plan.normalize(model)
     assert normalized['site']['beds'] and 'materials' not in normalized['site']['beds'][0], 'the bed stays; its slot resets'
     assert normalized['site']['fence'][0]['materials'] == {'boards': BRICK}
+    assert normalized['site']['pool'] and 'materials' not in normalized['site']['pool']
+    assert normalized['site']['edges'] and 'materials' not in normalized['site']['edges'][0]
+    assert all(any(f'Reset {name} materials' in n for n in notes) for name in ('pool', 'edges'))
     pad = normalized['site']['terraces'][0]
     assert pad['edges'][0]['wall']['material'] == 'block' and 'materials' not in pad['edges'][0]['wall']
     assert any('Reset beds materials' in n for n in notes) and any('retaining wall materials' in n for n in notes), notes
@@ -142,6 +161,35 @@ def test_history_and_parent_http():
     assert 'materials' not in _piece(twin_store.current_model(), 'fence', 'fence')
     twin_store.revert(after)
     assert _piece(twin_store.current_model(), 'fence', 'fence')['materials'] == {'boards': BRICK}
+
+
+def test_pool_and_edge_parent_http_history_and_room_source():
+    from test_twin_model_ops_more import _client, _people, _enforced
+    tokens, client = _people(), _client()
+    for name, pid, slots in [('pool', 'pool', {'coping': BRICK, 'interior': OAK}), ('edges', 'edge', {'strip': BRICK})]:
+        twin_store.push_round(bridge.flatten(_model()), 'build')
+        op = {'op': 'update_site_shape', 'list': name, 'id': pid, 'materials': slots}
+        before, count = twin_store.current_id(), len(twin_store.rounds())
+        with _enforced():
+            assert client.post('/api/house/editor/op', headers=tokens['child'], json={'op': op}).status_code == 403
+            bad = dict(op, materials={next(iter(slots)): {'id': 'gold'}})
+            assert client.post('/api/house/editor/op', headers=tokens['parent'], json={'op': bad}).status_code == 400
+            assert twin_store.current_id() == before
+            response = client.post('/api/house/editor/op', headers=tokens['parent'], json={'op': op})
+            assert response.status_code == 200, response.text
+        after = twin_store.current_id()
+        assert len(twin_store.rounds()) == count + 1
+        assert _piece(twin_store.current_model(), name, pid)['materials'] == slots
+        twin_store.revert(before)
+        assert 'materials' not in _piece(twin_store.current_model(), name, pid)
+        twin_store.revert(after)
+        assert _piece(twin_store.current_model(), name, pid)['materials'] == slots
+    for name, pid in [('pool', 'pool'), ('hardscape', 'patio'), ('fire_pit', 'pit')]:
+        made, _ = ops.apply(_model(), {'op': 'make_yard_room', 'list': name, 'id': pid})
+        room = made['site']['yard_rooms'][-1]
+        assert room['feature'] == {'list': name, 'id': pid}
+        loaded, notes = twin_plan.normalize(bridge.flatten(made))
+        assert loaded['site']['yard_rooms'][-1]['feature'] == room['feature'], notes
 
 
 if __name__ == '__main__':

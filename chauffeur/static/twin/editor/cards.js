@@ -7,7 +7,7 @@ import { foundationShelf } from './foundation_shelf.js';
 import { porchFoundationShelf, porchShelfOnGrade } from './porch_foundation_shelf.js';
 import { stairShelf } from './stair_shelf.js';
 import { siteRecord, siteShapeKinds, siteShapeLabels } from '../objects.js';
-import { drawSiteShapeShelf } from './site_shape_shelf.js';
+import { drawSiteShapeShelf, yardRoomFeatures } from './site_shape_shelf.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -114,9 +114,10 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     const flags = roofFlags(record);
+    const roomFeatures = record?.kind === 'yard_rooms' ? yardRoomFeatures(getPlan(), record.piece) : [];
     const porchLayout = record?.kind === 'room' && record.piece.kind === 'porch'
       ? JSON.stringify([record.piece.foundation, porchShelfOnGrade(getPlan(), record.building, record.piece), canEdit()]) : '';
-    const nextLayout = JSON.stringify([record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
+    const nextLayout = JSON.stringify([roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify(record.piece.foundation)}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
     // save must not detach Turn while the person is typing the next edit.
@@ -212,6 +213,15 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { canEdit, queue, op, report,
       getRecord: () => findPiece(getPlan(), piece.id, building?.id) });
     if (siteShapeKinds.includes(kind)) {
+      for (const feature of roomFeatures) {
+        const button = document.createElement('button'); button.type = 'button';
+        button.disabled = !canEdit();
+        button.textContent = `Edit ${feature.piece.name || siteShapeLabels[feature.kind]} materials`;
+        button.addEventListener('click', () => {
+          const next = {pieceId: feature.piece.id, buildingId: null}; select(next); draw(next);
+        });
+        host.append(button);
+      }
       drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getKit,
         haAvailable: !!haLink?.state()?.available,
         onMakeRoom: () => {
