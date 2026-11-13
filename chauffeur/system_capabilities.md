@@ -1,6 +1,41 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.830 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.831 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.831 (2026-11-13, NOT device-verified): solar conduit follows the user's ridge rule. It is electric blue, and all zones on one roof make one conduit.**
+
+**The report.** About v2.499.830 on their own house: "The conduits are still taking crazy paths to get to the main solar zone, nothing like what I described... a conduit from a zone right next to the main zone goes all the way around the house to meet up with the other conduits... It's just wandering." Then: "all zones on a single roof should be considered as one zone for conduit purposes", and "Can we make the conduits a different color, like an electric blue". Their rule, from v2.499.825: from a zone go up to its roof's ridge, follow the ridge toward the main zone, at the ridge end go up whatever it runs into to the next ridge, and repeat.
+
+**Why .830 wandered.** It searched for the cheapest path over the whole roof and wall surface, only mildly preferring ridges, and routed every conduit to one shared point. So routes ran down to eaves, along walls and around the house.
+
+**The rule, literally** (`static/twin/live/solar_conduit_core.js`, Claude). A conduit may only:
+1. go straight up its roof plane, from the top edge of its panels to the ridge (or up a hip or rake edge to the ridge);
+2. run along ridges: the horizontal top edges of the roof planes, with the coincident tops of a gable's two sides crossed at any point;
+3. at a ridge end, climb whatever it runs into: up the wall below a taller roof to that roof, then up that roof to its ridge;
+4. finally go down the main roof onto the top edge of the main zone.
+
+These moves form a small network built from the plan's roof planes (`solarPlanes`). Each satellite takes the shortest way through it.
+- **Never:** down to an eave, along a wall, or doubling back along a ridge.
+- **Flat roofs:** they join at their level, and step up to a taller roof they meet.
+- **Separate buildings:** a building with no shared roof gets no conduit (one debug line).
+- **Grouping:** all zones on one roof make one conduit, from whichever zone has the shorter run. All main-roof zones are one destination.
+- **Ribbons:** the ribbons start at the main roof's weighted centre, lifted onto that roof.
+- **Colour:** the conduit is electric blue `#4df0ff` (`CONDUIT_COLOR`), distinct from the grid ribbon's blue. Panel glow stays solar yellow.
+- **Worker:** the routing still runs in the worker, with the after-paint fallback.
+
+**Speed and coverage.** The fixture household routes 11 of 12 satellite roofs in about 18 ms in node. One roof has no ridge path: its ridge stops short of the roof it meets in the plan data.
+
+**Tests.**
+- `test_twin_solar_conduit_js` 10/10:
+  - two gables in line: up to the ridge, along it and down, never below the route's ends;
+  - a lower ridge running into a taller gable end: one rise at the wall, to the upper ridge;
+  - one conduit per roof, and several main-roof zones as one destination with the ribbon origin lifted;
+  - flat roofs, and a separate building with no conduit;
+  - ghost, absent or ambiguous sources;
+  - the worker handler, stale replies and the after-paint fallback;
+  - the household: every vertex on a roof plane or a wall rise, one conduit per roof, no doubling back.
+- `test_twin_energy_js` 37/37: the conduit colour, the end on the main zone, the lifted source. Also `test_twin_import_maps`.
+- Chromium screenshots of the fixture house with a zone on every roof plane.
 
 **v2.499.830 (2026-11-13, NOT device-verified): the solar conduit lies on the house. It routes along roof ridges, edges and walls, computed off the main thread.**
 
