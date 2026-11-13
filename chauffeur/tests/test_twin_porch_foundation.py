@@ -66,6 +66,26 @@ def run():
     # Every slot shares set_material's validator, with null meaning default.
     assert twin_library.material_slot_error(None) is None
     assert twin_library.normalize_material_slot(None) is None
+    assert any(m['id'] == 'lattice' and m['name'] == 'Lattice' for m in twin_library.material_choices())
+    assert 'skirt' not in twin_porches.DEFAULT
+    # Old enums become material references and disappear on normalization/write.
+    for skirt, role in (('lattice', 'lattice'), ('panel', 'siding')):
+        for materials in (None, {}, {'skirt': None}, {'skirt': {'id': 'trim', 'color': '#abcdef'}}):
+            legacy = {'type': 'enclosed', 'skirt': skirt}
+            if materials is not None:
+                legacy['materials'] = copy.deepcopy(materials)
+            changed = ops.apply(model, dict(change, foundation=legacy))[0]
+            expected = (materials or {}).get('skirt') or {'id': role}
+            assert porch(changed)['foundation']['materials']['skirt'] == expected
+            assert 'skirt' not in porch(changed)['foundation']
+            rendered = bridge.flatten(changed)
+            assert porch(bridge.assemble(rendered)[0])['foundation'] == porch(changed)['foundation']
+            raw = copy.deepcopy(model)
+            porch(raw)['foundation'] = legacy
+            assert porch(twin_model.normalize(raw)[0])['foundation'] == porch(changed)['foundation']
+            raw = copy.deepcopy(flat)
+            _b(raw)['porch']['foundation'] = legacy
+            assert _b(twin_plan.normalize(raw)[0])['porch']['foundation']['materials']['skirt'] == expected
     for ref in ({'id': 'trim'}, {'id': 'painted_trim'}, {'id': 'wood_planks', 'color': '#123abc'}, {'id': 'trim', 'color': 'white'}, {'id': 'trim', 'color': '#abc'}):
         assert twin_library.material_slot_error(ref) is None
         assert twin_library.normalize_material_slot(ref) == ref
@@ -84,7 +104,7 @@ def run():
                     assert porch(changed)['foundation'] == foundation
     for key, values in {'post_in': (3.9, 16.1, True, '6', None, float('nan')),
                         'spacing_ft': (3.9, 12.1, True, None, float('inf')),
-                        'post_shape': ('triangle', None, []), 'skirt': ('screen', None),
+                        'post_shape': ('triangle', None, []), 'skirt': ('screen', None, [], {}),
                         'materials': ([], None, {'other': None}, {'posts': {'id': 'unknown'}})}.items():
         for value in values:
             try:
@@ -117,10 +137,11 @@ def run():
         pass
     else:
         raise AssertionError('A normal room acquired a porch foundation')
-    valid = canonical(dict(valid, type='enclosed', post_in=10, post_shape='round', spacing_ft=5, skirt='panel', materials={'posts': {'id': 'trim'}, 'skirt': {'id': 'siding', 'color': '#ccddff'}}))
+    legacy = dict(valid, type='enclosed', post_in=10, post_shape='round', spacing_ft=5, skirt='panel', materials={'posts': {'id': 'trim'}, 'skirt': None})
+    valid = canonical(legacy)
     base = twin_store.push_round(normalized, 'build')
     with _enforced():
-        response = _client().post('/api/house/editor/op', headers=_people()['parent'], json={'op': dict(change, foundation=valid)})
+        response = _client().post('/api/house/editor/op', headers=_people()['parent'], json={'op': dict(change, foundation=legacy)})
         assert response.status_code == 200, response.text
         bad = _client().post('/api/house/editor/op', headers=_people()['parent'], json={'op': dict(change, foundation=dict(valid, lip_in=5))})
         assert bad.status_code == 400, bad.text

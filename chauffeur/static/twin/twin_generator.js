@@ -1039,7 +1039,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       } else {
         const geometry = porchSupportGeometry(plan, b, po, floor, base);
         if (geometry.supports) mesh(local[first.id], geometry.supports, slot('posts', 'trim'));
-        if (geometry.skirt) mesh(local[first.id], geometry.skirt, slot('skirt', foundation.skirt === 'panel' ? 'siding' : 'trim'));
+        if (geometry.skirt) mesh(local[first.id], geometry.skirt, slot('skirt', 'lattice'));
       }
       const shed = b.roof?.extensions?.find(e => e.kind === 'shed_continuation');
       const section = sections.find(s => s.id === shed?.section);

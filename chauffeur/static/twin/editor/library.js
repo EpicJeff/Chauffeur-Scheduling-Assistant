@@ -145,7 +145,8 @@ function createThumbnails(kit) {
     const key = JSON.stringify([material, entry.id, entry.color]);
     if (!cache.has(key)) cache.set(key, (async () => {
       if (material) {
-        const finish = kitMaterial('preview', { ...kit, materials: { preview: { asset: entry.id, color: entry.color } } }, 'low');
+        const ref = kit.materials?.[entry.id] || Object.values(kit.materials || {}).find(r => r.asset === entry.id);
+        const finish = kitMaterial('preview', { ...kit, materials: { preview: { ...ref, asset: entry.id, color: entry.color } } }, 'low');
         await finish.userData.ready;
         return render(new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), finish));
       }

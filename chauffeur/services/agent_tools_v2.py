@@ -7764,7 +7764,7 @@ class HouseDesignTool(BaseModel):
         "a sharp edge may hold wall:{material:stone|block|concrete|brick|timber, thickness_in:4..24=8, above_in:0..36=0}; slope drops it. "
         "update_pad (id, polygon?, height?, blend?, edges?); delete_pad (id). Later pads win overlaps; maximum 40. "
         "set_foundation (building, foundation:{mode:auto|fixed,offset_ft:0,thickness_ft:1}); auto follows the highest ground plus offset, fixed keeps base. "
-        "set_porch_foundation (building,id:porch,foundation:{type:posts|enclosed|solid,lip_in:0..4=1,post_in:4..16=6,post_shape:square|round,spacing_ft:4..12=8,skirt:lattice|panel,materials:{posts?,skirt?,solid?}}); slots:null|{id,color?} Library/kit; default posts."))
+        "set_porch_foundation (building,id:porch,foundation:{type:posts|enclosed|solid,lip_in:0..4=1,post_in:4..16=6,post_shape:square|round,spacing_ft:4..12=8,materials:{posts?,skirt?,solid?}}); slots:null|{id,color?} Library/kit; skirt defaults to lattice material; default posts."))
     step: Optional[str] = Field(None, description="Build step id to reread.")
     piece: Optional[str] = Field(None, description="Piece id to describe.")
     building: Optional[str] = Field(None, description=(

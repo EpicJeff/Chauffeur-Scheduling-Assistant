@@ -50,6 +50,12 @@ panel.append(doc.getElementById('library-entries'));
 const b = flat.buildings.find(b => b.id === 'pool-house'), room = b.rooms.find(r => r.name === 'Pool Lounge');
 const front = b.walls.find(w => w.id === 'wall:44b42dc9c06144adbeaeb88ce33b0430');
 const finish = {id:'red_brick_03',name:'Red brick 03',color:'#ad5946'};
+const latticeFinish={id:'lattice',name:'Lattice',color:kit.materials.lattice.color};
+const previewMaterials=[],renderPreview=globalThis.Renderer.prototype.render;
+globalThis.Renderer.prototype.render=function(scene){
+ scene.traverse(o=>{if(o.geometry?.type==='SphereGeometry')previewMaterials.push(o.material);});
+ return renderPreview.call(this,scene);
+};
 const chair = {id:'mid_century_lounge_chair',name:'Lounge chair',kind:'furniture'};
 const imported={id:'import-'+'5'.repeat(32),name:'Background chair',kind:'furniture',model:'original.gltf',thumbnail:'preview.png',files:{'original.gltf':true},lods:[]};
 const queuedDelete={...imported,id:'import-'+'6'.repeat(32),name:'Delete queued',files:{...imported.files},lods:[]};
@@ -70,7 +76,7 @@ const nativeFetch=globalThis.fetch;
 globalThis.fetch = async (input,options={}) => {
  const url=typeof input==='string'?input:input.url,json=value=>new Response(JSON.stringify(value));
  if(url.startsWith('data:'))return nativeFetch(input);
- if(url.endsWith('/library')){fetches++;return json({materials:[finish],items:[chair],imports:[{...imported},...(deleted?[]:[queuedDelete])]});}
+ if(url.endsWith('/library')){fetches++;return json({materials:[finish,latticeFinish],items:[chair],imports:[{...imported},...(deleted?[]:[queuedDelete])]});}
  if(url.endsWith('/import-settings'))return json({limit_mb:50,unpacked_limit_mb:200});
  if(url.endsWith('/imports'))return json([imported,...(deleted?[]:[queuedDelete])]);
  if(url.endsWith('/original.gltf')){if(url.includes(queuedDelete.id))deletedLoads++;originalRequested=true;await originalGate;return json(originalModel);}
@@ -122,6 +128,9 @@ doc.getElementById('editor-scene').parentElement=new Element();
 const browse = async name => {panel.querySelectorAll('[data-library-tab]').find(n=>n.dataset.libraryTab===name).dispatchEvent(new Event('click'));await settle();};
 doc.getElementById('rail-library').dispatchEvent(new Event('click'));await settle();
 assert.equal(fetches,1);
+assert.ok(doc.getElementById('library-entries').children.some(n=>n.dataset.material==='lattice'));
+assert.ok(previewMaterials.some(m=>m.alphaMap?.isDataTexture&&m.alphaTest===.5&&m.side===THREE.DoubleSide),'Library thumbnail uses procedural lattice definition');
+ok('Lattice appears in the Library and its real thumbnail uses the generated cutout');
 const drop = async point => {
   const thumb=doc.getElementById('library-entries').children.find(n=>n.dataset.item || n.dataset.material);thumb.dispatchEvent(event('pointerdown',120,150));
   const [x,y]=pixel(point);doc.dispatchEvent(event('pointerup',x,y));await settle();

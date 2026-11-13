@@ -65,6 +65,26 @@ function copyModel(source) {
   return model;
 }
 
+// One seamless tile of crossing 45-degree strips, 1.5 in wide / 4 in centres
+// measured perpendicular to each strip. No DOM, network or external image.
+function latticeTexture() {
+  const size = 128, data = new Uint8Array(size * size * 4);
+  const distance = v => Math.abs(v - Math.round(v));
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const u = (x + .5) / size, v = (y + .5) / size;
+    const strip = Math.min(distance(u + v), distance(u - v)) < 1.5 / 4 / 2;
+    const i = (y * size + x) * 4;
+    data[i] = data[i + 1] = data[i + 2] = strip ? 255 : 0; data[i + 3] = 255;
+  }
+  const texture = new THREE.DataTexture(data, size, size);
+  texture.name = 'generated lattice: 1.5in strips / 4in centres';
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.setScalar(1 / (Math.SQRT2 * 4 / 12)); // UVs in feet
+  texture.magFilter = THREE.LinearFilter; texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true; texture.needsUpdate = true;
+  return texture;
+}
+
 export function kitMaterial(role, kit, tier) {
   const ref = kit.materials?.[role] || {};
   const id = ref.id || ref.asset;
@@ -74,6 +94,13 @@ export function kitMaterial(role, kit, tier) {
     metalness: role === 'roof' ? 0.45 : 0,
     side: THREE.FrontSide,
   });
+  if (ref.pattern === 'lattice') {
+    material.alphaMap = latticeTexture(); material.alphaTest = .5; material.side = THREE.DoubleSide;
+    // r187 WebGLShadowMap caches depth/distance variants by this material's
+    // UUID and copies alphaMap/alphaTest/DoubleSide, including after batching.
+    // atlasMesh excludes cutouts as both bake receivers and bake occluders.
+    return material;
+  }
   if (role === 'granite') {
     // Keep a neutral stone response under orange firelight/reflections. Retain
     // the chosen tint and luminance/speckle, rather than baking in a warm cast.
@@ -148,7 +175,7 @@ export function materialSlot(value, defaultRole, kit, tier, cache, roleMaterial)
   const ref = named || (role && refs[role]) || { asset: value.id, color: '#b8b0a4' };
   const key = JSON.stringify(['material-slot', value.id, value.color || null, named || null]);
   if (!cache.has(key)) {
-    const material = !value.color && role ? roleMaterial(role)
+    const material = (!value.color || ref.pattern === 'lattice' && value.color === ref.color) && role ? roleMaterial(role)
       : kitMaterial(role || 'material', { ...kit, materials: { ...refs,
         [role || 'material']: { ...ref, asset: ref.asset || value.id, color: value.color || ref.color, tint: true } } }, tier);
     cache.set(key, material);

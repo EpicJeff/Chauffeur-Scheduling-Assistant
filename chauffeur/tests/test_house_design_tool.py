@@ -141,6 +141,8 @@ def scenario_tool_documents_connected_operation_arguments():
         check(shape in description, f'missing shape or coordinate convention: {shape}')
     # Same budget as test_twin_model_devices: 5,057 characters after terrain pads and porch foundations.
     check(len(json.dumps(schema)) <= 6000, 'keep the tool schema compact')  # stairs, porch slots and yard rooms added (5,689 at v2.499.836)
+    check('skirt:lattice|panel' not in description, 'skirt is only a material slot')
+    check('skirt defaults to lattice material' in description, 'agent knows the skirt default')
 
 
 def scenario_tool_edits_through_the_same_operations():

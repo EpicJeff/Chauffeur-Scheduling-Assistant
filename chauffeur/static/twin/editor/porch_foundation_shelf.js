@@ -27,7 +27,6 @@ export function porchFoundationShelf(host, room, building, { getPlan, getKit = (
   const visibility = () => {
     const type = controls.get('type').value;
     for (const key of ['post_in', 'post_shape', 'spacing_ft']) rows.get(key).hidden = type === 'solid';
-    rows.get('skirt').hidden = type !== 'enclosed';
     for (const [key, node] of slots) node.hidden = key === 'solid' ? type !== 'solid' : key === 'skirt' ? type !== 'enclosed' : type === 'solid';
   };
   for (const [key, title, options, range] of [
@@ -35,7 +34,6 @@ export function porchFoundationShelf(host, room, building, { getPlan, getKit = (
     ['post_in', 'Post width (in)', null, [4, 16, .5]],
     ['post_shape', 'Post shape', ['square', 'round']],
     ['spacing_ft', 'Post spacing (ft)', null, [4, 12, .5]],
-    ['skirt', 'Skirt', ['lattice', 'panel']],
     ['lip_in', 'Floor overhang (in)', null, [0, 4, .25]]]) {
     const label = document.createElement('label'); label.textContent = title;
     const input = document.createElement(options ? 'select' : 'input');
@@ -52,19 +50,13 @@ export function porchFoundationShelf(host, room, building, { getPlan, getKit = (
       save(key, options ? input.value : Number(input.value)).catch(report);
     });
   }
-  const drawSkirt = () => {
-    const lattice = controls.get('skirt').value === 'lattice';
-    slots.get('skirt')?.remove();
-    addSlot('skirt', 'Skirt', lattice ? 'trim' : 'siding'); visibility();
-  };
   function addSlot(key, label, role) {
     const ref = getKit().materials?.[role];
     const node = materialSlot({ label, value: value.materials[key], defaultLabel: role === 'base' ? 'Stone' : role[0].toUpperCase() + role.slice(1),
       defaultColor: ref?.color, kit: getKit(), readOnly: () => !canEdit(), onChange: changed => save(key, changed, true), report });
     section.append(node); slots.set(key, node);
   }
-  addSlot('posts', 'Posts and beam', 'trim'); addSlot('skirt', 'Skirt', value.skirt === 'panel' ? 'siding' : 'trim'); addSlot('solid', 'Solid base', 'base');
-  controls.get('skirt').addEventListener('change', drawSkirt);
+  addSlot('posts', 'Posts and beam', 'trim'); addSlot('skirt', 'Skirt', 'lattice'); addSlot('solid', 'Solid base', 'base');
   if (porchShelfOnGrade(getPlan(), building, room)) {
     const note = document.createElement('p'); note.textContent = 'Slab on grade: the floor is within 9 inches of the ground at every corner, so there is no room for posts.'; section.append(note);
   }

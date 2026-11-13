@@ -78,9 +78,11 @@ export function porchPlinthGeometry(plan, building, porch, top, base) {
 export const POST_SLAB_FT = 4 / 12;
 export const PORCH_BEAM_FT = 8 / 12;
 export function porchFoundation(value = {}) {
+  const { skirt, material, ...fields } = value;
   return { type: 'posts', lip_in: 1, post_in: 6, post_shape: 'square', spacing_ft: 8,
-    skirt: 'lattice', ...value, materials: { posts: null, skirt: null,
-      solid: value.material ? { id: porchFoundationRole(value.material) } : null, ...value.materials } };
+    ...fields, materials: { posts: null, skirt: null,
+      solid: material ? { id: porchFoundationRole(material) } : null, ...value.materials,
+      ...(skirt && !value.materials?.skirt ? { skirt: { id: skirt === 'panel' ? 'siding' : 'lattice' } } : {}) } };
 }
 const worldPoint = (building, p) => {
   const a = (building.rotation || 0) * Math.PI / 180, pos = building.position || [0, 0];
@@ -97,23 +99,14 @@ function merged(parts) {
   for (const g of new Set([...parts, ...plain])) g.dispose();
   return result;
 }
-// Clip a convex panel interval to a diagonal strip. Both families of strips
-// are closed prisms, with real air between them (also seen by bake rays).
-function clip(poly, distance) {
-  const out = [];
-  poly.forEach((p, i) => {
-    const q = poly[(i + 1) % poly.length], a = distance(p), b = distance(q);
-    if (a >= -1e-9) out.push(p);
-    if ((a > 0 && b < 0) || (a < 0 && b > 0)) out.push(p.map((v, k) => v + (q[k] - v) * a / (a - b)));
-  });
-  return out;
-}
-function panelPrism(poly, a, unit, depth, offset = 0) {
+// A closed half-inch surface also reads from inside with ordinary FrontSide
+// library materials. ExtrudeGeometry's cap UVs are the authored [u, height] feet.
+function panelPrism(poly, a, unit, depth) {
   const shape = new THREE.Shape(poly.map(p => new THREE.Vector2(...p)));
   const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, steps: 1 });
   const x = new THREE.Vector3(unit[0], 0, -unit[1]), y = new THREE.Vector3(0, 1, 0);
   const z = new THREE.Vector3().crossVectors(x, y);
-  return g.translate(0, 0, offset - depth / 2).applyMatrix4(new THREE.Matrix4().makeBasis(x, y, z).setPosition(a[0], 0, -a[1]));
+  return g.translate(0, 0, -depth / 2).applyMatrix4(new THREE.Matrix4().makeBasis(x, y, z).setPosition(a[0], 0, -a[1]));
 }
 
 // Geometry is authored once, in building-local feet, independent of render tier.
@@ -152,24 +145,23 @@ export function porchSupportGeometry(plan, building, porch, floor, base = buildi
         if (hit) { const u = Math.hypot(hit[0] - wa[0], hit[1] - wa[1]); if (u > lo && u < hi) cuts.push(u); }
       });
       cuts.sort((a, b) => a - b);
+      const panels = [];
       for (let k = 0; k + 1 < cuts.length; k++) {
         const u0 = cuts[k], u1 = cuts[k + 1], epsilon = Math.min(1e-7, (u1 - u0) / 10);
         if (u1 - u0 < 1e-8) continue;
         const bottom0 = Math.min(beamBottom, ground(along(u0 + epsilon))), bottom1 = Math.min(beamBottom, ground(along(u1 - epsilon)));
         if (Math.min(bottom0, bottom1) >= beamBottom - 1e-8) continue;
-        const panel = [[u0, bottom0], [u1, bottom1], [u1, beamBottom], [u0, beamBottom]];
-        if (f.skirt === 'panel') skirts.push(panelPrism(panel, a, unit, .5 / 12));
-        else for (const sign of [-1, 1]) {
-          const values = panel.map(([u, h]) => h + sign * u), spacing = .5, strip = 1 / 12;
-          for (let n = Math.floor(Math.min(...values) / spacing); n <= Math.ceil(Math.max(...values) / spacing); n++) {
-            const low = n * spacing, high = low + strip;
-            let band = clip(panel, ([u, h]) => h + sign * u - low);
-            band = clip(band, ([u, h]) => high - h - sign * u);
-            const area = band.reduce((sum, p, i) => { const q = band[(i + 1) % band.length]; return sum + p[0] * q[1] - p[1] * q[0]; }, 0);
-            if (band.length >= 3 && Math.abs(area) > 1e-8) skirts.push(panelPrism(band, a, unit, .5 / 12, sign * .25 / 12));
-          }
+        // Retain terrain samples on bends and both sides of a pad step, but
+        // coalesce collinear intervals: a flat opening is exactly one slab.
+        const prev = panels.at(-1), slope = (bottom1 - bottom0) / (u1 - u0);
+        if (prev && Math.abs(prev[1][0] - u0) < 1e-8 && Math.abs(prev[1][1] - bottom0) < 1e-6
+            && Math.abs((prev[1][1] - prev[0][1]) / (prev[1][0] - prev[0][0]) - slope) < 1e-6) {
+          prev[1] = [u1, bottom1]; prev[2] = [u1, beamBottom];
+        } else {
+          panels.push([[u0, bottom0], [u1, bottom1], [u1, beamBottom], [u0, beamBottom]]);
         }
       }
+      for (const panel of panels) skirts.push(panelPrism(panel, a, unit, .5 / 12));
     }
   });
   return { supports: merged(supports), skirt: merged(skirts), posts, spans, outline, slabBottom, beamBottom };

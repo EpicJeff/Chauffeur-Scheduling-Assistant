@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import {readFileSync} from 'node:fs';
 const job = JSON.parse(process.argv[2]);
 registerHooks({
   resolve(spec, ctx, next) {
@@ -24,6 +25,11 @@ registerHooks({
   },
   load(url, ctx, next) {
     if (url === 'test:tree') return {format: 'module', shortCircuit: true, source: 'export class Tree {}'};
+    // Expose the actual vendored shadow renderer to a CPU-only renderer stub.
+    // The implementation is unmodified; exercise depth/distance selection.
+    if (url === pathToFileURL(path.join(job.vendor, 'three.module.js')).href)
+      return {...next(url, {...ctx, format: 'module'}), format: 'module',
+        source: readFileSync(new URL(url), 'utf8') + '\nexport { WebGLShadowMap };'};
     if (url.startsWith('file:') && url.endsWith('.js')) return {...next(url, {...ctx, format: 'module'}), format: 'module'};
     return next(url, ctx);
   },
@@ -96,6 +102,55 @@ const slotVersion=slotMaterial.version,slotProgram=slotMaterial.customProgramCac
 assert.equal(lib.materialSlot({...slotRef},'trim',slotKit,'high',slotCache,slotRole),slotMaterial);
 assert.equal(slotMaterial.version,slotVersion);assert.equal(slotMaterial.customProgramCacheKey(),slotProgram);
 assert.equal(takeRequests().length,0);slotMaterial.dispose();ok('shared material slot caches and loaded tint');
+
+const latticeKit={materials:{lattice:{asset:'lattice',pattern:'lattice',color:'#f4f3ef'}},manifest:{}};
+const latticeCache=new Map(),latticeRole=r=>{if(!latticeCache.has(r))latticeCache.set(r,lib.kitMaterial(r,latticeKit,'high'));return latticeCache.get(r);};
+const lattice=lib.materialSlot(null,'lattice',latticeKit,'high',latticeCache,latticeRole);
+assert.equal(takeRequests().length,0,'generated lattice fetches no asset');
+assert.ok(lattice.alphaMap.isDataTexture);assert.equal(lattice.alphaTest,.5);assert.equal(lattice.side,THREE.DoubleSide);assert.equal(lattice.transparent,false);
+assert.equal(lattice.alphaMap.wrapS,THREE.RepeatWrapping);assert.equal(lattice.alphaMap.wrapT,THREE.RepeatWrapping);
+assert.ok(Math.abs(lattice.alphaMap.repeat.x-1/(Math.SQRT2*4/12))<1e-9,'physical four-inch pitch perpendicular to strips');
+const image=lattice.alphaMap.image,mask=(u,v)=>image.data[((Math.floor(v*image.height)%image.height+image.height)%image.height*image.width+(Math.floor(u*image.width)%image.width+image.width)%image.width)*4+1];
+assert.equal(mask(0,0),255,'crossing is painted');assert.equal(mask(.5,0),0,'diamond centre is a hole');
+assert.equal(mask(.25,.25),255);assert.equal(mask(.25,.75),255,'both 45-degree families');
+const solidPixels=Array.from({length:image.width*image.height},(_,i)=>image.data[i*4+1]).filter(v=>v>0).length;
+const fraction=solidPixels/(image.width*image.height),expected=1-(1-1.5/4)**2;
+assert.ok(Math.abs(fraction-expected)<.02,'1.5-inch painted strips on four-inch centres');
+const latticeVersion=lattice.version,latticeProgram=lattice.customProgramCacheKey();
+for(const ref of [{id:'lattice'},{id:'lattice',color:'#f4f3ef'},{id:'lattice',color:'#f4f3ef'}])
+ assert.equal(lib.materialSlot(ref,'siding',latticeKit,'high',latticeCache,latticeRole),lattice,'default and chooser references share one material');
+assert.equal(lattice.version,latticeVersion);assert.equal(lattice.customProgramCacheKey(),latticeProgram);
+const tinted=lib.materialSlot({id:'lattice',color:'#123456'},'lattice',latticeKit,'high',latticeCache,latticeRole);
+assert.equal(tinted.color.getHexString(),'123456');assert.equal(tinted.alphaTest,.5);assert.equal(tinted.side,THREE.DoubleSide);
+assert.equal(lib.materialSlot({id:'lattice',color:'#123456'},'siding',latticeKit,'high',latticeCache,latticeRole),tinted);
+assert.equal(tinted.customProgramCacheKey(),latticeProgram,'tint does not change shader variant');
+assert.equal(takeRequests().length,0);ok('procedural lattice size, holes, alpha cutout, tint and cached material/program');
+
+const drawn=[],noop=()=>{};
+const shadowRenderer={getRenderTarget:()=>null,getActiveCubeFace:()=>0,getActiveMipmapLevel:()=>0,localClippingEnabled:false,
+ properties:{get:()=>({})},setRenderTarget:noop,clear:noop,renderBufferDirect:(c,s,g,m,o)=>drawn.push(m),
+ state:{setBlending:noop,setScissorTest:noop,viewport:noop,buffers:{color:{setClear:noop},depth:{getReversed:()=>false,setTest:noop}}}};
+const shadowMap=new THREE.WebGLShadowMap(shadowRenderer,{update:o=>o.geometry},{maxTextureSize:4096});shadowMap.enabled=true;
+const shadowScene=new THREE.Scene(),shadowCamera=new THREE.PerspectiveCamera();shadowCamera.updateMatrixWorld();
+const {mergeStatic}=await import(pathToFileURL(path.join(job.twin,'twin_generator.js')).href);
+for(let i=0;i<2;i++){
+ const group=new THREE.Group();shadowScene.add(group);group.add(new THREE.Mesh(new THREE.PlaneGeometry(1,1),lattice));
+ mergeStatic(group);group.children[0].frustumCulled=false;
+ assert.ok(group.children[0].castShadow,'merged Lattice casts realtime shadows');
+}
+shadowScene.updateMatrixWorld(true);
+for(const light of [new THREE.DirectionalLight(),new THREE.PointLight()]){
+ light.position.set(0,2,0);light.updateMatrixWorld();light.target?.updateMatrixWorld();drawn.length=0;
+ shadowMap.render([light],shadowScene,shadowCamera);assert.ok(drawn.length>=2,'actual shadow renderer drew the cutouts');
+ for(const m of drawn){
+  assert.equal(m.alphaMap,lattice.alphaMap);assert.equal(m.alphaTest,lattice.alphaTest);assert.equal(m.side,THREE.DoubleSide);
+  assert.equal(m.isMeshDistanceMaterial,light.isPointLight||undefined);
+ }
+ const first=drawn[0];assert.ok(drawn.every(m=>m===first),'two meshes share one native shadow material');
+ drawn.length=0;shadowMap.render([light],shadowScene,shadowCamera);
+ assert.ok(drawn.length>=2&&drawn.every(m=>m===first),'shadow material is reused on subsequent renders');
+}
+ok('vendored r187 directional depth and point distance shadows retain alpha holes after merging');
 
 const building = {id: 'house', levels: [{id: 'L1', elevation: 0, ceiling: 9}], walls: [],
   rooms: [{id: 'room', level: 'L1', polygon: [[0,0],[10,0],[10,10],[0,10]], floor_material: {id: 'slow_finish', color: '#123456'}}]};

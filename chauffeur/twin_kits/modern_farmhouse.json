@@ -9,6 +9,11 @@
       "asset": "painted_trim",
       "color": "#f4f3ef"
     },
+    "lattice": {
+      "asset": "lattice",
+      "pattern": "lattice",
+      "color": "#f4f3ef"
+    },
     "window_frame": {
       "asset": "painted_trim",
       "color": "#f4f3ef"

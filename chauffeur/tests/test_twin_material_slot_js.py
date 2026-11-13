@@ -9,7 +9,7 @@ DRIVER = PRELUDE + r"""
 const {materialSlot}=await import(file('static/twin/editor/material_slot.js'));
 const {createCards}=await import(file('static/twin/editor/cards.js'));
 const {porchFoundation}=await import(file('static/twin/twin_porch_foundation.js'));
-const entries=[{id:'painted_trim',name:'Painted trim',color:'#f4f3ef'},{id:'wood_planks',name:'Wood planks',color:'#998877'}];
+const entries=[{id:'painted_trim',name:'Painted trim',color:'#f4f3ef'},{id:'wood_planks',name:'Wood planks',color:'#998877'},{id:'lattice',name:'Lattice',color:'#f4f3ef'}];
 let fetches=0;globalThis.fetch=async url=>{assert.ok(url.endsWith('/api/house/editor/library'));fetches++;return {ok:true,text:async()=>JSON.stringify({materials:entries,items:[]})};};
 const calls=[],errors=[];let locked=false;
 const node=materialSlot({label:'Posts',value:null,defaultLabel:'Trim',defaultColor:'#ffffff',quickPicks:[entries[1]],
@@ -18,7 +18,7 @@ const byText=(root,text)=>root.querySelectorAll('button').find(n=>textOf(n)===te
 assert.ok(textOf(node).includes('Default: Trim'));
 await click(byText(node,'Change'));assert.equal(fetches,1);assert.equal(calls.length,0,'opening is never a history step');
 assert.equal(node.querySelectorAll('[data-material]')[0].dataset.material,'wood_planks','quick picks first');
-assert.equal(node.querySelectorAll('[data-material]').length,2,'quick picks deduplicated');
+assert.equal(node.querySelectorAll('[data-material]').length,3,'quick picks deduplicated');
 await click(node.querySelector('[data-material="wood_planks"]'));assert.deepEqual(calls,[{id:'wood_planks',color:'#998877'}]);
 assert.ok(textOf(node).includes('Wood planks'));
 await click(byText(node,'Change'));await click(node.querySelector('[data-material="wood_planks"]'));assert.equal(calls.length,1,'reselect is no op');
@@ -49,22 +49,27 @@ cards.draw({pieceId:'porch',buildingId:'b'});const host=document.getElementById(
 const field=label=>host.querySelectorAll('input,select').find(n=>n.getAttribute('aria-label')===label);
 const slot=label=>host.querySelector(`[data-material-slot="${label}"]`);
 assert.ok(shown(field('Post width (in)'))&&shown(field('Post shape'))&&shown(field('Post spacing (ft)')));
-assert.ok(!shown(field('Skirt'))&&!shown(slot('Solid base'))&&shown(slot('Posts and beam')));
+assert.equal(field('Skirt'),undefined,'no Lattice/Panel selector');
+assert.ok(!shown(slot('Skirt'))&&!shown(slot('Solid base'))&&shown(slot('Posts and beam')));
 for(const [label,value,key]of [['Post width (in)','10','post_in'],['Post shape','round','post_shape'],['Post spacing (ft)','5','spacing_ft']]){
  const before=ops.length;field(label).value=value;await fire(field(label),'change');await cards.queue(async()=>{});
  assert.equal(ops.length,before+1);assert.equal(room.foundation[key],key==='post_shape'?value:Number(value));
 }
 field('Foundation').value='enclosed';await fire(field('Foundation'),'change');await cards.queue(async()=>{});
-assert.ok(shown(field('Skirt'))&&shown(slot('Skirt'))&&shown(slot('Posts and beam'))&&!shown(slot('Solid base')));
-field('Skirt').value='panel';await fire(field('Skirt'),'change');await cards.queue(async()=>{});
-assert.ok(textOf(slot('Skirt')).includes('Default: Siding'));
+assert.ok(shown(slot('Skirt'))&&shown(slot('Posts and beam'))&&!shown(slot('Solid base')));
+assert.equal(field('Skirt'),undefined);
+assert.ok(textOf(slot('Skirt')).includes('Default: Lattice'));
 let before=ops.length;await click(byText(slot('Skirt'),'Change'));await click(slot('Skirt').querySelector('[data-material="wood_planks"]'));await cards.queue(async()=>{});
 assert.equal(ops.length,before+1);assert.deepEqual(room.foundation.materials.skirt,{id:'wood_planks',color:'#998877'});
 assert.equal(ops.at(-1).op,'set_porch_foundation');assert.equal(room.foundation.post_in,10,'material change preserves other fields');
 await click(byText(slot('Skirt'),'Change'));await click(byText(slot('Skirt'),'Use default'));await cards.queue(async()=>{});
 assert.equal(room.foundation.materials.skirt,null);assert.equal(ops.length,before+2);
+assert.ok(textOf(slot('Skirt')).includes('Default: Lattice'));
+await click(byText(slot('Skirt'),'Change'));await click(slot('Skirt').querySelector('[data-material="lattice"]'));await cards.queue(async()=>{});
+assert.deepEqual(room.foundation.materials.skirt,{id:'lattice',color:'#f4f3ef'});assert.equal(ops.length,before+3);
+assert.ok(!Object.hasOwn(ops.at(-1).foundation,'skirt'));
 field('Foundation').value='solid';await fire(field('Foundation'),'change');await cards.queue(async()=>{});
-assert.ok(!shown(field('Post width (in)'))&&!shown(field('Post shape'))&&!shown(field('Post spacing (ft)'))&&!shown(field('Skirt')));
+assert.ok(!shown(field('Post width (in)'))&&!shown(field('Post shape'))&&!shown(field('Post spacing (ft)')));
 assert.ok(shown(slot('Solid base'))&&!shown(slot('Skirt'))&&!shown(slot('Posts and beam')));
 field('Floor overhang (in)').value='2.5';await fire(field('Floor overhang (in)'),'change');await cards.queue(async()=>{});assert.equal(room.foundation.lip_in,2.5);
 before=ops.length;

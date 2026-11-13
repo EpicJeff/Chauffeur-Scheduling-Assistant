@@ -47,6 +47,7 @@ const geometryDigest=out=>{const hash=createHash('sha256');out.root.traverse(o=>
 const before=build();await before.ready;
 const baselineDigest=geometryDigest(before);
 console.log('Posts fixture digest:',baselineDigest);
+assert.equal(baselineDigest,'29a2a577b5a6545c2acdfe18d1af6a8defe9550464b6d9a30bba5f9e12a57208','posts fixture unchanged');
 // Missing foundations now build real piers, just like explicit default posts.
 po.foundation={type:'posts'};
 const posts=build();await posts.ready;assert.equal(geometryDigest(posts),baselineDigest);
@@ -198,7 +199,8 @@ for(const skirt of ['panel','lattice']){
  tp.foundation.skirt=skirt;
  const g=porchSupportGeometry(testPlan,tb,tp,tp.floor,0),mesh=new THREE.Mesh(g.skirt,sm.material);
  assert.equal(g.spans.length,g.posts.length,'one skirt span between every pair of neighbouring posts');
- assert.ok(g.skirt&&!g.skirt.groups.length,'all strips/panels merged for one draw call');
+ assert.ok(g.skirt&&!g.skirt.groups.length,'all opening slabs merged for one draw call');
+ assert.ok(g.skirt.attributes.position.count<=36*(g.spans.length+4),'36 vertices per slab, plus four pad cuts');
  near(Math.max(...Array.from(g.skirt.attributes.position.array).filter((_,i)=>i%3===1)),g.beamBottom);
  assert.equal(centreRay.intersectObject(mesh).length,0,'skirt leaves interior empty');
  let hits=0,gaps=0;
@@ -206,17 +208,76 @@ for(const skirt of ['panel','lattice']){
   const hit=new THREE.Raycaster(new THREE.Vector3(x,.5,8),new THREE.Vector3(0,0,-1),0,3).intersectObject(mesh)[0];
   if(hit){hits++;assert.ok(hit.face.normal.z>0,'skirt front faces outward');}else gaps++;
  }
- assert.ok(hits>0);if(skirt==='lattice')assert.ok(gaps>hits,'diagonal lattice has real see-through gaps');else assert.ok(hits>gaps*4,'panel is continuous between posts');
+ assert.ok(hits>gaps*4,'geometry is a continuous surface between posts; material makes the holes');
  // Both one-sided ground heights exist at a sharp layer step, never bridged by a ramp.
  const pos=g.skirt.attributes.position;
- if(skirt==='panel')for(const x of [4,6])for(const height of [-2,-1])assert.ok(Array.from({length:pos.count},(_,i)=>i).some(i=>Math.abs(pos.getX(i)-x)<1e-5&&Math.abs(pos.getY(i)-height)<1e-5),`skirt ${skirt} reaches x=${x} height=${height}`);
+ for(const x of [4,6])for(const height of [-2,-1])assert.ok(Array.from({length:pos.count},(_,i)=>i).some(i=>Math.abs(pos.getX(i)-x)<1e-5&&Math.abs(pos.getY(i)-height)<1e-5),`skirt ${skirt} reaches x=${x} height=${height}`);
  for(const {vertices}of trianglesOf(g.skirt)){
   if(vertices.every(v=>v.z>5 || v.z<1))for(const x of [4,6])assert.ok(!(Math.min(...vertices.map(v=>v.x))<x-1e-5&&Math.max(...vertices.map(v=>v.x))>x+1e-5),'skirt splits at sharp pad boundaries');
  }
  const scene=build(testPlan);await scene.ready;
+ const surfaces=scene.pieces.get('b:porch').filter(o=>o.isMesh&&o.material.name===(skirt==='panel'?'siding':'lattice'));
+ assert.ok(surfaces.length);assert.ok(surfaces.every(o=>o.castShadow));
+ if(skirt==='lattice'){
+  assert.ok(surfaces.every(o=>!covered(scene.root).includes(o)),'cutout excluded from bake receivers');
+  const {occluders}=await import(file('static/twin/bake/bake_pass.js'));
+  const blockers=occluders({scene:scene.root});let found=false;blockers.traverse(o=>{if(o.material===surfaces[0].material)found=true;});
+  assert.equal(found,false,'cutout excluded from baked shadow casting');
+ }else assert.ok(surfaces.every(o=>covered(scene.root).includes(o)),'opaque siding still bakes');
  assert.ok(new Set(scene.pieces.get('b:porch').filter(o=>o.isMesh&&!o.layers.isEnabled(31))).size<=4,'bounded porch draw calls');
  stats[skirt]=g;g.supports.dispose();
 }
+assert.deepEqual(stats.panel.skirt.attributes.position.array,stats.lattice.skirt.attributes.position.array,'legacy modes use identical simple surfaces');
+assert.deepEqual(porchFoundation({skirt:'panel'}).materials.skirt,{id:'siding'});
+assert.deepEqual(porchFoundation({skirt:'lattice',materials:{skirt:null}}).materials.skirt,{id:'lattice'});
+assert.deepEqual(porchFoundation({skirt:'panel',materials:{skirt:{id:'lattice',color:'#123456'}}}).materials.skirt,{id:'lattice',color:'#123456'});
+assert.ok(!Object.hasOwn(porchFoundation({skirt:'panel'}),'skirt'));
+// Flat terrain: precisely one 12-triangle closed slab for each opening, with
+// outward cap/edge normals and feet UVs on both large faces.
+testPlan.site.terraces=[];delete tp.foundation.skirt;
+const flat=porchSupportGeometry(testPlan,tb,tp,tp.floor,0);
+assert.equal(flat.skirt.attributes.position.count,36*flat.spans.length);
+const uv=flat.skirt.attributes.uv,pos=flat.skirt.attributes.position;
+for(const [s,span]of flat.spans.entries()){
+ const unit=span.to.map((v,k)=>(v-span.from[k])/Math.hypot(...span.to.map((v,k)=>v-span.from[k])));
+ const outward=new THREE.Vector3(unit[1],0,unit[0]);
+ const mid=span.from.map((v,k)=>(v+span.to[k])/2);
+ for(const sign of [-1,1]){
+  const start=new THREE.Vector3(mid[0],.5,-mid[1]).addScaledVector(outward,sign);
+  const hits=new THREE.Raycaster(start,outward.clone().multiplyScalar(-sign),0,1.1).intersectObject(new THREE.Mesh(flat.skirt,sm.material));
+  assert.ok(hits.length,'slab visible from inside and outside with FrontSide material');
+  assert.ok(hits[0].face.normal.dot(outward)*sign>.99);
+  near(hits[0].distance,1-.5/24,'half-inch slab depth');
+ }
+ let caps=0;
+ for(let i=s*36;i<(s+1)*36;i+=3){
+  const normal=new THREE.Vector3().fromBufferAttribute(flat.skirt.attributes.normal,i);
+  if(Math.abs(normal.dot(outward))<.99)continue;caps++;
+  for(let k=0;k<3;k++){
+   near(uv.getY(i+k),pos.getY(i+k),'cap UV height is in feet');
+   const delta=(pos.getX(i+k)-pos.getX(i))*unit[0]-(pos.getZ(i+k)-pos.getZ(i))*unit[1];
+   near(uv.getX(i+k)-uv.getX(i),delta,'cap UV width is in feet on both faces');
+  }
+ }
+ assert.equal(caps,4,'two triangles per large face');
+}
+for(const {vertices,normal,centre}of trianglesOf(flat.skirt)){
+ if(Math.abs(normal.y)>.99)assert.ok(normal.y*(centre.y-flat.beamBottom/2)>0,'slab top/bottom outward');
+}
+flat.supports.dispose();flat.skirt.dispose();
+// Smooth ground retains the old one-foot sampling accuracy, in world space.
+testPlan.site.terraces=[{polygon:square(-20,-20,2,20),height:-3,blend:12}];
+tb.position=[1,-1];tb.rotation=18;tb.base=2;
+const slope=porchSupportGeometry(testPlan,tb,tp,tp.floor,tb.base),sp=slope.skirt.attributes.position,sn=slope.skirt.attributes.normal;
+const bottomHeights=new Set(),angleSlope=tb.rotation*Math.PI/180;
+for(let slab=0;slab<sp.count;slab+=36)for(let i=slab;i<slab+12;i++){
+ if(sp.getY(i)>=slope.beamBottom-1e-5)continue;
+ const x=sp.getX(i)-sn.getX(i)*.5/24,y=-(sp.getZ(i)-sn.getZ(i)*.5/24);
+ const wx=tb.position[0]+Math.cos(angleSlope)*x-Math.sin(angleSlope)*y,wy=tb.position[1]+Math.sin(angleSlope)*x+Math.cos(angleSlope)*y;
+ near(sp.getY(i),groundAt(testPlan,wx,wy)-tb.base,'skirt follows sloped ground at retained samples');bottomHeights.add(sp.getY(i).toFixed(3));
+}
+assert.ok(bottomHeights.size>4,'slope retains multiple terrain heights');slope.supports.dispose();slope.skirt.dispose();
+tb.position=[0,0];tb.rotation=0;tb.base=0;
 // Ground rule: all corners must be within nine inches (world-space, all types).
 for(const type of ['posts','enclosed','solid']){
  tp.foundation.type=type;testPlan.site.terraces=[];tp.floor=.75;
@@ -232,10 +293,10 @@ tp.floor=.7;testPlan.site.terraces=[{polygon:square(-1,-7,1,-5),height:-1,blend:
 assert.ok(!porchOnGrade(testPlan,tb,tp,tp.floor),'one corner beyond nine inches prevents slab-on-grade');
 // Every authored foundation field and slot affects both bake paths, on every tier.
 tp.floor=2;testPlan.site.terraces=[];
-tp.foundation={type:'enclosed',lip_in:1,post_in:6,post_shape:'square',spacing_ft:8,skirt:'lattice',materials:{posts:null,skirt:null,solid:null}};
+tp.foundation={type:'enclosed',lip_in:1,post_in:6,post_shape:'square',spacing_ft:8,materials:{posts:null,skirt:null,solid:null}};
 const baseScene=build(testPlan);await baseScene.ready;
 const baseKey=atlasJob(baseScene.root,testPlan,options).cacheKey;
-for(const [field,value] of Object.entries({type:'posts',lip_in:2,post_in:8,post_shape:'round',spacing_ft:4,skirt:'panel',
+for(const [field,value] of Object.entries({type:'posts',lip_in:2,post_in:8,post_shape:'round',spacing_ft:4,
  materials:{posts:{id:'trim',color:'#123456'}},})){
  const p=structuredClone(testPlan);p.buildings[0].porches[0].foundation[field]=value;
  const low=build(p);await low.ready;const hi=build(p,'high');await hi.ready;
@@ -254,7 +315,12 @@ assert.equal(materialSlot(ref,'trim',input.kit,'low',cache,role),materialSlot({.
 assert.equal(materialSlot(null,'trim',input.kit,'low',cache,role),role('trim'));
 const reused=build(testPlan,'low',baseScene.materials);await reused.ready;
 for(const [key,value]of baseScene.materials)assert.equal(reused.materials.get(key),value);
-console.log('Passed: solid golden digests/normals, terrain/steps, corners/spacing, post shapes/contact, beam/slab, empty enclosure, lattice gaps, draw bound, grade, slots, bake fields/tiers/cache');
+const secondPlan=structuredClone(testPlan);secondPlan.buildings[0].porches.push({...structuredClone(tp),id:'second',polygon:tp.polygon.map(([x,y])=>[x+12,y])});
+const two=build(secondPlan,'low',baseScene.materials);await two.ready;
+const firstLattice=baseScene.pieces.get('b:porch').find(o=>o.material.name==='lattice').material;
+assert.equal(two.pieces.get('b:second').find(o=>o.material.name==='lattice').material,firstLattice,'second porch reuses material');
+assert.equal(two.materials.size,baseScene.materials.size,'second porch creates no new material');
+console.log('Passed: solid/posts golden digests/normals, terrain/steps, corners/spacing, post shapes/contact, beam/slab, simple enclosure slabs/vertex bound, draw bound, grade, slots, bake exclusions/tiers/cache');
 """
 
 if __name__ == '__main__':
