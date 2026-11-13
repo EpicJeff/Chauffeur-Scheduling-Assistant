@@ -1,6 +1,44 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.827 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.828 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.828 (2026-11-13, NOT device-verified): stairs can be added and edited in the house editor, as solid or open with handrails. Doorways between rooms at different floor heights get steps.**
+
+**The ask.** The house editor scope list (`docs/superpowers/specs/2026-11-12-twin-editor-scope.md`): "Stairs between floors and steps between floor heights. Not built. Sunken rooms already record where a step is needed." Before this, stairs came only from plan reading and drew as solid stacked boxes, with nothing able to change them.
+
+**How it was built.** Codex built it. Claude checked an open stair with two handrails in Chromium and fixed two test files that were already red on main.
+
+**Data and ops** (`services/twin_model_ops.py`, `services/twin_plan.py`).
+- **`add_stair`:** `{building, level, from, to, width?=3, to_level? | rise_to?, style?, rail?}`.
+- **`update_stair`:** takes the same fields. Generic delete removes a stair.
+- **Validation:**
+  - width 2 to 8 ft;
+  - pitch 20° to 45°, with plain messages to make the stair longer or shorter;
+  - `to_level` must exist and sit above `level`.
+- **Risers:** derived as `ceil(rise / 7.5 in)`; a 9 ft rise gives 15 risers of 7.2 in.
+- **Legacy stairs:** they read as `style: solid`, `rail: none`, without rewriting stored data, so their geometry is byte-identical. Hand-edited stairs survive a drawing reread.
+
+**Drawing** (`static/twin/twin_stairs.js`, `twin_generator.js`).
+- **Styles:** `solid` is today's look. `open` has treads on two stringers and no risers.
+- **Rails:** `none | left | right | both`, with posts and a top rail following the pitch 36 in above the nosing line.
+- **Floor holes:** they follow an edited stair; the stair's own starting floor is never cut.
+- **Doorway steps:** a door between rooms of different floor heights (`opening.step_down_ft`) gets derived closed steps on the lower side. They are as wide as the opening, with `ceil(step / 7.5 in)` risers on 11 in treads, in the lower room's floor finish. Windows and level doorways get none.
+- **Bake:** stairs and steps are authored geometry in the bake key, the same on every tier.
+
+**Editor** (`editor/stair_shelf.js`, `draw.js`, `handles.js`, `scene_tools.js`, `cards.js`).
+- **Add stair:** a two-click tool. Its card has Width, To level, Style and Rails.
+- **A selected stair** gets the same card and two end handles. One drag is one `update_stair`; cancelled, unchanged and read-only gestures send nothing.
+
+**Agent.** `add_stair` and `update_stair` are in the `house_design` tool docs. The schema is 5,376 characters, and its cap rises from 5,200 to 5,600 in the three tests that hold it.
+
+**Old red tests fixed here.**
+- `test_twin_model_bridge`: since v2.499.821 a fire pit without a shape normalizes to round; the test's expected site now includes that.
+- `test_twin_roof_flags_js`: its copied `cards.js` now loads the card's sibling shelf modules from the real editor folder.
+
+**Tests.**
+- New: `test_twin_stairs` (validation, pitch limits and messages, derived risers, legacy defaults, bridge, HTTP, undo and redo), `test_twin_stairs_js` (open and solid geometry, rails, floor holes, doorway steps, windows, normals, the bake key) and `test_twin_stair_editor_js` (two-click add, end drags, card fields, read-only).
+- Neighbours: `test_twin_room_floor`, `test_twin_model_devices`, `test_house_design_tool`, `test_twin_retaining_wall`, `test_twin_energy_editor_js`, `test_twin_model_bridge` 32/32, `test_twin_roof_flags_js` 6/6, `test_twin_ground_js`, `test_twin_terrain_tools_js`, `test_twin_import_maps`, `test_tailwind_build`.
+- Chromium: an open stair with both rails, added by op.
 
 **v2.499.827 (2026-11-13, NOT device-verified): the terrain card lists every pad, topmost first, and a pad can be dragged to a new layer.**
 
