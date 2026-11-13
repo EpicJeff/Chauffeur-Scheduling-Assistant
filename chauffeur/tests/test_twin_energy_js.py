@@ -8,7 +8,7 @@ DRIVER = r"""
 const {flowReading} = await import(file('static/twin/live/energy_mapping.js'));
 const {energyAnchors,energyTopology,energyPlacementLegend,roofPoints,flowCurve,flowRoute,flowApex,flowFans,lotPoint,worldPoint} = await import(file('static/twin/live/energy_geometry.js'));
 const energyModule=await import(file('static/twin/live/energy.js'));
-const {flowLabelPositions,mountEnergy,FLOW_COLORS,CONDUIT_COLOR}=energyModule;
+const {flowLabelPositions,mountEnergy,FLOW_COLORS,CONDUIT_COLOR,energyPlace}=energyModule;
 const {solarPlanes,solarZones,solarLayout,solarPoint,solarCovered,solarRect}=await import(file('static/twin/twin_solar.js'));
 const {mountModes} = await import(file('static/twin/live/modes.js'));
 const checks=[], check=(n,f)=>checks.push([n,f]);
@@ -76,19 +76,41 @@ check('zone power overrides total, invalid or missing readings fall back, and st
   stale=true;effect.update('all');assert.equal(reading().watts,0);assert.equal(mesh.visible,true);assert.equal(mesh.material.uniforms.brightness.value,.15);
  }finally{effect?.stop();t.cleanup();t.panel.geometry.dispose();t.panel.material.dispose();}
 });
-check('panel emissive rises from zero, caps gently and restores on exit and stop without program changes',async()=>{
+check('panels keep their colour; a cyan wave scales with generation and never changes the program again',async()=>{
  const t=await conduitRig();try{
-  t.live.setMode('security');const m=t.panel.material,original={color:m.emissive.clone(),intensity:m.emissiveIntensity,key:m.customProgramCacheKey(),version:m.version};
+  t.live.setMode('security');const m=t.panel.material,original={color:m.emissive.clone(),intensity:m.emissiveIntensity};
+  t.live.setMode('energy');const wave=m.userData.solarWave;assert.ok(wave,'wave installed on the panel material');
+  const key=m.customProgramCacheKey(),version=m.version;assert.ok(key.endsWith('|solarWave'));
   const values=[];for(const watts of [0,1000,2000,100000]){
-   t.states['sensor.solar_power'].state=String(watts);await t.live.refresh();t.live.setMode('energy');values.push(m.emissiveIntensity);
-   assert.equal(m.emissive.getHex(),new THREE.Color(FLOW_COLORS.solar).getHex());
+   t.states['sensor.solar_power'].state=String(watts);await t.live.refresh();t.live.setMode('energy');values.push(wave.waveStrength.value);
+   assert.equal(m.emissive.getHex(),original.color.getHex(),'no tint');assert.equal(m.emissiveIntensity,original.intensity);
   }
-  assert.equal(values[0],0);assert.ok(values[1]>0&&values[2]>values[1]&&values[3]<=.25);
-  t.live.setMode('all');assert.equal(m.emissiveIntensity,values[3]);
-  for(const mode of ['lights','climate','security']){t.live.setMode(mode);assert.equal(m.emissive.getHex(),original.color.getHex());assert.equal(m.emissiveIntensity,original.intensity);}
-  t.live.setMode('energy');t.live.stop();assert.equal(m.emissive.getHex(),original.color.getHex());assert.equal(m.emissiveIntensity,original.intensity);
-  assert.equal(m.customProgramCacheKey(),original.key);assert.equal(m.version,original.version);
+  assert.equal(values[0],0);assert.ok(values[1]>0&&values[2]>values[1]&&values[3]<=1,JSON.stringify(values));
+  t.live.setMode('all');assert.equal(wave.waveStrength.value,values[3]);
+  for(const mode of ['lights','climate','security']){t.live.setMode(mode);assert.equal(wave.waveStrength.value,0,mode+': no wave');}
+  t.live.setMode('energy');assert.ok(wave.waveStrength.value>0);t.live.stop();assert.equal(wave.waveStrength.value,0,'stop ends the wave');
+  assert.equal(m.emissive.getHex(),original.color.getHex());assert.equal(m.emissiveIntensity,original.intensity);
+  assert.equal(m.customProgramCacheKey(),key);assert.equal(m.version,version,'power and mode changes never recompile');
+  const shader={uniforms:{},vertexShader:'#include <common>\n#include <begin_vertex>',fragmentShader:'#include <common>\n#include <emissivemap_fragment>'};
+  m.onBeforeCompile(shader,null);assert.ok(shader.uniforms.waveStrength===wave.waveStrength&&shader.fragmentShader.includes('totalEmissiveRadiance += waveColor'));
  }finally{t.cleanup();t.panel.geometry.dispose();t.panel.material.dispose();}
+});
+check('visualizations hide with the geometry they are tied to: conduits with their roof, ribbons when both ends hide',async()=>{
+ const t=await conduitRig();let effect;try{
+  t.live.stop();effect=mountEnergy({view:t.view,live:{layout:()=>t.layout,peek:()=>t.states,stale:()=>false}});
+  effect.update('energy');await effect.ready();effect.update('energy');
+  const hidden={roofs:new Set(),levels:new Set()};t.view.roofShown=id=>!hidden.roofs.has(id);t.view.levelShown=key=>!hidden.levels.has(key);
+  const snap=()=>{effect.draw('energy');return effect.snapshot();};
+  const before=snap(),solar=before.ribbons.filter(r=>r.id.startsWith('solar:')&&r.visible);
+  assert.ok(before.conduits.length&&before.conduits.every(c=>c.visible),'conduits shown with the roof');assert.ok(solar.length,'a solar ribbon to check');
+  const b=t.view.plan.buildings[0];hidden.roofs.add(b.id);
+  const roofless=snap();assert.ok(roofless.conduits.every(c=>!c.visible),'conduits go with the panels');
+  for(const r of solar)assert.equal(roofless.ribbons.find(x=>x.id===r.id).visible,true,'a solar ribbon stays while its other end shows: '+r.id);
+  for(const l of b.levels)hidden.levels.add(b.id+':'+l.id);
+  const none=snap();assert.ok(none.ribbons.filter(r=>r.id.startsWith('solar:')).every(r=>!r.visible),'both ends hidden: the ribbon goes');
+  hidden.roofs.clear();hidden.levels.clear();const back=snap();assert.ok(back.conduits.every(c=>c.visible));
+  assert.deepEqual(energyPlace(t.view.plan,[9999,9999,0]),null,'the yard is always shown');
+ }finally{effect?.stop();t.cleanup();t.panel.geometry.dispose();t.panel.material.dispose();}
 });
 check('conduits are warm objects and dispose on satellite edits, anchor changes and stop',async()=>{
  const t=await conduitRig();let effect;try{

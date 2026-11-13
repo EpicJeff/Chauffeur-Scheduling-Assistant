@@ -276,6 +276,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     viewingState() {
       return viewing?.snapshot() || {selected: state.view, pinned: state.view === 'ext' ? null : state.view, channels: []};
     },
+    // Visualizations hide with the geometry they are tied to (user, 2026-11-13): a floor or a
+    // building's roof counts as shown while it is more than half faded in.
+    levelShown(key) { return !viewing || viewing.levelAlpha(key) > .5; },
+    roofShown(id) { return !viewing || viewing.roofAlpha(id) > .5; },
     get site() { return site; },
     get roofSurfaces() { return twin?.roofSurfaces; },
     render,

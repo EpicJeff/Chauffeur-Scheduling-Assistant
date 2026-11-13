@@ -198,6 +198,7 @@ export function createViewing(view, model, ground, changed, {explicit = false} =
   return {
     update,
     levelAlpha(key) { return buildings.flatMap(b => b.floors).find(f => f.key === key)?.body.alpha ?? 1; },
+    roofAlpha(id) { const b = buildings.find(b => b.b.id === id); return b?.roofs.length ? Math.max(...b.roofs.map(c => c.alpha)) : 1; },
     select(key) {
       pinned = key === 'ext' ? null : key; pinnedDistance = distanceToTarget();
       active = false; signature = ''; selected = key; changed(key);

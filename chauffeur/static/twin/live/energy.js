@@ -3,7 +3,8 @@ import { FT } from '../twin_generator.js';
 import { isEnergyEntity } from './glance.js';
 import { guessEnergy, chargingCar, flowReading, watts, energyBalance } from './energy_mapping.js';
 import { energyCheck, renderEnergyCheck } from './energy_check.js';
-import { energyTopology, energyPlacementLegend, energyAnchors, worldPoint, flowCurve, flowRoute, flowApex, flowFans } from './energy_geometry.js';
+import { energyTopology, energyPlacementLegend, energyAnchors, worldPoint, flowCurve, flowRoute, flowApex, flowFans, lotPoint } from './energy_geometry.js';
+import { inPolygon, buildingFootprint } from '../twin_ground.js';
 
 import { createConduitRouter } from './solar_conduit.js';
 
@@ -68,6 +69,53 @@ export function flowLabelPositions(entries, rect) {
   return placed;
 }
 
+// What a point of the house is tied to: a floor ('building:level'), a building's roof, or
+// the yard (null: always shown). Visualizations hide with the geometry they are tied to.
+export function energyPlace(plan, p) {
+  for (const b of plan?.buildings || []) {
+    const outline = buildingFootprint(b).map(q => lotPoint(b, [q[0], q[1], 0], plan));
+    if (outline.length < 3) continue;
+    const near = inPolygon(outline, p[0], p[1]) || outline.some((a, i) => {
+      const c = outline[(i + 1) % outline.length], d = [c[0] - a[0], c[1] - a[1]], l = d[0] * d[0] + d[1] * d[1];
+      const t = l ? Math.max(0, Math.min(1, ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / l)) : 0;
+      return Math.hypot(a[0] + d[0] * t - p[0], a[1] + d[1] * t - p[1]) <= 2;
+    });
+    if (!near) continue;
+    const rel = p[2] - outline[0][2], levels = [...(b.levels || [])].sort((x, y) => x.elevation - y.elevation);
+    if (!levels.length) return {roof: b.id};
+    const top = levels.at(-1);
+    if (rel > top.elevation + (top.ceiling || 8) + .5) return {roof: b.id};
+    const level = [...levels].reverse().find(l => l.elevation <= rel + .25) || levels[0];
+    return {level: b.id + ':' + level.id};
+  }
+  return null;
+}
+const placeShown = (view, place) => !place || (place.roof ? view.roofShown?.(place.roof) !== false : view.levelShown?.(place.level) !== false);
+
+// A cyan wave pulses across the panels while they generate (user, 2026-11-13). Installed
+// once per panel material; generation only changes its uniforms, never the program.
+const WAVE_COLOR = new THREE.Color('#4df0ff');
+export function solarWave(material) {
+  if (material.userData.solarWave) return material.userData.solarWave;
+  const uniforms = {waveTime: {value: 0}, waveStrength: {value: 0}, waveColor: {value: WAVE_COLOR}};
+  const before = material.onBeforeCompile, key = material.customProgramCacheKey;
+  material.onBeforeCompile = (shader, renderer) => {
+    before?.call(material, shader, renderer);
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vSolarWave;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSolarWave = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>',
+      '#include <common>\nvarying vec3 vSolarWave;\nuniform float waveTime;\nuniform float waveStrength;\nuniform vec3 waveColor;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n'
+        + 'float solarPhase = fract(dot(vSolarWave.xz, vec2(.55, .35)) * .45 - waveTime * .35);\n'
+        + 'float solarBand = smoothstep(0., .08, solarPhase) * (1. - smoothstep(.08, .3, solarPhase));\n'
+        + 'totalEmissiveRadiance += waveColor * solarBand * waveStrength;');
+  };
+  material.customProgramCacheKey = () => (key ? key.call(material) : '') + '|solarWave';
+  material.userData.solarWave = uniforms; material.needsUpdate = true;
+  return uniforms;
+}
+
 export function mountEnergy({view, live, warm, overlays = view.scene}) {
   const root = new THREE.Group(); root.userData.twinMode = 'energy'; overlays.add(root);
   const labels = document.createElement('div'); labels.className = 'twin-mode-labels twin-energy-labels'; document.body.append(labels);
@@ -125,7 +173,9 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
     mesh.userData.energyRibbon = id; halo.userData.energyRibbonHalo = id;
     mesh.visible = halo.visible = false; root.add(halo, mesh);
     const node = label(); node.dataset.energyLabel = id;
-    ribbons.push({id, link, mesh, halo, curve, route, hue: new THREE.Color(color).convertLinearToSRGB().toArray(), label: node, point: link?curve.getPoint(.5):flowApex(curve), reading: flowReading(0)});
+    // A ribbon stays while either end is shown; the solar end is the main roof.
+    const ends = [id.startsWith('solar:') ? {roof: view.plan?.solar_source_building} : energyPlace(view.plan, from), link ? null : energyPlace(view.plan, to)];
+    ribbons.push({id, link, ends, mesh, halo, curve, route, hue: new THREE.Color(color).convertLinearToSRGB().toArray(), label: node, point: link?curve.getPoint(.5):flowApex(curve), reading: flowReading(0)});
   }
   function conduit(route) {
     const points = route.points.map(worldPoint), edges = points.length - 1;
@@ -159,10 +209,15 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       object.frustumCulled = false; root.add(object);
     }
     halo.renderOrder = 998; mesh.renderOrder = 999;
-    conduits.push({...route, mesh, halo, reading: flowReading(0)});
+    conduits.push({...route, place: {roof: String(route.id).split(':')[0]}, mesh, halo, reading: flowReading(0)});
+  }
+  function applyShown() {
+    for (const row of conduits) row.mesh.visible = row.halo.visible = !!row.wanted && placeShown(view, row.place);
+    for (const row of ribbons) row.mesh.visible = row.halo.visible = !!row.wanted && row.ends.some(place => placeShown(view, place));
   }
   function restorePanels() {
     for (const [material, original] of panels) {
+      if (material.userData.solarWave) material.userData.solarWave.waveStrength.value = 0;
       material.emissive.copy(original.color); material.emissiveIntensity = original.intensity;
     }
   }
@@ -209,8 +264,8 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
         m.visible = mapping.panels.visible !== false;
         if (!m.emissive) continue;
         if (!panels.has(m)) panels.set(m, {color: m.emissive.clone(), intensity: m.emissiveIntensity});
-        if (shown) {m.emissive.set(FLOW_COLORS.solar); m.emissiveIntensity = Math.min(.25, total / 4000 * .25);}
-        else {const original = panels.get(m); m.emissive.copy(original.color); m.emissiveIntensity = original.intensity;}
+        // No tint: the panels keep their own colour; a cyan wave runs while they generate.
+        solarWave(m).waveStrength.value = shown && total >= 50 ? .35 + .65 * Math.min(1, total / 4000) : 0;
       }});
       // Power, signs, names and panel visibility never rebuild a curve. Only
       // changed anchors, solar surfaces or a newly added source/car changes meshes.
@@ -227,7 +282,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       for (const row of conduits) {
         const power = live.stale() ? 0 : Math.max(0, watts(row.entity, states) ?? total);
         row.reading = {...flowReading(power), watts: power};
-        row.mesh.visible = row.halo.visible = shown;
+        row.wanted = shown;
         for (const object of [row.mesh, row.halo]) {
           object.material.uniforms.pulseGain.value = row.reading.visible ? 1 : 0;
           object.material.uniforms.brightness.value = row.reading.visible ? 1 : .15;
@@ -241,7 +296,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
         const flow = flows.get(row.link?'charger:'+chargerIndex:row.id);
         row.reading = {...flowReading(flow?.watts || 0), watts: flow?.watts || 0};
         if(row.link)row.reading.width=.25*.3048;
-        row.halo.visible = row.mesh.visible = (mode === 'energy' || mode === 'all') && (row.link
+        row.wanted = (mode === 'energy' || mode === 'all') && (row.link
           ? !live.stale() && row.reading.visible && !!car && anchors.spots.some(s=>s.car===car.id && s.building===row.link.spot.building && s.id===row.link.spot.id)
           : !!flow?.shown);
         row.mesh.material.uniforms.radius.value = row.reading.width / 2;
@@ -262,9 +317,15 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
         const title = charger ? `panel to ${charger.name}` : row.id.split(':').map(role=>names[role]).join(' to ');
         row.mesh.userData.flow = {...row.reading}; row.label.textContent = `${title} ${row.reading.label}${charger && !car?' · car unknown':''}`;
       }
+      applyShown();
     },
     draw(mode) {
       labels.hidden = mode !== 'energy' && mode !== 'all';
+      // Hide what is tied only to hidden geometry: conduits with their roof, a ribbon
+      // when both of its ends are hidden.
+      applyShown();
+      const waveTime = performance.now() / 1000;
+      for (const m of panels.keys()) if (m.userData.solarWave) m.userData.solarWave.waveTime.value = waveTime;
       const rect = view.renderer3.domElement.getBoundingClientRect();
       const shown = [], entries = [];
       for (const row of ribbons) {
