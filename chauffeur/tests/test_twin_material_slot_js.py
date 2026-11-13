@@ -37,6 +37,34 @@ assert.ok(textOf(idOnly).includes('Stacked stone wall'));
 const failed=materialSlot({label:'Skirt',defaultLabel:'Trim',onChange:async()=>{throw Error('save failed');},report:e=>errors.push(e.message)});document.body.append(failed);
 await click(byText(failed,'Change'));await click(failed.querySelector('[data-material="wood_planks"]'));assert.ok(textOf(failed).includes('Default: Trim'));assert.deepEqual(errors,['save failed']);
 console.log('Passed: shared slot catalogue, swatch/name, choose, quick picks, tint, default, duplicate suppression, read-only and error');
+// Yard features (user, 2026-11-13): each part's slot sits in the shared yard shape card.
+{
+  const {drawSiteShapeShelf}=await import(file('static/twin/editor/site_shape_shelf.js'));
+  const square=[[0,0],[6,0],[6,4],[0,4]];
+  for(const [kind,piece,parts] of [
+    ['fence',{id:'f',polyline:[[0,0],[4,0]],height:6},['Boards','Posts','Rails']],
+    ['fire_pit',{id:'p',at:[0,0],radius:2,fuel:'wood'},['Body']],
+    ['fire_pit',{id:'g',at:[0,0],radius:2,fuel:'gas'},['Body','Top']],
+    ['hardscape',{id:'h',polygon:square},['Surface']],
+    ['hardscape',{id:'w',kind:'path',points:[[0,0],[9,0]],width:3,edging:'curb'},['Surface','Curb']],
+    ['beds',{id:'b',polygon:square},['Fill']],
+    ['pool',{id:'pool',polygon:square},[]]]){
+    const host=document.createElement('div'),sent=[];document.body.append(host);
+    drawSiteShapeShelf(host,{kind,index:0,piece},{canEdit:()=>true,queue:work=>Promise.resolve().then(work),op:async o=>sent.push(o),
+      report:e=>{throw e;},getKit:()=>input.kit,getRecord:()=>({kind,index:0,piece})});
+    assert.deepEqual(host.querySelectorAll('[data-material-slot]').map(n=>n.dataset.materialSlot),parts,`${kind} slots`);
+    if(!parts.length)continue;
+    const slot=host.querySelectorAll('[data-material-slot]')[0];
+    await click(byText(slot,'Change'));await click(slot.querySelector('[data-material="wood_planks"]'));
+    const part={Boards:'boards',Body:'body',Surface:'surface',Fill:'fill'}[parts[0]];
+    assert.deepEqual(sent,[{op:'update_site_shape',list:kind,index:0,materials:{[part]:{id:'wood_planks',color:'#998877'}}}],`${kind}: one op`);
+  }
+  const host=document.createElement('div');document.body.append(host);
+  drawSiteShapeShelf(host,{kind:'beds',index:0,piece:{id:'b',polygon:square,materials:{fill:{id:'wood_planks'}}}},{canEdit:()=>false,queue:w=>w(),op:()=>{throw Error('read-only wrote');},report:e=>{throw e;}});
+  const slot=host.querySelector('[data-material-slot]');
+  assert.ok(textOf(slot).includes('Wood planks'));assert.equal(slot.querySelectorAll('button,input').length,0,'read-only');
+  console.log('Passed: yard shape card slots per feature, one op per choice, read-only');
+}
 
 const square=[[0,0],[12,0],[12,8],[0,8]];
 const room={id:'porch',kind:'porch',level:'L1',name:'Porch',polygon:square,foundation:{type:'posts'}};

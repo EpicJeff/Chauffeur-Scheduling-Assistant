@@ -29,6 +29,7 @@ Element.prototype.getAttribute=function(k){return this[k];};
 Element.prototype.setPointerCapture=function(id){this.capture=id;};
 Element.prototype.hasPointerCapture=function(id){return this.capture===id;};
 Element.prototype.releasePointerCapture=function(){this.capture=null;};
+Element.prototype.prepend=function(...nodes){this.children.unshift(...nodes);for(const n of nodes)n.parentElement=this;};
 Element.prototype.closest=()=>null;
 Element.prototype.focus=function(){document.activeElement=this;};
 window.showGlobalAlert=text=>{throw Error(text);};window.promptConfirm=async()=>true;
@@ -38,6 +39,7 @@ const realFetch=globalThis.fetch;
 globalThis.fetch=async(input,init)=>{const url=String(typeof input==='string'?input:input?.url||'');
   if(/api\/house\/editor\/import-settings/.test(url))return new Response(JSON.stringify({limit_mb:50,unpacked_limit_mb:200}),{status:200,headers:{'content-type':'application/json'}});
   if(/api\/house\/(editor|twin)\/imports/.test(url))return new Response('[]',{status:200,headers:{'content-type':'application/json'}});
+  if(/api\/house\/editor\/library/.test(url))return new Response(JSON.stringify({materials:[{id:'red_brick_03',name:'Red brick',color:'#aa3322'}],items:[]}),{status:200,headers:{'content-type':'application/json'}});
   return realFetch(input,init);};
 const plan={buildings:[],site:{lot:[[0,0],[40,0],[40,40],[0,40]],terraces:[],beds:[{id:'bed',polygon:[[5,5],[10,5],[10,10],[5,10]]}]},materials:{}};
 // Terrain tools live in the editor: mount inside an editor shell, so the viewer's levels
@@ -86,6 +88,21 @@ assert.ok(!descendants(card).some(n=>n['aria-label']==='Edge 1 Thickness (in)'))
 plan.site.terraces[0].edges[0].wall={...authoredWall};terrain.refresh();
 assert.equal(descendants(card).find(n=>n['aria-label']==='Edge 1 Wall').value,'timber');
 assert.equal(descendants(card).find(n=>n['aria-label']==='Edge 1 Above ground (in)').value,9);
+// The wall face takes a Library material through the shared slot: one update_pad per change.
+{
+  const face=()=>descendants(card).find(n=>n['aria-label']==='Change the edge 1 wall face material');
+  assert.ok(face(),'a wall face slot under a built wall');
+  assert.ok(descendants(card).some(n=>n.textContent==='Default: Timber'),'the default is the wall kind');
+  face().dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
+  const brick=descendants(card).find(n=>n.dataset?.material==='red_brick_03');assert.ok(brick,'the Library material is offered');
+  brick.dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
+  assert.deepEqual(ops.at(-1).edges[0].wall,{...authoredWall,materials:{face:{id:'red_brick_03',color:'#aa3322'}}});
+  plan.site.terraces[0].edges[0].wall={...authoredWall,materials:{face:{id:'red_brick_03'}}};terrain.refresh();
+  face().dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
+  descendants(card).find(n=>n.textContent==='Use default').dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
+  assert.deepEqual(ops.at(-1).edges[0].wall,authoredWall,'Use default drops the slot');
+  plan.site.terraces[0].edges[0].wall={...authoredWall};terrain.refresh();
+}
 click('Up 0.5 ft');await new Promise(r=>setTimeout(r,0));assert.equal(ops.at(-1).height,-3.5);
 const h=terrain.handles()[0];assert.ok(h);
 const drag={button:0,pointerId:2,clientX:h.screen[0],clientY:h.screen[1]};

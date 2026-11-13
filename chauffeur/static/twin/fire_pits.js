@@ -197,16 +197,18 @@ export function buildFirePit(group, pit, base, { mat, plain, id }) {
   const finishedTop=top+(options.top==='none'?0:gas?table.slabThickness:.16), panFloor=finishedTop-2/12;
   const bodyGeometry=gas?joined([polygon(outer,base,panFloor),polygon(outer,panFloor,top,[table.pan])])
     :polygon(outer,base,top,inner.length?[inner]:[]);
-  const body=addMesh(group,bodyGeometry,mat(porchFoundationRole(options.body)));
+  const slots=pit.materials||{};
+  const body=addMesh(group,bodyGeometry,mat(porchFoundationRole(options.body),slots.body));
   const result={body, logs:[], chips:[], flame:null, cap:null, pan:null};
   if(gas){
     result.table=table;
-    if(options.body==='stone')result.veneer=tableStone(group,outer,base,options.height,plain,pit);
+    // A chosen body material shows itself; the coursed veneer is the default stone look.
+    if(options.body==='stone'&&!slots.body)result.veneer=tableStone(group,outer,base,options.height,plain,pit);
     result.vents=tableVents(group,pit,outer,base,options.height,plain);
   }
   if (options.top !== 'none' && inner.length) {
     const lip=Math.min(.08,radius/8);
-    result.cap=addMesh(group,gas?polygon(table.slab,top,finishedTop,[table.pan]):polygon(insetPorch(outer,-lip),top,top+.16,[insetPorch(inner,lip)]),mat(options.top==='granite'?'granite':'patio_concrete'));
+    result.cap=addMesh(group,gas?polygon(table.slab,top,finishedTop,[table.pan]):polygon(insetPorch(outer,-lip),top,top+.16,[insetPorch(inner,lip)]),mat(options.top==='granite'?'granite':'patio_concrete',slots.top));
   }
   if (!inner.length) return result;
   const bed=gas?finishedTop-.075:base+.15;

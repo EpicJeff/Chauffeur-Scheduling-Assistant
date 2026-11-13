@@ -212,7 +212,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { canEdit, queue, op, report,
       getRecord: () => findPiece(getPlan(), piece.id, building?.id) });
     if (siteShapeKinds.includes(kind)) {
-      drawSiteShapeShelf(host, record, { canEdit, queue, op, report,
+      drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getKit,
         haAvailable: !!haLink?.state()?.available,
         onMakeRoom: () => {
           const room = getPlan().site?.yard_rooms?.at(-1);

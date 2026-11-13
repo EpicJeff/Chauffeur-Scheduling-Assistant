@@ -7759,6 +7759,7 @@ class HouseDesignTool(BaseModel):
         "move_site_item (list, index, at:[x,y]); delete_site_item (list, index); add_site_item (list, asset, at:[x,y]); "
         "site list is planting|furniture|beds|hardscape|edges|pool|fire_pit|fence; index is 0-based, or use id. "
         "yard_rooms:add/update_site_shape(name,polygon,ha_area);make_yard_room;host:yard_room,u,v. "
+        "Site materials:{part:slot}: fence boards,posts,rails;fire_pit body,top;hardscape surface,edging;beds fill;pad wall.materials.face. "
         "Pit fields: fuel wood|gas,body stone|brick|concrete,top none|granite|concrete,height_in 6..30,glass amber|blue|clear (gas),entity. "
         "Polygon yard items move with by:[dx,dy]. Adding site items is limited to plants/furniture. "
         "add_pad (polygon in lot feet, height -50..50, blend 0..50 default 6, edges:[{edge:slope|sharp, wall?}] one per polygon edge); "

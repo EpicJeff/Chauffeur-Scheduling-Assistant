@@ -521,10 +521,31 @@ def _site(site, notes):
         site['pool'] = None
         notes.append('Dropped site pool: invalid polygon or dimensions.')
     from services import twin_site_shapes
+
+    def slots(name, piece):
+        # A material the Library no longer has resets that feature to its default look;
+        # the feature itself is kept.
+        if isinstance(piece, dict) and 'materials' in piece:
+            try:
+                piece['materials'] = twin_site_shapes.material_slots(name, piece['materials'])
+            except ValueError:
+                piece['materials'] = {}
+                notes.append(f'Reset {name} materials: unknown Library material.')
+            if not piece['materials']:
+                piece.pop('materials')
+        for edge in piece.get('edges', []) if isinstance(piece, dict) and name == 'terraces' and isinstance(piece.get('edges'), list) else []:
+            wall = edge.get('wall') if isinstance(edge, dict) else None
+            if isinstance(wall, dict) and 'materials' in wall:
+                from services.twin_library import material_slot_error
+                value = wall['materials']
+                if not isinstance(value, dict) or set(value) - {'face'} or any(material_slot_error(v) for v in value.values()):
+                    wall.pop('materials')
+                    notes.append('Reset retaining wall materials: unknown Library material.')
     for name in ('fire_pit', 'fence'):
         value = site.get(name)
         kept = []
         for piece in value if isinstance(value, list) else [value] if value is not None else []:
+            slots(name, piece)
             try:
                 if not isinstance(piece, dict) or not _numeric_fields(piece, ('elevation',)):
                     raise ValueError('invalid ground feature')
@@ -548,6 +569,8 @@ def _site(site, notes):
         kept = []
         for index, item in enumerate(_items(site, name, notes)):
             valid = isinstance(item, dict)
+            if valid and (name in twin_site_shapes.SLOTS or name == 'terraces'):
+                slots(name, item)
             if valid and name == 'yard_rooms':
                 try:
                     twin_site_shapes.validate(name, item)

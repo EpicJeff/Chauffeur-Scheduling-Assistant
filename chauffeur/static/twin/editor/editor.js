@@ -549,7 +549,7 @@ export async function boot() {
       prepare() { onInteract(); roofTools.cancel(); draw.cancel(); } });
     terrain = createTerrainTools({ view, tools, getPlan: () => timeline?.preview() || snapshot.plan,
       op: applyOp, canEdit, signal: lifecycle.signal,
-      pickObject: (x, y) => library.pickSite(x, y),
+      pickObject: (x, y) => library.pickSite(x, y), getKit: () => kit,
       prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });
     view.live = { draw: devices.draw, stop: devices.stop };
     tools.delegate({

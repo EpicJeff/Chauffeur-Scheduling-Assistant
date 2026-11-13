@@ -4,9 +4,27 @@ import { shapeKey, shapeCentre, shapeSize, transformShape, shapeOperation, close
 import { roundPit, firePitOptions } from '../fire_pits.js';
 import { linkEntityPicker } from './object_shelf.js';
 import { pathOutline } from '../path_shapes.js';
+import { materialSlot } from './material_slot.js';
+
+const title = word => word[0].toUpperCase() + word.slice(1);
+const ROLE_WORDS = { patio_concrete: 'Concrete', paving: 'Pavers', base: 'Stone', fence: 'Wood', mulch: 'Mulch', granite: 'Granite', lawn: 'Grass' };
+// The parts of each yard feature that take a Library material, with the look each part has
+// by default (user, 2026-11-13: every feature gets a material slot).
+export function siteMaterialSlots(kind, piece) {
+  const role = piece.material === 'concrete' ? 'patio_concrete' : piece.material;
+  if (kind === 'fire_pit') {
+    const top = piece.top ?? (piece.fuel === 'gas' ? 'granite' : 'none');
+    return [['body', 'Body', title(piece.body || 'stone')], ...(top === 'none' ? [] : [['top', 'Top', title(top)]])];
+  }
+  if (kind === 'hardscape') return [['surface', 'Surface', ROLE_WORDS[role || 'paving'] || title(role)],
+    ...(piece.kind === 'path' && piece.edging === 'curb' ? [['edging', 'Curb', 'Concrete']] : [])];
+  if (kind === 'beds') return [['fill', 'Fill', ROLE_WORDS[role || 'mulch'] || title(role)]];
+  if (kind === 'fence') return [['boards', 'Boards', 'Wood'], ['posts', 'Posts', 'Wood'], ['rails', 'Rails', 'Wood']];
+  return [];
+}
 
 // Uses the object shelf's labels, number inputs and Advanced disclosure.
-export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, onSaved = () => {}, haAvailable = false, onMakeRoom = () => {} }) {
+export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, onSaved = () => {}, haAvailable = false, onMakeRoom = () => {}, getKit = () => ({}) }) {
   const section = document.createElement('section'); section.setAttribute('aria-label', 'Yard shape properties'); host.append(section);
   const advanced = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Advanced'; advanced.append(summary);
   const save = change => queue(async () => {
@@ -63,6 +81,13 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
   }
   if (['beds', 'hardscape', 'edges', 'pool'].includes(kind)) choice('Material', piece.material === 'concrete' ? 'patio_concrete' : piece.material || (kind === 'beds' ? 'mulch' : kind === 'edges' ? 'lawn' : 'paving'),
     [['mulch', 'Mulch'], ['patio_concrete', 'Concrete'], ['paving', 'Pavers'], ['lawn', 'Grass'], ['base', 'Stone'], ['fence', 'Wood']], material => ({ material }));
+  // One op per change: { materials: { part: slot or null } } (null is the default look).
+  for (const [part, label, defaultLabel] of siteMaterialSlots(kind, piece)) section.append(materialSlot({
+    label, value: piece.materials?.[part] || null, defaultLabel, kit: getKit(), readOnly: () => !canEdit(), report,
+    onChange: slot => queue(async () => {
+      const current = getRecord(); if (!current) return;
+      await op(shapeOperation(current, { materials: { [part]: slot } }));
+    }).finally(onSaved) }));
   if (path) {
     const width = field('Width (ft)', piece.width ?? 3, (_, width) => ({ width })); width.min = '1'; width.max = '30';
     choice('Corner style', piece.corner || 'mitred', [['mitred', 'Mitred'], ['rounded', 'Rounded']], corner => ({ corner }));

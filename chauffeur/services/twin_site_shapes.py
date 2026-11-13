@@ -7,6 +7,28 @@ from services import twin_terrain as terrain
 KINDS = ('beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence', 'yard_rooms')
 MATERIALS = ('mulch', 'patio_concrete', 'paving', 'lawn', 'base', 'fence')
 FIRE_FIELDS = {'fuel', 'body', 'top', 'height_in', 'glass', 'entity'}
+# Library material slots per feature part (user, 2026-11-13: "Why doesn't everything just have
+# a material slot"). A missing part is the feature's own default look.
+SLOTS = {'beds': ('fill',), 'hardscape': ('surface', 'edging'), 'fire_pit': ('body', 'top'),
+         'fence': ('boards', 'posts', 'rails')}
+
+
+def material_slots(name, value, previous=None):
+    """Merge a partial {part: slot or null}; null returns that part to the feature default."""
+    from services.twin_library import normalize_material_slot
+    parts = SLOTS.get(name)
+    if not parts:
+        raise ValueError('This yard shape has no material slots.')
+    if not isinstance(value, dict) or set(value) - set(parts):
+        raise ValueError(f"Choose material slots from: {', '.join(parts)}.")
+    merged = dict(previous or {})
+    for part, slot in value.items():
+        slot = normalize_material_slot(slot)
+        if slot is None:
+            merged.pop(part, None)
+        else:
+            merged[part] = slot
+    return merged
 
 
 def fire_properties(piece):
@@ -194,6 +216,8 @@ def validate(name, piece, *, legacy_height=False):
             raise ValueError(f'Choose {field} from {low} to {high}.')
     if 'style' in piece and (not isinstance(piece['style'], str) or not 1 <= len(piece['style'].strip()) <= 80):
         raise ValueError('Use a fence style of 1 to 80 characters.')
+    if 'materials' in piece:
+        material_slots(name, piece['materials'])
     return points
 
 
@@ -216,6 +240,8 @@ def update(name, piece, change, lot):
             allowed |= {'at', 'radius'}
     if name == 'fence':
         allowed |= {'height', 'style'}
+    if name in SLOTS:
+        allowed |= {'materials'}
     if not change or set(change) - allowed:
         raise ValueError('Choose a supported property of this yard shape.')
     # Keep legacy read/composed references (e.g. "concrete") editable. New
@@ -243,7 +269,11 @@ def update(name, piece, change, lot):
         a = math.radians(angle-(previous if terrain.number(previous) else 0))
         change[geometry] = [[round(origin[0]+(p[0]-origin[0])*math.cos(a)-(p[1]-origin[1])*math.sin(a), 9),
                              round(origin[1]+(p[0]-origin[0])*math.sin(a)+(p[1]-origin[1])*math.cos(a), 9)] for p in points]
+    if 'materials' in change:
+        change = {**change, 'materials': material_slots(name, change['materials'], piece.get('materials'))}
     piece.update(change)
+    if not piece.get('materials', True):
+        piece.pop('materials')
     if name == 'yard_rooms' and isinstance(piece.get('name'), str):
         piece['name'] = piece['name'].strip()
     if name == 'fire_pit' and piece.get('entity') is None:

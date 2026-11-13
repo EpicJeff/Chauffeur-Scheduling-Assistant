@@ -8,6 +8,7 @@ import { vertexHandles, editVertex } from './polygon_handles.js';
 import { createSiteDrawing, snapSitePoint, polygonArea } from './site_drawing.js';
 import { pathPresets, pathOutline } from '../path_shapes.js';
 import { placedPit, firePitOutline } from '../fire_pits.js';
+import { materialSlot } from './material_slot.js';
 
 const FT = .3048;
 const words = { terraces: 'Terrace pad', ...siteShapeLabels };
@@ -18,7 +19,7 @@ export function siteRows(plan) {
 export const snapPadPoint = snapSitePoint;
 
 // Separate lot tools keep the object-library/placed-item merge seam small.
-export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, prepare = () => {}, pickObject }) {
+export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, prepare = () => {}, pickObject, getKit = () => ({}) }) {
   const canvas = view.renderer3.domElement, shell = document.querySelector('.editor-shell');
   const card = document.createElement('aside'); card.className = 'place-card editor-lot-card'; card.id = 'terrain-card'; card.hidden = true; shell.append(card);
   const layer = document.createElement('div'); layer.className = 'editor-handles'; canvas.parentElement.append(layer);
@@ -285,7 +286,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
           const edges = current().polygon.map((_, j) => structuredClone(current().edges?.[j] || { edge: 'slope' }));
           edges[i] = { ...edges[i], ...change };
           if (edges[i].edge === 'slope' || !edges[i].wall) delete edges[i].wall;
-          update({ edges });
+          return update({ edges });
         };
         field(`Edge ${i + 1}`, edge.edge, edge => updateEdge({ edge }), ['slope', 'sharp']);
         if (edge.edge !== 'sharp') return;
@@ -297,6 +298,15 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
           const input = field(`Edge ${i + 1} ${title}`, edge.wall[key] ?? fallback, value => updateEdge({ wall: { ...edge.wall, [key]: value } }));
           input.min = String(min); input.max = String(max);
         }
+        // The wall's face takes any Library material; the default is its kind's own look.
+        card.append(materialSlot({ label: `Edge ${i + 1} Wall face`, value: edge.wall.materials?.face || null,
+          defaultLabel: edge.wall.material[0].toUpperCase() + edge.wall.material.slice(1), kit: getKit(), readOnly: () => !canEdit(), report,
+          onChange: face => {
+            const wall = { ...current().edges[i].wall, materials: { ...(current().edges[i].wall.materials || {}), face } };
+            if (!face) delete wall.materials.face;
+            if (!Object.keys(wall.materials).length) delete wall.materials;
+            return updateEdge({ wall });
+          } }));
       });
       card.append(node('p', 'Drag corners to reshape. Tap + to add a corner. Alt-click a corner to remove it (at least three remain).'));
     }

@@ -53,6 +53,15 @@ def pad_error(pad):
         wall = edge['wall']
         if not isinstance(wall, dict) or wall.get('material') not in ('stone', 'block', 'concrete', 'brick', 'timber'):
             return 'Choose stone, block, concrete, brick or timber for the retaining wall.'
+        if 'materials' in wall:
+            from services.twin_library import material_slot_error
+            slots = wall['materials']
+            if not isinstance(slots, dict) or set(slots) - {'face'} or any(material_slot_error(v) for v in slots.values()):
+                return 'A retaining wall takes face: null or a Library material.'
+            for key in [k for k, v in slots.items() if v is None]:
+                slots.pop(key)
+            if not slots:
+                wall.pop('materials')
         for key, default, low, high, title in (
                 ('thickness_in', 8, 4, 24, 'wall thickness'),
                 ('above_in', 0, 0, 36, 'wall height above ground')):

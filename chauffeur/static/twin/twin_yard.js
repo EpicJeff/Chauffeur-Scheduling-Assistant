@@ -134,7 +134,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   }
   for (const pad of site.terraces || []) pad.polygon.forEach((_, edge) => {
     if (pad.edges?.[edge]?.edge !== 'sharp' || !pad.edges[edge].wall) return;
-    addMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(pad.edges[edge].wall.material)));
+    const wall = pad.edges[edge].wall;
+    addMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face));
   });
   const pool = site.pool?.polygon;
   const inside = (p, poly) => { let v = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) v = !v; return v; };
@@ -142,20 +143,20 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     const role = h.material === 'concrete' ? 'patio_concrete' : kit.materials?.[h.material] ? h.material : 'paving';
     if (h.kind === 'path') {
       // Swept pieces retain user-drawn crossings without even/odd cancellation.
-      for (const poly of pathSurfacePolygons(h)) addMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0)), mat(role));
+      for (const poly of pathSurfacePolygons(h)) addMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0)), mat(role, h.materials?.surface));
       if (h.edging === 'curb') {
         const inner = pathBoundaries(h), outer = pathBoundaries(h, (h.width ?? 3) / 2 + .5);
         for (const side of ['left', 'right']) for (let i = 1; i < inner[side].length; i++) {
           const poly = [inner[side][i - 1], inner[side][i], outer[side][i], outer[side][i - 1]];
           // Both offsets have the same mitre/bevel topology.
-          const curb = addMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0)), mat('patio_concrete'));
+          const curb = addMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0)), mat('patio_concrete', h.materials?.edging));
           curb.geometry.userData.pathCurb = true;
         }
       }
       continue;
     }
     const holes = pool && pool.every(p => inside(p, h.polygon)) ? [pool] : [];
-    addMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role));
+    addMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role, h.materials?.surface));
   }
   if (pool?.length >= 3) {
     const d = site.pool.depth ?? 5, coping = site.pool.coping ?? 1;
@@ -184,7 +185,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     buildFirePit(group,f,height,{mat,plain,id:'fire_pit:'+(f.id || index)});
     if (roundPit(f)) addMesh(group, drapeGeometry(new THREE.CircleGeometry((f.radius ?? 2) + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plan, f.elevation || 0), plain('gravel', '#a59c8f'));
   }
-  for (const bed of site.beds || []) if (bed.polygon?.length >= 3) addMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(kit.materials?.[bed.material] ? bed.material : 'mulch'));
+  for (const bed of site.beds || []) if (bed.polygon?.length >= 3) addMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(kit.materials?.[bed.material] ? bed.material : 'mulch', bed.materials?.fill));
   for (const edge of site.edges || []) if (edge.polygon?.length >= 3) {
     // Edge planting remains a closed border. Give its ground strip the same
     // authored finish on every tier; High also keeps the existing grass blades.
@@ -193,15 +194,15 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   }
   for (const f of sitePieces(site.fence).filter(f => f.polyline?.length > 1)) {
     const height = f.height || 6;
-    const fenceMesh = geometry => addMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), mat('fence'));
+    const fenceMesh = (geometry, part) => addMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), mat('fence', f.materials?.[part]));
     for (let i = 0; i < f.polyline.length - 1; i++) {
       const a = f.polyline[i], b = f.polyline[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
       if (!length) continue;
-      for (let d = 0.25; d < length; d += 0.5) fenceMesh(boxGeometry(0.46, height, 0.06).rotateY(angle).translate(a[0] + dx * d / length, height / 2 + 0.15, -a[1] - dy * d / length));
-      for (let d = 0; d <= length; d += 8) fenceMesh(boxRect(a[0] + dx * d / length - 0.17, a[1] + dy * d / length - 0.17, a[0] + dx * d / length + 0.17, a[1] + dy * d / length + 0.17, 0, height + 0.3));
+      for (let d = 0.25; d < length; d += 0.5) fenceMesh(boxGeometry(0.46, height, 0.06).rotateY(angle).translate(a[0] + dx * d / length, height / 2 + 0.15, -a[1] - dy * d / length), 'boards');
+      for (let d = 0; d <= length; d += 8) fenceMesh(boxRect(a[0] + dx * d / length - 0.17, a[1] + dy * d / length - 0.17, a[0] + dx * d / length + 0.17, a[1] + dy * d / length + 0.17, 0, height + 0.3), 'posts');
       // Rails bend with the ground at the slat spacing, so on a slope or a pad step they ride
       // the slat tops instead of spanning end to end in one straight piece.
-      for (const y of [1, height - 0.6]) fenceMesh(boxGeometry(length, 0.3, 0.12, Math.max(1, Math.ceil(length / 0.5))).rotateY(angle).translate((a[0] + b[0]) / 2, y, -(a[1] + b[1]) / 2));
+      for (const y of [1, height - 0.6]) fenceMesh(boxGeometry(length, 0.3, 0.12, Math.max(1, Math.ceil(length / 0.5))).rotateY(angle).translate((a[0] + b[0]) / 2, y, -(a[1] + b[1]) / 2), 'rails');
     }
   }
   const cards = new Map();
