@@ -37,6 +37,7 @@ export const createBuildGhosts=()=>({clear(){},sync(){},settle(){},count:()=>0})
 export const createStatusChip=()=>({update(){}});
 export const createSteps=()=>({render(){}});
 export const createChecks=()=>({sync(){},dismiss(){}});
+export const mountHouses=options=>(globalThis.houseOptions=options,{sync(){}});
 """
 
 DRIVER = r"""
@@ -67,14 +68,14 @@ try {
   solar_zones:[{id:'z',roof:'roof',plane:[0,0,10],rect:[28,28,32,34]}],
   openings:[{id:'door',kind:'door',width:3,sill:0,head:7,at:4,state:'ghost'}]}],site:{}};
  let seq=0,rounds=[{id:'r0'}],saved=new Map([['r0',structuredClone(plan)]]),holdResponse=null,holdRender=null;
- const writes=[],reverts=[];
+ const writes=[],reverts=[];let sheetReads=0,failSheets=false;
  const response=(status,body)=>({ok:status<400,status,text:async()=>JSON.stringify(body)});
  const state=()=>({plan:structuredClone(plan),model:structuredClone(plan),rounds:structuredClone(rounds),cost:{},build:null});
  const record=()=>{const id='r'+(++seq);saved.set(id,structuredClone(plan));rounds.push({id});return id;};
  const piece=id=>plan.buildings[0].solar_zones.concat(plan.buildings[0].openings).find(p=>p.id===id);
  globalThis.fetch=window.fetch=async(url,init={})=>{
   const path=String(url).split('api/house/')[1];
-  if(path==='editor/sheets')return response(200,{sources:[],page_roles:[],place:{buildings:[{id:'b'}]}});
+  if(path==='editor/sheets'){sheetReads++;if(failSheets)throw Error('Sheets temporarily unavailable');return response(200,{sources:[],page_roles:[],place:{buildings:[{id:'b'}]}});}
   if(path==='twin/kit/modern_farmhouse')return response(200,{});
   if(path==='editor/state')return response(200,state());
   if(path==='twin/revert'){
@@ -145,6 +146,28 @@ try {
  await recovery;assert.equal(piece('door').width,7);
  assert.equal(alerts.length,1);assert.match(alerts[0],/no longer exists/);
  ok('a queued refusal reaches the caller and plain status line while the following edit still lands');
+
+ const beforeLoad=current(),beforeSheets=sheetReads,beforeReverts=reverts.length;
+ await houseOptions.history.perform(async()=>{
+  plan.buildings[0].name='Loaded house';const round=record();await houseOptions.afterLoad({round});
+ });
+ assert.ok(sheetReads>beforeSheets,'loading refreshes Your place');
+ const afterLoadSheets=sheetReads;
+ await press(document.getElementById('rail-undo'));await until(()=>reverts.length===beforeReverts+1&&!document.getElementById('rail-redo').disabled);
+ assert.equal(reverts.at(-1),beforeLoad);assert.ok(sheetReads>afterLoadSheets,'Undo reloads the restored Your place too');
+ assert.notEqual(editorView.plan.buildings[0].name,'Loaded house');
+ ok('real editor load and Undo both refresh model and Your place');
+ const beforeFailedLoad=current();
+ failSheets=true;
+ await assert.rejects(houseOptions.history.perform(async()=>{
+  plan.buildings[0].name='Loaded before read failed';const round=record();await houseOptions.afterLoad({round});
+ }),/Sheets temporarily unavailable/);
+ failSheets=false;
+ assert.equal(document.getElementById('rail-undo').disabled,false,'a completed load remains undoable after a read failure');
+ const beforeUndoFailure=reverts.length;
+ await press(document.getElementById('rail-undo'));await until(()=>reverts.length===beforeUndoFailure+1&&!document.getElementById('rail-redo').disabled);
+ assert.equal(reverts.at(-1),beforeFailedLoad);
+ ok('load remains undoable when its following sheet read fails');
 
  const count=reverts.length;plan.buildings[0].name='Someone else changed this';record();
  await press(document.getElementById('rail-undo'));await wait(30);
