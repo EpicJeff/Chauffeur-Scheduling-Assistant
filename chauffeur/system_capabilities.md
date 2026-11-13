@@ -1,6 +1,33 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.836 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.837 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.837 (2026-11-13, NOT device-verified): an enclosed porch skirt is one surface per opening, and the material decides its look. Lattice is a library material.**
+
+**The ask.** The user, about v2.499.835: "Did you actually build a lattice as the surface for the enclosed porch foundation? I would just make it a plane per opening and let the material drive what it looks like." It had been about 12k vertices of clipped 45° strips per porch, plus a separate lattice/panel setting.
+
+**How it was built.** Codex built it. Claude checked it in Chromium: a raycast hits the lattice skirt, and screenshots show see-through lattice and a brick skirt.
+
+**Geometry** (`static/twin/twin_porch_foundation.js`). Each opening between posts is a half-inch closed slab (12 triangles), from the terrain to the beam, merged into the one skirt draw. Terrain steps and slopes keep their 1 ft samples, and collinear spans merge. UVs are in feet, so a material keeps its physical size. The posts and solid plinth golden digests are unchanged.
+
+**Lattice material** (`twin_kits/modern_farmhouse.json`, `twin_library.js`).
+- **Definition:** a new kit material `lattice`, made from a 128 × 128 alpha mask generated in code: crossing 45° strips 1.5 in wide on 4 in centres. Nothing is downloaded.
+- **Render:** an alpha cutout (`alphaTest` 0.5, double-sided, not blended). Shadows use three r187's native alpha-tested shadow path, with holes.
+- **Bake:** the existing `atlasMesh` alpha-test rule excludes it from baked light.
+- **Library:** it is in the library chooser and tints through the slot. Every use shares one cached material.
+
+**Settings.**
+- `foundation.skirt` is gone; only `materials.skirt` sets the look, and null means Lattice.
+- Legacy `skirt: 'lattice'` reads as `{id: lattice}`, and `'panel'` as `{id: siding}`. An explicit material wins; unknown legacy values are refused cleanly.
+- The shelf keeps only the Skirt material slot.
+- The agent docs advertise only the slot; the schema is 5,705 characters against the 6,000 cap.
+
+**Tests.**
+- `test_twin_porch_foundation_js`: one slab per opening, a vertex bound, terrain cuts, digests.
+- `test_twin_porch_foundation`: migration and validation.
+- `test_twin_library_js` 15/15: the generated texture, cutout, double-sided, shadow depth, tint, one shared material.
+- Also `test_twin_material_slot_js`, `test_twin_editor_library_js` 10/10, `test_twin_model_devices` 20/20, `test_house_design_tool`, `test_twin_import_maps` and `test_tailwind_build`.
+- Browser: `test_house_twin_porch_foundation_live` 1/1 (a first run timed out under load; the rerun passed).
 
 **v2.499.836 (2026-11-13, NOT device-verified): outdoor yard rooms. Draw an area on the lot (or make one from the pool, a patio or the fire pit), link it to a Home Assistant area, and its devices show and work like a room's.**
 
