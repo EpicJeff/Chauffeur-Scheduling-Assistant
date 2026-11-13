@@ -30,6 +30,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   previewLine.renderOrder = 10; group.add(previewLine);
   const raycaster = new THREE.Raycaster();
   let chosen = null, drawing = null, gesture = null, handles = [], busy = false, grade = false, signature = '', menu = false;
+  let padDrag = null;
   const drawingOptions = { height: 0, blend: 6 };
   const draft = createSiteDrawing({ getPlan, commit: save });
   const listen = (node, type, fn, options = {}) => node.addEventListener(type, fn, { ...options, signal });
@@ -91,6 +92,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     view.groups.site?.traverse(o => { if (o.userData.terrain) tintGrade(o.geometry, grade); }); view.render();
   }
   function close() {
+    cancelPadDrag();
     const g = gesture; gesture = null;
     if (g) {
       view.controls.enabled = g.enabled;
@@ -117,9 +119,99 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       saveValue(choices || !numeric ? input.value : Number(input.value));
     }); l.append(input); card.append(l); return input;
   }
+  function cancelPadDrag() {
+    const drag = padDrag; padDrag = null;
+    if (!drag) return;
+    drag.indicator.hidden = true; drag.row.dataset.dragging = 'false';
+    if (drag.row.hasPointerCapture(drag.pointer)) drag.row.releasePointerCapture(drag.pointer);
+  }
+  function focusPadRow(id) {
+    [...card.querySelectorAll('button')].find(row => row.dataset.padId === id)?.focus();
+  }
+  async function reorderPad(id, to, focus = false) {
+    const pads = getPlan().site?.terraces || [], from = pads.findIndex(pad => pad.id === id);
+    if (!canEdit() || busy || from < 0 || to < 0 || to >= pads.length || to === from) return;
+    await save({ op: 'reorder_pad', id, to });
+    if (focus && !card.hidden) focusPadRow(id);
+  }
+  function drawPadList() {
+    card.append(node('h3', 'Pads'));
+    const pads = getPlan().site?.terraces || [];
+    if (!pads.length) { card.append(node('p', 'No pads yet.')); return; }
+    const list = node('div'); list.className = 'editor-pad-list'; list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Pads, topmost first');
+    const indicator = node('div'); indicator.className = 'editor-pad-drop'; indicator.hidden = true; indicator.setAttribute('aria-hidden', 'true');
+    const rows = [];
+    for (let index = pads.length - 1; index >= 0; index--) {
+      const pad = pads[index], height = pad.height < 0 ? `−${Math.abs(pad.height)}` : `${pad.height > 0 ? '+' : ''}${pad.height}`;
+      let suppressClick = false;
+      const row = button(undefined, event => {
+        if (suppressClick) { suppressClick = false; event.preventDefault(); return; }
+        choose('terraces', pad.id); focusPadRow(pad.id);
+      });
+      row.className = 'editor-pad-row'; row.dataset.padId = pad.id;
+      row.setAttribute('aria-pressed', String(chosen?.id === pad.id));
+      if (canEdit()) {
+        row.title = 'Drag to reorder, or use Alt+ArrowUp / Alt+ArrowDown';
+        const grip = node('span', '⠿'); grip.className = 'editor-pad-grip'; grip.setAttribute('aria-hidden', 'true'); row.append(grip);
+      }
+      row.append(node('span', `Pad ${index + 1} · ${height} ft`));
+      if (pad.edges?.some(edge => edge.wall)) {
+        const badge = node('span', 'Wall'); badge.className = 'editor-pad-wall'; badge.title = 'Retaining wall'; row.append(badge);
+      }
+      listen(row, 'keydown', event => {
+        if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        // Do not let the scene's arrow handlers nudge geometry as well.
+        event.preventDefault(); event.stopPropagation();
+        const from = (getPlan().site?.terraces || []).findIndex(p => p.id === pad.id);
+        reorderPad(pad.id, from + (event.key === 'ArrowUp' ? 1 : -1), true).catch(report);
+      });
+      listen(row, 'pointerdown', event => {
+        if (!canEdit() || busy || padDrag || event.button !== 0 || event.isPrimary === false) return;
+        // As with device rows, touch scrolls over words and drags on the grip.
+        if (event.pointerType !== 'mouse' && !event.target.closest?.('.editor-pad-grip')) return;
+        suppressClick = false;
+        padDrag = { row, pointer: event.pointerId, start: [event.clientX, event.clientY], to: pads.length - 1 - index,
+          order: pads.map(p => p.id), indicator, moved: false };
+        row.setPointerCapture(event.pointerId); event.stopPropagation();
+      });
+      const move = event => {
+        const drag = padDrag;
+        if (!drag || drag.row !== row || drag.pointer !== event.pointerId) return;
+        if (!canEdit() || busy) { cancelPadDrag(); return; }
+        if (!drag.moved && Math.hypot(event.clientX - drag.start[0], event.clientY - drag.start[1]) < 4) return;
+        drag.moved = true; suppressClick = true; row.dataset.dragging = 'true';
+        const remaining = rows.filter(r => r !== row);
+        const next = remaining.findIndex(r => { const rect = r.getBoundingClientRect(); return event.clientY < rect.top + rect.height / 2; });
+        drag.to = next < 0 ? remaining.length : next;
+        const target = remaining[drag.to] || remaining.at(-1);
+        const bounds = target?.getBoundingClientRect();
+        indicator.style.top = `${(bounds ? (remaining[drag.to] ? bounds.top : bounds.bottom) : row.getBoundingClientRect().top) - list.getBoundingClientRect().top}px`;
+        indicator.hidden = false; event.preventDefault(); event.stopPropagation();
+      };
+      listen(row, 'pointermove', move);
+      listen(row, 'pointerup', event => {
+        if (padDrag?.row !== row || padDrag.pointer !== event.pointerId) return;
+        move(event);
+        const drag = padDrag; cancelPadDrag();
+        if (!drag?.moved) return;
+        event.preventDefault(); event.stopPropagation();
+        // A refresh/remote edit must not apply an index from an older stack.
+        if (JSON.stringify(drag.order) !== JSON.stringify((getPlan().site?.terraces || []).map(p => p.id))) return;
+        // Display index 0 is the last stored pad. Emit only the final move.
+        reorderPad(pad.id, pads.length - 1 - drag.to, true).catch(report);
+      });
+      for (const type of ['pointercancel', 'lostpointercapture']) listen(row, type, event => {
+        if (padDrag?.row === row && padDrag.pointer === event.pointerId) cancelPadDrag();
+      });
+      rows.push(row); list.append(row);
+    }
+    list.append(indicator); card.append(list);
+  }
   function drawCard() {
+    cancelPadDrag();
     card.replaceChildren(); card.hidden = false;
     card.append(button('Close', close));
+    drawPadList();
     if (drawing) {
       if (drawing.kind === 'fire_pit') {
         field('Shape', drawing.options.shape, shape => startDrawing('fire_pit', shape === 'round' ? { shape, radius: 2 } : shape === 'square' ? { shape, side: 4 } : shape === 'rect' ? { shape, width: 4, depth: 6 } : { shape }),
@@ -169,7 +261,6 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       const toggle = button('Grade', () => { grade = !grade; toggle.setAttribute('aria-pressed', String(grade)); tint(); });
       toggle.setAttribute('aria-pressed', String(grade)); card.append(toggle);
       card.append(node('p', 'Grade: blue is lower, orange is higher. Heights are feet from the lot datum.'));
-      for (const pad of getPlan()?.site?.terraces || []) card.append(button(`Pad ${pad.id}: ${pad.height} ft`, () => choose('terraces', pad.id)));
       for (const row of siteRows(getPlan())) card.append(button(`${words[row.kind]} ${row.index + 1}`, () => choose(row.kind, row.piece.id)));
       return;
     }
@@ -310,6 +401,6 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   listen(canvas, 'pointermove', event => { if (drawing && !gesture) pointerMove(event); });
   view.controls.addEventListener('change', graphics);
   listen(canvas.parentElement, 'twinrebuilt', refresh);
-  signal.addEventListener('abort', () => { if (gesture) view.controls.enabled = gesture.enabled; clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
+  signal.addEventListener('abort', () => { cancelPadDrag(); if (gesture) view.controls.enabled = gesture.enabled; clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
   return { show, choose, startDrawing, refresh, pointerDown, pointerMove, pointerUp, cancel: close, handles: () => handles };
 }
