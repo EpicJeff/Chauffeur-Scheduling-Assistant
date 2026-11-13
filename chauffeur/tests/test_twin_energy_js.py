@@ -14,6 +14,10 @@ const {mountModes} = await import(file('static/twin/live/modes.js'));
 const checks=[], check=(n,f)=>checks.push([n,f]);
 const d=(id,entity_id,state,attributes={},kind='sensor')=>({device_id:id,name:id,entity_id,state:String(state),attributes,kind});
 const power={device_class:'power',unit_of_measurement:'W'};
+async function settleConduits(snapshot) {
+ for(let i=0;i<250&&snapshot().conduitPending;i++)await wait(4);
+ assert.equal(snapshot().conduitPending,false,'asynchronous conduits settle');
+}
 
 const flatRoof=()=>({id:'roof',kind:'flat',rect:[-40,-10,40,20],pitch:0,plate:10,overhang:0,level:'L1'});
 async function energyRig(args){
@@ -29,7 +33,7 @@ async function conduitRig(devices = [d('solar','sensor.solar_power',1000,power)]
  t.view.plan.solar_source_roof='roof';t.view.plan.solar_source_building=b.id;
  const material=new THREE.MeshStandardMaterial({name:'solar_panel',color:'#285888',emissive:'#123456',emissiveIntensity:.07});
  t.panel=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),material);t.view.scene.add(t.panel);
- await t.live.refresh();return t;
+ await t.live.refresh();await settleConduits(()=>t.live.energy());return t;
 }
 check('conduit mode visibility, threshold, idle dimming, forward pulse and retained programs',async()=>{
  const t=await conduitRig();try{
@@ -61,7 +65,7 @@ check('zone power overrides total, invalid or missing readings fall back, and st
  const t=await conduitRig([d('solar','sensor.solar_power',4000,power),d('zone','sensor.zone_power',.049,{...power,unit_of_measurement:'kW'})]);let effect;
  try{
   t.live.stop();t.view.plan.buildings[0].solar_zones[1].entity='sensor.zone_power';let stale=false;
-  effect=mountEnergy({view:t.view,live:{layout:()=>t.layout,peek:()=>t.states,stale:()=>stale}});effect.update('energy');
+  effect=mountEnergy({view:t.view,live:{layout:()=>t.layout,peek:()=>t.states,stale:()=>stale}});effect.update('energy');await effect.ready();
   const reading=()=>effect.snapshot().conduits[0];assert.equal(reading().watts,49);
   let mesh;t.view.scene.traverse(o=>{if(o.userData.solarConduit)mesh=o;});assert.equal(mesh.material.uniforms.pulseGain.value,0);
   t.states['sensor.zone_power'].state='.05';effect.update('energy');assert.equal(reading().watts,50);assert.equal(mesh.material.uniforms.pulseGain.value,1);
@@ -88,14 +92,14 @@ check('panel emissive rises from zero, caps gently and restores on exit and stop
 check('conduits are warm objects and dispose on satellite edits, anchor changes and stop',async()=>{
  const t=await conduitRig();let effect;try{
   t.live.stop();let warms=0;effect=mountEnergy({view:t.view,live:{layout:()=>t.layout,peek:()=>t.states,stale:()=>false},warm:()=>{warms++;}});
-  effect.update('energy');const conduits=()=>effect.warmObjects().filter(o=>o.userData.solarConduit||o.userData.solarConduitHalo);
+  effect.update('energy');await effect.ready();const conduits=()=>effect.warmObjects().filter(o=>o.userData.solarConduit||o.userData.solarConduitHalo);
   assert.equal(conduits().length,2);const old=conduits(),disposed=[];
   for(const resource of new Set(old.flatMap(o=>[o.geometry,o.material])))resource.addEventListener('dispose',()=>disposed.push(resource));
-  const b=t.view.plan.buildings[0];b.solar_zones[1].rect=[12,-5,32,5];effect.update('energy');
-  assert.equal(disposed.length,3);assert.ok(old.every(o=>o.parent===null));assert.equal(warms,2);
+  const b=t.view.plan.buildings[0];b.solar_zones[1].rect=[12,-5,32,5];effect.update('energy');await effect.ready();
+  assert.equal(disposed.length,3);assert.ok(old.every(o=>o.parent===null));assert.equal(warms,4);
   assert.ok(conduits().every(o=>!old.includes(o)));const next=conduits(),nextDisposed=[];
   for(const resource of new Set(next.flatMap(o=>[o.geometry,o.material])))resource.addEventListener('dispose',()=>nextDisposed.push(resource));
-  b.position=[5,7];effect.update('all');assert.equal(nextDisposed.length,3);assert.equal(warms,3);
+  b.position=[5,7];effect.update('all');await effect.ready();assert.equal(nextDisposed.length,3);assert.equal(warms,6);
   const last=conduits(),lastDisposed=[];for(const resource of new Set(last.flatMap(o=>[o.geometry,o.material])))resource.addEventListener('dispose',()=>lastDisposed.push(resource));
   effect.stop();effect=null;assert.equal(lastDisposed.length,3);assert.ok(last.every(o=>o.parent===null));
  }finally{effect?.stop();t.cleanup();t.panel.geometry.dispose();t.panel.material.dispose();}
@@ -105,9 +109,30 @@ check('mode warm-up sees conduits in both compile passes and does not rewarm on 
   t.live.stop();t.view.tier='low';let passes=0;
   t.view.renderer3.compileAsync=async scene=>{let found=false;scene.traverse(o=>{if(o.userData.solarConduit)found ||= o.visible;});if(found)passes++;};
   const live={layout:()=>t.layout,peek:()=>t.states,state:id=>t.states[id],stale:()=>false,subscribe:()=>()=>{},rooms:()=>[],setMode(){}};
-  modes=mountModes(t.view,live);assert.ok(passes>=2);const before=passes;t.view.onTimeLook();assert.equal(passes,before+2);
+  modes=mountModes(t.view,live);await settleConduits(()=>modes.energy());assert.ok(passes>=2);const before=passes;t.view.onTimeLook();assert.equal(passes,before+2);
   for(const mode of ['energy','all','security','energy'])modes.setMode(mode);assert.equal(passes,before+2);
  }finally{modes?.stop();t.cleanup();t.panel.geometry.dispose();t.panel.material.dispose();}
+});
+check('opposite source slopes share a surface endpoint with the ribbon and retain it across power pushes',async()=>{
+ const t=await conduitRig();let effect,roof;try{
+  t.live.stop();t.view.scene.traverse(o=>{if(o.material?.name==='roof')o.material.name='floor';});
+  const b=t.view.plan.buildings[0];b.roof.sections=[{...flatRoof(),rect:[-10,0,10,20],kind:'gable',ridge:'y',pitch:6},
+   {...flatRoof(),id:'remote',rect:[10,0,20,20]}];
+  b.solar_zones=[{id:'left',roof:'roof',plane:[.5,0,15],rect:[-8,2,-4,6]},
+   {id:'right',roof:'roof',plane:[-.5,0,15],rect:[4,2,8,6]},
+   {id:'sat',roof:'remote',plane:[0,0,10],rect:[12,2,16,6]}];
+  const corners=[[[-10,0,10],[0,0,15],[0,20,15],[-10,20,10]],
+   [[0,0,15],[10,0,10],[10,20,10],[0,20,15]],[[10,0,10],[20,0,10],[20,20,10],[10,20,10]]];
+  const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(
+   corners.flatMap(q=>[0,1,2,0,2,3].flatMap(i=>worldPoint(q[i]).toArray())),3));
+  roof=new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({name:'roof'}));roof.userData.buildingId=b.id;t.view.scene.add(roof);
+  effect=mountEnergy({view:t.view,live:{layout:()=>t.layout,peek:()=>t.states,stale:()=>false}});effect.update('energy');await effect.ready();
+  const raw=energyAnchors(t.view,t.layout,{cars:[]}).solar,first=effect.snapshot();assert.equal(first.conduits.length,1);
+  const end=first.conduits[0].points.at(-1);assert.ok(worldPoint(end).distanceTo(worldPoint(raw))>FT);
+  assert.deepEqual(first.anchors.solar,end);assert.deepEqual(first.ribbons.find(r=>r.id==='solar:house').from,end);
+  const objects=effect.warmObjects();t.states['sensor.solar_power'].state='2000';effect.update('all');
+  assert.deepEqual(effect.snapshot().anchors.solar,end);assert.deepEqual(effect.warmObjects(),objects);
+ }finally{effect?.stop();roof?.removeFromParent();roof?.geometry.dispose();roof?.material.dispose();t.cleanup();t.panel.geometry.dispose();t.panel.material.dispose();}
 });
 check('threshold includes 50 W and width/speed scale',()=>{
  assert.equal(flowReading(49).visible,false);assert.equal(flowReading(-49).visible,false);assert.equal(flowReading(50).visible,true);

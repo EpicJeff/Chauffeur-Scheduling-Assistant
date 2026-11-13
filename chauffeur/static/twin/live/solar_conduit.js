@@ -1,151 +1,137 @@
-// Surface routes in lot feet (z up). Rendering converts them to scene metres.
-import { solarPlanes, solarZones, solarPoint, solarUV } from '../twin_solar.js';
-import { buildingFootprint, groundAt } from '../twin_ground.js';
-import { lotPoint } from './energy_geometry.js';
+// Coarse structural planes in lot feet, z up. Render-detail meshes are never
+// routing input: cladding relief changes with tier and is not the wall plane.
+import {solarPlanes, solarZones, solarPoint} from '../twin_solar.js';
+import {roofMesh, stepFaces} from '../twin_roof.js';
+import {groundAt, inPolygon, buildingFootprint} from '../twin_ground.js';
+import {lotPoint} from './energy_geometry.js';
+import {routeConduits} from './solar_conduit_core.js';
+export {buildSurfaceGraph, surfacePath, trianglePoint, CONDUIT_OFFSET} from './solar_conduit_core.js';
 
-export const CONDUIT_OFFSET = 2 / 12;
-const distance = (a, b) => Math.hypot(...a.map((v, i) => v - b[i]));
-const cross = (a, b) => a[0] * b[1] - a[1] * b[0];
-const centre = z => [(z.rect[0] + z.rect[2]) / 2, (z.rect[1] + z.rect[3]) / 2];
-const near = (a, b) => distance(a, b) < 1e-6;
+const centre=z=>[(z.rect[0]+z.rect[2])/2,(z.rect[1]+z.rect[3])/2];
+const sub=(a,b)=>a.map((v,i)=>v-b[i]);
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const unit=a=>a.map(v=>v/(Math.hypot(...a)||1));
 
-// Triangulation interiors cancel. The remaining edges include cutouts, so a
-// downhill ray stops at the exposed edge rather than crossing a missing roof.
-function boundary(plane) {
-  const edges = new Map(), key = p => p.map(v => v.toFixed(6)).join(',');
-  for (const triangle of plane.triangles) for (let i = 0; i < 3; i++) {
-    const a = solarPoint(plane.plane, triangle[i]), b = solarPoint(plane.plane, triangle[(i + 1) % 3]);
-    const id = [key(a), key(b)].sort().join(':');
-    if (edges.has(id)) edges.delete(id); else edges.set(id, [a, b]);
-  }
-  return [...edges.values()];
-}
-function projection(p, a, b) {
-  const dx = b[0] - a[0], dy = b[1] - a[1], length = dx * dx + dy * dy;
-  const t = length ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length)) : 0;
-  return {t, at: [a[0] + t * dx, a[1] + t * dy]};
-}
-function eave(plane, uv) {
-  const p = solarPoint(plane.plane, uv), edges = boundary(plane), [a, b, c] = plane.plane;
-  const length = Math.hypot(a, b), direction = length ? [-a / length, -b / length] : null;
-  let best = null, span = Infinity;
-  for (const [start, end] of edges) {
-    let at;
-    if (direction) {
-      const edge = [end[0] - start[0], end[1] - start[1]], delta = [start[0] - p[0], start[1] - p[1]];
-      const den = cross(direction, edge); if (Math.abs(den) < 1e-9) continue;
-      const t = cross(delta, edge) / den, u = cross(delta, direction) / den;
-      if (t < -1e-6 || u < -1e-6 || u > 1 + 1e-6) continue;
-      at = [p[0] + Math.max(0, t) * direction[0], p[1] + Math.max(0, t) * direction[1]];
-    } else at = projection(p, start, end).at; // Flat roofs use their nearest edge.
-    const d = Math.hypot(at[0] - p[0], at[1] - p[1]);
-    if (d < span) {span = d; best = [...at, a * at[0] + b * at[1] + c];}
-  }
-  if (!best) return null;
-  const norm = Math.hypot(a, b, 1), n = [-a / norm, -b / norm, 1 / norm];
-  return {surface: best, at: best.map((v, i) => v + n[i] * CONDUIT_OFFSET)};
-}
-
-// Offset a wall perimeter outward, with mitred corners. Both windings work.
-function perimeter(building, plan) {
-  const poly = buildingFootprint(building).map(p => lotPoint(building, p, plan));
-  if (poly.length < 3) return null;
-  const winding = Math.sign(poly.reduce((s, p, i) => s + cross(p, poly[(i + 1) % poly.length]), 0)) || 1;
-  const normals = poly.map((p, i) => {
-    const q = poly[(i + 1) % poly.length], length = Math.hypot(q[0] - p[0], q[1] - p[1]);
-    return length ? [winding * (q[1] - p[1]) / length, -winding * (q[0] - p[0]) / length] : [0, 0];
-  });
-  return poly.map((p, i) => {
-    const a = normals[(i + poly.length - 1) % poly.length], b = normals[i], divisor = 1 + a[0] * b[0] + a[1] * b[1];
-    return p.slice(0, 2).map((v, j) => v + CONDUIT_OFFSET * (a[j] + b[j]) / Math.max(.1, divisor));
-  });
-}
-function wall(poly, p) {
-  return poly.map((a, i) => ({...projection(p, a, poly[(i + 1) % poly.length]), edge: i}))
-    .sort((a, b) => distance(a.at, p.slice(0, 2)) - distance(b.at, p.slice(0, 2)))[0];
-}
-function wallRun(poly, a, b, height) {
-  const forward = (start, end) => {
-    const out = [start.at];
-    if (start.edge !== end.edge || start.t > end.t) {
-      for (let i = (start.edge + 1) % poly.length; ; i = (i + 1) % poly.length) {
-        out.push(poly[i]); if (i === end.edge) break;
+export function planConduitSurfaces(plan,buildingIds=new Set((plan?.buildings||[]).map(b=>b.id))) {
+  const result=new Map();
+  for (const b of plan?.buildings||[]) {
+    if (!buildingIds.has(b.id)) continue;
+    const triangles=[],sections=(b.roof?.sections||[]).filter(s=>s.state!=='ghost');
+    const building=sections.length===(b.roof?.sections||[]).length?b:{...b,roof:{...b.roof,sections}};
+    const emit=(points,kind)=>triangles.push({points:points.map(p=>lotPoint(b,p,plan)),kind,building:b.id});
+    for (const plane of solarPlanes(building)) for (const t of plane.triangles) emit(t.map(uv=>solarPoint(plane.plane,uv)),'roof');
+    const levels=new Map((b.levels||[]).map(l=>[l.id,l]));
+    for (const w of b.walls||[]) {
+      if (!w.exterior || w.kind==='separator' || w.state==='ghost' || !w.from || !w.to) continue;
+      const l=levels.get(w.level); if (!l) continue;
+      const dx=w.to[0]-w.from[0],dy=w.to[1]-w.from[1],length=Math.hypot(dx,dy); if (!length) continue;
+      let outward=[dy/length,-dx/length];
+      const mid=[(w.from[0]+w.to[0])/2,(w.from[1]+w.to[1])/2],outline=l.outline?.length>=3?l.outline:buildingFootprint(b);
+      if (inPolygon(outline,mid[0]+outward[0]*.1,mid[1]+outward[1]*.1)) outward=outward.map(v=>-v);
+      let a=w.from,c=w.to;
+      if (w.footprint?.length>=4) {
+        // Joint footprints are centred on the wall line; their farthest long
+        // edge is the actual mitred exterior face, including its corner ends.
+        const corners=[...w.footprint].sort((p,q)=>(q[0]-p[0])*outward[0]+(q[1]-p[1])*outward[1]).slice(0,2)
+          .sort((p,q)=>(p[0]-q[0])*dx+(p[1]-q[1])*dy);
+        [a,c]=corners;
       }
+      // Legacy exterior walls already put their OUTSIDE face on from/to;
+      // blindly offsetting these by another thickness would move off the house.
+      const floor=l.elevation||0,top=floor+(w.height??l.ceiling??8);
+      const A=[...a,floor],B=[...c,floor],C=[...c,top],D=[...a,top];
+      const forward=(c[1]-a[1])*outward[0]-(c[0]-a[0])*outward[1]>0;
+      for (const t of forward?[[A,B,C],[A,C,D]]:[[A,C,B],[A,D,C]]) emit(t,'wall');
     }
-    out.push(end.at); return out;
-  };
-  const candidates = [forward(a, b), forward(b, a).reverse()];
-  const length = points => points.slice(1).reduce((s, p, i) => s + distance(p, points[i]), 0);
-  return candidates.sort((a, b) => length(a) - length(b))[0].map(p => [...p, height]);
-}
-function groundLink(from, to) {
-  // The closest pair faces the gap. Dropping from an eave on the far side
-  // and immediately drawing toward the source could cross the satellite.
-  const pairs = [
-    ...from.map(p => ({from: wall(from, p), to: wall(to, p)})),
-    ...to.map(p => ({from: wall(from, p), to: wall(to, p)}))
-  ];
-  return pairs.sort((a, b) => distance(a.from.at, a.to.at) - distance(b.from.at, b.to.at))[0];
-}
-function groundRun(plan, a, b) {
-  // One-foot sampling follows blended terrain. Sharp terrace edges get both
-  // heights at the crossing so the conduit follows the step, too.
-  const ts = new Set([0, 1]), length = Math.hypot(a[0] - b[0], a[1] - b[1]);
-  for (let i = 1; i < Math.ceil(length); i++) ts.add(i / Math.ceil(length));
-  const delta = b.map((v, i) => v - a[i]);
-  for (const pad of plan.site?.terraces || []) for (let i = 0; i < pad.polygon.length; i++) {
-    const p = pad.polygon[i], q = pad.polygon[(i + 1) % pad.polygon.length], edge = q.map((v, j) => v - p[j]);
-    const den = cross(delta, edge); if (Math.abs(den) < 1e-9) continue;
-    const v = p.map((v, j) => v - a[j]), t = cross(v, edge) / den, u = cross(v, delta) / den;
-    if (t > 0 && t < 1 && u >= 0 && u <= 1) for (const d of [-1e-6, 0, 1e-6]) ts.add(Math.max(0, Math.min(1, t + d)));
+    // Reuse the generator's coarse gable ends and roof-step closures, without
+    // its siding tessellation, battens, trim, window cutouts or cut variants.
+    const mesh=roofMesh(sections);
+    for (const positions of mesh.gables.map(g=>g.positions))
+      for (let i=0;i+8<positions.length;i+=9) emit([0,3,6].map(j=>Array.from(positions.slice(i+j,i+j+3))),'wall');
+    result.set(b.id,triangles);
   }
-  return [...ts].sort((a, b) => a - b).map(t => {
-    const x = a[0] + delta[0] * t, y = a[1] + delta[1] * t;
-    return [x, y, groundAt(plan, x, y) + CONDUIT_OFFSET];
-  });
+  return result;
 }
 
-export function solarConduits(plan, anchors) {
-  if (!anchors?.solar || !anchors.source) return [];
-  const zones = (plan?.buildings || []).flatMap(building => solarZones(building).map(({zone}) => ({zone, building})));
-  const sources = zones.filter(({zone, building}) => zone.roof === anchors.source &&
-    (!plan.solar_source_building || building.id === plan.solar_source_building));
-  if (!sources.length || new Set(sources.map(s => s.building.id)).size !== 1) return [];
-  const source = sources.sort((a, b) => distance(lotPoint(a.building, solarPoint(a.zone.plane, centre(a.zone)), plan), anchors.solar) -
-    distance(lotPoint(b.building, solarPoint(b.zone.plane, centre(b.zone)), plan), anchors.solar))[0];
-  const planeFor = ({zone, building}) => solarPlanes(building).find(p => p.roof === zone.roof && p.plane.every((v, i) => Math.abs(v - zone.plane[i]) < 1e-5));
-  // Project the shared anchor onto the selected source plane before climbing.
-  const pos = source.building.position || [0, 0], angle = -(source.building.rotation || 0) * Math.PI / 180;
-  const dx = anchors.solar[0] - pos[0], dy = anchors.solar[1] - pos[1];
-  const local = [Math.cos(angle) * dx - Math.sin(angle) * dy, Math.sin(angle) * dx + Math.cos(angle) * dy];
-  const sourcePlane = planeFor(source), [a, b, c] = source.zone.plane;
-  const onRoof = [local[0], local[1], a * local[0] + b * local[1] + c];
-  // UV basis is shared with panel placement, including roof slope.
-  if (!sourcePlane) return [];
-  const targetEave = eave(sourcePlane, solarUV(source.zone.plane, onRoof));
-  const targetPoly = perimeter(source.building, plan); if (!targetEave || !targetPoly) return [];
-  const targetAt = lotPoint(source.building, targetEave.at, plan), targetSurface = lotPoint(source.building, targetEave.surface, plan);
-  const targetWall = wall(targetPoly, targetAt), routes = [];
-  for (const satellite of zones) {
-    if (satellite.building.id === source.building.id && satellite.zone.roof === anchors.source) continue;
-    const edge = eave(planeFor(satellite), centre(satellite.zone)), poly = perimeter(satellite.building, plan);
-    if (!edge || !poly) continue;
-    const start = lotPoint(satellite.building, solarPoint(satellite.zone.plane, centre(satellite.zone), CONDUIT_OFFSET), plan);
-    const at = lotPoint(satellite.building, edge.at, plan), surface = lotPoint(satellite.building, edge.surface, plan), from = wall(poly, at);
-    const points = [start, at], same = satellite.building.id === source.building.id;
-    const height = Math.min(surface[2], targetSurface[2]);
-    if (same) {
-      points.push([...from.at, surface[2]], ...wallRun(poly, from, targetWall, height), [...targetWall.at, targetSurface[2]]);
-    } else {
-      const link = groundLink(poly, targetPoly), lead = wallRun(poly, from, link.from, 0);
-      points.push([...from.at, surface[2]]);
-      for (let i = 1; i < lead.length; i++) points.push(...groundRun(plan, lead[i - 1], lead[i]));
-      points.push(...groundRun(plan, link.from.at, link.to.at),
-        ...wallRun(targetPoly, link.to, targetWall, targetSurface[2]));
-    }
-    points.push(targetAt, anchors.solar);
-    routes.push({id: satellite.building.id + ':' + satellite.zone.id, entity: satellite.zone.entity || null,
-      points: points.filter((p, i) => !i || !near(p, points[i - 1]))});
+export function conduitInput(plan,anchors,triangles=null) {
+  const empty={triangles:[],zones:[],sourcePlanes:[],anchor:null,sourceBuilding:null,site:plan?.site};
+  if (!anchors?.solar || !anchors.source) return empty;
+  const zones=(plan?.buildings||[]).flatMap(building=>solarZones(building).map(({zone})=>({zone,building})));
+  const sources=zones.filter(({zone,building})=>zone.roof===anchors.source && (!plan.solar_source_building || building.id===plan.solar_source_building));
+  if (!sources.length || new Set(sources.map(s=>s.building.id)).size!==1) return empty;
+  const sourceBuilding=sources[0].building.id,satellites=zones.filter(s=>s.building.id!==sourceBuilding || s.zone.roof!==anchors.source);
+  if (!satellites.length) return empty;
+  const sourcePlanes=sources.map(({zone,building})=>{
+    const p=lotPoint(building,solarPoint(zone.plane,[0,0]),plan);
+    const u=lotPoint(building,solarPoint(zone.plane,[1,0]),plan),v=lotPoint(building,solarPoint(zone.plane,[0,1]),plan);
+    return {p,n:unit(cross(sub(u,p),sub(v,p))),building:building.id};
+  });
+  const ids=new Set([sourceBuilding,...satellites.map(s=>s.building.id)]);
+  return {triangles:triangles||[...planConduitSurfaces(plan,ids).values()].flat(),sourcePlanes,sourceBuilding,anchor:[...anchors.solar],site:plan.site,
+    zones:satellites.map(({zone,building})=>({id:building.id+':'+zone.id,entity:zone.entity||null,building:building.id,
+      start:lotPoint(building,solarPoint(zone.plane,centre(zone)),plan)}))};
+}
+
+// Synchronous entry point retained for pure Node tests and benchmarks.
+export function solarConduits(plan,anchors,{triangles=null,debug}={}) {
+  return routeConduits(conduitInput(plan,anchors,triangles),{groundAt,debug});
+}
+
+function afterPaint(work) {
+  const idle=()=>setTimeout(()=>globalThis.requestIdleCallback?globalThis.requestIdleCallback(work,{timeout:100}):work(),0);
+  const frame=globalThis.requestAnimationFrame;
+  if (frame) frame(()=>frame(idle));
+  else setTimeout(idle,16);
+}
+
+export function createConduitRouter({urls=globalThis.window?.chfSolarConduitWorker,debug=message=>console.debug(message)}={}) {
+  let worker=null,pending=null,serial=0,stopped=false,disabled=false;
+  const finish=(job,routes)=>{
+    if (pending!==job || stopped) return;
+    clearTimeout(job.timer);pending=null;job.resolve(routes);
+  };
+  function fallback(job) {
+    clearTimeout(job.timer);worker?.terminate();worker=null;disabled=true;
+    afterPaint(()=>{
+      if (pending!==job || stopped) return;
+      try {finish(job,routeConduits(job.input,{groundAt,debug}));}
+      catch (error) {debug('Solar conduit skipped: '+error.message);finish(job,[]);}
+    });
   }
-  return routes;
+  return {
+    run(plan,anchors) {
+      if (stopped) return Promise.resolve(null);
+      if (pending) {clearTimeout(pending.timer);pending.resolve(null);pending=null;}
+      // Snapshot now, prepare the small triangle payload after paint. Neither
+      // extraction nor the worker-unavailable fallback can block mount.
+      const snapshot=structuredClone({plan,anchors}),id=++serial;
+      return new Promise(resolve=>{
+        const job=pending={id,resolve,input:null};
+        afterPaint(()=>{
+          if (pending!==job || stopped) return;
+          try {
+            job.input=conduitInput(snapshot.plan,snapshot.anchors);
+            if (!job.input.zones.length) {finish(job,[]);return;}
+            if (!disabled && globalThis.Worker && urls) {
+              if (!worker) {
+                worker=new Worker(urls.worker,{type:'module',name:'solar-conduit'});
+                worker.onmessage=({data})=>{
+                  const current=pending;if (!current || data.id!==current.id || stopped) return;
+                  if (data.error) {fallback(current);return;}
+                  for (const message of data.messages||[]) debug(message);
+                  finish(current,data.routes||[]);
+                };
+                worker.onerror=worker.onmessageerror=()=>{if (pending) fallback(pending);};
+              }
+              job.timer=setTimeout(()=>{if (pending===job) fallback(job);},5000);
+              worker.postMessage({id,coreUrl:urls.core,groundUrl:urls.ground,input:job.input});
+            } else fallback(job);
+          } catch (error) {
+            if (job.input) fallback(job);else {debug('Solar conduit skipped: '+error.message);finish(job,[]);}
+          }
+        });
+      });
+    },
+    stop() {stopped=true;serial++;worker?.terminate();worker=null;if (pending) {clearTimeout(pending.timer);pending.resolve(null);pending=null;}}
+  };
 }

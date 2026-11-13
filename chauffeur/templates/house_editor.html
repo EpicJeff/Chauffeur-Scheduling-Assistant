@@ -51,7 +51,7 @@
     {% for name in ['model_lods', 'lod_worker', 'objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_floors', 'twin_yard', 'twin_tiers', 'twin_library', 'import_loaders', 'twin_view', 'levels', 'viewing', 'unlit', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'path_shapes', 'fire_pits', 'twin_porch_foundation', 'twin_retaining_wall', 'twin_terrain_mesh', 'twin_director', 'editor/editor', 'editor/lighting', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/object_shelf', 'editor/site_shape_shelf', 'editor/site_shapes', 'editor/polygon_handles', 'editor/imports', 'editor/equipment_shelf', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/terrain_tools', 'editor/site_drawing', 'editor/foundation_shelf', 'editor/porch_foundation_shelf', 'editor/library', 'editor/flags'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
-    {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_geometry', 'live/solar_conduit', 'live/energy_mapping', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
+    {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_geometry', 'live/solar_conduit', 'live/solar_conduit_core', 'live/solar_conduit_worker', 'live/energy_mapping', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/editor/flags.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/flags.js' | ver | tojson }};
@@ -69,6 +69,11 @@
     {% endfor %}
     imports[new URL(window.chfBase + 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js', location.href).href] = window.chfBase + {{ 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js' | ver | tojson }};
     // Workers have no import map; pass exactly the page's versioned paths.
+    window.chfSolarConduitWorker = {
+      worker: new URL(window.chfBase + {{ 'static/twin/live/solar_conduit_worker.js' | ver | tojson }}, location.href).href,
+      core: new URL(window.chfBase + {{ 'static/twin/live/solar_conduit_core.js' | ver | tojson }}, location.href).href,
+      ground: new URL(window.chfBase + {{ 'static/twin/twin_ground.js' | ver | tojson }}, location.href).href
+    };
     window.chfLodWorker = {
       worker: new URL(window.chfBase + {{ 'static/twin/lod_worker.js' | ver | tojson }}, location.href).href,
       simplifier: new URL(window.chfBase + {{ 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js' | ver | tojson }}, location.href).href

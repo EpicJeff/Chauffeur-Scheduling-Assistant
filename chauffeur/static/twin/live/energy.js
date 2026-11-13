@@ -5,7 +5,7 @@ import { guessEnergy, chargingCar, flowReading, watts, energyBalance } from './e
 import { energyCheck, renderEnergyCheck } from './energy_check.js';
 import { energyTopology, energyPlacementLegend, energyAnchors, worldPoint, flowCurve, flowRoute, flowApex, flowFans } from './energy_geometry.js';
 
-import { solarConduits } from './solar_conduit.js';
+import { createConduitRouter } from './solar_conduit.js';
 
 export const FLOW_COLORS = {solar: '#efbd24', battery: '#31ae62', grid: '#338bd9', house: '#57a8da', car: '#9957d2'};
 
@@ -70,6 +70,9 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
   const root = new THREE.Group(); root.userData.twinMode = 'energy'; overlays.add(root);
   const labels = document.createElement('div'); labels.className = 'twin-mode-labels twin-energy-labels'; document.body.append(labels);
   let key = '', mapping = {}, ribbons = [], conduits = [], anchors = null, check = null;
+  let conduitSolar = null;
+  const conduitRouter = createConduitRouter();
+  let conduitTask = Promise.resolve(), conduitPending = false, rebuildSerial = 0, stopped = false, currentMode = 'all';
   const checkControls = document.createElement('div'), checkLink = document.createElement('a'), checkPanel = document.createElement('section');
   checkLink.href = '#twin-energy-check'; checkLink.textContent = 'Why no ribbons?';
   checkPanel.className = 'twin-energy-check'; checkPanel.hidden = true; checkPanel.setAttribute('aria-label', 'Energy check');
@@ -161,22 +164,41 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       material.emissive.copy(original.color); material.emissiveIntensity = original.intensity;
     }
   }
-  function rebuild(anchors) {
-    clear(); if (!anchors) return;
+  function drawRibbons(anchors) {
     const topology = energyTopology(anchors,mapping), fans = flowFans(topology, flowReading(4000).width);
     for(const row of topology)ribbon(row.id,row.from,row.to,FLOW_COLORS[row.source],fans.get(row.id));
     for(const [i,at] of anchors.chargers.entries())if(at)for(const spot of anchors.parking){
       const from=[at[0],at[1],spot.at[2]],to=[...spot.at];
       ribbon(`link:${i}:${spot.building}:${spot.id}`,from,to,FLOW_COLORS.car,null,{charger:i,spot});
     }
-    for (const route of solarConduits(view.plan, anchors)) conduit(route);
+  }
+  function rebuild(anchors) {
+    const serial = ++rebuildSerial;
+    clear(); conduitSolar = null; if (!anchors) return;
+    drawRibbons(anchors);
+    conduitPending = true;
+    conduitTask = conduitRouter.run(view.plan, anchors).then(routes => {
+      if (stopped || serial !== rebuildSerial || routes === null) return;
+      conduitPending = false;
+      if (!routes.length) return;
+      // A weighted source centre on opposite slopes can be below the roof.
+      // Move its ribbon origin together with the resolved surface endpoint.
+      conduitSolar = routes[0].points.at(-1);
+      if (JSON.stringify(conduitSolar) !== JSON.stringify(anchors.solar)) {
+        clear(); drawRibbons({...anchors, solar: conduitSolar});
+      }
+      for (const route of routes) conduit(route);
+      effects.update(currentMode); warm?.(); view.render?.();
+    });
     warm?.();
   }
   const effects = {
     legend:()=>energyPlacementLegend(anchors || energyAnchors(view,layout,mapping),mapping) || 'Yellow: Solar | Green: Battery | Blue: Grid | Purple: Charger | Flow below 50 W hidden',
     legendContent:()=>checkControls,
     warmObjects: () => {const objects = []; root.traverse(o => {objects.push(o);}); return objects;},
+    ready: () => conduitTask,
     update(mode) {
+      currentMode = mode;
       const states = live.peek(); mapping = guessEnergy(states, view.energySources?.mapping, view.energySources?.cars, view.plan);
       anchors = energyAnchors(view, layout, mapping, states);
       const shown = mode === 'energy' || mode === 'all';
@@ -196,6 +218,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
         view.plan?.solar_source_building, (view.plan?.buildings || []).map(b =>
           [b.id, b.position, b.rotation, b.base, b.foundation, b.roof, b.solar_zones, b.levels, b.rooms, b.walls]), view.plan?.site?.terraces]);
       if (key !== next) {key = next; rebuild(anchors);}
+      if (conduitSolar) anchors.solar = conduitSolar;
       check = energyCheck(view, layout, mapping, states, live.stale(), anchors);
       renderEnergyCheck(checkPanel, check);
       const flows = new Map(check.flows.map(row => [row.id, row]));
@@ -268,11 +291,11 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       for (const r of conduits) r.halo.material.uniforms.phase.value = r.mesh.material.uniforms.phase.value = r.reading.visible ? seconds * r.reading.speed : 0;
       for (const r of ribbons) r.halo.material.uniforms.phase.value = r.mesh.material.uniforms.phase.value = seconds * r.reading.speed * r.reading.direction;
     },
-    snapshot: () => ({mapping, check, anchors, conduits: conduits.map(r => ({id: r.id, entity: r.entity, points: r.points,
+    snapshot: () => ({mapping, check, anchors, conduitPending, conduits: conduits.map(r => ({id: r.id, entity: r.entity, points: r.points,
       ...r.reading, visible: r.mesh.visible})), ribbons: ribbons.map(r => ({id: r.id, link:!!r.link, ...r.reading, visible: r.mesh.visible,
       apex: r.point.toArray(), labelAnchor: r.point.toArray(), midpoint: r.curve.getPoint(.5).toArray(), from: r.route.from, to: r.route.to, hue: r.hue, path: r.curve.getPoints(15).map(p => p.toArray())})),
       cars: view.cars?.snapshot() || [], plane: anchors?.source || null, legend:energyPlacementLegend(anchors || {},mapping)}),
-    stop() { restorePanels(); panels.clear(); clear(); root.removeFromParent(); labels.remove(); checkControls.remove(); }
+    stop() { stopped = true; rebuildSerial++; conduitRouter.stop(); restorePanels(); panels.clear(); clear(); root.removeFromParent(); labels.remove(); checkControls.remove(); }
   };
   return effects;
 }
