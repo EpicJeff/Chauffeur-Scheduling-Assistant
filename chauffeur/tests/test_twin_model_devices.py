@@ -638,7 +638,10 @@ def test_house_design_places_a_device():
         check(marker in description, f'{op} needs its argument shape')
         clause = description.split(marker, 1)[1].split(';', 1)[0]
         check(all(key in clause for key in keys), f'{op} needs {keys}: {clause}')
-    check(len(json.dumps(agent_tools_v2.TOOL_SCHEMAS['house_design'])) <= 4500, 'keep the tool schema compact')
+    # Terrain pads/foundations (3b64cdce) and porch foundations (5aa80b75)
+    # add 681 characters to the former 4,376-character schema. Keep a bounded
+    # budget with comparable headroom (5,057 today; previously capped at 4,500).
+    check(len(json.dumps(agent_tools_v2.TOOL_SCHEMAS['house_design'])) <= 5200, 'keep the tool schema compact')
 
 
 def test_i1a_catalogue_failure_keeps_the_area_link():

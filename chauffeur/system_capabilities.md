@@ -1,6 +1,21 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.823 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.824 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.824 (2026-11-12): tests only. Seven test files that had gone red on main are green again; no app behaviour changes.**
+
+**How it was done.** Codex diagnosed the first four; Claude reviewed them and fixed three neighbours. Each failure was traced to the commit that changed the behaviour. Every one was a stale test premise; none was a code regression. No assertion was dropped or loosened beyond the shipped behaviour.
+
+**The files.**
+- **`test_twin_guided_editor_js` and `test_twin_build_draft_pause_js`:**
+  - the editor stubs gain `mountLighting` (v2.499.798) and `createTerrainTools` (v2.499.814);
+  - the draft-pause loader now loads any editor or twin sibling it does not copy or stub from the real folder, because `cards.js` keeps gaining shelf modules.
+- **`test_twin_model_devices` and `test_house_design_tool`:** the `house_design` tool schema is 5,057 characters after terrain pads and porch foundations. The compactness cap moves from 4,500 to 5,200 in both files.
+- **`test_subjects` and `test_stage_contract_tools`:**
+  - programs are library-owned now, so `test_subjects` seeds them with `program_fixture.add_run`;
+  - Piano is now a library program, so the unmatched-title check in `test_stage_contract_tools` uses "Learn the clarinet" instead.
+- **`test_subject_audience`:** a hidden piece answers 404 since v2.499.527, so its existence does not leak. The test expected 403.
+- **`test_twin_editor_library_js`:** already green at HEAD.
 
 **v2.499.823 (2026-11-12, NOT device-verified): the house view's modes are icons centred at the top. All now shows every visualization at once.**
 
