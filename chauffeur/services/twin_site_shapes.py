@@ -10,7 +10,7 @@ FIRE_FIELDS = {'fuel', 'body', 'top', 'height_in', 'glass', 'entity'}
 # Library material slots per feature part (user, 2026-11-13: "Why doesn't everything just have
 # a material slot"). A missing part is the feature's own default look.
 SLOTS = {'beds': ('fill',), 'hardscape': ('surface', 'edging'), 'fire_pit': ('body', 'top'),
-         'fence': ('boards', 'posts', 'rails')}
+         'fence': ('boards', 'posts', 'rails'), 'pool': ('coping', 'interior'), 'edges': ('strip',)}
 
 
 def material_slots(name, value, previous=None):
@@ -99,7 +99,7 @@ def room_from_feature(name, piece):
         raise ValueError('Choose a feature with a closed outline.')
     from copy import deepcopy
     return {'name': (piece.get('name') or {'pool': 'Pool', 'hardscape': 'Patio', 'beds': 'Planting bed', 'fire_pit': 'Fire pit'}[name]).strip()[:40],
-            'polygon': deepcopy(polygon)}
+            'polygon': deepcopy(polygon), **({'feature': {'list': name, 'id': piece['id']}} if piece.get('id') else {})}
 
 
 def create(name, values, lot):
@@ -112,7 +112,7 @@ def create(name, values, lot):
     allowed = {'polygon', 'material'}
     if name == 'yard_rooms':
         defaults = {'name': 'Yard room'}
-        allowed = {'polygon', 'name', 'ha_area'}
+        allowed = {'polygon', 'name', 'ha_area', 'feature'}
     if name == 'pool':
         defaults.update(depth=5, coping=1, material='paving')
         allowed |= {'depth', 'coping'}
@@ -163,6 +163,11 @@ def create(name, values, lot):
 
 def validate(name, piece, *, legacy_height=False):
     if name == 'yard_rooms':
+        feature = piece.get('feature')
+        if feature is not None and (not isinstance(feature, dict) or set(feature) != {'list', 'id'}
+                or feature['list'] not in ('pool', 'hardscape', 'beds', 'fire_pit')
+                or not isinstance(feature['id'], str) or not feature['id']):
+            raise ValueError('Choose a yard feature reference.')
         if not isinstance(piece.get('name'), str) or not 1 <= len(piece['name'].strip()) <= 40:
             raise ValueError('Use a room name of 1 to 40 characters.')
         area = piece.get('ha_area')

@@ -25,7 +25,8 @@ LIFECYCLE = threading.RLock()
 _MASTER_LOCKS = weakref.WeakValueDictionary()  # Only active page readers retain locks.
 build_running = lambda: False  # Task 8 supplies the build runner's predicate.
 stop_builds_for_start_over = lambda: None
-_KINDS = {'draft', 'director', 'hand', 'revert', 'build', 'edit', 'start_over'}
+_KINDS = {'draft', 'director', 'hand', 'revert', 'build', 'edit', 'start_over', 'load'}
+HOUSE_STATE_KEYS = ('place', 'sources', 'page_roles', 'registrations')
 _PAGE_ROLES = set(twin_place.BUILDING_ROLES) | set(twin_place.LOT_ROLES)
 # Pillow identifies multi-picture phone JPEGs as MPO.
 _PHOTO_MIMES = {'JPEG': 'image/jpeg', 'MPO': 'image/jpeg', 'PNG': 'image/png'}
@@ -448,7 +449,35 @@ def _check_base(base):
         raise ValueError('The base must be a round id.')
 
 
-def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, changes=(), step=None, partial=False):
+def house_state(row):
+    """Only the editor's place and source references, never history or bytes."""
+    _place(row)
+    return {key: deepcopy(row[key]) for key in HOUSE_STATE_KEYS}
+
+
+def atomic_json(target, value):
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=target.parent,
+                                         suffix='.tmp', delete=False) as file:
+            temporary = Path(file.name)
+            json.dump(value, file, ensure_ascii=False, allow_nan=False)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def round_state_path(round_id):
+    return Path(DATA_DIR) / 'rounds' / f'{round_id}.state.json'
+
+
+def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, changes=(), step=None, partial=False,
+                  *, restored_from=None):
     """Called with _LOCK held; file, pointer and fixes form one mutation."""
     round_id = max((r['id'] for r in row['rounds']), default=0) + 1
     at = datetime.now(timezone.utc).isoformat()
@@ -459,6 +488,8 @@ def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, chan
         record['step'] = deepcopy(step)
     if partial:
         record['partial'] = True
+    if restored_from is not None:
+        record['restored_from'] = restored_from
     root = Path(DATA_DIR) / 'rounds'
     root.mkdir(parents=True, exist_ok=True)
     target = root / f'{round_id}.json'
@@ -475,12 +506,15 @@ def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, chan
         row['rounds'].append(record)
         if not stale:
             row['current'] = round_id
+        if kind == 'load':
+            atomic_json(round_state_path(round_id), house_state(row))
         row['fixes'].extend({**change, 'round': round_id, 'at': at} for change in changes)
         _save(row)
     except Exception:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
         target.unlink(missing_ok=True)
+        round_state_path(round_id).unlink(missing_ok=True)
         raise
     return round_id
 
@@ -536,6 +570,29 @@ def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, 
         return _append_round(row, model, kind, note=note, changes=changes)
 
 
+def _restore_load_state(row, target):
+    """Return to the place on the other side of a load, never an ordinary edit."""
+    records = {r['id']: r for r in row['rounds']}
+    # Revert appends a new round. Its logical position is the round it copied;
+    # using its new id would miss a redo forward onto the load just undone.
+    current = records.get(row['current'], {}).get('restored_from', row['current'])
+    target = records[target].get('restored_from', target)
+    if current is None:
+        return False, target
+    low, high = sorted((target, current))
+    crossed = [r['id'] for r in row['rounds'] if r['kind'] == 'load' and low < r['id'] <= high]
+    if not crossed:
+        return False, target
+    earlier = sorted((r['id'] for r in row['rounds'] if r['id'] <= target), reverse=True)
+    later = sorted(r['id'] for r in row['rounds'] if target <= r['id'] < min(crossed))
+    for candidate in [*earlier, *later]:
+        path = round_state_path(candidate)
+        if path.exists():
+            row.update(json.loads(path.read_text(encoding='utf-8')))
+            return True, target
+    return False, target
+
+
 def revert(round_id: int, generation=None) -> int:
     """Copy a historical plan into a new current round and return its int id."""
     with _LOCK:
@@ -547,9 +604,11 @@ def revert(round_id: int, generation=None) -> int:
         if build_running():
             raise ValueError('Stop the build before returning to an earlier house.')
         plan = _read_round(row, round_id)
-        _follow_place(row, plan)
+        restored, origin = _restore_load_state(row, round_id)
+        if not restored:
+            _follow_place(row, plan)
         _follow_tombstones(row, round_id)
-        return _append_round(row, plan, 'revert')
+        return _append_round(row, plan, 'revert', restored_from=origin)
 
 
 def _follow_tombstones(row, round_id):

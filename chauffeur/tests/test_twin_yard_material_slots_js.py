@@ -24,19 +24,31 @@ const meshes=group=>{const out=[];group.traverse(o=>{if(o.isMesh||o.isInstancedM
 const colours=group=>new Set(meshes(group).flatMap(o=>[].concat(o.material)).filter(m=>m?.color).map(hex));
 const signature=group=>meshes(group).map(o=>[[].concat(o.material).map(m=>m.name).join('+'),o.geometry.attributes.position.count]).sort().join('|');
 const vertices=group=>meshes(group).reduce((n,o)=>n+o.geometry.attributes.position.count*(o.count||1),0);
+// The yard merges by material, so a slot may split a mesh without moving any
+// triangle. Compare world-space triangles independently of that batching.
+const geometry=group=>{group.updateMatrixWorld(true);return meshes(group).flatMap(o=>{
+  const p=o.geometry.attributes.position,ids=o.geometry.index?.array||Array.from({length:p.count},(_,i)=>i),out=[];
+  for(let i=0;i<ids.length;i+=3)out.push(JSON.stringify(Array.from(ids.slice(i,i+3),id=>
+    new THREE.Vector3().fromBufferAttribute(p,id).applyMatrix4(o.matrixWorld).toArray())));
+  return out;
+}).sort();};
+const appearance=group=>meshes(group).map(o=>[].concat(o.material).map(m=>[m.name,hex(m),m.roughness,m.metalness,m.opacity,m.transparent,m.depthWrite,m.map?.name]));
 const site=extra=>({units:'ft',materials:{},buildings:[],site:{terraces:[],...extra}});
+let cases=0;
 async function pair(label,make,slots,{expect,absent=[],sameShape=true}){
   const plain=await buildYard(site(make({})),input.kit,'low');
   const legacyEmpty=await buildYard(site(make({materials:{}})),input.kit,'low');
   assert.equal(signature(legacyEmpty.group),signature(plain.group),`${label}: an empty slot set is the default look`);
+  assert.deepEqual(appearance(legacyEmpty.group),appearance(plain.group),`${label}: default material properties unchanged`);
   const slotted=await buildYard(site(make({materials:slots})),input.kit,'low');
   for(const colour of expect){
     assert.ok(!colours(plain.group).has(colour),`${label}: ${colour} is not in the default look`);
     assert.ok(colours(slotted.group).has(colour),`${label}: the slot draws ${colour}: ${[...colours(slotted.group)]}`);
   }
   for(const colour of absent)assert.ok(!colours(slotted.group).has(colour),`${label}: ${colour} only where chosen`);
-  if(sameShape)assert.equal(vertices(slotted.group),vertices(plain.group),`${label}: same geometry, only the material changes`);
-  return {plain,slotted};
+  if(sameShape){assert.equal(vertices(slotted.group),vertices(plain.group),`${label}: same geometry, only the material changes`);
+    assert.deepEqual(geometry(slotted.group),geometry(plain.group),`${label}: identical positions, indices and transforms`);}
+  cases++;return {plain,slotted};
 }
 // Fence: boards, posts and rails are separate parts.
 {
@@ -64,6 +76,32 @@ async function pair(label,make,slots,{expect,absent=[],sameShape=true}){
 }
 // Planting bed fill.
 await pair('bed',extra=>({beds:[{id:'b',polygon:square(0,0,6,4),material:'mulch',...extra}]}),{fill:BRICK},{expect:['#aa3322']});
+// Pool coping is a role; walls/floor remain the original untextured plain tile
+// unless explicitly slotted. Water never takes either slot.
+{
+  const pool=extra=>({pool:{id:'pool',polygon:square(0,0,10,6),material:'paving',...extra}});
+  const {plain,slotted}=await pair('pool coping',pool,{coping:BRICK},{expect:['#aa3322']});
+  const tiles=meshes(plain.group).filter(o=>o.material.name==='pool tile');
+  assert.ok(tiles.length,'floor and tile walls are batched together');
+  for(const tile of tiles){assert.equal(hex(tile.material),'#5fa8c4');assert.equal(tile.material.roughness,.35);assert.equal(tile.material.map,null);}
+  assert.deepEqual(appearance({traverse:fn=>meshes(slotted.group).filter(o=>o.material.name==='pool tile').forEach(fn)}),
+    appearance({traverse:fn=>tiles.forEach(fn)}),'coping leaves every tile unchanged');
+  const interior=await pair('pool interior',pool,{interior:OAK},{expect:['#336699']});
+  const tileVertices=tiles.reduce((n,o)=>n+o.geometry.attributes.position.count,0);
+  assert.equal(meshes(interior.slotted.group).filter(o=>hex(o.material)==='#336699').reduce((n,o)=>n+o.geometry.attributes.position.count,0),tileVertices,'all floor and wall tile vertices use interior');
+  assert.ok(!meshes(interior.slotted.group).some(o=>o.material.name==='pool tile'),'no tile surface stays unslotted');
+  for(const yard of [slotted,interior.slotted]){
+    const water=meshes(yard.group).find(o=>o.material.name==='water');
+    const original=meshes(plain.group).find(o=>o.material.name==='water');
+    assert.deepEqual(appearance({traverse:fn=>fn(water)}),appearance({traverse:fn=>fn(original)}));
+  }
+}
+{
+  const edge=extra=>({edges:[{id:'edge',polygon:square(0,0,6,4),...extra}]});
+  const {plain,slotted}=await pair('lawn edge strip',edge,{strip:BRICK},{expect:['#aa3322']});
+  assert.ok(meshes(plain.group).every(o=>o.material.name==='lawn'),'default strip is the lawn role');
+  assert.ok(meshes(slotted.group).every(o=>hex(o.material)==='#aa3322'),'every strip segment takes the slot');
+}
 // Retaining wall face; the wall kind still sets the default look.
 {
   const wall=extra=>({terraces:[{id:'pad',polygon:square(0,0,6,6),height:3,blend:0,
@@ -80,7 +118,7 @@ await pair('bed',extra=>({beds:[{id:'b',polygon:square(0,0,6,4),material:'mulch'
   const bricks=new Set(meshes(both.group).map(o=>o.material).filter(m=>hex(m)==='#aa3322'));
   assert.equal(bricks.size,1,'one shared brick material');
 }
-console.log('Passed: fence boards/posts/rails, wood and gas fire pit body/top, patio, path and curb, bed fill, retaining wall face; defaults unchanged; shared materials');
+console.log(`Passed: ${cases}/${cases} slot scenarios (fence, wood/gas fire pit, patio, path/curb, bed, pool coping/interior, edge strip, retaining wall); defaults unchanged; shared materials`);
 """
 
 if __name__ == '__main__':

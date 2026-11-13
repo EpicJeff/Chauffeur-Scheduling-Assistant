@@ -162,7 +162,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     const d = site.pool.depth ?? 5, coping = site.pool.coping ?? 1;
     const poolHeight = groundAt(plan, ...pool[0]) + (site.pool.elevation || 0);
     const poolSurface = (poly, z0, z1 = z0, holes = []) => polygon(poly, poolHeight + z0, poolHeight + z1, holes);
-    addMesh(group, poolSurface(pool, -d - 0.2, -d), plain('pool tile', '#5fa8c4', { roughness: 0.35 }));
+    const interior = site.pool.materials?.interior;
+    addMesh(group, poolSurface(pool, -d - 0.2, -d), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4', { roughness: 0.35 }));
     // Offset each edge outwards by coping width. This works for the convex pool
     // polygons used by the plan and retains the original water outline.
     const area = pool.reduce((a, p, i) => a + p[0] * pool[(i + 1) % pool.length][1] - pool[(i + 1) % pool.length][0] * p[1], 0);
@@ -171,10 +172,10 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       const a = normal(pool[(i + pool.length - 1) % pool.length], p), b = normal(p, pool[(i + 1) % pool.length]), factor = coping / Math.max(0.1, 1 + a[0] * b[0] + a[1] * b[1]);
       return [p[0] + (a[0] + b[0]) * factor, p[1] + (a[1] + b[1]) * factor];
     });
-    if (coping > 0) addMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving'));
+    if (coping > 0) addMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping));
     for (let i = 0; i < pool.length; i++) {
       const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
-      addMesh(group, poolSurface([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), plain('pool tile', '#5fa8c4'));
+      addMesh(group, poolSurface([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'));
     }
     addMesh(group, poolSurface(pool, -0.25), plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false }));
   }
@@ -190,7 +191,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     // Edge planting remains a closed border. Give its ground strip the same
     // authored finish on every tier; High also keeps the existing grass blades.
     for (const poly of pathSurfacePolygons({ points: [...edge.polygon, edge.polygon[0]], width: .5 }))
-      addMesh(group, surface(poly, edge.elevation || 0, .06 + (edge.elevation || 0)), mat(kit.materials?.[edge.material] ? edge.material : 'lawn'));
+      addMesh(group, surface(poly, edge.elevation || 0, .06 + (edge.elevation || 0)), mat(kit.materials?.[edge.material] ? edge.material : 'lawn', edge.materials?.strip));
   }
   for (const f of sitePieces(site.fence).filter(f => f.polyline?.length > 1)) {
     const height = f.height || 6;

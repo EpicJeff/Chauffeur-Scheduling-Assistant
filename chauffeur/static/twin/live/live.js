@@ -11,7 +11,7 @@ import { mountRing } from './ring.js';
 import { isEnergyEntity, houseTempUnit } from './glance.js';
 import { mappedEntities } from './energy_mapping.js';
 import { mountCars } from './cars.js';
-import { animateCamera as easeCamera, deviceAtLevel } from '../levels.js';
+import { animateCamera as easeCamera, deviceAtLevel, LEVEL_TUNING } from '../levels.js';
 
 const FT = .3048, unreachable = 'Home Assistant is not reachable.';
 // Screen sizes in CSS px: a marker is a 44 px tap target (the page's own controls' hit height),
@@ -235,6 +235,23 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const points = polygon.map(([x, z]) => new THREE.Vector3(x * FT, y, -z * FT));
     const bounds = new THREE.Box3().setFromPoints(points), center = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3()), camera = view.camera, controls = view.controls;
+    if (info.yard && camera.isPerspectiveCamera) {
+      // A yard remains at the orbit pitch in this view. Fit in camera space:
+      // the ground's lot-axis span misses both foreshortening and rotated corners.
+      const axis = camera.position.clone().sub(controls.target).normalize();
+      const inverse = new THREE.Quaternion().setFromRotationMatrix(
+        new THREE.Matrix4().lookAt(axis, new THREE.Vector3(), camera.up)).invert();
+      const tan = Math.tan(camera.fov * Math.PI / 360) / camera.zoom;
+      const padding = LEVEL_TUNING.yardFramePadding;
+      const distance = Math.max(...points.map(p => {
+        const q = p.clone().sub(center).applyQuaternion(inverse);
+        return q.z + Math.max(camera.near * 2, Math.abs(q.x) * padding / (tan * camera.aspect), Math.abs(q.y) * padding / tan);
+      }));
+      // A previous lot/building fit must not impose its much larger lower bound.
+      controls.minDistance = Math.min(controls.minDistance || 0, distance * LEVEL_TUNING.zoomHardMin);
+      controls.maxDistance = Math.max(controls.maxDistance ?? Infinity, distance * LEVEL_TUNING.zoomHardMax);
+      animateCamera(center, distance); return;
+    }
     const span = Math.max(size.x / (camera.aspect || 1), size.z, FT);
     if (camera.isOrthographicCamera) animateCamera(center, camera.position.distanceTo(controls.target),
       Math.min(controls.maxZoom ?? Infinity, Math.max(controls.minZoom ?? 0, (camera.top - camera.bottom) / (span * 1.5))));

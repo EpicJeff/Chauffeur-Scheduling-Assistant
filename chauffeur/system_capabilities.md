@@ -1,6 +1,79 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.842 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.846 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.846 (2026-11-13): test-only. A browser test pins yard-room framing, and the "3 s stall" turned out to be machine load.**
+
+**What was checked.** In the house view, the user reported that tapping a yard room barely zooms in. v2.499.843 noted that the real path is `levels.js` `go()` and `framing()`, and that Chromium showed a ~3 s stall.
+
+**Findings** (a CDP CPU profile at 200 µs sampling plus a 50 ms main-thread tick trace, at 1400×900 and 390×844, with and without the pool slots):
+- **No app stall:** the longest main-thread gap is 224-242 ms, about 3 s after the click, inside the lightmap bake worker message handler (`lightmap_material.js`), not the camera move.
+- **The earlier 3 s gaps** came from roughly 25 leaked Codex helper processes on the machine. The same load caused the day's loopback timeouts.
+- **Framing settles correctly:** looking straight down at 16.13 m, where the deck fills about 75% of the height at 1400×900, and at 20.47 m on a phone.
+- **The earlier "barely zooms" screenshots** were captured mid-animation while the loaded machine stalled the main thread. If the user still sees it on their heavier house, main-thread load during the transition is the likely cause; that belongs with the edit-speed work.
+
+**Test.** New `test_house_twin_live_rooms` scenario, `scenario_yard_room_target_frames_it_from_above`: it makes a yard room from the pool, clicks its level target, and waits for the camera to settle. It then asserts that the yard room is current, the view is top-down, every corner is on screen, and the room spans at least half of the shorter screen side. The file passes 11/11; one loopback timeout passed when rerun alone. Node: yard rooms 3/3, live rooms 10/10, live control 8/8, levels 5/5.
+
+**v2.499.845 (2026-11-13, NOT device-verified): save, load, download and upload houses in the house editor.**
+
+**The ask.** The user: "If I could quickly save and load a house, I would be willing to run the art director and see what it comes up with." It is also how a real house can be handed over for profiling slow edits.
+
+**What a person does.** The editor's top bar has a **Houses** control, which opens a centred panel.
+- **Save current house** asks for a name through `promptInput` (1-80 characters; duplicate names are allowed).
+- Each saved house shows a canvas thumbnail, its date, building and room counts, and its size, with:
+  - **Load**, which confirms through `promptConfirm` and says Undo brings the current house back;
+  - **Rename**;
+  - **Download**, as `<name>.chauffeur-house.json`;
+  - **Delete**, which confirms first.
+- **Download current house** and **Upload a house file**. An upload creates a save and never loads it automatically.
+- The panel notes that house files keep photo and Library references but not the files themselves.
+- No browser dialogs. Everything is parents only.
+
+**What a save contains** (`services/twin_house_saves.py`, stored as `<data>/houses/<id>.json` with atomic writes; format `chauffeur-house` version 1):
+- **Included:** the complete current model, plus the editor's place state: the building registry, lot, front bearing, source references, sheet roles and registrations.
+- **Left out:** round history, fixes, tombstones, build and run state, performance results, spend, and source bytes.
+- **Limits:** files up to 20 MB (an oversized upload gets 413); thumbnails PNG only, at most 256 KB and 512 px.
+- **Validation:** malformed and unsupported files are refused with a reason. A schema 2 upload goes through the bridge. Invalid fields reset with notes, which the panel shows.
+
+**Load and Undo.**
+- A load is exactly one history round, with kind `load` and note `Loaded "<name>"`.
+- Load is refused while a build is running.
+- Undo and redo across a load restore the place state on the other side of it. These moves use state companions (`rounds/<id>.state.json`), written only for the load round and the round just before it.
+- Ordinary undo is unchanged: it never touches sources, sheet roles or registrations, so a photo added after an edit survives undoing that edit.
+- Ordinary edits write no companion, so no extra disk write is added per edit. (Codex's first version wrote one on every round and restored it on every undo. Review caught it, and a regression test now pins it.)
+- Keyboard Undo is suppressed while the panel is open.
+
+**Tests.**
+- `test_twin_house_saves` 19/19 (HTTP): save, list, load, undo and redo of model and place, rename, delete, download and upload round trip, bad and oversized files, every route's auth, normalization notes, refusal during a build, plus the fix round's ordinary-undo and load-crossing cases.
+- `test_twin_house_saves_js` 12/12 (the real panel modules).
+- `test_twin_editor_history_js` 8/8.
+- Neighbours green: model bridge 32/32, twin store, import maps 3/3, Tailwind build 6/6, build-draft pause.
+- `test_twin_store_model` (14/15) and `test_twin_director` fail the same way on main before this branch; both are queued separately.
+- Chromium, as a parent: saved "Before the art director" (thumbnail, 2 buildings, 37 rooms, 155 KB), listed it and loaded it, with no page errors.
+
+**v2.499.844 (2026-11-13): test-only. The camera-ring browser scenario passes again.**
+
+**What was failing.** `test_house_twin_controls_more_live` `scenario_camera_ring_shows_a_still_and_refreshes` had failed since before v2.499.823 with "the marker is drawn at this camera (not merged into a room badge)".
+
+**The cause.** The fixture placed the porch camera on the Kitchen floor at (.5, .45), almost under the Kitchen pendant's automatic ceiling spot. At the scenario's camera the two markers sat 48 px apart on screen, inside the clustering hysteresis (`markers.js` `clusterMarkers`: under 40 px joins, and 48 px or less holds an existing cluster). The camera therefore drew as a cluster badge. The product behaved correctly.
+
+**The fix.** The fixture moves the camera to (.5, .65). The file passes 9/9.
+
+**v2.499.843 (2026-11-13, NOT device-verified): the pool and lawn edges take Library materials, and a yard room made from a feature links to that feature's materials.**
+
+**Slots** (the same shared slots as v2.499.842):
+- **Pool:** `coping`, and `interior` for the tiled walls and floor. With no interior slot the pool keeps its plain pool-tile look exactly, and water is not a slot.
+- **Lawn edge strips:** `strip`.
+- Server validation, load-time reset of unknown materials, one undoable edit per change, and parents only all work as for the other features.
+- Argyle's `house_design` description is extended in place: 5,987 of the 6,000-character cap.
+
+**Yard rooms from features.**
+- "Make this a room" now records which feature the room came from (`feature: {list, id}`).
+- The yard room's editor card shows "Edit <feature> materials", which selects that feature. Older rooms are matched by identical outline, and nothing is guessed after the feature is deleted.
+
+**Yard room framing, partial.** `live.js` `frameRoom` now fits a yard room's corners in camera space (`LEVEL_TUNING.yardFramePadding` 1.1). Node measure: 43.7% of the viewport height before, 61.2% after, with indoor rooms unchanged. That path only runs when there is no levels controller. The house view's normal tap goes through `levels.js` `framing()`, so the user's "tapping a yard room barely zooms" is not fixed by this. Chromium also showed the page stalling for about 3 s right after a yard room opens; investigation continues.
+
+**Tests.** `test_twin_yard_material_slots` 6/6, `test_twin_yard_material_slots_js`, `test_twin_material_slot_js`, `test_twin_yard_rooms` 8/8, and `test_twin_yard_rooms_js` 3/3 (the framing check fails on the old code). Neighbours green: live rooms 10/10, live control 8/8, model bridge 32/32, house_design tool, model devices 20/20, retaining wall, stairs, terrain tools, and import maps 3/3.
 
 **v2.499.842 (2026-11-13, NOT device-verified): fences, fire pits, patios, paths, beds and retaining walls take Library materials per part.**
 
