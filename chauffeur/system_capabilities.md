@@ -1,6 +1,39 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.840 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.841 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.841 (2026-11-13, NOT device-verified): a device shows with its controls or as separate entities, and anything can be hidden from the house view without touching Home Assistant.**
+
+**The ask.** The user's pool integration is one controller device with many entities (pumps, heaters, waterfall, spa jets, lights). They wanted those entities to come through so each can be placed on its own, with a choice per device: "controls on the main device" (right for cameras) or individual entities (right for the pool). They also wanted to hide things from the panel without disabling them in HA.
+
+**Show as** (`services/twin_display.py`, stored in the model as `ha_display`).
+- Per device: "Device with controls" (the default, unchanged behaviour) or "Separate entities".
+- As separate entities, each controllable entity of the device becomes its own placeable item, with device id `entity:<entity_id>` and `parent_device_id` naming the device. Sensors stay out. The device's own primary entity is an item too, unless it is a sensor.
+- Items are placed, auto-spotted, lit and controlled like any device. They work in yard rooms too.
+- Switching back to "Device with controls" unplaces the entity items in the same history step and says how many it removed.
+
+**Hide.**
+- A whole device, one entity item, or a single control on a device can be hidden.
+- Hidden things leave the house view: no marker, no room-panel row, no control. The editor still lists them, marked hidden and folded under "Hidden (n)", so they can be shown again.
+- Home Assistant is never changed.
+
+**Where a person does it.**
+- House editor, room device list (`static/twin/editor/ha_link.js`): a "Show as" select per device that has controls; entity items grouped under their device's name with its Show as and Hide; a "Controls (n)" fold with Hide or Show per control; Hide or Show on every row.
+- Room panel (`static/twin/live/room_panel.js`): a parent sees "Hide in house view" on each row. `api/house/live` now says `can_edit_house` (parents only). After a hide the live keeper re-reads the layout at once (`chf-house-layout-changed`) and reopens the same room, instead of waiting for the 5-minute layout clock. A refusal is said with `showGlobalAlert`.
+- Argyle: `house_design` documents the `set_ha_display` op (schema 5,824 of the 6,000 cap).
+
+**Server.**
+- `set_ha_display` is a parent-only house edit with undo and redo. It refuses an edit that changes nothing and an unknown Show as value.
+- `api/house/live` projects the catalogue before placements, and filters hidden controls out of each marker's accessories.
+- `api/house/ha/link` lists everything, hidden included, with `hidden`, `device_hidden`, `show_as`, `parent_name` and `controls`.
+- Identify (blink) works for entity items.
+- A bad `ha_display` resets on load, with a note.
+
+**Tests.**
+- New `test_twin_ha_display` 5/5: the default is unchanged; separate entities place individually and switching back unplaces them; hiding a device, an entity item and an accessory; parent-only; normalize.
+- `test_twin_ha_link_js` 18/18, a new editor check; `test_twin_controls_js` 31/31, a new panel Hide check; `test_twin_live_control_js` 8/8, the keeper re-reads at once and keeps the room open.
+- Neighbours green: device controls, yard rooms (Python and JS), fire pits, HA routes, model devices, model bridge, house_design tool, import maps, live rooms (node and browser), browser controls live.
+- Chromium, signed in as a parent, pool controller as separate entities with the waterfall hidden: the Pool deck panel lists light, pump, spa jets and heater, each with Hide. Hiding spa jets removed its row with the panel still open, and there were no page errors. The editor list itself was checked by the node test only.
 
 **v2.499.840 (2026-11-13, NOT device-verified): fixes the lighting bake failing with "wave.waveDir.value.set is not a function".**
 
