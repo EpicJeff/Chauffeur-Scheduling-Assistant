@@ -1,6 +1,18 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.845 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.846 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.846 (2026-11-13): test-only. A browser test pins yard-room framing, and the "3 s stall" turned out to be machine load.**
+
+**What was checked.** In the house view, the user reported that tapping a yard room barely zooms in. v2.499.843 noted that the real path is `levels.js` `go()` and `framing()`, and that Chromium showed a ~3 s stall.
+
+**Findings** (a CDP CPU profile at 200 µs sampling plus a 50 ms main-thread tick trace, at 1400×900 and 390×844, with and without the pool slots):
+- **No app stall:** the longest main-thread gap is 224-242 ms, about 3 s after the click, inside the lightmap bake worker message handler (`lightmap_material.js`), not the camera move.
+- **The earlier 3 s gaps** came from roughly 25 leaked Codex helper processes on the machine. The same load caused the day's loopback timeouts.
+- **Framing settles correctly:** looking straight down at 16.13 m, where the deck fills about 75% of the height at 1400×900, and at 20.47 m on a phone.
+- **The earlier "barely zooms" screenshots** were captured mid-animation while the loaded machine stalled the main thread. If the user still sees it on their heavier house, main-thread load during the transition is the likely cause; that belongs with the edit-speed work.
+
+**Test.** New `test_house_twin_live_rooms` scenario, `scenario_yard_room_target_frames_it_from_above`: it makes a yard room from the pool, clicks its level target, and waits for the camera to settle. It then asserts that the yard room is current, the view is top-down, every corner is on screen, and the room spans at least half of the shorter screen side. The file passes 11/11; one loopback timeout passed when rerun alone. Node: yard rooms 3/3, live rooms 10/10, live control 8/8, levels 5/5.
 
 **v2.499.845 (2026-11-13, NOT device-verified): save, load, download and upload houses in the house editor.**
 
