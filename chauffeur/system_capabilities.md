@@ -1,6 +1,33 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.831 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.832 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.832 (2026-11-13, NOT device-verified): energy visualizations hide with the geometry they are tied to. Generating panels show a cyan wave instead of a yellow tint.**
+
+**The ask.** The user, 2026-11-13: "the energy visualizations should probably go away once you are zoomed into a floor or room... it is really just a simple 'hide visualizations if all the things they are linked to are hidden' rule. So, once the solar panels are hidden, the conduits go away. But the solar ribbon stays as long as the thing it is flowing to - meter, powerwall, etc. - is still visible." Lighting likewise: "no need to pay a rendering cost for lighting on rooms that are hidden." On the panels: "I wonder if we could have like a pulsing cyan wave across them."
+
+**The rule** (`static/twin/live/energy.js`, `viewing.js`, `twin_view.js`).
+- **The view:** it now answers `levelShown(key)` and `roofShown(buildingId)`. A floor or a building's roof counts as shown while its fade is above half.
+- **`energyPlace(plan, point)`:** ties a point to a floor (`building:level`), a building's roof, or the yard (always shown). A point counts as in a building within 2 ft of its footprint; the floor comes from its height above the building base.
+- **Conduits:** tied to their roof's building; they hide when that roof peels away.
+- **Ribbons:** tied to both ends, with the solar end being the main roof. A ribbon hides only when both ends are hidden; charger-to-car links follow the charger end.
+- **Each frame:** `draw` gates every ribbon and conduit; pushes decide what is wanted.
+- **Lighting already followed the rule:** the real-light pool only takes lamps on floors that are shown, and re-runs when a floor hides (`live/modes.js`).
+
+**Panel wave.**
+- **Install:** the `solar_panel` material gets a one-time shader injection (`solarWave`): a world-space band of `#4df0ff` moving across the panels, added to the emissive.
+- **Strength:** 0 below 50 W and outside Energy and All, otherwise 0.35 to 1 scaled to 4 kW.
+- **Time:** advances each frame.
+- **Program:** power and mode changes touch only uniforms, so the program never recompiles after the install.
+- **Colour:** the panels keep their own colour; the old yellow emissive tint is gone.
+
+**Tests.**
+- `test_twin_energy_js` 38/38:
+  - the wave: no tint, strength by power and mode, stop, a stable program key and version, and the shader patch present;
+  - the visibility rule: conduits hide with the roof, a solar ribbon stays while its other end shows and hides when both ends hide, and the yard is always shown.
+- `test_twin_solar_conduit_js` 10/10, `test_twin_real_lights_js` 10/10, `test_twin_import_maps`.
+- Browser: `test_house_twin_energy_live` 7/7 (no new programs on re-entry or flow changes) and `test_house_twin_levels_live` 3/3.
+- Chromium: in the main house's main-floor view, the conduits are gone and the solar ribbons stay, because their ends are in the pool house, which is still shown.
 
 **v2.499.831 (2026-11-13, NOT device-verified): solar conduit follows the user's ridge rule. It is electric blue, and all zones on one roof make one conduit.**
 
