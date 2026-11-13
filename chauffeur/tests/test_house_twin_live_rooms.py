@@ -539,7 +539,55 @@ def scenario_room_cards_zoom_round_trip_and_mode_change_compile_no_programs():
         L.no_errors(s)
 
 
+YARD_FIT_JS = """(id) => {
+    const v = window.__twin, room = v.plan.site.yard_rooms.find(r => r.id === id), FT = .3048;
+    const r = v.renderer3.domElement.getBoundingClientRect(), cam = v.camera; cam.updateMatrixWorld(true);
+    const pts = room.polygon.map(([x, y]) => new cam.position.constructor(x * FT, v.controls.target.y, -y * FT).project(cam))
+      .map(p => [(p.x + 1) * r.width / 2, (1 - p.y) * r.height / 2]);
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const dir = cam.position.clone().sub(v.controls.target).normalize();
+    return {w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys), short: Math.min(r.width, r.height),
+            inside: xs.every(x => x >= -1 && x <= r.width + 1) && ys.every(y => y >= -1 && y <= r.height + 1),
+            up: dir.y, mode: v.state.camera, room: v.levels.snapshot().room};
+}"""
+
+
+def scenario_yard_room_target_frames_it_from_above():
+    """User, 2026-11: tapping a yard room should come close, like an indoor room, not barely zoom."""
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    from services import twin_model_ops, twin_store
+
+    def yard(model):
+        model = twin_model_ops.apply(model, {'op': 'make_yard_room', 'list': 'pool', 'index': 0})[0]
+        room = model['site']['yard_rooms'][-1]
+        return twin_model_ops.apply(model, {'op': 'update_site_shape', 'list': 'yard_rooms', 'id': room['id'], 'name': 'Pool deck'})[0]
+    twin_store.update_model(yard, 'edit', note='yard room fixture')
+    room_id = twin_store.current_model()['site']['yard_rooms'][-1]['id']
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        L.open_twin(page, s, query='tier=low&test=1&panel=true&kiosk=true')
+        page.evaluate("() => window.__twin.levels.go({level:'house'}, {immediate:true})")
+        L.H.settle(page)
+        page.locator('.twin-level-targets button', has_text='Pool deck').first.click()
+        camera = '() => window.__twin.camera.position.toArray().map(v => v.toFixed(3)).join()'
+        for _ in range(24):
+            before = page.evaluate(camera)
+            page.wait_for_timeout(250)
+            if page.evaluate(camera) == before:
+                break
+        fit = page.evaluate(YARD_FIT_JS, room_id)
+        check(fit['room'] == room_id and fit['mode'] == 'top', ('the yard room is entered and seen from above', fit))
+        check(fit['up'] > .99, ('the camera looks straight down at the yard room', fit))
+        check(fit['inside'], ('the whole yard room is on screen', fit))
+        check(max(fit['w'], fit['h']) >= .5 * fit['short'], ('the yard room fills at least half the screen', fit))
+        L.no_errors(s)
+
+
 SCENARIOS = [
+    scenario_yard_room_target_frames_it_from_above,
     scenario_far_all_room_card_has_live_facts_and_climate_keeps_round_badges,
     scenario_room_cards_zoom_round_trip_and_mode_change_compile_no_programs,
     scenario_wall_recovers_when_home_assistant_returns,
