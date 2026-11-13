@@ -1369,6 +1369,9 @@ async def slow_request_logger(request, call_next):
 @app.middleware("http")
 async def add_no_cache_headers(request: Request, call_next):
     response = await call_next(request)
+    if (request.url.path.startswith('/api/house/twin/materials/')
+            and response.status_code == 200 and 'immutable' in response.headers.get('Cache-Control', '')):
+        return response
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -2002,16 +2005,16 @@ def kitchen_page(request: Request):
 @app.get("/house/twin")
 def house_twin_page(request: Request):
     """Hidden plan-driven preview; the existing House remains the front door."""
-    from services import twin_library, twin_objects
+    from services import twin_materials, twin_objects
     return templates.TemplateResponse(request=request, name="house_twin.html",
-                                      context={"twin_manifest": twin_library.manifest(), "twin_object_schema": twin_objects.SCHEMA})
+                                      context={"twin_manifest": twin_materials.page_manifest(), "twin_object_schema": twin_objects.SCHEMA})
 
 
 @app.get("/house/editor")
 def house_editor_page(request: Request):
-    from services import twin_library, twin_objects
+    from services import twin_materials, twin_objects
     return templates.TemplateResponse(request=request, name="house_editor.html",
-                                      context={"twin_manifest": twin_library.manifest(), "twin_object_schema": twin_objects.SCHEMA})
+                                      context={"twin_manifest": twin_materials.page_manifest(), "twin_object_schema": twin_objects.SCHEMA})
 
 
 @app.get("/house")
@@ -7861,6 +7864,92 @@ def house_bake_manifest_put(key: str, body: dict = Body(...)):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _material_call(operation, *args):
+    try:
+        return operation(*args)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get('/api/house/materials')
+def house_materials():
+    from services import twin_materials
+    return twin_materials.catalogue()
+
+
+@app.get('/api/house/materials/{id}')
+def house_material_get(id: str):
+    from services import twin_materials
+    return _material_call(twin_materials.get, id)
+
+
+@app.get('/api/house/twin/materials/{id}/{file:path}')
+def house_material_file(id: str, file: str):
+    from services import twin_materials
+    path = _material_call(twin_materials.file_path, id, file)
+    return FileResponse(path, headers={'Cache-Control': 'public, max-age=31536000, immutable'})
+
+
+@app.post('/api/house/materials')
+def house_material_create(request: Request, body: dict = Body(default={})):
+    from services import twin_materials
+    return _material_call(twin_materials.create, body, _acting_id(request, None))
+
+
+@app.patch('/api/house/materials/{id}')
+def house_material_update(id: str, request: Request, body: dict = Body(default={})):
+    from services import twin_materials
+    return _material_call(twin_materials.update, id, body, _acting_id(request, None))
+
+
+@app.post('/api/house/materials/{id}/duplicate')
+def house_material_duplicate(id: str, request: Request):
+    from services import twin_materials
+    return _material_call(twin_materials.duplicate, id, _acting_id(request, None))
+
+
+@app.post('/api/house/materials/{id}/maps/{slot}')
+async def house_material_map(id: str, slot: str, request: Request):
+    from services import twin_materials
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > twin_materials.MAX_INPUT_BYTES:
+            raise HTTPException(status_code=400, detail='Each image must be at most 40 MB.')
+        data.extend(chunk)
+    return await asyncio.to_thread(_material_call, twin_materials.set_image, id, slot,
+                                   bytes(data), _acting_id(request, None))
+
+
+@app.delete('/api/house/materials/{id}/maps/{slot}')
+def house_material_map_clear(id: str, slot: str, request: Request):
+    from services import twin_materials
+    return _material_call(twin_materials.update, id, {'maps': {slot: None}}, _acting_id(request, None))
+
+
+@app.post('/api/house/materials/{id}/undo')
+def house_material_undo(id: str):
+    from services import twin_materials
+    return _material_call(twin_materials.undo, id)
+
+
+@app.post('/api/house/materials/{id}/redo')
+def house_material_redo(id: str):
+    from services import twin_materials
+    return _material_call(twin_materials.redo, id)
+
+
+@app.post('/api/house/materials/{id}/reset')
+def house_material_reset(id: str, request: Request):
+    from services import twin_materials
+    return _material_call(twin_materials.reset_to_source, id, _acting_id(request, None))
+
+
+@app.delete('/api/house/materials/{id}')
+def house_material_delete(id: str, request: Request):
+    from services import twin_materials
+    return _material_call(twin_materials.delete, id, _acting_id(request, None))
+
+
 @app.get("/api/house/twin/library/{asset_id}/{name:path}")
 def house_twin_library_file(asset_id: str, name: str):
     from services import twin_library
@@ -7946,6 +8035,8 @@ def _house_upload_call(fn, *args):
 def house_editor_upload_start(body: dict, request: Request):
     from services import twin_imports
     require_parent_token(request.headers.get('x-member-token') or request.query_params.get('member_token'))
+    if body.get('material_id') is not None:
+        body = {**body, 'material_actor': _acting_id(request, None)}
     return _house_upload_call(twin_imports.start_upload, body)
 
 
