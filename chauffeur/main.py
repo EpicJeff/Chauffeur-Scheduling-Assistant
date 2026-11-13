@@ -8434,18 +8434,10 @@ def house_editor_library(request: Request):
                          request.query_params.get('member_token'))
     kit = twin_library.kit('modern_farmhouse')
     words = lambda value: value.replace('_', ' ').strip().capitalize()
-    materials, items = [], {}
+    materials, items = twin_library.material_choices(), {}
     for asset, entry in twin_library.manifest().items():
-        if entry.get('kind') == 'material':
-            color = next((ref['color'] for ref in kit['materials'].values()
-                          if ref['asset'] == asset), '#b8b0a4')
-            materials.append({'id': asset, 'name': words(asset), 'color': color})
-        elif entry.get('kind') == 'model':
+        if entry.get('kind') == 'model':
             items[asset] = {'id': asset, 'name': words(asset), 'kind': 'furniture'}
-    for ref in kit['materials'].values():
-        material = {'id': ref['asset'], 'name': words(ref['asset']), 'color': ref['color']}
-        if material not in materials:
-            materials.append(material)
     for asset in kit['furniture'].values():
         items[asset] = {'id': asset, 'name': words(asset), 'kind': 'furniture'}
     for kind, presets in (('shrub', kit['shrubs']),

@@ -24,10 +24,11 @@ def scenario_solid_stone_and_undo():
         H.open_editor(page, served)
         page.evaluate("()=>{window.__twin.bake?.stop();window.__editor.clickPiece('porch','b');}")
         shelf = page.locator('#piece-card')
-        H.check(not shelf.get_by_label('Foundation material', exact=True).is_visible(), 'posts hides solid fields')
+        # Finishes are shared material slots now (v2.499.835); Posts hides the solid base slot.
+        H.check(not shelf.locator('[data-material-slot="Solid base"]').is_visible(), 'posts hides solid fields')
         shelf.get_by_label('Foundation', exact=True).select_option('solid')
         page.wait_for_function("()=>window.__twin.ready&&window.__twin.plan.buildings[0].porches[0].foundation.type==='solid'")
-        shelf.get_by_label('Foundation material', exact=True).select_option('stone')
+        H.check(shelf.locator('[data-material-slot="Solid base"]').is_visible(), 'solid shows its base material slot (default stone)')
 
         def geometry():
             return page.evaluate("""async()=>{
@@ -44,7 +45,7 @@ def scenario_solid_stone_and_undo():
         got = geometry()
         H.check(got['stone'] and abs(got['edge']-(-6+1/12)) < .02, ('stone base reaches ground and is inset one inch', got))
         H.check(got['roofPost'], ('roof posts remain', got))
-        # Choosing the already-selected Stone must not create an extra undo step.
+        # Switching to Solid is one undo step.
         page.click('#rail-undo')
         page.wait_for_function("()=>window.__twin.ready&&window.__twin.plan.buildings[0].porches[0].foundation.type==='posts'")
         H.check(not geometry()['stone'] and geometry()['roofPost'], 'undo restores posts and keeps roof supports')

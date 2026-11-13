@@ -8,7 +8,7 @@ import threading
 import uuid
 from urllib.request import Request, urlopen
 
-from services import twin_store, twin_objects
+from services import twin_objects
 
 _ROOT = Path(__file__).resolve().parent.parent
 _LOCK = threading.Lock()
@@ -33,8 +33,47 @@ def kit(kit_id: str) -> dict:
         raise KeyError(kit_id) from exc
 
 
+def material_choices(kit_id='modern_farmhouse'):
+    """The Library's material list, from the existing kit and vetted manifest."""
+    refs = kit(kit_id)['materials']
+    words = lambda value: value.replace('_', ' ').strip().capitalize()
+    choices = []
+    for asset, entry in manifest().items():
+        if entry.get('kind') == 'material':
+            color = next((ref['color'] for ref in refs.values() if ref['asset'] == asset), '#b8b0a4')
+            choices.append({'id': asset, 'name': words(asset), 'color': color})
+    for ref in refs.values():
+        choice = {'id': ref['asset'], 'name': words(ref['asset']), 'color': ref['color']}
+        if choice not in choices:
+            choices.append(choice)
+    return choices
+
+
+def material_slot_error(value):
+    """A feature default (None), kit role, or vetted library material with optional tint."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not isinstance(value.get('id'), str) or not value['id']:
+        return 'Choose a material with an id.'
+    if set(value) - {'id', 'color'}:
+        return 'A material slot accepts only id and optional color.'
+    if 'color' in value and (not isinstance(value['color'], str) or not value['color'].strip()):
+        return 'Choose a material with a non-empty color.'
+    if value['id'] not in kit('modern_farmhouse')['materials'] and value['id'] not in {m['id'] for m in material_choices()}:
+        return f"Unknown material id: {value['id']}. Choose a material from the Library."
+    return None
+
+
+def normalize_material_slot(value):
+    """Return a detached canonical reference; reject unknown ids rather than guessing."""
+    if error := material_slot_error(value):
+        raise ValueError(error)
+    return None if value is None else {key: value[key] for key in ('id', 'color') if key in value}
+
+
 def ensure(asset_id: str) -> str:
     """Return the complete asset directory; failed downloads publish nothing."""
+    from services import twin_store
     assets = manifest()
     asset = assets[asset_id]
     library = Path(twin_store.DATA_DIR) / 'library'

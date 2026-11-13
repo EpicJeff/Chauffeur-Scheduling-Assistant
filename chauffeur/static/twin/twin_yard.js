@@ -2,7 +2,7 @@ import { applyObject, objectShown, objectMaterialKey, sitePieces } from './objec
 import * as THREE from 'three';
 import { Tree } from '@dgreenheck/ez-tree';
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
-import { kitMaterial, loadModel, disposeObject, cacheModelMaterials } from './twin_library.js';
+import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials } from './twin_library.js';
 import { groundAt, buildingBase } from './twin_ground.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
 import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
@@ -94,11 +94,15 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   };
   const materialKit = { ...kit, materials: { ...kit.materials } };
   const known = kit.manifest || window.twinManifest || {};
-  for (const [role, ref] of Object.entries(plan.materials || {})) materialKit.materials[role] = {
-    ...kit.materials?.[role], color: ref.color || kit.materials?.[role]?.color,
-    asset: known[ref.id] ? ref.id : kit.materials?.[role]?.asset,
+  for (const [role, ref] of Object.entries(plan.materials || {})) {
+    const source = kit.materials?.[ref.id] || kit.materials?.[role];
+    materialKit.materials[role] = { ...source, color: ref.color || source?.color, asset: known[ref.id] ? ref.id : source?.asset };
+  }
+  const mat = (role, slot = null) => {
+    if (slot) return materialSlot(slot, role, materialKit, tier, mats, mat);
+    if (!mats.has(role)) mats.set(role, kitMaterial(role === 'terrain_lawn' ? 'lawn' : role, materialKit, tier));
+    return mats.get(role);
   };
-  const mat = role => { if (!mats.has(role)) mats.set(role, kitMaterial(role === 'terrain_lawn' ? 'lawn' : role, materialKit, tier)); return mats.get(role); };
   const plain = (name, color, extra = {}) => {
     if (!mats.has(name)) mats.set(name, extra.fireShader ? fireFlameMaterial() : new THREE.MeshStandardMaterial({ name, color, roughness: 0.85, ...extra }));
     return mats.get(name);

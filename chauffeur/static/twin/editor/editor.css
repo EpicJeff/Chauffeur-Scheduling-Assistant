@@ -344,3 +344,8 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   #library-panel > p { margin: 2px 0; }
   #library-entries { min-height: 100px; }
 }
+
+/* Slots extend the card's material rows and the Library's swatch/button vocabulary. */
+.editor-material-swatch { display: inline-block; flex: 0 0 22px; width: 22px; height: 22px; border: 1px solid var(--editor-muted); border-radius: 6px; }
+.editor-material-options { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; padding: 8px; border: 1px solid var(--editor-muted); border-radius: 12px; }
+.editor-material-options button { display: flex; align-items: center; gap: 8px; text-align: left; }

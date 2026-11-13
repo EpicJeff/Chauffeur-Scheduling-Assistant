@@ -841,9 +841,11 @@ def _material(building, op):
     target, material = op.get('target'), op.get('material')
     if not isinstance(target, dict):
         raise Refused('Choose a surface for the material.')
-    if material is not None and (not isinstance(material, dict)
-            or any(not isinstance(material.get(k), str) or not material[k] for k in ('id', 'color'))):
-        raise Refused('Choose a material with an id and color.')
+    from services.twin_library import normalize_material_slot
+    try:
+        material = normalize_material_slot(material)
+    except ValueError as error:
+        raise Refused(str(error)) from error
     if 'wall' in target and target.get('side') in ('left', 'right'):
         owner = _find(building, 'walls', target['wall'])
         container, key = owner.setdefault('faces', {}), target['side']
