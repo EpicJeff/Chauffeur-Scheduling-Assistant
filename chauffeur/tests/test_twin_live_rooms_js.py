@@ -96,7 +96,7 @@ const view = {ready:true,scene:new THREE.Scene(),renderer3:{domElement:canvas},c
   pick: () => ({kind:'room',building:'b',id:'r'}), render() { this.live?.draw(); }};
 const live = await mountLive(view,{api});
 const row = id => document.getElementById('twin-room-panel').querySelectorAll('[data-device-id]').find(n => n.dataset.deviceId === id);
-const button = (node, text) => node.querySelectorAll('button').find(n => n.textContent === text);
+const button = (node, text) => node.querySelectorAll('button').find(n => n.textContent === text || n.getAttribute?.('aria-label') === text);
 const toggle = id => row(id).querySelectorAll('button').find(n => n.getAttribute('role') === 'switch');
 const click = async node => { assert.ok(node,'control exists'); node.dispatchEvent(new Event('click')); await new Promise(resolve => setTimeout(resolve,15)); };
 const checks = [];
@@ -202,7 +202,9 @@ check('lights_mode_builds_transformed_floor_glow_and_restores_all', async () => 
   assert.ok(floors[0].children[0].material.opacity > .6); assert.deepEqual(floors[0].position.toArray(),[30.48,.6096,-15.24]);
   assert.ok(Math.abs(floors[0].rotation.y - Math.PI/2)<.001); assert.equal(floors[1].children[0].material.color.b,1);
   level.visible = false; live.draw(); assert.ok(floors.every(n => !n.visible)); level.visible = true;
-  await click(button(strip,'All')); assert.ok(live.markers().every(m => !m.dim)); assert.ok(floors.every(n => !n.visible));
+  // Slice 2c-2: All shows every visualization, so the lit rooms keep glowing (no room here has a
+  // temperature reading, so none takes the climate tint) and nothing is dimmed.
+  await click(button(strip,'All')); assert.ok(live.markers().every(m => !m.dim)); assert.equal(floors.filter(n => n.visible).length,2);
 });
 check('outage_keeps_state_and_blocks_room_control', async () => {
   const before = calls.length; away = true; await live.refresh();

@@ -280,8 +280,9 @@ check('modes_register_and_switch', async () => {
   assert.equal(typeof mod.registerMode, 'function', 'modes.js exports registerMode');
   assert.equal(typeof mod.modes, 'function', 'modes.js exports modes()');
   const listed = mod.modes();
-  assert.deepEqual(listed.slice(0, 2).map(m => [m.id, m.label]), [['lights', 'Lights'], ['all', 'All']],
-    `Lights and All are the first registrations: ${JSON.stringify(listed.map(m => m.id))}`);
+  // Slice 2c-2: the All icon leads the strip, then Lights.
+  assert.deepEqual(listed.slice(0, 2).map(m => [m.id, m.label]), [['all', 'All'], ['lights', 'Lights']],
+    `All and Lights are the first registrations: ${JSON.stringify(listed.map(m => m.id))}`);
   for (const m of listed.slice(0, 2)) for (const fn of ['enter', 'update', 'leave'])
     assert.equal(typeof m[fn], 'function', `${m.id} registers ${fn}`);
   const log = [];

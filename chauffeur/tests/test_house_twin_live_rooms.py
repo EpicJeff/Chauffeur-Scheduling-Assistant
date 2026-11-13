@@ -208,6 +208,8 @@ def scenario_lights_mode_lights_rooms():
             return 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]
 
         H = L.H
+        # Slice 2c-2: All lights rooms too, so the unlit reference is a mode without lighting.
+        page.get_by_role('button', name='Security', exact=True).locator('visible=true').first.click()
         H.settle(page, 3)
         plain = samples()
 
@@ -237,7 +239,8 @@ def scenario_lights_mode_lights_rooms():
         H.settle(page, 4)
         check(all(m['dim'] is False for m in L.markers(page)), ('All undims every marker', L.markers(page)[:3]))
         back = samples()
-        check(abs(lum(back['kitchen']) - lum(plain['kitchen'])) < 12, ('All puts the floors back', plain, back))
+        # All shows every visualization, so the lit Kitchen glows as it does in Lights.
+        check(abs(lum(back['kitchen']) - lum(lit['kitchen'])) < 12, ('All keeps the room glow of Lights', lit, back))
         L.no_errors(s)
 
 

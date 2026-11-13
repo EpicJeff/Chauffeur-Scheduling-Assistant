@@ -152,7 +152,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
         const flow = flows.get(row.link?'charger:'+chargerIndex:row.id);
         row.reading = {...flowReading(flow?.watts || 0), watts: flow?.watts || 0};
         if(row.link)row.reading.width=.25*.3048;
-        row.halo.visible = row.mesh.visible = mode === 'energy' && (row.link
+        row.halo.visible = row.mesh.visible = (mode === 'energy' || mode === 'all') && (row.link
           ? !live.stale() && row.reading.visible && !!car && anchors.spots.some(s=>s.car===car.id && s.building===row.link.spot.building && s.id===row.link.spot.id)
           : !!flow?.shown);
         row.mesh.material.uniforms.radius.value = row.reading.width / 2;
@@ -175,11 +175,11 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       }
     },
     draw(mode) {
-      labels.hidden = mode !== 'energy';
+      labels.hidden = mode !== 'energy' && mode !== 'all';
       const rect = view.renderer3.domElement.getBoundingClientRect();
       const shown = [], entries = [];
       for (const row of ribbons) {
-        row.label.hidden = !!row.link || !row.mesh.visible || mode !== 'energy';
+        row.label.hidden = !!row.link || !row.mesh.visible || mode !== 'energy' && mode !== 'all';
         if (!row.label.hidden) {
           const point = row.point.clone().project(view.camera);
           if (!row.label.hidden) {

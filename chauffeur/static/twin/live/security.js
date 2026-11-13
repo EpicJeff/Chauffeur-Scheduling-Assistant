@@ -59,8 +59,9 @@ export function mountSecurity({view, live, overlays = view.scene}) {
   }
   return {warmObjects: () => [...emphasis, ...cones].map(r => r.mesh),
     update(mode) {
-      for (const {marker, mesh} of emphasis) mesh.visible = mode === 'security' && !live.stale() && securityAttention(marker, live.state(marker.entity_id));
-      for (const {mesh} of cones) mesh.visible = mode === 'security';
+      const on = mode === 'security' || mode === 'all';
+      for (const {marker, mesh} of emphasis) mesh.visible = on && !live.stale() && securityAttention(marker, live.state(marker.entity_id));
+      for (const {mesh} of cones) mesh.visible = on;
     },
     legend() {
       const alarms = Object.entries(live.peek()).filter(([id]) => id.startsWith('alarm_control_panel.'));

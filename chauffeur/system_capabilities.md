@@ -1,6 +1,40 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.822 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.823 (2026-11-12).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.823 (2026-11-12, NOT device-verified): the house view's modes are icons centred at the top. All now shows every visualization at once.**
+
+**The ask.** Slice 2c of the viewer navigation spec (`docs/superpowers/specs/2026-11-12-twin-viewer-navigation-design.md`), part 2. The user: mode icons centred at the top with tooltips, and All as "all visualizations" rather than "nothing". Tint, ribbons and camera cones are cheap; only lights are costly.
+
+**The mode strip** (`static/twin/live/modes.js`, `templates/house_twin.html`).
+- **Icons:** each mode is an icon button: All (layers), Lights (lightbulb), Climate (thermometer), Energy (zap) and Security (shield).
+- **Names:** the mode name is the button's accessible name, and a tooltip on hover. On touch screens a long press (500 ms) shows the name for 1.5 s.
+- **Position:**
+  - fixed and centred at the top: 86 px down on a desk, 16 px on the wall panel;
+  - on screens up to 800 px wide it sits below the House and Preview row (206 px; 72 px on the wall).
+- **Order:** All leads, then Lights.
+- **Lucide:** `layers` and `zap` are added to the vendored set (`lucide-static@0.468.0`, integrity verified; VENDORED.md).
+
+**All = everything** (`modeShows(mode, id)` is true in a mode's own view and in All).
+- **Lights:** All takes lamp ownership as Lights does, so lit rooms glow, real lights shine, and the bulbs show. A mode without lighting (Climate, Energy, Security) hands the look back to the house's own lamps.
+- **Climate:** rooms with a temperature reading take the climate tint and label. In All, a room with no reading glows as it would in Lights.
+- **Energy:** the ribbons and kW labels show in All (`live/energy.js`).
+- **Security:** open or unlocked emphasis and the 25 ft camera cones show in All (`live/security.js`).
+
+**No new shaders on switching.** Programs are keyed on the light set. All shows the light pool and the overlays together, so the mode layer's warm-up now compiles twice: once with the pool shown and once hidden. Energy's flow changes and repeat entries to Energy or Security then compile nothing new. Found in Chromium: without the second pass, the energy test saw 1 to 2 extra programs.
+
+**Tests.**
+- Node: `test_twin_real_lights_js` (All lights; Security releases), `test_twin_kinds_js` (All then Lights), `test_twin_live_rooms_js` (aria-label lookups; All keeps the glow), and `test_twin_energy_js` (one warm-up is two compile passes). Also `test_twin_markers_js`, `test_twin_levels_js`, `test_twin_live_control_js`, `test_twin_live_stream_js`, `test_twin_palette_js`, `test_twin_import_maps`, `test_tailwind_build`.
+- Browser:
+  - `test_house_twin_real_lights_live` 10/10 (the release checks moved from All to Security);
+  - `test_house_twin_live_rooms` 10/10 (the unlit reference is Security; All keeps the Lights glow);
+  - `test_house_twin_energy_live` 7/7;
+  - `test_house_twin_levels_live` 3/3;
+  - `test_house_twin_viewing_live` 5/5;
+  - `test_house_twin_live_markers` 9/9;
+  - `test_house_twin_controls_live` 4/4;
+  - `test_house_twin_glance_live` 10/10.
+- Screenshots on desk, wall and phone.
 
 **v2.499.822 (2026-11-12, NOT device-verified): porches can sit on a solid stone, brick or concrete base. Slab walls on patios and beds now face outward.**
 
