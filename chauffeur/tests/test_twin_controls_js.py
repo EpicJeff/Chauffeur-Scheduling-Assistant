@@ -518,6 +518,50 @@ check('more_only_for_offered_devices', async () => {
   } finally { delete window.ChauffeurHaCards; t.cleanup(); }
 });
 
+check('panel_hide_is_parent_only_and_posts_a_house_display_edit', async () => {
+  // User, 2026-11-13: hide things from the panel without disabling them in Home Assistant.
+  const item = {...FAN, device_id: 'entity:fan.bedroom', name: 'Fan entity'};
+  let t = await mount([FAN, item]);
+  try {
+    t.live.openRoom('b', 'r');
+    await wait(60);
+    assert.equal(document.getElementById('twin-room-panel').querySelector('[data-hide]'), null,
+      'no Hide unless the house view says this person may edit the house');
+  } finally { t.cleanup(); }
+  t = await mount([FAN, item], {layoutExtra: {can_edit_house: true}});
+  const realFetch = globalThis.fetch, posted = [], changed = [];
+  globalThis.fetch = window.fetch = async (url, options = {}) => {
+    posted.push({url: String(url), body: JSON.parse(options.body || '{}')});
+    return new Response('{}', {status: t.refuse ? 400 : 200, headers: {'Content-Type': 'application/json'}});
+  };
+  const onChange = () => changed.push(1);
+  document.addEventListener('chf-house-layout-changed', onChange);
+  try {
+    t.live.openRoom('b', 'r');
+    await wait(60);
+    const panels = document.querySelectorAll('#twin-room-panel');
+    assert.equal(panels.length, 1, `one room panel (the first layer's went with it): ${panels.length}`);
+    const panel = panels[0];
+    const hide = id => panel.querySelector(`[data-device-id="${id}"] [data-hide]`);
+    assert.ok(hide('fan') && hide('entity:fan.bedroom'), 'each row has its Hide for a parent');
+    await press(hide('fan'));
+    await wait(40);
+    await press(hide('entity:fan.bedroom'));
+    await wait(40);
+    assert.deepEqual(posted.map(p => [p.url.endsWith('api/house/editor/op'), p.body.op]), [
+      [true, {op: 'set_ha_display', kind: 'devices', item: 'fan', hidden: true}],
+      [true, {op: 'set_ha_display', kind: 'entities', item: 'fan.bedroom', hidden: true}]], JSON.stringify(posted));
+    assert.equal(changed.length, 2, 'each hide asks the house view to re-read its layout now');
+    assert.deepEqual(t.serviceCalls(), [], 'Home Assistant is never called');
+    t.refuse = true;
+    await press(hide('fan'));
+    await wait(40);
+    assert.ok(t.alerts.some(a => /Could not hide/.test(a)), `a refusal is said in the page: ${JSON.stringify(t.alerts)}`);
+    assert.equal(changed.length, 2, 'a refused hide changes nothing');
+    assert.deepEqual(t.dialogs, [], 'no browser dialogs');
+  } finally { document.removeEventListener('chf-house-layout-changed', onChange); globalThis.fetch = window.fetch = realFetch; t.cleanup(); }
+});
+
 check('media_ring_play_volume_mute_source', async () => {
   const t = await mount([SPEAKER, TV]);
   try {

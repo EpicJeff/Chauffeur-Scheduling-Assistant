@@ -480,14 +480,14 @@ const THREE = await import('three');
 const FT = .3048;
 const liveModule = await import(file('static/twin/live/live.js'));
 
-async function rig({devices, rooms = null, spacing = 8, extraStates = {}}) {
+async function rig({devices, rooms = null, spacing = 8, extraStates = {}, layoutExtra = {}}) {
   const states = {...structuredClone(extraStates), ...Object.fromEntries(devices.map(d => [d.entity_id, {entity_id: d.entity_id, state: d.state,
     attributes: structuredClone(d.attributes || {})}]))};
   const layoutDevices = devices.map(d => ({device_id: d.device_id, name: d.name, entity_id: d.entity_id,
     entities: d.entities || [d.entity_id], accessories: d.accessories, kind: d.kind, offered: d.offered !== false, area_id: d.area_id || 'kitchen'}));
   const roomRows = rooms || [{building: 'b', room: 'r', level: 'L1', name: 'Kitchen', area_id: 'kitchen',
     lights: devices.filter(d => d.kind === 'light').map(d => d.entity_id)}];
-  const layout = {available: true, rooms: roomRows, devices: layoutDevices,
+  const layout = {...layoutExtra, available: true, rooms: roomRows, devices: layoutDevices,
     markers: layoutDevices.map((d, i) => ({...d, building: 'b', level: 'L1', room: 'r',
       at: devices[i].at || [i * spacing - 24, 4, 2], placed: true}))};
   const t = {states, layout, requests: [], calls: [], confirms: [], alerts: [], confirm: true, frozen: new Set()};

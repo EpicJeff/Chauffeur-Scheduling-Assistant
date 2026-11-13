@@ -578,6 +578,16 @@ def _unique_devices(buildings, notes):
         building['devices'] = kept
 
 
+def _ha_display(value, notes):
+    """House-only HA presentation (Show as, Hide); invalid settings fall back to defaults."""
+    from services import twin_display
+    try:
+        return twin_display.validate(value)
+    except ValueError:
+        notes.append('Reset invalid house display settings.')
+        return twin_display.validate()
+
+
 def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
     """Validate and derive rooms, optionally retaining whole flat-read walls."""
     model = deepcopy(model)
@@ -644,6 +654,7 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
         notes.append('Coerced invalid materials to an empty object.')
     return {'schema': SCHEMA, 'units': 'ft', 'materials': materials,
             'buildings': buildings, 'site': site,
+            'ha_display': _ha_display(model.get('ha_display'), notes),
             'solar_source_building': model.get('solar_source_building'),
             'solar_source_roof': model.get('solar_source_roof') if any(
                 r['id'] == model.get('solar_source_roof') for b in buildings for r in b.get('roofs', [])) else None}, notes

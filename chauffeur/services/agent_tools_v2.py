@@ -7743,6 +7743,7 @@ class HouseDesignTool(BaseModel):
         "place_device (device id from describe of a linked room, anchor or building+host, offset?, "
         "host may be {opening, side:in|out}); "
         "unplace_device (device); "
+        "set_ha_display (device, show_as:controls|entities) or (kind:devices|entities, item, hidden) house view only, never HA; "
         "host is {wall, side, at, z} with side left|right, {floor: room, u, v}, or {ceiling: room, u, v}; "
         "u,v are room fractions 0..1. "
         "draw_roof (area:rectilinear [[x,y],...], plate?, pitch?=6, overhang?=1); "

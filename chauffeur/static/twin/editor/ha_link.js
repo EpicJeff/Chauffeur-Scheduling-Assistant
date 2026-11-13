@@ -16,13 +16,31 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     if (!signal?.aborted) Promise.resolve().then(action).catch(api.report);
   }, { signal });
   // `focus` names the control so a redraw can hand keyboard focus to its successor.
-  const button = (text, action, focus) => {
+  const button = (text, action, focus, label) => {
     const node = element('button', text); node.type = 'button';
     if (focus) node.dataset.haFocus = focus;
+    if (label) node.setAttribute('aria-label', label);
     listen(node, 'click', action);
     return node;
   };
   const yardRoom = room => room.yard || room.building === null;
+  // House-only display (user, 2026-11-13): show a device with its controls or as separate
+  // entities, and hide devices, entity items or single controls from the house view.
+  const showAs = (deviceId, value) => onCommit({ op: 'set_ha_display', device: deviceId, show_as: value });
+  const hide = (kind, item, hidden) => onCommit({ op: 'set_ha_display', kind, item, hidden });
+  function hideButton(kind, item, hidden, label) {
+    return button(hidden ? 'Show' : 'Hide', () => { if (canEdit()) return hide(kind, item, !hidden); },
+      `${hidden ? 'show' : 'hide'}:${item}`, label);
+  }
+  function showAsField(deviceId, value) {
+    const label = element('label', 'Show as'), select = element('select');
+    for (const [v, text] of [['controls', 'Device with controls'], ['entities', 'Separate entities']]) {
+      const option = element('option', text); option.value = v; select.append(option);
+    }
+    select.value = value; select.disabled = !canEdit(); select.setAttribute('aria-label', 'Show as');
+    listen(select, 'change', () => { if (canEdit() && select.value !== value) return showAs(deviceId, select.value); });
+    label.append(select); return label;
+  }
   const commit = (room, value) => onCommit(yardRoom(room)
     ? { op: 'update_site_shape', list: 'yard_rooms', id: room.id, ha_area: value || null }
     : { op: 'set', building: room.building, id: room.id, field: 'ha_area', value });
@@ -93,8 +111,24 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     const placed = isPlaced(device);
     words.append(element('p', device.name), element('span', device.kind), element('span', placed ? 'Placed' : 'Not placed yet'));
     if (flag) words.append(element('span', flag));
+    if (device.hidden || device.device_hidden) { row.dataset.hidden = ''; words.append(element('span', 'Hidden in the house view')); }
+    if (!device.parent_device_id && (device.controls?.length || device.show_as === 'entities')) words.append(showAsField(device.device_id, device.show_as || 'controls'));
+    if (device.controls?.length) {
+      const list = element('details'), summary = element('summary', `Controls (${device.controls.length})`);
+      list.append(summary);
+      for (const control of device.controls) {
+        const line = element('div'); line.className = 'editor-device-control';
+        line.append(element('span', `${control.name}${control.hidden ? ' (hidden)' : ''}`),
+          hideButton('entities', control.entity_id, !!control.hidden, `${control.hidden ? 'Show' : 'Hide'} ${control.name}`));
+        list.append(line);
+      }
+      words.append(list);
+    }
     actions.append(button('Pick a spot', () => pickSpot(room, device), `spot:${device.device_id}`));
     if (device.kind === 'light') actions.append(button('Blink', () => blink(device), `blink:${device.device_id}`));
+    if (!device.device_hidden) actions.append(device.parent_device_id
+      ? hideButton('entities', device.entity_id, !!device.hidden, `${device.hidden ? 'Show' : 'Hide'} ${device.name}`)
+      : hideButton('devices', device.device_id, !!device.hidden, `${device.hidden ? 'Show' : 'Hide'} ${device.name}`));
     if (placed) actions.append(button('Remove', () => {
       if (canEdit()) return onCommit({ op: 'unplace_device', device: device.device_id });
     }, `remove:${device.device_id}`));
@@ -124,8 +158,30 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     const section = element('section');
     section.append(element('h3', 'Devices'));
     const placed = yardRoom(room) ? getPlan?.()?.site?.devices || [] : [];
-    for (const device of latest.devices || []) if ((area && device.area_id === area)
-      || placed.some(d => d.device === device.device_id && d.host?.yard_room === room.id)) section.append(deviceRow(device, room));
+    const rows = (latest.devices || []).filter(device => (area && device.area_id === area)
+      || placed.some(d => d.device === device.device_id && d.host?.yard_room === room.id));
+    const shown = rows.filter(d => !d.hidden && !d.device_hidden), hidden = rows.filter(d => d.hidden || d.device_hidden);
+    const headers = new Set();
+    const groupHeader = device => {
+      const header = element('div'); header.className = 'editor-material-line editor-device-group';
+      const words = element('div'); words.append(element('p', device.parent_name || 'Device'), element('span', 'Separate entities'),
+        showAsField(device.parent_device_id, 'entities'));
+      header.append(words, hideButton('devices', device.parent_device_id, !!device.device_hidden, `${device.device_hidden ? 'Show' : 'Hide'} ${device.parent_name}`));
+      return header;
+    };
+    for (const device of shown) {
+      if (device.parent_device_id && !headers.has(device.parent_device_id)) { headers.add(device.parent_device_id); section.append(groupHeader(device)); }
+      section.append(deviceRow(device, room));
+    }
+    if (hidden.length) {
+      const fold = element('details'); fold.className = 'editor-hidden-devices';
+      fold.append(element('summary', `Hidden (${hidden.length})`));
+      for (const device of hidden) {
+        if (device.device_hidden && !headers.has(device.parent_device_id)) { headers.add(device.parent_device_id); fold.append(groupHeader(device)); }
+        fold.append(deviceRow(device, room));
+      }
+      section.append(fold);
+    }
     for (const note of notes || []) section.append(element('p', note));
     return section;
   }

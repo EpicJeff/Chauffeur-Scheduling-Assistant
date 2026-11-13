@@ -7410,8 +7410,12 @@ def _house_ha_context(settings=None):
 
 @app.get('/api/house/ha/link')
 def house_ha_link():
-    from services import twin_ha
-    model, catalogue = _house_ha_context()
+    from services import ha_api, twin_display, twin_ha
+    model, source = _house_ha_context()
+    states = {row['entity_id']: row for row in ha_api.get_states()} if source['available'] else {}
+    # The editor lists everything, hidden included, as the house shows it (Show as).
+    catalogue = twin_display.catalogue(model, source, states, include_hidden=True)
+    names = {d['device_id']: d['name'] for d in source['devices']}
     suggestions = twin_ha.suggest(model, catalogue['areas'])
     gone = set(twin_ha.gone_rooms(model, catalogue['areas']))
     placed = twin_ha.placements(model)
@@ -7433,8 +7437,16 @@ def house_ha_link():
     return {**catalogue, 'rooms': rooms,
             'unlinked': [{'area_id': a['area_id'], 'name': a['name']}
                          for a in catalogue['areas'] if a['area_id'] not in linked],
-            'devices': [{**d, 'placed': placed.get(d['device_id']),
-                         'auto': auto.get(d['device_id'])} for d in catalogue['devices']]}
+            'devices': [{**d, 'placed': placed.get(d['device_id']), 'auto': auto.get(d['device_id']),
+                         'hidden': twin_display.hidden(model, 'entities', d['entity_id']) if d.get('parent_device_id')
+                         else twin_display.hidden(model, 'devices', d['device_id']),
+                         'show_as': 'entities' if d.get('parent_device_id') else twin_display.show_as(model, d['device_id']),
+                         'device_hidden': bool(d.get('parent_device_id')) and twin_display.hidden(model, 'devices', d['parent_device_id']),
+                         'parent_name': names.get(d.get('parent_device_id')),
+                         'controls': [] if d.get('parent_device_id') else [
+                             {**a, 'hidden': twin_display.hidden(model, 'entities', a['entity_id'])}
+                             for a in twin_ha.device_accessories(d, states)]}
+                        for d in catalogue['devices']]}
 
 
 def _house_lot_point(building, point):
@@ -7553,11 +7565,15 @@ def house_live(request: Request):
     from services import control_rules, ha_api, twin_ha, twin_model_hosts
     settings = storage.get_settings() or {}
     model, catalogue = _house_ha_context(settings)
+    states = {row['entity_id']: row for row in ha_api.get_states()} if catalogue['available'] else {}
+    # Each device as the house shows it: with its controls, or as separate entities; hidden
+    # devices and entities are left out (Home Assistant is untouched).
+    from services import twin_display
+    catalogue = twin_display.catalogue(model, catalogue, states)
     buildings = {b['id']: b for b in model['buildings']}
     placed = twin_ha.placements(model)
     auto = twin_ha.auto_spots(model, catalogue)
     who = control_rules.who_from_request(request.headers, request.query_params)
-    states = {row['entity_id']: row for row in ha_api.get_states()} if catalogue['available'] else {}
     geometry = {}
     rooms, markers, devices = [], [], []
     yard_areas = {}
@@ -7591,7 +7607,7 @@ def house_live(request: Request):
         devices[-1]['accessories'] = [
             {**accessory, 'offered': control_rules.offered(
                 who, accessory['entity_id'], settings, states=states)}
-            for accessory in twin_ha.device_accessories(device, states)]
+            for accessory in twin_display.accessories(model, twin_ha.device_accessories(device, states))]
         if placement:
             if yard_room:
                 spot = twin_ha.yard_spot(model, placement) if yard_linked else None
@@ -7644,7 +7660,9 @@ def house_live(request: Request):
         devices.insert(0, row)
         markers.append({**row, 'building': None, 'level': None, 'room': None,
                         'at': [*at, height + (pit.get('elevation') or 0)], 'placed': True})
-    return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices}
+    # A parent may hide things from the house view right from a panel (the edit is parent-only).
+    return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices,
+            'can_edit_house': getattr(who, 'role', None) == 'parent'}
 
 
 # A camera frame relayed every couple of seconds is bounded (review M2): past
@@ -7728,6 +7746,8 @@ def house_ha_identify(req: HouseHaIdentifyRequest, request: Request):
     catalogue = twin_ha.safe_catalogue()
     if not catalogue['available']:
         raise HTTPException(status_code=503, detail='Home Assistant is not reachable.')
+    from services import twin_display, twin_store
+    catalogue = twin_display.catalogue(twin_store.current_model() or {}, catalogue, include_hidden=True)
     device = next((d for d in catalogue['devices'] if d['device_id'] == req.device_id), None)
     if device is None:
         raise HTTPException(status_code=404, detail='Could not blink that light.')

@@ -31,15 +31,36 @@ export function mountRoomPanel(live) {
     for (const widget of widgets.values()) stop(widget);
     widgets.clear(); body.replaceChildren();
   }
+  // A parent can hide a device or entity from the house view right here (user, 2026-11-13);
+  // it comes back from the house editor's device list. Home Assistant is untouched.
+  function addHide(bar, row) {
+    if (!live.layout?.()?.can_edit_house) return false;
+    const button = element('button', 'Hide in house view'); button.type = 'button'; button.setAttribute('data-hide', '');
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      const entity = String(row.device_id).startsWith('entity:');
+      try {
+        const response = await fetch(base() + 'api/house/editor/op', {method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({op: {op: 'set_ha_display', kind: entity ? 'entities' : 'devices', item: entity ? row.entity_id : row.device_id, hidden: true}})});
+        if (!response.ok) throw new Error('hide refused');
+        // The layout changed: the keeper re-reads it now and reopens this room without the row.
+        document.dispatchEvent(new CustomEvent('chf-house-layout-changed'));
+      } catch { window.showGlobalAlert?.('Could not hide that. Try again from the house editor.'); }
+      finally { button.disabled = false; }
+    });
+    bar.append(button);
+    return true;
+  }
   function addMore(widget, row) {
     const kind = kindOf(row).id;
-    if (['lock', 'garage', 'alarm'].includes(kind)) return;
+    const bar = element('div'); bar.className = 'twin-device-actions';
     // A device the grid does not offer is read-only here: HA's own card would draw live
     // controls the server then refuses (review M1).
-    if (!row.offered) return;
-    const more = element('button', 'More'); more.type = 'button'; more.setAttribute('data-more', '');
-    const bar = element('div'); bar.className = 'twin-device-actions'; bar.append(more);
-    const host = element('div'); host.hidden = true; widget.node.append(bar, host);
+    const more = !['lock', 'garage', 'alarm'].includes(kind) && row.offered ? element('button', 'More') : null;
+    if (more) { more.type = 'button'; more.setAttribute('data-more', ''); bar.append(more); }
+    if (addHide(bar, row) || more) widget.node.append(bar);
+    if (!more) return;
+    const host = element('div'); host.hidden = true; widget.node.append(host);
     widget.cardId = `twin-card-${row.device_id}-${++sequence}`;
     more.addEventListener('click', async () => {
       if (widget.disposed || more.disabled) return;
@@ -120,6 +141,7 @@ export function mountRoomPanel(live) {
       room = next; shown = null; title.textContent = room.name || 'Room'; panel.hidden = false; render();
     },
     close: hide,
+    current: () => panel.hidden ? null : room,
     stop() { unsubscribe(); clear(); panel.remove(); },
   };
 }

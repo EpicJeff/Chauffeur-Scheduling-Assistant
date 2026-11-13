@@ -779,6 +779,7 @@ def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]
     room_reads = {}
     flat['solar_source_building'] = (previous or {}).get('solar_source_building', flat.get('solar_source_building'))
     flat['solar_source_roof'] = (previous or {}).get('solar_source_roof', flat.get('solar_source_roof'))
+    flat['ha_display'] = (previous or {}).get('ha_display', flat.get('ha_display'))
     old_buildings = {b['id']: b for b in (previous or {}).get('buildings', [])}
     for building in flat.get('buildings', []):
         old = old_buildings.get(building['id'], {})

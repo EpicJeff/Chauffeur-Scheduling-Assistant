@@ -331,6 +331,28 @@ check('i2_keeper_retries_until_home_assistant_answers', async () => {
   } finally { t.cleanup(); }
 });
 
+check('keeper_rereads_now_when_the_page_changed_the_layout_and_keeps_the_room_open', async () => {
+  // A Hide from the room panel (user, 2026-11-13) must not wait five minutes, and the panel stays.
+  const t = keeperRig();
+  t.available = true;
+  try {
+    t.keeper = keepLive(t.view, {api: t.api});
+    await wait(60);
+    const first = t.view.live;
+    assert.ok(first, 'mounted');
+    first.openRoom('b', 'r');
+    assert.deepEqual(first.openedRoom(), {building: 'b', room: 'r'}, 'the kitchen panel is open');
+    t.extra = true;
+    const reads = t.layoutReads();
+    document.dispatchEvent(new CustomEvent('chf-house-layout-changed'));
+    await wait(80);
+    assert.equal(t.layoutReads(), reads + 1, 'the layout is read at once, not on the slow clock');
+    assert.notEqual(t.view.live, first, 'the changed layout remounts');
+    assert.deepEqual(t.view.live.openedRoom(), {building: 'b', room: 'r'}, 'and the same room is open again');
+    assert.deepEqual(armed(), [300000], 'one clock still');
+  } finally { t.cleanup(); }
+});
+
 check('i2_keeper_rereads_the_layout_and_remounts_only_on_change', async () => {
   const t = keeperRig();
   t.available = true;

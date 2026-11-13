@@ -315,6 +315,44 @@ check('camera_device_row_keeps_camera_identity_and_icon', async () => {
   } finally {abort.abort();}
 });
 
+check('show_as_controls_and_hide_are_house_only_edits', async () => {
+  // User, 2026-11-13: a toggle between controls on the device and separate entities, and
+  // hiding things from the house view without touching Home Assistant.
+  const body = linked();
+  body.devices = [{device_id:'pool', name:'Pool controller', kind:'light', entity_id:'light.pool', area_id:'kitchen',
+    show_as:'controls', hidden:false, controls:[{entity_id:'switch.pump', name:'Pump', hidden:false}, {entity_id:'switch.falls', name:'Waterfall', hidden:true}]}];
+  let {link, commits, abort} = mount(body);
+  try {
+    await link.refresh();
+    let section = link.roomSection(BUILDING.rooms[0]);
+    const select = descendants(section).find(n => n.localName === 'select' && n.getAttribute('aria-label') === 'Show as');
+    assert.ok(select && select.value === 'controls', 'a device with controls offers Show as');
+    assert.ok(words(section).includes('Controls (2)') && words(section).includes('Waterfall (hidden)'));
+    select.value = 'entities'; select.dispatchEvent({ type: 'change' }); await settle();
+    assert.ok(subset(commits.at(-1), {op:'set_ha_display', device:'pool', show_as:'entities'}), JSON.stringify(commits));
+    descendants(section).find(n => n.localName === 'button' && n.getAttribute('aria-label') === 'Hide Pump').click(); await settle();
+    assert.ok(subset(commits.at(-1), {op:'set_ha_display', kind:'entities', item:'switch.pump', hidden:true}));
+    descendants(section).find(n => n.localName === 'button' && n.getAttribute('aria-label') === 'Hide Pool controller').click(); await settle();
+    assert.ok(subset(commits.at(-1), {op:'set_ha_display', kind:'devices', item:'pool', hidden:true}));
+  } finally {abort.abort();}
+  // Separate entities: items grouped under their device, each placeable and hideable;
+  // hidden items fold into a Hidden section with Show.
+  const items = linked();
+  const item = (eid, name, extra = {}) => ({device_id:'entity:' + eid, entity_id:eid, entities:[eid], name, kind:'switch', area_id:'kitchen',
+    parent_device_id:'pool', parent_name:'Pool controller', show_as:'entities', hidden:false, device_hidden:false, controls:[], ...extra});
+  items.devices = [item('switch.pump', 'Pump'), item('switch.falls', 'Waterfall', {hidden:true})];
+  ({link, commits, abort} = mount(items));
+  try {
+    await link.refresh();
+    const section = link.roomSection(BUILDING.rooms[0]);
+    assert.ok(words(section).includes('Pool controller') && words(section).includes('Separate entities'));
+    assert.ok(buttonNamed(section, 'Pick a spot'), 'an entity item is placed on its own');
+    assert.ok(words(section).includes('Hidden (1)'), 'hidden items fold away');
+    descendants(section).find(n => n.localName === 'button' && n.getAttribute('aria-label') === 'Show Waterfall').click(); await settle();
+    assert.ok(subset(commits.at(-1), {op:'set_ha_display', kind:'entities', item:'switch.falls', hidden:false}));
+  } finally {abort.abort();}
+});
+
 check('pick_list_groups_by_floor', async () => {
   const { link, commits, abort } = mount(linked({ 'r-dining': { suggested: 'dining_area' } }));
   await link.refresh();

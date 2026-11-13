@@ -491,7 +491,7 @@ MORE_OPS = ('add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
-            'move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape', 'make_yard_room', 'place_device', 'unplace_device',
+            'move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape', 'make_yard_room', 'place_device', 'unplace_device', 'set_ha_display',
             'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation', 'set_porch_foundation')
 
 
@@ -1376,6 +1376,16 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
         model['solar_source_roof'] = roof
         model['solar_source_building'] = owner if roof is not None else None
         return model, 'Set the solar ribbon source.'
+    if kind == 'set_ha_display':
+        from services import twin_display
+        if ha_catalogue is None:
+            from services import twin_ha
+            ha_catalogue = twin_ha.safe_catalogue()
+        try:
+            words = twin_display.apply_op(model, op, ha_catalogue, lambda m, d: _unplace_device(m, d, actor))
+        except ValueError as exc:
+            raise Refused(str(exc)) from exc
+        return model, words
     if kind in ('place_device', 'unplace_device'):
         device = _device_id(op.get('device'))
         if kind == 'place_device':
@@ -1384,8 +1394,11 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
                 ha_catalogue = twin_ha.safe_catalogue()
             # A guessed id would be stored and never drawn; with no Home Assistant
             # the id cannot be checked, so it is kept.
+            # Entity items (a device shown as separate entities) are placeable too.
+            from services import twin_display
+            listed = twin_display.catalogue(model, ha_catalogue, include_hidden=True)
             if ha_catalogue.get('available') and not any(
-                    d.get('device_id') == device for d in ha_catalogue.get('devices', [])):
+                    d.get('device_id') == device for d in listed.get('devices', [])):
                 raise Refused('Choose a device.')
             _place_device(model, op, actor)
         else:

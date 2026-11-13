@@ -89,8 +89,10 @@ export function keepLive(view, { api = (path, options) => fetch(base() + path, o
         // Away or failed: the mounted layer stays; its own poll already shows it stale.
         if (halt.signal.aborted || !layout?.available || layoutKey(layout) === layoutKey(live.layout())) return;
         const old = live; live = null;
+        const reopen = old.openedRoom?.();
         old.stop(); if (view.live === old) view.live = null;
         live = await mountLive(view, { api, layout });
+        if (reopen && live) live.openRoom(reopen.building, reopen.room);
       } catch (error) { report(error); }
       finally {
         busy = null;
@@ -102,7 +104,11 @@ export function keepLive(view, { api = (path, options) => fetch(base() + path, o
   }
   // A server push may mean a placement changed; at most one extra read in 30 s.
   const pushed = () => { if (live && Date.now() - readAt > 30000) check(); };
-  if (typeof document.addEventListener === 'function') document.addEventListener('chf-server-update', pushed, { signal: halt.signal });
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener('chf-server-update', pushed, { signal: halt.signal });
+    // This page changed the house's layout (a Hide from the room panel): read it now.
+    document.addEventListener('chf-house-layout-changed', () => { if (live) check(); }, { signal: halt.signal });
+  }
   check();
   return {
     check,
@@ -668,6 +674,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     ring: () => ring?.current() || null,
     setMode(name) { closeFan(); cancelFlight(); mode = modes?.setMode(name || 'all') || 'all'; notify(); draw(); view.render(); },
     closeRoom() { ring?.close(); roomPanel?.close(); closeSheet(); },
+    openedRoom: () => { const row = roomPanel?.current?.(); return row ? { building: row.building, room: row.room } : null; },
     markers: () => rows.map(plain),
     marker: id => { const row = rows.find(row => row.device_id === id); return row ? plain(row) : null; },
     rooms: roomRows,
