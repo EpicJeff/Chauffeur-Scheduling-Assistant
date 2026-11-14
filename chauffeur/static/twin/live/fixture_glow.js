@@ -11,7 +11,11 @@ function materialFor(key, channels) {
 }
 
 export function fixtureRotation(emitter, along) {
-  const normal = emitter.normal || (emitter.facing === 'up' ? [0, 0, 1] : [0, 0, -1]);
+  let normal = emitter.normal || (emitter.facing === 'up' ? [0, 0, 1] : [0, 0, -1]);
+  if (along && ['out', 'in'].includes(emitter.facing) && Math.hypot(along.x, along.z) > 1e-10) {
+    const sign = emitter.facing === 'out' ? 1 : -1;
+    normal = [-sign * along.z, -sign * along.x, 0];
+  }
   const z = new THREE.Vector3(-normal[0], -normal[2], normal[1]).normalize();
   let x = along?.clone() || new THREE.Vector3(1, 0, 0);
   x.addScaledVector(z, -x.dot(z));

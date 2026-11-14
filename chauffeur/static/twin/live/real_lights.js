@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { TIERS } from '../twin_tiers.js';
 import { CANDELA, FT } from '../twin_light_math.js';
-import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { fixturePoint, fixtureRotation, linePieces } from './fixture_glow.js';
 
 const clamp = (value, max = 255) => Math.max(0, Math.min(max, value));
@@ -34,12 +33,10 @@ export function pickReal(candidates, target, cap) {
     .slice(0, Math.max(0, Math.floor(cap))).map(row => row.device);
 }
 
-let areaReady = false;
 export function createRealLights(view, { tier = view.tier || 'low', fixtures = true } = {}) {
   // A fixture-free house keeps the original point-only profile, including its shadows.
   const quotas = fixtures ? (TIERS[tier] || TIERS.low).realLights
     : {point: {low: 4, medium: 8, high: 16, max: 16}[tier] || 4, spot: 0, area: 0, shadows: ['high', 'max'].includes(tier) ? 2 : 0};
-  if (quotas.area && !areaReady) { RectAreaLightUniformsLib.init(); areaReady = true; }
   // three.js keys programs on the number of visible lights and shadow casters, so
   // per-type counts stay fixed and both distributions of the single caster are warmed.
   // Outside Lights/All the pool is hidden: every lit fragment would otherwise loop
@@ -88,7 +85,7 @@ export function createRealLights(view, { tier = view.tier || 'low', fixtures = t
       const selected = new Set(); overflow = false;
       for (const [type, lights] of Object.entries(pools)) {
         const rows = expanded[type], ids = pickReal(rows, target, quotas[type]), byId = new Map(rows.map(row => [row.device, row]));
-        overflow ||= fixtures && rows.filter(row => row.intensity > 0).length > ids.length;
+        overflow ||= fixtures && rows.some(row => row.emitter && !row.emitter.legacy && row.intensity > 0 && !ids.includes(row.device));
         lights.forEach((light, index) => {
           const row = byId.get(ids[index]);
           if (!row) { light.intensity = 0; return; }

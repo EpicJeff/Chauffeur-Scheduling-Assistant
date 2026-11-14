@@ -1211,7 +1211,7 @@ async function boot() {
     if (!kitResponse.ok) throw new Error('Could not load the house style.');
     const kit = await kitResponse.json();
     const view = await mountTwin(host, { plan: snapshot.plan, kit, round: snapshot.round ?? null, site: snapshot.site });
-    document.getElementById('twin-tier').textContent = view.tier === 'low' ? 'Low' : 'High';
+    document.getElementById('twin-tier').textContent = view.tier[0].toUpperCase() + view.tier.slice(1);
     const sync = () => document.querySelectorAll('[data-time]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.time === view.state.time)));
     host.addEventListener('twintimechange', sync);
     host.addEventListener('twinviewchange', sync);

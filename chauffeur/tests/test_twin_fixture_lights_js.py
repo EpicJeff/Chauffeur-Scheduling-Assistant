@@ -76,6 +76,41 @@ check('area_orientation_dimensions_output_and_line_centres',()=>{
   for(const l of lights){close(l.position.y,(6-2/12)*FT);assert.ok(new THREE.Vector3(0,0,-1).applyQuaternion(l.quaternion).distanceTo(new THREE.Vector3(0,-1,0))<1e-8);}
   rig.stop();
 });
+check('bent_line_pieces_face_out_on_every_leg',async()=>{
+  const {linePieces,fixtureRotation}=await import(file('static/twin/live/fixture_glow.js'));
+  for(const facing of ['out','in','down','up']){
+    const e=emitted([f('bend','line',{path:[[0,0,4],[8,0,4],[8,8,4]],width_in:.5,facing})])[0];
+    const pieces=linePieces(e);assert.equal(pieces.length,4);
+    pieces.forEach((piece,i)=>{
+      const direction=i<2?new THREE.Vector3(1,0,0):new THREE.Vector3(0,0,-1);
+      const width=new THREE.Vector3(1,0,0).applyQuaternion(piece.rotation);
+      const normal=new THREE.Vector3(0,0,-1).applyQuaternion(piece.rotation);
+      assert.ok(Math.abs(width.y)<1e-6,`${facing} leg ${i}: width stays horizontal`);
+      assert.ok(width.distanceTo(direction)<1e-6,`${facing} leg ${i}: width follows its leg`);
+      const right=new THREE.Vector3(-direction.z,0,direction.x);
+      const expected=facing==='out'?right:facing==='in'?right.negate():new THREE.Vector3(0,facing==='up'?1:-1,0);
+      assert.ok(normal.distanceTo(expected)<1e-6,`${facing} leg ${i}: emitting normal follows its leg`);
+      assert.ok(Math.abs(normal.dot(direction))<1e-6);
+    });
+    const straight=emitted([f('straight','line',{path:[[0,0,4],[16,0,4]],width_in:.5,facing})])[0];
+    const original=fixtureRotation(straight);
+    for(const piece of linePieces(straight))assert.ok(piece.rotation.angleTo(original)<1e-6,'straight-line frame is unchanged');
+  }
+});
+check('legacy_over_quota_is_not_authored_overflow',()=>{
+  const scene=new THREE.Scene(),rig=R.createRealLights({scene,tier:'low'});
+  const legacy=Array.from({length:6},(_,i)=>({device:'legacy:'+i,at:[i,0,3],position:new THREE.Vector3(i*FT,3*FT,0),distance:10*FT,intensity:1,rgb:[255,255,255],
+    ...(i%2?{emitter:{legacy:true,shape:'point'}}:{})}));
+  const authored=candidates([f('panel','area',{size_ft:[2,1],facing:'down'})]);
+  try{
+    const selected=rig.update([...legacy,...authored],[0,0,0]);
+    assert.equal(selected.size,5);assert.ok(selected.has('fixture:panel'));
+    assert.equal(rig.overflow(),false,'legacy lamps keep the floor wash');
+    const distant=candidates([f('distant','point',{at:[100,0,3]})]);
+    rig.update([...legacy,...authored,...distant],[0,0,0]);
+    assert.equal(rig.overflow(),true,'a legacy slot can still displace an authored light');
+  }finally{rig.stop();}
+});
 check('glow_strip_follows_path_and_state',async()=>{
   const {createFixtureGlow}=await import(file('static/twin/live/fixture_glow.js'));
   const scene=new THREE.Scene(),rows=emitted([f('rope','line',{path:[[0,0,4],[3,0,4],[3,5,4]],width_in:1}),f('screen','area',{size_ft:[4,2],facing:[0,1,0],rotation_deg:20})]);
