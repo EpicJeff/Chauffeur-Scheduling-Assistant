@@ -359,6 +359,14 @@
     "files": {},
     "cost": {}
   },
+  "lattice": {
+    "kind": "geometry",
+    "source": "generator",
+    "source_id": "lattice",
+    "licence": "MIT",
+    "files": {},
+    "cost": {}
+  },
   "painted_trim": {
     "kind": "geometry",
     "source": "generator",

@@ -34,19 +34,12 @@ def kit(kit_id: str) -> dict:
 
 
 def material_choices(kit_id='modern_farmhouse'):
-    """The Library's material list, from the existing kit and vetted manifest."""
-    refs = kit(kit_id)['materials']
-    words = lambda value: value.replace('_', ' ').strip().capitalize()
-    choices = []
-    for asset, entry in manifest().items():
-        if entry.get('kind') == 'material':
-            color = next((ref['color'] for ref in refs.values() if ref['asset'] == asset), '#b8b0a4')
-            choices.append({'id': asset, 'name': words(asset), 'color': color})
-    for ref in refs.values():
-        choice = {'id': ref['asset'], 'name': words(ref['asset']), 'color': ref['color']}
-        if choice not in choices:
-            choices.append(choice)
-    return choices
+    """The shared catalogue, with the kit's procedural materials retained."""
+    from services import twin_materials
+    rows = twin_materials.catalogue()['materials']
+    if kit_id != 'modern_farmhouse':
+        rows = twin_materials.builtin_rows(kit_id) + [r for r in rows if not r['builtin']]
+    return rows
 
 
 def material_slot_error(value):
@@ -59,8 +52,12 @@ def material_slot_error(value):
         return 'A material slot accepts only id and optional color.'
     if 'color' in value and (not isinstance(value['color'], str) or not value['color'].strip()):
         return 'Choose a material with a non-empty color.'
-    if value['id'] not in kit('modern_farmhouse')['materials'] and value['id'] not in {m['id'] for m in material_choices()}:
-        return f"Unknown material id: {value['id']}. Choose a material from the Library."
+    if value['id'] not in kit('modern_farmhouse')['materials']:
+        from services import twin_materials
+        try:
+            twin_materials.get(value['id'])  # Archived assets remain valid for house undo/load.
+        except ValueError:
+            return f"Unknown material id: {value['id']}. Choose a material from the Library."
     return None
 
 

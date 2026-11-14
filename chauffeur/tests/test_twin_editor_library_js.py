@@ -13,6 +13,19 @@ sys.path.insert(0, str(ROOT / 'tests'))
 os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='chauffeur_library_ui_'))
 os.environ.pop('HA_BASE_URL', None)
 from test_twin_drag_js import DRIVER as DRAG_DRIVER
+from twin_editor_dom import PRELUDE, run_node
+
+REGRESSIONS = PRELUDE + r"""
+const {surfaceOperation}=await import(file('static/twin/editor/library.js'));
+await test('surface_operation_id_only',async()=>{
+ const surface={building:{id:'house'},piece:{id:'wall'},kind:'wall',side:'left',room:{id:'room'},role:'siding',level:'L1'};
+ for(const scope of ['face','room','level','building']){
+  const operation=surfaceOperation(surface,scope,{id:'material-household',color:'#789abc',thumbnail_url:'stone.png'});
+  assert.deepEqual(operation.material,{id:'material-household'},scope+' ordinary pick must not copy the swatch');
+ }
+});
+finish();
+"""
 
 DRIVER = DRAG_DRIVER.split('const {createDrag, piecesOnMovedJoints}')[0] + r"""
 const THREE = await import(three);
@@ -49,7 +62,7 @@ for (const name of ['materials','items']) {const tab=doc.createElement('button')
 panel.append(doc.getElementById('library-entries'));
 const b = flat.buildings.find(b => b.id === 'pool-house'), room = b.rooms.find(r => r.name === 'Pool Lounge');
 const front = b.walls.find(w => w.id === 'wall:44b42dc9c06144adbeaeb88ce33b0430');
-const finish = {id:'red_brick_03',name:'Red brick 03',color:'#ad5946'};
+const finish = {id:'red_brick_03',name:'Red brick 03',color:'#ad5946',thumbnail_url:'/ingress/test/stone.png'};
 const latticeFinish={id:'lattice',name:'Lattice',color:kit.materials.lattice.color};
 const previewMaterials=[],renderPreview=globalThis.Renderer.prototype.render;
 globalThis.Renderer.prototype.render=function(scene){
@@ -72,11 +85,16 @@ window.location={href:'http://house.test/house/editor'};
 let releaseOriginal,originalRequested=false,derivedName,derivedCount=0,deleted=false,deletedLoads=0;
 const originalGate=new Promise(resolve=>{releaseOriginal=resolve;});
 let fetches = 0;
+let householdAdded=false;
+const householdMaterial={id:'material-returned',name:'Returned stone',source:'user',revision:2,
+ maps:{base_color:'maps/returned.jpg'},params:{tint:'#123456',roughness:.6}};
 const nativeFetch=globalThis.fetch;
 globalThis.fetch = async (input,options={}) => {
  const url=typeof input==='string'?input:input.url,json=value=>new Response(JSON.stringify(value));
  if(url.startsWith('data:'))return nativeFetch(input);
- if(url.endsWith('/library')){fetches++;return json({materials:[finish,latticeFinish],items:[chair],imports:[{...imported},...(deleted?[]:[queuedDelete])]});}
+ if(url.endsWith('/materials'))return json({revision:7,materials:[finish,latticeFinish,...(householdAdded?[householdMaterial]:[])]});
+ if(url.endsWith('/materials/'+householdMaterial.id))return json(householdMaterial);
+ if(url.endsWith('/library')){fetches++;return json({materials:[{id:'duplicate-preset',name:'Dropped preset',color:'#ffffff'}],items:[chair],imports:[{...imported},...(deleted?[]:[queuedDelete])]});}
  if(url.endsWith('/import-settings'))return json({limit_mb:50,unpacked_limit_mb:200});
  if(url.endsWith('/imports'))return json([imported,...(deleted?[]:[queuedDelete])]);
  if(url.endsWith('/original.gltf')){if(url.includes(queuedDelete.id))deletedLoads++;originalRequested=true;await originalGate;return json(originalModel);}
@@ -128,11 +146,16 @@ doc.getElementById('editor-scene').parentElement=new Element();
 const browse = async name => {panel.querySelectorAll('[data-library-tab]').find(n=>n.dataset.libraryTab===name).dispatchEvent(new Event('click'));await settle();};
 doc.getElementById('rail-library').dispatchEvent(new Event('click'));await settle();
 assert.equal(fetches,1);
-assert.ok(doc.getElementById('library-entries').children.some(n=>n.dataset.material==='lattice'));
+const materialButtons=()=>descendants(doc.getElementById('library-entries')).filter(n=>n.dataset.material);
+assert.ok(materialButtons().some(n=>n.dataset.material==='lattice'));
+assert.ok(!materialButtons().some(n=>n.dataset.material==='duplicate-preset'));
+assert.equal(materialButtons().find(n=>n.dataset.material===finish.id).children[0].src,finish.thumbnail_url);
+const editLink=descendants(doc.getElementById('library-entries')).find(n=>n.tag==='a'&&n.href.endsWith('material='+finish.id));
+assert.equal(editLink.textContent,'Edit in Library');assert.equal(editLink.target,'_blank');assert.equal(editLink.rel,'noopener');
 assert.ok(previewMaterials.some(m=>m.alphaMap?.isDataTexture&&m.alphaTest===.5&&m.side===THREE.DoubleSide),'Library thumbnail uses procedural lattice definition');
 ok('Lattice appears in the Library and its real thumbnail uses the generated cutout');
 const drop = async point => {
-  const thumb=doc.getElementById('library-entries').children.find(n=>n.dataset.item || n.dataset.material);thumb.dispatchEvent(event('pointerdown',120,150));
+  const thumb=descendants(doc.getElementById('library-entries')).find(n=>n.dataset.item || n.dataset.material);thumb.dispatchEvent(event('pointerdown',120,150));
   const [x,y]=pixel(point);doc.dispatchEvent(event('pointerup',x,y));await settle();
 };
 tools.select({pieceId:room.id,buildingId:b.id});while(!view.ready)await settle();
@@ -141,7 +164,7 @@ const chooser=descendants(doc.getElementById('editor-scene').parentElement).find
 assert.ok(chooser,'real pointer drop opens the chooser');
 assert.deepEqual(chooser.children.map(n=>n.textContent),['This wall face','This room','This floor','The whole building','Cancel']);
 chooser.children[0].dispatchEvent(new Event('click'));await settle();
-assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{wall:front.id,side:'right'},material:{id:finish.id,color:finish.color}});
+assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{wall:front.id,side:'right'},material:{id:finish.id}});
 ok('real thumbnail pointer drop resolves the rotated outside face and chosen material scope');
 await browse('items');look([15.5,9,90],[15.5,9,0]);await drop([8,8,0]);
 const added=ops.pop();assert.equal(added.op,'add_item');assert.equal(added.host.floor,room.id);
@@ -221,12 +244,12 @@ assert.equal(changes.length,2,'each face line offers Change');
 changes[1].dispatchEvent(new Event('click'));await settle();
 assert.equal(panel.hidden,false,'Change opens the library');
 assert.equal(doc.getElementById('library-status').textContent,'Choose a material for the outside face.');
-const thumb=doc.getElementById('library-entries').children[0];assert.equal(thumb.tag,'button');
+const thumb=materialButtons()[0];assert.equal(thumb.tag,'button');
 thumb.dispatchEvent(new Event('click'));await settle();
 const picked=descendants(doc.getElementById('editor-scene').parentElement).find(n=>n.id==='material-chooser');
 assert.deepEqual(picked.children.map(n=>n.textContent),['This wall face','This room','This floor','The whole building','Cancel']);
 picked.children[2].dispatchEvent(new Event('click'));await settle();
-assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{level:front.level,role:'siding'},material:{id:finish.id,color:finish.color}});
+assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{level:front.level,role:'siding'},material:{id:finish.id}});
 assert.equal(doc.getElementById('library-status').textContent,'Drag a thumbnail onto the house or yard.');
 thumb.dispatchEvent(new Event('click'));await settle();assert.equal(ops.length,0,'a thumbnail press outside Change never applies');
 ok('card Change opens the library list; a pressed thumbnail applies at the chosen scope, This floor included');
@@ -258,11 +281,21 @@ cards.draw({pieceId:'anchor:test',buildingId:b.id});
 assert.ok(labelled('Distance from surface')&&!labelled('Turn')&&!labelled('Size'));
 await type('Distance from surface','3"');assert.deepEqual(ops.pop(),{op:'move_hosted',building:b.id,id:'anchor:test',offset:.25});
 ok('item cards carry Turn and Size; anchor and item cards carry Distance from surface');
+householdAdded=true;window.dispatchEvent(new Event('focus'));await settle();assert.equal(fetches,2,'returning from the Library rereads the catalogue');
+assert.ok(materialButtons().some(n=>n.dataset.material===finish.id));
+const returned=materialButtons().find(n=>n.dataset.material===householdMaterial.id);assert.ok(returned);
+assert.equal(returned.children[0].src,'../api/house/twin/materials/material-returned/maps/returned.jpg');
+assert.equal(kit.manifest[householdMaterial.id].revision,2);assert.equal(kit.manifest[householdMaterial.id].params.roughness,.6);
+ok('returning from the Library refreshes the picker catalogue');
 abort.abort();view.dispose();console.log(`${passed}/${passed} passed`);
 """
 
 
 def run():
+    code, output = run_node(REGRESSIONS, {'root': ROOT.as_posix()})
+    print(output)
+    if code:
+        raise SystemExit(code)
     from services import twin_model_bridge, twin_model_ops, twin_library
     fixture = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
     model = twin_model_bridge.assemble(fixture)[0]

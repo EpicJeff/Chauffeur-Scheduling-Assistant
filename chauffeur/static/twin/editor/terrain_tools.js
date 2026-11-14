@@ -11,7 +11,7 @@ import { placedPit, firePitOutline } from '../fire_pits.js';
 import { materialSlot } from './material_slot.js';
 
 const FT = .3048;
-const words = { terraces: 'Terrace pad', ...siteShapeLabels };
+const words = { terraces: 'Terrace pad', ledge: 'Tanning ledge', steps: 'Steps', spa: 'Spa', ...siteShapeLabels };
 const mid = poly => [0, 1].map(i => poly.reduce((n, p) => n + p[i], 0) / poly.length);
 export function siteRows(plan) {
   return siteRecords(plan).filter(record => siteShapeKinds.includes(record.kind));
@@ -320,8 +320,10 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   }
   async function finishDrawing() {
     if (!canEdit() || busy) return;
-    try { const yard = drawing?.kind === 'yard_rooms'; if (await draft.finish()) { drawing = null;
-      if (yard) choose('yard_rooms', getPlan().site.yard_rooms.at(-1).id); else show(); } }
+    try { const yard = drawing?.kind === 'yard_rooms', feature = ['ledge', 'steps', 'spa'].includes(drawing?.kind); if (await draft.finish()) { drawing = null;
+      if (yard) choose('yard_rooms', getPlan().site.yard_rooms.at(-1).id);
+      else if (feature) { close(); tools.select({ kind: 'pool', id: getPlan().site.pool.id }); }
+      else show(); } }
     catch (error) { report(error); }
   }
   function choose(kind, id) {

@@ -1,5 +1,5 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
-import { packBanks, fingerprint, atlasMesh } from './atlas.js';
+import { packBanks, fingerprint, atlasMesh, heightfieldExtent } from './atlas.js';
 import { authoredGeometry } from './fingerprint.js';
 
 export function covered(root) {
@@ -36,10 +36,12 @@ export function atlasJob(root, plan, layout) {
   });
   const hash = fingerprint();
   // Geometry and room outlines drive the cache. Device movement does not.
-  hash.add('atlas-worker-reach-8'); hash.add(authoredGeometry(plan)); hash.add(JSON.stringify([layout, plan.generatorVersion, plan.buildings?.map(b => ({
+  hash.add('atlas-worker-reach-9'); hash.add(authoredGeometry(plan)); hash.add(JSON.stringify([layout, plan.generatorVersion, plan.buildings?.map(b => ({
     id: b.id, rooms: b.rooms, levels: b.levels }))]));
   for (const m of meshes) {
     hash.add(JSON.stringify([m.matrix, m.name, m.buildingId]));
+    // Graded terrain's grid is tiered; its shape is authored (lot, terraces): one key per house.
+    if (m.geometry.userData?.bakeHeightfield) { hash.add(JSON.stringify(['heightfield', heightfieldExtent(geometryFrom(m.geometry))])); continue; }
     for (const [name, a] of Object.entries(m.geometry.attributes)) { hash.add(name); hash.add(a.array); }
     if (m.geometry.index) hash.add(m.geometry.index);
   }

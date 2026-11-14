@@ -1,6 +1,142 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.851 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.856 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.856 (2026-11-13, NOT device-verified): the Material library page. Make a material from your own textures, with a live preview.**
+
+**The ask.** The user: "I would be fine if there was a separate page for the Library and you do all the editing there and the Library in the house editor is just a viewer." "Preference is always for an editor with preview, especially if updates there can be snappy." "I usually just look for textures that match what I want and then maybe tweak them in Photoshop." This ships plan Tasks 5-6 (slice B).
+
+**The page** (`/house/library`, `templates/house_library.html`, `static/twin/library_page/`). It is parent-gated like the editor, and reached from "Material library" in the house page bar and from the editor's Library.
+- **Left:** a grid of every material (built-in, downloaded and yours), with search and a source filter.
+- **Centre:** a three.js preview, switchable between sphere, cube, wall and ground, with a 6 ft scale figure, orbit and zoom, and "Neutral studio" or "House day sun" lighting.
+- **Right:**
+  - **Map slots:** Base colour, Normal (with GL/DX), Roughness, Metalness, AO, ORM and Height, each with a thumbnail, Replace and Clear.
+  - **Parameters:** tint, roughness and metalness (each with Auto or a 0-2 value), normal strength, AO intensity, tile size in feet, rotation and random offset.
+  - **Details:** name and licence.
+  - **Actions:** Duplicate, Undo/Redo (the material's own history), Reset to source, and Delete. A refusal says where the material is used.
+- **Speed:** edits update the preview immediately with no fetch, and saves are debounced by 300 ms.
+- Built-ins offer Duplicate only. "Changes here apply everywhere this material is used."
+
+**Loose textures** (`texture_slots.js`).
+- Drop PNG, JPG or WebP files anywhere in Properties, or pick several at once. Filenames choose slots: Poly Haven `_diff`/`_nor_gl`/`_nor_dx`/`_rough`/`_arm`, ambientCG `_Color`/`_NormalGL`/`_NormalDX`/`_Roughness`/`_Metalness`/`_AmbientOcclusion`, plus `_basecolor`, `_albedo`, `_orm`, `_height`/`_disp` and so on. `_nor_dx` sets the DX convention.
+- Unmatched files ask for their slot through the in-page prompt.
+- Uploads run one at a time, with progress, and the preview shows each file before its upload returns. A refused file reports its reason and the rest continue.
+
+**The house editor's Library** stays a picker, with "Edit in Library" on a material. Material changes reach an open house view on reload; live updates without a reload come next (plan Task 4).
+
+**Tests.** New `test_house_library_page` 3/3, `test_twin_library_page_js` (preview updates with no fetch, one debounced PATCH, built-ins Duplicate only, delete refusal without a dialog, undo/redo routes) and `test_twin_texture_slots_js` (Poly Haven and ambientCG suffix tables, drop uploads to slots and previews locally, unmatched files ask). Also editor library js 11/11, material slot js, render js, materials 23/23, Tailwind 6/6, import maps 3/3. Chromium: the page renders. New material plus three dropped files (`brick_diff_2k.jpg`, `brick_nor_gl_2k.png`, `brick_rough_2k.png`) fill base colour, normal (GL) and roughness, and the preview sphere shows the texture, with no page errors.
+
+**v2.499.855 (2026-11-13, NOT device-verified): every light bakes, including yard-room lights, fire pits and lamp objects, onto the ground, patios, pool and the house exterior.**
+
+**The ask.** The user: "It seems silly to have some lights baked and some not if there isn't a real reason to not bake them." v2.499.839 had left yard and fire-pit lights out of the bake, because the yard ground was not in the atlas and those lights could never settle. Point lights only for now; light shapes are the approved light-fixtures plan.
+
+**What changed.**
+- **The ground is in the atlas.** The graded terrain bakes as a heightfield, charted top-down in 64 ft tiles (about 16 charts on the test house). Skirts and steep faces get no baked light, and the ground does not occlude. Patios, paths, pool tile and coping, the pool feature basins, mulch and fire-pit parts already were outdoor charts. Water and spillover stay out.
+- **One atlas on every tier.** The terrain grid is 1 ft on High and 2 ft on Low, so tiles start at the grid origin. Terrain keys, hashes and reach use the tile and the authored terrain, never the triangles. An already-baked scene re-derives the same key, so yard reuse never forces a rebake.
+- **Lights.**
+  - `lightsOf` includes yard-room markers.
+  - Fire pits and lamp objects bake as `object:<id>` (18 ft range), with the same ids and positions as the live layer.
+  - `reach.js` `lightSource` has yard and object branches.
+  - `assignChannels` keeps lights with no building room when they reach charts.
+- **Seams fixed** (`bake_pass.js`, `baker.js`).
+  - A chart border showed as a dark band, as a diagonal across the pool floor where it crosses a tile line. The bilateral filter averaged unwritten (zero) texels into edge texels, and bilinear sampling added more.
+  - `filterCharts` now ignores unwritten neighbours, and the new `dilateCharts` pads each chart ring by ring after bounce. This also removes a thinner dark rim on every other chart border, the house's included.
+- **Speed.** `bake_pass` searched every chart once per vertex; it now does it once per chart. With 303k terrain vertices a forced rebake had taken 218 s.
+
+**Measured (Chromium, test house).**
+- First full bake: 65 s with 6 lights, including a yard light and a fire pit (main: 82 s with 4). Forced rebake: 16 s.
+- Two bakes leave everything fresh, with no error.
+- Night luminance with the yard light's bake off versus on: pool 23.5 to 60.9, deck 19.9 to 84.3, lawn 13 to 52.9.
+- The pool floor shows a smooth falloff with no seam.
+- Cost: the third lightmap bank is now used, about +25 MB of GPU texture.
+
+**Tests.**
+- `test_twin_light_reach_js` 20/20, with new checks: ground charts per tile, yard and object light sources, UV winding, and a split quad with no dark seam (which fails on the old filter).
+- `test_twin_bake_runtime_js` 17/17. `yard_and_fire_pit_lights_are_not_baked` was rewritten as `every_placed_light_bakes_including_yard_and_fire_pit`; the old test passed only because its yard marker lacked `yard: true`.
+- `test_twin_bake_fingerprint_js` passes, including shared ground texels on High and Low and an unchanged key on re-derive.
+- Others: atlas js 13/13, baker js 12/12, bakes 16/16, pool features js 10/10 (feature basins are receivers, water is not), yard reuse js, energy js 38/38, fire pits, import maps 3/3.
+- `test_twin_lightmap_material_js` `fresh_bake_frees_the_pool_slot` fails the same way on main.
+
+**v2.499.854 (2026-11-13, NOT device-verified): material library, part 1. Household materials are stored, served and drawn on the house, and material pickers save the material rather than a copied colour.**
+
+**Context.** The user wants their house to read as theirs: "I can make the house geometry look pretty much like my house but I can't make the materials look like mine." The spec and plan are approved (`docs/superpowers/specs/2026-11-13-material-library-design.md`, `docs/superpowers/plans/2026-11-13-material-library.md`). This ships plan Tasks 1-3. Live invalidation (Task 4), the Library page (Tasks 5-6), online browsing (7-8) and glTF import (9) come next. No screen creates household materials yet, so nothing changes for a person until the Library page lands.
+
+**Task 1: the store** (`services/twin_materials.py`, 12 routes in `main.py`, each with an auth rule).
+- **Storage:** household materials have stable ids. Their map files are content-addressed and immutable (`maps/<sha12>.png|jpg`), served with `Cache-Control: immutable`.
+- **History:** each material has its own revisions, with undo and redo (20 kept). Garbage collection never deletes a file that a kept revision, the current record or the source snapshot uses.
+- **Limits:** live-file caps of 16 files and 200 MB.
+- **Images:** Pillow decodes every image before it is published.
+  - Truncated or corrupt images are refused.
+  - Anything over 16384 px a side or 64 Mpx is refused before decode.
+  - Masters are capped at 4096 px.
+  - 16-bit maps are scaled to 8-bit, not clipped.
+- **Parameters:** roughness and metalness default to "auto". With a map they multiply it by 1. With no map, metalness is 0 and roughness 0.85, and a duplicate of a built-in copies the built-in's values.
+- **Delete:** refused, with human-readable uses ("Used on 3 surfaces: Main House walls (2), Fence boards (1)"), while the current house uses the material. A material used only by history is archived and still serves.
+- **Built-ins:** they appear as read-only catalogue rows, and Duplicate makes an editable copy.
+- `material_slot_error` accepts live and archived household ids.
+- Both page templates receive the merged manifest (`page_manifest()`).
+
+**Task 2: rendering** (`static/twin/twin_library.js`).
+- **Maps:** base colour, normal (with the DX/GL flip), roughness, metalness and AO, or one shared ORM texture.
+- **Parameters:** tint (a slot colour replaces it), normal scale, AO intensity, real-world tile size and rotation. The low tier loads base colour only, and tier caps are 512/1024/2048 px, downsampled in the browser.
+- **Cache key:** id, revision, tier, receiving role and role shader flags. One material never carries two roles, which keeps the bake's role reading safe. A household slot matching its role's material reuses it, to keep batching.
+- **Lattice:** the cutout is kept.
+- **Granite:** one shared shader helper.
+- **URLs:** `materialUrl()` refuses `.`/`..` segments.
+- **Built-ins:** byte-identical, pinned by a 63-entry role×tier snapshot taken from main.
+
+**Task 3: pickers** (`editor/material_slot.js`, `editor/library.js`, `editor/material_catalog.js`).
+- An ordinary pick saves `{id}`. "Override tint" saves `{id, color}`, and "Clear override" goes back to `{id}`.
+- The catalogue merges household materials, with thumbnails.
+- The old duplicate preset-colour rows are gone. The user agreed: "Dropping is fine."
+
+**Reviews.** A Claude reviewer on each Codex task found a lifetime file cap, PATCH-able archive and source fields, no pixel cap before decode, 16-bit clipping, materials rendering fully metallic without a metalness map, a dropped lattice cutout and a duplicated shader. All were fixed.
+
+**Tests.** `test_twin_materials` 23/23, `test_twin_material_render_js` (13 or more named checks, plus the 63-entry built-in snapshot), `test_twin_material_slot_js`, `test_twin_editor_library_js` 10/10, `test_twin_library_js` 15/15, yard material slots py and js, porch foundation js, bake runtime 17/17, energy 38/38, yard reuse js, import chunks py and js, house saves 19/19, model bridge 32/32, import maps 3/3, Tailwind 6/6. Chromium: a household material created through the API, with an uploaded base colour, assigned to the Main House siding, draws on the house after a reload, with no page errors. Live update without a reload is Task 4.
+
+**v2.499.853 (2026-11-13, NOT device-verified): pools can have a tanning ledge, steps and a spa (raised or flush).**
+
+**The ask.** The user: "the pool is just a pool - no spa, no tanning ledge, no steps. Maybe pools could have subtools for drawing out those things just like we draw yard features." Then: "As long as the spa can be raised, flush, etc."
+
+**Data.** `site.pool.features`, at most 12. Each has `{id, kind, polygon}`:
+- **`ledge`:** `depth_in` 6-18, default 10. It must lie inside the pool.
+- **`steps`:** `treads` 1-6, default 3, and `entry_edge`, defaulting to the edge nearest the pool wall. It must lie inside the pool. Treads descend evenly from coping level to the pool floor.
+- **`spa`:**
+  - `mode` `raised` or `flush`;
+  - `raise_in` 6-24, default 12;
+  - `depth_in` 24-48, default 36;
+  - `spillover`, default on;
+  - Library slots `coping`, `interior` and `wall`, which inherit the pool's finishes when empty, with stone for the wall;
+  - placed inside the pool, across its edge, or outside it within 2 ft.
+- **Validation:** polygons must be simple, with no self-intersection. Normalisation drops an invalid feature with a note and keeps the pool.
+
+**Ops.**
+- `add_pool_feature`, `update_pool_feature` and `delete_pool_feature`: parents only, one undoable edit each. A feature keeps its kind.
+- Pool move, turn and scale carry the features along.
+- `make_yard_room` accepts `{list:'pool', feature:<spa id>}`, so a spa can be a yard room for the controller's jets and heater.
+- Argyle cannot do this yet: the `house_design` description is at its 6,000-character cap.
+
+**Rendering** (`static/twin/pool_features.js`, `twin_yard.js`).
+- The ledge is a raised floor under the water. The steps are tread slabs.
+- **Spa:**
+  - It has its own basin and water.
+  - Raised: walls `raise_in` above the deck, with coping, and water 2 in below it. Flush: water and coping level with the pool.
+  - The pool's water and coping are cut out under the spa.
+  - A raised spa that overlaps the pool gets a spillover sheet into it.
+- Features join the yard reuse key.
+- A pool without features builds identical geometry.
+
+**Editor.** The pool card has "Add tanning ledge", "Add steps" and "Add spa", each drawn with the snapped polygon tool. Feature rows show their fields, the spa's slots, "Make this a room", and Delete (with `promptConfirm`).
+
+**Tests.** New `test_twin_pool_features` 7/7, `test_twin_pool_features_js` (heights, depths, tread order, flush and raised water, water cut-out, spillover only when raised and overlapping, slots, unchanged plain pool) and `test_twin_pool_features_editor_js`. Neighbours green: yard material slots py 6/6 and js, yard reuse js (the key changes with features), yard rooms 8/8 and js 3/3, site shapes, model bridge 32/32, house tool, model devices 20/20 (schema cap), import maps 3/3, Tailwind 6/6, tree once 1/1, server speed 5/5. Chromium on the test house: a ledge, steps and a raised spa render, with no page errors.
+
+**v2.499.852 (2026-11-13): dev and test only. TestClient test files no longer hang on Windows loopback.**
+
+**The cause.** "TestClient files intermittently hang at exit or first request" (noted since v2.499.842) was found with a faulthandler stack dump. Every TestClient request starts an asyncio portal. On Windows its proactor loop calls `socket.socketpair()`, and CPython's `_fallback_socketpair` blocks forever in `accept()` when the development machine's loopback loses a TCP handshake. Browser tests already had a bounded, retried replacement in `tests/live_app.py`, but TestClient tests never loaded it.
+
+**The fix.** The replacement now lives in `services/win_loopback.py` (`install()`, idempotent). `main.py` calls it at import, so every test that imports the app is covered, and `tests/live_app.py` uses the same function. It does nothing off Windows, so the Home Assistant add-on (Linux) is unaffected.
+
+**Tests.** New `test_win_loopback` 1/1 (installed on Windows, a working pair, an asyncio loop starts). TestClient files green: HA display 5/5, house saves 19/19, edit timing 4/4, server speed 5/5. A browser scenario passed twice.
 
 **v2.499.851 (2026-11-13, NOT device-verified): an editor edit does less whole-house work on the server and no longer downloads the house twice.**
 

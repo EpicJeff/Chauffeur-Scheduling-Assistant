@@ -69,6 +69,16 @@ def _upload(upload_id):
 
 def start_upload(body):
     name, size, files = body.get('name'), body.get('size'), body.get('files')
+    material_id = body.get('material_id')
+    if material_id is not None:
+        from services import twin_materials
+        twin_materials.require_editable(material_id)
+        if body.get('asset_id') is not None or body.get('slot') not in twin_materials.SLOTS:
+            raise ValueError('Choose one valid material texture slot.')
+        if type(size) is not int or not 0 < size <= twin_materials.MAX_INPUT_BYTES:
+            raise ValueError('Each image must be at most 40 MB.')
+        if not isinstance(files, list) or len(files) != 1:
+            raise ValueError('Upload one image per material texture slot.')
     derived = body.get('asset_id') is not None
     if derived:
         if not get(body['asset_id']):
@@ -92,7 +102,7 @@ def start_upload(body):
         raise ValueError('The declared model sizes do not match.')
     if derived and size > LOD_MAX_BYTES:
         raise ValueError('Each lighter version may be at most 50 MB.')
-    if not derived and size > limit_mb() * 1024 * 1024:
+    if not derived and material_id is None and size > limit_mb() * 1024 * 1024:
         raise ValueError(f'Models may be at most {limit_mb()} MB uploaded.')
     with twin_store.LIFECYCLE, twin_store._LOCK:
         folder = _uploads()
@@ -104,7 +114,9 @@ def start_upload(body):
         (folder / 'body').write_bytes(b'')
         (folder / 'meta.json').write_text(json.dumps({'name': name.strip(), 'size': size,
             'files': declared, 'received': 0, 'index': 0, 'expires': time.time() + UPLOAD_TTL,
-            **({'asset_id': body['asset_id'], 'lod': body['lod']} if derived else {})}), encoding='utf-8')
+            **({'asset_id': body['asset_id'], 'lod': body['lod']} if derived else {}),
+            **({'material_id': material_id, 'slot': body['slot'], 'actor': body.get('material_actor')}
+               if material_id is not None else {})}), encoding='utf-8')
     return {'upload_id': upload_id, 'chunk_bytes': CHUNK_BYTES}
 
 
@@ -117,7 +129,11 @@ def upload_chunk(upload_id, index, data):
             raise ValueError('This chunk exceeds the declared model size or the 4 MB chunk limit.')
         if meta.get('asset_id') and meta['size'] > LOD_MAX_BYTES:
             raise ValueError('Each lighter version may be at most 50 MB.')
-        if not meta.get('asset_id') and meta['size'] > limit_mb() * 1024 * 1024:
+        if meta.get('material_id'):
+            from services import twin_materials
+            if meta['size'] > twin_materials.MAX_INPUT_BYTES:
+                raise ValueError('Each image must be at most 40 MB.')
+        if not meta.get('asset_id') and not meta.get('material_id') and meta['size'] > limit_mb() * 1024 * 1024:
             raise ValueError(f'Models may be at most {limit_mb()} MB uploaded.')
         # Truncate any unacknowledged append left by an interrupted write.
         with (folder / 'body').open('r+b') as stream:
@@ -140,6 +156,10 @@ def finish_upload(upload_id):
         try:
             with (folder / 'body').open('rb') as stream:
                 files = {row['name']: stream.read(row['size']) for row in meta['files']}
+            if meta.get('material_id'):
+                from services import twin_materials
+                return twin_materials.set_image(meta['material_id'], meta['slot'],
+                                                next(iter(files.values())), meta.get('actor'))
             if meta.get('asset_id'):
                 return attach_lod(meta['asset_id'], meta['lod'], files[meta['lod']])
             return create(files, meta['name'], 'other')

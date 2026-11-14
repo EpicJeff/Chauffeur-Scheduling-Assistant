@@ -44,18 +44,21 @@ export function materialSlot({ label, value = null, defaultLabel, defaultColor =
           node.addEventListener('click', action); chooser.append(node); return node;
         };
         button('Use default', () => save(null));
-        const ordered = [...quickPicks, ...entries].filter((ref, i, all) => all.findIndex(r => r.id === ref.id && r.color === ref.color) === i);
+        const ordered = [...quickPicks.map(ref => entries.find(entry => entry.id === ref.id)).filter(Boolean), ...entries]
+          .filter((ref, i, all) => all.findIndex(r => r.id === ref.id) === i);
         for (const entry of ordered) {
-          const ref = { id: entry.id, ...(entry.color ? { color: entry.color } : {}) };
+          const ref = { id: entry.id };
           const pick = button(entry.name || name(ref), () => save(ref)); pick.dataset.material = entry.id;
-          const chip = document.createElement('i'); chip.className = 'editor-material-swatch';
+          const chip = document.createElement(entry.thumbnail_url ? 'img' : 'i'); chip.className = 'editor-material-swatch';
+          if (entry.thumbnail_url) { chip.src = entry.thumbnail_url; chip.alt = ''; }
           chip.style.backgroundColor = color(entry); chip.setAttribute('aria-hidden', 'true'); pick.prepend(chip);
         }
         if (current) {
-          const tintLabel = document.createElement('label'); tintLabel.textContent = 'Tint';
+          const tintLabel = document.createElement('label'); tintLabel.textContent = 'Override tint';
           const tint = document.createElement('input'); tint.type = 'color'; tint.value = color(current);
-          tint.setAttribute('aria-label', `${label} tint`); tint.addEventListener('change', () => save({ id: current.id, color: tint.value }));
+          tint.setAttribute('aria-label', `${label} override tint`); tint.addEventListener('change', () => save({ id: current.id, color: tint.value }));
           tintLabel.append(tint); chooser.append(tintLabel);
+          if (current.color) button('Clear override', () => save({ id: current.id }));
         }
         button('Cancel', () => { chooser.remove(); chooser = null; });
         root.append(chooser); chooser.querySelector('button')?.focus();

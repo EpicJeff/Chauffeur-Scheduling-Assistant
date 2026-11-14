@@ -16,7 +16,7 @@ const {buildTwin, mergeStatic} = await import(file('static/twin/twin_generator.j
 const {buildYard} = await import(file('static/twin/twin_yard.js'));
 const {rememberImport} = await import(file('static/twin/twin_library.js'));
 const {buildAtlas} = await import(file('static/twin/bake/atlas.js'));
-const {atlasJob, covered, packAtlas, applyAtlas} = await import(file('static/twin/bake/atlas_transport.js'));
+const {atlasJob, covered, packAtlas, applyAtlas, geometryFrom} = await import(file('static/twin/bake/atlas_transport.js'));
 const {bakeLayout} = await import(file('static/twin/bake/baker.js'));
 window.location={href:'http://house.test/house/twin'}; window.chfBase='../';
 globalThis.ProgressEvent=class {constructor(type,values){this.type=type;Object.assign(this,values);}};
@@ -58,15 +58,34 @@ assert.notEqual(lowTriangles,highTriangles,'the fixture really has different ren
 assert.equal(atlasJob(low,plan,options).cacheKey,atlasJob(high,plan,options).cacheKey,'tier-independent input fingerprint');
 const a=buildAtlas(low,plan,options), b=buildAtlas(high,plan,options);
 assert.equal(a.key,b.key,'the panel polls exactly the desk bake key');
-const mapping=atlas=>({rooms:atlas.room.rooms,charts:atlas.room.charts.map(({mesh,...c})=>c),
- attributes:covered(atlas===a?low:high).map(m=>Object.fromEntries(['uv3','lmRoom','lmLightPage'].map(k=>[k,[...m.geometry.attributes[k].array]])))});
+// Graded terrain bakes too (user, 2026-11-13). Its grid is finer on High than on Low, so its
+// per-vertex arrays differ by tier; its charts (IDs, tiles, rects) and the UV at any shared
+// ground point do not. Every other receiver is compared vertex for vertex, as before.
+const field=root=>covered(root).find(m=>m.geometry.userData.bakeHeightfield);
+assert.ok(field(low)&&field(high),'graded terrain is a bake receiver on both tiers');
+const mapping=atlas=>({rooms:atlas.room.rooms,charts:atlas.room.charts.map(({mesh,faces,...c})=>c.heightfield?c:{...c,faces}),
+ attributes:covered(atlas===a?low:high).filter(m=>!m.geometry.userData.bakeHeightfield).map(m=>Object.fromEntries(['uv3','lmRoom','lmLightPage'].map(k=>[k,[...m.geometry.attributes[k].array]])))});
 assert.deepEqual(mapping(a),mapping(b),'identical chart IDs, packing and every lightmap UV');
-const layoutData=atlas=>JSON.parse(JSON.stringify(bakeLayout(atlas,options,[lamp]),(key,value)=>key==='mesh'?undefined:value));
+const groundUV=mesh=>{const p=mesh.geometry.attributes.position,u=mesh.geometry.attributes.uv3,r=mesh.geometry.attributes.lmRoom,m=new Map();
+ for(let i=0;i<p.count;i++)if(r.getX(i)>=0)m.set([p.getX(i),p.getY(i),p.getZ(i)].map(v=>v.toFixed(3)).join(),[u.getX(i),u.getY(i)]);return m;};
+const lowUV=groundUV(field(low)),highUV=groundUV(field(high));let shared=0;
+for(const [key,uv] of lowUV) {const other=highUV.get(key);if(!other)continue;shared++;
+ assert.ok(Math.abs(uv[0]-other[0])<1e-6&&Math.abs(uv[1]-other[1])<1e-6,`ground point ${key} maps to the same lightmap texel on both tiers`);}
+assert.ok(shared>10,`shared ground points compared: ${shared}`);
+// A heightfield chart's face list indexes its own tier's grid; keys, addresses and ownership do not.
+const layoutData=atlas=>JSON.parse(JSON.stringify(bakeLayout(atlas,options,[lamp]),(key,value)=>key==='mesh'?undefined:
+ value&&value.heightfield&&value.faces?{...value,faces:undefined}:value));
 assert.deepEqual(layoutData(a),layoutData(b),'same light keys, addresses and sticky ownership');
 const packed=packAtlas(b,covered(high)), freshLow=await scene('low');
 const applied=applyAtlas(packed,freshLow,options);
 assert.equal(applied.key,b.key,'a High worker/cache result applies on Low');
 assert.deepEqual(bakeLayout(applied,options,[lamp]).entries,bakeLayout(b,options,[lamp]).entries);
+// Yard reuse (v2.499.848) keeps meshes whose geometry an earlier bake replaced. Re-deriving the
+// atlas from them, the worker's way, keeps the key: no rebake after an unrelated edit.
+{const job=atlasJob(freshLow,plan,options),again=new THREE.Group();
+ for(const m of job.meshes){const mesh=new THREE.Mesh(geometryFrom(m.geometry),new THREE.MeshStandardMaterial({name:m.name}));
+  mesh.matrixAutoUpdate=false;mesh.matrix.fromArray(m.matrix);mesh.userData={merged:true,buildingId:m.buildingId};again.add(mesh);}
+ assert.equal(buildAtlas(again,plan,options).key,b.key,'an already-applied scene derives the same atlas key');}
 const changed=structuredClone(plan);changed.buildings[0].walls[0].to[0]=10;
 const {transformShape}=await import(file('static/twin/editor/site_shapes.js'));
 const rotated=structuredClone(plan);Object.assign(rotated.site.hardscape[0],transformShape(rotated.site.hardscape[0],{rotation:90}));

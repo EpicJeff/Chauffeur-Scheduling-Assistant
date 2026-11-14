@@ -35,11 +35,13 @@ function proxies(charts, size, layout) {
     const uv = src.attributes.uv3.array.slice();
     const index = [];
     for (const c of list) {
-      // Sparse banks move whole charts from the base room layout.
+      // Sparse banks move whole charts from the base room layout. One lookup per chart: a
+      // per-vertex search was charts x vertices (seconds once graded ground baked).
+      const base = layout.room.charts.find(b => b.mesh === mesh && b.faces === c.faces);
+      const du = base ? (c.rect.x - base.rect.x) / size : 0, dv = base ? (c.rect.y - base.rect.y) / size : 0;
       for (const f of c.faces) for (let k = 0; k < 3; k++) {
         const i = f * 3 + k; index.push(i);
-        const base = layout.room.charts.find(b => b.mesh === mesh && b.faces === c.faces);
-        if (base) { uv[i * 2] += (c.rect.x - base.rect.x) / size; uv[i * 2 + 1] += (c.rect.y - base.rect.y) / size; }
+        if (base) { uv[i * 2] += du; uv[i * 2 + 1] += dv; }
       }
     }
     g.setAttribute('bakeUV', new THREE.BufferAttribute(uv, 2)); g.setIndex(index);
@@ -54,6 +56,9 @@ export function occluders(view) {
   view.scene.updateMatrixWorld(true);
   view.scene.traverse(o => {
     if (!atlasMesh(o) || o.material.name === 'glass') return;
+    // Graded ground receives yard light but never blocks it: seen at grazing angles from a
+    // lamp above, one cube texel spans more depth than the bias and the lawn shadows itself.
+    if (o.geometry?.userData.bakeHeightfield) return;
     for (let p = o.parent; p; p = p.parent) if (p.userData.viewingWalls === 'cut') return;
     const mesh = new THREE.Mesh(o.geometry, o.material);
     mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); mesh.frustumCulled = false; scene.add(mesh);
@@ -112,26 +117,65 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
     else renderer.readRenderTargetPixels(target, 0, 0, size, size, raw);
     const bytes = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) bytes[i] = Math.round(Math.min(1, Math.max(0, THREE.DataUtils.fromHalfFloat(raw[i]))) * 255);
-    // A small chart-local bilateral filter keeps shadow edges.
-    const copy = bytes.slice();
-    for (const c of charts) {
-      const r = c.rect;
-      for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) {
-        const p = (y * size + x) * 4, centre = copy[p]; let sum = 0, n = 0;
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          const sx = Math.max(r.x, Math.min(r.x + r.w - 1, x + dx)), sy = Math.max(r.y, Math.min(r.y + r.h - 1, y + dy));
-          const v = copy[(sy * size + sx) * 4]; if (Math.abs(v - centre) < 20) { sum += v; n++; }
-        }
-        if (copy[p + 3]) bytes[p] = Math.round(sum / n);
-      }
-    }
-    if (!deferBounce) addRoomBounce(bytes, charts, size);
+    filterCharts(bytes, charts, size);
+    if (!deferBounce) { addRoomBounce(bytes, charts, size); dilateCharts(bytes, charts, size); }
     return bytes;
   } finally {
     restore();
     for (const o of scene.children) o.geometry.dispose();
     material?.dispose(); depth?.dispose(); target.dispose(); shadow?.dispose();
   }
+}
+
+// A small chart-local bilateral filter keeps shadow edges. Texels the raster never wrote (in
+// the chart's rectangle but outside its faces) neither count nor change: averaging them in
+// darkened every chart border (the pool floor's dark diagonal, 2026-11-13).
+export function filterCharts(bytes, charts, size) {
+  const copy = bytes.slice();
+  for (const c of charts) {
+    const r = c.rect;
+    for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) {
+      const p = (y * size + x) * 4, centre = copy[p]; let sum = 0, n = 0;
+      if (!copy[p + 3]) continue;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const sx = Math.max(r.x, Math.min(r.x + r.w - 1, x + dx)), sy = Math.max(r.y, Math.min(r.y + r.h - 1, y + dy));
+        const q = (sy * size + sx) * 4, v = copy[q];
+        if (copy[q + 3] && Math.abs(v - centre) < 20) { sum += v; n++; }
+      }
+      bytes[p] = Math.round(sum / n);
+    }
+  }
+  return bytes;
+}
+
+// Fill each chart's unwritten texels from their written neighbours, ring by ring, so bilinear
+// sampling at a chart's border never blends in black. A flat floor split into two charts (the
+// pool floor crosses a 64 ft outdoor tile line) showed its seam as a dark diagonal. Filled
+// texels stay alpha 0: they are padding, not surface, for bounce and coverage.
+export function dilateCharts(bytes, charts, size) {
+  for (const c of charts) {
+    const r = c.rect, w = r.w, h = r.h, done = new Uint8Array(w * h);
+    let any = false;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++)
+      if (bytes[((r.y + y) * size + r.x + x) * 4 + 3]) { done[y * w + x] = 1; any = true; }
+    if (!any) continue;
+    for (let pass = 0; pass < w + h; pass++) {
+      const fill = [];
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        if (done[y * w + x]) continue;
+        let sum = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h || !done[ny * w + nx]) continue;
+          sum += bytes[((r.y + ny) * size + r.x + nx) * 4]; n++;
+        }
+        if (n) fill.push([x, y, Math.round(sum / n)]);
+      }
+      if (!fill.length) break;
+      for (const [x, y, v] of fill) { bytes[((r.y + y) * size + r.x + x) * 4] = v; done[y * w + x] = 1; }
+    }
+  }
+  return bytes;
 }
 
 export function addRoomBounce(bytes, charts, size) {
