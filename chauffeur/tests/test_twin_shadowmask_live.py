@@ -172,7 +172,38 @@ async () => {
   const gl = renderer.getContext(), heavyPx = view([heavyWall, caster], front, [sun, ...points]);
   const linked = m => { const prog = renderer.properties.get(m).currentProgram; return !!prog && gl.getProgramParameter(prog.program, gl.LINK_STATUS) && (!prog.diagnostics || prog.diagnostics.runnable); };
   out.heavy = { linked: linked(heavy), lit: heavyPx[centre(16, 24)], samplers: gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS) };
+  // The production typed pool, including parked area slots and their LTC samplers.
+  const {createRealLights} = await import(B + 'static/twin/live/real_lights.js');
+  const poolScene = new THREE.Scene(), rig = createRealLights({scene:poolScene,tier:'high'});
+  rig.show(true);
+  const poolLights = poolScene.children.filter(o=>o.isLight), areas = poolLights.filter(o=>o.isRectAreaLight);
+  const poolPx = view([heavyWall,caster], front, [sun,...poolLights]);
+  rig.warm(()=>view([heavyWall,caster],front,[sun,...poolLights]));
+  const programKeys = () => renderer.info.programs.map(p=>p.cacheKey).sort();
+  const keysBefore = programKeys();
+  const candidate = (device,shape,at,extra={}) => ({device,at,position:new THREE.Vector3(at[0]*FT,at[2]*FT,-at[1]*FT),distance:REACH,intensity:1,rgb:[255,255,255],
+    emitter:{shape,at,normal:[0,-1,0],size_ft:[2,1],cd:40,luminance:20,output_lm_share:503,aim:[6,0,4],cone_deg:60,softness:.3,...extra}});
+  rig.update([candidate('point','point',[6,-4,4]),candidate('spot','spot',[6,-4,4]),candidate('area','area',[6,-4,4])],[0,0,0]);
+  view([heavyWall,caster],front,[sun,...poolLights]);const keysOn=programKeys();
+  rig.update([candidate('spot','spot',[6,-4,4])],[0,0,0]);view([heavyWall,caster],front,[sun,...poolLights]);
+  const keysSpot = programKeys();
+  rig.update([], [0,0,0]);view([heavyWall,caster],front,[sun,...poolLights]);
+  const samplerTypes = new Set([gl.SAMPLER_2D,gl.SAMPLER_CUBE,gl.SAMPLER_2D_ARRAY,gl.SAMPLER_2D_SHADOW,gl.SAMPLER_CUBE_SHADOW]);
+  const program = renderer.properties.get(heavy).currentProgram.program;
+  let samplerCount=0;
+  for(let i=0;i<gl.getProgramParameter(program,gl.ACTIVE_UNIFORMS);i++){
+    const u=gl.getActiveUniform(program,i);if(samplerTypes.has(u.type))samplerCount+=u.size;
+  }
+  out.typedPool = {areas:areas.length,linked:linked(heavy),lit:poolPx[centre(16,24)],samplerCount,stable:JSON.stringify(keysBefore)===JSON.stringify(keysOn)&&JSON.stringify(keysOn)===JSON.stringify(keysSpot)&&JSON.stringify(keysSpot)===JSON.stringify(programKeys())};
+  rig.stop();
   renderer.shadowMap.enabled = false;
+  // RectAreaLights do not set three's punctual-light multiscatter term. The
+  // baked term must still match a live point when only areas are present.
+  const area = new THREE.RectAreaLight(0xffffff,20,FT,FT);area.position.copy(source([6,4,4]));
+  const areaLive = view(plain,front,[area,livePoint([6,4,4])]);
+  M.setLightSource(uniforms,0,0,source([6,4,4]),REACH);
+  const areaBaked = view(baked,front,[area]);
+  out.areaOnly={baked:areaBaked[centre(16,24)],live:areaLive[centre(16,24)]};
   // --- room mode and window glow ---
   const roomU = M.lightmapUniforms(2, 4);
   const roomMat = patched({}, roomU, [page, pageOf(open.bytes)]);
@@ -250,13 +281,25 @@ def run():
         assert m['room']['linked'] and m['room']['lit'] > 0, f'room mode links and draws its light: {m}'
         assert m['glow']['linked'] and m['glow']['lit'] > 0, f'the window glow links and glows: {m}'
 
+    def typed_pool():
+        pool = result['typedPool']
+        assert pool['areas'] == 8, pool
+        assert pool['linked'] and pool['lit'] > 0, pool
+        assert pool['samplerCount'] <= 16, pool
+        assert pool['stable'], f'render, toggle, render preserves program keys: {pool}'
+
+    def area_only():
+        a = result['areaOnly']
+        assert a['live'] > 0 and abs(a['baked'] / a['live'] - 1) < .02, a
+
     for name, fn in (('visibility_is_a_fraction_of_the_lamp', visibility), ('baked_light_matches_the_live_light', parity),
                      ('a_normal_map_turns_toward_the_lamp', normal_map), ('brightness_and_colour_need_no_rebake', tint),
                      ('a_batten_front_shades_by_its_own_normal', proxy), ('an_unbaked_light_adds_nothing', unbaked),
                      ('the_fill_stops_at_the_reach', fill), ('a_fully_mapped_material_still_links', heavy),
-                     ('room_mode_and_window_glow_compile', modes)):
+                     ('room_mode_and_window_glow_compile', modes), ('program_keys_stable_when_lights_switch', typed_pool),
+                     ('area_only_multiscatter_matches_live', area_only)):
         check(name, fn)
-    print(f'{9 - len(failures)}/9 passed')
+    print(f'{11 - len(failures)}/11 passed')
     return 1 if failures else 0
 
 

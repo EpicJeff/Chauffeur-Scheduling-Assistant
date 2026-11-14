@@ -1,7 +1,10 @@
 // Renderer settings and deterministic selection, shared by the page and embeds.
 export const TIERS = {
-  low: { pixelRatio: 1, antialias: false, shadows: false, shadowSize: 0, plantCards: true, edgeGrass: false, realLights: 4 },
-  high: { pixelRatio: Math.min(globalThis.devicePixelRatio || 1, 2), antialias: true, shadows: true, shadowSize: 4096, plantCards: false, edgeGrass: true, realLights: 16 },
+  low: { pixelRatio: 1, antialias: false, shadows: false, shadowSize: 0, plantCards: true, edgeGrass: false, realLights: {point: 4, spot: 1, area: 2, shadows: 0} },
+  medium: { pixelRatio: 1, antialias: true, shadows: true, shadowSize: 2048, plantCards: true, edgeGrass: false, realLights: {point: 8, spot: 2, area: 4, shadows: 1} },
+  // Fully mapped + DFG + environment + 3 bake banks + LTC + sun leaves one lamp shadow on 16-sampler GPUs.
+  high: { pixelRatio: Math.min(globalThis.devicePixelRatio || 1, 2), antialias: true, shadows: true, shadowSize: 4096, plantCards: false, edgeGrass: true, realLights: {point: 12, spot: 4, area: 8, shadows: 1} },
+  max: { pixelRatio: Math.min(globalThis.devicePixelRatio || 1, 2), antialias: true, shadows: true, shadowSize: 4096, plantCards: false, edgeGrass: true, realLights: {point: 16, spot: 6, area: 12, shadows: 1} },
 };
 
 export function rendererName(gl) {
@@ -11,6 +14,6 @@ export function rendererName(gl) {
 
 export function pickTier(search, gl) {
   const forced = search.get('tier');
-  if (forced === 'low' || forced === 'high') return forced;
+  if (Object.hasOwn(TIERS, forced)) return forced;
   return /videocore|v3d/i.test(rendererName(gl)) || (globalThis.navigator?.hardwareConcurrency || 8) <= 4 ? 'low' : 'high';
 }

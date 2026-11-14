@@ -4,7 +4,8 @@ import { FT, polygon, contains, stairHoles } from '../twin_generator.js';
 export { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 import { buildingGround } from '../twin_ground.js';
 import { lightColor, createRealLights } from './real_lights.js';
-import { resolveEmitters, emission, DEFAULT_OUTPUT_LM } from './emitters.js';
+import { resolveEmitters, emission } from './emitters.js';
+import { createFixtureGlow } from './fixture_glow.js';
 import { registerClimate, roomClimate } from './climate.js';
 import { registerEnergy } from './energy.js';
 import { registerSecurity } from './security.js';
@@ -75,13 +76,13 @@ export function mountModes(view, live) {
   // they mount the current view, whose tier supplies the real-light budget.
   const realLighting = !!view.tier;
   let legacyRooms = [];
-  const rig = createRealLights(view);
+  const layout = live.layout(), emitters = resolveEmitters(layout, {}, view.plan, {firePits: false});
+  const fixtures = emitters.some(e => !e.legacy), rig = createRealLights(view, {fixtures});
   const effects = new Map();
   const overlays = new THREE.Group(); overlays.userData.twinMode = 'modes'; view.scene.add(overlays);
   const context = {view, live, warm, overlays, lighting(on) { view.setLiveLamps?.(on); rig.show(on); }};
   for (const definition of modes()) if (definition.mount) effects.set(definition.id, definition.mount(context));
   registry.get(mode).enter(context);
-  const layout = live.layout();
   const climateDevices = layout.devices || layout.markers;
   // Placement, vertical references and mounting offsets have one owner.
   // A small shared low-poly bulb adds no shadow draw calls.
@@ -90,14 +91,15 @@ export function mountModes(view, live) {
   // flame colour, intensityScale and the baked object:fire_pit:<id> channel.
   // The bake slice moves pits onto firePitEmitters, and must carry that
   // colour (#ff9a3c) and scale (.5) with them.
-  for (const emitter of resolveEmitters(layout, {}, view.plan, {firePits: false})) {
+  for (const emitter of emitters) {
     const position = new THREE.Vector3(...emitter.position);
     const marker = emitter.legacy ? emitter.marker : {...emitter, at: [position.x / FT, -position.z / FT, position.y / FT]};
-    const bulb = new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: '#fff1c9', toneMapped: false }));
-    bulb.position.copy(position); bulb.userData.bulb = marker.device_id; bulb.visible = false;
-    view.scene.add(bulb);
+    const glow = ['line', 'area'].includes(emitter.shape) ? createFixtureGlow(view.scene, emitter) : null;
+    const bulb = glow?.mesh || new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: '#fff1c9', toneMapped: false }));
+    if (!glow) { bulb.position.copy(position); bulb.userData.bulb = marker.device_id; view.scene.add(bulb); }
+    bulb.visible = false;
     lamps.push({ marker, emitter, key: emitter.legacy ? marker.device_id : emitter.fixture_id,
-      bulb, position, distance: emitter.range * FT, intensity: 0, rgb: lightColor(), real: false });
+      bulb, glow, position, distance: emitter.range * FT, intensity: 0, rgb: lightColor(), real: false });
   }
   // Object lamps join the same fixed-budget real-light pool as HA lamps.
   // Material instances survive batching and are changed in place on pushes.
@@ -183,7 +185,7 @@ export function mountModes(view, live) {
     const shown = extras.map(object => object.visible), poolShown = rig.shown?.();
     rig.show(true); for (const object of extras) object.visible = true;
     try {
-      view.renderer3.compileAsync(view.scene, view.camera).catch(() => {});
+      rig.warm(() => view.renderer3.compileAsync(view.scene, view.camera).catch(() => {}));
       // Programs are keyed on the light set too. All shows the pool and the effects at
       // once (slice 2c-2), so compile the overlays a second time with the pool hidden,
       // the light set Climate, Energy and Security draw them under.
@@ -199,6 +201,7 @@ export function mountModes(view, live) {
   function update() {
     // Read without copying the house: this runs on every push (review M3).
     const states = live.peek(), stale = live.stale();
+    const resolved = new Map((fixtures ? resolveEmitters(layout, stale ? {} : states, view.plan, {firePits: false}) : []).map(e => [e.fixture_id, e]));
     for (const flame of flames) flame.visible = !stale && states[flame.material.userData.objectLight.entity]?.state === 'on';
     legacyRooms = !realLighting && !stale ? live.rooms() : [];
     for (const lamp of lamps) {
@@ -206,11 +209,10 @@ export function mountModes(view, live) {
       const object = lamp.objectSource;
       const emitted = emission(stale ? null : state, lamp.marker.entity_id?.split('.')[0]);
       lamp.intensity = object && !object.entity ? (object.on ? 1 : 0) : emitted.brightness;
-      // Shape-specific pools arrive in the real-time slice. Until then the
-      // point pool receives each fixture's share at its resolved centre, in
-      // legacy-lamp units: a default fixture is exactly one legacy lamp.
-      if (lamp.emitter && !lamp.emitter.legacy)
-        lamp.intensity *= lamp.emitter.output_lm * lamp.emitter.output_fraction / DEFAULT_OUTPUT_LM;
+      if (lamp.emitter && !lamp.emitter.legacy) {
+        lamp.emitter = resolved.get(lamp.emitter.fixture_id);
+        lamp.intensity = lamp.emitter?.on ? lamp.emitter.brightness : 0;
+      }
       if (object?.fire) lamp.intensity *= object.intensityScale ?? .5;
       if (object && (!object.entity || object.fire)) {
         const color = new THREE.Color(object.color).getRGB(new THREE.Color(), THREE.SRGBColorSpace);
@@ -262,6 +264,9 @@ export function mountModes(view, live) {
       .map(lamp => ({ device: lamp.key, at: lamp.marker.at, ...lamp }));
     const fresh = new Set(view.bake?.fresh() || []);
     const selected = rig.update(realLighting ? candidates : [], target ? [target.x / FT, -target.z / FT, target.y / FT] : [0, 0, 0]);
+    const overflowText = modeShows(mode, 'lights') && rig.overflow() ? 'Some lights are shown as glow only on this tier' : '';
+    legendText.textContent = [effects.get(mode)?.legend?.() || registry.get(mode)?.legend || '', overflowText].filter(Boolean).join(' · ');
+    modeLegend.hidden = !modeLegend.textContent;
     for (const lamp of lamps) {
       const baked = (!lamp.emitter || lamp.emitter.legacy) && fresh.has(lamp.marker.device_id);
       const shown = candidates.some(row => row.device === lamp.key);
@@ -269,12 +274,15 @@ export function mountModes(view, live) {
       if (baked || lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, baked && shown ? lamp.intensity : 0);
       lamp.baked = baked;
       lamp.real = selected.has(lamp.key);
-      lamp.bulb.visible = shown && !lamp.objectSource?.fire;
-      lamp.bulb.material.color.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
+      if (lamp.glow) lamp.glow.update(lamp.rgb, lamp.intensity, shown);
+      else {
+        lamp.bulb.visible = shown && !lamp.objectSource?.fire;
+        lamp.bulb.material.color.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
+      }
     }
     for (const floor of floors) {
       const { room, mesh, group, parent } = floor;
-      const overflow = candidates.filter(lamp => !selected.has(lamp.device) && !fresh.has(lamp.device) &&
+      const overflow = candidates.filter(lamp => (!lamp.emitter || lamp.emitter.legacy) && !selected.has(lamp.device) && !fresh.has(lamp.device) &&
         lamp.marker.building === room.building && lamp.marker.room === room.room);
       const legacy = legacyRooms.find(row => row.building === room.building && row.room === room.room);
       const glow = realLighting ? (overflow.length ? overflow.reduce((sum, lamp) => sum + lamp.intensity, 0) / overflow.length : 0) : legacy?.glow || 0;
@@ -310,7 +318,7 @@ export function mountModes(view, live) {
       for (const effect of effects.values()) effect.stop?.();
       overlays.removeFromParent();
       if (view.onTimeLook === warm) view.onTimeLook = null;
-      for (const { bulb } of lamps) { bulb.removeFromParent(); bulb.material.dispose(); }
+      for (const { bulb, glow } of lamps) { if (glow) glow.stop(); else { bulb.removeFromParent(); bulb.material.dispose(); } }
       bulbGeometry.dispose();
       for (const { group, mesh } of floors) { group.removeFromParent(); mesh.geometry.dispose(); mesh.material.dispose(); }
     },

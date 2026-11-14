@@ -282,8 +282,8 @@ check('budget_picks_nearest_then_brightest_per_tier', async () => {
   // A light at intensity 0 is never picked; fewer candidates than the cap is fine.
   assert.deepEqual(ids(pickReal([c('off',1,0), c('on',20,.4)], [0,0,9], 4)), ['on']);
   assert.deepEqual(ids(pickReal([], [0,0,9], 4)), []);
-  // The cap per tier, and shadows only on high and max, on 2 lights.
-  for (const [tier, cap, shadows] of [['low',4,0], ['medium',8,0], ['high',16,2], ['max',16,2]]) {
+  // Typed tiers keep these point slots; the 16-sampler budget leaves one lamp shadow.
+  for (const [tier, cap, shadows] of [['low',4,0], ['medium',8,1], ['high',12,1], ['max',16,1]]) {
     const scene = new THREE.Scene();
     const rig = createRealLights({scene, tier, renderer3:{shadowMap:{enabled:shadows > 0}}}, {tier});
     const lights = pool({scene});
@@ -293,10 +293,10 @@ check('budget_picks_nearest_then_brightest_per_tier', async () => {
     rig.stop();
     assert.equal(pool({scene}).length, 0, `${tier}: stop() removes the pool`);
   }
-  assert.equal(TIERS.low.realLights, 4, 'twin_tiers.js: TIERS.low.realLights');
-  assert.equal(TIERS.high.realLights, 16, 'twin_tiers.js: TIERS.high.realLights');
-  if (TIERS.medium) assert.equal(TIERS.medium.realLights, 8);
-  if (TIERS.max) assert.equal(TIERS.max.realLights, 16);
+  assert.deepEqual(TIERS.low.realLights, {point:4,spot:1,area:2,shadows:0});
+  assert.deepEqual(TIERS.medium.realLights, {point:8,spot:2,area:4,shadows:1});
+  assert.deepEqual(TIERS.high.realLights, {point:12,spot:4,area:8,shadows:1});
+  assert.deepEqual(TIERS.max.realLights, {point:16,spot:6,area:12,shadows:1});
 
   // Mounted on low: the four nearest the camera target (room A) are real.
   const {view, live} = await mounted('low');
