@@ -1,6 +1,31 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.846 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.847 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.847 (2026-11-13, NOT device-verified): every house editor edit is timed, end to end, server and browser.**
+
+**The ask.** The user: "Every change on my house right now takes several seconds to update." This is step 1 of the edit-speed plan: measure, with no change in behaviour.
+
+**Server** (`services/twin_timing.py`, a request-scoped ContextVar collector that is active only on `POST /api/house/editor/op`).
+- Spans: `lock`, `apply` (`twin_edit.apply_model`), `normalize` (every whole-model normalize in the request), `round` (`_append_round`), `read` (`current` / `current_model`) and `response` (serialization).
+- They are returned as a standard `Server-Timing` header and as `timing` in the JSON, with `bytes`, the exact serialized response size.
+- Other routes are untouched.
+
+**Browser** (`static/twin/edit_timing.js`, threaded through `editor.js` `applyOpNow`, `api.js`, `twin_view.js` `rebuild` and `twin_generator.js`).
+- Each edit records:
+  - `request`, `parse`, `rebuild` (split into `generate` per building and level with walls and floors, `batch`, `yard`, `materials`, `dispose` and `bake_stop`), `first_frame`, `refresh_state` and `total`;
+  - counts of meshes, draw calls, triangles, and buildings and levels rebuilt.
+- The last 30 records are kept in `window.__twinEditTiming`.
+- Menu: "Show edit timing" (an overlay with the last edit's top spans, persisted locally) and "Send timing report", which posts the records to `api/house/twin/perf` as `kind: 'edit_timing'`, with a size cap.
+
+**First measurement** (Chromium headless on the test house: 2 buildings, 5 levels, 332 meshes, 131 draw calls, about 590k triangles; four siding material changes).
+- `yard` took 26.2-29.5 s of a 27.4-31.0 s rebuild, every time, although the edit never touches the yard.
+- Generating both buildings took 0.7-1.1 s, and batching 0.25-0.35 s.
+- Server total: 0.7-2.9 s, mostly `normalize` (0.34-0.62 s) and `read` (0.17-0.82 s).
+- Response: 245 KB, carrying the whole plan and the whole model.
+- Headless software rendering inflates absolute times, but the ratio is clear. The yard rebuild on every edit is the first fix.
+
+**Tests.** New `test_twin_edit_timing` 4/4 (header and JSON spans, no header on other routes, report accepted and oversized refused) and `test_twin_edit_timing_js` (a real `applyOp` records the spans, the toggle shows and hides the overlay, the report posts once). Neighbours green: editor history 8/8, house saves 19/19 and js 12/12, editor api, guided editor 3/3, build-draft pause, model bridge 32/32, twin store, import maps 3/3, Tailwind 6/6, material slot js, yard material slots js. Chromium: four real edits recorded, with no page errors.
 
 **v2.499.846 (2026-11-13): test-only. A browser test pins yard-room framing, and the "3 s stall" turned out to be machine load.**
 
