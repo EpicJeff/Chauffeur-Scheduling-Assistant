@@ -6,6 +6,7 @@ import { markerState, levelOfDetail, clusterMarkers, markerTextureCache, markerS
 import { roomFacts, layoutRoomCards, mountRoomCards } from './room_cards.js';
 import { deviceActions, confirmUnsafe, mountRoomPanel } from './room_panel.js';
 import { roomStates, mountModes, modeForeground } from './modes.js';
+import { resolveEmitters, emitterSignature } from './emitters.js';
 import { kindOf, unsafeLabel } from './kinds.js';
 import { mountRing } from './ring.js';
 import { isEnergyEntity, houseTempUnit } from './glance.js';
@@ -62,10 +63,11 @@ async function readLayout(api, stop) {
 }
 
 // What a layer draws from a layout; a re-read that matches it changes nothing on screen.
-const layoutKey = layout => JSON.stringify([
+export const layoutKey = (layout, plan = {}) => JSON.stringify([
   (layout?.markers || []).map(m => [m.device_id, m.name, m.kind, m.entity_id, m.entities, m.building, m.level, m.room, m.yard, m.at, m.fire_pit, m.facing_deg, m.orientation, m.outdoor, m.location_valid, m.placed, m.offered, m.accessories]),
   (layout?.rooms || []).map(r => [r.building, r.room, r.level, r.yard, r.area_id, r.name, r.lights, r.polygon_world]),
-  (layout?.devices || []).map(d => [d.device_id, d.name, d.kind, d.entity_id, d.entities, d.area_id, d.building, d.room, d.yard, d.offered, d.accessories])]);
+  (layout?.devices || []).map(d => [d.device_id, d.name, d.kind, d.entity_id, d.entities, d.area_id, d.building, d.room, d.yard, d.offered, d.accessories]),
+  emitterSignature(resolveEmitters(layout || {}, {}, plan))]);
 
 // The wall keeps its live layer without a reload. A layer that could not mount (Home Assistant
 // away, a read that failed or timed out) is tried again every 45 s; a mounted one re-reads the
@@ -87,7 +89,7 @@ export function keepLive(view, { api = (path, options) => fetch(base() + path, o
         readAt = Date.now();
         const layout = await readLayout(api, halt.signal);
         // Away or failed: the mounted layer stays; its own poll already shows it stale.
-        if (halt.signal.aborted || !layout?.available || layoutKey(layout) === layoutKey(live.layout())) return;
+        if (halt.signal.aborted || !layout?.available || layoutKey(layout, view.plan) === layoutKey(live.layout(), view.plan)) return;
         const old = live; live = null;
         const reopen = old.openedRoom?.();
         old.stop(); if (view.live === old) view.live = null;
@@ -608,7 +610,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   function subscribeStates() {
     if (stopped || stream || typeof EventSource !== 'function') return;
     const entities = new Set([...Object.keys(states), ...(live.glanceEntities || []), ...energyEntities(), ...rows.map(row => row.entity_id), ...devices.flatMap(row => row.entities || [row.entity_id]),
-      ...(layout.rooms || []).flatMap(room => room.lights || [])].filter(Boolean));
+      ...Object.keys(layout.light_fixtures || {}), ...(layout.rooms || []).flatMap(room => room.lights || [])].filter(Boolean));
     if (!entities.size) return;
     try {
       // No entity list in the URL (Ruling C11): the server derives the house's set from

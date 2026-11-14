@@ -1,10 +1,10 @@
 import { roomFloor } from '../twin_floors.js';
 import * as THREE from 'three';
 import { FT, polygon, contains, stairHoles } from '../twin_generator.js';
-import { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 export { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
-import { groundAt, buildingGround } from '../twin_ground.js';
-import { lightColor, lightIntensity, createRealLights } from './real_lights.js';
+import { buildingGround } from '../twin_ground.js';
+import { lightColor, createRealLights } from './real_lights.js';
+import { resolveEmitters, emission } from './emitters.js';
 import { registerClimate, roomClimate } from './climate.js';
 import { registerEnergy } from './energy.js';
 import { registerSecurity } from './security.js';
@@ -83,31 +83,18 @@ export function mountModes(view, live) {
   registry.get(mode).enter(context);
   const layout = live.layout();
   const climateDevices = layout.devices || layout.markers;
-  // The same world transform as the marker, including lot ground elevation.
+  // Placement, vertical references and mounting offsets have one owner.
   // A small shared low-poly bulb adds no shadow draw calls.
   const bulbGeometry = new THREE.SphereGeometry(.1, 8, 6);
-  for (const marker of layout.markers.filter(row => row.kind === 'light')) {
-    const building = view.plan.buildings.find(b => b.id === marker.building);
-    const room = marker.yard ? view.plan.site?.yard_rooms?.find(r => r.id === marker.room) : building?.rooms?.find(r => r.id === marker.room);
-    const xs = room?.polygon?.map(p => p[0]) || [], ys = room?.polygon?.map(p => p[1]) || [];
-    const span = xs.length ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 1) : 10;
-    const level = building?.levels.find(l => l.id === marker.level);
-    // A light standing on the floor is a floor lamp: its bulb, and so its light,
-    // hangs LAMP_HEIGHT above the floor (a bulb on the floor makes one hot spot
-    // and lights nothing). The marker stays where the person put it.
-    const floor = (building?.base || 0) + roomFloor(level, room);
-    const standing = !!level && marker.at[2] <= floor + .1;
-    const z = standing ? floor + LAMP_HEIGHT : marker.at[2];
-    const range = lightRange({ ...marker, at: [marker.at[0], marker.at[1], z] }, building, level, room, span);
-    const position = new THREE.Vector3(marker.at[0] * FT,
-      (z + (marker.yard ? groundAt(view.plan, marker.at[0], marker.at[1]) : buildingGround(view.plan, building))) * FT, -marker.at[1] * FT);
-    // Ceiling placements sit just below the slab so their own fixture cannot
-    // occlude them. Wall placements retain the person's chosen height.
-    if (level && !standing && marker.at[2] >= (building?.base || 0) + level.elevation + level.ceiling - .1) position.y -= .2 * FT;
+  for (const emitter of resolveEmitters(layout, {}, view.plan)) {
+    const position = new THREE.Vector3(...emitter.position);
+    const original = layout.markers.find(row => row.device_id === emitter.device_id);
+    const marker = emitter.legacy ? original : {...emitter, at: [position.x / FT, -position.z / FT, position.y / FT]};
     const bulb = new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: '#fff1c9', toneMapped: false }));
     bulb.position.copy(position); bulb.userData.bulb = marker.device_id; bulb.visible = false;
     view.scene.add(bulb);
-    lamps.push({ marker, bulb, position, distance: range * FT, intensity: 0, rgb: lightColor(), real: false });
+    lamps.push({ marker, emitter, key: emitter.legacy ? marker.device_id : emitter.fixture_id,
+      bulb, position, distance: emitter.range * FT, intensity: 0, rgb: lightColor(), real: false });
   }
   // Object lamps join the same fixed-budget real-light pool as HA lamps.
   // Material instances survive batching and are changed in place on pushes.
@@ -128,14 +115,16 @@ export function mountModes(view, live) {
     const position = firePosition || box.getCenter(new THREE.Vector3());
     if (!firePosition) position.y = box.max.y + .05;
     const at = [position.x / FT, -position.z / FT, position.y / FT];
-    const existing = object.entity && lamps.find(lamp => lamp.marker.entity_id === object.entity && (!object.fire || !lamp.objectSource));
+    const existing = object.entity && lamps.find(lamp => lamp.marker.entity_id === object.entity &&
+      (lamp.emitter?.fire_pit ? lamp.marker.device_id === 'object:' + object.id : !object.fire || !lamp.objectSource));
     if (existing) {
       existing.objectMaterials = [...(existing.objectMaterials || []), ...materials];
-      if (object.fire) {
+      if (object.fire && (!existing.emitter || existing.emitter.legacy)) {
         // A light-domain pit can also have an auto-placed room marker. Its
         // physical fire owns the light position, and never an indoor bake.
         existing.objectSource = object; existing.position.copy(position); existing.distance = 18 * FT;
         existing.marker = { device_id: 'object:' + object.id, entity_id: object.entity, at };
+        existing.key = existing.marker.device_id;
         existing.bulb.position.copy(position);
       }
       continue;
@@ -148,6 +137,7 @@ export function mountModes(view, live) {
     const level = owner?.walls?.find(w => w.id === piece?.host?.wall)?.level
       || owner?.rooms?.find(r => r.id === (piece?.host?.floor || piece?.host?.ceiling))?.level;
     lamps.push({ marker: { device_id: 'object:' + object.id, entity_id: object.entity, at, building: owner?.id, level },
+      key: 'object:' + object.id,
       bulb, position, distance: 18 * FT, intensity: 0, rgb: [rgb.r * 255, rgb.g * 255, rgb.b * 255], real: false,
       objectSource: object, objectMaterials: [...materials] });
   }
@@ -210,12 +200,17 @@ export function mountModes(view, live) {
     for (const lamp of lamps) {
       const state = states[lamp.marker.entity_id];
       const object = lamp.objectSource;
-      lamp.intensity = object && !object.entity ? (object.on ? 1 : 0) : !stale && state?.state === 'on' ? lightIntensity(state.attributes) : 0;
+      const emitted = emission(stale ? null : state, lamp.marker.entity_id?.split('.')[0]);
+      lamp.intensity = object && !object.entity ? (object.on ? 1 : 0) : emitted.brightness;
+      // Shape-specific pools arrive in the real-time slice. Until then the
+      // point pool receives each fixture's share at its resolved centre.
+      if (lamp.emitter && !lamp.emitter.legacy)
+        lamp.intensity *= lamp.emitter.output_lm * lamp.emitter.output_fraction / (4 * Math.PI * 40);
       if (object?.fire) lamp.intensity *= object.intensityScale ?? .5;
       if (object && (!object.entity || object.fire)) {
         const color = new THREE.Color(object.color).getRGB(new THREE.Color(), THREE.SRGBColorSpace);
         lamp.rgb = [color.r * 255, color.g * 255, color.b * 255];
-      } else lamp.rgb = lightColor(state?.attributes);
+      } else lamp.rgb = emitted.rgb;
       for (const material of lamp.objectMaterials || []) {
         if (!material.emissive) continue; // Flame shaders carry the lamp tag too.
         material.emissive.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
@@ -259,17 +254,17 @@ export function mountModes(view, live) {
     lastKey = key;
     const candidates = lamps.filter(lamp => modeShows(mode, 'lights') && lamp.intensity > 0 &&
       view.groups.levels[`${lamp.marker.building}:${lamp.marker.level}`]?.visible !== false)
-      .map(lamp => ({ device: lamp.marker.device_id, at: lamp.marker.at, ...lamp }));
+      .map(lamp => ({ device: lamp.key, at: lamp.marker.at, ...lamp }));
     const fresh = new Set(view.bake?.fresh() || []);
     const selected = rig.update(realLighting ? candidates : [], target ? [target.x / FT, -target.z / FT, target.y / FT] : [0, 0, 0]);
     for (const lamp of lamps) {
-      const baked = fresh.has(lamp.marker.device_id);
-      const shown = candidates.some(row => row.device === lamp.marker.device_id);
+      const baked = (!lamp.emitter || lamp.emitter.legacy) && fresh.has(lamp.marker.device_id);
+      const shown = candidates.some(row => row.device === lamp.key);
       // Clear a former bake too: losing freshness must never leave its tint on.
       if (baked || lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, baked && shown ? lamp.intensity : 0);
       lamp.baked = baked;
-      lamp.real = selected.has(lamp.marker.device_id);
-      lamp.bulb.visible = shown && !lamp.objectSource?.fire;
+      lamp.real = selected.has(lamp.key);
+      lamp.bulb.visible = shown && !lamp.emitter?.fire_pit && !lamp.objectSource?.fire;
       lamp.bulb.material.color.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
     }
     for (const floor of floors) {
@@ -299,7 +294,7 @@ export function mountModes(view, live) {
     },
     draw, update,
     energy: () => effects.get('energy')?.snapshot(),
-    lights: () => lamps.map(lamp => ({ device: lamp.marker.device_id, at: [...lamp.marker.at],
+    lights: () => lamps.map(lamp => ({ device: lamp.marker.device_id, fixture_id: lamp.emitter?.fixture_id, at: [...lamp.marker.at],
       rgb: [...lamp.rgb], intensity: lamp.intensity, real: lamp.real, baked: !!lamp.baked })),
     stop() {
       for (const flame of flames) flame.visible = false;
