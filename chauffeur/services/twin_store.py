@@ -26,6 +26,7 @@ LIFECYCLE = threading.RLock()
 _MASTER_LOCKS = weakref.WeakValueDictionary()  # Only active page readers retain locks.
 _READ_KEY = None
 _READ_MODEL = _READ_PLAN = None
+_READ_NORMALIZED = False
 build_running = lambda: False  # Task 8 supplies the build runner's predicate.
 stop_builds_for_start_over = lambda: None
 _KINDS = {'draft', 'director', 'hand', 'revert', 'build', 'edit', 'start_over', 'load'}
@@ -62,9 +63,29 @@ def _save(row):
 def _invalidate_reads():
     # Every store write funnels through _save, including metadata-only writes.
     # Callers hold the existing store lock; no lock scopes change for caching.
-    global _READ_KEY, _READ_MODEL, _READ_PLAN
+    global _READ_KEY, _READ_MODEL, _READ_PLAN, _READ_NORMALIZED
     _READ_KEY = None
     _READ_MODEL = _READ_PLAN = None
+    _READ_NORMALIZED = False
+
+
+def _write_through(row, text, normalized=False):
+    # The round just published is the next read (the op's response, then the next edit's
+    # 'before'): keep it instead of re-reading the file we just wrote. Old flat-plan rounds
+    # still go through _read_round, which converts them. A private parse of the written
+    # text, so no caller can reach it except through the copying readers.
+    global _READ_KEY, _READ_MODEL, _READ_PLAN, _READ_NORMALIZED
+    model = json.loads(text)
+    if model.get('schema') != twin_model.SCHEMA:
+        return
+    _READ_KEY, _READ_MODEL, _READ_PLAN, _READ_NORMALIZED = _read_key(row), model, None, normalized
+
+
+def current_is_normalized() -> bool:
+    """True when the current model is exactly what update_model published after
+    twin_model.normalize, so normalizing it again changes nothing."""
+    with _LOCK:
+        return _READ_NORMALIZED and _READ_KEY == _read_key(_state())
 
 
 def _read_key(row):
@@ -520,7 +541,7 @@ def round_state_path(round_id):
 
 @_edit_timed('round')
 def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, changes=(), step=None, partial=False,
-                  *, restored_from=None):
+                  *, restored_from=None, normalized=False):
     """Called with _LOCK held; file, pointer and fixes form one mutation."""
     round_id = max((r['id'] for r in row['rounds']), default=0) + 1
     at = datetime.now(timezone.utc).isoformat()
@@ -539,10 +560,12 @@ def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, chan
     # A same-directory temp file keeps the rename on the same filesystem.
     temp_path = None
     try:
+        # Serialized once: the file and the write-through read cache share this text.
+        text = json.dumps(plan, ensure_ascii=False, allow_nan=False)
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=root,
                                          suffix='.tmp', delete=False) as file:
             temp_path = Path(file.name)
-            json.dump(plan, file, ensure_ascii=False, allow_nan=False)
+            file.write(text)
             file.flush()
             os.fsync(file.fileno())
         os.replace(temp_path, target)
@@ -553,6 +576,8 @@ def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, chan
             atomic_json(round_state_path(round_id), house_state(row))
         row['fixes'].extend({**change, 'round': round_id, 'at': at} for change in changes)
         _save(row)
+        if not stale:
+            _write_through(row, text, normalized)
     except Exception:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
@@ -605,12 +630,14 @@ def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, 
             raise ValueError('Unknown twin round kind.')
         if row['current'] is None:
             raise ValueError('There is no house yet.')
-        before = _read_round(row, row['current'])
+        before = (deepcopy(_READ_MODEL) if _READ_MODEL is not None and _READ_KEY == _read_key(row)
+                  else _read_round(row, row['current']))
         model, _ = twin_model.normalize(mutator(before))
         if state_mutator is not None:
             state_mutator(row)
         _follow_place(row, model)
-        return _append_round(row, model, kind, note=note, changes=changes)
+        # _follow_place only copies registry names onto buildings normalize already kept.
+        return _append_round(row, model, kind, note=note, changes=changes, normalized=True)
 
 
 def _restore_load_state(row, target):

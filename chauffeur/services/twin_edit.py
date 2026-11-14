@@ -903,12 +903,17 @@ def save(edit, actor_id, reason=''):
             twin_store._source_page(twin_store._state(), edit.get('source'), edit.get('page'))
         from services import twin_model, twin_model_bridge
         current = twin_store.current_model()
-        normalized = twin_model.normalize(current)
+        # A model update_model just published is already normalized: skip the second pass.
+        normalized = ((deepcopy(current), []) if twin_store.current_is_normalized()
+                      else twin_model.normalize(current))
         model, summary = apply_model(current, edit, ha_catalogue=ha_catalogue, _normalized=normalized)
         after = twin_model_bridge.flatten(model)
         # The fix log compares against the house as every op sees it (normalized),
         # so a pass's own re-derive is never logged as the person's fix.
-        logged_before = twin_model_bridge.flatten(normalized[0])
+        # Usually the stored model is already normalized, so its flat view is `before`; a
+        # copy, because _apply_legacy below may work on `before`.
+        logged_before = (deepcopy(before) if normalized[0] == current
+                         else twin_model_bridge.flatten(normalized[0]))
         place_row = None
         if edit.get('op') == 'set' and edit.get('field') == 'name':
             kind, piece, building, _ = _find(after, edit.get('piece', edit.get('id')), edit.get('building'))
