@@ -314,6 +314,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         console.warn('Material refresh requires a geometry rebuild:', m.userData.materialId, 'missing reference or changed alpha/cutout pattern');
         await view.rebuild(plan); return;
       }
+      // random_offset lives in surface geometry (offsetSurfaceUvs), so turning it on or
+      // off regenerates the buildings and yard parts that use the material.
+      if (materials.some(m => !!known[m.userData.materialId]?.params?.random_offset !== !!m.userData.randomOffset)) {
+        await view.rebuild(plan); return;
+      }
       const syncStyled = (source, target) => {
         if (Array.isArray(source)) { source.forEach((m, i) => syncStyled(m, target[i])); return; }
         if (!ids.includes(source.userData.materialId)) return;

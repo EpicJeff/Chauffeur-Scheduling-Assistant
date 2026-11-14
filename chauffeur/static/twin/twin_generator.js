@@ -4,7 +4,7 @@ import { applyObject, fitOpening, objectShown, objectMaterialKey } from './objec
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey } from './twin_library.js';
+import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs } from './twin_library.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
@@ -551,6 +551,8 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     const mesh = (group, geometry, material, retained = null) => {
       const data = activePiece || { pieceId: 'structure', kind: 'building', buildingId: b.id };
       const key = `${b.id}:${data.pieceId}`;
+      // A random-offset material shifts this piece's base uv by its own seed, before batching.
+      if (!retained && !data.ghost && activePiece) offsetSurfaceUvs(geometry, material, key);
       const object = retained || addMesh(group, geometry, data.ghost ? ghost : material);
       if (retained && data.ghost) object.material = ghost;
       Object.assign(object.userData, data);

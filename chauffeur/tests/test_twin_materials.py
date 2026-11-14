@@ -260,6 +260,20 @@ def test_duplicate_of_builtin_keeps_its_roughness():
             assert copied['params'] == row['params'], 'household duplicate preserves explicit values'
 
 
+def test_random_offset_toggles_and_reaches_the_page_manifest():
+    seed()
+    with Ctx() as c:
+        row = create(c)
+        assert row['params']['random_offset'] is False, 'off unless a person turns it on'
+        path = f"{API}/{row['id']}"
+        on = c.client.patch(path, headers=c.mum, json={'params': {'random_offset': True}})
+        assert on.status_code == 200 and on.json()['params']['random_offset'] is True
+        assert on.json()['revision'] == row['revision'] + 1, 'a toggle is a revision: house keys follow it'
+        assert materials.page_manifest()[row['id']]['params']['random_offset'] is True
+        off = c.client.patch(path, headers=c.mum, json={'params': {'random_offset': False}}).json()
+        assert off['params']['random_offset'] is False and off['params']['tile_ft'] == [4, 4]
+
+
 def test_page_manifest_carries_household_material():
     seed()
     with Ctx() as c:

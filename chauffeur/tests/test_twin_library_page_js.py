@@ -70,6 +70,16 @@ await test('failed_patch_restores_server_value_and_reason',async()=>{
  assert.equal(drawn.material.normalScale.x,.75);assert.equal(Number(c.field('normal_scale').value),.75);
  assert.deepEqual(c.alerts,['roughness must be from 0 to 2.']);c.page.stop();
 });
+await test('random_offset_toggle_saves_the_param',async()=>{
+ const c=await setup(),box=c.field('random_offset','checkbox');
+ assert.ok(box,'a person can turn random offset on');assert.equal(box.checked,false);assert.equal(!!box.disabled,false);
+ assert.match(box.closest('label').textContent,/Random UV offset per surface/);
+ await edit(box,'change',{checked:true});await pause(340);
+ const patches=c.calls.filter(x=>x.method==='PATCH');assert.equal(patches.length,1);
+ assert.equal(patches[0].body.params.random_offset,true);assert.equal(c.saved.params.random_offset,true);
+ await edit(box,'change',{checked:false});await pause(340);
+ assert.equal(c.calls.filter(x=>x.method==='PATCH').at(-1).body.params.random_offset,false);c.page.stop();
+});
 await test('builtin_shows_duplicate_not_edit',async()=>{
  const c=await setup(record('brick','builtin'));assert.ok(c.action('duplicate'));
  assert.equal(c.action('delete'),null);assert.equal(c.action('undo'),null);
