@@ -4,7 +4,7 @@ import { applyObject, fitOpening, objectShown, objectMaterialKey } from './objec
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey } from './twin_library.js';
+import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey } from './twin_library.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
@@ -449,7 +449,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
   for (const [id, group] of Object.entries(groups)) if (group.isGroup) { group.name = id; root.add(group); }
   const materialKitFor = refs => materialKitWithRefs(kit, refs);
-  const materials = material(() => new Map(reuseMaterials || []));
+  const materials = material(() => new Map([...(reuseMaterials || [])].filter(([, m]) => currentMaterial(m, manifest(kit)))));
   let parkingIcon = materials.get('parking_icon#ffffff') || null;
   const plain = (name, color, extra = {}) => material(() => {
     const key = name + color;

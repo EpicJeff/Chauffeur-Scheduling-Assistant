@@ -478,6 +478,7 @@ RULES = [
     ('GET', '/api/house/twin/library/{asset_id}/{name:path}', WALL_OR_SERVICE, None),
     ('GET', '/api/house/materials', PARENTS, None),
     ('GET', '/api/house/materials/{id}', PARENTS, None),
+    ('GET', '/api/house/twin/materials/manifest', WALL_OR_SERVICE, None),
     ('GET', '/api/house/twin/materials/{id}/{file:path}', WALL_OR_SERVICE, None),
     ('POST', '/api/house/materials', PARENTS, None),
     ('PATCH', '/api/house/materials/{id}', PARENTS, None),

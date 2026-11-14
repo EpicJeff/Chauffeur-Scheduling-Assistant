@@ -1,6 +1,7 @@
 import { roomFloor, roomAt } from './twin_floors.js';
 // Viewing LOD uses lot feet (x, y, height). No work here depends on frame rate.
 import * as THREE from 'three';
+import { copyMaterialParams } from './twin_library.js';
 
 const smooth = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
 export const cutHeight = level => Math.max(1, (level.ceiling || 8) - 4);
@@ -78,7 +79,7 @@ export function createViewing(view, model, ground, changed, {explicit = false} =
             m.transparent = true; m.clippingPlanes = [plane];
             if (source.alphaTest > 0) m.forceSinglePass = true;
             const binding = {m, opacity: source.opacity, depth: source.depthWrite};
-            originals.set(source, m); materials.push(binding); bindings.set(m, {materials, binding, plane});
+            originals.set(source, m); materials.push(binding); bindings.set(m, {materials, binding, plane, source});
           }
           return originals.get(source);
         };
@@ -225,6 +226,9 @@ export function createViewing(view, model, ground, changed, {explicit = false} =
       return !!b?.roofs.length && Math.max(...b.roofs.map(c => c.alpha)) < .5;
     },
     snapshot() { return {selected, pinned, channels: channels.map(c => ({name: c.group.name, alpha: c.alpha, target: c.to}))}; },
+    refresh(source) {
+      for (const [material, record] of bindings) if (record.source === source) copyMaterialParams(source, material);
+    },
     adopt(source, material) {
       const record = bindings.get(source); if (!record) return;
       const binding = {...record.binding, m: material};
