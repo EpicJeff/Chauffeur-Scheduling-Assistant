@@ -39,7 +39,7 @@ const realFetch=globalThis.fetch;
 globalThis.fetch=async(input,init)=>{const url=String(typeof input==='string'?input:input?.url||'');
   if(/api\/house\/editor\/import-settings/.test(url))return new Response(JSON.stringify({limit_mb:50,unpacked_limit_mb:200}),{status:200,headers:{'content-type':'application/json'}});
   if(/api\/house\/(editor|twin)\/imports/.test(url))return new Response('[]',{status:200,headers:{'content-type':'application/json'}});
-  if(/api\/house\/editor\/library/.test(url))return new Response(JSON.stringify({materials:[{id:'red_brick_03',name:'Red brick',color:'#aa3322'}],items:[]}),{status:200,headers:{'content-type':'application/json'}});
+  if(/api\/house\/(editor\/library|materials)$/.test(url))return new Response(JSON.stringify({materials:[{id:'red_brick_03',name:'Red brick',color:'#aa3322'}],items:[]}),{status:200,headers:{'content-type':'application/json'}});
   return realFetch(input,init);};
 const plan={buildings:[],site:{lot:[[0,0],[40,0],[40,40],[0,40]],terraces:[],beds:[{id:'bed',polygon:[[5,5],[10,5],[10,10],[5,10]]}]},materials:{}};
 // Terrain tools live in the editor: mount inside an editor shell, so the viewer's levels
@@ -96,7 +96,7 @@ assert.equal(descendants(card).find(n=>n['aria-label']==='Edge 1 Above ground (i
   face().dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
   const brick=descendants(card).find(n=>n.dataset?.material==='red_brick_03');assert.ok(brick,'the Library material is offered');
   brick.dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
-  assert.deepEqual(ops.at(-1).edges[0].wall,{...authoredWall,materials:{face:{id:'red_brick_03',color:'#aa3322'}}});
+  assert.deepEqual(ops.at(-1).edges[0].wall,{...authoredWall,materials:{face:{id:'red_brick_03'}}});
   plan.site.terraces[0].edges[0].wall={...authoredWall,materials:{face:{id:'red_brick_03'}}};terrain.refresh();
   face().dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
   descendants(card).find(n=>n.textContent==='Use default').dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));

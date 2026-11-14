@@ -1,6 +1,111 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.850 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.854 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.854 (2026-11-13, NOT device-verified): material library, part 1. Household materials are stored, served and drawn on the house, and material pickers save the material rather than a copied colour.**
+
+**Context.** The user wants their house to read as theirs: "I can make the house geometry look pretty much like my house but I can't make the materials look like mine." The spec and plan are approved (`docs/superpowers/specs/2026-11-13-material-library-design.md`, `docs/superpowers/plans/2026-11-13-material-library.md`). This ships plan Tasks 1-3. Live invalidation (Task 4), the Library page (Tasks 5-6), online browsing (7-8) and glTF import (9) come next. No screen creates household materials yet, so nothing changes for a person until the Library page lands.
+
+**Task 1: the store** (`services/twin_materials.py`, 12 routes in `main.py`, each with an auth rule).
+- **Storage:** household materials have stable ids. Their map files are content-addressed and immutable (`maps/<sha12>.png|jpg`), served with `Cache-Control: immutable`.
+- **History:** each material has its own revisions, with undo and redo (20 kept). Garbage collection never deletes a file that a kept revision, the current record or the source snapshot uses.
+- **Limits:** live-file caps of 16 files and 200 MB.
+- **Images:** Pillow decodes every image before it is published.
+  - Truncated or corrupt images are refused.
+  - Anything over 16384 px a side or 64 Mpx is refused before decode.
+  - Masters are capped at 4096 px.
+  - 16-bit maps are scaled to 8-bit, not clipped.
+- **Parameters:** roughness and metalness default to "auto". With a map they multiply it by 1. With no map, metalness is 0 and roughness 0.85, and a duplicate of a built-in copies the built-in's values.
+- **Delete:** refused, with human-readable uses ("Used on 3 surfaces: Main House walls (2), Fence boards (1)"), while the current house uses the material. A material used only by history is archived and still serves.
+- **Built-ins:** they appear as read-only catalogue rows, and Duplicate makes an editable copy.
+- `material_slot_error` accepts live and archived household ids.
+- Both page templates receive the merged manifest (`page_manifest()`).
+
+**Task 2: rendering** (`static/twin/twin_library.js`).
+- **Maps:** base colour, normal (with the DX/GL flip), roughness, metalness and AO, or one shared ORM texture.
+- **Parameters:** tint (a slot colour replaces it), normal scale, AO intensity, real-world tile size and rotation. The low tier loads base colour only, and tier caps are 512/1024/2048 px, downsampled in the browser.
+- **Cache key:** id, revision, tier, receiving role and role shader flags. One material never carries two roles, which keeps the bake's role reading safe. A household slot matching its role's material reuses it, to keep batching.
+- **Lattice:** the cutout is kept.
+- **Granite:** one shared shader helper.
+- **URLs:** `materialUrl()` refuses `.`/`..` segments.
+- **Built-ins:** byte-identical, pinned by a 63-entry role×tier snapshot taken from main.
+
+**Task 3: pickers** (`editor/material_slot.js`, `editor/library.js`, `editor/material_catalog.js`).
+- An ordinary pick saves `{id}`. "Override tint" saves `{id, color}`, and "Clear override" goes back to `{id}`.
+- The catalogue merges household materials, with thumbnails.
+- The old duplicate preset-colour rows are gone. The user agreed: "Dropping is fine."
+
+**Reviews.** A Claude reviewer on each Codex task found a lifetime file cap, PATCH-able archive and source fields, no pixel cap before decode, 16-bit clipping, materials rendering fully metallic without a metalness map, a dropped lattice cutout and a duplicated shader. All were fixed.
+
+**Tests.** `test_twin_materials` 23/23, `test_twin_material_render_js` (13 or more named checks, plus the 63-entry built-in snapshot), `test_twin_material_slot_js`, `test_twin_editor_library_js` 10/10, `test_twin_library_js` 15/15, yard material slots py and js, porch foundation js, bake runtime 17/17, energy 38/38, yard reuse js, import chunks py and js, house saves 19/19, model bridge 32/32, import maps 3/3, Tailwind 6/6. Chromium: a household material created through the API, with an uploaded base colour, assigned to the Main House siding, draws on the house after a reload, with no page errors. Live update without a reload is Task 4.
+
+**v2.499.853 (2026-11-13, NOT device-verified): pools can have a tanning ledge, steps and a spa (raised or flush).**
+
+**The ask.** The user: "the pool is just a pool - no spa, no tanning ledge, no steps. Maybe pools could have subtools for drawing out those things just like we draw yard features." Then: "As long as the spa can be raised, flush, etc."
+
+**Data.** `site.pool.features`, at most 12. Each has `{id, kind, polygon}`:
+- **`ledge`:** `depth_in` 6-18, default 10. It must lie inside the pool.
+- **`steps`:** `treads` 1-6, default 3, and `entry_edge`, defaulting to the edge nearest the pool wall. It must lie inside the pool. Treads descend evenly from coping level to the pool floor.
+- **`spa`:**
+  - `mode` `raised` or `flush`;
+  - `raise_in` 6-24, default 12;
+  - `depth_in` 24-48, default 36;
+  - `spillover`, default on;
+  - Library slots `coping`, `interior` and `wall`, which inherit the pool's finishes when empty, with stone for the wall;
+  - placed inside the pool, across its edge, or outside it within 2 ft.
+- **Validation:** polygons must be simple, with no self-intersection. Normalisation drops an invalid feature with a note and keeps the pool.
+
+**Ops.**
+- `add_pool_feature`, `update_pool_feature` and `delete_pool_feature`: parents only, one undoable edit each. A feature keeps its kind.
+- Pool move, turn and scale carry the features along.
+- `make_yard_room` accepts `{list:'pool', feature:<spa id>}`, so a spa can be a yard room for the controller's jets and heater.
+- Argyle cannot do this yet: the `house_design` description is at its 6,000-character cap.
+
+**Rendering** (`static/twin/pool_features.js`, `twin_yard.js`).
+- The ledge is a raised floor under the water. The steps are tread slabs.
+- **Spa:**
+  - It has its own basin and water.
+  - Raised: walls `raise_in` above the deck, with coping, and water 2 in below it. Flush: water and coping level with the pool.
+  - The pool's water and coping are cut out under the spa.
+  - A raised spa that overlaps the pool gets a spillover sheet into it.
+- Features join the yard reuse key.
+- A pool without features builds identical geometry.
+
+**Editor.** The pool card has "Add tanning ledge", "Add steps" and "Add spa", each drawn with the snapped polygon tool. Feature rows show their fields, the spa's slots, "Make this a room", and Delete (with `promptConfirm`).
+
+**Tests.** New `test_twin_pool_features` 7/7, `test_twin_pool_features_js` (heights, depths, tread order, flush and raised water, water cut-out, spillover only when raised and overlapping, slots, unchanged plain pool) and `test_twin_pool_features_editor_js`. Neighbours green: yard material slots py 6/6 and js, yard reuse js (the key changes with features), yard rooms 8/8 and js 3/3, site shapes, model bridge 32/32, house tool, model devices 20/20 (schema cap), import maps 3/3, Tailwind 6/6, tree once 1/1, server speed 5/5. Chromium on the test house: a ledge, steps and a raised spa render, with no page errors.
+
+**v2.499.852 (2026-11-13): dev and test only. TestClient test files no longer hang on Windows loopback.**
+
+**The cause.** "TestClient files intermittently hang at exit or first request" (noted since v2.499.842) was found with a faulthandler stack dump. Every TestClient request starts an asyncio portal. On Windows its proactor loop calls `socket.socketpair()`, and CPython's `_fallback_socketpair` blocks forever in `accept()` when the development machine's loopback loses a TCP handshake. Browser tests already had a bounded, retried replacement in `tests/live_app.py`, but TestClient tests never loaded it.
+
+**The fix.** The replacement now lives in `services/win_loopback.py` (`install()`, idempotent). `main.py` calls it at import, so every test that imports the app is covered, and `tests/live_app.py` uses the same function. It does nothing off Windows, so the Home Assistant add-on (Linux) is unaffected.
+
+**Tests.** New `test_win_loopback` 1/1 (installed on Windows, a working pair, an asyncio loop starts). TestClient files green: HA display 5/5, house saves 19/19, edit timing 4/4, server speed 5/5. A browser scenario passed twice.
+
+**v2.499.851 (2026-11-13, NOT device-verified): an editor edit does less whole-house work on the server and no longer downloads the house twice.**
+
+**The evidence.** The user's house, moving one parking spot: the server took about 1.3 s (`normalize` 489 ms, `apply` 374, `read` 326), then `refresh_state` took 1.7 s. After every op the editor called `/api/house/editor/state`, which re-derived and re-sent the same whole plan and model the op had just returned (about 245 KB).
+
+**What changed.**
+- **Cached reads.** `twin_store` caches the current model and its flattened plan, keyed by `(data dir, store generation, current round id)`. Every store write goes through `_save`, which clears both. `_save` is called from every publication point: rounds, revert/undo/redo, house load, builds, Start over, and place, sheet and lot writes. Readers get deep copies, so callers cannot mutate the cache.
+- **One normalize before the edit.** `twin_edit.save` normalizes the pre-edit model once and reuses it for validation and the fix log. Publication still normalizes the edited model. Per op, `normalize` calls fall from 3 to 2 and round-file reads from 5 to 2.
+- **Lean state refresh.** `GET /api/house/editor/state?have_round=<id>` omits `plan` and `model` when the id matches the current round, and returns `current_round`. The editor sends it after its own edits and keeps the plan and model it already has. All other callers still do full reads.
+
+**Measured.**
+- TestClient on the fixture house: `normalize` 128-328 ms down to 101-115 ms per op. The state refresh after an edit falls from about 100-200 ms and about 245 KB to about 10-13 ms and under 1.4 KB.
+- Chromium: the editor sends `state?have_round=N` after each edit, answered in 26-111 ms with about 300-450 bytes on the wire, against 36 KB compressed for a full state.
+
+**Tests.**
+- New `test_twin_server_speed` 5/5:
+  - op and full-state JSON byte-identical to v2.499.850 for an 8-op corpus (a stored fixture);
+  - caches invalidated by revert, Start over, house load and build rounds;
+  - fewer normalize calls;
+  - lean state only when the round matches;
+  - copies isolated.
+- The node timing test checks that `applyOp` sends `have_round` and keeps its plan.
+- Neighbours green: edit timing 4/4 and js, editor history 8/8, house saves 19/19 and js 12/12, twin store, model bridge 32/32, HA display 5/5, house tool, editor api js, sheets, place 25/25.
+- `test_twin_store_model` is 14/15, the same failure as on main.
 
 **v2.499.850 (2026-11-13, NOT device-verified): yard trees are generated once instead of twice.**
 

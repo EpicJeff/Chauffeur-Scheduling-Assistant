@@ -292,7 +292,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       const known = kit.manifest || window.twinManifest || {};
       // Kit-role ids and asset ids are the same references accepted by slots.
       const source = kit.materials?.[ref.id] || kit.materials?.[role];
-      materialKit.materials[role] = { ...source, color: ref.color || source?.color,
+      materialKit.materials[role] = { ...source, color: ref.color || (known[ref.id]?.household ? undefined : source?.color),
         asset: known[ref.id] ? ref.id : source?.asset };
     }
     return materialKit;

@@ -34,7 +34,7 @@ export async function checkpoint(detail) {
 export async function request(path, method = 'GET', body, area = 'editor', timing = null) {
   for (;;) {
     const sent = timing ? performance.now() : 0;
-    const response = await fetch((window.chfBase ?? '../') + `api/house/${area}/` + path, {
+    const response = await fetch((window.chfBase ?? '../') + 'api/house/' + (area ? area + '/' : '') + path, {
       method, ...(body === undefined ? {} : body instanceof Blob ? { headers: { 'Content-Type': 'application/octet-stream' }, body } : body instanceof FormData ? { body } : {
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       }),
@@ -128,8 +128,8 @@ export function createPolling({ onState, onBuild, onTick, onError }) {
     // Calling follow here (or in onBuild) would wait on our own pending poll.
     nextBuild = next.state === 'done' && next.next && next.next !== next.id ? next.next : null;
   }
-  async function readState() {
-    const state = await request('state');
+  async function readState(haveRound) {
+    const state = await request(haveRound == null ? 'state' : `state?have_round=${encodeURIComponent(haveRound)}`);
     if (!state.build) { build = null; seq = 0; }
     await onState(state);
     return state;

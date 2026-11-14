@@ -10,6 +10,7 @@ export function snapSitePoint(point, plan, exclude) {
     else for (let i = 1; i < (piece.points || []).length; i++) segments.push([piece.points[i - 1], piece.points[i]]);
   }
   if (!exclude || plan.site?.pool?.id !== exclude) polygon(plan.site?.pool?.polygon);
+  for (const f of plan.site?.pool?.features || []) if (f.id !== exclude) polygon(f.polygon);
   for (const pit of Array.isArray(plan.site?.fire_pit) ? plan.site.fire_pit : plan.site?.fire_pit ? [plan.site.fire_pit] : []) if (!exclude || pit.id !== exclude) polygon(pit.polygon);
   for (const b of plan.buildings || []) {
     const angle = (b.rotation || 0) * Math.PI / 180;
@@ -55,7 +56,8 @@ export function createSiteDrawing({ getPlan, commit }) {
       if (!draft || saving) return false;
       const d = draft, path = d.kind === 'path', fence = d.kind === 'fence', placement = d.kind === 'fire_pit' && d.options.shape !== 'outline';
       if (d.points.length < (placement ? 1 : path || fence ? 2 : 3)) throw new Error(`Add at least ${placement ? 'one point' : path || fence ? 'two points' : 'three corners'}.`);
-      const operation = d.kind === 'terraces' ? { op: 'add_pad', polygon: d.points, ...d.options }
+      const operation = ['ledge', 'steps', 'spa'].includes(d.kind) ? { op: 'add_pool_feature', kind: d.kind, polygon: d.points, ...d.options }
+        : d.kind === 'terraces' ? { op: 'add_pad', polygon: d.points, ...d.options }
         : { op: 'add_site_shape', list: path ? 'hardscape' : d.kind, ...(d.kind === 'yard_rooms' ? { name: 'Yard room' } : {}), ...(placement ? { at: d.points[0] } : fence ? { polyline: d.points } : path ? { kind: 'path', points: d.points } : { polygon: d.points }), ...d.options };
       saving = true;
       try { if (await commit(operation) === false) return false; draft = null; hover = null; return true; }

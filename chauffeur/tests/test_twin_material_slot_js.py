@@ -5,21 +5,68 @@ from pathlib import Path
 from twin_editor_dom import PRELUDE, run_node
 
 ROOT = Path(__file__).resolve().parents[1]
+REGRESSIONS = PRELUDE + r"""
+const {materialSlot}=await import(file('static/twin/editor/material_slot.js'));
+const {readLibraryCatalog}=await import(file('static/twin/editor/material_catalog.js'));
+const entry={id:'material-household',name:'Household stone',color:'#789abc',thumbnail_url:'/ingress/test/stone.png'};
+const byText=(root,text)=>root.querySelectorAll('button').find(n=>textOf(n)===text);
+const make=value=>{const calls=[],node=materialSlot({label:'Surface',value,defaultLabel:'Stone',
+ loadMaterials:async()=>[entry],onChange:async v=>calls.push(v)});return {node,calls};};
+await test('pick_saves_id_only',async()=>{
+ const {node,calls}=make(null);await click(byText(node,'Change'));
+ await click(node.querySelector('[data-material]'));assert.deepEqual(calls,[{id:entry.id}]);
+});
+await test('override_then_clear',async()=>{
+ const {node,calls}=make({id:entry.id});await click(byText(node,'Change'));
+ const tint=node.querySelector('input[type="color"]');assert.equal(textOf(tint.parentElement),'Override tint');
+ tint.value='#123456';await fire(tint,'change');assert.deepEqual(calls,[{id:entry.id,color:'#123456'}]);
+ await click(byText(node,'Change'));await click(byText(node,'Clear override'));
+ assert.deepEqual(calls,[{id:entry.id,color:'#123456'},{id:entry.id}]);
+ await click(byText(node,'Change'));assert.equal(byText(node,'Clear override'),undefined);
+ await click(byText(node,'Use default'));assert.equal(calls.at(-1),null);
+});
+await test('legacy_color_shows_clear_override',async()=>{
+ const {node,calls}=make({id:entry.id,color:'#123456'});await click(byText(node,'Change'));
+ assert.equal(node.querySelector('input[type="color"]').value,'#123456');
+ const clear=byText(node,'Clear override');assert.ok(clear);await click(clear);
+ assert.deepEqual(calls,[{id:entry.id}]);
+});
+await test('catalogue_uses_household_rows_and_passes_thumbnail',async()=>{
+ const urls=[];window.chfBase='/ingress/test/';
+ globalThis.fetch=async url=>{urls.push(url);return new Response(JSON.stringify(url.endsWith('/materials')
+  ?{revision:7,materials:[entry]}:{materials:[{id:'duplicate-preset',color:'#ffffff'}],items:[{id:'chair'}],imports:[{id:'import-chair'}],import_limit_mb:50}));};
+ const catalog=await readLibraryCatalog();
+ assert.deepEqual(urls.sort(),['/ingress/test/api/house/editor/library','/ingress/test/api/house/materials']);
+ assert.deepEqual(catalog.materials,[entry]);assert.equal(catalog.revision,7);
+ assert.deepEqual(catalog.items,[{id:'chair'}]);assert.deepEqual(catalog.imports,[{id:'import-chair'}]);assert.equal(catalog.import_limit_mb,50);
+ const {node}=make(null);await click(byText(node,'Change'));
+ assert.equal(node.querySelector('[data-material] img').src,entry.thumbnail_url);
+});
+await test('quick_picks_use_catalogue_identity_once',async()=>{
+ const calls=[],node=materialSlot({label:'Surface',defaultLabel:'Stone',
+  quickPicks:[{id:entry.id,color:'#ffffff'},{id:entry.id,color:'#000000'},{id:'not-in-catalogue'}],
+  loadMaterials:async()=>[entry],onChange:async v=>calls.push(v)});
+ await click(byText(node,'Change'));assert.equal(node.querySelectorAll('[data-material]').length,1);
+ assert.ok(textOf(node.querySelector('[data-material]')).includes(entry.name));
+ await click(node.querySelector('[data-material]'));assert.deepEqual(calls,[{id:entry.id}]);
+});
+finish();
+"""
 DRIVER = PRELUDE + r"""
 const {materialSlot}=await import(file('static/twin/editor/material_slot.js'));
 const {createCards}=await import(file('static/twin/editor/cards.js'));
 const {porchFoundation}=await import(file('static/twin/twin_porch_foundation.js'));
 const entries=[{id:'painted_trim',name:'Painted trim',color:'#f4f3ef'},{id:'wood_planks',name:'Wood planks',color:'#998877'},{id:'lattice',name:'Lattice',color:'#f4f3ef'}];
-let fetches=0;globalThis.fetch=async url=>{assert.ok(url.endsWith('/api/house/editor/library'));fetches++;return {ok:true,text:async()=>JSON.stringify({materials:entries,items:[]})};};
+let fetches=0;globalThis.fetch=async url=>{assert.ok(url.endsWith('/api/house/editor/library')||url.endsWith('/api/house/materials'));fetches++;return {ok:true,text:async()=>JSON.stringify({materials:entries,items:[]})};};
 const calls=[],errors=[];let locked=false;
 const node=materialSlot({label:'Posts',value:null,defaultLabel:'Trim',defaultColor:'#ffffff',quickPicks:[entries[1]],
  readOnly:()=>locked,onChange:async v=>calls.push(v),report:e=>errors.push(e.message)});document.body.append(node);
 const byText=(root,text)=>root.querySelectorAll('button').find(n=>textOf(n)===text);
 assert.ok(textOf(node).includes('Default: Trim'));
-await click(byText(node,'Change'));assert.equal(fetches,1);assert.equal(calls.length,0,'opening is never a history step');
+await click(byText(node,'Change'));assert.equal(fetches,2);assert.equal(calls.length,0,'opening is never a history step');
 assert.equal(node.querySelectorAll('[data-material]')[0].dataset.material,'wood_planks','quick picks first');
 assert.equal(node.querySelectorAll('[data-material]').length,3,'quick picks deduplicated');
-await click(node.querySelector('[data-material="wood_planks"]'));assert.deepEqual(calls,[{id:'wood_planks',color:'#998877'}]);
+await click(node.querySelector('[data-material="wood_planks"]'));assert.deepEqual(calls,[{id:'wood_planks'}]);
 assert.ok(textOf(node).includes('Wood planks'));
 await click(byText(node,'Change'));await click(node.querySelector('[data-material="wood_planks"]'));assert.equal(calls.length,1,'reselect is no op');
 // Reselect leaves the chooser open and still permits clearing/tinting.
@@ -60,7 +107,7 @@ console.log('Passed: shared slot catalogue, swatch/name, choose, quick picks, ti
       await click(byText(slot,'Change'));await click(slot.querySelector('[data-material="wood_planks"]'));
       const part={Boards:'boards',Posts:'posts',Rails:'rails',Body:'body',Top:'top',Surface:'surface',Curb:'edging',Fill:'fill',Coping:'coping',Interior:'interior',Strip:'strip'}[label];
       assert.equal(sent.length,before+1);
-      assert.deepEqual(sent.at(-1),{op:'update_site_shape',list:kind,index:0,materials:{[part]:{id:'wood_planks',color:'#998877'}}},`${kind} ${label}: one op`);
+      assert.deepEqual(sent.at(-1),{op:'update_site_shape',list:kind,index:0,materials:{[part]:{id:'wood_planks'}}},`${kind} ${label}: one op`);
       await click(byText(slot,'Change'));await click(byText(slot,'Use default'));
       assert.equal(sent.length,before+2);assert.deepEqual(sent.at(-1).materials,{[part]:null});
     }
@@ -95,7 +142,7 @@ console.log('Passed: shared slot catalogue, swatch/name, choose, quick picks, ti
       assert.deepEqual(selections.at(-1),{pieceId:id,buildingId:null});
       const slot=host.querySelector('[data-material-slot]');assert.ok(slot);
       await click(byText(slot,'Change'));await click(slot.querySelector('[data-material="wood_planks"]'));await cards.queue(async()=>{});
-      assert.equal(sent.length,before+1);assert.deepEqual(sent.at(-1),{op:'update_site_shape',list:kind,index:0,materials:{[part]:{id:'wood_planks',color:'#998877'}}});
+      assert.equal(sent.length,before+1);assert.deepEqual(sent.at(-1),{op:'update_site_shape',list:kind,index:0,materials:{[part]:{id:'wood_planks'}}});
     }
     writable=false;cards.draw({pieceId:room.id,buildingId:null});
     assert.ok(byText(host,`Edit ${label} materials`).disabled,'read-only room card');writable=true;
@@ -127,13 +174,13 @@ assert.ok(shown(slot('Skirt'))&&shown(slot('Posts and beam'))&&!shown(slot('Soli
 assert.equal(field('Skirt'),undefined);
 assert.ok(textOf(slot('Skirt')).includes('Default: Lattice'));
 let before=ops.length;await click(byText(slot('Skirt'),'Change'));await click(slot('Skirt').querySelector('[data-material="wood_planks"]'));await cards.queue(async()=>{});
-assert.equal(ops.length,before+1);assert.deepEqual(room.foundation.materials.skirt,{id:'wood_planks',color:'#998877'});
+assert.equal(ops.length,before+1);assert.deepEqual(room.foundation.materials.skirt,{id:'wood_planks'});
 assert.equal(ops.at(-1).op,'set_porch_foundation');assert.equal(room.foundation.post_in,10,'material change preserves other fields');
 await click(byText(slot('Skirt'),'Change'));await click(byText(slot('Skirt'),'Use default'));await cards.queue(async()=>{});
 assert.equal(room.foundation.materials.skirt,null);assert.equal(ops.length,before+2);
 assert.ok(textOf(slot('Skirt')).includes('Default: Lattice'));
 await click(byText(slot('Skirt'),'Change'));await click(slot('Skirt').querySelector('[data-material="lattice"]'));await cards.queue(async()=>{});
-assert.deepEqual(room.foundation.materials.skirt,{id:'lattice',color:'#f4f3ef'});assert.equal(ops.length,before+3);
+assert.deepEqual(room.foundation.materials.skirt,{id:'lattice'});assert.equal(ops.length,before+3);
 assert.ok(!Object.hasOwn(ops.at(-1).foundation,'skirt'));
 field('Foundation').value='solid';await fire(field('Foundation'),'change');await cards.queue(async()=>{});
 assert.ok(!shown(field('Post width (in)'))&&!shown(field('Post shape'))&&!shown(field('Post spacing (ft)')));
@@ -155,6 +202,9 @@ console.log('Passed: real card fields by type, post properties, default skirt ro
 
 if __name__ == '__main__':
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
-    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'kit': kit})
-    print(output)
-    sys.exit(code or 0)
+    codes = []
+    for driver in (REGRESSIONS, DRIVER):
+        code, output = run_node(driver, {'root': ROOT.as_posix(), 'kit': kit})
+        print(output)
+        codes.append(code or 0)
+    sys.exit(max(codes))

@@ -104,7 +104,7 @@ export async function boot() {
     lastSummary = result.words;
     const refresh = async () => {
       const stop = api.span(timing, 'refresh_state');
-      try { await polling.refreshState(); timeline?.sync(currentBuild); }
+      try { await polling.refreshState(result.round); timeline?.sync(currentBuild); }
       finally { stop(); }
     };
     const rebuild = async () => {
@@ -246,7 +246,7 @@ export async function boot() {
         currentBuild = null; ghostBuild = null; ghosts.clear(); buildGhosts?.clear(); panel.reset(); drawTimeline(null);
         await loadSheets();
       }
-      snapshot = state;
+      snapshot = { ...snapshot, ...state };
       syncBuildButton();
       // A house with pieces and no drawings to build from is not waiting for drawings.
       const built = (snapshot.model?.buildings || []).some(b => b.walls?.length || b.rooms?.length || b.roofs?.length);
@@ -556,7 +556,7 @@ export async function boot() {
       },
     });
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
-      pickSite: (x, y) => library?.pickSite(x, y), pickMaterial: surface => library?.pick(surface),
+      pickSite: (x, y) => library?.pickSite(x, y), pickMaterial: surface => library?.pick(surface), onDrawFeature: kind => terrain?.startDrawing(kind),
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
     library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || snapshot.plan, tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
