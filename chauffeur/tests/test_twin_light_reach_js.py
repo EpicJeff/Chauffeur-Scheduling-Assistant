@@ -15,7 +15,7 @@ DRIVER += r"""
 const { reachLights, lightSource } = await import(file('static/twin/bake/reach.js'));
 const { assignChannels, CHANNEL_FALLBACK } = await import(file('static/twin/bake/atlas.js'));
 const { chartLightmapUniforms, chartAddress, setLightTint, patchLightmaps } = await import(file('static/twin/bake/lightmap_material.js'));
-const { occluders, addRoomBounce, addRoomBounceAcrossPages, renderPage } = await import(file('static/twin/bake/bake_pass.js'));
+const { occluders, addRoomBounce, addRoomBounceAcrossPages, renderPage, filterCharts, dilateCharts } = await import(file('static/twin/bake/bake_pass.js'));
 const FT = gen.FT, options = {room: {density: 2, page: 128, gutter: 2}};
 function house(wall = false, wallX = 10, remote = 100) {
   const plan = { buildings: [{ id: 'b', position: [0,0], levels: [{id:'L1', elevation:0, ceiling:10}],
@@ -99,6 +99,80 @@ await check('far_surfaces_reserve_no_channels', () => {
   });
   assert.ok(remote.length);
   for(const c of remote) assert.ok(!l.receivers.includes(c.room));
+});
+await check('graded_ground_is_charted_top_down_and_yard_and_object_lights_bake_onto_it', () => {
+  // Every light bakes (user, 2026-11-13). Graded terrain is a heightfield receiver: its upward
+  // faces chart top-down per 64 ft tile; a building-less yard light and an object lamp reach it.
+  const root = new THREE.Group(); root.scale.setScalar(FT);
+  const ground = new THREE.PlaneGeometry(60, 60, 30, 30).rotateX(-Math.PI / 2), pos = ground.attributes.position;
+  for (let i = 0; i < pos.count; i++) pos.setY(i, Math.sin(pos.getX(i) * .3) * .4 + Math.cos(pos.getZ(i) * .2) * .3);
+  ground.computeVertexNormals(); ground.userData.bakeExcluded = true; ground.userData.bakeHeightfield = true;
+  const lawn = new THREE.Mesh(ground, new THREE.MeshStandardMaterial({name: 'lawn', side: THREE.DoubleSide}));
+  root.add(lawn); root.updateMatrixWorld(true);
+  const plan = {buildings: [], site: {yard_rooms: [{id: 'y', name: 'Pool deck', polygon: [[0, 0], [20, 0], [20, 20], [0, 20]]}]}};
+  const atlas = buildAtlas(root, plan, options), charts = atlas.room.charts.filter(c => c.mesh === lawn);
+  assert.ok(charts.length >= 1 && charts.length <= 4, `one chart per 64 ft tile, not per triangle: ${charts.length}`);
+  assert.ok(charts.every(c => c.outdoor), 'ground charts are outdoor');
+  // The bake rasterises charts in UV space with back faces culled: ground faces must wind like an
+  // upward floor (found in Chromium: a mirrored v axis left every ground texel unbaked).
+  const winding = (mesh, list) => { const uv = mesh.geometry.attributes.uv3, signs = new Set();
+    for (const c of list) for (const f of c.faces) { const a = [0, 1, 2].map(k => [uv.getX(f * 3 + k), uv.getY(f * 3 + k)]);
+      const area = (a[1][0] - a[0][0]) * (a[2][1] - a[0][1]) - (a[2][0] - a[0][0]) * (a[1][1] - a[0][1]);
+      if (Math.abs(area) > 1e-12) signs.add(Math.sign(area)); }
+    return [...signs]; };
+  const floorCtx = house(), floor = floorCtx.atlas.room.charts.filter(c => c.mesh.material.name === 'floor');
+  const floorSign = winding(floor[0].mesh, floor);
+  assert.equal(floorSign.length, 1, 'an upward floor winds one way in UV space');
+  assert.deepEqual(winding(lawn, charts), floorSign, 'ground charts wind like the floor (front-facing in the bake)');
+  const yard = {device: 'yard', building: null, level: null, room: 'y', at: [5, 5, 8], yard: true};
+  const source = lightSource(plan, yard);
+  assert.ok(Math.abs(source.source.y - 8 * FT) < 1e-6, 'a yard light hangs its offset above the ground');
+  assert.ok(Math.abs(source.range - 30 * FT) < 1e-6, 'range follows the yard room span, as the live lamp');
+  const fire = {device: 'object:fire_pit:f', building: null, level: null, room: null, at: [-5, -5, 1.5], absolute: true, range: 18};
+  const fs = lightSource(plan, fire);
+  assert.deepEqual([fs.source.x, fs.source.y, fs.source.z].map(v => +(v / FT).toFixed(6)), [-5, 1.5, 5]);
+  assert.ok(Math.abs(fs.range - 18 * FT) < 1e-9);
+  const lights = reachLights(atlas.room, [yard, fire]);
+  for (const l of lights) assert.ok(l.receivingCharts.length > 0, `${l.device} reaches the ground`);
+  const packed = B.bakeLayout(atlas, options, [yard, fire]);
+  for (const id of ['yard', 'object:fire_pit:f']) {
+    assert.ok(packed.slots[id]?.assignments?.length, `${id} has chart assignments`);
+    assert.ok(packed.entries[id], `${id} has a bake entry`);
+  }
+  assert.deepEqual(packed.fallback, [], 'no building-less light falls back');
+});
+await check('a_flat_quad_split_into_two_charts_has_no_dark_seam', () => {
+  // The pool floor (a 16 x 27 ft quad) crossed a 64 ft outdoor tile line, so its two triangles
+  // were two charts and the diagonal was a chart border. The GPU writes only texels whose
+  // centres its faces cover; filtering averaged in, and bilinear sampling blended in, the
+  // unwritten texels: a dark diagonal (Chromium, 2026-11-13). Rebuild exactly that raster.
+  const size = 64, W = 16, H = 27, light = (u, v) => 20 + 200 * Math.exp(-((u - 8) ** 2 + (v - 13) ** 2) / 150);
+  const charts = [{rect: {x: 2, y: 2, w: W, h: H}, upper: true}, {rect: {x: 24, y: 2, w: W, h: H}, upper: false}];
+  const inside = (c, u, v) => c.upper ? v * W >= u * H : v * W <= u * H;
+  const raster = () => { const bytes = new Uint8Array(size * size * 4);
+    for (const c of charts) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (!inside(c, x + .5, y + .5)) continue;
+      const q = ((c.rect.y + y) * size + c.rect.x + x) * 4; bytes[q] = Math.round(light(x + .5, y + .5)); bytes[q + 3] = 255; }
+    return bytes; };
+  // The runtime's bilinear lookup of a chart-local point (texel centres at +.5, clamped to the rect).
+  const sample = (bytes, c, u, v) => { const r = c.rect, at = (x, y) => bytes[((r.y + Math.min(H - 1, Math.max(0, y))) * size + r.x + Math.min(W - 1, Math.max(0, x))) * 4];
+    const fx = u - .5, fy = v - .5, x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0;
+    return (at(x0, y0) * (1 - tx) + at(x0 + 1, y0) * tx) * (1 - ty) + (at(x0, y0 + 1) * (1 - tx) + at(x0 + 1, y0 + 1) * tx) * ty; };
+  const worst = bytes => { let low = Infinity;
+    for (let t = .1; t <= .9; t += .05) { const u = t * W, v = t * H, n = [H, -W].map(k => k / Math.hypot(W, H) * .3);
+      for (const c of charts) { const side = c.upper ? -1 : 1, pu = u + side * n[0], pv = v + side * n[1];
+        low = Math.min(low, sample(bytes, c, pu, pv) / light(pu, pv)); } }
+    return low; };
+  const raw = raster();
+  assert.ok(worst(raw) < .75, `the raw raster really is dark along the seam: ${worst(raw).toFixed(2)}`);
+  const fixed = raster(); filterCharts(fixed, charts, size); dilateCharts(fixed, charts, size);
+  const low = worst(fixed);
+  assert.ok(low > .9, `the seam samples within 10% of the light on both sides: worst ${low.toFixed(2)}`);
+  for (const c of charts) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const q = ((c.rect.y + y) * size + c.rect.x + x) * 4;
+    if (inside(c, x + .5, y + .5)) assert.ok(fixed[q] >= .85 * light(x + .5, y + .5), `edge texel ${x},${y} is not dragged down by unwritten neighbours`);
+    else assert.equal(fixed[q + 3], 0, 'padding stays out of coverage');
+  }
 });
 await check('nearby_wall_changes_key_and_remote_wall_does_not', () => {
   const key=ctx => B.bakeLayout(ctx.atlas,options,[lamp]).entries.lamp.key;
@@ -491,7 +565,7 @@ def run():
             if result.returncode:
                 print(result.stderr[-4000:], end='')
                 return result.returncode
-            print('18/18 passed (16 reach checks + worker/timing + harness rebake integration)')
+            print('20/20 passed (18 reach checks + worker/timing + harness rebake integration)')
         return 0
 
 

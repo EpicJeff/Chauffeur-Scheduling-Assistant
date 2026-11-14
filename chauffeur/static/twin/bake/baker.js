@@ -1,5 +1,5 @@
 import { assignChannels, CHANNEL_FALLBACK, CHART_STATS, fingerprint } from './atlas.js';
-import { renderPage, addRoomBounceAcrossPages } from './bake_pass.js';
+import { renderPage, addRoomBounceAcrossPages, dilateCharts } from './bake_pass.js';
 import { withBakeLease } from './bake_lock.js';
 import { reachLights } from './reach.js';
 import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
@@ -144,6 +144,8 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
       rendered.push({page, charts:mine, bytes:pixels});
     }
     addRoomBounceAcrossPages(rendered,size);
+    // Pad each chart's unwritten texels after bounce, so padding carries the bounced value too.
+    for (const r of rendered) dilateCharts(r.bytes, r.charts, size);
     for (const {page, charts:mine, bytes:pixels} of rendered) {
       const channels = await pageData(page, size, 2);
       // Replace only this light's receiving charts and channel.

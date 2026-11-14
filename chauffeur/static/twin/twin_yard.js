@@ -265,6 +265,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     // Grade's vertex colours already keep this grid out of static merging.
     // Keep the exclusion explicit if a future merge path accepts colours.
     mesh.geometry.userData.bakeExcluded = true;
+    // Yard lights bake onto the ground (user, 2026-11-13): the atlas charts it top-down.
+    mesh.geometry.userData.bakeHeightfield = true;
     tintGrade(mesh.geometry, false);
   }
   stopTerrain();

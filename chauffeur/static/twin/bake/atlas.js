@@ -4,7 +4,7 @@ import { reachLights } from './reach.js';
 import { fingerprint, authoredGeometry } from './fingerprint.js';
 export { fingerprint } from './fingerprint.js';
 
-const VERSION = 'reach-atlas-7';
+const VERSION = 'reach-atlas-8';
 const EPS = 1e-6;
 const prepared = new WeakMap();
 const bankPacking = new WeakMap();
@@ -274,7 +274,50 @@ function vertexKey(p) {
   return `${Math.round(p.x * 1e4)},${Math.round(p.y * 1e4)},${Math.round(p.z * 1e4)}`;
 }
 
+// Graded terrain is a heightfield: its upward faces chart top-down per 64 ft tile, which
+// never overlaps. Planar flood fill would cut a graded grid into one chart per triangle.
+// Skirts and other steep faces stay uncharted (no baked light). Yard lights, 2026-11-13.
+// The terrain grid is finer on High than on Low, and a Low panel reads the desk's bake, so a
+// chart's bounds, order and identity come from its tile and the mesh's extent, never from
+// its triangles: every tier gets the same atlas.
+// The tiles are anchored at the grid's own origin (the terrain outline's corner), and 64 ft
+// is a whole number of cells on every tier (1 ft High, 2 ft Low): no cell straddles a tile, so
+// a Low face samples exactly the texels the High desk baked.
+export const heightfieldMesh = mesh => !!mesh.geometry?.userData.bakeHeightfield;
+export function heightfieldExtent(geometry) {
+  const pos = geometry.attributes.position;
+  let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  return [x0, z0, x1, z1].map(v => Math.round(v * 1000) / 1000);
+}
+function heightfieldCharts(mesh) {
+  const pos = mesh.geometry.attributes.position, tiles = new Map(), [x0, z0, x1, z1] = heightfieldExtent(mesh.geometry);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
+  for (let f = 0; f < pos.count / 3; f++) {
+    a.fromBufferAttribute(pos, 3 * f); b.fromBufferAttribute(pos, 3 * f + 1); c.fromBufferAttribute(pos, 3 * f + 2);
+    n.copy(b).sub(a).cross(c.clone().sub(a));
+    if (n.length() / 2 < 1e-6 || Math.abs(n.normalize().y) < 0.25) continue;
+    // Lot y runs along -z; the grid starts at the outline's lowest x and lowest lot y (z1).
+    const tx = Math.floor(((a.x + b.x + c.x) / 3 - x0) / 64), ty = Math.floor((z1 - (a.z + b.z + c.z) / 3) / 64);
+    const tile = `field:${tx},${ty}`;
+    if (!tiles.has(tile)) tiles.set(tile, { tx, ty, faces: [] });
+    tiles.get(tile).faces.push(f);
+  }
+  // u = x and v = lot y (-z): right-handed about the upward normal (v = n x u), so faces stay
+  // front-facing in UV space; the bake rasterises with back faces culled.
+  return [...tiles].sort((p, q) => p[1].ty - q[1].ty || p[1].tx - q[1].tx).map(([tile, t]) => {
+    const minU = x0 + t.tx * 64, maxU = Math.min(x1, x0 + (t.tx + 1) * 64);
+    const minV = -z1 + t.ty * 64, maxV = Math.min(-z0, -z1 + (t.ty + 1) * 64);
+    return { mesh, faces: t.faces, room: -1, tile, heightfield: true, field: [minU, minV, maxU, maxV],
+      u: new THREE.Vector3(1, 0, 0), v: new THREE.Vector3(0, 0, -1), minU, minV, width: maxU - minU, height: maxV - minV };
+  });
+}
+
 function chartsFor(mesh, owners) {
+  if (mesh.geometry.userData.bakeHeightfield) return heightfieldCharts(mesh);
   const pos = mesh.geometry.attributes.position, faces = [], atVertex = new Map();
   const p = i => new THREE.Vector3().fromBufferAttribute(pos, i);
   for (let f = 0; f < pos.count / 3; f++) {
@@ -433,7 +476,9 @@ function writeUV(charts, o, name, pageName) {
 // Cut-out cards (the Low tier's merged plant cards, alphaTest) are left out on
 // every tier, so a Low panel builds the same atlas key as the desk that baked.
 export function atlasMesh(mesh) {
-  return !!(mesh.isMesh && mesh.userData.merged && !mesh.geometry?.userData.bakeExcluded && !mesh.layers.isEnabled(31) && !Array.isArray(mesh.material) &&
+  // Graded terrain stays out of static merging (bakeExcluded) but receives baked light.
+  const field = !!mesh.geometry?.userData.bakeHeightfield;
+  return !!(mesh.isMesh && (mesh.userData.merged || field) && (field || !mesh.geometry?.userData.bakeExcluded) && !mesh.layers.isEnabled(31) && !Array.isArray(mesh.material) &&
     (!mesh.material.transparent || mesh.material.userData.viewingOpaque) && !(mesh.material.alphaTest > 0) && !['fixture', 'glass'].includes(mesh.material.name) &&
     mesh.geometry?.attributes.position);
 }
@@ -448,7 +493,7 @@ export function assignChannels(rooms, lights, previous = new Map()) {
   });
   const nodes = [];
   for (const light of lights) {
-    const room = byBuilding.get(light.building)?.get(light.room);
+    const room = byBuilding.get(light.building)?.get(light.room) ?? (light.receivingCharts ? -1 : undefined);
     if (room === undefined || nodes.some(n => n.light.device === light.device)) continue;
     nodes.push({ light, room });
   }
@@ -591,7 +636,9 @@ export function buildAtlas(group, plan, { room } = {}) {
     g.setAttribute('lmRoom', new THREE.Float32BufferAttribute(owner, 1));
     g.deleteAttribute('uv3'); g.deleteAttribute('lmLightPage');
     hash.add(mesh.material.name || ''); hash.add(JSON.stringify(mesh.matrixWorld.elements));
-    for (const name of ['position', 'normal', 'uv']) if (g.attributes[name]) hash.add(g.attributes[name].array);
+    // A heightfield's shape is authored (lot, terraces, pool: authoredGeometry above).
+    if (heightfieldMesh(mesh)) hash.add(JSON.stringify(['heightfield', heightfieldExtent(g)]));
+    else for (const name of ['position', 'normal', 'uv']) if (g.attributes[name]) hash.add(g.attributes[name].array);
   });
   const rc = scaled(roomCharts, ro);
   const roomPages = roomLayout(rc, data.rooms, ro);
@@ -603,10 +650,12 @@ export function buildAtlas(group, plan, { room } = {}) {
       const h=fingerprint(); h.add(new Float64Array(c.mesh.matrixWorld.elements)); matrices.set(c.mesh,h.key());
     }
     identity.add(matrices.get(c.mesh));
-    for (const f of c.faces) for (let k=0;k<3;k++) {
+    if (c.heightfield) identity.add(JSON.stringify(['heightfield', c.tile, c.field]));
+    else for (const f of c.faces) for (let k=0;k<3;k++) {
       const i=f*3+k; xyz[0]=pos.getX(i);xyz[1]=pos.getY(i);xyz[2]=pos.getZ(i);identity.add(xyz);
     }
-    return { id:c.id, key:identity.key(), mesh: c.mesh, faces: c.faces, page: c.page, rect: c.rect, outdoor: !!c.outdoor, density: c.density };
+    return { id:c.id, key:identity.key(), mesh: c.mesh, faces: c.faces, page: c.page, rect: c.rect, outdoor: !!c.outdoor, density: c.density,
+      ...(c.heightfield ? { heightfield: true, field: c.field } : {}) };
   };
   const lightLayout = { pages: roomPages, rooms: data.rooms, plan,
     charts: rc.map(c => ({ ...publicChart(c), room: c.room })) };

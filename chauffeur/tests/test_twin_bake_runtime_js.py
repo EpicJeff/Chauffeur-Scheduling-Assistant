@@ -20,7 +20,7 @@ DRIVER += B.DRIVER[B.DRIVER.index('// --- the fake GPU'):B.DRIVER.index('// --- 
 DRIVER += B.DRIVER[B.DRIVER.index('const building ='):B.DRIVER.index('async function setup')]
 DRIVER += r"""
 const B = await import(file('static/twin/bake/baker.js'));
-const { mountBake, lightsOf } = await import(file('static/twin/bake/runtime.js'));
+const { mountBake, lightsOf, bakeLights } = await import(file('static/twin/bake/runtime.js'));
 class CodecWorker {
   postMessage(job) {
     setImmediate(async () => {
@@ -74,15 +74,33 @@ async function check(name, fn) {
   try { await fn(); passed++; console.log('  ok   ' + name); }
   catch (error) { console.log('  FAIL ' + name + ' ' + error.stack); }
 }
-await check('yard_and_fire_pit_lights_are_not_baked', async () => {
-  // Yard-room and fire-pit lights have no building: baked light lands indoors only, and a
-  // building-less light never baked, so the bake never settled (user, 2026-11-13).
+await check('every_placed_light_bakes_including_yard_and_fire_pit', async () => {
+  // v2.499.839 left yard-room and fire-pit lights out of the bake: yard surfaces were not in
+  // the atlas, so they never settled. The yard now bakes (user, 2026-11-13: "It seems silly to
+  // have some lights baked and some not"), so they are in.
   const layout={markers:[
     {device_id:'indoor',kind:'light',placed:true,at:[1,2,8],room:'r',building:'b',level:'L1'},
-    {device_id:'yard',kind:'light',placed:true,at:[30,40,8],room:'yard_rooms:1',building:null,level:null},
-    {device_id:'pit',kind:'light',placed:true,at:[5,5,2],room:null,building:null,level:null},
+    {device_id:'yard',kind:'light',placed:true,at:[30,40,8],room:'yard_rooms:1',building:null,level:null,yard:true},
+    {device_id:'pit-light',kind:'light',placed:true,entity_id:'light.pit',at:[5,5,2],room:'r',building:'b',level:'L1'},
+    {device_id:'nowhere',kind:'light',placed:true,at:[5,5,2],room:null,building:null,level:null},
     {device_id:'unplaced',kind:'light',placed:false,at:[1,1,8],room:'r',building:'b',level:'L1'}]};
-  assert.deepEqual(lightsOf(layout).map(l=>l.device),['indoor']);
+  assert.deepEqual(lightsOf(layout).map(l=>l.device),['indoor','yard','pit-light']);
+  assert.equal(lightsOf(layout)[1].yard,true);
+  // Object lamps come from the scene, as live modes.js makes them. A fire pit owns its
+  // light-domain marker's light; a lamp object with a marker stays that marker.
+  const root=new THREE.Group(), pit=new THREE.Group(); pit.position.set(3,0,-4); root.add(pit);
+  const flame=new THREE.MeshStandardMaterial(); flame.userData.objectLight={id:'fire_pit:f',entity:'light.pit',fire:true,fireLightAt:[0,1,0]};
+  pit.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1),flame));
+  const lamp=new THREE.MeshStandardMaterial(); lamp.userData.objectLight={id:'b:lamp1',entity:'light.lamp'};
+  root.add(new THREE.Mesh(new THREE.BoxGeometry(1,2,1).translate(10,1,-10),lamp));
+  const free=new THREE.MeshStandardMaterial(); free.userData.objectLight={id:'b:glow',entity:null};
+  root.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1).translate(-6,.5,6),free));
+  const withLamp={markers:[...layout.markers,{device_id:'lamp-marker',kind:'light',placed:true,entity_id:'light.lamp',at:[1,1,4],room:'r',building:'b',level:'L1'}]};
+  const all=bakeLights(withLamp,root), ids=all.map(l=>l.device);
+  assert.deepEqual(ids,['indoor','yard','lamp-marker','object:fire_pit:f','object:b:glow'],JSON.stringify(ids));
+  const fire=all.find(l=>l.device==='object:fire_pit:f');
+  assert.equal(fire.absolute,true);assert.equal(fire.range,18);
+  assert.deepEqual(fire.at.map(v=>+v.toFixed(6)),[3/FT,4/FT,1/FT].map(v=>+v.toFixed(6)),'the fire light point in lot feet');
 });
 await check('worker_failures_are_visible_in_state_and_console', async () => {
   const Worker=globalThis.Worker, db=globalThis.indexedDB, log=console.error, timeout=globalThis.setTimeout, errors=[];

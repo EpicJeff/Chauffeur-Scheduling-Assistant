@@ -1,6 +1,37 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.854 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.855 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.855 (2026-11-13, NOT device-verified): every light bakes, including yard-room lights, fire pits and lamp objects, onto the ground, patios, pool and the house exterior.**
+
+**The ask.** The user: "It seems silly to have some lights baked and some not if there isn't a real reason to not bake them." v2.499.839 had left yard and fire-pit lights out of the bake, because the yard ground was not in the atlas and those lights could never settle. Point lights only for now; light shapes are the approved light-fixtures plan.
+
+**What changed.**
+- **The ground is in the atlas.** The graded terrain bakes as a heightfield, charted top-down in 64 ft tiles (about 16 charts on the test house). Skirts and steep faces get no baked light, and the ground does not occlude. Patios, paths, pool tile and coping, the pool feature basins, mulch and fire-pit parts already were outdoor charts. Water and spillover stay out.
+- **One atlas on every tier.** The terrain grid is 1 ft on High and 2 ft on Low, so tiles start at the grid origin. Terrain keys, hashes and reach use the tile and the authored terrain, never the triangles. An already-baked scene re-derives the same key, so yard reuse never forces a rebake.
+- **Lights.**
+  - `lightsOf` includes yard-room markers.
+  - Fire pits and lamp objects bake as `object:<id>` (18 ft range), with the same ids and positions as the live layer.
+  - `reach.js` `lightSource` has yard and object branches.
+  - `assignChannels` keeps lights with no building room when they reach charts.
+- **Seams fixed** (`bake_pass.js`, `baker.js`).
+  - A chart border showed as a dark band, as a diagonal across the pool floor where it crosses a tile line. The bilateral filter averaged unwritten (zero) texels into edge texels, and bilinear sampling added more.
+  - `filterCharts` now ignores unwritten neighbours, and the new `dilateCharts` pads each chart ring by ring after bounce. This also removes a thinner dark rim on every other chart border, the house's included.
+- **Speed.** `bake_pass` searched every chart once per vertex; it now does it once per chart. With 303k terrain vertices a forced rebake had taken 218 s.
+
+**Measured (Chromium, test house).**
+- First full bake: 65 s with 6 lights, including a yard light and a fire pit (main: 82 s with 4). Forced rebake: 16 s.
+- Two bakes leave everything fresh, with no error.
+- Night luminance with the yard light's bake off versus on: pool 23.5 to 60.9, deck 19.9 to 84.3, lawn 13 to 52.9.
+- The pool floor shows a smooth falloff with no seam.
+- Cost: the third lightmap bank is now used, about +25 MB of GPU texture.
+
+**Tests.**
+- `test_twin_light_reach_js` 20/20, with new checks: ground charts per tile, yard and object light sources, UV winding, and a split quad with no dark seam (which fails on the old filter).
+- `test_twin_bake_runtime_js` 17/17. `yard_and_fire_pit_lights_are_not_baked` was rewritten as `every_placed_light_bakes_including_yard_and_fire_pit`; the old test passed only because its yard marker lacked `yard: true`.
+- `test_twin_bake_fingerprint_js` passes, including shared ground texels on High and Low and an unchanged key on re-derive.
+- Others: atlas js 13/13, baker js 12/12, bakes 16/16, pool features js 10/10 (feature basins are receivers, water is not), yard reuse js, energy js 38/38, fire pits, import maps 3/3.
+- `test_twin_lightmap_material_js` `fresh_bake_frees_the_pool_slot` fails the same way on main.
 
 **v2.499.854 (2026-11-13, NOT device-verified): material library, part 1. Household materials are stored, served and drawn on the house, and material pickers save the material rather than a copied colour.**
 
