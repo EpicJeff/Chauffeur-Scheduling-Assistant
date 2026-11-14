@@ -166,6 +166,25 @@ function summarise(atlas, o) {
         const of = roomChartOf.get(c.mesh);
         for (const f of c.faces) of[f] = of[f] === -1 ? c.room : -2;
       }
+      // Lightmap proxies (thin batten, trim and cap faces, 2026-11-14) are charted through
+      // their host: the host's room, page and rect, never a rect of their own.
+      for (const p of c.proxies || []) {
+        if (!index.has(p.mesh)) { push(E('mesh'), { ci, why: 'proxy on a mesh that is not merged' }); continue; }
+        const pg = p.mesh.geometry, puv = pg.attributes[uvName], pseen = counts.get(p.mesh), pof = roomChartOf.get(p.mesh);
+        for (const f of p.faces) {
+          if (pseen[f]) push(E('twice'), { ci, f, proxy: true }); pseen[f]++;
+          if (kind === 'room') {
+            pof[f] = pof[f] === -1 ? c.room : -2;
+            if (faceValue(pg, 'lmRoom', f) !== c.room) push('room.faceRoom', { ci, f, proxy: true });
+            if (faceValue(pg, 'lmLightPage', f) !== c.page) push('room.facePage', { ci, f, proxy: true });
+          }
+          if (!puv) continue;
+          for (let k = 0; k < 3; k++) {
+            const i = vtx(pg, f, k), tx = puv.getX(i) * lo.page, ty = puv.getY(i) * lo.page;
+            if (tx < r.x - 1e-3 || tx > r.x + r.w + 1e-3 || ty < r.y - 1e-3 || ty > r.y + r.h + 1e-3) push(E('uvOutside'), { ci, f, proxy: true });
+          }
+        }
+      }
       if (!perPage.has(c.page)) perPage.set(c.page, []);
       perPage.get(c.page).push({ ci, ...r });
       rectArea += r.w * r.h;
@@ -517,7 +536,8 @@ def scenario_texel_density_matches_world_size():
     d, high = main_run()[DEFAULT], main_run()[HIGH]
     check(3.0 < high['room']['interiorRectArea'] / d['room']['interiorRectArea'] < 4.6,
           'interior density 8 uses about four times the texels of density 4')
-    check(high['room']['outdoorRectArea'] == d['room']['outdoorRectArea'], 'outdoor density stays capped at one texel/ft')
+    check(high['room']['outdoorRectArea'] == d['room']['outdoorRectArea'],
+          'outdoor density does not follow the room density (building outside up to 4/ft, yard 1/ft)')
 
 
 def scenario_every_interior_face_has_uv3():

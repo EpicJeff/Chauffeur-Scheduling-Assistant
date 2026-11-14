@@ -20,9 +20,12 @@ export const chartAddress = (chart, bank, banks) => [((chart * banks + bank) % 1
 export function applyChartIndices(atlas) {
   const arrays = new Map(), ArrayType = atlas.room.charts.length < 32768 ? Int16Array : Float32Array;
   for (const c of atlas.room.charts) {
-    const g=c.mesh.geometry;
-    if (!arrays.has(g)) arrays.set(g,new ArrayType(g.attributes.position.count).fill(-1));
-    for (const f of c.faces) arrays.get(g).fill(c.id,f*3,f*3+3);
+    // A proxy (a batten face, a trim edge) reads its host chart's texels and lights.
+    for (const part of [{ mesh: c.mesh, faces: c.faces }, ...(c.proxies || [])]) {
+      const g=part.mesh.geometry;
+      if (!arrays.has(g)) arrays.set(g,new ArrayType(g.attributes.position.count).fill(-1));
+      for (const f of part.faces) arrays.get(g).fill(c.id,f*3,f*3+3);
+    }
   }
   for (const [g,data] of arrays) {
     g.setAttribute('lmRoom',new THREE.BufferAttribute(data,1));

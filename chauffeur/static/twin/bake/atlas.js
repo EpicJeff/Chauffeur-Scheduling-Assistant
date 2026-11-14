@@ -4,7 +4,7 @@ import { reachLights } from './reach.js';
 import { fingerprint, authoredGeometry } from './fingerprint.js';
 export { fingerprint } from './fingerprint.js';
 
-const VERSION = 'reach-atlas-8';
+const VERSION = 'reach-atlas-9';
 const EPS = 1e-6;
 const prepared = new WeakMap();
 const bankPacking = new WeakMap();
@@ -316,7 +316,7 @@ function heightfieldCharts(mesh) {
   });
 }
 
-function chartsFor(mesh, owners) {
+function chartsFor(mesh, owners, tileFeet = 64) {
   if (mesh.geometry.userData.bakeHeightfield) return heightfieldCharts(mesh);
   const pos = mesh.geometry.attributes.position, faces = [], atVertex = new Map();
   const p = i => new THREE.Vector3().fromBufferAttribute(pos, i);
@@ -326,7 +326,7 @@ function chartsFor(mesh, owners) {
     if (n.length() / 2 < 1e-6) continue;
     n.normalize();
     const centre = v.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / 3);
-    const tile = `${Math.floor(centre.x / 64)},${Math.floor(-centre.z / 64)}`;
+    const tile = `${tileFeet}:${Math.floor(centre.x / tileFeet)},${Math.floor(-centre.z / tileFeet)}`;
     const face = { f, v, n, keys: v.map(vertexKey), tile };
     faces[f] = face;
     for (const key of face.keys) {
@@ -407,11 +407,99 @@ function shelves(items, width, height, gutter, ordered = null) {
   return pages.length;
 }
 
+// Texels per foot by surface: rooms at the layout density; a building's outside (siding,
+// battens, trim, roofs) at up to 4/ft, so night lights read on it (user, 2026-11-14: "super
+// dark lines on the batten strips"); yard and ground at 1/ft. Every chart fits one page.
+export const BUILDING_OUTDOOR_DENSITY = 4, YARD_DENSITY = 1;
+function baseDensity(c, o) {
+  if (!c.outdoor) return o.density;
+  return Math.min(o.density, c.building && !c.heightfield ? BUILDING_OUTDOOR_DENSITY : YARD_DENSITY);
+}
 function scaled(charts, o) {
   return charts.map((c, id) => {
-    const density = c.outdoor ? Math.min(1, o.density, (o.page - 4) / Math.max(c.width, c.height)) : o.density;
-    return { ...c, id, density, w: Math.max(1, Math.ceil(c.width * density)), h: Math.max(1, Math.ceil(c.height * density)) };
+    let density = baseDensity(c, o);
+    if (c.outdoor) density = Math.min(density, (o.page - 4) / Math.max(c.width, c.height));
+    const ew = c.width * density, eh = c.height * density;
+    // A thin chart nothing could host keeps its density but takes at least two texels across,
+    // centred on the first texel centre: the raster always writes that line, and dilation
+    // fills the rest (no black sliver, and no growth beyond two texels).
+    const seed = e => c.seeded && e < 1 ? .5 - e / 2 : 0;
+    return { ...c, id, density, offU: seed(ew), offV: seed(eh),
+      w: Math.max(c.seeded ? 2 : 1, Math.ceil(ew)), h: Math.max(c.seeded ? 2 : 1, Math.ceil(eh)) };
   });
+}
+
+// Lightmap proxies. A chart too thin to hold two texels at its density (a batten face, a trim
+// edge, a cap) covers no texel centre: the raster writes nothing and the surface reads black.
+// It borrows instead the lighting of the large chart it sits on: the nearest one within half
+// a foot in front of whose plane its centre lies, inside that chart's bounds. Its faces map
+// through the host's UV transform (no rect of its own), and its lmRoom is the host's.
+const PROXY_REACH = .5, PROXY_TEXELS = 2;
+const chartNormal = c => new THREE.Vector3().crossVectors(c.u, c.v).normalize();
+function chartCentre(c) {
+  const pos = c.mesh.geometry.attributes.position, p = new THREE.Vector3(), sum = new THREE.Vector3();
+  let n = 0;
+  for (const f of c.faces) for (let k = 0; k < 3; k++) { sum.add(p.fromBufferAttribute(pos, f * 3 + k)); n++; }
+  return sum.multiplyScalar(1 / Math.max(1, n));
+}
+export function assignProxies(charts, o) {
+  const small = [], hosts = [];
+  for (const c of charts) {
+    if (c.heightfield) { hosts.push(c); continue; }
+    const thin = Math.min(c.width, c.height) * baseDensity(c, o) < PROXY_TEXELS;
+    (thin ? small : hosts).push(c);
+  }
+  // Hosts by 8 ft cells of their world bounds; each holds its plane in its own mesh's frame.
+  const cells = new Map(), cell = 8, key = (x, y, z) => `${x},${y},${z}`;
+  const info = new Map(), large = [];
+  for (const h of hosts) {
+    if (h.heightfield) continue;
+    const box = new THREE.Box3(), pos = h.mesh.geometry.attributes.position, p = new THREE.Vector3();
+    for (const f of h.faces) for (let k = 0; k < 3; k++) box.expandByPoint(p.fromBufferAttribute(pos, f * 3 + k).applyMatrix4(h.mesh.matrixWorld));
+    box.expandByScalar(PROXY_REACH * .3048 + .01);
+    const origin = new THREE.Vector3().fromBufferAttribute(pos, h.faces[0] * 3);
+    info.set(h, { normal: chartNormal(h), origin, inverse: h.mesh.matrixWorld.clone().invert(),
+      area: h.width * h.height });
+    // A huge plane (the yard's outer lawn) is checked for every chart rather than filling
+    // thousands of cells.
+    const span = Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z) / (cell * .3048);
+    if (span > 32) { large.push(h); continue; }
+    for (let x = Math.floor(box.min.x / (cell * .3048)); x <= Math.floor(box.max.x / (cell * .3048)); x++)
+      for (let y = Math.floor(box.min.y / (cell * .3048)); y <= Math.floor(box.max.y / (cell * .3048)); y++)
+        for (let z = Math.floor(box.min.z / (cell * .3048)); z <= Math.floor(box.max.z / (cell * .3048)); z++) {
+          const k = key(x, y, z); if (!cells.has(k)) cells.set(k, []); cells.get(k).push(h);
+        }
+  }
+  const proxies = [], orphans = [], local = new THREE.Vector3(), scratch = new THREE.Vector3();
+  for (const c of small) {
+    const world = chartCentre(c).applyMatrix4(c.mesh.matrixWorld), s = cell * .3048;
+    const candidates = [...(cells.get(key(Math.floor(world.x / s), Math.floor(world.y / s), Math.floor(world.z / s))) || []), ...large];
+    let best = null, corners = null;
+    for (const h of candidates) {
+      // Same side of the wall: outside borrows from outside, a room only from itself.
+      if (h.outdoor !== c.outdoor || !c.outdoor && h.room !== c.room) continue;
+      const i = info.get(h);
+      local.copy(world).applyMatrix4(i.inverse);
+      const d = scratch.copy(local).sub(i.origin).dot(i.normal);
+      if (d < -.02 || d > PROXY_REACH) continue;
+      const u = local.dot(h.u), v = local.dot(h.v), m = .1;
+      if (u < h.minU - m || u > h.minU + h.width + m || v < h.minV - m || v > h.minV + h.height + m) continue;
+      // The whole proxy sits in front of the host, not through it (a full-height batten's
+      // centre lies in the plane of a horizontal wall cap at mid-height).
+      if (!corners) {
+        const ppos = c.mesh.geometry.attributes.position; corners = [];
+        for (const f of c.faces) for (let k = 0; k < 3; k++) corners.push(new THREE.Vector3().fromBufferAttribute(ppos, f * 3 + k).applyMatrix4(c.mesh.matrixWorld));
+      }
+      if (corners.some(w => { const e = scratch.copy(w).applyMatrix4(i.inverse).sub(i.origin).dot(i.normal); return e < -.02 || e > PROXY_REACH; })) continue;
+      const rank = [Math.abs(d), -i.area, h.order];
+      if (!best || rank[0] < best.rank[0] - 1e-6 || Math.abs(rank[0] - best.rank[0]) <= 1e-6 &&
+        (rank[1] < best.rank[1] || rank[1] === best.rank[1] && rank[2] < best.rank[2])) best = { h, rank };
+    }
+    if (best) { (best.h.proxies ||= []).push({ mesh: c.mesh, faces: c.faces }); proxies.push({ chart: c, host: best.h }); continue; }
+    // No host: a seeded chart (see scaled).
+    c.seeded = true; orphans.push(c);
+  }
+  return { hosts: [...hosts, ...orphans].sort((a, b) => a.order - b.order), proxies };
 }
 
 function roomLayout(charts, rooms, o) {
@@ -451,16 +539,31 @@ function roomLayout(charts, rooms, o) {
 
 function writeUV(charts, o, name, pageName) {
   const buffers = new Map();
-  for (const c of charts) {
-    const g = c.mesh.geometry;
+  const buffer = g => {
     if (!buffers.has(g)) buffers.set(g, { uv: new Float32Array(g.attributes.position.count * 2),
       page: new Float32Array(g.attributes.position.count).fill(-1) });
-    const b = buffers.get(g), pos = g.attributes.position, point = new THREE.Vector3();
+    return buffers.get(g);
+  };
+  for (const c of charts) {
+    const g = c.mesh.geometry;
+    const b = buffer(g), pos = g.attributes.position, point = new THREE.Vector3();
     for (const f of c.faces) for (let k = 0; k < 3; k++) {
       const i = f * 3 + k; point.fromBufferAttribute(pos, i);
-      b.uv[i * 2] = (c.rect.x + (point.dot(c.u) - c.minU) * c.density) / o.page;
-      b.uv[i * 2 + 1] = (c.rect.y + (point.dot(c.v) - c.minV) * c.density) / o.page;
+      b.uv[i * 2] = (c.rect.x + (c.offU || 0) + (point.dot(c.u) - c.minU) * c.density) / o.page;
+      b.uv[i * 2 + 1] = (c.rect.y + (c.offV || 0) + (point.dot(c.v) - c.minV) * c.density) / o.page;
       b.page[i] = c.page;
+    }
+    // A proxy's vertices, carried into the host's frame, take the host's mapping: clamped to
+    // the host's rectangle so a proxy at its edge never samples a neighbour.
+    for (const p of c.proxies || []) {
+      const pb = buffer(p.mesh.geometry), ppos = p.mesh.geometry.attributes.position;
+      const into = p.mesh === c.mesh ? null : c.mesh.matrixWorld.clone().invert().multiply(p.mesh.matrixWorld);
+      for (const f of p.faces) for (let k = 0; k < 3; k++) {
+        const i = f * 3 + k; point.fromBufferAttribute(ppos, i); if (into) point.applyMatrix4(into);
+        const x = Math.min(c.w - .5, Math.max(.5, (point.dot(c.u) - c.minU) * c.density));
+        const y = Math.min(c.h - .5, Math.max(.5, (point.dot(c.v) - c.minV) * c.density));
+        pb.uv[i * 2] = (c.rect.x + x) / o.page; pb.uv[i * 2 + 1] = (c.rect.y + y) / o.page; pb.page[i] = c.page;
+      }
     }
   }
   for (const [g, b] of buffers) {
@@ -616,30 +719,44 @@ export function buildAtlas(group, plan, { room } = {}) {
   hash.add(authoredGeometry(plan));
   hash.add(JSON.stringify([VERSION, plan.generatorVersion ?? null, ro, [...data.buildings], data.rooms]));
   group.updateMatrixWorld(true);
+  const raw = [], owners = new Map();
   group.traverse(mesh => {
     if (!atlasMesh(mesh)) return;
     const state = prepare(mesh, data), g = mesh.geometry;
-    if (!state.room) state.room = chartsFor(mesh, state.owners);
-    const outdoors = new Map();
-    const mine = state.room.map(c => {
-      if (c.room >= 0) return c;
-      if (!outdoors.has(c.tile)) {
-        outdoors.set(c.tile, data.rooms.length);
-        data.rooms.push({ id: `outdoor:${data.rooms.length}`, outdoor: true, region: null });
-      }
-      const room = outdoors.get(c.tile);
-      return { ...c, room, outdoor: true };
-    });
-    roomCharts.push(...mine);
-    const owner = new Float32Array(g.attributes.position.count).fill(-1);
-    for (const c of mine) for (const f of c.faces) owner.fill(c.room, f * 3, f * 3 + 3);
-    g.setAttribute('lmRoom', new THREE.Float32BufferAttribute(owner, 1));
+    let buildingId;
+    for (let p = mesh; p && !buildingId; p = p.parent) buildingId = p.userData.buildingId;
+    const building = data.buildings.has(buildingId);
+    // A building's outside groups by 16 ft tiles: at 4 texels/ft that is the 64-texel span a
+    // 64 ft yard tile has at 1/ft, so one region never outgrows a page.
+    if (!state.room) state.room = chartsFor(mesh, state.owners, building ? 64 / BUILDING_OUTDOOR_DENSITY : 64);
+    for (const c of state.room) raw.push({ ...c, outdoor: c.room < 0, building, order: raw.length });
+    owners.set(mesh, new Float32Array(g.attributes.position.count).fill(-1));
     g.deleteAttribute('uv3'); g.deleteAttribute('lmLightPage');
     hash.add(mesh.material.name || ''); hash.add(JSON.stringify(mesh.matrixWorld.elements));
     // A heightfield's shape is authored (lot, terraces, pool: authoredGeometry above).
     if (heightfieldMesh(mesh)) hash.add(JSON.stringify(['heightfield', heightfieldExtent(g)]));
     else for (const name of ['position', 'normal', 'uv']) if (g.attributes[name]) hash.add(g.attributes[name].array);
   });
+  // Thin charts become proxies of the surface they sit on; only hosts take atlas space.
+  const { hosts, proxies } = assignProxies(raw, ro);
+  const outdoors = new Map();
+  for (const c of hosts) {
+    if (c.room < 0) {
+      if (!outdoors.has(c.tile)) {
+        outdoors.set(c.tile, data.rooms.length);
+        data.rooms.push({ id: `outdoor:${data.rooms.length}`, outdoor: true, region: null });
+      }
+      c.room = outdoors.get(c.tile);
+    }
+    roomCharts.push(c);
+    const owner = owners.get(c.mesh);
+    for (const f of c.faces) owner.fill(c.room, f * 3, f * 3 + 3);
+  }
+  for (const { chart, host } of proxies) {
+    const owner = owners.get(chart.mesh);
+    for (const f of chart.faces) owner.fill(host.room, f * 3, f * 3 + 3);
+  }
+  for (const [mesh, owner] of owners) mesh.geometry.setAttribute('lmRoom', new THREE.BufferAttribute(owner, 1));
   const rc = scaled(roomCharts, ro);
   const roomPages = roomLayout(rc, data.rooms, ro);
   writeUV(rc, ro, 'uv3', 'lmLightPage');
@@ -655,6 +772,7 @@ export function buildAtlas(group, plan, { room } = {}) {
       const i=f*3+k; xyz[0]=pos.getX(i);xyz[1]=pos.getY(i);xyz[2]=pos.getZ(i);identity.add(xyz);
     }
     return { id:c.id, key:identity.key(), mesh: c.mesh, faces: c.faces, page: c.page, rect: c.rect, outdoor: !!c.outdoor, density: c.density,
+      ...(c.proxies ? { proxies: c.proxies.map(p => ({ mesh: p.mesh, faces: p.faces })) } : {}),
       ...(c.heightfield ? { heightfield: true, field: c.field } : {}) };
   };
   const lightLayout = { pages: roomPages, rooms: data.rooms, plan,

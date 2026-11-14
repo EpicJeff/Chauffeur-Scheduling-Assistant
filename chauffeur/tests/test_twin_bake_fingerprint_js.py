@@ -63,7 +63,10 @@ assert.equal(a.key,b.key,'the panel polls exactly the desk bake key');
 // ground point do not. Every other receiver is compared vertex for vertex, as before.
 const field=root=>covered(root).find(m=>m.geometry.userData.bakeHeightfield);
 assert.ok(field(low)&&field(high),'graded terrain is a bake receiver on both tiers');
-const mapping=atlas=>({rooms:atlas.room.rooms,charts:atlas.room.charts.map(({mesh,faces,...c})=>c.heightfield?c:{...c,faces}),
+const mapping=atlas=>({rooms:atlas.room.rooms,charts:atlas.room.charts.map(({mesh,faces,proxies,...c})=>{
+  // Lightmap proxies (2026-11-14) name their mesh by its place among the covered meshes.
+  const out=c.heightfield?c:{...c,faces},list=covered(atlas===a?low:high);
+  return proxies?{...out,proxies:proxies.map(p=>({mesh:list.indexOf(p.mesh),faces:p.faces}))}:out;}),
  attributes:covered(atlas===a?low:high).filter(m=>!m.geometry.userData.bakeHeightfield).map(m=>Object.fromEntries(['uv3','lmRoom','lmLightPage'].map(k=>[k,[...m.geometry.attributes[k].array]])))});
 assert.deepEqual(mapping(a),mapping(b),'identical chart IDs, packing and every lightmap UV');
 const groundUV=mesh=>{const p=mesh.geometry.attributes.position,u=mesh.geometry.attributes.uv3,r=mesh.geometry.attributes.lmRoom,m=new Map();
