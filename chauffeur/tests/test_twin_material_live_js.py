@@ -201,13 +201,33 @@ await test('ordinary_editor_receives_existing_server_stream_and_closes_it',async
  const native=globalThis.EventSource,streams=[];globalThis.EventSource=class {
   constructor(url){this.url=url;streams.push(this);}close(){this.closed=true;}
  };
- window.chfAuthUrl=url=>url+'?person=token';current=record();const v=await mount(kit());let w;
- try {w=watchMaterialCatalogue(v,{api});await w.check();const stream=streams.at(-1);assert.ok(stream,'ordinary editor has an update subscription');
+ window.chfAuthUrl=url=>url+'?person=token';current=record();const v=await mount(kit());v.materialWatcher.stop();let w;
+ try {const start=streams.length;w=watchMaterialCatalogue(v,{api});await w.check();for(let i=0;i<200&&streams.length===start;i++)await new Promise(r=>setTimeout(r,10));
+  const stream=streams[start];assert.ok(stream,'ordinary editor has an update subscription');
   assert.equal(stream.url,'/api/stream?person=token');current=record(11,'#667788');const before=reads;
   for(let i=0;i<4;i++)stream.onmessage({data:'update'});await settle();assert.equal(reads,before,'stream is debounced');
   await new Promise(r=>setTimeout(r,1550));await settle();
   assert.equal(siding(v).color.getHexString(),'667788');w.stop();assert.equal(stream.closed,true);
  }finally{w?.stop();v.dispose();globalThis.EventSource=native;delete window.chfAuthUrl;}
+});
+await test('two_tabs_share_one_update_stream_and_hand_it_over',async()=>{
+ const {watchMaterialCatalogue}=await import(file('static/twin/material_watch.js'));
+ const native=globalThis.EventSource,streams=[];globalThis.EventSource=class {
+  constructor(url){this.url=url;streams.push(this);}close(){this.closed=true;}
+ };
+ const until=async(ok,why)=>{for(let i=0;i<200&&!ok();i++)await new Promise(r=>setTimeout(r,10));assert.ok(ok(),why);};
+ current=record();const v=await mount(kit());v.materialWatcher.stop();await settle();let a,b,readsA=0,readsB=0;
+ try {const start=streams.length;
+  a=watchMaterialCatalogue(v,{api:(...x)=>{readsA++;return api(...x);}});await a.check();
+  await until(()=>streams.length===start+1,'the first tab opens the stream');
+  b=watchMaterialCatalogue(v,{api:(...x)=>{readsB++;return api(...x);}});await b.check();
+  await new Promise(r=>setTimeout(r,100));assert.equal(streams.length,start+1,'a second tab opens no stream of its own');
+  const a0=readsA,b0=readsB;streams.at(-1).onmessage({data:'update'});
+  await until(()=>readsA>a0&&readsB>b0,'a push reaches both tabs');
+  a.stop();assert.equal(streams.at(-1).closed,true);
+  await until(()=>streams.length===start+2,'the remaining tab takes the stream over');
+  const b1=readsB;streams.at(-1).onmessage({data:'update'});await until(()=>readsB>b1,'and still hears pushes');
+ }finally{a?.stop();b?.stop();v.dispose();globalThis.EventSource=native;}
 });
 await test('mounted_bake_chain_stales_only_lights_reaching_the_changed_material',async()=>{
  const {buildAtlas}=await import(file('static/twin/bake/atlas.js'));
