@@ -18,16 +18,17 @@ const v = await mountTwin(host,{plan:{buildings:[b],site:{
  terraces:[{polygon:[[15,-5],[55,-5],[55,15],[15,15]],height:4,blend:0}],
  yard_rooms:[{id:'pool',name:'Pool deck',polygon:rect(20,0)},{id:'grill',name:'Grill',polygon:rect(40,0)}]},materials:{}},
  kit:{materials:{}},tier:'low',bake:false});
-await test('yard House target, top framing, selected outline, back and directional swipes',()=>{
+await test('yard House target, orbit framing, selected outline, back and directional swipes',()=>{
  const l = v.levels; assert.equal(l.snapshot().level,'house'); l.draw();
  const button = host.querySelector('[data-level-room="pool"]'); assert.ok(button); assert.equal(button.hidden,false); click(button);
  assert.deepEqual(l.snapshot(),{level:'room',building:null,floor:null,room:'pool'});
  l.go({room:'pool'},{immediate:true});
- assert.equal(v.controls.enableRotate,false); assert.equal(v.state.view,'ext');
+ // User, 2026-11-14: "Orbiting instead of top down is fine" - outside rooms orbit.
+ assert.equal(v.controls.enableRotate,true); assert.equal(v.state.view,'ext'); assert.equal(v.state.camera,'orbit');
  assert.ok(Math.abs(v.controls.target.x - 25 * .3048) < 1e-6);
  assert.ok(Math.abs(v.controls.target.y - 4 * .3048) < 1e-6);
  assert.ok(Math.abs(v.controls.target.z + 5 * .3048) < 1e-6);
- assert.ok(v.camera.position.clone().sub(v.controls.target).normalize().y > .9999);
+ assert.ok(v.camera.position.clone().sub(v.controls.target).normalize().y < .99,'an angle, not straight down');
  assert.ok(v.scene.getObjectByName('yard-room-outline:pool').visible);
  assert.equal(v.scene.getObjectByName('yard-room-outline:grill').visible,false);
  assert.equal(textOf(document.getElementById('twin-path')),'House \u203a Pool deck');
@@ -45,7 +46,7 @@ await test('yard attention markers are limited to House and their own room',()=>
  assert.ok(deviceAtLevel({level:'room',building:null,room:'pool'},row));
  assert.equal(deviceAtLevel({level:'room',building:null,room:'grill'},row),false);
 });
-await test('level navigation keeps yard and indoor rooms equally framed from above',async()=>{
+await test('level navigation frames yard rooms (orbit) and indoor rooms (above) to fill the screen',async()=>{
  const THREE=await import('three'),sizes=[];
  for(const outdoor of [false,true]){
   v.levels.go({building:outdoor?null:'b',room:outdoor?'pool':'inside'},{immediate:true});
@@ -57,7 +58,7 @@ await test('level navigation keeps yard and indoor rooms equally framed from abo
   const short=Math.min(v.camera.aspect,1);assert.ok(Math.min(...size)/short>=.5);
   sizes.push(size);
  }
- assert.ok(sizes[0].every((n,i)=>Math.abs(n-sizes[1][i])<1e-6),'indoor level navigation stays unchanged');
+ // Indoor stays top-down; the yard room orbits, so the two framings differ by design.
 });
 await test('editor yard selection outline uses lot feet once and clears on deselection',async()=>{
  const THREE = await import('three');
@@ -100,10 +101,11 @@ t.view.plan.site = {yard_rooms:[{id:'patio',name:'Patio',polygon:yard.polygon_wo
 let navigation = {level:'house',building:null,floor:null,room:null};
 t.view.levels = {snapshot:()=>({...navigation}),tap:()=>false};
 t.live = await liveModule.mountLive(t.view,{api:t.api}); assert.ok(t.live,'yard live layer mounts');
-check('mounted yard marker uses terrain plus offset and hides in floor views',()=>{
+check('mounted yard marker uses terrain plus offset and shows only in its own yard room',()=>{
  const sprite = t.sprite('explicit'); assert.ok(sprite);
  assert.ok(Math.abs(sprite.position.y - (groundAt(t.view.plan,0,0) + 2) * FT) < 1e-6);
- t.live.draw(); assert.equal(sprite.visible,true);
+ // Hidden at House until its yard room is focused (user, 2026-11-14).
+ t.live.draw(); assert.equal(sprite.visible,false);
  navigation = {level:'floor',building:'b',floor:'L1',room:null}; t.live.draw(); assert.equal(sprite.visible,false);
  navigation = {level:'room',building:null,floor:null,room:'patio'}; t.live.draw(); assert.equal(sprite.visible,true);
  navigation = {level:'room',building:null,floor:null,room:'other'}; t.live.draw(); assert.equal(sprite.visible,false);

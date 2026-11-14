@@ -166,6 +166,25 @@ function summarise(atlas, o) {
         const of = roomChartOf.get(c.mesh);
         for (const f of c.faces) of[f] = of[f] === -1 ? c.room : -2;
       }
+      // Lightmap proxies (thin batten, trim and cap faces, 2026-11-14) are charted through
+      // their host: the host's room, page and rect, never a rect of their own.
+      for (const p of c.proxies || []) {
+        if (!index.has(p.mesh)) { push(E('mesh'), { ci, why: 'proxy on a mesh that is not merged' }); continue; }
+        const pg = p.mesh.geometry, puv = pg.attributes[uvName], pseen = counts.get(p.mesh), pof = roomChartOf.get(p.mesh);
+        for (const f of p.faces) {
+          if (pseen[f]) push(E('twice'), { ci, f, proxy: true }); pseen[f]++;
+          if (kind === 'room') {
+            pof[f] = pof[f] === -1 ? c.room : -2;
+            if (faceValue(pg, 'lmRoom', f) !== c.room) push('room.faceRoom', { ci, f, proxy: true });
+            if (faceValue(pg, 'lmLightPage', f) !== c.page) push('room.facePage', { ci, f, proxy: true });
+          }
+          if (!puv) continue;
+          for (let k = 0; k < 3; k++) {
+            const i = vtx(pg, f, k), tx = puv.getX(i) * lo.page, ty = puv.getY(i) * lo.page;
+            if (tx < r.x - 1e-3 || tx > r.x + r.w + 1e-3 || ty < r.y - 1e-3 || ty > r.y + r.h + 1e-3) push(E('uvOutside'), { ci, f, proxy: true });
+          }
+        }
+      }
       if (!perPage.has(c.page)) perPage.set(c.page, []);
       perPage.get(c.page).push({ ci, ...r });
       rectArea += r.w * r.h;
@@ -179,7 +198,9 @@ function summarise(atlas, o) {
         minX = Math.min(minX, tx); maxX = Math.max(maxX, tx); minY = Math.min(minY, ty); maxY = Math.max(maxY, ty);
         if (tx < r.x - 1e-3 || tx > r.x + r.w + 1e-3 || ty < r.y - 1e-3 || ty > r.y + r.h + 1e-3) push(E('uvOutside'), { ci, f, tx, ty, rect: r });
       }
-      if (r.w > Math.ceil(maxX - minX) + 1 || r.h > Math.ceil(maxY - minY) + 1) push(E('padded'), { ci, rect: r, extent: [maxX - minX, maxY - minY] });
+      // A thin chart with no host keeps a seeded rect two texels across (lightmap proxies).
+      const fits = (size, extent) => size <= Math.max(Math.ceil(extent) + 1, 2);
+      if (!fits(r.w, maxX - minX) || !fits(r.h, maxY - minY)) push(E('padded'), { ci, rect: r, extent: [maxX - minX, maxY - minY] });
       for (const f of c.faces) {
         if (area(g, f) < 1e-4) continue;
         for (let k = 0; k < 3; k++) {
@@ -517,7 +538,8 @@ def scenario_texel_density_matches_world_size():
     d, high = main_run()[DEFAULT], main_run()[HIGH]
     check(3.0 < high['room']['interiorRectArea'] / d['room']['interiorRectArea'] < 4.6,
           'interior density 8 uses about four times the texels of density 4')
-    check(high['room']['outdoorRectArea'] == d['room']['outdoorRectArea'], 'outdoor density stays capped at one texel/ft')
+    check(high['room']['outdoorRectArea'] == d['room']['outdoorRectArea'],
+          'outdoor density does not follow the room density (building outside up to 4/ft, yard 1/ft)')
 
 
 def scenario_every_interior_face_has_uv3():
@@ -669,7 +691,10 @@ def scenario_memory_stays_bounded():
     banks = 1 + max(x['bank'] for x in placed.values())
     check(banks == 3, ('six kitchen lights take three two-channel banks; no room needs a fourth', banks))
     pages = s['room']['pages']
-    check(pages * banks <= 4, ('at 4 texels/ft, room-light pages x banks stays within four 2048 RG pages', pages, banks))
+    # Building outsides bake at 4 texels/ft since 2026-11-14 (battens and trim read their own
+    # light, not a smear of the yard's 1/ft): this house went from one page to two, so the
+    # bound rose from four RG pages to six (2048 BC5 with mips, about 5.3 MB a page).
+    check(pages * banks <= 6, ('at 4 texels/ft, room-light pages x banks stays within six 2048 RG pages', pages, banks))
     check(s['key'] == main_run()[DEFAULT]['key'] and layout(s) == layout(main_run()[DEFAULT]),
           'forty light fixtures change no atlas')
 

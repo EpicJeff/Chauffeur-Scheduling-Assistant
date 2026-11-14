@@ -206,23 +206,72 @@ export function canonicalOutline(points) {
   return [...p.slice(start), ...p.slice(0, start)];
 }
 
-export function yardKey(plan, kit, tier, { viewing = false } = {}) {
+export const YARD_PARTS = ['terrain', 'plants', 'fences', 'hardscape', 'pool', 'fire_pits', 'retaining_walls', 'furniture', 'grass'];
+
+export function yardPartKeys(plan, kit, tier, { viewing = false } = {}) {
   const site = plan.site || {};
+  // groundAt and slab subdivision read ordered pads, not their wall finishes.
+  const grade = (site.terraces || []).map(p => [p.polygon, p.height, p.blend, (p.edges || []).map(e => e.edge)]);
+  const spaHoles = (site.pool?.features || []).filter(f => f.kind === 'spa').map(f => f.polygon);
+  const own = yardSiteInputs(site);
+  const finishes = names => yardMaterialInputs({ ...plan, site: Object.fromEntries(names.map(n => [n, site[n]])) }, kit);
+  const key = (...inputs) => JSON.stringify(inputs);
+  const buildings = (plan.buildings || []).map(b => [b.position, b.rotation, b.base, b.foundation?.mode, b.foundation?.offset_ft,
+    canonicalOutline(buildingFootprint(b)), b.levels?.[0]?.id, allPorches(b).map(p => [canonicalOutline(p.polygon), p.level, p.floor]),
+    (b.rooms || []).filter(r => r.kind === 'porch').map(r => [r.level, r.state, canonicalOutline(r.polygon), r.floor_offset_ft])]);
   const models = [...(site.furniture || []), ...(site.planting || []).filter(p => p.asset?.startsWith('import-'))]
     .map(f => (f.asset || kit.furniture?.[f.kind] || '').replace(/^polyhaven:/, ''));
-  return JSON.stringify([tier, viewing,
-    yardSiteInputs(site),
-    (plan.buildings || []).map(b => [b.position, b.rotation, b.base, b.foundation?.mode, b.foundation?.offset_ft,
-      canonicalOutline(buildingFootprint(b)), b.levels?.[0]?.id, allPorches(b).map(p => [canonicalOutline(p.polygon), p.level, p.floor]),
-      (b.rooms || []).filter(r => r.kind === 'porch').map(r => [r.level, r.state, canonicalOutline(r.polygon), r.floor_offset_ft])]),
-    yardMaterialInputs(plan, kit), models.map(id => [id, modelAssetKey(id, kit)])]);
+  return {
+    // terrain: tier, lot; ordered grade; sharp-edge wall presence (suppresses
+    // earth skirts); pool polygon and spa polygons only; resolved lawn finish.
+    // No hardscape/building holes are cut by the current terrain builder.
+    terrain: key(tier, site.lot, grade, (site.terraces || []).map(p => (p.edges || []).map(e => !!e.wall)),
+      site.pool?.polygon, spaHoles, finishes(['lot'])),
+    // plants: tier/viewing; ground grade; planting object fields (see
+    // objectFields), including preset/height/seed and applyObject appearance.
+    plants: key(tier, viewing, grade, own[8]),
+    // fences: tier; ground grade; polyline/height/elevation and boards/posts/
+    // rails slots; resolved fence role/slot refs, aliases and manifest revisions.
+    fences: key(tier, grade, own[7], finishes(['fence'])),
+    // hardscape: tier; ground grade; pool polygon/spa holes; hardscape kind/
+    // polygon/points/width/corner/smooth/radius/edging/elevation/material/slots;
+    // beds polygon/elevation/material/fill; edges polygon/elevation/material/
+    // strip (points/polyline are blades only); all resolved surface finishes.
+    hardscape: key(tier, grade, site.pool?.polygon, spaHoles, own[2], own[5],
+      (site.edges || []).map(e => fields(e, 'polygon elevation material materials')), finishes(['hardscape', 'beds', 'edges'])),
+    // pool: tier; ground grade; polygon/depth/coping/elevation/material/slots;
+    // features kind/polygon/depth_in/treads/entry_edge/mode/raise_in/spillover/
+    // materials, including spa coping/interior/wall inheritance and revisions.
+    pool: key(tier, grade, own[3], finishes(['pool'])),
+    // fire_pits: tier; ground grade; id/shape/at/radius/rotation/polygon/fuel/
+    // body/top/height_in/glass/entity/elevation/materials; resolved finishes.
+    fire_pits: key(tier, grade, own[4], finishes(['fire_pit'])),
+    // retaining_walls: tier; ordered grade; each terrace edge's wall material/
+    // thickness_in/above_in/face slot; resolved retaining-wall finishes.
+    retaining_walls: key(tier, own[1], finishes(['terraces'])),
+    // furniture: tier/viewing; ground grade; furniture objectFields and imported
+    // planting objectFields; resolved asset or kit.furniture[kind], model metadata/
+    // LODs; building position/rotation/base/foundation mode+offset, canonical
+    // footprint (lowest level or room/wall fallback), first level id, allPorches
+    // polygon/level/floor (including alias dedup), porch room level/state/polygon/
+    // floor_offset_ft. These place models on porches, never shape lawn.
+    furniture: key(tier, viewing, grade, own[9], (site.planting || []).filter(p => p.asset?.startsWith('import-')).map(p => fields(p, objectFields)),
+      buildings, models.map(id => [id, modelAssetKey(id, kit)])),
+    // grass: High only; ground grade; edge polygon, else points or polyline.
+    // Elevation and strip finishes do not affect the existing blade builder.
+    grass: key(tier === 'high' ? [grade, (site.edges || []).map(e => e.polygon || e.points || e.polyline || [])] : null),
+  };
 }
 
-export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null } = {}) {
-  const group = new THREE.Group(); group.name = 'yard';
+// The whole-yard fast path is precisely the union of the part keys.
+export const yardKey = (plan, kit, tier, options) => JSON.stringify(yardPartKeys(plan, kit, tier, options));
+
+export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null } = {}) {
+  const root = new THREE.Group(); root.name = 'yard';
+  const keys = yardPartKeys(plan, kit, tier, { viewing }), reused = new Map();
   const site = plan.site || {}, mats = materials || new Map();
   const spas = (site.pool?.features || []).filter(f => f.kind === 'spa').map(f => f.polygon);
-  group.userData.materials = mats;
+  root.userData.materials = mats;
   const surface = (poly, z0, z1 = z0, holes = []) => {
     if (z0 === z1) return terrainGeometry(plan, poly, tier, { holes, offset: z0 });
     return terrainSlabGeometry(plan, poly, tier, z0, z1, holes);
@@ -240,243 +289,287 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     return mats.get(name);
   };
   const part = name => editSpan(timing, 'yard_' + name);
-  if (timing) for (const name of ['terrain', 'grass', 'plants', 'fences', 'hardscape', 'pool', 'fire_pits', 'retaining_walls', 'cards', 'batch', 'models', 'materials']) timing['yard_' + name] = 0;
-  const stopTerrain = part('terrain');
-  if (site.lot?.length >= 3) {
-    // Actual lawn material; no procedural canvas noise or substitute blobs.
-    const pool = site.pool?.polygon;
-    const xs = site.lot.map(p => p[0]), ys = site.lot.map(p => p[1]), margin = 150;
-    const x0 = Math.min(...xs) - margin, x1 = Math.max(...xs) + margin;
-    const y0 = Math.min(...ys) - margin, y1 = Math.max(...ys) + margin;
-    // Continue the terrain below the lot edge without covering the sunken pool.
-    // The distant continuation is flat and cheap. The lot and its blend bands
-    // are the sampled surface; don't put a flat sheet through descending pads.
-    const reach = 50;
-    const terrainOutline = [[x0 + margin - reach, y0 + margin - reach], [x1 - margin + reach, y0 + margin - reach],
-      [x1 - margin + reach, y1 - margin + reach], [x0 + margin - reach, y1 - margin + reach]];
-    addMesh(group, polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], -.06, -.06, [terrainOutline]), mat('lawn'));
-    const terrain = new THREE.Group(); terrain.userData.viewingWalls = 'terrain'; group.add(terrain);
-    const lawn = mat('terrain_lawn');
-    // Same kit role, same texture. Vertex colours are always enabled; Grade
-    // changes the buffer, never a material define or shader program.
-    lawn.vertexColors = true; lawn.side = THREE.DoubleSide;
-    const mesh = addMesh(terrain, terrainGeometry(plan, terrainOutline, tier, { holes: [...(pool ? [pool] : []), ...spas], offset: -.04, skirts: true }), lawn);
-    mesh.userData.terrain = true;
-    // Grade's vertex colours already keep this grid out of static merging.
-    // Keep the exclusion explicit if a future merge path accepts colours.
-    mesh.geometry.userData.bakeExcluded = true;
-    // Yard lights bake onto the ground (user, 2026-11-13): the atlas charts it top-down.
-    mesh.geometry.userData.bakeHeightfield = true;
-    tintGrade(mesh.geometry, false);
-  }
-  stopTerrain();
-  const stopWalls = part('retaining_walls');
-  for (const pad of site.terraces || []) pad.polygon.forEach((_, edge) => {
-    if (pad.edges?.[edge]?.edge !== 'sharp' || !pad.edges[edge].wall) return;
-    const wall = pad.edges[edge].wall;
-    addMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face));
-  });
-  stopWalls();
+  if (timing) for (const name of ['terrain', 'grass', 'plants', 'fences', 'hardscape', 'pool', 'fire_pits', 'retaining_walls', 'cards', 'batch', 'models', 'furniture', 'materials']) timing['yard_' + name] = 0;
   const pool = site.pool?.polygon;
-  const stopHardscape = part('hardscape');
   const inside = (p, poly) => { let v = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) v = !v; return v; };
-  for (const h of site.hardscape || []) if (h.kind === 'path' || h.polygon?.length >= 3) {
-    const role = h.material === 'concrete' ? 'patio_concrete' : kit.materials?.[h.material] ? h.material : 'paving';
-    if (h.kind === 'path') {
-      // Swept pieces retain user-drawn crossings without even/odd cancellation.
-      for (const poly of pathSurfacePolygons(h)) addMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spas), mat(role, h.materials?.surface));
-      if (h.edging === 'curb') {
-        const inner = pathBoundaries(h), outer = pathBoundaries(h, (h.width ?? 3) / 2 + .5);
-        for (const side of ['left', 'right']) for (let i = 1; i < inner[side].length; i++) {
-          const poly = [inner[side][i - 1], inner[side][i], outer[side][i], outer[side][i - 1]];
-          // Both offsets have the same mitre/bevel topology.
-          const curb = addMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spas), mat('patio_concrete', h.materials?.edging));
-          curb.geometry.userData.pathCurb = true;
+  const builders = {
+    terrain: async group => {
+      const stopTerrain = part('terrain');
+      if (site.lot?.length >= 3) {
+        // Actual lawn material; no procedural canvas noise or substitute blobs.
+        const pool = site.pool?.polygon;
+        const xs = site.lot.map(p => p[0]), ys = site.lot.map(p => p[1]), margin = 150;
+        const x0 = Math.min(...xs) - margin, x1 = Math.max(...xs) + margin;
+        const y0 = Math.min(...ys) - margin, y1 = Math.max(...ys) + margin;
+        // Continue the terrain below the lot edge without covering the sunken pool.
+        // The distant continuation is flat and cheap. The lot and its blend bands
+        // are the sampled surface; don't put a flat sheet through descending pads.
+        const reach = 50;
+        const terrainOutline = [[x0 + margin - reach, y0 + margin - reach], [x1 - margin + reach, y0 + margin - reach],
+          [x1 - margin + reach, y1 - margin + reach], [x0 + margin - reach, y1 - margin + reach]];
+        addMesh(group, polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], -.06, -.06, [terrainOutline]), mat('lawn'));
+        const terrain = new THREE.Group(); terrain.userData.viewingWalls = 'terrain'; group.add(terrain);
+        const lawn = mat('terrain_lawn');
+        // Same kit role, same texture. Vertex colours are always enabled; Grade
+        // changes the buffer, never a material define or shader program.
+        lawn.vertexColors = true; lawn.side = THREE.DoubleSide;
+        const mesh = addMesh(terrain, terrainGeometry(plan, terrainOutline, tier, { holes: [...(pool ? [pool] : []), ...spas], offset: -.04, skirts: true }), lawn);
+        mesh.userData.terrain = true;
+        // Grade's vertex colours already keep this grid out of static merging.
+        // Keep the exclusion explicit if a future merge path accepts colours.
+        mesh.geometry.userData.bakeExcluded = true;
+        // Yard lights bake onto the ground (user, 2026-11-13): the atlas charts it top-down.
+        mesh.geometry.userData.bakeHeightfield = true;
+        tintGrade(mesh.geometry, false);
+      }
+      stopTerrain();
+    },
+    retaining_walls: async group => {
+      const stopWalls = part('retaining_walls');
+      for (const pad of site.terraces || []) pad.polygon.forEach((_, edge) => {
+        if (pad.edges?.[edge]?.edge !== 'sharp' || !pad.edges[edge].wall) return;
+        const wall = pad.edges[edge].wall;
+        addMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face));
+      });
+      stopWalls();
+    },
+    hardscape: async group => {
+      const stopHardscape = part('hardscape');
+      for (const h of site.hardscape || []) if (h.kind === 'path' || h.polygon?.length >= 3) {
+        const role = h.material === 'concrete' ? 'patio_concrete' : kit.materials?.[h.material] ? h.material : 'paving';
+        if (h.kind === 'path') {
+          // Swept pieces retain user-drawn crossings without even/odd cancellation.
+          for (const poly of pathSurfacePolygons(h)) addMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spas), mat(role, h.materials?.surface));
+          if (h.edging === 'curb') {
+            const inner = pathBoundaries(h), outer = pathBoundaries(h, (h.width ?? 3) / 2 + .5);
+            for (const side of ['left', 'right']) for (let i = 1; i < inner[side].length; i++) {
+              const poly = [inner[side][i - 1], inner[side][i], outer[side][i], outer[side][i - 1]];
+              // Both offsets have the same mitre/bevel topology.
+              const curb = addMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spas), mat('patio_concrete', h.materials?.edging));
+              curb.geometry.userData.pathCurb = true;
+            }
+          }
+          continue;
+        }
+        const holes = [...(pool && pool.every(p => inside(p, h.polygon)) ? [pool] : []), ...spas];
+        addMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role, h.materials?.surface));
+      }
+      stopHardscape();
+      const stopBeds = part('hardscape');
+      for (const bed of site.beds || []) if (bed.polygon?.length >= 3) addMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(kit.materials?.[bed.material] ? bed.material : 'mulch', bed.materials?.fill));
+      for (const edge of site.edges || []) if (edge.polygon?.length >= 3) {
+        // Edge planting remains a closed border. Give its ground strip the same
+        // authored finish on every tier; High also keeps the existing grass blades.
+        for (const poly of pathSurfacePolygons({ points: [...edge.polygon, edge.polygon[0]], width: .5 }))
+          addMesh(group, surface(poly, edge.elevation || 0, .06 + (edge.elevation || 0)), mat(kit.materials?.[edge.material] ? edge.material : 'lawn', edge.materials?.strip));
+      }
+      stopBeds();
+    },
+    pool: async group => {
+      const stopPool = part('pool');
+      if (pool?.length >= 3) {
+        const d = site.pool.depth ?? 5, coping = site.pool.coping ?? 1;
+        const poolHeight = groundAt(plan, ...pool[0]) + (site.pool.elevation || 0);
+        const poolSurface = (poly, z0, z1 = z0, holes = []) => spas.length
+          ? cutSurface(poly, spas, poolHeight + z0, poolHeight + z1, holes)
+          : polygon(poly, poolHeight + z0, poolHeight + z1, holes);
+        const interior = site.pool.materials?.interior;
+        addMesh(group, poolSurface(pool, -d - 0.2, -d), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4', { roughness: 0.35 }));
+        // Offset each edge outwards by coping width. This works for the convex pool
+        // polygons used by the plan and retains the original water outline.
+        const area = pool.reduce((a, p, i) => a + p[0] * pool[(i + 1) % pool.length][1] - pool[(i + 1) % pool.length][0] * p[1], 0);
+        const normal = (a, b) => { const l = Math.hypot(b[0] - a[0], b[1] - a[1]); return area > 0 ? [(b[1] - a[1]) / l, -(b[0] - a[0]) / l] : [-(b[1] - a[1]) / l, (b[0] - a[0]) / l]; };
+        const outer = pool.map((p, i) => {
+          const a = normal(pool[(i + pool.length - 1) % pool.length], p), b = normal(p, pool[(i + 1) % pool.length]), factor = coping / Math.max(0.1, 1 + a[0] * b[0] + a[1] * b[1]);
+          return [p[0] + (a[0] + b[0]) * factor, p[1] + (a[1] + b[1]) * factor];
+        });
+        if (coping > 0) addMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping));
+        for (let i = 0; i < pool.length; i++) {
+          const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
+          addMesh(group, poolSurface([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'));
+        }
+        const water = plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false });
+        addMesh(group, poolSurface(pool, -0.25), water);
+        buildPoolFeatures(group, site.pool, poolHeight, { mat, plain, water, copingRole: kit.materials?.[site.pool.material] ? site.pool.material : 'paving' });
+      }
+      stopPool();
+    },
+    fire_pits: async group => {
+      const stopFirePits = part('fire_pits');
+      for (const [index, f] of sitePieces(site.fire_pit).entries()) {
+        const { outer } = firePitRings(f);
+        const centre = outer.reduce((s,p)=>s.map((v,i)=>v+p[i]/outer.length),[0,0]);
+        const height = groundAt(plan, ...centre) + (f.elevation || 0);
+        buildFirePit(group,f,height,{mat,plain,id:'fire_pit:'+(f.id || index)});
+        if (roundPit(f)) addMesh(group, drapeGeometry(new THREE.CircleGeometry((f.radius ?? 2) + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plan, f.elevation || 0), plain('gravel', '#a59c8f'));
+      }
+      stopFirePits();
+    },
+    fences: async group => {
+      const stopFences = part('fences');
+      for (const f of sitePieces(site.fence).filter(f => f.polyline?.length > 1)) {
+        const height = f.height || 6;
+        const fenceMesh = (geometry, part) => addMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), mat('fence', f.materials?.[part]));
+        for (let i = 0; i < f.polyline.length - 1; i++) {
+          const a = f.polyline[i], b = f.polyline[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
+          if (!length) continue;
+          for (let d = 0.25; d < length; d += 0.5) fenceMesh(boxGeometry(0.46, height, 0.06).rotateY(angle).translate(a[0] + dx * d / length, height / 2 + 0.15, -a[1] - dy * d / length), 'boards');
+          for (let d = 0; d <= length; d += 8) fenceMesh(boxRect(a[0] + dx * d / length - 0.17, a[1] + dy * d / length - 0.17, a[0] + dx * d / length + 0.17, a[1] + dy * d / length + 0.17, 0, height + 0.3), 'posts');
+          // Rails bend with the ground at the slat spacing, so on a slope or a pad step they ride
+          // the slat tops instead of spanning end to end in one straight piece.
+          for (const y of [1, height - 0.6]) fenceMesh(boxGeometry(length, 0.3, 0.12, Math.max(1, Math.ceil(length / 0.5))).rotateY(angle).translate((a[0] + b[0]) / 2, y, -(a[1] + b[1]) / 2), 'rails');
         }
       }
+      stopFences();
+    },
+    plants: async group => {
+      const stopPlants = part('plants');
+      const cards = new Map();
+      let baker = null;
+      try {
+        if (tier === 'low' && site.planting?.some(p => !mats.has('plant_card:' + p.preset))) baker = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+        for (let index = 0; index < (site.planting || []).length; index++) {
+          const p = site.planting[index]; if (!objectShown(p, !viewing)) continue; if (!p.at || !p.preset || !(p.height > 0)) continue;
+          if (tier === 'low') {
+            const holder = new THREE.Group(); holder.userData.placedPlant = true; group.add(holder);
+            if (viewing) { holder.userData.viewingTree = true; holder.name = `tree:${index}`; }
+            if (!cards.has(p.preset)) {
+              const cached = mats.get('plant_card:' + p.preset);
+              const card = cached ? { material: cached, texture: cached.map, aspect: cached.userData.cardAspect }
+                : await bakePreset(p.preset, p.seed ?? 1, baker);
+              card.material.userData.cardAspect = card.aspect; mats.set('plant_card:' + p.preset, card.material); cards.set(p.preset, card);
+            }
+            const card = cards.get(p.preset), h = p.height * 1.08;
+            for (const angle of [0, Math.PI / 2]) {
+              const geometry = new THREE.PlaneGeometry(h * card.aspect, h).translate(0, h / 2, 0).rotateY(angle + (p.seed || 0) * 2.39996);
+              addMesh(holder, geometry, card.material);
+            }
+            applyObject(holder, p, { units: 1 }); holder.position.set(p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0), -p.at[1]);
+            cacheModelMaterials(holder, 'plant-card:' + p.preset + ':' + objectMaterialKey(p, p.id || index), mats);
+            if (viewing) mergeStatic(holder);
+          } else {
+            const tree = presetTree(p.preset, p.seed ?? 1); standardTree(tree, mats);
+            const bounds = new THREE.Box3().setFromObject(tree), h = bounds.max.y - bounds.min.y, scale = p.height / Math.max(0.01, h);
+            tree.scale.setScalar(scale);
+            applyObject(tree, p, { units: 1 });
+            cacheModelMaterials(tree, 'plant:' + p.preset + ':' + objectMaterialKey(p, p.id || index), mats);
+            tree.position.set(p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0) - bounds.min.y * scale * (p.scale ?? 1) * (p.scale_axes?.[1] ?? 1), -p.at[1]);
+            tree.rotation.y += (p.seed || 0) * 2.39996; group.add(tree);
+            if (viewing) { tree.userData.viewingTree = true; tree.name = `tree:${index}`; }
+          }
+          // Let loading/status controls paint while full presets are generated.
+          if (index % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+        }
+      } finally { if (baker) { baker.dispose(); baker.forceContextLoss(); } }
+      stopPlants();
+    },
+    furniture: async group => {
+      const stopModels = part('furniture');
+      const models = new Map(), latePlacements = new Map();
+      const placements = await Promise.all([...(site.furniture || []), ...(site.planting || []).filter(p => p.asset?.startsWith('import-'))].filter(f => objectShown(f, !viewing)).map(async f => {
+        const assetId = (f.asset || kit.furniture?.[f.kind] || '').replace(/^polyhaven:/, '');
+        if (!assetId || !f.at) return;
+        const place = (model, late = false) => {
+          if (root.userData.disposed) { disposeObject(model); return; }
+          applyObject(model, f, { id: `site:${f.id || f.at.join(',')}` });
+          cacheModelMaterials(model, 'yard:' + assetId + ':' + objectMaterialKey(f, `site:${f.id || f.at.join(',')}`), mats);
+          let elevation = groundAt(plan, ...f.at);
+          for (const b of plan.buildings || []) for (const porch of allPorches(b)) if (porch.polygon) {
+            const pos = b.position || [0, 0], angle = -(b.rotation || 0) * Math.PI / 180;
+            const x = f.at[0] - pos[0], y = f.at[1] - pos[1];
+            const point = [Math.cos(angle) * x - Math.sin(angle) * y, Math.sin(angle) * x + Math.cos(angle) * y];
+            if (inside(point, porch.polygon)) {
+              const room = (b.rooms || []).find(r => r.kind === 'porch' && r.state !== 'ghost'
+                && r.level === (porch.level || b.levels[0]?.id) && inside(point, r.polygon));
+              elevation = buildingBase(plan, b) + porch.floor + (room?.floor_offset_ft || 0);
+            }
+          }
+          model.position.set(f.at[0], elevation + (f.elevation || 0), -f.at[1]);
+          if (late) { model.userData.yardPart = 'furniture'; root.add(model); mergeStatic(model); }
+          return model;
+        };
+        if (!models.has(assetId)) {
+          latePlacements.set(assetId, []);
+          models.set(assetId, loadModel(assetId, kit, source => {
+            if (root.userData.disposed) { disposeObject(source); return; }
+            for (const draw of latePlacements.get(assetId)) draw(source.clone(true), true);
+          }, { tier, editor: !viewing }));
+        }
+        latePlacements.get(assetId).push(place);
+        const source = await models.get(assetId);
+        return source ? place(source.clone(true)) : null;
+      }));
+      placements.filter(Boolean).forEach(model => group.add(model));
+      stopModels();
+    },
+    grass: async group => {
+      const stopGrass = part('grass');
+      if (tier === 'high') {
+        const placements = [], rng = random(1);
+        for (const edge of site.edges || []) {
+          const line = edge.polygon ? [...edge.polygon, edge.polygon[0]] : edge.points || edge.polyline || [];
+          for (let i = 0; i < line.length - 1; i++) {
+            const a = line[i], b = line[i + 1], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+            for (let d = 0; d < length; d += 0.18) placements.push([a[0] + (b[0] - a[0]) * d / length + (rng() - 0.5) * 0.4, -a[1] - (b[1] - a[1]) * d / length + (rng() - 0.5) * 0.4, rng()]);
+          }
+        }
+        if (placements.length) {
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.Float32BufferAttribute([-0.035, 0, 0, 0.035, 0, 0, 0.03, 0.45, 0], 3));
+          geo.computeVertexNormals();
+          const grass = new THREE.InstancedMesh(geo, plain('edge grass', '#56783a', { side: THREE.DoubleSide }), placements.length), dummy = new THREE.Object3D();
+          placements.forEach(([x, z, n], i) => { dummy.position.set(x, groundAt(plan, x, -z) + 0.12, z); dummy.rotation.y = n * Math.PI * 2; dummy.scale.setScalar(0.6 + n); dummy.updateMatrix(); grass.setMatrixAt(i, dummy.matrix); });
+          grass.receiveShadow = true; group.add(grass);
+        }
+      }
+      stopGrass();
+    },
+  };
+  // The yard root stays flat (its children are the meshes and trees, as before); each child
+  // carries userData.yardPart, and root.userData.yardPartKeys records each part's key.
+  const previousKeys = previous?.userData.yardPartKeys || {};
+  for (const name of YARD_PARTS) {
+    if (previous && previousKeys[name] === keys[name]) {
+      reused.set(name, previous.children.filter(o => o.userData.yardPart === name));
       continue;
     }
-    const holes = [...(pool && pool.every(p => inside(p, h.polygon)) ? [pool] : []), ...spas];
-    addMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role, h.materials?.surface));
+    const scratch = new THREE.Group();
+    await builders[name](scratch);
+    const stop = part('batch');
+    // Full trees/cards own their materials and viewing domains. Everything else
+    // batches only inside its part, so no later edit can replace a sibling buffer.
+    if (name !== 'plants' && name !== 'grass') mergeStatic(scratch);
+    stop();
+    for (const child of [...scratch.children]) { child.userData.yardPart = name; root.add(child); }
   }
-  stopHardscape();
-  const stopPool = part('pool');
-  if (pool?.length >= 3) {
-    const d = site.pool.depth ?? 5, coping = site.pool.coping ?? 1;
-    const poolHeight = groundAt(plan, ...pool[0]) + (site.pool.elevation || 0);
-    const poolSurface = (poly, z0, z1 = z0, holes = []) => spas.length
-      ? cutSurface(poly, spas, poolHeight + z0, poolHeight + z1, holes)
-      : polygon(poly, poolHeight + z0, poolHeight + z1, holes);
-    const interior = site.pool.materials?.interior;
-    addMesh(group, poolSurface(pool, -d - 0.2, -d), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4', { roughness: 0.35 }));
-    // Offset each edge outwards by coping width. This works for the convex pool
-    // polygons used by the plan and retains the original water outline.
-    const area = pool.reduce((a, p, i) => a + p[0] * pool[(i + 1) % pool.length][1] - pool[(i + 1) % pool.length][0] * p[1], 0);
-    const normal = (a, b) => { const l = Math.hypot(b[0] - a[0], b[1] - a[1]); return area > 0 ? [(b[1] - a[1]) / l, -(b[0] - a[0]) / l] : [-(b[1] - a[1]) / l, (b[0] - a[0]) / l]; };
-    const outer = pool.map((p, i) => {
-      const a = normal(pool[(i + pool.length - 1) % pool.length], p), b = normal(p, pool[(i + 1) % pool.length]), factor = coping / Math.max(0.1, 1 + a[0] * b[0] + a[1] * b[1]);
-      return [p[0] + (a[0] + b[0]) * factor, p[1] + (a[1] + b[1]) * factor];
-    });
-    if (coping > 0) addMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping));
-    for (let i = 0; i < pool.length; i++) {
-      const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
-      addMesh(group, poolSurface([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'));
-    }
-    const water = plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false });
-    addMesh(group, poolSurface(pool, -0.25), water);
-    buildPoolFeatures(group, site.pool, poolHeight, { mat, plain, water, copingRole: kit.materials?.[site.pool.material] ? site.pool.material : 'paving' });
-  }
-  stopPool();
-  const stopFirePits = part('fire_pits');
-  for (const [index, f] of sitePieces(site.fire_pit).entries()) {
-    const { outer } = firePitRings(f);
-    const centre = outer.reduce((s,p)=>s.map((v,i)=>v+p[i]/outer.length),[0,0]);
-    const height = groundAt(plan, ...centre) + (f.elevation || 0);
-    buildFirePit(group,f,height,{mat,plain,id:'fire_pit:'+(f.id || index)});
-    if (roundPit(f)) addMesh(group, drapeGeometry(new THREE.CircleGeometry((f.radius ?? 2) + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plan, f.elevation || 0), plain('gravel', '#a59c8f'));
-  }
-  stopFirePits();
-  const stopBeds = part('hardscape');
-  for (const bed of site.beds || []) if (bed.polygon?.length >= 3) addMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(kit.materials?.[bed.material] ? bed.material : 'mulch', bed.materials?.fill));
-  for (const edge of site.edges || []) if (edge.polygon?.length >= 3) {
-    // Edge planting remains a closed border. Give its ground strip the same
-    // authored finish on every tier; High also keeps the existing grass blades.
-    for (const poly of pathSurfacePolygons({ points: [...edge.polygon, edge.polygon[0]], width: .5 }))
-      addMesh(group, surface(poly, edge.elevation || 0, .06 + (edge.elevation || 0)), mat(kit.materials?.[edge.material] ? edge.material : 'lawn', edge.materials?.strip));
-  }
-  stopBeds();
-  const stopFences = part('fences');
-  for (const f of sitePieces(site.fence).filter(f => f.polyline?.length > 1)) {
-    const height = f.height || 6;
-    const fenceMesh = (geometry, part) => addMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), mat('fence', f.materials?.[part]));
-    for (let i = 0; i < f.polyline.length - 1; i++) {
-      const a = f.polyline[i], b = f.polyline[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
-      if (!length) continue;
-      for (let d = 0.25; d < length; d += 0.5) fenceMesh(boxGeometry(0.46, height, 0.06).rotateY(angle).translate(a[0] + dx * d / length, height / 2 + 0.15, -a[1] - dy * d / length), 'boards');
-      for (let d = 0; d <= length; d += 8) fenceMesh(boxRect(a[0] + dx * d / length - 0.17, a[1] + dy * d / length - 0.17, a[0] + dx * d / length + 0.17, a[1] + dy * d / length + 0.17, 0, height + 0.3), 'posts');
-      // Rails bend with the ground at the slat spacing, so on a slope or a pad step they ride
-      // the slat tops instead of spanning end to end in one straight piece.
-      for (const y of [1, height - 0.6]) fenceMesh(boxGeometry(length, 0.3, 0.12, Math.max(1, Math.ceil(length / 0.5))).rotateY(angle).translate((a[0] + b[0]) / 2, y, -(a[1] + b[1]) / 2), 'rails');
-    }
-  }
-  stopFences();
-  const stopPlants = part(tier === 'low' ? 'cards' : 'plants');
-  const cards = new Map();
-  let baker = null;
-  try {
-    if (tier === 'low' && site.planting?.some(p => !mats.has('plant_card:' + p.preset))) baker = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
-    for (let index = 0; index < (site.planting || []).length; index++) {
-      const p = site.planting[index]; if (!objectShown(p, !viewing)) continue; if (!p.at || !p.preset || !(p.height > 0)) continue;
-      if (tier === 'low') {
-        const holder = new THREE.Group(); holder.userData.placedPlant = true; group.add(holder);
-        if (viewing) { holder.userData.viewingTree = true; holder.name = `tree:${index}`; }
-        if (!cards.has(p.preset)) {
-          const cached = mats.get('plant_card:' + p.preset);
-          const card = cached ? { material: cached, texture: cached.map, aspect: cached.userData.cardAspect }
-            : await bakePreset(p.preset, p.seed ?? 1, baker);
-          card.material.userData.cardAspect = card.aspect; mats.set('plant_card:' + p.preset, card.material); cards.set(p.preset, card);
-        }
-        const card = cards.get(p.preset), h = p.height * 1.08;
-        for (const angle of [0, Math.PI / 2]) {
-          const geometry = new THREE.PlaneGeometry(h * card.aspect, h).translate(0, h / 2, 0).rotateY(angle + (p.seed || 0) * 2.39996);
-          addMesh(holder, geometry, card.material);
-        }
-        applyObject(holder, p, { units: 1 }); holder.position.set(p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0), -p.at[1]);
-        cacheModelMaterials(holder, 'plant-card:' + p.preset + ':' + objectMaterialKey(p, p.id || index), mats);
-        if (viewing) mergeStatic(holder);
-      } else {
-        const tree = presetTree(p.preset, p.seed ?? 1); standardTree(tree, mats);
-        const bounds = new THREE.Box3().setFromObject(tree), h = bounds.max.y - bounds.min.y, scale = p.height / Math.max(0.01, h);
-        tree.scale.setScalar(scale);
-        applyObject(tree, p, { units: 1 });
-        cacheModelMaterials(tree, 'plant:' + p.preset + ':' + objectMaterialKey(p, p.id || index), mats);
-        tree.position.set(p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0) - bounds.min.y * scale * (p.scale ?? 1) * (p.scale_axes?.[1] ?? 1), -p.at[1]);
-        tree.rotation.y += (p.seed || 0) * 2.39996; group.add(tree);
-        if (viewing) { tree.userData.viewingTree = true; tree.name = `tree:${index}`; }
-      }
-      // Let loading/status controls paint while full presets are generated.
-      if (index % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
-    }
-  } finally { if (baker) { baker.dispose(); baker.forceContextLoss(); } }
-  stopPlants();
-  const stopBatch = part('batch');
-  // Merge only the static site and cards. Full trees keep their own materials
-  // and EZ-Tree geometry; they are not traversed by this static merge.
-  const plants = group.children.filter(o => o instanceof Tree || o.userData.placedPlant); plants.forEach(o => o.removeFromParent());
-  mergeStatic(group); plants.forEach(o => group.add(o));
-
-  stopBatch();
-  const stopModels = part('models');
-  const models = new Map(), latePlacements = new Map();
-  const placements = await Promise.all([...(site.furniture || []), ...(site.planting || []).filter(p => p.asset?.startsWith('import-'))].filter(f => objectShown(f, !viewing)).map(async f => {
-    const assetId = (f.asset || kit.furniture?.[f.kind] || '').replace(/^polyhaven:/, '');
-    if (!assetId || !f.at) return;
-    const place = (model, late = false) => {
-      if (group.userData.disposed) { disposeObject(model); return; }
-      applyObject(model, f, { id: `site:${f.id || f.at.join(',')}` });
-      cacheModelMaterials(model, 'yard:' + assetId + ':' + objectMaterialKey(f, `site:${f.id || f.at.join(',')}`), mats);
-      let elevation = groundAt(plan, ...f.at);
-      for (const b of plan.buildings || []) for (const porch of allPorches(b)) if (porch.polygon) {
-        const pos = b.position || [0, 0], angle = -(b.rotation || 0) * Math.PI / 180;
-        const x = f.at[0] - pos[0], y = f.at[1] - pos[1];
-        const point = [Math.cos(angle) * x - Math.sin(angle) * y, Math.sin(angle) * x + Math.cos(angle) * y];
-        if (inside(point, porch.polygon)) {
-          const room = (b.rooms || []).find(r => r.kind === 'porch' && r.state !== 'ghost'
-            && r.level === (porch.level || b.levels[0]?.id) && inside(point, r.polygon));
-          elevation = buildingBase(plan, b) + porch.floor + (room?.floor_offset_ft || 0);
-        }
-      }
-      model.position.set(f.at[0], elevation + (f.elevation || 0), -f.at[1]);
-      if (late) { group.add(model); mergeStatic(model); }
-      return model;
-    };
-    if (!models.has(assetId)) {
-      latePlacements.set(assetId, []);
-      models.set(assetId, loadModel(assetId, kit, source => {
-        if (group.userData.disposed) { disposeObject(source); return; }
-        for (const draw of latePlacements.get(assetId)) draw(source.clone(true), true);
-      }, { tier, editor: !viewing }));
-    }
-    latePlacements.get(assetId).push(place);
-    const source = await models.get(assetId);
-    return source ? place(source.clone(true)) : null;
-  }));
-  placements.filter(Boolean).forEach(model => group.add(model));
-  stopModels();
-  const stopModelBatch = part('batch');
-  // Merge model instances by their shared material as well, without folding
-  // in full plants. Multi-material glTF primitives remain independently drawn.
-  plants.forEach(o => o.removeFromParent()); mergeStatic(group); plants.forEach(o => group.add(o));
-
-  stopModelBatch();
-  const stopGrass = part('grass');
-  if (tier === 'high') {
-    const placements = [], rng = random(1);
-    for (const edge of site.edges || []) {
-      const line = edge.polygon ? [...edge.polygon, edge.polygon[0]] : edge.points || edge.polyline || [];
-      for (let i = 0; i < line.length - 1; i++) {
-        const a = line[i], b = line[i + 1], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
-        for (let d = 0; d < length; d += 0.18) placements.push([a[0] + (b[0] - a[0]) * d / length + (rng() - 0.5) * 0.4, -a[1] - (b[1] - a[1]) * d / length + (rng() - 0.5) * 0.4, rng()]);
-      }
-    }
-    if (placements.length) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute([-0.035, 0, 0, 0.035, 0, 0, 0.03, 0.45, 0], 3));
-      geo.computeVertexNormals();
-      const grass = new THREE.InstancedMesh(geo, plain('edge grass', '#56783a', { side: THREE.DoubleSide }), placements.length), dummy = new THREE.Object3D();
-      placements.forEach(([x, z, n], i) => { dummy.position.set(x, groundAt(plan, x, -z) + 0.12, z); dummy.rotation.y = n * Math.PI * 2; dummy.scale.setScalar(0.6 + n); dummy.updateMatrix(); grass.setMatrixAt(i, dummy.matrix); });
-      grass.receiveShadow = true; group.add(grass);
-    }
-  }
-  stopGrass();
+  // Keys are taken after the builds: furniture's key includes imported-model metadata
+  // that its loads resolve. Reused parts keep the key they were built with.
+  const built = yardPartKeys(plan, kit, tier, { viewing });
+  root.userData.yardPartKeys = Object.fromEntries(YARD_PARTS.map(name => [name, reused.has(name) ? previousKeys[name] : built[name]]));
+  root.userData.yardReusedParts = [...reused.keys()];
+  root.userData.yardRebuiltParts = YARD_PARTS.filter(name => !reused.has(name));
+  // Commit only after twin_view's revision check. Until then the live scene
+  // owns reused groups and can survive a failed/superseded asynchronous rebuild.
+  root.userData.adoptParts = () => {
+    for (const objects of reused.values()) for (const object of objects) root.add(object);
+    // Stable part order (and stable order within a part) keeps chart packing deterministic.
+    const order = o => YARD_PARTS.indexOf(o.userData.yardPart);
+    root.children.sort((a, b) => order(a) - order(b));
+    // The material map started as a copy of the previous yard's, so reused parts keep their
+    // materials. Drop what no mesh uses any more (a replaced slot material and its maps),
+    // keeping only the tree and plant-card caches that later builds reuse by key; the
+    // previous yard's release then frees the dropped ones.
+    const used = new Set();
+    root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) used.add(m); });
+    for (const [key, material] of [...mats]) if (!used.has(material) && !key.startsWith('tree:') && !key.startsWith('plant_card:')) mats.delete(key);
+  };
   const stopMaterials = part('materials');
   await Promise.all([...mats.values()].map(m => m.userData.ready));
   stopMaterials();
   let triangles = 0;
-  group.traverse(o => { if (o.isMesh) triangles += (o.geometry.index?.count || o.geometry.attributes.position.count) / 3 * (o.isInstancedMesh ? o.count : 1); });
+  for (const object of [root, ...[...reused.values()].flat()]) object.traverse(o => { if (o.isMesh) triangles += (o.geometry.index?.count || o.geometry.attributes.position.count) / 3 * (o.isInstancedMesh ? o.count : 1); });
   // EZ-Tree textures are shared by its module, unlike all other yard resources.
-  group.userData.releasePlants = (keepMaterials = new Set()) => {
-    plants.forEach(p => { releasePlant(p, keepMaterials); p.removeFromParent(); });
+  root.userData.releasePlants = (keepMaterials = new Set()) => {
     const textures = new Set(), kept = new Set([...keepMaterials].flatMap(m => Object.values(m).filter(v => v?.isTexture)));
     for (const [key, material] of mats) if (!keepMaterials.has(material)) {
       material.dispose();
@@ -487,7 +580,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   };
   // Snapshot after loads have resolved imported model metadata. Never compare
   // against a mutable old plan/kit; editor operations can update them in place.
-  group.userData.yardKey = yardKey(plan, kit, tier, { viewing });
-  group.userData.yardMaterialKey = yardMaterialKey(plan, kit, tier);
-  return { group, triangles };
+  root.userData.yardKey = yardKey(plan, kit, tier, { viewing });
+  root.userData.yardMaterialKey = yardMaterialKey(plan, kit, tier);
+  return { group: root, triangles };
 }

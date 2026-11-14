@@ -767,7 +767,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const reuseYard = !!yardGroup && (preserveYard || yardGroup.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor }));
       if (timing) timing.yard_reused = reuseYard;
       const yardMaterials = reuseYard || yardGroup?.userData.yardMaterialKey === yardMaterialKey(nextPlan, kit, tier)
-        ? yardGroup?.userData.materials : null;
+        ? yardGroup?.userData.materials : new Map(yardGroup?.userData.materials);
       const keepMaterials = new Set([...(yardMaterials?.values() || []), ...(reuseMaterials?.values() || [])]);
       next.editableLevel = editableLevel;
       const extras = new Map();
@@ -819,7 +819,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         stopBatch();
         if (!reuseYard) {
           const stopYard = editSpan(detail, 'yard');
-          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, materials: yardMaterials, timing: detail }); next.groups.site.add(yard.group);
+          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, materials: yardMaterials, timing: detail, previous: yardGroup }); next.groups.site.add(yard.group);
           stopYard();
           next.yardGroup = yard.group;
         }
@@ -828,6 +828,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         stopAssets();
       } catch (error) { release(next, keepMaterials); throw error; }
       if (disposed || version !== revision) { release(next, keepMaterials); return; }
+      next.yardGroup?.userData.adoptParts?.();
+      // After adoption the new yard's material map holds exactly what it still uses.
+      const keepAfter = new Set([...(next.yardGroup?.userData.materials?.values() || []), ...(reuseMaterials?.values() || [])]);
+      if (timing) {
+        timing.yard_reused_parts = reuseYard ? Object.keys(yardGroup?.userData.yardPartKeys || {}) : next.yardGroup?.userData.yardReusedParts || [];
+        timing.yard_rebuilt_parts = reuseYard ? [] : next.yardGroup?.userData.yardRebuiltParts || [];
+      }
       const levelsToRestore = visibleLevels && [...visibleLevels];
       const faintToRestore = [...new Set([...faded.keys()].map(o => {
         for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey;
@@ -844,7 +851,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (!next.yardGroup && yardGroup) {
         yardGroup.removeFromParent(); next.groups.site.add(yardGroup); next.yardGroup = yardGroup;
       }
-      if (twin) { scene.remove(twin.root); release(twin, keepMaterials); }
+      if (twin) { scene.remove(twin.root); release(twin, keepAfter); }
       stopDispose();
       yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);

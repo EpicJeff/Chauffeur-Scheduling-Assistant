@@ -1,6 +1,146 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.856 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.861 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.861 (2026-11-14, NOT device-verified): no more black lines on board-and-batten siding in baked light. Small details borrow the wall's light, and building exteriors bake at 4 texels per foot.**
+
+**The report.** The user, on their house lit at night by the fire pit: "The super dark lines on the batten strips is the most obvious issue. I think we had similar issues when baking the sun and skylight previously."
+
+**The cause** (a texel dump on main). 238 of the 248 outdoor board-and-batten charts covered no texel centre: a batten face is 0.14 × 0.09 ft, and outdoor charts baked at 1 texel per foot. The GPU wrote nothing, the edge padding had nothing to spread, and the shader read black. The same bug drew the white window and door trim as black.
+
+**The fix** (`static/twin/bake/atlas.js`).
+- **Lightmap proxies.** A chart under 2 texels across takes the lighting of the nearest suitable surface behind it, through that surface's mapping, page and room, and gets no atlas rect of its own. A host must:
+  - sit on the same side of the wall within 0.5 ft;
+  - face the same way;
+  - be at least 4 texels across;
+  - contain every corner of the thin face, with up to 0.25 ft of overhang.
+  The first version picked a buried, sideways wall end, which is why the facing and width rules exist.
+- **No host:** a thin chart gets a minimum 2×2 rect.
+- **Deterministic:** host choice is deterministic, so the atlas key is the same on every tier.
+- **Density:** building exteriors now bake at 4/ft, the room density, in 16 ft groups. Yard and terrain stay at 1/ft. A group that would overflow a page continues on the next.
+
+**Measured (Chromium, test house).**
+
+| | main | now |
+|---|---|---|
+| Dark pixels per row across the lit gable | 21-23 | 1-2 |
+| Darkest pixel vs median | 0.17-0.27 | 0.48-0.49 |
+| Lightmap pages | 9 (3 banks × 3) | 12 (3 × 4) |
+| GPU memory, compressed | about 50 MB | about 67 MB |
+| GPU memory, uncompressed fallback | about 200 MB | about 270 MB |
+| First bake | 62 s | 71-75 s |
+| Rebake | 16 s | 16 s |
+
+- Two bakes leave everything fresh, with no error.
+- Known: faint mottled shading on the wall at 4/ft, which the old blur hid. There are no hard lines.
+- If panel memory matters, 2/ft is the lever.
+
+**Tests.**
+- New `test_twin_bake_proxy_js` 4/4:
+  - no lit siding face below 80% of its light (fails on main);
+  - proxies take no rect and map inside their host's rect, page and room;
+  - proxy assignment and the atlas key repeat on a rebuild;
+  - on the real pool house, every proxy faces its host within 0.25 ft and every host is at least 4 texels (fails without the host rules).
+- `test_twin_bake_atlas_js` 13/13. Two checks were updated to the design: the room-light page budget goes from 4 to 6 pages, since the test house needs 2 pages at 4/ft, and the rect-size check allows the 2-texel minimum.
+- Neighbours: fingerprint, baker 12/12, reach 20/20, runtime 17/17, pool features, yard reuse, yard rooms 3/3, energy 38/38, import maps 3/3, bakes 16/16.
+- `test_twin_lightmap_material_js` `fresh_bake_frees_the_pool_slot` fails the same way on main.
+
+**v2.499.860 (2026-11-14, NOT device-verified): outside rooms behave like inside ones. Their devices stay hidden until you focus the room, and focusing it orbits rather than looking straight down.**
+
+**The ask.** The user, with a night screenshot full of yard-light markers: "Items in outside areas don't hide when you are zoomed out like items in inside rooms... it clutters up the view so you can't really see the house. I lean towards hiding until you focus that area." On focus: "Orbiting instead of top down is fine." Viewpoints (saved camera spots) were discussed as a possible follow-up, not built.
+
+**What changed** (`static/twin/levels.js`).
+- **`deviceAtLevel`:** a yard device shows only when its own yard room is focused. A yard device needing attention also shows at House, as before. At House the yard room's own icon stands for its devices.
+- **`framing()`:** a focused yard room is an orbit view, not top-down, with rotation enabled. Its corners are fitted in camera space along the orbit direction (`yardFramePadding`), so the foreshortened ground still fills the screen. Indoor rooms and floors still look down.
+- Fire-pit markers are unchanged.
+
+**Tests.**
+- `test_twin_yard_rooms_js` 4/4 and 3/3, with three checks updated to the new rule:
+  - the House target now asserts orbit framing (rotation on, camera at an angle);
+  - the framing check asserts a yard room fills at least half the screen in orbit (it used to be equal to the indoor top-down framing);
+  - the mounted yard marker is hidden at House.
+- The attention check is unchanged and passes.
+- Browser `test_house_twin_live_rooms`: `scenario_yard_room_target_orbits_it` (renamed from `..._frames_it_from_above`) asserts orbit mode, an angled camera, the room fully on screen and filling at least half of it. The file passes 11/11; one loopback reset passed when rerun alone.
+- Neighbours: levels js 5/5, real lights js 10/10, live rooms js 10/10, live control js 8/8, controls js 31/31, import maps 3/3.
+- Chromium: at House only the "Pool deck" icon shows, with no device markers. Focused, the pool light marker and the room panel appear.
+
+**v2.499.859 (2026-11-14, NOT device-verified): the dashed "needs checking" roof outline shows only in the house editor, never in the live house view or on panels.**
+
+**The report.** The user, with a screenshot of the pool house: "What is this dotted outline on the pool house roof? It has been there forever and I have no idea why it shows on the panel."
+
+**The cause.** When a build flags a roof block as uncertain (`building.roof.flags`, listed under "Check it" in the editor), `twin_generator.js` outlines that roof with the dashed ghost-edge line, so a person can find and confirm it. The outline was built whatever the view was, so the live house view and wall panels showed it too.
+
+**The fix.** It is drawn only when `buildTwin` is not `viewing`. The editor still marks the roof, and a tap still opens its card. To clear it for good, open the roof in the editor and confirm or adjust it from "Check it".
+
+**Tests.** `test_twin_roof_flags_js` 7/7, with the new `test_live_view_and_panels_never_show_the_check_marker`: no marker when viewing, and the roof still picks as itself.
+
+**v2.499.858 (2026-11-14, NOT device-verified): a yard edit rebuilds only the yard parts it changed. A fence edit no longer rebuilds the terrain.**
+
+**The evidence.** The user's house, editing one yard feature: `yard` 5121 ms, of which `yard_terrain` 3294, `yard_plants` 982, `yard_fences` 421 and `yard_hardscape` 331. v2.499.848 reused the whole yard only when nothing in it changed.
+
+**What changed** (`static/twin/twin_yard.js`, `twin_view.js`).
+- `buildYard` builds nine parts, each with its own key covering exactly what it reads:
+
+  | Part | Key inputs |
+  |---|---|
+  | terrain | tier, lot, the grade (pads), which pad edges carry walls, pool and spa outlines, lawn finish |
+  | plants | tier, viewing mode, grade, planting fields |
+  | fences | tier, grade, fence fields and slots, resolved finishes |
+  | hardscape | tier, grade, pool and spa holes, hardscape/bed/edge-strip fields and finishes |
+  | pool | tier, grade, pool fields and features, finishes |
+  | fire_pits | tier, grade, fire pit fields, finishes |
+  | retaining_walls | tier, pad fields including walls, resolved wall finishes |
+  | furniture | tier, viewing mode, grade, furniture and imported planting, building placement/footprint/porches, model metadata |
+  | grass | High tier only: grade and edge outlines |
+
+  The whole-yard key is their union.
+- A rebuild reuses every part whose key is unchanged. Each reused object carries `userData.yardPart` and moves into the new yard root after the revision check, in a stable order; changed parts are built fresh.
+- The yard root stays flat, as existing consumers (bake, retaining walls, ground) expect.
+- The material map is pruned to materials still in use, so a replaced slot material and its textures are freed.
+- Late furniture loads join the right root.
+- Edit timing records `yard_reused_parts` and `yard_rebuilt_parts`.
+
+**Measured (Chromium headless, test house).**
+
+| Edit | yard, main | yard, now | rebuild, main | rebuild, now |
+|---|---|---|---|---|
+| move a fence | 28.8 s | 5 ms (fences only) | 30.6 s | 1.05 s |
+| move a patio | 30.5 s | 57 ms (hardscape only) | 32.1 s | 1.39 s |
+
+- A plant move still rebuilds plants, as it should.
+- Draw calls: 132 before, 133 now.
+- No page errors.
+
+**Built from Codex's unfinished split, then fixed:** an empty retaining-wall builder, a nested group structure that broke bake, ground and wall consumers, a material leak, and part keys computed before imported-model metadata had resolved.
+
+**Tests.**
+- `test_twin_yard_reuse_js` 20/20: fence, plant, fence-slot, pad, pool-outline and pool-depth edits each rebuild exactly their parts; a replaced slot material is released; a per-part key guard of 124 mutations shows each input changes exactly the parts that read it.
+- `test_twin_bake_fingerprint_js`: a fence edit leaves every terrain chart key unchanged.
+- `test_twin_yard_parts_draw_calls_js`: the census is within budget.
+- Neighbours: edit timing js, yard material slots js, pool features js, yard rooms js 3/3, light reach js 20/20, tree once js, terrain tools js, retaining wall js, ground js, porches js 5/5, material render js, bake runtime js 17/17, energy js 38/38, import maps 3/3.
+- Not browser-verified: that the bake stays fresh after a fence edit. The node chart-key check covers it.
+
+**v2.499.857 (2026-11-14, NOT device-verified): an editor edit flattens the house half as often and normalizes it once instead of twice.**
+
+**The evidence.** The user's house on v2.499.851 or later still showed server `read` 494-627 ms and `normalize` 320-398 ms per edit. Every op publishes a new round, which cleared v2.499.851's read cache, so the response re-read and re-flattened the round. A trace of one op found four `flatten` calls and two `normalize` calls:
+1. the pre-edit `current()`;
+2. the edited model;
+3. the normalized pre-edit model for the fix log;
+4. the response;
+plus the pre-edit normalize and the publication normalize.
+
+**What changed** (`services/twin_store.py`, `services/twin_edit.py`).
+- **Write-through.** `_append_round` serializes the round once, writes that text, and fills the read cache with a private parse of it. The next read (the response, then the next edit's pre-edit read) is a cache hit. `update_model` also takes its pre-edit model from the cache. `_save` still clears the cache on every other write.
+- **No second normalize.** A model `update_model` just published is already normalized. `current_is_normalized()` says so, and `twin_edit.save` uses a copy instead of normalizing it again.
+- **No second flatten for the fix log.** When normalizing the stored model changes nothing, `logged_before` is a copy of `before` rather than another flatten.
+- **Result:** after the first edit, each edit does 2 flattens and 1 normalize instead of 4 and 2, with no round-file reads. Fixture house: `read` about 92 ms against about 157 ms on the first edit of a session.
+
+**Tests.** `test_twin_server_speed` 5/5:
+- op and full-state responses are byte-identical to the v2.499.850 corpus;
+- `normalize_calls_per_op_reduced` now asserts one normalize and no round reads after the first edit;
+- the cached-read test's fresh-store case now checks the read is that store's own model, since write-through legitimately fills the cache from the store's own publish.
+
+Neighbours green: edit timing 4/4, twin store, house saves 19/19, model bridge 32/32, HA display 5/5, house tool, sheets, place 25/25, editor history 8/8, pool features 7/7, materials 23/23, yard material slots 6/6, fire pits. `test_twin_store_model` is 14/15, the same failure as on main.
 
 **v2.499.856 (2026-11-13, NOT device-verified): the Material library page. Make a material from your own textures, with a live preview.**
 

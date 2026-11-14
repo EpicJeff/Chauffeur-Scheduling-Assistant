@@ -119,8 +119,13 @@ def test_normalize_calls_per_op_reduced():
     baseline = json.loads(METRICS.read_text())
     _, after = capture()
     for kind in ('set_material', 'move_site_item', 'move_wall', 'place_device'):
-        assert after[kind]['calls']['normalize'] == 2 < baseline[kind]['calls']['normalize']
+        # v2.499.857: write-through plus skipping the second normalize of a just-published
+        # model leaves one normalize (publication), except a first edit after a cold start.
+        assert after[kind]['calls']['normalize'] <= 2 < baseline[kind]['calls']['normalize']
         assert after[kind]['calls']['read_round'] < baseline[kind]['calls']['read_round']
+        if kind != 'set_material':
+            assert after[kind]['calls']['normalize'] == 1, (kind, after[kind]['calls'])
+            assert after[kind]['calls']['read_round'] == 0, (kind, after[kind]['calls'])
         assert after[kind]['state_calls']['flatten'] == 0
         assert after[kind]['state_calls']['read_round'] == 0
         assert after[kind]['lean_calls']['current'] == after[kind]['lean_calls']['current_model'] == 0
@@ -146,9 +151,13 @@ def test_cached_reads_are_private_and_keyed_by_round_generation_and_root():
     with house():
         # Another store uses the same id and generation, with a different root.
         assert ts.current_id() == old_id and ts.generation() == old_generation
+        # Write-through (v2.499.857) fills the cache from this store's own publish, under
+        # this root's key: what matters is that the read is this store's model, not the old one.
         with counted() as counts:
-            ts.current()
-        assert counts['read_round'] == counts['flatten'] == 1
+            mine = ts.current()
+        assert counts['flatten'] == 1 and counts['read_round'] <= 1
+        on_disk = json.loads((Path(ts.DATA_DIR) / 'rounds' / f'{ts.current_id()}.json').read_text(encoding='utf-8'))
+        assert ts.current_model() == on_disk and mine['buildings']
 
 
 def changed_position(x):
