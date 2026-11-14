@@ -128,27 +128,35 @@ export function materialKey(value, role, tier, manifest) {
   return JSON.stringify(['m', id, manifest[id]?.revision ?? 0, tier, role, value.color || null, flags]);
 }
 
-// params.random_offset: each surface's base `uv` moves by a stable point inside one
-// tile, picked by a hash of its piece id, so repeats on neighbouring walls, floors
-// and roofs stop lining up. It lives in the geometry, never in the shared material,
-// so batching keeps one instance; the lightmap channels are never touched.
+// params.random_offset: each surface's base `uv` moves by a stable point picked by a
+// hash of its piece id, so repeats on neighbouring walls, floors and roofs stop lining
+// up. It lives in the geometry, never in the shared material, so batching keeps one
+// instance; the lightmap channels are never touched. The range is a fixed 64 ft, not
+// the tile, so a tile_ft edit never moves uv (the phase inside any tile stays random).
+export const UV_OFFSET_RANGE_FT = 64;
 const unitHash = (h, salt) => {
   h = Math.imul(h ^ salt, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16;
   return (h >>> 0) / 4294967296;
 };
-export function uvOffsetFor(seedId, tileFt) {
+export function uvOffsetFor(seedId) {
   let h = 0x811c9dc5;
   for (const ch of String(seedId)) h = Math.imul(h ^ ch.codePointAt(0), 0x01000193);
-  return [unitHash(h, 0x9e3779b9) * tileFt[0], unitHash(h, 0x632be5ab) * tileFt[1]];
+  return [unitHash(h, 0x9e3779b9) * UV_OFFSET_RANGE_FT, unitHash(h, 0x632be5ab) * UV_OFFSET_RANGE_FT];
 }
 // Offsets a freshly generated surface in place, once. No seed (a builder without a
 // stable piece id) or a material without random_offset leaves it exactly as made.
+// Vertical faces (|normal.y| < .5: walls, pool and retaining walls, curb sides) move
+// along u only, so brick and siding courses stay registered across corners and
+// splits; floors, patios, caps and roofs move on both axes.
 export function offsetSurfaceUvs(geometry, material, seedId) {
-  const uv = geometry?.attributes?.uv;
+  const uv = geometry?.attributes?.uv, normal = geometry?.attributes?.normal;
   if (!seedId || !uv || Array.isArray(material) || !material?.userData?.randomOffset
     || geometry.userData.uvOffsetSeed !== undefined) return geometry;
-  const [du, dv] = uvOffsetFor(seedId, material.userData.uvTileFt || [4, 4]);
-  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) + du, uv.getY(i) + dv);
+  const [du, dv] = uvOffsetFor(seedId);
+  for (let i = 0; i < uv.count; i++) {
+    const vertical = normal && Math.abs(normal.getY(i)) < .5;
+    uv.setXY(i, uv.getX(i) + du, uv.getY(i) + (vertical ? 0 : dv));
+  }
   uv.needsUpdate = true; geometry.userData.uvOffsetSeed = seedId;
   return geometry;
 }
@@ -195,7 +203,7 @@ export function copyMaterialParams(source, target) {
   for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'alphaMap',
     'roughness', 'metalness', 'aoMapIntensity', 'alphaTest', 'side']) target[key] = source[key];
   target.color.copy(source.color); target.normalScale.copy(source.normalScale);
-  for (const key of ['materialId', 'materialRevision', 'materialKey', 'materialRef', 'materialRole', 'randomOffset', 'uvTileFt'])
+  for (const key of ['materialId', 'materialRevision', 'materialKey', 'materialRef', 'materialRole', 'randomOffset'])
     target.userData[key] = source.userData[key];
   target.needsUpdate = true;
 }
@@ -244,7 +252,6 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   const tile = params.tile_ft || [4, 4];
   // Read by the generator and yard when they make geometry (offsetSurfaceUvs).
   material.userData.randomOffset = params.random_offset === true;
-  material.userData.uvTileFt = [...tile];
   const properties = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap'];
   for (const property of properties) material[property] = null;
   if (role === 'granite') applyGraniteShader(material);

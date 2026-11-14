@@ -4,7 +4,7 @@ import { reachLights } from './reach.js';
 import { fingerprint, authoredGeometry } from './fingerprint.js';
 export { fingerprint } from './fingerprint.js';
 
-const VERSION = 'reach-atlas-9';
+const VERSION = 'reach-atlas-10';
 const EPS = 1e-6;
 const prepared = new WeakMap();
 const bankPacking = new WeakMap();
@@ -753,7 +753,8 @@ export function buildAtlas(group, plan, { room } = {}) {
     hash.add(mesh.material.name || ''); hash.add(JSON.stringify(mesh.matrixWorld.elements));
     // A heightfield's shape is authored (lot, terraces, pool: authoredGeometry above).
     if (heightfieldMesh(mesh)) hash.add(JSON.stringify(['heightfield', heightfieldExtent(g)]));
-    else for (const name of ['position', 'normal', 'uv']) if (g.attributes[name]) hash.add(g.attributes[name].array);
+    // Base uv is texture placement only (random_offset): it never moves a chart.
+    else for (const name of ['position', 'normal']) if (g.attributes[name]) hash.add(g.attributes[name].array);
   });
   // Thin charts become proxies of the surface they sit on; only hosts take atlas space.
   const { hosts, proxies } = assignProxies(raw, ro);

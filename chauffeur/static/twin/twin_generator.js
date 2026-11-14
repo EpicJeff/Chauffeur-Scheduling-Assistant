@@ -548,11 +548,12 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     let activePiece = null;
     const records = new Map(), wallProfiles = new Map();
     const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || fallback, kind, buildingId: b.id, ghost: piece.state === 'ghost' }; };
-    const mesh = (group, geometry, material, retained = null) => {
+    // seed: a random-offset origin shared by several pieces (one per level for floors).
+    const mesh = (group, geometry, material, retained = null, seed = null) => {
       const data = activePiece || { pieceId: 'structure', kind: 'building', buildingId: b.id };
       const key = `${b.id}:${data.pieceId}`;
       // A random-offset material shifts this piece's base uv by its own seed, before batching.
-      if (!retained && !data.ghost && activePiece) offsetSurfaceUvs(geometry, material, key);
+      if (!retained && !data.ghost && activePiece) offsetSurfaceUvs(geometry, material, seed || key);
       const object = retained || addMesh(group, geometry, data.ghost ? ghost : material);
       if (retained && data.ghost) object.material = ghost;
       Object.assign(object.userData, data);
@@ -1190,8 +1191,11 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         const cuts = holes.filter(h => h.every(p => contains(poly, p)));
         const slabBottom = porch ? elevation - (porchFoundation(porch.foundation).type === 'solid' ? PORCH_SLAB_FT : POST_SLAB_FT)
           : l.id === first.id && !room.floor_offset_ft ? 0 : elevation - .8;
-        mesh(local[l.id], polygon(poly, slabBottom, elevation - 0.02, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'));
-        mesh(local[l.id], polygon(poly, elevation, elevation, cuts), mat(porch ? 'patio_concrete' : 'floor', l, room.floor_material));
+        // Rooms stay their own pieces for selection; the level is one floor origin, so a
+        // finish running through several rooms stays continuous.
+        const floorSeed = `${b.id}:floor:${l.id}`;
+        mesh(local[l.id], polygon(poly, slabBottom, elevation - 0.02, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'), null, floorSeed);
+        mesh(local[l.id], polygon(poly, elevation, elevation, cuts), mat(porch ? 'patio_concrete' : 'floor', l, room.floor_material), null, floorSeed);
       }
       // Room boundaries stop at the wall lines. Their slab plus these mitred
       // wall footprints fills the level through to its exterior faces.

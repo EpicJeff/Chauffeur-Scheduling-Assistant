@@ -192,7 +192,10 @@ export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker
   const answer = data => apply ? applyAtlas(data, root, layout) : { key: data.key, apply: () => applyAtlas(data, root, layout) };
   try {
     const key = await cached(db, 'input:' + job.cacheKey).catch(() => null);
-    const hit = key && await cached(db, key).catch(() => null);
+    const stored = key && await cached(db, key).catch(() => null);
+    // One layout key can hold geometry from another base uv (random_offset on/off):
+    // that copy is not this scene's, so lay out afresh and replace it.
+    const hit = stored?.uvKey === job.uvKey ? stored : null;
     check();
     if (hit) { await remember(db, hit.key, job.cacheKey).catch(() => null); return answer(hit); }
     const data = await new Promise((resolve, reject) => {
@@ -209,6 +212,7 @@ export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker
       try { w.postMessage(job, buffers(job.meshes)); }
       catch (error) { finish(); reject(error); }
     });
+    data.uvKey = job.uvKey;
     await cached(db, data.key, data).catch(() => null);
     await cached(db, 'input:' + job.cacheKey, data.key).catch(() => null);
     await remember(db, data.key, job.cacheKey).catch(() => null);

@@ -333,7 +333,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       for (const pad of site.terraces || []) pad.polygon.forEach((_, edge) => {
         if (pad.edges?.[edge]?.edge !== 'sharp' || !pad.edges[edge].wall) return;
         const wall = pad.edges[edge].wall;
-        surfaceMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face), seedOf(pad, 'edge', edge));
+        surfaceMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face), seedOf(pad, 'walls'));
       });
       stopWalls();
     },
@@ -349,7 +349,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             for (const side of ['left', 'right']) for (let i = 1; i < inner[side].length; i++) {
               const poly = [inner[side][i - 1], inner[side][i], outer[side][i], outer[side][i - 1]];
               // Both offsets have the same mitre/bevel topology.
-              const curb = surfaceMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spas), mat('patio_concrete', h.materials?.edging), seedOf(h, 'curb', side, i));
+              const curb = surfaceMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spas), mat('patio_concrete', h.materials?.edging), seedOf(h, 'curb', side));
               curb.geometry.userData.pathCurb = true;
             }
           }
@@ -390,7 +390,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         if (coping > 0) surfaceMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
         for (let i = 0; i < pool.length; i++) {
           const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
-          surfaceMesh(group, poolSurface([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'), seedOf(site.pool, 'wall', i));
+          surfaceMesh(group, poolSurface([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'), seedOf(site.pool, 'walls'));
         }
         const water = plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false });
         addMesh(group, poolSurface(pool, -0.25), water);

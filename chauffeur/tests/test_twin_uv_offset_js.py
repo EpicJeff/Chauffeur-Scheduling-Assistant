@@ -1,7 +1,7 @@
 """Per-surface random UV offset (material-library Task 10), through the real generator and yard.
 
 A household material with params.random_offset shifts each surface's base `uv`
-by a stable hash of its piece id, inside one tile. Batching keeps one material
+by a stable hash of its piece id (a fixed 0..64 ft range; vertical faces u only). Batching keeps one material
 instance; the lightmap channels are untouched. Off, the geometry is byte-for-byte
 what the generator made before the feature (GOLDEN was taken from 5c58872f).
 
@@ -62,53 +62,73 @@ const digest=root=>{const h=fingerprint();for(const m of meshes(root)){h.add([].
  for(const n of ['position','uv'])if(m.geometry.attributes[n])h.add(m.geometry.attributes[n].array);}return h.key();};
 async function twin(p,k,opts={}){const t=buildTwin(p,k,'low',opts);await t.ready;return t;}
 async function yard(p,k){return (await buildYard(p,k,'low',{})).group;}
-// Per-vertex uv deltas between two otherwise identical builds, matched to expected offsets.
-function deltas(a,b){const out=[];for(let i=0;i<a.length;i+=2)out.push([b[i]-a[i],b[i+1]-a[i+1]]);return out;}
+// Per-vertex [du, dv, |normal.y|] between two otherwise identical builds.
+function deltas(a,b){const ua=a.geometry.attributes.uv.array,ub=b.geometry.attributes.uv.array,n=b.geometry.attributes.normal,out=[];
+ for(let i=0;i<ua.length/2;i++)out.push([ub[2*i]-ua[2*i],ub[2*i+1]-ua[2*i+1],n?Math.abs(n.getY(i)):1]);return out;}
+// Vertical faces move along u only; everything else on both axes.
+const expect=(id,ny)=>{const [du,dv]=lib.uvOffsetFor(id);return [du,ny<.5?0:dv];};
 const near=(p,q)=>Math.abs(p[0]-q[0])<2e-3&&Math.abs(p[1]-q[1])<2e-3;
-function matched(found,expected){
- const used=new Set();
- for(const d of found){const i=expected.findIndex(e=>near(d,e));assert.ok(i>=0,'unexpected uv delta '+JSON.stringify(d));used.add(i);}
- return used;
-}
+const pairs=(x,y,name)=>{const a=meshes(x).filter(m=>m.material.name===name),b=meshes(y).filter(m=>m.material.name===name);
+ assert.equal(b.length,a.length,name+' batching unchanged');return a.map((m,i)=>[m,b[i]]);};
+// The seeds that explain every vertex's delta; any unexplained delta fails.
+function seedsOf(list,ids){const used=new Set();
+ for(const [a,b] of list)for(const d of deltas(a,b)){const id=ids.find(id=>near(d,expect(id,d[2])));assert.ok(id,'unexpected uv delta '+JSON.stringify(d));used.add(id);}
+ return used;}
 await test('same_id_same_offset',()=>{
- const a=lib.uvOffsetFor('a:w0',[4,4]),b=lib.uvOffsetFor('a:w0',[4,4]);
+ const a=lib.uvOffsetFor('a:w0'),b=lib.uvOffsetFor('a:w0');
  assert.deepEqual(a,b);assert.equal(a.length,2);
- assert.notDeepEqual(lib.uvOffsetFor('a:w1',[4,4]),a);
- for(const id of ['a:w0','a:w1','h1','pool:wall:3','x'.repeat(200),'']){
-  const [du,dv]=lib.uvOffsetFor(id,[6,3]);assert.ok(du>=0&&du<6&&dv>=0&&dv<3,id+' in tile');
+ assert.notDeepEqual(lib.uvOffsetFor('a:w1'),a);
+ for(const id of ['a:w0','a:w1','h1','pool:walls','x'.repeat(200),'']){
+  const [du,dv]=lib.uvOffsetFor(id);assert.ok(du>=0&&du<64&&dv>=0&&dv<64,id+' in the fixed 64 ft range');
  }
- // The fraction of the tile is the same for a different tile size: one stable seed.
- const [u4,v4]=lib.uvOffsetFor('a:w2',[4,4]),[u8,v2]=lib.uvOffsetFor('a:w2',[8,2]);
- assert.ok(Math.abs(u4/4-u8/8)<1e-9&&Math.abs(v4/4-v2/2)<1e-9);
- // Spread: 200 ids land in every quarter of the tile.
- const quarters=new Set();for(let i=0;i<200;i++){const [u,v]=lib.uvOffsetFor('w'+i,[4,4]);quarters.add((u>=2)+2*(v>=2));}
+ assert.equal(lib.UV_OFFSET_RANGE_FT,64);
+ // Spread: 200 ids land in every quarter of the range.
+ const quarters=new Set();for(let i=0;i<200;i++){const [u,v]=lib.uvOffsetFor('w'+i);quarters.add((u>=32)+2*(v>=32));}
  assert.equal(quarters.size,4);
 });
 await test('off_by_default_geometry_unchanged',async()=>{
- const got={};
  for(const extra of [{random_offset:false},{}]){
   const p=plan(),k=kitFor(extra);
   const b=digest((await twin(p,k)).root),y=digest(await yard(p,k));
   if(process.env.UV_GOLDEN)console.log('    golden',JSON.stringify({building:b,yard:y}));
   assert.equal(b,input.golden.building,'building geometry with '+JSON.stringify(extra));
   assert.equal(y,input.golden.yard,'yard geometry with '+JSON.stringify(extra));
-  got[JSON.stringify(extra)]=[b,y];
  }
 });
 await test('different_walls_different_offsets_same_material_instance',async()=>{
  const p=plan({roof:false,openings:false}),plainRoles=ROLES.filter(r=>r!=='siding');
  const off=await twin(p,kitFor({random_offset:false},{plain:plainRoles})),on=await twin(p,kitFor({random_offset:true},{plain:plainRoles}));
- const siding=t=>meshes(t.root).filter(m=>m.material.name==='siding');
- const a=siding(off),b=siding(on);
- assert.ok(b.length>=1);assert.equal(b.length,a.length,'batching unchanged');
+ const list=pairs(off.root,on.root,'siding'),b=list.map(([,m])=>m);
+ assert.ok(b.length>=1);
  assert.equal(new Set(b.map(m=>m.material)).size,1,'one material instance');
  assert.ok(b.every(m=>m.userData.merged),'walls still batch');
- const expected=[0,1,2,3].map(i=>lib.uvOffsetFor('a:w'+i,[4,4]));
- const found=b.flatMap((m,i)=>deltas(a[i].geometry.attributes.uv.array,m.geometry.attributes.uv.array));
- assert.equal(matched(found,expected).size,4,'each wall has its own uv origin');
- for(let i=0;i<b.length;i++)assert.deepEqual([...b[i].geometry.attributes.position.array],[...a[i].geometry.attributes.position.array]);
+ assert.equal(seedsOf(list,[0,1,2,3].map(i=>'a:w'+i)).size,4,'each wall has its own uv origin');
+ for(const [a,m] of list)assert.deepEqual([...m.geometry.attributes.position.array],[...a.geometry.attributes.position.array]);
  // Only the base channel moves: no lightmap channel exists or is written here.
  for(const m of b)for(const name of Object.keys(m.geometry.attributes))assert.ok(['position','normal','uv'].includes(name),name);
+});
+await test('brick_wall_pair_at_a_corner_keeps_v',async()=>{
+ const p=plan({roof:false,openings:false}),plainRoles=ROLES.filter(r=>r!=='siding');
+ const off=await twin(p,kitFor({random_offset:false},{plain:plainRoles})),on=await twin(p,kitFor({random_offset:true},{plain:plainRoles}));
+ let vertical=0;
+ for(const [a,b] of pairs(off.root,on.root,'siding'))for(const [du,dv,ny] of deltas(a,b))if(ny<.5){vertical++;assert.ok(Math.abs(dv)<1e-4,'courses stay registered: dv '+dv);}
+ assert.ok(vertical>0);
+ // w0 and w1 meet at a corner: their u origins differ, their v is untouched.
+ assert.notEqual(lib.uvOffsetFor('a:w0')[0],lib.uvOffsetFor('a:w1')[0]);
+});
+await test('floors_share_one_origin_per_level',async()=>{
+ const p=plan({roof:false,openings:false}),b=p.buildings[0];
+ b.rooms=[{id:'r1',level:'L1',name:'Kitchen',polygon:[[0,0],[6,0],[6,12],[0,12]],state:'settled'},
+  {id:'r2',level:'L1',name:'Dining',polygon:[[6,0],[12,0],[12,12],[6,12]],state:'settled'}];
+ const plainRoles=ROLES.filter(r=>r!=='floor');
+ const off=await twin(p,kitFor({random_offset:false},{plain:plainRoles})),on=await twin(p,kitFor({random_offset:true},{plain:plainRoles}));
+ assert.deepEqual([...seedsOf(pairs(off.root,on.root,'floor'),['a:floor:L1','a:r1','a:r2'])],['a:floor:L1'],'two rooms, one level origin');
+ assert.ok(on.pieces.has('a:r1')&&on.pieces.has('a:r2'),'each room is still its own piece');
+});
+await test('tile_ft_edit_never_moves_uv',async()=>{
+ const p=plan(),k4=kitFor({random_offset:true}),k6=kitFor({random_offset:true,tile_ft:[6,3]});
+ assert.equal(digest((await twin(p,k6)).root),digest((await twin(p,k4)).root));
+ assert.equal(digest(await yard(p,k6)),digest(await yard(p,k4)));
 });
 await test('random_offset_reaches_roof_floor_and_yard_surfaces',async()=>{
  const p=plan(),off={b:await twin(p,kitFor({random_offset:false})),y:await yard(p,kitFor({random_offset:false}))};
@@ -120,18 +140,39 @@ await test('random_offset_reaches_roof_floor_and_yard_surfaces',async()=>{
  for(const role of ['siding','roof','floor','trim'])assert.ok(house.has(role),'house '+role+' '+[...house]);
  const site=moved(off.y,on.y);
  for(const role of ['paving','fence','mulch','lawn','base','granite','patio_concrete'])assert.ok(site.has(role),'yard '+role+' '+[...site]);
- // Two patios in one material keep one material instance and their own origins.
- const pavingOff=meshes(off.y).filter(m=>m.material.name==='paving'),pavingOn=meshes(on.y).filter(m=>m.material.name==='paving');
- assert.equal(new Set(pavingOn.map(m=>m.material)).size,1);
- const found=pavingOn.flatMap((m,i)=>deltas(pavingOff[i].geometry.attributes.uv.array,m.geometry.attributes.uv.array));
- const ids=['h1','h2','p1','pool:floor','pool:coping',...[0,1,2,3].map(i=>'pool:wall:'+i)];
- const used=matched(found,ids.map(id=>lib.uvOffsetFor(id,[4,4])));
- assert.ok(used.has(0)&&used.has(1),'both patios offset by their own ids');
+ // Two patios in one material keep one material instance and their own origins; the
+ // pool's walls share one origin.
+ const paving=pairs(off.y,on.y,'paving');
+ assert.equal(new Set(paving.map(([,m])=>m.material)).size,1);
+ const used=seedsOf(paving,['h1','h2','p1','pool:floor','pool:coping','pool:walls']);
+ assert.ok(used.has('h1')&&used.has('h2')&&used.has('pool:walls'),[...used].join());
  // The retaining wall and the fire pit body share 'base'; each keeps its own seed.
- const baseOff=meshes(off.y).filter(m=>m.material.name==='base'),baseOn=meshes(on.y).filter(m=>m.material.name==='base');
- const walls=matched(baseOn.flatMap((m,i)=>deltas(baseOff[i].geometry.attributes.uv.array,m.geometry.attributes.uv.array)),
-  ['t1:edge:0','fire:body'].map(id=>lib.uvOffsetFor(id,[4,4])));
- assert.equal(walls.size,2,'retaining wall and fire pit body');
+ assert.deepEqual([...seedsOf(pairs(off.y,on.y,'base'),['t1:walls','fire:body'])].sort(),['fire:body','t1:walls']);
+ // A curbed path: one origin per side, continuous along every segment of that side.
+ assert.deepEqual([...seedsOf(pairs(off.y,on.y,'patio_concrete'),['p1:curb:left','p1:curb:right'])].sort(),['p1:curb:left','p1:curb:right']);
+});
+await test('retaining_walls_share_one_origin_per_terrace',async()=>{
+ const p={buildings:[],materials:{},site:{lot:square(-10,-10,40),planting:[],furniture:[],terraces:[{id:'t9',polygon:square(0,0,10),height:3,blend:3,
+  edges:[0,1,2,3].map(i=>i<2?{edge:'sharp',wall:{material:'stone',thickness_in:8,above_in:6,materials:{face:{id:'X'}}}}:{edge:'slope'})}]}};
+ const off=await yard(p,kitFor({random_offset:false})),on=await yard(p,kitFor({random_offset:true}));
+ const list=pairs(off,on,'base');
+ assert.deepEqual([...seedsOf(list,['t9:walls','t9:edge:0','t9:edge:1'])],['t9:walls'],'both edges, one origin');
+ let vertical=0;for(const [a,b] of list)for(const [,dv,ny] of deltas(a,b))if(ny<.5){vertical++;assert.ok(Math.abs(dv)<1e-4);}
+ assert.ok(vertical>0,'the corner keeps its courses');
+});
+await test('bake_layout_ignores_random_offset',async()=>{
+ const {buildAtlas}=await import(file('static/twin/bake/atlas.js'));
+ const {atlasJob}=await import(file('static/twin/bake/atlas_transport.js'));
+ const options={room:{density:1,page:256,gutter:2}},p=plan();
+ const scene=async on=>{const k=kitFor({random_offset:on}),house=buildTwin(p,k,'low',{viewing:true});await house.ready;
+  house.root.add((await buildYard(p,k,'low',{viewing:true})).group);house.root.updateMatrixWorld(true);return house.root;};
+ const off=await scene(false),on=await scene(true);
+ const jobOff=atlasJob(off,p,options),jobOn=atlasJob(on,p,options);
+ assert.notEqual(jobOn.uvKey,jobOff.uvKey,'the cached geometry knows its base uv');
+ assert.notEqual(jobOn.cacheKey,jobOff.cacheKey,'and the input cache keeps them apart');
+ const a=buildAtlas(await scene(false),p,options),b=buildAtlas(await scene(true),p,options);
+ assert.equal(b.key,a.key,'toggling random_offset leaves the bake layout fresh');
+ assert.deepEqual(b.room.charts.map(c=>c.key),a.room.charts.map(c=>c.key),'and every chart key');
 });
 await test('building_reuse_and_yard_keys_follow_random_offset_only_when_used',async()=>{
  const p=plan(),k=kitFor({random_offset:false},{plain:ROLES}),K=k=>structuredClone(k);
@@ -166,6 +207,9 @@ await test('live_toggle_rebuilds_geometry',async()=>{
   assert.equal(buildCalls,calls+1,'turning it on rebuilds the geometry');assert.notDeepEqual(uvs(),before);
   k.manifest.X=entry({random_offset:false},4);await v.refreshMaterials(['X']);
   assert.equal(buildCalls,calls+2,'turning it off rebuilds the geometry');assert.deepEqual(uvs(),before);
+  k.manifest.X=entry({random_offset:true},5);await v.refreshMaterials(['X']);const shifted=uvs();
+  k.manifest.X=entry({random_offset:true,tile_ft:[6,3]},6);await v.refreshMaterials(['X']);
+  assert.equal(buildCalls,calls+3,'a tile edit stays in place');assert.deepEqual(uvs(),shifted,'and never moves uv');
  } finally { v.dispose(); }
 });
 finish();

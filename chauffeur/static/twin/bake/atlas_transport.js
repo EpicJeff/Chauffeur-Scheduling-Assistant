@@ -34,18 +34,23 @@ export function atlasJob(root, plan, layout) {
     for (let p = m; p && !buildingId; p = p.parent) buildingId = p.userData.buildingId;
     return { geometry: geometryData(m.geometry), matrix: m.matrixWorld.toArray(), name: m.material.name, buildingId };
   });
-  const hash = fingerprint();
+  const hash = fingerprint(), uvs = fingerprint();
   // Geometry and room outlines drive the cache. Device movement does not.
-  hash.add('atlas-worker-reach-10'); hash.add(authoredGeometry(plan)); hash.add(JSON.stringify([layout, plan.generatorVersion, plan.buildings?.map(b => ({
+  hash.add('atlas-worker-reach-11'); hash.add(authoredGeometry(plan)); hash.add(JSON.stringify([layout, plan.generatorVersion, plan.buildings?.map(b => ({
     id: b.id, rooms: b.rooms, levels: b.levels }))]));
   for (const m of meshes) {
     hash.add(JSON.stringify([m.matrix, m.name, m.buildingId]));
     // Graded terrain's grid is tiered; its shape is authored (lot, terraces): one key per house.
     if (m.geometry.userData?.bakeHeightfield) { hash.add(JSON.stringify(['heightfield', heightfieldExtent(geometryFrom(m.geometry))])); continue; }
-    for (const [name, a] of Object.entries(m.geometry.attributes)) { hash.add(name); hash.add(a.array); }
+    // Base uv is hashed once, into uvKey, which the input key then folds in.
+    for (const [name, a] of Object.entries(m.geometry.attributes)) { hash.add(name); if (name !== 'uv') hash.add(a.array); }
     if (m.geometry.index) hash.add(m.geometry.index);
+    uvs.add(m.geometry.attributes.uv?.array || new Float32Array(0)); uvs.add('|');
   }
-  return { meshes, plan, layout, cacheKey: hash.key() };
+  hash.add('uv:' + uvs.key());
+  // The layout key ignores base uv, but the cached result carries clipped geometry with
+  // it: uvKey says which base uv that geometry holds (see loadAtlas).
+  return { meshes, plan, layout, cacheKey: hash.key(), uvKey: uvs.key() };
 }
 export function packAtlas(atlas, meshes) {
   const charts = list => list.map(c => ({ ...c, mesh: meshes.indexOf(c.mesh),

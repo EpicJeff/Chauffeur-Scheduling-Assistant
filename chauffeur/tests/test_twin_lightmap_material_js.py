@@ -517,6 +517,33 @@ check('atlas_runs_in_a_worker_and_is_cached', async () => {
   sameAttributes(reference, again, 'from IndexedDB');
 });
 
+check('atlas_cache_never_hands_one_base_uv_to_another', async () => {
+  // random_offset changes base uv but not the layout key; the cached result carries
+  // clipped geometry with base uv, so a scene must never receive another's.
+  need('loadAtlas');
+  const kit = on => { const k = structuredClone(job.kit);
+    k.manifest = { ...(k.manifest || {}), 'uv-test': { kind: 'material', household: true, revision: 1, maps: {},
+      params: { tint: '#ffffff', roughness: null, metalness: null, normal_scale: 1, normal_convention: 'gl', ao_intensity: 1, tile_ft: [4, 4], rotation_deg: 0, random_offset: on } } };
+    k.materials = { ...k.materials, siding: { id: 'uv-test' } }; return k; };
+  const plan = { ...job.plan, materials: { ...(job.plan.materials || {}) } }; delete plan.materials.siding;
+  const build = async on => { const out = gen.buildTwin(plan, kit(on), 'high'); await out.ready; out.root.updateMatrixWorld(true); return out.root; };
+  const uvs = root => covered(root).map(m => [...(m.geometry.attributes.uv?.array || [])]);
+  const idb = fakeIndexedDB();
+  const load = async root => { const before = WORKERS.length;
+    const atlas = await withTimeout(M.loadAtlas(root, plan, job.layout, { Worker: FakeWorker, indexedDB: idb }), 60000, 'loadAtlas()');
+    return { atlas, jobs: WORKERS.slice(before).flatMap(w => w.posted).length }; };
+  const offRoot = await build(false), off = await load(offRoot), offUv = uvs(offRoot);
+  const onRoot = await build(true), on = await load(onRoot);
+  assert.equal(on.atlas.key, off.atlas.key, 'random_offset does not change the layout key');
+  assert.ok(on.jobs >= 1, 'another base uv is laid out afresh');
+  assert.notDeepEqual(uvs(onRoot), offUv, 'the offset scene keeps its own uv');
+  const againRoot = await build(false), again = await load(againRoot);
+  assert.ok(again.jobs >= 1, 'the slot holds the other uv now, so this lays out afresh');
+  assert.deepEqual(uvs(againRoot), offUv, 'never the offset uv in an unshifted scene');
+  const hitRoot = await build(false), hit = await load(hitRoot);
+  assert.equal(hit.jobs, 0, 'the same base uv is a cache hit'); assert.deepEqual(uvs(hitRoot), offUv);
+});
+
 check('lights_draw_real_time_until_the_atlas_is_ready', async () => {
   need('loadAtlas');
   // A worker that has not answered yet: loadAtlas waits on it, the main thread builds nothing.
