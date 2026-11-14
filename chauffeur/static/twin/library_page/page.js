@@ -55,6 +55,7 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   const browseButton = button('Browse online', 'browse', () => browse.shown ? browse.hide() : browse.show(), signal);
   browseButton.setAttribute('aria-controls', browsePanel.id);
   const browse = mountBrowse(browsePanel, { api, signal, onToggle: shown => browseButton.setAttribute('aria-expanded', String(shown)),
+    selection: () => selection, refresh: async () => { if (!stopped) await refreshRows(); },
     open: async id => { if (stopped) return; search.value = ''; source.value = 'all'; await refreshRows(); await select(id); } });
   const search = node('input'); search.type = 'search'; search.placeholder = 'Search materials'; search.dataset.librarySearch = '';
   search.setAttribute('aria-label', 'Search materials');

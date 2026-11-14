@@ -171,6 +171,78 @@ await test('default_api_error_carries_status',async()=>{
  assert.equal(urls[0],'/api/hassio_ingress/tok/api/house/materials/sources/polyhaven?q=');
  assert.equal(error.status,503);assert.equal(error.message,'Online libraries are not reachable.');
 });
+const polls=c=>c.calls.filter(x=>x.path.startsWith('materials/jobs/')).length;
+const addOf=(c,key='polyhaven:red_brick')=>c.card(key).querySelector('[data-action="add"]');
+await test('stop_mid_poll_stops_polling',async()=>{
+ const c=await setup({job:async()=>({state:'running',progress:.1})});
+ await c.openBrowse();fire(addOf(c),'click');await pause(580);assert.equal(polls(c),1);
+ c.page.stop();await pause(1100);assert.equal(polls(c),1,'no poll after stop');assert.deepEqual(c.alerts,[]);
+});
+
+await test('double_click_add_one_post_one_poller',async()=>{
+ const c=await setup({job:async n=>n<2?{state:'running',progress:.3}:{state:'done',progress:1,material_id:'red-brick-2'}});
+ await c.openBrowse();const add=addOf(c);
+ const a=fire(add,'click'),b=fire(add,'click');await a;await b;await pause(700);
+ assert.equal(c.calls.filter(x=>x.method==='POST').length,1);assert.equal(polls(c),2);
+ assert.equal(c.calls.filter(x=>x.path==='materials/red-brick-2').length,1,'opened once');c.page.stop();
+});
+
+await test('poll_blips_are_retried',async()=>{
+ const c=await setup({job:async n=>{if(n<=2)throw fail(502,'Bad gateway');return {state:'done',progress:1,material_id:'red-brick-2'};}});
+ await c.openBrowse();await click(addOf(c));
+ assert.equal(polls(c),3);assert.deepEqual(c.alerts,[]);
+ assert.equal(c.host.querySelector('[data-material="red-brick-2"]').getAttribute('aria-pressed'),'true');c.page.stop();
+});
+
+await test('poll_gives_up_after_five_retries_and_says_it_may_finish',async()=>{
+ const c=await setup({job:async()=>{throw fail(502,'Bad gateway');}});
+ await c.openBrowse();const card=c.card('polyhaven:red_brick'),add=addOf(c);
+ const rows=()=>c.calls.filter(x=>x.path==='materials'&&x.method==='GET').length,before=rows();
+ await click(add);
+ assert.equal(polls(c),6,'the first poll plus five retries');
+ assert.equal(c.alerts.length,1);assert.match(c.alerts[0],/may still finish/);assert.match(c.alerts[0],/catalogue/);
+ assert.doesNotMatch(textOf(card.querySelector('output')),/Not added/);assert.match(textOf(card.querySelector('output')),/may still finish/);
+ assert.equal(rows(),before+1,'catalogue rows refreshed');assert.equal(add.disabled,false);
+ await pause(600);assert.equal(polls(c),6);c.page.stop();
+});
+
+for(const [name,leave] of [['late_job_after_another_pick_does_not_open',c=>click(c.host.querySelector('[data-material="brick"]'))],
+  ['late_job_with_browse_closed_does_not_open',c=>click(c.q('[data-action="browse"]'))]]){
+ await test(name,async()=>{
+  const c=await setup({job:async n=>n<2?{state:'running',progress:.5}:{state:'done',progress:1,material_id:'red-brick-2'}});
+  await c.openBrowse();const card=c.card('polyhaven:red_brick'),before=c.q('[aria-pressed="true"][data-material]').dataset.material;
+  fire(addOf(c),'click');await pause(200);await leave(c);
+  const picked=c.q('[aria-pressed="true"][data-material]').dataset.material;await pause(1100);
+  assert.equal(polls(c),2);assert.equal(c.calls.filter(x=>x.path==='materials/red-brick-2').length,0,'not opened');
+  assert.equal(c.q('[aria-pressed="true"][data-material]').dataset.material,picked);
+  assert.ok(c.host.querySelector('[data-material="red-brick-2"]'),'catalogue rows refreshed');
+  assert.match(textOf(card.querySelector('output')),/Added/);assert.deepEqual(c.alerts,[]);
+  assert.ok(before);c.page.stop();
+ });
+}
+
+await test('failed_search_retries_on_reopen_and_active_source',async()=>{
+ let n=0;const c=await setup({search:async source=>{if(++n%2===1)throw fail(503,'Online libraries are not reachable.');return ROWS[source];}});
+ await c.openBrowse();assert.match(textOf(c.q('[data-browse-status]')),/not reachable/);assert.equal(c.q('[data-browse-result]'),null);
+ await click(c.q('[data-action="browse"]'));await c.openBrowse();
+ assert.equal(c.searches().length,2,'reopening after a failure searches again');assert.ok(c.card('polyhaven:red_brick'));
+ await click(c.q('[data-browse-source="polyhaven"]'));assert.equal(c.searches().length,3);assert.equal(c.q('[data-browse-result]'),null);
+ await click(c.q('[data-browse-source="polyhaven"]'));assert.equal(c.searches().length,4,'the active source button retries');
+ assert.ok(c.card('polyhaven:red_brick'));
+ await click(c.q('[data-action="browse"]'));await c.openBrowse();assert.equal(c.searches().length,4,'a good search is not repeated on reopen');
+ c.page.stop();
+});
+
+await test('wait_listener_is_removed_after_each_poll',async()=>{
+ const add=AbortSignal.prototype.addEventListener,remove=AbortSignal.prototype.removeEventListener;let live=0;
+ AbortSignal.prototype.addEventListener=function(type,fn,o){if(type==='abort')live++;return add.call(this,type,fn,o);};
+ AbortSignal.prototype.removeEventListener=function(type,fn,o){if(type==='abort')live--;return remove.call(this,type,fn,o);};
+ try{
+  const c=await setup({job:async()=>({state:'running',progress:.2})});
+  await c.openBrowse();fire(addOf(c),'click');await pause(560);const after1=live;
+  await pause(1000);assert.equal(polls(c),3);assert.equal(live,after1,'abort listeners do not grow with each poll');c.page.stop();
+ }finally{AbortSignal.prototype.addEventListener=add;AbortSignal.prototype.removeEventListener=remove;}
+});
 finish();
 """
 
