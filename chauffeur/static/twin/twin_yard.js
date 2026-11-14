@@ -1,6 +1,19 @@
 import { applyObject, objectShown, objectMaterialKey, sitePieces } from './objects.js';
 import * as THREE from 'three';
-import { Tree } from '@dgreenheck/ez-tree';
+import * as EZTree from '@dgreenheck/ez-tree';
+const { Tree } = EZTree;
+
+// EZ-Tree's loadPreset() copies the preset and generates the whole tree; the saved seed then
+// needs a second generate(), so every plant was built twice and the first thrown away (about
+// half of all yard build time, found 2026-11-13). Copy the preset's options, set the seed,
+// generate once. Without a preset table (a stand-in Tree) it falls back to loadPreset.
+export function presetTree(preset, seed) {
+  const tree = new Tree(), options = EZTree.TreePreset?.[preset];
+  if (options && tree.options?.copy) tree.options.copy(structuredClone(options));
+  else tree.loadPreset(preset);
+  tree.options.seed = seed; tree.generate();
+  return tree;
+}
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
 import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey } from './twin_library.js';
 import { groundAt, buildingBase, buildingFootprint } from './twin_ground.js';
@@ -64,7 +77,7 @@ function releasePlant(tree, keepMaterials = new Set()) {
 }
 
 async function bakePreset(preset, seed, renderer) {
-  const tree = new Tree(); tree.loadPreset(preset); tree.options.seed = seed; tree.generate();
+  const tree = presetTree(preset, seed);
   standardTree(tree);
   await imagesReady(tree);
   const bounds = new THREE.Box3().setFromObject(tree), size = bounds.getSize(new THREE.Vector3()), center = bounds.getCenter(new THREE.Vector3());
@@ -357,7 +370,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         cacheModelMaterials(holder, 'plant-card:' + p.preset + ':' + objectMaterialKey(p, p.id || index), mats);
         if (viewing) mergeStatic(holder);
       } else {
-        const tree = new Tree(); tree.loadPreset(p.preset); tree.options.seed = p.seed ?? 1; tree.generate(); standardTree(tree, mats);
+        const tree = presetTree(p.preset, p.seed ?? 1); standardTree(tree, mats);
         const bounds = new THREE.Box3().setFromObject(tree), h = bounds.max.y - bounds.min.y, scale = p.height / Math.max(0.01, h);
         tree.scale.setScalar(scale);
         applyObject(tree, p, { units: 1 });
