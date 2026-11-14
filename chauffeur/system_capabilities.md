@@ -1,6 +1,42 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.868 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.869 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.869 (2026-11-14, NOT device-verified): light fixtures shine in the live house. A fixture drawn as a spot, a line or a panel now lights the scene as that shape, and a line or panel shows as a glowing strip or panel. Light fixtures Task 3 (slice B).**
+
+There is still no editor for fixtures (Tasks 4-5), so today they exist only where the stored house carries them. Bake support for the new shapes is Task 6.
+
+**What a person sees** (Lights and All modes, `static/twin/live/real_lights.js`, `live/fixture_glow.js`, `live/modes.js`).
+- **Spot:** a cone aimed at its aim point, with its cone angle and soft edge.
+- **Line:** a glowing tube along the drawn path, and light cast from it in the direction it faces. A line is lit by at most 4 equal pieces however long it is. On a bent path facing out or in, each piece faces outward from its own leg.
+- **Area:** a glowing panel and light from its face.
+- Glow follows the entity: on, off, colour and brightness. Glow is unlit geometry, so it never needs a light slot.
+- When more fixtures are on than the tier can light, the nearest and brightest are lit, the rest still glow, and the legend says "Some lights are shown as glow only on this tier". Ordinary lamps over the limit keep their floor wash as before and do not trigger that line.
+- The tier badge now reads Low, Medium, High or Max.
+
+**Limits per tier** (`static/twin/twin_tiers.js`; `realLights` is now `{point, spot, area, shadows}`).
+
+| tier | point | spot | area | lamp shadows |
+|---|---|---|---|---|
+| low | 4 | 1 | 2 | 0 |
+| medium | 8 | 2 | 4 | 1 |
+| high | 12 | 4 | 8 | 1 |
+| max | 16 | 6 | 12 | 1 |
+
+- Medium and Max exist only through `?tier=`; automatic choice is still Low or High.
+- **One lamp shadow, not two, in a house with fixtures.** A fully mapped material with the shadowmask lightmap, the area-light lookup textures and the sun shadow uses 15 of 16 samplers. The single shadow goes to the nearest lit point or spot.
+- **A house with no fixtures is unchanged:** the earlier point-only pool (4 / 8 / 16 / 16 lights, 2 shadows on High and Max), same brightness, floor wash, bulbs and bake tints. The profile is chosen at mount; adding the first fixture or removing the last remounts the layer.
+- Fire pits stay on their object lamps.
+
+**Invariants.**
+- Every slot of every type stays visible while the pool is shown, parked at intensity 0, and the shadow count is fixed, so switching lights never compiles a shader. Moving the one shadow between a point and a spot switches between two programs that are both warmed at mount.
+- Area and line lights cast no shadows (three's `RectAreaLight`); they light through walls until the bake carries them.
+- Units: lumens become candela for points (lm / 4 pi), the cone formula for spots, and luminance for areas (lm / (pi x area)). A default fixture equals the earlier 40 cd lamp.
+- Lattice and imported models never receive the lightmap patch (`alphaTest`, `bakeExcluded`), so their extra maps cannot exceed the sampler limit.
+
+**Seen in Chromium** (High, night, a 17.6 ft line under a 2 ft wall cap, an L-shaped line facing out, a panel and a spot): strips follow their paths and both legs of the bend, off is dark, no page errors. Two things to tune on device: the ground right under a default-output line is close to white at night exposure, and the edge between a lit piece and a glow-only piece shows as a step in the ground light.
+
+**Tests.** `test_twin_fixture_lights_js` 10/10 (quotas, a 60 ft line on Low lighting 2 of 4 pieces, spot aim, glow follows path and state, bent line, legacy overflow, fixture-free pool unchanged), `test_twin_real_lights_js` 10/10, emitters 24/24 + 5/5, live control 8/8, live rooms 10/10, energy 38/38, import maps 4/4, `test_twin_shadowmask_live` 11/11 in Chromium with GPU (two new: the High typed pool links with the fully mapped lightmap material within 16 samplers and keeps its program keys across switches; baked matches live with only an area light present), `test_house_twin_energy_live` 7/7. `test_twin_lightmap_material_js` 8/9: `fresh_bake_frees_the_pool_slot` fails the same way on main. `test_house_twin_real_lights_live` did not pass whole in one run: 8, 8 and 9 of 10 over three runs, a different scenario each time, all on loopback timeouts (WinError 10060); every scenario passed in at least one run, and main gave 7 and 9 of 10 the same way on the same machine.
 
 **v2.499.868 (2026-11-14, NOT device-verified): the Library imports a material from a glTF file, and a material can shift its texture per surface so tiling does not line up. Material library Tasks 9-10; the arc is complete.**
 

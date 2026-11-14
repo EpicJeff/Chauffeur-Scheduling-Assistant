@@ -99,8 +99,10 @@ Normalisation drops a malformed fixture with a note, and never drops the entity'
 |---|---|---|---|---|
 | low | 4 | 1 | 2 | 0 |
 | medium | 8 | 2 | 4 | 1 |
-| high | 12 | 4 | 8 | 2 |
-| max | 16 | 6 | 12 | 4 |
+| high | 12 | 4 | 8 | 1 |
+| max | 16 | 6 | 12 | 1 |
+
+Built (v2.499.869): high and max were 2 and 4 shadow casters. A fully mapped material with the shadowmask lightmap, the area-light lookup textures and the sun shadow uses 15 of the 16 samplers a GPU guarantees, which leaves one lamp shadow. A house with no fixtures keeps the earlier point-only pool (16 lights, 2 shadows on high).
 
 - A line run expands into at most 4 area pieces, merged evenly however long it is.
 - **Selection:** candidates are per fixture, picked by distance to the view target and by output, as today per device.
