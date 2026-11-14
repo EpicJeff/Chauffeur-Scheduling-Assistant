@@ -1,6 +1,52 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.857 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.858 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.858 (2026-11-14, NOT device-verified): a yard edit rebuilds only the yard parts it changed. A fence edit no longer rebuilds the terrain.**
+
+**The evidence.** The user's house, editing one yard feature: `yard` 5121 ms, of which `yard_terrain` 3294, `yard_plants` 982, `yard_fences` 421 and `yard_hardscape` 331. v2.499.848 reused the whole yard only when nothing in it changed.
+
+**What changed** (`static/twin/twin_yard.js`, `twin_view.js`).
+- `buildYard` builds nine parts, each with its own key covering exactly what it reads:
+
+  | Part | Key inputs |
+  |---|---|
+  | terrain | tier, lot, the grade (pads), which pad edges carry walls, pool and spa outlines, lawn finish |
+  | plants | tier, viewing mode, grade, planting fields |
+  | fences | tier, grade, fence fields and slots, resolved finishes |
+  | hardscape | tier, grade, pool and spa holes, hardscape/bed/edge-strip fields and finishes |
+  | pool | tier, grade, pool fields and features, finishes |
+  | fire_pits | tier, grade, fire pit fields, finishes |
+  | retaining_walls | tier, pad fields including walls, resolved wall finishes |
+  | furniture | tier, viewing mode, grade, furniture and imported planting, building placement/footprint/porches, model metadata |
+  | grass | High tier only: grade and edge outlines |
+
+  The whole-yard key is their union.
+- A rebuild reuses every part whose key is unchanged. Each reused object carries `userData.yardPart` and moves into the new yard root after the revision check, in a stable order; changed parts are built fresh.
+- The yard root stays flat, as existing consumers (bake, retaining walls, ground) expect.
+- The material map is pruned to materials still in use, so a replaced slot material and its textures are freed.
+- Late furniture loads join the right root.
+- Edit timing records `yard_reused_parts` and `yard_rebuilt_parts`.
+
+**Measured (Chromium headless, test house).**
+
+| Edit | yard, main | yard, now | rebuild, main | rebuild, now |
+|---|---|---|---|---|
+| move a fence | 28.8 s | 5 ms (fences only) | 30.6 s | 1.05 s |
+| move a patio | 30.5 s | 57 ms (hardscape only) | 32.1 s | 1.39 s |
+
+- A plant move still rebuilds plants, as it should.
+- Draw calls: 132 before, 133 now.
+- No page errors.
+
+**Built from Codex's unfinished split, then fixed:** an empty retaining-wall builder, a nested group structure that broke bake, ground and wall consumers, a material leak, and part keys computed before imported-model metadata had resolved.
+
+**Tests.**
+- `test_twin_yard_reuse_js` 20/20: fence, plant, fence-slot, pad, pool-outline and pool-depth edits each rebuild exactly their parts; a replaced slot material is released; a per-part key guard of 124 mutations shows each input changes exactly the parts that read it.
+- `test_twin_bake_fingerprint_js`: a fence edit leaves every terrain chart key unchanged.
+- `test_twin_yard_parts_draw_calls_js`: the census is within budget.
+- Neighbours: edit timing js, yard material slots js, pool features js, yard rooms js 3/3, light reach js 20/20, tree once js, terrain tools js, retaining wall js, ground js, porches js 5/5, material render js, bake runtime js 17/17, energy js 38/38, import maps 3/3.
+- Not browser-verified: that the bake stays fresh after a fence edit. The node chart-key check covers it.
 
 **v2.499.857 (2026-11-14, NOT device-verified): an editor edit flattens the house half as often and normalizes it once instead of twice.**
 
