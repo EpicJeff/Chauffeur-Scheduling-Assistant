@@ -3,6 +3,7 @@ import { createPreview } from './preview.js';
 import { mountProperties, defaults, slots, node, button } from './properties.js';
 import { slotForFilename } from './texture_slots.js';
 import { mountBrowse } from './browse.js';
+import { readGltfMaterials } from './gltf_import.js';
 
 // Nav owns authentication. Every endpoint stays relative to the ingress base.
 export async function libraryApi(path, method = 'GET', body) {
@@ -23,6 +24,7 @@ export async function libraryApi(path, method = 'GET', body) {
 }
 
 const copy = value => structuredClone(value);
+const MODEL = /\.(glb|gltf)$/i;
 const merge = (entry, change) => ({ ...entry, ...change, params: { ...entry.params, ...change.params } });
 const normalized = entry => ({ ...entry, maps: entry.maps || {}, params: { ...defaults, ...entry.params } });
 
@@ -57,6 +59,14 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   const browse = mountBrowse(browsePanel, { api, signal, onToggle: shown => browseButton.setAttribute('aria-expanded', String(shown)),
     selection: () => selection, refresh: async () => { if (!stopped) await refreshRows(); },
     open: async id => { if (stopped) return; search.value = ''; source.value = 'all'; await refreshRows(); await select(id); } });
+  const importLabel = node('label', 'Import glTF', 'library-import'), importInput = node('input');
+  importInput.type = 'file'; importInput.multiple = true; importInput.dataset.gltfFiles = '';
+  importInput.accept = '.glb,.gltf,.bin,.png,.jpg,.jpeg,.webp';
+  importInput.setAttribute('aria-label', 'Import glTF: choose a .glb, or a .gltf with its .bin and texture files');
+  importInput.addEventListener('change', async () => {
+    try { await importGltf(Array.from(importInput.files || [])); } finally { importInput.value = ''; }
+  }, { signal });
+  importLabel.append(importInput);
   const search = node('input'); search.type = 'search'; search.placeholder = 'Search materials'; search.dataset.librarySearch = '';
   search.setAttribute('aria-label', 'Search materials');
   const source = node('select'); source.dataset.librarySource = ''; source.setAttribute('aria-label', 'Material source');
@@ -65,7 +75,7 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   }
   source.value = 'all';
   const grid = node('div', null, 'library-grid');
-  left.append(newButton, browseButton, search, source, grid);
+  left.append(newButton, browseButton, importLabel, search, source, grid);
   search.addEventListener('input', drawGrid, { signal }); source.addEventListener('change', drawGrid, { signal });
   const shape = node('div', null, 'editor-actions'), lighting = node('div', null, 'editor-actions');
   shape.setAttribute('role', 'group'); shape.setAttribute('aria-label', 'Preview shape');
@@ -91,7 +101,8 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   }, { signal });
   right.addEventListener('drop', event => {
     event.preventDefault();
-    return uploadTextures(Array.from(event.dataTransfer?.files || []));
+    const files = Array.from(event.dataTransfer?.files || []);
+    return files.some(file => MODEL.test(file.name || '')) ? importGltf(files) : uploadTextures(files);
   }, { signal });
   const endpoint = ctx => 'materials/' + encodeURIComponent(ctx.draft.id);
   function setStatus(ctx, text) {
@@ -230,6 +241,54 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
       delete ctx.uploadStatus;
       setStatus(ctx, `Textures: ${uploaded} uploaded, ${skipped} skipped, ${failed} failed`);
     } finally { delete ctx.uploadStatus; uploading = false; setBusy(ctx, false); }
+  }
+  async function importGltf(files) {
+    // The chosen material becomes a new Library entry; its maps then upload
+    // through the same per-map route and local preview as loose textures.
+    if (stopped || uploading || context?.busy || !files.length) return;
+    uploading = true; importInput.disabled = true;
+    let ctx;
+    try {
+      status.textContent = 'Reading glTF…';
+      const found = await readGltfMaterials(files);
+      if (stopped) return;
+      if (!found.length) throw new Error('That glTF file has no materials.');
+      let chosen = found[0];
+      if (found.length > 1) {
+        const model = files.find(file => MODEL.test(file.name || ''));
+        const pick = await window.promptChoice('Import which material?',
+          `${model.name} has ${found.length} materials. Choose one to add to the Library.`,
+          found.map((material, index) => ({ value: String(index), label: material.name })));
+        if (stopped) return;
+        if (pick === null || pick === undefined || !found[Number(pick)]) { status.textContent = 'glTF import cancelled'; return; }
+        chosen = found[Number(pick)];
+      }
+      await flush(context);
+      const entry = await api('materials', 'POST', { name: chosen.name, source: 'gltf', params: chosen.params });
+      if (stopped) return;
+      search.value = ''; source.value = 'all';
+      await refreshRows(); await select(entry.id, entry);
+      if (stopped || context?.draft.id !== entry.id) return;
+      ctx = context; setBusy(ctx, true);
+      const maps = Object.entries(chosen.maps);
+      let uploaded = 0, failed = 0;
+      for (const [index, [slot, blob]] of maps.entries()) {
+        if (stopped) break;
+        ctx.uploadStatus = `Uploading ${index + 1} of ${maps.length}: ${slots.find(([value]) => value === slot)?.[1] || slot}`;
+        setStatus(ctx, ctx.uploadStatus);
+        if (await uploadMap(ctx, slot, blob)) uploaded++; else failed++;
+      }
+      delete ctx.uploadStatus;
+      setStatus(ctx, `glTF import: ${uploaded} maps uploaded, ${failed} failed`);
+      if (chosen.problems.length) report(new Error(`Some maps were not imported:\n${chosen.problems.join('\n')}`));
+    } catch (error) {
+      if (!stopped) status.textContent = 'glTF import failed';
+      report(error);
+    } finally {
+      if (ctx) delete ctx.uploadStatus;
+      uploading = false; importInput.disabled = false;
+      if (ctx) setBusy(ctx, false);
+    }
   }
   async function clearMap(slot) {
     const ctx = context;

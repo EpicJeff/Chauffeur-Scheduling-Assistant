@@ -72,6 +72,10 @@ def test_house_editor_page():
     return check_page('house_editor.html', entries + ['twin/editor/editor.js'])
 
 
+def test_house_library_page():
+    return check_page('house_library.html', ['twin/library_page/page.js'])
+
+
 def test_lod_worker_urls():
     # A worker cannot see an import map. Execute the actual rendered config
     # against trailing-slash and HA ingress pages, using a distinct ver per file.
@@ -102,7 +106,7 @@ def test_lod_worker_urls():
 
 
 if __name__ == '__main__':
-    tests = [test_house_twin_page, test_house_editor_page, test_lod_worker_urls]
+    tests = [test_house_twin_page, test_house_editor_page, test_house_library_page, test_lod_worker_urls]
     passed = 0
     for fn in tests:
         try:

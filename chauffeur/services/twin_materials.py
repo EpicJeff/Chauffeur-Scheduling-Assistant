@@ -300,12 +300,22 @@ def new_id() -> str:
 def create(fields, actor, *, material_id=None, source=None) -> dict:
     """Publish a new material. `material_id` adopts a staged folder whose maps were
     ingested with `ingest_image(..., staged=True)`; `source` records a download's
-    origin and snapshots its maps and params for "Reset to source"."""
+    origin and snapshots its maps and params for "Reset to source".
+
+    The one origin a request may name is `gltf`: the Library page's glTF import
+    creates the material, then uploads its maps through the ordinary map route.
+    It has no source snapshot, so there is nothing to reset to."""
+    origin = 'user'
+    if isinstance(fields, dict) and 'source' in fields:
+        fields = dict(fields)
+        origin = fields.pop('source')
+        if origin != 'gltf' or source is not None:
+            raise ValueError('Choose a valid material source.')
     mid = new_id() if material_id is None else _id(material_id)
     with _lock(mid):
         if (root() / mid / 'material.json').exists():
             raise ValueError('That material already exists.')
-        record = dict(id=mid, name='', source='user', licence=None, source_url=None, based_on=None,
+        record = dict(id=mid, name='', source=origin, licence=None, source_url=None, based_on=None,
                       revision=0, archived=False, created_by=actor, updated_at=None, maps={},
                       params=deepcopy(DEFAULT_PARAMS), source_snapshot=None)
         record = _fields(mid, fields, record)

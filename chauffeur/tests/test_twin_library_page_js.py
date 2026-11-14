@@ -74,7 +74,8 @@ await test('builtin_shows_duplicate_not_edit',async()=>{
  const c=await setup(record('brick','builtin'));assert.ok(c.action('duplicate'));
  assert.equal(c.action('delete'),null);assert.equal(c.action('undo'),null);
  assert.equal(c.host.querySelector('[data-param]'),null);
- assert.equal(c.host.querySelector('input[type="file"]'),null);
+ // No map inputs: the page's only file input is Import glTF, which makes a new material.
+ assert.deepEqual(c.host.querySelectorAll('input[type="file"]').map(x=>'gltfFiles' in x.dataset),[true]);
  await click(c.action('duplicate'));assert.ok(c.calls.some(x=>x.path==='materials/brick/duplicate'&&x.method==='POST'));c.page.stop();
 });
 await test('delete_refusal_shows_reason_no_dialog',async()=>{

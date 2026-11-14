@@ -393,6 +393,26 @@ def test_patch_cannot_archive_or_relabel():
         assert materials.get(row['id']) == row
 
 
+def test_gltf_import_creates_a_gltf_material_through_the_map_route():
+    seed()
+    with Ctx() as c:
+        params = {'tint': '#bc89ff', 'roughness': 0.6, 'metalness': 0.2, 'normal_scale': 0.75,
+                  'normal_convention': 'gl', 'ao_intensity': 0.5}
+        row = create(c, name='Brick wall', source='gltf', params=params)
+        assert row['source'] == 'gltf' and row['source_snapshot'] is None
+        assert {k: row['params'][k] for k in params} == params
+        uploaded = upload(c, row['id'], slot='orm')
+        assert uploaded.status_code == 200, uploaded.text
+        assert uploaded.json()['source'] == 'gltf' and uploaded.json()['maps']['orm'].startswith('maps/')
+        # gltf is the only origin a request may name, and only when creating.
+        for label in ('builtin', 'polyhaven', 'ambientcg', 'user', 'GLTF', None):
+            assert c.client.post(API, headers=c.mum, json={'name': 'Forged', 'source': label}).status_code == 400, label
+        assert c.client.patch(f"{API}/{row['id']}", headers=c.mum, json={'source': 'user'}).status_code == 400
+        assert c.client.post(API, headers=c.kid, json={'name': 'Kid', 'source': 'gltf'}).status_code in (401, 403)
+        listed = {r['id']: r for r in c.client.get(API, headers=c.mum).json()['materials']}
+        assert listed[row['id']]['source'] == 'gltf'
+
+
 def test_huge_dimensions_refused_before_decode():
     seed()
     def chunk(kind, data):
