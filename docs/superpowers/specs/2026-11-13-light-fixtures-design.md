@@ -1,6 +1,6 @@
 # Light fixtures: design
 
-Date: 2026-11-13. Status: draft for the user's approval.
+Date: 2026-11-13. Status: draft for the user's approval; revised after Codex adversarial review (ownership, quotas, persistence, invalidation, snapped hosts, emission states, units, legacy placement).
 
 ## Why
 
@@ -38,7 +38,15 @@ This builds on the bake-every-light work (yard and fire-pit lights baked onto ya
 
 ## The model
 
-A placed light device has `fixtures: [fixture]`, at most 64 per device. A device with no `fixtures` keeps today's behaviour exactly: one point fixture at its marker. Old houses render unchanged.
+**Ownership and storage (revised).** Fixtures are owned by the **entity** that switches them, not by the device placement:
+- They live in the model at `light_fixtures: {<entity_id>: [fixture, …]}`, at most 64 per entity.
+- This matters because the existing placement ops (`place_device`, marker drag, yard-height edits) rebuild a device's placement record from device, host, offset and source. Fixtures stored there would be erased by an ordinary marker move.
+- The marker remains the control icon. Moving it never moves the fixtures, and re-placing or regrouping a device (Show as, v2.499.841) never touches them.
+- A device with several entities can have fixtures on each one.
+
+**Legacy placement (revised).** An entity with no `light_fixtures` entry uses today's legacy resolver unchanged, in both live and bake: floor lamps raised by `LAMP_HEIGHT`, ceiling emitters lowered by 0.2 ft (`modes.js`, `reach.js`). Old houses render exactly as before.
+
+**Fixture coordinates** are explicit lot feet plus a vertical reference (`ref: floor | ground | absolute`, with the host building and level for `floor`). The legacy offsets do not apply to them.
 
 | shape | fields |
 |---|---|
@@ -47,11 +55,35 @@ A placed light device has `fixtures: [fixture]`, at most 64 per device. A device
 | `line` | `path` [[x, y, z], …] (2-64 points), or `edge` (a reference to a host edge, see the editor section), plus `facing`: `down` / `out` / `up` / `in` relative to the host edge (default `down`), and `width_in` 0.25-2 (default 0.5) |
 | `area` | `at` (the centre), `size_ft` [w, h], `facing` (a unit normal, or the `down`/`out`/`up` presets), `rotation_deg` |
 
-- Each fixture also has `id` and an optional `intensity` share (default: the entity's brightness split by fixture length or area, so one 40 ft rope run is not 40 times brighter than a 1 ft one).
-- Every fixture of a device follows the device's entity: on/off, brightness and colour or temperature.
-- **Which entities can have fixtures:** `light.*`, `switch.*` (a switch counts as a light once it has fixtures), and `media_player.*` for a TV screen. A TV screen is an `area` fixture that glows while the player is on or playing, with a cool white default colour.
+- Each fixture has a stable `id` (`fixture:<uuid>`), plus an optional `share`.
+
+**Output and units (revised).**
+- Each entity has a total output, `output_lm`, in lumens. The default 503 lm equals today's 40 cd point (40 × 4π).
+- Each fixture gets a share of it: the authored `share`, otherwise proportional to length (line) or area (area), with points and spots counted as 1 each. So a 40 ft rope run is not 40 times brighter than a 1 ft one, and subdividing a run never changes the total.
+- **Conversions:**
+  - point: cd = lm / 4π;
+  - spot: cd = lm / (2π(1 − cos(cone/2)));
+  - area: luminance = lm / (π·A), the three.js `RectAreaLight` convention;
+  - line: treated as an area of length × `width_in`, split into segments whose luminance stays constant.
+- Live and bake use the same conversion, so they match.
+- Brightness and colour from Home Assistant scale the entity's output.
+
+**When an entity emits (revised).** This is a single shared resolver, `emission(entity_state, domain)`, used by both live and bake. Device control kinds and their controls are unchanged.
+- `light`: `on`, with brightness and colour from the state.
+- `switch`: `on` gives brightness 1 at 2700 K by default (adjustable per entity).
+- `media_player` (TV screen): `on`, `playing` and `paused` emit; `idle`, `standby` and `off` do not. The default colour is 6500 K at 30% output.
+- `unavailable`, `unknown` and stale data: no emission.
 - **The fire pit derives its fixtures; you never place them.** A linear burner (about 4:1 or longer) gives a `line` along the burner centre, facing up. A wider burner gives an `area` the burner's size, facing up. A wood fire gives a `point` above the logs. The fire pit's entity drives them.
-- **Validation is server-side.** It refuses a path outside the lot or with too few points. Normalisation on load drops an invalid fixture with a note and never drops the device.
+- **Validation is server-side.** It refuses a path outside the lot or with too few points.
+
+**Snapped runs (revised).** A line always stores its resolved `path`. It may also store `snap: {host: {kind, id}, edge: {from: [x, y], to: [x, y]}, t0, t1}`:
+- `host` is a stable host id: retaining-wall pad id plus edge, patio/path/deck id, step id, wall id or fence id.
+- `edge` is the edge's endpoints, not an index, so a reshape that renumbers edges still finds it by nearest matching endpoints.
+- When the host moves or reshapes, the path is re-resolved from the snap.
+- If the host or edge is gone, after a deletion, a split or join that removes the edge, or a reversal the match cannot follow, the fixture keeps its last `path`, gets `detached: true` and shows a "Reattach" prompt in its row. It is never dropped.
+- Undo of the host change restores the attachment.
+
+Normalisation drops a malformed fixture with a note, and never drops the entity's other fixtures or the device.
 
 ## Rendering
 
@@ -61,12 +93,32 @@ A placed light device has `fixtures: [fixture]`, at most 64 per device. A device
 - line → a thin emissive strip mesh along the path (the visible rope), plus `RectAreaLight`s along the run facing `facing`. Each covers at most a few feet;
 - area → `RectAreaLight` plus an emissive panel (the burner glow or the TV screen).
 - `RectAreaLight` needs `RectAreaLightUniformsLib`, lights only Standard/Physical materials, and casts no shadows. That is acceptable, because the bake carries the shadows.
-- **Budget.** Fixtures count against the existing per-tier real-light pool (`real_lights.js`, `TIERS[tier].realLights`), picked by distance and intensity as today.
-- **Programs.** The pool keeps a fixed number of each light type visible, so programs never recompile when lights switch. That is the existing rule for point lights; extend it per type and warm the programs.
+- **Quotas (revised).** Each tier has fixed slot counts per type. Every expanded light counts, so each `RectAreaLight` piece of a line counts against the area quota. My numbers, which the builder tunes against frame time:
+
+| tier | point | spot | area | shadow casters |
+|---|---|---|---|---|
+| low | 4 | 1 | 2 | 0 |
+| medium | 8 | 2 | 4 | 1 |
+| high | 12 | 4 | 8 | 2 |
+| max | 16 | 6 | 12 | 4 |
+
+- A line run expands into at most 4 area pieces, merged evenly however long it is.
+- **Selection:** candidates are per fixture, picked by distance to the view target and by output, as today per device.
+- **Overflow:** fixtures over quota still show their emissive glow (strip, burner, screen), and the bake carries their light. Without a bake they are glow-only, and the energy-check style status says "Some lights are shown as glow only on this tier".
+- **Programs:** the pool keeps every slot of every type visible inside Lights mode, with fixed shadow-caster counts, because three keys programs on light counts and shadow counts too. The fixed variants are warmed, as the existing point pool already is.
 
 ### Bake
 - Each shape is an emitter in the lightmap baker: point (as today), spot (a cone mask with a soft edge), line (sampled along its length with facing cosine falloff) and area (sampled over its rectangle). All four cast shadows.
-- **Grouping.** All fixtures of one entity share one bake channel, because they always switch together. The 6-channels-per-chart limit therefore counts entities, not fixtures: a 12-light landscape circuit uses one channel.
+- **Grouping (revised).** All fixtures of one entity share one bake channel, because they always switch together.
+  - Today the pipeline keys lights by device: `real_lights.js` maps candidates by device, and `atlas.js` `assignChannels` drops repeats of a device.
+  - Fixtures become distinct emitters with fixture ids for reach and sampling. Their per-chart irradiance and receivers are aggregated **by entity** before the per-chart channel ranking, and the published channel is the entity's.
+  - So a 12-light landscape circuit uses one channel per chart, and the 6-per-chart limit counts entities.
+- **Invalidation (revised).** A canonical, resolved emitter signature per entity covers shape, positions, aim, cone, dimensions, facing, shares, output and the resolved snapped path. It is threaded through:
+  - the live `layoutKey`, so a changed aim remounts the live layer;
+  - the bake's light transport (`lightsOf`);
+  - the reach cache input;
+  - the bake fingerprint (`baker.js`), with a bake format version bump.
+  Changing a spot's aim or cone marks the bake stale. A test covers each kind of edit.
 - **Emissive surfaces:** the rope strip, the burner and the TV panel glow in the bake too, and stay unlit by other lights.
 
 ## The editor
@@ -90,8 +142,15 @@ A placed light device has `fixtures: [fixture]`, at most 64 per device. A device
 - Old houses unchanged: no `fixtures` means today's single point.
 - Every Home Assistant touchpoint degrades gracefully. Without HA, fixtures draw unlit, as markers do today.
 - **Argyle:** the `house_design` tool description is at its 6,000-character cap. Fixtures are hand-only until that description is compressed; the hand path rule is satisfied.
-- Tests:
-  - per shape: data validation, real-time light creation and budget, bake emitter output (a node test of the bake pass against known geometry), and editor tools;
+- Tests (acceptance cases from the review are included):
+  - per shape: data validation, real-time light creation and quota, bake emitter output (a node test of the bake pass against known geometry), and editor tools;
+  - several fixtures on one entity: one channel per chart, every fixture lit;
+  - a marker re-placement or drag keeps the fixtures;
+  - an aim or cone edit invalidates live and bake;
+  - deleting, reshaping or splitting a snapped host detaches the run and keeps it, and undo reattaches it;
+  - a paused TV emits, an idle TV does not;
+  - a legacy house is pixel-identical in live and bake (floor lamp and ceiling light);
+  - subdividing a line keeps its total output;
   - Chromium night screenshots of the wall-cap grazing case and the linear burner;
   - a no-recompile check when lights switch.
 
@@ -105,7 +164,11 @@ A placed light device has `fixtures: [fixture]`, at most 64 per device. A device
 
 ## My calls (the user can override any of these)
 
-- Per-fixture intensity defaults to splitting the entity's brightness by length or area.
+- Fixtures are keyed by entity in the model. Marker moves never move them.
+- Total output is in lumens, with a 503 lm default (today's 40 cd), and shares by length or area.
+- Real-time quotas per tier as tabled; over quota means glow plus bake only.
+- Snapped runs detach and keep their path rather than drop. Matching is by endpoints, not edge index.
+- A paused TV emits; a switch defaults to 2700 K.
 - Fire pit fixtures are derived from the burner and are not editable.
 - Real time uses `RectAreaLight` without shadows for line and area lights.
 - Entities share one bake channel.
