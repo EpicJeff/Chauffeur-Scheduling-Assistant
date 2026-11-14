@@ -1,6 +1,30 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.862 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.863 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.863 (2026-11-14, NOT device-verified): light fixtures, slice A. The house model stores light fixtures per entity, and the live view places its lights through one emitter resolver. Existing houses look exactly as before.**
+
+**Why.** The user wants each light shaped like the real thing: a security spotlight as a spot, a fire table as an area, rope lights under wall caps as lines, a TV screen as a light. They also want one entity to drive many fixtures (pool lights, landscape lights on one switch). This slice lays the data and the shared resolver; the editor card, the real-time typed pool and the bake follow in later slices (spec `docs/superpowers/specs/2026-11-13-light-fixtures-design.md`).
+
+**Storage** (`services/twin_fixtures.py`, `twin_model.py`, `twin_model_ops.py`, `twin_model_bridge.py`).
+- `light_fixtures: {entity_id: [fixture, ...]}` and `light_fixtures_meta: {entity_id: {output_lm}}` on the model. Fixture ids are canonical `fixture:<uuid>`.
+- Shapes: `point` (`at`), `spot` (`at`, `aim`, `cone_deg` 10-160, default 90, `softness`), `line` (`path` of 2-64 points, `facing` down/out/up/in, `width_in`, optional `snap` to a host edge), `area` (`at`, `size_ft`, `facing`). `ref` is `floor`, `ground` or `absolute`; `share` optionally weights one fixture's part of the entity's output. `output_lm` and `share` are capped at 1e6.
+- Editor ops (`POST /api/house/editor/op`): `add_light_fixture`, `update_light_fixture`, `delete_light_fixture`, `set_light_output`. The lot and floor checks run only on the fixture being added or edited.
+- **Never silently dropped.** A stored fixture whose lot or building no longer fits (the lot shrank, the building was removed) is kept with `orphaned: true` and an `orphan_reason`; the flag clears when the context returns. A fixture id duplicated under another entity is dropped with a note.
+- Snapped lines store the host edge itself (cap top, path or patio edge, step nosing, wall) and follow host moves; a line that loses its host becomes `detached` and keeps its last path.
+- `/api/house/live` carries the fixture maps, metadata and per-entity signatures. Legacy models normalize byte-identically.
+
+**The resolver** (`static/twin/live/emitters.js`, used by `live/modes.js`). `resolveEmitters` turns layout plus HA states into resolved emitters, and is exported for the bake slice with `emitterSignature` and `firePitEmitters`.
+- Entities without fixtures keep the legacy placement rules unchanged (a snapshot of main's positions pins it). A default fixture equals a legacy lamp exactly (output divided by the default 503 lm).
+- Facing offsets are applied here, not stored: `down` sits 2 in below the path and 1 in out from the host face, `out` 1 in out, `up` 1 in above, `in` 1 in in. Step hosts face downhill, off the nosing; on a fence, `out` is the right of the drawn direction; hostless lines get no sideways offset.
+- Wall and step snaps resolve in the building's frame, including the auto-foundation lift.
+- `emission()`: lights scale by brightness and colour once; a switch is 2700 K at full output; a TV emits while playing or paused and not when idle; `input_boolean` and `fan` count as on/off; unavailable or stale states never emit.
+- Orphaned and detached fixtures still resolve and carry `orphaned: true` for later UI.
+- **Fire pits stay on their object lamps in live** (flame colour #ff9a3c, half intensity, the baked `object:fire_pit:<id>` channel when fresh). The bake slice moves them onto the resolver and must carry that colour and scale.
+
+**No hand path yet, and no agent path.** Fixtures can only be created through the editor op route; the editor fixture card and aim tool are the next UI slice, and Argyle gets no fixture tool.
+
+**Tests.** `test_twin_fixtures` 32/32 (TestClient, real store: ops, orphaning, canonical ids, caps, byte-identical legacy), `test_twin_emitters_js` 24/24 + 5/5 live (real `mountLive`/`keepLive`), plus live control 8/8, real lights 10/10, controls 31/31, model bridge 32/32, house saves 19/19, HA routes 16/16, import maps 3/3.
 
 **v2.499.862 (2026-11-14, NOT device-verified): household material edits show up live in every open house view, in place, with no scene rebuild. Material library Task 4.**
 
