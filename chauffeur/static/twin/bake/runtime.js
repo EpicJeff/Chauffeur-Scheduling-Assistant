@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { base } from '../twin_library.js';
+import { base, copyMaterialParams } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, chartLookupGLSL, patchLightmaps, setLightTint, pickTranscode, lightSwizzle } from './lightmap_material.js';
@@ -444,19 +444,26 @@ if (vGlowRoom > -0.5) { ${sum} }`);
     state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: running && paused(),
       ...progress, baked: [...baked], stale: [...stale], error: errorReason }),
     fresh: () => valid() ? [...fresh] : [], light, idle, refresh,
+    refreshMaterials(ids) {
+      for (const { original, material } of clones) if (ids.includes(original.userData.materialId)) copyMaterialParams(original, material);
+    },
     materialsChanged(ids) {
       if (!valid() || !atlas) return false;
+      controller.refreshMaterials(ids);
       if (!invalidateMaterialReach(atlas.room, ids)) return false;
       ++generation;
       baker?.cancel();
       pendingRun ||= running;
-      // Restore the source materials before recomputing colour inputs and
-      // cloning again. The new reach keys reject the previous publication.
-      const wasPatched = patched;
-      unpatch();
-      invalidateMaterialReach(atlas.room, ids);
-      prepare(lights.map(({ reach, receivers, receivingCharts, distances, scores, chartKeys, ...light }) => light));
-      if (wasPatched) patch();
+      // Material edits do not move charts or change their channel assignment.
+      // Retain the arrays, shader bindings and unrelated lights' fresh masks.
+      const previous = packed;
+      packed = bakeLayout(atlas, layout, lights, packed.ownership);
+      for (const id of [...fresh]) if (previous.entries[id]?.key !== packed.entries[id]?.key) {
+        fresh.delete(id); light(id, [0, 0, 0], 0);
+      }
+      stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
+      manifestText = null;
+      Promise.resolve(view.live?.refresh()).catch(reportError);
       view.render();
       return true;
     },

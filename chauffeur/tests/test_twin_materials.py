@@ -17,6 +17,27 @@ from services import auth, twin_library as library, twin_materials as materials
 API = '/api/house/materials'
 
 
+def test_viewer_manifest_includes_archived_for_panels_and_kids():
+    seed()
+    with Ctx() as c:
+        row = create(c)
+        upload(c, row['id'])
+        # History-owned archive is still part of the page's rendering manifest.
+        record = materials.get(row['id'])
+        record['archived'] = True
+        materials._json(materials.root() / row['id'] / 'material.json', record)
+        route = '/api/house/twin/materials/manifest'
+        assert auth.resolve('GET', route) == auth.WALL_OR_SERVICE
+        for headers in (c.panel, c.kid, c.mum):
+            response = c.client.get(route, headers=headers)
+            assert response.status_code == 200, response.text
+            data = response.json()
+            assert data['revision'] == materials.catalogue(True)['revision']
+            assert data['entries'] == {k: e for k, e in materials.page_manifest().items() if e.get('household')}
+            assert data['entries'][row['id']]['maps']['base_color'].startswith('materials/' + row['id'])
+        assert c.client.get(API, headers=c.panel).status_code == 403
+
+
 def test_successful_material_writes_push_update_but_reads_and_errors_do_not():
     import main
     seed()

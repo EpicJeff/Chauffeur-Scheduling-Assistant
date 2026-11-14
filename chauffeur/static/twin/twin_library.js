@@ -161,6 +161,17 @@ export function currentMaterial(material, known) {
   return !id || material.userData.materialRevision === known[id]?.revision;
 }
 
+// Copy only the surface values. Viewing opacity/clipping and bake shader hooks
+// belong to the receiving clone and must survive a material revision.
+export function copyMaterialParams(source, target) {
+  for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'alphaMap',
+    'roughness', 'metalness', 'aoMapIntensity', 'alphaTest', 'side']) target[key] = source[key];
+  target.color.copy(source.color); target.normalScale.copy(source.normalScale);
+  for (const key of ['materialId', 'materialRevision', 'materialKey', 'materialRef', 'materialRole'])
+    target.userData[key] = source.userData[key];
+  target.needsUpdate = true;
+}
+
 function householdTexture(path, tier, onLate) {
   const url = materialUrl(path), key = JSON.stringify([url, tier]);
   return optionalAsset(householdTextureCache, key, async () => {
@@ -192,6 +203,8 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   material.userData.materialKey = materialKey(ref, role, tier, { [id]: entry });
   material.userData.materialId = id;
   material.userData.materialRevision = entry.revision;
+  material.userData.materialRef = { ...ref };
+  material.userData.materialRole = role;
   material.color.set(ref.color || params.tint || '#ffffff');
   // Auto is flat until this tier actually attaches the corresponding map.
   material.roughness = params.roughness ?? .85;
@@ -231,6 +244,7 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
     if (properties.includes('roughnessMap')) material.roughness = params.roughness ?? 1;
     if (properties.includes('metalnessMap')) material.metalness = params.metalness ?? 1;
     material.needsUpdate = true;
+    material.dispatchEvent({ type: 'materialparamschange' });
   };
   const slots = [['base_color', ['map']]];
   if (tier !== 'low') {

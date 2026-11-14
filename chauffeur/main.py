@@ -7896,6 +7896,14 @@ def house_materials():
     return twin_materials.catalogue()
 
 
+@app.get('/api/house/twin/materials/manifest')
+def house_material_manifest():
+    from services import twin_materials
+    return {'revision': twin_materials.catalogue(True)['revision'],
+            'entries': {mid: entry for mid, entry in twin_materials.page_manifest().items()
+                        if entry.get('household')}}
+
+
 @app.get('/api/house/materials/{id}')
 def house_material_get(id: str):
     from services import twin_materials

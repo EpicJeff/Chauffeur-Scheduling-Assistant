@@ -45,6 +45,11 @@ const until = async (fn, what, timeout = 40000) => {
 const liveLayout = list => ({ markers: list.map(l => ({ ...l, device_id: l.device, placed: true, kind: 'light' })) });
 async function context(tier = 'high', sharedServer = null, placed = null, extra = {}) {
   const out = gen.buildTwin(job.plan, job.kit, tier); await out.ready;
+  if (extra.materialRole) {
+    const {applyMaterialParams}=await import(file('static/twin/twin_library.js'));
+    for (const material of out.materials.values()) if (material.name===extra.materialRole)
+      applyMaterialParams(material,{household:true,revision:1,params:{tint:'#123456'},maps:{}},{id:'material-baked'},extra.materialRole,tier);
+  }
   let plan = job.plan;
   if (extra.farSurface) {
     plan=structuredClone(job.plan);
@@ -75,22 +80,22 @@ async function check(name, fn) {
   catch (error) { console.log('  FAIL ' + name + ' ' + error.stack); }
 }
 await check('material_revision_invalidates_bake_and_refreshes_affected_clones', async () => {
-  const desk = await context();
+  const desk = await context('high',null,null,{materialRole:'interior_wall'});
   try {
     await until(() => desk.controller.fresh().length === 4 && !desk.controller.state().baking, 'initial bake');
-    const mesh = covered(desk.out.root).find(m => m.material.name !== 'glass');
+    const mesh = covered(desk.out.root).find(m => m.material.userData.materialId === 'material-baked');
     const clone = mesh.material;
-    // Runtime metadata survives the viewing and bake clone chains.
-    clone.userData.materialId='material-baked'; clone.userData.materialRevision=1;
+    assert.equal(clone.userData.materialRevision,1,'metadata is present before the initial bake');
     assert.equal(desk.controller.materialsChanged(['unused']), false);
     assert.ok(desk.controller.fresh().length === 4);
-    // Its original must receive the new maps/params before the runtime repatches.
+    const {applyMaterialParams}=await import(file('static/twin/twin_library.js'));
+    // Production updates the retained source first, then refreshes bake clones.
     for (const material of desk.out.materials.values()) if (material.name === mesh.material.name) {
-      material.userData.materialId='material-baked';material.userData.materialRevision=2;material.color.set('#56789a');
+      applyMaterialParams(material,{household:true,revision:2,params:{tint:'#56789a'},maps:{}},{id:'material-baked'},material.name,'high');
     }
     assert.equal(desk.controller.materialsChanged(['material-baked']), true);
     assert.ok(desk.controller.state().stale.length, 'revision marks existing stale state');
-    assert.notEqual(mesh.material,clone);assert.equal(mesh.material.color.getHexString(),'56789a');
+    assert.equal(mesh.material,clone);assert.equal(mesh.material.color.getHexString(),'56789a');
     await desk.controller.refresh();
     assert.ok(desk.controller.state().stale.length,'the old publication cannot make the revision fresh again');
   } finally { desk.controller.stop(); }
