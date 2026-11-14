@@ -1277,7 +1277,7 @@ def solar_clear(building, previous):
             raise Refused('That would move a solar zone off its roof plane. Move or delete the zone before changing the roof.')
 
 
-def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple[dict, str]:
+def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None) -> tuple[dict, str]:
     """Return an edited model and plain words, leaving the input untouched."""
     if not isinstance(op, dict):
         raise Refused('Choose an operation.')
@@ -1286,7 +1286,9 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple
                     'split_wall', 'draw_room', 'split_room', 'delete'):
         raise Refused('That operation is not available.')
     op = deepcopy(op)
-    model, notes = twin_model.normalize(model)
+    # save() also needs the normalized pre-edit model for its fix log. Reuse
+    # that exact input's result, but keep our mutable working copy private.
+    model, notes = twin_model.normalize(model) if _normalized is None else deepcopy(_normalized)
     if kind == 'set_porch_foundation':
         from services import twin_porches
         building = _find(model, 'buildings', op.get('building'))

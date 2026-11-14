@@ -1,6 +1,38 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.850 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.852 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.852 (2026-11-13): dev and test only. TestClient test files no longer hang on Windows loopback.**
+
+**The cause.** "TestClient files intermittently hang at exit or first request" (noted since v2.499.842) was found with a faulthandler stack dump. Every TestClient request starts an asyncio portal. On Windows its proactor loop calls `socket.socketpair()`, and CPython's `_fallback_socketpair` blocks forever in `accept()` when the development machine's loopback loses a TCP handshake. Browser tests already had a bounded, retried replacement in `tests/live_app.py`, but TestClient tests never loaded it.
+
+**The fix.** The replacement now lives in `services/win_loopback.py` (`install()`, idempotent). `main.py` calls it at import, so every test that imports the app is covered, and `tests/live_app.py` uses the same function. It does nothing off Windows, so the Home Assistant add-on (Linux) is unaffected.
+
+**Tests.** New `test_win_loopback` 1/1 (installed on Windows, a working pair, an asyncio loop starts). TestClient files green: HA display 5/5, house saves 19/19, edit timing 4/4, server speed 5/5. A browser scenario passed twice.
+
+**v2.499.851 (2026-11-13, NOT device-verified): an editor edit does less whole-house work on the server and no longer downloads the house twice.**
+
+**The evidence.** The user's house, moving one parking spot: the server took about 1.3 s (`normalize` 489 ms, `apply` 374, `read` 326), then `refresh_state` took 1.7 s. After every op the editor called `/api/house/editor/state`, which re-derived and re-sent the same whole plan and model the op had just returned (about 245 KB).
+
+**What changed.**
+- **Cached reads.** `twin_store` caches the current model and its flattened plan, keyed by `(data dir, store generation, current round id)`. Every store write goes through `_save`, which clears both. `_save` is called from every publication point: rounds, revert/undo/redo, house load, builds, Start over, and place, sheet and lot writes. Readers get deep copies, so callers cannot mutate the cache.
+- **One normalize before the edit.** `twin_edit.save` normalizes the pre-edit model once and reuses it for validation and the fix log. Publication still normalizes the edited model. Per op, `normalize` calls fall from 3 to 2 and round-file reads from 5 to 2.
+- **Lean state refresh.** `GET /api/house/editor/state?have_round=<id>` omits `plan` and `model` when the id matches the current round, and returns `current_round`. The editor sends it after its own edits and keeps the plan and model it already has. All other callers still do full reads.
+
+**Measured.**
+- TestClient on the fixture house: `normalize` 128-328 ms down to 101-115 ms per op. The state refresh after an edit falls from about 100-200 ms and about 245 KB to about 10-13 ms and under 1.4 KB.
+- Chromium: the editor sends `state?have_round=N` after each edit, answered in 26-111 ms with about 300-450 bytes on the wire, against 36 KB compressed for a full state.
+
+**Tests.**
+- New `test_twin_server_speed` 5/5:
+  - op and full-state JSON byte-identical to v2.499.850 for an 8-op corpus (a stored fixture);
+  - caches invalidated by revert, Start over, house load and build rounds;
+  - fewer normalize calls;
+  - lean state only when the round matches;
+  - copies isolated.
+- The node timing test checks that `applyOp` sends `have_round` and keeps its plan.
+- Neighbours green: edit timing 4/4 and js, editor history 8/8, house saves 19/19 and js 12/12, twin store, model bridge 32/32, HA display 5/5, house tool, editor api js, sheets, place 25/25.
+- `test_twin_store_model` is 14/15, the same failure as on main.
 
 **v2.499.850 (2026-11-13, NOT device-verified): yard trees are generated once instead of twice.**
 

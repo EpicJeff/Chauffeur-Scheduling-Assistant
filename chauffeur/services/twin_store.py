@@ -24,6 +24,8 @@ DATA_DIR = os.path.join(os.path.dirname(storage.DB_PATH), 'twin')
 _LOCK = threading.RLock()
 LIFECYCLE = threading.RLock()
 _MASTER_LOCKS = weakref.WeakValueDictionary()  # Only active page readers retain locks.
+_READ_KEY = None
+_READ_MODEL = _READ_PLAN = None
 build_running = lambda: False  # Task 8 supplies the build runner's predicate.
 stop_builds_for_start_over = lambda: None
 _KINDS = {'draft', 'director', 'hand', 'revert', 'build', 'edit', 'start_over', 'load'}
@@ -54,6 +56,20 @@ def _state(settings=None):
 
 def _save(row):
     storage.patch_settings({'house_twin': row})
+    _invalidate_reads()
+
+
+def _invalidate_reads():
+    # Every store write funnels through _save, including metadata-only writes.
+    # Callers hold the existing store lock; no lock scopes change for caching.
+    global _READ_KEY, _READ_MODEL, _READ_PLAN
+    _READ_KEY = None
+    _READ_MODEL = _READ_PLAN = None
+
+
+def _read_key(row):
+    # DATA_DIR also isolates test stores / switched data roots with reused ids.
+    return (os.path.abspath(DATA_DIR), row['generation'], row['current'])
 
 
 def _place(row):
@@ -438,15 +454,26 @@ def _read_round(row, round_id):
 def current() -> dict | None:
     """Return the flat view used by the build pipeline and existing editor."""
     with _LOCK:
+        global _READ_PLAN
         model = current_model()
-        return twin_model_bridge.flatten(model) if model is not None else None
+        if model is None:
+            return None
+        if _READ_PLAN is None:
+            _READ_PLAN = twin_model_bridge.flatten(model)
+        return deepcopy(_READ_PLAN)
 
 
 @_edit_timed('read')
 def current_model(*, settings=None) -> dict | None:
     with _LOCK:
+        global _READ_KEY, _READ_MODEL, _READ_PLAN
         row = _state(settings)
-        return _read_round(row, row['current']) if row['current'] is not None else None
+        key = _read_key(row)
+        if key != _READ_KEY:
+            _READ_MODEL = _read_round(row, row['current']) if row['current'] is not None else None
+            _READ_PLAN = None
+            _READ_KEY = key
+        return deepcopy(_READ_MODEL)
 
 
 def current_id() -> int | None:

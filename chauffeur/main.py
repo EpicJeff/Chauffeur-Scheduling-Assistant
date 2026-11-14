@@ -1,4 +1,6 @@
 import copy
+from services import win_loopback as _win_loopback  # Windows dev loopback guard; no-op elsewhere
+_win_loopback.install()
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -8684,16 +8686,19 @@ def house_editor_record():
 
 
 @app.get('/api/house/editor/state')
-def house_editor_state():
+def house_editor_state(have_round: int | None = None):
     from services import twin_bakes, twin_build, twin_cost, twin_store, twin_site
     with twin_store.LIFECYCLE:
         latest = twin_build.latest()
-        return {'plan': twin_store.current(), 'model': twin_store.current_model(), 'rounds': twin_store.rounds(), 'site': twin_site.site(),
+        current_round = twin_store.current_id()
+        house = ({'plan': twin_store.current(), 'model': twin_store.current_model()}
+                 if have_round is None or have_round != current_round else {})
+        return {**house, 'rounds': twin_store.rounds(), 'site': twin_site.site(),
                 'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint(),
                          'estimate': twin_build.remaining_estimate(latest) if latest else None},
                 'build': latest,
                 # Ruling B15: the editor never bakes; its chip says when lights wait to re-bake.
-                'bake': twin_bakes.status(twin_store.current_id())}
+                'bake': twin_bakes.status(current_round), 'current_round': current_round}
 
 
 @app.get('/api/house/twin/rounds/{round_id}')

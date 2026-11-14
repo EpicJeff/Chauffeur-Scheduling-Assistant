@@ -128,8 +128,8 @@ export function createPolling({ onState, onBuild, onTick, onError }) {
     // Calling follow here (or in onBuild) would wait on our own pending poll.
     nextBuild = next.state === 'done' && next.next && next.next !== next.id ? next.next : null;
   }
-  async function readState() {
-    const state = await request('state');
+  async function readState(haveRound) {
+    const state = await request(haveRound == null ? 'state' : `state?have_round=${encodeURIComponent(haveRound)}`);
     if (!state.build) { build = null; seq = 0; }
     await onState(state);
     return state;
