@@ -1,6 +1,25 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.863 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.864 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.864 (2026-11-14, NOT device-verified): the Material library browses Poly Haven and ambientCG and adds a material in one click. Material library Tasks 7-8.**
+
+**What a person sees.** On the Library page (parents), **Browse online** opens a panel with a Poly Haven / ambientCG switch and a search box (300 ms debounce). Results show a thumbnail, the name, the source (linked) and the licence (CC0), a resolution select (1k/2k/4k as offered, default 2k) and **Add**. Add follows the download (polled every 500 ms) and, when it finishes, opens the new material in the editor, unless the person has picked another material since or closed the panel; then the catalogue just refreshes.
+- Offline: "Online libraries are not reachable." in the panel; reopening the panel or pressing the active source retries.
+- Queue full (10 waiting): a plain 429 message. A download lost to a restart: "The download was interrupted, most likely by a Chauffeur restart. Try again." Repeated poll failures: the download may still finish and will appear in the catalogue.
+- Thumbnails always come through Chauffeur's own route; the browser never contacts the source sites.
+
+**Server** (`services/twin_material_sources.py`; routes all parents-only):
+- `GET /api/house/materials/sources/{source}?q=&category=` returns `{results: [...]}` (each row: source, source_id, name, thumbnail, resolutions, source_url), cached 10 minutes. Poly Haven filters its texture list locally; ambientCG uses its v2 API.
+- `GET /api/house/materials/sources/{source}/{source_id}/thumb` (disk-cached, header-checked pixel count before decoding).
+- `POST /api/house/materials/sources/{source}/{source_id}/download` with `{resolution}` returns a job id; `GET /api/house/materials/jobs/{job_id}` reports queued/running/done/failed with progress.
+- **One worker, one job at a time; bounded everywhere.** 64 MB per file, 200 MB per ambientCG archive (so 4k is offered when the zip fits), 300 MB per job including metadata, 180 s deadline enforced per socket read (`read1`), at most 10 queued jobs.
+- **Network guard.** Every URL and every redirect hop (max 5) must be https, on that source's own hosts, and resolve to a public address (loopback, private, link-local, reserved and multicast refused). Accepted residual: a DNS answer could change between the check and the connect.
+- **Archives.** At most 64 entries and 400 MB expanded; any entry with `..`, a leading `/` or a drive letter refuses the whole archive; only mapped image entries are extracted, counted as they stream.
+- Every map goes through `twin_materials.ingest_image` into a staged folder; the material is published once, on success, with its `source_snapshot` (source, id, licence). Any failure removes staging and the half-made folder. A startup sweep clears staging and any job-marked folder without a `material.json`, so a crash never leaves orphans; published materials are never touched.
+- Job status lives in memory; a restart loses the job (finished materials stay).
+
+**Tests.** `test_twin_material_sources` 21/21 (fake `_urlopen`, no network: slot mapping for both sources, traversal, zip bomb, oversize stream, deadline with a trickling server, redirects and private addresses, 4k archive cap, sweep, queue cap, plain messages, parents-only), `test_twin_library_browse_js` 17/17 (real `page.js` + `browse.js` in node), `test_twin_materials` 25/25, `test_auth` 19/19, library page js 14/14, tailwind 6/6, import maps 3/3. Chromium against the real sites: "brick" gave 123 Poly Haven and 31 ambientCG results with thumbnails; Red Brick added at 1k in 14 s.
 
 **v2.499.863 (2026-11-14, NOT device-verified): light fixtures, slice A. The house model stores light fixtures per entity, and the live view places its lights through one emitter resolver. Existing houses look exactly as before.**
 
