@@ -100,6 +100,47 @@ await check('far_surfaces_reserve_no_channels', () => {
   assert.ok(remote.length);
   for(const c of remote) assert.ok(!l.receivers.includes(c.room));
 });
+await check('graded_ground_is_charted_top_down_and_yard_and_object_lights_bake_onto_it', () => {
+  // Every light bakes (user, 2026-11-13). Graded terrain is a heightfield receiver: its upward
+  // faces chart top-down per 64 ft tile; a building-less yard light and an object lamp reach it.
+  const root = new THREE.Group(); root.scale.setScalar(FT);
+  const ground = new THREE.PlaneGeometry(60, 60, 30, 30).rotateX(-Math.PI / 2), pos = ground.attributes.position;
+  for (let i = 0; i < pos.count; i++) pos.setY(i, Math.sin(pos.getX(i) * .3) * .4 + Math.cos(pos.getZ(i) * .2) * .3);
+  ground.computeVertexNormals(); ground.userData.bakeExcluded = true; ground.userData.bakeHeightfield = true;
+  const lawn = new THREE.Mesh(ground, new THREE.MeshStandardMaterial({name: 'lawn', side: THREE.DoubleSide}));
+  root.add(lawn); root.updateMatrixWorld(true);
+  const plan = {buildings: [], site: {yard_rooms: [{id: 'y', name: 'Pool deck', polygon: [[0, 0], [20, 0], [20, 20], [0, 20]]}]}};
+  const atlas = buildAtlas(root, plan, options), charts = atlas.room.charts.filter(c => c.mesh === lawn);
+  assert.ok(charts.length >= 1 && charts.length <= 4, `one chart per 64 ft tile, not per triangle: ${charts.length}`);
+  assert.ok(charts.every(c => c.outdoor), 'ground charts are outdoor');
+  // The bake rasterises charts in UV space with back faces culled: ground faces must wind like an
+  // upward floor (found in Chromium: a mirrored v axis left every ground texel unbaked).
+  const winding = (mesh, list) => { const uv = mesh.geometry.attributes.uv3, signs = new Set();
+    for (const c of list) for (const f of c.faces) { const a = [0, 1, 2].map(k => [uv.getX(f * 3 + k), uv.getY(f * 3 + k)]);
+      const area = (a[1][0] - a[0][0]) * (a[2][1] - a[0][1]) - (a[2][0] - a[0][0]) * (a[1][1] - a[0][1]);
+      if (Math.abs(area) > 1e-12) signs.add(Math.sign(area)); }
+    return [...signs]; };
+  const floorCtx = house(), floor = floorCtx.atlas.room.charts.filter(c => c.mesh.material.name === 'floor');
+  const floorSign = winding(floor[0].mesh, floor);
+  assert.equal(floorSign.length, 1, 'an upward floor winds one way in UV space');
+  assert.deepEqual(winding(lawn, charts), floorSign, 'ground charts wind like the floor (front-facing in the bake)');
+  const yard = {device: 'yard', building: null, level: null, room: 'y', at: [5, 5, 8], yard: true};
+  const source = lightSource(plan, yard);
+  assert.ok(Math.abs(source.source.y - 8 * FT) < 1e-6, 'a yard light hangs its offset above the ground');
+  assert.ok(Math.abs(source.range - 30 * FT) < 1e-6, 'range follows the yard room span, as the live lamp');
+  const fire = {device: 'object:fire_pit:f', building: null, level: null, room: null, at: [-5, -5, 1.5], absolute: true, range: 18};
+  const fs = lightSource(plan, fire);
+  assert.deepEqual([fs.source.x, fs.source.y, fs.source.z].map(v => +(v / FT).toFixed(6)), [-5, 1.5, 5]);
+  assert.ok(Math.abs(fs.range - 18 * FT) < 1e-9);
+  const lights = reachLights(atlas.room, [yard, fire]);
+  for (const l of lights) assert.ok(l.receivingCharts.length > 0, `${l.device} reaches the ground`);
+  const packed = B.bakeLayout(atlas, options, [yard, fire]);
+  for (const id of ['yard', 'object:fire_pit:f']) {
+    assert.ok(packed.slots[id]?.assignments?.length, `${id} has chart assignments`);
+    assert.ok(packed.entries[id], `${id} has a bake entry`);
+  }
+  assert.deepEqual(packed.fallback, [], 'no building-less light falls back');
+});
 await check('nearby_wall_changes_key_and_remote_wall_does_not', () => {
   const key=ctx => B.bakeLayout(ctx.atlas,options,[lamp]).entries.lamp.key;
   const a=house(true,10,100), b=house(true,11,100), c=house(true,10,110);
@@ -491,7 +532,7 @@ def run():
             if result.returncode:
                 print(result.stderr[-4000:], end='')
                 return result.returncode
-            print('18/18 passed (16 reach checks + worker/timing + harness rebake integration)')
+            print('19/19 passed (17 reach checks + worker/timing + harness rebake integration)')
         return 0
 
 

@@ -50,8 +50,43 @@ function writeLayer(texture, layer, page) {
 }
 // Baked light lands on indoor surfaces only. Yard and fire-pit lights (no building) light the
 // lot through the live pool; baking them never completes and kept the bake from settling.
-export const lightsOf = layout => (layout?.markers || []).filter(m => m.kind === 'light' && m.placed && m.at && m.room && m.building)
-  .map(m => ({ device: m.device_id, building: m.building, level: m.level, room: m.room, at: [...m.at] }));
+// Every placed light bakes (user, 2026-11-13: "It seems silly to have some lights baked and
+// some not"). A yard-room light has no building; its z is height above the ground.
+export const lightsOf = layout => (layout?.markers || []).filter(m => m.kind === 'light' && m.placed && m.at && m.room && (m.building || m.yard))
+  .map(m => ({ device: m.device_id, building: m.building || null, level: m.level || null, room: m.room, at: [...m.at],
+    ...(m.building ? {} : { yard: true }) }));
+
+// Object lamps (fire pits, lamp furniture) as live modes.js makes them: 'object:<id>', at the
+// fire's light point or the lamp's top, 18 ft reach. A light-domain pit also owns its marker's
+// light (modes.js moves that lamp to the fire); a lamp object with a marker is that marker.
+export function objectLightsOf(root, layout) {
+  const markers = (layout?.markers || []).filter(m => m.kind === 'light');
+  const rows = new Map();
+  root.updateMatrixWorld(true);
+  root.traverse(mesh => {
+    for (const material of mesh.material ? [].concat(mesh.material) : []) {
+      const object = material.userData?.objectLight;
+      if (!object) continue;
+      if (!rows.has(object.id)) rows.set(object.id, { object, box: new THREE.Box3(), fire: null });
+      const row = rows.get(object.id); row.box.expandByObject(mesh);
+      if (object.fireLightAt) row.fire = mesh.parent.localToWorld(new THREE.Vector3(...object.fireLightAt));
+    }
+  });
+  const lights = [], replaced = new Set();
+  for (const { object, box, fire } of rows.values()) {
+    const owner = object.entity && markers.find(m => m.entity_id === object.entity);
+    if (owner && !object.fire) continue;
+    if (owner) replaced.add(owner.device_id);
+    const p = fire || box.getCenter(new THREE.Vector3()); if (!fire) p.y = box.max.y + .05;
+    lights.push({ device: 'object:' + object.id, building: null, level: null, room: null,
+      at: [p.x / FT, -p.z / FT, p.y / FT], absolute: true, range: 18 });
+  }
+  return { lights, replaced };
+}
+export function bakeLights(layout, root) {
+  const objects = root ? objectLightsOf(root, layout) : { lights: [], replaced: new Set() };
+  return [...lightsOf(layout).filter(l => !objects.replaced.has(l.device)), ...objects.lights];
+}
 
 export function mountBake(view, root, { host, controls = view.controls, layout: requestedLayout, poll: pollMs = 10000,
   api = (path, init) => fetch(base() + path, init) } = {}) {
@@ -350,7 +385,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
   async function relight() {
     const layoutNow = view.live?.layout?.();
     if (!layoutNow || !atlas) return;
-    const next = lightsOf(layoutNow);
+    const next = bakeLights(layoutNow, root);
     if (JSON.stringify(next) === lightsKey) return;
     if (running) { pendingRun = true; baker?.cancel(); }
     const text=await readManifest(atlas.key);if(!valid())return;
@@ -414,6 +449,11 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       ids: { banks: pages.banks.map(t => t.uuid) },
       updates: { banks: pages.banks.map(t => [...t.layerUpdates]) },
       textures: { banks: [...pages.banks] } } : null,
+    // Which charts each light was given and where (test hook, as held()).
+    packing: () => packed && atlas ? { entries: packed.entries, fallback: packed.fallback || [],
+      slots: Object.fromEntries(Object.entries(packed.slots).map(([id, s]) => [id, (s.assignments || []).map(a => [a.chart, a.bank, a.channel])])),
+      charts: atlas.room.charts.map(c => ({ id: c.id, room: c.room, page: c.page, rect: c.rect, heightfield: !!c.heightfield, outdoor: !!c.outdoor })),
+      banks: packed.banks.map(b => ({ pages: b.pages, charts: b.charts.map(c => [c.id, c.page, c.rect]) })), layers: layers.map(l => [...l]) } : null,
     now: () => run(true),
     stop() {
       if (stopped) return;
@@ -430,7 +470,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       if (!covered(root).length) return;
       const response = await api('api/house/live'); const liveLayout = response.ok ? await response.json() : null;
       if (!valid()) return;
-      lights = lightsOf(liveLayout);
+      lights = bakeLights(liveLayout, root);
       // The worker lays the atlas out; it is applied to the meshes only once a bake
       // exists or this desk will make one (M1).
       pending = await loadAtlas(root, round, layout, { signal: halt.signal, apply: false });

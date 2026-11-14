@@ -5,6 +5,16 @@ import { fingerprint } from './fingerprint.js';
 
 // Match the live lamp's bulb height and range, including the ceiling inset.
 export function lightSource(plan, light) {
+  // Object lamps (fire pits, lamp furniture) carry their world position: modes.js range.
+  if (light.absolute) return { source: new THREE.Vector3(light.at[0] * FT, light.at[2] * FT, -light.at[1] * FT),
+    range: (light.range ?? 18) * FT };
+  // A yard-room light: its z is height above the local ground, its span the yard room's.
+  if (light.yard) {
+    const r = plan.site?.yard_rooms?.find(r => r.id === light.room);
+    const span = r?.polygon?.length ? Math.max(...[0, 1].map(k => Math.max(...r.polygon.map(p => p[k])) - Math.min(...r.polygon.map(p => p[k]))), 1) : 10;
+    const range = lightRange({ at: light.at }, null, null, r, span) * FT;
+    return { source: new THREE.Vector3(light.at[0] * FT, (light.at[2] + groundAt(plan, light.at[0], light.at[1])) * FT, -light.at[1] * FT), range };
+  }
   const b = plan.buildings?.find(b => b.id === light.building), l = b?.levels?.find(l => l.id === light.level);
   const r = b?.rooms?.find(r => r.id === light.room), floor = (b?.base || 0) + (l?.elevation || 0) + (r?.floor_offset_ft || 0);
   const standing = !!l && light.at[2] <= floor + .1;
@@ -18,6 +28,18 @@ export function lightSource(plan, light) {
 }
 
 const cached = new WeakMap();
+const inverses = new WeakMap();
+// The ground point under a heightfield chart closest to the light: the light clamped into the
+// chart's tile, at the authored ground height there. From the plan, never from the tiered
+// grid, so every tier computes the same reach (atlas.js).
+function fieldClosest(chart, plan, source, out) {
+  let inverse = inverses.get(chart.mesh);
+  if (!inverse) { inverse = chart.mesh.matrixWorld.clone().invert(); inverses.set(chart.mesh, inverse); }
+  // The field is [x0, lotY0, x1, lotY1] in the mesh's feet (lot y = -z).
+  const local = out.copy(source).applyMatrix4(inverse), [u0, v0, u1, v1] = chart.field;
+  const x = Math.min(u1, Math.max(u0, local.x)), y = Math.min(v1, Math.max(v0, -local.z));
+  return out.set(x, groundAt(plan, x, y), -y).applyMatrix4(chart.mesh.matrixWorld);
+}
 const reaches = new WeakMap();
 function triangles(chart) {
   let data = cached.get(chart);
@@ -55,6 +77,16 @@ export function reachLights(layout, lights) {
     const receivingCharts = [], distances = {}, scores={}, chartKeys={};
     const delta=new THREE.Vector3(), limit=(range+.15*FT)**2, range4=range**4;
     for (const c of layout.charts) {
+      // A heightfield is lit from above: its bounds give the distance, and its tier-free
+      // chart key stands for its triangles (walking a graded grid per light is the cost).
+      if (c.heightfield) {
+        const d = fieldClosest(c, layout.plan, source, closest).distanceToSquared(source);
+        if (d > limit) continue;
+        receivers.add(c.room); geometry.push(c.key);
+        distances[c.id] = d; receivingCharts.push(c.id); chartKeys[c.id] = c.key;
+        scores[c.id] = Math.max(0, 1 - d * d / range4) ** 2 / Math.max(d, .01);
+        continue;
+      }
       const data=triangles(c);
       data.bounds.clampPoint(source,closest);
       if (closest.distanceToSquared(source)>limit) continue;

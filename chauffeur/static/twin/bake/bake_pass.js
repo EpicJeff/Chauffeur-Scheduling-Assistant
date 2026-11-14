@@ -35,11 +35,13 @@ function proxies(charts, size, layout) {
     const uv = src.attributes.uv3.array.slice();
     const index = [];
     for (const c of list) {
-      // Sparse banks move whole charts from the base room layout.
+      // Sparse banks move whole charts from the base room layout. One lookup per chart: a
+      // per-vertex search was charts x vertices (seconds once graded ground baked).
+      const base = layout.room.charts.find(b => b.mesh === mesh && b.faces === c.faces);
+      const du = base ? (c.rect.x - base.rect.x) / size : 0, dv = base ? (c.rect.y - base.rect.y) / size : 0;
       for (const f of c.faces) for (let k = 0; k < 3; k++) {
         const i = f * 3 + k; index.push(i);
-        const base = layout.room.charts.find(b => b.mesh === mesh && b.faces === c.faces);
-        if (base) { uv[i * 2] += (c.rect.x - base.rect.x) / size; uv[i * 2 + 1] += (c.rect.y - base.rect.y) / size; }
+        if (base) { uv[i * 2] += du; uv[i * 2 + 1] += dv; }
       }
     }
     g.setAttribute('bakeUV', new THREE.BufferAttribute(uv, 2)); g.setIndex(index);
@@ -54,6 +56,9 @@ export function occluders(view) {
   view.scene.updateMatrixWorld(true);
   view.scene.traverse(o => {
     if (!atlasMesh(o) || o.material.name === 'glass') return;
+    // Graded ground receives yard light but never blocks it: seen at grazing angles from a
+    // lamp above, one cube texel spans more depth than the bias and the lawn shadows itself.
+    if (o.geometry?.userData.bakeHeightfield) return;
     for (let p = o.parent; p; p = p.parent) if (p.userData.viewingWalls === 'cut') return;
     const mesh = new THREE.Mesh(o.geometry, o.material);
     mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); mesh.frustumCulled = false; scene.add(mesh);
