@@ -1,6 +1,26 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.866 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.867 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.867 (2026-11-14, NOT device-verified): baked lights are a shadowmask. The bake stores only how much of each light reaches a surface; brightness, falloff and surface angle are computed per pixel when drawn. Replaces the irradiance bake.**
+
+**The report.** The user, on a close compare shot of baked against live light: the quality is still pretty rough. The irradiance bake stored finished light at atlas resolution, so falloff and the cosine term were blotchy up close and normal maps did nothing under baked light.
+
+**How** (`static/twin/bake/bake_pass.js`, `baker.js`, `lightmap_material.js`, `runtime.js`).
+- **The bake stores visibility only**, one channel per light: 1 where the light reaches the texel, 0 where a wall or object blocks it. Visibility varies slowly, so a low-resolution page holds it well.
+- **The shader does the rest per pixel.** For each baked light on a fragment it computes three's own decay-2 falloff with the reach cutoff, and hands the result to three's `RE_Direct` with the fragment's own normal. So a baked light gives the same diffuse and specular as the live PointLight, and normal maps, batten fronts and sides shade correctly.
+  - three sets multiscatter compensation only when a live punctual light exists. The patch sets it when none does, or baked specular would vanish whenever the live pool is hidden. The guard is the exact negation of three's condition, so it never applies twice.
+- **Per-room fill** (bounce) rides in the manifest under `fill`, is multiplied by the reach cutoff so nothing outside a light's reach is lit, and goes through `RE_IndirectDiffuse`. It is therefore slightly dimmer than before on dielectrics and zero on full metals, which is intended.
+- **Sampler budget.** Light positions, shapes and room fills are packed as extra rows of the existing `lmTints` and `lmRegions` float textures and read with `texelFetch`. The lightmap adds 5 samplers at most (2 data, 3 banks). A fully mapped standard material with the sun shadow and two shadowed point lights still links.
+- **Cost on the panel.** Each bank is skipped when no light of that bank reaches the fragment, in both chart and room mode; fragments with no lightmap skip the fill call too.
+- **Shadow-edge lift** is `min(3 cm, 5 mm + 4 mm per metre)`, so batten and head-trim contact shadows are kept.
+- **Exteriors bake at 2 texels per foot** (was 4 in .861): visibility needs less resolution than irradiance did.
+- Keys: `light-slots-8`, `lm-7-shadowmask-direct`, `reach-atlas-10`. Old bakes are discarded and rebaked.
+- Limit: a chart keeps its 6 strongest lights (3 banks of 2), as before.
+
+**Measured** (GPU, Chromium): baked against live PointLight within 2% at metalness 0.5, with a normal map; a batten front turned 20 degrees from its wall shades by its own angle within 3%. Frame time on the Pi panel is not measured yet.
+
+**Tests.** `test_twin_shadowmask_live` 9/9 (GPU: parity, normal map, heavy-material link, room-mode and window-glow compile, tint-0 light with fill adds nothing, fill stops at reach), `test_twin_light_reach_js` 21/21, `test_twin_baker_js` 12/12, `test_twin_bake_runtime_js` 18/18, `test_twin_bake_proxy_js` 4/4, `test_twin_bake_atlas_js` 13/13, bake fingerprint, `test_twin_bakes` 16/16, building reuse 19/19, material live 19/19, real lights 10/10, emitters 5/5, import maps 3/3. `test_twin_lightmap_material_js` 7/8: `fresh_bake_frees_the_pool_slot` fails the same way on main. `test_house_twin_bake_live`: all 19 scenarios pass, though not in one run: on this machine the group run drops loopback connections, and `scenario_two_tabs_bake_without_tearing` passed 2 of 4 runs alone after the .866 fix (one Failed to fetch, one reopened tab that never drew the bake), so it is not yet reliable.
 
 **v2.499.866 (2026-11-14, NOT device-verified): two house tabs in one browser work again. Fixes a hang introduced in .862.**
 
