@@ -37,22 +37,33 @@ async function conduitRig(devices = [d('solar','sensor.solar_power',1000,power)]
 }
 check('conduit mode visibility, threshold, idle dimming, forward pulse and retained programs',async()=>{
  const t=await conduitRig();try{
-  let mesh,halo;t.view.scene.traverse(o=>{if(o.userData.solarConduit)mesh=o;if(o.userData.solarConduitHalo)halo=o;});
-  assert.ok(mesh&&halo);assert.equal(mesh.geometry,halo.geometry);assert.equal(mesh.material.depthTest,true);
+  let mesh,halo,metal;t.view.scene.traverse(o=>{if(o.userData.solarConduit)mesh=o;if(o.userData.solarConduitHalo)halo=o;if(o.userData.solarConduitMetal)metal=o;});
+  assert.ok(mesh&&halo&&metal);assert.equal(mesh.geometry,halo.geometry);assert.equal(metal.geometry,mesh.geometry,'the metal tube shares the geometry');
+  assert.equal(mesh.material.depthTest,true);
   assert.equal(CONDUIT_COLOR,'#4df0ff');assert.equal(mesh.material.uniforms.color.value.getHex(),new THREE.Color(CONDUIT_COLOR).getHex(),'conduit is electric blue');
   assert.ok(Math.abs(mesh.material.uniforms.radius.value-1.5/12*FT)<1e-9);
   const original=[mesh.geometry,mesh.material,mesh.material.customProgramCacheKey(),mesh.material.version];
   for(const mode of ['energy','all','lights','climate','security','energy']){
-   t.live.setMode(mode);const shown=['energy','all'].includes(mode);assert.equal(mesh.visible,shown);assert.equal(halo.visible,shown);
+   t.live.setMode(mode);const shown=['energy','all'].includes(mode);assert.equal(mesh.visible||metal.visible,shown);assert.equal(mesh.visible&&metal.visible,false);
   }
   for(const watts of [0,49,50,5000]){
    t.states['sensor.solar_power'].state=String(watts);await t.live.refresh();t.live.draw();
    const u=mesh.material.uniforms;assert.equal(u.pulseGain.value,watts>=50?1:0);assert.equal(u.brightness.value,watts>=50?1:.15);
-   assert.equal(mesh.visible,true);const phase=u.phase.value;await wait(20);t.live.draw();
+   // User, 2026-11-13: at night the conduits are plain metal, not a teal glow.
+   assert.equal(mesh.visible,watts>=50,`${watts} W: the glowing tube`);assert.equal(halo.visible,watts>=50,`${watts} W: the halo`);
+   assert.equal(metal.visible,watts<50,`${watts} W: the metal tube`);
+   assert.equal(metal.material.name,'conduit_metal');assert.ok(metal.material.isMeshStandardMaterial&&metal.material.metalness>=.5);
+   const phase=u.phase.value;await wait(20);t.live.draw();
    if(watts>=50)assert.ok(u.phase.value>phase,'positive phase moves along increasing UV toward the source');else assert.equal(u.phase.value,0);
    assert.equal(u.phase.value,halo.material.uniforms.phase.value);
   }
   assert.deepEqual([mesh.geometry,mesh.material,mesh.material.customProgramCacheKey(),mesh.material.version],original);
+  const metalMaterial=metal.material;
+  for(const watts of [0,5000,0]){t.states['sensor.solar_power'].state=String(watts);await t.live.refresh();t.live.draw();}
+  assert.equal(metal.material,metalMaterial,'switching back and forth never makes a new material');
+  // Stale data is not producing.
+  t.states['sensor.solar_power'].state='5000';await t.live.refresh();t.live.draw();assert.equal(mesh.visible,true);
+
   const route=t.live.energy().conduits[0],position=mesh.geometry.attributes.position;
   for(let ring=0;ring<route.points.length;ring++){
    const centre=new THREE.Vector3();for(let side=0;side<8;side++)centre.add(new THREE.Vector3().fromBufferAttribute(position,ring*4*9+side));
@@ -73,7 +84,9 @@ check('zone power overrides total, invalid or missing readings fall back, and st
   t.states['sensor.zone_power'].state='0';effect.update('energy');assert.equal(reading().watts,0);assert.equal(mesh.material.uniforms.pulseGain.value,0);
   t.states['sensor.zone_power'].state='unavailable';effect.update('energy');assert.equal(reading().watts,4000);
   delete t.states['sensor.zone_power'];effect.update('energy');assert.equal(reading().watts,4000);
-  stale=true;effect.update('all');assert.equal(reading().watts,0);assert.equal(mesh.visible,true);assert.equal(mesh.material.uniforms.brightness.value,.15);
+  // Stale data is not producing: the conduit is plain metal (user, 2026-11-13).
+  let metal;t.view.scene.traverse(o=>{if(o.userData.solarConduitMetal)metal=o;});
+  stale=true;effect.update('all');assert.equal(reading().watts,0);assert.equal(mesh.visible,false);assert.equal(metal.visible,true);assert.equal(mesh.material.uniforms.brightness.value,.15);
  }finally{effect?.stop();t.cleanup();t.panel.geometry.dispose();t.panel.material.dispose();}
 });
 check('panels keep their colour; a cyan wave scales with generation and never changes the program again',async()=>{

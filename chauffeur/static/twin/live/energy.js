@@ -151,6 +151,12 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
   const own = value => { resources.add(value); return value; };
   const label = () => {const node = document.createElement('span'); node.hidden = true; labels.append(node); return node;};
   function clear() { sweep = null; root.clear(); labels.replaceChildren(); for (const r of resources) r.dispose(); resources.clear(); ribbons = []; conduits = []; }
+  // Idle conduits are what they are on the roof: galvanized EMT, lit like the house (user,
+  // 2026-11-13: "They should either disappear or switch to a metal material"). One material
+  // for every conduit, so idle conduits add no programs.
+  let conduitMetalMaterial = null;
+  const conduitMetal = () => conduitMetalMaterial ||= own(new THREE.MeshStandardMaterial({name: 'conduit_metal',
+    color: '#a7adb3', metalness: .6, roughness: .45}));
   const flowMaterial = (color, glow, surface = false) => own(new THREE.ShaderMaterial({transparent: true, depthTest: surface, depthWrite: false, toneMapped: false,
       blending: glow ? THREE.AdditiveBlending : THREE.NormalBlending,
       uniforms: {color: {value: new THREE.Color(color)}, phase: {value: 0}, radius: {value: .1}, glow: {value: glow ? 1 : 0},
@@ -213,13 +219,14 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
     }
     const mesh = new THREE.Mesh(geometry, flowMaterial(CONDUIT_COLOR, false, true));
     const halo = new THREE.Mesh(geometry, flowMaterial(CONDUIT_COLOR, true, true));
-    mesh.userData.solarConduit = route.id; halo.userData.solarConduitHalo = route.id;
-    for (const object of [halo, mesh]) {
-      object.material.uniforms.radius.value = radius; object.visible = false;
-      object.frustumCulled = false; root.add(object);
-    }
+    // The metal tube shares the glowing tube's geometry; one of the two is drawn.
+    const metal = new THREE.Mesh(geometry, conduitMetal());
+    mesh.userData.solarConduit = route.id; halo.userData.solarConduitHalo = route.id; metal.userData.solarConduitMetal = route.id;
+    for (const object of [halo, mesh]) object.material.uniforms.radius.value = radius;
+    for (const object of [halo, mesh, metal]) { object.visible = false; object.frustumCulled = false; root.add(object); }
+    metal.castShadow = metal.receiveShadow = false;
     halo.renderOrder = 998; mesh.renderOrder = 999;
-    conduits.push({...route, place: {roof: String(route.id).split(':')[0]}, mesh, halo, reading: flowReading(0)});
+    conduits.push({...route, place: {roof: String(route.id).split(':')[0]}, mesh, halo, metal, idle: true, reading: flowReading(0)});
   }
   // The sweep runs along the longer horizontal side of all panels together.
   function panelSweep() {
@@ -231,7 +238,10 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
     return {dir: along ? [1, 0] : [0, 1], from, to, width: Math.max(.25, (to - from) * .06)};
   }
   function applyShown() {
-    for (const row of conduits) row.mesh.visible = row.halo.visible = !!row.wanted && placeShown(view, row.place);
+    for (const row of conduits) {
+      const shown = !!row.wanted && placeShown(view, row.place);
+      row.mesh.visible = row.halo.visible = shown && !row.idle; row.metal.visible = shown && row.idle;
+    }
     for (const row of ribbons) row.mesh.visible = row.halo.visible = !!row.wanted && row.ends.some(place => placeShown(view, place));
   }
   function restorePanels() {
@@ -303,6 +313,8 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
         const power = live.stale() ? 0 : Math.max(0, watts(row.entity, states) ?? total);
         row.reading = {...flowReading(power), watts: power};
         row.wanted = shown;
+        // Below the flow threshold (night, or stale data) the conduit is plain metal.
+        row.idle = !row.reading.visible;
         for (const object of [row.mesh, row.halo]) {
           object.material.uniforms.pulseGain.value = row.reading.visible ? 1 : 0;
           object.material.uniforms.brightness.value = row.reading.visible ? 1 : .15;
