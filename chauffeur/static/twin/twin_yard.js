@@ -15,7 +15,7 @@ export function presetTree(preset, seed) {
   return tree;
 }
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
-import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey } from './twin_library.js';
+import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey } from './twin_library.js';
 import { groundAt, buildingBase, buildingFootprint } from './twin_ground.js';
 import { span as editSpan } from './edit_timing.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
@@ -103,7 +103,7 @@ function yardMaterialKit(plan, kit) {
   const materialKit = { ...kit, materials: { ...kit.materials } }, known = manifest(kit);
   for (const [role, ref] of Object.entries(plan.materials || {})) {
     const source = kit.materials?.[ref.id] || kit.materials?.[role];
-    materialKit.materials[role] = { ...source, color: ref.color || source?.color, asset: known[ref.id] ? ref.id : source?.asset };
+    materialKit.materials[role] = { ...source, color: ref.color || (known[ref.id]?.household ? undefined : source?.color), asset: known[ref.id] ? ref.id : source?.asset };
   }
   return materialKit;
 }
@@ -223,8 +223,10 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   const materialKit = yardMaterialKit(plan, kit);
   const mat = (role, slot = null) => {
     if (slot) return materialSlot(slot, role, materialKit, tier, mats, mat);
-    if (!mats.has(role)) mats.set(role, kitMaterial(role === 'terrain_lawn' ? 'lawn' : role, materialKit, tier));
-    return mats.get(role);
+    const sourceRole = role === 'terrain_lawn' ? 'lawn' : role;
+    const key = materialKey(materialKit.materials[sourceRole] || {}, role, tier, manifest(materialKit));
+    if (!mats.has(key)) mats.set(key, kitMaterial(sourceRole, materialKit, tier));
+    return mats.get(key);
   };
   const plain = (name, color, extra = {}) => {
     if (!mats.has(name)) mats.set(name, extra.fireShader ? fireFlameMaterial() : new THREE.MeshStandardMaterial({ name, color, roughness: 0.85, ...extra }));

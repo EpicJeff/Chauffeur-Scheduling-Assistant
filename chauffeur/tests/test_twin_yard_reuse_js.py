@@ -12,7 +12,7 @@ PREFIX = PREFIX.replace("if (spec === 'three')", """if (spec === '@dgreenheck/ez
 DRIVER = PREFIX + r"""
 const THREE = await import('three');
 const {mountTwin} = await import(file('static/twin/twin_view.js'));
-const {yardKey,buildYard,canonicalOutline} = await import(file('static/twin/twin_yard.js'));
+const {yardKey,yardMaterialKey,buildYard,canonicalOutline} = await import(file('static/twin/twin_yard.js'));
 const {beginEdit,mountEditTiming} = await import(file('static/twin/edit_timing.js'));
 const {rememberImport} = await import(file('static/twin/twin_library.js'));
 const square=(x,y,w=4)=>[[x,y],[x+w,y],[x+w,y+w],[x,y+w]];
@@ -129,6 +129,31 @@ await test('yard materials invalidate on resolved kit or manifest changes',async
    assert.notEqual(yard(v),previous);assert.notEqual(yard(v).userData.materials,materials);assert.equal(record.yard_reused,false);assert.ok(releases>0);
   }
  }finally{v.dispose();}
+});
+await test('household_revision_reaches_both_yard_keys_and_material_cache',async()=>{
+ const id='material-yard',unused='material-unused';
+ for(const useSlot of [false,true])for(const useWindow of [false,true]){
+  const entry={kind:'material',household:true,revision:7,maps:{},params:{tint:'#123456'}};
+  const kit={materials:{fence:{asset:useSlot?'wood':id,color:'#665544'}},manifest:{[id]:entry,[unused]:{...entry}}};
+  const plan={buildings:[],materials:{},site:{fence:[{id:'f',polyline:[[0,0],[2,0]],height:3,
+   ...(useSlot?{materials:{boards:{id}}}:{})}]}};
+  const saved=window.twinManifest;
+  if(useWindow){window.twinManifest=kit.manifest;delete kit.manifest;}
+  try{
+   const before=yardKey(plan,kit,'high'),beforeMaterials=yardMaterialKey(plan,kit,'high'),cache=new Map();
+   const first=await buildYard(plan,kit,'high',{materials:cache});
+   const names=group=>{const found=new Set();group.traverse(o=>{for(const m of o.material?[].concat(o.material):[])if(m.name==='fence')found.add(m);});return found;};
+   const firstMaterials=names(first.group);
+   const known=useWindow?window.twinManifest:kit.manifest;known[unused].revision++;
+   assert.equal(yardKey(plan,kit,'high'),before,'unused household revision preserves yard');
+   assert.equal(yardMaterialKey(plan,kit,'high'),beforeMaterials);
+   entry.revision++;
+   assert.notEqual(yardKey(plan,kit,'high'),before,'used household revision rebuilds yard');
+   assert.notEqual(yardMaterialKey(plan,kit,'high'),beforeMaterials,'used revision invalidates materials');
+   const second=await buildYard(plan,kit,'high',{materials:cache});
+   assert.ok([...names(second.group)].some(m=>!firstMaterials.has(m)),'retained cache creates a new instance for a new revision');
+  }finally{window.twinManifest=saved;}
+ }
 });
 await test('key_covers_every_buildYard_input',()=>{
  const p=fixture(),b=p.buildings[0];

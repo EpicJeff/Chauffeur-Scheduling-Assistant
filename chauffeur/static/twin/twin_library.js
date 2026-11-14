@@ -6,7 +6,9 @@ import { tierModel } from './model_lods.js';
 
 export const base = () => window.chfBase ?? '../';
 export function libUrl(assetId, name) {
-  const url = base() + (assetId.startsWith('import-') ? 'api/house/twin/imports/' : 'api/house/twin/library/') + encodeURIComponent(assetId) + '/' + name.split('/').map(encodeURIComponent).join('/');
+  const url = name.startsWith('materials/')
+    ? base() + 'api/house/twin/' + name.split('/').map(encodeURIComponent).join('/')
+    : base() + (assetId.startsWith('import-') ? 'api/house/twin/imports/' : 'api/house/twin/library/') + encodeURIComponent(assetId) + '/' + name.split('/').map(encodeURIComponent).join('/');
   return window.chfAuthUrl ? window.chfAuthUrl(url) : url;
 }
 
@@ -85,10 +87,106 @@ function latticeTexture() {
   return texture;
 }
 
+// Include the receiving role: the bake classifies surfaces by material.name.
+export function materialKey(value, role, tier, manifest) {
+  const id = value.id || value.asset || role;
+  const flags = [role === 'granite' && 'granite', value.pattern === 'lattice' && 'lattice', role === 'roof' && 'roof'].filter(Boolean);
+  return JSON.stringify(['m', id, manifest[id]?.revision ?? 0, tier, role, value.color || null, flags]);
+}
+
+// Immutable master URLs are decoded once; each tier image is resized once.
+// Material-owned clones share pixels, never repeat/rotation or GPU lifecycle.
+const householdTextureCache = new Map();
+function householdTexture(path, tier, onLate) {
+  const url = libUrl('', path), key = JSON.stringify([url, tier]);
+  return optionalAsset(householdTextureCache, key, async () => {
+    if (!textureCache.has(url)) textureCache.set(url,
+      new Promise((done, reject) => new THREE.TextureLoader().load(url, done, undefined, reject))
+        .catch(() => { textureCache.delete(url); return null; }));
+    const source = await textureCache.get(url);
+    if (!source) return null;
+    let image = source.image;
+    const width = image.width, height = image.height;
+    const cap = tier === 'low' ? 512 : tier === 'medium' ? 1024 : 2048;
+    if (Math.max(width, height) > cap) {
+      const canvas = document.createElement('canvas'), ratio = cap / Math.max(width, height);
+      canvas.width = Math.max(1, Math.round(width * ratio)); canvas.height = Math.max(1, Math.round(height * ratio));
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      image = canvas;
+    }
+    // Texture.clone shares Source; assigning clone.image would resize the master.
+    const texture = new THREE.Texture(image); texture.name = url; texture.needsUpdate = true;
+    return texture;
+  }, texture => texture.clone(), onLate);
+}
+
+// Also used by the Library preview. Returns immediately; ready is bounded by
+// the same optional-asset budget as built-ins and late maps still attach.
+export function applyMaterialParams(material, entry, ref, role, tier) {
+  // A preview may apply another revision to the same material while maps load.
+  material.userData.releaseMaterialParams?.();
+  const params = entry.params || {}, maps = entry.maps || {};
+  material.name = role;
+  material.color.set(ref.color || params.tint || '#ffffff');
+  material.roughness = params.roughness ?? 1;
+  material.metalness = params.metalness ?? 1;
+  material.aoMapIntensity = params.ao_intensity ?? 1;
+  const scale = params.normal_scale ?? 1;
+  material.normalScale.set(scale, params.normal_convention === 'dx' ? -scale : scale);
+  const tile = params.tile_ft || [4, 4];
+  const properties = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap'];
+  for (const property of properties) material[property] = null;
+  if (role === 'granite') {
+    material.onBeforeCompile = shader => {
+      shader.uniforms.graniteTint = { value: material.color };
+      shader.fragmentShader = 'uniform vec3 graniteTint;\n' + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+        vec3 graniteLuma = vec3(.2126,.7152,.0722);
+        vec3 neutralStone = vec3(dot(outgoingLight,graniteLuma)) * graniteTint / max(dot(graniteTint,graniteLuma),.001);
+        outgoingLight = mix(outgoingLight,neutralStone,.95);
+        #include <opaque_fragment>`);
+    };
+    material.customProgramCacheKey = () => 'granite-neutral-light-1';
+  }
+  let disposed = false;
+  const textures = new Set();
+  const release = () => {
+    disposed = true;
+    textures.forEach(texture => texture.dispose()); textures.clear();
+    material.removeEventListener('dispose', release);
+  };
+  material.userData.releaseMaterialParams = release;
+  material.addEventListener('dispose', release);
+  const attach = properties => texture => {
+    if (disposed) { texture.dispose(); return; }
+    textures.add(texture);
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(1 / tile[0], 1 / tile[1]);
+    texture.rotation = (params.rotation_deg ?? 0) * Math.PI / 180;
+    texture.anisotropy = tier === 'low' ? 1 : 4;
+    texture.colorSpace = properties.includes('map') ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    for (const property of properties) material[property] = texture;
+    material.needsUpdate = true;
+  };
+  const slots = [['base_color', ['map']]];
+  if (tier !== 'low') {
+    slots.push(['normal', ['normalMap']]);
+    if (maps.orm) slots.push(['orm', ['roughnessMap', 'metalnessMap', 'aoMap']]);
+    else slots.push(['roughness', ['roughnessMap']], ['metalness', ['metalnessMap']], ['ao', ['aoMap']]);
+  }
+  material.userData.ready = Promise.all(slots.filter(([slot]) => maps[slot]).map(([slot, properties]) => {
+    const apply = attach(properties);
+    return householdTexture(maps[slot], tier, apply).then(texture => { if (texture) apply(texture); });
+  }));
+  material.needsUpdate = true;
+  return material;
+}
+
 export function kitMaterial(role, kit, tier) {
   const ref = kit.materials?.[role] || {};
   const id = ref.id || ref.asset;
   const asset = manifest(kit)[id];
+  if (asset?.household) return applyMaterialParams(new THREE.MeshStandardMaterial({ side: THREE.FrontSide }), asset, ref, role, tier);
   const material = new THREE.MeshStandardMaterial({
     name: role, color: ref.color || '#c3c6c2', roughness: ref.roughness ?? (role === 'roof' ? 0.45 : 0.85),
     metalness: role === 'roof' ? 0.45 : 0,
@@ -167,10 +265,19 @@ export function kitMaterial(role, kit, tier) {
 }
 
 // Feature slots share the scene's role cache, including across rebuilds and yard.
-// Explicit references have one key independent of the receiving feature/role.
+// Household instances retain their receiving role; built-in aliases keep their
+// original path and appearance, including the kit's special shader behaviour.
 export function materialSlot(value, defaultRole, kit, tier, cache, roleMaterial) {
   if (!value) return roleMaterial(defaultRole);
   const refs = kit.materials || {}, named = refs[value.id];
+  const known = manifest(kit), id = known[value.id]?.household ? value.id : named?.id || named?.asset;
+  if (known[id]?.household) {
+    const ref = { ...(named || {}), id, color: value.color || named?.color };
+    const key = materialKey(ref, defaultRole, tier, known);
+    if (!cache.has(key)) cache.set(key, kitMaterial(defaultRole,
+      { ...kit, materials: { ...refs, [defaultRole]: ref } }, tier));
+    return cache.get(key);
+  }
   const role = named ? value.id : Object.keys(refs).find(key => refs[key].asset === value.id);
   const ref = named || (role && refs[role]) || { asset: value.id, color: '#b8b0a4' };
   const key = JSON.stringify(['material-slot', value.id, value.color || null, named || null]);
