@@ -34,7 +34,7 @@ export async function checkpoint(detail) {
 export async function request(path, method = 'GET', body, area = 'editor', timing = null) {
   for (;;) {
     const sent = timing ? performance.now() : 0;
-    const response = await fetch((window.chfBase ?? '../') + `api/house/${area}/` + path, {
+    const response = await fetch((window.chfBase ?? '../') + 'api/house/' + (area ? area + '/' : '') + path, {
       method, ...(body === undefined ? {} : body instanceof Blob ? { headers: { 'Content-Type': 'application/octet-stream' }, body } : body instanceof FormData ? { body } : {
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       }),

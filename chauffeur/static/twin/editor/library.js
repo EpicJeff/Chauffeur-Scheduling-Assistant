@@ -79,7 +79,7 @@ export function surfaceOperation(surface, scope, material) {
     target = { room: room.id, surface: kind === 'wall' ? 'walls' : surface.surface || 'floor' };
   } else target = kind === 'wall' ? { wall: piece.id, side }
     : kind === 'room' ? { room: piece.id, surface: surface.surface || 'floor' } : { roof: piece.roof || piece.id };
-  return { op: 'set_material', building: building.id, target, material: { id: material.id, color: material.color } };
+  return { op: 'set_material', building: building.id, target, material: { id: material.id } };
 }
 
 export function itemOperation(surface, item, ground) {
@@ -300,7 +300,8 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       button.setAttribute('aria-label', entry.name); button.style.touchAction = 'none';
       const image = document.createElement('img'); image.alt = ''; image.draggable = false; image.width = 112; image.height = 96;
       const name = document.createElement('span'); name.textContent = entry.name; button.append(image, name); grid.append(button);
-      if (entry.thumbnail) image.src = libUrl(entry.id, entry.thumbnail);
+      if (entry.thumbnail_url) image.src = entry.thumbnail_url;
+      else if (entry.thumbnail) image.src = libUrl(entry.id, entry.thumbnail);
       else thumbnails.current.picture(entry, tab === 'materials').then(url => { if (url && !signal.aborted) image.src = url; }).catch(report);
       if (entry.id.startsWith('import-')) {
         const controls = [];
