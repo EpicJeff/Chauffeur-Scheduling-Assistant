@@ -71,7 +71,10 @@ export async function boot() {
     panel.message(text);
   }
   const edit = change => history.perform(() => editNow(change));
-  const applyOp = operation => history.perform(() => applyOpNow(operation));
+  const applyOp = operation => {
+    const start = performance.now();
+    return history.perform(() => applyOpNow(operation, { start }));
+  };
   async function editNow(change) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
     let result;
@@ -88,9 +91,10 @@ export async function boot() {
   // roof tools select the new piece then). `settle: false` returns once the
   // round is saved and read back; the scene rebuild follows. The lot tools
   // already show the building where it landed.
-  async function applyOpNow(operation, { saved, settle = true } = {}) {
+  async function applyOpNow(operation, { saved, settle = true, start } = {}) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
-    const result = await api.op(operation);
+    const timing = api.beginEdit(operation, start);
+    const result = await api.op(operation, timing);
     snapshot = { ...snapshot, plan: result.plan, model: result.model };
     saved?.(result);
     // The card shows the saved change at once (a device reads Placed); the
@@ -98,13 +102,27 @@ export async function boot() {
     tools?.refreshCard();
     const line = document.createElement('li'); line.textContent = plain(result.words); el('editor-log').append(line);
     lastSummary = result.words;
+    const refresh = async () => {
+      const stop = api.span(timing, 'refresh_state');
+      try { await polling.refreshState(); timeline?.sync(currentBuild); }
+      finally { stop(); }
+    };
+    const rebuild = async () => {
+      const stop = api.span(timing, 'rebuild');
+      try { await renderScene(timing); }
+      finally { stop(); }
+      return { frame: api.observeEditFrame(view, timing) };
+    };
     if (!settle) {
-      await polling.refreshState(); timeline?.sync(currentBuild);
-      renderScene().catch(report);
+      await refresh();
+      rebuild().then(({ frame }) => frame).then(() => api.keepEdit(timing)).catch(report);
       return result;
     }
-    await renderScene();
-    await polling.refreshState(); timeline?.sync(currentBuild);
+    // Observe the frame without holding up state refresh or the history queue.
+    // refresh_state can overlap first_frame, or finish after it.
+    const { frame } = await rebuild();
+    try { await refresh(); }
+    finally { frame.then(() => api.keepEdit(timing)).catch(report); }
     return result;
   }
 
@@ -178,13 +196,13 @@ export async function boot() {
     }
     return plan;
   }
-  async function renderScene() {
+  async function renderScene(timing = null) {
     view?.setSite?.(snapshot.site);
     if (tools?.dragging() || lot?.dragging()) return;
     const plan = timeline?.preview() || previewPlan(), signature = JSON.stringify(plan);
     const changed = signature !== lastScene;
     if (view && changed) {
-      await view.rebuild(plan);
+      await view.rebuild(plan, { timing });
       view.scene.background?.set?.('#171e27');
       lastScene = signature;
       // The first view of the house: from the street, past the yard's plants (M3).
@@ -329,6 +347,8 @@ export async function boot() {
     finally { stopping = false; syncBuildButton(); }
   });
   listen(el('editor-manage-sources'), 'click', () => steps.open('Your files'));
+  api.mountEditTiming({ toggle: el('menu-edit-timing'), overlay: el('editor-edit-timing'), send: el('menu-send-timing'),
+    signal: lifecycle.signal, post: body => request('perf', 'POST', body, 'twin'), report });
   listen(el('menu-upload'), 'click', () => steps.open('Your files'));
   listen(el('editor-add-files'), 'click', () => steps.open('Your files'));
   listen(el('editor-draw-myself'), 'click', async () => {

@@ -1,3 +1,5 @@
+import { serverTiming } from '../edit_timing.js';
+export { beginEdit, span, observeEditFrame, keepEdit, mountEditTiming } from '../edit_timing.js';
 // The shared nav fetch wrapper owns the parent session and ingress headers.
 export const idleInterval = 60000;
 export const buildInterval = 1000;
@@ -29,13 +31,19 @@ export async function checkpoint(detail) {
   finally { checkpointPrompt = null; }
 }
 
-export async function request(path, method = 'GET', body, area = 'editor') {
+export async function request(path, method = 'GET', body, area = 'editor', timing = null) {
   for (;;) {
+    const sent = timing ? performance.now() : 0;
     const response = await fetch((window.chfBase ?? '../') + `api/house/${area}/` + path, {
       method, ...(body === undefined ? {} : body instanceof Blob ? { headers: { 'Content-Type': 'application/octet-stream' }, body } : body instanceof FormData ? { body } : {
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       }),
     });
+    if (timing) {
+      timing.request += performance.now() - sent;
+      timing.server = serverTiming(response.headers?.get('Server-Timing') || '');
+    }
+    const parseStart = timing ? performance.now() : 0;
     let data;
     try { data = JSON.parse(await response.text()); }
     catch {
@@ -57,6 +65,11 @@ export async function request(path, method = 'GET', body, area = 'editor') {
       }
       throw error;
     }
+    if (timing) {
+      timing.parse += performance.now() - parseStart;
+      timing.server_json = data.timing;
+      timing.bytes = data.bytes;
+    }
     if (response.ok) {
       if (area === 'editor' && path === 'state') session.noticeShown = false;
       return data;
@@ -76,8 +89,8 @@ export async function request(path, method = 'GET', body, area = 'editor') {
   }
 }
 
-export async function op(operation) {
-  try { return await request('op', 'POST', { op: operation }); }
+export async function op(operation, timing = null) {
+  try { return await request('op', 'POST', { op: operation }, 'editor', timing); }
   catch (error) {
     report(error); error.shown = true; throw error;
   }

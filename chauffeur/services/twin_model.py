@@ -4,6 +4,7 @@ from copy import deepcopy
 import math
 import re
 
+from services.twin_timing import timed as _edit_timed
 from services import twin_model_graph as graph
 from services import twin_model_hosts as hosts
 from services import twin_plan
@@ -588,6 +589,7 @@ def _ha_display(value, notes):
         return twin_display.validate()
 
 
+@_edit_timed('normalize')
 def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
     """Validate and derive rooms, optionally retaining whole flat-read walls."""
     model = deepcopy(model)

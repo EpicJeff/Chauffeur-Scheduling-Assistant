@@ -119,6 +119,7 @@ console.log('6/6 passed (draft pause, reread wording, first look, cleanup, one r
 '''
 
 EDITOR_STUBS = r'''
+export const mountEditTiming = () => {};
 export const session = { signedOut: false }, idleInterval = 60000, buildInterval = 1000;
 export const plain = String, active = b => ['running', 'paused', 'checkpoint'].includes(b?.state);
 export const report = e => { throw e; }, checkpoint = async () => true;

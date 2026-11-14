@@ -25,6 +25,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODULE = os.path.join(ROOT, 'static', 'twin', 'editor', 'api.js')
 
 
+def copy_api(folder, name):
+    source = Path(MODULE).read_text(encoding='utf-8')
+    (Path(folder) / name).write_text(source.replace("'../edit_timing.js'", "'./edit_timing.mjs'"), encoding='utf-8')
+    (Path(folder) / 'edit_timing.mjs').write_text((Path(MODULE).parent.parent / 'edit_timing.js').read_text(encoding='utf-8'), encoding='utf-8')
+
+
 def check(cond, msg):
     if not cond:
         raise AssertionError(msg)
@@ -74,7 +80,7 @@ process.exit(0);
 
 def run(job):
     d = tempfile.mkdtemp(prefix='twin_editor_api_js_')
-    shutil.copy(MODULE, os.path.join(d, 'api.mjs'))
+    copy_api(d, 'api.mjs')
     with open(os.path.join(d, 'driver.mjs'), 'w', encoding='utf-8') as f:
         f.write(DRIVER)
     out = subprocess.run([shutil.which('node'), os.path.join(d, 'driver.mjs'), json.dumps(job)],
@@ -128,7 +134,7 @@ def scenario_place_suggest_stays_enabled_for_unassigned_pages():
     """Run createPlace with a small DOM double; click Suggest and Confirm pages."""
     d = tempfile.mkdtemp(prefix='twin_place_js_')
     shutil.copy(os.path.join(ROOT, 'static', 'twin', 'editor', 'place.js'), os.path.join(d, 'place.mjs'))
-    shutil.copy(MODULE, os.path.join(d, 'api.js'))
+    copy_api(d, 'api.js')
     with open(os.path.join(d, 'package.json'), 'w', encoding='utf-8') as f:
         json.dump({'type': 'module'}, f)
     driver = r"""

@@ -1,3 +1,4 @@
+import { span as editSpan } from './edit_timing.js';
 import { applyObject, fitOpening, objectShown, objectMaterialKey } from './objects.js';
 // Plan -> geometry. Plan x/y map to world X/-Z; heights are world Y.
 // All geometry is in plan feet; only the returned root converts to metres.
@@ -266,7 +267,21 @@ function footprintPanel(footprint, a, c, lo, ta, tc) {
   });
 }
 
-export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel = null, viewing = false, reuseMaterials = null } = {}) {
+export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel = null, viewing = false, reuseMaterials = null, timing = null } = {}) {
+  const detail = timing?.detail;
+  const generationStart = timing ? performance.now() : 0;
+  const materialBefore = detail?.materials || 0, batchBefore = detail?.batch || 0;
+  let materialDepth = 0;
+  const material = fn => {
+    if (materialDepth) return fn();
+    const stop = editSpan(detail, 'materials');
+    ++materialDepth;
+    try { return fn(); } finally { --materialDepth; stop(); }
+  };
+  const batch = (...args) => {
+    const stop = editSpan(detail, 'batch');
+    try { return mergeStatic(...args); } finally { stop(); }
+  };
   const root = new THREE.Group(); root.scale.setScalar(FT);
   const pieces = new Map(), pieceBounds = new Map(), pickObjects = new Map(), roofSurfaces = new Map(), mergeGroups = [], ghostBatches = [];
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
@@ -282,30 +297,36 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     }
     return materialKit;
   };
-  const materials = new Map(reuseMaterials || []);
+  const materials = material(() => new Map(reuseMaterials || []));
   let parkingIcon = materials.get('parking_icon#ffffff') || null;
-  const plain = (name, color, extra = {}) => {
+  const plain = (name, color, extra = {}) => material(() => {
     const key = name + color;
     if (!materials.has(key)) materials.set(key, new THREE.MeshStandardMaterial({ name, color, roughness: 0.8, ...extra }));
     return materials.get(key);
-  };
+  });
   const glass = plain('glass', '#b9d7db', { transparent: true, opacity: 0.26, roughness: 0.1, depthWrite: false });
   const screen = plain('screen', '#59615d', { transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide });
   const fixture = plain('fixture', '#fff4e0', { emissive: '#ffd59a', emissiveIntensity: 0 });
   const ghost = plain('ghost', '#38bdf8', { opacity: 0.35, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-  const ghostEdges = materials.get('ghostEdges') || new THREE.LineDashedMaterial({ color: '#38bdf8', dashSize: 0.4, gapSize: 0.25, transparent: true, opacity: 0.8, depthWrite: false });
-  const pickMaterial = materials.get('pick') || new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+  const ghostEdges = material(() => materials.get('ghostEdges') || new THREE.LineDashedMaterial({ color: '#38bdf8', dashSize: 0.4, gapSize: 0.25, transparent: true, opacity: 0.8, depthWrite: false }));
+  const pickMaterial = material(() => materials.get('pick') || new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
   const roomLights = [], levelElevations = {}, notes = [], pendingModels = [];
   for (const b of plan.buildings || []) {
-    const materialKit = materialKitFor({ ...plan.materials, ...b.materials });
-    const mat = (role, level = null, override = null) => {
+    const buildingStart = timing ? performance.now() : 0;
+    const buildingMaterials = detail?.materials || 0, buildingBatch = detail?.batch || 0;
+    const materialKit = material(() => materialKitFor({ ...plan.materials, ...b.materials }));
+    const mat = (role, level = null, override = null) => material(() => {
       const ref = override || level?.materials?.[role];
       const key = ref ? JSON.stringify([role, ref, materialKit.materials[role]])
         : Object.hasOwn(b.materials || {}, role) ? JSON.stringify([b.id, role]) : role;
       if (!materials.has(key)) materials.set(key, kitMaterial(role,
         ref ? materialKitFor({ ...plan.materials, ...b.materials, [role]: ref }) : materialKit, tier));
       return materials.get(key);
-    };
+    });
+    // Walls/openings (including CSG) and floor slabs are attributable by level;
+    // roof, foundation and shared preparation stay at building granularity.
+    const levelTiming = timing ? b.levels.map(l => ({ id: l.id, walls: 0, floors: 0 })) : [];
+    const levelSpan = (id, phase) => editSpan(levelTiming.find(l => l.id === id), phase);
     const levels = Object.fromEntries(b.levels.map(l => [l.id, l]));
     const ordered = [...b.levels].sort((a, c) => a.elevation - c.elevation), first = ordered[0];
     if (!first) continue;
@@ -597,7 +618,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
             activePiece = saved;
             const geometries = new Set(); fitted.traverse(o => { if (o.geometry) geometries.add(o.geometry); }); geometries.forEach(g => g.dispose());
             registerRecords();
-            mergeStatic(group, { perPiece: !!editableLevel });
+            batch(group, { perPiece: !!editableLevel });
           }));
           continue;
         }
@@ -649,6 +670,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       use(w, 'wall', w.id);
       const length = Math.hypot(w.to[0] - w.from[0], w.to[1] - w.from[1]);
       if (!length) continue;
+      const stopLevel = levelSpan(w.level, 'walls');
       const dx = (w.to[0] - w.from[0]) / length, dy = (w.to[1] - w.from[1]) / length;
       const { sign, outward } = wallNormal(w);
       // Outside face stays on the drawn line. Interior walls retain their
@@ -738,6 +760,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       wallProfiles.set(w.id, { panels: profile.panels, elevation: l.elevation });
       if (w.exterior && w.state !== 'ghost') supportingWalls.push({ w, l, outward, dx, dy, panels: profile.panels });
       if (w.exterior && l.elevation > 0 && w.level === first.id) wall(local[w.level], w.from, w.to, 0, w.thickness + 0.12, () => l.elevation, [], false, 'base', false, profile);
+      stopLevel();
     }
     const roofGeometry = positions => {
       const geometry = new THREE.BufferGeometry(), mapped = [], uv = [];
@@ -996,6 +1019,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         || r.polygon.every(p => contains(po.polygon, p)) && po.polygon.every(p => contains(r.polygon, p))));
     // A half-storey gets its own outline-based slab just like a full level.
     for (const l of ordered) {
+      const stopLevel = levelSpan(l.id, 'floors');
       use({ ...l, id: `floor:${l.id}` }, 'floor', `floor:${l.id}`);
       const floorOutlines = outlines.get(l.id);
       const rooms = (b.rooms || []).filter(r => r.level === l.id && r.polygon?.length >= 3);
@@ -1024,6 +1048,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
           : [{polygon: wall.footprint, top: l.elevation}];
         for (const {polygon: area, top} of parts) mesh(local[l.id], polygon(area, top - .8, top), mat('siding', l));
       }
+      stopLevel();
     }
     for (const [index, po] of porches.entries()) {
       if (!po.polygon) continue;
@@ -1031,7 +1056,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       const room = porchRoom(po), foundation = porchFoundation(po.foundation), solid = foundation.type === 'solid';
       const floor = po.floor + (room?.floor_offset_ft || 0);
       const slabBottom = floor - (solid ? PORCH_SLAB_FT : POST_SLAB_FT);
-      const slot = (name, role) => materialSlot(foundation.materials[name], role, materialKit, tier, materials, mat);
+      const slot = (name, role) => material(() => materialSlot(foundation.materials[name], role, materialKit, tier, materials, mat));
       if (!room) mesh(local[first.id], polygon(po.polygon, slabBottom, floor), mat('patio_concrete'));
       if (solid || porchOnGrade(plan, b, po, floor, base)) {
         mesh(local[first.id], porchPlinthGeometry(plan, b, po, slabBottom, base),
@@ -1312,7 +1337,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
         if (item.state === 'ghost' && pieces.has(key)) {
           ghostUpdate = batchGhost(root, pieces.get(key), ghost, ghostEdges); ghostBatches.push(ghostUpdate);
         }
-        if (late) mergeStatic(holder, { perPiece: levelKey(level.id) === editableLevel });
+        if (late) batch(holder, { perPiece: levelKey(level.id) === editableLevel });
       };
       if (point) {
         const asset = item.asset.replace(/^polyhaven:/, '');
@@ -1329,18 +1354,24 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       draw(source?.clone(true));
     });
     pendingModels.push(Promise.all(jobs).then(() => {
-      for (const [level, group] of itemGroups) mergeStatic(group, { perPiece: levelKey(level) === editableLevel });
+      for (const [level, group] of itemGroups) batch(group, { perPiece: levelKey(level) === editableLevel });
     }));
+    if (timing) {
+      timing.buildings.push({ id: b.id, levels: levelTiming,
+        generate: Math.max(0, performance.now() - buildingStart - (detail.materials - buildingMaterials) - (detail.batch - buildingBatch)) });
+      ++timing.counts.buildings; timing.counts.levels += b.levels.length;
+    }
   }
   // Merge within independently switchable domains, never across a floor cut.
-  for (const g of mergeGroups) mergeStatic(g, { perPiece: !!editableLevel && g.userData.levelKey === editableLevel });
+  for (const g of mergeGroups) batch(g, { perPiece: !!editableLevel && g.userData.levelKey === editableLevel });
   groups.gableCut.visible = false;
   const updateGhosts = () => ghostBatches.forEach(update => update());
   updateGhosts();
   // The view's supplementary room meshes still use the plan's floor role.
-  if (plan.buildings?.length && !materials.has('floor')) materials.set('floor', kitMaterial('floor', materialKitFor(plan.materials), tier));
+  if (plan.buildings?.length && !materials.has('floor')) material(() => materials.set('floor', kitMaterial('floor', materialKitFor(plan.materials), tier)));
   const ready = Promise.all(pendingModels).then(() => Promise.all([...materials.values()].map(m => m.userData.ready)));
   // These two shared materials may have no objects in a settled-only plan.
   materials.set('ghostEdges', ghostEdges); materials.set('pick', pickMaterial);
+  if (timing) detail.generate += Math.max(0, performance.now() - generationStart - (detail.materials - materialBefore) - (detail.batch - batchBefore));
   return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready, updateGhosts, notes };
 }
