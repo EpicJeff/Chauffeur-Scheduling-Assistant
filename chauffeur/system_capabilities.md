@@ -1,6 +1,19 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.848 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.849 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.849 (2026-11-13, NOT device-verified): solar conduits are plain galvanized metal when the panels are not producing.**
+
+**The report.** The user sent a night screenshot: "Why are conduits visible at night when no solar is generating? They should either disappear or switch to a metal material." Below the flow threshold, conduits kept the unlit, non-tone-mapped electric-blue shader at 15% brightness, so they glowed teal in the dark.
+
+**The fix** (`static/twin/live/energy.js`).
+- Each conduit now has a second mesh on the same tube geometry, using one shared `MeshStandardMaterial` named `conduit_metal`: colour `#a7adb3`, metalness 0.6, roughness 0.45, lit like the house.
+- **Below the 50 W flow threshold, or on stale data,** the metal tube is drawn and the glowing tube and its halo are hidden.
+- **Producing:** exactly as before, with the electric-blue glow, pulse and halo.
+- **Cost:** one draw per conduit either way. Both materials are in the energy layer's warm set, so switching never compiles. No geometry is rebuilt.
+- Conduits still hide with their roof.
+
+**Tests.** `test_twin_energy_js` 38/38. The conduit check now asserts the glowing tube and halo at 50 W and above, the metal tube below it, a shared geometry, and the same metal material across switches; the stale-data check expects metal. `test_twin_bake_runtime_js` 17/17, `test_twin_import_maps` 3/3, and browser `test_house_twin_energy_live` 7/7, including "no programs on second entry". Chromium at night with solar at 0 W shows every conduit as metal and none glowing.
 
 **v2.499.848 (2026-11-13, NOT device-verified): editing the house no longer rebuilds the yard unless the edit changes something the yard draws.**
 
