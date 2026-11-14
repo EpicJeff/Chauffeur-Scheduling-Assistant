@@ -7882,6 +7882,14 @@ def _material_call(operation, *args):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _material_write(operation, *args):
+    result = _material_call(operation, *args)
+    # Existing /api/stream update -> chf-server-update in connected pages.
+    global LAST_UPDATE_TIME
+    LAST_UPDATE_TIME = time.time()
+    return result
+
+
 @app.get('/api/house/materials')
 def house_materials():
     from services import twin_materials
@@ -7907,19 +7915,19 @@ def house_material_file(id: str, file: str):
 @app.post('/api/house/materials')
 def house_material_create(request: Request, body: dict = Body(default={})):
     from services import twin_materials
-    return _material_call(twin_materials.create, body, _acting_id(request, None))
+    return _material_write(twin_materials.create, body, _acting_id(request, None))
 
 
 @app.patch('/api/house/materials/{id}')
 def house_material_update(id: str, request: Request, body: dict = Body(default={})):
     from services import twin_materials
-    return _material_call(twin_materials.update, id, body, _acting_id(request, None))
+    return _material_write(twin_materials.update, id, body, _acting_id(request, None))
 
 
 @app.post('/api/house/materials/{id}/duplicate')
 def house_material_duplicate(id: str, request: Request):
     from services import twin_materials
-    return _material_call(twin_materials.duplicate, id, _acting_id(request, None))
+    return _material_write(twin_materials.duplicate, id, _acting_id(request, None))
 
 
 @app.post('/api/house/materials/{id}/maps/{slot}')
@@ -7930,38 +7938,38 @@ async def house_material_map(id: str, slot: str, request: Request):
         if len(data) + len(chunk) > twin_materials.MAX_INPUT_BYTES:
             raise HTTPException(status_code=400, detail='Each image must be at most 40 MB.')
         data.extend(chunk)
-    return await asyncio.to_thread(_material_call, twin_materials.set_image, id, slot,
+    return await asyncio.to_thread(_material_write, twin_materials.set_image, id, slot,
                                    bytes(data), _acting_id(request, None))
 
 
 @app.delete('/api/house/materials/{id}/maps/{slot}')
 def house_material_map_clear(id: str, slot: str, request: Request):
     from services import twin_materials
-    return _material_call(twin_materials.update, id, {'maps': {slot: None}}, _acting_id(request, None))
+    return _material_write(twin_materials.update, id, {'maps': {slot: None}}, _acting_id(request, None))
 
 
 @app.post('/api/house/materials/{id}/undo')
 def house_material_undo(id: str):
     from services import twin_materials
-    return _material_call(twin_materials.undo, id)
+    return _material_write(twin_materials.undo, id)
 
 
 @app.post('/api/house/materials/{id}/redo')
 def house_material_redo(id: str):
     from services import twin_materials
-    return _material_call(twin_materials.redo, id)
+    return _material_write(twin_materials.redo, id)
 
 
 @app.post('/api/house/materials/{id}/reset')
 def house_material_reset(id: str, request: Request):
     from services import twin_materials
-    return _material_call(twin_materials.reset_to_source, id, _acting_id(request, None))
+    return _material_write(twin_materials.reset_to_source, id, _acting_id(request, None))
 
 
 @app.delete('/api/house/materials/{id}')
 def house_material_delete(id: str, request: Request):
     from services import twin_materials
-    return _material_call(twin_materials.delete, id, _acting_id(request, None))
+    return _material_write(twin_materials.delete, id, _acting_id(request, None))
 
 
 @app.get("/api/house/twin/library/{asset_id}/{name:path}")

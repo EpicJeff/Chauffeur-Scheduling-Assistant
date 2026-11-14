@@ -7,7 +7,8 @@ import { span as editSpan } from './edit_timing.js';
 import { heightAt } from './twin_roof.js';
 import { groundAt, buildingGround } from './twin_ground.js';
 import { buildYard, yardKey, yardMaterialKey } from './twin_yard.js';
-import { base, loadSky, disposeObject } from './twin_library.js';
+import { base, loadSky, disposeObject, manifest } from './twin_library.js';
+import { watchMaterialCatalogue } from './material_watch.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 import { hostPoint } from './twin_hosts.js';
 import { keepLive } from './live/live.js';
@@ -23,6 +24,8 @@ import { createViewing } from './viewing.js';
 import { createLevels } from './levels.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {} } = {}) {
+  kit = kit || {};
+  kit.manifest ||= manifest(kit);
   // Ruling B15: only the 3D house view bakes lights. The editor's scene is the house
   // mid-edit (a focused floor, faded floors, editable geometry), so it never bakes.
   const editor = !!el.closest?.('.editor-shell');
@@ -297,6 +300,18 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     levelShown(key) { return !viewing || viewing.levelAlpha(key) > .5; },
     roofShown(id) { return !viewing || viewing.roofAlpha(id) > .5; },
     get site() { return site; },
+    get materialManifest() { return manifest(kit); },
+    async refreshMaterials(ids) {
+      // An editor rebuild may be adopting a newer plan. Wait for it rather
+      // than superseding that work with the previously displayed plan.
+      while (!disposed && !view.ready) await new Promise(resolve => setTimeout(resolve, 16));
+      if (disposed || !twin) return;
+      const used = [...twin.materials.values(), ...(yardGroup?.userData.materials?.values() || [])]
+        .some(m => ids.includes(m.userData.materialId));
+      if (!used) return;
+      view.bake?.materialsChanged(ids);
+      await view.rebuild(plan);
+    },
     get roofSurfaces() { return twin?.roofSurfaces; },
     render,
     prepareViewingMaterial(source, material) { viewing?.adopt(source, material); },
@@ -830,7 +845,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (disposed || version !== revision) { release(next, keepMaterials); return; }
       next.yardGroup?.userData.adoptParts?.();
       // After adoption the new yard's material map holds exactly what it still uses.
-      const keepAfter = new Set([...(next.yardGroup?.userData.materials?.values() || []), ...(reuseMaterials?.values() || [])]);
+      const keepAfter = new Set([...(next.yardGroup?.userData.materials?.values() || []), ...next.materials.values()]);
       if (timing) {
         timing.yard_reused_parts = reuseYard ? Object.keys(yardGroup?.userData.yardPartKeys || {}) : next.yardGroup?.userData.yardReusedParts || [];
         timing.yard_rebuilt_parts = reuseYard ? [] : next.yardGroup?.userData.yardRebuiltParts || [];
@@ -910,6 +925,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     dispose() {
       if (disposed) return;
       disposed = true; ++revision; view.ready = false;
+      view.materialWatcher?.stop();
       view.levels?.stop();
       clearInterval(timeTimer); clearTimeout(previewIdle);
       for (const name of ['pointerdown', 'pointermove', 'keydown', 'input']) document.removeEventListener(name, previewActivity);
@@ -1078,6 +1094,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const loadedSky = await skyPromise;
     if (loadedSky) applySky(loadedSky);
     if (disposed) return view;
+    view.materialWatcher = watchMaterialCatalogue(view);
     renderer3.setAnimationLoop(() => {
       const now = performance.now(), run = probeRun;
       try {

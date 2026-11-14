@@ -282,10 +282,12 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       catalog = await loading;
       const known = kit.manifest || (kit.manifest = window.twinManifest || {});
       for (const row of catalog.materials) {
-        if (row.builtin || row.source === 'builtin' || !row.id.startsWith('material-') || known[row.id]?.revision === row.revision) continue;
-        const entry = await request('materials/' + encodeURIComponent(row.id), 'GET', undefined, '');
-        known[row.id] = { kind: 'material', household: true, revision: entry.revision, params: entry.params,
-          maps: Object.fromEntries(Object.entries(entry.maps || {}).map(([slot, path]) => [slot, `materials/${entry.id}/${path}`])) };
+        if (row.builtin || row.source === 'builtin' || !row.id.startsWith('material-')) continue;
+        if (known[row.id]?.revision !== row.revision) {
+          const entry = await request('materials/' + encodeURIComponent(row.id), 'GET', undefined, '');
+          known[row.id] = { kind: 'material', household: true, revision: entry.revision, params: entry.params,
+            maps: Object.fromEntries(Object.entries(entry.maps || {}).map(([slot, path]) => [slot, `materials/${entry.id}/${path}`])) };
+        }
         if (known[row.id].maps.base_color) row.thumbnail_url = materialUrl(known[row.id].maps.base_color);
       }
     }
@@ -386,10 +388,12 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     if (added && !row) await browse();
   }
   const importsQueue = mountImports({ canvas, kit, canEdit, signal, changed: changedImport });
-  listen(window, 'focus', () => {
+  const invalidateCatalog = () => {
     catalog = null; loading = null;
     if (!host.hidden) browse().catch(report);
-  });
+  };
+  listen(window, 'focus', invalidateCatalog);
+  listen(document, 'chf-materials-changed', invalidateCatalog);
   if (new URLSearchParams(location.search).get('library') === '1') {
     tab = 'items'; host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true');
     browse().catch(report);

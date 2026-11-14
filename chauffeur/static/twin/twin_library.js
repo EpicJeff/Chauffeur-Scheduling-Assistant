@@ -30,7 +30,7 @@ const modelCache = new Map(), skyCache = new Map(), textureCache = new Map();
 function loadTexture(url) {
   if (!textureCache.has(url)) {
     const request = new Promise((done, reject) => new THREE.TextureLoader().load(url, done, undefined, reject))
-      .catch(() => { textureCache.delete(url); return null; });
+      .catch(() => { if (textureCache.get(url) === request) textureCache.delete(url); return null; });
     textureCache.set(url, request);
   }
   return textureCache.get(url);
@@ -45,7 +45,7 @@ function optionalAsset(cache, key, load, copy, onLate) {
     catch { entry.complete = Promise.resolve(null); }
     entry.complete = entry.complete.catch(() => null).then(value => {
       entry.done = true; entry.value = value;
-      if (!value) cache.delete(key);
+      if (!value && cache.get(key) === entry) cache.delete(key);
       return value;
     });
     entry.ready = new Promise(resolve => {
@@ -128,6 +128,39 @@ export function materialKey(value, role, tier, manifest) {
 // Immutable master URLs are decoded once; each tier image is resized once.
 // Material-owned clones share pixels, never repeat/rotation or GPU lifecycle.
 const householdTextureCache = new Map();
+const householdUrls = new Map(), textureOwners = new Map(), retiredTextures = new Map();
+function releaseRetired(url) {
+  if (textureOwners.get(url)?.size) return;
+  textureOwners.delete(url);
+  const retired = retiredTextures.get(url);
+  retiredTextures.delete(url);
+  for (const request of retired || []) Promise.resolve(request).then(texture => texture?.dispose());
+}
+
+// Retire obsolete immutable URLs immediately from both lookup caches. Existing
+// material owners (including requests still in flight) retain their pixels until
+// disposal; a later undo may load the URL afresh without reviving an old entry.
+export function refreshMaterials(ids, known = null) {
+  for (const id of ids) {
+    const keep = new Set(Object.values(known?.[id]?.maps || {}).map(materialUrl));
+    for (const url of householdUrls.get(id) || []) {
+      if (keep.has(url)) continue;
+      const retired = retiredTextures.get(url) || [];
+      if (textureCache.has(url)) { retired.push(textureCache.get(url)); textureCache.delete(url); }
+      for (const [key, entry] of householdTextureCache) if (JSON.parse(key)[0] === url) {
+        retired.push(entry.complete); householdTextureCache.delete(key);
+      }
+      retiredTextures.set(url, retired); householdUrls.get(id).delete(url);
+      releaseRetired(url);
+    }
+  }
+}
+
+export function currentMaterial(material, known) {
+  const id = material.userData.materialId;
+  return !id || material.userData.materialRevision === known[id]?.revision;
+}
+
 function householdTexture(path, tier, onLate) {
   const url = materialUrl(path), key = JSON.stringify([url, tier]);
   return optionalAsset(householdTextureCache, key, async () => {
@@ -157,6 +190,8 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   material.name = role;
   const id = ref.id || ref.asset || role;
   material.userData.materialKey = materialKey(ref, role, tier, { [id]: entry });
+  material.userData.materialId = id;
+  material.userData.materialRevision = entry.revision;
   material.color.set(ref.color || params.tint || '#ffffff');
   // Auto is flat until this tier actually attaches the corresponding map.
   material.roughness = params.roughness ?? .85;
@@ -170,6 +205,7 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   if (role === 'granite') applyGraniteShader(material);
   let disposed = false;
   const textures = new Set();
+  const urls = new Set();
   material.alphaMap = null; material.alphaTest = 0; material.side = THREE.FrontSide;
   if (ref.pattern === 'lattice') {
     material.alphaMap = latticeTexture(); material.alphaTest = .5; material.side = THREE.DoubleSide;
@@ -178,6 +214,7 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   const release = () => {
     disposed = true;
     textures.forEach(texture => texture.dispose()); textures.clear();
+    for (const url of urls) { textureOwners.get(url)?.delete(material); releaseRetired(url); }
     material.removeEventListener('dispose', release);
   };
   material.userData.releaseMaterialParams = release;
@@ -202,6 +239,11 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
     else slots.push(['roughness', ['roughnessMap']], ['metalness', ['metalnessMap']], ['ao', ['aoMap']]);
   }
   material.userData.ready = Promise.all(slots.filter(([slot]) => maps[slot]).map(([slot, properties]) => {
+    const url = materialUrl(maps[slot]); urls.add(url);
+    if (!householdUrls.has(id)) householdUrls.set(id, new Set());
+    householdUrls.get(id).add(url);
+    if (!textureOwners.has(url)) textureOwners.set(url, new Set());
+    textureOwners.get(url).add(material);
     const apply = attach(properties);
     return householdTexture(maps[slot], tier, apply).then(texture => { if (texture) apply(texture); });
   }));

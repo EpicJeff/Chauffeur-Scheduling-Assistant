@@ -74,6 +74,28 @@ async function check(name, fn) {
   try { await fn(); passed++; console.log('  ok   ' + name); }
   catch (error) { console.log('  FAIL ' + name + ' ' + error.stack); }
 }
+await check('material_revision_invalidates_bake_and_refreshes_affected_clones', async () => {
+  const desk = await context();
+  try {
+    await until(() => desk.controller.fresh().length === 4 && !desk.controller.state().baking, 'initial bake');
+    const mesh = covered(desk.out.root).find(m => m.material.name !== 'glass');
+    const clone = mesh.material;
+    // Runtime metadata survives the viewing and bake clone chains.
+    clone.userData.materialId='material-baked'; clone.userData.materialRevision=1;
+    assert.equal(desk.controller.materialsChanged(['unused']), false);
+    assert.ok(desk.controller.fresh().length === 4);
+    // Its original must receive the new maps/params before the runtime repatches.
+    for (const material of desk.out.materials.values()) if (material.name === mesh.material.name) {
+      material.userData.materialId='material-baked';material.userData.materialRevision=2;material.color.set('#56789a');
+    }
+    assert.equal(desk.controller.materialsChanged(['material-baked']), true);
+    assert.ok(desk.controller.state().stale.length, 'revision marks existing stale state');
+    assert.notEqual(mesh.material,clone);assert.equal(mesh.material.color.getHexString(),'56789a');
+    await desk.controller.refresh();
+    assert.ok(desk.controller.state().stale.length,'the old publication cannot make the revision fresh again');
+  } finally { desk.controller.stop(); }
+});
+
 await check('every_placed_light_bakes_including_yard_and_fire_pit', async () => {
   // v2.499.839 left yard-room and fire-pit lights out of the bake: yard surfaces were not in
   // the atlas, so they never settled. The yard now bakes (user, 2026-11-13: "It seems silly to

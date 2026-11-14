@@ -4,6 +4,7 @@ export async function readLibraryCatalog() {
   const [library, materials] = await Promise.all([
     request('library'), request('materials', 'GET', undefined, ''),
   ]);
+  document.dispatchEvent(new CustomEvent('chf-material-catalogue', { detail: materials }));
   return { ...library, ...materials };
 }
 export const materialName = id => String(id || 'Material').replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());

@@ -17,6 +17,33 @@ from services import auth, twin_library as library, twin_materials as materials
 API = '/api/house/materials'
 
 
+def test_successful_material_writes_push_update_but_reads_and_errors_do_not():
+    import main
+    seed()
+    with Ctx() as c:
+        def write(call):
+            main.LAST_UPDATE_TIME = 0
+            response = call()
+            assert response.status_code == 200, response.text
+            assert main.LAST_UPDATE_TIME > 0, 'material write must signal the existing SSE update'
+            return response.json()
+        row = write(lambda: c.client.post(API, headers=c.mum, json={'name': 'Live'}))
+        mid = row['id']
+        write(lambda: c.client.patch(f'{API}/{mid}', headers=c.mum, json={'params': {'tint': '#123456'}}))
+        write(lambda: upload(c, mid))
+        write(lambda: c.client.delete(f'{API}/{mid}/maps/base_color', headers=c.mum))
+        write(lambda: c.client.post(f'{API}/{mid}/undo', headers=c.mum))
+        write(lambda: c.client.post(f'{API}/{mid}/redo', headers=c.mum))
+        duplicate = write(lambda: c.client.post(f'{API}/{mid}/duplicate', headers=c.mum))
+        write(lambda: c.client.post(f"{API}/{duplicate['id']}/reset", headers=c.mum))
+        main.LAST_UPDATE_TIME = 0
+        assert c.client.get(API, headers=c.mum).status_code == 200
+        assert c.client.get(f'{API}/{mid}', headers=c.mum).status_code == 200
+        assert c.client.patch(f'{API}/{mid}', headers=c.mum, json={'params': {'tint': 'bad'}}).status_code == 400
+        assert main.LAST_UPDATE_TIME == 0
+        write(lambda: c.client.delete(f'{API}/{mid}', headers=c.mum))
+
+
 def image(size=(64, 64), color=(90, 120, 150), fmt='PNG'):
     out = io.BytesIO()
     Image.new('RGB', size, color).save(out, format=fmt)
