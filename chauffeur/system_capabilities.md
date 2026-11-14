@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.851 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.852 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.852 (2026-11-13): dev and test only. TestClient test files no longer hang on Windows loopback.**
+
+**The cause.** "TestClient files intermittently hang at exit or first request" (noted since v2.499.842) was found with a faulthandler stack dump. Every TestClient request starts an asyncio portal. On Windows its proactor loop calls `socket.socketpair()`, and CPython's `_fallback_socketpair` blocks forever in `accept()` when the development machine's loopback loses a TCP handshake. Browser tests already had a bounded, retried replacement in `tests/live_app.py`, but TestClient tests never loaded it.
+
+**The fix.** The replacement now lives in `services/win_loopback.py` (`install()`, idempotent). `main.py` calls it at import, so every test that imports the app is covered, and `tests/live_app.py` uses the same function. It does nothing off Windows, so the Home Assistant add-on (Linux) is unaffected.
+
+**Tests.** New `test_win_loopback` 1/1 (installed on Windows, a working pair, an asyncio loop starts). TestClient files green: HA display 5/5, house saves 19/19, edit timing 4/4, server speed 5/5. A browser scenario passed twice.
 
 **v2.499.851 (2026-11-13, NOT device-verified): an editor edit does less whole-house work on the server and no longer downloads the house twice.**
 
