@@ -223,10 +223,10 @@ vec3 lmFill = vec3(0.0);
 int lmRow = int(vLmRoom + 0.5);
 if (vLmRoom > -0.5) {
 ${bankCode}
-}
-RE_IndirectDiffuse(lmFill, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);`);
+  RE_IndirectDiffuse(lmFill, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
+}`);
     };
-    material.customProgramCacheKey = () => `${key}|lm-6-shadowmask-direct|${chartMode ? 'charts-2|' : ''}${slots}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
+    material.customProgramCacheKey = () => `${key}|lm-7-shadowmask-direct|${chartMode ? 'charts-2|' : ''}${slots}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
     material.needsUpdate = true;
   }
 }
