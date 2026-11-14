@@ -53,6 +53,18 @@ await test('flush spa water equals pool water and coping equals pool coping',asy
  assert.ok(topAt(g,28,6,-.25,'water'));assert.ok(topAt(g,20,6,-.25,'water'));
  assert.ok(topAt(g,26.1,6,.45,'paving'));assert.equal(verticalWater(g).length,0);
 });
+await test('pool features bake as opaque receivers and their water never does',async()=>{
+ // Every light bakes (2026-11-13): ledge, steps, spa basin, walls and coping receive baked
+ // light; pool and spa water and the spillover sheet are transparent and stay out.
+ const {atlasMesh}=await import(file('static/twin/bake/atlas.js'));
+ const g=await build([{id:'l',kind:'ledge',polygon:rect(1,1,8,6),depth_in:12},{id:'s',kind:'steps',polygon:rect(1,12,6,6),entry_edge:3,treads:3},
+  {id:'spa',kind:'spa',polygon:rect(26,4,8,8),mode:'raised',raise_in:18,depth_in:36,spillover:true}]);
+ const received=new Set(),water=[];
+ g.traverse(o=>{if(!o.isMesh)return;if(o.material.name==='water')water.push(atlasMesh(o));else if(atlasMesh(o))received.add(o.material.name);});
+ assert.ok(received.has('pool tile'),`pool tile (floor, walls, ledge, steps, spa basin) receives: ${[...received]}`);
+ assert.ok(received.has('base'),`the raised spa wall receives: ${[...received]}`);
+ assert.ok(water.length&&water.every(v=>!v),'pool, spa and spillover water (merged) never bake: '+JSON.stringify(water));
+});
 await test('spa cuts the pool water and coping for inside, crossing, touching and overlapping outlines',async()=>{
  for(const poly of [rect(2,2,8,8),rect(26,4,8,8),rect(30,4,8,8),[[26,4],[34,4],[34,8],[29,8],[29,12],[26,12]]]){
   const g=await build([{id:'spa',kind:'spa',polygon:poly,mode:'raised',raise_in:12,spillover:false}]);
