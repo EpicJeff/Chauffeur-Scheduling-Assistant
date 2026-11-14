@@ -4,7 +4,7 @@ import { FT, polygon, contains, stairHoles } from '../twin_generator.js';
 export { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 import { buildingGround } from '../twin_ground.js';
 import { lightColor, createRealLights } from './real_lights.js';
-import { resolveEmitters, emission } from './emitters.js';
+import { resolveEmitters, emission, DEFAULT_OUTPUT_LM } from './emitters.js';
 import { registerClimate, roomClimate } from './climate.js';
 import { registerEnergy } from './energy.js';
 import { registerSecurity } from './security.js';
@@ -86,10 +86,13 @@ export function mountModes(view, live) {
   // Placement, vertical references and mounting offsets have one owner.
   // A small shared low-poly bulb adds no shadow draw calls.
   const bulbGeometry = new THREE.SphereGeometry(.1, 8, 6);
-  for (const emitter of resolveEmitters(layout, {}, view.plan)) {
+  // Fire pits stay on the object-lamp path below, exactly as before fixtures:
+  // flame colour, intensityScale and the baked object:fire_pit:<id> channel.
+  // The bake slice moves pits onto firePitEmitters, and must carry that
+  // colour (#ff9a3c) and scale (.5) with them.
+  for (const emitter of resolveEmitters(layout, {}, view.plan, {firePits: false})) {
     const position = new THREE.Vector3(...emitter.position);
-    const original = layout.markers.find(row => row.device_id === emitter.device_id);
-    const marker = emitter.legacy ? original : {...emitter, at: [position.x / FT, -position.z / FT, position.y / FT]};
+    const marker = emitter.legacy ? emitter.marker : {...emitter, at: [position.x / FT, -position.z / FT, position.y / FT]};
     const bulb = new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: '#fff1c9', toneMapped: false }));
     bulb.position.copy(position); bulb.userData.bulb = marker.device_id; bulb.visible = false;
     view.scene.add(bulb);
@@ -115,16 +118,17 @@ export function mountModes(view, live) {
     const position = firePosition || box.getCenter(new THREE.Vector3());
     if (!firePosition) position.y = box.max.y + .05;
     const at = [position.x / FT, -position.z / FT, position.y / FT];
+    // A fire only takes over a legacy marker lamp; authored fixtures keep theirs.
     const existing = object.entity && lamps.find(lamp => lamp.marker.entity_id === object.entity &&
-      (lamp.emitter?.fire_pit ? lamp.marker.device_id === 'object:' + object.id : !object.fire || !lamp.objectSource));
+      (!object.fire || (!lamp.objectSource && (!lamp.emitter || lamp.emitter.legacy))));
     if (existing) {
       existing.objectMaterials = [...(existing.objectMaterials || []), ...materials];
-      if (object.fire && (!existing.emitter || existing.emitter.legacy)) {
+      if (object.fire) {
         // A light-domain pit can also have an auto-placed room marker. Its
         // physical fire owns the light position, and never an indoor bake.
         existing.objectSource = object; existing.position.copy(position); existing.distance = 18 * FT;
         existing.marker = { device_id: 'object:' + object.id, entity_id: object.entity, at };
-        existing.key = existing.marker.device_id;
+        existing.key = existing.marker.device_id; existing.emitter = null;
         existing.bulb.position.copy(position);
       }
       continue;
@@ -203,9 +207,10 @@ export function mountModes(view, live) {
       const emitted = emission(stale ? null : state, lamp.marker.entity_id?.split('.')[0]);
       lamp.intensity = object && !object.entity ? (object.on ? 1 : 0) : emitted.brightness;
       // Shape-specific pools arrive in the real-time slice. Until then the
-      // point pool receives each fixture's share at its resolved centre.
+      // point pool receives each fixture's share at its resolved centre, in
+      // legacy-lamp units: a default fixture is exactly one legacy lamp.
       if (lamp.emitter && !lamp.emitter.legacy)
-        lamp.intensity *= lamp.emitter.output_lm * lamp.emitter.output_fraction / (4 * Math.PI * 40);
+        lamp.intensity *= lamp.emitter.output_lm * lamp.emitter.output_fraction / DEFAULT_OUTPUT_LM;
       if (object?.fire) lamp.intensity *= object.intensityScale ?? .5;
       if (object && (!object.entity || object.fire)) {
         const color = new THREE.Color(object.color).getRGB(new THREE.Color(), THREE.SRGBColorSpace);
@@ -264,7 +269,7 @@ export function mountModes(view, live) {
       if (baked || lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, baked && shown ? lamp.intensity : 0);
       lamp.baked = baked;
       lamp.real = selected.has(lamp.key);
-      lamp.bulb.visible = shown && !lamp.emitter?.fire_pit && !lamp.objectSource?.fire;
+      lamp.bulb.visible = shown && !lamp.objectSource?.fire;
       lamp.bulb.material.color.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
     }
     for (const floor of floors) {

@@ -49,18 +49,33 @@ check('legacy_floor_and_ceiling_match_old_rules',()=>{
     const row=out.find(e=>e.device_id===expected.device_id);
     assert.equal(row.legacy,true);assert.deepEqual(row.position,expected.position);assert.equal(row.range,expected.range);
     near(row.at,[expected.position[0]/.3048,-expected.position[2]/.3048,expected.position[1]/.3048]);
+    assert.equal(row.marker,snapshot.markers.find(m=>m.device_id===expected.device_id),'the emitter carries its own marker');
   }
+});
+check('legacy_lamp_is_a_default_point_fixture',()=>{
+  const marker={kind:'light',device_id:'d1',entity_id:'light.a',at:[1,2,9]},twin={kind:'light',device_id:'d2',entity_id:'light.a',at:[3,2,9]};
+  const out=resolveEmitters({markers:[marker,twin]},{'light.a':{state:'on',attributes:{brightness:128}}},plan);
+  assert.equal(out.length,2);assert.equal(out[0].marker,marker);assert.equal(out[1].marker,twin,'same entity, distinct markers');
+  close(out[0].output_lm_share,503*128/255);close(out[0].cd,out[0].output_lm_share/(4*Math.PI));
+  const fixtureLike=resolve([fixture('p','point',{at:[1,2,3]})])[0],legacyFull=resolveEmitters({markers:[marker]},{'light.a':{state:'on',attributes:{}}},plan)[0];
+  close(legacyFull.cd,fixtureLike.cd);close(legacyFull.output_lm_share,fixtureLike.output_lm_share);
 });
 check('switch_on_is_2700k_full',()=>{
   assert.deepEqual(emission({state:'on',attributes:{brightness:2}},'switch'),{on:true,brightness:1,rgb:lightColor({color_temp_kelvin:2700})});
   assert.equal(emission({state:'off'},'switch').on,false);
+});
+check('input_boolean_and_fan_are_on_off_sources',()=>{
+  for(const domain of ['input_boolean','fan']){
+    assert.deepEqual(emission({state:'on',attributes:{}},domain),{on:true,brightness:1,rgb:lightColor({color_temp_kelvin:2700})});
+    for(const state of [{state:'off'},{state:'unavailable'},{state:'on',stale:true},null])assert.equal(emission(state,domain).on,false);
+  }
 });
 check('tv_paused_emits_idle_does_not',()=>{
   for(const state of ['on','playing','paused']) assert.deepEqual(emission({state},'media_player'),{on:true,brightness:.3,rgb:lightColor({color_temp_kelvin:6500})});
   for(const state of ['idle','standby','off']) assert.equal(emission({state},'media_player').on,false);
 });
 check('unavailable_and_stale_never_emit',()=>{
-  for(const domain of ['light','switch','media_player']) for(const state of [null,{state:'unknown'},{state:'unavailable'},{state:'on',stale:true},{state:'on',reachable:false}]) {
+  for(const domain of ['light','switch','media_player','input_boolean','fan']) for(const state of [null,{state:'unknown'},{state:'unavailable'},{state:'on',stale:true},{state:'on',reachable:false}]) {
     assert.equal(emission(state,domain).on,false);assert.equal(emission(state,domain).brightness,0);
   }
   assert.ok(resolveEmitters(layout([fixture('p','point',{at:[1,2,3]})]),{states,reachable:false},plan).every(e=>!e.on));
@@ -123,12 +138,54 @@ check('host_facing_presets_and_path_surface_outward_normal',()=>{
   const area={...f,id:'fixture:area',shape:'area',at:[1,-2,0],size_ft:[2,1],facing:'down'};delete area.path;
   near(resolveEmitters(layout([area]),states,p)[0].at,[1,-2-1/12,-2/12]);
 });
-check('drawn_line_offsets_from_its_stored_path_and_sunken_pad_faces_high_side',()=>{
+check('drawn_line_keeps_its_plan_path_and_sunken_pad_faces_low_side',()=>{
+  // A hostless drawn line has no face to stand off: no lateral offset, only the drop.
   const f=fixture('drawn','line',{path:[[1,0,3],[9,0,3]],facing:'down',width_in:.5});
-  near(resolve([f])[0].path[0],[1,-1/12,3-2/12]);
+  near(resolve([f])[0].path[0],[1,0,3-2/12]);
+  for(const facing of ['out','in'])near(resolve([{...f,facing}])[0].path[1],[9,0,3]);
+  near(resolve([{...f,facing:'up'}])[0].path[0],[1,0,3+1/12]);
   const p={buildings:[],site:{terraces:[{id:'sunken',polygon:[[0,0],[10,0],[10,10],[0,10]],height:-3,blend:0}]}};
   f.path=[[1,0,-3],[9,0,-3]];f.snap={host:{kind:'retaining_wall',id:'sunken'},edge:{from:[0,0],to:[10,0]}};
   near(resolveEmitters(layout([f]),states,p)[0].path[0],[1,1/12,-3-2/12]);
+});
+check('step_runs_face_downhill_off_the_nosing',()=>{
+  // Stair climbs from [0,0] to [0,10]: downhill is -y. Edge order must not matter.
+  const stair={id:'st',level:'L',from:[0,0],to:[0,10],width:4,rise_to:8,risers:8};
+  const p={buildings:[{id:'b',position:[0,0],rotation:0,base:0,levels:[{id:'L',elevation:0,ceiling:9}],stairs:[stair]}],site:{}};
+  const f=fixture('riser','line',{path:[[-2,1.25,1],[2,1.25,1]],facing:'down',width_in:.5,snap:{host:{kind:'step',id:'st'},edge:{from:[-2,1.25],to:[2,1.25]},t0:0,t1:1}});
+  for(const edge of [{from:[-2,1.25],to:[2,1.25]},{from:[2,1.25],to:[-2,1.25]}]){
+    f.snap.edge=edge;const [e]=resolveEmitters(layout([f]),states,p);
+    near(e.path[0],[-2,1.25-1/12,1-2/12]);near(e.normal,[0,0,-1]);
+    near(resolveEmitters(layout([{...f,facing:'out'}]),states,p)[0].normal,[0,-1,0]);
+  }
+  // Rotating the building 90 degrees turns the run to -x, so downhill is +x.
+  p.buildings[0].rotation=90;
+  const g=fixture('turned','line',{path:[[-1.25,-2,1],[-1.25,2,1]],facing:'out',width_in:.5,snap:{host:{kind:'step',id:'st'},edge:{from:[-1.25,2],to:[-1.25,-2]},t0:0,t1:1}});
+  near(resolveEmitters(layout([g]),states,p)[0].path[0],[-1.25+1/12,-2,1]);
+});
+check('fence_out_is_right_of_the_drawn_direction',()=>{
+  const p={buildings:[],site:{fence:[{id:'fence',polyline:[[0,0],[10,0],[10,10]],height:6}]}};
+  for(const [edge,path,at] of [[{from:[10,0],to:[0,0]},[[8,0,6],[2,0,6]],[8,-1/12,6]],[{from:[10,2],to:[10,8]},[[10,2,6],[10,8,6]],[10+1/12,2,6]]]){
+    const f=fixture('fence','line',{path,facing:'out',width_in:.5,snap:{host:{kind:'fence',id:'fence'},edge,t0:0,t1:1}});
+    near(resolveEmitters(layout([f]),states,p)[0].path[0],at);
+  }
+});
+check('snapped_runs_take_the_auto_foundation_lift_from_building_hosts_only',async()=>{
+  const {buildingGround}=await import(file('static/twin/twin_ground.js'));
+  const b={id:'b',position:[0,0],rotation:0,base:0,foundation:{mode:'auto',offset_ft:1},levels:[{id:'L',elevation:0,ceiling:9}],rooms:[],
+    walls:[{id:'w',level:'L',from:[0,0],to:[10,0]}],stairs:[]};
+  const p={buildings:[b],site:{terraces:[{polygon:[[-20,-20],[40,-20],[40,40],[-20,40]],height:3,blend:0}],hardscape:[{id:'patio',polygon:[[20,0],[30,0],[30,10],[20,10]],elevation:3}]}};
+  const lift=buildingGround(p,b);assert.ok(lift>3,'the auto foundation lifts the building '+lift);
+  // Server frame: a wall top is base + elevation + height, with no auto lift.
+  const wall=ref=>fixture('w'+ref,'line',{ref,...(ref==='floor'?{building:'b',level:'L'}:{}),path:[[2,0,ref==='ground'?6:9],[8,0,ref==='ground'?6:9]],facing:'up',width_in:.5,
+    snap:{host:{kind:'wall',id:'w'},edge:{from:[0,0],to:[10,0]},t0:.2,t1:.8}});
+  for(const ref of ['absolute','floor','ground'])close(resolveEmitters(layout([wall(ref)]),states,p)[0].path[0][2],9+lift+1/12);
+  // Site hosts are true lot heights: a floor ref there must not add the building's lift.
+  const patio=fixture('patio','line',{ref:'floor',building:'b',level:'L',path:[[20,2,3],[20,8,3]],facing:'up',width_in:.5,
+    snap:{host:{kind:'hardscape',id:'patio'},edge:{from:[20,0],to:[20,10]},t0:.2,t1:.8}});
+  close(resolveEmitters(layout([patio]),states,p)[0].path[0][2],3+1/12);
+  // Unsnapped floor fixtures still sit on the lifted floor, as legacy markers do.
+  close(resolveEmitters(layout([fixture('pt','point',{ref:'floor',building:'b',level:'L',at:[5,5,8]})]),states,p)[0].at[2],8+lift);
 });
 check('linear_burner_gives_line_wide_gives_area_wood_gives_point',()=>{
   const linear={id:'linear',shape:'rectangle',polygon:[[0,0],[12,0],[12,2],[0,2]],fuel:'gas',entity:'switch.fire'};
@@ -159,6 +216,16 @@ check('fire_pits_resolve_from_their_entity_without_duplicate_marker',()=>{
   const p={buildings:[],site:{fire_pit:[pit]}};
   const out=resolveEmitters(l,{'switch.fire':{state:'on'}},p);assert.equal(out.length,1);assert.equal(out[0].on,true);
   assert.equal(resolveEmitters(l,{'switch.fire':{state:'off'}},p)[0].on,false);
+  const ib=resolveEmitters({markers:[]},{'input_boolean.fire':{state:'on'}},{buildings:[],site:{fire_pit:[{...pit,entity:'input_boolean.fire'}]}});
+  assert.equal(ib.length,1);assert.equal(ib[0].on,true);
+  // Live opts out: the entity's own marker resolves through the legacy rules.
+  const live=resolveEmitters(l,{'switch.fire':{state:'on'}},p,{firePits:false});
+  assert.equal(live.length,1);assert.equal(live[0].legacy,true);assert.equal(live[0].device_id,'d');
+});
+check('unnamed_pits_take_their_index_like_the_yard_builder',()=>{
+  const pits=[{shape:'round',at:[5,5],radius:2,fuel:'wood',entity:'switch.a'},{id:'',shape:'round',at:[15,5],radius:2,fuel:'wood',entity:'switch.b'}];
+  const out=resolveEmitters({markers:[]},{},{buildings:[],site:{fire_pit:pits}});
+  assert.deepEqual(out.map(e=>e.device_id).sort(),['object:fire_pit:0','object:fire_pit:1']);
 });
 check('signature_changes_on_aim_cone_size_facing_path',()=>{
   const rows=[fixture('s','spot',{at:[1,2,3],aim:[4,5,0],cone_deg:90,softness:.3}),fixture('a','area',{at:[1,2,3],size_ft:[2,3],facing:'up'}),fixture('l','line',{path:[[0,0,1],[10,0,1]],width_in:.5,facing:'down'})];
@@ -178,7 +245,10 @@ console.log(`${passed}/${checks.length} passed`);process.exit(passed===checks.le
 
 # Reuse the neighbouring test's fake DOM/view, but execute our own cases through
 # the actual live entry point and rig. No browser or source-grep assertions.
-LIVE_DRIVER = REAL_LIGHTS_DRIVER.split("check('lights_mode_never_requests_a_time_look_change'")[0] + r"""
+_LIVE_SPLIT = "check('lights_mode_never_requests_a_time_look_change'"
+if REAL_LIGHTS_DRIVER.count(_LIVE_SPLIT) != 1:
+    raise AssertionError('test_twin_real_lights_js.DRIVER changed: cannot find its first check to reuse the fake view')
+LIVE_DRIVER = REAL_LIGHTS_DRIVER.split(_LIVE_SPLIT)[0] + r"""
 const {layoutKey,keepLive}=await import(file('static/twin/live/live.js'));
 check('live_uses_fixtures_not_markers_and_keeps_distinct_pool_slots',async()=>{
   const saved=structuredClone(layout);
@@ -225,28 +295,43 @@ check('live_layout_key_covers_resolved_fixture_edits_without_server_signatures',
   }
   const c=structuredClone(l);c.light_fixtures_meta={'light.a':{output_lm:1000}};assert.notEqual(layoutKey(c),initial);
 });
-check('live_derived_fire_uses_burner_positions_and_never_duplicates_object_lamps',async()=>{
+check('live_fire_pits_stay_object_lamps_with_flame_colour_scale_and_bake',async()=>{
+  // Existing houses: a pit lights exactly as before fixtures (review I-1).
+  const close=(a,b)=>assert.ok(Math.abs(a-b)<1e-10,`${a} != ${b}`),near=(a,b)=>a.forEach((v,i)=>close(v,b[i]));
   const view=makeView('low');
   const pits=[{id:'gas',shape:'rectangle',polygon:[[0,0],[12,0],[12,2],[0,2]],fuel:'gas',entity:'switch.fire'},
-    {id:'wood',shape:'round',at:[14,5],radius:2,fuel:'wood',entity:'switch.fire'}];
+    {id:'wood',shape:'round',at:[14,5],radius:2,fuel:'wood',entity:'switch.fire'},
+    {id:'ib',shape:'round',at:[20,5],radius:2,fuel:'wood',entity:'input_boolean.fire'}];
   view.plan.site={fire_pit:pits};
   const {buildFirePit,fireFlameMaterial}=await import(file('static/twin/fire_pits.js'));
   const {resolveEmitters}=await import(file('static/twin/live/emitters.js'));
   const group=new THREE.Group();group.scale.setScalar(FT);view.scene.add(group);
+  const fireAt={};
   for(const pit of pits) buildFirePit(group,pit,0,{id:'fire_pit:'+pit.id,mat:name=>new THREE.MeshStandardMaterial({name}),
     plain:(name,color,extra={})=>extra.fireShader?fireFlameMaterial():new THREE.MeshStandardMaterial({name,color,...extra})});
-  states=initialStates();states['switch.fire']={state:'on'};reachable=true;
+  group.traverse(o=>{for(const m of o.material?[].concat(o.material):[]){const l=m.userData?.objectLight;if(l?.fireLightAt)fireAt[l.id]=l.fireLightAt;}});
+  const calls=[];view.bake={fresh:()=>['object:fire_pit:gas'],light:(id,rgb,intensity)=>calls.push({id,rgb,intensity})};
+  states=initialStates();states['switch.fire']={state:'on'};states['input_boolean.fire']={state:'on'};reachable=true;
   const live=await mountLive(view,{api});
   try{
-    const expected=resolveEmitters(layout,states,view.plan).filter(e=>e.fire_pit);
+    live.setMode('lights');live.draw();
+    const derived=resolveEmitters(layout,states,view.plan).filter(e=>e.fire_pit);
+    assert.equal(derived.length,3,'the resolver still derives pit emitters for the bake slice');
     const actual=live.lights().filter(e=>e.device.startsWith('object:fire_pit:'));
-    assert.equal(actual.length,2);assert.equal(new Set(actual.map(e=>e.fixture_id)).size,2);
-    for(const e of expected){
-      const row=actual.find(r=>r.fixture_id===e.fixture_id);
-      const at=[e.position[0]/FT,-e.position[2]/FT,e.position[1]/FT];
-      assert.ok(row.at.every((v,k)=>Math.abs(v-at[k])<1e-10));assert.ok(row.intensity>0);
+    assert.deepEqual(actual.map(e=>e.device).sort(),['object:fire_pit:gas','object:fire_pit:ib','object:fire_pit:wood'],'one lamp per pit, no derived duplicates');
+    assert.ok(!live.lights().some(e=>String(e.fixture_id||'').startsWith('fixture:fire_pit:')),'no derived emitter reaches the live pool');
+    for(const row of actual){
+      const id=row.device.slice('object:'.length),at=fireAt[id];assert.ok(at,'flame anchor for '+id);
+      near(row.at,[at[0],-at[2],at[1]]);
+      assert.deepEqual(row.rgb.map(Math.round),[255,154,60],'flame colour #ff9a3c');
+      close(row.intensity,.5);
     }
-    assert.ok(tagged(view,'bulb').filter(b=>b.userData.bulb.startsWith('object:fire_pit:')).every(b=>!b.visible));
+    const gas=actual.find(e=>e.device==='object:fire_pit:gas');assert.equal(gas.baked,true,'fresh bake drives the pit channel');
+    assert.ok(calls.some(c=>c.id==='object:fire_pit:gas'&&Math.abs(c.intensity-.5)<1e-12),'baked object:fire_pit:<id> channel lit at the flame scale');
+    assert.ok(!actual.find(e=>e.device==='object:fire_pit:wood').baked);
+    assert.ok(tagged(view,'bulb').filter(b=>String(b.userData.bulb).startsWith('object:fire_pit:')).every(b=>!b.visible));
+    states['input_boolean.fire'].state='off';await live.refresh();
+    assert.equal(live.lights().find(e=>e.device==='object:fire_pit:ib').intensity,0);
   }finally{live.stop();states=initialStates();}
 });
 check('live_recheck_remounts_on_fixture_aim_edit',async()=>{

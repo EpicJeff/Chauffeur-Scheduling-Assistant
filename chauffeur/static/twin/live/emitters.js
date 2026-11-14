@@ -15,30 +15,42 @@ const spanOf = room => room?.polygon?.length ? Math.max(...[0, 1].map(k =>
   Math.max(...room.polygon.map(p => p[k])) - Math.min(...room.polygon.map(p => p[k]))), 1) : 10;
 const world = at => [at[0] * FT, at[2] * FT, -at[1] * FT];
 const domainOf = entity => entity?.split('.')[0];
+// Plain on/off sources light at full output in 2700 K, like a switch.
+const ON_OFF = ['switch', 'input_boolean', 'fan'];
 
 // Staleness is explicit, as in the live feed. HA's last_changed is not freshness:
 // a lamp may legitimately have stayed on for days.
 export function emission(state, domain) {
   const attributes = state?.attributes || {};
-  const rgb = domain === 'switch' ? lightColor({color_temp_kelvin: 2700})
+  const rgb = ON_OFF.includes(domain) ? lightColor({color_temp_kelvin: 2700})
     : domain === 'media_player' ? lightColor({color_temp_kelvin: 6500}) : lightColor(attributes);
   const on = !!state && !state.stale && state.reachable !== false &&
     (domain === 'media_player' ? ['on', 'playing', 'paused'].includes(state.state)
-      : ['light', 'switch'].includes(domain) && state.state === 'on');
+      : (domain === 'light' || ON_OFF.includes(domain)) && state.state === 'on');
   return {on, brightness: !on ? 0 : domain === 'light' ? lightIntensity(attributes) : domain === 'media_player' ? .3 : 1, rgb};
 }
 
 function reference(plan, fixture, point) {
-  if (fixture.ref === 'ground') return groundAt(plan, ...point);
+  // A snapped run's heights were resolved by the server, whose building frame
+  // has no auto-foundation lift (buildingGround): wall and step tops are
+  // base + elevation + height there, while site hosts are true lot heights.
+  // So a snapped run gets the lift from its host, never from its ref.
+  const snapped = fixture.shape === 'line' && !!fixture.snap;
+  const hostKind = fixture.snap?.host?.kind;
+  const host = hostKind === 'wall' || hostKind === 'step' ? plan.buildings?.find(b =>
+    (b[hostKind === 'wall' ? 'walls' : 'stairs'] || []).some(p => p.id === fixture.snap.host.id)) : null;
+  const lift = snapped && host ? buildingGround(plan, host) : 0;
+  if (fixture.ref === 'ground') return groundAt(plan, ...point) + lift;
   if (fixture.ref === 'floor') {
     const b = plan.buildings?.find(b => b.id === fixture.building);
     const l = b?.levels?.find(l => l.id === fixture.level);
     // Orphaned fixtures keep their stored coordinates when the floor is gone.
-    return l ? (b.base || 0) + l.elevation + buildingGround(plan, b) : 0;
+    return l ? (b.base || 0) + l.elevation + (snapped ? lift : buildingGround(plan, b)) : 0;
   }
-  return 0;
+  return lift;
 }
 
+// Outward, in lot feet. Unsnapped geometry uses the right of its drawn path.
 function hostNormal(fixture, plan) {
   const snap = fixture.snap;
   const path = fixture.path || [fixture.at, fixture.at?.map((v, i) => v + (i === 0 ? 1 : 0))];
@@ -46,6 +58,34 @@ function hostNormal(fixture, plan) {
   const dx = b[0] - a[0], dy = b[1] - a[1], distance = Math.hypot(dx, dy) || 1;
   let normal = [dy / distance, -dx / distance, 0];
   const host = snap?.host;
+  if (host?.kind === 'step') {
+    // services/twin_fixtures.py builds each tread's leading edge across the
+    // run, climbing from the stair's from to its to. Outward is downhill (the
+    // negated run), so a riser light sits off the nosing, not inside the step.
+    const owner = plan.buildings?.find(b => b.stairs?.some(s => s.id === host.id));
+    const stair = owner?.stairs?.find(s => s.id === host.id);
+    if (stair?.from && stair?.to) {
+      const angle = (owner.rotation || 0) * Math.PI / 180;
+      const rx = stair.to[0] - stair.from[0], ry = stair.to[1] - stair.from[1];
+      const run = [rx * Math.cos(angle) - ry * Math.sin(angle), rx * Math.sin(angle) + ry * Math.cos(angle)];
+      const d = Math.hypot(...run);
+      if (d > 0) return [-run[0] / d, -run[1] / d, 0];
+    }
+    return normal;
+  }
+  if (host?.kind === 'fence') {
+    // A fence has no inside. 'out' is the right of the fence's drawn
+    // direction (its polyline order), whatever order the snap stored.
+    const line = pieces(plan.site?.fence).find(p => p.id === host.id)?.polyline || [];
+    const segments = line.slice(1).map((q, i) => ({p: line[i], q}));
+    segments.sort((u, v) => edgeDistance(a, u.p, u.q) + edgeDistance(b, u.p, u.q)
+      - edgeDistance(a, v.p, v.q) - edgeDistance(b, v.p, v.q));
+    if (segments.length) {
+      const {p, q} = segments[0], d = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+      normal = [(q[1] - p[1]) / d, -(q[0] - p[0]) / d, 0];
+    }
+    return normal;
+  }
   let outline;
   if (host?.kind === 'retaining_wall') outline = plan.site?.terraces?.find(p => p.id === host.id)?.polygon;
   if (host?.kind === 'hardscape') {
@@ -95,10 +135,12 @@ function resolveFixture(fixture, plan) {
     const normal = hostNormal(f, plan);
     f.normal = Array.isArray(f.facing) ? [...f.facing] : f.facing === 'up' ? [0, 0, 1]
       : f.facing === 'down' ? [0, 0, -1] : normal.map(v => v * (f.facing === 'in' ? -1 : 1));
-    // Lines store the drawn attachment path. Areas only have a mounting offset
-    // when attached to a host. Derived burners already sit on the burning bed.
+    // Lines store the drawn attachment path. Only a host has a face to stand
+    // off, so an unsnapped drawn line keeps its plan position and only drops
+    // under (down) or lifts over (up) its path. Derived burners already sit on
+    // the burning bed.
     if (!f.fire_pit && (f.shape === 'line' || f.snap)) {
-      const outward = f.facing === 'down' || f.facing === 'out' ? 1 / 12 : f.facing === 'in' ? -1 / 12 : 0;
+      const outward = !f.snap ? 0 : f.facing === 'down' || f.facing === 'out' ? 1 / 12 : f.facing === 'in' ? -1 / 12 : 0;
       const dz = f.facing === 'down' ? -2 / 12 : f.facing === 'up' ? 1 / 12 : 0;
       const offset = p => [p[0] + normal[0] * outward, p[1] + normal[1] * outward, p[2] + dz];
       if (f.path) f.path = f.path.map(offset);
@@ -172,13 +214,18 @@ function legacyEmitter(marker, plan, state) {
   const position = [marker.at[0] * FT,
     (z + (marker.yard ? groundAt(plan, marker.at[0], marker.at[1]) : buildingGround(plan, building))) * FT, -marker.at[1] * FT];
   if (level && !standing && marker.at[2] >= (building?.base || 0) + level.elevation + level.ceiling - .1) position[1] -= .2 * FT;
-  return {...marker, fixture_id: `legacy:${marker.device_id}`, shape: 'point', legacy: true, position, range,
+  // A legacy lamp is a default fixture: same lumens, same point photometry.
+  const lumens = DEFAULT_OUTPUT_LM * state.brightness;
+  return {...marker, marker, fixture_id: `legacy:${marker.device_id}`, shape: 'point', legacy: true, position, range,
     at: [position[0] / FT, -position[2] / FT, position[1] / FT], output_lm: DEFAULT_OUTPUT_LM,
-    output_fraction: 1, output_lm_share: DEFAULT_OUTPUT_LM * state.brightness,
-    cd: 40 * state.brightness, rgb: state.rgb, brightness: state.brightness, on: state.on};
+    output_fraction: 1, output_lm_share: lumens, ...photometry({shape: 'point'}, lumens),
+    rgb: state.rgb, brightness: state.brightness, on: state.on};
 }
 
-export function resolveEmitters(layout, states = {}, plan = {}) {
+// firePits: false leaves derived fire-pit emitters out (live keeps pits on its
+// object-lamp path until the bake slice moves them); their entity's markers
+// then resolve through the legacy rules exactly as before fixtures existed.
+export function resolveEmitters(layout, states = {}, plan = {}, {firePits = true} = {}) {
   // Accept either live.peek()'s map or the HA card-state response envelope.
   const stale = states?.stale || states?.reachable === false;
   const readings = states?.states || states || {};
@@ -186,10 +233,11 @@ export function resolveEmitters(layout, states = {}, plan = {}) {
   const fixtures = layout.light_fixtures || {}, devices = layout.devices || layout.markers || [];
   const groups = new Map(Object.entries(fixtures).filter(([, rows]) => rows.length).map(([entity, rows]) =>
     [entity, rows.map(f => resolveFixture(f, plan))]));
-  const pits = pieces(plan.site?.fire_pit);
+  // Pit ids follow twin_yard.js, which names an unnamed pit by its index.
+  const pits = firePits ? pieces(plan.site?.fire_pit) : [];
   for (const [index, pit] of pits.entries()) if (pit.entity) {
     const rows = groups.get(pit.entity) || [];
-    rows.push(...firePitEmitters({...pit, id: pit.id ?? index}, plan)); groups.set(pit.entity, rows);
+    rows.push(...firePitEmitters({...pit, id: pit.id || index}, plan)); groups.set(pit.entity, rows);
   }
   const emitters = [];
   for (const [entity, rows] of groups) {
