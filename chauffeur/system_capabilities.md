@@ -1,6 +1,30 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.855 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.856 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.856 (2026-11-13, NOT device-verified): the Material library page. Make a material from your own textures, with a live preview.**
+
+**The ask.** The user: "I would be fine if there was a separate page for the Library and you do all the editing there and the Library in the house editor is just a viewer." "Preference is always for an editor with preview, especially if updates there can be snappy." "I usually just look for textures that match what I want and then maybe tweak them in Photoshop." This ships plan Tasks 5-6 (slice B).
+
+**The page** (`/house/library`, `templates/house_library.html`, `static/twin/library_page/`). It is parent-gated like the editor, and reached from "Material library" in the house page bar and from the editor's Library.
+- **Left:** a grid of every material (built-in, downloaded and yours), with search and a source filter.
+- **Centre:** a three.js preview, switchable between sphere, cube, wall and ground, with a 6 ft scale figure, orbit and zoom, and "Neutral studio" or "House day sun" lighting.
+- **Right:**
+  - **Map slots:** Base colour, Normal (with GL/DX), Roughness, Metalness, AO, ORM and Height, each with a thumbnail, Replace and Clear.
+  - **Parameters:** tint, roughness and metalness (each with Auto or a 0-2 value), normal strength, AO intensity, tile size in feet, rotation and random offset.
+  - **Details:** name and licence.
+  - **Actions:** Duplicate, Undo/Redo (the material's own history), Reset to source, and Delete. A refusal says where the material is used.
+- **Speed:** edits update the preview immediately with no fetch, and saves are debounced by 300 ms.
+- Built-ins offer Duplicate only. "Changes here apply everywhere this material is used."
+
+**Loose textures** (`texture_slots.js`).
+- Drop PNG, JPG or WebP files anywhere in Properties, or pick several at once. Filenames choose slots: Poly Haven `_diff`/`_nor_gl`/`_nor_dx`/`_rough`/`_arm`, ambientCG `_Color`/`_NormalGL`/`_NormalDX`/`_Roughness`/`_Metalness`/`_AmbientOcclusion`, plus `_basecolor`, `_albedo`, `_orm`, `_height`/`_disp` and so on. `_nor_dx` sets the DX convention.
+- Unmatched files ask for their slot through the in-page prompt.
+- Uploads run one at a time, with progress, and the preview shows each file before its upload returns. A refused file reports its reason and the rest continue.
+
+**The house editor's Library** stays a picker, with "Edit in Library" on a material. Material changes reach an open house view on reload; live updates without a reload come next (plan Task 4).
+
+**Tests.** New `test_house_library_page` 3/3, `test_twin_library_page_js` (preview updates with no fetch, one debounced PATCH, built-ins Duplicate only, delete refusal without a dialog, undo/redo routes) and `test_twin_texture_slots_js` (Poly Haven and ambientCG suffix tables, drop uploads to slots and previews locally, unmatched files ask). Also editor library js 11/11, material slot js, render js, materials 23/23, Tailwind 6/6, import maps 3/3. Chromium: the page renders. New material plus three dropped files (`brick_diff_2k.jpg`, `brick_nor_gl_2k.png`, `brick_rough_2k.png`) fill base colour, normal (GL) and roughness, and the preview sphere shows the texture, with no page errors.
 
 **v2.499.855 (2026-11-13, NOT device-verified): every light bakes, including yard-room lights, fire pits and lamp objects, onto the ground, patios, pool and the house exterior.**
 
