@@ -65,6 +65,49 @@ await test('terrain_change_under_a_building_rebuilds_it',async()=>{
  assert.deepEqual(next.buildingsRebuilt,['a']);assert.deepEqual(next.buildingsReused,['b']);
  assert.notEqual(next.levelElevations['a:L1'],old.levelElevations['a:L1']);assert.equal(next.levelElevations['b:L1'],old.levelElevations['b:L1']);
 });
+await test('raised_buildings_without_porches_rebuild_when_base_material_changes',async()=>{
+ const p=fixture();for(const b of p.buildings){b.levels[0].elevation=3;b.roof.sections=[];}
+ const old=await build(p);assert.ok(p.buildings.every(b=>!b.porch&&!b.porches));
+ for(const b of p.buildings)assert.ok([...old.buildings.get(b.id).model.materials.values()].some(m=>m.name==='base'));
+ const changed=structuredClone(p);changed.materials.base={id:'base',color:'#ff0000'};const next=await build(changed,{previous:old});
+ assert.deepEqual(next.buildingsRebuilt,['a','b']);assert.deepEqual(next.buildingsReused,[]);
+ for(const b of p.buildings)assert.equal(next.buildings.get(b.id).model.materials.get('base')?.color.getHexString()
+  ||next.buildings.get(b.id).model.materials.get(JSON.stringify([b.id,'base']))?.color.getHexString(),'ff0000');
+});
+await test('terrain_only_rebuild_keeps_each_buildings_materials',async()=>{
+ const p=fixture(),old=await build(p),changed=structuredClone(p);changed.site.terraces.push({polygon:square(-2,-2,16),height:2,blend:0});
+ const next=await build(changed,{previous:old});assert.deepEqual(next.buildingsRebuilt,['a']);assert.deepEqual(next.buildingsReused,['b']);
+ assert.equal(next.buildings.get('a').finishes,old.buildings.get('a').finishes);
+ assert.equal(next.buildings.get('a').model.materials.get('patio_concrete'),old.buildings.get('a').model.materials.get('patio_concrete'));
+ assert.equal(next.buildings.get('a').model.materials.get('siding'),old.buildings.get('a').model.materials.get('siding'));
+ assert.notEqual(next.groups.levels['a:L1'],old.groups.levels['a:L1']);
+});
+await test('manifest_changes_during_ready_are_not_certified_as_generated',async()=>{
+ const p=fixture(),k=structuredClone(kit);k.manifest.siding={kind:'material',household:true,revision:1,params:{tint:'#112233'}};
+ p.materials.siding={id:'siding'};
+ const old=buildTwin(p,k,'low'),before=old.buildings.get('a').key,finishes=old.buildings.get('a').finishes;
+ k.manifest.siding={kind:'material',household:true,revision:2,params:{tint:'#abcdef'}};
+ await old.ready;assert.equal(old.buildings.get('a').key,before);assert.equal(old.buildings.get('a').finishes,finishes);
+ const next=buildTwin(p,k,'low',{previous:old});await next.ready;assert.deepEqual(next.buildingsRebuilt,['a','b']);
+ assert.notEqual(next.buildings.get('a').model.materials.get('siding'),old.buildings.get('a').model.materials.get('siding'));
+ assert.equal(next.buildings.get('a').model.materials.get('siding').color.getHexString(),'abcdef');
+});
+await test('only_resolved_model_metadata_refreshes_after_ready',async()=>{
+ const asset='import-'+'e'.repeat(32),p=fixture();p.buildings[0].items=[{id:'chair',asset,host:{floor:'room',u:.5,v:.5}}];
+ const {GLTFLoader}=await import('three/addons/loaders/GLTFLoader.js'),load=GLTFLoader.prototype.loadAsync,fetchBefore=globalThis.fetch,locationBefore=window.location;
+ try{
+  window.location={href:'http://house.test/house/twin'};
+  GLTFLoader.prototype.loadAsync=async()=>({scene:new T.Group().add(new T.Mesh(new T.BoxGeometry(),new T.MeshStandardMaterial()))});
+  globalThis.fetch=async()=>({ok:true,json:async()=>[{id:asset,model:'mesh.gltf',files:{'mesh.gltf':true},triangles:12}]});
+  const old=buildTwin(p,kit,'low'),key=old.buildings.get('a').key;await old.ready;
+  assert.notEqual(old.buildings.get('a').key,key);assert.equal(old.buildings.get('a').key,buildingKey(p,p.buildings[0],kit,'low'));
+  const next=await build(p,{previous:old});assert.deepEqual(next.buildingsReused,['a','b']);
+ }finally{GLTFLoader.prototype.loadAsync=load;globalThis.fetch=fetchBefore;window.location=locationBefore;}
+});
+await test('early_adoption_does_not_copy_from_a_cleared_previous_twin',async()=>{
+ const p=fixture(),old=await build(p),next=buildTwin(p,kit,'low',{previous:old});next.adoptBuildings();await next.ready;
+ assert.deepEqual(next.buildingsReused,['a','b']);assert.equal(next.groups.levels['a:L1'],old.groups.levels['a:L1']);assert.ok(next.pickObjects.get('b:door').parent);
+});
 await test('yard_only_edit_reuses_every_building',async()=>{
  const {next}=await edited(p=>p.site.fence=[{polyline:[[0,-8],[20,-8]],height:5}]);assert.deepEqual(next.buildingsRebuilt,[]);assert.deepEqual(next.buildingsReused,['a','b']);
 });
@@ -117,13 +160,20 @@ await test('building_key_guard',async()=>{
  window.twinManifest=k.manifest;const fallback={materials:k.materials};const fb=key(p,fallback);window.twinManifest={...k.manifest,siding:{...k.manifest.siding,revision:8}};assert.notEqual(key(p,fallback),fb);delete window.twinManifest;n++;
  const unused=structuredClone(k);unused.materials.lawn={asset:'unused'};unused.manifest.unrelated={revision:9};assert.equal(key(p,unused),richBefore);
  const yard=structuredClone(p);yard.site.fence=[{height:9}];assert.equal(key(yard),richBefore);
+ const raised=fixture();raised.buildings[0].levels[0].elevation=3;
+ const raisedKey=buildingKey(raised,raised.buildings[0],kit,'low');
+ const raisedPlan=structuredClone(raised);raisedPlan.materials.base={id:'base',color:'#ff0000'};assert.notEqual(buildingKey(raisedPlan,raisedPlan.buildings[0],kit,'low'),raisedKey);n++;
+ const raisedKit=structuredClone(kit);raisedKit.materials.base.color='#ff0000';assert.notEqual(buildingKey(raised,raised.buildings[0],raisedKit,'low'),raisedKey);n++;
+ const raisedRevision=structuredClone(kit);raisedRevision.manifest.base={household:true,revision:2};assert.notEqual(buildingKey(raised,raised.buildings[0],raisedRevision,'low'),raisedKey);n++;
+ for(const list of ['fixtures','items']){const device=fixture();device.buildings[0][list]=[{id:'device',device:'ha-device',visible_in:['viewer']}];
+  assert.notEqual(buildingKey(device,device.buildings[0],kit,'low'),buildingKey(device,device.buildings[0],kit,'low',{editableLevel:'b:L1'}),list+' with device changes edit-mode visibility');n++;}
  console.log(`  key guard: ${n} independent input mutations`);
 });
 await test('reused_resources_survive_and_changed_materials_are_released',async()=>{
  const plan=fixture(),old=await build(plan),entry=old.buildings.get('b'),geometry=old.pieces.get('b:w0')[0].geometry,material=entry.model.materials.get('siding');
  let disposed=0,replaced=0;geometry.addEventListener('dispose',()=>disposed++);material.addEventListener('dispose',()=>disposed++);
  old.buildings.get('a').model.materials.get('siding').addEventListener('dispose',()=>replaced++);
- const p=structuredClone(plan);p.buildings[0].openings[0].width=4;const next=await build(p,{previous:old});next.adoptBuildings();
+ const p=structuredClone(plan);p.buildings[0].materials.siding={id:'siding',color:'#223344'};const next=await build(p,{previous:old});next.adoptBuildings();
  const keepMaterials=new Set(next.materials.values());disposeObject(old.root,{keepMaterials});old.materials.forEach(m=>{if(!keepMaterials.has(m))m.dispose();});
  assert.equal(disposed,0);assert.equal(next.pieces.get('b:w0')[0].geometry,geometry);
  assert.ok(replaced>0,'changed-only material is released');
@@ -195,6 +245,16 @@ await test('supplementary_ghosts_and_rebuildLevel_keep_correct_registries',async
   const before=view.worldBox('door','b'),flat=structuredClone(view.plan);flat.buildings[1].openings[0].width=5;
   view.rebuildLevel('b','L1',flat,{openings:['door']});assert.notDeepEqual(view.worldBox('door','b'),before);
   const timing=beginEdit({op:'set'});await view.rebuild(flat,{timing});assert.deepEqual(timing.buildings_rebuilt,['b']);assert.deepEqual(timing.buildings_reused,['a']);
+ }finally{view.dispose();}
+});
+await test('rebuildLevel_staleness_survives_an_in_flight_twin_entry',async()=>{
+ const shell=new Element();shell.className='editor-shell';const host=new Element();shell.append(host);
+ const view=await mountTwin(host,{plan:fixture(),kit,tier:'low',bake:false});try{
+  await view.setEditableLevel('b:L1');const before=view.worldBox('door','b'),original=view.plan;
+  const inFlight=view.rebuild(original),flat=structuredClone(original);flat.buildings[1].openings[0].width=5;
+  view.rebuildLevel('b','L1',flat,{openings:['door']});assert.notDeepEqual(view.worldBox('door','b'),before);await inFlight;
+  const timing=beginEdit({op:'set'});await view.rebuild(view.plan,{timing});
+  assert.deepEqual(timing.buildings_rebuilt,['b']);assert.deepEqual(timing.buildings_reused,['a']);assert.deepEqual(view.worldBox('door','b'),before);
  }finally{view.dispose();}
 });
 finish();

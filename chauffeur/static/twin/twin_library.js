@@ -35,7 +35,7 @@ function loadTexture(url) {
   }
   return textureCache.get(url);
 }
-function optionalAsset(cache, key, load, copy, onLate) {
+function optionalAsset(cache, key, load, copy, onLate, onFailure) {
   let entry = cache.get(key);
   if (!entry) {
     entry = {}; cache.set(key, entry);
@@ -53,6 +53,9 @@ function optionalAsset(cache, key, load, copy, onLate) {
       entry.complete.then(value => { clearTimeout(timer); resolve(value); });
     });
   }
+  // A deadline only releases readiness. Notify every owner only when the
+  // underlying request actually fails, including failures after that deadline.
+  if (onFailure) entry.complete.then(value => { if (!value) onFailure(); });
   return (entry.done ? Promise.resolve(entry.value) : entry.ready).then(value => {
     if (value) return copy(value);
     if (onLate) entry.complete.then(late => { if (late) onLate(copy(late)); });
@@ -128,7 +131,7 @@ export function materialKey(value, role, tier, manifest) {
 // Immutable master URLs are decoded once; each tier image is resized once.
 // Material-owned clones share pixels, never repeat/rotation or GPU lifecycle.
 const householdTextureCache = new Map();
-function householdTexture(path, tier, onLate) {
+function householdTexture(path, tier, onLate, onFailure) {
   const url = materialUrl(path), key = JSON.stringify([url, tier]);
   return optionalAsset(householdTextureCache, key, async () => {
     const source = await loadTexture(url);
@@ -145,7 +148,7 @@ function householdTexture(path, tier, onLate) {
     // Texture.clone shares Source; assigning clone.image would resize the master.
     const texture = new THREE.Texture(image); texture.name = url; texture.needsUpdate = true;
     return texture;
-  }, texture => texture.clone(), onLate);
+  }, texture => texture.clone(), onLate, onFailure);
 }
 
 // Also used by the Library preview. Returns immediately; ready is bounded by
@@ -153,6 +156,7 @@ function householdTexture(path, tier, onLate) {
 export function applyMaterialParams(material, entry, ref, role, tier) {
   // A preview may apply another revision to the same material while maps load.
   material.userData.releaseMaterialParams?.();
+  material.userData.assetFailed = false;
   const params = entry.params || {}, maps = entry.maps || {};
   material.name = role;
   const id = ref.id || ref.asset || role;
@@ -203,7 +207,9 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   }
   material.userData.ready = Promise.all(slots.filter(([slot]) => maps[slot]).map(([slot, properties]) => {
     const apply = attach(properties);
-    return householdTexture(maps[slot], tier, apply).then(texture => { if (texture) apply(texture); });
+    return householdTexture(maps[slot], tier, apply, () => {
+      if (!disposed) material.userData.assetFailed = true;
+    }).then(texture => { if (texture) apply(texture); });
   }));
   material.needsUpdate = true;
   return material;
@@ -230,7 +236,7 @@ export function kitMaterial(role, kit, tier) {
   if (asset?.kind !== 'material') return material;
   const pending = [];
   // A failed set is entirely plain kit colour, even if another map succeeds.
-  let failed = false;
+  let failed = false, disposed = false;
   const textures = new Set();
   const completions = new Set();
   const settle = () => { completions.forEach(resolve => resolve()); completions.clear(); };
@@ -251,7 +257,10 @@ export function kitMaterial(role, kit, tier) {
       completions.add(resolve);
       const url = libUrl(id, name);
       loadTexture(url).then(source => {
-        if (!source) clear();
+        if (!source) {
+          if (!disposed) material.userData.assetFailed = true;
+          clear();
+        }
         else if (!failed) {
           const texture = source.clone(); textures.add(texture);
           texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
@@ -269,7 +278,7 @@ export function kitMaterial(role, kit, tier) {
   }
   const timer = pending.length ? setTimeout(settle, ASSET_TIMEOUT_MS) : null;
   material.userData.ready = Promise.all(pending).then(() => clearTimeout(timer));
-  material.addEventListener('dispose', clear);
+  material.addEventListener('dispose', () => { disposed = true; clear(); });
   return material;
 }
 
@@ -327,7 +336,7 @@ export async function importedModels(refresh = false) {
   }).catch(error => { importRead = null; throw error; });
   return importRead;
 }
-export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, editor = false, shared = false, lodName = null } = {}) {
+export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, editor = false, shared = false, lodName = null, onFailure } = {}) {
   // Optional models may arrive late or use a tier-specific stand-in/LOD.
   // They remain visible and cast shadows, but cannot own shared lightmap UVs.
   const renderOnly = model => {
@@ -335,11 +344,14 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
     return model;
   };
   const isImport = assetId.startsWith('import-');
-  if (isImport && !imported.has(assetId)) await importedModels();
+  if (isImport && !imported.has(assetId)) {
+    try { await importedModels(); }
+    catch { onFailure?.(); return null; }
+  }
   const asset = isImport ? imported.get(assetId) : manifest(kit)[assetId];
   if (isImport && !editor && !lodName && asset?.lods?.length && (tier !== 'low' || asset.lods.some(l => l.name === 'lod2.glb'))) {
     const names = new Set(asset.lods.map(l => l.name));
-    if (tier === 'low' && names.has('lod2.glb')) return loadModel(assetId, kit, onLate, { tier, kind, shared, lodName: 'lod2.glb' });
+    if (tier === 'low' && names.has('lod2.glb')) return loadModel(assetId, kit, onLate, { tier, kind, shared, lodName: 'lod2.glb', onFailure });
     const levels = [null, null, null]; let initial = true, delivered = false;
     const late = i => model => {
       levels[i] = model;
@@ -347,7 +359,7 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
     };
     await Promise.all([null, 'lod1.glb', tier === 'medium' ? null : 'lod2.glb'].map(async (name, i) => {
       if (i && (!name || !names.has(name))) return;
-      const model = await loadModel(assetId, kit, onLate ? late(i) : undefined, { tier: 'high', kind, shared, editor: true, lodName: name });
+      const model = await loadModel(assetId, kit, onLate ? late(i) : undefined, { tier: 'high', kind, shared, editor: true, lodName: name, onFailure });
       if (model) levels[i] = model;
     }));
     initial = false;
@@ -422,7 +434,7 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
     if (isImport) { modelBudget(result.scene, { resizeTextures: false }); return lodName ? result.scene : normaliseModel(mergeByMaterial(result.scene)); }
     return result.scene;
   }, model => renderOnly(!editor && !lodName && tier === 'low' && isImport && asset?.triangles > 300000
-    ? heavyStandIn(new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).toArray(), kind || asset.kind) : shared ? model.clone(true) : copyModel(model)), onLate);
+    ? heavyStandIn(new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).toArray(), kind || asset.kind) : shared ? model.clone(true) : copyModel(model)), onLate, onFailure);
 }
 
 export async function loadSky(kit, onLate) {

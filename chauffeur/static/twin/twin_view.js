@@ -741,7 +741,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       plan = flat; view.plan = flat;
       // A gesture deforms retained buffers in place; the next full rebuild
       // must regenerate this building from its final authoritative record.
-      if (twin.buildings?.has(buildingId)) twin.buildings.get(buildingId).key = null;
+      if (twin.buildings?.has(buildingId)) twin.buildings.get(buildingId).model.stale = true;
       for (const line of selectionLines) {
         const key = line.userData.selectionKey;
         if (!changedPieces.has(key)) continue;

@@ -290,10 +290,10 @@ function materialKitWithRefs(kit, refs) {
 // Imported opening/item metadata/LODs, tier, viewing, showAnchors, the building's
 // editableLevel and global edit-mode object visibility also participate.
 // Keep the mutation guard alongside these inputs.
-export function buildingKey(plan, b, kit, tier, { viewing = false, showAnchors = false, editableLevel = null } = {}) {
+function buildingKeyParts(plan, b, kit, tier, { viewing = false, showAnchors = false, editableLevel = null } = {}) {
   const known = manifest(kit), refs = { ...plan.materials, ...b.materials };
   const materialKit = materialKitWithRefs(kit, refs);
-  const roles = new Set(['floor', 'patio_concrete']);
+  const roles = new Set(['floor', 'patio_concrete', 'base']);
   if (b.levels?.length > 1) roles.add('interior_wall');
   if (b.walls?.length) { roles.add('siding'); roles.add('interior_wall'); }
   if (b.roof?.sections?.length || b.roof?.extensions?.length) for (const r of ['roof', 'siding', 'trim', 'porch_ceiling']) roles.add(r);
@@ -338,11 +338,18 @@ export function buildingKey(plan, b, kit, tier, { viewing = false, showAnchors =
     .map(p => [p.polygon, p.height, p.blend, p.edges?.map(e => e.edge)]);
   const models = [...(b.items || []).filter(i => i.asset).map(i => i.asset.replace(/^polyhaven:/, '')),
     ...(b.openings || []).filter(o => o.model).map(o => o.model)].map(id => [id, modelAssetKey(id, kit)]);
-  const editorObjects = [...(b.items || []), ...(b.fixtures || []), ...(b.lights || []), ...(b.anchors || [])].some(o => !o.device)
+  const editorObjects = !!(b.items?.length || b.fixtures?.length)
+    || [...(b.lights || []), ...(b.anchors || [])].some(o => !o.device)
     || (b.openings || []).some(o => o.model);
-  return JSON.stringify([b, finishes, grade, models, tier, viewing, showAnchors,
-    editableLevel?.startsWith(b.id + ':') ? editableLevel : null, editorObjects && !!editableLevel]);
+  return {
+    fixed: JSON.stringify([b, finishes, grade, tier, viewing, showAnchors,
+      editableLevel?.startsWith(b.id + ':') ? editableLevel : null, editorObjects && !!editableLevel]),
+    finishes: JSON.stringify([finishes, tier]),
+    models: JSON.stringify(models),
+  };
 }
+const keyFromParts = parts => JSON.stringify([parts.fixed, parts.models]);
+export const buildingKey = (plan, building, kit, tier, opts) => keyFromParts(buildingKeyParts(plan, building, kit, tier, opts));
 
 // A late import must publish into the currently adopted twin, even after its
 // building has survived several rebuilds. The owner changes only at adoption.
@@ -377,9 +384,11 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
     for (const name of registries) model[name].owner = next[name];
   };
   for (const b of plan.buildings || []) {
-    const key = buildingKey(plan, b, kit, tier, opts), old = previous?.buildings?.get(b.id);
-    const reuse = old?.key === key;
-    const entry = { id: b.id, key, model: reuse ? old.model : generateTwin({ ...plan, buildings: [b] }, kit, tier, opts) };
+    const inputs = buildingKeyParts(plan, b, kit, tier, opts), key = keyFromParts(inputs), old = previous?.buildings?.get(b.id);
+    const reuse = old?.key === key && !old.model.stale && !old.model.degraded;
+    const reuseMaterials = old && !old.model.degraded && old.finishes === inputs.finishes ? old.model.materials : opts.reuseMaterials;
+    const entry = { id: b.id, key, inputs: inputs.fixed, finishes: inputs.finishes,
+      model: reuse ? old.model : generateTwin({ ...plan, buildings: [b] }, kit, tier, { ...opts, reuseMaterials }) };
     entry.domains = reuse ? old.domains : Object.fromEntries(['roof', 'gableFull', 'gableCut', 'lights'].map(name => [name, [...entry.model.groups[name].children]]));
     next.buildings.set(b.id, entry); (reuse ? reused : rebuilt).push(b.id);
     // References are safe to copy now; scene ownership stays untouched until
@@ -404,9 +413,13 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
     previous = null; // Do not retain a chain of disposed twins across edits.
   };
   next.ready = Promise.all([...next.buildings.values()].map(e => e.model.ready)).then(() => {
-    for (const entry of next.buildings.values()) copy(entry, reused.includes(entry.id) ? previous : entry.model);
-    // loadModel can resolve imported metadata while awaiting readiness.
-    for (const b of plan.buildings || []) next.buildings.get(b.id).key = buildingKey(plan, b, kit, tier, opts);
+    if (!adopted) for (const entry of next.buildings.values()) copy(entry, reused.includes(entry.id) ? previous : entry.model);
+    // Import discovery may fill in model metadata during the asset wait. Never
+    // certify a changed manifest/plan as the input that generated these buffers.
+    for (const b of plan.buildings || []) {
+      const entry = next.buildings.get(b.id), resolved = buildingKeyParts(plan, b, kit, tier, opts);
+      if (resolved.fixed === entry.inputs) entry.key = keyFromParts(resolved);
+    }
   });
   next.updateGhosts = () => { for (const entry of next.buildings.values()) entry.model.updateGhosts(); };
   next.buildingsReused = reused; next.buildingsRebuilt = rebuilt;
@@ -415,6 +428,8 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
 }
 
 function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = null, viewing = false, reuseMaterials = null, timing = null } = {}) {
+  let failedModel = false;
+  const onAssetFailure = () => { failedModel = true; };
   const detail = timing?.detail;
   const generationStart = timing ? performance.now() : 0;
   const materialBefore = detail?.materials || 0, batchBefore = detail?.batch || 0;
@@ -731,7 +746,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           const placeholder = localBox(cu, cv, width, height, Math.min(thickness, .08), mat('window_frame'));
           if (placeholder) placeholder.userData.pendingImport = true;
           const openingData = activePiece;
-          pendingModels.push(loadModel(h.model, kit, undefined, { tier, editor: !viewing }).then(source => {
+          pendingModels.push(loadModel(h.model, kit, undefined, { tier, editor: !viewing, onFailure: onAssetFailure }).then(source => {
             if (!source) return;
             if (root.userData.disposed) { disposeObject(source); return; }
             const livePlaceholder = pieces.get(`${b.id}:${openingData.pieceId}`)?.find(o => o === placeholder);
@@ -1428,6 +1443,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     for (const [key, { data }] of records) if (data.ghost) ghostBatches.push(batchGhost(root, pieces.get(key), ghost, ghostEdges));
     const models = new Map(), lateItems = new Map(), itemGroups = new Map();
     const jobs = (b.items || []).filter(item => item.asset && objectShown(item, showAnchors || !!editableLevel)).map(async item => {
+      const asset = item.asset.replace(/^polyhaven:/, '');
       let point, source;
       try { point = hostPoint(b, item.host, item.offset || 0); }
       catch { /* Retain any legacy fixture when its host is unavailable. */ }
@@ -1459,7 +1475,10 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         if (source) {
           const model = source;
           applyObject(model, item, { id: `${b.id}:${item.id}` });
-          cacheModelMaterials(model, 'item:' + b.id + ':' + item.id + ':' + objectMaterialKey(item, `${b.id}:${item.id}`), materials);
+          // Structural finish reuse must not give a replacement asset the old
+          // item's imported materials (even when its piece id is unchanged).
+          cacheModelMaterials(model, 'item:' + b.id + ':' + item.id + ':' + JSON.stringify([asset, modelAssetKey(asset, kit)])
+            + ':' + objectMaterialKey(item, `${b.id}:${item.id}`), materials);
           model.position.set(point[0], point[2] + (item.elevation || 0), -point[1]);
           model.updateMatrixWorld(true);
           use(item, 'item', item.id);
@@ -1479,13 +1498,12 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         if (late) batch(holder, { perPiece: levelKey(level.id) === editableLevel });
       };
       if (point) {
-        const asset = item.asset.replace(/^polyhaven:/, '');
         if (!models.has(asset)) {
           lateItems.set(asset, []);
           models.set(asset, loadModel(asset, kit, model => {
             if (root.userData.disposed) { disposeObject(model); return; }
             for (const update of lateItems.get(asset)) update(model.clone(true), true);
-          }, { tier, editor: !viewing }));
+          }, { tier, editor: !viewing, onFailure: onAssetFailure }));
         }
         lateItems.get(asset).push(draw);
         source = await models.get(asset);
@@ -1512,5 +1530,6 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   // These two shared materials may have no objects in a settled-only plan.
   materials.set('ghostEdges', ghostEdges); materials.set('pick', pickMaterial);
   if (timing) detail.generate += Math.max(0, performance.now() - generationStart - (detail.materials - materialBefore) - (detail.batch - batchBefore));
-  return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready, updateGhosts, notes };
+  return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready, updateGhosts, notes,
+    stale: false, get degraded() { return failedModel || [...materials.values()].some(m => m.userData.assetFailed); } };
 }
