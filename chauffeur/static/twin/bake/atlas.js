@@ -4,7 +4,7 @@ import { reachLights } from './reach.js';
 import { fingerprint, authoredGeometry } from './fingerprint.js';
 export { fingerprint } from './fingerprint.js';
 
-const VERSION = 'reach-atlas-10';
+const VERSION = 'reach-atlas-11';
 const EPS = 1e-6;
 const prepared = new WeakMap();
 const bankPacking = new WeakMap();

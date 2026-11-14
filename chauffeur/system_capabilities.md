@@ -1,6 +1,30 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.867 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.868 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.868 (2026-11-14, NOT device-verified): the Library imports a material from a glTF file, and a material can shift its texture per surface so tiling does not line up. Material library Tasks 9-10; the arc is complete.**
+
+**Import glTF** (`static/twin/library_page/gltf_import.js`, `page.js`; parents, Library page).
+- **What a person sees.** An **Import glTF** button in the left panel takes a `.glb`, or a `.gltf` chosen together with its `.bin` and textures. Dropping a `.glb` or `.gltf` on Properties does the same, on a built-in material too. A file with several materials asks which one (`promptChoice`). The new material is created, selected, and its maps upload with progress text. The grid waits while an import runs.
+- **What carries over:** base colour, normal (GL convention) with its scale, occlusion with its strength, roughness and metallic factors, base colour factor as the tint.
+  - The metallic-roughness texture becomes `orm` only when occlusion uses the same image. Otherwise it fills `roughness` and `metalness`, and occlusion goes to `ao`, because an `orm` map reads AO from R and glTF leaves R unused.
+  - A factor of exactly 1 over an imported map is stored as Auto. A material with no map keeps glTF's flat values. Unlit materials import with metalness 0.
+- **What does not, said in plain words after the import** ("Not everything in the glTF carried over"): texture transforms, a second UV set, a map that cannot be read, two files with the same name.
+- **Safety.** Nothing is fetched from the network: only the chosen files and inline data are read. Geometry is never decoded. Images must be PNG, JPEG or WebP and at most 40 MB each; model, buffers and images together at most 256 MB. Maps go through the existing ingest route.
+- Server: `twin_materials.create` accepts `source: 'gltf'` from a request and still refuses every other source.
+- Known gap: a material opened from Browse while an import is still uploading shows empty maps until it is selected again.
+
+**Random texture offset** (`static/twin/twin_library.js` `uvOffsetFor`, `offsetSurfaceUvs`; `twin_generator.js`, `twin_yard.js`).
+- **What a person sees.** A **Random UV offset per surface** checkbox in a household material's properties. On, each surface using the material starts its texture at a different place, so two walls or two patios do not show the same brick in the same spot. Off, nothing changes: UVs are byte-identical to before.
+- **Rules, each fixed after a seam was found in review:**
+  - The offset comes only from ids, so it is the same on every reload and survives building reuse.
+  - Floors share one origin per building level, so the floor runs unbroken through doorways.
+  - Curbs share one per side, pool walls one per pool, retaining walls one per terrace.
+  - Vertical surfaces shift along their length only, so courses stay level around corners.
+  - The range is a fixed 0 to 64 ft, independent of tile size, so editing tile size does not reshuffle anything.
+- **Bakes stay fresh.** Base UVs are no longer part of the bake layout key (the lightmap has its own UV channel), so the toggle does not discard baked light. Atlas version is `reach-atlas-11`. The browser atlas cache stores a digest of base UVs and treats a mismatch as a miss, so one layout never hands its UVs to another.
+
+**Tests.** `test_twin_gltf_material_js` 6/6, `test_twin_uv_offset_js` 11/11, library page js 15/15, browse 17/17, `test_twin_library_js` 28/28, editor library 12/12, `test_twin_materials` 27/27, material live 20/20, material render 19/19, slots and yard slots, light reach 21/21, bake atlas 13/13, fingerprint, baker 12/12, bake runtime 18/18, proxy 4/4, building reuse 19/19, drag 20/20 (the yard stubs gained `yardPartKeys`, missing since .862), import maps 4/4, tailwind 6/6, shadowmask GPU 9/9, `test_house_library_page` 3/3 in Chromium. `test_twin_lightmap_material_js` 8/9: `fresh_bake_frees_the_pool_slot` fails the same way on main. The import and the toggle themselves were exercised in node on the real page code, not by hand in a browser.
 
 **v2.499.867 (2026-11-14, NOT device-verified): baked lights are a shadowmask. The bake stores only how much of each light reaches a surface; brightness, falloff and surface angle are computed per pixel when drawn. Replaces the irradiance bake.**
 
