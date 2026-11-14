@@ -1,6 +1,43 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.853 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.854 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.854 (2026-11-13, NOT device-verified): material library, part 1. Household materials are stored, served and drawn on the house, and material pickers save the material rather than a copied colour.**
+
+**Context.** The user wants their house to read as theirs: "I can make the house geometry look pretty much like my house but I can't make the materials look like mine." The spec and plan are approved (`docs/superpowers/specs/2026-11-13-material-library-design.md`, `docs/superpowers/plans/2026-11-13-material-library.md`). This ships plan Tasks 1-3. Live invalidation (Task 4), the Library page (Tasks 5-6), online browsing (7-8) and glTF import (9) come next. No screen creates household materials yet, so nothing changes for a person until the Library page lands.
+
+**Task 1: the store** (`services/twin_materials.py`, 12 routes in `main.py`, each with an auth rule).
+- **Storage:** household materials have stable ids. Their map files are content-addressed and immutable (`maps/<sha12>.png|jpg`), served with `Cache-Control: immutable`.
+- **History:** each material has its own revisions, with undo and redo (20 kept). Garbage collection never deletes a file that a kept revision, the current record or the source snapshot uses.
+- **Limits:** live-file caps of 16 files and 200 MB.
+- **Images:** Pillow decodes every image before it is published.
+  - Truncated or corrupt images are refused.
+  - Anything over 16384 px a side or 64 Mpx is refused before decode.
+  - Masters are capped at 4096 px.
+  - 16-bit maps are scaled to 8-bit, not clipped.
+- **Parameters:** roughness and metalness default to "auto". With a map they multiply it by 1. With no map, metalness is 0 and roughness 0.85, and a duplicate of a built-in copies the built-in's values.
+- **Delete:** refused, with human-readable uses ("Used on 3 surfaces: Main House walls (2), Fence boards (1)"), while the current house uses the material. A material used only by history is archived and still serves.
+- **Built-ins:** they appear as read-only catalogue rows, and Duplicate makes an editable copy.
+- `material_slot_error` accepts live and archived household ids.
+- Both page templates receive the merged manifest (`page_manifest()`).
+
+**Task 2: rendering** (`static/twin/twin_library.js`).
+- **Maps:** base colour, normal (with the DX/GL flip), roughness, metalness and AO, or one shared ORM texture.
+- **Parameters:** tint (a slot colour replaces it), normal scale, AO intensity, real-world tile size and rotation. The low tier loads base colour only, and tier caps are 512/1024/2048 px, downsampled in the browser.
+- **Cache key:** id, revision, tier, receiving role and role shader flags. One material never carries two roles, which keeps the bake's role reading safe. A household slot matching its role's material reuses it, to keep batching.
+- **Lattice:** the cutout is kept.
+- **Granite:** one shared shader helper.
+- **URLs:** `materialUrl()` refuses `.`/`..` segments.
+- **Built-ins:** byte-identical, pinned by a 63-entry role×tier snapshot taken from main.
+
+**Task 3: pickers** (`editor/material_slot.js`, `editor/library.js`, `editor/material_catalog.js`).
+- An ordinary pick saves `{id}`. "Override tint" saves `{id, color}`, and "Clear override" goes back to `{id}`.
+- The catalogue merges household materials, with thumbnails.
+- The old duplicate preset-colour rows are gone. The user agreed: "Dropping is fine."
+
+**Reviews.** A Claude reviewer on each Codex task found a lifetime file cap, PATCH-able archive and source fields, no pixel cap before decode, 16-bit clipping, materials rendering fully metallic without a metalness map, a dropped lattice cutout and a duplicated shader. All were fixed.
+
+**Tests.** `test_twin_materials` 23/23, `test_twin_material_render_js` (13 or more named checks, plus the 63-entry built-in snapshot), `test_twin_material_slot_js`, `test_twin_editor_library_js` 10/10, `test_twin_library_js` 15/15, yard material slots py and js, porch foundation js, bake runtime 17/17, energy 38/38, yard reuse js, import chunks py and js, house saves 19/19, model bridge 32/32, import maps 3/3, Tailwind 6/6. Chromium: a household material created through the API, with an uploaded base colour, assigned to the Main House siding, draws on the house after a reload, with no page errors. Live update without a reload is Task 4.
 
 **v2.499.853 (2026-11-13, NOT device-verified): pools can have a tanning ledge, steps and a spa (raised or flush).**
 
