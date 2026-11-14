@@ -136,7 +136,7 @@
 {% set _pg = namespace(group=none, active=none, first=none) %}
 {% for gslug, tabs in PAGE_GROUPS.items() %}
   {% for t in tabs %}
-    {% if t.path in _path or (t.also and t.also in _path) %}
+    {% if (t.path in _path or (t.also and t.also in _path)) and '/house/library' not in _path %}
       {% set _pg.group = gslug %}
       {% if _pg.first is none %}{% set _pg.first = t %}{% endif %}
       {% if _tab and t.tab == _tab %}{% set _pg.active = t %}{% endif %}
@@ -154,7 +154,9 @@
   gear: they ARE settings pages.
 #}
 {% set _bar = namespace(key=none, label=none) %}
-{% if _pg.group %}
+{% if '/house/library' in _path %}
+  {% set _bar.key = 'house-materials' %}{% set _bar.label = 'Material library' %}
+{% elif _pg.group %}
   {% set _bar.key = _active_tab.key %}
 {% elif '/board/' in _path %}
   {% set _bar.key = 'board' %}{% set _bar.label = 'Board' %}
@@ -182,7 +184,7 @@
   add-on entirely. The same reasoning as home.html's apiBase, which had to
   learn this first.
 #}
-{% set _up = '../../' if _path.endswith(('/house/twin/', '/house/editor/')) else '../' if '/board/' in _path or _path.endswith(('/house/twin', '/house/editor')) else '' %}
+{% set _up = '../../' if _path.endswith(('/house/twin/', '/house/editor/', '/house/library/')) else '../' if '/board/' in _path or _path.endswith(('/house/twin', '/house/editor', '/house/library')) else '' %}
 
 {# The <nav> element is a bare wrapper so that the top bar and the panel shelf
    are siblings inside it: `?tabs=none` hides the nav and both go with it, and
@@ -308,6 +310,9 @@
                 <span class="page-bar-name whitespace-nowrap px-3 py-1.5 text-sm font-bold text-white">{{ _bar.label }}</span>
                 {% endif %}
             </div>
+            {% if _path.rstrip('/').endswith(('/house', '/house/twin', '/house/editor')) %}
+            <a href="{{ _up }}house/library" class="whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-bold text-gray-300 hover:bg-gray-700 hover:text-white">Material library</a>
+            {% endif %}
             <button type="button" id="page-settings-gear" aria-label="Settings for this page"
                 class="hidden shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-bold text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-1.5">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -2019,6 +2019,15 @@ def house_editor_page(request: Request):
                                       context={"twin_manifest": twin_materials.page_manifest(), "twin_object_schema": twin_objects.SCHEMA})
 
 
+@app.get('/house/library')
+def house_library_page(request: Request):
+    from services import twin_materials, twin_library, twin_site
+    return templates.TemplateResponse(request=request, name='house_library.html',
+                                      context={'twin_manifest': twin_materials.page_manifest(),
+                                               'twin_kit': twin_library.kit('modern_farmhouse'),
+                                               'twin_site': twin_site.site()})
+
+
 @app.get("/house")
 def house_page(request: Request):
     """The Home: the dollhouse the panel lives in (spec

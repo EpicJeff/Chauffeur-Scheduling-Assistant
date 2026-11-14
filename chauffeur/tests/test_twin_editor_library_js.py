@@ -85,11 +85,15 @@ window.location={href:'http://house.test/house/editor'};
 let releaseOriginal,originalRequested=false,derivedName,derivedCount=0,deleted=false,deletedLoads=0;
 const originalGate=new Promise(resolve=>{releaseOriginal=resolve;});
 let fetches = 0;
+let householdAdded=false;
+const householdMaterial={id:'material-returned',name:'Returned stone',source:'user',revision:2,
+ maps:{base_color:'maps/returned.jpg'},params:{tint:'#123456',roughness:.6}};
 const nativeFetch=globalThis.fetch;
 globalThis.fetch = async (input,options={}) => {
  const url=typeof input==='string'?input:input.url,json=value=>new Response(JSON.stringify(value));
  if(url.startsWith('data:'))return nativeFetch(input);
- if(url.endsWith('/materials'))return json({revision:7,materials:[finish,latticeFinish]});
+ if(url.endsWith('/materials'))return json({revision:7,materials:[finish,latticeFinish,...(householdAdded?[householdMaterial]:[])]});
+ if(url.endsWith('/materials/'+householdMaterial.id))return json(householdMaterial);
  if(url.endsWith('/library')){fetches++;return json({materials:[{id:'duplicate-preset',name:'Dropped preset',color:'#ffffff'}],items:[chair],imports:[{...imported},...(deleted?[]:[queuedDelete])]});}
  if(url.endsWith('/import-settings'))return json({limit_mb:50,unpacked_limit_mb:200});
  if(url.endsWith('/imports'))return json([imported,...(deleted?[]:[queuedDelete])]);
@@ -142,13 +146,16 @@ doc.getElementById('editor-scene').parentElement=new Element();
 const browse = async name => {panel.querySelectorAll('[data-library-tab]').find(n=>n.dataset.libraryTab===name).dispatchEvent(new Event('click'));await settle();};
 doc.getElementById('rail-library').dispatchEvent(new Event('click'));await settle();
 assert.equal(fetches,1);
-assert.ok(doc.getElementById('library-entries').children.some(n=>n.dataset.material==='lattice'));
-assert.ok(!doc.getElementById('library-entries').children.some(n=>n.dataset.material==='duplicate-preset'));
-assert.equal(doc.getElementById('library-entries').children.find(n=>n.dataset.material===finish.id).children[0].src,finish.thumbnail_url);
+const materialButtons=()=>descendants(doc.getElementById('library-entries')).filter(n=>n.dataset.material);
+assert.ok(materialButtons().some(n=>n.dataset.material==='lattice'));
+assert.ok(!materialButtons().some(n=>n.dataset.material==='duplicate-preset'));
+assert.equal(materialButtons().find(n=>n.dataset.material===finish.id).children[0].src,finish.thumbnail_url);
+const editLink=descendants(doc.getElementById('library-entries')).find(n=>n.tag==='a'&&n.href.endsWith('material='+finish.id));
+assert.equal(editLink.textContent,'Edit in Library');assert.equal(editLink.target,'_blank');assert.equal(editLink.rel,'noopener');
 assert.ok(previewMaterials.some(m=>m.alphaMap?.isDataTexture&&m.alphaTest===.5&&m.side===THREE.DoubleSide),'Library thumbnail uses procedural lattice definition');
 ok('Lattice appears in the Library and its real thumbnail uses the generated cutout');
 const drop = async point => {
-  const thumb=doc.getElementById('library-entries').children.find(n=>n.dataset.item || n.dataset.material);thumb.dispatchEvent(event('pointerdown',120,150));
+  const thumb=descendants(doc.getElementById('library-entries')).find(n=>n.dataset.item || n.dataset.material);thumb.dispatchEvent(event('pointerdown',120,150));
   const [x,y]=pixel(point);doc.dispatchEvent(event('pointerup',x,y));await settle();
 };
 tools.select({pieceId:room.id,buildingId:b.id});while(!view.ready)await settle();
@@ -237,7 +244,7 @@ assert.equal(changes.length,2,'each face line offers Change');
 changes[1].dispatchEvent(new Event('click'));await settle();
 assert.equal(panel.hidden,false,'Change opens the library');
 assert.equal(doc.getElementById('library-status').textContent,'Choose a material for the outside face.');
-const thumb=doc.getElementById('library-entries').children[0];assert.equal(thumb.tag,'button');
+const thumb=materialButtons()[0];assert.equal(thumb.tag,'button');
 thumb.dispatchEvent(new Event('click'));await settle();
 const picked=descendants(doc.getElementById('editor-scene').parentElement).find(n=>n.id==='material-chooser');
 assert.deepEqual(picked.children.map(n=>n.textContent),['This wall face','This room','This floor','The whole building','Cancel']);
@@ -274,6 +281,12 @@ cards.draw({pieceId:'anchor:test',buildingId:b.id});
 assert.ok(labelled('Distance from surface')&&!labelled('Turn')&&!labelled('Size'));
 await type('Distance from surface','3"');assert.deepEqual(ops.pop(),{op:'move_hosted',building:b.id,id:'anchor:test',offset:.25});
 ok('item cards carry Turn and Size; anchor and item cards carry Distance from surface');
+householdAdded=true;window.dispatchEvent(new Event('focus'));await settle();assert.equal(fetches,2,'returning from the Library rereads the catalogue');
+assert.ok(materialButtons().some(n=>n.dataset.material===finish.id));
+const returned=materialButtons().find(n=>n.dataset.material===householdMaterial.id);assert.ok(returned);
+assert.equal(returned.children[0].src,'../api/house/twin/materials/material-returned/maps/returned.jpg');
+assert.equal(kit.manifest[householdMaterial.id].revision,2);assert.equal(kit.manifest[householdMaterial.id].params.roughness,.6);
+ok('returning from the Library refreshes the picker catalogue');
 abort.abort();view.dispose();console.log(`${passed}/${passed} passed`);
 """
 

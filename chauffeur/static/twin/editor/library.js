@@ -3,7 +3,7 @@ import { svgIcon } from '../live/glance_icons.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt, buildingGround, inPolygon, edgeDistance } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
-import { rememberImport, forgetImport, libUrl } from '../twin_library.js';
+import { rememberImport, forgetImport, libUrl, materialUrl } from '../twin_library.js';
 import { mountImports } from './imports.js';
 import { objectShown, siteRecords, siteRecord, sitePoints, siteShapeKinds } from '../objects.js';
 import { pathSurfacePolygons } from '../path_shapes.js';
@@ -11,6 +11,7 @@ import { request, report } from './api.js';
 
 import { materialName, readLibraryCatalog } from './material_catalog.js';
 export { materialName } from './material_catalog.js';
+export const libraryMaterialHref = id => (window.chfBase ?? '../') + 'house/library?material=' + encodeURIComponent(id);
 
 export function wallFace(building, wall, side) {
   const [a, b] = [wall.from, wall.to], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -142,7 +143,7 @@ function createThumbnails(kit) {
     const url = renderer.domElement.toDataURL('image/png'); object.removeFromParent(); disposeObject(object); return url;
   }
   function picture(entry, material) {
-    const key = JSON.stringify([material, entry.id, entry.color]);
+    const key = JSON.stringify([material, entry.id, entry.color, entry.revision]);
     if (!cache.has(key)) cache.set(key, (async () => {
       if (material) {
         const ref = kit.materials?.[entry.id] || Object.values(kit.materials || {}).find(r => r.asset === entry.id);
@@ -279,6 +280,14 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     if (!catalog) {
       loading ||= readLibraryCatalog().catch(error => { loading = null; throw error; });
       catalog = await loading;
+      const known = kit.manifest || (kit.manifest = window.twinManifest || {});
+      for (const row of catalog.materials) {
+        if (row.builtin || row.source === 'builtin' || !row.id.startsWith('material-') || known[row.id]?.revision === row.revision) continue;
+        const entry = await request('materials/' + encodeURIComponent(row.id), 'GET', undefined, '');
+        known[row.id] = { kind: 'material', household: true, revision: entry.revision, params: entry.params,
+          maps: Object.fromEntries(Object.entries(entry.maps || {}).map(([slot, path]) => [slot, `materials/${entry.id}/${path}`])) };
+        if (known[row.id].maps.base_color) row.thumbnail_url = materialUrl(known[row.id].maps.base_color);
+      }
     }
     if (signal.aborted) return;
     if (drag) { browsePending = true; return; }
@@ -299,7 +308,13 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       const button = document.createElement('button'); button.type = 'button'; button.dataset[tab === 'materials' ? 'material' : 'item'] = entry.id;
       button.setAttribute('aria-label', entry.name); button.style.touchAction = 'none';
       const image = document.createElement('img'); image.alt = ''; image.draggable = false; image.width = 112; image.height = 96;
-      const name = document.createElement('span'); name.textContent = entry.name; button.append(image, name); grid.append(button);
+      const name = document.createElement('span'); name.textContent = entry.name; button.append(image, name);
+      if (tab === 'materials') {
+        const tile = document.createElement('div'); tile.className = 'library-material-tile'; grid.append(tile); tile.append(button);
+        const edit = document.createElement('a'); edit.textContent = 'Edit in Library'; edit.href = libraryMaterialHref(entry.id);
+        edit.target = '_blank'; edit.rel = 'noopener'; edit.className = 'library-edit-link';
+        edit.setAttribute('aria-label', `Edit ${entry.name} in Library`); tile.append(edit);
+      } else grid.append(button);
       if (entry.thumbnail_url) image.src = entry.thumbnail_url;
       else if (entry.thumbnail) image.src = libUrl(entry.id, entry.thumbnail);
       else thumbnails.current.picture(entry, tab === 'materials').then(url => { if (url && !signal.aborted) image.src = url; }).catch(report);
@@ -371,6 +386,10 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     if (added && !row) await browse();
   }
   const importsQueue = mountImports({ canvas, kit, canEdit, signal, changed: changedImport });
+  listen(window, 'focus', () => {
+    catalog = null; loading = null;
+    if (!host.hidden) browse().catch(report);
+  });
   if (new URLSearchParams(location.search).get('library') === '1') {
     tab = 'items'; host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true');
     browse().catch(report);
