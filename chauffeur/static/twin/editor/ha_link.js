@@ -151,7 +151,7 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     row.append(grip);
     if (device.kind === 'camera') row.append(svgIcon('camera', 'currentColor'));
     row.append(words, actions);
-    placement?.drawFixtures?.(words, device);
+    placement?.drawFixtures?.(actions, device);
     return row;
   }
 

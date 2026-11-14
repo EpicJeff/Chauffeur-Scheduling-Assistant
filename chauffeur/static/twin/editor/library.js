@@ -84,7 +84,7 @@ export function surfaceOperation(surface, scope, material) {
 }
 
 export function itemOperation(surface, item, ground) {
-  if (item.id.startsWith('import-')) {
+  if (item.id?.startsWith('import-')) {
     if (['door', 'window'].includes(item.kind)) {
       if (surface?.kind !== 'wall') throw new Error('Drop doors and windows onto a wall.');
       const wall = surface.piece, d = wall.to.map((v, i) => v - wall.from[i]), length = Math.hypot(...d);
