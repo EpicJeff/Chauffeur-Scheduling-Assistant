@@ -104,7 +104,7 @@ export async function boot() {
     lastSummary = result.words;
     const refresh = async () => {
       const stop = api.span(timing, 'refresh_state');
-      try { await polling.refreshState(); timeline?.sync(currentBuild); }
+      try { await polling.refreshState(result.round); timeline?.sync(currentBuild); }
       finally { stop(); }
     };
     const rebuild = async () => {
@@ -246,7 +246,7 @@ export async function boot() {
         currentBuild = null; ghostBuild = null; ghosts.clear(); buildGhosts?.clear(); panel.reset(); drawTimeline(null);
         await loadSheets();
       }
-      snapshot = state;
+      snapshot = { ...snapshot, ...state };
       syncBuildButton();
       // A house with pieces and no drawings to build from is not waiting for drawings.
       const built = (snapshot.model?.buildings || []).some(b => b.walls?.length || b.rooms?.length || b.roofs?.length);
