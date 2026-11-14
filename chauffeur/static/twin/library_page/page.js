@@ -2,6 +2,7 @@ import { base, libUrl, materialUrl } from '../twin_library.js';
 import { createPreview } from './preview.js';
 import { mountProperties, defaults, slots, node, button } from './properties.js';
 import { slotForFilename } from './texture_slots.js';
+import { mountBrowse } from './browse.js';
 
 // Nav owns authentication. Every endpoint stays relative to the ingress base.
 export async function libraryApi(path, method = 'GET', body) {
@@ -13,7 +14,11 @@ export async function libraryApi(path, method = 'GET', body) {
   let data;
   try { data = await response.json(); }
   catch { throw new Error(`The Library could not answer (HTTP ${response.status}). Try again.`); }
-  if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : data.error || 'The material could not be saved.');
+  if (!response.ok) {
+    // The status rides along so callers can tell offline, busy and gone apart.
+    const error = new Error(typeof data.detail === 'string' ? data.detail : data.error || 'The material could not be saved.');
+    error.status = response.status; throw error;
+  }
   return data;
 }
 
@@ -32,6 +37,9 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   const status = node('output', 'Opening Library…', 'place-muted'); status.setAttribute('role', 'status');
   root.append(toolbar, node('p', 'Changes here apply everywhere this material is used.', 'place-muted'),
     node('p', 'Undo and redo here affect this material. House history keeps material assignments.', 'place-muted'), status);
+  const browsePanel = node('section', null, 'library-browse'); browsePanel.id = 'library-browse';
+  browsePanel.dataset.libraryBrowse = ''; browsePanel.setAttribute('aria-label', 'Browse online materials');
+  root.append(browsePanel);
   const layout = node('div', null, 'library-layout'), left = node('section', null, 'library-browser'),
     centre = node('section', null, 'library-preview'), right = node('aside', null, 'library-properties');
   left.setAttribute('aria-label', 'Material catalogue'); centre.setAttribute('aria-label', 'Live material preview'); right.setAttribute('aria-label', 'Material properties');
@@ -44,6 +52,11 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
       await refreshRows(); await select(entry.id, entry); } catch (error) { report(error); }
     finally { newButton.disabled = false; }
   }, signal);
+  const browseButton = button('Browse online', 'browse', () => browse.shown ? browse.hide() : browse.show(), signal);
+  browseButton.setAttribute('aria-controls', browsePanel.id);
+  const browse = mountBrowse(browsePanel, { api, signal, onToggle: shown => browseButton.setAttribute('aria-expanded', String(shown)),
+    selection: () => selection, refresh: async () => { if (!stopped) await refreshRows(); },
+    open: async id => { if (stopped) return; search.value = ''; source.value = 'all'; await refreshRows(); await select(id); } });
   const search = node('input'); search.type = 'search'; search.placeholder = 'Search materials'; search.dataset.librarySearch = '';
   search.setAttribute('aria-label', 'Search materials');
   const source = node('select'); source.dataset.librarySource = ''; source.setAttribute('aria-label', 'Material source');
@@ -52,7 +65,7 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   }
   source.value = 'all';
   const grid = node('div', null, 'library-grid');
-  left.append(newButton, search, source, grid);
+  left.append(newButton, browseButton, search, source, grid);
   search.addEventListener('input', drawGrid, { signal }); source.addEventListener('change', drawGrid, { signal });
   const shape = node('div', null, 'editor-actions'), lighting = node('div', null, 'editor-actions');
   shape.setAttribute('role', 'group'); shape.setAttribute('aria-label', 'Preview shape');

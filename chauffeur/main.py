@@ -7675,7 +7675,9 @@ def house_live(request: Request):
         markers.append({**row, 'building': None, 'level': None, 'room': None,
                         'at': [*at, height + (pit.get('elevation') or 0)], 'placed': True})
     # A parent may hide things from the house view right from a panel (the edit is parent-only).
-    return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices,
+    from services import twin_fixtures
+    return {**twin_fixtures.live_layout(model),
+            'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices,
             'can_edit_house': getattr(who, 'role', None) == 'parent'}
 
 
@@ -7902,6 +7904,62 @@ def house_material_manifest():
     return {'revision': twin_materials.catalogue(True)['revision'],
             'entries': {mid: entry for mid, entry in twin_materials.page_manifest().items()
                         if entry.get('household')}}
+
+
+def _material_sources_published():
+    # A finished download publishes a material: same /api/stream update as other writes.
+    global LAST_UPDATE_TIME
+    LAST_UPDATE_TIME = time.time()
+
+
+from services import twin_material_sources as _material_sources  # noqa: E402
+_material_sources.on_published = _material_sources_published
+
+
+def _material_source_call(operation, *args):
+    from services import twin_material_sources as sources
+    try:
+        return operation(*args)
+    except sources.UnknownSource as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except sources.Unreachable as exc:
+        raise HTTPException(status_code=503, detail=sources.UNREACHABLE) from exc
+    except sources.Busy as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get('/api/house/materials/sources/{source}')
+def house_material_source_search(source: str, q: str = '', category: str = ''):
+    from services import twin_material_sources as sources
+    return {'results': _material_source_call(sources.search, source, q, category or None)}
+
+
+@app.get('/api/house/materials/sources/{source}/{source_id}/thumb')
+def house_material_source_thumb(source: str, source_id: str):
+    from services import twin_material_sources as sources
+    data = _material_source_call(sources.thumbnail, source, source_id)
+    return Response(content=data, media_type='image/png')
+
+
+@app.post('/api/house/materials/sources/{source}/{source_id}/download')
+def house_material_source_download(source: str, source_id: str, request: Request,
+                                   body: dict = Body(default={})):
+    from services import twin_material_sources as sources
+    resolution = body.get('resolution') if isinstance(body, dict) else None
+    job_id = _material_source_call(sources.start_download, source, source_id, resolution,
+                                   _acting_id(request, None))
+    return {'job_id': job_id}
+
+
+@app.get('/api/house/materials/jobs/{job_id}')
+def house_material_job(job_id: str):
+    from services import twin_material_sources as sources
+    try:
+        return sources.job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail='No such download.') from exc
 
 
 @app.get('/api/house/materials/{id}')
