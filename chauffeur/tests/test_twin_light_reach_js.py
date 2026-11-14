@@ -73,7 +73,7 @@ await check('bake_entry_point_shadows_far_side_with_zero_room_fill', async () =>
     assert.ok(depthScene?.children.length && receiverScene?.children.length);
     const shader=receiverScene.overrideMaterial;
     // A shadowmask: the receiver steps off its surface along its normal, then compares depth.
-    assert.ok(shader.fragmentShader.includes('vec3 lifted = wp + n * (0.02 + 0.006 * d)'));
+    assert.ok(shader.fragmentShader.includes('vec3 lifted = wp + n * min(0.03, 0.005 + 0.004 * d)'));
     assert.ok(shader.fragmentShader.includes('step(reached - 0.02, stored)'));
     assert.ok(shader.fragmentShader.includes('if (d >= reach) discard'));
     const point=new THREE.Vector3(14,0,-5).multiplyScalar(FT), source=shader.uniforms.source.value;
@@ -349,21 +349,23 @@ await check('shared_channel_uses_the_correct_light_tint_at_each_chart', () => {
   assert.ok(shader.fragmentShader.includes('lmOwnerTint(mod(region0.w, 4096.0))'));
 });
 await check('light_sources_and_fills_land_where_the_shader_reads_them', () => {
-  // The shadowmask material finds a light by its owner index (lmOwnerSlot: owner - 1) in
-  // lmLights row 0 (position, reach) and row 1 (shape), and a chart's fill at lmAddress.
+  // No sampler beyond the tints, the regions and the banks: a light's position and reach are
+  // lmTints rows [R, 2R), its shape rows [2R, 3R) (R = 1 in chart mode), found by owner index
+  // (lmOwnerSlot: owner - 1); a chart's fill is lmRegions' second half at its lmAddress.
   const lights=[{device:'near'},{device:'far'}], charts=[0,1,2].map(id=>({id,page:0,rect:{x:id*8,y:0,w:4,h:4},sourceRegion:{x:0,y:0,w:4,h:4}}));
   const packed={banks:[{charts},{charts}],slots:{near:{assignments:[{chart:2,bank:1,channel:1}]},far:{assignments:[{chart:0,bank:0,channel:0}]}}};
   const u=chartLightmapUniforms(3,packed,lights,128,[[0],[0]]);
+  assert.deepEqual(Object.keys(u).filter(k=>u[k].value?.isTexture).sort(),['lmRegions','lmTints'],'two data textures, as before the shadowmask');
   setLightSource(u,0,1,new THREE.Vector3(1,2,3),4);
-  const L=u.lmLights.value.image;
-  assert.deepEqual([...L.data.slice(4,8)],[1,2,3,4],'the far light: its slot in row 0 holds position and reach');
-  assert.deepEqual([...L.data.slice((L.width+1)*4,(L.width+1)*4+4)],[0,0,0,0],'and row 1 its shape: a point');
-  const [x,y]=chartAddress(2,1,2), owner=u.lmRegions.value.image.data[(y*1024+x)*4+3];
+  const T=u.lmTints.value.image;
+  assert.equal(T.height,3,'tint, source and shape rows');
+  assert.deepEqual([...T.data.slice((T.width+1)*4,(T.width+1)*4+4)],[1,2,3,4],'the far light: its slot in row 1 holds position and reach');
+  assert.deepEqual([...T.data.slice((2*T.width+1)*4,(2*T.width+1)*4+4)],[0,0,0,0],'and row 2 its shape: a point');
+  const [x,y]=chartAddress(2,1,2), R=u.lmRegions.value.image, owner=R.data[(y*1024+x)*4+3];
   assert.equal(Math.floor(owner/4096)-1,0,'chart 2 bank 1 channel b is owned by the near light (index 0)');
   setChartFill(u,2,1,2,1,.25);
-  assert.equal(u.lmFills.value.image.data[(y*u.lmFills.value.image.width+x)*4+1],.25,'its fill sits beside its region, in channel b');
-  assert.equal(u.lmFills.value.image.width,u.lmRegions.value.image.width);
-  assert.equal(u.lmFills.value.image.height,u.lmRegions.value.image.height);
+  assert.equal(R.data[((y+R.height/2)*R.width+x)*4+1],.25,'its fill sits below its region, in channel b');
+  assert.equal(R.data[(y*R.width+x)*4+3],owner,'and leaves the region itself alone');
 });
 await check('room_fill_follows_each_rooms_direct_energy_and_leaves_the_pages_alone', () => {
   // The fill is computed from G (shadowed irradiance / 16) and travels in the manifest; the

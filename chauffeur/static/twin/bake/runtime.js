@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { base } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
-import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, chartLookupGLSL, patchLightmaps, setLightTint, pickTranscode, lightSwizzle,
-  setLightSource, setChartFill, setRoomFill, clearFills, SHADE_GLSL } from './lightmap_material.js';
+import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, patchLightmaps, setLightTint, pickTranscode,
+  setLightSource, setChartFill, setRoomFill, clearFills, roomRegions, patchWindowGlow } from './lightmap_material.js';
 import { lightSource } from './reach.js';
 import { createBaker, bakeLayout } from './baker.js';
 import { mayBake } from './bake_lock.js';
@@ -157,8 +157,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     }
   }
   function regions() {
-    const width = Math.max(1, packed.banks.length), height = Math.max(1, atlas.room.rooms.length);
-    const t = new THREE.DataTexture(new Float32Array(width * height * 4), width, height, THREE.RGBAFormat, THREE.FloatType);
+    // A column per bank, a row per room; the fills sit below the rooms (lightmap_material.js).
+    const width = Math.max(1, packed.banks.length), t = roomRegions(packed.banks.length, atlas.room.rooms.length);
     packed.banks.forEach((bank, b) => bank.rooms.forEach(({ room, sourceRegion, region }) => {
       t.image.data.set([(region.x - sourceRegion.x) / layout.room.page,
         (region.y - sourceRegion.y) / layout.room.page, Math.max(0, layers[b].indexOf(region.page)), 0], (room * width + b) * 4);
@@ -257,41 +257,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       const original = mesh.material, material = original.clone(); mesh.material = material;
       view.prepareViewingMaterial?.(original, material);
       clones.push({ mesh, original, material });
-      const banks = pages.banks;
-      material.onBeforeCompile = shader => {
-        Object.assign(shader.uniforms, uniforms);
-        banks.forEach((t, b) => { shader.uniforms[`glowBank${b}`] = { value: t }; });
-        shader.vertexShader = 'attribute float glowRoom; attribute vec2 glowUV; varying float vGlowRoom; varying vec2 vGlowUV;\n' + shader.vertexShader;
-        shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
-vGlowRoom = glowRoom; vGlowUV = glowUV;`);
-        shader.fragmentShader = `uniform sampler2D lmTints; uniform sampler2D lmRegions;
-varying float vGlowRoom; varying vec2 vGlowUV;
-${banks.map((t, b) => `uniform highp sampler2DArray glowBank${b};`).join('\n')}
-${SHADE_GLSL}
-${uniforms.lmChartMode ? chartLookupGLSL(banks.length) : ''}
-` + shader.fragmentShader;
-        // The pane's point, and its normal on whichever side faces the lamp, stand in for the
-        // inside wall it reads.
-        const term = (b, k, s) => uniforms.lmChartMode
-          ? `lmTerm(lmOwnerTint(${['mod', 'floor'][k]}(region${b}.w${k ? ' / 4096.0' : ', 4096.0'})), lmOwnerSlot(${['mod', 'floor'][k]}(region${b}.w${k ? ' / 4096.0' : ', 4096.0'})), 0, value${b}.${s[k]}, fill${b}.${'rg'[k]}, glowPos, glowNormal, true)`
-          : `lmTerm(texelFetch(lmTints, ivec2(${2*b+k}, glowRow), 0).rgb, ${2*b+k}, glowRow, value${b}.${s[k]}, texelFetch(lmFills, ivec2(${2*b+k}, glowRow), 0).r, glowPos, glowNormal, true)`;
-        const sum = banks.map((t, b) => `
-vec4 region${b} = texelFetch(lmRegions, ${uniforms.lmChartMode ? `lmAddress(${b}, int(vGlowRoom + 0.5))` : `ivec2(${b}, glowRow)`}, 0);
-${uniforms.lmChartMode ? `vec4 fill${b} = texelFetch(lmFills, lmAddress(${b}, int(vGlowRoom + 0.5)), 0);` : ''}
-vec4 value${b} = textureLod(glowBank${b}, vec3(vGlowUV + region${b}.xy, region${b}.z), 0.0);
-glow += ${term(b, 0, lightSwizzle(t.format))} + ${term(b, 1, lightSwizzle(t.format))};
-`).join('\n');
-        // Irradiance / 16 x 8, as the pane glowed when the page held irradiance / 16.
-        shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-if (vGlowRoom > -0.5) {
-  vec3 glow = vec3(0.0), glowPos = -vViewPosition;
-  vec3 glowNormal = normalize(normal);
-  int glowRow = int(vGlowRoom + 0.5);
-  ${sum}
-  totalEmissiveRadiance += glow * 0.5;
-}`);
-      };
-      material.customProgramCacheKey = () => `twin-window-glow-5-shadowmask-${banks.map(t => lightSwizzle(t.format)).join(',')}`;
+      patchWindowGlow(material, pages, uniforms);
     });
   }
   // The light list's layout: banks, layers, tints and the blank arrays it draws from.
@@ -299,7 +265,7 @@ if (vGlowRoom > -0.5) {
     unpatch();
     for (const t of textures) t.dispose();
     textures.clear();
-    if (uniforms) for (const name of ['lmTints', 'lmRegions', 'lmLights', 'lmFills']) uniforms[name]?.value.dispose();
+    if (uniforms) for (const name of ['lmTints', 'lmRegions']) uniforms[name]?.value.dispose();
     lights = list; lightsKey = JSON.stringify(list);
     packed = bakeLayout(atlas, layout, lights, history);
     if (packed.banks.some(b => b.chartPacking)) applyChartIndices(atlas);
@@ -497,7 +463,7 @@ if (vGlowRoom > -0.5) {
       controls.removeEventListener('start', moved); controls.removeEventListener('change', moved); controls.removeEventListener('end', moved);
       unpatch();
       for (const t of textures) t.dispose();
-      if (uniforms) for (const name of ['lmTints', 'lmRegions', 'lmLights', 'lmFills']) uniforms[name]?.value.dispose();
+      if (uniforms) for (const name of ['lmTints', 'lmRegions']) uniforms[name]?.value.dispose();
     },
   };
   view.bake = controller;

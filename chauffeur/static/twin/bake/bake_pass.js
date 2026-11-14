@@ -21,8 +21,10 @@ void main() { vec3 delta = source - wp; float d = length(delta);
 if (d >= reach) discard;
 vec3 n = normalize(wn);
 // Normal offset: a cube texel spans more depth at distance and at grazing angles, so the
-// receiver steps off its own surface by about a texel before the depth test (no acne).
-vec3 lifted = wp + n * (0.02 + 0.006 * d);
+// receiver steps off its own surface by about a texel before the depth test (no acne). At
+// most 3 cm: a batten stands 2.7 cm proud, and a lift past it would erase the contact shadow
+// it casts on the wall beside it (and under shelves and trim).
+vec3 lifted = wp + n * min(0.03, 0.005 + 0.004 * d);
 vec3 toward = source - lifted; float reached = length(toward);
 float stored = textureCube(depthCube, -toward).r * farPlane;
 float visibility = step(reached - 0.02, stored);

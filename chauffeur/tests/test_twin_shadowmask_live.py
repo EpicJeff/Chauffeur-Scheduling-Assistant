@@ -3,27 +3,36 @@
 The user, 2026-11-14, on the pool house gable at night: "The quality in the close compare
 shot is still pretty rough" (mottled blotches, streaks along battens, muddy falloff). The bake
 used to store irradiance (falloff x N.L x visibility, 8 bits, at the chart's density); now a
-page stores only visibility, and the material lights each pixel as the live light does.
+page stores only visibility, and the material lights each pixel through three's own RE_Direct
+with the live light's colour, so it matches the live PointLight.
 
 These checks run the real bake pass (bake/bake_pass.js renderPage) and the real material
-patch (bake/lightmap_material.js patchLightmaps) on a bare scene in the twin page: a 12 x 8 ft
-wall at z = 0 facing +z, charted at 8 texels/ft on a 256 page, and a point lamp 4 ft in
-front of it. Nothing else in the house is drawn; the twin page only provides the import map.
+patches (bake/lightmap_material.js patchLightmaps, patchWindowGlow) on bare scenes in the twin
+page: a 12 x 8 ft wall at z = 0 facing +z, charted at 8 texels/ft on a 256 page, and a point
+lamp in front of it. The twin page only provides the import map.
 
   visibility_is_a_fraction_of_the_lamp     every stored texel is in 0..255; an open wall reads
                                            fully lit without specks; a box casts an umbra and
                                            a soft penumbra
-  a_lit_wall_follows_the_live_falloff      the patched material on that wall matches the live
-                                           PointLight's diffuse term pixel by pixel (no
-                                           mottling: the ratio barely varies)
+  baked_light_matches_the_live_light       a baked wall (metalness .5, roughness .6) matches the
+                                           same wall under the live PointLight pixel by pixel:
+                                           diffuse by metalness, specular, falloff (no mottling)
   a_normal_map_turns_toward_the_lamp       a normal map tilted toward +x brightens under a lamp
                                            on the +x side and darkens under one on the -x side
   brightness_and_colour_need_no_rebake     the tint halves the light and colours it; no new
                                            program and no material version change
-  a_proxy_shades_by_its_own_normal         a batten side reading the wall's texels is lit by
-                                           its own normal, not the wall's
+  a_batten_front_shades_by_its_own_normal  a proxy turned 20 degrees from the wall (as a batten
+                                           front within the 25 degree facing rule) reading the
+                                           wall's texels is lit by its own normal
   an_unbaked_light_adds_nothing            a zero tint (the light is not fresh, so live lights
-                                           draw it) contributes nothing: no double counting
+                                           draw it) adds nothing, even with a room fill
+  the_fill_stops_at_the_reach              a texel past the light's reach stays dark
+  a_fully_mapped_material_still_links      map, normal, roughness, metalness and AO maps, an
+                                           environment, the sun's shadow and two shadowed point
+                                           lights, plus three baked banks: the program links
+                                           and draws (ANGLE allows 16 fragment samplers)
+  room_mode_and_window_glow_compile        the room-mode material and the window glow link and
+                                           draw light
 
 Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_shadowmask_live.py
 """
@@ -47,15 +56,15 @@ async () => {
   const renderer = new THREE.WebGLRenderer({ antialias: false });
   renderer.setSize(64, 64); renderer.toneMapping = THREE.NoToneMapping;
   const out = {};
-  const plane = (w, h, transform, uv) => {
+  const plane = (w, h, transform, uv, room = 0) => {
     const g = new THREE.PlaneGeometry(w * FT, h * FT).toNonIndexed(); transform(g);
     g.setAttribute('uv3', new THREE.Float32BufferAttribute(Array.from({ length: g.attributes.position.count }, (_, i) => uv(
       new THREE.Vector3().fromBufferAttribute(g.attributes.position, i))).flat(), 2));
-    g.setAttribute('lmRoom', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count), 1));
+    g.setAttribute('lmRoom', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count).fill(room), 1));
     return g;
   };
   const wallUV = p => [(RECT.x + p.x / FT * DENSITY) / SIZE, (RECT.y + p.y / FT * DENSITY) / SIZE];
-  const wallGeometry = () => plane(W, H, g => g.translate(W * FT / 2, H * FT / 2, 0), wallUV);
+  const wallGeometry = (room = 0) => plane(W, H, g => g.translate(W * FT / 2, H * FT / 2, 0), wallUV, room);
   const lamp = at => ({ device: 'lamp', absolute: true, at: [at[0], -at[2], at[1]], range: 30 });
   async function bake(at, blockers = []) {
     const scene = new THREE.Scene(), wall = new THREE.Mesh(wallGeometry(), new THREE.MeshStandardMaterial({ name: 'siding' }));
@@ -76,57 +85,105 @@ async () => {
   out.visibility = { openMin: Math.min(...open.vis), openBelow250: open.vis.filter(v => v < 250).length, count: open.vis.length,
     allBytes: open.vis.every(v => v >= 0 && v <= 255),
     umbra: shaded.vis.filter(v => v === 0).length, penumbra: shaded.vis.filter(v => v > 10 && v < 245).length, lit: shaded.vis.filter(v => v === 255).length };
-  // --- shading ---
-  const page = new THREE.DataArrayTexture(new Uint8Array(SIZE * SIZE * 4), SIZE, SIZE, 1);
-  for (let i = 0; i < SIZE * SIZE; i++) page.image.data[i * 4] = open.bytes[i * 4];
-  page.format = THREE.RGBAFormat; page.minFilter = page.magFilter = THREE.LinearFilter; page.generateMipmaps = false; page.needsUpdate = true;
-  const packed = { banks: [{ charts: [{ id: 0, page: 0, rect: RECT, sourceRegion: RECT }] }], slots: { lamp: { assignments: [{ chart: 0, bank: 0, channel: 0 }] } } };
-  const uniforms = M.chartLightmapUniforms(1, packed, [{ device: 'lamp' }], SIZE, [[0]]);
+  // --- the pages and uniforms of a chart-mode wall ---
+  const pageOf = bytes => {
+    const page = new THREE.DataArrayTexture(new Uint8Array(SIZE * SIZE * 4), SIZE, SIZE, 1);
+    for (let i = 0; i < SIZE * SIZE; i++) page.image.data[i * 4] = bytes[i * 4];
+    page.format = THREE.RGBAFormat; page.minFilter = page.magFilter = THREE.LinearFilter; page.generateMipmaps = false; page.needsUpdate = true;
+    return page;
+  };
+  const page = pageOf(open.bytes);
+  const chartUniforms = (banks = 1) => M.chartLightmapUniforms(1, { banks: Array.from({ length: banks }, () => ({ charts: [{ id: 0, page: 0, rect: RECT, sourceRegion: RECT }] })),
+    slots: { lamp: { assignments: [{ chart: 0, bank: 0, channel: 0 }] } } }, [{ device: 'lamp' }], SIZE, Array.from({ length: banks }, () => [0]));
+  const uniforms = chartUniforms();
   const source = at => new THREE.Vector3(at[0] * FT, at[1] * FT, at[2] * FT);
   M.setLightTint(uniforms, 0, 0, [255, 255, 255], 1);
   const target = new THREE.WebGLRenderTarget(48, 32, { type: THREE.FloatType });
-  const view = (mesh, camera) => {
-    const scene = new THREE.Scene(); scene.add(mesh); renderer.setRenderTarget(target); renderer.setClearColor(0, 0); renderer.clear();
+  const view = (meshes, camera, lights = []) => {
+    const scene = new THREE.Scene(); for (const m of [].concat(meshes, lights)) scene.add(m);
+    renderer.setRenderTarget(target); renderer.setClearColor(0, 0); renderer.clear();
     renderer.render(scene, camera); const px = new Float32Array(48 * 32 * 4); renderer.readRenderTargetPixels(target, 0, 0, 48, 32, px);
     renderer.setRenderTarget(null); return px;
   };
   const front = new THREE.OrthographicCamera(0, W * FT, H * FT, 0, .1, 10); front.position.set(0, 0, 5); front.updateMatrixWorld(true);
-  const patched = extra => { const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0, ...extra }); M.patchLightmaps([m], { banks: [page] }, uniforms); return m; };
-  const expected = (p, n, at) => { const l = source(at).sub(p), d = l.length();
-    return CANDELA * Math.max(0, 1 - (d / REACH) ** 4) ** 2 / Math.max(d * d, .01) * Math.max(0, n.dot(l.normalize())) / Math.PI; };
-  const flat = patched(), wall = new THREE.Mesh(wallGeometry(), flat);
+  const patched = (extra, u = uniforms, pages = [page]) => { const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0, ...extra }); M.patchLightmaps([m], { banks: pages }, u); return m; };
+  const livePoint = at => { const l = new THREE.PointLight(0xffffff, CANDELA, REACH, 2); l.position.copy(source(at)); return l; };
+  const centre = (j, i) => (j * 48 + i) * 4;
+  // --- parity with the live light ---
+  const metal = { roughness: .6, metalness: .5, color: 0xc8a070 };
+  const baked = new THREE.Mesh(wallGeometry(), patched(metal)), plain = new THREE.Mesh(wallGeometry(), new THREE.MeshStandardMaterial(metal));
   M.setLightSource(uniforms, 0, 0, source([6, 4, 4]), REACH);
-  const px = view(wall, front), ratios = [];
-  for (let j = 2; j < 30; j++) for (let i = 2; i < 46; i++) {
-    const p = new THREE.Vector3((i + .5) / 48 * W * FT, (j + .5) / 32 * H * FT, 0);
-    ratios.push(px[(j * 48 + i) * 4] / expected(p, new THREE.Vector3(0, 0, 1), [6, 4, 4]));
+  const bakedPx = view(baked, front), livePx = view(plain, front, [livePoint([6, 4, 4])]);
+  const ratios = [];
+  for (let j = 2; j < 30; j++) for (let i = 2; i < 46; i++) for (let c = 0; c < 3; c++) {
+    const live = livePx[centre(j, i) + c]; if (live > 1e-3) ratios.push(bakedPx[centre(j, i) + c] / live);
   }
   const mean = ratios.reduce((a, b) => a + b, 0) / ratios.length;
-  out.falloff = { mean, std: Math.sqrt(ratios.reduce((a, b) => a + (b - mean) ** 2, 0) / ratios.length), min: Math.min(...ratios), max: Math.max(...ratios) };
+  out.parity = { mean, std: Math.sqrt(ratios.reduce((a, b) => a + (b - mean) ** 2, 0) / ratios.length), min: Math.min(...ratios), max: Math.max(...ratios), n: ratios.length };
   // --- brightness and colour ---
-  const programs = renderer.info.programs.length, version = flat.version, centre = (j, i) => (j * 48 + i) * 4;
+  const flat = patched(), wall = new THREE.Mesh(wallGeometry(), flat);
+  const full = view(wall, front);
+  const programs = renderer.info.programs.length, version = flat.version;
   M.setLightTint(uniforms, 0, 0, [255, 255, 255], .5); const half = view(wall, front);
   M.setLightTint(uniforms, 0, 0, [255, 0, 0], 1); const red = view(wall, front);
+  M.setChartFill(uniforms, 0, 0, 1, 0, .5);
   M.setLightTint(uniforms, 0, 0, [255, 255, 255], 0); const off = view(wall, front);
-  out.tint = { full: px[centre(16, 24)], half: half[centre(16, 24)], redR: red[centre(16, 24)], redG: red[centre(16, 24) + 1],
+  out.tint = { full: full[centre(16, 24)], half: half[centre(16, 24)], redR: red[centre(16, 24)], redG: red[centre(16, 24) + 1],
     off: Math.max(...off.filter((v, i) => i % 4 < 3)), programs: [programs, renderer.info.programs.length], versions: [version, flat.version] };
+  // --- the fill stops at the reach: a 4 ft lamp at x = 1 ft, fill only ---
   M.setLightTint(uniforms, 0, 0, [255, 255, 255], 1);
+  const blind = pageOf(new Uint8Array(SIZE * SIZE * 4));                    // nothing seen: the fill alone
+  const fillOnly = new THREE.Mesh(wallGeometry(), patched({}, uniforms, [blind]));
+  M.setLightSource(uniforms, 0, 0, source([1, 4, .5]), 4 * FT);
+  const fillPx = view(fillOnly, front), near = [], far = [];
+  for (let i = 0; i < 48; i++) { const x = (i + .5) / 48 * W; (x < 2.5 ? near : x > 5.5 ? far : []).push(fillPx[centre(16, i)]); }
+  out.fill = { near: Math.min(...near), far: Math.max(...far) };
+  M.setChartFill(uniforms, 0, 0, 1, 0, 0);
   // --- normal map: a constant tangent-space normal leaning 30 degrees toward +x (u) ---
   const tilt = new THREE.DataTexture(new Uint8Array([Math.round((.5 + .5 * .5) * 255), 128, Math.round((.5 + .5 * .866) * 255), 255]), 1, 1);
   tilt.needsUpdate = true;
   const bumpy = new THREE.Mesh(wallGeometry(), patched({ normalMap: tilt }));
   const at = side => { M.setLightSource(uniforms, 0, 0, source([side, 4, 2]), REACH); return [view(wall, front)[centre(16, 24)], view(bumpy, front)[centre(16, 24)]]; };
-  const east = at(11), west = at(1);
-  out.normalMap = { east, west };
+  out.normalMap = { east: at(11), west: at(1) };
+  // --- a batten front: 0.09 ft proud at x = 3..3.5 ft, turned 20 degrees toward +x ---
+  const turn = 20 * Math.PI / 180, own = new THREE.Vector3(Math.sin(turn), 0, Math.cos(turn));
+  const frontUV = p => wallUV(new THREE.Vector3(p.x, p.y, 0));
+  const batten = new THREE.Mesh(plane(.5, H, g => { g.rotateY(turn); g.translate(3.25 * FT, H * FT / 2, .09 * FT); }, frontUV), patched());
+  const battenPlain = new THREE.Mesh(batten.geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 }));
+  const look = new THREE.OrthographicCamera(-.3 * FT, .3 * FT, H * FT, 0, .1, 10);
+  look.position.set(3.25 * FT + own.x * 2, 0, .09 * FT + own.z * 2); look.lookAt(3.25 * FT, 0, .09 * FT); look.updateMatrixWorld(true);
+  M.setLightSource(uniforms, 0, 0, source([11, 4, 2]), REACH);
+  const proxyPx = view(batten, look), livePx2 = view(battenPlain, look, [livePoint([11, 4, 2])]);
+  const p = new THREE.Vector3(3.25 * FT, H * FT / 2, .09 * FT), l = source([11, 4, 2]).sub(p).normalize();
+  out.proxy = { got: proxyPx[centre(16, 24)], live: livePx2[centre(16, 24)], ownCos: own.dot(l), wallCos: l.z };
+  // --- a fully mapped material with every shadow the house can cast ---
+  const tex = (r, g, b) => { const t = new THREE.DataTexture(new Uint8Array([r, g, b, 255]), 1, 1); t.needsUpdate = true; return t; };
+  const pmrem = new THREE.PMREMGenerator(renderer), env = pmrem.fromScene(new THREE.Scene()).texture;
+  const three = chartUniforms(3), banks3 = [page, pageOf(open.bytes), pageOf(open.bytes)];
+  M.setLightTint(three, 0, 0, [255, 255, 255], 1); M.setLightSource(three, 0, 0, source([6, 4, 4]), REACH);
+  const heavy = patched({ map: tex(200, 180, 160), normalMap: tex(128, 128, 255), roughnessMap: tex(0, 150, 0), metalnessMap: tex(0, 0, 40),
+    aoMap: tex(230, 230, 230), envMap: env, envMapIntensity: .2 }, three, banks3);
+  const heavyWall = new THREE.Mesh(wallGeometry(), heavy); heavyWall.receiveShadow = true;
+  heavyWall.geometry.setAttribute('uv1', heavyWall.geometry.attributes.uv);
+  renderer.shadowMap.enabled = true;
+  const sun = new THREE.DirectionalLight(0xffffff, .2); sun.position.set(2, 4, 6); sun.castShadow = true;
+  const points = [livePoint([2, 6, 3]), livePoint([10, 6, 3])].map(x => { x.intensity = 1; x.castShadow = true; return x; });
+  const caster = new THREE.Mesh(new THREE.BoxGeometry(.3, .3, .3), new THREE.MeshStandardMaterial()); caster.position.set(1.8, 1.2, .6); caster.castShadow = true;
+  const gl = renderer.getContext(), heavyPx = view([heavyWall, caster], front, [sun, ...points]);
+  const linked = m => { const prog = renderer.properties.get(m).currentProgram; return !!prog && gl.getProgramParameter(prog.program, gl.LINK_STATUS) && (!prog.diagnostics || prog.diagnostics.runnable); };
+  out.heavy = { linked: linked(heavy), lit: heavyPx[centre(16, 24)], samplers: gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS) };
+  renderer.shadowMap.enabled = false;
+  // --- room mode and window glow ---
+  const roomU = M.lightmapUniforms(2, 4);
+  const roomMat = patched({}, roomU, [page, pageOf(open.bytes)]);
+  M.setLightTint(roomU, 1, 0, [255, 255, 255], 1); M.setLightSource(roomU, 1, 0, source([6, 4, 4]), REACH);
+  const roomPx = view(new THREE.Mesh(wallGeometry(1), roomMat), front);
+  const glass = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 1 }), glowGeo = wallGeometry();
+  glowGeo.setAttribute('glowRoom', glowGeo.attributes.lmRoom); glowGeo.setAttribute('glowUV', glowGeo.attributes.uv3);
   M.setLightSource(uniforms, 0, 0, source([6, 4, 4]), REACH);
-  // --- a proxy: a 0.5 ft batten side facing +x at x = 3 ft, reading the wall's texels there ---
-  const sideUV = p => wallUV(new THREE.Vector3(3 * FT, p.y, 0));
-  const side = new THREE.Mesh(plane(.5, H, g => { g.rotateY(Math.PI / 2); g.translate(3 * FT, H * FT / 2, .25 * FT); }, sideUV), patched());
-  const eastCam = new THREE.OrthographicCamera(-.25 * FT, .25 * FT, H * FT, 0, .1, 10); eastCam.position.set(3 * FT + 2, 0, .25 * FT); eastCam.lookAt(-10, 0, .25 * FT);
-  eastCam.updateMatrixWorld(true);
-  M.setLightSource(uniforms, 0, 0, source([11, 4, 4]), REACH);
-  const sidePx = view(side, eastCam), row = 16, p = new THREE.Vector3(3 * FT, (row + .5) / 32 * H * FT, .25 * FT);
-  out.proxy = { got: sidePx[centre(row, 24)], own: expected(p, new THREE.Vector3(1, 0, 0), [11, 4, 4]), host: expected(p, new THREE.Vector3(0, 0, 1), [11, 4, 4]) };
+  M.patchWindowGlow(glass, { banks: [page] }, uniforms);
+  const glowPx = view(new THREE.Mesh(glowGeo, glass), front);
+  out.modes = { room: { linked: linked(roomMat), lit: roomPx[centre(16, 24)] }, glow: { linked: linked(glass), lit: glowPx[centre(16, 24)] } };
   renderer.dispose();
   return out;
 }
@@ -137,13 +194,15 @@ def run():
     served = L.serve()
     L.reset()
     failures = []
+    errors = []
     with served.browser(launch_args=L.GPU_ARGS) as page:
         page.set_viewport_size({'width': 1200, 'height': 800})
+        page.on('console', lambda m: errors.append(m.text[:400]) if m.type == 'error' and 'Failed to load resource' not in m.text else None)
         L.H.signed_in(page)
         L.open_twin(page, served, query='tier=high&test=1')
         result = page.evaluate(SCENE)
     print('MEASURED', json.dumps(result))
-    v, f, t, n, p = result['visibility'], result['falloff'], result['tint'], result['normalMap'], result['proxy']
+    v, par, t, n, p, f, h, m = (result[k] for k in ('visibility', 'parity', 'tint', 'normalMap', 'proxy', 'fill', 'heavy', 'modes'))
 
     def check(name, fn):
         try:
@@ -159,9 +218,9 @@ def run():
         assert v['openBelow250'] <= v['count'] * .005, f'an open wall reads fully seen, no specks: {v}'
         assert v['umbra'] > 50 and v['penumbra'] > 20 and v['lit'] > v['count'] / 2, f'a box casts an umbra and a soft edge: {v}'
 
-    def falloff():
-        assert abs(f['mean'] - 1) < .04, f'the wall matches the live light: {f}'
-        assert f['std'] < .02 and f['min'] > .93 and f['max'] < 1.07, f'and evenly, with no mottling: {f}'
+    def parity():
+        assert par['n'] > 1000, par
+        assert abs(par['mean'] - 1) < .02 and par['min'] > .97 and par['max'] < 1.03, f'the baked wall is the live wall: {par}'
 
     def normal_map():
         assert n['east'][1] > n['east'][0] * 1.1, f'tilted toward +x: brighter under the east lamp {n}'
@@ -173,19 +232,31 @@ def run():
         assert t['programs'][0] == t['programs'][1] and t['versions'][0] == t['versions'][1], f'with no new program: {t}'
 
     def proxy():
-        assert abs(p['got'] / p['own'] - 1) < .05, f'a batten side is lit by its own normal: {p}'
-        assert abs(p['got'] - p['host']) > p['own'] * .2, f'not the wall\'s: {p}'
+        assert abs(p['got'] / p['live'] - 1) < .03, f'a batten front is lit as the live light lights it, by its own normal: {p}'
+        assert abs(p['ownCos'] / p['wallCos'] - 1) > .2, f'which differs from the wall\'s: {p}'
 
     def unbaked():
-        assert t['off'] == 0, f'a zero tint adds nothing: {t}'
+        assert t['off'] == 0, f'a zero tint adds nothing, even with a fill: {t}'
 
-    check('visibility_is_a_fraction_of_the_lamp', visibility)
-    check('a_lit_wall_follows_the_live_falloff', falloff)
-    check('a_normal_map_turns_toward_the_lamp', normal_map)
-    check('brightness_and_colour_need_no_rebake', tint)
-    check('a_proxy_shades_by_its_own_normal', proxy)
-    check('an_unbaked_light_adds_nothing', unbaked)
-    print(f'{6 - len(failures)}/6 passed')
+    def fill():
+        assert f['near'] > 0, f'within reach the fill shows: {f}'
+        assert f['far'] == 0, f'past the reach a texel stays dark: {f}'
+
+    def heavy():
+        assert not errors, errors[:3]
+        assert h['linked'] and h['lit'] > 0, f'the fully mapped, fully shadowed material links and draws: {h}'
+
+    def modes():
+        assert m['room']['linked'] and m['room']['lit'] > 0, f'room mode links and draws its light: {m}'
+        assert m['glow']['linked'] and m['glow']['lit'] > 0, f'the window glow links and glows: {m}'
+
+    for name, fn in (('visibility_is_a_fraction_of_the_lamp', visibility), ('baked_light_matches_the_live_light', parity),
+                     ('a_normal_map_turns_toward_the_lamp', normal_map), ('brightness_and_colour_need_no_rebake', tint),
+                     ('a_batten_front_shades_by_its_own_normal', proxy), ('an_unbaked_light_adds_nothing', unbaked),
+                     ('the_fill_stops_at_the_reach', fill), ('a_fully_mapped_material_still_links', heavy),
+                     ('room_mode_and_window_glow_compile', modes)):
+        check(name, fn)
+    print(f'{9 - len(failures)}/9 passed')
     return 1 if failures else 0
 
 
