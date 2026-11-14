@@ -355,7 +355,11 @@ check('stale_lights_are_only_the_changed_ones', async () => {
     assert.ok(delta.mean<=1.5&&delta.max<=12,`${id}'s owned texels survive another light's multi-bank write: ${JSON.stringify(delta)}`);
   }
   assert.ok(compare(lightSamples(packed,'h1',before,key),lightSamples(packed,'h1',server.pages,key)).mean>=3);
-  assert.deepEqual(server.manifests.get(key).lights,manifest.lights,'forced refresh retains every key and entry');
+  // An entry's fill is the bake's output (the room fill beside its shadowmask), so a rebake may
+  // change it; the key, location, pages and channel are what a refresh must keep.
+  const placement=lights=>Object.fromEntries(Object.entries(lights).map(([id,{fill,...e}])=>[id,e]));
+  assert.deepEqual(placement(server.manifests.get(key).lights),placement(manifest.lights),'forced refresh retains every key and entry');
+  assert.ok(Object.values(server.manifests.get(key).lights).every(e=>e.fill&&typeof e.fill==='object'),'every baked entry carries its room fill');
   const ownPages=new Set(manifest.lights.h1.pages);
   for(const [path,bytes] of before) if(!ownPages.has(Number(path.split('/').pop()))) assert.deepEqual(server.pages.get(path),bytes);
 
@@ -367,7 +371,7 @@ check('stale_lights_are_only_the_changed_ones', async () => {
   const third=makeBaker(ctx,server,nextLights);
   assert.deepEqual(asSet(await third.staleLights()),asSet(changed),'only changed geometry, reach or slots go stale');
   assert.deepEqual(asSet(await bakeAll(third)),asSet(changed));
-  assert.deepEqual(server.manifests.get(key).lights,next.entries);
+  assert.deepEqual(placement(server.manifests.get(key).lights),next.entries);
   const other=await setup('high',{room:{...LAYOUT.room,density:2,page:512}});
   assert.notEqual(other.atlas.key,key);
   assert.deepEqual(asSet(await makeBaker(other,server,nextLights).staleLights()),['c1','h1','k1','k2']);

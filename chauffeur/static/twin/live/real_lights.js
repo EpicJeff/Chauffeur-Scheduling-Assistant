@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { TIERS } from '../twin_tiers.js';
+import { CANDELA } from '../twin_light_math.js';
 
 const clamp = (value, max = 255) => Math.max(0, Math.min(max, value));
-// Candela at full brightness. A ceiling light 10 ft up leaves the floor under it
-// bright but not clipped at night exposure, and the far corner lit.
-export const CANDELA = 40;
+// Candela at full brightness lives with the pure lamp math, which the baked material shares.
+export { CANDELA };
 
 export function lightColor(attributes = {}) {
   const { rgb_color: rgb, color_temp_kelvin: kelvin, color_temp: mireds } = attributes || {};

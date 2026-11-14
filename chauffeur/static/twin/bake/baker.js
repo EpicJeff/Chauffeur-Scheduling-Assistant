@@ -1,5 +1,5 @@
 import { assignChannels, CHANNEL_FALLBACK, CHART_STATS, fingerprint } from './atlas.js';
-import { renderPage, addRoomBounceAcrossPages, dilateCharts } from './bake_pass.js';
+import { renderPage, roomFills, dilateCharts } from './bake_pass.js';
 import { withBakeLease } from './bake_lock.js';
 import { reachLights } from './reach.js';
 import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
@@ -8,7 +8,8 @@ export { encodePage, decodePage } from './codec.js';
 
 export function lightKey(atlas, light, slot, bank) {
   const hash=fingerprint();
-  hash.add(JSON.stringify(['light-slots-7',light.reach || atlas.key,light.device,light.at]));
+  // light-slots-8: pages hold a shadowmask (visibility), not irradiance (2026-11-14).
+  hash.add(JSON.stringify(['light-slots-8',light.reach || atlas.key,light.device,light.at]));
   if (slot.assignments) {
     const ranking=[...slot.assignments].sort((a,b)=>a.chartKey<b.chartKey?-1:a.chartKey>b.chartKey?1:0), rank=new Uint8Array(2);
     for (const a of ranking) {
@@ -143,8 +144,8 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
       if (!valid()) return null;
       rendered.push({page, charts:mine, bytes:pixels});
     }
-    addRoomBounceAcrossPages(rendered,size);
-    // Pad each chart's unwritten texels after bounce, so padding carries the bounced value too.
+    // The room fill travels in the manifest entry; the pages hold visibility only.
+    const fill = roomFills(rendered, size);
     for (const r of rendered) dilateCharts(r.bytes, r.charts, size);
     for (const {page, charts:mine, bytes:pixels} of rendered) {
       const channels = await pageData(page, size, 2);
@@ -178,7 +179,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
         if (!r.ok) throw new Error('Could not preserve the later light bank.');
         moves.set(page, new Uint8Array(await r.arrayBuffer()));
       }
-      next.lights[device] = expected;
+      next.lights[device] = { ...expected, ...(entry.fill ? { fill: entry.fill } : {}) };
     }
     for (const [page, bytes] of moves) uploads.push({ page, bytes });
     // Bank zero reserves unlit rooms too. Publish any missing reserved pages
@@ -191,7 +192,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
       uploads.push({ page, bytes: empty });
     }
     delete next.sky; // Ignore legacy sky metadata when publishing room lights.
-    next.lights[id] = packed.entries[id];
+    next.lights[id] = { ...packed.entries[id], fill };
     // Which round this desk baked and whether it is whole (Ruling B15: the editor's chip).
     const left = new Set(redo); left.delete(id);
     next.round = round;

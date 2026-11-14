@@ -1,5 +1,8 @@
 // Pure lamp geometry shared by the live rig and the atlas module worker.
 export const FT = 0.3048;
+// Candela at full brightness. A ceiling light 10 ft up leaves the floor under it
+// bright but not clipped at night exposure, and the far corner lit.
+export const CANDELA = 40;
 
 // A real light reaches the far corner of its own room and little beyond: the
 // farthest floor corner from the fixture (lot feet, 3D), with a margin so the

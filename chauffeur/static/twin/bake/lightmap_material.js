@@ -1,12 +1,50 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { atlasJob, buffers, applyAtlas } from './atlas_transport.js';
+import { CANDELA } from '../twin_light_math.js';
 
+const floatTexture = (width, height) => {
+  const t = new THREE.DataTexture(new Float32Array(Math.max(1, width) * Math.max(1, height) * 4),
+    Math.max(1, width), Math.max(1, height), THREE.RGBAFormat, THREE.FloatType);
+  t.needsUpdate = true; return t;
+};
+// The baked pages are a shadowmask: per light, how much of its emitter a texel sees. The
+// material lights each pixel itself, as the live light does: falloff and N.L from the light's
+// position and reach, visibility from the page, colour and brightness from the tint.
+//   lmTints  (slot, row)         live colour x brightness (the switch: no rebake, no recompile)
+//   lmLights (slot, 2 row)       the light's world position (m) and reach (m)
+//            (slot, 2 row + 1)   its shape: x = kind (0 point). Slice C (spot cone, line, area)
+//                                adds kinds and their parameters here and a term in lmShape.
+//   lmFills  as lmRegions        chart mode: per chart and bank, the room fill of channel a, b
+//            (slot, row)         room mode: the room fill of the slot
+// Chart mode has one row (row 0) and a slot per light index; room mode a row per room and a
+// slot per bank channel. Every texture is addressed by data, never by a uniform array index,
+// so a merged batch of many charts and lights needs no per-draw uniforms.
 export function lightmapUniforms(roomCount, slotCount) {
-  const t = new THREE.DataTexture(new Float32Array(Math.max(1, roomCount) * Math.max(1, slotCount) * 4),
-    Math.max(1, slotCount), Math.max(1, roomCount), THREE.RGBAFormat, THREE.FloatType);
-  t.needsUpdate = true;
-  return { lmTints: { value: t } };
+  return { lmTints: { value: floatTexture(slotCount, roomCount) },
+    lmLights: { value: floatTexture(slotCount, 2 * Math.max(1, roomCount)) },
+    lmFills: { value: floatTexture(slotCount, roomCount) } };
 }
+// Where a light is: its bake source, as the shadowmask was rendered from (reach.js).
+export function setLightSource(uniforms, room, slot, position, reach, kind = 0) {
+  const t = uniforms.lmLights.value;
+  if (room < 0 || 2 * room + 1 >= t.image.height || slot < 0 || slot >= t.image.width) return;
+  t.image.data.set([position.x, position.y, position.z, reach], (2 * room * t.image.width + slot) * 4);
+  t.image.data.set([kind, 0, 0, 0], ((2 * room + 1) * t.image.width + slot) * 4);
+  t.needsUpdate = true;
+}
+// Room mode: a slot's fill in irradiance units.
+export function setRoomFill(uniforms, room, slot, value) {
+  const t = uniforms.lmFills.value;
+  if (room < 0 || room >= t.image.height || slot < 0 || slot >= t.image.width) return;
+  t.image.data[(room * t.image.width + slot) * 4] = value; t.needsUpdate = true;
+}
+// Chart mode: the fill one channel of a chart's bank carries.
+export function setChartFill(uniforms, chart, bank, banks, channel, value) {
+  const t = uniforms.lmFills.value, [x, y] = chartAddress(chart, bank, banks);
+  if (y >= t.image.height) return;
+  t.image.data[(y * t.image.width + x) * 4 + channel] = value; t.needsUpdate = true;
+}
+export function clearFills(uniforms) { uniforms.lmFills.value.image.data.fill(0); uniforms.lmFills.value.needsUpdate = true; }
 export function setLightTint(uniforms, room, slot, rgb, intensity) {
   const t = uniforms.lmTints.value;
   if (room < 0 || room >= t.image.height || slot < 0 || slot >= t.image.width) return;
@@ -35,8 +73,8 @@ export function applyChartIndices(atlas) {
 export function chartLightmapUniforms(chartCount, packed, lights, pageSize, layers) {
   if (lights.length > 4095) throw new Error('Too many light indices for a chart owner texture.');
   const uniforms = lightmapUniforms(1, Math.max(1, lights.length)), banks = Math.max(1, packed.banks.length);
-  const texture = new THREE.DataTexture(new Float32Array(1024 * Math.max(1, Math.ceil(chartCount*banks/1024))*4),
-    1024, Math.max(1, Math.ceil(chartCount*banks/1024)), THREE.RGBAFormat, THREE.FloatType);
+  const texture = floatTexture(1024, Math.ceil(chartCount*banks/1024));
+  uniforms.lmFills.value.dispose(); uniforms.lmFills.value = floatTexture(1024, Math.ceil(chartCount*banks/1024));
   const owners = new Map();
   lights.forEach((l,index) => {
     const slot = packed.slots[l.device]; if (!slot) return;
@@ -58,6 +96,23 @@ export function chartLookupGLSL(banks) {
   return `ivec2 lmAddress(int bank, int chart) { int id = chart * ${Math.max(1,banks)} + bank; return ivec2(id % 1024, id / 1024); }
 vec3 lmOwnerTint(float owner) { return owner < 0.5 ? vec3(0.0) : texelFetch(lmTints, ivec2(int(owner)-1, 0), 0).rgb; }`;
 }
+// The live light's diffuse term at a view-space point and normal: three's PointLight with
+// decay 2 and its distance cutoff (real_lights.js), N.L with the shading normal. lmShape is
+// the seam for light shapes (Slice C): kind 0 is a point; other kinds return 0 until built.
+export const SHADE_GLSL = `uniform sampler2D lmLights; uniform sampler2D lmFills;
+float lmShape(vec4 src, vec4 shape, vec3 posV, vec3 nV, bool twoSided) {
+  if (shape.x > 0.5 || src.w <= 0.0) return 0.0;
+  vec3 toward = (viewMatrix * vec4(src.xyz, 1.0)).xyz - posV; float d = length(toward);
+  float falloff = pow(clamp(1.0 - pow(d / src.w, 4.0), 0.0, 1.0), 2.0) / max(d * d, 0.01);
+  float cosine = dot(nV, toward / max(d, 1e-4));
+  return ${CANDELA.toFixed(1)} * falloff * (twoSided ? abs(cosine) : max(0.0, cosine));
+}
+vec3 lmTerm(vec3 tint, int slot, int row, float visibility, float fill, vec3 posV, vec3 nV, bool twoSided) {
+  if (tint.r + tint.g + tint.b <= 0.0) return vec3(0.0);
+  vec4 src = texelFetch(lmLights, ivec2(slot, 2 * row), 0), shape = texelFetch(lmLights, ivec2(slot, 2 * row + 1), 0);
+  return tint * (lmShape(src, shape, posV, nV, twoSided) * visibility + fill);
+}
+int lmOwnerSlot(float owner) { return max(0, int(owner) - 1); }`;
 export const lightSwizzle = format => format === THREE.RGBAFormat ? 'ra' : 'rg';
 export function pickTranscode(extensions, channels) {
   if (extensions.has('EXT_texture_compression_rgtc')) return channels === 1 ? THREE.RED_RGTC1_Format : THREE.RED_GREEN_RGTC2_Format;
@@ -89,18 +144,24 @@ export function patchLightmaps(materials, pages, uniforms) {
   // taken outside the room branch, where derivatives are defined.
   const bankCode = pages.banks.map((t, b) => {
     const s = lightSwizzle(t.format);
-    return `vec4 region${b} = texelFetch(lmRegions, ${chartMode ? `lmAddress(${b}, int(vLmRoom + 0.5))` : `ivec2(${b}, int(vLmRoom + 0.5))`}, 0);
+    const owners = chartMode
+      ? [`mod(region${b}.w, 4096.0)`, `floor(region${b}.w / 4096.0)`]
+      : null;
+    const term = k => chartMode
+      ? `lmTerm(lmOwnerTint(${owners[k]}), lmOwnerSlot(${owners[k]}), 0, bank${b}.${s[k]}, fill${b}.${'rg'[k]}, lmPos, lmNormal, false)`
+      : `lmTerm(texelFetch(lmTints, ivec2(${2*b+k}, lmRow), 0).rgb, ${2*b+k}, lmRow, bank${b}.${s[k]}, texelFetch(lmFills, ivec2(${2*b+k}, lmRow), 0).r, lmPos, lmNormal, false)`;
+    return `vec4 region${b} = texelFetch(lmRegions, ${chartMode ? `lmAddress(${b}, int(vLmRoom + 0.5))` : `ivec2(${b}, lmRow)`}, 0);
+${chartMode ? `vec4 fill${b} = texelFetch(lmFills, lmAddress(${b}, int(vLmRoom + 0.5)), 0);` : ''}
 float lmSpan${b} = max(length(lmDx), length(lmDy)) * float(textureSize(lmBank${b}, 0).x);
 float lmClamp${b} = lmSpan${b} > 2.0 ? 2.0 / lmSpan${b} : 1.0;
 vec4 bank${b} = textureGrad(lmBank${b}, vec3(vLmUV + region${b}.xy, region${b}.z), lmDx * lmClamp${b}, lmDy * lmClamp${b});
-vec3 tint${b}a = ${chartMode ? `lmOwnerTint(mod(region${b}.w, 4096.0))` : `texelFetch(lmTints, ivec2(${2*b}, int(vLmRoom + 0.5)), 0).rgb`};
-vec3 tint${b}b = ${chartMode ? `lmOwnerTint(floor(region${b}.w / 4096.0))` : `texelFetch(lmTints, ivec2(${2*b+1}, int(vLmRoom + 0.5)), 0).rgb`};
-lmLight += bank${b}.r * tint${b}a + bank${b}.${s[1]} * tint${b}b;`;
+lmLight += ${term(0)} + ${term(1)};`;
   }).join('\n');
   const declarations = `uniform sampler2D lmTints;
 uniform sampler2D lmRegions;
 varying vec2 vLmUV; varying float vLmRoom;
 ${pages.banks.map((t, b) => `uniform highp sampler2DArray lmBank${b};`).join('\n')}
+${SHADE_GLSL}
 ${chartMode ? chartLookupGLSL(pages.banks.length) : ''}`;
   const slots = uniforms.lmTints.value.image.width, rooms = uniforms.lmTints.value.image.height;
   if (!uniforms.lmRegions) {
@@ -126,13 +187,16 @@ varying vec2 vLmUV; varying float vLmRoom;\n` + shader.vertexShader;
       shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
 vLmUV = uv3; vLmRoom = lmRoom;`);
       shader.fragmentShader = declarations + '\n' + shader.fragmentShader;
+      // The baked lights shade with the fragment's own normal (normal maps, a batten's sides)
+      // at its own position; the page says only how much of each light reaches it.
       shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_end>', `vec2 lmDx = dFdx(vLmUV), lmDy = dFdy(vLmUV);
 #include <lights_fragment_end>
-vec3 lmLight = vec3(0.0);
+vec3 lmLight = vec3(0.0), lmPos = -vViewPosition, lmNormal = normal;
+int lmRow = int(vLmRoom + 0.5);
 if (vLmRoom > -0.5) { ${bankCode} }
-reflectedLight.indirectDiffuse += lmLight * 16.0 * RECIPROCAL_PI * diffuseColor.rgb;`);
+reflectedLight.indirectDiffuse += lmLight * RECIPROCAL_PI * diffuseColor.rgb;`);
     };
-    material.customProgramCacheKey = () => `${key}|lm-4|${chartMode ? 'charts-2|' : ''}${slots}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
+    material.customProgramCacheKey = () => `${key}|lm-5-shadowmask|${chartMode ? 'charts-2|' : ''}${slots}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
     material.needsUpdate = true;
   }
 }

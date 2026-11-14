@@ -362,7 +362,7 @@ check('material_leaves_ambient_alone_without_sky_uniforms', async () => {
   assert.ok(!Object.hasOwn(shader.uniforms, 'lmSky'), 'no lmSky sampler');
   assert.ok(!/skyTint|lmSky|uv2/.test(shader.vertexShader + shader.fragmentShader), 'no sky shader terms');
   assert.ok(!/irradiance\s*\*=|iblIrradiance\s*\*=/.test(shader.fragmentShader), 'three ambient is unmodified');
-  assert.ok(material.customProgramCacheKey().includes('|lm-4|'), 'new shader program cache key');
+  assert.ok(material.customProgramCacheKey().includes('|lm-5-shadowmask|'), 'new shader program cache key (pages are a shadowmask)');
   assert.ok(shader.fragmentShader.includes('texelFetch(lmTints') && !shader.fragmentShader.includes('light.room'),
     'group tints can represent any light reaching that group, including neighbours and outdoor tiles');
 });

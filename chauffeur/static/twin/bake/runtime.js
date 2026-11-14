@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { base } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
-import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, chartLookupGLSL, patchLightmaps, setLightTint, pickTranscode, lightSwizzle } from './lightmap_material.js';
+import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, chartLookupGLSL, patchLightmaps, setLightTint, pickTranscode, lightSwizzle,
+  setLightSource, setChartFill, setRoomFill, clearFills, SHADE_GLSL } from './lightmap_material.js';
+import { lightSource } from './reach.js';
 import { createBaker, bakeLayout } from './baker.js';
 import { mayBake } from './bake_lock.js';
 import { workerCodec } from './worker_codec.js';
@@ -265,19 +267,31 @@ vGlowRoom = glowRoom; vGlowUV = glowUV;`);
         shader.fragmentShader = `uniform sampler2D lmTints; uniform sampler2D lmRegions;
 varying float vGlowRoom; varying vec2 vGlowUV;
 ${banks.map((t, b) => `uniform highp sampler2DArray glowBank${b};`).join('\n')}
+${SHADE_GLSL}
 ${uniforms.lmChartMode ? chartLookupGLSL(banks.length) : ''}
 ` + shader.fragmentShader;
+        // The pane's point, and its normal on whichever side faces the lamp, stand in for the
+        // inside wall it reads.
+        const term = (b, k, s) => uniforms.lmChartMode
+          ? `lmTerm(lmOwnerTint(${['mod', 'floor'][k]}(region${b}.w${k ? ' / 4096.0' : ', 4096.0'})), lmOwnerSlot(${['mod', 'floor'][k]}(region${b}.w${k ? ' / 4096.0' : ', 4096.0'})), 0, value${b}.${s[k]}, fill${b}.${'rg'[k]}, glowPos, glowNormal, true)`
+          : `lmTerm(texelFetch(lmTints, ivec2(${2*b+k}, glowRow), 0).rgb, ${2*b+k}, glowRow, value${b}.${s[k]}, texelFetch(lmFills, ivec2(${2*b+k}, glowRow), 0).r, glowPos, glowNormal, true)`;
         const sum = banks.map((t, b) => `
-vec4 region${b} = texelFetch(lmRegions, ${uniforms.lmChartMode ? `lmAddress(${b}, int(vGlowRoom + 0.5))` : `ivec2(${b}, int(vGlowRoom + 0.5))`}, 0);
+vec4 region${b} = texelFetch(lmRegions, ${uniforms.lmChartMode ? `lmAddress(${b}, int(vGlowRoom + 0.5))` : `ivec2(${b}, glowRow)`}, 0);
+${uniforms.lmChartMode ? `vec4 fill${b} = texelFetch(lmFills, lmAddress(${b}, int(vGlowRoom + 0.5)), 0);` : ''}
 vec4 value${b} = textureLod(glowBank${b}, vec3(vGlowUV + region${b}.xy, region${b}.z), 0.0);
-vec3 tint${b}a = ${uniforms.lmChartMode ? `lmOwnerTint(mod(region${b}.w, 4096.0))` : `texelFetch(lmTints, ivec2(${2*b}, int(vGlowRoom + 0.5)), 0).rgb`};
-vec3 tint${b}b = ${uniforms.lmChartMode ? `lmOwnerTint(floor(region${b}.w / 4096.0))` : `texelFetch(lmTints, ivec2(${2*b+1}, int(vGlowRoom + 0.5)), 0).rgb`};
-totalEmissiveRadiance += (value${b}.r * tint${b}a + value${b}.${lightSwizzle(t.format)[1]} * tint${b}b) * 8.0;
+glow += ${term(b, 0, lightSwizzle(t.format))} + ${term(b, 1, lightSwizzle(t.format))};
 `).join('\n');
+        // Irradiance / 16 x 8, as the pane glowed when the page held irradiance / 16.
         shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-if (vGlowRoom > -0.5) { ${sum} }`);
+if (vGlowRoom > -0.5) {
+  vec3 glow = vec3(0.0), glowPos = -vViewPosition;
+  vec3 glowNormal = normalize(normal);
+  int glowRow = int(vGlowRoom + 0.5);
+  ${sum}
+  totalEmissiveRadiance += glow * 0.5;
+}`);
       };
-      material.customProgramCacheKey = () => `twin-window-glow-4-${banks.map(t => lightSwizzle(t.format)).join(',')}`;
+      material.customProgramCacheKey = () => `twin-window-glow-5-shadowmask-${banks.map(t => lightSwizzle(t.format)).join(',')}`;
     });
   }
   // The light list's layout: banks, layers, tints and the blank arrays it draws from.
@@ -285,7 +299,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
     unpatch();
     for (const t of textures) t.dispose();
     textures.clear();
-    if (uniforms) { uniforms.lmTints.value.dispose(); uniforms.lmRegions.value.dispose(); }
+    if (uniforms) for (const name of ['lmTints', 'lmRegions', 'lmLights', 'lmFills']) uniforms[name]?.value.dispose();
     lights = list; lightsKey = JSON.stringify(list);
     packed = bakeLayout(atlas, layout, lights, history);
     if (packed.banks.some(b => b.chartPacking)) applyChartIndices(atlas);
@@ -304,9 +318,30 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       banks: packed.banks.map((b, i) => layers[i].length ? blankArray(layers[i].length, roomFormat, layout.room.page)
         : blankArray(1, roomFormat, 4)) };
     pages.banks.forEach(t => textures.add(t));
+    // Each slot's light, where its shadowmask was rendered from (the shader's falloff and N.L).
+    lights.forEach((l, index) => {
+      const s = packed.slots[l.device]; if (!s) return;
+      const { source, range } = lightSource(view.plan, l);
+      if (uniforms.lmChartMode) setLightSource(uniforms, 0, index, source, range);
+      else for (const room of s.receivers || [s.room]) setLightSource(uniforms, room, s.bank * 2 + s.channel, source, range);
+    });
     etags.clear(); present.clear(); manifestText = null; fresh.clear();
     stale = lights.map(l => l.device);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
+  }
+  // The room fill each baked light published with its pages (baker.js), onto the slots
+  // that light owns. A light with no fill (none reached its room) adds none.
+  function fills(m) {
+    clearFills(uniforms);
+    const banks = Math.max(1, packed.banks.length);
+    for (const l of lights) {
+      const fill = m.lights[l.device]?.fill, s = packed.slots[l.device];
+      if (!fill || !s) continue;
+      if (uniforms.lmChartMode) for (const a of s.assignments || []) {
+        const value = fill[atlas.room.charts[a.chart]?.room];
+        if (value) setChartFill(uniforms, a.chart, a.bank, banks, a.channel, value);
+      } else for (const room of s.receivers || [s.room]) if (fill[room]) setRoomFill(uniforms, room, s.bank * 2 + s.channel, fill[room]);
+    }
   }
   function locate(p) {
     for (let i = 0; i < layers.length; i++) {
@@ -373,6 +408,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
         JSON.stringify(stored.pages) === JSON.stringify(e.pages) && e.pages.every(p => present.has(p))) fresh.add(l.device);
     }
     stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
+    fills(m);
     if (present.size) patch();
     for (const id of previous) if (!fresh.has(id)) light(id, [0, 0, 0], 0);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
@@ -461,7 +497,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       controls.removeEventListener('start', moved); controls.removeEventListener('change', moved); controls.removeEventListener('end', moved);
       unpatch();
       for (const t of textures) t.dispose();
-      if (uniforms) { uniforms.lmTints.value.dispose(); uniforms.lmRegions.value.dispose(); }
+      if (uniforms) for (const name of ['lmTints', 'lmRegions', 'lmLights', 'lmFills']) uniforms[name]?.value.dispose();
     },
   };
   view.bake = controller;
