@@ -1,6 +1,20 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.865 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.866 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.866 (2026-11-14, NOT device-verified): two house tabs in one browser work again. Fixes a hang introduced in .862.**
+
+**The defect.** Each house tab already held two long-lived streams (`api/ha/stream` for device states and the chat stream). The material watcher (.862) added a third, `api/stream`. Two tabs then held six, which is every connection a browser allows to one host, so every other request in both tabs waited forever: nothing loaded and no bake landed. Found by `scenario_two_tabs_bake_without_tearing`, which passed at .861 and failed from .862 on. Panels were not affected; they reuse nav's stream.
+
+**The fix** (`static/twin/material_watch.js`). One tab per browser holds the material stream and tells the others.
+- The tab that wins the `chf-material-stream` Web Lock opens the `EventSource`. Each `update` it receives is also posted on a `BroadcastChannel` of the same name.
+- Every tab listens on that channel and runs the same 1.5 s debounced manifest check, so a material edit still repaints every open tab.
+- When the holding tab closes or its watcher stops, the lock is released and the next tab opens the stream.
+- A browser without Web Locks or `BroadcastChannel` opens its own stream as before. The 60 s poll, the focus check and the panel path are unchanged.
+
+**Limit, unchanged from before .862.** Three house tabs in one browser still reach six streams (two each) and stall.
+
+**Tests.** `test_twin_material_live_js` 20/20, with a new case: a second tab opens no stream, a push reaches both tabs, and the second tab takes the stream over when the first stops. `test_twin_library_js` 28/28, import maps 3/3. Chromium: `scenario_two_tabs_bake_without_tearing` passes (it fails on .865).
 
 **v2.499.865 (2026-11-14, NOT device-verified): editing one building no longer regenerates the others. Unchanged buildings are reused as they are.**
 
