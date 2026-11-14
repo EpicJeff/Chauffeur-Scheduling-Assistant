@@ -101,6 +101,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (haSection) haLink.draw(haSection, record);
   }
   function draw(next = selection) {
+    if (!next && host.dataset.fixtureCard) return;
+    if (next) delete host.dataset.fixtureCard;
     // The two-click add tool temporarily owns the same card surface. Polling
     // selection/HA while no piece is selected must leave its fields in place.
     if (!next && host.dataset.stairDraft) {
@@ -127,7 +129,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       headingNode.textContent = title(record);
       if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
       if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost' && !flags.length;
-      host.querySelectorAll('button').forEach(b => { b.disabled = !canEdit(); });
+      host.querySelectorAll('button').forEach(b => { b.disabled = b.dataset.fixtureLocked !== undefined || !canEdit() && b.dataset.fixtureBrowse === undefined; });
       // A save or poll refreshes clean values without replacing anyone's input.
       for (const [field, state] of inputs) {
         const { input } = state;

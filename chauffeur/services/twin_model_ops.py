@@ -494,7 +494,7 @@ MORE_OPS = ('add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update
             'move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape', 'make_yard_room', 'place_device', 'unplace_device', 'set_ha_display',
             'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation', 'set_porch_foundation',
             'add_pool_feature', 'update_pool_feature', 'delete_pool_feature',
-            'add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output')
+            'add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output', 'set_camera_view')
 
 
 def _item_scale(value):
@@ -1305,6 +1305,23 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
             words = twin_fixtures.apply_op(model, op)
         except ValueError as exc:
             raise Refused(str(exc)) from exc
+        if kind == 'set_camera_view':
+            from services import twin_ha
+            catalogue = ha_catalogue if ha_catalogue is not None else twin_ha.safe_catalogue()
+            entity = op['entity_id']
+            devices = {d['device_id'] for d in catalogue.get('devices', [])
+                       if d.get('entity_id') == entity or entity in d.get('entities', [])}
+            devices.update((entity, 'entity:' + entity))
+            value = model['camera_views'][entity]
+            dx, dy = (value['aim'][i] - value['at'][i] for i in (0, 1))
+            facing = math.degrees(math.atan2(dy, dx)) % 360
+            for building in model['buildings']:
+                for piece in building.get('anchors', []) + building.get('devices', []):
+                    if piece.get('device') in devices:
+                        piece['facing_deg'] = (facing - building.get('rotation', 0)) % 360
+            for piece in model['site'].get('devices', []):
+                if piece.get('device') in devices:
+                    piece['facing_deg'] = facing
         return model, words
     if kind == 'set_porch_foundation':
         from services import twin_porches

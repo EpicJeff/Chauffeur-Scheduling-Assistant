@@ -592,7 +592,7 @@ export async function boot() {
     tools.delegate({
       pick: flags.pick,
       pointerDown: event => terrain.pointerDown(event) || devices.pointerDown(event) || lot.pointerDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event) || library.pointerDown(event),
-      pointerMove: event => terrain.pointerMove(event) || lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event) || library.pointerMove(event),
+      pointerMove: event => terrain.pointerMove(event) || devices.pointerMove(event) || lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event) || library.pointerMove(event),
       pointerUp: (event, cancel) => terrain.pointerUp(event, cancel) || devices.pointerUp(event, cancel) || lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
       floorChanged() { terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.floorChanged(); }, cancel() { terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.cancel(); },
     });

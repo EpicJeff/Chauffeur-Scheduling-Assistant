@@ -151,6 +151,7 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     row.append(grip);
     if (device.kind === 'camera') row.append(svgIcon('camera', 'currentColor'));
     row.append(words, actions);
+    placement?.drawFixtures?.(words, device);
     return row;
   }
 
@@ -204,6 +205,7 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     section.append(element('p', device?.name || anchor.device), button('Remove', () => {
       if (canEdit()) return onCommit({ op: 'unplace_device', device: anchor.device });
     }, 'remove'));
+    if (device) placement?.drawFixtures?.(section, device);
     return section;
   }
 
@@ -312,7 +314,8 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
   // What a card's section shows, kept small: it redraws only when this changes.
   function key({ kind, piece, building }) {
     if (!latest) return 'none';
-    const base = [kind, building?.id, piece?.id, latest.available, canEdit()];
+    const plan = getPlan?.();
+    const base = [kind, building?.id, piece?.id, latest.available, canEdit(), !!placement, plan?.light_fixtures, plan?.light_fixtures_meta, plan?.camera_views];
     if (!latest.available) return JSON.stringify(base);
     if (kind === 'anchor') {
       const device = latest.devices?.find(d => d.device_id === piece.device);
@@ -354,7 +357,7 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
       const name = inside?.dataset?.haFocus;
       if (name) [...host.querySelectorAll('select, button')].find(n => n.dataset.haFocus === name)?.focus();
     }
-    host.querySelectorAll('input, select, button').forEach(node => { node.disabled = !canEdit(); });
+    host.querySelectorAll('input, select, button').forEach(node => { node.disabled = node.dataset.fixtureLocked !== undefined || !canEdit() && node.dataset.fixtureBrowse === undefined; });
     return true;
   }
 

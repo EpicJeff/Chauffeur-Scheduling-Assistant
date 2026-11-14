@@ -4,6 +4,9 @@ import { groundAt, buildingGround, inPolygon } from '../twin_ground.js';
 import { markerTexture, markerSprite } from '../live/markers.js';
 import { itemOperation, wallFace } from './library.js';
 import { report } from './api.js';
+import { createFixtureEditor } from './fixtures.js';
+import { cameraDirection } from '../live/security.js';
+import { buildingCentre } from '../live/energy_geometry.js';
 
 const FT = .3048, badHost = 'Pick a wall, floor, ceiling or door for it.';
 
@@ -17,6 +20,24 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
   root.name = 'editor-device-markers';
   view.scene.add(root);
   let armed = null, press = null, drag = null, stopped = false;
+  const fixtures = createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal,
+    prepare() { cancel(); prepare(); }, getCameraMarker(device) {
+      const at = spot(device); if (!at) return null;
+      const b = at.building, a = (b?.rotation || 0) * Math.PI / 180, p = b?.position || [0, 0], [x, y, z] = at.point;
+      const marker = { entity_id: device.entity_id, room: at.room, at: b
+        ? [p[0] + x * Math.cos(a) - y * Math.sin(a), p[1] + x * Math.sin(a) + y * Math.cos(a), z + (b.base || 0) + buildingGround(getPlan(), b)]
+        : [x, y, z + groundAt(getPlan(), x, y)] };
+      const placed = b && (b.anchors?.find(d => d.device === device.device_id) || b.devices?.find(d => d.device === device.device_id));
+      const facing = placed?.facing_deg ?? placed?.orientation ?? placed?.rotation;
+      if (Number.isFinite(facing)) marker.facing_deg = facing + (b?.rotation || 0);
+      else {
+        const room = b?.rooms?.find(r => r.id === at.room), points = room?.polygon;
+        const local = points?.length ? points.reduce((s, q) => s.map((v, i) => v + q[i] / points.length), [0, 0]) : null;
+        const centre = local && [p[0] + local[0] * Math.cos(a) - local[1] * Math.sin(a), p[1] + local[0] * Math.sin(a) + local[1] * Math.cos(a)];
+        const direction = cameraDirection(marker, centre, b ? buildingCentre(b, getPlan()) : [0, 0]); marker.facing_deg = Math.atan2(direction[1], direction[0]) * 180 / Math.PI;
+      }
+      return marker;
+    } });
 
   function anchors(room) {
     const building = getPlan()?.buildings.find(b => b.id === room.building);
@@ -114,6 +135,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     if (canvas.hasPointerCapture(previous.pointer)) canvas.releasePointerCapture(previous.pointer);
   }
   function cancel() {
+    fixtures.cancel();
     releasePress();
     if (drag) {
       const previous = drag; drag = null;
@@ -129,7 +151,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     el('device-tools').hidden = false; canvas.style.cursor = 'crosshair';
   }
   function startDrag(event, device) {
-    if (event.button !== 0 || !canEdit() || event.target.closest('button, input, select')) return;
+    if (event.button !== 0 || !canEdit() || event.target.closest('button, input, select, [data-fixture-entity]')) return;
     cancel(); prepare(); tools.setTool('select');
     event.preventDefault();
     const row = event.currentTarget; row.setPointerCapture(event.pointerId);
@@ -146,12 +168,14 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     el('device-tools').hidden = false; document.body.style.cursor = 'grabbing';
   }, { capture: true });
   function pointerDown(event) {
+    if (!armed && fixtures.pointerDown(event)) return true;
     if (!armed || !canEdit() || event.button !== 0) return false;
     press = { pointer: event.pointerId, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
     view.controls.enabled = false; canvas.setPointerCapture(event.pointerId);
     return true;
   }
   function pointerUp(event, cancelled) {
+    const fixture = fixtures.pointerUp(event, cancelled); if (fixture) return fixture;
     if (!press || press.pointer !== event.pointerId) return false;
     const previous = press; releasePress();
     if (!cancelled && armed && canEdit() && Math.hypot(event.clientX - previous.x, event.clientY - previous.y) < 3) {
@@ -240,6 +264,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
   // only a saved placement says where (the building card flags it to move or remove).
   function refresh() {
     if (stopped) return;
+    fixtures.refresh();
     const state = link.state(), shown = new Set();
     for (const device of state?.available ? state.devices || [] : []) {
       if (!state.areas?.some(a => a.area_id === device.area_id) && !saved(device)) continue;
@@ -275,7 +300,8 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     sprites.forEach(row => row.sprite.material.dispose()); textures.forEach(texture => texture.dispose());
     sprites.clear(); textures.clear();
   }
-  const controller = { anchors, doors, arm, startDrag, pointerDown, pointerUp, cancel, refresh, draw, stop };
+  const controller = { anchors, doors, arm, startDrag, pointerDown, pointerMove: fixtures.pointerMove, pointerUp, cancel, refresh, draw, stop,
+    drawFixtures: fixtures.deviceLink };
   link.setPlacement(controller);
   signal.addEventListener('abort', stop, { once: true });
   return controller;

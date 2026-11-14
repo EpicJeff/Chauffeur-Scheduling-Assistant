@@ -531,6 +531,60 @@ def test_facing_does_not_offset_the_stored_host_edge():
             assert snapped(c, facing=facing)['path'] == [[12, 10, 2], [18, 10, 2]]
 
 
+def test_camera_views_roundtrip_validation_parent_gate_and_undo():
+    seed()
+    with Ctx() as c:
+        original = ts.current_id()
+        view = {'at': [10, 10, 6], 'aim': [30, 10, 0], 'fov_deg': 70}
+        operation = {'op': 'set_camera_view', 'entity_id': 'camera.front', 'view': view}
+        m = post(c, operation)
+        assert m['camera_views'] == {'camera.front': view}
+        assert twin_model.normalize(m)[0]['camera_views'] == m['camera_views']
+        assert c.client.get(LIVE, headers=c.mum).json()['camera_views'] == m['camera_views']
+        for bad in ({**view, 'fov_deg': 180}, {**view, 'aim': view['at']}, {**view, 'at': [True, 0, 0]}):
+            post(c, {**operation, 'view': bad}, 400)
+        post(c, {**operation, 'entity_id': 'light.front'}, 400)
+        post(c, operation, 403, c.kid)
+        response = c.client.post('/api/house/twin/revert', headers=c.mum, json={'round': original})
+        assert response.status_code == 200, response.text
+        assert not ts.current_model().get('camera_views')
+
+
+def test_share_can_return_to_automatic():
+    seed()
+    with Ctx() as c:
+        f = add(c, fixture(share=2))
+        m = post(c, {'op': 'update_light_fixture', 'entity_id': ENTITY, 'id': f['id'], 'change': {'share': None}})
+        assert 'share' not in m['light_fixtures'][ENTITY][0]
+
+
+def test_camera_view_keeps_legacy_facing_and_survives_flat_reads():
+    from services import twin_model_bridge as bridge
+    seed()
+    with Ctx() as c:
+        def place(m):
+            m['buildings'][0]['devices'] = [{'id': 'camera-front', 'device': 'dev-camera',
+                'host': {'floor': 'kitchen', 'u': .2, 'v': .3}, 'offset': 5, 'facing_deg': 30}]
+            return m
+        ts.update_model(place)
+        catalogue = {'available': True, 'areas': [{'area_id': 'kitchen'}], 'devices': [
+            {'device_id': 'dev-camera', 'kind': 'camera', 'name': 'Front', 'entity_id': 'camera.front',
+             'entities': ['camera.front'], 'area_id': 'kitchen'}]}
+        with patch('services.twin_ha.safe_catalogue', return_value=catalogue):
+            old = c.client.get(LIVE, headers=c.mum).json()['markers'][0]
+            assert old['facing_deg'] == 120 and 'camera_view' not in old
+            view = {'at': [100, 50, 5], 'aim': [100, 30, 0]}
+            m = post(c, {'op': 'set_camera_view', 'entity_id': 'camera.front', 'view': view})
+            assert m['camera_views']['camera.front']['fov_deg'] == 90
+            assert m['buildings'][0]['devices'][0]['facing_deg'] == 180
+            marker = c.client.get(LIVE, headers=c.mum).json()['markers'][0]
+            assert marker['facing_deg'] == 270 and marker['camera_view'] == m['camera_views']['camera.front']
+        flat = bridge.flatten(m)
+        flat.pop('camera_views')
+        restored, _ = bridge.assemble(flat, m)
+        assert restored['camera_views'] == m['camera_views']
+
+
 if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     passed = 0

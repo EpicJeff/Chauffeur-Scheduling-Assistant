@@ -16,7 +16,7 @@ DEFAULT_OUTPUT_LM = 503
 MAX_FIXTURES = 64
 MAX_OUTPUT_LM = 1e6
 MAX_SHARE = 1e6
-OPS = ('add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output')
+OPS = ('add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output', 'set_camera_view')
 _SHAPES = {
     'point': {'at'},
     'spot': {'at', 'aim', 'cone_deg', 'softness'},
@@ -395,6 +395,18 @@ def _resolve(model, f):
 
 def normalize(model, notes):
     """Drop structurally invalid fixtures; retain context orphans with reasons."""
+    if 'camera_views' in model:
+        kept = {}
+        raw = model['camera_views']
+        if not isinstance(raw, dict):
+            notes.append('Dropped invalid camera_views; expected an entity map.')
+            raw = {}
+        for entity, value in raw.items():
+            try:
+                kept[entity] = validate_camera_view(entity, value)
+            except ValueError as exc:
+                notes.append(f'Dropped camera view for {entity}: {exc}')
+        model['camera_views'] = kept
     if 'light_fixtures' in model:
         raw = model['light_fixtures']
         kept = {}
@@ -456,13 +468,29 @@ def live_layout(model):
     meta = deepcopy(model.get('light_fixtures_meta', {}))
     for entity in fixtures:
         meta.setdefault(entity, {'output_lm': DEFAULT_OUTPUT_LM})
-    return {'light_fixtures': fixtures, 'light_fixtures_meta': meta,
+    return {'light_fixtures': fixtures, 'light_fixtures_meta': meta, 'camera_views': deepcopy(model.get('camera_views', {})),
             'light_fixtures_signatures': {eid: signature(eid, {'fixtures': rows, **meta[eid]}) for eid, rows in fixtures.items()}}
+
+
+def validate_camera_view(entity, value):
+    if not isinstance(entity, str) or not re.fullmatch(r'camera\.[a-z0-9_]+', entity):
+        raise ValueError('Choose a camera entity.')
+    if not isinstance(value, dict) or set(value) - {'at', 'aim', 'fov_deg'}:
+        raise ValueError('Choose a camera position, aim and field of view.')
+    at, aim = (_vector(value.get(k), 3, k) for k in ('at', 'aim'))
+    if math.dist(at, aim) <= 1e-8:
+        raise ValueError('Aim away from the camera.')
+    return {'at': at, 'aim': aim, 'fov_deg': _number(value.get('fov_deg', 90), 'field of view', 10, 160)}
 
 
 def apply_op(model, op):
     """Mutate the private editor model; validation errors abort its one round."""
     kind = op['op']
+    if kind == 'set_camera_view':
+        entity = op.get('entity_id')
+        value = validate_camera_view(entity, op.get('view'))
+        model.setdefault('camera_views', {})[entity] = value
+        return 'Changed the camera view.'
     entity = _entity(op.get('entity_id'))
     if kind == 'set_light_output':
         value = _number(op.get('output_lm'), 'output in lumens', 0, MAX_OUTPUT_LM)
@@ -496,7 +524,10 @@ def apply_op(model, op):
             # geometry, but cannot carry stale spot/line parameters with it.
             allowed = _SHAPES.get(change['shape'], set()) if isinstance(change['shape'], str) else set()
             baseline = {k: v for k, v in previous.items() if k in {'id', 'shape', 'share', 'ref', 'building', 'level'} | allowed}
-        value = validate({**baseline, **change})
+        candidate = {**baseline, **change}
+        if 'share' in change and change['share'] is None:
+            candidate.pop('share', None)
+        value = validate(candidate)
     _in_lot(model, value)
     _resolve(model, value)
     _in_lot(model, value)

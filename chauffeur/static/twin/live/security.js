@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { buildingCentre, lotPoint } from './energy_geometry.js';
+import { conePreview } from '../editor/aim_tool.js';
 
 export function securityItem(row, state) {
   const domain = row.entity_id?.split('.')[0], kind = row.kind, dc = state?.attributes?.device_class;
@@ -18,6 +19,10 @@ export function securityAttention(row, state) {
 }
 // Lot-frame facing is degrees, counterclockwise from +X toward plan +Y.
 export function cameraDirection(marker, roomCentre, houseCentre) {
+  if (marker.camera_view) {
+    const { at, aim } = marker.camera_view, dx = aim[0] - at[0], dy = aim[1] - at[1], length = Math.hypot(dx, dy);
+    if (length > 1e-8) return [dx / length, dy / length];
+  }
   const facing = marker.facing_deg ?? marker.orientation;
   if (Number.isFinite(facing)) return [Math.cos(facing * Math.PI / 180), Math.sin(facing * Math.PI / 180)];
   const indoor = marker.outdoor !== true && marker.room && roomCentre;
@@ -42,6 +47,12 @@ export function mountSecurity({view, live, overlays = view.scene}) {
     mesh.position.copy(at); mesh.visible = false; mesh.renderOrder = 19;
     mesh.userData.securityAttention = marker.device_id; root.add(mesh); emphasis.push({marker, mesh});
     if (marker.kind !== 'camera' && !marker.entity_id.startsWith('camera.')) continue;
+    const saved = marker.camera_view || layout.camera_views?.[marker.entity_id];
+    if (saved) {
+      const cone = conePreview(saved.at, saved.aim, saved.fov_deg); cone.visible = false;
+      cone.userData.cameraCone = { device: marker.device_id, length_ft: Math.hypot(...saved.aim.map((v, i) => v - saved.at[i])), fov_deg: saved.fov_deg };
+      root.add(cone); cones.push({ marker, mesh: cone }); continue;
+    }
     const room = layout.rooms.find(r => r.building === marker.building && r.room === marker.room);
     let centre = null;
     if (room?.polygon_world?.length) centre = room.polygon_world.reduce((s, p) => [s[0] + p[0] / room.polygon_world.length, s[1] + p[1] / room.polygon_world.length], [0, 0]);
