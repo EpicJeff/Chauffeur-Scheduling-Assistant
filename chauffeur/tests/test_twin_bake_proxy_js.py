@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 
+# Imported first: it points CHAUFFEUR_DATA_DIR at a scratch directory before the store loads.
+from test_twin_lightmap_material_js import household_pool_house
 from test_twin_ground_js import PREFIX, ROOT
 
 DRIVER = PREFIX + r"""
@@ -113,6 +115,37 @@ await check('proxy_assignment_and_atlas_key_are_deterministic', async () => {
   assert.equal(again.atlas.key, atlas.key, 'the same house gives the same atlas key');
   assert.deepEqual(shape(again.atlas), shape(atlas), 'and the same hosts, rects and proxies');
 });
+await check('a_proxy_never_hangs_past_its_host', async () => {
+  // The pool house (gables, windows, board-and-batten): a full-height batten beside a window
+  // once took the short wall piece under the window as its host. Its faces clamped to that
+  // piece's edge row, and the batten read as one dark line from the band to the ridge. A
+  // batten's front also took the buried end of the wall piece beside it (nearer than the wall,
+  // but turned 90 degrees and dark): a host faces the way its proxy faces, and is broad.
+  const p = JSON.parse(readFileSync(process.argv[2])).poolHouse, house = buildTwin(p, kit, 'high', {viewing: true});
+  await house.ready; house.root.updateMatrixWorld(true);
+  const pool = buildAtlas(house.root, p, options), W = (m, i) => new THREE.Vector3().fromBufferAttribute(m.geometry.attributes.position, i).applyMatrix4(m.matrixWorld);
+  let count = 0, worst = 0, worstAt = null, turned = 0, narrow = 0;
+  const faceNormal = (m, f) => { const a = W(m, f * 3); return W(m, f * 3 + 1).sub(a).cross(W(m, f * 3 + 2).sub(a)).normalize(); };
+  for (const c of pool.room.charts) {
+    if (!c.proxies) continue;
+    const v0 = W(c.mesh, c.faces[0] * 3), n = faceNormal(c.mesh, c.faces[0]);
+    if (Math.min(c.rect.w, c.rect.h) < 4) narrow++;
+    for (const x of c.proxies) if (x.faces.some(f => faceNormal(x.mesh, f).dot(n) < .9)) turned++;
+    const axis = Math.abs(n.y) < .9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    const u = axis.addScaledVector(n, -axis.dot(n)).normalize(), v = n.clone().cross(u);
+    let mu = Infinity, Mu = -Infinity, mv = Infinity, Mv = -Infinity;
+    for (const f of c.faces) for (let k = 0; k < 3; k++) { const q = W(c.mesh, f * 3 + k);
+      mu = Math.min(mu, q.dot(u)); Mu = Math.max(Mu, q.dot(u)); mv = Math.min(mv, q.dot(v)); Mv = Math.max(Mv, q.dot(v)); }
+    for (const x of c.proxies) for (const f of x.faces) for (let k = 0; k < 3; k++) {
+      const q = W(x.mesh, f * 3 + k), a = q.dot(u), b = q.dot(v), over = Math.max(mu - a, a - Mu, mv - b, b - Mv) / FT;
+      count++; if (over > worst) { worst = over; worstAt = [x.mesh.material.name, c.mesh.material.name, ...q.toArray().map(t => +(t / FT).toFixed(1))]; }
+    }
+  }
+  assert.ok(count > 500, `pool house proxy corners: ${count}`);
+  assert.equal(turned, 0, 'every proxy faces the way its host faces');
+  assert.equal(narrow, 0, 'and every host is at least four texels across');
+  assert.ok(worst <= .26, `no proxy reaches more than a quarter foot past its host: ${worst.toFixed(2)} ft (${worstAt})`);
+});
 console.log(`${passed}/${ran} passed`);
 process.exit(passed === ran ? 0 : 1);
 """
@@ -124,7 +157,8 @@ def run():
     with tempfile.TemporaryDirectory(prefix='chauffeur_bake_proxy_') as directory:
         driver, data = Path(directory) / 'driver.mjs', Path(directory) / 'input.json'
         driver.write_text(DRIVER, encoding='utf-8')
-        data.write_text(json.dumps({'root': ROOT.as_posix(), 'flat': {}, 'kit': kit}), encoding='utf-8')
+        data.write_text(json.dumps({'root': ROOT.as_posix(), 'flat': {}, 'kit': kit, 'poolHouse': household_pool_house()}),
+                        encoding='utf-8')
         result = subprocess.run([shutil.which('node'), str(driver), str(data)], capture_output=True,
                                 text=True, timeout=600)
         print(result.stdout, end='')

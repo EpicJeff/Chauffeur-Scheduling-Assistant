@@ -411,6 +411,8 @@ function shelves(items, width, height, gutter, ordered = null) {
 // battens, trim, roofs) at up to 4/ft, so night lights read on it (user, 2026-11-14: "super
 // dark lines on the batten strips"); yard and ground at 1/ft. Every chart fits one page.
 export const BUILDING_OUTDOOR_DENSITY = 4, YARD_DENSITY = 1;
+// The share of a page one outdoor room may claim before its tile continues in another room.
+const OUTDOOR_FILL = .45;
 function baseDensity(c, o) {
   if (!c.outdoor) return o.density;
   return Math.min(o.density, c.building && !c.heightfield ? BUILDING_OUTDOOR_DENSITY : YARD_DENSITY);
@@ -432,9 +434,11 @@ function scaled(charts, o) {
 // Lightmap proxies. A chart too thin to hold two texels at its density (a batten face, a trim
 // edge, a cap) covers no texel centre: the raster writes nothing and the surface reads black.
 // It borrows instead the lighting of the large chart it sits on: the nearest one within half
-// a foot in front of whose plane its centre lies, inside that chart's bounds. Its faces map
-// through the host's UV transform (no rect of its own), and its lmRoom is the host's.
-const PROXY_REACH = .5, PROXY_TEXELS = 2;
+// a foot in front of whose plane it lies, facing the same way, inside that chart's bounds (a
+// quarter foot of overhang allowed, the gap a batten bridges). Only a broad chart, four texels
+// across, lends. Its faces map through the host's UV transform (no rect of its own), and its
+// lmRoom is the host's. A thin chart with no host keeps a seeded rect (see scaled).
+const PROXY_REACH = .5, PROXY_TEXELS = 2, PROXY_OVERHANG = .25, PROXY_FACING = .9, PROXY_HOST_TEXELS = 4;
 const chartNormal = c => new THREE.Vector3().crossVectors(c.u, c.v).normalize();
 function chartCentre(c) {
   const pos = c.mesh.geometry.attributes.position, p = new THREE.Vector3(), sum = new THREE.Vector3();
@@ -453,12 +457,14 @@ export function assignProxies(charts, o) {
   const cells = new Map(), cell = 8, key = (x, y, z) => `${x},${y},${z}`;
   const info = new Map(), large = [];
   for (const h of hosts) {
-    if (h.heightfield) continue;
+    // A host is a broad surface. A narrow one (a wall piece's buried end beside a batten, a
+    // jamb) keeps its own rect but lends to nothing: its light is not the light around it.
+    if (h.heightfield || Math.min(h.width, h.height) * baseDensity(h, o) < PROXY_HOST_TEXELS) continue;
     const box = new THREE.Box3(), pos = h.mesh.geometry.attributes.position, p = new THREE.Vector3();
     for (const f of h.faces) for (let k = 0; k < 3; k++) box.expandByPoint(p.fromBufferAttribute(pos, f * 3 + k).applyMatrix4(h.mesh.matrixWorld));
     box.expandByScalar(PROXY_REACH * .3048 + .01);
     const origin = new THREE.Vector3().fromBufferAttribute(pos, h.faces[0] * 3);
-    info.set(h, { normal: chartNormal(h), origin, inverse: h.mesh.matrixWorld.clone().invert(),
+    info.set(h, { normal: chartNormal(h), facing: chartNormal(h).transformDirection(h.mesh.matrixWorld), origin, inverse: h.mesh.matrixWorld.clone().invert(),
       area: h.width * h.height });
     // A huge plane (the yard's outer lawn) is checked for every chart rather than filling
     // thousands of cells.
@@ -474,11 +480,16 @@ export function assignProxies(charts, o) {
   for (const c of small) {
     const world = chartCentre(c).applyMatrix4(c.mesh.matrixWorld), s = cell * .3048;
     const candidates = [...(cells.get(key(Math.floor(world.x / s), Math.floor(world.y / s), Math.floor(world.z / s))) || []), ...large];
+    const facing = chartNormal(c).transformDirection(c.mesh.matrixWorld);
     let best = null, corners = null;
     for (const h of candidates) {
       // Same side of the wall: outside borrows from outside, a room only from itself.
       if (h.outdoor !== c.outdoor || !c.outdoor && h.room !== c.room) continue;
       const i = info.get(h);
+      // Facing the same way: a batten's front never borrows the buried end of the wall piece
+      // beside it (closer than the wall, but turned 90 degrees and dark), and its sides,
+      // which face along the wall, keep a rect of their own.
+      if (facing.dot(i.facing) < PROXY_FACING) continue;
       local.copy(world).applyMatrix4(i.inverse);
       const d = scratch.copy(local).sub(i.origin).dot(i.normal);
       if (d < -.02 || d > PROXY_REACH) continue;
@@ -490,7 +501,14 @@ export function assignProxies(charts, o) {
         const ppos = c.mesh.geometry.attributes.position; corners = [];
         for (const f of c.faces) for (let k = 0; k < 3; k++) corners.push(new THREE.Vector3().fromBufferAttribute(ppos, f * 3 + k).applyMatrix4(c.mesh.matrixWorld));
       }
-      if (corners.some(w => { const e = scratch.copy(w).applyMatrix4(i.inverse).sub(i.origin).dot(i.normal); return e < -.02 || e > PROXY_REACH; })) continue;
+      // And within the host's extent: a batten running past a short wall piece would clamp
+      // to that piece's edge texels and read a line of whatever light fell there.
+      if (corners.some(w => {
+        scratch.copy(w).applyMatrix4(i.inverse);
+        const cu = scratch.dot(h.u), cv = scratch.dot(h.v), e = scratch.sub(i.origin).dot(i.normal);
+        return e < -.02 || e > PROXY_REACH || cu < h.minU - PROXY_OVERHANG || cu > h.minU + h.width + PROXY_OVERHANG ||
+          cv < h.minV - PROXY_OVERHANG || cv > h.minV + h.height + PROXY_OVERHANG;
+      })) continue;
       const rank = [Math.abs(d), -i.area, h.order];
       if (!best || rank[0] < best.rank[0] - 1e-6 || Math.abs(rank[0] - best.rank[0]) <= 1e-6 &&
         (rank[1] < best.rank[1] || rank[1] === best.rank[1] && rank[2] < best.rank[2])) best = { h, rank };
@@ -739,15 +757,21 @@ export function buildAtlas(group, plan, { room } = {}) {
   });
   // Thin charts become proxies of the surface they sit on; only hosts take atlas space.
   const { hosts, proxies } = assignProxies(raw, ro);
-  const outdoors = new Map();
-  for (const c of hosts) {
-    if (c.room < 0) {
-      if (!outdoors.has(c.tile)) {
-        outdoors.set(c.tile, data.rooms.length);
-        data.rooms.push({ id: `outdoor:${data.rooms.length}`, outdoor: true, region: null });
-      }
-      c.room = outdoors.get(c.tile);
+  // Outdoor charts group by tile. A tile whose charts would not fit one page (big faces land
+  // by their centre, so a 16 ft tile can hold a whole roof plane) continues in a next room.
+  const outdoors = new Map(), sizes = scaled(hosts, ro), budget = OUTDOOR_FILL * ro.page * ro.page;
+  hosts.forEach((c, i) => {
+    if (c.room >= 0) return;
+    const area = (sizes[i].w + ro.gutter) * (sizes[i].h + ro.gutter);
+    let tile = outdoors.get(c.tile);
+    if (!tile || tile.area + area > budget) {
+      tile = { room: data.rooms.length, area: 0 };
+      outdoors.set(c.tile, tile);
+      data.rooms.push({ id: `outdoor:${data.rooms.length}`, outdoor: true, region: null });
     }
+    tile.area += area; c.room = tile.room;
+  });
+  for (const c of hosts) {
     roomCharts.push(c);
     const owner = owners.get(c.mesh);
     for (const f of c.faces) owner.fill(c.room, f * 3, f * 3 + 3);
