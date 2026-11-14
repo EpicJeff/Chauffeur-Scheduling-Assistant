@@ -4,7 +4,8 @@ from pathlib import Path
 import re
 import sys
 from twin_live_node_rig import run
-from twin_editor_dom import PRELUDE, run_node
+from twin_editor_dom import run_node
+from test_twin_yard_reuse_js import PREFIX
 from test_twin_editor_history_js import DRIVER as HISTORY_DRIVER, STUBS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,7 +62,7 @@ EDITOR = HISTORY_DRIVER.split(' const zoneResize=')[0].replace(
 }catch(error){console.error(error);process.exit(1);}
 """
 
-VIEW = PRELUDE + r"""
+VIEW = PREFIX + r"""
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
 const {beginEdit,observeEditFrame}=await import(file('static/twin/edit_timing.js'));
 const baseRenderer=globalThis.Renderer;
@@ -73,9 +74,13 @@ const view=await mountTwin(host,{plan:structuredClone(input.plan),kit:{materials
 try {
  await test('real rebuild attributes generation, material, batching, yard, disposal and bake stop',async()=>{
   const record=beginEdit({op:'set'}),plan=structuredClone(input.plan);plan.buildings[0].name='Timed house';
+  // Exercise the actual yard build, rather than an unchanged-plan reuse.
+  plan.site.lot[0][0] -= 1;
   await view.rebuild(plan,{timing:record});
   for(const name of ['generate','batch','yard','materials','dispose','bake_stop','assets'])assert.ok(Number.isFinite(record.detail[name])&&record.detail[name]>=0,name);
   assert.ok(record.detail.generate>0);assert.ok(record.detail.batch>0);assert.ok(record.detail.materials>0);
+  assert.ok(record.detail.yard>0);assert.equal(record.yard_reused,false);
+  assert.ok(record.detail.yard_terrain>0);assert.ok(record.detail.yard_hardscape>0);
   assert.equal(record.counts.buildings,plan.buildings.length);
   assert.equal(record.counts.levels,plan.buildings.reduce((n,b)=>n+b.levels.length,0));
   assert.equal(record.buildings[0].id,plan.buildings[0].id);
@@ -91,6 +96,7 @@ try {
  await test('preserveYard follows the same rebuild path and reports zero yard work',async()=>{
   const record=beginEdit({op:'set'});await view.rebuild(view.plan,{preserveYard:true,timing:record});
   assert.equal(record.detail.yard,0);assert.ok(record.detail.dispose>0);assert.equal(record.counts.buildings,input.plan.buildings.length);
+  assert.equal(record.yard_reused,true);
  });
 }finally{view.dispose();}
 finish();

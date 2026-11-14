@@ -44,7 +44,7 @@ registerHooks({resolve(spec, ctx, next) {
       update(){this.object.lookAt(this.target);this.object.updateMatrixWorld();} dispose(){}
     }`), shortCircuit: true};
   if (spec.startsWith('three/addons/')) return {url: file('static/vendor/three-r187/addons/' + spec.slice(13)), shortCircuit: true};
-  if (spec === './twin_yard.js') return {url: data(`import {Group} from '${three}'; export async function buildYard(){const group=new Group();group.name='test-yard';return {group};}`), shortCircuit: true};
+  if (spec === './twin_yard.js') return {url: data(`import {Group} from '${three}'; export const yardKey=(p,k,t,o)=>JSON.stringify([p.site,t,o]); export const yardMaterialKey=(p,k,t)=>JSON.stringify([p.materials,k.materials,t]); export async function buildYard(){const group=new Group();group.name='test-yard';return {group};}`), shortCircuit: true};
   return next(spec, ctx);
 }, load(url, ctx, next) {
   return url.startsWith('file:') && url.endsWith('.js') ? {...next(url, {...ctx, format:'module'}), format:'module'} : next(url, ctx);

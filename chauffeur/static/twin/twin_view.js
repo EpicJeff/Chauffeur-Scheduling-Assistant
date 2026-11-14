@@ -6,7 +6,7 @@ import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic, contains, stairHoles }
 import { span as editSpan } from './edit_timing.js';
 import { heightAt } from './twin_roof.js';
 import { groundAt, buildingGround } from './twin_ground.js';
-import { buildYard } from './twin_yard.js';
+import { buildYard, yardKey, yardMaterialKey } from './twin_yard.js';
 import { base, loadSky, disposeObject } from './twin_library.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 import { hostPoint } from './twin_hosts.js';
@@ -764,7 +764,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const reuseMaterials = twin && structureKey(plan) === structureKey(nextPlan) ? twin.materials : null;
       stopMaterials();
       const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor, reuseMaterials, timing });
-      const yardMaterials = JSON.stringify(nextPlan.materials) === JSON.stringify(plan.materials) ? yardGroup?.userData.materials : null;
+      const reuseYard = !!yardGroup && (preserveYard || yardGroup.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor }));
+      if (timing) timing.yard_reused = reuseYard;
+      const yardMaterials = reuseYard || yardGroup?.userData.yardMaterialKey === yardMaterialKey(nextPlan, kit, tier)
+        ? yardGroup?.userData.materials : null;
       const keepMaterials = new Set([...(yardMaterials?.values() || []), ...(reuseMaterials?.values() || [])]);
       next.editableLevel = editableLevel;
       const extras = new Map();
@@ -814,9 +817,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         const stopBatch = editSpan(detail, 'batch');
         for (const [parent, group] of extras) mergeStatic(group, { perPiece: !!editableLevel && parent.userData.levelKey === editableLevel });
         stopBatch();
-        if (!preserveYard || !yardGroup) {
+        if (!reuseYard) {
           const stopYard = editSpan(detail, 'yard');
-          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, materials: yardMaterials }); next.groups.site.add(yard.group);
+          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, materials: yardMaterials, timing: detail }); next.groups.site.add(yard.group);
           stopYard();
           next.yardGroup = yard.group;
         }

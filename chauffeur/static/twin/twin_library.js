@@ -184,6 +184,9 @@ export function materialSlot(value, defaultRole, kit, tier, cache, roleMaterial)
 }
 
 const imported = new Map();
+// Include the metadata used by loadModel (including LOD/file revisions) in
+// callers' retained-geometry keys. An unknown import is resolved during load.
+export const modelAssetKey = (id, kit) => id.startsWith('import-') ? imported.get(id) : manifest(kit)[id];
 let importRead = null;
 export function rememberImport(entry) { imported.set(entry.id, entry); }
 export function forgetImport(assetId) {
