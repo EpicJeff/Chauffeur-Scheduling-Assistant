@@ -7675,7 +7675,9 @@ def house_live(request: Request):
         markers.append({**row, 'building': None, 'level': None, 'room': None,
                         'at': [*at, height + (pit.get('elevation') or 0)], 'placed': True})
     # A parent may hide things from the house view right from a panel (the edit is parent-only).
-    return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices,
+    from services import twin_fixtures
+    return {**twin_fixtures.live_layout(model),
+            'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices,
             'can_edit_house': getattr(who, 'role', None) == 'parent'}
 
 

@@ -654,9 +654,15 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
     if not isinstance(materials, dict):
         materials = {}
         notes.append('Coerced invalid materials to an empty object.')
-    return {'schema': SCHEMA, 'units': 'ft', 'materials': materials,
+    result = {'schema': SCHEMA, 'units': 'ft', 'materials': materials,
             'buildings': buildings, 'site': site,
             'ha_display': _ha_display(model.get('ha_display'), notes),
             'solar_source_building': model.get('solar_source_building'),
             'solar_source_roof': model.get('solar_source_roof') if any(
-                r['id'] == model.get('solar_source_roof') for b in buildings for r in b.get('roofs', [])) else None}, notes
+                r['id'] == model.get('solar_source_roof') for b in buildings for r in b.get('roofs', [])) else None}
+    from services import twin_fixtures
+    for key in ('light_fixtures', 'light_fixtures_meta'):
+        if key in model:
+            result[key] = model[key]
+    twin_fixtures.normalize(result, notes)
+    return result, notes
