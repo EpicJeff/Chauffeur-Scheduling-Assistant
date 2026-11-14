@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.858 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.859 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.859 (2026-11-14, NOT device-verified): the dashed "needs checking" roof outline shows only in the house editor, never in the live house view or on panels.**
+
+**The report.** The user, with a screenshot of the pool house: "What is this dotted outline on the pool house roof? It has been there forever and I have no idea why it shows on the panel."
+
+**The cause.** When a build flags a roof block as uncertain (`building.roof.flags`, listed under "Check it" in the editor), `twin_generator.js` outlines that roof with the dashed ghost-edge line, so a person can find and confirm it. The outline was built whatever the view was, so the live house view and wall panels showed it too.
+
+**The fix.** It is drawn only when `buildTwin` is not `viewing`. The editor still marks the roof, and a tap still opens its card. To clear it for good, open the roof in the editor and confirm or adjust it from "Check it".
+
+**Tests.** `test_twin_roof_flags_js` 7/7, with the new `test_live_view_and_panels_never_show_the_check_marker`: no marker when viewing, and the roof still picks as itself.
 
 **v2.499.858 (2026-11-14, NOT device-verified): a yard edit rebuilds only the yard parts it changed. A fence edit no longer rebuilds the terrain.**
 
