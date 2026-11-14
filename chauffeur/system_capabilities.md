@@ -1,6 +1,35 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.847 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.848 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.848 (2026-11-13, NOT device-verified): editing the house no longer rebuilds the yard unless the edit changes something the yard draws.**
+
+**The evidence.**
+- v2.499.847's edit timing on the test house showed `yard` at 26-29 s of every 27-31 s rebuild, for siding material changes.
+- The user's own house, moving a parking spot: 7.6 s total, of which yard 4.2 s, generate 0.85 s, batch 0.33 s, and server about 1.3 s.
+- The user: "updating the ground when you edit a building doesn't make sense."
+
+**The fix.**
+- **`yardKey(plan, kit, tier, {viewing})`** in `static/twin/twin_yard.js` covers exactly what `buildYard` reads:
+  - the lot, terraces and walls, hardscape and paths, pool, fire pits, beds, edges, fence, planting and furniture;
+  - building position, rotation, base, foundation, footprint and porches (yard furniture can sit on a porch);
+  - the yard's material refs and slots, with manifest and revision metadata, and imported-model metadata;
+  - tier and viewing.
+- **Reuse:** `twin_view.js` `rebuild` keeps the existing yard group, geometry and materials whenever the key is unchanged, on both the editor and live paths. `preserveYard` keeps its meaning.
+- **Timing:** edit timing records `yard: 0` and `yard_reused: true`, and adds yard sub-spans for terrain, grass, plants, fences, hardscape, pool, fire pits, retaining walls, cards, batching, models and materials.
+- **`canonicalOutline`:** outlines compare rounded to 0.01 ft, with collinear corners dropped, normalised winding and start corner. Chromium found that the first edit after a load re-derived a porch outline on the server (the same shape, with extra collinear corners and float noise), and the key saw that as a change.
+
+**Measured** (Chromium headless, test house, four siding material changes): the yard was reused on all four, and `rebuild` fell from about 31 s to 0.9-5.3 s.
+
+**The yard build itself, when it is needed:**
+- In a CPU profile, trees are about 70% of the yard build.
+- About half of that is discarded work. `tree.loadPreset()` in vendored EZ-Tree already generates the whole tree, and `twin_yard.js` then sets the saved seed and generates it again, both for full trees and for Low-tier cards.
+- That is the next fix for edits that do change the yard.
+
+**Tests.**
+- New `test_twin_yard_reuse_js` 11/11: reuse in the editor and the live view, rebuild on site, terrain, footprint and tier changes, explicit `preserveYard`, and material invalidation. A guard test checks that 238 input mutations each change the key. An equivalent re-derived outline keeps the key.
+- `test_twin_edit_timing_js`, now running the real yard, plus yard material slots js, yard rooms js 3/3, material slot js, terrain tools js, editor history 8/8, drag 20/20, and import maps 3/3.
+- `test_twin_checks_js` fails `queue_merges_pause_flags_and_proposals` ("the camera is on the flag") the same way on main before this change; it is queued with `test_twin_store_model` and `test_twin_director`.
 
 **v2.499.847 (2026-11-13, NOT device-verified): every house editor edit is timed, end to end, server and browser.**
 
