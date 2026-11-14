@@ -1,6 +1,49 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.860 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.861 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.861 (2026-11-14, NOT device-verified): no more black lines on board-and-batten siding in baked light. Small details borrow the wall's light, and building exteriors bake at 4 texels per foot.**
+
+**The report.** The user, on their house lit at night by the fire pit: "The super dark lines on the batten strips is the most obvious issue. I think we had similar issues when baking the sun and skylight previously."
+
+**The cause** (a texel dump on main). 238 of the 248 outdoor board-and-batten charts covered no texel centre: a batten face is 0.14 × 0.09 ft, and outdoor charts baked at 1 texel per foot. The GPU wrote nothing, the edge padding had nothing to spread, and the shader read black. The same bug drew the white window and door trim as black.
+
+**The fix** (`static/twin/bake/atlas.js`).
+- **Lightmap proxies.** A chart under 2 texels across takes the lighting of the nearest suitable surface behind it, through that surface's mapping, page and room, and gets no atlas rect of its own. A host must:
+  - sit on the same side of the wall within 0.5 ft;
+  - face the same way;
+  - be at least 4 texels across;
+  - contain every corner of the thin face, with up to 0.25 ft of overhang.
+  The first version picked a buried, sideways wall end, which is why the facing and width rules exist.
+- **No host:** a thin chart gets a minimum 2×2 rect.
+- **Deterministic:** host choice is deterministic, so the atlas key is the same on every tier.
+- **Density:** building exteriors now bake at 4/ft, the room density, in 16 ft groups. Yard and terrain stay at 1/ft. A group that would overflow a page continues on the next.
+
+**Measured (Chromium, test house).**
+
+| | main | now |
+|---|---|---|
+| Dark pixels per row across the lit gable | 21-23 | 1-2 |
+| Darkest pixel vs median | 0.17-0.27 | 0.48-0.49 |
+| Lightmap pages | 9 (3 banks × 3) | 12 (3 × 4) |
+| GPU memory, compressed | about 50 MB | about 67 MB |
+| GPU memory, uncompressed fallback | about 200 MB | about 270 MB |
+| First bake | 62 s | 71-75 s |
+| Rebake | 16 s | 16 s |
+
+- Two bakes leave everything fresh, with no error.
+- Known: faint mottled shading on the wall at 4/ft, which the old blur hid. There are no hard lines.
+- If panel memory matters, 2/ft is the lever.
+
+**Tests.**
+- New `test_twin_bake_proxy_js` 4/4:
+  - no lit siding face below 80% of its light (fails on main);
+  - proxies take no rect and map inside their host's rect, page and room;
+  - proxy assignment and the atlas key repeat on a rebuild;
+  - on the real pool house, every proxy faces its host within 0.25 ft and every host is at least 4 texels (fails without the host rules).
+- `test_twin_bake_atlas_js` 13/13. Two checks were updated to the design: the room-light page budget goes from 4 to 6 pages, since the test house needs 2 pages at 4/ft, and the rect-size check allows the 2-texel minimum.
+- Neighbours: fingerprint, baker 12/12, reach 20/20, runtime 17/17, pool features, yard reuse, yard rooms 3/3, energy 38/38, import maps 3/3, bakes 16/16.
+- `test_twin_lightmap_material_js` `fresh_bake_frees_the_pool_slot` fails the same way on main.
 
 **v2.499.860 (2026-11-14, NOT device-verified): outside rooms behave like inside ones. Their devices stay hidden until you focus the room, and focusing it orbits rather than looking straight down.**
 
