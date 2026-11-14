@@ -1,6 +1,24 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.861 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.862 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.862 (2026-11-14, NOT device-verified): household material edits show up live in every open house view, in place, with no scene rebuild. Material library Task 4.**
+
+**What a person sees.** Edit a household material in the Library (tint, roughness, a new map) and every open house page, editor and wall panel that uses it repaints within seconds. Nothing reloads, the camera stays put, and selection and viewing fades keep their look.
+
+**How** (`static/twin/material_watch.js`, `twin_view.js` `refreshMaterials`, `twin_library.js`).
+- **The watcher** reads `GET /api/house/twin/materials/manifest` (new, auth `WALL_OR_SERVICE`; returns the catalogue revision and every household entry the page manifest already ships, archived ones included, so undo can still render them). It checks on window focus, on nav's `chf-server-update` (panels), on its own `api/stream` subscription elsewhere (debounced 1.5 s like nav, never a second stream on panels), when the Library signals `chf-material-catalogue`, and every 60 s.
+  - A signal arriving during a check sets a rerun flag; the check runs once more after it finishes.
+  - A 401 or 403 stops the watcher and closes its stream; it never loops.
+  - Network failures stay quiet; anything else logs through `console.error`.
+- **In-place update.** For each cached material (building and yard caches) whose id changed and is not already at the current revision, `applyMaterialParams` runs again on the same instance. Viewing clones, faded and selected copies (selection tint re-applied) and bake clones are then synced. No geometry, viewing or level rebuild, and no bake remount.
+  - Fallback: a material with no stored reference, or whose lattice cutout flips (alpha changes), triggers one full rebuild, logged with the reason.
+- **Bake.** `materialsChanged` now runs after the in-place update, so lights whose charts use the changed material go stale and an unrelated material's lights stay fresh.
+- `rebuild()`'s error path restores `view.ready`, so a failed refresh cannot wedge later ones.
+
+**Upgrade note.** The reach-key encoding changed, so every existing bake goes stale once after this update.
+
+**Tests.** `test_twin_material_live_js` (`revision_updates_materials_in_place` with a `buildTwin` count, `failed_refresh_does_not_wedge_watcher`, rerun, refusal stop, panel stream reuse, mounted bake chain), `test_twin_materials` 25/25 (panel token reads the manifest route), `test_twin_bake_runtime_js` 18/18. Chromium: a siding tint PATCH repainted the open editor in place with no page errors.
 
 **v2.499.861 (2026-11-14, NOT device-verified): no more black lines on board-and-batten siding in baked light. Small details borrow the wall's light, and building exteriors bake at 4 texels per foot.**
 

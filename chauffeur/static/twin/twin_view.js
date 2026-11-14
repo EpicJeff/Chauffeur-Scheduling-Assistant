@@ -6,8 +6,9 @@ import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic, contains, stairHoles }
 import { span as editSpan } from './edit_timing.js';
 import { heightAt } from './twin_roof.js';
 import { groundAt, buildingGround } from './twin_ground.js';
-import { buildYard, yardKey, yardMaterialKey } from './twin_yard.js';
-import { base, loadSky, disposeObject } from './twin_library.js';
+import { buildYard, yardKey, yardMaterialKey, yardPartKeys } from './twin_yard.js';
+import { base, loadSky, disposeObject, manifest, currentMaterial, applyMaterialParams, copyMaterialParams } from './twin_library.js';
+import { watchMaterialCatalogue } from './material_watch.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 import { hostPoint } from './twin_hosts.js';
 import { keepLive } from './live/live.js';
@@ -23,6 +24,8 @@ import { createViewing } from './viewing.js';
 import { createLevels } from './levels.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {} } = {}) {
+  kit = kit || {};
+  kit.manifest ||= manifest(kit);
   // Ruling B15: only the 3D house view bakes lights. The editor's scene is the house
   // mid-edit (a focused floor, faded floors, editable geometry), so it never bakes.
   const editor = !!el.closest?.('.editor-shell');
@@ -69,6 +72,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   fallbackEnvironment.mapping = THREE.EquirectangularReflectionMapping;
   fallbackEnvironment.needsUpdate = true;
   let twin = null, disposed = false, revision = 0, sky = null, environment = fallbackEnvironment, environmentTarget = null;
+  let rebuildWork = null;
+  const materialBindings = new Map();
   scene.environment = environment;
   const state = { view: 'ext', time: editor ? 'day' : 'now', camera: 'front', unlit: false };
   const unlit = createUnlit();
@@ -126,7 +131,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         const clone = material => {
           const next = material.clone(); selectionMaterials.add(next);
           if (ghost) { next.opacity = 0.25; next.transparent = true; next.depthWrite = false; }
-          else next.color?.lerp(tint, 0.32);
+          else { next.color?.lerp(tint, 0.32); next.userData.selectionTint = tint.getHex(); }
           return next;
         };
         object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
@@ -297,9 +302,57 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     levelShown(key) { return !viewing || viewing.levelAlpha(key) > .5; },
     roofShown(id) { return !viewing || viewing.roofAlpha(id) > .5; },
     get site() { return site; },
+    get materialManifest() { return manifest(kit); },
+    async refreshMaterials(ids) {
+      while (rebuildWork) await rebuildWork;
+      if (disposed || !twin) return;
+      const known = manifest(kit), caches = [twin.materials, yardGroup?.userData.materials].filter(Boolean);
+      const materials = [...new Set(caches.flatMap(cache => [...cache.values()]))]
+        .filter(m => ids.includes(m.userData.materialId) && !currentMaterial(m, known));
+      if (!materials.length) return;
+      for (const m of materials) if (!m.userData.materialRef || (m.alphaTest > 0) !== (m.userData.materialRef.pattern === 'lattice')) {
+        console.warn('Material refresh requires a geometry rebuild:', m.userData.materialId, 'missing reference or changed alpha/cutout pattern');
+        await view.rebuild(plan); return;
+      }
+      const syncStyled = (source, target) => {
+        if (Array.isArray(source)) { source.forEach((m, i) => syncStyled(m, target[i])); return; }
+        if (!ids.includes(source.userData.materialId)) return;
+        copyMaterialParams(source, target);
+        if (target.userData.selectionTint !== undefined) target.color.lerp(new THREE.Color(target.userData.selectionTint), .32);
+      };
+      const sync = source => {
+        if (disposed) return;
+        view.prepareViewingMaterial(source);
+        for (const [object, original] of faded) syncStyled(original, object.material);
+        for (const [object, original] of selectedMaterials) syncStyled(original, object.material);
+        view.bake?.refreshMaterials([source.userData.materialId]);
+        render();
+      };
+      for (const material of materials) {
+        if (!materialBindings.has(material)) {
+          const changed = () => sync(material);
+          const release = () => { material.removeEventListener('materialparamschange', changed); material.removeEventListener('dispose', release); materialBindings.delete(material); };
+          material.addEventListener('materialparamschange', changed); material.addEventListener('dispose', release);
+          materialBindings.set(material, release);
+        }
+        applyMaterialParams(material, known[material.userData.materialId], material.userData.materialRef,
+          material.userData.materialRole || material.name, tier);
+        sync(material);
+      }
+      // Revision-bearing slot/yard cache keys must follow the retained instance.
+      for (const cache of caches) for (const [key, material] of [...cache]) if (materials.includes(material) && key.startsWith('["m",')) {
+        const parts = JSON.parse(key); parts[2] = material.userData.materialRevision;
+        cache.delete(key); cache.set(JSON.stringify(parts), material);
+      }
+      if (yardGroup) Object.assign(yardGroup.userData, { yardKey: yardKey(plan, kit, tier, { viewing: !editor }),
+        yardMaterialKey: yardMaterialKey(plan, kit, tier), yardPartKeys: yardPartKeys(plan, kit, tier, { viewing: !editor }) });
+      view.bake?.materialsChanged([...new Set(materials.map(m => m.userData.materialId))]);
+      await Promise.all(materials.map(m => m.userData.ready));
+      materials.forEach(sync);
+    },
     get roofSurfaces() { return twin?.roofSurfaces; },
     render,
-    prepareViewingMaterial(source, material) { viewing?.adopt(source, material); },
+    prepareViewingMaterial(source, material) { if (material) viewing?.adopt(source, material); else viewing?.refresh(source); },
     cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
     saveView() {
       return { camera, position: camera.position.clone(), quaternion: camera.quaternion.clone(), target: controls.target.clone(),
@@ -753,12 +806,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       render();
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
     },
-    async rebuild(nextPlan, { preserveYard = false, timing = null } = {}) {
+    rebuild(nextPlan, { preserveYard = false, timing = null } = {}) {
+      const work = (async () => {
+      const version = ++revision; view.ready = false;
+      try {
       const detail = timing?.detail;
       const stopBake = editSpan(detail, 'bake_stop');
       view.bake?.stop();
       stopBake();
-      const version = ++revision; view.ready = false;
       const structureKey = p => JSON.stringify([p.materials, p.buildings?.map(b => ({ ...b, foundation: undefined, foundation_src: undefined, base: undefined }))]);
       const stopMaterials = editSpan(detail, 'materials');
       const reuseMaterials = twin && structureKey(plan) === structureKey(nextPlan) ? twin.materials : null;
@@ -830,7 +885,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (disposed || version !== revision) { release(next, keepMaterials); return; }
       next.yardGroup?.userData.adoptParts?.();
       // After adoption the new yard's material map holds exactly what it still uses.
-      const keepAfter = new Set([...(next.yardGroup?.userData.materials?.values() || []), ...(reuseMaterials?.values() || [])]);
+      const keepAfter = new Set([...(next.yardGroup?.userData.materials?.values() || []), ...next.materials.values()]);
       if (timing) {
         timing.yard_reused_parts = reuseYard ? Object.keys(yardGroup?.userData.yardPartKeys || {}) : next.yardGroup?.userData.yardReusedParts || [];
         timing.yard_rebuilt_parts = reuseYard ? [] : next.yardGroup?.userData.yardRebuiltParts || [];
@@ -906,10 +961,16 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       view.ready = true;
       startBake();
       el.dispatchEvent(new CustomEvent('twinrebuilt', { detail: view }));
+      } finally { if (version === revision) view.ready = !disposed && !!twin; }
+      })();
+      rebuildWork = work;
+      return work.finally(() => { if (rebuildWork === work) rebuildWork = null; });
     },
     dispose() {
       if (disposed) return;
       disposed = true; ++revision; view.ready = false;
+      view.materialWatcher?.stop();
+      for (const release of [...materialBindings.values()]) release();
       view.levels?.stop();
       clearInterval(timeTimer); clearTimeout(previewIdle);
       for (const name of ['pointerdown', 'pointermove', 'keydown', 'input']) document.removeEventListener(name, previewActivity);
@@ -1078,6 +1139,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const loadedSky = await skyPromise;
     if (loadedSky) applySky(loadedSky);
     if (disposed) return view;
+    view.materialWatcher = watchMaterialCatalogue(view);
     renderer3.setAnimationLoop(() => {
       const now = performance.now(), run = probeRun;
       try {

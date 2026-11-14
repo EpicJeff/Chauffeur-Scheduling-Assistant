@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { base } from '../twin_library.js';
+import { base, copyMaterialParams } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, chartLookupGLSL, patchLightmaps, setLightTint, pickTranscode, lightSwizzle } from './lightmap_material.js';
@@ -8,6 +8,7 @@ import { mayBake } from './bake_lock.js';
 import { workerCodec } from './worker_codec.js';
 import { covered } from './atlas_transport.js';
 import { sameSlots } from './slots.js';
+import { invalidateMaterialReach } from './reach.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Every tier lays its atlas out at the desk's 8 texels/ft, so a wall that opens before
@@ -98,7 +99,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   let stopped = false, allowed = false, atlas = null, pending = null, layout = requestedLayout || options(8);
   let lights = [], lightsKey = '', packed = null, uniforms = null, pages = null;
   let layers = [], baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
-  let dragging = false, stillAt = performance.now();
+  let dragging = false, stillAt = performance.now(), generation = 0;
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
   let failure = '', errorReason = null, manifestText = null;
   function reportError(error) {
@@ -398,18 +399,20 @@ if (vGlowRoom > -0.5) { ${sum} }`);
     if (running) { pendingForce ||= force; return; }
     failure = ''; errorReason = null; progress = { done: 0, total: force ? lights.length : stale.length };
     running = true; showProgress();
-    const mine = lightsKey;
+    const mine = generation, input = lightsKey;
     try {
       baker = createBaker(view, { renderer: view.renderer3, atlas, layout, lights, api, codec, force, owner });
-      stale = await baker.staleLights(); progress = baker.progress(); showProgress();
-      while (valid() && mine === lightsKey) {
+      const initialStale = await baker.staleLights();
+      if (!valid() || mine !== generation || input !== lightsKey) return;
+      stale = initialStale; progress = baker.progress(); showProgress();
+      while (valid() && mine === generation && input === lightsKey) {
         await idle();
-        const id = await baker.bakeNext(); if (!id || !valid() || mine !== lightsKey) break;
+        const id = await baker.bakeNext(); if (!id || !valid() || mine !== generation || input !== lightsKey) break;
         baked.push(id); progress = baker.progress(); stale = await baker.staleLights(); showProgress();
         await loadPages();
       }
       // Tell the editor's chip this round's lights are whole (Ruling B15).
-      if (valid() && mine === lightsKey && !(await baker.staleLights()).length) await baker.settle();
+      if (valid() && mine === generation && input === lightsKey && !(await baker.staleLights()).length) await baker.settle();
     } catch (error) {
       reportError(error);
     } finally {
@@ -441,6 +444,29 @@ if (vGlowRoom > -0.5) { ${sum} }`);
     state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: running && paused(),
       ...progress, baked: [...baked], stale: [...stale], error: errorReason }),
     fresh: () => valid() ? [...fresh] : [], light, idle, refresh,
+    refreshMaterials(ids) {
+      for (const { original, material } of clones) if (ids.includes(original.userData.materialId)) copyMaterialParams(original, material);
+    },
+    materialsChanged(ids) {
+      if (!valid() || !atlas) return false;
+      controller.refreshMaterials(ids);
+      if (!invalidateMaterialReach(atlas.room, ids)) return false;
+      ++generation;
+      baker?.cancel();
+      pendingRun ||= running;
+      // Material edits do not move charts or change their channel assignment.
+      // Retain the arrays, shader bindings and unrelated lights' fresh masks.
+      const previous = packed;
+      packed = bakeLayout(atlas, layout, lights, packed.ownership);
+      for (const id of [...fresh]) if (previous.entries[id]?.key !== packed.entries[id]?.key) {
+        fresh.delete(id); light(id, [0, 0, 0], 0);
+      }
+      stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
+      manifestText = null;
+      Promise.resolve(view.live?.refresh()).catch(reportError);
+      view.render();
+      return true;
+    },
     // The lightmap arrays as held: per array its layer size and layer count, plus what
     // the GPU has been told to upload (test hooks).
     held: () => pages ? {

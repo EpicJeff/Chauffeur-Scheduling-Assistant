@@ -45,6 +45,11 @@ const until = async (fn, what, timeout = 40000) => {
 const liveLayout = list => ({ markers: list.map(l => ({ ...l, device_id: l.device, placed: true, kind: 'light' })) });
 async function context(tier = 'high', sharedServer = null, placed = null, extra = {}) {
   const out = gen.buildTwin(job.plan, job.kit, tier); await out.ready;
+  if (extra.materialRole) {
+    const {applyMaterialParams}=await import(file('static/twin/twin_library.js'));
+    for (const material of out.materials.values()) if (material.name===extra.materialRole)
+      applyMaterialParams(material,{household:true,revision:1,params:{tint:'#123456'},maps:{}},{id:'material-baked'},extra.materialRole,tier);
+  }
   let plan = job.plan;
   if (extra.farSurface) {
     plan=structuredClone(job.plan);
@@ -74,6 +79,28 @@ async function check(name, fn) {
   try { await fn(); passed++; console.log('  ok   ' + name); }
   catch (error) { console.log('  FAIL ' + name + ' ' + error.stack); }
 }
+await check('material_revision_invalidates_bake_and_refreshes_affected_clones', async () => {
+  const desk = await context('high',null,null,{materialRole:'interior_wall'});
+  try {
+    await until(() => desk.controller.fresh().length === 4 && !desk.controller.state().baking, 'initial bake');
+    const mesh = covered(desk.out.root).find(m => m.material.userData.materialId === 'material-baked');
+    const clone = mesh.material;
+    assert.equal(clone.userData.materialRevision,1,'metadata is present before the initial bake');
+    assert.equal(desk.controller.materialsChanged(['unused']), false);
+    assert.ok(desk.controller.fresh().length === 4);
+    const {applyMaterialParams}=await import(file('static/twin/twin_library.js'));
+    // Production updates the retained source first, then refreshes bake clones.
+    for (const material of desk.out.materials.values()) if (material.name === mesh.material.name) {
+      applyMaterialParams(material,{household:true,revision:2,params:{tint:'#56789a'},maps:{}},{id:'material-baked'},material.name,'high');
+    }
+    assert.equal(desk.controller.materialsChanged(['material-baked']), true);
+    assert.ok(desk.controller.state().stale.length, 'revision marks existing stale state');
+    assert.equal(mesh.material,clone);assert.equal(mesh.material.color.getHexString(),'56789a');
+    await desk.controller.refresh();
+    assert.ok(desk.controller.state().stale.length,'the old publication cannot make the revision fresh again');
+  } finally { desk.controller.stop(); }
+});
+
 await check('every_placed_light_bakes_including_yard_and_fire_pit', async () => {
   // v2.499.839 left yard-room and fire-pit lights out of the bake: yard surfaces were not in
   // the atlas, so they never settled. The yard now bakes (user, 2026-11-13: "It seems silly to

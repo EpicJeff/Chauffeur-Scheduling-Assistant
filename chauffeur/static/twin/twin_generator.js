@@ -4,7 +4,7 @@ import { applyObject, fitOpening, objectShown, objectMaterialKey } from './objec
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials } from './twin_library.js';
+import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest } from './twin_library.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
@@ -297,7 +297,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
     }
     return materialKit;
   };
-  const materials = material(() => new Map(reuseMaterials || []));
+  const materials = material(() => new Map([...(reuseMaterials || [])].filter(([, m]) => currentMaterial(m, manifest(kit)))));
   let parkingIcon = materials.get('parking_icon#ffffff') || null;
   const plain = (name, color, extra = {}) => material(() => {
     const key = name + color;
