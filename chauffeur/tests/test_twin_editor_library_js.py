@@ -287,6 +287,14 @@ const returned=materialButtons().find(n=>n.dataset.material===householdMaterial.
 assert.equal(returned.children[0].src,'../api/house/twin/materials/material-returned/maps/returned.jpg');
 assert.equal(kit.manifest[householdMaterial.id].revision,2);assert.equal(kit.manifest[householdMaterial.id].params.roughness,.6);
 ok('returning from the Library refreshes the picker catalogue');
+householdMaterial.revision=3;householdMaterial.maps.base_color='maps/replaced.jpg';
+// The scene watcher has already merged the record before notifying the picker.
+kit.manifest[householdMaterial.id]={kind:'material',household:true,revision:3,params:householdMaterial.params,
+ maps:{base_color:'materials/'+householdMaterial.id+'/maps/replaced.jpg'}};
+doc.dispatchEvent(new CustomEvent('chf-materials-changed',{detail:{ids:[householdMaterial.id]}}));await settle();
+assert.equal(materialButtons().find(n=>n.dataset.material===householdMaterial.id).children[0].src,
+ '../api/house/twin/materials/material-returned/maps/replaced.jpg');
+ok('live catalogue notification refreshes thumbnails with an already merged manifest');
 abort.abort();view.dispose();console.log(`${passed}/${passed} passed`);
 """
 

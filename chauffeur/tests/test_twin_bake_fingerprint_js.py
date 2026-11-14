@@ -128,6 +128,37 @@ assert.equal(buildAtlas(await scene('low',lodPlan),lodPlan,options).key,b.key,'L
  assert.deepEqual(keysOf(house.root,moved,'terrain'),terrainBefore,'a fence edit leaves every terrain chart key as it was');
  assert.notDeepEqual(keysOf(house.root,moved,'fences'),fenceBefore,'the fence charts change');
 }
+// Per-building reuse retains geometry already prepared by the bake, so an edit to
+// the other building cannot stale this building's chart identities.
+{
+ const two=structuredClone(plan),annex=structuredClone(two.buildings[0]);
+ annex.id='annex';annex.position=[30,0];two.buildings.push(annex);
+ const first=buildTwin(two,kit,'high',{viewing:true});await first.ready;
+ first.root.updateMatrixWorld(true);
+ const owner=mesh=>{for(let o=mesh;o;o=o.parent)if(o.userData.buildingId)return o.userData.buildingId;return null;};
+ const keysOf=(atlas,id)=>atlas.room.charts.filter(c=>owner(c.mesh)===id).map(c=>c.key).sort();
+ const before=buildAtlas(first.root,two,options);
+ const unchangedKeys=keysOf(before,'annex'),changedKeys=keysOf(before,'house');
+ assert.ok(unchangedKeys.length>0&&changedKeys.length>0,'both buildings have bake charts');
+ // Capture after the atlas has prepared its buffers, matching a previously baked scene.
+ const unchanged=covered(first.root).filter(mesh=>owner(mesh)==='annex').map(mesh=>[mesh,mesh.geometry]);
+ assert.ok(unchanged.length>0,'the unchanged building has baked receiver geometry');
+ const edited=structuredClone(two);edited.buildings[0].walls[0].to[0]=10;
+ const next=buildTwin(edited,kit,'high',{viewing:true,previous:first});await next.ready;next.adoptBuildings();
+ next.root.updateMatrixWorld(true);
+ assert.deepEqual(next.buildingsReused,['annex'],'only the other building is reused');
+ assert.deepEqual(next.buildingsRebuilt,['house'],'only the edited building is rebuilt');
+ const nextReceivers=covered(next.root);
+ for(const [mesh,geometry] of unchanged){
+  assert.ok(nextReceivers.includes(mesh),'the unchanged receiver is the same mesh');
+  assert.equal(mesh.geometry,geometry,'the unchanged receiver keeps its baked geometry object');
+ }
+ const after=buildAtlas(next.root,edited,options);
+ assert.deepEqual(keysOf(after,'annex'),unchangedKeys,'every reused building chart key stays fresh');
+ assert.notDeepEqual(keysOf(after,'house'),changedKeys,'the edited building charts change');
+ for(const [mesh,geometry] of unchanged)assert.equal(mesh.geometry,geometry,'re-atlasing preserves the retained geometry');
+ console.log('Passed: reused building geometry identity and every chart key; edited building charts change');
+}
 // Excluded geometry stays excluded after repeated static merges, even with a shared material.
 const mixed=new THREE.Group(), material=new THREE.MeshStandardMaterial();
 const excluded=new THREE.Mesh(new THREE.BoxGeometry(),material);excluded.geometry.userData.bakeExcluded=true;

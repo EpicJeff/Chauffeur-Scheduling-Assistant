@@ -30,12 +30,12 @@ const modelCache = new Map(), skyCache = new Map(), textureCache = new Map();
 function loadTexture(url) {
   if (!textureCache.has(url)) {
     const request = new Promise((done, reject) => new THREE.TextureLoader().load(url, done, undefined, reject))
-      .catch(() => { textureCache.delete(url); return null; });
+      .catch(() => { if (textureCache.get(url) === request) textureCache.delete(url); return null; });
     textureCache.set(url, request);
   }
   return textureCache.get(url);
 }
-function optionalAsset(cache, key, load, copy, onLate) {
+function optionalAsset(cache, key, load, copy, onLate, onFailure) {
   let entry = cache.get(key);
   if (!entry) {
     entry = {}; cache.set(key, entry);
@@ -45,7 +45,7 @@ function optionalAsset(cache, key, load, copy, onLate) {
     catch { entry.complete = Promise.resolve(null); }
     entry.complete = entry.complete.catch(() => null).then(value => {
       entry.done = true; entry.value = value;
-      if (!value) cache.delete(key);
+      if (!value && cache.get(key) === entry) cache.delete(key);
       return value;
     });
     entry.ready = new Promise(resolve => {
@@ -53,6 +53,9 @@ function optionalAsset(cache, key, load, copy, onLate) {
       entry.complete.then(value => { clearTimeout(timer); resolve(value); });
     });
   }
+  // A deadline only releases readiness. Notify every owner only when the
+  // underlying request actually fails, including failures after that deadline.
+  if (onFailure) entry.complete.then(value => { if (!value) onFailure(); });
   return (entry.done ? Promise.resolve(entry.value) : entry.ready).then(value => {
     if (value) return copy(value);
     if (onLate) entry.complete.then(late => { if (late) onLate(copy(late)); });
@@ -128,7 +131,51 @@ export function materialKey(value, role, tier, manifest) {
 // Immutable master URLs are decoded once; each tier image is resized once.
 // Material-owned clones share pixels, never repeat/rotation or GPU lifecycle.
 const householdTextureCache = new Map();
-function householdTexture(path, tier, onLate) {
+const householdUrls = new Map(), textureOwners = new Map(), retiredTextures = new Map();
+function releaseRetired(url) {
+  if (textureOwners.get(url)?.size) return;
+  textureOwners.delete(url);
+  const retired = retiredTextures.get(url);
+  retiredTextures.delete(url);
+  for (const request of retired || []) Promise.resolve(request).then(texture => texture?.dispose());
+}
+
+// Retire obsolete immutable URLs immediately from both lookup caches. Existing
+// material owners (including requests still in flight) retain their pixels until
+// disposal; a later undo may load the URL afresh without reviving an old entry.
+export function refreshMaterials(ids, known = null) {
+  for (const id of ids) {
+    const keep = new Set(Object.values(known?.[id]?.maps || {}).map(materialUrl));
+    for (const url of householdUrls.get(id) || []) {
+      if (keep.has(url)) continue;
+      const retired = retiredTextures.get(url) || [];
+      if (textureCache.has(url)) { retired.push(textureCache.get(url)); textureCache.delete(url); }
+      for (const [key, entry] of householdTextureCache) if (JSON.parse(key)[0] === url) {
+        retired.push(entry.complete); householdTextureCache.delete(key);
+      }
+      retiredTextures.set(url, retired); householdUrls.get(id).delete(url);
+      releaseRetired(url);
+    }
+  }
+}
+
+export function currentMaterial(material, known) {
+  const id = material.userData.materialId;
+  return !id || material.userData.materialRevision === known[id]?.revision;
+}
+
+// Copy only the surface values. Viewing opacity/clipping and bake shader hooks
+// belong to the receiving clone and must survive a material revision.
+export function copyMaterialParams(source, target) {
+  for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'alphaMap',
+    'roughness', 'metalness', 'aoMapIntensity', 'alphaTest', 'side']) target[key] = source[key];
+  target.color.copy(source.color); target.normalScale.copy(source.normalScale);
+  for (const key of ['materialId', 'materialRevision', 'materialKey', 'materialRef', 'materialRole'])
+    target.userData[key] = source.userData[key];
+  target.needsUpdate = true;
+}
+
+function householdTexture(path, tier, onLate, onFailure) {
   const url = materialUrl(path), key = JSON.stringify([url, tier]);
   return optionalAsset(householdTextureCache, key, async () => {
     const source = await loadTexture(url);
@@ -145,7 +192,7 @@ function householdTexture(path, tier, onLate) {
     // Texture.clone shares Source; assigning clone.image would resize the master.
     const texture = new THREE.Texture(image); texture.name = url; texture.needsUpdate = true;
     return texture;
-  }, texture => texture.clone(), onLate);
+  }, texture => texture.clone(), onLate, onFailure);
 }
 
 // Also used by the Library preview. Returns immediately; ready is bounded by
@@ -153,10 +200,15 @@ function householdTexture(path, tier, onLate) {
 export function applyMaterialParams(material, entry, ref, role, tier) {
   // A preview may apply another revision to the same material while maps load.
   material.userData.releaseMaterialParams?.();
+  material.userData.assetFailed = false;
   const params = entry.params || {}, maps = entry.maps || {};
   material.name = role;
   const id = ref.id || ref.asset || role;
   material.userData.materialKey = materialKey(ref, role, tier, { [id]: entry });
+  material.userData.materialId = id;
+  material.userData.materialRevision = entry.revision;
+  material.userData.materialRef = { ...ref };
+  material.userData.materialRole = role;
   material.color.set(ref.color || params.tint || '#ffffff');
   // Auto is flat until this tier actually attaches the corresponding map.
   material.roughness = params.roughness ?? .85;
@@ -170,6 +222,7 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   if (role === 'granite') applyGraniteShader(material);
   let disposed = false;
   const textures = new Set();
+  const urls = new Set();
   material.alphaMap = null; material.alphaTest = 0; material.side = THREE.FrontSide;
   if (ref.pattern === 'lattice') {
     material.alphaMap = latticeTexture(); material.alphaTest = .5; material.side = THREE.DoubleSide;
@@ -178,6 +231,7 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   const release = () => {
     disposed = true;
     textures.forEach(texture => texture.dispose()); textures.clear();
+    for (const url of urls) { textureOwners.get(url)?.delete(material); releaseRetired(url); }
     material.removeEventListener('dispose', release);
   };
   material.userData.releaseMaterialParams = release;
@@ -194,6 +248,7 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
     if (properties.includes('roughnessMap')) material.roughness = params.roughness ?? 1;
     if (properties.includes('metalnessMap')) material.metalness = params.metalness ?? 1;
     material.needsUpdate = true;
+    material.dispatchEvent({ type: 'materialparamschange' });
   };
   const slots = [['base_color', ['map']]];
   if (tier !== 'low') {
@@ -202,8 +257,15 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
     else slots.push(['roughness', ['roughnessMap']], ['metalness', ['metalnessMap']], ['ao', ['aoMap']]);
   }
   material.userData.ready = Promise.all(slots.filter(([slot]) => maps[slot]).map(([slot, properties]) => {
+    const url = materialUrl(maps[slot]); urls.add(url);
+    if (!householdUrls.has(id)) householdUrls.set(id, new Set());
+    householdUrls.get(id).add(url);
+    if (!textureOwners.has(url)) textureOwners.set(url, new Set());
+    textureOwners.get(url).add(material);
     const apply = attach(properties);
-    return householdTexture(maps[slot], tier, apply).then(texture => { if (texture) apply(texture); });
+    return householdTexture(maps[slot], tier, apply, () => {
+      if (!disposed) material.userData.assetFailed = true;
+    }).then(texture => { if (texture) apply(texture); });
   }));
   material.needsUpdate = true;
   return material;
@@ -230,7 +292,7 @@ export function kitMaterial(role, kit, tier) {
   if (asset?.kind !== 'material') return material;
   const pending = [];
   // A failed set is entirely plain kit colour, even if another map succeeds.
-  let failed = false;
+  let failed = false, disposed = false;
   const textures = new Set();
   const completions = new Set();
   const settle = () => { completions.forEach(resolve => resolve()); completions.clear(); };
@@ -251,7 +313,10 @@ export function kitMaterial(role, kit, tier) {
       completions.add(resolve);
       const url = libUrl(id, name);
       loadTexture(url).then(source => {
-        if (!source) clear();
+        if (!source) {
+          if (!disposed) material.userData.assetFailed = true;
+          clear();
+        }
         else if (!failed) {
           const texture = source.clone(); textures.add(texture);
           texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
@@ -269,7 +334,7 @@ export function kitMaterial(role, kit, tier) {
   }
   const timer = pending.length ? setTimeout(settle, ASSET_TIMEOUT_MS) : null;
   material.userData.ready = Promise.all(pending).then(() => clearTimeout(timer));
-  material.addEventListener('dispose', clear);
+  material.addEventListener('dispose', () => { disposed = true; clear(); });
   return material;
 }
 
@@ -327,7 +392,7 @@ export async function importedModels(refresh = false) {
   }).catch(error => { importRead = null; throw error; });
   return importRead;
 }
-export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, editor = false, shared = false, lodName = null } = {}) {
+export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, editor = false, shared = false, lodName = null, onFailure } = {}) {
   // Optional models may arrive late or use a tier-specific stand-in/LOD.
   // They remain visible and cast shadows, but cannot own shared lightmap UVs.
   const renderOnly = model => {
@@ -335,11 +400,14 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
     return model;
   };
   const isImport = assetId.startsWith('import-');
-  if (isImport && !imported.has(assetId)) await importedModels();
+  if (isImport && !imported.has(assetId)) {
+    try { await importedModels(); }
+    catch { onFailure?.(); return null; }
+  }
   const asset = isImport ? imported.get(assetId) : manifest(kit)[assetId];
   if (isImport && !editor && !lodName && asset?.lods?.length && (tier !== 'low' || asset.lods.some(l => l.name === 'lod2.glb'))) {
     const names = new Set(asset.lods.map(l => l.name));
-    if (tier === 'low' && names.has('lod2.glb')) return loadModel(assetId, kit, onLate, { tier, kind, shared, lodName: 'lod2.glb' });
+    if (tier === 'low' && names.has('lod2.glb')) return loadModel(assetId, kit, onLate, { tier, kind, shared, lodName: 'lod2.glb', onFailure });
     const levels = [null, null, null]; let initial = true, delivered = false;
     const late = i => model => {
       levels[i] = model;
@@ -347,7 +415,7 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
     };
     await Promise.all([null, 'lod1.glb', tier === 'medium' ? null : 'lod2.glb'].map(async (name, i) => {
       if (i && (!name || !names.has(name))) return;
-      const model = await loadModel(assetId, kit, onLate ? late(i) : undefined, { tier: 'high', kind, shared, editor: true, lodName: name });
+      const model = await loadModel(assetId, kit, onLate ? late(i) : undefined, { tier: 'high', kind, shared, editor: true, lodName: name, onFailure });
       if (model) levels[i] = model;
     }));
     initial = false;
@@ -422,7 +490,7 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
     if (isImport) { modelBudget(result.scene, { resizeTextures: false }); return lodName ? result.scene : normaliseModel(mergeByMaterial(result.scene)); }
     return result.scene;
   }, model => renderOnly(!editor && !lodName && tier === 'low' && isImport && asset?.triangles > 300000
-    ? heavyStandIn(new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).toArray(), kind || asset.kind) : shared ? model.clone(true) : copyModel(model)), onLate);
+    ? heavyStandIn(new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).toArray(), kind || asset.kind) : shared ? model.clone(true) : copyModel(model)), onLate, onFailure);
 }
 
 export async function loadSky(kit, onLate) {

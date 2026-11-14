@@ -17,6 +17,54 @@ from services import auth, twin_library as library, twin_materials as materials
 API = '/api/house/materials'
 
 
+def test_viewer_manifest_includes_archived_for_panels_and_kids():
+    seed()
+    with Ctx() as c:
+        row = create(c)
+        upload(c, row['id'])
+        # History-owned archive is still part of the page's rendering manifest.
+        record = materials.get(row['id'])
+        record['archived'] = True
+        materials._json(materials.root() / row['id'] / 'material.json', record)
+        route = '/api/house/twin/materials/manifest'
+        assert auth.resolve('GET', route) == auth.WALL_OR_SERVICE
+        for headers in (c.panel, c.kid, c.mum):
+            response = c.client.get(route, headers=headers)
+            assert response.status_code == 200, response.text
+            data = response.json()
+            assert data['revision'] == materials.catalogue(True)['revision']
+            assert data['entries'] == {k: e for k, e in materials.page_manifest().items() if e.get('household')}
+            assert data['entries'][row['id']]['maps']['base_color'].startswith('materials/' + row['id'])
+        assert c.client.get(API, headers=c.panel).status_code == 403
+
+
+def test_successful_material_writes_push_update_but_reads_and_errors_do_not():
+    import main
+    seed()
+    with Ctx() as c:
+        def write(call):
+            main.LAST_UPDATE_TIME = 0
+            response = call()
+            assert response.status_code == 200, response.text
+            assert main.LAST_UPDATE_TIME > 0, 'material write must signal the existing SSE update'
+            return response.json()
+        row = write(lambda: c.client.post(API, headers=c.mum, json={'name': 'Live'}))
+        mid = row['id']
+        write(lambda: c.client.patch(f'{API}/{mid}', headers=c.mum, json={'params': {'tint': '#123456'}}))
+        write(lambda: upload(c, mid))
+        write(lambda: c.client.delete(f'{API}/{mid}/maps/base_color', headers=c.mum))
+        write(lambda: c.client.post(f'{API}/{mid}/undo', headers=c.mum))
+        write(lambda: c.client.post(f'{API}/{mid}/redo', headers=c.mum))
+        duplicate = write(lambda: c.client.post(f'{API}/{mid}/duplicate', headers=c.mum))
+        write(lambda: c.client.post(f"{API}/{duplicate['id']}/reset", headers=c.mum))
+        main.LAST_UPDATE_TIME = 0
+        assert c.client.get(API, headers=c.mum).status_code == 200
+        assert c.client.get(f'{API}/{mid}', headers=c.mum).status_code == 200
+        assert c.client.patch(f'{API}/{mid}', headers=c.mum, json={'params': {'tint': 'bad'}}).status_code == 400
+        assert main.LAST_UPDATE_TIME == 0
+        write(lambda: c.client.delete(f'{API}/{mid}', headers=c.mum))
+
+
 def image(size=(64, 64), color=(90, 120, 150), fmt='PNG'):
     out = io.BytesIO()
     Image.new('RGB', size, color).save(out, format=fmt)

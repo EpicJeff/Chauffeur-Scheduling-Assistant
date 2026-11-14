@@ -41,6 +41,22 @@ function fieldClosest(chart, plan, source, out) {
   return out.set(x, groundAt(plan, x, y), -y).applyMatrix4(chart.mesh.matrixWorld);
 }
 const reaches = new WeakMap();
+// Geometry is retained for live material edits, but both triangle colour input
+// and per-light physical freshness must be recomputed for the affected layout.
+export function invalidateMaterialReach(layout, ids) {
+  const changed = new Set(ids);
+  let used = false;
+  for (const chart of layout.charts) if ([chart.mesh, ...(chart.proxies || []).map(p => p.mesh)]
+    .some(mesh => changed.has(mesh.material.userData.materialId))) {
+    cached.delete(chart); used = true;
+  }
+  if (used) reaches.delete(layout);
+  return used;
+}
+const materialInput = mesh => [mesh.material.color?.toArray(), mesh.material.userData.materialId || null,
+  mesh.material.userData.materialRevision ?? null];
+const surfaceInput = chart => JSON.stringify([materialInput(chart.mesh), chart.density,
+  ...(chart.proxies || []).map(p => materialInput(p.mesh))]);
 function triangles(chart) {
   let data = cached.get(chart);
   if (data) return data;
@@ -53,7 +69,7 @@ function triangles(chart) {
     bounds.expandByPoint(t.a);bounds.expandByPoint(t.b);bounds.expandByPoint(t.c);
     return t;
   });
-  data={faces,bounds,surface:new TextEncoder().encode(JSON.stringify([chart.mesh.material.color?.toArray(),chart.density]))};
+  data={faces,bounds,surface:new TextEncoder().encode(surfaceInput(chart))};
   cached.set(chart, data); return data;
 }
 
@@ -82,7 +98,7 @@ export function reachLights(layout, lights) {
       if (c.heightfield) {
         const d = fieldClosest(c, layout.plan, source, closest).distanceToSquared(source);
         if (d > limit) continue;
-        receivers.add(c.room); geometry.push(c.key);
+        receivers.add(c.room); geometry.push(c.key + surfaceInput(c));
         distances[c.id] = d; receivingCharts.push(c.id); chartKeys[c.id] = c.key;
         scores[c.id] = Math.max(0, 1 - d * d / range4) ** 2 / Math.max(d, .01);
         continue;

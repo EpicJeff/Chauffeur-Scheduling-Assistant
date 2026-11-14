@@ -1,0 +1,191 @@
+{
+  "source": "d88fc835032686468968a9d9bc0a9da07fdf4d42:chauffeur/static/twin/live/modes.js",
+  "plan": {
+    "site": {
+      "terraces": [
+        {
+          "id": "pad",
+          "polygon": [
+            [
+              -20,
+              -20
+            ],
+            [
+              80,
+              -20
+            ],
+            [
+              80,
+              80
+            ],
+            [
+              -20,
+              80
+            ]
+          ],
+          "height": 3,
+          "blend": 0
+        }
+      ],
+      "yard_rooms": [
+        {
+          "id": "yard",
+          "polygon": [
+            [
+              20,
+              20
+            ],
+            [
+              40,
+              20
+            ],
+            [
+              40,
+              40
+            ],
+            [
+              20,
+              40
+            ]
+          ]
+        }
+      ]
+    },
+    "buildings": [
+      {
+        "id": "b",
+        "base": 2,
+        "foundation": {
+          "mode": "auto"
+        },
+        "position": [
+          0,
+          0
+        ],
+        "levels": [
+          {
+            "id": "L",
+            "elevation": 10,
+            "ceiling": 9
+          }
+        ],
+        "rooms": [
+          {
+            "id": "r",
+            "level": "L",
+            "floor_offset_ft": -1,
+            "polygon": [
+              [
+                0,
+                0
+              ],
+              [
+                20,
+                0
+              ],
+              [
+                20,
+                15
+              ],
+              [
+                0,
+                15
+              ]
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "markers": [
+    {
+      "device_id": "floor",
+      "entity_id": "light.floor",
+      "kind": "light",
+      "building": "b",
+      "level": "L",
+      "room": "r",
+      "at": [
+        4,
+        5,
+        11
+      ]
+    },
+    {
+      "device_id": "ceiling",
+      "entity_id": "light.ceiling",
+      "kind": "light",
+      "building": "b",
+      "level": "L",
+      "room": "r",
+      "at": [
+        6,
+        7,
+        21
+      ]
+    },
+    {
+      "device_id": "wall",
+      "entity_id": "light.wall",
+      "kind": "light",
+      "building": "b",
+      "level": "L",
+      "room": "r",
+      "at": [
+        8,
+        9,
+        16
+      ]
+    },
+    {
+      "device_id": "yard",
+      "entity_id": "light.yard",
+      "kind": "light",
+      "yard": true,
+      "room": "yard",
+      "at": [
+        30,
+        30,
+        1
+      ]
+    }
+  ],
+  "expected": [
+    {
+      "device_id": "floor",
+      "position": [
+        1.2192,
+        5.0292,
+        -1.524
+      ],
+      "range": 29.095747111906235
+    },
+    {
+      "device_id": "ceiling",
+      "position": [
+        1.8288000000000002,
+        6.644640000000001,
+        -2.1336
+      ],
+      "range": 28.460498941515414
+    },
+    {
+      "device_id": "wall",
+      "position": [
+        2.4384,
+        5.1816,
+        -2.7432000000000003
+      ],
+      "range": 23.717082451262844
+    },
+    {
+      "device_id": "yard",
+      "position": [
+        9.144,
+        1.2192,
+        -9.144
+      ],
+      "range": 30
+    }
+  ]
+}

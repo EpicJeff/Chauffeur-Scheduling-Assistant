@@ -1,6 +1,100 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.861 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.865 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.865 (2026-11-14, NOT device-verified): editing one building no longer regenerates the others. Unchanged buildings are reused as they are.**
+
+**The report.** The user, on their two-building house: every change takes several seconds; the object count is high and the system is not optimised for that complexity. Edit timing (.847) showed each edit regenerating every building, even one nobody touched.
+
+**How** (`static/twin/twin_generator.js` `buildTwin(plan, kit, tier, {previous})`, `buildingKey`; `twin_view.js` rebuild).
+- Each building gets a key from everything that shapes it:
+  - its complete record;
+  - its effective finishes, resolved through plan, building, level, face, room and porch overrides, including household material revisions;
+  - the `base` foundation band, whenever the first floor is raised, porch or not;
+  - terrain pads whose reach overlaps it;
+  - imported model metadata;
+  - tier, viewing mode, anchors and the editable level.
+  A key guard checks 241 independent mutations of those inputs.
+- A building whose key is unchanged keeps its geometry, level groups, roof, gable and light domains, materials and pick registries. Only changed buildings are generated, and nothing merges across buildings.
+- **Adoption happens after the asset wait and the view's revision check**, so a superseded edit never takes over the scene. Late model imports land in the currently adopted twin, however many reuses later. The key is computed before generation. After the asset wait only its model-metadata part may update, and only if everything else is unchanged.
+- **When a building is never reused:**
+  - its model is marked stale by an in-place level rebuild;
+  - it is degraded, because an optional asset failed to load.
+- **Finishes shortcut.** A rebuilt building whose finishes did not change keeps its materials, so a terrain-only edit does not recreate shaders.
+- Edit timing records now list `buildings_reused` and `buildings_rebuilt`.
+
+**Measured** (Chromium, test house, siding edit on the pool house): main-house generation dropped from about 1.3 s to 0.1-0.2 s, with the same draw-call count (editor 125, viewer 154). It held on the first edit after a page reload too. Headless totals are dominated by software rendering and are not representative of the desk.
+
+**Tests.** `test_twin_building_reuse_js` 19/19, run on the real mounted editor. It covers:
+- the key guard, a porch-less raised floor among its cases;
+- the base-band rebuild;
+- refusing a stale or degraded model;
+- the finishes material reuse;
+- a manifest change during the asset wait;
+- selection, hover, cards, raycast, fades and ghosts after a reuse.
+
+Also passing: `test_twin_library_js` 28/28 (late imports after reuses), `test_twin_bake_fingerprint_js` (an unchanged building keeps its bake chart keys), yard reuse 20/20, material live 19/19, edit timing 2/2, ground, levels, roof flags, editor history 8/8, controls 31/31, import maps 3/3.
+
+**v2.499.864 (2026-11-14, NOT device-verified): the Material library browses Poly Haven and ambientCG and adds a material in one click. Material library Tasks 7-8.**
+
+**What a person sees.** On the Library page (parents), **Browse online** opens a panel with a Poly Haven / ambientCG switch and a search box (300 ms debounce). Results show a thumbnail, the name, the source (linked) and the licence (CC0), a resolution select (1k/2k/4k as offered, default 2k) and **Add**. Add follows the download (polled every 500 ms) and, when it finishes, opens the new material in the editor, unless the person has picked another material since or closed the panel; then the catalogue just refreshes.
+- Offline: "Online libraries are not reachable." in the panel; reopening the panel or pressing the active source retries.
+- Queue full (10 waiting): a plain 429 message. A download lost to a restart: "The download was interrupted, most likely by a Chauffeur restart. Try again." Repeated poll failures: the download may still finish and will appear in the catalogue.
+- Thumbnails always come through Chauffeur's own route; the browser never contacts the source sites.
+
+**Server** (`services/twin_material_sources.py`; routes all parents-only):
+- `GET /api/house/materials/sources/{source}?q=&category=` returns `{results: [...]}` (each row: source, source_id, name, thumbnail, resolutions, source_url), cached 10 minutes. Poly Haven filters its texture list locally; ambientCG uses its v2 API.
+- `GET /api/house/materials/sources/{source}/{source_id}/thumb` (disk-cached, header-checked pixel count before decoding).
+- `POST /api/house/materials/sources/{source}/{source_id}/download` with `{resolution}` returns a job id; `GET /api/house/materials/jobs/{job_id}` reports queued/running/done/failed with progress.
+- **One worker, one job at a time; bounded everywhere.** 64 MB per file, 200 MB per ambientCG archive (so 4k is offered when the zip fits), 300 MB per job including metadata, 180 s deadline enforced per socket read (`read1`), at most 10 queued jobs.
+- **Network guard.** Every URL and every redirect hop (max 5) must be https, on that source's own hosts, and resolve to a public address (loopback, private, link-local, reserved and multicast refused). Accepted residual: a DNS answer could change between the check and the connect.
+- **Archives.** At most 64 entries and 400 MB expanded; any entry with `..`, a leading `/` or a drive letter refuses the whole archive; only mapped image entries are extracted, counted as they stream.
+- Every map goes through `twin_materials.ingest_image` into a staged folder; the material is published once, on success, with its `source_snapshot` (source, id, licence). Any failure removes staging and the half-made folder. A startup sweep clears staging and any job-marked folder without a `material.json`, so a crash never leaves orphans; published materials are never touched.
+- Job status lives in memory; a restart loses the job (finished materials stay).
+
+**Tests.** `test_twin_material_sources` 21/21 (fake `_urlopen`, no network: slot mapping for both sources, traversal, zip bomb, oversize stream, deadline with a trickling server, redirects and private addresses, 4k archive cap, sweep, queue cap, plain messages, parents-only), `test_twin_library_browse_js` 17/17 (real `page.js` + `browse.js` in node), `test_twin_materials` 25/25, `test_auth` 19/19, library page js 14/14, tailwind 6/6, import maps 3/3. Chromium against the real sites: "brick" gave 123 Poly Haven and 31 ambientCG results with thumbnails; Red Brick added at 1k in 14 s.
+
+**v2.499.863 (2026-11-14, NOT device-verified): light fixtures, slice A. The house model stores light fixtures per entity, and the live view places its lights through one emitter resolver. Existing houses look exactly as before.**
+
+**Why.** The user wants each light shaped like the real thing: a security spotlight as a spot, a fire table as an area, rope lights under wall caps as lines, a TV screen as a light. They also want one entity to drive many fixtures (pool lights, landscape lights on one switch). This slice lays the data and the shared resolver; the editor card, the real-time typed pool and the bake follow in later slices (spec `docs/superpowers/specs/2026-11-13-light-fixtures-design.md`).
+
+**Storage** (`services/twin_fixtures.py`, `twin_model.py`, `twin_model_ops.py`, `twin_model_bridge.py`).
+- `light_fixtures: {entity_id: [fixture, ...]}` and `light_fixtures_meta: {entity_id: {output_lm}}` on the model. Fixture ids are canonical `fixture:<uuid>`.
+- Shapes: `point` (`at`), `spot` (`at`, `aim`, `cone_deg` 10-160, default 90, `softness`), `line` (`path` of 2-64 points, `facing` down/out/up/in, `width_in`, optional `snap` to a host edge), `area` (`at`, `size_ft`, `facing`). `ref` is `floor`, `ground` or `absolute`; `share` optionally weights one fixture's part of the entity's output. `output_lm` and `share` are capped at 1e6.
+- Editor ops (`POST /api/house/editor/op`): `add_light_fixture`, `update_light_fixture`, `delete_light_fixture`, `set_light_output`. The lot and floor checks run only on the fixture being added or edited.
+- **Never silently dropped.** A stored fixture whose lot or building no longer fits (the lot shrank, the building was removed) is kept with `orphaned: true` and an `orphan_reason`; the flag clears when the context returns. A fixture id duplicated under another entity is dropped with a note.
+- Snapped lines store the host edge itself (cap top, path or patio edge, step nosing, wall) and follow host moves; a line that loses its host becomes `detached` and keeps its last path.
+- `/api/house/live` carries the fixture maps, metadata and per-entity signatures. Legacy models normalize byte-identically.
+
+**The resolver** (`static/twin/live/emitters.js`, used by `live/modes.js`). `resolveEmitters` turns layout plus HA states into resolved emitters, and is exported for the bake slice with `emitterSignature` and `firePitEmitters`.
+- Entities without fixtures keep the legacy placement rules unchanged (a snapshot of main's positions pins it). A default fixture equals a legacy lamp exactly (output divided by the default 503 lm).
+- Facing offsets are applied here, not stored: `down` sits 2 in below the path and 1 in out from the host face, `out` 1 in out, `up` 1 in above, `in` 1 in in. Step hosts face downhill, off the nosing; on a fence, `out` is the right of the drawn direction; hostless lines get no sideways offset.
+- Wall and step snaps resolve in the building's frame, including the auto-foundation lift.
+- `emission()`: lights scale by brightness and colour once; a switch is 2700 K at full output; a TV emits while playing or paused and not when idle; `input_boolean` and `fan` count as on/off; unavailable or stale states never emit.
+- Orphaned and detached fixtures still resolve and carry `orphaned: true` for later UI.
+- **Fire pits stay on their object lamps in live** (flame colour #ff9a3c, half intensity, the baked `object:fire_pit:<id>` channel when fresh). The bake slice moves them onto the resolver and must carry that colour and scale.
+
+**No hand path yet, and no agent path.** Fixtures can only be created through the editor op route; the editor fixture card and aim tool are the next UI slice, and Argyle gets no fixture tool.
+
+**Tests.** `test_twin_fixtures` 32/32 (TestClient, real store: ops, orphaning, canonical ids, caps, byte-identical legacy), `test_twin_emitters_js` 24/24 + 5/5 live (real `mountLive`/`keepLive`), plus live control 8/8, real lights 10/10, controls 31/31, model bridge 32/32, house saves 19/19, HA routes 16/16, import maps 3/3.
+
+**v2.499.862 (2026-11-14, NOT device-verified): household material edits show up live in every open house view, in place, with no scene rebuild. Material library Task 4.**
+
+**What a person sees.** Edit a household material in the Library (tint, roughness, a new map) and every open house page, editor and wall panel that uses it repaints within seconds. Nothing reloads, the camera stays put, and selection and viewing fades keep their look.
+
+**How** (`static/twin/material_watch.js`, `twin_view.js` `refreshMaterials`, `twin_library.js`).
+- **The watcher** reads `GET /api/house/twin/materials/manifest` (new, auth `WALL_OR_SERVICE`; returns the catalogue revision and every household entry the page manifest already ships, archived ones included, so undo can still render them). It checks on window focus, on nav's `chf-server-update` (panels), on its own `api/stream` subscription elsewhere (debounced 1.5 s like nav, never a second stream on panels), when the Library signals `chf-material-catalogue`, and every 60 s.
+  - A signal arriving during a check sets a rerun flag; the check runs once more after it finishes.
+  - A 401 or 403 stops the watcher and closes its stream; it never loops.
+  - Network failures stay quiet; anything else logs through `console.error`.
+- **In-place update.** For each cached material (building and yard caches) whose id changed and is not already at the current revision, `applyMaterialParams` runs again on the same instance. Viewing clones, faded and selected copies (selection tint re-applied) and bake clones are then synced. No geometry, viewing or level rebuild, and no bake remount.
+  - Fallback: a material with no stored reference, or whose lattice cutout flips (alpha changes), triggers one full rebuild, logged with the reason.
+- **Bake.** `materialsChanged` now runs after the in-place update, so lights whose charts use the changed material go stale and an unrelated material's lights stay fresh.
+- `rebuild()`'s error path restores `view.ready`, so a failed refresh cannot wedge later ones.
+
+**Upgrade note.** The reach-key encoding changed, so every existing bake goes stale once after this update.
+
+**Tests.** `test_twin_material_live_js` (`revision_updates_materials_in_place` with a `buildTwin` count, `failed_refresh_does_not_wedge_watcher`, rerun, refusal stop, panel stream reuse, mounted bake chain), `test_twin_materials` 25/25 (panel token reads the manifest route), `test_twin_bake_runtime_js` 18/18. Chromium: a siding tint PATCH repainted the open editor in place with no page errors.
 
 **v2.499.861 (2026-11-14, NOT device-verified): no more black lines on board-and-batten siding in baked light. Small details borrow the wall's light, and building exteriors bake at 4 texels per foot.**
 

@@ -160,6 +160,7 @@ let ready = false; twin.ready.then(() => {ready = true;}); await flush();
 assert.equal(ready, false, 'real generator waits for the stalled surface images');
 const stalled = takeRequests(); assert.ok(stalled.length);
 await advance(15000); assert.equal(ready, true, 'plain geometry is ready at 15 seconds');
+assert.equal(twin.buildings.get('house').model.degraded, false, 'a texture deadline is not an asset failure');
 assert.ok(twin.pieceBounds.has('house:room'));
 const slowMaterial = [...twin.materials.values()].find(m => m.name === 'floor' && m.color.getHexString() === '123456');
 assert.equal(slowMaterial.map, null);
@@ -179,6 +180,7 @@ ok('an actual image error keeps the entire material plain, including late siblin
 
 const disposed = lib.kitMaterial('floor', materialKit('disposed'), 'high'), disposedRequests = takeRequests();
 disposed.dispose(); await disposed.userData.ready;
+assert.notEqual(disposed.userData.assetFailed,true,'disposal does not report a fetch failure');
 await advance(20000); disposedRequests.forEach(r => r.success(r.texture)); await flush();
 assert.equal(disposed.map, null);
 const disposedCache = lib.kitMaterial('floor', materialKit('disposed'), 'high'); await disposedCache.userData.ready;
@@ -226,6 +228,72 @@ await afterLateBuild.ready;
 assert.equal(fetches, 2, 'the next build uses the cached hosted model');
 lib.disposeObject(itemTwin.root); lib.disposeObject(afterLateBuild.root);
 ok('a late hosted model replaces the existing fallback and is used by the next build');
+
+// A timed-out import belongs to its building even when that building survives
+// several accepted house rebuilds before the loader delivers its model.
+const reuseBuilding = {...itemBuilding, items: [{...itemBuilding.items[0], asset: 'reused_late_chair'}]};
+const otherBuilding = {id: 'annex', position: [30,0], levels: [{id: 'L1', elevation: 0, ceiling: 9}], walls: [],
+  rooms: [{id: 'room', level: 'L1', polygon: [[0,0],[10,0],[10,10],[0,10]]}]};
+const reusePlan = {buildings: [reuseBuilding, otherBuilding], materials: {}}, reuseKit = modelKit('reused_late_chair');
+let current = buildTwin(reusePlan, reuseKit, 'high');
+await flush(); await advance(15000); await current.ready;
+const owner = current.buildings.get('house').model, fallback = current.pieces.get('house:chair').slice();
+assert.equal(owner.degraded, false, 'a model deadline is not an asset failure');
+assert.equal(current.pieceBounds.get('house:chair').box.max.y, 2);
+const releasePrevious = (previous, next) => {
+  const keepMaterials = new Set(next.materials.values());
+  lib.disposeObject(previous.root, {keepMaterials});
+  previous.materials.forEach(material => {if (!keepMaterials.has(material)) material.dispose();});
+};
+let reuseEdited = reusePlan;
+for (const ceiling of [10,11]) {
+  reuseEdited = structuredClone(reuseEdited); reuseEdited.buildings[1].levels[0].ceiling = ceiling;
+  const next = buildTwin(reuseEdited, reuseKit, 'high', {previous: current}); await next.ready;
+  assert.deepEqual(next.buildingsReused, ['house']); assert.deepEqual(next.buildingsRebuilt, ['annex']);
+  next.adoptBuildings(); releasePrevious(current, next); current = next;
+  assert.equal(current.buildings.get('house').model, owner); assert.notEqual(owner.root.userData.disposed, true);
+}
+await advance(5000); modelResolve({scene: cube()}); await flush();
+const lateObjects = current.pieces.get('house:chair'), lateProxy = current.pickObjects.get('house:chair');
+assert.ok(lateObjects.length > 0);
+assert.equal(current.pieceBounds.get('house:chair').data.kind, 'item');
+assert.equal(current.pieceBounds.get('house:chair').data.buildingId, 'house');
+assert.ok(lateObjects.every(object => !fallback.includes(object)), 'current pieces contain no procedural fallback');
+assert.ok(fallback.every(object => !object.parent), 'late arrival detaches every previous fallback mesh');
+assert.equal(lateProxy.userData.kind, 'item'); assert.equal(lateProxy.userData.buildingId, 'house');
+assert.equal(lateProxy, owner.pickObjects.get('house:chair'));
+assert.equal(current.pieceBounds.get('house:chair'), owner.pieceBounds.get('house:chair'));
+assert.equal(current.pieces.get('house:chair'), owner.pieces.get('house:chair'));
+assert.ok(Math.abs(current.pieceBounds.get('house:chair').box.max.y - 1 / .3048) < .001);
+for (const object of [...lateObjects, lateProxy]) {
+  let root = object; while (root.parent) root = root.parent;
+  assert.equal(root, current.root, 'late geometry and its pick proxy join the currently adopted twin');
+  assert.notEqual(object.userData.disposed, true); assert.ok(object.geometry.attributes.position.count > 0);
+}
+assert.notEqual(owner.root.userData.disposed, true, 'the late loader retains a live building owner');
+lib.disposeObject(current.root);
+ok('a late hosted import updates current registries after its building is reused twice');
+
+const removedBuilding = {...reuseBuilding, items: [{...reuseBuilding.items[0], asset: 'removed_late_chair'}]};
+const removedKit = modelKit('removed_late_chair');
+const beforeRemoval = buildTwin({buildings: [removedBuilding, otherBuilding], materials: {}}, removedKit, 'high');
+await flush(); await advance(15000); await beforeRemoval.ready;
+const removedOwner = beforeRemoval.buildings.get('house').model;
+const afterRemoval = buildTwin({buildings: [otherBuilding], materials: {}}, removedKit, 'high', {previous: beforeRemoval});
+await afterRemoval.ready; afterRemoval.adoptBuildings(); releasePrevious(beforeRemoval, afterRemoval);
+assert.equal(removedOwner.root.userData.disposed, true);
+const removedBounds = removedOwner.pieceBounds.get('house:chair').box.clone();
+const removedSource = cube(); let removedGeometryReleased = 0;
+removedSource.children[0].geometry.clone = function() {
+  const copy = THREE.BufferGeometry.prototype.clone.call(this);
+  copy.addEventListener('dispose', () => removedGeometryReleased++); return copy;
+};
+modelResolve({scene: removedSource}); await flush();
+for (const name of ['pieces','pickObjects','pieceBounds']) assert.ok([...afterRemoval[name].keys()].every(key => !key.startsWith('house:')));
+assert.ok(removedOwner.pieceBounds.get('house:chair').box.equals(removedBounds), 'a removed building ignores its late import');
+assert.equal(removedGeometryReleased, 1, 'the removed owner releases the delivered model copy');
+lib.disposeObject(afterRemoval.root);
+ok('removing a building prevents its late hosted import from joining the current twin');
 
 const deadBuilding = {...itemBuilding, items: [{...itemBuilding.items[0], asset: 'disposed_chair'}]};
 const deadTwin = buildTwin({buildings: [deadBuilding], materials: {}}, modelKit('disposed_chair'), 'high');
@@ -285,6 +353,130 @@ ok('a late sky is delivered and cached without aborting its request');
 GLTFLoader.prototype.loadAsync = async () => ({scene: cube()});
 assert.ok((await lib.loadModel('fast_chair', modelKit('fast_chair'))).isGroup);
 ok('successful model loads remain available');
+
+// Real generator retries failed optional assets even when no house fields change.
+for (const kind of ['item', 'opening']) {
+ const asset = 'retry_' + kind, retryKit = modelKit(asset);
+ const retryBuilding = structuredClone(itemBuilding);
+ if (kind === 'item') retryBuilding.items[0].asset = asset;
+ else {
+  retryBuilding.items = []; retryBuilding.fixtures = [];
+  retryBuilding.walls = [{id:'wall',level:'L1',from:[0,0],to:[10,0],height:9,thickness:.5,exterior:true}];
+  retryBuilding.openings = [{id:'door',wall:'wall',level:'L1',kind:'door',at:3,width:3,sill:0,head:7,model:asset}];
+ }
+ const retryPlan = {buildings:[retryBuilding],materials:{}};
+ let attempts = 0;
+ GLTFLoader.prototype.loadAsync = async () => {++attempts; throw new Error('offline');};
+ const failedTwin = buildTwin(retryPlan,retryKit,'high'); await failedTwin.ready;
+ assert.equal(failedTwin.buildings.get('house').model.degraded,true);
+ GLTFLoader.prototype.loadAsync = async () => {++attempts; return {scene:cube()};};
+ const recoveredTwin = buildTwin(retryPlan,retryKit,'high',{previous:failedTwin}); await recoveredTwin.ready;
+ assert.deepEqual(recoveredTwin.buildingsReused,[]);assert.deepEqual(recoveredTwin.buildingsRebuilt,['house']);
+ assert.notEqual(recoveredTwin.buildings.get('house').model,failedTwin.buildings.get('house').model);
+ assert.equal(recoveredTwin.buildings.get('house').model.degraded,false);assert.equal(attempts,2);
+ const stable = buildTwin(retryPlan,retryKit,'high',{previous:recoveredTwin}); await stable.ready;
+ assert.deepEqual(stable.buildingsReused,['house']);stable.adoptBuildings();
+ lib.disposeObject(failedTwin.root);lib.disposeObject(stable.root);
+ ok('failed '+kind+' model rebuilds and retries, then recovered geometry is reusable');
+}
+
+for (const household of [false,true]) {
+ const asset = household ? 'retry_household' : 'retry_builtin';
+ const retryKit = household ? {materials:{floor:{id:asset}},manifest:{[asset]:{
+  household:true,revision:1,params:{},maps:{base_color:'materials/'+asset+'/base.png'},
+ }}} : materialKit(asset);
+ const retryBuilding = {...building,rooms:[{...building.rooms[0],floor_material:undefined}]};
+ const retryPlan = {buildings:[retryBuilding],materials:{}};
+ const failedTwin = buildTwin(retryPlan,retryKit,'high');
+ const failedRequests = takeRequests();assert.ok(failedRequests.length);
+ failedRequests.forEach(r=>r.error());await failedTwin.ready;
+ const failedMaterial = failedTwin.buildings.get('house').model.materials.get('floor');
+ assert.equal(failedMaterial.userData.assetFailed,true);assert.equal(failedTwin.buildings.get('house').model.degraded,true);
+ const recoveredTwin = buildTwin(retryPlan,retryKit,'high',{previous:failedTwin});
+ const recoveredRequests = takeRequests();assert.ok(recoveredRequests.length,'failed image cache is evicted');
+ recoveredRequests.forEach(r=>{r.texture.image={width:4,height:4};r.success(r.texture);});await recoveredTwin.ready;
+ assert.deepEqual(recoveredTwin.buildingsReused,[]);assert.deepEqual(recoveredTwin.buildingsRebuilt,['house']);
+ const recoveredMaterial = recoveredTwin.buildings.get('house').model.materials.get('floor');
+ assert.notEqual(recoveredMaterial,failedMaterial,'failed compiled material is not recycled');
+ assert.ok(recoveredMaterial.map);assert.equal(recoveredTwin.buildings.get('house').model.degraded,false);
+ recoveredMaterial.dispose();assert.notEqual(recoveredMaterial.userData.assetFailed,true,'disposal is not a fetch failure');
+ lib.disposeObject(failedTwin.root);lib.disposeObject(recoveredTwin.root);
+ ok((household?'household':'builtin')+' texture failure rebuilds, evicts failed cache and recovers with a fresh material');
+}
+
+let failLate;
+GLTFLoader.prototype.loadAsync = () => new Promise((resolve,reject)=>{failLate=reject;});
+const lateFailureBuilding = {...itemBuilding,items:[{...itemBuilding.items[0],asset:'late_failed_chair'}]};
+const lateFailurePlan = {buildings:[lateFailureBuilding],materials:{}}, lateFailureKit=modelKit('late_failed_chair');
+const lateFailureTwin = buildTwin(lateFailurePlan,lateFailureKit,'high');
+await flush();await advance(15000);await lateFailureTwin.ready;
+assert.equal(lateFailureTwin.buildings.get('house').model.degraded,false);
+failLate(new Error('offline after deadline'));await flush();
+assert.equal(lateFailureTwin.buildings.get('house').model.degraded,true,'a real failure after readiness still invalidates reuse');
+GLTFLoader.prototype.loadAsync = async () => ({scene:cube()});
+const lateRecovered = buildTwin(lateFailurePlan,lateFailureKit,'high',{previous:lateFailureTwin});await lateRecovered.ready;
+assert.deepEqual(lateRecovered.buildingsRebuilt,['house']);assert.equal(lateRecovered.buildings.get('house').model.degraded,false);
+lib.disposeObject(lateFailureTwin.root);lib.disposeObject(lateRecovered.root);
+ok('actual model failure after its readiness timeout invalidates reuse and retries');
+
+for (const household of [false,true]) {
+ const asset=household?'late_failed_household':'late_failed_builtin';
+ const lateKit=household?{materials:{floor:{id:asset}},manifest:{[asset]:{household:true,revision:1,
+  params:{},maps:{base_color:'materials/'+asset+'/base.png'}}}}:materialKit(asset);
+ const lateBuilding={...building,rooms:[{...building.rooms[0],floor_material:undefined}]};
+ const lateTwin=buildTwin({buildings:[lateBuilding],materials:{}},lateKit,'high');
+ const lateRequests=takeRequests();assert.ok(lateRequests.length);
+ await flush();await advance(15000);await lateTwin.ready;
+ const owner=lateTwin.buildings.get('house').model;assert.equal(owner.degraded,false);
+ lateRequests.forEach(r=>r.error());await flush();assert.equal(owner.degraded,true);
+ lib.disposeObject(lateTwin.root);
+ ok((household?'household':'builtin')+' image failure after readiness timeout marks its owner degraded');
+}
+
+globalThis.fetch = async () => {throw new Error('metadata offline');};
+let metadataFailures=0;
+assert.equal(await lib.loadModel('import-unavailable',{},undefined,{onFailure:()=>metadataFailures++}),null);
+assert.equal(metadataFailures,1,'metadata fetch rejection signals asset failure');
+globalThis.fetch = async () => ({ok:true,json:async()=>[{id:'import-unavailable',model:'model.glb',files:{'model.glb':''}}]});
+assert.ok((await lib.loadModel('import-unavailable',{},undefined,{onFailure:()=>metadataFailures++})).isGroup);
+assert.equal(metadataFailures,1,'metadata recovery retries rather than caching its failure');
+ok('import metadata failures notify owners and allow a later retry');
+
+for (const tier of ['low','high']) {
+ const id='import-failed-lod-'+tier;
+ lib.rememberImport({id,model:'model.glb',files:{'model.glb':'','lod2.glb':''},lods:[{name:'lod2.glb'}]});
+ let failures=0;
+ GLTFLoader.prototype.loadAsync = async url => {if(url.endsWith('lod2.glb'))throw new Error('LOD offline');return {scene:cube()};};
+ await lib.loadModel(id,{},undefined,{tier,onFailure:()=>failures++});
+ assert.equal(failures,1,'failure callback survives recursive '+tier+' LOD calls');
+}
+ok('LOD failure notifications propagate through both recursive tier paths');
+
+for (const metadataOnly of [false,true]) {
+ const asset=metadataOnly?'metadata_red_chair':'swap_red_chair',nextAsset='swap_blue_chair';
+ const swapKit={manifest:{...modelKit(asset).manifest,...modelKit(nextAsset).manifest}};
+ GLTFLoader.prototype.loadAsync=async url=>{
+  const model=cube();model.children[0].material.color.set(/blue|replacement/.test(url)?'#0000ff':'#ff0000');
+  return {scene:model};
+ };
+ const swapBuilding={...itemBuilding,items:[{...itemBuilding.items[0],asset}]};
+ const swapPlan={buildings:[swapBuilding],materials:{}};
+ const old=buildTwin(swapPlan,swapKit,'high');await old.ready;
+ const oldMaterial=old.pieces.get('house:chair')[0].material;assert.equal(oldMaterial.color.getHexString(),'ff0000');
+ const changed=structuredClone(swapPlan);
+ if(metadataOnly)swapKit.manifest[asset]={kind:'model',model:'replacement.gltf',files:{'replacement.gltf':''},revision:2};
+ else changed.buildings[0].items[0].asset=nextAsset;
+ const next=buildTwin(changed,swapKit,'high',{previous:old});await next.ready;
+ assert.deepEqual(next.buildingsRebuilt,['house']);
+ const nextMaterial=next.pieces.get('house:chair')[0].material;
+ assert.notEqual(nextMaterial,oldMaterial);assert.equal(nextMaterial.color.getHexString(),'0000ff','replacement geometry owns its replacement asset material');
+ const ceilingEdit=structuredClone(changed);ceilingEdit.buildings[0].levels[0].ceiling++;
+ const stable=buildTwin(ceilingEdit,swapKit,'high',{previous:next});await stable.ready;
+ assert.deepEqual(stable.buildingsRebuilt,['house']);
+ assert.equal(stable.pieces.get('house:chair')[0].material,nextMaterial,'unchanged model asset retains its compiled material');
+ releasePrevious(old,next);releasePrevious(next,stable);lib.disposeObject(stable.root);
+ ok((metadataOnly?'changed model metadata':'changed item asset')+' refreshes imported materials while unchanged assets retain them');
+}
 console.log(`${passed}/${passed} passed`);
 
 """

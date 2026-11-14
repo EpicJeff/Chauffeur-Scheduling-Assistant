@@ -7675,7 +7675,9 @@ def house_live(request: Request):
         markers.append({**row, 'building': None, 'level': None, 'room': None,
                         'at': [*at, height + (pit.get('elevation') or 0)], 'placed': True})
     # A parent may hide things from the house view right from a panel (the edit is parent-only).
-    return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices,
+    from services import twin_fixtures
+    return {**twin_fixtures.live_layout(model),
+            'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices,
             'can_edit_house': getattr(who, 'role', None) == 'parent'}
 
 
@@ -7882,10 +7884,82 @@ def _material_call(operation, *args):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _material_write(operation, *args):
+    result = _material_call(operation, *args)
+    # Existing /api/stream update -> chf-server-update in connected pages.
+    global LAST_UPDATE_TIME
+    LAST_UPDATE_TIME = time.time()
+    return result
+
+
 @app.get('/api/house/materials')
 def house_materials():
     from services import twin_materials
     return twin_materials.catalogue()
+
+
+@app.get('/api/house/twin/materials/manifest')
+def house_material_manifest():
+    from services import twin_materials
+    return {'revision': twin_materials.catalogue(True)['revision'],
+            'entries': {mid: entry for mid, entry in twin_materials.page_manifest().items()
+                        if entry.get('household')}}
+
+
+def _material_sources_published():
+    # A finished download publishes a material: same /api/stream update as other writes.
+    global LAST_UPDATE_TIME
+    LAST_UPDATE_TIME = time.time()
+
+
+from services import twin_material_sources as _material_sources  # noqa: E402
+_material_sources.on_published = _material_sources_published
+
+
+def _material_source_call(operation, *args):
+    from services import twin_material_sources as sources
+    try:
+        return operation(*args)
+    except sources.UnknownSource as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except sources.Unreachable as exc:
+        raise HTTPException(status_code=503, detail=sources.UNREACHABLE) from exc
+    except sources.Busy as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get('/api/house/materials/sources/{source}')
+def house_material_source_search(source: str, q: str = '', category: str = ''):
+    from services import twin_material_sources as sources
+    return {'results': _material_source_call(sources.search, source, q, category or None)}
+
+
+@app.get('/api/house/materials/sources/{source}/{source_id}/thumb')
+def house_material_source_thumb(source: str, source_id: str):
+    from services import twin_material_sources as sources
+    data = _material_source_call(sources.thumbnail, source, source_id)
+    return Response(content=data, media_type='image/png')
+
+
+@app.post('/api/house/materials/sources/{source}/{source_id}/download')
+def house_material_source_download(source: str, source_id: str, request: Request,
+                                   body: dict = Body(default={})):
+    from services import twin_material_sources as sources
+    resolution = body.get('resolution') if isinstance(body, dict) else None
+    job_id = _material_source_call(sources.start_download, source, source_id, resolution,
+                                   _acting_id(request, None))
+    return {'job_id': job_id}
+
+
+@app.get('/api/house/materials/jobs/{job_id}')
+def house_material_job(job_id: str):
+    from services import twin_material_sources as sources
+    try:
+        return sources.job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail='No such download.') from exc
 
 
 @app.get('/api/house/materials/{id}')
@@ -7907,19 +7981,19 @@ def house_material_file(id: str, file: str):
 @app.post('/api/house/materials')
 def house_material_create(request: Request, body: dict = Body(default={})):
     from services import twin_materials
-    return _material_call(twin_materials.create, body, _acting_id(request, None))
+    return _material_write(twin_materials.create, body, _acting_id(request, None))
 
 
 @app.patch('/api/house/materials/{id}')
 def house_material_update(id: str, request: Request, body: dict = Body(default={})):
     from services import twin_materials
-    return _material_call(twin_materials.update, id, body, _acting_id(request, None))
+    return _material_write(twin_materials.update, id, body, _acting_id(request, None))
 
 
 @app.post('/api/house/materials/{id}/duplicate')
 def house_material_duplicate(id: str, request: Request):
     from services import twin_materials
-    return _material_call(twin_materials.duplicate, id, _acting_id(request, None))
+    return _material_write(twin_materials.duplicate, id, _acting_id(request, None))
 
 
 @app.post('/api/house/materials/{id}/maps/{slot}')
@@ -7930,38 +8004,38 @@ async def house_material_map(id: str, slot: str, request: Request):
         if len(data) + len(chunk) > twin_materials.MAX_INPUT_BYTES:
             raise HTTPException(status_code=400, detail='Each image must be at most 40 MB.')
         data.extend(chunk)
-    return await asyncio.to_thread(_material_call, twin_materials.set_image, id, slot,
+    return await asyncio.to_thread(_material_write, twin_materials.set_image, id, slot,
                                    bytes(data), _acting_id(request, None))
 
 
 @app.delete('/api/house/materials/{id}/maps/{slot}')
 def house_material_map_clear(id: str, slot: str, request: Request):
     from services import twin_materials
-    return _material_call(twin_materials.update, id, {'maps': {slot: None}}, _acting_id(request, None))
+    return _material_write(twin_materials.update, id, {'maps': {slot: None}}, _acting_id(request, None))
 
 
 @app.post('/api/house/materials/{id}/undo')
 def house_material_undo(id: str):
     from services import twin_materials
-    return _material_call(twin_materials.undo, id)
+    return _material_write(twin_materials.undo, id)
 
 
 @app.post('/api/house/materials/{id}/redo')
 def house_material_redo(id: str):
     from services import twin_materials
-    return _material_call(twin_materials.redo, id)
+    return _material_write(twin_materials.redo, id)
 
 
 @app.post('/api/house/materials/{id}/reset')
 def house_material_reset(id: str, request: Request):
     from services import twin_materials
-    return _material_call(twin_materials.reset_to_source, id, _acting_id(request, None))
+    return _material_write(twin_materials.reset_to_source, id, _acting_id(request, None))
 
 
 @app.delete('/api/house/materials/{id}')
 def house_material_delete(id: str, request: Request):
     from services import twin_materials
-    return _material_call(twin_materials.delete, id, _acting_id(request, None))
+    return _material_write(twin_materials.delete, id, _acting_id(request, None))
 
 
 @app.get("/api/house/twin/library/{asset_id}/{name:path}")

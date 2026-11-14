@@ -493,7 +493,8 @@ MORE_OPS = ('add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update
             'set_material', 'accept_proposal', 'dismiss_proposal',
             'move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape', 'make_yard_room', 'place_device', 'unplace_device', 'set_ha_display',
             'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation', 'set_porch_foundation',
-            'add_pool_feature', 'update_pool_feature', 'delete_pool_feature')
+            'add_pool_feature', 'update_pool_feature', 'delete_pool_feature',
+            'add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output')
 
 
 def _item_scale(value):
@@ -1278,6 +1279,15 @@ def solar_clear(building, previous):
 
 
 def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None) -> tuple[dict, str]:
+    from services import twin_fixtures
+    result, words = _apply(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized)
+    if result.get('light_fixtures'):
+        twin_fixtures.follow_host_moves(_normalized[0] if _normalized is not None else model, result)
+        twin_fixtures.normalize(result, [])
+    return result, words
+
+
+def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None) -> tuple[dict, str]:
     """Return an edited model and plain words, leaving the input untouched."""
     if not isinstance(op, dict):
         raise Refused('Choose an operation.')
@@ -1289,6 +1299,13 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normali
     # save() also needs the normalized pre-edit model for its fix log. Reuse
     # that exact input's result, but keep our mutable working copy private.
     model, notes = twin_model.normalize(model) if _normalized is None else deepcopy(_normalized)
+    from services import twin_fixtures
+    if kind in twin_fixtures.OPS:
+        try:
+            words = twin_fixtures.apply_op(model, op)
+        except ValueError as exc:
+            raise Refused(str(exc)) from exc
+        return model, words
     if kind == 'set_porch_foundation':
         from services import twin_porches
         building = _find(model, 'buildings', op.get('building'))
