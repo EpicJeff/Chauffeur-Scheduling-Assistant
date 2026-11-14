@@ -10,16 +10,27 @@ gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0); }`;
 const atlasVertex = `attribute vec2 bakeUV; varying vec3 wp; varying vec3 wn;
 void main() { wp = (modelMatrix * vec4(position, 1.0)).xyz;
 wn = normalize(mat3(modelMatrix) * normal); gl_Position = vec4(bakeUV * 2.0 - 1.0, 0.0, 1.0); }`;
+// A shadowmask: each texel stores how much of the light's emitter it sees (0..1, soft over the
+// emitter's jittered samples). The falloff, N.L and colour are the live light's, computed per
+// pixel in the material (lightmap_material.js), so the bake carries no falloff or shading, and
+// a normal map and a batten's own normal still shade (2026-11-14). G carries the texel's
+// shadowed irradiance / 16 for the room fill only; it is never stored.
 const pointFragment = `uniform samplerCube depthCube; uniform vec3 source; uniform float reach;
 uniform float farPlane; uniform float weight; varying vec3 wp; varying vec3 wn;
 void main() { vec3 delta = source - wp; float d = length(delta);
 if (d >= reach) discard;
-float stored = textureCube(depthCube, -delta).r * farPlane;
-float visibility = step(d - 0.025, stored);
+vec3 n = normalize(wn);
+// Normal offset: a cube texel spans more depth at distance and at grazing angles, so the
+// receiver steps off its own surface by about a texel before the depth test (no acne). At
+// most 3 cm: a batten stands 2.7 cm proud, and a lift past it would erase the contact shadow
+// it casts on the wall beside it (and under shelves and trim).
+vec3 lifted = wp + n * min(0.03, 0.005 + 0.004 * d);
+vec3 toward = source - lifted; float reached = length(toward);
+float stored = textureCube(depthCube, -toward).r * farPlane;
+float visibility = step(reached - 0.02, stored);
 float attenuation = pow(clamp(1.0 - pow(d / reach, 4.0), 0.0, 1.0), 2.0) / max(d*d, 0.01);
-float irradiance = ${CANDELA.toFixed(1)} * attenuation * max(0.0, dot(normalize(wn), normalize(delta)));
-// The byte stores irradiance / 16; runtime restores it before Lambert's 1/pi.
-gl_FragColor = vec4(irradiance * visibility * weight / 16.0, 0.0, 0.0, 1.0); }`;
+float irradiance = ${CANDELA.toFixed(1)} * attenuation * max(0.0, dot(n, normalize(delta)));
+gl_FragColor = vec4(visibility * weight, irradiance * visibility * weight / 16.0, 0.0, 1.0); }`;
 function proxies(charts, size, layout) {
   const scene = new THREE.Scene(), groups = new Map();
   for (const c of charts) {
@@ -118,7 +129,7 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
     const bytes = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) bytes[i] = Math.round(Math.min(1, Math.max(0, THREE.DataUtils.fromHalfFloat(raw[i]))) * 255);
     filterCharts(bytes, charts, size);
-    if (!deferBounce) { addRoomBounce(bytes, charts, size); dilateCharts(bytes, charts, size); }
+    if (!deferBounce) dilateCharts(bytes, charts, size);
     return bytes;
   } finally {
     restore();
@@ -178,30 +189,25 @@ export function dilateCharts(bytes, charts, size) {
   return bytes;
 }
 
-export function addRoomBounce(bytes, charts, size) {
-  addRoomBounceAcrossPages([{bytes, charts}], size);
-}
-
-export function addRoomBounceAcrossPages(pages, size) {
-  // Each reached room gets fill proportional to its own direct energy. A
-  // shadowed room gets none. Outdoors retains direct shadows, without fill.
-  const rooms = new Set(pages.flatMap(p => p.charts.filter(c => !c.outdoor).map(c => c.room)));
+// The room fill: each reached room gets a uniform term proportional to its own direct
+// energy (albedo-weighted shadowed irradiance, read from G), in irradiance units, which the
+// material adds to that light's term under its live tint. A room the light never reaches (all
+// texels shadowed) gets none; outdoors keeps its shadows without fill.
+export function roomFills(pages, size) {
+  const rooms = new Set(pages.flatMap(p => p.charts.filter(c => !c.outdoor).map(c => c.room))), fills = {};
   for (const room of rooms) {
-    const mine = pages.flatMap(p => p.charts.filter(c => c.room === room).map(c => ({c, bytes:p.bytes})));
+    const mine = pages.flatMap(p => p.charts.filter(c => c.room === room).map(c => ({ c, bytes: p.bytes })));
     let energy = 0, albedo = 0, count = 0;
-    for (const {c, bytes} of mine) {
+    for (const { c, bytes } of mine) {
       const color = c.mesh.material.color, reflectance = color ? (color.r + color.g + color.b) / 3 : .5;
       for (let y = c.rect.y; y < c.rect.y + c.rect.h; y++) for (let x = c.rect.x; x < c.rect.x + c.rect.w; x++) {
         const p = (y * size + x) * 4;
         if (!bytes[p + 3]) continue;
-        const v = bytes[p]; energy += v; albedo += v * reflectance; count++;
+        const v = bytes[p + 1]; energy += v; albedo += v * reflectance; count++;
       }
     }
-    const bounce = count ? Math.min(4, albedo / count * .08) : 0;
-    if (energy > 0) for (const {c, bytes} of mine)
-      for (let y = c.rect.y; y < c.rect.y + c.rect.h; y++) for (let x = c.rect.x; x < c.rect.x + c.rect.w; x++) {
-        const p = (y * size + x) * 4;
-        if (bytes[p + 3]) bytes[p] = Math.min(255, Math.round(bytes[p] + bounce));
-      }
+    // G bytes are irradiance / 16 * 255; the fill is what four such bytes carried at most.
+    if (energy > 0 && count) fills[room] = Math.min(4, albedo / count * .08) * 16 / 255;
   }
+  return fills;
 }

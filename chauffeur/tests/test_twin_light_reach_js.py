@@ -14,8 +14,8 @@ DRIVER += B.DRIVER[B.DRIVER.index('// --- the fake bake server'):B.DRIVER.index(
 DRIVER += r"""
 const { reachLights, lightSource } = await import(file('static/twin/bake/reach.js'));
 const { assignChannels, CHANNEL_FALLBACK } = await import(file('static/twin/bake/atlas.js'));
-const { chartLightmapUniforms, chartAddress, setLightTint, patchLightmaps } = await import(file('static/twin/bake/lightmap_material.js'));
-const { occluders, addRoomBounce, addRoomBounceAcrossPages, renderPage, filterCharts, dilateCharts } = await import(file('static/twin/bake/bake_pass.js'));
+const { chartLightmapUniforms, chartAddress, setLightTint, patchLightmaps, setLightSource, setChartFill } = await import(file('static/twin/bake/lightmap_material.js'));
+const { occluders, roomFills, renderPage, filterCharts, dilateCharts } = await import(file('static/twin/bake/bake_pass.js'));
 const FT = gen.FT, options = {room: {density: 2, page: 128, gutter: 2}};
 function house(wall = false, wallX = 10, remote = 100) {
   const plan = { buildings: [{ id: 'b', position: [0,0], levels: [{id:'L1', elevation:0, ceiling:10}],
@@ -72,7 +72,9 @@ await check('bake_entry_point_shadows_far_side_with_zero_room_fill', async () =>
   renderer.readRenderTargetPixelsAsync=async (rt,x,y,w,h,raw)=>{
     assert.ok(depthScene?.children.length && receiverScene?.children.length);
     const shader=receiverScene.overrideMaterial;
-    assert.ok(shader.fragmentShader.includes('step(d - 0.025, stored)'));
+    // A shadowmask: the receiver steps off its surface along its normal, then compares depth.
+    assert.ok(shader.fragmentShader.includes('vec3 lifted = wp + n * min(0.03, 0.005 + 0.004 * d)'));
+    assert.ok(shader.fragmentShader.includes('step(reached - 0.02, stored)'));
     assert.ok(shader.fragmentShader.includes('if (d >= reach) discard'));
     const point=new THREE.Vector3(14,0,-5).multiplyScalar(FT), source=shader.uniforms.source.value;
     const ray=new THREE.Raycaster(source,point.clone().sub(source).normalize(),.001,source.distanceTo(point)-.025);
@@ -83,7 +85,8 @@ await check('bake_entry_point_shadows_far_side_with_zero_room_fill', async () =>
   };
   const pixels=await renderPage({scene:ctx.root,plan:ctx.plan},renderer,charts,options.room.page,lamp,options,ctx.atlas);
   assert.ok(charts.length);
-  assert.equal(pixels.some((v,i)=>i%4===0&&v>0),false,'solid wall leaves the far-side room direct and bounced texels zero');
+  assert.equal(pixels.some((v,i)=>i%4===0&&v>0),false,'solid wall leaves the far-side room unseen (visibility zero)');
+  assert.deepEqual(roomFills([{bytes:pixels,charts}],options.room.page),{},'and with no direct energy, no room fill');
 });
 await check('glazed_opening_reaches_outdoor_ground', () => {
   const ctx=house(), l=reached(ctx);
@@ -345,23 +348,44 @@ await check('shared_channel_uses_the_correct_light_tint_at_each_chart', () => {
   assert.ok(shader.vertexShader.includes('vLmRoom = lmRoom'));
   assert.ok(shader.fragmentShader.includes('lmOwnerTint(mod(region0.w, 4096.0))'));
 });
-await check('bounce_uses_each_rooms_direct_energy_and_respects_range_mask', () => {
+await check('light_sources_and_fills_land_where_the_shader_reads_them', () => {
+  // No sampler beyond the tints, the regions and the banks: a light's position and reach are
+  // lmTints rows [R, 2R), its shape rows [2R, 3R) (R = 1 in chart mode), found by owner index
+  // (lmOwnerSlot: owner - 1); a chart's fill is lmRegions' second half at its lmAddress.
+  const lights=[{device:'near'},{device:'far'}], charts=[0,1,2].map(id=>({id,page:0,rect:{x:id*8,y:0,w:4,h:4},sourceRegion:{x:0,y:0,w:4,h:4}}));
+  const packed={banks:[{charts},{charts}],slots:{near:{assignments:[{chart:2,bank:1,channel:1}]},far:{assignments:[{chart:0,bank:0,channel:0}]}}};
+  const u=chartLightmapUniforms(3,packed,lights,128,[[0],[0]]);
+  assert.deepEqual(Object.keys(u).filter(k=>u[k].value?.isTexture).sort(),['lmRegions','lmTints'],'two data textures, as before the shadowmask');
+  setLightSource(u,0,1,new THREE.Vector3(1,2,3),4);
+  const T=u.lmTints.value.image;
+  assert.equal(T.height,3,'tint, source and shape rows');
+  assert.deepEqual([...T.data.slice((T.width+1)*4,(T.width+1)*4+4)],[1,2,3,4],'the far light: its slot in row 1 holds position and reach');
+  assert.deepEqual([...T.data.slice((2*T.width+1)*4,(2*T.width+1)*4+4)],[0,0,0,0],'and row 2 its shape: a point');
+  const [x,y]=chartAddress(2,1,2), R=u.lmRegions.value.image, owner=R.data[(y*1024+x)*4+3];
+  assert.equal(Math.floor(owner/4096)-1,0,'chart 2 bank 1 channel b is owned by the near light (index 0)');
+  setChartFill(u,2,1,2,1,.25);
+  assert.equal(R.data[((y+R.height/2)*R.width+x)*4+1],.25,'its fill sits below its region, in channel b');
+  assert.equal(R.data[(y*R.width+x)*4+3],owner,'and leaves the region itself alone');
+});
+await check('room_fill_follows_each_rooms_direct_energy_and_leaves_the_pages_alone', () => {
+  // The fill is computed from G (shadowed irradiance / 16) and travels in the manifest; the
+  // stored pages are visibility only, so no texel changes.
   const pixels=new Uint8Array(8*8*4), material={color:new THREE.Color(1,1,1)};
   const charts=[0,1,2].map(room=>({room,outdoor:room===2,mesh:{material},rect:{x:room*2,y:0,w:2,h:2}}));
   for(const c of charts) for(let y=0;y<2;y++) for(let x=c.rect.x;x<c.rect.x+2;x++) {
-    const p=(y*8+x)*4; pixels[p]=c.room===1?0:100; pixels[p+3]=255;
+    const p=(y*8+x)*4; pixels[p]=255; pixels[p+1]=c.room===1?0:100; pixels[p+3]=255;
   }
-  pixels[4]=0; pixels[7]=0; // Out of range, inside the same receiving chart.
-  addRoomBounce(pixels,charts,8);
-  assert.ok(pixels[0]>100); assert.equal(pixels[4],0);
-  assert.equal(pixels[2*4],0,'no direct energy means no room fill');
-  assert.equal(pixels[4*4],100,'outdoor shadows receive no uniform bounce');
+  const before=pixels.slice(), fills=roomFills([{bytes:pixels,charts}],8);
+  assert.deepEqual(pixels,before,'the pages are untouched');
+  assert.ok(Math.abs(fills[0]-Math.min(4,100*.08)*16/255)<1e-9,`room 0 fill from its own energy: ${fills[0]}`);
+  assert.equal(fills[1],undefined,'no direct energy means no room fill');
+  assert.equal(fills[2],undefined,'outdoor shadows receive no uniform fill');
 });
-await check('room_bounce_is_shared_across_sparse_pages', () => {
-  const a=new Uint8Array([120,0,0,255]),b=new Uint8Array([0,0,0,255]);
+await check('room_fill_is_shared_across_sparse_pages', () => {
+  const a=new Uint8Array([255,40,0,255]),b=new Uint8Array([0,0,0,255]);
   const chart={room:0,mesh:{material:{color:new THREE.Color(1,1,1)}},rect:{x:0,y:0,w:1,h:1}};
-  addRoomBounceAcrossPages([{bytes:a,charts:[chart]},{bytes:b,charts:[chart]}],1);
-  assert.ok(a[0]>120&&b[0]>0,'room energy crosses page boundaries without crossing room boundaries');
+  const both=roomFills([{bytes:a,charts:[chart]},{bytes:b,charts:[chart]}],1), one=roomFills([{bytes:a,charts:[chart]}],1);
+  assert.ok(both[0]>0&&both[0]<one[0],'room energy averages across page boundaries without crossing room boundaries');
 });
 console.log(`${passed}/${ran} passed`); process.exit(passed===ran?0:1);
 """
@@ -565,7 +589,7 @@ def run():
             if result.returncode:
                 print(result.stderr[-4000:], end='')
                 return result.returncode
-            print('20/20 passed (18 reach checks + worker/timing + harness rebake integration)')
+            print('21/21 passed (19 reach checks + worker/timing + harness rebake integration)')
         return 0
 
 

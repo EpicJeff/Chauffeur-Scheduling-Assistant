@@ -408,9 +408,11 @@ function shelves(items, width, height, gutter, ordered = null) {
 }
 
 // Texels per foot by surface: rooms at the layout density; a building's outside (siding,
-// battens, trim, roofs) at up to 4/ft, so night lights read on it (user, 2026-11-14: "super
-// dark lines on the batten strips"); yard and ground at 1/ft. Every chart fits one page.
-export const BUILDING_OUTDOOR_DENSITY = 4, YARD_DENSITY = 1;
+// battens, trim, roofs) at up to 2/ft; yard and ground at 1/ft. Every chart fits one page.
+// The pages hold visibility only (a shadowmask): falloff and shading are per pixel, so 2/ft
+// outside looks as 4/ft did on the pool house gable and holds one page fewer a bank
+// (2026-11-14; 4/ft was v2.499.861's answer to the dark batten lines under irradiance).
+export const BUILDING_OUTDOOR_DENSITY = 2, YARD_DENSITY = 1;
 // The share of a page one outdoor room may claim before its tile continues in another room.
 const OUTDOOR_FILL = .45;
 function baseDensity(c, o) {
@@ -744,7 +746,7 @@ export function buildAtlas(group, plan, { room } = {}) {
     let buildingId;
     for (let p = mesh; p && !buildingId; p = p.parent) buildingId = p.userData.buildingId;
     const building = data.buildings.has(buildingId);
-    // A building's outside groups by 16 ft tiles: at 4 texels/ft that is the 64-texel span a
+    // A building's outside groups by 32 ft tiles: at 2 texels/ft that is the 64-texel span a
     // 64 ft yard tile has at 1/ft, so one region never outgrows a page.
     if (!state.room) state.room = chartsFor(mesh, state.owners, building ? 64 / BUILDING_OUTDOOR_DENSITY : 64);
     for (const c of state.room) raw.push({ ...c, outdoor: c.room < 0, building, order: raw.length });
@@ -759,7 +761,7 @@ export function buildAtlas(group, plan, { room } = {}) {
   // Thin charts become proxies of the surface they sit on; only hosts take atlas space.
   const { hosts, proxies } = assignProxies(raw, ro);
   // Outdoor charts group by tile. A tile whose charts would not fit one page (big faces land
-  // by their centre, so a 16 ft tile can hold a whole roof plane) continues in a next room.
+  // by their centre, so a tile can hold a whole roof plane) continues in a next room.
   const outdoors = new Map(), sizes = scaled(hosts, ro), budget = OUTDOOR_FILL * ro.page * ro.page;
   hosts.forEach((c, i) => {
     if (c.room >= 0) return;

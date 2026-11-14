@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { base, copyMaterialParams } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
-import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, chartLookupGLSL, patchLightmaps, setLightTint, pickTranscode, lightSwizzle } from './lightmap_material.js';
+import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, patchLightmaps, setLightTint, pickTranscode,
+  setLightSource, setChartFill, setRoomFill, clearFills, roomRegions, patchWindowGlow } from './lightmap_material.js';
+import { lightSource } from './reach.js';
 import { createBaker, bakeLayout } from './baker.js';
 import { mayBake } from './bake_lock.js';
 import { workerCodec } from './worker_codec.js';
@@ -156,8 +158,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     }
   }
   function regions() {
-    const width = Math.max(1, packed.banks.length), height = Math.max(1, atlas.room.rooms.length);
-    const t = new THREE.DataTexture(new Float32Array(width * height * 4), width, height, THREE.RGBAFormat, THREE.FloatType);
+    // A column per bank, a row per room; the fills sit below the rooms (lightmap_material.js).
+    const width = Math.max(1, packed.banks.length), t = roomRegions(packed.banks.length, atlas.room.rooms.length);
     packed.banks.forEach((bank, b) => bank.rooms.forEach(({ room, sourceRegion, region }) => {
       t.image.data.set([(region.x - sourceRegion.x) / layout.room.page,
         (region.y - sourceRegion.y) / layout.room.page, Math.max(0, layers[b].indexOf(region.page)), 0], (room * width + b) * 4);
@@ -256,29 +258,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       const original = mesh.material, material = original.clone(); mesh.material = material;
       view.prepareViewingMaterial?.(original, material);
       clones.push({ mesh, original, material });
-      const banks = pages.banks;
-      material.onBeforeCompile = shader => {
-        Object.assign(shader.uniforms, uniforms);
-        banks.forEach((t, b) => { shader.uniforms[`glowBank${b}`] = { value: t }; });
-        shader.vertexShader = 'attribute float glowRoom; attribute vec2 glowUV; varying float vGlowRoom; varying vec2 vGlowUV;\n' + shader.vertexShader;
-        shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
-vGlowRoom = glowRoom; vGlowUV = glowUV;`);
-        shader.fragmentShader = `uniform sampler2D lmTints; uniform sampler2D lmRegions;
-varying float vGlowRoom; varying vec2 vGlowUV;
-${banks.map((t, b) => `uniform highp sampler2DArray glowBank${b};`).join('\n')}
-${uniforms.lmChartMode ? chartLookupGLSL(banks.length) : ''}
-` + shader.fragmentShader;
-        const sum = banks.map((t, b) => `
-vec4 region${b} = texelFetch(lmRegions, ${uniforms.lmChartMode ? `lmAddress(${b}, int(vGlowRoom + 0.5))` : `ivec2(${b}, int(vGlowRoom + 0.5))`}, 0);
-vec4 value${b} = textureLod(glowBank${b}, vec3(vGlowUV + region${b}.xy, region${b}.z), 0.0);
-vec3 tint${b}a = ${uniforms.lmChartMode ? `lmOwnerTint(mod(region${b}.w, 4096.0))` : `texelFetch(lmTints, ivec2(${2*b}, int(vGlowRoom + 0.5)), 0).rgb`};
-vec3 tint${b}b = ${uniforms.lmChartMode ? `lmOwnerTint(floor(region${b}.w / 4096.0))` : `texelFetch(lmTints, ivec2(${2*b+1}, int(vGlowRoom + 0.5)), 0).rgb`};
-totalEmissiveRadiance += (value${b}.r * tint${b}a + value${b}.${lightSwizzle(t.format)[1]} * tint${b}b) * 8.0;
-`).join('\n');
-        shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-if (vGlowRoom > -0.5) { ${sum} }`);
-      };
-      material.customProgramCacheKey = () => `twin-window-glow-4-${banks.map(t => lightSwizzle(t.format)).join(',')}`;
+      patchWindowGlow(material, pages, uniforms);
     });
   }
   // The light list's layout: banks, layers, tints and the blank arrays it draws from.
@@ -286,7 +266,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
     unpatch();
     for (const t of textures) t.dispose();
     textures.clear();
-    if (uniforms) { uniforms.lmTints.value.dispose(); uniforms.lmRegions.value.dispose(); }
+    if (uniforms) for (const name of ['lmTints', 'lmRegions']) uniforms[name]?.value.dispose();
     lights = list; lightsKey = JSON.stringify(list);
     packed = bakeLayout(atlas, layout, lights, history);
     if (packed.banks.some(b => b.chartPacking)) applyChartIndices(atlas);
@@ -305,9 +285,30 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       banks: packed.banks.map((b, i) => layers[i].length ? blankArray(layers[i].length, roomFormat, layout.room.page)
         : blankArray(1, roomFormat, 4)) };
     pages.banks.forEach(t => textures.add(t));
+    // Each slot's light, where its shadowmask was rendered from (the shader's falloff and N.L).
+    lights.forEach((l, index) => {
+      const s = packed.slots[l.device]; if (!s) return;
+      const { source, range } = lightSource(view.plan, l);
+      if (uniforms.lmChartMode) setLightSource(uniforms, 0, index, source, range);
+      else for (const room of s.receivers || [s.room]) setLightSource(uniforms, room, s.bank * 2 + s.channel, source, range);
+    });
     etags.clear(); present.clear(); manifestText = null; fresh.clear();
     stale = lights.map(l => l.device);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
+  }
+  // The room fill each baked light published with its pages (baker.js), onto the slots
+  // that light owns. A light with no fill (none reached its room) adds none.
+  function fills(m) {
+    clearFills(uniforms);
+    const banks = Math.max(1, packed.banks.length);
+    for (const l of lights) {
+      const fill = m.lights[l.device]?.fill, s = packed.slots[l.device];
+      if (!fill || !s) continue;
+      if (uniforms.lmChartMode) for (const a of s.assignments || []) {
+        const value = fill[atlas.room.charts[a.chart]?.room];
+        if (value) setChartFill(uniforms, a.chart, a.bank, banks, a.channel, value);
+      } else for (const room of s.receivers || [s.room]) if (fill[room]) setRoomFill(uniforms, room, s.bank * 2 + s.channel, fill[room]);
+    }
   }
   function locate(p) {
     for (let i = 0; i < layers.length; i++) {
@@ -374,6 +375,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
         JSON.stringify(stored.pages) === JSON.stringify(e.pages) && e.pages.every(p => present.has(p))) fresh.add(l.device);
     }
     stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
+    fills(m);
     if (present.size) patch();
     for (const id of previous) if (!fresh.has(id)) light(id, [0, 0, 0], 0);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
@@ -487,7 +489,7 @@ if (vGlowRoom > -0.5) { ${sum} }`);
       controls.removeEventListener('start', moved); controls.removeEventListener('change', moved); controls.removeEventListener('end', moved);
       unpatch();
       for (const t of textures) t.dispose();
-      if (uniforms) { uniforms.lmTints.value.dispose(); uniforms.lmRegions.value.dispose(); }
+      if (uniforms) for (const name of ['lmTints', 'lmRegions']) uniforms[name]?.value.dispose();
     },
   };
   view.bake = controller;

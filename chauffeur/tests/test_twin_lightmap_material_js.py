@@ -362,7 +362,7 @@ check('material_leaves_ambient_alone_without_sky_uniforms', async () => {
   assert.ok(!Object.hasOwn(shader.uniforms, 'lmSky'), 'no lmSky sampler');
   assert.ok(!/skyTint|lmSky|uv2/.test(shader.vertexShader + shader.fragmentShader), 'no sky shader terms');
   assert.ok(!/irradiance\s*\*=|iblIrradiance\s*\*=/.test(shader.fragmentShader), 'three ambient is unmodified');
-  assert.ok(material.customProgramCacheKey().includes('|lm-4|'), 'new shader program cache key');
+  assert.ok(material.customProgramCacheKey().includes('|lm-7-shadowmask-direct|'), 'new shader program cache key (pages are a shadowmask, lit through RE_Direct)');
   assert.ok(shader.fragmentShader.includes('texelFetch(lmTints') && !shader.fragmentShader.includes('light.room'),
     'group tints can represent any light reaching that group, including neighbours and outdoor tiles');
 });
@@ -372,7 +372,9 @@ check('fixed_uniforms_never_recompile', async () => {
   const rooms = 3, slots = 4, uniforms = M.lightmapUniforms(rooms, slots);
   const tints = uniforms.lmTints?.value;
   assert.ok(tints && tints.isDataTexture, 'uniforms.lmTints holds a DataTexture (Ruling B2: tints never live in per-light uniforms)');
-  assert.equal(tints.image.width, slots, 'one texel column per slot'); assert.equal(tints.image.height, rooms, 'one row per room');
+  assert.equal(tints.image.width, slots, 'one texel column per slot');
+  // Rows per room for the tint, then the same rows again for each light's source and shape.
+  assert.equal(tints.image.height, 3 * rooms, 'one tint row per room, then source and shape rows');
   const materials = [new THREE.MeshStandardMaterial({ name: 'floor' }), new THREE.MeshStandardMaterial({ name: 'interior_wall' })];
   const pages = { banks: [arrayPage(THREE.RG11_EAC_Format, 1), arrayPage(THREE.RG11_EAC_Format, 1)] };
   M.patchLightmaps(materials, pages, uniforms);
