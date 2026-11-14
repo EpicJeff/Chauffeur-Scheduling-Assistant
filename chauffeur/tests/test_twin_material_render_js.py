@@ -107,7 +107,7 @@ PREFIX = PREFIX.replace("if (spec === 'three')", """if (spec === '@dgreenheck/ez
   if (spec === 'three')""")
 DRIVER = PREFIX + SETUP + r"""
 const library = await import(file('static/twin/twin_library.js'));
-const {kitMaterial,materialSlot,libUrl,materialKey,applyMaterialParams} = library;
+const {kitMaterial,materialSlot,libUrl,materialUrl,materialKey,applyMaterialParams} = library;
 await test('builtin_materials_unchanged',async()=>{
   // Literal main snapshot; the test never reads main or recomputes expectations.
   const got={};
@@ -149,7 +149,8 @@ await test('low_tier_base_colour_only',async()=>{
 });
 await test('slot_color_replaces_tint',async()=>{
   const e=entry('material-color'),kit=kitFor('material-color',e),cache=new Map();
-  const get=value=>materialSlot(value,'interior_wall',kit,'high',cache,()=>{throw Error('household routed to built-in role');});
+  const roleBase=kitMaterial('interior_wall',kit,'high');
+  const get=value=>materialSlot(value,'interior_wall',kit,'high',cache,role=>{assert.equal(role,'interior_wall');return roleBase;});
   const plain=await ready(get({id:'material-color'})),tinted=await ready(get({id:'material-color',color:'#123456'}));
   assert.equal(hex(plain),'#789abc');assert.equal(hex(tinted),'#123456');assert.notEqual(plain,tinted);
   assert.equal(get({id:'material-color'}),plain,'same role and ref share one draw state');
@@ -192,10 +193,22 @@ await test('revision_changes_key',async()=>{
 await test('lib_url_ingress_auth_and_encoded_paths',()=>{
   const saved=window.chfBase;window.chfBase='/ingress/token/';window.chfAuthUrl=u=>u+'?auth=ok';
   try{
-    assert.equal(libUrl('material a','materials/material a/maps/base color.jpg'),'/ingress/token/api/house/twin/materials/material%20a/maps/base%20color.jpg?auth=ok');
+    assert.equal(materialUrl('materials/material a/maps/base color.jpg'),'/ingress/token/api/house/twin/materials/material%20a/maps/base%20color.jpg?auth=ok');
+    assert.equal(libUrl('stone','materials/a.jpg'),'/ingress/token/api/house/twin/library/stone/materials/a.jpg?auth=ok');
+    assert.equal(libUrl('import-a','materials/a.jpg'),'/ingress/token/api/house/twin/imports/import-a/materials/a.jpg?auth=ok');
     assert.equal(libUrl('import-a','a b.glb'),'/ingress/token/api/house/twin/imports/import-a/a%20b.glb?auth=ok');
     assert.equal(libUrl('stone','a b.jpg'),'/ingress/token/api/house/twin/library/stone/a%20b.jpg?auth=ok');
   }finally{window.chfBase=saved;delete window.chfAuthUrl;}
+});
+await test('material_url_refuses_dot_segments_and_loader_uses_it',async()=>{
+  assert.equal(typeof materialUrl,'function');
+  for(const path of ['materials/a/../b.jpg','materials/a/./b.jpg','materials/../b.jpg',
+    'materials/a/%2e%2e/b.jpg','materials/a/%2E/b.jpg','materials/a/..\\b.jpg','library/a/b.jpg'])
+    assert.throws(()=>materialUrl(path),undefined,path);
+  const e=entry('material-invalid-url',['base_color']);e.maps.base_color='materials/a/../secret.jpg';
+  const before=requests.length;
+  assert.throws(()=>kitMaterial('interior_wall',kitFor('material-invalid-url',e),'high'));
+  assert.equal(requests.length,before,'invalid household path never reaches image transport');
 });
 await test('tier_caps_and_downsample_cache',async()=>{
   const id='material-caps',e=entry(id,['base_color']),kit=kitFor(id,e);
@@ -215,7 +228,62 @@ await test('preview_helper_params_defaults_and_gl_normals',async()=>{
   assert.deepEqual(m.normalScale.toArray(),[1.7,1.7]);
   assert.equal(m.roughness,.62,'spec: scalar is kept even without a roughness map');m.dispose();
   const plain=new THREE.MeshStandardMaterial();applyMaterialParams(plain,{maps:{},params:{}},{},'roof','low');
-  await ready(plain);assert.equal(hex(plain),'#ffffff');assert.equal(plain.roughness,1);assert.equal(plain.metalness,1);plain.dispose();
+  await ready(plain);assert.equal(hex(plain),'#ffffff');assert.equal(plain.roughness,.85);assert.equal(plain.metalness,0);plain.dispose();
+});
+await test('no_metal_map_is_dielectric_by_default',async()=>{
+  for(const source of ['user','gltf','polyhaven','ambientcg']){
+    const id='material-dielectric-'+source,e=entry(id,['base_color','normal','roughness']);
+    e.source=source;e.params.roughness=null;e.params.metalness=null;
+    const m=await ready(kitMaterial('interior_wall',kitFor(id,e),'high'));
+    assert.equal(m.metalnessMap,null);assert.equal(m.metalness,0);assert.equal(m.roughness,1,'attached roughness map uses auto multiplier');m.dispose();
+    const plain=entry(id+'-plain',[]);plain.source=source;plain.params={roughness:null,metalness:null};
+    const flat=await ready(kitMaterial('interior_wall',kitFor(id+'-plain',plain),'high'));
+    assert.equal(flat.roughness,.85);assert.equal(flat.metalness,0);flat.dispose();
+  }
+});
+await test('metal_map_multiplied_by_param',async()=>{
+  for(const slot of ['metalness','orm'])for(const value of [null,0,.4,2]){
+    const id=`material-metal-${slot}-${value}`,e=entry(id,[slot]);
+    e.params.metalness=value;e.params.roughness=null;
+    const m=await ready(kitMaterial('roof',kitFor(id,e,'roof'),'high'));
+    assert.ok(m.metalnessMap);assert.equal(m.metalness,value??1);
+    assert.equal(m.roughness,slot==='orm'?1:.85);m.dispose();
+  }
+  const id='material-failed-metal',e=entry(id,['metalness','roughness']);e.params.metalness=e.params.roughness=null;
+  for(const path of Object.values(e.maps))failures.add('/api/house/twin/'+path);
+  const m=await ready(kitMaterial('roof',kitFor(id,e,'roof'),'high'));
+  assert.equal(m.metalnessMap,null);assert.equal(m.metalness,0);assert.equal(m.roughness,.85);m.dispose();
+  for(const path of Object.values(e.maps))failures.delete('/api/house/twin/'+path);
+});
+await test('low_tier_household_not_metallic',async()=>{
+  const id='material-low-auto',e=entry(id,['base_color','roughness','metalness','orm']);e.params.roughness=e.params.metalness=null;
+  const m=await ready(kitMaterial('roof',kitFor(id,e,'roof'),'low'));
+  assert.ok(m.map);assert.equal(m.metalnessMap,null);assert.equal(m.roughnessMap,null);
+  assert.equal(m.metalness,0);assert.equal(m.roughness,.85);m.dispose();
+  // Explicit values without a map are flat values, including on low.
+  e.params.roughness=.22;e.params.metalness=.3;
+  const flat=await ready(kitMaterial('roof',kitFor(id,e,'roof'),'low'));
+  assert.equal(flat.roughness,.22);assert.equal(flat.metalness,.3);flat.dispose();
+});
+await test('household_lattice_override_keeps_cutout',async()=>{
+  const id='material-lattice',e=entry(id,['base_color']);
+  const m=await ready(kitMaterial('lattice',kitFor(id,e,'lattice',{pattern:'lattice'}),'high'));
+  const builtin=kitMaterial('lattice',input.kit,'high');
+  assert.ok(m.alphaMap);assert.equal(m.alphaTest,.5);assert.equal(m.side,THREE.DoubleSide);
+  assert.deepEqual(m.alphaMap.image.data,builtin.alphaMap.image.data);
+  assert.deepEqual(m.alphaMap.repeat.toArray(),builtin.alphaMap.repeat.toArray());
+  let disposed=0;m.alphaMap.addEventListener('dispose',()=>disposed++);m.dispose();assert.equal(disposed,1);builtin.dispose();
+});
+await test('household_slot_reuses_matching_role_material_only',async()=>{
+  const id='material-role-reuse',e=entry(id,[]),kit=kitFor(id,e,'roof'),cache=new Map();
+  const role=kitMaterial('roof',kit,'high');let calls=0;
+  const get=value=>materialSlot(value,'roof',kit,'high',cache,name=>{assert.equal(name,'roof');calls++;return role;});
+  assert.equal(get({id}),role);assert.equal(calls,1);
+  const tinted=get({id,color:'#123456'});assert.notEqual(tinted,role);assert.equal(calls,1);
+  e.revision++;
+  const revised=get({id});assert.notEqual(revised,role,'stale role material is not reused');
+  const other=materialSlot({id},'interior_wall',kit,'high',cache,()=>role);assert.notEqual(other,role);assert.equal(other.name,'interior_wall');
+  for(const m of [role,tinted,revised,other])m.dispose();
 });
 await test('dispose_releases_owned_maps_and_blocks_late_assignment',async()=>{
   const id='material-dispose',e=entry(id,['orm']),m=await ready(kitMaterial('roof',kitFor(id,e,'roof'),'high'));

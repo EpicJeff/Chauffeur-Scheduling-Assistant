@@ -55,7 +55,7 @@ def test_create_ingest_and_serve_immutable_map():
     seed()
     with Ctx() as c:
         row = create(c)
-        assert row['params'] == dict(tint='#ffffff', roughness=1, metalness=1, normal_scale=1,
+        assert row['params'] == dict(tint='#ffffff', roughness=None, metalness=None, normal_scale=1,
                                     normal_convention='gl', ao_intensity=1, tile_ft=[4, 4],
                                     rotation_deg=0, random_offset=False)
         assert row['created_by'] == 'mum'
@@ -173,6 +173,43 @@ def test_parents_only():
             template = url.replace(row['id'], '{id}').replace('/maps/base_color', '/maps/{slot}')
             assert auth.resolve(method, template) == auth.PARENTS, (method, template)
         assert auth.resolve('GET', '/api/house/twin/materials/{id}/{file:path}') == auth.WALL_OR_SERVICE
+
+
+def test_nullable_auto_params_and_validation():
+    seed()
+    with Ctx() as c:
+        row = create(c, params={'roughness': None, 'metalness': None})
+        path = f"{API}/{row['id']}"
+        for value in (0, 2, None):
+            r = c.client.patch(path, headers=c.mum, json={'params': {'roughness': value, 'metalness': value}})
+            assert r.status_code == 200, r.text
+            assert r.json()['params']['roughness'] == value
+            assert r.json()['params']['metalness'] == value
+        for key in ('roughness', 'metalness'):
+            for value in (-.01, 2.01, 'auto', True):
+                r = c.client.patch(path, headers=c.mum, json={'params': {key: value}})
+                assert r.status_code == 400, (key, value, r.text)
+        for key in ('normal_scale', 'ao_intensity', 'rotation_deg'):
+            assert c.client.patch(path, headers=c.mum, json={'params': {key: None}}).status_code == 400
+
+
+def test_duplicate_of_builtin_keeps_its_roughness():
+    seed()
+    with Ctx() as c:
+        for aid, roughness, metalness in (('red_brick_03', .85, 0), ('granite_tile', .22, 0), ('standing_seam', .45, .45)):
+            cached = Path(ts.DATA_DIR) / 'library' / aid
+            cached.mkdir(parents=True)
+            for name in library.manifest()[aid].get('files', {}):
+                (cached / name).write_bytes(image())
+            with patch.object(library, 'ensure', return_value=str(cached)):
+                r = c.client.post(f'{API}/{aid}/duplicate', headers=c.mum)
+            assert r.status_code == 200, r.text
+            row = r.json()
+            assert row['params']['roughness'] == roughness, (aid, row['params'])
+            assert row['params']['metalness'] == metalness, (aid, row['params'])
+            assert row['source_snapshot']['params'] == row['params']
+            copied = materials.duplicate(row['id'], 'mum')
+            assert copied['params'] == row['params'], 'household duplicate preserves explicit values'
 
 
 def test_page_manifest_carries_household_material():

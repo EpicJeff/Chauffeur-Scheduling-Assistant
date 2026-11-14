@@ -6,9 +6,17 @@ import { tierModel } from './model_lods.js';
 
 export const base = () => window.chfBase ?? '../';
 export function libUrl(assetId, name) {
-  const url = name.startsWith('materials/')
-    ? base() + 'api/house/twin/' + name.split('/').map(encodeURIComponent).join('/')
-    : base() + (assetId.startsWith('import-') ? 'api/house/twin/imports/' : 'api/house/twin/library/') + encodeURIComponent(assetId) + '/' + name.split('/').map(encodeURIComponent).join('/');
+  const url = base() + (assetId.startsWith('import-') ? 'api/house/twin/imports/' : 'api/house/twin/library/') + encodeURIComponent(assetId) + '/' + name.split('/').map(encodeURIComponent).join('/');
+  return window.chfAuthUrl ? window.chfAuthUrl(url) : url;
+}
+
+export function materialUrl(path) {
+  const parts = path.split('/');
+  if (parts[0] !== 'materials' || parts.length < 3 || parts.some(part => {
+    const decoded = decodeURIComponent(part);
+    return !part || decoded === '.' || decoded === '..' || /[\\/]/.test(decoded);
+  })) throw new Error('Choose a valid household material map path.');
+  const url = base() + 'api/house/twin/' + parts.map(encodeURIComponent).join('/');
   return window.chfAuthUrl ? window.chfAuthUrl(url) : url;
 }
 
@@ -19,6 +27,14 @@ export function manifest(kit) { return kit?.manifest || window.twinManifest || {
 // a connection stays open without delivering its image, buffer or HDR.
 const ASSET_TIMEOUT_MS = 15000;
 const modelCache = new Map(), skyCache = new Map(), textureCache = new Map();
+function loadTexture(url) {
+  if (!textureCache.has(url)) {
+    const request = new Promise((done, reject) => new THREE.TextureLoader().load(url, done, undefined, reject))
+      .catch(() => { textureCache.delete(url); return null; });
+    textureCache.set(url, request);
+  }
+  return textureCache.get(url);
+}
 function optionalAsset(cache, key, load, copy, onLate) {
   let entry = cache.get(key);
   if (!entry) {
@@ -87,6 +103,21 @@ function latticeTexture() {
   return texture;
 }
 
+function applyGraniteShader(material) {
+  // Keep a neutral stone response under orange firelight/reflections. Retain
+  // the chosen tint and luminance/speckle, rather than baking in a warm cast.
+  material.onBeforeCompile = shader => {
+    shader.uniforms.graniteTint = { value: material.color };
+    shader.fragmentShader = 'uniform vec3 graniteTint;\n' + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+        vec3 graniteLuma = vec3(.2126,.7152,.0722);
+        vec3 neutralStone = vec3(dot(outgoingLight,graniteLuma)) * graniteTint / max(dot(graniteTint,graniteLuma),.001);
+        outgoingLight = mix(outgoingLight,neutralStone,.95);
+        #include <opaque_fragment>`);
+  };
+  material.customProgramCacheKey = () => 'granite-neutral-light-1';
+}
+
 // Include the receiving role: the bake classifies surfaces by material.name.
 export function materialKey(value, role, tier, manifest) {
   const id = value.id || value.asset || role;
@@ -98,12 +129,9 @@ export function materialKey(value, role, tier, manifest) {
 // Material-owned clones share pixels, never repeat/rotation or GPU lifecycle.
 const householdTextureCache = new Map();
 function householdTexture(path, tier, onLate) {
-  const url = libUrl('', path), key = JSON.stringify([url, tier]);
+  const url = materialUrl(path), key = JSON.stringify([url, tier]);
   return optionalAsset(householdTextureCache, key, async () => {
-    if (!textureCache.has(url)) textureCache.set(url,
-      new Promise((done, reject) => new THREE.TextureLoader().load(url, done, undefined, reject))
-        .catch(() => { textureCache.delete(url); return null; }));
-    const source = await textureCache.get(url);
+    const source = await loadTexture(url);
     if (!source) return null;
     let image = source.image;
     const width = image.width, height = image.height;
@@ -127,29 +155,26 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   material.userData.releaseMaterialParams?.();
   const params = entry.params || {}, maps = entry.maps || {};
   material.name = role;
+  const id = ref.id || ref.asset || role;
+  material.userData.materialKey = materialKey(ref, role, tier, { [id]: entry });
   material.color.set(ref.color || params.tint || '#ffffff');
-  material.roughness = params.roughness ?? 1;
-  material.metalness = params.metalness ?? 1;
+  // Auto is flat until this tier actually attaches the corresponding map.
+  material.roughness = params.roughness ?? .85;
+  material.metalness = params.metalness ?? 0;
   material.aoMapIntensity = params.ao_intensity ?? 1;
   const scale = params.normal_scale ?? 1;
   material.normalScale.set(scale, params.normal_convention === 'dx' ? -scale : scale);
   const tile = params.tile_ft || [4, 4];
   const properties = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap'];
   for (const property of properties) material[property] = null;
-  if (role === 'granite') {
-    material.onBeforeCompile = shader => {
-      shader.uniforms.graniteTint = { value: material.color };
-      shader.fragmentShader = 'uniform vec3 graniteTint;\n' + shader.fragmentShader;
-      shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
-        vec3 graniteLuma = vec3(.2126,.7152,.0722);
-        vec3 neutralStone = vec3(dot(outgoingLight,graniteLuma)) * graniteTint / max(dot(graniteTint,graniteLuma),.001);
-        outgoingLight = mix(outgoingLight,neutralStone,.95);
-        #include <opaque_fragment>`);
-    };
-    material.customProgramCacheKey = () => 'granite-neutral-light-1';
-  }
+  if (role === 'granite') applyGraniteShader(material);
   let disposed = false;
   const textures = new Set();
+  material.alphaMap = null; material.alphaTest = 0; material.side = THREE.FrontSide;
+  if (ref.pattern === 'lattice') {
+    material.alphaMap = latticeTexture(); material.alphaTest = .5; material.side = THREE.DoubleSide;
+    textures.add(material.alphaMap);
+  }
   const release = () => {
     disposed = true;
     textures.forEach(texture => texture.dispose()); textures.clear();
@@ -166,6 +191,8 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
     texture.anisotropy = tier === 'low' ? 1 : 4;
     texture.colorSpace = properties.includes('map') ? THREE.SRGBColorSpace : THREE.NoColorSpace;
     for (const property of properties) material[property] = texture;
+    if (properties.includes('roughnessMap')) material.roughness = params.roughness ?? 1;
+    if (properties.includes('metalnessMap')) material.metalness = params.metalness ?? 1;
     material.needsUpdate = true;
   };
   const slots = [['base_color', ['map']]];
@@ -199,20 +226,7 @@ export function kitMaterial(role, kit, tier) {
     // atlasMesh excludes cutouts as both bake receivers and bake occluders.
     return material;
   }
-  if (role === 'granite') {
-    // Keep a neutral stone response under orange firelight/reflections. Retain
-    // the chosen tint and luminance/speckle, rather than baking in a warm cast.
-    material.onBeforeCompile = shader => {
-      shader.uniforms.graniteTint = { value: material.color };
-      shader.fragmentShader = 'uniform vec3 graniteTint;\n' + shader.fragmentShader;
-      shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
-        vec3 graniteLuma = vec3(.2126,.7152,.0722);
-        vec3 neutralStone = vec3(dot(outgoingLight,graniteLuma)) * graniteTint / max(dot(graniteTint,graniteLuma),.001);
-        outgoingLight = mix(outgoingLight,neutralStone,.95);
-        #include <opaque_fragment>`);
-    };
-    material.customProgramCacheKey = () => 'granite-neutral-light-1';
-  }
+  if (role === 'granite') applyGraniteShader(material);
   if (asset?.kind !== 'material') return material;
   const pending = [];
   // A failed set is entirely plain kit colour, even if another map succeeds.
@@ -236,12 +250,7 @@ export function kitMaterial(role, kit, tier) {
     pending.push(new Promise(resolve => {
       completions.add(resolve);
       const url = libUrl(id, name);
-      if (!textureCache.has(url)) {
-        const request = new Promise((done, reject) => new THREE.TextureLoader().load(url, done, undefined, reject))
-          .catch(() => { textureCache.delete(url); return null; });
-        textureCache.set(url, request);
-      }
-      textureCache.get(url).then(source => {
+      loadTexture(url).then(source => {
         if (!source) clear();
         else if (!failed) {
           const texture = source.clone(); textures.add(texture);
@@ -272,6 +281,11 @@ export function materialSlot(value, defaultRole, kit, tier, cache, roleMaterial)
   const refs = kit.materials || {}, named = refs[value.id];
   const known = manifest(kit), id = known[value.id]?.household ? value.id : named?.id || named?.asset;
   if (known[id]?.household) {
+    const roleRef = refs[defaultRole];
+    if (!value.color && (roleRef?.id || roleRef?.asset) === id) {
+      const role = roleMaterial(defaultRole);
+      if (role?.name === defaultRole && role.userData.materialKey === materialKey(roleRef, defaultRole, tier, known)) return role;
+    }
     const ref = { ...(named || {}), id, color: value.color || named?.color };
     const key = materialKey(ref, defaultRole, tier, known);
     if (!cache.has(key)) cache.set(key, kitMaterial(defaultRole,

@@ -20,7 +20,7 @@ import uuid
 from services import twin_library, twin_store
 
 SLOTS = ('base_color', 'normal', 'roughness', 'metalness', 'ao', 'orm', 'height')
-DEFAULT_PARAMS = dict(tint='#ffffff', roughness=1, metalness=1, normal_scale=1,
+DEFAULT_PARAMS = dict(tint='#ffffff', roughness=None, metalness=None, normal_scale=1,
                       normal_convention='gl', ao_intensity=1, tile_ft=[4, 4],
                       rotation_deg=0, random_offset=False)
 MAX_INPUT_BYTES = 40 * 1024 * 1024
@@ -165,6 +165,8 @@ def _params(change, current=None):
         raise ValueError('Tint must be a six-digit hex colour.')
     for key, low, high in (('roughness', 0, 2), ('metalness', 0, 2), ('normal_scale', 0, 4),
                            ('ao_intensity', 0, 2), ('rotation_deg', 0, 359)):
+        if key in ('roughness', 'metalness') and result[key] is None:
+            continue  # Auto: a map multiplier or the source's flat default.
         _number(result[key], low, high, key)
     tile = result['tile_ft']
     if not isinstance(tile, list) or len(tile) != 2:
@@ -371,6 +373,15 @@ def duplicate(material_id, actor) -> dict:
             record = deepcopy(source)
             record.update(id=mid, name=source['name'] + ' copy', source='user', based_on=material_id,
                           created_by=actor, archived=False, maps={}, source_snapshot=None)
+            if source['source'] == 'builtin':
+                matches = [(role, ref) for role, ref in twin_library.kit('modern_farmhouse')['materials'].items()
+                           if ref['asset'] == material_id]
+                # granite_tile also serves counters; retain granite's explicit
+                # finish rather than taking the first generic counter ref.
+                role, ref = next(((role, ref) for role, ref in matches if 'roughness' in ref),
+                                 matches[0] if matches else ('material', {}))
+                record['params'].update(roughness=ref.get('roughness', .45 if role == 'roof' else .85),
+                                        metalness=.45 if role == 'roof' else 0)
             try:
                 if source['source'] == 'builtin' and source['maps']:
                     try:
