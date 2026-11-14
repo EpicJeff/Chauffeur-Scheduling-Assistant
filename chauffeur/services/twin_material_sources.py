@@ -11,11 +11,13 @@ failure removes the staging. All HTTP goes through `_urlopen` (faked in tests).
 from __future__ import annotations
 
 import io
+import ipaddress
 import json
 import logging
 import queue
 import re
 import shutil
+import socket
 import threading
 import time
 import uuid
@@ -24,7 +26,7 @@ import zlib
 from pathlib import Path, PurePosixPath
 from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from services import twin_materials
 
@@ -38,6 +40,7 @@ MAX_SEARCH_BYTES = 32 * 1024 * 1024
 MAX_THUMB_BYTES = 4 * 1024 * 1024
 THUMB_SIDE = 256
 MAX_FILE_BYTES = 64 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 200 * 1024 * 1024  # an ambientCG zip as downloaded; its entries stay 64 MB each
 MAX_JOB_BYTES = 300 * 1024 * 1024
 DEADLINE_S = 180
 MAX_ARCHIVE_ENTRIES = 64
@@ -45,6 +48,9 @@ MAX_ARCHIVE_EXPANDED = 400 * 1024 * 1024
 CHUNK = 1024 * 1024
 SOCKET_TIMEOUT_S = 15
 MAX_JOBS_KEPT = 50
+MAX_QUEUED = 10
+MAX_REDIRECTS = 5
+JOB_MARKER = '.download-job'
 UNREACHABLE = 'Online libraries are not reachable.'
 USER_AGENT = 'Chauffeur-HomeAssistant-addon/1.0 (household material library)'
 
@@ -73,7 +79,7 @@ AMBIENTCG_SLOTS = {'color': 'base_color', 'normalgl': ('normal', 'gl'), 'normald
                    'displacement': 'height'}
 IMAGE_SUFFIXES = ('.jpg', '.jpeg', '.png')
 
-_urlopen = urlopen
+_resolve = socket.getaddrinfo  # stubbed in tests
 _now = time.monotonic
 on_published = None  # main sets this to its update signal
 
@@ -84,6 +90,7 @@ _JOBS_LOCK = threading.Lock()
 _JOBS = {}
 _QUEUE = queue.Queue()
 _WORKER = None
+_SWEPT = False
 
 
 class UnknownSource(ValueError):
@@ -96,6 +103,10 @@ class Unreachable(Exception):
 
 class DownloadError(ValueError):
     """A refusal with a message a person can read."""
+
+
+class Busy(Exception):
+    """Too many downloads already waiting (a 429)."""
 
 
 def _mb(value):
@@ -137,9 +148,62 @@ def _clear_caches():
 def _check_url(url, source):
     parts = urlsplit(url)
     host = (parts.hostname or '').lower()
-    if parts.scheme != 'https' or not any(host == h or host.endswith('.' + h) for h in HOSTS[source]):
-        raise ValueError('That address is not one of the library\'s own.')
+    if (source not in HOSTS or parts.scheme != 'https'
+            or not any(host == h or host.endswith('.' + h) for h in HOSTS[source])):
+        raise DownloadError('That address is not one of the library\'s own.')
     return url
+
+
+def _check_public(url):
+    """Refuse a host that resolves to loopback, private, link-local or other non-public space."""
+    parts = urlsplit(url)
+    try:
+        infos = _resolve(parts.hostname, parts.port or 443, proto=socket.IPPROTO_TCP)
+    except OSError as exc:
+        raise OSError(f'Could not resolve {parts.hostname}') from exc
+    if not infos:
+        raise OSError(f'Could not resolve {parts.hostname}')
+    for info in infos:
+        address = ipaddress.ip_address(str(info[4][0]).split('%')[0])
+        mapped = getattr(address, 'ipv4_mapped', None)
+        for ip in (address, mapped) if mapped else (address,):
+            if (ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved
+                    or ip.is_multicast or ip.is_unspecified):
+                raise DownloadError('That address is not a public one.')
+    return url
+
+
+class _GuardedRedirect(HTTPRedirectHandler):
+    """Every hop: https, the same source's own hosts, a public address, at most 5 hops."""
+    max_redirections = MAX_REDIRECTS
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        source = getattr(req, 'chauffeur_source', None)
+        hops = getattr(req, 'chauffeur_hops', 0) + 1
+        if hops > MAX_REDIRECTS:
+            raise DownloadError('The library redirected too many times.')
+        _check_url(newurl, source)
+        _check_public(newurl)
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.chauffeur_source = source
+            new.chauffeur_hops = hops
+        return new
+
+
+def _guarded_urlopen(request, timeout):
+    _check_url(request.full_url, getattr(request, 'chauffeur_source', None))
+    _check_public(request.full_url)
+    return build_opener(_GuardedRedirect).open(request, timeout=timeout)
+
+
+_urlopen = _guarded_urlopen  # faked in tests
+
+
+def _read(response):
+    """read1 returns what the socket has (up to CHUNK), so a trickling server cannot hold
+    one call open past a socket timeout; plain read would wait for the whole CHUNK."""
+    return getattr(response, 'read1', None) or response.read
 
 
 def _stream(url, source, *, cap, deadline, sink, cap_message, on_bytes=None):
@@ -149,10 +213,12 @@ def _stream(url, source, *, cap, deadline, sink, cap_message, on_bytes=None):
         raise DownloadError('The download took longer than 3 minutes.')
     remaining = max(1, min(SOCKET_TIMEOUT_S, deadline - _now()))
     request = Request(url, headers={'User-Agent': USER_AGENT})
+    request.chauffeur_source = source
     total = 0
     with _urlopen(request, timeout=remaining) as response:
+        read = _read(response)
         while True:
-            chunk = response.read(CHUNK)
+            chunk = read(CHUNK)
             if _now() > deadline:
                 raise DownloadError('The download took longer than 3 minutes.')
             if not chunk:
@@ -165,14 +231,16 @@ def _stream(url, source, *, cap, deadline, sink, cap_message, on_bytes=None):
             sink(chunk)
 
 
-def _bytes(url, source, *, cap, deadline, cap_message='The answer was too large.'):
+def _bytes(url, source, *, cap, deadline, cap_message='The answer was too large.', on_bytes=None):
     out = bytearray()
-    _stream(url, source, cap=cap, deadline=deadline, sink=out.extend, cap_message=cap_message)
+    _stream(url, source, cap=cap, deadline=deadline, sink=out.extend, cap_message=cap_message,
+            on_bytes=on_bytes)
     return bytes(out)
 
 
-def _json(url, source, *, cap=MAX_SEARCH_BYTES, deadline=None):
-    data = _bytes(url, source, cap=cap, deadline=_now() + 30 if deadline is None else deadline)
+def _json(url, source, *, cap=MAX_SEARCH_BYTES, deadline=None, on_bytes=None):
+    data = _bytes(url, source, cap=cap, deadline=_now() + 30 if deadline is None else deadline,
+                  on_bytes=on_bytes)
     return json.loads(data.decode('utf-8'))
 
 
@@ -255,7 +323,7 @@ def _acg_download(asset, resolution):
         for entry in downloads:
             size = entry.get('size')
             if (entry.get('attribute') == f'{resolution.upper()}-{kind}'
-                    and (type(size) is not int or size <= MAX_FILE_BYTES)):
+                    and (type(size) is not int or size <= MAX_ARCHIVE_BYTES)):
                 return entry
     return None
 
@@ -335,14 +403,16 @@ def start_download(source: str, source_id: str, resolution: str, actor) -> str:
     if resolution not in RESOLUTIONS:
         raise ValueError('Choose a resolution of 1k, 2k or 4k.')
     job_id = uuid.uuid4().hex
+    _ensure_worker()  # sweeps leftovers before the first job of this process is queued
     with _JOBS_LOCK:
+        if sum(1 for j in _JOBS.values() if j['state'] == 'queued') >= MAX_QUEUED:
+            raise Busy(f'{MAX_QUEUED} downloads are already waiting. Try again when some finish.')
         finished = [k for k, j in _JOBS.items() if j['state'] in ('done', 'failed')]
         for key in finished[:max(0, len(_JOBS) - MAX_JOBS_KEPT + 1)]:
             del _JOBS[key]
         _JOBS[job_id] = dict(id=job_id, state='queued', progress=0.0, source=source,
                              source_id=source_id, resolution=resolution)
-    _QUEUE.put((job_id, source, source_id, resolution, actor))
-    _ensure_worker()
+        _QUEUE.put((job_id, source, source_id, resolution, actor))
     return job_id
 
 
@@ -360,9 +430,28 @@ def _set(job_id, **fields):
             _JOBS[job_id].update(fields)
 
 
+def _sweep():
+    """Leftovers of a process that stopped mid-download: all staging, and material
+    folders that a job marked but never published."""
+    shutil.rmtree(staging_root(), ignore_errors=True)
+    materials = twin_materials.root()
+    if materials.is_dir():
+        for folder in materials.iterdir():
+            if (folder.is_dir() and (folder / JOB_MARKER).is_file()
+                    and not (folder / 'material.json').exists()):
+                shutil.rmtree(folder, ignore_errors=True)
+
+
 def _ensure_worker():
-    global _WORKER
+    global _WORKER, _SWEPT
     with _JOBS_LOCK:
+        if not _SWEPT:
+            # First start in this process: no job of ours can be running yet.
+            try:
+                _sweep()
+            except OSError:
+                log.exception('material download sweep failed')
+            _SWEPT = True
         if _WORKER is None or not _WORKER.is_alive():
             _WORKER = threading.Thread(target=_work, name='material-downloads', daemon=True)
             _WORKER.start()
@@ -393,8 +482,14 @@ def _message(exc):
         return 'That material is no longer available online.'
     if isinstance(exc, (zipfile.BadZipFile, zlib.error, EOFError)):
         return 'The archive is damaged.'
-    if isinstance(exc, ValueError):
+    if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+        return 'The library sent an answer that could not be read.'
+    if isinstance(exc, DownloadError):
         return str(exc)
+    if isinstance(exc, ValueError) and str(exc).startswith('Could not decode image'):
+        return 'A downloaded image could not be read.'
+    if isinstance(exc, ValueError):
+        return str(exc)  # twin_materials refusals are already plain language
     if isinstance(exc, OSError):
         return UNREACHABLE
     return 'The download failed.'
@@ -416,13 +511,14 @@ class _Budget:
         if self.expected:
             _set(self.job_id, progress=round(min(.9, .9 * self.read / self.expected), 3))
 
-    def fetch(self, url, source, target: Path):
+    def fetch(self, url, source, target: Path, cap=None):
+        cap = MAX_FILE_BYTES if cap is None else cap
         with target.open('wb') as out:
-            _stream(url, source, cap=MAX_FILE_BYTES, deadline=self.deadline, sink=out.write,
-                    cap_message=f'A file is larger than {_mb(MAX_FILE_BYTES)}.', on_bytes=self.count)
+            _stream(url, source, cap=cap, deadline=self.deadline, sink=out.write,
+                    cap_message=f'A file is larger than {_mb(cap)}.', on_bytes=self.count)
 
     def json(self, url, source):
-        return _json(url, source, cap=MAX_FILE_BYTES, deadline=self.deadline)
+        return _json(url, source, cap=MAX_FILE_BYTES, deadline=self.deadline, on_bytes=self.count)
 
 
 def _tile(width, height, unit):
@@ -441,6 +537,9 @@ def _run(job_id, source, source_id, resolution, actor):
         stage.mkdir(parents=True)
         plan = (_polyhaven if source == 'polyhaven' else _ambientcg)(source_id, resolution, budget, stage)
         fields, images, convention = plan
+        folder = twin_materials.root() / material_id
+        folder.mkdir(parents=True)
+        (folder / JOB_MARKER).write_text(job_id, encoding='utf-8')  # swept if never published
         maps = {}
         for slot, path in images:  # staged files, decoded one at a time
             if _now() > budget.deadline:
@@ -451,6 +550,7 @@ def _run(job_id, source, source_id, resolution, actor):
         fields['maps'] = maps
         fields.setdefault('params', {})['normal_convention'] = convention
         record = twin_materials.create(fields, actor, material_id=material_id, source=source)
+        (folder / JOB_MARKER).unlink(missing_ok=True)
         return record['id']
     except BaseException:
         folder = twin_materials.root() / material_id
@@ -553,7 +653,7 @@ def _ambientcg(asset_id, resolution, budget, stage):
         raise DownloadError('That resolution is not available for this material.')
     budget.expected = download.get('size') if type(download.get('size')) is int else 0
     archive_path = stage / 'archive.zip'
-    budget.fetch(url, 'ambientcg', archive_path)
+    budget.fetch(url, 'ambientcg', archive_path, cap=MAX_ARCHIVE_BYTES)
     images, conventions = [], {}
     with zipfile.ZipFile(archive_path) as archive:
         entries = archive.infolist()

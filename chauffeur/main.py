@@ -7912,6 +7912,10 @@ def _material_sources_published():
     LAST_UPDATE_TIME = time.time()
 
 
+from services import twin_material_sources as _material_sources  # noqa: E402
+_material_sources.on_published = _material_sources_published
+
+
 def _material_source_call(operation, *args):
     from services import twin_material_sources as sources
     try:
@@ -7920,6 +7924,8 @@ def _material_source_call(operation, *args):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except sources.Unreachable as exc:
         raise HTTPException(status_code=503, detail=sources.UNREACHABLE) from exc
+    except sources.Busy as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -7941,7 +7947,6 @@ def house_material_source_thumb(source: str, source_id: str):
 def house_material_source_download(source: str, source_id: str, request: Request,
                                    body: dict = Body(default={})):
     from services import twin_material_sources as sources
-    sources.on_published = _material_sources_published
     resolution = body.get('resolution') if isinstance(body, dict) else None
     job_id = _material_source_call(sources.start_download, source, source_id, resolution,
                                    _acting_id(request, None))

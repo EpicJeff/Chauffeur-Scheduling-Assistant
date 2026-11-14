@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import URLError
+from urllib.request import Request
 
 from PIL import Image
 from test_twin_ha_routes import Ctx, seed, ts
@@ -25,18 +26,35 @@ MB = 1024 * 1024
 # --- fake network ------------------------------------------------------------
 
 class FakeResponse:
+    """Like http.client's buffered response: read1 returns what one socket read has
+    (at most n); read(n) keeps reading until it has n bytes or the stream ends."""
+
     def __init__(self, chunks, on_read=None, on_close=None):
         self._chunks = iter(chunks)
         self._on_read = on_read
         self._on_close = on_close
+        self._pending = b''
         self.headers = {}
+        self.reads = 0
+
+    def read1(self, n=-1):
+        if not self._pending:
+            self.reads += 1
+            if self._on_read:
+                self._on_read()
+            self._pending = next(self._chunks, b'')
+        n = len(self._pending) if n is None or n < 0 else n
+        out, self._pending = self._pending[:n], self._pending[n:]
+        return out
 
     def read(self, n=-1):
-        if self._on_read:
-            self._on_read()
-        if n is None or n < 0:
-            return b''.join(self._chunks)
-        return next(self._chunks, b'')
+        out = bytearray()
+        while n is None or n < 0 or len(out) < n:
+            chunk = self.read1(-1 if n is None or n < 0 else n - len(out))
+            if not chunk:
+                break
+            out += chunk
+        return bytes(out)
 
     def close(self):
         if self._on_close:
@@ -168,8 +186,8 @@ def acg_zip(asset_id, extra=(), maps=('Color', 'NormalGL', 'NormalDX', 'Roughnes
     return out.getvalue()
 
 
-def acg_routes(asset_id, archive=None):
-    payload = {'foundAssets': [acg_asset(asset_id)]}
+def acg_routes(asset_id, archive=None, **kw):
+    payload = {'foundAssets': [acg_asset(asset_id, **kw)]}
     return {acg_asset_url(asset_id): json.dumps(payload).encode(),
             f'https://ambientcg.com/get?file={asset_id}_1K-JPG.zip': archive or acg_zip(asset_id)}
 
@@ -445,8 +463,10 @@ def test_search_filters_and_caches_ten_minutes():
     assets['oak_planks'].update(categories=['wood'], tags=['floor'])
     assets['grey_brick']['max_resolution'] = [4096, 4096]
     q_url = acg_search_url('red%20brick')
+    huge = acg_asset('Ground111', sizes=(('1K-JPG', 9 * MB), ('2K-JPG', 34 * MB), ('4K-JPG', 260 * MB),
+                                         ('4K-PNG', 500 * MB)))
     net = FakeNet({PH_ASSETS: json.dumps(assets).encode(),
-                   q_url: json.dumps({'foundAssets': [acg_asset('Bricks097')]}).encode()})
+                   q_url: json.dumps({'foundAssets': [acg_asset('Bricks097'), huge]}).encode()})
     with Ctx() as c, patch.object(sources, '_urlopen', net), patch.object(sources, '_now', lambda: clock[0]):
         rows = c.client.get(f'{API}/sources/polyhaven', params={'q': 'brick'}, headers=c.mum).json()['results']
         assert [r['source_id'] for r in rows] == ['grey_brick', 'red_brick_03'], rows  # most downloaded first
@@ -468,10 +488,11 @@ def test_search_filters_and_caches_ten_minutes():
         acg = c.client.get(f'{API}/sources/ambientcg', params={'q': 'red brick'}, headers=c.mum)
         assert acg.status_code == 200, acg.text
         assert net.calls[-1] == q_url
-        row = acg.json()['results'][0]
+        row, big = acg.json()['results']
         assert row['source_id'] == 'Bricks097' and row['source'] == 'ambientcg'
-        # 4K-JPG is 128 MB, past the 64 MB per-file cap: never offered.
-        assert row['resolutions'] == ['1k', '2k'], row
+        # A 128 MB 4K zip is within the 200 MB archive cap; 260 MB JPG / 500 MB PNG is not.
+        assert row['resolutions'] == ['1k', '2k', '4k'], row
+        assert big['resolutions'] == ['1k', '2k'], big
         assert row['thumbnail'] == 'api/house/materials/sources/ambientcg/Bricks097/thumb'
         c.client.get(f'{API}/sources/ambientcg', params={'q': 'red brick'}, headers=c.mum)
         assert len(net.fetched('ambientcg.com')) == 1
@@ -542,6 +563,168 @@ def test_parents_only():
                 r = c.client.request(method, url, headers=headers, json={'resolution': '1k'})
                 assert r.status_code in (401, 403), (method, url, headers, r.status_code, r.text)
         assert not net_downloads_started(), 'a refused caller never queues a download'
+
+
+def test_trickling_server_stops_at_the_deadline():
+    """A server sending 512 bytes a second must not hold a 1 MB read open past 3 minutes."""
+    reset()
+    clock = [1000.0]
+    responses = []
+
+    def tick():
+        clock[0] += 1
+
+    def trickle():
+        responses.append(FakeResponse(endless(512), on_read=tick))
+        return responses[-1]
+
+    routes = ph_routes('trickle_wall')
+    routes[ph_url('trickle_wall', 'diff', '1k', 'jpg')] = trickle
+    with Ctx() as c, patch.object(sources, '_now', lambda: clock[0]):
+        refused(c, FakeNet(routes), 'polyhaven', 'trickle_wall', ['3 minutes'])
+        assert responses and responses[0].reads <= 182, f'{responses[0].reads} socket reads, deadline overran'
+        # Search obeys its own 30 s deadline the same way.
+        sources._clear_caches()
+        responses.clear()
+        net = FakeNet({PH_ASSETS: trickle})
+        with patch.object(sources, '_urlopen', net):
+            r = c.client.get(f'{API}/sources/polyhaven', headers=c.mum)
+        assert r.status_code == 503, r.text
+        assert responses[0].reads <= 32, responses[0].reads
+
+
+def public(*addresses):
+    return lambda host, port, **kw: [(2, 1, 6, '', (a, port)) for a in addresses]
+
+
+def test_redirects_and_addresses_are_guarded():
+    handler = sources._GuardedRedirect()
+
+    def hop(req, url):
+        return handler.redirect_request(req, None, 302, 'Found', {}, url)
+
+    def refuses(call, words):
+        try:
+            call()
+        except ValueError as exc:
+            assert words in str(exc), exc
+        else:
+            raise AssertionError('not refused')
+
+    start = Request('https://ambientcg.com/get?file=Bricks097_1K-JPG.zip')
+    start.chauffeur_source = 'ambientcg'
+    with patch.object(sources, '_resolve', public('104.21.3.4')):
+        # The live ambientCG hop: get?file= -> acg-download.struffelproductions.com.
+        new = hop(start, 'https://acg-download.struffelproductions.com/file/ambientCG-Web/download/x.zip')
+        assert new.full_url.startswith('https://acg-download.struffelproductions.com/')
+        assert new.chauffeur_source == 'ambientcg' and new.chauffeur_hops == 1
+        refuses(lambda: hop(start, 'https://evil.example/x.zip'), "library's own")
+        refuses(lambda: hop(start, 'https://ambientcg.com.evil.example/x.zip'), "library's own")
+        refuses(lambda: hop(start, 'http://ambientcg.com/x.zip'), "library's own")
+        polyhaven = Request('https://dl.polyhaven.org/a.jpg')
+        polyhaven.chauffeur_source = 'polyhaven'
+        refuses(lambda: hop(polyhaven, 'https://ambientcg.com/a.jpg'), "library's own")
+        req = start
+        for _ in range(sources.MAX_REDIRECTS):
+            req = hop(req, 'https://ambientcg.com/next')
+        assert req.chauffeur_hops == 5
+        refuses(lambda: hop(req, 'https://ambientcg.com/next'), 'too many')
+    for address in ('127.0.0.1', '10.0.0.5', '192.168.1.20', '172.16.0.1', '169.254.169.254',
+                    '::1', 'fe80::1', '::ffff:127.0.0.1', '0.0.0.0'):
+        with patch.object(sources, '_resolve', public('104.21.3.4', address)):
+            refuses(lambda: hop(start, 'https://acg-download.struffelproductions.com/x.zip'), 'public')
+            # The first url is checked the same way, before any connection is made.
+            refuses(lambda: sources._guarded_urlopen(start, 5), 'public')
+    with patch.object(sources, '_resolve', public('104.21.3.4')):
+        bad = Request('https://evil.example/x')
+        bad.chauffeur_source = 'ambientcg'
+        refuses(lambda: sources._guarded_urlopen(bad, 5), "library's own")
+    assert sources._urlopen is sources._guarded_urlopen, 'the default opener is the guarded one'
+
+
+def test_archive_has_its_own_200_mb_cap():
+    reset()
+    padding = [('padding.bin', b'\1' * (MB + MB // 2))]
+    with Ctx() as c:
+        # A 1.5 MB zip refused past a (lowered) archive cap, even though it declared less.
+        with patch.object(sources, 'MAX_ARCHIVE_BYTES', MB):
+            routes = acg_routes('Bricks004', acg_zip('Bricks004', extra=padding), sizes=(('1K-JPG', 1000),))
+            refused(c, FakeNet(routes), 'ambientcg', 'Bricks004', ['larger than 1 MB'])
+        # The same size passes when files are capped at 1 MB: the zip is not a file.
+        with patch.object(sources, 'MAX_FILE_BYTES', MB), \
+                patch.object(sources, '_urlopen', FakeNet(acg_routes('Bricks003', acg_zip('Bricks003', extra=padding)))):
+            job = wait(c, download(c, 'ambientcg', 'Bricks003'))
+            assert job['state'] == 'done', job
+
+
+def test_metadata_counts_against_the_job_cap():
+    reset()
+    routes = ph_routes('chatty_wall')
+    files = json.loads(routes['https://api.polyhaven.com/files/chatty_wall'])
+    files['padding'] = 'x' * (MB + MB // 2)
+    routes['https://api.polyhaven.com/files/chatty_wall'] = json.dumps(files).encode()
+    with Ctx() as c, patch.object(sources, 'MAX_JOB_BYTES', MB):
+        refused(c, FakeNet(routes), 'polyhaven', 'chatty_wall', ['larger than 1 MB in all'])
+
+
+def test_unreadable_answers_get_plain_messages():
+    reset()
+    with Ctx() as c:
+        routes = ph_routes('garbled_wall')
+        routes['https://api.polyhaven.com/files/garbled_wall'] = b'<html>busy</html>'
+        job = refused(c, FakeNet(routes), 'polyhaven', 'garbled_wall', ['could not be read'])
+        assert job['error'] == 'The library sent an answer that could not be read.'
+        routes = ph_routes('broken_wall')
+        routes[ph_url('broken_wall', 'diff', '1k', 'jpg')] = b'not an image at all'
+        job = refused(c, FakeNet(routes), 'polyhaven', 'broken_wall', ['image'])
+        assert job['error'] == 'A downloaded image could not be read.', job['error']
+        assert 'BytesIO' not in job['error']
+
+
+def test_queue_holds_at_most_ten():
+    reset()
+    gate = threading.Event()
+    routes = ph_routes('held_wall')
+    data = routes[ph_url('held_wall', 'diff', '1k', 'jpg')]
+    routes[ph_url('held_wall', 'diff', '1k', 'jpg')] = lambda: FakeResponse([data], on_read=lambda: gate.wait(20))
+    with Ctx() as c, patch.object(sources, '_urlopen', FakeNet(routes)):
+        try:
+            jobs = [download(c, 'polyhaven', 'held_wall')]
+            end = time.time() + 10
+            while c.client.get(f'{API}/jobs/{jobs[0]}', headers=c.mum).json()['state'] != 'running':
+                assert time.time() < end
+                time.sleep(0.01)
+            jobs += [download(c, 'polyhaven', 'held_wall') for _ in range(10)]
+            r = c.client.post(f'{API}/sources/polyhaven/held_wall/download', headers=c.mum,
+                              json={'resolution': '1k'})
+            assert r.status_code == 429, r.text
+            assert r.json()['detail'] == '10 downloads are already waiting. Try again when some finish.'
+        finally:
+            gate.set()
+        assert all(wait(c, j)['state'] == 'done' for j in jobs)
+
+
+def test_startup_sweep_clears_unpublished_job_leftovers():
+    reset()
+    staging = sources.staging_root() / 'old-job'
+    staging.mkdir(parents=True)
+    (staging / '0.img').write_bytes(b'partial')
+    orphan = materials.root() / materials.new_id()
+    (orphan / 'maps').mkdir(parents=True)
+    (orphan / sources.JOB_MARKER).write_text('old-job')
+    unmarked = materials.root() / materials.new_id()
+    unmarked.mkdir()
+    net = FakeNet(ph_routes('fresh_wall'))
+    with Ctx() as c, patch.object(sources, '_urlopen', net), patch.object(sources, '_SWEPT', False):
+        published = materials.create({'name': 'Kept'}, 'mum')
+        (materials.root() / published['id'] / sources.JOB_MARKER).write_text('done-job')
+        job = wait(c, download(c, 'polyhaven', 'fresh_wall'))
+        assert job['state'] == 'done', job
+        assert not orphan.exists() and not staging.exists(), 'leftovers swept on first start'
+        assert unmarked.exists(), 'an unmarked folder is not ours to remove'
+        assert materials.get(published['id'])['name'] == 'Kept'
+        fresh = materials.root() / job['material_id']
+        assert not (fresh / sources.JOB_MARKER).exists(), 'a published download drops its marker'
 
 
 def net_downloads_started():
