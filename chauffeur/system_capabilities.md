@@ -1,6 +1,42 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.852 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.853 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.853 (2026-11-13, NOT device-verified): pools can have a tanning ledge, steps and a spa (raised or flush).**
+
+**The ask.** The user: "the pool is just a pool - no spa, no tanning ledge, no steps. Maybe pools could have subtools for drawing out those things just like we draw yard features." Then: "As long as the spa can be raised, flush, etc."
+
+**Data.** `site.pool.features`, at most 12. Each has `{id, kind, polygon}`:
+- **`ledge`:** `depth_in` 6-18, default 10. It must lie inside the pool.
+- **`steps`:** `treads` 1-6, default 3, and `entry_edge`, defaulting to the edge nearest the pool wall. It must lie inside the pool. Treads descend evenly from coping level to the pool floor.
+- **`spa`:**
+  - `mode` `raised` or `flush`;
+  - `raise_in` 6-24, default 12;
+  - `depth_in` 24-48, default 36;
+  - `spillover`, default on;
+  - Library slots `coping`, `interior` and `wall`, which inherit the pool's finishes when empty, with stone for the wall;
+  - placed inside the pool, across its edge, or outside it within 2 ft.
+- **Validation:** polygons must be simple, with no self-intersection. Normalisation drops an invalid feature with a note and keeps the pool.
+
+**Ops.**
+- `add_pool_feature`, `update_pool_feature` and `delete_pool_feature`: parents only, one undoable edit each. A feature keeps its kind.
+- Pool move, turn and scale carry the features along.
+- `make_yard_room` accepts `{list:'pool', feature:<spa id>}`, so a spa can be a yard room for the controller's jets and heater.
+- Argyle cannot do this yet: the `house_design` description is at its 6,000-character cap.
+
+**Rendering** (`static/twin/pool_features.js`, `twin_yard.js`).
+- The ledge is a raised floor under the water. The steps are tread slabs.
+- **Spa:**
+  - It has its own basin and water.
+  - Raised: walls `raise_in` above the deck, with coping, and water 2 in below it. Flush: water and coping level with the pool.
+  - The pool's water and coping are cut out under the spa.
+  - A raised spa that overlaps the pool gets a spillover sheet into it.
+- Features join the yard reuse key.
+- A pool without features builds identical geometry.
+
+**Editor.** The pool card has "Add tanning ledge", "Add steps" and "Add spa", each drawn with the snapped polygon tool. Feature rows show their fields, the spa's slots, "Make this a room", and Delete (with `promptConfirm`).
+
+**Tests.** New `test_twin_pool_features` 7/7, `test_twin_pool_features_js` (heights, depths, tread order, flush and raised water, water cut-out, spillover only when raised and overlapping, slots, unchanged plain pool) and `test_twin_pool_features_editor_js`. Neighbours green: yard material slots py 6/6 and js, yard reuse js (the key changes with features), yard rooms 8/8 and js 3/3, site shapes, model bridge 32/32, house tool, model devices 20/20 (schema cap), import maps 3/3, Tailwind 6/6, tree once 1/1, server speed 5/5. Chromium on the test house: a ledge, steps and a raised spa render, with no page errors.
 
 **v2.499.852 (2026-11-13): dev and test only. TestClient test files no longer hang on Windows loopback.**
 

@@ -16,7 +16,7 @@ const rotatePoint = (p, angle) => {
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
 
-export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, pickSite, pickMaterial, api }) {
+export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, pickSite, pickMaterial, api, onDrawFeature }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let selection = null, tool = 'select', levelKey = null, sheetOn = false, gesture = null, delegate = null, pointerId = null;
   let ownsGesture = false, handles = null;
@@ -55,7 +55,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let linkReadAt = 0;
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    op, addDormer, canEdit, select, pickMaterial, haLink, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
+    op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: op,
     onPreview: drawDimensions, onClick: cards.edge, signal });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'

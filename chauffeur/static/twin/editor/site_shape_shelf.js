@@ -20,6 +20,7 @@ export function siteMaterialSlots(kind, piece) {
     ...(piece.kind === 'path' && piece.edging === 'curb' ? [['edging', 'Curb', 'Concrete']] : [])];
   if (kind === 'beds') return [['fill', 'Fill', ROLE_WORDS[role || 'mulch'] || title(role)]];
   if (kind === 'pool') return [['coping', 'Coping', ROLE_WORDS[role || 'paving'] || title(role)], ['interior', 'Interior', 'Pool tile']];
+  if (kind === 'spa') return [['coping', 'Coping', 'Pool coping'], ['interior', 'Interior', 'Pool interior'], ['wall', 'Wall', 'Stone']];
   if (kind === 'edges') return [['strip', 'Strip', ROLE_WORDS[role || 'lawn'] || title(role)]];
   if (kind === 'fence') return [['boards', 'Boards', 'Wood'], ['posts', 'Posts', 'Wood'], ['rails', 'Rails', 'Wood']];
   return [];
@@ -29,7 +30,8 @@ export function siteMaterialSlots(kind, piece) {
 // after either outline is edited. Never guess another feature after deletion.
 export function yardRoomFeatures(plan, room) {
   const features = siteRecords(plan).filter(r => ['pool', 'hardscape', 'beds', 'fire_pit'].includes(r.kind));
-  if (room.feature) return features.filter(r => r.kind === room.feature.list && r.piece.id === room.feature.id);
+  if (room.feature) return features.filter(r => r.kind === room.feature.list && r.piece.id === room.feature.id
+    && (!room.feature.feature || r.piece.features?.some(f => f.kind === 'spa' && f.id === room.feature.feature)));
   const same = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
   return features.filter(({kind, piece}) => {
     const polygon = kind === 'fire_pit' && roundPit(piece)
@@ -43,7 +45,7 @@ export function yardRoomFeatures(plan, room) {
 }
 
 // Uses the object shelf's labels, number inputs and Advanced disclosure.
-export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, onSaved = () => {}, haAvailable = false, onMakeRoom = () => {}, getKit = () => ({}) }) {
+export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, onSaved = () => {}, haAvailable = false, onMakeRoom = () => {}, getKit = () => ({}), onDrawFeature = () => {} }) {
   const section = document.createElement('section'); section.setAttribute('aria-label', 'Yard shape properties'); host.append(section);
   const advanced = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Advanced'; advanced.append(summary);
   const save = change => queue(async () => {
@@ -69,18 +71,20 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
     label.append(input); section.append(label);
   }
   const { piece, kind } = record, centre = shapeCentre(piece), size = shapeSize(piece);
+  const poolFeature = ['ledge', 'steps', 'spa'].includes(kind);
   const path = piece.kind === 'path';
   if (kind === 'yard_rooms') {
     const name = field('Name', piece.name, (_, name) => ({ name: name.trim() }), section, false);
     name.maxLength = 40; name.minLength = 1;
     if (!haAvailable) field('Home Assistant area', piece.ha_area || '', (_, ha_area) => ({ ha_area: ha_area.trim() || null }), section, false, true);
   }
-  if (['pool', 'hardscape', 'beds', 'fire_pit'].includes(kind) && (piece.polygon || path || kind === 'fire_pit')) {
+  if (['pool', 'hardscape', 'beds', 'fire_pit', 'spa'].includes(kind) && (piece.polygon || path || kind === 'fire_pit')) {
     const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Make this a room'; button.disabled = !canEdit();
     button.addEventListener('click', () => queue(async () => {
       if (!canEdit()) return;
       const current = getRecord(); if (!current) return;
-      await op(current.piece.kind === 'path'
+      await op(kind === 'spa' ? { op: 'make_yard_room', list: 'pool', feature: current.piece.id }
+        : current.piece.kind === 'path'
         ? { op: 'add_site_shape', list: 'yard_rooms', name: (current.piece.name || 'Path').slice(0, 40), polygon: pathOutline(current.piece) }
         : { op: 'make_yard_room', list: current.kind, id: current.piece.id });
       onMakeRoom();
@@ -121,7 +125,7 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
   }
   else {
     if (kind !== 'fence') {
-      field('Angle (degrees)', piece.rotation || 0, (p, rotation) => transformShape(p, { rotation }));
+      if (!poolFeature) field('Angle (degrees)', piece.rotation || 0, (p, rotation) => transformShape(p, { rotation }));
       field('Size (%)', 100, (p, percent) => {
         if (!(percent > 0)) throw new Error('Use a positive size.');
         return transformShape(p, { scale: [percent / 100, percent / 100] });
@@ -136,7 +140,8 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
       if (!(v > 0)) throw new Error('Use a positive scale.');
       return transformShape(p, { scale: [0, 1].map(j => j === i ? v / 100 : 1) });
     }, advanced);
-    const note = document.createElement('p'); note.textContent = 'Drag corners to reshape. Drag or tap + to add a corner. Alt-click a corner to remove it. Turn snaps to 15 degrees; hold Shift for free turn.'; section.append(note);
+    const note = document.createElement('p'); note.textContent = poolFeature ? 'Edit corner coordinates under Advanced to reshape the outline.'
+      : 'Drag corners to reshape. Drag or tap + to add a corner. Alt-click a corner to remove it. Turn snaps to 15 degrees; hold Shift for free turn.'; section.append(note);
     sitePoints(piece).forEach((point, index) => {
       for (const [axis, text] of ['X', 'Y'].entries()) field(`Point ${index + 1} ${text} (ft)`, point[axis], (p, v) => ({ [shapeKey(p)]: editVertex(sitePoints(p), { index }, sitePoints(p)[index].map((n, i) => i === axis ? v : n)) }), advanced);
       const button = document.createElement('button'); button.type = 'button'; button.textContent = `Remove corner ${index + 1}`;
@@ -147,6 +152,38 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
   if (kind === 'pool') {
     field('Pool depth (ft)', piece.depth ?? 5, (_, depth) => ({ depth }));
     field('Coping (ft)', piece.coping ?? 1, (_, coping) => ({ coping }));
+    for (const [feature, text] of [['ledge', 'tanning ledge'], ['steps', 'steps'], ['spa', 'spa']]) {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = `Add ${text}`;
+      button.disabled = !canEdit() || (piece.features?.length || 0) >= 12;
+      button.addEventListener('click', () => { if (canEdit()) onDrawFeature(feature); }); section.append(button);
+    }
+    for (const f of piece.features || []) {
+      const row = document.createElement('details'), heading = document.createElement('summary');
+      heading.textContent = { ledge: 'Tanning ledge', steps: 'Steps', spa: 'Spa' }[f.kind]; row.open = true; row.dataset.poolFeature = f.id;
+      row.append(heading); section.append(row);
+      drawSiteShapeShelf(row, { kind: f.kind, piece: f }, { canEdit, queue, op, report, getKit, onSaved, onMakeRoom,
+        getRecord: () => { const p = getRecord()?.piece.features?.find(p => p.id === f.id); return p ? { kind: p.kind, piece: p } : null; } });
+      const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Delete'; remove.disabled = !canEdit();
+      remove.addEventListener('click', async () => {
+        if (!canEdit() || !await window.promptConfirm(`Delete ${heading.textContent.toLowerCase()}?`, 'Undo restores it.', 'Delete', 'Cancel')) return;
+        queue(() => canEdit() && op({ op: 'delete_pool_feature', id: f.id })).catch(report).finally(onSaved);
+      }); row.append(remove);
+    }
+  }
+  if (kind === 'ledge' || kind === 'spa') {
+    const input = field('Water depth (in)', piece.depth_in ?? (kind === 'ledge' ? 10 : 36), (_, depth_in) => ({ depth_in }));
+    input.min = kind === 'ledge' ? '6' : '24'; input.max = kind === 'ledge' ? '18' : '48';
+  }
+  if (kind === 'steps') {
+    const input = field('Treads', piece.treads ?? 3, (_, treads) => ({ treads })); input.min = '1'; input.max = '6'; input.step = '1';
+    choice('Entry edge', piece.entry_edge ?? 0, piece.polygon.map((_, i) => [String(i), `Edge ${i + 1}`]), entry_edge => ({ entry_edge: Number(entry_edge) }));
+  }
+  if (kind === 'spa') {
+    choice('Mode', piece.mode ?? 'raised', [['raised', 'Raised'], ['flush', 'Flush']], mode => ({ mode }));
+    if ((piece.mode ?? 'raised') === 'raised') {
+      const input = field('Raise above deck (in)', piece.raise_in ?? 12, (_, raise_in) => ({ raise_in })); input.min = '6'; input.max = '24';
+    }
+    choice('Spillover', (piece.spillover ?? true) ? 'yes' : 'no', [['yes', 'Yes'], ['no', 'No']], spillover => ({ spillover: spillover === 'yes' }));
   }
   if (kind === 'fence') {
     const height = field('Height (ft)', piece.height ?? 6, (_, height) => ({ height })); height.min = '2'; height.max = '10';

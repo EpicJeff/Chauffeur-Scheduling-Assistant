@@ -23,6 +23,7 @@ import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
 import { firePitRings, firePitOptions, roundPit, buildFirePit, fireFlameMaterial } from './fire_pits.js';
 import { porchFoundationRole } from './twin_porch_foundation.js';
 import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.js';
+import { buildPoolFeatures, cutSurface } from './pool_features.js';
 
 function random(seed) {
   let n = seed | 0;
@@ -134,6 +135,11 @@ function yardMaterialInputs(plan, kit) {
   if (site.pool?.polygon?.length >= 3) {
     if (site.pool.materials?.interior) use('paving', site.pool.materials.interior);
     if ((site.pool.coping ?? 1) > 0) use(authoredRole(site.pool.material, 'paving'), site.pool.materials?.coping);
+    for (const f of site.pool.features || []) if (f.kind === 'spa') {
+      use(authoredRole(site.pool.material, 'paving'), f.materials?.coping || site.pool.materials?.coping);
+      if (f.materials?.interior || site.pool.materials?.interior) use('paving', f.materials?.interior || site.pool.materials?.interior);
+      use('base', f.materials?.wall);
+    }
   }
   for (const f of sitePieces(site.fire_pit)) {
     const options = firePitOptions(f);
@@ -156,7 +162,7 @@ function yardSiteInputs(site) {
   return [site.lot, (site.terraces || []).map(p => [p.polygon, p.height, p.blend,
     (p.edges || []).map(e => [e.edge, e.wall && fields(e.wall, 'material thickness_in above_in materials')])]),
     (site.hardscape || []).map(h => fields(h, 'kind polygon points width corner smooth radius edging elevation material materials')),
-    site.pool && fields(site.pool, 'polygon depth coping elevation material materials'),
+    site.pool && fields(site.pool, 'polygon depth coping elevation material materials features'),
     sitePieces(site.fire_pit).map(f => fields(f, 'id shape at radius rotation polygon fuel body top height_in glass entity elevation materials')),
     (site.beds || []).map(b => fields(b, 'polygon elevation material materials')),
     (site.edges || []).map(e => fields(e, 'polygon points polyline elevation material materials')),
@@ -215,6 +221,7 @@ export function yardKey(plan, kit, tier, { viewing = false } = {}) {
 export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null } = {}) {
   const group = new THREE.Group(); group.name = 'yard';
   const site = plan.site || {}, mats = materials || new Map();
+  const spas = (site.pool?.features || []).filter(f => f.kind === 'spa').map(f => f.polygon);
   group.userData.materials = mats;
   const surface = (poly, z0, z1 = z0, holes = []) => {
     if (z0 === z1) return terrainGeometry(plan, poly, tier, { holes, offset: z0 });
@@ -253,7 +260,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     // Same kit role, same texture. Vertex colours are always enabled; Grade
     // changes the buffer, never a material define or shader program.
     lawn.vertexColors = true; lawn.side = THREE.DoubleSide;
-    const mesh = addMesh(terrain, terrainGeometry(plan, terrainOutline, tier, { holes: pool ? [pool] : [], offset: -.04, skirts: true }), lawn);
+    const mesh = addMesh(terrain, terrainGeometry(plan, terrainOutline, tier, { holes: [...(pool ? [pool] : []), ...spas], offset: -.04, skirts: true }), lawn);
     mesh.userData.terrain = true;
     // Grade's vertex colours already keep this grid out of static merging.
     // Keep the exclusion explicit if a future merge path accepts colours.
@@ -275,19 +282,19 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     const role = h.material === 'concrete' ? 'patio_concrete' : kit.materials?.[h.material] ? h.material : 'paving';
     if (h.kind === 'path') {
       // Swept pieces retain user-drawn crossings without even/odd cancellation.
-      for (const poly of pathSurfacePolygons(h)) addMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0)), mat(role, h.materials?.surface));
+      for (const poly of pathSurfacePolygons(h)) addMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spas), mat(role, h.materials?.surface));
       if (h.edging === 'curb') {
         const inner = pathBoundaries(h), outer = pathBoundaries(h, (h.width ?? 3) / 2 + .5);
         for (const side of ['left', 'right']) for (let i = 1; i < inner[side].length; i++) {
           const poly = [inner[side][i - 1], inner[side][i], outer[side][i], outer[side][i - 1]];
           // Both offsets have the same mitre/bevel topology.
-          const curb = addMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0)), mat('patio_concrete', h.materials?.edging));
+          const curb = addMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spas), mat('patio_concrete', h.materials?.edging));
           curb.geometry.userData.pathCurb = true;
         }
       }
       continue;
     }
-    const holes = pool && pool.every(p => inside(p, h.polygon)) ? [pool] : [];
+    const holes = [...(pool && pool.every(p => inside(p, h.polygon)) ? [pool] : []), ...spas];
     addMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role, h.materials?.surface));
   }
   stopHardscape();
@@ -295,7 +302,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   if (pool?.length >= 3) {
     const d = site.pool.depth ?? 5, coping = site.pool.coping ?? 1;
     const poolHeight = groundAt(plan, ...pool[0]) + (site.pool.elevation || 0);
-    const poolSurface = (poly, z0, z1 = z0, holes = []) => polygon(poly, poolHeight + z0, poolHeight + z1, holes);
+    const poolSurface = (poly, z0, z1 = z0, holes = []) => spas.length
+      ? cutSurface(poly, spas, poolHeight + z0, poolHeight + z1, holes)
+      : polygon(poly, poolHeight + z0, poolHeight + z1, holes);
     const interior = site.pool.materials?.interior;
     addMesh(group, poolSurface(pool, -d - 0.2, -d), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4', { roughness: 0.35 }));
     // Offset each edge outwards by coping width. This works for the convex pool
@@ -311,7 +320,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
       addMesh(group, poolSurface([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'));
     }
-    addMesh(group, poolSurface(pool, -0.25), plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false }));
+    const water = plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false });
+    addMesh(group, poolSurface(pool, -0.25), water);
+    buildPoolFeatures(group, site.pool, poolHeight, { mat, plain, water, copingRole: kit.materials?.[site.pool.material] ? site.pool.material : 'paving' });
   }
   stopPool();
   const stopFirePits = part('fire_pits');

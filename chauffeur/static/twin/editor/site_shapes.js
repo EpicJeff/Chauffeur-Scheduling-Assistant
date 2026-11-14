@@ -22,10 +22,15 @@ const clean = v => Math.round(v * 1e9) / 1e9;
 export function transformShape(piece, { rotation, scale = [1, 1], centre = shapeCentre(piece) } = {}) {
   const origin = shapeCentre(piece), angle = ((rotation ?? piece.rotation ?? 0) - (piece.rotation || 0)) * Math.PI / 180;
   const key = shapeKey(piece);
-  const points = sitePoints(piece).map(p => {
+  const placed = p => {
     const x = (p[0] - origin[0]) * scale[0], y = (p[1] - origin[1]) * scale[1];
     return [clean(centre[0] + x * Math.cos(angle) - y * Math.sin(angle)), clean(centre[1] + x * Math.sin(angle) + y * Math.cos(angle))];
-  });
-  return { ...(key ? { [key]: points } : { at: points[0] }), ...(rotation === undefined ? {} : { rotation: (rotation % 360 + 360) % 360 }) };
+  };
+  const points = sitePoints(piece).map(placed);
+  return { ...(key ? { [key]: points } : { at: points[0] }),
+    ...(piece.features ? { features: piece.features.map(f => ({ ...f, polygon: f.polygon.map(placed) })) } : {}),
+    ...(rotation === undefined ? {} : { rotation: (rotation % 360 + 360) % 360 }) };
 }
-export const shapeOperation = (record, change) => ({ op: 'update_site_shape', list: record.kind, index: record.index, ...change });
+export const shapeOperation = (record, change) => ['ledge', 'steps', 'spa'].includes(record.kind)
+  ? { op: 'update_pool_feature', id: record.piece.id, ...change }
+  : { op: 'update_site_shape', list: record.kind, index: record.index, ...change };

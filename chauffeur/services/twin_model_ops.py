@@ -492,7 +492,8 @@ MORE_OPS = ('add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
             'move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape', 'make_yard_room', 'place_device', 'unplace_device', 'set_ha_display',
-            'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation', 'set_porch_foundation')
+            'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation', 'set_porch_foundation',
+            'add_pool_feature', 'update_pool_feature', 'delete_pool_feature')
 
 
 def _item_scale(value):
@@ -1230,6 +1231,9 @@ def _site_op(model, op, actor):
                         piece[key] = [piece[key][i] + by[i] for i in (0, 1)]
                     else:
                         piece[key] = [[p[i] + by[i] for i in (0, 1)] for p in piece[key]]
+                if name == 'pool':
+                    for feature in piece.get('features', []):
+                        feature['polygon'] = [[p[i] + by[i] for i in (0, 1)] for p in feature['polygon']]
             elif 'at' in piece:
                 piece['at'] = _point(op.get('at'))
             else:
@@ -1407,6 +1411,42 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normali
             if not _unplace_device(model, device, actor):
                 raise Refused('Nothing changed.')
         return model, 'Placed the device.' if kind == 'place_device' else 'Removed the device placement.'
+    if kind in ('add_pool_feature', 'update_pool_feature', 'delete_pool_feature'):
+        from services import twin_site_shapes as shapes
+        pool = model['site'].get('pool')
+        if not isinstance(pool, dict):
+            raise Refused('Draw a pool first.')
+        features = pool.setdefault('features', [])
+        try:
+            if kind == 'add_pool_feature':
+                if set(op) - {'op', 'kind', 'polygon', 'depth_in', 'treads', 'entry_edge', 'mode', 'raise_in', 'spillover', 'materials'}:
+                    raise ValueError('Choose supported pool feature properties.')
+                value = {k: v for k, v in op.items() if k != 'op'}
+                from uuid import uuid4
+                value['id'] = 'pool_feature:' + uuid4().hex
+                features.append(shapes.pool_feature(pool, value))
+            else:
+                piece = next((p for p in features if p['id'] == op.get('id')), None)
+                if piece is None:
+                    raise ValueError('That pool feature is missing.')
+                if kind == 'delete_pool_feature':
+                    if set(op) - {'op', 'id'}:
+                        raise ValueError('Choose a pool feature to delete.')
+                    features.remove(piece)
+                else:
+                    if 'kind' in op:
+                        raise ValueError('A pool feature keeps its kind.')
+                    change = {k: v for k, v in op.items() if k not in ('op', 'id')}
+                    if 'materials' in change:
+                        change['materials'] = shapes.material_slots(piece['kind'], change['materials'], piece.get('materials'))
+                    piece.update(change)
+            pool['features'] = shapes.pool_features(pool)
+        except ValueError as exc:
+            raise Refused(str(exc)) from exc
+        if actor == 'person':
+            pool.setdefault('src', {})['person'] = True
+        return model, {'add_pool_feature': 'Added the pool feature.', 'update_pool_feature': 'Changed the pool feature.',
+                       'delete_pool_feature': 'Deleted the pool feature.'}[kind]
     if kind == 'make_yard_room':
         from services import twin_site_shapes
         name = op.get('list')
@@ -1415,7 +1455,7 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normali
         if piece is None:
             raise Refused('That ground feature is missing.')
         try:
-            values = twin_site_shapes.room_from_feature(name, piece)
+            values = twin_site_shapes.room_from_feature(name, piece, op.get('feature'))
         except ValueError as exc:
             raise Refused(str(exc)) from exc
         return _site_op(model, {'op': 'add_site_shape', 'list': 'yard_rooms', **values}, actor)
