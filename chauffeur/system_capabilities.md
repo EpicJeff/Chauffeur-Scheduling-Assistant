@@ -1,6 +1,39 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.864 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.865 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.865 (2026-11-14, NOT device-verified): editing one building no longer regenerates the others. Unchanged buildings are reused as they are.**
+
+**The report.** The user, on their two-building house: every change takes several seconds; the object count is high and the system is not optimised for that complexity. Edit timing (.847) showed each edit regenerating every building, even one nobody touched.
+
+**How** (`static/twin/twin_generator.js` `buildTwin(plan, kit, tier, {previous})`, `buildingKey`; `twin_view.js` rebuild).
+- Each building gets a key from everything that shapes it:
+  - its complete record;
+  - its effective finishes, resolved through plan, building, level, face, room and porch overrides, including household material revisions;
+  - the `base` foundation band, whenever the first floor is raised, porch or not;
+  - terrain pads whose reach overlaps it;
+  - imported model metadata;
+  - tier, viewing mode, anchors and the editable level.
+  A key guard checks 241 independent mutations of those inputs.
+- A building whose key is unchanged keeps its geometry, level groups, roof, gable and light domains, materials and pick registries. Only changed buildings are generated, and nothing merges across buildings.
+- **Adoption happens after the asset wait and the view's revision check**, so a superseded edit never takes over the scene. Late model imports land in the currently adopted twin, however many reuses later. The key is computed before generation. After the asset wait only its model-metadata part may update, and only if everything else is unchanged.
+- **When a building is never reused:**
+  - its model is marked stale by an in-place level rebuild;
+  - it is degraded, because an optional asset failed to load.
+- **Finishes shortcut.** A rebuilt building whose finishes did not change keeps its materials, so a terrain-only edit does not recreate shaders.
+- Edit timing records now list `buildings_reused` and `buildings_rebuilt`.
+
+**Measured** (Chromium, test house, siding edit on the pool house): main-house generation dropped from about 1.3 s to 0.1-0.2 s, with the same draw-call count (editor 125, viewer 154). It held on the first edit after a page reload too. Headless totals are dominated by software rendering and are not representative of the desk.
+
+**Tests.** `test_twin_building_reuse_js` 19/19, run on the real mounted editor. It covers:
+- the key guard, a porch-less raised floor among its cases;
+- the base-band rebuild;
+- refusing a stale or degraded model;
+- the finishes material reuse;
+- a manifest change during the asset wait;
+- selection, hover, cards, raycast, fades and ghosts after a reuse.
+
+Also passing: `test_twin_library_js` 28/28 (late imports after reuses), `test_twin_bake_fingerprint_js` (an unchanged building keeps its bake chart keys), yard reuse 20/20, material live 19/19, edit timing 2/2, ground, levels, roof flags, editor history 8/8, controls 31/31, import maps 3/3.
 
 **v2.499.864 (2026-11-14, NOT device-verified): the Material library browses Poly Haven and ambientCG and adds a material in one click. Material library Tasks 7-8.**
 
