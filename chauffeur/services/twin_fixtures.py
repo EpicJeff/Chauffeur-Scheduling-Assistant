@@ -14,6 +14,8 @@ from services import twin_terrain as terrain
 
 DEFAULT_OUTPUT_LM = 503
 MAX_FIXTURES = 64
+MAX_OUTPUT_LM = 1e6
+MAX_SHARE = 1e6
 OPS = ('add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output')
 _SHAPES = {
     'point': {'at'},
@@ -70,6 +72,9 @@ def validate(fixture):
     if not isinstance(fixture, dict) or not isinstance(fixture.get('shape'), str) or fixture['shape'] not in _SHAPES:
         raise ValueError('Choose point, spot, line or area.')
     f = deepcopy(fixture)
+    # Context status is derived from the current house, never authored data.
+    f.pop('orphaned', None)
+    f.pop('orphan_reason', None)
     shape = f['shape']
     if set(f) - {'id', 'shape', 'share', 'ref', 'building', 'level'} - _SHAPES[shape]:
         raise ValueError('Choose supported fixture properties.')
@@ -77,9 +82,10 @@ def validate(fixture):
     try:
         if not isinstance(fid, str) or not fid.startswith('fixture:'):
             raise ValueError()
-        UUID(fid[8:])
+        if str(UUID(fid[8:])) != fid[8:]:
+            raise ValueError()
     except (ValueError, AttributeError):
-        raise ValueError('A fixture needs a stable fixture:<uuid> id.') from None
+        raise ValueError('A fixture needs a canonical fixture:<uuid> id.') from None
     if f.get('ref') not in ('floor', 'ground', 'absolute'):
         raise ValueError('Choose a floor, ground or absolute vertical reference.')
     if f['ref'] == 'floor':
@@ -89,7 +95,7 @@ def validate(fixture):
         f.pop('building', None)
         f.pop('level', None)
     if 'share' in f:
-        _number(f['share'], 'share', 0, math.inf)
+        _number(f['share'], 'share', 0, MAX_SHARE)
     if shape != 'line':
         f['at'] = _vector(f.get('at'), 3, 'Position')
     if shape == 'spot':
@@ -313,8 +319,9 @@ def _match(edges, snap):
 def resolve_snap(model, snap):
     """Return the endpoint-matched sub-path in absolute xyz feet, or None.
 
-    Facing changes emission direction, not the host's top elevation. A wall
-    cap run is lifted to its cap; down/out/up/in share that attachment path.
+    Return the host edge line itself (cap top, surface edge, etc.), with no
+    facing offset. Task 2's emitter resolver applies the mounting offset per
+    facing; down/out/up/in share the stored attachment path here.
     """
     snap = _snap(snap)
     matched = _match(_host_edges(model, snap['host']), snap)
@@ -336,17 +343,36 @@ def _reference(model, f, point):
     return 0
 
 
-def _in_lot(model, f):
+def _context_error(model, f):
+    """Describe missing floor/lot context without rejecting a stored fixture."""
     from services.twin_site_shapes import _contained
     lot = model.get('site', {}).get('lot')
     points = f['path'] if f['shape'] == 'line' else [f['at']]
-    _reference(model, f, points[0])
+    try:
+        _reference(model, f, points[0])
+    except ValueError as exc:
+        return str(exc)
+    if f['shape'] == 'area':
+        x, y, z = f['at']
+        w, h = f['size_ft']
+        angle = math.radians(f['rotation_deg'])
+        c, s = math.cos(angle), math.sin(angle)
+        points = [[x + dx*c - dy*s, y + dx*s + dy*c, z]
+                  for dx, dy in ((-w/2, -h/2), (w/2, -h/2), (w/2, h/2), (-w/2, h/2))]
+        points.append(points[0])
     # Check the open polyline, without inventing a closing edge across a notch.
     outside = lot and any(not terrain.inside(lot, p[:2]) for p in points)
     if lot and not outside:
         outside = any(not _contained(lot, [a[:2], b[:2]]) for a, b in zip(points, points[1:]) if a[:2] != b[:2])
     if outside:
-        raise ValueError('Fixture positions and paths must stay inside the lot.')
+        return 'Fixture positions and paths must stay inside the lot.'
+    return None
+
+
+def _in_lot(model, f):
+    """Reject invalid context only for the fixture being added or edited."""
+    if reason := _context_error(model, f):
+        raise ValueError(reason)
 
 
 def _resolve(model, f):
@@ -357,7 +383,8 @@ def _resolve(model, f):
         else:
             try:
                 resolved = {**f, 'path': [[*p[:2], p[2] - _reference(model, f, p)] for p in path]}
-                _in_lot(model, resolved)
+                if reason := _context_error(model, resolved):
+                    raise ValueError(reason)
             except ValueError:
                 # Host/floor removal or leaving the lot cannot erase a run.
                 f['detached'] = True
@@ -367,13 +394,14 @@ def _resolve(model, f):
 
 
 def normalize(model, notes):
-    """Validate present fixture maps in place; absent maps stay absent."""
+    """Drop structurally invalid fixtures; retain context orphans with reasons."""
     if 'light_fixtures' in model:
         raw = model['light_fixtures']
         kept = {}
         if not isinstance(raw, dict):
             notes.append('Dropped invalid light_fixtures; expected an entity map.')
             raw = {}
+        ids = set()
         for entity, fixtures in raw.items():
             try:
                 _entity(entity)
@@ -382,19 +410,20 @@ def normalize(model, notes):
             except ValueError as exc:
                 notes.append(f'Dropped fixtures for {entity}: {exc}')
                 continue
-            rows, ids = [], set()
+            rows = []
             for fixture in fixtures:
                 try:
                     f = validate(fixture)
                     if f['id'] in ids or len(rows) >= MAX_FIXTURES:
                         raise ValueError('Duplicate fixture id or more than 64 fixtures.')
-                    if 'snap' not in f:
-                        _in_lot(model, f)
-                    _resolve(model, f)
-                    rows.append(f)
-                    ids.add(f['id'])
                 except ValueError as exc:
                     notes.append(f'Dropped a fixture for {entity}: {exc}')
+                    continue
+                _resolve(model, f)
+                if reason := _context_error(model, f):
+                    f.update(orphaned=True, orphan_reason=reason)
+                rows.append(f)
+                ids.add(f['id'])
             if rows:
                 kept[entity] = rows
         model['light_fixtures'] = kept
@@ -409,7 +438,7 @@ def normalize(model, notes):
                 _entity(entity)
                 if not isinstance(value, dict) or set(value) - {'output_lm'}:
                     raise ValueError('Expected output_lm metadata.')
-                kept[entity] = {'output_lm': _number(value.get('output_lm', DEFAULT_OUTPUT_LM), 'output in lumens', 0, math.inf)}
+                kept[entity] = {'output_lm': _number(value.get('output_lm', DEFAULT_OUTPUT_LM), 'output in lumens', 0, MAX_OUTPUT_LM)}
             except ValueError as exc:
                 notes.append(f'Dropped fixture metadata for {entity}: {exc}')
         model['light_fixtures_meta'] = kept
@@ -436,7 +465,7 @@ def apply_op(model, op):
     kind = op['op']
     entity = _entity(op.get('entity_id'))
     if kind == 'set_light_output':
-        value = _number(op.get('output_lm'), 'output in lumens', 0, math.inf)
+        value = _number(op.get('output_lm'), 'output in lumens', 0, MAX_OUTPUT_LM)
         model.setdefault('light_fixtures_meta', {})[entity] = {'output_lm': value}
         return 'Changed the light output.'
     fixtures = model.setdefault('light_fixtures', {}).setdefault(entity, [])

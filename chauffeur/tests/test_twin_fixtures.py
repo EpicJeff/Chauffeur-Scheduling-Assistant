@@ -7,7 +7,8 @@ import tempfile
 import traceback
 import subprocess
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
+from unittest.mock import patch
 
 os.environ['CHAUFFEUR_DATA_DIR'] = tempfile.mkdtemp(prefix='chauffeur_fixtures_')
 os.environ.pop('HA_BASE_URL', None)
@@ -104,6 +105,8 @@ def test_limits_refused():
 
 def test_placement_ops_never_touch_fixtures():
     seed()
+    ts.update_model(lambda m: {**m, 'site': {**m['site'], 'hardscape': [
+        {'id': 'patio', 'polygon': [[1, 1], [9, 1], [9, 9], [1, 9]], 'material': 'paving'}]}})
     with Ctx() as c:
         # Fixtures survive the same device being placed, dragged, raised and regrouped.
         controller(c, [(ENTITY, 'Landscape')])
@@ -117,6 +120,8 @@ def test_placement_ops_never_touch_fixtures():
             {'op': 'place_device', 'device': 'dev-k-light', 'host': {'yard_room': 'yard', 'u': .4, 'v': .5}, 'offset': 3},
             {'op': 'set_ha_display', 'device': 'dev-k-light', 'show_as': 'entities'},
             {'op': 'set_ha_display', 'device': 'dev-k-light', 'show_as': 'controls'},
+            {'op': 'make_yard_room', 'list': 'hardscape', 'id': 'patio'},
+            {'op': 'unplace_device', 'device': 'dev-k-light'},
         ]:
             assert post(c, op)['light_fixtures'] == before
 
@@ -207,6 +212,13 @@ def test_legacy_model_without_fixtures_unchanged():
     out, notes = twin_model.normalize(m)
     assert out == m
     assert 'light_fixtures' not in out and 'light_fixtures_meta' not in out
+    from services import twin_fixtures as tf, twin_model_bridge as bridge
+    raw = json.loads((Path(__file__).parent / 'fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
+    with patch.object(tf, 'normalize', return_value=None):
+        legacy, _ = bridge.assemble(raw)
+        baseline, _ = twin_model.normalize(legacy)
+    actual, _ = twin_model.normalize(legacy)
+    assert json.dumps(actual, sort_keys=True) == json.dumps(baseline, sort_keys=True)
 
 
 def test_normalize_isolates_malformed_fixture_and_checks_floor_host():
@@ -214,9 +226,14 @@ def test_normalize_isolates_malformed_fixture_and_checks_floor_host():
     seed()
     m = ts.current_model()
     good = fixture(ref='floor', building='B1', level='L1')
-    m['light_fixtures'] = {ENTITY: [good, fixture('spot', cone_deg=200), fixture(ref='floor', building='gone', level='L1')]}
+    missing_floor = fixture(ref='floor', building='gone', level='L1')
+    m['light_fixtures'] = {ENTITY: [good, fixture('spot', cone_deg=200), missing_floor]}
     out, notes = twin_model.normalize(m)
-    assert out['light_fixtures'][ENTITY] == [tf.validate(good)] and len(notes) >= 2
+    assert out['light_fixtures'][ENTITY][0] == tf.validate(good) and len(notes) >= 1
+    assert len(out['light_fixtures'][ENTITY]) == 2
+    assert out['light_fixtures'][ENTITY][1]['id'] == missing_floor['id']
+    assert out['light_fixtures'][ENTITY][1]['orphaned'] is True
+    assert 'building and level' in out['light_fixtures'][ENTITY][1]['orphan_reason']
     assert len(m['light_fixtures'][ENTITY]) == 3, 'normalization must not mutate input'
     bad = fixture('point', at=[float('nan'), 0, 0])
     try:
@@ -383,6 +400,135 @@ def test_output_and_share_do_not_inherit_the_coordinate_limit():
         assert f['share'] == 200000
         m = post(c, {'op': 'set_light_output', 'entity_id': ENTITY, 'output_lm': 200000})
         assert m['light_fixtures_meta'][ENTITY]['output_lm'] == 200000
+
+
+def test_lot_shrink_keeps_fixture_flagged_orphaned():
+    seed()
+    with Ctx() as c:
+        before = [add(c, fixture(shape)) for shape in ('point', 'spot', 'line', 'area')]
+        ts.update_current(lambda m: {**m, 'site': {**m['site'], 'lot': [[0, 0], [8, 0], [8, 8], [0, 8]]}}, 'edit')
+        rows = ts.current_model()['light_fixtures'][ENTITY]
+        assert len(rows) == len(before)
+        for old, row in zip(before, rows):
+            assert row['orphaned'] is True and 'lot' in row['orphan_reason']
+            assert {k: v for k, v in row.items() if k not in ('orphaned', 'orphan_reason')} == old
+        body = c.client.get(LIVE, headers=c.mum).json()
+        assert body['light_fixtures'][ENTITY] == rows
+
+
+def test_building_removal_keeps_floor_fixture_flagged_orphaned():
+    seed()
+    with Ctx() as c:
+        floor = add(c, fixture(ref='floor', building='B1', level='L1'))
+        ground = add(c)
+        post(c, {'op': 'delete', 'piece': 'B1', 'building': 'B1'})
+        ts.remove_building('B1')
+        rows = ts.current_model()['light_fixtures'][ENTITY]
+        assert len(rows) == 2
+        assert rows[0]['id'] == floor['id'] and rows[0]['at'] == floor['at']
+        assert rows[0]['orphaned'] is True and 'building and level' in rows[0]['orphan_reason']
+        assert rows[1] == ground
+
+
+def test_context_restored_clears_orphaned():
+    for context in ('lot', 'floor'):
+        seed()
+        with Ctx() as c:
+            f = add(c, fixture(ref='floor', building='B1', level='L1') if context == 'floor' else fixture())
+            original = ts.current_model()
+            if context == 'lot':
+                ts.update_model(lambda m: {**m, 'site': {**m['site'], 'lot': [[0, 0], [8, 0], [8, 8], [0, 8]]}})
+            else:
+                post(c, {'op': 'delete', 'piece': 'B1', 'building': 'B1'})
+                ts.remove_building('B1')
+            assert ts.current_model()['light_fixtures'][ENTITY][0]['orphaned'] is True
+            ts.update_model(lambda m: {**m, 'buildings': original['buildings'], 'site': original['site']})
+            restored = ts.current_model()['light_fixtures'][ENTITY][0]
+            assert restored == f
+            assert 'orphaned' not in restored and 'orphan_reason' not in restored
+            assert twin_model.normalize(ts.current_model())[0] == ts.current_model()
+
+
+def test_orphan_edits_validate_only_the_target_and_can_repair_it():
+    seed()
+    with Ctx() as c:
+        f = add(c)
+        ts.update_model(lambda m: {**m, 'site': {**m['site'], 'lot': [[0, 0], [8, 0], [8, 8], [0, 8]]}})
+        post(c, {'op': 'update_light_fixture', 'entity_id': ENTITY, 'id': f['id'], 'change': {'share': 2}}, 400)
+        add(c, fixture(at=[3, 3, 1]))
+        assert ts.current_model()['light_fixtures'][ENTITY][0]['orphaned'] is True
+        m = post(c, {'op': 'update_light_fixture', 'entity_id': ENTITY, 'id': f['id'], 'change': {'at': [4, 4, 1]}})
+        assert m['light_fixtures'][ENTITY][0]['at'] == [4, 4, 1]
+        assert 'orphaned' not in m['light_fixtures'][ENTITY][0]
+        assert 'orphan_reason' not in m['light_fixtures'][ENTITY][0]
+
+
+def test_fixture_ids_require_canonical_uuid():
+    from services import twin_fixtures as tf
+    seed()
+    uid = UUID('12345678-1234-4abc-8123-123456789abc')
+    with Ctx() as c:
+        for text in ('{' + str(uid) + '}', uid.urn, uid.hex, str(uid).upper()):
+            f = fixture(id='fixture:' + text)
+            try:
+                tf.validate(f)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('accepted noncanonical UUID: ' + text)
+            post(c, {'op': 'add_light_fixture', 'entity_id': ENTITY, 'fixture': f}, 400)
+        assert add(c, fixture(id='fixture:' + str(uid)))['id'] == 'fixture:' + str(uid)
+
+
+def test_area_corners_and_rotation_must_fit_lot():
+    seed()
+    ts.update_model(lambda m: {**m, 'site': {**m['site'], 'lot': [[0, 0], [10, 0], [10, 10], [0, 10]]}})
+    with Ctx() as c:
+        for f in (fixture('area', at=[5, 5, 2], size_ft=[12, 12]),
+                  fixture('area', at=[5, 5, 2], size_ft=[8, 8], rotation_deg=45),
+                  fixture('area', at=[5, 5, 2], size_ft=[12, 2], rotation_deg=90)):
+            post(c, {'op': 'add_light_fixture', 'entity_id': ENTITY, 'fixture': f}, 400)
+        f = add(c, fixture('area', at=[5, 5, 2], size_ft=[8, 8]))
+        post(c, {'op': 'update_light_fixture', 'entity_id': ENTITY, 'id': f['id'], 'change': {'rotation_deg': 45}}, 400)
+        assert add(c, fixture('area', at=[5, 5, 2], size_ft=[6, 6], rotation_deg=45))
+
+
+def test_output_and_share_caps_refused():
+    from services import twin_fixtures as tf
+    seed()
+    with Ctx() as c:
+        f = add(c, fixture(share=1e6))
+        m = post(c, {'op': 'set_light_output', 'entity_id': ENTITY, 'output_lm': 1e6})
+        assert m['light_fixtures_meta'][ENTITY]['output_lm'] == 1e6
+        for value in (1e6 + 1, 1e12):
+            post(c, {'op': 'set_light_output', 'entity_id': ENTITY, 'output_lm': value}, 400)
+            post(c, {'op': 'add_light_fixture', 'entity_id': ENTITY, 'fixture': fixture(share=value)}, 400)
+            post(c, {'op': 'update_light_fixture', 'entity_id': ENTITY, 'id': f['id'], 'change': {'share': value}}, 400)
+        raw = ts.current_model()
+        raw['light_fixtures_meta'][ENTITY]['output_lm'] = 1e6 + 1
+        raw['light_fixtures'][ENTITY].append(fixture(share=1e6 + 1))
+        notes = []
+        tf.normalize(raw, notes)
+        assert raw['light_fixtures'][ENTITY] == [f]
+        assert ENTITY not in raw['light_fixtures_meta'] and len(notes) == 2
+
+
+def test_duplicate_ids_across_entities_are_dropped_with_note():
+    seed()
+    m = ts.current_model()
+    first, other = fixture(), fixture()
+    m['light_fixtures'] = {ENTITY: [first], 'switch.garden': [copy.deepcopy(first), other]}
+    out, notes = twin_model.normalize(m)
+    assert out['light_fixtures'] == {ENTITY: [first], 'switch.garden': [other]}
+    assert any('Duplicate fixture id' in note for note in notes)
+    assert m['light_fixtures']['switch.garden'] == [first, other]
+
+
+def test_facing_does_not_offset_the_stored_host_edge():
+    seed()
+    with Ctx() as c:
+        for facing in ('down', 'out', 'up', 'in'):
+            assert snapped(c, facing=facing)['path'] == [[12, 10, 2], [18, 10, 2]]
 
 
 if __name__ == '__main__':
