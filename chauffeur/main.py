@@ -1,4 +1,6 @@
 import copy
+from services import win_loopback as _win_loopback  # Windows dev loopback guard; no-op elsewhere
+_win_loopback.install()
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
