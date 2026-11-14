@@ -552,7 +552,7 @@ YARD_FIT_JS = """(id) => {
 }"""
 
 
-def scenario_yard_room_target_frames_it_from_above():
+def scenario_yard_room_target_orbits_it():
     """User, 2026-11: tapping a yard room should come close, like an indoor room, not barely zoom."""
     s = L.serve()
     if s is None:
@@ -579,15 +579,16 @@ def scenario_yard_room_target_frames_it_from_above():
             if page.evaluate(camera) == before:
                 break
         fit = page.evaluate(YARD_FIT_JS, room_id)
-        check(fit['room'] == room_id and fit['mode'] == 'top', ('the yard room is entered and seen from above', fit))
-        check(fit['up'] > .99, ('the camera looks straight down at the yard room', fit))
+        # User, 2026-11-14: "Orbiting instead of top down is fine" - an outside room orbits.
+        check(fit['room'] == room_id and fit['mode'] == 'orbit', ('the yard room is entered in orbit', fit))
+        check(fit['up'] < .99, ('the camera looks at the yard room at an angle, not straight down', fit))
         check(fit['inside'], ('the whole yard room is on screen', fit))
         check(max(fit['w'], fit['h']) >= .5 * fit['short'], ('the yard room fills at least half the screen', fit))
         L.no_errors(s)
 
 
 SCENARIOS = [
-    scenario_yard_room_target_frames_it_from_above,
+    scenario_yard_room_target_orbits_it,
     scenario_far_all_room_card_has_live_facts_and_climate_keeps_round_badges,
     scenario_room_cards_zoom_round_trip_and_mode_change_compile_no_programs,
     scenario_wall_recovers_when_home_assistant_returns,

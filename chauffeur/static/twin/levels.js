@@ -56,7 +56,9 @@ export function roomNeighbour(rooms, current, direction) {
   return candidates[0]?.room || null;
 }
 export function deviceAtLevel(state, row) {
-  if (row.yard) return state.level === 'house' || state.level === 'room' && state.building == null && row.room === state.room;
+  // Outside rooms behave like inside ones: their devices show once that room is focused (user,
+  // 2026-11-14: "hiding until you focus that area"); the room's own icon stands for them before.
+  if (row.yard) return row.look === 'attention' && state.level === 'house' || state.level === 'room' && state.building == null && row.room === state.room;
   if (row.fire_pit) return state.level === 'house';
   return row.look === 'attention' || state.level === 'room' && row.building === state.building && row.room === state.room;
 }
@@ -128,8 +130,9 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
     const x0 = Math.min(...xs, ...(points.length ? [] : [0])), x1 = Math.max(...xs, ...(points.length ? [] : [20]));
     const y0 = Math.min(...ys, ...(points.length ? [] : [0])), y1 = Math.max(...ys, ...(points.length ? [] : [20]));
-    const top = ['floor', 'room'].includes(state.level);
-    const ranges = top ? [] : list.map(heights), low = ranges.length ? Math.min(...ranges.map(r => r[0])) : 0,
+    // An outside room orbits (nothing to cut through outdoors); inside rooms and floors look down.
+    const top = ['floor', 'room'].includes(state.level) && !yard;
+    const ranges = top || yard ? [] : list.map(heights), low = ranges.length ? Math.min(...ranges.map(r => r[0])) : 0,
       high = ranges.length ? Math.max(...ranges.map(r => r[1])) : 0;
     const height = yard ? groundAt(view.plan, ...centroid(yard.polygon)) : top ? base(b) + f.elevation : (low + high) / 2;
     // At House, orbit the centroid of building centroids, rather than a lot or an outlier's bbox centre.
@@ -137,11 +140,25 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     const at = yard ? centroid(yard.polygon) : state.level === 'house' && centres.length ? [0, 1].map(i => centres.reduce((sum, p) => sum + p[i], 0) / centres.length) : [(x0 + x1) / 2, (y0 + y1) / 2];
     const span = Math.max(LEVEL_TUNING.minSpanFeet, 2 * Math.max(at[0] - x0, x1 - at[0]) / (view.camera.aspect || 1),
       2 * Math.max(at[1] - y0, y1 - at[1]), top ? 0 : high - low);
-    return {target: new THREE.Vector3(at[0] * FT, height * FT, -at[1] * FT),
+    const target = new THREE.Vector3(at[0] * FT, height * FT, -at[1] * FT);
+    if (yard && !top && view.camera.isPerspectiveCamera) {
+      // Orbit framing for an outside room: fit its corners in camera space along the orbit
+      // direction, so the foreshortened ground still fills the screen.
+      const inverse = new THREE.Quaternion().setFromRotationMatrix(
+        new THREE.Matrix4().lookAt(orbit, new THREE.Vector3(), view.camera.up)).invert();
+      const tan = Math.tan(view.camera.fov * Math.PI / 360) / (view.camera.zoom || 1), aspect = view.camera.aspect || 1;
+      const padding = LEVEL_TUNING.yardFramePadding;
+      const distance = Math.max(...yard.polygon.map(p => {
+        const q = new THREE.Vector3(p[0] * FT, height * FT, -p[1] * FT).sub(target).applyQuaternion(inverse);
+        return q.z + Math.max(view.camera.near * 2, Math.abs(q.x) * padding / (tan * aspect), Math.abs(q.y) * padding / tan);
+      }));
+      return {target, distance, top};
+    }
+    return {target,
       distance: span * FT * LEVEL_TUNING.framePadding / (2 * Math.tan(view.camera.fov * Math.PI / 360)), top};
   }
   function configure() {
-    const top = state.level === 'floor' || state.level === 'room';
+    const top = (state.level === 'floor' || state.level === 'room') && !yardRoom();
     controls.enablePan = false; controls.enableRotate = !top; controls.enableZoom = true;
     controls.minPolarAngle = top ? 0 : LEVEL_TUNING.orbitPolarMin;
     controls.maxPolarAngle = top ? LEVEL_TUNING.topPolarMax : LEVEL_TUNING.orbitPolarMax;

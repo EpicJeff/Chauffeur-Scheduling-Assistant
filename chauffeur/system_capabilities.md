@@ -1,6 +1,25 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.859 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.860 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.860 (2026-11-14, NOT device-verified): outside rooms behave like inside ones. Their devices stay hidden until you focus the room, and focusing it orbits rather than looking straight down.**
+
+**The ask.** The user, with a night screenshot full of yard-light markers: "Items in outside areas don't hide when you are zoomed out like items in inside rooms... it clutters up the view so you can't really see the house. I lean towards hiding until you focus that area." On focus: "Orbiting instead of top down is fine." Viewpoints (saved camera spots) were discussed as a possible follow-up, not built.
+
+**What changed** (`static/twin/levels.js`).
+- **`deviceAtLevel`:** a yard device shows only when its own yard room is focused. A yard device needing attention also shows at House, as before. At House the yard room's own icon stands for its devices.
+- **`framing()`:** a focused yard room is an orbit view, not top-down, with rotation enabled. Its corners are fitted in camera space along the orbit direction (`yardFramePadding`), so the foreshortened ground still fills the screen. Indoor rooms and floors still look down.
+- Fire-pit markers are unchanged.
+
+**Tests.**
+- `test_twin_yard_rooms_js` 4/4 and 3/3, with three checks updated to the new rule:
+  - the House target now asserts orbit framing (rotation on, camera at an angle);
+  - the framing check asserts a yard room fills at least half the screen in orbit (it used to be equal to the indoor top-down framing);
+  - the mounted yard marker is hidden at House.
+- The attention check is unchanged and passes.
+- Browser `test_house_twin_live_rooms`: `scenario_yard_room_target_orbits_it` (renamed from `..._frames_it_from_above`) asserts orbit mode, an angled camera, the room fully on screen and filling at least half of it. The file passes 11/11; one loopback reset passed when rerun alone.
+- Neighbours: levels js 5/5, real lights js 10/10, live rooms js 10/10, live control js 8/8, controls js 31/31, import maps 3/3.
+- Chromium: at House only the "Pool deck" icon shows, with no device markers. Focused, the pool light marker and the room panel appear.
 
 **v2.499.859 (2026-11-14, NOT device-verified): the dashed "needs checking" roof outline shows only in the house editor, never in the live house view or on panels.**
 
