@@ -4,6 +4,7 @@ from copy import deepcopy
 import math
 import re
 
+from services.twin_timing import timed as _edit_timed
 from services import twin_joints, twin_plan, twin_register
 
 
@@ -591,6 +592,7 @@ def _apply_legacy(plan, edit, ha_catalogue=None):
     return normalized, summary
 
 
+@_edit_timed('apply')
 def apply_model(model, edit, validated=None, ha_catalogue=None):
     """Translate the old editor vocabulary at the connected-model boundary."""
     from services import twin_model_ops as ops, twin_model_bridge as bridge

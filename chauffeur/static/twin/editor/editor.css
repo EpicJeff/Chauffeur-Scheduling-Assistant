@@ -359,3 +359,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-material-swatch { display: inline-block; flex: 0 0 22px; width: 22px; height: 22px; border: 1px solid var(--editor-muted); border-radius: 6px; }
 .editor-material-options { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; padding: 8px; border: 1px solid var(--editor-muted); border-radius: 12px; }
 .editor-material-options button { display: flex; align-items: center; gap: 8px; text-align: left; }
+
+/* Diagnostic panel uses the Menu's glass, border and typography. */
+#editor-edit-timing { position: absolute; top: var(--editor-header-bottom, 130px); right: calc(var(--editor-side) + 40px); z-index: 3; width: 280px; max-width: calc(100vw - 32px); max-height: 50dvh; overflow: auto; padding: 12px; border: 1px solid var(--editor-line); border-radius: 12px; background: var(--editor-panel); backdrop-filter: blur(16px); pointer-events: auto; }
+#editor-edit-timing pre { margin: 6px 0 0; font: 11px/1.5 ui-monospace, monospace; white-space: pre-wrap; }
+#editor-menu button[aria-pressed="true"] { color: var(--editor-accent); }
+@media (max-width: 760px) { #editor-edit-timing { right: 16px; } }

@@ -1,12 +1,27 @@
 import { applyObject, objectShown, objectMaterialKey, sitePieces } from './objects.js';
 import * as THREE from 'three';
-import { Tree } from '@dgreenheck/ez-tree';
+import * as EZTree from '@dgreenheck/ez-tree';
+const { Tree } = EZTree;
+
+// EZ-Tree's loadPreset() copies the preset and generates the whole tree; the saved seed then
+// needs a second generate(), so every plant was built twice and the first thrown away (about
+// half of all yard build time, found 2026-11-13). Copy the preset's options, set the seed,
+// generate once. Without a preset table (a stand-in Tree) it falls back to loadPreset.
+export function presetTree(preset, seed) {
+  const tree = new Tree(), options = EZTree.TreePreset?.[preset];
+  if (options && tree.options?.copy) tree.options.copy(structuredClone(options));
+  else tree.loadPreset(preset);
+  tree.options.seed = seed; tree.generate();
+  return tree;
+}
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
-import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials } from './twin_library.js';
-import { groundAt, buildingBase } from './twin_ground.js';
+import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey } from './twin_library.js';
+import { groundAt, buildingBase, buildingFootprint } from './twin_ground.js';
+import { span as editSpan } from './edit_timing.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
 import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
-import { firePitRings, roundPit, buildFirePit, fireFlameMaterial } from './fire_pits.js';
+import { firePitRings, firePitOptions, roundPit, buildFirePit, fireFlameMaterial } from './fire_pits.js';
+import { porchFoundationRole } from './twin_porch_foundation.js';
 import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.js';
 
 function random(seed) {
@@ -62,7 +77,7 @@ function releasePlant(tree, keepMaterials = new Set()) {
 }
 
 async function bakePreset(preset, seed, renderer) {
-  const tree = new Tree(); tree.loadPreset(preset); tree.options.seed = seed; tree.generate();
+  const tree = presetTree(preset, seed);
   standardTree(tree);
   await imagesReady(tree);
   const bounds = new THREE.Box3().setFromObject(tree), size = bounds.getSize(new THREE.Vector3()), center = bounds.getCenter(new THREE.Vector3());
@@ -84,7 +99,120 @@ async function bakePreset(preset, seed, renderer) {
   return result;
 }
 
-export async function buildYard(plan, kit, tier, { viewing = false, materials = null } = {}) {
+function yardMaterialKit(plan, kit) {
+  const materialKit = { ...kit, materials: { ...kit.materials } }, known = manifest(kit);
+  for (const [role, ref] of Object.entries(plan.materials || {})) {
+    const source = kit.materials?.[ref.id] || kit.materials?.[role];
+    materialKit.materials[role] = { ...source, color: ref.color || source?.color, asset: known[ref.id] ? ref.id : source?.asset };
+  }
+  return materialKit;
+}
+
+function yardMaterialInputs(plan, kit) {
+  const site = plan.site || {}, refs = yardMaterialKit(plan, kit).materials, known = manifest(kit);
+  // Only yard roles participate: a siding override must not invalidate the
+  // yard. Mirror mat/materialSlot's named-or-asset-alias resolution, retaining
+  // full refs/manifest metadata so material revisions also invalidate caches.
+  const roles = new Set(), slots = [];
+  const use = (fallback, value) => {
+    if (value) {
+      const role = refs[value.id] ? value.id : Object.keys(refs).find(k => refs[k].asset === value.id);
+      const ref = refs[role];
+      slots.push([value, role, ref, known[ref?.id || ref?.asset || value.id]]);
+    } else roles.add(fallback);
+  };
+  const authoredRole = (value, fallback) => kit.materials?.[value] ? value : fallback;
+  if (site.lot?.length >= 3) use('lawn');
+  for (const pad of site.terraces || []) pad.polygon.forEach((_, edge) => {
+    const e = pad.edges?.[edge];
+    if (e?.edge === 'sharp' && e.wall) use(retainingWallRole(e.wall.material), e.wall.materials?.face);
+  });
+  for (const h of site.hardscape || []) if (h.kind === 'path' || h.polygon?.length >= 3) {
+    use(h.material === 'concrete' ? 'patio_concrete' : authoredRole(h.material, 'paving'), h.materials?.surface);
+    if (h.kind === 'path' && h.edging === 'curb') use('patio_concrete', h.materials?.edging);
+  }
+  if (site.pool?.polygon?.length >= 3) {
+    if (site.pool.materials?.interior) use('paving', site.pool.materials.interior);
+    if ((site.pool.coping ?? 1) > 0) use(authoredRole(site.pool.material, 'paving'), site.pool.materials?.coping);
+  }
+  for (const f of sitePieces(site.fire_pit)) {
+    const options = firePitOptions(f);
+    use(porchFoundationRole(options.body), f.materials?.body);
+    if (options.top !== 'none') use(options.top === 'granite' ? 'granite' : 'patio_concrete', f.materials?.top);
+    if (options.fuel !== 'gas') use('counter');
+  }
+  for (const bed of site.beds || []) if (bed.polygon?.length >= 3) use(authoredRole(bed.material, 'mulch'), bed.materials?.fill);
+  for (const edge of site.edges || []) if (edge.polygon?.length >= 3) use(authoredRole(edge.material, 'lawn'), edge.materials?.strip);
+  for (const f of sitePieces(site.fence)) if (f.polyline?.length > 1)
+    for (const part of ['boards', 'posts', 'rails']) use('fence', f.materials?.[part]);
+  return { roles: [...roles].sort().map(role => [role, refs[role], known[refs[role]?.id || refs[role]?.asset]]), slots };
+}
+
+export const yardMaterialKey = (plan, kit, tier) => JSON.stringify([tier, yardMaterialInputs(plan, kit)]);
+
+const fields = (value, names) => names.split(' ').map(k => value?.[k]);
+const objectFields = 'id kind asset at elevation visible_in scale scale_axes pitch rotation roll tint casts_shadow object_kind emissive emissive_color light_entity preset height seed';
+function yardSiteInputs(site) {
+  return [site.lot, (site.terraces || []).map(p => [p.polygon, p.height, p.blend,
+    (p.edges || []).map(e => [e.edge, e.wall && fields(e.wall, 'material thickness_in above_in materials')])]),
+    (site.hardscape || []).map(h => fields(h, 'kind polygon points width corner smooth radius edging elevation material materials')),
+    site.pool && fields(site.pool, 'polygon depth coping elevation material materials'),
+    sitePieces(site.fire_pit).map(f => fields(f, 'id shape at radius rotation polygon fuel body top height_in glass entity elevation materials')),
+    (site.beds || []).map(b => fields(b, 'polygon elevation material materials')),
+    (site.edges || []).map(e => fields(e, 'polygon points polyline elevation material materials')),
+    sitePieces(site.fence).map(f => fields(f, 'polyline height elevation materials')),
+    (site.planting || []).map(p => fields(p, objectFields)), (site.furniture || []).map(f => fields(f, objectFields))];
+}
+
+// Yard inputs: site.lot; ordered terraces (polygon/height/blend/edges/walls);
+// hardscape, pool, fire_pit, beds, edges, fence, planting and furniture records
+// (geometry, elevations, material slots, visibility, transforms, tint, shadows,
+// lights, presets/seeds and asset refs). The projections above omit authoring
+// metadata. yard_rooms are navigation only, not drawn here.
+// Building inputs are placement/rotation, base and auto-foundation mode/offset,
+// buildingFootprint (levels' elevation/id/outline, or rooms' level/polygon and
+// walls' from/to fallback), first level id,
+// allPorches' polygon/level/floor and porch rooms' level/state/polygon/floor offset.
+// These position furniture on porches; building/porch foundations are drawn by
+// buildTwin, not the yard. Terrain holes/skirts read only terraces and the pool.
+// Materials: kit.materials with plan.materials overrides for used yard roles,
+// slot id/color refs and alias selection; kit.manifest || window.twinManifest
+// entries, including any household revisions;
+// model refs resolve through kit.furniture and manifest/import metadata (LODs).
+// Finally tier and viewing affect tessellation, maps, trees/cards and visibility.
+// No building finish, roof, opening, anchor or indoor furnishing is a yard input.
+// Equal outlines compare equal. The server can re-derive a porch or footprint outline
+// with extra collinear corners and float noise (found in Chromium, 2026-11-13: the first
+// edit after a load re-derived a porch and rebuilt the yard). Rounded to 0.01 ft, repeated
+// and collinear corners dropped, counter-clockwise, starting at the lowest-leftmost corner.
+export function canonicalOutline(points) {
+  if (!Array.isArray(points)) return points ?? null;
+  const r = v => Math.round(v * 100) / 100;
+  const p = points.map(q => [r(q[0]), r(q[1])])
+    .filter((q, i, a) => i === 0 || q[0] !== a[i - 1][0] || q[1] !== a[i - 1][1]);
+  if (p.length > 1 && p[0][0] === p.at(-1)[0] && p[0][1] === p.at(-1)[1]) p.pop();
+  for (let i = 0; p.length > 3 && i < p.length;) {
+    const a = p[(i + p.length - 1) % p.length], b = p[i], c = p[(i + 1) % p.length];
+    if (Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) < 1e-3) { p.splice(i, 1); i = 0; } else i++;
+  }
+  if (p.reduce((sum, q, i) => sum + q[0] * p[(i + 1) % p.length][1] - p[(i + 1) % p.length][0] * q[1], 0) < 0) p.reverse();
+  const start = p.reduce((m, q, i) => q[1] < p[m][1] || q[1] === p[m][1] && q[0] < p[m][0] ? i : m, 0);
+  return [...p.slice(start), ...p.slice(0, start)];
+}
+
+export function yardKey(plan, kit, tier, { viewing = false } = {}) {
+  const site = plan.site || {};
+  const models = [...(site.furniture || []), ...(site.planting || []).filter(p => p.asset?.startsWith('import-'))]
+    .map(f => (f.asset || kit.furniture?.[f.kind] || '').replace(/^polyhaven:/, ''));
+  return JSON.stringify([tier, viewing,
+    yardSiteInputs(site),
+    (plan.buildings || []).map(b => [b.position, b.rotation, b.base, b.foundation?.mode, b.foundation?.offset_ft,
+      canonicalOutline(buildingFootprint(b)), b.levels?.[0]?.id, allPorches(b).map(p => [canonicalOutline(p.polygon), p.level, p.floor]),
+      (b.rooms || []).filter(r => r.kind === 'porch').map(r => [r.level, r.state, canonicalOutline(r.polygon), r.floor_offset_ft])]),
+    yardMaterialInputs(plan, kit), models.map(id => [id, modelAssetKey(id, kit)])]);
+}
+
+export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null } = {}) {
   const group = new THREE.Group(); group.name = 'yard';
   const site = plan.site || {}, mats = materials || new Map();
   group.userData.materials = mats;
@@ -92,12 +220,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     if (z0 === z1) return terrainGeometry(plan, poly, tier, { holes, offset: z0 });
     return terrainSlabGeometry(plan, poly, tier, z0, z1, holes);
   };
-  const materialKit = { ...kit, materials: { ...kit.materials } };
-  const known = kit.manifest || window.twinManifest || {};
-  for (const [role, ref] of Object.entries(plan.materials || {})) {
-    const source = kit.materials?.[ref.id] || kit.materials?.[role];
-    materialKit.materials[role] = { ...source, color: ref.color || source?.color, asset: known[ref.id] ? ref.id : source?.asset };
-  }
+  const materialKit = yardMaterialKit(plan, kit);
   const mat = (role, slot = null) => {
     if (slot) return materialSlot(slot, role, materialKit, tier, mats, mat);
     if (!mats.has(role)) mats.set(role, kitMaterial(role === 'terrain_lawn' ? 'lawn' : role, materialKit, tier));
@@ -107,6 +230,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     if (!mats.has(name)) mats.set(name, extra.fireShader ? fireFlameMaterial() : new THREE.MeshStandardMaterial({ name, color, roughness: 0.85, ...extra }));
     return mats.get(name);
   };
+  const part = name => editSpan(timing, 'yard_' + name);
+  if (timing) for (const name of ['terrain', 'grass', 'plants', 'fences', 'hardscape', 'pool', 'fire_pits', 'retaining_walls', 'cards', 'batch', 'models', 'materials']) timing['yard_' + name] = 0;
+  const stopTerrain = part('terrain');
   if (site.lot?.length >= 3) {
     // Actual lawn material; no procedural canvas noise or substitute blobs.
     const pool = site.pool?.polygon;
@@ -132,12 +258,16 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     mesh.geometry.userData.bakeExcluded = true;
     tintGrade(mesh.geometry, false);
   }
+  stopTerrain();
+  const stopWalls = part('retaining_walls');
   for (const pad of site.terraces || []) pad.polygon.forEach((_, edge) => {
     if (pad.edges?.[edge]?.edge !== 'sharp' || !pad.edges[edge].wall) return;
     const wall = pad.edges[edge].wall;
     addMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face));
   });
+  stopWalls();
   const pool = site.pool?.polygon;
+  const stopHardscape = part('hardscape');
   const inside = (p, poly) => { let v = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) v = !v; return v; };
   for (const h of site.hardscape || []) if (h.kind === 'path' || h.polygon?.length >= 3) {
     const role = h.material === 'concrete' ? 'patio_concrete' : kit.materials?.[h.material] ? h.material : 'paving';
@@ -158,6 +288,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     const holes = pool && pool.every(p => inside(p, h.polygon)) ? [pool] : [];
     addMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role, h.materials?.surface));
   }
+  stopHardscape();
+  const stopPool = part('pool');
   if (pool?.length >= 3) {
     const d = site.pool.depth ?? 5, coping = site.pool.coping ?? 1;
     const poolHeight = groundAt(plan, ...pool[0]) + (site.pool.elevation || 0);
@@ -179,6 +311,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     }
     addMesh(group, poolSurface(pool, -0.25), plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false }));
   }
+  stopPool();
+  const stopFirePits = part('fire_pits');
   for (const [index, f] of sitePieces(site.fire_pit).entries()) {
     const { outer } = firePitRings(f);
     const centre = outer.reduce((s,p)=>s.map((v,i)=>v+p[i]/outer.length),[0,0]);
@@ -186,6 +320,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     buildFirePit(group,f,height,{mat,plain,id:'fire_pit:'+(f.id || index)});
     if (roundPit(f)) addMesh(group, drapeGeometry(new THREE.CircleGeometry((f.radius ?? 2) + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plan, f.elevation || 0), plain('gravel', '#a59c8f'));
   }
+  stopFirePits();
+  const stopBeds = part('hardscape');
   for (const bed of site.beds || []) if (bed.polygon?.length >= 3) addMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(kit.materials?.[bed.material] ? bed.material : 'mulch', bed.materials?.fill));
   for (const edge of site.edges || []) if (edge.polygon?.length >= 3) {
     // Edge planting remains a closed border. Give its ground strip the same
@@ -193,6 +329,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     for (const poly of pathSurfacePolygons({ points: [...edge.polygon, edge.polygon[0]], width: .5 }))
       addMesh(group, surface(poly, edge.elevation || 0, .06 + (edge.elevation || 0)), mat(kit.materials?.[edge.material] ? edge.material : 'lawn', edge.materials?.strip));
   }
+  stopBeds();
+  const stopFences = part('fences');
   for (const f of sitePieces(site.fence).filter(f => f.polyline?.length > 1)) {
     const height = f.height || 6;
     const fenceMesh = (geometry, part) => addMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), mat('fence', f.materials?.[part]));
@@ -206,6 +344,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       for (const y of [1, height - 0.6]) fenceMesh(boxGeometry(length, 0.3, 0.12, Math.max(1, Math.ceil(length / 0.5))).rotateY(angle).translate((a[0] + b[0]) / 2, y, -(a[1] + b[1]) / 2), 'rails');
     }
   }
+  stopFences();
+  const stopPlants = part(tier === 'low' ? 'cards' : 'plants');
   const cards = new Map();
   let baker = null;
   try {
@@ -230,7 +370,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         cacheModelMaterials(holder, 'plant-card:' + p.preset + ':' + objectMaterialKey(p, p.id || index), mats);
         if (viewing) mergeStatic(holder);
       } else {
-        const tree = new Tree(); tree.loadPreset(p.preset); tree.options.seed = p.seed ?? 1; tree.generate(); standardTree(tree, mats);
+        const tree = presetTree(p.preset, p.seed ?? 1); standardTree(tree, mats);
         const bounds = new THREE.Box3().setFromObject(tree), h = bounds.max.y - bounds.min.y, scale = p.height / Math.max(0.01, h);
         tree.scale.setScalar(scale);
         applyObject(tree, p, { units: 1 });
@@ -243,11 +383,15 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       if (index % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
     }
   } finally { if (baker) { baker.dispose(); baker.forceContextLoss(); } }
+  stopPlants();
+  const stopBatch = part('batch');
   // Merge only the static site and cards. Full trees keep their own materials
   // and EZ-Tree geometry; they are not traversed by this static merge.
   const plants = group.children.filter(o => o instanceof Tree || o.userData.placedPlant); plants.forEach(o => o.removeFromParent());
   mergeStatic(group); plants.forEach(o => group.add(o));
 
+  stopBatch();
+  const stopModels = part('models');
   const models = new Map(), latePlacements = new Map();
   const placements = await Promise.all([...(site.furniture || []), ...(site.planting || []).filter(p => p.asset?.startsWith('import-'))].filter(f => objectShown(f, !viewing)).map(async f => {
     const assetId = (f.asset || kit.furniture?.[f.kind] || '').replace(/^polyhaven:/, '');
@@ -283,10 +427,14 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     return source ? place(source.clone(true)) : null;
   }));
   placements.filter(Boolean).forEach(model => group.add(model));
+  stopModels();
+  const stopModelBatch = part('batch');
   // Merge model instances by their shared material as well, without folding
   // in full plants. Multi-material glTF primitives remain independently drawn.
   plants.forEach(o => o.removeFromParent()); mergeStatic(group); plants.forEach(o => group.add(o));
 
+  stopModelBatch();
+  const stopGrass = part('grass');
   if (tier === 'high') {
     const placements = [], rng = random(1);
     for (const edge of site.edges || []) {
@@ -305,7 +453,10 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       grass.receiveShadow = true; group.add(grass);
     }
   }
+  stopGrass();
+  const stopMaterials = part('materials');
   await Promise.all([...mats.values()].map(m => m.userData.ready));
+  stopMaterials();
   let triangles = 0;
   group.traverse(o => { if (o.isMesh) triangles += (o.geometry.index?.count || o.geometry.attributes.position.count) / 3 * (o.isInstancedMesh ? o.count : 1); });
   // EZ-Tree textures are shared by its module, unlike all other yard resources.
@@ -319,5 +470,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     }
     textures.forEach(t => t.dispose());
   };
+  // Snapshot after loads have resolved imported model metadata. Never compare
+  // against a mutable old plan/kit; editor operations can update them in place.
+  group.userData.yardKey = yardKey(plan, kit, tier, { viewing });
+  group.userData.yardMaterialKey = yardMaterialKey(plan, kit, tier);
   return { group, triangles };
 }

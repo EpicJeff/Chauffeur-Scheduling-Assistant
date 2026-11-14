@@ -104,7 +104,9 @@ def run():
         work = Path(folder)
         for module in ('houses', 'history', 'api'):
             source = (ROOT / f'static/twin/editor/{module}.js').read_text(encoding='utf-8')
-            (work / f'{module}.mjs').write_text(source.replace("'./api.js'", "'./api.mjs'"), encoding='utf-8')
+            (work / f'{module}.mjs').write_text(source.replace("'./api.js'", "'./api.mjs'")
+                .replace("'../edit_timing.js'", "'./edit_timing.mjs'"), encoding='utf-8')
+        (work / 'edit_timing.mjs').write_text((ROOT / 'static/twin/edit_timing.js').read_text(encoding='utf-8'), encoding='utf-8')
         (work / 'driver.mjs').write_text(DRIVER, encoding='utf-8')
         result = subprocess.run([node, str(work / 'driver.mjs')], capture_output=True, text=True, timeout=30)
         print(result.stdout, end='')

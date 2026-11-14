@@ -1,6 +1,86 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.846 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.850 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.850 (2026-11-13, NOT device-verified): yard trees are generated once instead of twice.**
+
+**The cause.** Vendored EZ-Tree's `loadPreset()` copies the preset's options and generates the whole tree. `static/twin/twin_yard.js` then set the saved seed and called `generate()` again, both for full trees and for Low-tier card baking. Every plant was built twice and the first build thrown away.
+
+**The fix.** `presetTree(preset, seed)` in `twin_yard.js` copies `TreePreset[preset]` into the tree's options, sets the seed, and generates once. It uses a namespace import, so stand-in Trees in node tests (which export no preset table) fall back to `loadPreset`. The vendor file is unchanged. The editor Library's one-off preview thumbnail keeps the old path.
+
+**Measured.**
+- Node, real vendored EZ-Tree: 8 preset/seed pairs generate once, with geometry identical to the old path (`test_twin_tree_once_js`, which fails on the old code).
+- Chromium CPU profile of a plant move on the test house: the whole yard is 1.1 s of JavaScript, of which trees are 0.7 s.
+- The headless `yard_plants` wall time (24-30 s) is not JavaScript. The plant loop yields every 4 plants (`await setTimeout(0)`), and each yield lets a software-rendered frame (about 3 s headless) run. On a real GPU a frame is about 0.16 s (the user's `first_frame`). The user's own yard breakdown (v2.499.848 sub-spans in the timing overlay) will show where their 4.2 s goes before anything else is changed.
+
+**Tests.** New `test_twin_tree_once_js` 1/1 (8 pairs). Neighbours green: yard reuse js, yard material slots js, ground js, retaining wall js, porches js 5/5, library js 15/15, edit timing js, import maps 3/3, yard rooms js 3/3.
+
+**v2.499.849 (2026-11-13, NOT device-verified): solar conduits are plain galvanized metal when the panels are not producing.**
+
+**The report.** The user sent a night screenshot: "Why are conduits visible at night when no solar is generating? They should either disappear or switch to a metal material." Below the flow threshold, conduits kept the unlit, non-tone-mapped electric-blue shader at 15% brightness, so they glowed teal in the dark.
+
+**The fix** (`static/twin/live/energy.js`).
+- Each conduit now has a second mesh on the same tube geometry, using one shared `MeshStandardMaterial` named `conduit_metal`: colour `#a7adb3`, metalness 0.6, roughness 0.45, lit like the house.
+- **Below the 50 W flow threshold, or on stale data,** the metal tube is drawn and the glowing tube and its halo are hidden.
+- **Producing:** exactly as before, with the electric-blue glow, pulse and halo.
+- **Cost:** one draw per conduit either way. Both materials are in the energy layer's warm set, so switching never compiles. No geometry is rebuilt.
+- Conduits still hide with their roof.
+
+**Tests.** `test_twin_energy_js` 38/38. The conduit check now asserts the glowing tube and halo at 50 W and above, the metal tube below it, a shared geometry, and the same metal material across switches; the stale-data check expects metal. `test_twin_bake_runtime_js` 17/17, `test_twin_import_maps` 3/3, and browser `test_house_twin_energy_live` 7/7, including "no programs on second entry". Chromium at night with solar at 0 W shows every conduit as metal and none glowing.
+
+**v2.499.848 (2026-11-13, NOT device-verified): editing the house no longer rebuilds the yard unless the edit changes something the yard draws.**
+
+**The evidence.**
+- v2.499.847's edit timing on the test house showed `yard` at 26-29 s of every 27-31 s rebuild, for siding material changes.
+- The user's own house, moving a parking spot: 7.6 s total, of which yard 4.2 s, generate 0.85 s, batch 0.33 s, and server about 1.3 s.
+- The user: "updating the ground when you edit a building doesn't make sense."
+
+**The fix.**
+- **`yardKey(plan, kit, tier, {viewing})`** in `static/twin/twin_yard.js` covers exactly what `buildYard` reads:
+  - the lot, terraces and walls, hardscape and paths, pool, fire pits, beds, edges, fence, planting and furniture;
+  - building position, rotation, base, foundation, footprint and porches (yard furniture can sit on a porch);
+  - the yard's material refs and slots, with manifest and revision metadata, and imported-model metadata;
+  - tier and viewing.
+- **Reuse:** `twin_view.js` `rebuild` keeps the existing yard group, geometry and materials whenever the key is unchanged, on both the editor and live paths. `preserveYard` keeps its meaning.
+- **Timing:** edit timing records `yard: 0` and `yard_reused: true`, and adds yard sub-spans for terrain, grass, plants, fences, hardscape, pool, fire pits, retaining walls, cards, batching, models and materials.
+- **`canonicalOutline`:** outlines compare rounded to 0.01 ft, with collinear corners dropped, normalised winding and start corner. Chromium found that the first edit after a load re-derived a porch outline on the server (the same shape, with extra collinear corners and float noise), and the key saw that as a change.
+
+**Measured** (Chromium headless, test house, four siding material changes): the yard was reused on all four, and `rebuild` fell from about 31 s to 0.9-5.3 s.
+
+**The yard build itself, when it is needed:**
+- In a CPU profile, trees are about 70% of the yard build.
+- About half of that is discarded work. `tree.loadPreset()` in vendored EZ-Tree already generates the whole tree, and `twin_yard.js` then sets the saved seed and generates it again, both for full trees and for Low-tier cards.
+- That is the next fix for edits that do change the yard.
+
+**Tests.**
+- New `test_twin_yard_reuse_js` 11/11: reuse in the editor and the live view, rebuild on site, terrain, footprint and tier changes, explicit `preserveYard`, and material invalidation. A guard test checks that 238 input mutations each change the key. An equivalent re-derived outline keeps the key.
+- `test_twin_edit_timing_js`, now running the real yard, plus yard material slots js, yard rooms js 3/3, material slot js, terrain tools js, editor history 8/8, drag 20/20, and import maps 3/3.
+- `test_twin_checks_js` fails `queue_merges_pause_flags_and_proposals` ("the camera is on the flag") the same way on main before this change; it is queued with `test_twin_store_model` and `test_twin_director`.
+
+**v2.499.847 (2026-11-13, NOT device-verified): every house editor edit is timed, end to end, server and browser.**
+
+**The ask.** The user: "Every change on my house right now takes several seconds to update." This is step 1 of the edit-speed plan: measure, with no change in behaviour.
+
+**Server** (`services/twin_timing.py`, a request-scoped ContextVar collector that is active only on `POST /api/house/editor/op`).
+- Spans: `lock`, `apply` (`twin_edit.apply_model`), `normalize` (every whole-model normalize in the request), `round` (`_append_round`), `read` (`current` / `current_model`) and `response` (serialization).
+- They are returned as a standard `Server-Timing` header and as `timing` in the JSON, with `bytes`, the exact serialized response size.
+- Other routes are untouched.
+
+**Browser** (`static/twin/edit_timing.js`, threaded through `editor.js` `applyOpNow`, `api.js`, `twin_view.js` `rebuild` and `twin_generator.js`).
+- Each edit records:
+  - `request`, `parse`, `rebuild` (split into `generate` per building and level with walls and floors, `batch`, `yard`, `materials`, `dispose` and `bake_stop`), `first_frame`, `refresh_state` and `total`;
+  - counts of meshes, draw calls, triangles, and buildings and levels rebuilt.
+- The last 30 records are kept in `window.__twinEditTiming`.
+- Menu: "Show edit timing" (an overlay with the last edit's top spans, persisted locally) and "Send timing report", which posts the records to `api/house/twin/perf` as `kind: 'edit_timing'`, with a size cap.
+
+**First measurement** (Chromium headless on the test house: 2 buildings, 5 levels, 332 meshes, 131 draw calls, about 590k triangles; four siding material changes).
+- `yard` took 26.2-29.5 s of a 27.4-31.0 s rebuild, every time, although the edit never touches the yard.
+- Generating both buildings took 0.7-1.1 s, and batching 0.25-0.35 s.
+- Server total: 0.7-2.9 s, mostly `normalize` (0.34-0.62 s) and `read` (0.17-0.82 s).
+- Response: 245 KB, carrying the whole plan and the whole model.
+- Headless software rendering inflates absolute times, but the ratio is clear. The yard rebuild on every edit is the first fix.
+
+**Tests.** New `test_twin_edit_timing` 4/4 (header and JSON spans, no header on other routes, report accepted and oversized refused) and `test_twin_edit_timing_js` (a real `applyOp` records the spans, the toggle shows and hides the overlay, the report posts once). Neighbours green: editor history 8/8, house saves 19/19 and js 12/12, editor api, guided editor 3/3, build-draft pause, model bridge 32/32, twin store, import maps 3/3, Tailwind 6/6, material slot js, yard material slots js. Chromium: four real edits recorded, with no page errors.
 
 **v2.499.846 (2026-11-13): test-only. A browser test pins yard-room framing, and the "3 s stall" turned out to be machine load.**
 

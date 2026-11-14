@@ -8645,16 +8645,22 @@ def house_editor_library(request: Request):
 
 @app.post('/api/house/editor/op')
 def house_editor_op(request: Request, body: dict = Body(default={})):
-    from services import twin_edit, twin_store
+    from contextlib import ExitStack
+    from services import twin_edit, twin_store, twin_timing
     parent = require_parent_token(request.headers.get('x-member-token') or
                                   request.query_params.get('member_token'))
-    with twin_store.LIFECYCLE, twin_store._LOCK:
+    with twin_timing.collect() as timing, ExitStack() as locks:
+        with twin_timing.span('lock'):
+            locks.enter_context(twin_store.LIFECYCLE)
+            locks.enter_context(twin_store._LOCK)
         try:
             result = twin_edit.save(body.get('op'), parent['id'], reason=body.get('reason', ''))
         except ValueError as exc:
-            return JSONResponse(status_code=400, content={'error': str(exc)})
-        return {'round': result['round'], 'words': result['summary'], 'plan': twin_store.current(),
-                'model': twin_store.current_model()}
+            return twin_timing.response({'error': str(exc)}, timing, status_code=400)
+        with twin_timing.span('read'):
+            plan, model = twin_store.current(), twin_store.current_model()
+        return twin_timing.response({'round': result['round'], 'words': result['summary'],
+                                     'plan': plan, 'model': model}, timing)
 
 
 @app.post('/api/house/editor/edit')

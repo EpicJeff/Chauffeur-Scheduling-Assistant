@@ -122,7 +122,9 @@ export const createBuildGhosts = () => {
 };
 '''
         (work / 'editor-stubs.mjs').write_text(stubs, encoding='utf-8')
-        (work / 'api.mjs').write_text((ROOT / 'api.js').read_text(encoding='utf-8'), encoding='utf-8')
+        (work / 'api.mjs').write_text((ROOT / 'api.js').read_text(encoding='utf-8')
+            .replace("'../edit_timing.js'", "'./edit_timing.mjs'"), encoding='utf-8')
+        (work / 'edit_timing.mjs').write_text((ROOT.parent / 'edit_timing.js').read_text(encoding='utf-8'), encoding='utf-8')
         for name, driver in [('editor-driver', DRIVER), ('refresh-driver', REFRESH_DRIVER), ('api-driver', API_DRIVER)]:
             (work / f'{name}.mjs').write_text(driver, encoding='utf-8')
             result = subprocess.run(['node', str(work / f'{name}.mjs')], capture_output=True, text=True, timeout=30)

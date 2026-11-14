@@ -17,6 +17,7 @@ import weakref
 
 from PIL import Image, ImageOps
 
+from services.twin_timing import timed as _edit_timed
 from services import storage, twin_model, twin_model_bridge, twin_pdf, twin_plan, twin_place
 
 DATA_DIR = os.path.join(os.path.dirname(storage.DB_PATH), 'twin')
@@ -392,19 +393,31 @@ def perf_results() -> list[dict]:
 
 
 def save_perf(body: dict) -> dict:
-    record = {}
-    for key in ('tier', 'gpu', 'ua', 'at'):
-        value = body.get(key)
-        if not isinstance(value, str) or len(value) > 300:
-            raise ValueError(f'{key} must be a string of at most 300 characters.')
-        record[key] = value
-    if record['tier'] not in ('low', 'high'):
-        raise ValueError('tier must be low or high.')
-    for key in ('fpsAvg', 'fpsP5', 'drawCalls', 'triangles'):
-        value = body.get(key)
-        if type(value) not in (int, float) or value < 0 or (type(value) is float and not math.isfinite(value)):
-            raise ValueError(f'{key} must be a finite non-negative number.')
-        record[key] = value
+    if body.get('kind') == 'edit_timing':
+        records = body.get('records')
+        if not isinstance(records, list) or not 1 <= len(records) <= 30 or not all(isinstance(r, dict) for r in records):
+            raise ValueError('An edit timing report needs 1 to 30 records.')
+        try:
+            size = len(json.dumps(body, ensure_ascii=False, allow_nan=False).encode('utf-8'))
+        except (TypeError, ValueError) as exc:
+            raise ValueError('Edit timing records must be finite JSON data.') from exc
+        if size > 256 * 1024:
+            raise ValueError('An edit timing report must be at most 256 KB.')
+        record = {'kind': 'edit_timing', 'records': deepcopy(records)}
+    else:
+        record = {}
+        for key in ('tier', 'gpu', 'ua', 'at'):
+            value = body.get(key)
+            if not isinstance(value, str) or len(value) > 300:
+                raise ValueError(f'{key} must be a string of at most 300 characters.')
+            record[key] = value
+        if record['tier'] not in ('low', 'high'):
+            raise ValueError('tier must be low or high.')
+        for key in ('fpsAvg', 'fpsP5', 'drawCalls', 'triangles'):
+            value = body.get(key)
+            if type(value) not in (int, float) or value < 0 or (type(value) is float and not math.isfinite(value)):
+                raise ValueError(f'{key} must be a finite non-negative number.')
+            record[key] = value
     with _LOCK:
         rows = storage.get_settings().get('house_twin_perf') or []
         storage.patch_settings({'house_twin_perf': [*rows, record][-20:]})
@@ -421,6 +434,7 @@ def _read_round(row, round_id):
     return twin_model_bridge.assemble(twin_plan.normalize(plan)[0])[0]
 
 
+@_edit_timed('read')
 def current() -> dict | None:
     """Return the flat view used by the build pipeline and existing editor."""
     with _LOCK:
@@ -428,6 +442,7 @@ def current() -> dict | None:
         return twin_model_bridge.flatten(model) if model is not None else None
 
 
+@_edit_timed('read')
 def current_model(*, settings=None) -> dict | None:
     with _LOCK:
         row = _state(settings)
@@ -476,6 +491,7 @@ def round_state_path(round_id):
     return Path(DATA_DIR) / 'rounds' / f'{round_id}.state.json'
 
 
+@_edit_timed('round')
 def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, changes=(), step=None, partial=False,
                   *, restored_from=None):
     """Called with _LOCK held; file, pointer and fixes form one mutation."""
