@@ -1,6 +1,9 @@
 """Household materials through the real HTTP, image decode and house history paths."""
 import hashlib
 import io
+import json
+import struct
+import zlib
 from pathlib import Path
 import sys
 import traceback
@@ -96,13 +99,10 @@ def test_bad_images_refused_nothing_published():
         data = c.client.get(file_url(r.json(), 'normal'), headers=c.mum).content
         assert Image.open(io.BytesIO(data)).size == (4096, 4096)
         assert r.json()['maps']['normal'].endswith('.png')
-        for n in range(11):
-            assert upload(c, row['id'], image(color=(n * 20, 0, 0))).status_code == 200
-        assert len(list(folder.iterdir())) == 12
-        before = sorted(folder.iterdir())
-        assert upload(c, row['id'], image(color=(240, 0, 0))).status_code == 400
-        assert sorted(folder.iterdir()) == before
         assert upload(c, row['id'], image(color=(0, 0, 0))).status_code == 200, 'identical bytes reuse the immutable file'
+        before = sorted(folder.iterdir())
+        assert upload(c, row['id'], image(color=(0, 0, 0))).status_code == 200
+        assert sorted(folder.iterdir()) == before
 
 
 def test_delete_in_use_refused_history_archives():
@@ -276,6 +276,156 @@ def test_concurrent_updates_preserve_independent_params_and_revision_counter():
     assert materials.catalogue()['revision'] == before + len(changes)
     for change in changes:
         assert all(current['params'][key] == value for key, value in change['params'].items())
+
+
+def test_iteration_never_locks_a_material():
+    seed()
+    with Ctx() as c:
+        row = create(c)
+        folder = materials.root() / row['id']
+        assert materials.MAX_FILES == 16
+        with patch.object(materials, 'MAX_MATERIAL_BYTES', 2048):
+            for n in range(30):
+                r = upload(c, row['id'], image(color=(n * 8, 30, 50)))
+                assert r.status_code == 200, (n, r.text)
+                assert len(list((folder / 'maps').glob('*'))) <= 20
+                assert len(list((folder / 'revisions').glob('*.json'))) <= 20
+                for snapshot in (folder / 'revisions').glob('*.json'):
+                    record = json.loads(snapshot.read_text(encoding='utf-8'))
+                    assert all((folder / filename).is_file() for filename in record['maps'].values())
+
+
+def test_patch_cannot_archive_or_relabel():
+    seed()
+    with Ctx() as c:
+        row = create(c)
+        path = f"{API}/{row['id']}"
+        for fields in ({'archived': True}, {'archived': False}, {'source': 'polyhaven'},
+                       {'source': 'user'}, {'source_snapshot': None},
+                       {'source_snapshot': {'maps': {}, 'params': row['params']}}):
+            assert c.client.patch(path, headers=c.mum, json=fields).status_code == 400, fields
+            assert c.client.post(API, headers=c.mum, json={'name': 'Forged', **fields}).status_code == 400, fields
+        assert materials.get(row['id']) == row
+
+
+def test_huge_dimensions_refused_before_decode():
+    seed()
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    with Ctx() as c:
+        row = create(c)
+        for width, height in ((12000, 12000), (16385, 1)):
+            data = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 0, 0, 0, 0))
+                    + chunk(b'IDAT', zlib.compress(b'\x00\x00')) + chunk(b'IEND', b''))
+            assert len(data) < 1024
+            from PIL import PngImagePlugin
+            with patch.object(PngImagePlugin.PngImageFile, 'load', side_effect=AssertionError('decoded huge image')) as load:
+                r = upload(c, row['id'], data, 'height')
+            assert r.status_code == 400, r.text
+            assert not load.called, 'dimensions must be refused before pixel allocation'
+        assert not list((materials.root() / row['id'] / 'maps').glob('*'))
+
+
+def test_sixteen_bit_height_scaled_not_clipped():
+    seed()
+    with Ctx() as c:
+        row = create(c)
+        for mode, fmt in (('I;16', 'PNG'), ('I', 'TIFF')):
+            source = (Image.frombytes(mode, (2, 1), struct.pack('<HH', 65535, 32768)) if mode == 'I;16'
+                      else Image.frombytes(mode, (2, 1), struct.pack('<ii', 65535, 32768)))
+            stream = io.BytesIO()
+            source.save(stream, format=fmt)
+            r = upload(c, row['id'], stream.getvalue(), 'height')
+            assert r.status_code == 200, r.text
+            data = c.client.get(file_url(r.json(), 'height'), headers=c.mum).content
+            decoded = Image.open(io.BytesIO(data)).convert('L')
+            pixels = [decoded.getpixel((x, 0)) for x in range(2)]
+            assert pixels[0] == 255 and abs(pixels[1] - 128) <= 1, (mode, pixels)
+
+
+def test_file_get_404s():
+    seed()
+    with Ctx() as c:
+        row = create(c)
+        for mid in (row['id'], 'red_brick_03', 'material-missing'):
+            r = c.client.get(f'/api/house/twin/materials/{mid}/maps/000000000000.png', headers=c.panel)
+            assert r.status_code == 404, (mid, r.text)
+            assert 'immutable' not in r.headers.get('cache-control', '')
+
+
+def test_public_builtin_and_editable_helpers():
+    seed()
+    row = materials.create({'name': 'Editable'}, 'mum')
+    assert materials.builtin_rows()[:12] == materials.catalogue()['materials'][:12]
+    assert materials.require_editable(row['id']) == row
+    try:
+        materials.require_editable('red_brick_03')
+    except ValueError as exc:
+        assert 'read-only' in str(exc)
+    else:
+        raise AssertionError('built-in is editable')
+
+
+def test_usage_refusal_groups_named_surfaces_and_counts():
+    seed()
+    with Ctx() as c:
+        row = create(c)
+        def assign(model):
+            building = model['buildings'][0]
+            building['name'] = 'Main House'
+            for wall in building['walls'][:2]:
+                wall['faces'] = {'left': {'id': row['id']}}
+            model['site']['fence'] = [{'id': 'fence', 'name': 'Fence', 'height': 6,
+                                       'polyline': [[2, 2], [30, 2]], 'materials': {'boards': {'id': row['id']}}}]
+            return model
+        ts.update_model(assign, state_mutator=lambda state: state['place']['buildings'][0].update(name='Main House'))
+        r = c.client.delete(f"{API}/{row['id']}", headers=c.mum)
+        assert r.status_code == 400, r.text
+        assert r.json()['detail'] == 'Used on 3 surfaces: Main House walls (2), Fence boards (1)', r.text
+
+
+def test_live_bytes_over_cap_refused():
+    seed()
+    with Ctx() as c:
+        row = upload(c, create(c)['id']).json()
+        folder = materials.root() / row['id'] / 'maps'
+        before = sorted(folder.iterdir())
+        revision = materials.catalogue()['revision']
+        with patch.object(materials, 'MAX_MATERIAL_BYTES', 10):
+            r = upload(c, row['id'], image(color=(240, 0, 0)))
+        assert r.status_code == 400 and '200 MB' in r.text
+        assert sorted(folder.iterdir()) == before
+        assert materials.get(row['id']) == row
+        assert materials.catalogue()['revision'] == revision
+
+
+def test_gc_keeps_source_and_all_retained_undo_redo_maps():
+    seed()
+    original = materials.create({'name': 'Source'}, 'mum')
+    original = materials.set_image(original['id'], 'base_color', image(), 'mum')
+    row = materials.duplicate(original['id'], 'mum')
+    folder = materials.root() / row['id']
+    source_file = row['maps']['base_color']
+    for n in range(30):
+        materials.set_image(row['id'], 'base_color', image(color=(n * 8, 0, 80)), 'mum')
+    assert len(list((folder / 'revisions').glob('*.json'))) == 20
+    assert len(list((folder / 'maps').glob('*'))) == 21, 'source plus twenty retained states'
+    assert (folder / source_file).is_file(), 'source survives eviction of its initial revision'
+    for _ in range(19):
+        undone = materials.undo(row['id'])
+        assert all((folder / filename).is_file() for filename in undone['maps'].values())
+    try:
+        materials.undo(row['id'])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('undo escaped retained snapshots')
+    for _ in range(19):
+        redone = materials.redo(row['id'])
+        assert all((folder / filename).is_file() for filename in redone['maps'].values())
+    reset = materials.reset_to_source(row['id'], 'mum')
+    assert reset['maps'] == row['maps']
+    assert (folder / source_file).is_file()
 
 
 if __name__ == '__main__':

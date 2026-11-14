@@ -72,7 +72,7 @@ def start_upload(body):
     material_id = body.get('material_id')
     if material_id is not None:
         from services import twin_materials
-        twin_materials._editable(material_id)
+        twin_materials.require_editable(material_id)
         if body.get('asset_id') is not None or body.get('slot') not in twin_materials.SLOTS:
             raise ValueError('Choose one valid material texture slot.')
         if type(size) is not int or not 0 < size <= twin_materials.MAX_INPUT_BYTES:

@@ -38,7 +38,7 @@ def material_choices(kit_id='modern_farmhouse'):
     from services import twin_materials
     rows = twin_materials.catalogue()['materials']
     if kit_id != 'modern_farmhouse':
-        rows = twin_materials._builtin_rows(kit_id) + [r for r in rows if not r['builtin']]
+        rows = twin_materials.builtin_rows(kit_id) + [r for r in rows if not r['builtin']]
     return rows
 
 

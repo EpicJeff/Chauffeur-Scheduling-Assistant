@@ -7886,7 +7886,10 @@ def house_material_get(id: str):
 @app.get('/api/house/twin/materials/{id}/{file:path}')
 def house_material_file(id: str, file: str):
     from services import twin_materials
-    path = _material_call(twin_materials.file_path, id, file)
+    try:
+        path = twin_materials.file_path(id, file)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(path, headers={'Cache-Control': 'public, max-age=31536000, immutable'})
 
 
