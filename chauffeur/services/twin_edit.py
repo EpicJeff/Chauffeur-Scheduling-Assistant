@@ -593,7 +593,7 @@ def _apply_legacy(plan, edit, ha_catalogue=None):
 
 
 @_edit_timed('apply')
-def apply_model(model, edit, validated=None, ha_catalogue=None):
+def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=None):
     """Translate the old editor vocabulary at the connected-model boundary."""
     from services import twin_model_ops as ops, twin_model_bridge as bridge
     from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_model
@@ -609,14 +609,14 @@ def apply_model(model, edit, validated=None, ha_catalogue=None):
         anchors = [(b, a) for b in model['buildings'] for a in b.get('anchors', [])
                    if a['id'] == edit['piece'] and (not edit.get('building') or b['id'] == edit['building'])]
         if len(anchors) == 1:
-            return ops.apply(model, {**edit, 'building': anchors[0][0]['id'], 'id': edit['piece']})
+            return ops.apply(model, {**edit, 'building': anchors[0][0]['id'], 'id': edit['piece']}, _normalized=_normalized)
     # A flag_ok set names a building's check, not a piece, so it carries no id.
     if (op in ops.MORE_OPS and (op not in ('set', 'add_opening') or 'id' in edit
                                 or op == 'set' and edit.get('field') == 'flag_ok'
                                 or op == 'add_opening' and 'model' in edit)
             or op in ('move_joint', 'move_wall', 'move_room', 'split_wall', 'draw_room', 'split_room')
             or op == 'delete' and 'id' in edit):
-        return ops.apply(model, edit, ha_catalogue=ha_catalogue)
+        return ops.apply(model, edit, ha_catalogue=ha_catalogue, _normalized=_normalized)
 
     flat = bridge.flatten(model)
     checked = deepcopy(edit)
@@ -641,21 +641,21 @@ def apply_model(model, edit, validated=None, ha_catalogue=None):
             else:
                 translated.update(op='move_' + kind)
                 translated[kind] = pid
-            result, _ = ops.apply(model, translated)
+            result, _ = ops.apply(model, translated, _normalized=_normalized)
             return result, summary
         if op == 'rotate':
             translated.update(op='rotate_building', rotation=edit.get('to'))
             if 'about' in edit:
                 translated['about'] = twin_register.to_world(flat_building, edit['about'])
-            result, _ = ops.apply(model, translated)
+            result, _ = ops.apply(model, translated, _normalized=_normalized)
             return result, summary
         if op in ('add_wall', 'add_opening') or op == 'set' and kind != 'roof':
-            result, _ = ops.apply(model, translated, ha_catalogue=ha_catalogue)
+            result, _ = ops.apply(model, translated, ha_catalogue=ha_catalogue, _normalized=_normalized)
             return result, summary
         if op == 'delete' and kind in ('wall', 'room', 'opening', 'roof'):
             # The legacy delete explicitly removes its dependants. New model
             # deletes retain lost hosts as ghosts, preserving the new UI's path.
-            result, _ = ops.apply(model, translated)
+            result, _ = ops.apply(model, translated, _normalized=_normalized)
             building = next(b for b in result['buildings'] if b['id'] == bid)
             removed = {p['id'] for _, p, b in _removed(flat, legacy) if b['id'] == bid}
             for anchor in building.get('anchors', []):
@@ -903,11 +903,12 @@ def save(edit, actor_id, reason=''):
             twin_store._source_page(twin_store._state(), edit.get('source'), edit.get('page'))
         from services import twin_model, twin_model_bridge
         current = twin_store.current_model()
-        model, summary = apply_model(current, edit, ha_catalogue=ha_catalogue)
+        normalized = twin_model.normalize(current)
+        model, summary = apply_model(current, edit, ha_catalogue=ha_catalogue, _normalized=normalized)
         after = twin_model_bridge.flatten(model)
         # The fix log compares against the house as every op sees it (normalized),
         # so a pass's own re-derive is never logged as the person's fix.
-        logged_before = twin_model_bridge.flatten(twin_model.normalize(current)[0])
+        logged_before = twin_model_bridge.flatten(normalized[0])
         place_row = None
         if edit.get('op') == 'set' and edit.get('field') == 'name':
             kind, piece, building, _ = _find(after, edit.get('piece', edit.get('id')), edit.get('building'))

@@ -10,6 +10,46 @@ from test_twin_editor_history_js import DRIVER as HISTORY_DRIVER, STUBS
 
 ROOT = Path(__file__).resolve().parents[1]
 
+LEAN = HISTORY_DRIVER.split(' const zoneResize=')[0].replace(
+    'const writes=[],reverts=[];', 'const stateReads=[];let serverAhead=false;const writes=[],reverts=[];').replace(
+    "if(path==='editor/state')return response(200,state());", r"""
+  if(path.startsWith('editor/state')){
+   stateReads.push(path);
+   if(serverAhead){serverAhead=false;plan.buildings[0].name='Another writer';record();return response(200,{...state(),current_round:rounds.at(-1).id});}
+   if(path.includes('?have_round=')){
+    assert.equal(new URL('https://test/'+path).searchParams.get('have_round'),rounds.at(-1).id);
+    return response(200,{rounds:structuredClone(rounds),site:{lat:17},cost:{total:42},build:null,bake:{state:'waiting'},current_round:rounds.at(-1).id});
+   }
+   return response(200,state());
+  }""").replace(
+    "{...state(),words:'Saved the change.'", "{...state(),round:rounds.at(-1).id,words:'Saved the change.'") + r"""
+ await hooks.op({op:'resize_opening',building:'b',id:'door',width:4});
+ assert.equal(stateReads.at(-1),'editor/state?have_round=r1');
+ assert.equal(editorView.plan.buildings[0].openings[0].width,4);
+ assert.equal(sceneOptions.getPlan().buildings[0].openings[0].width,4);
+ assert.equal(sceneOptions.getModel().buildings[0].openings[0].width,4);
+ assert.equal(lastSnapshot.plan.buildings[0].openings[0].width,4);
+ assert.equal(lastSnapshot.rounds.at(-1).id,'r1');
+ assert.deepEqual(lastSnapshot.site,{lat:17});assert.deepEqual(lastSnapshot.cost,{total:42});
+ assert.equal(lastSnapshot.build,null);assert.deepEqual(lastSnapshot.bake,{state:'waiting'});
+ ok('applyOp_refreshes_state_with_have_round_and_keeps_plan (and model and ancillary fields)');
+ await houseOptions.afterLoad({round:current()});
+ assert.equal(stateReads.at(-1),'editor/state');
+ ok('house load refresh still requests the full state');
+ serverAhead=true;
+ await hooks.op({op:'resize_opening',building:'b',id:'door',width:5});
+ assert.equal(sceneOptions.getPlan().buildings[0].name,'Another writer');
+ assert.equal(sceneOptions.getModel().buildings[0].name,'Another writer');
+ ok('a full response from a newer round replaces both cached editor reads');
+ assert.deepEqual(domErrors,[]);assert.deepEqual(escaped,[]);
+ window.dispatchEvent(new Event('pagehide'));
+ console.log(`${passed}/${passed} lean state checks passed`);process.exit(0);
+}catch(error){console.error(error);process.exit(1);}
+"""
+LEAN_STUBS = STUBS.replace('const cards=createCards', 'globalThis.sceneOptions=options;const cards=createCards').replace(
+    'export const createPlace=()=>({sync(){},isOpen:()=>false});',
+    'export const createPlace=()=>({sync(sheets,state){globalThis.lastSnapshot=state;},isOpen:()=>false});')
+
 # Reuse the history rig's real editor boot and transport fixtures, then test
 # timing through its public op hook. The renderer is tested separately below.
 EDITOR = HISTORY_DRIVER.split(' const zoneResize=')[0].replace(
@@ -106,6 +146,9 @@ finish();
 if __name__ == '__main__':
     ids = sorted(set(re.findall(r'id="([\w-]+)"', (ROOT / 'templates/house_editor.html').read_text(encoding='utf-8'))) | {'piece-card', 'rail-undo', 'rail-redo'})
     result = run(EDITOR, {'stubs': STUBS, 'ids': ids}, timeout=45)
+    if result:
+        sys.exit(result)
+    result = run(LEAN, {'stubs': LEAN_STUBS, 'ids': ids}, timeout=45)
     if result:
         sys.exit(result)
     plan = json.loads((ROOT / 'tests/fixtures/twin_poolhouse.plan.json').read_text(encoding='utf-8'))

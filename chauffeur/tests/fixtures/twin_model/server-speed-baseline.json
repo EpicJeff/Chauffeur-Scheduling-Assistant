@@ -1,0 +1,227 @@
+{
+  "set_material": {
+    "ms": 618.6411001253873,
+    "timing": {
+      "lock": 0.007,
+      "apply": 62.781,
+      "normalize": 220.317,
+      "round": 20.842,
+      "read": 99.174,
+      "response": 6.094
+    },
+    "calls": {
+      "normalize": 3,
+      "plan_normalize": 0,
+      "flatten": 4,
+      "read_round": 6,
+      "current": 2,
+      "current_model": 4
+    },
+    "state_ms": 118.87510004453361,
+    "state_calls": {
+      "normalize": 0,
+      "plan_normalize": 0,
+      "flatten": 1,
+      "read_round": 2,
+      "current": 1,
+      "current_model": 2
+    },
+    "state_bytes": 245692
+  },
+  "move_site_item": {
+    "ms": 412.9935000091791,
+    "timing": {
+      "lock": 0.012,
+      "apply": 10.117,
+      "normalize": 154.334,
+      "round": 21.089,
+      "read": 91.095,
+      "response": 6.245
+    },
+    "calls": {
+      "normalize": 3,
+      "plan_normalize": 0,
+      "flatten": 4,
+      "read_round": 5,
+      "current": 2,
+      "current_model": 4
+    },
+    "state_ms": 201.2410000897944,
+    "state_calls": {
+      "normalize": 0,
+      "plan_normalize": 0,
+      "flatten": 1,
+      "read_round": 2,
+      "current": 1,
+      "current_model": 2
+    },
+    "state_bytes": 245918
+  },
+  "move_wall": {
+    "ms": 470.5717000178993,
+    "timing": {
+      "lock": 0.006,
+      "apply": 68.792,
+      "normalize": 150.408,
+      "round": 21.101,
+      "read": 100.343,
+      "response": 6.465
+    },
+    "calls": {
+      "normalize": 3,
+      "plan_normalize": 0,
+      "flatten": 4,
+      "read_round": 5,
+      "current": 2,
+      "current_model": 4
+    },
+    "state_ms": 110.50840001553297,
+    "state_calls": {
+      "normalize": 0,
+      "plan_normalize": 0,
+      "flatten": 1,
+      "read_round": 2,
+      "current": 1,
+      "current_model": 2
+    },
+    "state_bytes": 246525
+  },
+  "place_device": {
+    "ms": 363.9710999559611,
+    "timing": {
+      "lock": 0.006,
+      "apply": 1.494,
+      "normalize": 128.904,
+      "round": 27.424,
+      "read": 97.028,
+      "response": 5.916
+    },
+    "calls": {
+      "normalize": 3,
+      "plan_normalize": 0,
+      "flatten": 4,
+      "read_round": 5,
+      "current": 2,
+      "current_model": 4
+    },
+    "state_ms": 114.41190005280077,
+    "state_calls": {
+      "normalize": 0,
+      "plan_normalize": 0,
+      "flatten": 1,
+      "read_round": 2,
+      "current": 1,
+      "current_model": 2
+    },
+    "state_bytes": 246975
+  },
+  "move_building": {
+    "ms": 438.9003000687808,
+    "timing": {
+      "lock": 0.006,
+      "apply": 52.021,
+      "normalize": 146.078,
+      "round": 34.261,
+      "read": 86.765,
+      "response": 6.099
+    },
+    "calls": {
+      "normalize": 3,
+      "plan_normalize": 0,
+      "flatten": 4,
+      "read_round": 5,
+      "current": 2,
+      "current_model": 4
+    },
+    "state_ms": 96.75629995763302,
+    "state_calls": {
+      "normalize": 0,
+      "plan_normalize": 0,
+      "flatten": 1,
+      "read_round": 2,
+      "current": 1,
+      "current_model": 2
+    },
+    "state_bytes": 247042
+  },
+  "set_material_again": {
+    "ms": 443.6657000333071,
+    "timing": {
+      "lock": 0.006,
+      "apply": 51.2,
+      "normalize": 152.191,
+      "round": 22.08,
+      "read": 97.451,
+      "response": 7.004
+    },
+    "calls": {
+      "normalize": 3,
+      "plan_normalize": 0,
+      "flatten": 4,
+      "read_round": 5,
+      "current": 2,
+      "current_model": 4
+    },
+    "state_ms": 145.81480016931891,
+    "state_calls": {
+      "normalize": 0,
+      "plan_normalize": 0,
+      "flatten": 1,
+      "read_round": 2,
+      "current": 1,
+      "current_model": 2
+    },
+    "state_bytes": 247167
+  },
+  "unplace_device": {
+    "ms": 913.3171001449227,
+    "timing": {
+      "lock": 0.012,
+      "apply": 0.081,
+      "normalize": 327.58,
+      "round": 50.664,
+      "read": 296.393,
+      "response": 7.258
+    },
+    "calls": {
+      "normalize": 3,
+      "plan_normalize": 0,
+      "flatten": 4,
+      "read_round": 5,
+      "current": 2,
+      "current_model": 4
+    },
+    "state_ms": 107.5132000260055,
+    "state_calls": {
+      "normalize": 0,
+      "plan_normalize": 0,
+      "flatten": 1,
+      "read_round": 2,
+      "current": 1,
+      "current_model": 2
+    },
+    "state_bytes": 246980
+  },
+  "revert": {
+    "ms": 44.80520007200539,
+    "timing": {},
+    "calls": {
+      "normalize": 0,
+      "plan_normalize": 0,
+      "flatten": 0,
+      "read_round": 1,
+      "current": 0,
+      "current_model": 0
+    },
+    "state_ms": 113.85380011051893,
+    "state_calls": {
+      "normalize": 0,
+      "plan_normalize": 0,
+      "flatten": 1,
+      "read_round": 2,
+      "current": 1,
+      "current_model": 2
+    },
+    "state_bytes": 244395
+  }
+}
