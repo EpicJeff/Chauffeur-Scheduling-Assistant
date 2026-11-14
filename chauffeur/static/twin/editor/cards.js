@@ -60,7 +60,7 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview }) {
+export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview, onDrawFeature }) {
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
   let edgeIndex = null;
@@ -216,13 +216,13 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       for (const feature of roomFeatures) {
         const button = document.createElement('button'); button.type = 'button';
         button.disabled = !canEdit();
-        button.textContent = `Edit ${feature.piece.name || siteShapeLabels[feature.kind]} materials`;
+        button.textContent = `Edit ${piece.feature?.feature ? 'Spa' : feature.piece.name || siteShapeLabels[feature.kind]} materials`;
         button.addEventListener('click', () => {
           const next = {pieceId: feature.piece.id, buildingId: null}; select(next); draw(next);
         });
         host.append(button);
       }
-      drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getKit,
+      drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getKit, onDrawFeature,
         haAvailable: !!haLink?.state()?.available,
         onMakeRoom: () => {
           const room = getPlan().site?.yard_rooms?.at(-1);

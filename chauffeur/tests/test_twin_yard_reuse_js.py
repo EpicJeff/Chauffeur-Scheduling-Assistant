@@ -132,6 +132,10 @@ await test('yard materials invalidate on resolved kit or manifest changes',async
 });
 await test('key_covers_every_buildYard_input',()=>{
  const p=fixture(),b=p.buildings[0];
+ p.site.pool.features=[{id:'ledge',kind:'ledge',polygon:square(5,5,1),depth_in:10},
+  {id:'steps',kind:'steps',polygon:square(5,5,1),treads:3,entry_edge:0},
+  {id:'spa',kind:'spa',polygon:square(5,5,1),mode:'raised',raise_in:12,depth_in:36,spillover:true,
+   materials:{coping:{id:'coping-slot'},interior:{id:'inside-slot'},wall:{id:'wall-slot'}}}];
  b.foundation={mode:'auto',offset_ft:1};b.base=1;
  b.porches=[{id:'porch',polygon:square(0,0),level:b.levels[0].id,floor:1}];
  b.rooms.push({id:'porch-room',kind:'porch',state:'settled',level:b.levels[0].id,polygon:square(0,0),floor_offset_ft:1});

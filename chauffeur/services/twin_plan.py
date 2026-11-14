@@ -542,6 +542,25 @@ def _site(site, notes):
                     wall.pop('materials')
                     notes.append('Reset retaining wall materials: unknown Library material.')
     slots('pool', site.get('pool'))
+    pool = site.get('pool')
+    if isinstance(pool, dict) and 'features' in pool:
+        values, kept, seen = pool['features'], [], set()
+        if not isinstance(values, list):
+            notes.append('Dropped pool features: expected a list.')
+            values = []
+        for value in values:
+            try:
+                # Missing Library assets reset only their slots, like other yard shapes.
+                if isinstance(value, dict) and value.get('kind') == 'spa':
+                    slots('spa', value)
+                feature = twin_site_shapes.pool_feature(pool, value)
+                if len(kept) >= 12 or feature['id'] in seen:
+                    raise ValueError('At most 12 features with unique ids.')
+                kept.append(feature)
+                seen.add(feature['id'])
+            except ValueError as exc:
+                notes.append(f'Dropped pool feature: {exc}')
+        pool['features'] = kept
     for name in ('fire_pit', 'fence'):
         value = site.get(name)
         kept = []

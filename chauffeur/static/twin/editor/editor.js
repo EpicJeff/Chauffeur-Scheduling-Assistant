@@ -556,7 +556,7 @@ export async function boot() {
       },
     });
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
-      pickSite: (x, y) => library?.pickSite(x, y), pickMaterial: surface => library?.pick(surface),
+      pickSite: (x, y) => library?.pickSite(x, y), pickMaterial: surface => library?.pick(surface), onDrawFeature: kind => terrain?.startDrawing(kind),
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
     library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || snapshot.plan, tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
