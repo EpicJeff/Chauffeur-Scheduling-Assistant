@@ -739,6 +739,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
       }
       plan = flat; view.plan = flat;
+      // A gesture deforms retained buffers in place; the next full rebuild
+      // must regenerate this building from its final authoritative record.
+      if (twin.buildings?.has(buildingId)) twin.buildings.get(buildingId).key = null;
       for (const line of selectionLines) {
         const key = line.userData.selectionKey;
         if (!changedPieces.has(key)) continue;
@@ -759,16 +762,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       view.bake?.stop();
       stopBake();
       const version = ++revision; view.ready = false;
-      const structureKey = p => JSON.stringify([p.materials, p.buildings?.map(b => ({ ...b, foundation: undefined, foundation_src: undefined, base: undefined }))]);
-      const stopMaterials = editSpan(detail, 'materials');
-      const reuseMaterials = twin && structureKey(plan) === structureKey(nextPlan) ? twin.materials : null;
-      stopMaterials();
-      const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor, reuseMaterials, timing });
+      const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor, previous: twin, timing });
       const reuseYard = !!yardGroup && (preserveYard || yardGroup.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor }));
       if (timing) timing.yard_reused = reuseYard;
       const yardMaterials = reuseYard || yardGroup?.userData.yardMaterialKey === yardMaterialKey(nextPlan, kit, tier)
         ? yardGroup?.userData.materials : new Map(yardGroup?.userData.materials);
-      const keepMaterials = new Set([...(yardMaterials?.values() || []), ...(reuseMaterials?.values() || [])]);
+      const keepMaterials = new Set([...(yardMaterials?.values() || []), ...(twin?.materials.values() || [])]);
       next.editableLevel = editableLevel;
       const extras = new Map();
       try {
@@ -786,13 +785,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
               if (!extras.has(group)) { const extra = new THREE.Group(); group.add(extra); extras.set(group, extra); }
               const renderGroup = extras.get(group);
               const ghost = piece.state === 'ghost', data = { pieceId: piece.id, buildingId: building.id, kind, ghost };
-              const material = next.materials.get(ghost ? 'ghost#38bdf8' : 'floor');
+              const buildingMaterials = next.buildings.get(building.id).model.materials;
+              const material = buildingMaterials.get(ghost ? 'ghost#38bdf8' : 'floor');
               const objects = [];
               const add = geometry => {
                 const mesh = new THREE.Mesh(geometry, material);
                 Object.assign(mesh.userData, data, { pieceObjects: objects }); renderGroup.add(mesh); objects.push(mesh);
                 if (ghost) {
-                  const edge = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), next.materials.get('ghostEdges'));
+                  const edge = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), buildingMaterials.get('ghostEdges'));
                   edge.computeLineDistances(); Object.assign(edge.userData, data); renderGroup.add(edge); objects.push(edge);
                 }
               };
@@ -809,7 +809,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
               next.pieces.set(key, objects);
               const geometry = objects[0].geometry; geometry.computeBoundingBox();
               next.pieceBounds.set(key, { box: geometry.boundingBox.clone(), group, data });
-              const proxy = new THREE.Mesh(geometry.clone(), next.materials.get('pick'));
+              const proxy = new THREE.Mesh(geometry.clone(), buildingMaterials.get('pick'));
               Object.assign(proxy.userData, data); proxy.layers.set(PICK_LAYER); group.add(proxy); next.pickObjects.set(key, proxy);
             }
           }
@@ -829,8 +829,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       } catch (error) { release(next, keepMaterials); throw error; }
       if (disposed || version !== revision) { release(next, keepMaterials); return; }
       next.yardGroup?.userData.adoptParts?.();
-      // After adoption the new yard's material map holds exactly what it still uses.
-      const keepAfter = new Set([...(next.yardGroup?.userData.materials?.values() || []), ...(reuseMaterials?.values() || [])]);
+      // Both caches now own exactly the resources surviving the accepted build.
+      const keepAfter = new Set([...(next.yardGroup?.userData.materials?.values() || []), ...next.materials.values()]);
       if (timing) {
         timing.yard_reused_parts = reuseYard ? Object.keys(yardGroup?.userData.yardPartKeys || {}) : next.yardGroup?.userData.yardReusedParts || [];
         timing.yard_rebuilt_parts = reuseYard ? [] : next.yardGroup?.userData.yardRebuiltParts || [];
@@ -847,6 +847,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       // adopted them. Ordinary terrain edits must not delete/recreate shaders.
       const stopDispose = editSpan(detail, 'dispose');
       const releaseViewing = viewing?.dispose({ deferMaterials: true }); viewing = null;
+      next.adoptBuildings();
       sheet?.object?.removeFromParent();
       if (!next.yardGroup && yardGroup) {
         yardGroup.removeFromParent(); next.groups.site.add(yardGroup); next.yardGroup = yardGroup;

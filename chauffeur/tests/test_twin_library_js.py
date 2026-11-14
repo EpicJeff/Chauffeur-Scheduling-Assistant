@@ -227,6 +227,71 @@ assert.equal(fetches, 2, 'the next build uses the cached hosted model');
 lib.disposeObject(itemTwin.root); lib.disposeObject(afterLateBuild.root);
 ok('a late hosted model replaces the existing fallback and is used by the next build');
 
+// A timed-out import belongs to its building even when that building survives
+// several accepted house rebuilds before the loader delivers its model.
+const reuseBuilding = {...itemBuilding, items: [{...itemBuilding.items[0], asset: 'reused_late_chair'}]};
+const otherBuilding = {id: 'annex', position: [30,0], levels: [{id: 'L1', elevation: 0, ceiling: 9}], walls: [],
+  rooms: [{id: 'room', level: 'L1', polygon: [[0,0],[10,0],[10,10],[0,10]]}]};
+const reusePlan = {buildings: [reuseBuilding, otherBuilding], materials: {}}, reuseKit = modelKit('reused_late_chair');
+let current = buildTwin(reusePlan, reuseKit, 'high');
+await flush(); await advance(15000); await current.ready;
+const owner = current.buildings.get('house').model, fallback = current.pieces.get('house:chair').slice();
+assert.equal(current.pieceBounds.get('house:chair').box.max.y, 2);
+const releasePrevious = (previous, next) => {
+  const keepMaterials = new Set(next.materials.values());
+  lib.disposeObject(previous.root, {keepMaterials});
+  previous.materials.forEach(material => {if (!keepMaterials.has(material)) material.dispose();});
+};
+let reuseEdited = reusePlan;
+for (const ceiling of [10,11]) {
+  reuseEdited = structuredClone(reuseEdited); reuseEdited.buildings[1].levels[0].ceiling = ceiling;
+  const next = buildTwin(reuseEdited, reuseKit, 'high', {previous: current}); await next.ready;
+  assert.deepEqual(next.buildingsReused, ['house']); assert.deepEqual(next.buildingsRebuilt, ['annex']);
+  next.adoptBuildings(); releasePrevious(current, next); current = next;
+  assert.equal(current.buildings.get('house').model, owner); assert.notEqual(owner.root.userData.disposed, true);
+}
+await advance(5000); modelResolve({scene: cube()}); await flush();
+const lateObjects = current.pieces.get('house:chair'), lateProxy = current.pickObjects.get('house:chair');
+assert.ok(lateObjects.length > 0);
+assert.equal(current.pieceBounds.get('house:chair').data.kind, 'item');
+assert.equal(current.pieceBounds.get('house:chair').data.buildingId, 'house');
+assert.ok(lateObjects.every(object => !fallback.includes(object)), 'current pieces contain no procedural fallback');
+assert.ok(fallback.every(object => !object.parent), 'late arrival detaches every previous fallback mesh');
+assert.equal(lateProxy.userData.kind, 'item'); assert.equal(lateProxy.userData.buildingId, 'house');
+assert.equal(lateProxy, owner.pickObjects.get('house:chair'));
+assert.equal(current.pieceBounds.get('house:chair'), owner.pieceBounds.get('house:chair'));
+assert.equal(current.pieces.get('house:chair'), owner.pieces.get('house:chair'));
+assert.ok(Math.abs(current.pieceBounds.get('house:chair').box.max.y - 1 / .3048) < .001);
+for (const object of [...lateObjects, lateProxy]) {
+  let root = object; while (root.parent) root = root.parent;
+  assert.equal(root, current.root, 'late geometry and its pick proxy join the currently adopted twin');
+  assert.notEqual(object.userData.disposed, true); assert.ok(object.geometry.attributes.position.count > 0);
+}
+assert.notEqual(owner.root.userData.disposed, true, 'the late loader retains a live building owner');
+lib.disposeObject(current.root);
+ok('a late hosted import updates current registries after its building is reused twice');
+
+const removedBuilding = {...reuseBuilding, items: [{...reuseBuilding.items[0], asset: 'removed_late_chair'}]};
+const removedKit = modelKit('removed_late_chair');
+const beforeRemoval = buildTwin({buildings: [removedBuilding, otherBuilding], materials: {}}, removedKit, 'high');
+await flush(); await advance(15000); await beforeRemoval.ready;
+const removedOwner = beforeRemoval.buildings.get('house').model;
+const afterRemoval = buildTwin({buildings: [otherBuilding], materials: {}}, removedKit, 'high', {previous: beforeRemoval});
+await afterRemoval.ready; afterRemoval.adoptBuildings(); releasePrevious(beforeRemoval, afterRemoval);
+assert.equal(removedOwner.root.userData.disposed, true);
+const removedBounds = removedOwner.pieceBounds.get('house:chair').box.clone();
+const removedSource = cube(); let removedGeometryReleased = 0;
+removedSource.children[0].geometry.clone = function() {
+  const copy = THREE.BufferGeometry.prototype.clone.call(this);
+  copy.addEventListener('dispose', () => removedGeometryReleased++); return copy;
+};
+modelResolve({scene: removedSource}); await flush();
+for (const name of ['pieces','pickObjects','pieceBounds']) assert.ok([...afterRemoval[name].keys()].every(key => !key.startsWith('house:')));
+assert.ok(removedOwner.pieceBounds.get('house:chair').box.equals(removedBounds), 'a removed building ignores its late import');
+assert.equal(removedGeometryReleased, 1, 'the removed owner releases the delivered model copy');
+lib.disposeObject(afterRemoval.root);
+ok('removing a building prevents its late hosted import from joining the current twin');
+
 const deadBuilding = {...itemBuilding, items: [{...itemBuilding.items[0], asset: 'disposed_chair'}]};
 const deadTwin = buildTwin({buildings: [deadBuilding], materials: {}}, modelKit('disposed_chair'), 'high');
 await flush(); await advance(15000); await deadTwin.ready; lib.disposeObject(deadTwin.root);
