@@ -6,13 +6,14 @@ from twin_editor_dom import PRELUDE, run_node
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = '\n'.join(line for line in PRELUDE.splitlines() if "if (spec === './twin_yard.js')" not in line)
-PREFIX = PREFIX.replace("if (spec === 'three')", """if (spec === '@dgreenheck/ez-tree') return {url:data(`import {Group} from '${three}'; export class Tree extends Group {}`),shortCircuit:true};
+PREFIX = PREFIX.replace("if (spec === 'three')", """if (spec === '@dgreenheck/ez-tree') return {url:data(`import {Group} from '${three}'; export class Tree extends Group { constructor(){super();this.options={};} loadPreset(){} generate(){ this.clear?.(); this.add(new (globalThis.__THREE_MESH)(new (globalThis.__THREE_BOX)(1,2,1), new (globalThis.__THREE_STD)())); } }`),shortCircuit:true};
   if (spec === 'three')""")
 
 DRIVER = PREFIX + r"""
 const THREE = await import('three');
 const {mountTwin} = await import(file('static/twin/twin_view.js'));
-const {yardKey,yardMaterialKey,buildYard,canonicalOutline} = await import(file('static/twin/twin_yard.js'));
+const {yardKey,yardMaterialKey,buildYard,canonicalOutline,yardPartKeys,YARD_PARTS} = await import(file('static/twin/twin_yard.js'));
+globalThis.__THREE_MESH=THREE.Mesh;globalThis.__THREE_BOX=THREE.BoxGeometry;globalThis.__THREE_STD=THREE.MeshStandardMaterial;
 const {beginEdit,mountEditTiming} = await import(file('static/twin/edit_timing.js'));
 const {rememberImport} = await import(file('static/twin/twin_library.js'));
 const square=(x,y,w=4)=>[[x,y],[x+w,y],[x+w,y+w],[x,y+w]];
@@ -185,7 +186,8 @@ await test('key_covers_every_buildYard_input',()=>{
   const next=structuredClone(source),nextKit=structuredClone(sourceKit);change(next,nextKit);
   assert.notEqual(yardKey(next,nextKit,'high'),yardKey(source,sourceKit,'high'),label);checked++;
  }
- for(const path of mutations(p.site))check(n=>mutate(n.site,path),'site.'+path.join('.'));
+ // An edge with both points and polyline draws its blades from points; its polyline is never read.
+ for(const path of mutations(p.site,[],q=>q.join('.')==='edges.1.polyline'))check(n=>mutate(n.site,path),'site.'+path.join('.'));
  for(const path of [['position','0'],['rotation'],['base'],['foundation','mode'],['foundation','offset_ft'],['levels','0','outline','0','0'],
    ['levels','0','id'],['porches','0','polygon','0','0'],['porches','0','level'],['porches','0','floor'],
    ['rooms',String(b.rooms.length-1),'kind'],['rooms',String(b.rooms.length-1),'state'],['rooms',String(b.rooms.length-1),'level'],
@@ -234,6 +236,99 @@ await test('key_covers_every_buildYard_input',()=>{
  assert.notEqual(yardKey(p,kit,'high'),yardKey(p,kit,'high',{viewing:true}));checked++;
  assert.notEqual(yardKey(p,kit,'high'),yardKey(p,kit,'low'));checked++;
  console.log(`    ${checked} input mutations checked`);
+});
+
+// Per-part reuse (edit speed step 3): an edit rebuilds only the yard parts whose inputs changed.
+// A part's identity is the list of objects tagged with it (the yard root stays flat).
+const parts=v=>{const out={};for(const o of yard(v)?.children||[])(out[o.userData.yardPart]||=[]).push(o);return out;};
+const same=(a=[],b=[])=>a.length===b.length&&a.every((o,i)=>o===b[i]);
+async function partEdit(change,expectRebuilt,label){
+ const plan=fixture();plan.site.planting=[{id:'oak',kind:'tree',preset:'oak',at:[2,2],height:12,seed:1}];
+ const v=await mount(plan,true);
+ try{
+  const before=parts(v);
+  change(plan);
+  const record=beginEdit({op:'edit'});await v.rebuild(plan,{timing:record});
+  const after=parts(v);
+  const rebuilt=YARD_PARTS.filter(n=>(before[n]||after[n])&&!same(after[n],before[n])).sort();
+  // Identity can only be compared for parts that draw something in this fixture; the timing
+  // record below lists every rebuilt part, empty or not.
+  const drawn=expectRebuilt.filter(n=>before[n]?.length||after[n]?.length);
+  assert.deepEqual(rebuilt,[...drawn].sort(),label+': rebuilt '+JSON.stringify(rebuilt));
+  assert.deepEqual([...record.yard_rebuilt_parts].sort(),[...expectRebuilt].sort(),label+' timing');
+  for(const n of YARD_PARTS)if(!expectRebuilt.includes(n))for(const o of after[n]||[])assert.ok(o.parent===yard(v),label+': '+n+' adopted into the new yard');
+  const order=yard(v).children.map(o=>YARD_PARTS.indexOf(o.userData.yardPart));
+  assert.ok(order.every((x,i)=>i===0||x>=order[i-1]),label+': stable part order');
+ }finally{v.dispose();}
+}
+await test('fence_edit_rebuilds_only_fences',()=>partEdit(p=>{p.site.fence[0].polyline[1][0]+=1;},['fences'],'fence'));
+await test('plant_move_rebuilds_only_plants',()=>partEdit(p=>{p.site.planting[0].at[0]+=1;},['plants'],'plant'));
+await test('fence_material_slot_rebuilds_only_fences',()=>partEdit(p=>{p.site.fence[0].materials.boards={id:'other-slot'};},['fences'],'fence slot'));
+await test('pad_edit_rebuilds_terrain_and_what_sits_on_it',()=>partEdit(p=>{p.site.terraces[0].height+=1;},
+ ['terrain','plants','fences','hardscape','pool','fire_pits','retaining_walls','furniture','grass'],'pad'));
+await test('pool_outline_rebuilds_pool_terrain_and_hardscape_holes',()=>partEdit(p=>{p.site.pool.polygon[0][0]-=.5;},['terrain','hardscape','pool'],'pool outline'));
+await test('pool_depth_rebuilds_only_pool',()=>partEdit(p=>{p.site.pool.depth+=1;},['pool'],'pool depth'));
+await test('replaced_slot_material_is_released',async()=>{
+ const plan=fixture();const v=await mount(plan,true);
+ try{
+  const map=()=>yard(v).userData.materials;
+  const old=[...map().values()];
+  plan.site.fence[0].materials.boards={id:'other-slot'};
+  await v.rebuild(plan,{timing:beginEdit({op:'edit'})});
+  const used=new Set();yard(v).traverse(o=>{for(const m of o.material?[].concat(o.material):[])used.add(m);});
+  for(const m of map().values())assert.ok(used.has(m),'the new yard keeps only materials a mesh uses');
+  assert.ok(old.some(m=>!used.has(m)),'the replaced boards material is no longer kept');
+ }finally{v.dispose();}
+});
+await test('part_key_guard',()=>{
+ const p=fixture();
+ p.site.planting=[{id:'oak',kind:'tree',preset:'oak',at:[2,2],height:12,seed:1}];
+ p.site.furniture=[{id:'chair',kind:'chair',asset:'model',at:[1,1]}];
+ p.site.pool.features=[{id:'spa',kind:'spa',polygon:square(5,5,1),mode:'raised',raise_in:12,depth_in:36,spillover:true}];
+ const kit={materials:{lawn:{asset:'grass'},fence:{asset:'wood'}},furniture:{chair:'model'},manifest:{}};
+ const ALL=YARD_PARTS.filter(n=>n!=='grass'||true);
+ const grade=['terrain','plants','fences','hardscape','pool','fire_pits','retaining_walls','furniture','grass'];
+ // What each site input feeds, by the part builders' reads.
+ const expected=path=>{
+  const [list,,field,...rest]=path;
+  if(list==='lot')return ['terrain'];
+  if(list==='terraces'){
+   if(field==='edges'&&rest[1]==='wall'||field==='edges'&&rest.includes('wall'))return ['retaining_walls'];
+   if(field==='edges'&&rest[1]==='edge')return grade;
+   return grade;
+  }
+  if(list==='hardscape'||list==='beds')return ['hardscape'];
+  if(list==='pool'){
+   // pool is an object, not a list: path is pool.<field>[.<index>.<sub>…]
+   const poolField=path[1],sub=path[3];
+   // The pool outline and spa outlines (and whether a feature is a spa) cut the
+   // lawn and patio holes.
+   if(poolField==='polygon'||poolField==='features'&&(sub==='polygon'||sub==='kind'))return ['terrain','hardscape','pool'];
+   return ['pool'];
+  }
+  if(list==='fire_pit')return ['fire_pits'];
+  if(list==='edges')return field==='polygon'?['hardscape','grass']:['points','polyline'].includes(field)?['grass']:['hardscape'];
+  if(list==='fence')return ['fences'];
+  if(list==='planting')return ['plants'];
+  if(list==='furniture')return ['furniture'];
+  return null;
+ };
+ const mutations=(root,path=[])=>Object.entries(root).flatMap(([k,v])=>v!==null&&typeof v==='object'?mutations(v,[...path,k]):[[...path,k]]);
+ const mutate=(root,path)=>{const parent=path.slice(0,-1).reduce((o,k)=>o[k],root),k=path.at(-1),v=parent[k];parent[k]=typeof v==='number'?v+1:typeof v==='boolean'?!v:String(v)+'-changed';};
+ const base=yardPartKeys(p,kit,'high');let checked=0;const wrong=[];
+ for(const path of mutations(p.site)){
+  const want=expected(path);if(!want)continue;
+  const next=structuredClone(p);mutate(next.site,path);
+  const keys=yardPartKeys(next,kit,'high');
+  const changed=YARD_PARTS.filter(n=>keys[n]!==base[n]);
+  // A part may legitimately ignore a field (a material name that resolves to the same role);
+  // it must never change when the field is not its input.
+  const extra=changed.filter(n=>!want.includes(n));
+  if(extra.length||!changed.length)wrong.push(path.join('.')+' changed '+JSON.stringify(changed)+' want '+JSON.stringify(want));
+  checked++;
+ }
+ assert.deepEqual(wrong,[],wrong.join('\n'));
+ console.log(`    ${checked} per-part mutations checked`);
 });
 await test('irrelevant authoring metadata and building finishes leave key unchanged',()=>{
  const p=fixture(),key=yardKey(p,{},'high');

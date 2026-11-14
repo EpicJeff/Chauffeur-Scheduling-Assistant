@@ -792,7 +792,9 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) positions.push(...roofLayers.positions.slice(t * 9, t * 9 + 9));
       if (positions.length) mesh(local.roof, roofGeometry(positions), mat('roof'));
       const block = section.block || section.rect;
-      if (positions.length && !section.dormer_of
+      // Editor only: the live house view and wall panels never show the check marker (user,
+      // 2026-11-14: "no idea why it shows on the panel").
+      if (!viewing && positions.length && !section.dormer_of
           && section.rect.every((v, i) => Math.abs(v - block[i]) <= 1)
           && Array.isArray(b.roof?.flags) && b.roof.flags.some(flag => Array.isArray(flag?.block_rect)
             && flag.block_rect.length === 4 && typeof flag.text === 'string'

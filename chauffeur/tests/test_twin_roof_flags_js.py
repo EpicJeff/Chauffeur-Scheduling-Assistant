@@ -83,7 +83,7 @@ registerHooks({
 globalThis.window = globalThis.window || {};
 const THREE = await import('three');
 const gen = await import(pathToFileURL(path.join(job.twin, 'twin_generator.js')).href);
-const out = gen.buildTwin(job.plan, job.kit, 'low');
+const out = gen.buildTwin(job.plan, job.kit, 'low', { viewing: !!job.viewing });
 const root = out.root;
 root.scale.setScalar(1);
 root.updateMatrixWorld(true);
@@ -167,14 +167,14 @@ def plan(flags=None):
     return normalized
 
 
-def run(p, points=None):
+def run(p, points=None, viewing=False):
     d = tempfile.mkdtemp(prefix='twin_roof_flags_js_')
     try:
         driver = os.path.join(d, 'driver.mjs')
         with open(driver, 'w', encoding='utf-8') as f:
             f.write(DRIVER)
         job = {'vendor': VENDOR, 'twin': TWIN, 'plan': p, 'kit': {**tl.kit('modern_farmhouse'), 'manifest': {}},
-               'points': points or []}
+               'points': points or [], 'viewing': viewing}
         job_path = os.path.join(d, 'job.json')
         with open(job_path, 'w', encoding='utf-8') as f:
             json.dump(job, f)
@@ -231,6 +231,15 @@ def test_flagged_roof_is_marked_and_a_tap_selects_it():
           ('the unflagged roof still picks as itself', out['points'][0]))
     check(out['points'][1] == {'pieceId': 'roof-B', 'kind': 'roof', 'buildingId': BID},
           ('the flagged roof picks as itself away from the mark too', out['points'][1]))
+
+
+def test_live_view_and_panels_never_show_the_check_marker():
+    # User, 2026-11-14: the dashed outline on the pool house roof "has been there forever and I
+    # have no idea why it shows on the panel". The marker is an editor aid only.
+    out = run(plan([FLAG]), points=[[36, 22]], viewing=True)
+    check(out['markers'] == [], ('the live house view draws no needs-checking marker', _summary(out['markers'])))
+    check(out['points'][0] == {'pieceId': 'roof-B', 'kind': 'roof', 'buildingId': BID},
+          ('the flagged roof still picks as itself in the live view', out['points'][0]))
 
 
 def test_no_flags_no_marker():
@@ -316,6 +325,7 @@ TESTS = (
     test_malformed_roof_metadata_normalizes_and_builds,
     test_flags_survive_normalize,
     test_flagged_roof_is_marked_and_a_tap_selects_it,
+    test_live_view_and_panels_never_show_the_check_marker,
     test_no_flags_no_marker,
     test_flag_matches_its_block_within_a_foot,
 )

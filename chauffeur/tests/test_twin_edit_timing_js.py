@@ -120,7 +120,8 @@ try {
   for(const name of ['generate','batch','yard','materials','dispose','bake_stop','assets'])assert.ok(Number.isFinite(record.detail[name])&&record.detail[name]>=0,name);
   assert.ok(record.detail.generate>0);assert.ok(record.detail.batch>0);assert.ok(record.detail.materials>0);
   assert.ok(record.detail.yard>0);assert.equal(record.yard_reused,false);
-  assert.ok(record.detail.yard_terrain>0);assert.ok(record.detail.yard_hardscape>0);
+  // Only the lot changed: per-part reuse rebuilds the terrain and nothing else.
+  assert.ok(record.detail.yard_terrain>0);assert.deepEqual(record.yard_rebuilt_parts,['terrain']);assert.equal(record.detail.yard_hardscape,0);
   assert.equal(record.counts.buildings,plan.buildings.length);
   assert.equal(record.counts.levels,plan.buildings.reduce((n,b)=>n+b.levels.length,0));
   assert.equal(record.buildings[0].id,plan.buildings[0].id);
