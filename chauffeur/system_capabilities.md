@@ -1,6 +1,19 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.849 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.850 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.850 (2026-11-13, NOT device-verified): yard trees are generated once instead of twice.**
+
+**The cause.** Vendored EZ-Tree's `loadPreset()` copies the preset's options and generates the whole tree. `static/twin/twin_yard.js` then set the saved seed and called `generate()` again, both for full trees and for Low-tier card baking. Every plant was built twice and the first build thrown away.
+
+**The fix.** `presetTree(preset, seed)` in `twin_yard.js` copies `TreePreset[preset]` into the tree's options, sets the seed, and generates once. It uses a namespace import, so stand-in Trees in node tests (which export no preset table) fall back to `loadPreset`. The vendor file is unchanged. The editor Library's one-off preview thumbnail keeps the old path.
+
+**Measured.**
+- Node, real vendored EZ-Tree: 8 preset/seed pairs generate once, with geometry identical to the old path (`test_twin_tree_once_js`, which fails on the old code).
+- Chromium CPU profile of a plant move on the test house: the whole yard is 1.1 s of JavaScript, of which trees are 0.7 s.
+- The headless `yard_plants` wall time (24-30 s) is not JavaScript. The plant loop yields every 4 plants (`await setTimeout(0)`), and each yield lets a software-rendered frame (about 3 s headless) run. On a real GPU a frame is about 0.16 s (the user's `first_frame`). The user's own yard breakdown (v2.499.848 sub-spans in the timing overlay) will show where their 4.2 s goes before anything else is changed.
+
+**Tests.** New `test_twin_tree_once_js` 1/1 (8 pairs). Neighbours green: yard reuse js, yard material slots js, ground js, retaining wall js, porches js 5/5, library js 15/15, edit timing js, import maps 3/3, yard rooms js 3/3.
 
 **v2.499.849 (2026-11-13, NOT device-verified): solar conduits are plain galvanized metal when the panels are not producing.**
 
