@@ -18,7 +18,7 @@
       'three': window.chfBase + {{ 'static/vendor/three-r187/three.module.js' | ver | tojson }},
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/'
     };
-    {% for name in ['library_page/page', 'library_page/preview', 'library_page/properties', 'twin_library', 'import_loaders', 'objects', 'palette', 'model_lods', 'lod_worker', 'sky/ephemeris', 'sky/look'] %}
+    {% for name in ['library_page/page', 'library_page/preview', 'library_page/properties', 'library_page/texture_slots', 'twin_library', 'import_loaders', 'objects', 'palette', 'model_lods', 'lod_worker', 'sky/ephemeris', 'sky/look'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     imports[new URL(window.chfBase + 'static/vendor/lucide/icons.js', location.href).href] = window.chfBase + {{ 'static/vendor/lucide/icons.js' | ver | tojson }};

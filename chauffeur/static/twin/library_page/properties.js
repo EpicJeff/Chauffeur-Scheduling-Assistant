@@ -22,11 +22,22 @@ export function mapUrl(entry, slot) {
     : materialUrl(path.startsWith('materials/') ? path : `materials/${entry.id}/${path}`);
 }
 
-export function mountProperties(host, entry, { change, replaceMap, clearMap, signal }) {
+export function mountProperties(host, entry, { change, replaceMap, clearMap, uploadTextures, signal }) {
   host.replaceChildren();
   const readonly = entry.source === 'builtin', controls = [];
   host.append(node('h2', 'Properties'));
   if (readonly) host.append(node('p', 'Built-in material. Duplicate to edit.', 'place-muted'));
+  else {
+    const zone = node('section', null, 'library-map'); zone.dataset.textureDrop = '';
+    zone.append(node('h3', 'Drop textures'), node('p', 'Drop PNG, JPG or WebP files anywhere in Properties. Filenames choose slots; unmatched files ask.', 'place-muted'));
+    const label = node('label', 'Choose texture files'), input = node('input');
+    input.type = 'file'; input.multiple = true; input.accept = '.png,.jpg,.jpeg,.webp'; input.dataset.textureFiles = '';
+    input.setAttribute('aria-label', 'Choose texture files');
+    input.addEventListener('change', async () => {
+      try { await uploadTextures(Array.from(input.files || [])); } finally { input.value = ''; }
+    }, { signal });
+    label.append(input); zone.append(label); host.append(zone);
+  }
   function textField(key, label) {
     const row = node('label', label), input = node('input'); input.type = 'text';
     input.value = entry[key] || ''; input.disabled = readonly; input.dataset.field = key;

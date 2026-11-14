@@ -1,6 +1,7 @@
 import { base, libUrl, materialUrl } from '../twin_library.js';
 import { createPreview } from './preview.js';
-import { mountProperties, defaults, node, button } from './properties.js';
+import { mountProperties, defaults, slots, node, button } from './properties.js';
+import { slotForFilename } from './texture_slots.js';
 
 // Nav owns authentication. Every endpoint stays relative to the ingress base.
 export async function libraryApi(path, method = 'GET', body) {
@@ -22,7 +23,7 @@ const normalized = entry => ({ ...entry, maps: entry.maps || {}, params: { ...de
 
 export function mountLibraryPage(root, { api = libraryApi } = {}) {
   const abort = new AbortController(), { signal } = abort;
-  let stopped = false, rows = [], context, properties, propAbort, gridAbort, selection = 0;
+  let stopped = false, uploading = false, rows = [], context, properties, propAbort, gridAbort, selection = 0;
   const contexts = new Set(), report = error => { if (!stopped) window.showGlobalAlert(error.message || String(error)); };
   root.replaceChildren();
   const toolbar = node('header', null, 'library-header'), heading = node('h1', 'Material library');
@@ -68,17 +69,32 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
     control.setAttribute('aria-pressed', String(value === 'studio')); lighting.append(control);
   }
   const actions = node('div', null, 'editor-actions'), props = node('div'); right.append(actions, props);
+  // One listener on the whole panel also handles drops on the nested drop zone.
+  right.addEventListener('dragover', event => {
+    if (Array.from(event.dataTransfer?.types || []).includes('Files')) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = context && context.draft.source !== 'builtin' && !context.busy && !uploading ? 'copy' : 'none';
+    }
+  }, { signal });
+  right.addEventListener('drop', event => {
+    event.preventDefault();
+    return uploadTextures(Array.from(event.dataTransfer?.files || []));
+  }, { signal });
   const endpoint = ctx => 'materials/' + encodeURIComponent(ctx.draft.id);
+  function setStatus(ctx, text) {
+    if (!stopped && ctx === context) status.textContent = ctx.uploadStatus || text;
+  }
   function show(ctx, rebuild = false) {
     if (stopped || ctx !== context) return;
-    preview.setMaterial({ ...ctx.draft, previewMaps: ctx.localMaps }, ctx.draft.params);
+    const params = ctx.localConvention ? { ...ctx.draft.params, normal_convention: ctx.localConvention } : ctx.draft.params;
+    preview.setMaterial({ ...ctx.draft, previewMaps: ctx.localMaps }, params);
     if (rebuild) renderProperties(); else properties?.sync(ctx.draft);
   }
   function change(fields) {
     const ctx = context;
     if (!ctx || ctx.draft.source === 'builtin') return;
     ctx.draft = merge(ctx.draft, fields); ctx.pending = merge(ctx.pending, fields);
-    show(ctx); status.textContent = 'Unsaved changes';
+    show(ctx); setStatus(ctx, 'Unsaved changes');
     clearTimeout(ctx.timer); ctx.timer = setTimeout(() => flush(ctx), 300);
   }
   function accept(ctx, server, rebuild = false) {
@@ -102,13 +118,13 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
       try {
         const server = await api(endpoint(ctx), 'PATCH', patch);
         ctx.queued.splice(ctx.queued.indexOf(patch), 1);
-        accept(ctx, server); if (!stopped && ctx === context) status.textContent = ctx.queued.length || Object.keys(ctx.pending).length ? 'Unsaved changes' : 'Saved';
+        accept(ctx, server); setStatus(ctx, ctx.queued.length || Object.keys(ctx.pending).length ? 'Unsaved changes' : 'Saved');
       } catch (error) {
         // The server may have advanced in another tab. Read it before reverting.
         try { ctx.server = normalized(await api(endpoint(ctx))); } catch { /* Last acknowledged server value remains authoritative offline. */ }
         ctx.queued.splice(ctx.queued.indexOf(patch), 1);
         ctx.draft = merge(ctx.queued.reduce(merge, copy(ctx.server)), ctx.pending); show(ctx); report(error);
-        if (!stopped && ctx === context) status.textContent = 'Save failed; restored server values';
+        setStatus(ctx, 'Save failed; restored server values');
       }
     });
     return ctx.chain;
@@ -139,17 +155,72 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   }
   async function replaceMap(slot, file) {
     const ctx = context;
-    if (!ctx || ctx.busy) return;
-    const url = URL.createObjectURL(file); ctx.localMaps[slot] = url; show(ctx, true);
+    if (stopped || uploading || !ctx || ctx.busy || ctx.draft.source === 'builtin') return;
+    uploading = true;
     setBusy(ctx, true);
-    try { const result = await mutate(ctx, '/maps/' + slot, 'POST', file);
-      delete ctx.localMaps[slot]; accept(ctx, result, true); status.textContent = 'Map saved';
-    } catch (error) { delete ctx.localMaps[slot]; show(ctx, true); report(error); }
-    finally { URL.revokeObjectURL(url); setBusy(ctx, false); }
+    try {
+      const match = slotForFilename(file.name || '');
+      const saved = await uploadMap(ctx, slot, file, slot === 'normal' && match?.slot === 'normal' ? match.convention : undefined);
+      if (!stopped && ctx === context) status.textContent = saved ? 'Map saved' : 'Map upload failed';
+    } finally { uploading = false; setBusy(ctx, false); }
+  }
+  function releaseLocal(ctx, slot, url) {
+    // stop() may already have released it while the request was in flight.
+    if (ctx.localMaps[slot] !== url) return;
+    delete ctx.localMaps[slot]; URL.revokeObjectURL(url);
+  }
+  async function uploadMap(ctx, slot, file, convention) {
+    const url = URL.createObjectURL(file); ctx.localMaps[slot] = url;
+    ctx.localConvention = convention; show(ctx, true);
+    try {
+      let result = await mutate(ctx, '/maps/' + slot, 'POST', file);
+      if (convention) {
+        // The raw-byte route ingests and attaches. Keep its acknowledged map on
+        // PATCH failure, and save the slot and its detected convention together.
+        accept(ctx, result);
+        result = await mutate(ctx, '', 'PATCH', { maps: { [slot]: result.maps[slot] }, params: { normal_convention: convention } });
+      }
+      releaseLocal(ctx, slot, url); delete ctx.localConvention;
+      accept(ctx, result, true); return true;
+    } catch (error) {
+      releaseLocal(ctx, slot, url); delete ctx.localConvention;
+      show(ctx, true); report(error); return false;
+    } finally { releaseLocal(ctx, slot, url); }
+  }
+  async function uploadTextures(files) {
+    // Capture the material once: switching selection cannot redirect a batch.
+    const ctx = context;
+    if (stopped || uploading || !ctx || ctx.busy || ctx.draft.source === 'builtin' || !files.length) return;
+    uploading = true;
+    setBusy(ctx, true);
+    let uploaded = 0, skipped = 0, failed = 0;
+    try {
+      for (let index = 0; index < files.length && !stopped; index++) {
+        const file = files[index];
+        try {
+          let match = slotForFilename(file.name);
+          while (!match && !stopped) {
+            const choice = await window.promptInput('Choose texture slot',
+              `Which slot does ${file.name} fill?\n${slots.map(([slot, label]) => `${slot}: ${label}`).join('\n')}`,
+              { placeholder: 'Enter a slot from the list', okText: 'Assign' });
+            if (choice === null) break;
+            const slot = choice.trim().toLowerCase();
+            if (slots.some(([value]) => value === slot)) match = { slot };
+          }
+          if (stopped) break;
+          if (!match) { skipped++; continue; }
+          ctx.uploadStatus = `Uploading ${index + 1} of ${files.length}: ${file.name}`;
+          setStatus(ctx, ctx.uploadStatus);
+          if (await uploadMap(ctx, match.slot, file, match.convention)) uploaded++; else failed++;
+        } catch (error) { failed++; report(error); }
+      }
+      delete ctx.uploadStatus;
+      setStatus(ctx, `Textures: ${uploaded} uploaded, ${skipped} skipped, ${failed} failed`);
+    } finally { delete ctx.uploadStatus; uploading = false; setBusy(ctx, false); }
   }
   async function clearMap(slot) {
     const ctx = context;
-    if (!ctx || ctx.busy) return;
+    if (stopped || uploading || !ctx || ctx.busy || ctx.draft.source === 'builtin') return;
     setBusy(ctx, true);
     try { accept(ctx, await mutate(ctx, '/maps/' + slot, 'DELETE'), true); }
     catch (error) { report(error); }
@@ -157,13 +228,14 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   }
   function setBusy(ctx, busy) {
     ctx.busy = busy;
-    if (ctx !== context || stopped) return;
-    [...actions.querySelectorAll('button'), ...props.querySelectorAll('input[type="file"], [data-action="clear"]')]
-      .forEach(control => { control.disabled = busy; });
+    if (!context || stopped) return;
+    actions.querySelectorAll('button').forEach(control => { control.disabled = !!context.busy; });
+    props.querySelectorAll('input[type="file"], [data-action="clear"]')
+      .forEach(control => { control.disabled = !!context.busy || uploading; });
   }
   function renderProperties() {
     propAbort?.abort(); propAbort = new AbortController();
-    properties = mountProperties(props, { ...context.draft, previewMaps: context.localMaps }, { change, replaceMap, clearMap, signal: propAbort.signal });
+    properties = mountProperties(props, { ...context.draft, previewMaps: context.localMaps }, { change, replaceMap, clearMap, uploadTextures, signal: propAbort.signal });
     actions.replaceChildren(button('Duplicate', 'duplicate', () => action('duplicate'), propAbort.signal));
     if (context.draft.source !== 'builtin') {
       for (const [label, name] of [['Undo', 'undo'], ['Redo', 'redo'],
@@ -221,7 +293,7 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   window.addEventListener('pagehide', saveOnLeave, { signal });
   return { ready, stop() {
     if (stopped) return;
-    contexts.forEach(ctx => { flush(ctx); Object.values(ctx.localMaps).forEach(url => URL.revokeObjectURL(url)); });
+    contexts.forEach(ctx => { flush(ctx); Object.entries(ctx.localMaps).forEach(([slot, url]) => releaseLocal(ctx, slot, url)); });
     stopped = true; abort.abort(); propAbort?.abort(); gridAbort?.abort(); preview.dispose();
   } };
 }
