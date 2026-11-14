@@ -325,6 +325,13 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       stopTerrain();
     },
     retaining_walls: async group => {
+      const stopWalls = part('retaining_walls');
+      for (const pad of site.terraces || []) pad.polygon.forEach((_, edge) => {
+        if (pad.edges?.[edge]?.edge !== 'sharp' || !pad.edges[edge].wall) return;
+        const wall = pad.edges[edge].wall;
+        addMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face));
+      });
+      stopWalls();
     },
     hardscape: async group => {
       const stopHardscape = part('hardscape');
@@ -455,10 +462,6 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         }
       } finally { if (baker) { baker.dispose(); baker.forceContextLoss(); } }
       stopPlants();
-      const plants = [...group.children];
-      group.userData.releasePlants = (keepMaterials = new Set()) => {
-        plants.forEach(p => { releasePlant(p, keepMaterials); p.removeFromParent(); });
-      };
     },
     furniture: async group => {
       const stopModels = part('furniture');
@@ -467,7 +470,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         const assetId = (f.asset || kit.furniture?.[f.kind] || '').replace(/^polyhaven:/, '');
         if (!assetId || !f.at) return;
         const place = (model, late = false) => {
-          if (group.userData.disposed) { disposeObject(model); return; }
+          if (root.userData.disposed) { disposeObject(model); return; }
           applyObject(model, f, { id: `site:${f.id || f.at.join(',')}` });
           cacheModelMaterials(model, 'yard:' + assetId + ':' + objectMaterialKey(f, `site:${f.id || f.at.join(',')}`), mats);
           let elevation = groundAt(plan, ...f.at);
@@ -482,13 +485,13 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             }
           }
           model.position.set(f.at[0], elevation + (f.elevation || 0), -f.at[1]);
-          if (late) { group.add(model); mergeStatic(model); }
+          if (late) { model.userData.yardPart = 'furniture'; root.add(model); mergeStatic(model); }
           return model;
         };
         if (!models.has(assetId)) {
           latePlacements.set(assetId, []);
           models.set(assetId, loadModel(assetId, kit, source => {
-            if (group.userData.disposed) { disposeObject(source); return; }
+            if (root.userData.disposed) { disposeObject(source); return; }
             for (const draw of latePlacements.get(assetId)) draw(source.clone(true), true);
           }, { tier, editor: !viewing }));
         }
@@ -522,33 +525,49 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       stopGrass();
     },
   };
+  // The yard root stays flat (its children are the meshes and trees, as before); each child
+  // carries userData.yardPart, and root.userData.yardPartKeys records each part's key.
+  const previousKeys = previous?.userData.yardPartKeys || {};
   for (const name of YARD_PARTS) {
-    const old = previous?.getObjectByName('yard:' + name);
-    if (old && old.userData.yardPartKey === keys[name]) { reused.set(name, old); continue; }
-    const group = new THREE.Group(); group.name = 'yard:' + name;
-    root.add(group);
-    await builders[name](group);
+    if (previous && previousKeys[name] === keys[name]) {
+      reused.set(name, previous.children.filter(o => o.userData.yardPart === name));
+      continue;
+    }
+    const scratch = new THREE.Group();
+    await builders[name](scratch);
     const stop = part('batch');
     // Full trees/cards own their materials and viewing domains. Everything else
     // batches only inside its part, so no later edit can replace a sibling buffer.
-    if (name !== 'plants' && name !== 'grass') mergeStatic(group);
+    if (name !== 'plants' && name !== 'grass') mergeStatic(scratch);
     stop();
-    group.userData.yardPartKey = yardPartKeys(plan, kit, tier, { viewing })[name];
+    for (const child of [...scratch.children]) { child.userData.yardPart = name; root.add(child); }
   }
+  // Keys are taken after the builds: furniture's key includes imported-model metadata
+  // that its loads resolve. Reused parts keep the key they were built with.
+  const built = yardPartKeys(plan, kit, tier, { viewing });
+  root.userData.yardPartKeys = Object.fromEntries(YARD_PARTS.map(name => [name, reused.has(name) ? previousKeys[name] : built[name]]));
   root.userData.yardReusedParts = [...reused.keys()];
   root.userData.yardRebuiltParts = YARD_PARTS.filter(name => !reused.has(name));
   // Commit only after twin_view's revision check. Until then the live scene
   // owns reused groups and can survive a failed/superseded asynchronous rebuild.
   root.userData.adoptParts = () => {
-    for (const group of reused.values()) root.add(group);
-    // Stable part traversal order also keeps chart packing deterministic.
-    root.children.sort((a, b) => YARD_PARTS.indexOf(a.name.slice(5)) - YARD_PARTS.indexOf(b.name.slice(5)));
+    for (const objects of reused.values()) for (const object of objects) root.add(object);
+    // Stable part order (and stable order within a part) keeps chart packing deterministic.
+    const order = o => YARD_PARTS.indexOf(o.userData.yardPart);
+    root.children.sort((a, b) => order(a) - order(b));
+    // The material map started as a copy of the previous yard's, so reused parts keep their
+    // materials. Drop what no mesh uses any more (a replaced slot material and its maps),
+    // keeping only the tree and plant-card caches that later builds reuse by key; the
+    // previous yard's release then frees the dropped ones.
+    const used = new Set();
+    root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) used.add(m); });
+    for (const [key, material] of [...mats]) if (!used.has(material) && !key.startsWith('tree:') && !key.startsWith('plant_card:')) mats.delete(key);
   };
   const stopMaterials = part('materials');
   await Promise.all([...mats.values()].map(m => m.userData.ready));
   stopMaterials();
   let triangles = 0;
-  for (const group of [root, ...reused.values()]) group.traverse(o => { if (o.isMesh) triangles += (o.geometry.index?.count || o.geometry.attributes.position.count) / 3 * (o.isInstancedMesh ? o.count : 1); });
+  for (const object of [root, ...[...reused.values()].flat()]) object.traverse(o => { if (o.isMesh) triangles += (o.geometry.index?.count || o.geometry.attributes.position.count) / 3 * (o.isInstancedMesh ? o.count : 1); });
   // EZ-Tree textures are shared by its module, unlike all other yard resources.
   root.userData.releasePlants = (keepMaterials = new Set()) => {
     const textures = new Set(), kept = new Set([...keepMaterials].flatMap(m => Object.values(m).filter(v => v?.isTexture)));

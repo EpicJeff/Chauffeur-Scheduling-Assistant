@@ -829,8 +829,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       } catch (error) { release(next, keepMaterials); throw error; }
       if (disposed || version !== revision) { release(next, keepMaterials); return; }
       next.yardGroup?.userData.adoptParts?.();
+      // After adoption the new yard's material map holds exactly what it still uses.
+      const keepAfter = new Set([...(next.yardGroup?.userData.materials?.values() || []), ...(reuseMaterials?.values() || [])]);
       if (timing) {
-        timing.yard_reused_parts = reuseYard ? [...(yardGroup?.children || [])].map(g => g.name.slice(5)) : next.yardGroup?.userData.yardReusedParts || [];
+        timing.yard_reused_parts = reuseYard ? Object.keys(yardGroup?.userData.yardPartKeys || {}) : next.yardGroup?.userData.yardReusedParts || [];
         timing.yard_rebuilt_parts = reuseYard ? [] : next.yardGroup?.userData.yardRebuiltParts || [];
       }
       const levelsToRestore = visibleLevels && [...visibleLevels];
@@ -849,7 +851,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (!next.yardGroup && yardGroup) {
         yardGroup.removeFromParent(); next.groups.site.add(yardGroup); next.yardGroup = yardGroup;
       }
-      if (twin) { scene.remove(twin.root); release(twin, keepMaterials); }
+      if (twin) { scene.remove(twin.root); release(twin, keepAfter); }
       stopDispose();
       yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);

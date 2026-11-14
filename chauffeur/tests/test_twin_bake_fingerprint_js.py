@@ -108,6 +108,23 @@ for(const mutate of [p=>p.site.terraces[0].height--,p=>p.site.furniture[0].rotat
 const lodPlan=structuredClone(plan);lodPlan.tier='low';lodPlan.site.furniture[0].lod=2;
 assert.equal(atlasJob(await scene('low',lodPlan),lodPlan,options).cacheKey,atlasJob(await scene('high'),plan,options).cacheKey,'LOD choice is render detail');
 assert.equal(buildAtlas(await scene('low',lodPlan),lodPlan,options).key,b.key,'LOD choice never changes the stored key');
+// Per-part yard reuse: a fence edit rebuilds only the fence, so every terrain chart keeps
+// its key (the ground's bake stays fresh) and only the fence charts change.
+{
+ const fenced=structuredClone(plan);fenced.site.fence=[{id:'fence',polyline:[[-4,-4],[-4,10]],height:5}];
+ const house=buildTwin(fenced,kit,'high',{viewing:true});await house.ready;
+ const first=await buildYard(fenced,kit,'high',{viewing:true});house.root.add(first.group);house.root.updateMatrixWorld(true);
+ const partOf=mesh=>{for(let o=mesh;o;o=o.parent)if(o.userData.yardPart)return o.userData.yardPart;return null;};
+ const keysOf=(root,p,part)=>buildAtlas(root,p,options).room.charts.filter(c=>partOf(c.mesh)===part).map(c=>c.key).sort();
+ const terrainBefore=keysOf(house.root,fenced,'terrain'),fenceBefore=keysOf(house.root,fenced,'fences');
+ assert.ok(terrainBefore.length>0&&fenceBefore.length>0,'the fixture bakes ground and fence charts');
+ const moved=structuredClone(fenced);moved.site.fence[0].polyline[1][1]=12;
+ const second=await buildYard(moved,kit,'high',{viewing:true,previous:first.group});second.group.userData.adoptParts();
+ assert.deepEqual(second.group.userData.yardRebuiltParts,['fences'],'only the fence part rebuilds');
+ house.root.remove(first.group);house.root.add(second.group);house.root.updateMatrixWorld(true);
+ assert.deepEqual(keysOf(house.root,moved,'terrain'),terrainBefore,'a fence edit leaves every terrain chart key as it was');
+ assert.notDeepEqual(keysOf(house.root,moved,'fences'),fenceBefore,'the fence charts change');
+}
 // Excluded geometry stays excluded after repeated static merges, even with a shared material.
 const mixed=new THREE.Group(), material=new THREE.MeshStandardMaterial();
 const excluded=new THREE.Mesh(new THREE.BoxGeometry(),material);excluded.geometry.userData.bakeExcluded=true;

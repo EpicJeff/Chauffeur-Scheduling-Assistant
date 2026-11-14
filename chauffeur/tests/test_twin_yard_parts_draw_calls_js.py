@@ -27,6 +27,8 @@ if __name__ == '__main__':
     plan = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
     kit['manifest'] = {}
-    code, out = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan, 'kit': kit}, timeout=300)
+    code, out = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan, 'kit': kit,
+                                  # main v2.499.857 (one whole-yard merge): 82 yard submissions in both modes
+                                  'expected': {'false': 82, 'true': 82}}, timeout=300)
     print(out)
     sys.exit(code or 0)
