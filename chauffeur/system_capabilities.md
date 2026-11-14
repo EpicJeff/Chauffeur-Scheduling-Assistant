@@ -1,6 +1,28 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.856 (2026-11-13).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.857 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.857 (2026-11-14, NOT device-verified): an editor edit flattens the house half as often and normalizes it once instead of twice.**
+
+**The evidence.** The user's house on v2.499.851 or later still showed server `read` 494-627 ms and `normalize` 320-398 ms per edit. Every op publishes a new round, which cleared v2.499.851's read cache, so the response re-read and re-flattened the round. A trace of one op found four `flatten` calls and two `normalize` calls:
+1. the pre-edit `current()`;
+2. the edited model;
+3. the normalized pre-edit model for the fix log;
+4. the response;
+plus the pre-edit normalize and the publication normalize.
+
+**What changed** (`services/twin_store.py`, `services/twin_edit.py`).
+- **Write-through.** `_append_round` serializes the round once, writes that text, and fills the read cache with a private parse of it. The next read (the response, then the next edit's pre-edit read) is a cache hit. `update_model` also takes its pre-edit model from the cache. `_save` still clears the cache on every other write.
+- **No second normalize.** A model `update_model` just published is already normalized. `current_is_normalized()` says so, and `twin_edit.save` uses a copy instead of normalizing it again.
+- **No second flatten for the fix log.** When normalizing the stored model changes nothing, `logged_before` is a copy of `before` rather than another flatten.
+- **Result:** after the first edit, each edit does 2 flattens and 1 normalize instead of 4 and 2, with no round-file reads. Fixture house: `read` about 92 ms against about 157 ms on the first edit of a session.
+
+**Tests.** `test_twin_server_speed` 5/5:
+- op and full-state responses are byte-identical to the v2.499.850 corpus;
+- `normalize_calls_per_op_reduced` now asserts one normalize and no round reads after the first edit;
+- the cached-read test's fresh-store case now checks the read is that store's own model, since write-through legitimately fills the cache from the store's own publish.
+
+Neighbours green: edit timing 4/4, twin store, house saves 19/19, model bridge 32/32, HA display 5/5, house tool, sheets, place 25/25, editor history 8/8, pool features 7/7, materials 23/23, yard material slots 6/6, fire pits. `test_twin_store_model` is 14/15, the same failure as on main.
 
 **v2.499.856 (2026-11-13, NOT device-verified): the Material library page. Make a material from your own textures, with a live preview.**
 
