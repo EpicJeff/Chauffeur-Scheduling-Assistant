@@ -767,7 +767,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const reuseYard = !!yardGroup && (preserveYard || yardGroup.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor }));
       if (timing) timing.yard_reused = reuseYard;
       const yardMaterials = reuseYard || yardGroup?.userData.yardMaterialKey === yardMaterialKey(nextPlan, kit, tier)
-        ? yardGroup?.userData.materials : null;
+        ? yardGroup?.userData.materials : new Map(yardGroup?.userData.materials);
       const keepMaterials = new Set([...(yardMaterials?.values() || []), ...(reuseMaterials?.values() || [])]);
       next.editableLevel = editableLevel;
       const extras = new Map();
@@ -819,7 +819,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         stopBatch();
         if (!reuseYard) {
           const stopYard = editSpan(detail, 'yard');
-          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, materials: yardMaterials, timing: detail }); next.groups.site.add(yard.group);
+          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, materials: yardMaterials, timing: detail, previous: yardGroup }); next.groups.site.add(yard.group);
           stopYard();
           next.yardGroup = yard.group;
         }
@@ -828,6 +828,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         stopAssets();
       } catch (error) { release(next, keepMaterials); throw error; }
       if (disposed || version !== revision) { release(next, keepMaterials); return; }
+      next.yardGroup?.userData.adoptParts?.();
+      if (timing) {
+        timing.yard_reused_parts = reuseYard ? [...(yardGroup?.children || [])].map(g => g.name.slice(5)) : next.yardGroup?.userData.yardReusedParts || [];
+        timing.yard_rebuilt_parts = reuseYard ? [] : next.yardGroup?.userData.yardRebuiltParts || [];
+      }
       const levelsToRestore = visibleLevels && [...visibleLevels];
       const faintToRestore = [...new Set([...faded.keys()].map(o => {
         for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey;
