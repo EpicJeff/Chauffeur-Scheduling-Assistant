@@ -19,6 +19,13 @@ function fileName(uri) {
   try { return decodeURIComponent(last); } catch { return last; }
 }
 
+// The folder-relative path a URI names, for telling same-named files apart.
+function uriPath(uri) {
+  let path = String(uri).split(/[?#]/)[0];
+  try { path = decodeURIComponent(path); } catch { /* Keep the raw text. */ }
+  return path.replace(/\\/g, '/').replace(/^(\.\/)+/, '').toLowerCase();
+}
+
 function kind(head) {
   const text = String.fromCharCode(...head.slice(0, 12));
   if (head[0] === 0x89 && text.slice(1, 4) === 'PNG') return 'image/png';
@@ -42,14 +49,25 @@ export async function readGltfMaterials(files, { maxModelBytes = MAX_MODEL_BYTES
   if (models.length > 1) throw new Error('Choose one .glb or .gltf file at a time, with its textures.');
   const [model] = models;
   if (model.size > maxModelBytes) throw new Error(`${model.name} is larger than ${MB(maxModelBytes)}.`);
-  const siblings = new Map(files.filter(file => file !== model).map(file => [file.name.toLowerCase(), file]));
+  if (files.reduce((sum, file) => sum + file.size, 0) > maxModelBytes)
+    throw new Error(`The chosen files are larger than ${MB(maxModelBytes)} together.`);
+  // A file name the import cannot resolve to exactly one file is a problem,
+  // never a guess: two chosen files with one name, or two paths in the model
+  // (a/rough.png, b/rough.png) that both end in that name.
+  const siblings = new Map(), clash = new Map();
+  for (const file of files) {
+    if (file === model) continue;
+    const name = file.name.toLowerCase();
+    if (siblings.has(name)) clash.set(name, `two chosen files are named ${file.name}`);
+    siblings.set(name, file);
+  }
   const owned = new Map();
   const manager = new LoadingManager();
   // Sibling textures and buffers resolve to the person's chosen files only.
   manager.setURLModifier(url => {
     if (/^data:/i.test(url) || owned.has(url)) return url;
     const name = fileName(url), file = siblings.get(name.toLowerCase());
-    if (!file) return MISSING;
+    if (!file || clash.has(name.toLowerCase())) return MISSING;
     for (const [known, sibling] of owned) if (sibling === file) return known;
     const objectUrl = URL.createObjectURL(file); owned.set(objectUrl, file); return objectUrl;
   });
@@ -61,6 +79,8 @@ export async function readGltfMaterials(files, { maxModelBytes = MAX_MODEL_BYTES
     if (image.bufferView !== undefined) {
       blob = new Blob([await parser.getDependency('bufferView', image.bufferView)]);
     } else if (typeof image.uri === 'string') {
+      const conflict = clash.get(fileName(image.uri).toLowerCase());
+      if (conflict) throw new Error(`${conflict}, so the import cannot tell which is which`);
       const url = manager.resolveURL(LoaderUtils.resolveURL(image.uri, ''));
       if (url === MISSING) throw new Error(`${fileName(image.uri)} is missing; choose it with the model`);
       if (owned.has(url)) blob = owned.get(url);
@@ -77,18 +97,28 @@ export async function readGltfMaterials(files, { maxModelBytes = MAX_MODEL_BYTES
   loader.setDRACOLoader({ preload() { return this; } });
   // First in line, so no texture is ever decoded: each texture records its
   // image source and the image's own bytes become the map.
-  loader.pluginCallbacks.unshift(gltf => ({
-    name: 'CHF_material_import',
-    loadTexture(textureIndex) {
-      const def = gltf.json.textures?.[textureIndex] || {}, ext = def.extensions || {};
-      const source = def.source ?? ext.EXT_texture_webp?.source ?? ext.EXT_texture_avif?.source ?? ext.KHR_texture_basisu?.source;
-      if (source !== undefined && !images.has(source)) {
-        const read = imageBlob(gltf, source); read.catch(() => {}); images.set(source, read);
-      }
-      const texture = new Texture(); texture.userData.gltfImage = source; return Promise.resolve(texture);
-    },
-    async beforeRoot() { parser = gltf; materials = await gltf.getDependencies('material'); throw MATERIALS_READ; },
-  }));
+  loader.pluginCallbacks.unshift(gltf => {
+    const paths = new Map();
+    for (const ref of [...(gltf.json.images || []), ...(gltf.json.buffers || [])]) {
+      if (typeof ref.uri !== 'string' || /^data:/i.test(ref.uri)) continue;
+      const name = fileName(ref.uri).toLowerCase();
+      if (!paths.has(name)) paths.set(name, new Set());
+      paths.get(name).add(uriPath(ref.uri));
+    }
+    for (const [name, found] of paths) if (found.size > 1) clash.set(name, `${[...found].join(' and ')} share a file name`);
+    return {
+      name: 'CHF_material_import',
+      loadTexture(textureIndex) {
+        const def = gltf.json.textures?.[textureIndex] || {}, ext = def.extensions || {};
+        const source = def.source ?? ext.EXT_texture_webp?.source ?? ext.EXT_texture_avif?.source ?? ext.KHR_texture_basisu?.source;
+        if (source !== undefined && !images.has(source)) {
+          const read = imageBlob(gltf, source); read.catch(() => {}); images.set(source, read);
+        }
+        const texture = new Texture(); texture.userData.gltfImage = source; return Promise.resolve(texture);
+      },
+      async beforeRoot() { parser = gltf; materials = await gltf.getDependencies('material'); throw MATERIALS_READ; },
+    };
+  });
   try {
     await loader.parseAsync(await model.arrayBuffer(), '').catch(error => { if (error !== MATERIALS_READ) throw error; });
   } catch (error) {
@@ -118,6 +148,20 @@ export async function readGltfMaterials(files, { maxModelBytes = MAX_MODEL_BYTES
     // the image fills both single slots (three reads G and B) and R stays unused.
     if (rm !== undefined && rm === ao) await take(['orm'], rm);
     else { await take(['roughness', 'metalness'], rm); await take(['ao'], ao); }
+    const pbr = def.pbrMetallicRoughness || {};
+    // The Library has one UV set and its own tiling: say what did not carry over.
+    for (const [info, slots] of [[pbr.baseColorTexture, ['base_color']], [def.normalTexture, ['normal']],
+      [pbr.metallicRoughnessTexture, maps.orm ? ['orm'] : ['roughness', 'metalness']], [def.occlusionTexture, maps.orm ? [] : ['ao']]]) {
+      if (!info || !slots.some(slot => maps[slot])) continue;
+      const label = slots.map(slot => LABELS[slot]).join(' and ');
+      if (info.extensions?.KHR_texture_transform) problems.push(`${label}: its texture transform (offset, scale or rotation) was not imported; set the tile size and rotation here.`);
+      if (info.texCoord > 0) problems.push(`${label}: it uses a second UV set; the Library maps it onto the first.`);
+    }
+    // A factor of 1 over an imported map is Auto, so the material is not
+    // drawn as flat chrome before its map loads or on the low tier.
+    const packed = !!(maps.orm || maps.roughness);
+    const factor = value => { const out = round(clamp(value, 0, 2, 1)); return packed && out === 1 ? null : out; };
+    const unlit = !!def.extensions?.KHR_materials_unlit;
     const color = material.color instanceof Color ? material.color : new Color(1, 1, 1);
     const normalScale = material.normalScale ? Math.abs(material.normalScale.x) : 1;
     const name = String(material.name || def.name || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 120);
@@ -126,8 +170,9 @@ export async function readGltfMaterials(files, { maxModelBytes = MAX_MODEL_BYTES
       maps,
       params: {
         tint: '#' + color.getHexString(),
-        roughness: round(clamp(material.roughness ?? 1, 0, 2, 1)),
-        metalness: round(clamp(material.metalness ?? 1, 0, 2, 1)),
+        // An unlit material (three's MeshBasicMaterial) has no factors of its own.
+        roughness: factor(material.roughness ?? pbr.roughnessFactor ?? 1),
+        metalness: unlit ? 0 : factor(material.metalness ?? pbr.metallicFactor ?? 1),
         normal_scale: round(clamp(normalScale, 0, 4, 1)),
         normal_convention: 'gl',
         ao_intensity: round(clamp(material.aoMapIntensity ?? 1, 0, 2, 1)),

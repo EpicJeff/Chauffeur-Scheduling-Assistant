@@ -74,11 +74,12 @@ function twoGlb() {
 }
 const glbFile = (buffer, name = 'brick.glb') => new File([buffer], name, {type: 'model/gltf-binary'});
 
+const deferred = () => { let resolve; return {promise: new Promise(r => { resolve = r; }), resolve}; };
 const record = (id = 'material-test', source = 'user') => ({id, name: id, source, revision: 1, maps: {},
   params: {tint: '#ffffff', roughness: null, metalness: null, normal_scale: 1, normal_convention: 'gl', ao_intensity: 1, tile_ft: [4, 4], rotation_deg: 0, random_offset: false}});
-async function setup(hooks = {}) {
+async function setup(hooks = {}, first = record()) {
   const host = document.createElement('main'); document.body.append(host);
-  const records = new Map([['material-test', record()]]), calls = [], alerts = [], choices = [], inputs = [];
+  const records = new Map([[first.id, first], ['material-other', record('material-other')]]), calls = [], alerts = [], choices = [], inputs = [];
   window.showGlobalAlert = text => alerts.push(text); window.promptConfirm = async () => true;
   window.promptInput = async (...args) => { inputs.push(args); return null; };
   window.promptChoice = async (...args) => { choices.push(args); return hooks.choose ? hooks.choose(...args) : null; };
@@ -95,7 +96,7 @@ async function setup(hooks = {}) {
     if (method === 'PATCH') { saved = {...saved, ...body, maps: {...saved.maps, ...body.maps}, params: {...saved.params, ...body.params}, revision: saved.revision + 1}; records.set(id, saved); }
     return clone(saved);
   };
-  location.search = '?material=material-test';
+  location.search = '?material=' + first.id;
   const page = mountLibraryPage(host, {api}); await page.ready; tick();
   const input = host.querySelector('[data-gltf-files]');
   const choose = async files => { input.files = files; await fire(input, 'change'); };
@@ -115,17 +116,22 @@ await test('glb_maps_and_factors', async () => {
   assert.deepEqual(material.problems, []);
 
   const c = await setup();
-  assert.ok(c.input, 'Import glTF file input'); assert.match(c.input.accept, /\.glb/); assert.match(c.input.accept, /\.gltf/); assert.ok(c.input.multiple);
+  assert.ok(c.input, 'Import glTF file input'); assert.equal(c.input.hidden, true);
+  // The shared button builder opens the hidden picker, like New and Browse.
+  const importButton = c.host.querySelector('[data-action="import-gltf"]');
+  assert.equal(importButton.localName, 'button'); assert.equal(textOf(importButton), 'Import glTF');
+  let opened = 0; c.input.click = () => { opened++; }; await click(importButton); assert.equal(opened, 1);
+  assert.match(c.input.accept, /\.glb/); assert.match(c.input.accept, /\.gltf/); assert.ok(c.input.multiple);
   await c.choose([glbFile(brickGlb())]);
   await until(() => /glTF import/.test(c.status()));
   const w = writes(c);
   assert.deepEqual(w[0], {path: 'materials', method: 'POST', body: {name: 'Brick wall', source: 'gltf', params: material.params}});
-  assert.deepEqual(w.slice(1).map(x => [x.method, x.path]), [['POST', 'materials/material-gltf1/maps/base_color'],
-    ['POST', 'materials/material-gltf1/maps/normal'], ['POST', 'materials/material-gltf1/maps/orm']]);
+  assert.deepEqual(w.slice(1).map(x => [x.method, x.path]), [['POST', 'materials/material-gltf2/maps/base_color'],
+    ['POST', 'materials/material-gltf2/maps/normal'], ['POST', 'materials/material-gltf2/maps/orm']]);
   await same(w[1].body, BASE, 'uploaded base'); await same(w[3].body, ORM, 'uploaded orm');
   assert.equal(c.status(), 'glTF import: 3 maps uploaded, 0 failed');
   assert.equal(c.host.querySelector('[data-field="name"]').value, 'Brick wall');
-  assert.equal(c.host.querySelector('[data-material="material-gltf1"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(c.host.querySelector('[data-material="material-gltf2"]').getAttribute('aria-pressed'), 'true');
   assert.deepEqual(c.alerts, []); assert.equal(c.choices.length, 0); assert.equal(c.input.value, '');
 
   // A .glb dropped on Properties imports instead of asking which texture slot it fills.
@@ -188,6 +194,8 @@ await test('gltf_with_sibling_textures', async () => {
   await same(brick.maps.base_color, BIN_BASE, 'bin base'); await same(brick.maps.roughness, MR, 'roughness');
   await same(brick.maps.metalness, MR, 'metalness'); await same(brick.maps.ao, AO, 'ao'); await same(brick.maps.normal, DATA_NORMAL, 'data normal');
   assert.equal(brick.params.ao_intensity, 0.8); assert.deepEqual(brick.problems, []);
+  // No factors over an imported metallic-roughness map: Auto, not flat chrome.
+  assert.equal(brick.params.roughness, null); assert.equal(brick.params.metalness, null);
   assert.deepEqual(lost.maps, {});
   assert.equal(lost.problems.length, 2);
   assert.match(lost.problems[0], /Base colour/); assert.match(lost.problems[0], /steal\.png/);
@@ -218,6 +226,72 @@ await test('refusals_are_reported_not_uploaded', async () => {
   await c.choose([new File(['nope'], 'broken.glb')]);
   await until(() => c.alerts.length === 2);
   assert.equal(writes(c).length, 2); assert.equal(c.status(), 'glTF import failed');
+  c.stop();
+});
+await test('factors_unlit_transforms_and_name_clashes', async () => {
+  const A = png(1, 2, 3), B = png(4, 5, 6), C = png(7, 8, 9);
+  const {bin, views} = pack([A, B, C]);
+  const many = glb({asset: {version: '2.0'}, extensionsUsed: ['KHR_materials_unlit', 'KHR_texture_transform'],
+    buffers: [{byteLength: bin.length}], bufferViews: views,
+    images: [0, 1, 2].map(i => ({bufferView: i, mimeType: 'image/png'})), textures: [{source: 0}, {source: 1}, {source: 2}],
+    materials: [
+      // Factors other than 1 survive over a map; exactly 1 becomes Auto.
+      {name: 'Kept', pbrMetallicRoughness: {metallicRoughnessTexture: {index: 1}, roughnessFactor: 0.5, metallicFactor: 1}},
+      {name: 'Flat', pbrMetallicRoughness: {roughnessFactor: 1, metallicFactor: 1}},
+      {name: 'Unlit', extensions: {KHR_materials_unlit: {}}, pbrMetallicRoughness: {baseColorTexture: {index: 0}, roughnessFactor: 0.7, metallicFactor: 0.9}},
+      {name: 'Moved', pbrMetallicRoughness: {baseColorTexture: {index: 0, extensions: {KHR_texture_transform: {scale: [2, 2]}}}},
+        normalTexture: {index: 2, texCoord: 1}}]}, bin);
+  const [kept, flat, unlit, moved] = await readGltfMaterials([glbFile(many)]);
+  assert.equal(kept.params.roughness, 0.5); assert.equal(kept.params.metalness, null);
+  // No map: glTF's flat defaults stay as written.
+  assert.equal(flat.params.roughness, 1); assert.equal(flat.params.metalness, 1);
+  assert.equal(unlit.params.metalness, 0); assert.equal(unlit.params.roughness, 0.7); await same(unlit.maps.base_color, A, 'unlit base');
+  assert.deepEqual(Object.keys(moved.maps), ['base_color', 'normal']);
+  assert.equal(moved.problems.length, 2);
+  assert.match(moved.problems[0], /^Base colour: .*texture transform.*not imported/);
+  assert.match(moved.problems[1], /^Normal: .*second UV set/);
+
+  // a/rough.png and b/rough.png cannot both be the one chosen rough.png.
+  const json = {asset: {version: '2.0'}, images: [{uri: 'a/rough.png'}, {uri: 'b/Rough.png'}, {uri: 'base.png'}],
+    textures: [{source: 0}, {source: 1}, {source: 2}],
+    materials: [{name: 'Clash', pbrMetallicRoughness: {baseColorTexture: {index: 2}, metallicRoughnessTexture: {index: 0}}, occlusionTexture: {index: 1}}]};
+  const [clashing] = await readGltfMaterials([new File([JSON.stringify(json)], 'x.gltf'), new File([A], 'rough.png'), new File([B], 'base.png')]);
+  assert.deepEqual(Object.keys(clashing.maps), ['base_color']);
+  assert.equal(clashing.problems.length, 2);
+  for (const problem of clashing.problems) assert.match(problem, /a\/rough\.png and b\/rough\.png share a file name/);
+  // Two chosen files with one name are refused the same way.
+  const twice = {asset: {version: '2.0'}, images: [{uri: 'base.png'}], textures: [{source: 0}],
+    materials: [{name: 'Twice', pbrMetallicRoughness: {baseColorTexture: {index: 0}}}]};
+  const [doubled] = await readGltfMaterials([new File([JSON.stringify(twice)], 'y.gltf'), new File([A], 'base.png'), new File([B], 'BASE.png')]);
+  assert.deepEqual(doubled.maps, {}); assert.match(doubled.problems[0], /two chosen files are named/);
+
+  // The model, its .bin and its images share the model cap.
+  const small = new File([JSON.stringify(twice)], 'z.gltf');
+  await assert.rejects(readGltfMaterials([small, new File([Buffer.alloc(400)], 'base.png')], {maxModelBytes: small.size + 100}), /larger than .* together/);
+});
+
+await test('builtin_drop_imports_and_grid_waits', async () => {
+  const gate = deferred(); let uploads = 0;
+  const c = await setup({upload: async () => { if (++uploads === 1) await gate.promise; }}, record('brick', 'builtin'));
+  const panel = c.host.querySelector('.library-properties');
+  const over = await fire(panel, 'dragover', {dataTransfer: {types: ['Files']}});
+  assert.equal(over.defaultPrevented, true); assert.equal(over.dataTransfer.dropEffect, 'copy');
+  // A texture dropped on a built-in is still refused, with the reason.
+  await fire(panel, 'drop', {dataTransfer: {files: [new File([BASE], 'x_diff.png')], types: ['Files']}});
+  assert.deepEqual(c.alerts, ['Built-in material. Duplicate to edit.']); assert.deepEqual(writes(c), []);
+  // A .glb dropped on a built-in imports a new material.
+  const done = fire(panel, 'drop', {dataTransfer: {files: [glbFile(brickGlb())], types: ['Files']}});
+  await until(() => uploads === 1);
+  const grid = c.host.querySelectorAll('[data-material]');
+  assert.ok(grid.length >= 3); assert.ok(grid.every(b => b.disabled), 'grid waits during import');
+  assert.equal(c.host.querySelector('[data-action="import-gltf"]').disabled, true);
+  assert.equal((await fire(panel, 'dragover', {dataTransfer: {types: ['Files']}})).dataTransfer.dropEffect, 'none');
+  await click(c.host.querySelector('[data-material="material-other"]'));
+  gate.resolve(); await done; await until(() => /glTF import/.test(c.status()));
+  assert.equal(c.status(), 'glTF import: 3 maps uploaded, 0 failed');
+  assert.equal(c.host.querySelector('[data-field="name"]').value, 'Brick wall');
+  assert.ok(writes(c).filter(x => x.path.includes('/maps/')).every(x => x.path.startsWith('materials/material-gltf2/')));
+  assert.ok(c.host.querySelectorAll('[data-material]').every(b => !b.disabled));
   c.stop();
 });
 finish();

@@ -19,6 +19,7 @@
   background:var(--library-panel); border:1px solid var(--library-line); border-radius:16px; backdrop-filter:blur(16px); padding:14px; min-width:0;
 }
 #material-library .library-browser>input,#material-library .library-browser>select { display:block; width:100%; margin-top:10px; }
+#material-library .library-browser>input[hidden] { display:none; }
 #material-library [data-action=new] { background:#119e50; border-color:#119e50; font-weight:600; width:100%; }
 #material-library [data-action=delete] { color:#fca5a5; }
 #material-library .library-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(100px,1fr)); gap:8px; margin-top:14px; max-height:68vh; overflow:auto; }
@@ -63,4 +64,4 @@
 #material-library .library-browse-add { display:flex; gap:6px; margin-top:6px; }
 #material-library .library-browse-add select { flex:1; min-width:0; }
 #material-library .library-browse-add [data-action=add] { background:#119e50; border-color:#119e50; font-weight:600; }
-#material-library .library-browser>[data-action=browse] { width:100%; margin-top:8px; }
+#material-library .library-browser>[data-action=browse],#material-library .library-browser>[data-action=import-gltf] { width:100%; margin-top:8px; }

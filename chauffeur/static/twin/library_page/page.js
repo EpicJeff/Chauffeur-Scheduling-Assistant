@@ -30,7 +30,7 @@ const normalized = entry => ({ ...entry, maps: entry.maps || {}, params: { ...de
 
 export function mountLibraryPage(root, { api = libraryApi } = {}) {
   const abort = new AbortController(), { signal } = abort;
-  let stopped = false, uploading = false, rows = [], context, properties, propAbort, gridAbort, selection = 0;
+  let stopped = false, uploading = false, importing = false, rows = [], context, properties, propAbort, gridAbort, selection = 0;
   const contexts = new Set(), report = error => { if (!stopped) window.showGlobalAlert(error.message || String(error)); };
   root.replaceChildren();
   const toolbar = node('header', null, 'library-header'), heading = node('h1', 'Material library');
@@ -59,14 +59,15 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   const browse = mountBrowse(browsePanel, { api, signal, onToggle: shown => browseButton.setAttribute('aria-expanded', String(shown)),
     selection: () => selection, refresh: async () => { if (!stopped) await refreshRows(); },
     open: async id => { if (stopped) return; search.value = ''; source.value = 'all'; await refreshRows(); await select(id); } });
-  const importLabel = node('label', 'Import glTF', 'library-import'), importInput = node('input');
+  // The shared button opens a hidden picker, like Replace does for one map.
+  const importInput = node('input'); importInput.hidden = true;
+  const importButton = button('Import glTF', 'import-gltf', () => importInput.click(), signal);
   importInput.type = 'file'; importInput.multiple = true; importInput.dataset.gltfFiles = '';
   importInput.accept = '.glb,.gltf,.bin,.png,.jpg,.jpeg,.webp';
   importInput.setAttribute('aria-label', 'Import glTF: choose a .glb, or a .gltf with its .bin and texture files');
   importInput.addEventListener('change', async () => {
     try { await importGltf(Array.from(importInput.files || [])); } finally { importInput.value = ''; }
   }, { signal });
-  importLabel.append(importInput);
   const search = node('input'); search.type = 'search'; search.placeholder = 'Search materials'; search.dataset.librarySearch = '';
   search.setAttribute('aria-label', 'Search materials');
   const source = node('select'); source.dataset.librarySource = ''; source.setAttribute('aria-label', 'Material source');
@@ -75,7 +76,7 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   }
   source.value = 'all';
   const grid = node('div', null, 'library-grid');
-  left.append(newButton, browseButton, importLabel, search, source, grid);
+  left.append(newButton, browseButton, importButton, importInput, search, source, grid);
   search.addEventListener('input', drawGrid, { signal }); source.addEventListener('change', drawGrid, { signal });
   const shape = node('div', null, 'editor-actions'), lighting = node('div', null, 'editor-actions');
   shape.setAttribute('role', 'group'); shape.setAttribute('aria-label', 'Preview shape');
@@ -96,13 +97,16 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   right.addEventListener('dragover', event => {
     if (Array.from(event.dataTransfer?.types || []).includes('Files')) {
       event.preventDefault();
-      event.dataTransfer.dropEffect = context && context.draft.source !== 'builtin' && !context.busy && !uploading ? 'copy' : 'none';
+      // A built-in still takes a dropped .glb/.gltf (a new material); its own maps refuse on drop.
+      event.dataTransfer.dropEffect = !uploading && !context?.busy ? 'copy' : 'none';
     }
   }, { signal });
   right.addEventListener('drop', event => {
     event.preventDefault();
     const files = Array.from(event.dataTransfer?.files || []);
-    return files.some(file => MODEL.test(file.name || '')) ? importGltf(files) : uploadTextures(files);
+    if (files.some(file => MODEL.test(file.name || ''))) return importGltf(files);
+    if (context?.draft.source === 'builtin' && files.length) { report(new Error('Built-in material. Duplicate to edit.')); return; }
+    return uploadTextures(files);
   }, { signal });
   const endpoint = ctx => 'materials/' + encodeURIComponent(ctx.draft.id);
   function setStatus(ctx, text) {
@@ -246,7 +250,8 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
     // The chosen material becomes a new Library entry; its maps then upload
     // through the same per-map route and local preview as loose textures.
     if (stopped || uploading || context?.busy || !files.length) return;
-    uploading = true; importInput.disabled = true;
+    // The grid waits, so the new material stays the one being filled.
+    uploading = importing = true; importButton.disabled = true; drawGrid();
     let ctx;
     try {
       status.textContent = 'Reading glTF…';
@@ -268,8 +273,16 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
       if (stopped) return;
       search.value = ''; source.value = 'all';
       await refreshRows(); await select(entry.id, entry);
-      if (stopped || context?.draft.id !== entry.id) return;
-      ctx = context; setBusy(ctx, true);
+      if (stopped) return;
+      // Opened elsewhere meanwhile (Browse): the maps still go to the new material.
+      const current = context?.draft.id === entry.id;
+      if (current) ctx = context;
+      else {
+        const server = normalized(entry);
+        ctx = { server, draft: copy(server), pending: {}, queued: [], localMaps: {}, chain: Promise.resolve() };
+        contexts.add(ctx);
+      }
+      setBusy(ctx, true);
       const maps = Object.entries(chosen.maps);
       let uploaded = 0, failed = 0;
       for (const [index, [slot, blob]] of maps.entries()) {
@@ -279,14 +292,15 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
         if (await uploadMap(ctx, slot, blob)) uploaded++; else failed++;
       }
       delete ctx.uploadStatus;
-      setStatus(ctx, `glTF import: ${uploaded} maps uploaded, ${failed} failed`);
-      if (chosen.problems.length) report(new Error(`Some maps were not imported:\n${chosen.problems.join('\n')}`));
+      if (!stopped) status.textContent = current ? `glTF import: ${uploaded} maps uploaded, ${failed} failed`
+        : `Imported ${chosen.name}: ${uploaded} maps uploaded, ${failed} failed. Open it to see them.`;
+      if (chosen.problems.length) report(new Error(`Not everything in the glTF carried over:\n${chosen.problems.join('\n')}`));
     } catch (error) {
       if (!stopped) status.textContent = 'glTF import failed';
       report(error);
     } finally {
       if (ctx) delete ctx.uploadStatus;
-      uploading = false; importInput.disabled = false;
+      uploading = importing = false; importButton.disabled = false; drawGrid();
       if (ctx) setBusy(ctx, false);
     }
   }
@@ -333,7 +347,8 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
       && (source.value === 'all' || source.value === 'builtin' && row.source === 'builtin'
         || source.value === 'mine' && ['user', 'gltf'].includes(row.source)
         || source.value === 'downloaded' && ['polyhaven', 'ambientcg'].includes(row.source)))) {
-      const control = button('', 'select', () => select(row.id).catch(report), gridAbort.signal); control.dataset.material = row.id;
+      const control = button('', 'select', () => importing ? undefined : select(row.id).catch(report), gridAbort.signal);
+      control.dataset.material = row.id; control.disabled = importing;
       control.setAttribute('aria-pressed', String(context?.draft.id === row.id));
       const image = node('img'); image.alt = ''; image.width = 112; image.height = 96;
       image.style.backgroundColor = row.color || row.params?.tint || '#b8b0a4';
