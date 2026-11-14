@@ -7906,6 +7906,57 @@ def house_material_manifest():
                         if entry.get('household')}}
 
 
+def _material_sources_published():
+    # A finished download publishes a material: same /api/stream update as other writes.
+    global LAST_UPDATE_TIME
+    LAST_UPDATE_TIME = time.time()
+
+
+def _material_source_call(operation, *args):
+    from services import twin_material_sources as sources
+    try:
+        return operation(*args)
+    except sources.UnknownSource as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except sources.Unreachable as exc:
+        raise HTTPException(status_code=503, detail=sources.UNREACHABLE) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get('/api/house/materials/sources/{source}')
+def house_material_source_search(source: str, q: str = '', category: str = ''):
+    from services import twin_material_sources as sources
+    return {'results': _material_source_call(sources.search, source, q, category or None)}
+
+
+@app.get('/api/house/materials/sources/{source}/{source_id}/thumb')
+def house_material_source_thumb(source: str, source_id: str):
+    from services import twin_material_sources as sources
+    data = _material_source_call(sources.thumbnail, source, source_id)
+    return Response(content=data, media_type='image/png')
+
+
+@app.post('/api/house/materials/sources/{source}/{source_id}/download')
+def house_material_source_download(source: str, source_id: str, request: Request,
+                                   body: dict = Body(default={})):
+    from services import twin_material_sources as sources
+    sources.on_published = _material_sources_published
+    resolution = body.get('resolution') if isinstance(body, dict) else None
+    job_id = _material_source_call(sources.start_download, source, source_id, resolution,
+                                   _acting_id(request, None))
+    return {'job_id': job_id}
+
+
+@app.get('/api/house/materials/jobs/{job_id}')
+def house_material_job(job_id: str):
+    from services import twin_material_sources as sources
+    try:
+        return sources.job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail='No such download.') from exc
+
+
 @app.get('/api/house/materials/{id}')
 def house_material_get(id: str):
     from services import twin_materials

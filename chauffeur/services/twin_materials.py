@@ -293,13 +293,24 @@ def _save(record, previous=None, history=None, *, snapshot=True):
     return deepcopy(record)
 
 
-def create(fields, actor) -> dict:
-    mid = 'material-' + uuid.uuid4().hex
+def new_id() -> str:
+    return 'material-' + uuid.uuid4().hex
+
+
+def create(fields, actor, *, material_id=None, source=None) -> dict:
+    """Publish a new material. `material_id` adopts a staged folder whose maps were
+    ingested with `ingest_image(..., staged=True)`; `source` records a download's
+    origin and snapshots its maps and params for "Reset to source"."""
+    mid = new_id() if material_id is None else _id(material_id)
     with _lock(mid):
+        if (root() / mid / 'material.json').exists():
+            raise ValueError('That material already exists.')
         record = dict(id=mid, name='', source='user', licence=None, source_url=None, based_on=None,
                       revision=0, archived=False, created_by=actor, updated_at=None, maps={},
                       params=deepcopy(DEFAULT_PARAMS), source_snapshot=None)
         record = _fields(mid, fields, record)
+        if source is not None:
+            _set_source(record, source, dict(maps=deepcopy(record['maps']), params=deepcopy(record['params'])))
         return _save(record)
 
 
@@ -352,9 +363,15 @@ def _image_file(mid, slot, data, record):
     return filename
 
 
-def ingest_image(material_id, slot, data: bytes) -> str:
+def ingest_image(material_id, slot, data: bytes, *, staged=False) -> str:
+    """Decode, cap and store one map. `staged` ingests into a folder that has no
+    published record yet (a download job); `create(material_id=...)` publishes it."""
     with _lock(material_id):
-        return _ingest(material_id, slot, data)
+        if not staged:
+            return _ingest(material_id, slot, data)
+        if (root() / material_id / 'material.json').exists():
+            raise ValueError('That material is already published.')
+        return _image_file(material_id, slot, data, dict(id=material_id, maps={}, source_snapshot=None))
 
 
 def set_image(material_id, slot, data: bytes, actor) -> dict:
