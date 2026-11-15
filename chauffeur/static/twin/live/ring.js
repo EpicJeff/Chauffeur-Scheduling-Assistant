@@ -103,7 +103,7 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
     // answers after the ring closed still reads its own device.
     const entity = row.entity_id;
     builder = deviceControls({row, state, control: live.control, surface: 'ring',
-      getState: () => live.state(entity), getEntityState: live.state});
+      getState: () => live.state(entity), getEntityState: live.state, lightLooks: live.lightLooks});
     // A kind with nothing to control (a sensor) shows its value alone, not an empty card.
     if (!builder.childNodes.length) builder.hidden = true;
     root.append(builder);

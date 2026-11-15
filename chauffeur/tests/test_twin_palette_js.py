@@ -63,8 +63,10 @@ check('light_disc_uses_rgb_then_kelvin_then_warm_white_without_brightness_tintin
   assert.equal(warm, '#ffa757'); assert.equal(cool, '#fffefa');
   assert.equal(disc(stateDraw('light', 'on', {color_temp:1e6/2700})), warm);
   assert.equal(disc(stateDraw('light', 'on', {color_temp_kelvin:2700, brightness:1})), warm);
-  assert.equal(disc(stateDraw('light', 'on')), '#ffd89a');
-  assert.equal(disc(stateDraw('light', 'on', {rgb_color:[null,0,0], color_temp:0})), '#ffd89a');
+  assert.equal(disc(stateDraw('light', 'on')), '#fff1c9');
+  assert.equal(disc(stateDraw('light', 'on', {rgb_color:[null,0,0], color_temp:0})), '#fff1c9');
+  assert.equal(disc(stateDraw('light', 'on', {hs_color:[120,100]})), '#00ff00');
+  assert.equal(disc(stateDraw('light', 'on', {effect:'Deep Blue'})), '#0000ff');
   assert.equal(disc(stateDraw('light', 'off', {rgb_color:[255,0,0]})), palette.twinMarkerOff);
   assert.equal(red.at(-1)[1].strokeStyle, '#111318');
   assert.equal(stateDraw('light', 'on', {rgb_color:[0,0,80]}).at(-1)[1].strokeStyle, '#f4f5f7');
@@ -109,8 +111,10 @@ check('lock_alarm_and_cover_discs_follow_state_while_retaining_attention', () =>
   assert.equal(count.at(-1)[1].fillStyle, '#111318');
 });
 
-check('ordinary_active_states_share_white_and_paused_media_is_off', () => {
-  for (const [kind, state, attrs] of [['fan','on'], ['switch','on'], ['outlet','on'], ['other','on'],
+check('on_off_emitters_share_the_resolver_and_other_active_states_keep_white', () => {
+  for (const kind of ['fan', 'switch'])
+    assert.equal(disc(stateDraw(kind, 'on')), '#ffa757', kind + ' 2700 K');
+  for (const [kind, state, attrs] of [['outlet','on'], ['other','on'],
     ['media','playing'], ['camera','recording'], ['camera','streaming'], ['vacuum','cleaning'],
     ['sensor','on',{device_class:'motion'}], ['sensor','on',{device_class:'occupancy'}]])
     assert.equal(disc(stateDraw(kind, state, attrs)), '#f4f5f7', kind + ' ' + state);

@@ -55,6 +55,7 @@ def mapped(template):
 def check_page(template, entries):
     needed = graph(entries)
     have = mapped(template)
+    assert 'twin/live/light_colours.js' in have, f'{template}: pure light colour resolver must be versioned'
     # three and its addons are mapped by bare specifier ('three'), not by path.
     missing = sorted(p for p in needed if p not in have and not p.startswith('vendor/three'))
     assert not missing, f'{template}: modules imported but not versioned in the import map: {missing}'

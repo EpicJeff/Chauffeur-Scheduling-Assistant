@@ -6,7 +6,8 @@ import { FT, LAMP_HEIGHT, lightRange } from '../twin_light_math.js';
 import { groundAt, buildingGround, edgeDistance } from '../twin_ground.js';
 import { pathOutline } from '../path_shapes.js';
 import { firePitOptions, firePitLayout, gasTableLayout } from '../fire_pits.js';
-import { lightColor, lightIntensity } from './real_lights.js';
+import { lightIntensity } from './real_lights.js';
+import { resolveLightColour } from './light_colours.js';
 
 export const DEFAULT_OUTPUT_LM = 503;
 const pieces = value => Array.isArray(value) ? value : value ? [value] : [];
@@ -20,14 +21,13 @@ const ON_OFF = ['switch', 'input_boolean', 'fan'];
 
 // Staleness is explicit, as in the live feed. HA's last_changed is not freshness:
 // a lamp may legitimately have stayed on for days.
-export function emission(state, domain) {
+export function emission(state, domain, look) {
   const attributes = state?.attributes || {};
-  const rgb = ON_OFF.includes(domain) ? lightColor({color_temp_kelvin: 2700})
-    : domain === 'media_player' ? lightColor({color_temp_kelvin: 6500}) : lightColor(attributes);
+  const colour = resolveLightColour(attributes, look, domain);
   const on = !!state && !state.stale && state.reachable !== false &&
     (domain === 'media_player' ? ['on', 'playing', 'paused'].includes(state.state)
       : (domain === 'light' || ON_OFF.includes(domain)) && state.state === 'on');
-  return {on, brightness: !on ? 0 : domain === 'light' ? lightIntensity(attributes) : domain === 'media_player' ? .3 : 1, rgb};
+  return {on, brightness: !on ? 0 : domain === 'light' ? lightIntensity(attributes) : domain === 'media_player' ? .3 : 1, ...colour};
 }
 
 export function fixtureReference(plan, fixture, point) {
@@ -165,7 +165,7 @@ function resolved(f, entity, device, output, fraction, state) {
   const lumens = output * fraction * state.brightness;
   return {...f, fixture_id: f.id, entity_id: entity, device_id: device, legacy: false,
     output_lm: output, output_fraction: fraction, output_lm_share: lumens, ...photometry(f, lumens),
-    rgb: state.rgb, brightness: state.brightness, on: state.on && lumens > 0};
+    rgb: state.rgb, ...(state.palette ? {palette: state.palette} : {}), brightness: state.brightness, on: state.on && lumens > 0};
 }
 
 // Geometry comes from the same bowl/pan helpers used to build the pit. These
@@ -219,17 +219,17 @@ function legacyEmitter(marker, plan, state) {
   return {...marker, marker, fixture_id: `legacy:${marker.device_id}`, shape: 'point', legacy: true, position, range,
     at: [position[0] / FT, -position[2] / FT, position[1] / FT], output_lm: DEFAULT_OUTPUT_LM,
     output_fraction: 1, output_lm_share: lumens, ...photometry({shape: 'point'}, lumens),
-    rgb: state.rgb, brightness: state.brightness, on: state.on};
+    rgb: state.rgb, ...(state.palette ? {palette: state.palette} : {}), brightness: state.brightness, on: state.on};
 }
 
 // firePits: false leaves derived fire-pit emitters out (live keeps pits on its
 // object-lamp path until the bake slice moves them); their entity's markers
 // then resolve through the legacy rules exactly as before fixtures existed.
-export function resolveEmitters(layout, states = {}, plan = {}, {firePits = true} = {}) {
+export function resolveEmitters(layout, states = {}, plan = {}, {firePits = true, looks = {}} = {}) {
   // Accept either live.peek()'s map or the HA card-state response envelope.
   const stale = states?.stale || states?.reachable === false;
   const readings = states?.states || states || {};
-  const stateOf = entity => emission(stale ? null : readings[entity], domainOf(entity));
+  const stateOf = entity => emission(stale ? null : readings[entity], domainOf(entity), looks[entity]);
   const fixtures = layout.light_fixtures || {}, devices = layout.devices || layout.markers || [];
   const groups = new Map(Object.entries(fixtures).filter(([, rows]) => rows.length).map(([entity, rows]) =>
     [entity, rows.map(f => resolveFixture(f, plan))]));

@@ -9,8 +9,8 @@ const element = (tag, text) => {
   return node;
 };
 
-export function deviceActions(row, state, control, { compact = false, getState, getEntityState } = {}) {
-  return deviceControls({row, state, control, compact, getState, getEntityState});
+export function deviceActions(row, state, control, { compact = false, getState, getEntityState, lightLooks } = {}) {
+  return deviceControls({row, state, control, compact, getState, getEntityState, lightLooks});
 }
 
 export function mountRoomPanel(live) {
@@ -88,7 +88,7 @@ export function mountRoomPanel(live) {
     // Read without a copy (review M3); HA's own cards hear the house only while one is up.
     const rows = live.devices(room.area_id, room), states = live.peek();
     if ([...widgets.values()].some(widget => widget.hosted)) window.ChauffeurHaCards?.setStates(states);
-    const key = JSON.stringify([room.area_id, rows.map(row => [row.device_id, row.offered, row.label,
+    const key = JSON.stringify([room.area_id, live.looks?.(), rows.map(row => [row.device_id, row.offered, row.label,
       states[row.entity_id]?.state, states[row.entity_id]?.attributes,
       row.accessories?.map(a => [a, states[a.entity_id]])])]);
     if (key === shown) return;
@@ -112,7 +112,7 @@ export function mountRoomPanel(live) {
         if (widget) stop(widget);
         node.className = 'twin-room-device'; node.dataset.deviceId = row.device_id; node.dataset.kind = kindOf(row).id;
         const name = element('h3'), status = element('p');
-        const actions = deviceActions(row, state, live.control, {getState: () => live.state(row.entity_id), getEntityState: live.state});
+        const actions = deviceActions(row, state, live.control, {getState: () => live.state(row.entity_id), getEntityState: live.state, lightLooks: live.lightLooks});
         node.replaceChildren(name, status, actions);
         widget = {node, name, status, actions, shape}; widgets.set(row.device_id, widget);
         addMore(widget, row);

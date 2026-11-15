@@ -7519,6 +7519,22 @@ def _house_ha_placed_spot(building, device_id, placement, geometry):
     return result
 
 
+@app.get('/api/house/twin/light-looks')
+def house_twin_light_looks():
+    from services import twin_light_looks
+    return twin_light_looks.read()
+
+
+@app.put('/api/house/twin/light-looks')
+def save_house_twin_light_looks(body: dict = Body(...)):
+    from services import twin_light_looks
+    try:
+        look = twin_light_looks.save(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {'saved': True, 'look': look}
+
+
 @app.get('/api/house/twin/glance')
 def house_twin_glance(request: Request, panel_id: str | None = None):
     from services import auth, control_rules, twin_glance

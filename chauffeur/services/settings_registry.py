@@ -59,14 +59,14 @@ _CONFIG = 'config'
 _DRIVE = 'dashboard_v2'
 
 
-def _e(key, group, label, help_text, page=_CONFIG, anchor='general', ui_marker=None):
+def _e(key, group, label, help_text, page=_CONFIG, anchor='general', ui_marker=None, item=False):
     # `ui_marker` is for the honest exception: a control that does not name its
     # setting anywhere. The status-tier editor is one component shared by Chores
     # and Routines, keyed by `kind` and saving through /api/status-tiers, so the
     # words `chore_status_tiers` appear nowhere on screen. Declaring the marker
     # keeps the coverage audit truthful without weakening it into a guess.
     return {'key': key, 'group': group, 'label': label, 'help': help_text,
-            'page': page, 'anchor': anchor, 'ui_marker': ui_marker}
+            'page': page, 'anchor': anchor, 'ui_marker': ui_marker, **({'item': True} if item else {})}
 
 
 # The declarations. Grouped by what a person is trying to DO, not by which
@@ -128,6 +128,10 @@ ENTRIES: List[dict] = [
     _e('house_twin_glance', 'panel', 'House glance tiles',
        'Choose and order entity tiles with coloured icons and optional labels for the household or an enrolled panel.',
        page='house/twin', anchor='twin-glance-settings'),
+    _e('house_twin_light_looks', 'panel', 'Light colours in the twin',
+       'Hold a light marker or expand its room controls to assign effect palettes or a fixed display colour. '
+       'This changes only the twin, never the real light.',
+       page='house/twin', anchor='twin-canvas', ui_marker='twin-canvas', item=True),
     _e('house_twin_idle_enabled', 'panel', 'House idle face',
        'Show the clock, weather and a slow house orbit after a minute. Off on desks, on on panels by default.',
        page='house/twin', anchor='twin-glance-settings'),
@@ -841,7 +845,7 @@ def audit() -> dict:
     # The old schema field remains readable for migration, with no editor.
     # Structured display preferences have a dedicated store and endpoint, like
     # the control rulebook; they never invalidate schedules on a display save.
-    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'twin_import_limit_mb', 'twin_import_unpacked_limit_mb', 'ha_control', 'house_twin_glance', 'house_twin_idle_enabled', 'house_twin_energy'}
+    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'twin_import_limit_mb', 'twin_import_unpacked_limit_mb', 'ha_control', 'house_twin_glance', 'house_twin_idle_enabled', 'house_twin_energy', 'house_twin_light_looks'}
     listed = set(BY_KEY)
     return {'missing': sorted(model - listed), 'stale': sorted(listed - model)}
 
@@ -981,7 +985,9 @@ def audit_ui(templates_dir: str = None) -> dict:
         # outside any drawer) is not this rule's business.
         tab = e['page'].partition('?tab=')[2] or None
         spans = [] if (not tab and re.search(r'<[^>]*\sdata-page-tab="', body)) else _drawer_spans(body, tab)
-        if spans and e['page'].split('?')[0] != 'config':
+        # Item preferences belong on the interactive object, per the UI guide;
+        # their marker and deep-link target are still checked below.
+        if spans and not e.get('item') and e['page'].split('?')[0] != 'config':
             if e['anchor'] == 'general':
                 missing.append({**e, 'why': f"a drawer page needs a real anchor (on '{e['page']}')"})
                 continue

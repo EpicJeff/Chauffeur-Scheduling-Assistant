@@ -201,13 +201,13 @@ export function mountModes(view, live) {
   function update() {
     // Read without copying the house: this runs on every push (review M3).
     const states = live.peek(), stale = live.stale();
-    const resolved = new Map((fixtures ? resolveEmitters(layout, stale ? {} : states, view.plan, {firePits: false}) : []).map(e => [e.fixture_id, e]));
+    const resolved = new Map((fixtures ? resolveEmitters(layout, stale ? {} : states, view.plan, {firePits: false, looks: live.looks?.() || {}}) : []).map(e => [e.fixture_id, e]));
     for (const flame of flames) flame.visible = !stale && states[flame.material.userData.objectLight.entity]?.state === 'on';
     legacyRooms = !realLighting && !stale ? live.rooms() : [];
     for (const lamp of lamps) {
       const state = states[lamp.marker.entity_id];
       const object = lamp.objectSource;
-      const emitted = emission(stale ? null : state, lamp.marker.entity_id?.split('.')[0]);
+      const emitted = emission(stale ? null : state, lamp.marker.entity_id?.split('.')[0], live.looks?.()[lamp.marker.entity_id]);
       lamp.intensity = object && !object.entity ? (object.on ? 1 : 0) : emitted.brightness;
       if (lamp.emitter && !lamp.emitter.legacy) {
         lamp.emitter = resolved.get(lamp.emitter.fixture_id);
@@ -218,6 +218,7 @@ export function mountModes(view, live) {
         const color = new THREE.Color(object.color).getRGB(new THREE.Color(), THREE.SRGBColorSpace);
         lamp.rgb = [color.r * 255, color.g * 255, color.b * 255];
       } else lamp.rgb = emitted.rgb;
+      lamp.palette = object && (!object.entity || object.fire) ? undefined : emitted.palette;
       for (const material of lamp.objectMaterials || []) {
         if (!material.emissive) continue; // Flame shaders carry the lamp tag too.
         material.emissive.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
@@ -274,7 +275,7 @@ export function mountModes(view, live) {
       if (baked || lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, baked && shown ? lamp.intensity : 0);
       lamp.baked = baked;
       lamp.real = selected.has(lamp.key);
-      if (lamp.glow) lamp.glow.update(lamp.rgb, lamp.intensity, shown);
+      if (lamp.glow) lamp.glow.update(lamp.rgb, lamp.intensity, shown, lamp.palette);
       else {
         lamp.bulb.visible = shown && !lamp.objectSource?.fire;
         lamp.bulb.material.color.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);

@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { FT } from '../twin_light_math.js';
+import { paletteColour, validPalette } from './light_colours.js';
 
 export const fixturePoint = p => new THREE.Vector3(p[0] * FT, p[2] * FT, -p[1] * FT);
 export const facingNormal = facing => Array.isArray(facing) ? [...facing] : facing === 'up' ? [0,0,1] : facing === 'out' ? [0,-1,0] : [0,0,-1];
 const materials = new Map();
-function materialFor(key, channels) {
+function materialFor(key, channels, vertexColors = false) {
   if (!materials.has(key)) materials.set(key, {refs: 0, material: new THREE.MeshBasicMaterial({
-    color: new THREE.Color(...channels.map(v => v / 255)), toneMapped: false, side: THREE.DoubleSide})});
+    color: new THREE.Color(...channels.map(v => v / 255)), toneMapped: false, side: THREE.DoubleSide, vertexColors})});
   const entry = materials.get(key); entry.refs++; return entry.material;
 }
 
@@ -43,23 +44,34 @@ export function linePieces(emitter) {
   };
   return Array.from({length: count}, (_, i) => {
     const a = sample(i * total / count), b = sample((i + 1) * total / count);
-    return {position: sample((i + .5) * total / count), width: total / count,
+    const start = i * total / count, end = (i + 1) * total / count;
+    let walked = 0;
+    const inside = path.filter((p, j) => { if (j) walked += lengths[j - 1]; return walked > start && walked < end; });
+    return {t: (i + .5) / count, path: [a.clone(), ...inside, b.clone()], position: sample((i + .5) * total / count), width: total / count,
       height: emitter.width_in / 12 * FT, rotation: fixtureRotation(emitter, b.sub(a))};
   });
 }
 
 export function createFixtureGlow(scene, emitter) {
   let geometry;
+  const sections = [];
   if (emitter.shape === 'line') {
-    const points = emitter.path.map(fixturePoint), radius = emitter.width_in / 24 * FT, parts = [];
-    points.slice(1).forEach((p, i) => {
-      if (!p.equals(points[i])) parts.push(new THREE.TubeGeometry(new THREE.LineCurve3(points[i], p), 1, radius, 8, false));
-      if (i < points.length - 2) parts.push(new THREE.SphereGeometry(radius, 8, 4).translate(p.x, p.y, p.z));
-    });
+    const radius = emitter.width_in / 24 * FT, parts = [];
+    let offset = 0;
+    for (const piece of linePieces(emitter)) {
+      const points = piece.path;
+      points.slice(1).forEach((p, i) => {
+        if (!p.equals(points[i])) parts.push(new THREE.TubeGeometry(new THREE.LineCurve3(points[i], p), 1, radius, 8, false));
+        if (i < points.length - 2) parts.push(new THREE.SphereGeometry(radius, 8, 4).translate(p.x, p.y, p.z));
+      });
+      const end = parts.reduce((sum, part) => sum + part.attributes.position.count, 0);
+      sections.push({start: offset, end, t: piece.t}); offset = end;
+    }
     geometry = parts.length ? mergeGeometries(parts) : new THREE.BufferGeometry();
     for (const part of parts) part.dispose();
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(offset * 3), 3));
   } else geometry = new THREE.PlaneGeometry(emitter.size_ft[0] * FT, emitter.size_ft[1] * FT);
-  let bucket = '0,0,0';
+  let bucket = '0,0,0', paletteKey = '';
   const mesh = new THREE.Mesh(geometry, materialFor(bucket, [0, 0, 0])); mesh.visible = false; mesh.userData.fixtureGlow = emitter.fixture_id;
   if (emitter.shape === 'area') { mesh.position.copy(fixturePoint(emitter.at)); mesh.quaternion.copy(fixtureRotation(emitter)); }
   scene.add(mesh);
@@ -71,15 +83,26 @@ export function createFixtureGlow(scene, emitter) {
   }
   return {
     mesh,
-    update(rgb, brightness, shown) {
+    update(rgb, brightness, shown, palette) {
       mesh.visible = !!shown && brightness > 0;
       if (!mesh.visible) return;
-      const color = new THREE.Color().setRGB(...rgb.map(v => v / 255), THREE.SRGBColorSpace).multiplyScalar(brightness);
+      const multicolour = emitter.shape === 'line' && validPalette(palette) && palette.length > 1;
+      const nextPalette = multicolour ? JSON.stringify(palette) : '';
+      if (multicolour && nextPalette !== paletteKey) {
+        const colors = geometry.attributes.color;
+        for (const section of sections) {
+          const color = new THREE.Color().setRGB(...paletteColour(palette, section.t).map(v => v / 255), THREE.SRGBColorSpace);
+          for (let i = section.start; i < section.end; i++) colors.setXYZ(i, color.r, color.g, color.b);
+        }
+        colors.needsUpdate = true;
+      }
+      paletteKey = nextPalette;
+      const color = new THREE.Color().setRGB(...(multicolour ? [255, 255, 255] : rgb).map(v => v / 255), THREE.SRGBColorSpace).multiplyScalar(brightness);
       const channels = color.toArray().map(v => Math.round(v * 255));
-      const key = channels.join(',');
+      const key = (multicolour ? 'palette:' : '') + channels.join(',');
       if (key === bucket) return;
       release();
-      mesh.material = materialFor(key, channels); bucket = key;
+      mesh.material = materialFor(key, channels, multicolour); bucket = key;
     },
     stop() { mesh.removeFromParent(); geometry.dispose(); release(); },
   };
