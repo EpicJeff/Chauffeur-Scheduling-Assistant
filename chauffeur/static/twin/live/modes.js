@@ -90,7 +90,7 @@ export function mountModes(view, live) {
   for (const emitter of emitters) {
     const position = new THREE.Vector3(...emitter.position);
     const marker = emitter.legacy ? emitter.marker : {...emitter, at: [position.x / FT, -position.z / FT, position.y / FT]};
-    const glow = ['line', 'area'].includes(emitter.shape) ? createFixtureGlow(view.scene, emitter) : null;
+    const glow = !emitter.fire_pit && ['line', 'area'].includes(emitter.shape) ? createFixtureGlow(view.scene, emitter) : null;
     const bulb = glow?.mesh || new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: '#fff1c9', toneMapped: false }));
     if (!glow) { bulb.position.copy(position); bulb.userData.bulb = marker.device_id; view.scene.add(bulb); }
     bulb.visible = false;
@@ -272,8 +272,13 @@ export function mountModes(view, live) {
       const shown = candidates.some(row => row.device === lamp.key);
       // Clear a former bake too: losing freshness must never leave its tint on.
       if (baked || lamp.baked) {
-        const intensity = baked && shown ? lamp.intensity : 0, previous = bakeTints.get(bakeId);
-        if (!previous || intensity > previous.intensity) bakeTints.set(bakeId, {rgb: lamp.rgb, intensity});
+        // Sum slots carry each pit's half output in their samples. One tint
+        // cannot also carry the pit's flame colour beside arbitrary HA colours.
+        const sum = lamp.emitter && !lamp.emitter.legacy && lamps.some(other =>
+          other !== lamp && other.emitter?.entity_id === lamp.emitter.entity_id);
+        const intensity = baked && shown ? (sum ? lamp.emitter.brightness : lamp.intensity) : 0, previous = bakeTints.get(bakeId);
+        if (!previous || intensity > previous.intensity || intensity === previous.intensity && !lamp.emitter?.fire_pit)
+          bakeTints.set(bakeId, {rgb: lamp.rgb, intensity});
       }
       lamp.baked = baked;
       lamp.real = selected.has(lamp.key);

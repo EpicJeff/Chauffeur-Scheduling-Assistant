@@ -23,13 +23,14 @@ const V=(x,y,z)=>new THREE.Vector3(x,y,z);
 const close=(a,b,e=1e-7)=>assert.ok(Math.abs(a-b)<=e,`${a} != ${b}`);
 // Preprocess the generated shader and bundled chunks to count declarations,
 // including both branches of the live-area/fallback LTC binding contract.
-function samplerBudget(source, areas) {
+function samplerBudget(source, areas, clearcoat=false) {
   const macros=new Map(Object.entries({STANDARD:1,USE_MAP:1,USE_NORMALMAP:1,USE_ROUGHNESSMAP:1,
     USE_METALNESSMAP:1,USE_AOMAP:1,USE_ENVMAP:1,ENVMAP_TYPE_CUBE_UV:1,USE_SHADOWMAP:1,SHADOWMAP_TYPE_PCF:1,
     NUM_DIR_LIGHTS:1,NUM_DIR_LIGHT_SHADOWS:1,NUM_SUN_LIGHTS:0,NUM_SUN_LIGHT_SHADOWS:0,
     NUM_POINT_LIGHTS:12,NUM_POINT_LIGHT_SHADOWS:1,NUM_SPOT_LIGHTS:4,NUM_SPOT_LIGHT_SHADOWS:0,
     NUM_SPOT_LIGHT_MAPS:0,NUM_SPOT_LIGHT_COORDS:0,NUM_RECT_AREA_LIGHTS:areas,NUM_HEMI_LIGHTS:0,
     NUM_LIGHT_PROBES:0,NUM_CLIPPING_PLANES:0,UNION_CLIPPING_PLANES:0}));
+  if(clearcoat)macros.set('USE_CLEARCOAT',1);
   const expand=s=>s.replace(/#include <(\w+)>/g,(_,name)=>expand(THREE.ShaderChunk[name]));
   const expression=s=>s.replace(/defined\s*\(\s*(\w+)\s*\)/g,(_,k)=>macros.has(k)?'1':'0')
     .replace(/\b[A-Za-z_]\w*\b/g,k=>String(Number(macros.get(k))||0));
@@ -49,7 +50,7 @@ function samplerBudget(source, areas) {
     else if(active&&op==='undef')macros.delete(arg);
   }
   const declarations=[...lines.join('\n').matchAll(/uniform\s+(?:highp\s+)?sampler\w+\s+(\w+)\s*(?:\[\s*(\w+)\s*\])?/g)];
-  return {count:declarations.reduce((n,m)=>n+(m[2]?Number(macros.get(m[2])||m[2]):1),0),names:declarations.map(m=>m[1])};
+  return {count:declarations.reduce((n,m)=>n+(m[2]?Number(macros.get(m[2])||m[2]):1),0),names:declarations.map(m=>m[1]),source:lines.join('\n')};
 }
 const energy=(light,at,normal,visible=()=>1)=>F.sampleValue(F.bakeSamples(plan,light),at,normal,visible,light.kind,light.scale||1);
 // A one-texel GPU double evaluates the uniforms submitted by the real cube/atlas
@@ -60,11 +61,17 @@ async function renderProbe(light, blockers=[], point=V(0,0,0), normal=V(0,1,0), 
   mesh.userData.merged=true;const scene=new THREE.Scene();scene.add(mesh,...blockers);scene.updateMatrixWorld(true);
   const chart={id:0,mesh,faces:[0,1],room:0,rect:{x:0,y:0,w:1,h:1}},values=[0,0,0,1],sources=[];
   let target=null,color=new THREE.Color(),alpha=0;
+  const targets=new Set(),geometries=new Set();let disposedTargets=0,disposedGeometries=0;
   const renderer={toneMapping:THREE.NoToneMapping,autoClear:true,xr:{enabled:false},
-    getRenderTarget:()=>target,setRenderTarget:t=>target=t,getClearColor:c=>c.copy(color),getClearAlpha:()=>alpha,
+    getRenderTarget:()=>target,setRenderTarget:t=>{
+      target=t;if(t&&!targets.has(t)){targets.add(t);t.addEventListener('dispose',()=>disposedTargets++);}
+    },getClearColor:c=>c.copy(color),getClearAlpha:()=>alpha,
     setClearColor:(c,a)=>{color.set(c);alpha=a;},clear:()=>{},
     render(s,camera){
       if(camera.isPerspectiveCamera)return;
+      for(const o of s.children)if(!geometries.has(o.geometry)){
+        geometries.add(o.geometry);o.geometry.addEventListener('dispose',()=>disposedGeometries++);
+      }
       const u=s.overrideMaterial.uniforms,source=u.source.value.clone();sources.push(source);
       const piece=u.pieceU.value.lengthSq()?{position:u.pieceCentre.value.clone(),u:u.pieceU.value.clone(),v:u.pieceV.value.clone()}:null;
       const sample={source,origin:u.origin.value,range:u.reach.value,weight:u.weight.value,cd:u.cd.value,
@@ -76,11 +83,11 @@ async function renderProbe(light, blockers=[], point=V(0,0,0), normal=V(0,1,0), 
         return ray.intersectObjects(blockers,false).length?0:1;
       };
       const e=F.sampleValue([sample],point,normal,visible,0,1);
-      values[0]+=light.kind===3?e.irradiance/(light.scale||1):e.value;values[1]+=e.irradiance/16;
+      values[0]+=light.kind===3?e.irradiance/(light.scale||1):e.value;values[1]+=e.irradiance/(16*u.fillStrength.value);
     },
     readRenderTargetPixels(t,x,y,w,h,raw){values.forEach((v,i)=>raw[i]=THREE.DataUtils.toHalfFloat(v));}};
   const bytes=await P.renderPage({plan,scene,tier},renderer,[chart],1,light,{}, {room:{charts:[chart]}});
-  return {bytes,sources};
+  return {bytes,sources,resources:{targets:targets.size,disposedTargets,geometries:geometries.size,disposedGeometries}};
 }
 check('twelve_fixtures_one_entity_one_channel_per_chart',()=>{
   const list=RT.bakeLights(fixtureLayout(Array.from({length:12},(_,i)=>fixture('p'+i,'point',{at:[i,0,4]}))),null,plan);
@@ -94,7 +101,7 @@ check('twelve_fixtures_one_entity_one_channel_per_chart',()=>{
   assert.deepEqual(Object.keys(aggregate),['light.test']);assert.equal(aggregate['light.test'].assignments[0].score,12);
   assert.deepEqual(RT.bakeLights({markers:[{kind:'light',placed:false,entity_id:'light.unplaced',at:null}]},null,plan),[]);
 });
-check('legacy_house_bake_identical',async()=>{
+check('legacy_inputs_slots_jitter_and_uniform_submission_identical',async()=>{
   needFixtures(); const old={device:'lamp',building:null,level:null,room:'yard',at:[2,2,4],yard:true};
   const layout={markers:[{kind:'light',placed:true,device_id:'lamp',entity_id:'light.lamp',room:'yard',yard:true,at:[2,2,4]}]};
   assert.deepEqual(RT.bakeLights(layout,null,plan),[old]);
@@ -116,17 +123,87 @@ check('legacy_house_bake_identical',async()=>{
   assert.deepEqual([...rendered.bytes],[255,Math.round(Math.min(1,THREE.DataUtils.fromHalfFloat(THREE.DataUtils.toHalfFloat(reference.irradiance/16)))*255),0,255]);
 });
 const awaitImportReach=await import(file('static/twin/bake/reach.js'));
-check('spot_slot_is_kind_1_and_cone_matches_live',()=>{
+function physicalRoom(segments=1) {
+  const p={buildings:[{id:'house',position:[0,0],levels:[{id:'L',elevation:0,ceiling:8}],
+    rooms:[{id:'room',level:'L',polygon:[[-10,-10],[10,-10],[10,10],[-10,10]]}]}]};
+  const root=new THREE.Group();root.scale.setScalar(FT);root.userData.buildingId='house';
+  for(const ceiling of [false,true]) {
+    const g=new THREE.PlaneGeometry(20,20,segments,segments).rotateX(ceiling?Math.PI/2:-Math.PI/2);
+    if(ceiling)g.translate(0,8,0);
+    const m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({name:ceiling?'ceiling':'floor'}));
+    m.userData.merged=true;root.add(m);
+  }
+  root.updateMatrixWorld(true);
+  const options={room:{density:2,page:128,gutter:2}};
+  return {p,root,options,atlas:A.buildAtlas(root,p,options)};
+}
+check('group_reach_cached_and_within_legacy_timing',()=>{
+  const run=(name,rows,legacyCount)=>{
+    const {p,options,atlas}=physicalRoom(60);
+    const input=RT.bakeLights({markers:[],light_fixtures:rows},null,p);
+    const legacy=Array.from({length:legacyCount},(_,i)=>({device:'old'+i,absolute:true,at:[i%8-4,Math.floor(i/8)-1,7.9],range:18}));
+    const start=performance.now();B.bakeLayout(atlas,options,legacy);const old=performance.now()-start;
+    const firstAt=performance.now(),first=B.bakeLayout(atlas,options,input),firstMs=performance.now()-firstAt;
+    const secondAt=performance.now(),second=B.bakeLayout(atlas,options,input),secondMs=performance.now()-secondAt;
+    assert.deepEqual(second.entries,first.entries);
+    assert.ok(secondMs<50,`${name} cached ${secondMs} ms`);
+    assert.ok(firstMs<old*3,`${name} first ${firstMs} ms vs legacy ${old} ms`);
+    console.log(`       C2 ${name}: legacy ${old.toFixed(2)} ms, first ${firstMs.toFixed(2)} ms, second ${secondMs.toFixed(2)} ms`);
+  };
+  run('8 x 3 points',Object.fromEntries(Array.from({length:8},(_,i)=>['light.'+i,
+    Array.from({length:3},(_,j)=>fixture(i+'p'+j,'point',{at:[i-4,j-1,7.9]}))])),24);
+  run('line + panel + 3 points',{'light.line':[fixture('l','line',{path:[[-4,0,7.9],[5,0,7.9]],width_in:.5,facing:'down'})],
+    'light.panel':[panel()], 'light.cluster':Array.from({length:3},(_,i)=>fixture('p'+i,'point',{at:[i-1,0,7.9]}))},5);
+});
+check('production_sum_scale_uses_floor_codes_and_is_saved_and_keyed',()=>{
+  const {p,options,atlas}=physicalRoom(4);
+  const input=RT.bakeLights(fixtureLayout([[-3,-3],[3,-3],[-3,3],[3,3]].map(([x,y],i)=>
+    fixture('s'+i,'spot',{at:[x,y,7.9],aim:[x,y,0],cone_deg:60,softness:.3}))),null,p);
+  const packed=B.bakeLayout(atlas,options,input),l=packed.lights[0],samples=F.bakeSamples(p,l);
+  let brightest=0,peak=0;
+  for(let x=-9;x<=9;x+=.25)for(let z=-9;z<=9;z+=.25) {
+    const value=F.sampleValue(samples,V(x*FT,0,z*FT),V(0,1,0),()=>1,3,l.scale);
+    brightest=Math.max(brightest,value.value);peak=Math.max(peak,value.irradiance);
+  }
+  assert.ok(Math.round(brightest*255)>=96,`only ${Math.round(brightest*255)} codes, scale ${l.scale}`);
+  assert.ok(peak<=l.scale*1.03,`scale ${l.scale} clips the real floor peak ${peak}`);
+  assert.equal(packed.entries[l.device].scale,l.scale);
+  const reader=B.bakeLayout(atlas,options,[{...input[0],publishedScale:17}]);
+  assert.equal(reader.lights[0].scale,17,'reader uses manifest scale rather than deriving it from geometry');
+  assert.notEqual(B.lightKey(atlas,l,packed.slots[l.device],{}),B.lightKey(atlas,{...l,scale:l.scale*2},packed.slots[l.device],{}));
+  console.log(`       C3 floor uses ${Math.round(brightest*255)} codes, scale ${l.scale.toFixed(4)}`);
+});
+check('mixed_point_and_legacy_ranking_share_photometric_units',()=>{
+  const {p,options,atlas}=physicalRoom();
+  const fixtureLight=group([fixture('p','point',{at:[0,0,4]})]);
+  const legacy={device:'legacy',absolute:true,at:[0,0,4],range:18};
+  const reached=awaitImportReach.reachLights(atlas.room,[legacy,fixtureLight]);
+  for(const id of reached[0].receivingCharts)close(reached[1].scores[id]/reached[0].scores[id],1,.01);
+  const alone=B.bakeLayout(atlas,options,[legacy]);
+  const mixed=B.bakeLayout(atlas,options,[legacy,fixtureLight]);
+  close(mixed.slots.legacy.assignments[0].score,alone.slots.legacy.assignments[0].score);
+  const again=awaitImportReach.reachLights(atlas.room,[legacy,fixtureLight]);
+  assert.equal(again[0].receivers,reached[0].receivers,'nested fixture sweep retains legacy cache');
+  assert.equal(again[1].receivers,mixed.lights[1].receivers,'group signature retains its result');
+});
+check('spot_slot_is_kind_1_and_cone_matches_live',async()=>{
   needFixtures();const l=group([fixture('spot','spot',{aim:[0,0,0],cone_deg:60,softness:.3})]);assert.equal(l.kind,1);
   const u=M.lightmapUniforms(1,1,{fixtures:true});M.setLightSource(u,0,0,V(...l.emitters[0].position),6,1,l);
   const data=u.lmTints.value.image.data;
-  const spot=new THREE.SpotLight();spot.angle=Math.PI/6;spot.penumbra=.3;
+  const {createRealLights}=await import(file('static/twin/live/real_lights.js'));
+  const scene=new THREE.Scene(),rig=createRealLights({scene,tier:'high'});
+  const emitter=resolveEmitters(fixtureLayout([fixture('spot','spot',{aim:[0,0,0],cone_deg:60,softness:.3})]),
+    {'light.test':{state:'on'}},plan)[0];
+  rig.update([{device:emitter.fixture_id,emitter,at:emitter.at,position:V(...emitter.position),
+    distance:emitter.range*FT,intensity:1,rgb:[255,255,255]}],[0,0,0]);
+  const spot=scene.children.find(o=>o.isSpotLight&&o.intensity>0);assert.ok(spot,'production live spot selected');
   for(const angle of [0,10,21,25,30,40]){
     const c=Math.cos(angle*Math.PI/180),outer=Math.cos(spot.angle),inner=Math.cos(spot.angle*(1-spot.penumbra));
     const t=Math.max(0,Math.min(1,(c-outer)/(inner-outer)));
     close(F.coneWindow(c,outer,inner),t*t*(3-2*t));
     close(F.coneWindow(c,data[15],data[16]),t*t*(3-2*t),1e-5);
   }
+  rig.stop();
 });
 check('rect_visibility_is_fraction_of_samples_seen',async()=>{
   needFixtures();const l=group([panel()]),at=V(0,0,0),n=V(0,1,0);
@@ -156,7 +233,8 @@ check('multi_fixture_entity_stores_scaled_irradiance_and_restores_it',async()=>{
   assert.equal(l.kind,3);const at=V(0,0,0),n=V(0,1,0),samples=F.bakeSamples(plan,l);
   const one=F.sampleValue(samples.filter(s=>s.emitter===0),at,n,()=>1,3,100).irradiance;
   const two=F.sampleValue(samples.filter(s=>s.emitter===1),at,n,()=>1,3,100).irradiance;
-  close(two/one,3,.02);const scale=one+two+1;
+  close(two/one,3,.02);
+  const {atlas,options}=physicalRoom(4),reached=B.bakeLayout(atlas,options,[l]).lights[0],scale=reached.scale;
   const stored=F.sampleValue(samples,at,n,()=>1,3,scale);
   const byte=Math.round(stored.value*255);close(F.decodeIrradiance(byte/255,scale),one+two,scale/128);
   const rendered=await renderProbe({...l,scale});close(F.decodeIrradiance(rendered.bytes[0]/255,scale),one+two,scale/128);
@@ -191,7 +269,13 @@ check('brightness_and_colour_do_not',()=>{
 check('rect_cap_changes_shading_only',async()=>{
   needFixtures();const lights=Array.from({length:10},(_,i)=>({...group([panel()]),device:'light.'+i,entity:'light.'+i}));
   const low=F.exactRects(lights,'low'),high=F.exactRects(lights,'high');assert.equal(low.size,2);assert.equal(high.size,8);
-  const l=lights[5],slot={bank:0,channel:0};assert.equal(B.lightKey({key:'a'},l,slot,{}),B.lightKey({key:'a'},{...l,exact:false},slot,{}));
+  const l=lights[5];
+  const {atlas,options}=physicalRoom();
+  // Both tiers submit the identical production bake list and persisted entries.
+  const lowInputs=RT.bakeLights({light_fixtures:Object.fromEntries(lights.map(l=>[l.device,[panel()]]))},null,plan);
+  const highInputs=RT.bakeLights({light_fixtures:Object.fromEntries(lights.map(l=>[l.device,[panel()]]))},null,plan);
+  const lowBake=B.bakeLayout(atlas,options,lowInputs),highBake=B.bakeLayout(atlas,options,highInputs);
+  assert.deepEqual(lowBake.lights,highBake.lights);assert.deepEqual(lowBake.entries,highBake.entries);
   assert.ok(!low.has(l.device));const p=F.rectPieces(l.emitters[0])[0];assert.ok(F.rectIrradiance(p,V(0,0,0),V(0,1,0),false)>0);
   const u=M.lightmapUniforms(1,1,{fixtures:true});
   M.setLightSource(u,0,0,V(0,1,0),6,2,l,low.has(l.device));assert.equal(u.lmTints.value.image.data[11],0);
@@ -203,13 +287,38 @@ check('fire_pit_bakes_from_emitters_with_flame_tint',()=>{
   const lights=RT.bakeLights({markers:[]},null,p);assert.equal(lights.length,1);assert.equal(lights[0].device,'switch.fire');
   assert.equal(lights[0].emitters[0].fire_pit,true);assert.deepEqual(lights[0].emitters[0].rgb,[255,154,60]);
   assert.equal(lights[0].emitters[0].intensityScale,.5);
+  assert.equal(lights[0].kind,0);assert.equal(lights[0].emitters[0].shape,'point');
+  assert.ok(energy(lights[0],V(5*FT,0,-5*FT),V(0,1,0)).irradiance>0,'patio gets fire light');
 });
-check('room_fill_present_for_rect_and_sum_slots',()=>{
+check('mixed_pit_samples_carry_half_strength_and_share',()=>{
+  const p={buildings:[],site:{fire_pit:[{id:'gas',at:[5,5],fuel:'gas',entity:'switch.fire',radius:2}]}};
+  const layout={markers:[],light_fixtures:{'switch.fire':[fixture('p','point',{at:[0,0,4]})]}};
+  const light=RT.bakeLights(layout,null,p)[0],samples=F.bakeSamples(p,light);
+  const pit=samples.filter(s=>light.emitters[s.emitter].fire_pit),point=samples.filter(s=>!light.emitters[s.emitter].fire_pit);
+  close(pit.reduce((n,s)=>n+s.cd*s.weight,0)/point.reduce((n,s)=>n+s.cd*s.weight,0),.5);
+});
+check('repeated_fixture_pages_reuse_one_cube_and_dispose_all_owned_resources',async()=>{
+  for(let i=0;i<3;i++) {
+    const result=await renderProbe(group([panel(),fixture('p','point')]));
+    assert.ok(result.sources.length>=32);
+    assert.deepEqual(result.resources,{targets:2,disposedTargets:2,geometries:1,disposedGeometries:1});
+  }
+});
+check('room_fill_uniform_submission_and_cpu_decode_for_rect_and_sum',async()=>{
   needFixtures();for(const l of [group([panel()]),group([panel(),fixture('p','point')])]){
-    const e=energy(l,V(0,0,0),V(0,1,0)),bytes=new Uint8Array([0,Math.round(Math.min(1,e.irradiance/16)*255),0,255]);
-    const fill=P.roomFills([{bytes,charts:[{room:0,rect:{x:0,y:0,w:1,h:1},mesh:{material:{color:new THREE.Color('white')}}}]}],1);
+    const {bytes}=await renderProbe(l);
+    const fill=P.roomFills([{bytes,charts:[{room:0,rect:{x:0,y:0,w:1,h:1},mesh:{material:{color:new THREE.Color('white')}}}]}],1,l);
     assert.ok(fill[0]>0);
   }
+});
+check('default_panel_room_fill_does_not_clip_and_restores_strength',async()=>{
+  const l=group([{...panel(),at:[0,0,8]}]),at=V(0,0,0),normal=V(0,1,0),{bytes}=await renderProbe(l,[],at,normal);
+  assert.ok(bytes[1]>0&&bytes[1]<255,`G ${bytes[1]} should not clip`);
+  const e=energy(l,at,normal),strength=F.fillStrength(l);
+  close(bytes[1]/255*16*strength,e.irradiance,16*strength/255);
+  const charts=[{room:0,rect:{x:0,y:0,w:1,h:1},mesh:{material:{color:new THREE.Color('white')}}}];
+  close(P.roomFills([{bytes,charts}],1,l)[0],Math.min(4,bytes[1]*.08)*16/255*strength);
+  const old={absolute:true,at:[0,0,4],range:18};assert.equal(F.fillStrength(old),1);
 });
 check('worst_case_sampler_count_and_legacy_shader_work',()=>{
   needFixtures();const u=M.lightmapUniforms(1,1,{fixtures:true});M.setLightSource(u,0,0,V(0,1,0),6,2,group([panel()]),true);
@@ -221,11 +330,12 @@ check('worst_case_sampler_count_and_legacy_shader_work',()=>{
   const textures=new Set(Object.values(shader.uniforms).map(v=>v.value).filter(v=>v?.isTexture));assert.equal(textures.size,7);
   const maps=5,environment=1,dfg=1,sun=1,lamp=1;
   assert.equal(textures.size+maps+environment+dfg+sun+lamp,16);
-  for(const areas of [0,8]) {
-    const budget=samplerBudget(shader.fragmentShader,areas);
+  for(const areas of [0,8])for(const clearcoat of [false,true]) {
+    const budget=samplerBudget(shader.fragmentShader,areas,clearcoat);
     assert.ok(budget.count<=16,JSON.stringify(budget));
     assert.equal(budget.names.filter(n=>['ltc_1','ltc_2','lmLtc1','lmLtc2'].includes(n)).length,2,JSON.stringify(budget));
-    console.log(`       ${areas} live area slots: ${budget.count} declared samplers`);
+    if(clearcoat)assert.ok(budget.source.includes('clearcoatSpecularDirect+=lmTint*p.w*coatFresnel'));
+    console.log(`       ${areas} live area slots, clearcoat ${clearcoat}: ${budget.count} declared samplers`);
   }
   const legacy=M.lightmapUniforms(1,1);assert.equal(legacy.lmTints.value.image.height,3);
   const old=new THREE.MeshStandardMaterial();M.patchLightmaps([old],pages,legacy);

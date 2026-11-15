@@ -209,6 +209,13 @@ for (int i=0;i<4;i++) {
   mat3 inv=mat3(vec3(t1.x,0.0,t1.y),vec3(0.0,1.0,0.0),vec3(t1.z,0.0,t1.w));
   vec3 fresnel=material.specularColorBlended*t2.x+(material.specularF90-material.specularColorBlended)*t2.y;
   reflectedLight.directSpecular+=lmTint*p.w*fresnel*LTC_Evaluate(geometryNormal,geometryViewDir,geometryPosition,inv,coords)*cut*${visibility};
+  #ifdef USE_CLEARCOAT
+    vec2 coatUv=LTC_Uv(geometryClearcoatNormal,geometryViewDir,material.clearcoatRoughness);
+    vec4 coat1=texture2D(ltc_1,coatUv),coat2=texture2D(ltc_2,coatUv);
+    mat3 coatInv=mat3(vec3(coat1.x,0.0,coat1.y),vec3(0.0,1.0,0.0),vec3(coat1.z,0.0,coat1.w));
+    vec3 coatFresnel=material.clearcoatF0*coat2.x+(material.clearcoatF90-material.clearcoatF0)*coat2.y;
+    clearcoatSpecularDirect+=lmTint*p.w*coatFresnel*LTC_Evaluate(geometryClearcoatNormal,geometryViewDir,geometryPosition,coatInv,coords)*cut*${visibility};
+  #endif
 }`;
 export const lightSwizzle = format => format === THREE.RGBAFormat ? 'ra' : 'rg';
 export function pickTranscode(extensions, channels) {

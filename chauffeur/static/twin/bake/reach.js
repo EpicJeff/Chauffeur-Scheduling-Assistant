@@ -1,8 +1,8 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
-import { FT, lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
+import { FT, CANDELA, lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { fingerprint } from './fingerprint.js';
-import { emitterSamples } from './fixture_terms.js';
+import { emitterSamples, rectPieces, sampleValue, coneWindow, reachWindow } from './fixture_terms.js';
 
 // Match the live lamp's bulb height and range, including the ceiling inset.
 export function lightSource(plan, light) {
@@ -81,46 +81,103 @@ function triangles(chart) {
   cached.set(chart, data); return data;
 }
 
-export function reachLights(layout, lights) {
+export function reachLights(layout, lights, outer = true) {
   if (!layout.plan) return lights;
-  if (lights.some(l => l.emitters)) return lights.map(light => {
-    if (!light.emitters) return reachLights(layout, [light])[0];
-    const samples = emitterSamples(light.emitters);
-    const inputs = samples.map((s, i) => ({device: light.device + ':' + i, absolute: true,
-      at: [s.source.x / FT, -s.source.z / FT, s.source.y / FT],
-      range: (s.range + (s.piece ? Math.hypot(s.piece.width, s.piece.height) : 0)) / FT}));
-    const hits = reachLights(layout, inputs), receivers = new Set(), charts = new Set(), scores = {}, distances = {}, chartKeys = {};
-    let scale = 0;
-    const hash = fingerprint();hash.add(light.signature);
-    hits.forEach((hit, i) => {
-      const sample = samples[i];hash.add(hit.reach);
-      hit.receivers.forEach(r => receivers.add(r));
-      for (const chart of hit.receivingCharts) {
-        charts.add(chart);scores[chart] = (scores[chart] || 0) + hit.scores[chart] * sample.cd * sample.weight;
-        distances[chart] = Math.min(distances[chart] ?? Infinity, hit.distances[chart]);chartKeys[chart] = hit.chartKeys[chart];
-      }
-      scale += sample.cd * sample.weight / Math.max(.01, Math.min(Infinity, ...Object.values(hit.distances)));
-    });
-    return {...light, receivers: [...receivers].sort((a,b) => a-b), receivingCharts: [...charts].sort((a,b) => a-b),
-      scores, distances, chartKeys, reach: hash.key(), range: lightSource(layout.plan, light).range, scale: Math.max(scale, 1e-6)};
-  });
   if (!reaches.has(layout)) reaches.set(layout, new Map());
   const saved = reaches.get(layout);
+  // Only the complete, outer device list can retire a cached group. A nested
+  // emitter sweep must not delete its siblings (or the legacy lamps).
+  const prune = () => {
+    if (!outer) return;
+    const devices = new Set(lights.map(l => l.device));
+    for (const device of saved.keys()) if (!devices.has(device)) saved.delete(device);
+  };
+  if (lights.some(l => l.emitters)) {
+    const result = lights.map(light => {
+      if (!light.emitters) return reachLights(layout, [light], false)[0];
+      if (light.reach && light.receivers) return light;
+      const input = JSON.stringify(['group', light.signature, light.publishedScale ?? null]);
+      const previous = saved.get(light.device);
+      if (previous?.input === input) return {...light, ...previous.result};
+      const samples = emitterSamples(light.emitters);
+      // Reach is a conservative envelope per emitter/piece, never per jitter or
+      // surface sample. The piece half-diagonal contains every stratified sample.
+      const probes = light.emitters.flatMap((e, i) => {
+        const first = samples.find(s => s.emitter === i);
+        return e.shape === 'point' || e.shape === 'spot'
+          ? [{...first, source: first.origin, weight: 1, padding: .15 * FT}]
+          : rectPieces(e).map(p => ({...first, source: p.position, normal: p.normal, piece: p,
+            cd: p.luminance * p.width * p.height, weight: 1, padding: Math.hypot(p.width, p.height) / 2}));
+      });
+      const scaleBound = {value: 0, probes};
+      const inputs = probes.map((s, i) => ({device: light.device + ':reach:' + i, absolute: true,
+        at: [s.source.x / FT, -s.source.z / FT, s.source.y / FT], range: s.range / FT, probe: s,
+        ...(light.kind === 3 && light.publishedScale === undefined ? {scaleSamples: samples, scaleBound, signature: light.signature} : {})}));
+      const hits = reachLights(layout, inputs, false), receivers = new Set(), charts = new Set(), scores = {}, distances = {}, chartKeys = {};
+      const hash = fingerprint();hash.add(light.signature);
+      hits.forEach(hit => {
+        hash.add(hit.reach);
+        hit.receivers.forEach(r => receivers.add(r));
+        for (const chart of hit.receivingCharts) {
+          charts.add(chart);scores[chart] = (scores[chart] || 0) + hit.scores[chart];
+          distances[chart] = Math.min(distances[chart] ?? Infinity, hit.distances[chart]);chartKeys[chart] = hit.chartKeys[chart];
+        }
+      });
+      // Each sweep evaluated the real sample sum on its reached receiver
+      // triangles. Only a scalar maximum survives; no per-sample reach is held.
+      const scale = light.publishedScale ?? Math.max(1e-6, scaleBound.value);
+      const result = {receivers: [...receivers].sort((a,b) => a-b), receivingCharts: [...charts].sort((a,b) => a-b),
+        scores, distances, chartKeys, reach: hash.key(), range: lightSource(layout.plan, light).range,
+        ...(light.kind === 3 ? {scale} : {})};
+      saved.set(light.device, {input, result});
+      return {...light, ...result};
+    });
+    prune();return result;
+  }
   // Coincident fixtures have identical physical reach. Retain only current
   // device results, so dragging a lamp does not grow a position-history cache.
   const positions=new Map([...saved.values()].map(hit=>[hit.input,hit.result]));
-  const devices=new Set(lights.map(l=>l.device));
-  for (const device of saved.keys()) if (!devices.has(device)) saved.delete(device);
+  prune();
   const closest = new THREE.Vector3(), coords=new Float64Array(9);
   return lights.map(light => {
     if (!light.at) return light;
     if (light.reach && light.receivers) return light;
-    const input = JSON.stringify([light.building, light.level, light.room, light.at, ...(light.absolute ? [true, light.range] : [])]);
+    const input = JSON.stringify([light.building, light.level, light.room, light.at, ...(light.absolute ? [true, light.range] : []),
+      ...(light.probe ? [light.probe, light.signature] : [])]);
     const hit = positions.get(input);
     if (hit) { saved.set(light.device,{input,result:hit}); return { ...light, ...hit }; }
     const { source, range } = lightSource(layout.plan, light), receivers = new Set(), geometry = [];
     const receivingCharts = [], distances = {}, scores={}, chartKeys={};
-    const delta=new THREE.Vector3(), limit=(range+.15*FT)**2, range4=range**4;
+    let scale=0;
+    const probe=light.probe;
+    const delta=new THREE.Vector3(), limit=(range+(probe?.padding ?? .15*FT))**2, range4=range**4;
+    const physicalScore = (point, normal, d, cosine) => {
+      if (light.scaleSamples && d<=limit && cosine>0) {
+        // A conservative distance/cosine bound avoids evaluating all jitter
+        // samples where even the unoccluded upper bound cannot beat the peak.
+        // This skips work, never a possible maximum, and retains only a scalar.
+        let bound=0;
+        for(const s of light.scaleBound.probes) {
+          const x=s.source.x-point.x,y=s.source.y-point.y,z=s.source.z-point.z;
+          const nearest=Math.max(0,Math.hypot(x,y,z)-s.padding);
+          const cos=Math.min(1,Math.max(0,(normal.x*x+normal.y*y+normal.z*z+s.padding)/Math.max(nearest,1e-4)));
+          bound+=s.cd*reachWindow(nearest,s.range)*cos/Math.max(.01,nearest*nearest);
+        }
+        if(bound>light.scaleBound.value) {
+          light.scaleBound.value=Math.max(light.scaleBound.value,
+            sampleValue(light.scaleSamples,point,normal,()=>1,3,1).irradiance);
+        }
+        scale=light.scaleBound.value;
+      }
+      let score = Math.max(0,1-d*d/range4)**2/Math.max(d,.01)*cosine;
+      if (probe) {
+        const direction=delta.copy(source).sub(point).normalize();
+        const facing=probe.normal.lengthSq() ? Math.max(0,-probe.normal.dot(direction)) : 1;
+        const cone=probe.outer > -1 ? coneWindow(-probe.axis.dot(direction),probe.outer,probe.inner) : 1;
+        score *= probe.cd / CANDELA * facing * cone;
+      }
+      return score;
+    };
     for (const c of layout.charts) {
       // A heightfield is lit from above: its bounds give the distance, and its tier-free
       // chart key stands for its triangles (walking a graded grid per light is the cost).
@@ -129,7 +186,8 @@ export function reachLights(layout, lights) {
         if (d > limit) continue;
         receivers.add(c.room); geometry.push(c.key + surfaceInput(c));
         distances[c.id] = d; receivingCharts.push(c.id); chartKeys[c.id] = c.key;
-        scores[c.id] = Math.max(0, 1 - d * d / range4) ** 2 / Math.max(d, .01);
+        const normal=new THREE.Vector3(0,1,0);
+        scores[c.id] = physicalScore(closest,normal,d,1);
         continue;
       }
       const data=triangles(c);
@@ -142,7 +200,8 @@ export function reachLights(layout, lights) {
         distance = Math.min(distance, d);
         delta.copy(source).sub(closest);
         const cosine=d>1e-12 ? Math.max(0,t.normal.dot(delta)/Math.sqrt(d)) : 1;
-        score=Math.max(score,Math.max(0,1-d*d/range4)**2/Math.max(d,.01)*cosine);
+        const value=physicalScore(closest,t.normal,d,cosine);
+        score=Math.max(score,value);
         // The soft-shadow emitter has a 0.15 ft radius.
         if (d > limit) continue;
         receivers.add(c.room);
@@ -164,7 +223,7 @@ export function reachLights(layout, lights) {
     for (const key of geometry.sort()) hash.add(key);
     const reach=hash.key();
     const result = { receivers: [...receivers].sort((a, b) => a - b), receivingCharts,
-      distances, scores, chartKeys, range, reach };
+      distances, scores, chartKeys, range, reach, ...(light.scaleSamples ? {scale} : {}) };
     saved.set(light.device, { input, result });
     positions.set(input,result);
     return { ...light, ...result };

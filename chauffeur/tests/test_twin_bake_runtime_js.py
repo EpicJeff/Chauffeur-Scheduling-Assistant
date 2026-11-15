@@ -111,7 +111,7 @@ await check('every_placed_light_bakes_including_yard_and_fire_pit', async () => 
     {device_id:'pit-light',kind:'light',placed:true,entity_id:'light.pit',at:[5,5,2],room:'r',building:'b',level:'L1'},
     {device_id:'nowhere',kind:'light',placed:true,at:[5,5,2],room:null,building:null,level:null},
     {device_id:'unplaced',kind:'light',placed:false,at:[1,1,8],room:'r',building:'b',level:'L1'}]};
-  assert.deepEqual(lightsOf(layout).map(l=>l.device),['indoor','yard','pit-light']);
+  assert.deepEqual(lightsOf(layout).map(l=>l.device),['indoor','yard','pit-light','unplaced']);
   assert.equal(lightsOf(layout)[1].yard,true);
   // Object lamps come from the scene, as live modes.js makes them. A fire pit owns its
   // light-domain marker's light; a lamp object with a marker stays that marker.
@@ -124,7 +124,7 @@ await check('every_placed_light_bakes_including_yard_and_fire_pit', async () => 
   root.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1).translate(-6,.5,6),free));
   const withLamp={markers:[...layout.markers,{device_id:'lamp-marker',kind:'light',placed:true,entity_id:'light.lamp',at:[1,1,4],room:'r',building:'b',level:'L1'}]};
   const all=bakeLights(withLamp,root), ids=all.map(l=>l.device);
-  assert.deepEqual(ids,['indoor','yard','lamp-marker','object:fire_pit:f','object:b:glow'],JSON.stringify(ids));
+  assert.deepEqual(ids,['indoor','yard','unplaced','lamp-marker','object:fire_pit:f','object:b:glow'],JSON.stringify(ids));
   const fire=all.find(l=>l.device==='object:fire_pit:f');
   assert.equal(fire.absolute,true);assert.equal(fire.range,18);
   assert.deepEqual(fire.at.map(v=>+v.toFixed(6)),[3/FT,4/FT,1/FT].map(v=>+v.toFixed(6)),'the fire light point in lot feet');
@@ -486,11 +486,43 @@ await check('fixture_groups_bake_twice_settle_and_populate_shape_rows', async ()
     const t=shader.uniforms.lmTints.value;assert.equal(t.image.height,17);assert.equal(t.image.width,3);
     assert.deepEqual([t.image.data[24],t.image.data[28],t.image.data[32]],[1,2,3]);
     assert.ok(t.image.data[34]>0,'the sum scale reaches the shader');
+    const manifest=desk.server.manifests.get(desk.controller.state().key);
+    assert.equal(t.image.data[34],Math.fround(manifest.lights['light.sum'].scale),'decode scale is the published manifest value');
     desk.controller.light('light.spot',[255,100,50],1);assert.ok(t.image.data[0]>0);
     await desk.controller.now();
     assert.deepEqual(desk.controller.state().stale,[]);assert.equal(desk.controller.state().baked.length,6);
     assert.deepEqual(desk.controller.fresh().sort(),['light.rect','light.spot','light.sum']);
   } finally {desk.controller.stop();}
+});
+await check('five_mixed_entries_become_fresh_and_force_bake_again',async()=>{
+  const {lightSource}=await import(file('static/twin/bake/reach.js'));
+  const source=lightSource(job.plan,k1).source,at=[source.x/gen.FT,-source.z/gen.FT,source.y/gen.FT];
+  const point=(id,dx=0)=>({id:'fixture:'+id,shape:'point',ref:'absolute',at:[at[0]+dx,at[1],at[2]]});
+  const fixtureLayout={light_fixtures:{
+    'light.spot':[{...point('s'),shape:'spot',aim:[at[0],at[1],0],cone_deg:60,softness:.3}],
+    'light.panel':[{...point('a'),shape:'area',size_ft:[3,2],facing:'down'}],
+    'light.line':[{id:'fixture:l',shape:'line',ref:'absolute',path:[at,[at[0]+9,at[1],at[2]]],facing:'down',width_in:.5}],
+    'light.sum':[point('one',-1),point('two',1)]}};
+  const desk=await context('high',null,[k2],{fixtureLayout,poll:0});
+  try {
+    await until(()=>desk.controller.fresh().length===5&&!desk.controller.state().baking,'all five entries fresh');
+    assert.equal(desk.controller.state().baked.length,5);assert.deepEqual(desk.controller.state().stale,[]);
+    for(let i=0;i<3;i++)await desk.controller.refresh();
+    assert.equal(desk.controller.state().baked.length,5,'unchanged refresh does not restart the bake');
+    const key=desk.controller.state().key,m=desk.server.manifests.get(key);
+    const sumScale=m.lights['light.sum'].scale;assert.ok(sumScale>0);
+    m.lights['light.sum'].scale*=2;
+    await desk.controller.refresh();assert.ok(desk.controller.state().stale.includes('light.sum'),'scale mismatch stales page');
+    const wall=await context('low',desk.server,[k2],{fixtureLayout,poll:0});
+    try {
+      await until(()=>wall.controller.fresh().length===4,'reader refuses the mismatched scale');
+      assert.ok(wall.controller.state().stale.includes('light.sum'));
+    }finally{wall.controller.stop();}
+    await desk.controller.now();
+    assert.equal(desk.controller.state().baked.length,10);assert.deepEqual(desk.controller.state().stale,[]);
+    assert.equal(desk.controller.fresh().length,5);
+    assert.equal(desk.server.manifests.get(key).lights['light.sum'].scale,sumScale);
+  }finally{desk.controller.stop();}
 });
 console.log(`${passed}/${ran} passed`); process.exit(passed === ran ? 0 : 1);
 """

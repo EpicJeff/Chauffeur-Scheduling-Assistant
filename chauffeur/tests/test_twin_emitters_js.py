@@ -30,7 +30,7 @@ let mod = {};
 try { mod = await import(file('static/twin/live/emitters.js')); } catch (e) { console.log(e.message); }
 const {emission,resolveEmitters,firePitEmitters,emitterSignature} = mod;
 const {lightColor} = await import(file('static/twin/live/real_lights.js'));
-const {gasTableLayout,firePitLayout,firePitOptions,buildFirePit} = await import(file('static/twin/fire_pits.js'));
+const {gasTableLayout,firePitLayout,firePitOptions,buildFirePit,fireFlameMaterial} = await import(file('static/twin/fire_pits.js'));
 const THREE=await import(file('static/vendor/three-r187/three.module.js'));
 const close = (a,b) => assert.ok(Math.abs(a-b)<1e-10,`${a} != ${b}`);
 const near = (a,b) => a.forEach((v,i)=>close(v,b[i]));
@@ -187,26 +187,31 @@ check('snapped_runs_take_the_auto_foundation_lift_from_building_hosts_only',asyn
   // Unsnapped floor fixtures still sit on the lifted floor, as legacy markers do.
   close(resolveEmitters(layout([fixture('pt','point',{ref:'floor',building:'b',level:'L',at:[5,5,8]})]),states,p)[0].at[2],8+lift);
 });
-check('linear_burner_gives_line_wide_gives_area_wood_gives_point',()=>{
+check('auto_placed_marker_with_position_still_resolves_and_null_does_not',()=>{
+  const rows={markers:[{kind:'light',placed:false,device_id:'auto',entity_id:'light.auto',at:[1,2,4]},
+    {kind:'light',placed:false,device_id:'missing',entity_id:'light.missing',at:null}]};
+  const out=resolveEmitters(rows,{'light.auto':{state:'on'}},plan);
+  assert.equal(out.length,1);assert.equal(out[0].device_id,'auto');assert.equal(out[0].on,true);
+});
+check('every_pit_shape_keeps_its_point_lamp_above_finished_top',()=>{
   const linear={id:'linear',shape:'rectangle',polygon:[[0,0],[12,0],[12,2],[0,2]],fuel:'gas',entity:'switch.fire'};
   const wide={...linear,id:'wide',polygon:[[0,0],[4,0],[4,4],[0,4]]};
   const wood={id:'wood',shape:'round',at:[5,5],radius:2,fuel:'wood',entity:'switch.fire'};
   const table=gasTableLayout(linear),[line]=firePitEmitters(linear,plan),[area]=firePitEmitters(wide,plan),[point]=firePitEmitters(wood,plan);
-  assert.equal(line.shape,'line');assert.equal(line.facing,'up');assert.equal(line.entity_id,'switch.fire');
-  close(Math.hypot(...line.path[1].map((v,k)=>v-line.path[0][k])),table.lineLength);
-  near(line.path[0].slice(0,2),table.centre.map((v,k)=>v-table.u[k]*table.lineLength/2));
-  close(line.path[0][2],firePitOptions(linear).height+table.slabThickness-.075+.07);
-  assert.equal(area.shape,'area');assert.equal(area.facing,'up');assert.ok(area.size_ft.every(v=>v>0));
+  assert.equal(line.shape,'point');assert.equal(line.entity_id,'switch.fire');
+  near(line.at.slice(0,2),table.centre);
+  close(line.at[2],firePitOptions(linear).height+table.slabThickness+4);
+  assert.equal(area.shape,'point');assert.equal(area.facing,undefined);
   assert.equal(point.shape,'point');near(point.at.slice(0,2),firePitLayout(wood).centre);
 });
-check('derived_emitters_match_built_burner_and_log_heights',()=>{
+check('derived_emitters_match_built_object_fireLightAt',()=>{
   for(const fuel of ['gas','wood']) {
-    const pit={id:fuel,shape:'round',at:[5,5],radius:2,fuel,elevation:2};
+    const pit={id:fuel,shape:'round',at:[5,5],radius:2,fuel,elevation:2,entity:'switch.fire'};
     const group=new THREE.Group(),mat=name=>new THREE.MeshStandardMaterial({name});
-    const built=buildFirePit(group,pit,2,{id:fuel,mat,plain:(name,color,extra)=>new THREE.MeshStandardMaterial({name,color,...extra})});
+    const built=buildFirePit(group,pit,2,{id:fuel,mat,plain:(name,color,extra)=>extra?.fireShader?fireFlameMaterial():new THREE.MeshStandardMaterial({name,color,...extra})});
     const [e]=firePitEmitters(pit,plan);
-    if(fuel==='wood')close(e.at[2],Math.max(...built.logs.map(log=>log.height+log.radius))+1);
-    else {built.burner.geometry.computeBoundingBox();assert.ok(Math.abs(e.at[2]-built.burner.geometry.boundingBox.getCenter(new THREE.Vector3()).y)<1e-6,'Float32 burner centre matches resolved height');}
+    const old=built.flame.material.userData.objectLight.fireLightAt;
+    near(e.at,[old[0],-old[2],old[1]]);assert.equal(e.range,18);
     group.traverse(o=>{o.geometry?.dispose();for(const m of o.material?[].concat(o.material):[])m.dispose();});
   }
 });
@@ -250,6 +255,17 @@ if REAL_LIGHTS_DRIVER.count(_LIVE_SPLIT) != 1:
     raise AssertionError('test_twin_real_lights_js.DRIVER changed: cannot find its first check to reuse the fake view')
 LIVE_DRIVER = REAL_LIGHTS_DRIVER.split(_LIVE_SPLIT)[0] + r"""
 const {layoutKey,keepLive}=await import(file('static/twin/live/live.js'));
+check('auto_placed_light_with_position_reaches_live_pool',async()=>{
+  const saved=structuredClone(layout);
+  layout.markers.find(m=>m.device_id==='a1').placed=false;
+  layout.markers.push({kind:'light',placed:false,device_id:'missing',entity_id:'light.missing',at:null});
+  const {view,live}=await mounted();
+  try {
+    live.setMode('lights');live.draw();
+    const row=live.lights().find(l=>l.device==='a1');assert.ok(row?.real&&row.intensity>0);
+    assert.equal(live.lights().some(l=>l.device==='missing'),false);
+  }finally{live.stop();for(const k of Object.keys(layout))delete layout[k];Object.assign(layout,saved);}
+});
 check('live_uses_fixtures_not_markers_and_keeps_distinct_pool_slots',async()=>{
   const saved=structuredClone(layout);
   layout.light_fixtures={'light.a1':[
@@ -327,12 +343,26 @@ check('live_fire_pits_use_derived_emitters_with_flame_colour_scale_and_bake',asy
       close(row.intensity,.5);
     }
     const gas=actual.find(e=>e.device==='object:fire_pit:gas');assert.equal(gas.baked,true,'fresh bake drives the pit channel');
-    assert.ok(calls.some(c=>c.id==='switch.fire'&&Math.abs(c.intensity-.5)<1e-12),'one entity channel lit at the flame scale');
+    assert.ok(calls.some(c=>c.id==='switch.fire'&&Math.abs(c.intensity-1)<1e-12),'sum channel carries .5 in samples, not twice in tint');
     assert.ok(actual.find(e=>e.device==='object:fire_pit:wood').baked,'pits on one switch share their bake');
     assert.ok(tagged(view,'bulb').filter(b=>String(b.userData.bulb).startsWith('object:fire_pit:')).every(b=>!b.visible));
     states['input_boolean.fire'].state='off';await live.refresh();
     assert.equal(live.lights().find(e=>e.device==='object:fire_pit:ib').intensity,0);
   }finally{live.stop();states=initialStates();}
+});
+check('mixed_pit_and_fixture_channel_uses_entity_tint_and_switch_brightness',async()=>{
+  const saved=structuredClone(layout),view=makeView('high');
+  view.plan.site={fire_pit:[{id:'mixed',shape:'round',at:[5,5],radius:2,fuel:'wood',entity:'light.a1'}]};
+  layout.light_fixtures={'light.a1':[{id:'fixture:extra',shape:'point',ref:'absolute',at:[8,5,6]}]};
+  const calls=[];view.bake={fresh:()=>['light.a1'],light:(id,rgb,intensity)=>calls.push({id,rgb,intensity})};
+  states=initialStates();states['light.a1']={state:'on',attributes:{brightness:128,rgb_color:[40,100,220]}};
+  const live=await mountLive(view,{api});
+  try {
+    live.setMode('lights');live.draw();
+    const tint=calls.findLast(c=>c.id==='light.a1');assert.ok(tint);
+    assert.deepEqual(tint.rgb,[40,100,220]);assert.equal(tint.intensity,128/255);
+    assert.equal(live.lights().find(l=>l.device==='object:fire_pit:mixed').intensity,.5*128/255);
+  }finally{live.stop();states=initialStates();for(const k of Object.keys(layout))delete layout[k];Object.assign(layout,saved);}
 });
 check('live_recheck_remounts_on_fixture_aim_edit',async()=>{
   const saved=structuredClone(layout);

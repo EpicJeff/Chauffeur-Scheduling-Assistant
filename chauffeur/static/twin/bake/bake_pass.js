@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { lightSource } from './reach.js';
 import { CANDELA } from '../live/real_lights.js';
 import { atlasMesh } from './atlas.js';
-import { bakeSamples } from './fixture_terms.js';
+import { bakeSamples, fillStrength } from './fixture_terms.js';
 
 const worldVertex = `varying vec3 wp;
 void main() { wp = (modelMatrix * vec4(position, 1.0)).xyz;
@@ -34,7 +34,7 @@ gl_FragColor = vec4(visibility * weight, irradiance * visibility * weight / 16.0
 const fixtureFragment = pointFragment.replace('uniform float farPlane;', `uniform vec3 emitterNormal; uniform vec3 axis; uniform vec3 origin;
 uniform vec3 pieceCentre; uniform vec3 pieceU; uniform vec3 pieceV;
 uniform float outer; uniform float inner; uniform float cd; uniform float kind;
-uniform float visibilityWeight; uniform float scale; uniform float farPlane;`)
+uniform float visibilityWeight; uniform float scale; uniform float fillStrength; uniform float farPlane;`)
   .replace('if (d >= reach) discard;', `float nearest = d;
 if (dot(pieceU,pieceU) > 0.0) {
   vec3 offset = wp-pieceCentre;
@@ -48,6 +48,7 @@ float coneCos = dot(axis,normalize(wp-origin));
 float cone = outer < -0.5 ? 1.0 : inner == outer ? step(outer,coneCos) : smoothstep(outer,inner,coneCos);`)
   .replace('pow(d / reach, 4.0)', 'pow(nearest / reach, 4.0)')
   .replace(`${CANDELA.toFixed(1)} * attenuation`, 'cd * facing * cone * attenuation')
+  .replace('weight / 16.0', 'weight / (16.0 * fillStrength)')
   .replace('gl_FragColor = vec4(visibility * weight,', `visibility *= step(1e-8,facing);
 gl_FragColor = vec4(kind > 2.5 ? irradiance * visibility * weight / scale : visibility * visibilityWeight,`);
 function proxies(charts, size, layout) {
@@ -135,7 +136,7 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
         emitterNormal: {value: new THREE.Vector3()}, axis: {value: new THREE.Vector3()}, origin: {value: source.clone()},
         pieceCentre: {value: new THREE.Vector3()}, pieceU: {value: new THREE.Vector3()}, pieceV: {value: new THREE.Vector3()},
         outer: {value: -1}, inner: {value: -1}, cd: {value: CANDELA}, kind: {value: light.kind || 0},
-        visibilityWeight: {value: 1 / 16}, scale: {value: light.scale || 1} } });
+        visibilityWeight: {value: 1 / 16}, scale: {value: light.scale || 1}, fillStrength: {value: fillStrength(light)} } });
     scene.overrideMaterial = material;
     for (const sample of samples) {
       await nextFrame();
@@ -226,7 +227,7 @@ export function dilateCharts(bytes, charts, size) {
 // energy (albedo-weighted shadowed irradiance, read from G), in irradiance units, which the
 // material adds to that light's term under its live tint. A room the light never reaches (all
 // texels shadowed) gets none; outdoors keeps its shadows without fill.
-export function roomFills(pages, size) {
+export function roomFills(pages, size, light = null) {
   const rooms = new Set(pages.flatMap(p => p.charts.filter(c => !c.outdoor).map(c => c.room))), fills = {};
   for (const room of rooms) {
     const mine = pages.flatMap(p => p.charts.filter(c => c.room === room).map(c => ({ c, bytes: p.bytes })));
@@ -240,7 +241,7 @@ export function roomFills(pages, size) {
       }
     }
     // G bytes are irradiance / 16 * 255; the fill is what four such bytes carried at most.
-    if (energy > 0 && count) fills[room] = Math.min(4, albedo / count * .08) * 16 / 255;
+    if (energy > 0 && count) fills[room] = Math.min(4, albedo / count * .08) * 16 / 255 * fillStrength(light);
   }
   return fills;
 }

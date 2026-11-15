@@ -177,26 +177,10 @@ export function firePitEmitters(pit, plan) {
   const mean = outer.reduce((s, p) => s.map((v, i) => v + p[i] / outer.length), [0, 0]);
   const base = groundAt(plan, ...mean) + (pit.elevation || 0);
   const common = {id: `fixture:fire_pit:${pit.id}`, ref: 'absolute', fire_pit: true, range: 18};
-  let f;
-  if (!gas) {
-    // fire_pits.js stacks four logs: bed .15, radius r, centres r*.55 apart.
-    const r = Math.min(.14, burner.radius * .12), logsTop = base + .15 + r * (2 + 3 * .55);
-    f = {...common, shape: 'point', at: [...centre, logsTop + 1]};
-  }
-  else {
-    const height = base + options.height + (options.top === 'none' ? 0 : burner.slabThickness) - .075 + .07;
-    const u = burner.u, v = [-u[1], u[0]];
-    const widths = [u, v].map(axis => {
-      const points = burner.glass.map(p => p[0] * axis[0] + p[1] * axis[1]);
-      return Math.max(...points) - Math.min(...points);
-    });
-    if (burner.lineLength > 0 && widths[0] / widths[1] >= 4) {
-      f = {...common, shape: 'line', path: [-1, 1].map(sign =>
-        [centre[0] + sign * u[0] * burner.lineLength / 2, centre[1] + sign * u[1] * burner.lineLength / 2, height]),
-      facing: 'up', width_in: widths[1] * 12};
-    } else f = {...common, shape: 'area', at: [...centre, height], size_ft: widths, facing: 'up',
-      rotation_deg: Math.atan2(u[1], u[0]) * 180 / Math.PI};
-  }
+  // Exactly fire_pits.js's object lamp: four feet above the finished top,
+  // lighting paving and seats as well as the space above the burner.
+  const finishedTop = base + options.height + (options.top === 'none' ? 0 : gas ? burner.slabThickness : .16);
+  const f = {...common, shape: 'point', at: [...centre, finishedTop + 4]};
   return [resolved(resolveFixture(f, plan), pit.entity, `object:fire_pit:${pit.id}`, DEFAULT_OUTPUT_LM, 1,
     emission(null, domainOf(pit.entity)))];
 }
@@ -253,7 +237,7 @@ export function resolveEmitters(layout, states = {}, plan = {}, {firePits = true
       emitters.push(e);
     });
   }
-  for (const marker of layout.markers || []) if (marker.kind === 'light' && marker.at && marker.placed !== false && !groups.has(marker.entity_id))
+  for (const marker of layout.markers || []) if (marker.kind === 'light' && marker.at && !groups.has(marker.entity_id))
     emitters.push(legacyEmitter(marker, plan, stateOf(marker.entity_id)));
   return emitters;
 }

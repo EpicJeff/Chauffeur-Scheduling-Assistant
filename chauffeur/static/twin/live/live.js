@@ -728,7 +728,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       if (stale) window.showGlobalAlert(unreachable);
       else tapRoom(building, room);
     });
-    rows = layout.markers.map(marker => {
+    rows = layout.markers.filter(marker => marker.at).map(marker => {
       const sprite = spriteFor(iconKind(marker), 'unavailable');
       sprite.userData.deviceId = marker.device_id;
       const building = view.plan.buildings.find(b => b.id === marker.building);

@@ -9,7 +9,8 @@ export { encodePage, decodePage } from './codec.js';
 export function lightKey(atlas, light, slot, bank) {
   const hash=fingerprint();
   // light-slots-9: pages hold a shadowmask (visibility), not irradiance (2026-11-14).
-  hash.add(JSON.stringify(['light-slots-9',light.reach || atlas.key,light.device,light.at, ...(light.signature ? [light.signature] : [])]));
+  hash.add(JSON.stringify(['light-slots-9',light.reach || atlas.key,light.device,light.at,
+    ...(light.signature ? ['fixtures-2', light.signature, light.kind === 3 ? light.scale : null] : [])]));
   if (slot.assignments) {
     const ranking=[...slot.assignments].sort((a,b)=>a.chartKey<b.chartKey?-1:a.chartKey>b.chartKey?1:0), rank=new Uint8Array(2);
     for (const a of ranking) {
@@ -47,6 +48,7 @@ export function bakeLayout(atlas, layout, lights, history) {
     const pages=[...usedPages].sort((a,b)=>a-b);
     if (!pages.length) continue;
     entries[light.device] = { page: pages[0], pages, channel: s.channel,
+      ...(light.kind === 3 ? {scale: light.scale} : {}),
       location: location.key(),
       key: lightKey(atlas, light, s, banks[s.bank]) };
   }
@@ -84,7 +86,8 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     return response.json();
   };
   const isStale = device => packed.entries[device] && (redo.has(device) || manifest.lights[device]?.key !== packed.entries[device].key ||
-    manifest.lights[device]?.location !== packed.entries[device].location);
+    manifest.lights[device]?.location !== packed.entries[device].location ||
+    manifest.lights[device]?.scale !== packed.entries[device].scale);
   const ready = enabled ? readManifest().then(async m => {
     assignmentHistory=m?.ownership;
     packed=bakeLayout(atlas,layout,lights,assignmentHistory);
@@ -147,7 +150,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
       rendered.push({page, charts:mine, bytes:pixels});
     }
     // The room fill travels in the manifest entry; the pages hold visibility only.
-    const fill = roomFills(rendered, size);
+    const fill = roomFills(rendered, size, light);
     for (const r of rendered) dilateCharts(r.bytes, r.charts, size);
     for (const {page, charts:mine, bytes:pixels} of rendered) {
       const channels = await pageData(page, size, 2);
@@ -199,7 +202,8 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     const left = new Set(redo); left.delete(id);
     next.round = round;
     next.complete = !left.size && lights.every(l => !packed.entries[l.device] ||
-      next.lights[l.device]?.key === packed.entries[l.device].key);
+      next.lights[l.device]?.key === packed.entries[l.device].key &&
+      next.lights[l.device]?.scale === packed.entries[l.device].scale);
     for (const { page, bytes } of uploads) {
       if (!valid()) return null;
       const r = await api(`${path}/${page}.png`, { method: 'POST', headers: { 'Content-Type': 'image/ktx2' }, body: bytes });
@@ -227,7 +231,8 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     return withBakeLease(api, path, who, valid, async () => {
       const latest = await readManifest();
       if (!latest || !valid() || (latest.round === round && latest.complete === true)) return false;
-      const whole = lights.every(l => !packed.entries[l.device] || latest.lights[l.device]?.key === packed.entries[l.device].key);
+      const whole = lights.every(l => !packed.entries[l.device] || latest.lights[l.device]?.key === packed.entries[l.device].key &&
+        latest.lights[l.device]?.scale === packed.entries[l.device].scale);
       if (!whole) return false;
       const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...latest, round, complete: true }) });

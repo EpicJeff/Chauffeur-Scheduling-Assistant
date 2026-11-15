@@ -41,7 +41,10 @@ export function emitterSamples(emitters) {
   return emitters.flatMap((e, emitter) => {
     if (e.shape === 'point' || e.shape === 'spot') {
       const cone = e.cone_deg * Math.PI / 360;
-      const cd = e.output_lm * e.output_fraction / (e.shape === 'point' ? 4 * Math.PI : 2 * Math.PI * (1 - Math.cos(cone)));
+      // A single pit gets .5 from its live tint. In a sum the tint belongs to
+      // the entity, so its individual half output must travel in the samples.
+      const cd = e.output_lm * e.output_fraction * (emitters.length > 1 && e.fire_pit ? .5 : 1)
+        / (e.shape === 'point' ? 4 * Math.PI : 2 * Math.PI * (1 - Math.cos(cone)));
       const samples = jitter(new THREE.Vector3(...e.position), e.range * FT, cd, emitter);
       if (e.shape === 'spot') for (const s of samples) {
         s.axis.copy(fixturePoint(e.aim)).sub(s.origin).normalize();s.outer = Math.cos(cone);s.inner = Math.cos(cone * (1 - e.softness));
@@ -69,19 +72,33 @@ export function bakeSamples(plan, light) {
   if (light.emitters) return emitterSamples(light.emitters);
   const {source, range} = lightSource(plan, light);return legacySamples(source, range);
 }
+// G was sized for the full-output 40 cd point lamp. Keep its exact legacy
+// bytes, and express fixture G in that same range before 8-bit quantisation.
+export function fillStrength(light) {
+  return light?.emitters ? Math.max(1e-6, emitterSamples(light.emitters)
+    .reduce((sum, s) => sum + s.cd * s.weight, 0) / CANDELA) : 1;
+}
 export const decodeIrradiance = (value, scale) => value * value * scale;
 export function sampleValue(samples, point, normal, visible, kind, scale) {
   let visibility = 0, irradiance = 0;
   for (const s of samples) {
-    const delta = s.source.clone().sub(point), d = delta.length(), direction = delta.clone().divideScalar(Math.max(d, 1e-4));
-    const distance = s.piece ? rectClosest(s.piece, point).distanceTo(point) : d;
+    const dx=s.source.x-point.x,dy=s.source.y-point.y,dz=s.source.z-point.z;
+    const d2=dx*dx+dy*dy+dz*dz,d=Math.sqrt(d2),inv=1/Math.max(d,1e-4);
+    let distance=d;
+    if(s.piece) {
+      const p=s.piece,x=point.x-p.position.x,y=point.y-p.position.y,z=point.z-p.position.z;
+      const u=Math.max(-1,Math.min(1,(x*p.u.x+y*p.u.y+z*p.u.z)/p.u.lengthSq()));
+      const v=Math.max(-1,Math.min(1,(x*p.v.x+y*p.v.y+z*p.v.z)/p.v.lengthSq()));
+      distance=Math.hypot(x-u*p.u.x-v*p.v.x,y-u*p.u.y-v*p.v.y,z-u*p.u.z-v*p.v.z);
+    }
     const cutoff = reachWindow(distance, s.range);
     if (!cutoff) continue;
-    const facing = s.normal.lengthSq() ? Math.max(0, -s.normal.dot(direction)) : 1;
-    const cone = s.outer > -1 ? coneWindow(-s.axis.dot(direction), s.outer, s.inner) : 1;
+    const facing = s.normal.lengthSq() ? Math.max(0, -(s.normal.x*dx+s.normal.y*dy+s.normal.z*dz)*inv) : 1;
+    const cone = s.outer > -1 ? coneWindow(-(s.axis.x*dx+s.axis.y*dy+s.axis.z*dz)*inv, s.outer, s.inner) : 1;
     const seen = visible(s) * (facing > 0 ? 1 : 0);
     visibility += seen * (s.visibilityWeight ?? s.weight);
-    irradiance += s.cd * s.weight * facing * cone * cutoff / Math.max(d * d, .01) * Math.max(0, normal.dot(direction)) * seen;
+    irradiance += s.cd * s.weight * facing * cone * cutoff / Math.max(d2, .01)
+      * Math.max(0,(normal.x*dx+normal.y*dy+normal.z*dz)*inv) * seen;
   }
   return {value: kind === 3 ? Math.sqrt(Math.min(1, irradiance / scale)) : visibility, irradiance};
 }

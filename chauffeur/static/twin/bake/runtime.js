@@ -57,7 +57,7 @@ function writeLayer(texture, layer, page) {
 // lot through the live pool; baking them never completes and kept the bake from settling.
 // Every placed light bakes (user, 2026-11-13: "It seems silly to have some lights baked and
 // some not"). A yard-room light has no building; its z is height above the ground.
-export const lightsOf = layout => (layout?.markers || []).filter(m => m.kind === 'light' && m.placed && m.at && m.room && (m.building || m.yard))
+export const lightsOf = layout => (layout?.markers || []).filter(m => m.kind === 'light' && m.at && m.room && (m.building || m.yard))
   .map(m => ({ device: m.device_id, building: m.building || null, level: m.level || null, room: m.room, at: [...m.at],
     ...(m.building ? {} : { yard: true }) }));
 
@@ -276,24 +276,32 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       patchWindowGlow(material, pages, uniforms);
     });
   }
-  function setSources() {
+  function setSources(manifest = null) {
     // Each slot's light, where its shadowmask was rendered from (the shader's falloff and N.L).
     const exact = exactRects(lights, view.tier);
     lights.forEach((input, index) => {
       const l = packed.lights[index], s = packed.slots[l.device]; if (!s) return;
       const { source, range } = lightSource(view.plan, l);
-      if (uniforms.lmChartMode) setLightSource(uniforms, 0, index, source, range, l.kind || 0, l, exact.has(l.device));
-      else for (const room of s.receivers || [s.room]) setLightSource(uniforms, room, s.bank * 2 + s.channel, source, range, l.kind || 0, l, exact.has(l.device));
+      // Decode with the published page's scale only. The reach estimate is a
+      // bake input/freshness key, never a device's interpretation of old bytes.
+      const slotLight = l.kind === 3 ? {...l, scale: manifest?.lights[l.device]?.scale ?? 1} : l;
+      if (uniforms.lmChartMode) setLightSource(uniforms, 0, index, source, range, l.kind || 0, slotLight, exact.has(l.device));
+      else for (const room of s.receivers || [s.room]) setLightSource(uniforms, room, s.bank * 2 + s.channel, source, range, l.kind || 0, slotLight, exact.has(l.device));
     });
   }
   // The light list's layout: banks, layers, tints and the blank arrays it draws from.
-  function prepare(list, history = packed?.ownership) {
+  const publishedInputs = (list, manifest) => list.map(l => l.kind === 3 ? {...l,
+    // Readers do not estimate a scale. Until a slot is published it has no
+    // usable bytes/tint; the placeholder only lets its layout be prepared.
+    publishedScale: Number.isFinite(manifest?.lights[l.device]?.scale) && manifest.lights[l.device].scale > 0
+      ? manifest.lights[l.device].scale : 1} : l);
+  function prepare(list, history = packed?.ownership, manifest = null) {
     unpatch();
     for (const t of textures) t.dispose();
     textures.clear();
     if (uniforms) for (const name of ['lmTints', 'lmRegions']) uniforms[name]?.value.dispose();
     lights = list; lightsKey = JSON.stringify(list);
-    packed = bakeLayout(atlas, layout, lights, history);
+    packed = bakeLayout(atlas, layout, publishedInputs(lights, manifest), history);
     if (packed.banks.some(b => b.chartPacking)) applyChartIndices(atlas);
     // A bank page no placed light writes to (bank zero reserves unlit rooms,
     // Ruling B12) is never fetched or held on the GPU: each bank's array keeps
@@ -357,9 +365,11 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     const m = JSON.parse(text);
     // A reopened panel or another desk's publication adopts the persisted
     // channels. Never reset survivors to a fresh assignment on reload/poll.
-    if(m.ownership && text!==manifestText && !sameSlots(m.ownership,packed.ownership)) {
-      const next=bakeLayout(atlas,layout,lights,m.ownership);
-      if(!sameSlots(next.ownership,packed.ownership)) prepare(lights,m.ownership);
+    if(text!==manifestText && (m.ownership && !sameSlots(m.ownership,packed.ownership) ||
+      packed.lights.some(l=>l.kind===3 && l.scale!==m.lights[l.device]?.scale))) {
+      const next=bakeLayout(atlas,layout,publishedInputs(lights,m),m.ownership || packed.ownership);
+      if(!sameSlots(next.ownership,packed.ownership)) prepare(lights,m.ownership,m);
+      else packed=next;
     }
     let changed = text !== manifestText;
     manifestText = text;
@@ -390,11 +400,11 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     const previous = [...fresh]; fresh.clear();
     for (const l of lights) {
       const e = packed.entries[l.device], stored = m.lights[l.device];
-      if (e && stored?.key === e.key && stored.location === e.location && stored.channel === e.channel &&
+      if (e && stored?.key === e.key && stored.scale === e.scale && stored.location === e.location && stored.channel === e.channel &&
         JSON.stringify(stored.pages) === JSON.stringify(e.pages) && e.pages.every(p => present.has(p))) fresh.add(l.device);
     }
     stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
-    fills(m);
+    setSources(m);fills(m);
     if (present.size) patch();
     for (const id of previous) if (!fresh.has(id)) light(id, [0, 0, 0], 0);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
@@ -411,7 +421,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     if (JSON.stringify(next) === lightsKey) return;
     if (running) { pendingRun = true; baker?.cancel(); }
     const text=await readManifest(atlas.key);if(!valid())return;
-    prepare(next,typeof text==='string'?JSON.parse(text).ownership || packed?.ownership:packed?.ownership);
+    const manifest=typeof text==='string'?JSON.parse(text):null;
+    prepare(next,manifest?.ownership || packed?.ownership,manifest);
     await loadPages();
     if (allowed && !running) run();
   }
@@ -444,7 +455,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   async function begin(text) {
     atlas = pending.apply(); pending = null;
     codec = workerCodec();
-    prepare(lights,typeof text==='string'?JSON.parse(text).ownership:undefined);
+    const manifest=typeof text==='string'?JSON.parse(text):null;
+    prepare(lights,manifest?.ownership,manifest);
     await loadPages(); if (!valid()) return;
     showProgress();
     if (allowed) run();
@@ -478,8 +490,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       // Material edits do not move charts or change their channel assignment.
       // Retain the arrays, shader bindings and unrelated lights' fresh masks.
       const previous = packed;
-      packed = bakeLayout(atlas, layout, lights, packed.ownership);
-      setSources();
+      packed = bakeLayout(atlas, layout, publishedInputs(lights,{lights:packed.entries}), packed.ownership);
+      setSources({lights:packed.entries});
       for (const id of [...fresh]) if (previous.entries[id]?.key !== packed.entries[id]?.key) {
         fresh.delete(id); light(id, [0, 0, 0], 0);
       }
