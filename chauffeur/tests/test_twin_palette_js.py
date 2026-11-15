@@ -111,15 +111,24 @@ check('lock_alarm_and_cover_discs_follow_state_while_retaining_attention', () =>
   assert.equal(count.at(-1)[1].fillStyle, '#111318');
 });
 
-check('on_off_emitters_share_the_resolver_and_other_active_states_keep_white', () => {
+check('on_off_markers_keep_white_without_a_look_and_other_active_states_keep_white', () => {
   for (const kind of ['fan', 'switch'])
-    assert.equal(disc(stateDraw(kind, 'on')), '#ffa757', kind + ' 2700 K');
+    assert.equal(disc(stateDraw(kind, 'on')), '#f4f5f7', kind);
   for (const [kind, state, attrs] of [['outlet','on'], ['other','on'],
     ['media','playing'], ['camera','recording'], ['camera','streaming'], ['vacuum','cleaning'],
     ['sensor','on',{device_class:'motion'}], ['sensor','on',{device_class:'occupancy'}]])
     assert.equal(disc(stateDraw(kind, state, attrs)), '#f4f5f7', kind + ' ' + state);
   for (const state of ['paused','idle']) assert.equal(disc(stateDraw('media', state)), palette.twinMarkerOff);
   assert.equal(palette.markerInk('#000000'), '#f4f5f7');
+});
+check('assigned_fixed_marker_colour_follows_entity_domain_including_outlets', () => {
+  for (const [kind,entity] of [['switch','switch.lamp'],['outlet','switch.plug'],['switch','input_boolean.lamp'],['fan','fan.lamp']]) {
+    const assigned=markerState(kind,'on',{},entity,{colour:[0,80,255]});
+    assert.equal(disc(draw(kind,assigned.look,assigned.color)),'#0050ff');
+    assert.equal(markerState(kind,'on',{},entity).color,'#f4f5f7');
+    assert.equal(markerState(kind,'on',{},entity,{effects:{party:[[255,0,0]]}}).color,'#f4f5f7');
+  }
+  assert.equal(markerState('outlet','on',{},'switch.plug').color,'#f4f5f7');
 });
 
 check('climate_colour_follows_mode_even_when_idle_or_action_disagrees', () => {

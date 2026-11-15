@@ -42,9 +42,12 @@ export function climateModeColor(mode) {
     dry: twinDry, fan_only: twinDry}[mode] || twinText;
 }
 
-export function markerOnColor(kind, state = {}, look) {
+export function markerOnColor(kind, state = {}, look, entityId = '') {
   const attrs = state?.attributes || {}, value = state?.state;
-  if (['light', 'switch', 'input_boolean', 'fan'].includes(kind)) return hex(resolveLightColour(attrs, look, kind).rgb);
+  const domain = entityId.split('.')[0] || kind;
+  if (domain === 'light' || kind === 'light') return hex(resolveLightColour(attrs, look, 'light').rgb);
+  // An on/off source keeps its kind's colour until a person assigns one in the twin.
+  if (['switch', 'input_boolean', 'fan'].includes(domain) && look?.colour) return hex(resolveLightColour(attrs, look, domain).rgb);
   if (kind === 'climate') return climateModeColor(value || attrs.hvac_mode);
   if (kind === 'lock') return value === 'jammed' ? twinDanger : value === 'locked' ? twinOpen : twinAttention;
   if (kind === 'alarm' || kind === 'alarm_control_panel')

@@ -35,6 +35,31 @@ check('malformed_looks_never_throw_or_change_automatic_colour',()=>{
   assert.deepEqual(R.lightColor(),[255,241,201]);
   assert.deepEqual(R.lightColor({effect:'Deep Blue'}),[0,0,255]);
 });
+check('line_glow_keeps_every_corner_and_allocates_colours_only_for_palettes',()=>{
+  const scene=new THREE.Scene(), tube=new THREE.TubeGeometry(new THREE.LineCurve3(new THREE.Vector3(),new THREE.Vector3(1,0,0)),1,.01,8,false);
+  const sphere=new THREE.SphereGeometry(.01,8,4), tubeVertices=tube.attributes.position.count, sphereVertices=sphere.attributes.position.count;
+  for(const path of [[[0,0,4],[4,0,4],[4,4,4]],[[0,0,4],[4,0,4],[4,8,4]],
+    [[0,0,4],[8,0,4],[8,8,4]],[[0,0,4],[6,0,4],[6,6,4]],[[0,0,4],[4,0,4],[4,4,4],[8,4,4],[8,8,4]]]) {
+    const emitter={shape:'line',fixture_id:'rope',path,width_in:1,facing:'down'}, pieces=linePieces(emitter);
+    const glow=createFixtureGlow(scene,emitter), geometry=glow.mesh.geometry;
+    const segments=pieces.reduce((n,p)=>n+p.path.slice(1).filter((v,i)=>!v.equals(p.path[i])).length,0);
+    assert.equal((geometry.attributes.position.count-segments*tubeVertices)/sphereVertices,path.length-2,JSON.stringify(path));
+    assert.equal(geometry.getAttribute('color'),undefined);
+    glow.update([20,30,40],1,true);glow.update([50,60,70],1,true);
+    assert.equal(geometry.getAttribute('color'),undefined,'ordinary glows never upload a colour buffer');
+    const palette=[[255,0,0],[0,0,255]];glow.update([188,0,188],1,true,palette);
+    const colors=geometry.getAttribute('color');assert.ok(colors);
+    let offset=0;
+    for(const piece of pieces) {
+      const count=piece.path.slice(1).reduce((n,v,i)=>n+(!v.equals(piece.path[i])?tubeVertices:0)+(i<piece.path.length-2?sphereVertices:0),0);
+      const expected=C.paletteColour(palette,piece.t);
+      for(let i=offset;i<offset+count;i++) assert.deepEqual(new THREE.Color().fromBufferAttribute(colors,i).convertLinearToSRGB().toArray().map(v=>Math.round(v*255)),expected);
+      offset+=count;
+    }
+    assert.equal(offset,colors.count);glow.stop();
+  }
+  tube.dispose();sphere.dispose();assert.equal(scene.children.length,0);
+});
 check('line_centres_sample_the_whole_bent_run_and_point_uses_average',()=>{
   const plan={buildings:[],site:{}}, line={id:'rope',shape:'line',ref:'absolute',path:[[0,0,4],[4,0,4],[4,8,4]],width_in:1,facing:'down'};
   const layout={markers:[],light_fixtures:{'light.pool':[line,{id:'bulb',shape:'point',ref:'absolute',at:[0,0,4]}]}};

@@ -23,6 +23,7 @@ function hueSat(attrs) {
 // differ (arcs around the marker, native ranges in the room's expanded row).
 export function lightControls(options) {
   const c = controls(options), {row} = options, attrs = c.attrs, modes = attrs.supported_color_modes;
+  editorLifecycle(c);
   const light = row.kind === 'light';
   const dimmable = light && (Array.isArray(modes) ? modes.some(mode => mode !== 'onoff') : true);
   const temperature = light && modes?.includes('color_temp');
@@ -56,9 +57,20 @@ export function lightControls(options) {
     }
     wheel(c, options);
   }
-  if (light && attrs.effect_list?.length)
-    c.chips('effects', 'Effects', attrs.effect_list, s => s?.attributes?.effect, 'turn_on', 'effect',
+  if (light && attrs.effect_list?.length) {
+    if (c.enabled) c.chips('effects', 'Effects', attrs.effect_list, s => s?.attributes?.effect, 'turn_on', 'effect',
       (node, effect, group) => effectDot(c, options, node, effect, group));
+    else {
+      const assigned = attrs.effect_list.filter(effect => effectPalette(effect, options.lightLooks?.get(row.entity_id)));
+      if (assigned.length) {
+        const group = c.chipGroup('effects', 'Effects', true);
+        for (const effect of assigned) {
+          const item = c.part(element('span', effect), 'effect-look-preview'); group.append(item);
+          effectDot(c, options, item, effect, group);
+        }
+      }
+    }
+  }
   if (!colour) twinFixedColour(c, options);
   return c.finish();
 }
@@ -128,23 +140,31 @@ function effectDot(c, options, node, effect, group) {
   if (editable) { preview.setAttribute('aria-hidden', 'true'); dot.append(preview); }
   const paint = () => {
     const palette = effectPalette(effect, lightLooks?.get(row.entity_id)) || (effectRgb(effect) ? [effectRgb(effect)] : []);
-    preview.style.background = palette.length > 1 ? `linear-gradient(90deg, ${palette.map(rgb => `rgb(${rgb.join(',')})`).join(',')})`
+    const background = palette.length > 1 ? `linear-gradient(90deg, ${palette.map(rgb => `rgb(${rgb.join(',')})`).join(',')})`
       : palette.length ? `rgb(${palette[0].join(',')})` : 'transparent';
+    if (background !== painted) { preview.style.background = background; painted = background; }
     dot.setAttribute('aria-label', `${editable ? 'Edit' : 'Preview'} ${effect} colour in the twin${palette.length ? '' : ', automatic colour unknown'}`);
   };
+  let painted;
   if (editable) dot.className = 'twin-look-edit';
   if (editable) {
     dot.type = 'button'; dot.title = 'Edit colour in the twin';
     dot.addEventListener('click', () => lookEditor(c, options, effect, dot));
     const chip = element('span'); chip.className = 'twin-look-chip';
     node.remove(); chip.append(node, dot); group.append(chip);
-  } else { dot.setAttribute('role', 'img'); node.prepend(dot); group.setAttribute('data-look-preview', ''); }
+  } else { dot.setAttribute('aria-hidden', 'true'); node.prepend(dot); }
   c.watch(paint); paint();
 }
 const canEdit = (c, options) => !!options.lightLooks?.canEdit && !!options.row.offered && !options.compact;
+function editorLifecycle(c) {
+  if (c.stopLookEditor) return;
+  c.stopLookEditor = () => c.closeLookEditor?.(false);
+  c.onStop(c.stopLookEditor);
+}
 export function twinFixedColour(c, options) {
   const domain = options.row.entity_id?.split('.')[0];
   if (!['light', 'switch', 'input_boolean', 'fan'].includes(domain) || !canEdit(c, options)) return;
+  editorLifecycle(c);
   const button = c.part(element('button', 'Colour in the twin (display only)'), 'fixed-look-edit'); button.type = 'button';
   button.addEventListener('click', () => lookEditor(c, options, null, button)); c.side.append(button);
 }
@@ -164,8 +184,8 @@ function lookEditor(c, options, effect, opener) {
   const makeButton = (name, label, fn) => {
     const button = c.part(element('button', label), name); button.type = 'button'; button.addEventListener('click', fn); return button;
   };
-  const close = () => { closed = true; wheels.forEach(w => w.stop()); editor.remove(); opener.focus?.(); };
-  c.closeLookEditor = close; c.onStop(() => { closed = true; wheels.forEach(w => w.stop()); });
+  const close = (focus = true) => { closed = true; wheels.forEach(w => w.stop()); editor.remove(); if (focus) opener.focus?.(); };
+  c.closeLookEditor = close;
   async function save(clear = false) {
     if (saving || editing || closed) return;
     editing = true;
@@ -193,7 +213,7 @@ function lookEditor(c, options, effect, opener) {
     wheels.forEach(w => w.stop()); wheels = []; list.replaceChildren();
     stops.forEach((rgb, i) => {
       const slot = element('div'); slot.className = 'twin-look-stop'; list.append(slot);
-      const context = {...c, disposed: () => closed || c.disposed(), watch: () => {}};
+      const context = {...c, disposed: () => closed || c.disposed(), watch: () => {}, onStop: () => {}};
       wheels.push(wheel(context, options, {parent: slot, initial: {rgb_color: rgb}, read: () => ({rgb_color: stops[i]}),
         choose: hs => { stops[i] = hsRgb(hs); }, enabled: () => !saving && !closed,
         name: 'look-wheel', caption: `Stop ${i + 1}`, aria: `${row.name} twin colour stop ${i + 1}`}));

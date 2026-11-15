@@ -126,14 +126,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   layout ||= await readLayout(api, requests.signal);
   if (!layout?.available || !view.ready) return null;
 
-  let looks = {}, looksReady = false;
-  const limit = deadline(requests.signal, REQUEST_MS);
-  try {
-    const response = await api('api/house/twin/light-looks', {signal: limit.signal});
-    if (response.ok) { looks = await response.json(); looksReady = !!looks && typeof looks === 'object' && !Array.isArray(looks); }
-  } catch { /* Appearance defaults remain available offline. */ }
-  finally { limit.done(); }
-  if (!looksReady) looks = {};
+  let looks = {}, looksReady = false, looksRevision = 0;
   const canvas = view.renderer3.domElement, host = canvas.parentElement;
   const root = new THREE.Group();
   const labels = document.createElement('div'); labels.className = 'twin-live-labels';
@@ -194,7 +187,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   // device or what it offers changes, so a press that spans a poll still lands (review M2).
   function showSheet(row) {
     roomPanel?.close();
-    const key = JSON.stringify([row.device_id, row.kind, row.offered]);
+    const key = JSON.stringify([row.device_id, row.kind, row.offered, looksRevision]);
     selected = row; sheet.hidden = false;
     if (key === sheetKey && sheetStatus) {
       if (sheetStatus.textContent !== row.label) sheetStatus.textContent = row.label;
@@ -614,6 +607,24 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     try { notify(); } catch (error) { report(error); }
     try { draw(); view.render(); } catch (error) { report(error); }
   }
+  // Load and save take the same local appearance refresh; neither reads HA again.
+  function changedLooks() {
+    if (stopped) return;
+    looksRevision++;
+    for (const row of rows) Object.assign(row, stateOf(row));
+    modes?.update(); notify(); draw(); view.render();
+  }
+  async function readLooks() {
+    const limit = deadline(requests.signal, REQUEST_MS);
+    try {
+      const response = await api('api/house/twin/light-looks', {signal: limit.signal});
+      if (!response.ok) return;
+      const value = await response.json();
+      if (stopped || !value || typeof value !== 'object' || Array.isArray(value)) return;
+      looks = value; looksReady = true; changedLooks();
+    } catch { /* Appearance defaults remain available offline; editing stays off. */ }
+    finally { limit.done(); }
+  }
   // Older saved rows omit Drive's fuel/range bindings. Accept those pushes
   // even when the entity had no reading in the initial state response.
   const energyEntities = () => [...mappedEntities(view.energySources?.mapping), ...mappedEntities({cars:view.energySources?.cars})];
@@ -693,8 +704,9 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   const live = {
     refresh, draw, control, openRoom, stop,
     looks: () => looks,
+    looksRevision: () => looksRevision,
     lightLooks: {
-      canEdit: looksReady && !!layout.can_edit_house && !['panel', 'kiosk', 'tabs'].some(key => new URLSearchParams(window.location?.search || '').has(key)),
+      get canEdit() { return looksReady && !!layout.can_edit_house && !['panel', 'kiosk', 'tabs'].some(key => new URLSearchParams(window.location?.search || '').has(key)); },
       get: entity => looks[entity],
       async save(entity, look) {
         if (!live.lightLooks.canEdit || stopped) return false;
@@ -706,10 +718,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
           const saved = (await response.json()).look;
           looks = {...looks};
           if (saved && Object.keys(saved).length) looks[entity] = saved; else delete looks[entity];
-          if (!stopped) {
-            for (const row of rows) Object.assign(row, stateOf(row));
-            modes?.update(); notify(); draw(); view.render();
-          }
+          changedLooks();
           return true;
         } catch { if (!stopped) window.showGlobalAlert?.('Could not save the colour in the twin. Try again.'); return false; }
         finally { limit.done(); }
@@ -815,6 +824,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     if (view.live === live) view.live = null;
     return null;
   }
+  void readLooks();
   await refresh();
   view.glance?.attach(live);
   view.glanceSettings?.refreshChoices();

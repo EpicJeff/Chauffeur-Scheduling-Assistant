@@ -87,6 +87,12 @@ class LightLooksTests(unittest.TestCase):
         self.assertEqual(self.read(), store)
         self.assertEqual(self.put('light.l0', {'colour': [4, 5, 6]}).status_code, 200)
 
+    def test_entity_domain_accepts_digits_but_rejects_punctuation(self):
+        look = {'colour': [1, 2, 3]}
+        self.assertEqual(self.put('light2.pool', look).status_code, 200)
+        self.assertEqual(self.put('light-2.pool', look).status_code, 422)
+        self.assertEqual(self.read(), {'light2.pool': look})
+
     def test_auth_tiers(self):
         self.assertEqual(auth.resolve('GET', URL), auth.WALL_OR_SERVICE)
         self.assertEqual(auth.resolve('PUT', URL), auth.PARENTS)

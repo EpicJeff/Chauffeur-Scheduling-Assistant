@@ -88,7 +88,7 @@ export function mountRoomPanel(live) {
     // Read without a copy (review M3); HA's own cards hear the house only while one is up.
     const rows = live.devices(room.area_id, room), states = live.peek();
     if ([...widgets.values()].some(widget => widget.hosted)) window.ChauffeurHaCards?.setStates(states);
-    const key = JSON.stringify([room.area_id, live.looks?.(), rows.map(row => [row.device_id, row.offered, row.label,
+    const key = JSON.stringify([room.area_id, live.looksRevision?.(), rows.map(row => [row.device_id, row.offered, row.label,
       states[row.entity_id]?.state, states[row.entity_id]?.attributes,
       row.accessories?.map(a => [a, states[a.entity_id]])])]);
     if (key === shown) return;
@@ -105,7 +105,8 @@ export function mountRoomPanel(live) {
     }
     for (const row of rows) {
       const state = states[row.entity_id], attrs = state?.attributes || {};
-      const shape = deviceControlShape(row, state, live.state);
+      const shape = JSON.stringify([deviceControlShape(row, state, live.state), live.lightLooks?.canEdit,
+        row.offered ? null : live.looksRevision?.()]);
       let widget = widgets.get(row.device_id);
       if (!widget || shape !== widget.shape || !widget.actions.update) {
         const node = widget?.node || element('section');

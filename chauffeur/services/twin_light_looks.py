@@ -48,7 +48,7 @@ def save(body):
     if not isinstance(body, dict) or set(body) != {'entity_id', 'look'}:
         raise ValueError('Supply entity_id and look.')
     entity = body['entity_id']
-    if not isinstance(entity, str) or not re.fullmatch(r'[a-z_]+\.[a-z0-9_]+', entity):
+    if not isinstance(entity, str) or not re.fullmatch(r'[a-z0-9_]+\.[a-z0-9_]+', entity):
         raise ValueError('Choose a valid entity id.')
     look = validate(body['look'])
     # Hold the storage lock across the read and write: two entity edits merge.

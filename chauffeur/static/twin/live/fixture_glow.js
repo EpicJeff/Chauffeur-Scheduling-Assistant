@@ -46,7 +46,8 @@ export function linePieces(emitter) {
     const a = sample(i * total / count), b = sample((i + 1) * total / count);
     const start = i * total / count, end = (i + 1) * total / count;
     let walked = 0;
-    const inside = path.filter((p, j) => { if (j) walked += lengths[j - 1]; return walked > start && walked < end; });
+    // A boundary corner belongs to the piece starting there, exactly once.
+    const inside = path.filter((p, j) => { if (j) walked += lengths[j - 1]; return j > 0 && j < path.length - 1 && walked >= start && walked < end; });
     return {t: (i + .5) / count, path: [a.clone(), ...inside, b.clone()], position: sample((i + .5) * total / count), width: total / count,
       height: emitter.width_in / 12 * FT, rotation: fixtureRotation(emitter, b.sub(a))};
   });
@@ -69,7 +70,6 @@ export function createFixtureGlow(scene, emitter) {
     }
     geometry = parts.length ? mergeGeometries(parts) : new THREE.BufferGeometry();
     for (const part of parts) part.dispose();
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(offset * 3), 3));
   } else geometry = new THREE.PlaneGeometry(emitter.size_ft[0] * FT, emitter.size_ft[1] * FT);
   let bucket = '0,0,0', paletteKey = '';
   const mesh = new THREE.Mesh(geometry, materialFor(bucket, [0, 0, 0])); mesh.visible = false; mesh.userData.fixtureGlow = emitter.fixture_id;
@@ -89,6 +89,8 @@ export function createFixtureGlow(scene, emitter) {
       const multicolour = emitter.shape === 'line' && validPalette(palette) && palette.length > 1;
       const nextPalette = multicolour ? JSON.stringify(palette) : '';
       if (multicolour && nextPalette !== paletteKey) {
+        if (!geometry.attributes.color) geometry.setAttribute('color',
+          new THREE.Float32BufferAttribute(new Float32Array(geometry.attributes.position.count * 3), 3));
         const colors = geometry.attributes.color;
         for (const section of sections) {
           const color = new THREE.Color().setRGB(...paletteColour(palette, section.t).map(v => v / 255), THREE.SRGBColorSpace);

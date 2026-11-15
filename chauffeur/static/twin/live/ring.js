@@ -87,7 +87,8 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
     if (!row) return;
     // One entity's confirmed state, read without copying the house (review M3).
     const state = live.state(row.entity_id), kind = kindOf(row);
-    const key = JSON.stringify([row.device_id, deviceControlShape(row, state, live.state),
+    const key = JSON.stringify([row.device_id, deviceControlShape(row, state, live.state), live.lightLooks?.canEdit,
+      row.offered ? null : live.looksRevision?.(),
       kind.ring ? null : state]);
     if (signature === key && builder?.update) { builder.update(state); return; }
     if (signature === key) return;

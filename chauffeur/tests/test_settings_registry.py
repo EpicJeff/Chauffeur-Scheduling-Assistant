@@ -59,6 +59,21 @@ def scenario_no_setting_is_unreachable():
           + ', '.join(f"{e['key']} ({e['why']})" for e in u))
 
 
+def scenario_only_light_looks_is_an_item_preference():
+    # This setting is per light and edited on the light's own control, so it
+    # has no drawer anchor. No other entry may bypass the drawer-anchor audit.
+    check([e['key'] for e in reg.ENTRIES if e.get('item')] == ['house_twin_light_looks'],
+          'only light looks may carry the item flag')
+    entry = next(e for e in reg.ENTRIES if e['key'] == 'house_twin_light_looks')
+    entry.pop('item')
+    try:
+        flagged = reg.audit_ui()['unreachable']
+        check(any(e['key'] == entry['key'] and 'outside the settings drawer' in e['why'] for e in flagged),
+              'the per-light control requires the item exception with its existing anchor')
+    finally:
+        entry['item'] = True
+
+
 FAKE_PAGE = """<div x-data="page()">
   <!-- llm_gemini_model moved away; this comment is not a control -->
   {# nor is this: llm_ollama_model #}

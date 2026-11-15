@@ -6,7 +6,7 @@ import { markerOnColor, markerInk, twinMarkerOff, twinMarkerRing, twinMarkerUnav
 
 export function markerState(kind, state, attributes, entityId = '', look) {
   const resolved = kindOf({kind, entity_id: entityId});
-  return { look: resolved.look({state, attributes}), color: markerOnColor(resolved.id, {state, attributes}, look),
+  return { look: resolved.look({state, attributes}), color: markerOnColor(resolved.id, {state, attributes}, look, entityId),
     label: stateLabel(kind, state, attributes) };
 }
 
