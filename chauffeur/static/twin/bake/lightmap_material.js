@@ -31,6 +31,7 @@ const floatTexture = (width, height) => {
 // mode: R = a row per room, a slot per bank channel; Q = a row per room, a column per bank.
 // Every lookup is by data, never by a uniform array index, so merged batches need nothing more.
 const rowsOf = t => Math.max(1, Math.floor(t.image.height / (t.userData.fixtureRows ? 17 : 3)));
+export const needsFixtureShader = lights => lights.some(l => l.kind > 0 || l.emitters?.some(e => !e.fire_pit));
 export function lightmapUniforms(roomCount, slotCount, {fixtures = false} = {}) {
   const t = floatTexture(slotCount, (fixtures ? 17 : 3) * Math.max(1, roomCount));t.userData.fixtureRows = fixtures;
   if (fixtures && !THREE.UniformsLib.LTC_FLOAT_1) RectAreaLightUniformsLib.init();
@@ -110,7 +111,7 @@ export function applyChartIndices(atlas) {
 }
 export function chartLightmapUniforms(chartCount, packed, lights, pageSize, layers) {
   if (lights.length > 4095) throw new Error('Too many light indices for a chart owner texture.');
-  const uniforms = lightmapUniforms(1, Math.max(1, lights.length), {fixtures: lights.some(l => l.emitters)}), banks = Math.max(1, packed.banks.length);
+  const uniforms = lightmapUniforms(1, Math.max(1, lights.length), {fixtures: needsFixtureShader(lights)}), banks = Math.max(1, packed.banks.length);
   // Regions in the first half of the rows, each address's fills in the second (lmFillsAt).
   const texture = floatTexture(1024, 2 * Math.max(1, Math.ceil(chartCount*banks/1024)));
   const owners = new Map();

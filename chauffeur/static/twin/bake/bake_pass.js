@@ -191,7 +191,7 @@ export async function encodeSumPages(pages, size, yieldWork = () => new Promise(
     for (let y = r.y; y < r.y + r.h; y++) {
       for (let x = r.x; x < r.x + r.w; x++) {
         const i = (y * size + x) * 4, value = irradiance[i / 4];
-        if (bytes[i + 3] && value > 0 && value <= 0x7c00) {
+        if (bytes[i + 3] && value > 0 && value < 0x7c00) {
           histogram[Math.min(value, 0x7bff)]++; count++;
         }
       }

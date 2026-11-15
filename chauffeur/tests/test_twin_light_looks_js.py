@@ -66,7 +66,7 @@ check('line_centres_sample_the_whole_bent_run_and_point_uses_average',()=>{
   const states={'light.pool':{state:'on',attributes:{effect:'Caribbean',rgb_color:[0,255,0]}}};
   const resolved=resolveEmitters(layout,states,plan,{looks:{'light.pool':look}}), pieces=linePieces(resolved[0]);
   assert.equal(pieces.length,3);assert.deepEqual(pieces.map(p=>p.t),[1/6,1/2,5/6]);
-  const scene=new THREE.Scene(), rig=R.createRealLights({scene,tier:'max'});rig.show(true);
+  const scene=new THREE.Scene(), rigView={scene,tier:'max'},rig=R.createRealLights(rigView);rig.show(true);
   const candidates=resolved.map(e=>({device:e.fixture_id,emitter:e,position:new THREE.Vector3(...e.position),at:e.at||e.path[0],rgb:e.rgb,palette:e.palette,intensity:1,distance:10}));
   rig.update(candidates,[0,0,0]);
   const colours=[];scene.traverse(o=>{if(o.isRectAreaLight&&o.intensity>0)colours.push([o.position.x,o.position.z,o.color.clone().convertLinearToSRGB().toArray().map(v=>Math.round(v*255))]);});
@@ -86,6 +86,10 @@ check('line_centres_sample_the_whole_bent_run_and_point_uses_average',()=>{
   rig.update(candidates.map((row,i)=>({...row,emitter:cleared[i],rgb:cleared[i].rgb,palette:undefined})),[0,0,0]);
   scene.traverse(o=>{if(o.isLight&&o.intensity>0)assert.deepEqual(o.color.clone().convertLinearToSRGB().toArray().map(v=>Math.round(v*255)),[0,255,0]);});
   glow.update(cleared[0].rgb,1,true);assert.equal(glow.mesh.material.vertexColors,false);
+  rigView.bake={fresh:()=>['light.pool']};rig.update(candidates,[0,0,0]);
+  assert.ok(scene.children.some(o=>o.isRectAreaLight&&o.intensity>0),'rig independently excludes a palette line from fresh');
+  rig.update(candidates.map((row,i)=>({...row,emitter:cleared[i],rgb:cleared[i].rgb,palette:undefined})),[0,0,0]);
+  assert.ok(scene.children.filter(o=>o.isLight).every(o=>o.intensity===0),'clearing the palette restores baked pool suppression');
   glow.stop();rig.stop();assert.equal(scene.children.length,0);
 });
 check('mounted_save_updates_bulb_marker_bake_and_clear_without_another_read',async()=>{
@@ -109,6 +113,35 @@ check('mounted_save_updates_bulb_marker_bake_and_clear_without_another_read',asy
     assert.equal(live.marker('a1').color,'#00ff00');assert.deepEqual(calls,[{entity_id:'light.a1',look:null}]);
     assert.equal(requests.filter(p=>p==='api/house/twin/light-looks').length,2,'one mount fetch and one save');
   } finally {live.stop();}
+});
+check('fresh_baked_line_palette_uses_live_pieces_and_returns_without_rebake',async()=>{
+  for(const summed of [false,true]) {
+    const line={id:'fixture:rope',shape:'line',ref:'absolute',path:[[0,0,4],[4,0,4],[4,8,4]],width_in:1,facing:'down'};
+    const customLayout={...layout,can_edit_house:true,light_fixtures:{'light.a1':[line,
+      ...(summed?[{id:'fixture:point',shape:'point',ref:'absolute',at:[0,0,4]}]:[])]}};
+    states=initialStates();states['light.a1'].attributes={effect:'Caribbean',rgb_color:[0,255,0]};
+    const view=makeView('max'),tints=[],stored=['light.a1'];view.bake={fresh:()=>stored,light:(id,rgb,intensity)=>tints.push({id,rgb,intensity})};
+    const live=await mountLive(view,{api:async(path,init)=>({ok:true,json:async()=>path==='api/house/live'?customLayout:
+      path==='api/house/twin/light-looks'?(init?.method?{look:JSON.parse(init.body).look||{}}:{}):{states,reachable:true}})});
+    const rows=()=>live.lights().filter(l=>l.fixture_id?.startsWith('fixture:'));
+    const tint=()=>tints.findLast(t=>t.id==='light.a1');
+    try {
+      live.setMode('lights');assert.ok(rows().every(l=>l.baked&&!l.real));assert.ok(tint().intensity>0);
+      assert.ok(await live.lightLooks.save('light.a1',look));
+      assert.ok(rows().every(l=>!l.baked&&l.real),'entire entity leaves the effective fresh set');assert.equal(tint().intensity,0);
+      const e=resolveEmitters(customLayout,states,view.plan,{looks:{'light.a1':look}})[0],pieces=linePieces(e);
+      const actual=[];view.scene.traverse(o=>{if(o.isRectAreaLight&&o.intensity>0)actual.push(o);});
+      assert.equal(actual.length,pieces.length);
+      for(const piece of pieces) {
+        const light=actual.find(l=>l.position.distanceTo(piece.position)<1e-8);assert.ok(light);
+        assert.deepEqual(light.color.clone().convertLinearToSRGB().toArray().map(v=>Math.round(v*255)),C.paletteColour(look.effects.caribbean,piece.t));
+      }
+      const glow=view.scene.children.find(o=>o.userData.fixtureGlow);assert.ok(glow.material.vertexColors);
+      assert.ok(await live.lightLooks.save('light.a1',null));
+      assert.ok(rows().every(l=>l.baked&&!l.real));assert.ok(tint().intensity>0);
+      assert.ok(actual.every(l=>l.intensity===0));assert.deepEqual(stored,['light.a1'],'stored bake remains fresh throughout');
+    } finally {live.stop();states=initialStates();}
+  }
 });
 """ + BASE[BASE.index('let passed = 0;'):]
 

@@ -1,10 +1,24 @@
 """Fixture shadowmask transport; production modules in node, no browser or HA."""
+import json
+import subprocess
 import sys
 import test_twin_real_lights_js as harness
 
 DRIVER = harness.DRIVER[:harness.DRIVER.index("class Node")] + r"""
 globalThis.window={}; const THREE=await import('three'); const FT=.3048;
 const {createHash}=await import('node:crypto');
+// Execute main's modules without writing into either worktree.
+const mainPaths=['baker.js','bake_pass.js','reach.js','atlas.js','lightmap_material.js'].map(p=>'static/twin/bake/'+p);
+const mainURLs=new Map();
+function mainURL(path) {
+  if(mainURLs.has(path))return mainURLs.get(path);
+  let source=mainSources[path];
+  source=source.replace(/((?:from|import)\s*['"])(\.[^'"]+)(['"])/g,(_,a,s,b)=>{
+    const url=new URL(s,file(path)).href, ref=mainPaths.find(p=>file(p)===url);
+    return a+(ref?mainURL(ref):url)+b;
+  });
+  const url='data:text/javascript;base64,'+Buffer.from(source).toString('base64');mainURLs.set(path,url);return url;
+}
 const checks=[]; const check=(name,fn)=>checks.push([name,fn]);
 const {resolveEmitters} = await import(file('static/twin/live/emitters.js'));
 const A = await import(file('static/twin/bake/atlas.js'));
@@ -55,7 +69,7 @@ function samplerBudget(source, areas, clearcoat=false) {
 const energy=(light,at,normal,visible=()=>1)=>F.sampleValue(F.bakeSamples(plan,light),at,normal,visible,light.kind,light.scale||1);
 // A one-texel GPU double evaluates the uniforms submitted by the real cube/atlas
 // pass. Occlusion uses real three raycasts; filtering and quantization are production.
-async function renderProbe(light, blockers=[], point=V(0,0,0), normal=V(0,1,0), tier='high') {
+async function renderProbe(light, blockers=[], point=V(0,0,0), normal=V(0,1,0), tier='high', pass=P) {
   const mesh=new THREE.Mesh(new THREE.PlaneGeometry(1,1).toNonIndexed(),new THREE.MeshStandardMaterial());
   mesh.geometry.setAttribute('uv3',new THREE.Float32BufferAttribute(new Float32Array(12),2));
   mesh.userData.merged=true;const scene=new THREE.Scene();scene.add(mesh,...blockers);scene.updateMatrixWorld(true);
@@ -73,20 +87,20 @@ async function renderProbe(light, blockers=[], point=V(0,0,0), normal=V(0,1,0), 
         geometries.add(o.geometry);o.geometry.addEventListener('dispose',()=>disposedGeometries++);
       }
       const u=s.overrideMaterial.uniforms,source=u.source.value.clone();sources.push(source);
-      const piece=u.pieceU.value.lengthSq()?{position:u.pieceCentre.value.clone(),u:u.pieceU.value.clone(),v:u.pieceV.value.clone()}:null;
-      const sample={source,origin:u.origin.value,range:u.reach.value,weight:u.weight.value,cd:u.cd.value,
-        normal:u.emitterNormal.value,axis:u.axis.value,outer:u.outer.value,inner:u.inner.value,
-        visibilityWeight:u.visibilityWeight.value,piece};
+      const piece=u.pieceU?.value.lengthSq()?{position:u.pieceCentre.value.clone(),u:u.pieceU.value.clone(),v:u.pieceV.value.clone()}:null;
+      const sample={source,origin:u.origin?.value||source,range:u.reach.value,weight:u.weight.value,cd:u.cd?.value??40,
+        normal:u.emitterNormal?.value||V(0,0,0),axis:u.axis?.value||V(0,0,0),outer:u.outer?.value??-1,inner:u.inner?.value??-1,
+        visibilityWeight:u.visibilityWeight?.value,piece};
       const visible=()=>{
         const lifted=point.clone().addScaledVector(normal,Math.min(.03,.005+.004*source.distanceTo(point)));
         const ray=new THREE.Raycaster(lifted,source.clone().sub(lifted).normalize(),.001,lifted.distanceTo(source)-.02);
         return ray.intersectObjects(blockers,false).length?0:1;
       };
       const e=F.sampleValue([sample],point,normal,visible,0,1);
-      values[0]+=light.kind===3?e.irradiance/u.scale.value:e.value;values[1]+=e.irradiance/(16*u.fillStrength.value);
+      values[0]+=light.kind===3?e.irradiance/u.scale.value:e.value;values[1]+=e.irradiance/(16*(u.fillStrength?.value??1));
     },
     readRenderTargetPixels(t,x,y,w,h,raw){values.forEach((v,i)=>raw[i]=THREE.DataUtils.toHalfFloat(v));}};
-  const bytes=await P.renderPage({plan,scene,tier},renderer,[chart],1,light,{}, {room:{charts:[chart]}});
+  const bytes=await pass.renderPage({plan,scene,tier},renderer,[chart],1,light,{}, {room:{charts:[chart]}});
   return {bytes,sources,resources:{targets:targets.size,disposedTargets,geometries:geometries.size,disposedGeometries}};
 }
 check('twelve_fixtures_one_entity_one_channel_per_chart',()=>{
@@ -123,6 +137,36 @@ check('legacy_inputs_slots_jitter_and_uniform_submission_identical',async()=>{
   assert.deepEqual([...rendered.bytes],[255,Math.round(Math.min(1,THREE.DataUtils.fromHalfFloat(THREE.DataUtils.toHalfFloat(reference.irradiance/16)))*255),0,255]);
 });
 const awaitImportReach=await import(file('static/twin/bake/reach.js'));
+check('legacy_key_pages_and_shader_equal_main',async()=>{
+  const mainB=await import(mainURL('static/twin/bake/baker.js'));
+  const mainA=await import(mainURL('static/twin/bake/atlas.js'));
+  const mainP=await import(mainURL('static/twin/bake/bake_pass.js'));
+  const mainR=await import(mainURL('static/twin/bake/reach.js'));
+  const mainM=await import(mainURL('static/twin/bake/lightmap_material.js'));
+  const {p,root,options,atlas}=physicalRoom();
+  const legacy={device:'legacy',building:'house',level:'L',room:'room',at:[2,2,4]};
+  const oldAtlas=mainA.buildAtlas(root,p,options),before=mainB.bakeLayout(oldAtlas,options,[legacy]);
+  const after=B.bakeLayout(atlas,options,[legacy]);
+  const {lights:reached,...comparable}=after;
+  assert.deepEqual(reached,mainR.reachLights(oldAtlas.room,[legacy]),'reach and every per-light key input equal main');
+  assert.deepEqual(comparable,before,'chart keys, ranking, ownership, locations and light keys equal main');
+  for(const slot of [{bank:1,channel:0},{bank:0,channel:1,assignments:[{chartKey:'z',bank:1,channel:0},{chartKey:'a',bank:0,channel:1}]}])
+    assert.equal(B.lightKey(atlas,legacy,slot),mainB.lightKey(atlas,legacy,slot),'legacy lightKey is main value');
+  for(const blockers of [[],[new THREE.Mesh(new THREE.BoxGeometry(10,.2,10).translate(0,.5,0),new THREE.MeshBasicMaterial())]]) {
+    for(const m of blockers)m.updateMatrixWorld(true);
+    const now=await renderProbe(legacy,blockers),old=await renderProbe(legacy,blockers,V(0,0,0),V(0,1,0),'high',mainP);
+    assert.deepEqual(now.bytes,old.bytes);assert.deepEqual(now.sources,old.sources);
+    const charts=[{room:0,rect:{x:0,y:0,w:1,h:1},mesh:{material:{color:new THREE.Color('white')}}}];
+    assert.deepEqual(P.roomFills([{bytes:now.bytes,charts}],1,legacy),mainP.roomFills([{bytes:old.bytes,charts}],1));
+  }
+  const compile=module=>{
+    const u=module.lightmapUniforms(1,1);module.setLightSource(u,0,0,V(0,1,0),6);
+    const m=new THREE.MeshStandardMaterial();module.patchLightmaps([m],{banks:[new THREE.DataArrayTexture()]},u);
+    const s={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};m.onBeforeCompile(s,{});
+    return {data:u.lmTints.value.image.data,glsl:(s.vertexShader+s.fragmentShader).replace(/\s/g,'')};
+  };
+  assert.deepEqual(compile(M),compile(mainM),'legacy shader reads the same bytes as main');
+});
 function physicalRoom(segments=1) {
   const p={buildings:[{id:'house',position:[0,0],levels:[{id:'L',elevation:0,ceiling:8}],
     rooms:[{id:'room',level:'L',polygon:[[-10,-10],[10,-10],[10,10],[-10,10]]}]}]};
@@ -241,6 +285,10 @@ check('sum_percentile_is_entity_wide_quantised_and_ignores_padding',async()=>{
   assert.equal(scale,2**(Math.ceil(Math.log2(16*1.25)*16)/16));
   assert.equal(b.bytes[0],255,'intentional outlier clipping');
   assert.ok(a.bytes[4]<b.bytes[4],'all pages use one entity scale');
+  const small=make([4,4,Infinity]);small.bytes.fill(255);
+  small.irradiance.set([THREE.DataUtils.toHalfFloat(4),THREE.DataUtils.toHalfFloat(4),0x7c00]);
+  assert.equal(await P.encodeSumPages([small],3),2**(Math.ceil(Math.log2(4*1.25)*16)/16),'overflow does not set the scale of a small entity');
+  assert.equal(small.bytes[8],255,'overflow still clamps to full output');
   // A whole 2048 page must not hide a main-thread scale search stall.
   const page=make(Array(2048).fill(1));page.charts[0].rect.h=2048;
   page.bytes=new Uint8Array(2048*2048*4);page.irradiance=new Uint16Array(page.bytes.length/4);
@@ -353,6 +401,12 @@ check('fire_pit_bakes_from_emitters_with_flame_tint',()=>{
   const p={buildings:[],site:{fire_pit:[{id:'gas',at:[5,5],fuel:'gas',entity:'switch.fire',radius:2}]}};
   const lights=RT.bakeLights({markers:[]},null,p);assert.equal(lights.length,1);assert.equal(lights[0].device,'switch.fire');
   assert.equal(lights[0].emitters[0].fire_pit,true);assert.deepEqual(lights[0].emitters[0].rgb,[255,154,60]);
+  const packed={banks:[{charts:[]}],slots:{}};
+  const bare=M.chartLightmapUniforms(0,packed,[],4,[[]]),pit=M.chartLightmapUniforms(0,packed,lights,4,[[]]);
+  assert.equal(pit.lmTints.value.image.height,bare.lmTints.value.image.height);
+  assert.equal(pit.lmTints.value.userData.fixtureRows,false);
+  const variant=u=>{const m=new THREE.MeshStandardMaterial();M.patchLightmaps([m],{banks:[new THREE.DataArrayTexture()]},u);return m.customProgramCacheKey();};
+  assert.equal(variant(pit),variant(bare),'pit-only house uses legacy shader variant');
   assert.equal(lights[0].emitters[0].intensityScale,.5);
   assert.equal(lights[0].kind,0);assert.equal(lights[0].emitters[0].shape,'point');
   assert.ok(energy(lights[0],V(5*FT,0,-5*FT),V(0,1,0)).irradiance>0,'patio gets fire light');
@@ -433,5 +487,11 @@ console.log(`${passed}/${checks.length} passed`);process.exit(passed===checks.le
 """
 
 if __name__ == '__main__':
-    harness.DRIVER = DRIVER
+    # main when this compatibility ruling was verified; keep the proof stable after landing.
+    main_baseline = 'b5b98280bf508f117672f07681db034ff3e932dd'
+    paths = ['static/twin/bake/' + name for name in
+             ['baker.js', 'bake_pass.js', 'reach.js', 'atlas.js', 'lightmap_material.js']]
+    sources = {path: subprocess.check_output(['git', 'show', main_baseline + ':chauffeur/' + path],
+               cwd=harness.ROOT, encoding='utf-8') for path in paths}
+    harness.DRIVER = 'const mainSources = ' + json.dumps(sources) + ';\n' + DRIVER
     sys.exit(1 if harness.run() else 0)

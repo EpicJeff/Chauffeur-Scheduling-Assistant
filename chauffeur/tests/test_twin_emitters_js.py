@@ -356,12 +356,17 @@ check('mixed_pit_and_fixture_channel_uses_entity_tint_and_switch_brightness',asy
   layout.light_fixtures={'light.a1':[{id:'fixture:extra',shape:'point',ref:'absolute',at:[8,5,6]}]};
   const calls=[];view.bake={fresh:()=>['light.a1'],light:(id,rgb,intensity)=>calls.push({id,rgb,intensity})};
   states=initialStates();states['light.a1']={state:'on',attributes:{brightness:128,rgb_color:[40,100,220]}};
-  const live=await mountLive(view,{api});
+  let live=await mountLive(view,{api});
   try {
     live.setMode('lights');live.draw();
     const tint=calls.findLast(c=>c.id==='light.a1');assert.ok(tint);
     assert.deepEqual(tint.rgb,[40,100,220]);assert.equal(tint.intensity,128/255);
     assert.equal(live.lights().find(l=>l.device==='object:fire_pit:mixed').intensity,.5*128/255);
+    live.stop();layout.light_fixtures['light.a1'][0].share=0;
+    live=await mountLive(view,{api});live.setMode('lights');
+    const pitOnly=calls.findLast(c=>c.id==='light.a1');
+    assert.deepEqual(pitOnly.rgb,[255,154,60],'a zero-share fixture cannot win the tint tie over an emitting pit');
+    assert.equal(pitOnly.intensity,128/255);
   }finally{live.stop();states=initialStates();for(const k of Object.keys(layout))delete layout[k];Object.assign(layout,saved);}
 });
 check('live_recheck_remounts_on_fixture_aim_edit',async()=>{

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { FT, polygon, contains, stairHoles } from '../twin_generator.js';
 export { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 import { buildingGround } from '../twin_ground.js';
-import { lightColor, createRealLights } from './real_lights.js';
+import { lightColor, createRealLights, paletteLineEntities } from './real_lights.js';
 import { resolveEmitters, emission } from './emitters.js';
 import { createFixtureGlow } from './fixture_glow.js';
 import { registerClimate, roomClimate } from './climate.js';
@@ -77,7 +77,8 @@ export function mountModes(view, live) {
   const realLighting = !!view.tier;
   let legacyRooms = [];
   const layout = live.layout(), emitters = resolveEmitters(layout, {}, view.plan);
-  const fixtures = emitters.some(e => !e.legacy), rig = createRealLights(view, {fixtures});
+  const fixtures = emitters.some(e => !e.legacy && !e.fire_pit), rig = createRealLights(view, {fixtures});
+  const hasEmitters = fixtures || emitters.some(e => e.fire_pit);
   const effects = new Map();
   const overlays = new THREE.Group(); overlays.userData.twinMode = 'modes'; view.scene.add(overlays);
   const context = {view, live, warm, overlays, lighting(on) { view.setLiveLamps?.(on); rig.show(on); }};
@@ -199,7 +200,7 @@ export function mountModes(view, live) {
   function update() {
     // Read without copying the house: this runs on every push (review M3).
     const states = live.peek(), stale = live.stale();
-    const resolved = new Map((fixtures ? resolveEmitters(layout, stale ? {} : states, view.plan, {looks: live.looks?.() || {}}) : []).map(e => [e.fixture_id, e]));
+    const resolved = new Map((hasEmitters ? resolveEmitters(layout, stale ? {} : states, view.plan, {looks: live.looks?.() || {}}) : []).map(e => [e.fixture_id, e]));
     for (const flame of flames) flame.visible = !stale && states[flame.material.userData.objectLight.entity]?.state === 'on';
     legacyRooms = !realLighting && !stale ? live.rooms() : [];
     for (const lamp of lamps) {
@@ -262,7 +263,8 @@ export function mountModes(view, live) {
       view.groups.levels[`${lamp.marker.building}:${lamp.marker.level}`]?.visible !== false)
       .map(lamp => ({ device: lamp.key, at: lamp.marker.at, ...lamp }));
     const fresh = new Set(view.bake?.fresh() || []);
-    const selected = rig.update(realLighting ? candidates : [], target ? [target.x / FT, -target.z / FT, target.y / FT] : [0, 0, 0]);
+    for (const id of paletteLineEntities(lamps)) fresh.delete(id);
+    const selected = rig.update(realLighting ? candidates : [], target ? [target.x / FT, -target.z / FT, target.y / FT] : [0, 0, 0], fresh);
     const overflowText = modeShows(mode, 'lights') && rig.overflow() ? 'Some lights are shown as glow only on this tier' : '';
     legendText.textContent = [effects.get(mode)?.legend?.() || registry.get(mode)?.legend || '', overflowText].filter(Boolean).join(' · ');
     modeLegend.hidden = !modeLegend.textContent;
@@ -278,7 +280,7 @@ export function mountModes(view, live) {
         const sum = lamp.emitter && !lamp.emitter.legacy && lamps.some(other =>
           other !== lamp && other.emitter?.entity_id === lamp.emitter.entity_id);
         const intensity = baked && shown ? (sum ? lamp.emitter.brightness : lamp.intensity) : 0, previous = bakeTints.get(bakeId);
-        if (!previous || intensity > previous.intensity || intensity === previous.intensity && !lamp.emitter?.fire_pit)
+        if (!previous || intensity > previous.intensity || intensity === previous.intensity && lamp.intensity > 0 && !lamp.emitter?.fire_pit)
           bakeTints.set(bakeId, {rgb: lamp.rgb, intensity});
       }
       lamp.baked = baked;

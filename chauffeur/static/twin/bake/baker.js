@@ -8,8 +8,8 @@ export { encodePage, decodePage } from './codec.js';
 
 export function lightKey(atlas, light, slot, bank) {
   const hash=fingerprint();
-  // light-slots-9: pages hold a shadowmask (visibility), not irradiance (2026-11-14).
-  hash.add(JSON.stringify(['light-slots-9',light.reach || atlas.key,light.device,light.at,
+  // Fixture pages use the new layout; unsigned legacy shadowmasks keep main's keys.
+  hash.add(JSON.stringify([light.signature ? 'light-slots-9' : 'light-slots-8',light.reach || atlas.key,light.device,light.at,
     ...(light.signature ? ['fixtures-2', light.signature, ...(light.kind === 3 ? [] : [null])] : [])]));
   if (slot.assignments) {
     const ranking=[...slot.assignments].sort((a,b)=>a.chartKey<b.chartKey?-1:a.chartKey>b.chartKey?1:0), rank=new Uint8Array(2);

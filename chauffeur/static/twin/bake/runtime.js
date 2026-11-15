@@ -3,7 +3,7 @@ import { base, copyMaterialParams } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, patchLightmaps, setLightTint, pickTranscode,
-  setLightSource, setChartFill, setRoomFill, clearFills, roomRegions, patchWindowGlow } from './lightmap_material.js';
+  setLightSource, setChartFill, setRoomFill, clearFills, roomRegions, patchWindowGlow, needsFixtureShader } from './lightmap_material.js';
 import { lightSource } from './reach.js';
 import { resolveEmitters, emitterSignature } from '../live/emitters.js';
 import { kindOf, exactRects } from './fixture_terms.js';
@@ -118,7 +118,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   let layers = [], baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
   let dragging = false, stillAt = performance.now(), generation = 0;
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
-  let failure = '', errorReason = null, manifestText = null;
+  let failure = '', errorReason = null, manifestText = null, initialized = false, mounting = null;
   function reportError(error) {
     if (!valid()) return;
     errorReason=error?.message || String(error);
@@ -127,7 +127,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     console.error('House lighting bake failed:', error);
     showProgress();
   }
-  const pageErrors = new Set(), etags = new Map(), present = new Set(), clones = [], textures = new Set();
+  const pageErrors = new Map(), etags = new Map(), present = new Set(), clones = [], textures = new Set();
+  const pageReason = () => pageErrors.values().next().value || null;
   const valid = () => !stopped && view.plan === round;
   const paused = () => dragging || performance.now() - stillAt < 2000;
   const moved = () => { stillAt = performance.now(); };
@@ -150,8 +151,9 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   }
   function showProgress() {
     if (!status) return;
-    status.hidden = !(running && progress.total) && !failure;
-    status.textContent = running && progress.total ? `Baking lights ${Math.min(progress.total, progress.done + 1)} of ${progress.total}` : failure;
+    const message = failure || (pageReason() ? `Could not read baked lighting (${pageReason()}).` : '');
+    status.hidden = !(running && progress.total) && !message;
+    status.textContent = message || (running && progress.total ? `Baking lights ${Math.min(progress.total, progress.done + 1)} of ${progress.total}` : '');
     button.disabled = !atlas || running;
   }
   async function idle() {
@@ -304,7 +306,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       .filter(p => p >= 0 && p < b.pages))].sort((a, c) => a - c));
     uniforms = packed.banks.some(b => b.chartPacking)
       ? chartLightmapUniforms(atlas.room.charts.length, packed, lights, layout.room.page, layers)
-      : lightmapUniforms(atlas.room.rooms.length, Math.max(2, packed.banks.length * 2), {fixtures: lights.some(l => l.emitters)});
+      : lightmapUniforms(atlas.room.rooms.length, Math.max(2, packed.banks.length * 2), {fixtures: needsFixtureShader(lights)});
     if (!uniforms.lmRegions) uniforms.lmRegions = { value: regions() };
     const roomFormat = pickTranscode(view.renderer3.extensions, 2);
     pages = {
@@ -313,7 +315,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
         : blankArray(1, roomFormat, 4)) };
     pages.banks.forEach(t => textures.add(t));
     setSources();
-    etags.clear(); present.clear(); manifestText = null; fresh.clear();
+    etags.clear(); present.clear(); pageErrors.clear(); manifestText = null; fresh.clear();
     stale = lights.map(l => l.device);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
   }
@@ -387,9 +389,13 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
         const data = await codec.transcode(new Uint8Array(await r.arrayBuffer()), at.texture.format);
         if (!valid()) return;
         writeLayer(at.texture, at.layer, data); present.add(p); etags.set(p, r.headers.get('etag')); changed = true;
+        if (pageErrors.delete(p)) showProgress();
       } catch (error) {
         // A damaged page keeps its lights real-time; a broken build stays visible.
-        if (!pageErrors.has(p)) { pageErrors.add(p); reportError(new Error(`Lightmap page ${p}: ${error.message || error}`)); }
+        if (!pageErrors.has(p)) {
+          pageErrors.set(p, `Lightmap page ${p}: ${error.message || error}`);
+          console.error('House lighting bake failed:', error); showProgress();
+        }
         if (present.has(p)) { writeLayer(at.texture, at.layer, null); present.delete(p); changed = true; }
         etags.delete(p);
       }
@@ -452,16 +458,20 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     }
   }
   async function begin(text) {
-    atlas = pending.apply(); pending = null;
-    codec = workerCodec();
+    initialized = false;
+    // A retry after a later mount step failed resumes the already applied atlas.
+    if (pending) { atlas = pending.apply(); pending = null; }
+    codec?.stop(); codec = workerCodec();
     const manifest=typeof text==='string'?JSON.parse(text):null;
     prepare(lights,manifest?.ownership,manifest);
     await loadPages(); if (!valid()) return;
     showProgress();
     if (allowed) run();
+    initialized = true;
   }
   async function refresh() {
     if (!valid()) return;
+    if (!initialized) { await initialize(); return; }
     if (pending) {
       // A wall that opened before any bake applies the atlas when one lands (I1, M1).
       const text = await readManifest(pending.key);
@@ -474,7 +484,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   }
   const controller = {
     state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: running && paused(),
-      ...progress, baked: [...baked], stale: [...stale], error: errorReason }),
+      ...progress, baked: [...baked], stale: [...stale], error: errorReason || pageReason() }),
     fresh: () => valid() ? [...fresh] : [], light, idle, refresh,
     refreshMaterials(ids) {
       for (const { original, material } of clones) if (ids.includes(original.userData.materialId)) copyMaterialParams(original, material);
@@ -524,17 +534,18 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     },
   };
   view.bake = controller;
-  (async () => {
-    try {
+  function initialize() {
+    if (mounting) return mounting;
+    mounting = (async () => {
       if (!covered(root).length) return;
       const response = await api('api/house/live'); const liveLayout = response.ok ? await response.json() : null;
       if (!valid()) return;
       lights = bakeLights(liveLayout, root, view.plan);
       // The worker lays the atlas out; it is applied to the meshes only once a bake
       // exists or this desk will make one (M1).
-      pending = await loadAtlas(root, round, layout, { signal: halt.signal, apply: false });
+      if (!atlas && !pending) pending = await loadAtlas(root, round, layout, { signal: halt.signal, apply: false });
       if (!valid()) return;
-      let text = await readManifest(pending.key);
+      let text = await readManifest(pending?.key || atlas.key);
       const manifest = typeof text === 'string' ? JSON.parse(text) : null;
       if (manifest?.densities && (manifest.densities.room !== layout.room.density)) {
         layout = { room: { ...layout.room, density: manifest.densities.room } };
@@ -542,19 +553,26 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
         if (!valid()) return;
         text = await readManifest(pending.key);
       }
-      allowed = canBake && await mayBake(api, `api/house/bakes/${pending.key}`, owner);
+      allowed = canBake && await mayBake(api, `api/house/bakes/${pending?.key || atlas.key}`, owner);
       if (!valid()) return;
       showControls();
+      failure = ''; errorReason = null;
       if (typeof text === 'string' || allowed) await begin(text);
       if (!valid()) return;
-      // Panels and other tabs pick up pages as another desktop publishes them.
-      const tick = async () => {
-        if (!valid()) return;
-        try { await refresh(); } catch { /* offline: retain the last complete page */ }
-        if (valid()) timer = setTimeout(tick, pollMs);
-      };
-      if (pollMs > 0) timer = setTimeout(tick, pollMs);
-    } catch (error) { reportError(error); }
+      initialized = true; showProgress();
+    })().finally(() => { mounting = null; });
+    return mounting;
+  }
+  // The same poll retries incomplete mounts as well as finding later publications.
+  const tick = async () => {
+    if (!valid()) return;
+    try { await refresh(); } catch (error) { reportError(error); }
+    finally { if (valid() && pollMs > 0) timer = setTimeout(tick, pollMs); }
+  };
+  (async () => {
+    try { await initialize(); }
+    catch (error) { reportError(error); }
+    finally { if (valid() && covered(root).length && pollMs > 0) timer = setTimeout(tick, pollMs); }
   })();
   return controller;
 }

@@ -162,6 +162,20 @@ check('legacy_point_pool_unchanged',async()=>{
     assert.equal(typed(view.scene).spot.length,0);assert.equal(typed(view.scene).area.length,0);
   }finally{live.stop();}
 });
+check('pit_only_house_keeps_legacy_profile_at_every_tier',async()=>{
+  for(const tier of ['low','medium','high','max']) {
+    const baseline=makeView(tier),a=await mountLive(baseline,{api});
+    const profile=v=>Object.values(typed(v.scene)).map(pool=>[pool.length,pool.filter(l=>l.castShadow).length]);
+    const expected=profile(baseline);a.stop();
+    const view=makeView(tier);view.plan.site={fire_pit:[{id:'pit',at:[8,5],radius:2,fuel:'gas',entity:'switch.fire'}]};
+    states['switch.fire']={state:'on'};
+    const live=await mountLive(view,{api});
+    try {
+      assert.deepEqual(profile(view),expected,tier);
+      assert.ok(live.lights().find(l=>l.device==='object:fire_pit:pit').intensity>0,'pit still resolves and emits');
+    } finally {live.stop();delete states['switch.fire'];}
+  }
+});
 """ + BASE[BASE.index('let passed = 0;'):]
 
 if __name__ == '__main__':

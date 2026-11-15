@@ -6,6 +6,11 @@ import { fixturePoint, fixtureRotation, linePieces } from './fixture_glow.js';
 import { paletteColour } from './light_colours.js';
 export { lightColor } from './light_colours.js';
 export { CANDELA };
+// A baked entity has one tint. Keep a line's multi-colour look in the live pool.
+export function paletteLineEntities(lamps) {
+  const palettes = new Set(lamps.filter(l => (l.palette || l.emitter?.palette)?.length > 1).map(l => l.emitter?.entity_id));
+  return new Set(lamps.filter(l => l.emitter?.shape === 'line' && palettes.has(l.emitter.entity_id)).map(l => l.emitter.entity_id));
+}
 const clamp = (value, max = 255) => Math.max(0, Math.min(max, value));
 
 export function lightIntensity(attributes = {}) {
@@ -53,8 +58,9 @@ export function createRealLights(view, { tier = view.tier || 'low', fixtures = t
     });
   }
   return {
-    update(candidates, target) {
-      const baked = new Set(view.bake?.fresh() || []);
+    update(candidates, target, fresh = view.bake?.fresh() || []) {
+      const baked = new Set(fresh);
+      for (const id of paletteLineEntities(candidates)) baked.delete(id);
       const expanded = {point: [], spot: [], area: []};
       for (const row of candidates) {
         const e = row.emitter;

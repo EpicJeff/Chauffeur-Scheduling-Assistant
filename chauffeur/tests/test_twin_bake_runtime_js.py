@@ -66,9 +66,10 @@ async function context(tier = 'high', sharedServer = null, placed = null, extra 
   const controls = new THREE.EventDispatcher(); controls.target = new THREE.Vector3();
   const view = { plan, ready: true, scene, tier, renderer3: renderer, controls, render() {} };
   const server = sharedServer || fakeServer(), lights = placed || [k1, k2, h1, c1];
-  const api = (path, init) => path === 'api/house/live' ? Promise.resolve(new Response(JSON.stringify({...liveLayout(lights), ...extra.fixtureLayout}), { status: 200 }))
+  const defaultApi = (path, init) => path === 'api/house/live' ? Promise.resolve(new Response(JSON.stringify({...liveLayout(lights), ...extra.fixtureLayout}), { status: 200 }))
     : extra.deny && path.endsWith('/lease') ? Promise.resolve(new Response('{"detail":"Requires parent"}', { status: 403 }))
     : server.api(path, init);
+  const api = extra.api ? (path,init)=>extra.api(path,init,defaultApi) : defaultApi;
   const host = extra.host || document.getElementById('twin-controls');
   const controller = mountBake(view, out.root, { host, layout: job.layout, api, ...(extra.poll !== undefined ? { poll: extra.poll } : {}) });
   return { view, controller, server, out, renderer, host };
@@ -160,6 +161,80 @@ await check('transcode_failure_is_observable_once_per_page_and_keeps_live_fallba
     await wall.controller.refresh();await wall.controller.refresh();
     assert.equal(errors.length,count,'polling does not repeat page diagnostics');
   } finally {wall?.controller.stop();globalThis.Worker=Worker;console.error=log;}
+});
+await check('desk_page_error_survives_run_and_clears_after_successful_transcode', async () => {
+  const publisher=await context();
+  try {await until(()=>!publisher.controller.state().baking&&publisher.controller.fresh().length===4,'publish stored bake');}
+  finally {publisher.controller.stop();}
+  const Worker=globalThis.Worker,log=console.error,errors=[];let desk,broken=true;
+  try {
+    console.error=(...args)=>errors.push(args);
+    globalThis.Worker=class {constructor(url,options) {
+      if(!String(url).includes('codec_worker'))return new Worker(url,options);
+      const worker=new CodecWorker(),post=worker.postMessage;
+      worker.postMessage=function(job) {
+        if(broken&&job.kind==='transcode')setImmediate(()=>this.onmessage({data:{id:job.id,error:'damaged desk page'}}));
+        else post.call(this,job);
+      };return worker;
+    }};
+    desk=await context('high',publisher.server,null,{poll:0});
+    await until(()=>desk.controller.state().key&&desk.controller.state().error&&!desk.controller.state().baking,'desk finished automatic run');
+    await desk.controller.now(); // run() clears job errors, but must retain page errors.
+    assert.match(desk.controller.state().error,/damaged desk page/);
+    const output=document.getElementById('twin-bake-controls').children.find(n=>n.tagName==='OUTPUT');
+    assert.match(output.textContent,/damaged desk page/);assert.ok(!output.hidden);
+    assert.ok(!output.textContent.includes('Try Bake lighting now'));
+    const count=errors.length;await desk.controller.refresh();assert.equal(errors.length,count,'page diagnostics are deduplicated on a desk too');
+    broken=false;await desk.controller.refresh();
+    assert.equal(desk.controller.fresh().length,4);assert.equal(desk.controller.state().error,null);
+    assert.ok(!output.textContent.includes('damaged desk page'));
+  } finally {desk?.controller.stop();globalThis.Worker=Worker;console.error=log;}
+});
+await check('failed_mount_retries_from_existing_poll_and_finds_stored_bake',async()=>{
+  const desk=await context();
+  try {await until(()=>!desk.controller.state().baking&&desk.controller.fresh().length===4,'publish for retrying wall');}
+  finally {desk.controller.stop();}
+  const log=console.error,errors=[];console.error=(...args)=>errors.push(args);
+  try {
+    for(const step of ['live','manifest']) {
+      let attempts=0,wall;
+      const api=async(path,init,next)=>{
+        if((step==='live'?path==='api/house/live':/^api\/house\/bakes\/[^/]+$/.test(path))&&++attempts===1)
+          throw new TypeError('Failed to fetch '+step);
+        return next(path,init);
+      };
+      try {
+        wall=await context('low',desk.server,null,{poll:200,api});
+        await until(()=>wall.controller.state().error,'mount failure reported');
+        await until(()=>wall.controller.fresh().length===4,'later poll retries '+step+' and reads stored pages');
+        assert.ok(attempts>=2);assert.equal(wall.controller.state().error,null);
+      } finally {wall?.controller.stop();}
+    }
+    const Worker=globalThis.Worker;let published=false,throws=0,late;
+    try {
+      globalThis.Worker=class {constructor(url,options) {
+        if(String(url).includes('codec_worker')&&++throws===1)throw new Error('codec mount failed');
+        return new Worker(url,options);
+      }};
+      late=await context('low',desk.server,null,{poll:200,api:async(path,init,next)=>
+        !published&&/^api\/house\/bakes\/[^/]+$/.test(path)?new Response(null,{status:404}):next(path,init)});
+      await until(()=>late.controller.state().key,'wall waits for stored bake');published=true;
+      await until(()=>late.controller.state().error==='codec mount failed','late begin failure is reported by poll');
+      await until(()=>late.controller.fresh().length===4,'next poll retries failed begin after pending was cleared');
+      assert.equal(late.controller.state().key,desk.controller.state().key,'retry retains the applied atlas and stored bake key');
+      assert.equal(late.controller.state().error,null);assert.ok(throws>=2);
+    } finally {late?.controller.stop();globalThis.Worker=Worker;}
+    let broken=false,wall;
+    try {
+      wall=await context('low',desk.server,null,{poll:200,api:async(path,init,next)=>{
+        if(broken&&/^api\/house\/bakes\/[^/]+$/.test(path))throw new SyntaxError('unexpected manifest structure');
+        return next(path,init);
+      }});
+      await until(()=>wall.controller.fresh().length===4,'wall mounted');broken=true;
+      await until(()=>wall.controller.state().error==='unexpected manifest structure','poll reports non-network failure');
+      assert.ok(errors.some(args=>args.some(e=>e?.message==='unexpected manifest structure')));
+    } finally {wall?.controller.stop();}
+  } finally {console.error=log;}
 });
 await check('worker_failures_are_visible_in_state_and_console', async () => {
   const Worker=globalThis.Worker, db=globalThis.indexedDB, log=console.error, timeout=globalThis.setTimeout, errors=[];
