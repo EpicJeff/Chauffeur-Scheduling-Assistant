@@ -7,7 +7,7 @@ import { span as editSpan } from './edit_timing.js';
 import { heightAt } from './twin_roof.js';
 import { groundAt, buildingGround } from './twin_ground.js';
 import { buildYard, yardKey, yardMaterialKey, yardPartKeys } from './twin_yard.js';
-import { base, loadSky, disposeObject, manifest, currentMaterial, applyMaterialParams, copyMaterialParams } from './twin_library.js';
+import { base, loadSky, disposeObject, manifest, currentMaterial, applyMaterialParams, copyMaterialParams, alphaModeOf } from './twin_library.js';
 import { watchMaterialCatalogue } from './material_watch.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 import { hostPoint } from './twin_hosts.js';
@@ -131,7 +131,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         styled.add(object); selectedMaterials.set(object, object.material);
         const clone = material => {
           const next = material.clone(); selectionMaterials.add(next);
-          if (ghost) { next.opacity = 0.25; next.transparent = true; next.depthWrite = false; }
+          if (ghost) { next.userData.styledFade = true; next.opacity = 0.25; next.transparent = true; next.depthWrite = false; }
           else { next.color?.lerp(tint, 0.32); next.userData.selectionTint = tint.getHex(); }
           return next;
         };
@@ -142,7 +142,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (!object.material || selectedMaterials.has(object) || object.layers.isEnabled(PICK_LAYER)) return;
       selectedMaterials.set(object, object.material);
       const clone = material => {
-        const next = material.clone(); next.opacity = .25; next.transparent = true; next.depthWrite = false;
+        const next = material.clone(); next.userData.styledFade = true; next.opacity = .25; next.transparent = true; next.depthWrite = false;
         selectionMaterials.add(next); return next;
       };
       object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
@@ -311,8 +311,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const materials = [...new Set(caches.flatMap(cache => [...cache.values()]))]
         .filter(m => ids.includes(m.userData.materialId) && !currentMaterial(m, known));
       if (!materials.length) return;
-      for (const m of materials) if (!m.userData.materialRef || (m.alphaTest > 0) !== (m.userData.materialRef.pattern === 'lattice')) {
-        console.warn('Material refresh requires a geometry rebuild:', m.userData.materialId, 'missing reference or changed alpha/cutout pattern');
+      for (const m of materials) if (!m.userData.materialRef
+        || m.userData.alphaMode !== alphaModeOf(known[m.userData.materialId], m.userData.materialRef)) {
+        console.warn('Material refresh requires a geometry rebuild:', m.userData.materialId, 'missing reference or changed alpha/cutout pattern or mode');
         await view.rebuild(plan); return;
       }
       // random_offset lives in surface geometry (offsetSurfaceUvs), so turning it on or
@@ -489,7 +490,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       for (const key of faint) twin.groups.levels[key]?.traverse(object => {
         if (!object.material || object.layers.isEnabled(PICK_LAYER)) return;
         faded.set(object, object.material);
-        const clone = m => { const next = m.clone(); next.transparent = true; next.opacity = 0.18; next.depthWrite = false; return next; };
+        const clone = m => { const next = m.clone(); next.userData.styledFade = true; next.transparent = true; next.opacity = 0.18; next.depthWrite = false; return next; };
         object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
       });
       const buildings = new Set(Object.values(twin.groups.levels).filter(g => g.visible).map(g => g.userData.buildingId));

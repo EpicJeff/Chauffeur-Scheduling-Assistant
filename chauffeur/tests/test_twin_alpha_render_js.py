@@ -52,6 +52,12 @@ await test('cutout_sets_alpha_test_and_double_side', async () => {
   assert.ok(m.alphaMap?.isTexture); assert.equal(m.alphaMap.image,requests.at(-1).texture.image);
   assert.equal(m.alphaMap.colorSpace,THREE.NoColorSpace); m.dispose();
 });
+await test('cutout_cutoff_is_always_positive', async () => {
+  for (const cutoff of [0,.001,.4,1]) for (const tier of ['low','high']) {
+    const m=lib.kitMaterial('floor',make('cutoff-'+cutoff,{alpha_mode:'cutout',alpha_cutoff:cutoff}),tier);
+    assert.equal(m.alphaTest,Math.max(cutoff,.01)); assert.ok(m.alphaTest>0); m.dispose();
+  }
+});
 await test('blend_sets_opacity_and_no_depth_write', async () => {
   modes();
   const m = lib.kitMaterial('floor',make('blend',{alpha_mode:'blend',opacity:.35},
@@ -81,12 +87,19 @@ await test('mode_flags_are_set_before_any_map_loads_and_on_low_tier', async () =
 await test('opaque_entry_is_unchanged', async () => {
   modes(); assert.equal(lib.alphaModeOf(undefined,{}),'opaque');
   for (const tier of ['low','high']) for (const params of [{},{alpha_mode:'opaque',opacity:.2,alpha_cutoff:.7}]) {
-    const kit = make('opaque',params), ref = kit.materials.floor;
-    const a = await ready(lib.kitMaterial('floor',kit,tier)), b = await ready(legacy.kitMaterial('floor',kit,tier));
+    const kit = make('opaque-'+tier+'-'+Object.keys(params).length,params,{
+      ...Object.fromEntries(['base_color','normal','roughness'].map(slot=>[slot,`materials/opaque-${tier}-${Object.keys(params).length}/${slot}.png`]))}), ref = kit.materials.floor;
+    lib.refreshMaterials([ref.id]); const start = requests.length;
+    const a = await ready(lib.kitMaterial('floor',kit,tier));
+    const newRequests = requests.slice(start).map(r=>r.url);
+    legacy.refreshMaterials([ref.id]); const middle = requests.length;
+    const b = await ready(legacy.kitMaterial('floor',kit,tier));
+    assert.deepEqual(newRequests,requests.slice(middle).map(r=>r.url));
+    assert.equal(newRequests.length,tier === 'low' ? 1 : 3);
     assert.deepEqual(flags(a),flags(b));
     assert.equal(lib.materialKey(ref,'floor',tier,kit.manifest),legacy.materialKey(ref,'floor',tier,kit.manifest));
     const keys = ['opaque','cutout','blend'].map(mode=>lib.materialKey(ref,'floor',tier,
-      {opaque:{...kit.manifest.opaque,params:{alpha_mode:mode}}}));
+      {[ref.id]:{...kit.manifest[ref.id],params:{alpha_mode:mode}}}));
     assert.equal(new Set(keys).size,3); a.dispose(); b.dispose();
   }
   const m = new THREE.MeshStandardMaterial();
@@ -108,12 +121,27 @@ await test('lattice_keeps_its_look', async () => {
     assert.equal(lib.materialKey(kit.materials.lattice,'lattice',tier,{}),legacy.materialKey(kit.materials.lattice,'lattice',tier,{}));
     a.dispose(); b.dispose();
   }
+  for (const alpha_mode of ['opaque','cutout','blend']) {
+    const ref={id:'lattice-record',pattern:'lattice',color:'#f4f3ef'};
+    const manifest={'lattice-record':{household:true,revision:2,params:{alpha_mode}}};
+    assert.equal(lib.materialKey(ref,'lattice','high',manifest),legacy.materialKey(ref,'lattice','high',manifest));
+  }
   const kit2 = make('household-lattice',{alpha_mode:'blend',alpha_cutoff:.2},
     {opacity:'materials/household-lattice/opacity.png'});
   kit2.materials.floor.pattern = 'lattice';
   const m = await ready(lib.kitMaterial('floor',kit2,'low'));
   assert.equal(m.userData.alphaMode,'cutout'); assert.equal(m.alphaTest,.5);
   assert.equal(m.alphaMap.image.width,128); assert.equal(m.alphaMap.image.height,128); m.dispose();
+});
+await test('styled_fade_copies_cutout_values_without_replacing_the_fade', async () => {
+  const source=await ready(lib.kitMaterial('floor',make('styled-cutout',
+    {alpha_mode:'cutout',alpha_cutoff:.3},{opacity:'materials/styled-cutout/opacity.png'}),'low'));
+  const target=new THREE.MeshStandardMaterial({transparent:true,opacity:.18,depthWrite:false});
+  target.userData.styledFade=true;lib.copyMaterialParams(source,target);
+  assert.deepEqual([target.transparent,target.opacity,target.depthWrite],[true,.18,false]);
+  assert.equal(target.alphaTest,.3);assert.equal(target.alphaMap,source.alphaMap);assert.equal(target.side,THREE.DoubleSide);
+  assert.equal(target.userData.alphaMode,'cutout');assert.equal(target.userData.styledFade,true);
+  target.dispose();source.dispose();
 });
 await test('copy_carries_mode_between_instances', async () => {
   const source = await ready(lib.kitMaterial('floor',make('copy',{alpha_mode:'blend',opacity:.35}),'high'));
@@ -149,8 +177,29 @@ await test('copy_carries_mode_between_instances', async () => {
   owner.select('ext'); owner.update(600); owner.update(900);
   assert.equal(meshes[1].material.opacity,.7,'viewing restores the refreshed source opacity');
   assert.equal(meshes[1].material.depthWrite,false);
+  // The bake runtime adopts a clone of a viewing clone, then refreshes it.
+  const adopted=meshes[0].material.clone(); owner.adopt(meshes[0].material,adopted);
+  source.opacity=.8; source.color.set('#abc123'); source.roughness=.2;
+  source.userData.materialRevision=8; owner.refresh(source);
+  assert.equal(adopted.opacity,.8); assert.equal(adopted.depthWrite,false);
+  assert.equal(adopted.color.getHexString(),'abc123');assert.equal(adopted.roughness,.2);
+  assert.equal(adopted.userData.materialRevision,8);
   owner.dispose(); lib.disposeObject(root);
   source.dispose(); target.dispose(); viewing.dispose();
+});
+await test('viewing_cutout_keeps_alpha_test', async () => {
+  const {createViewing}=await import(file('static/twin/viewing.js'));
+  const source=lib.kitMaterial('floor',make('view-cutout',{alpha_mode:'cutout',alpha_cutoff:.4}),'low');
+  const root=new THREE.Group(), groups={levels:{}};
+  for(const id of ['roof','gableFull','gableCut','site']){groups[id]=new THREE.Group();root.add(groups[id]);}
+  const group=new THREE.Group();groups.levels['b:L1']=group;root.add(group);
+  const mesh=new THREE.Mesh(new THREE.BoxGeometry(),source);group.add(mesh);
+  const view={plan:{buildings:[{id:'b',position:[0,0],levels:[{id:'L1',elevation:0,ceiling:10,outline:[[0,0],[10,0],[10,10],[0,10]]}],walls:[]}]},
+    camera:new THREE.PerspectiveCamera(),controls:{target:new THREE.Vector3()},roomLights:[],renderer3:{shadowMap:{}}};
+  const owner=createViewing(view,{root,groups},()=>0,()=>{},{explicit:true});
+  assert.equal(mesh.material.alphaTest,.4);assert.equal(mesh.material.userData.viewingOpaque,true);
+  source.alphaTest=.7;owner.refresh(source);assert.equal(mesh.material.alphaTest,.7);
+  owner.dispose();lib.disposeObject(root);
 });
 await test('builtin_looks_equal_todays_materials', async () => {
   const {builtinMaterial} = await import(file('static/twin/surface_kinds.js'));

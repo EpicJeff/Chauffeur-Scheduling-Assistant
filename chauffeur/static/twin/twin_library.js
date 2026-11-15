@@ -134,7 +134,7 @@ export function materialKey(value, role, tier, manifest) {
   // The lattice flag already belongs to legacy keys. Only a record's new mode
   // extends the key; opaque records and the existing kit keep their old bytes.
   const mode = manifest[id]?.params?.alpha_mode || 'opaque';
-  if (mode !== 'opaque') key.push(mode);
+  if (value.pattern !== 'lattice' && mode !== 'opaque') key.push(mode);
   return JSON.stringify(key);
 }
 
@@ -216,7 +216,7 @@ export function copyMaterialParams(source, target) {
   if (target.userData.viewingOpaque !== undefined) {
     target.userData.viewingOpacity = source.opacity;
     target.userData.viewingDepthWrite = source.depthWrite;
-  } else {
+  } else if (!target.userData.styledFade) {
     for (const key of ['transparent', 'opacity', 'depthWrite']) target[key] = source[key];
   }
   for (const key of ['materialId', 'materialRevision', 'materialKey', 'materialRef', 'materialRole', 'randomOffset', 'alphaMode'])
@@ -279,7 +279,7 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   const mode = alphaModeOf(entry, ref);
   material.userData.alphaMode = mode;
   if (mode === 'cutout') {
-    material.alphaTest = params.alpha_cutoff ?? .5; material.side = THREE.DoubleSide;
+    material.alphaTest = Math.max(params.alpha_cutoff ?? .5, .01); material.side = THREE.DoubleSide;
   } else if (mode === 'blend') {
     material.transparent = true; material.opacity = params.opacity ?? 1; material.depthWrite = false;
   }

@@ -1,5 +1,6 @@
 """Catalogue updates through real mounted views, renderer caches and bake reach."""
 import json
+import subprocess
 import sys
 from pathlib import Path
 from twin_editor_dom import run_node
@@ -7,8 +8,9 @@ from test_twin_yard_reuse_js import PREFIX
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = PREFIX + r"""
-globalThis.buildCalls=0;
+globalThis.buildCalls=0;globalThis.applyCalls=[];
 registerHooks({resolve(spec,ctx,next){
+ if(spec==='./twin_library.js'&&ctx.parentURL.endsWith('/twin_view.js'))return {url:data(`export * from '${file('static/twin/twin_library.js')}';import {applyMaterialParams as apply} from '${file('static/twin/twin_library.js')}';export function applyMaterialParams(...args){globalThis.applyCalls.push(args[2].id);return apply(...args);}`),shortCircuit:true};
  if(spec==='./twin_generator.js'&&ctx.parentURL.endsWith('/twin_view.js'))return {url:data(`export * from '${file('static/twin/twin_generator.js')}';import {buildTwin as build} from '${file('static/twin/twin_generator.js')}';export function buildTwin(...args){globalThis.buildCalls++;if(globalThis.failBuild)throw Error('injected builder failure');return build(...args);}`),shortCircuit:true};
  if(spec==='./lightmap_material.js'&&ctx.parentURL.endsWith('/bake/runtime.js'))return {url:data(`export * from '${file('static/twin/bake/lightmap_material.js')}';import {loadAtlas as load} from '${file('static/twin/bake/lightmap_material.js')}';export function loadAtlas(...args){return globalThis.testAtlas?globalThis.testAtlas(...args):load(...args);}`),shortCircuit:true};
  return next(spec,ctx);
@@ -16,6 +18,16 @@ registerHooks({resolve(spec,ctx,next){
 const THREE = await import('three');
 const lib = await import(file('static/twin/twin_library.js'));
 const {mountTwin} = await import(file('static/twin/twin_view.js'));
+const baselineURLs=new Map();
+function baselineURL(path){
+ if(baselineURLs.has(path))return baselineURLs.get(path);
+ const source=input.baselineSources[path].replace(/((?:from|import)\s*['"])(\.[^'"]+)(['"])/g,(_,a,s,b)=>{
+  const url=new URL(s,file(path)).href,ref=Object.keys(input.baselineSources).find(p=>file(p)===url);
+  return a+(ref?baselineURL(ref):url)+b;
+ });
+ const url='data:text/javascript;base64,'+Buffer.from(source).toString('base64');baselineURLs.set(path,url);return url;
+}
+const {mountTwin:mountBaseline}=await import(baselineURL('static/twin/twin_view.js'));
 const {buildTwin} = await import(file('static/twin/twin_generator.js'));
 const {yardPartKeys,YARD_PARTS} = await import(file('static/twin/twin_yard.js'));
 globalThis.__THREE_MESH=THREE.Mesh;globalThis.__THREE_BOX=THREE.BoxGeometry;globalThis.__THREE_STD=THREE.MeshStandardMaterial;
@@ -34,6 +46,58 @@ async function mount(k,editor=true){const host=new Element();if(editor){const sh
 const materials=v=>{const s=new Set();v.scene.traverse(o=>{for(const m of o.material?[].concat(o.material):[])s.add(m);});return [...s];};
 const siding=v=>materials(v).find(m=>m.name==='siding');
 const settle=async()=>{for(let n=0;n<25;n++)await new Promise(r=>setTimeout(r,5));};
+await test('editor_faint_and_room_ghost_refresh_keep_their_fade_at_baseline_and_now',async()=>{
+ for(const mountView of [mountBaseline,mountTwin])for(const style of ['faint','room']){
+  const host=new Element(),shell=new Element();shell.className='editor-shell';shell.append(host);
+  const k=kit();k.materials.lawn={id};k.materials.floor={id};k.materials.interior_wall={id};const v=await mountView(host,{plan:plan(),kit:k,tier:'low',bake:false});
+  try{
+   const b=v.plan.buildings[0],key=b.id+':'+b.levels[0].id;
+   if(style==='faint')v.showLevels([key],{faint:[key]});
+   else {await v.setEditableLevel(key);v.setSelection({selected:null,hover:null,room:{building:b.id,level:b.levels[0].id,id:'focused',allowed:[],walls:[]}});}
+   const clones=materials(v).filter(m=>m.userData.materialId===id&&m.transparent&&m.opacity===(style==='faint'?.18:.25));
+   assert.ok(clones.length,`${mountView===mountBaseline?'baseline':'current'} ${style}: fixture contains styled household materials`);
+   if(style==='room')assert.ok(clones.some(m=>m.name==='lawn'),'covers site ghost clone');
+   const flags=clones.map(m=>[m.transparent,m.opacity,m.depthWrite]);
+   k.manifest[id]=entry(record(40,'#abc123','abababababab.jpg'));await v.refreshMaterials([id]);
+   assert.deepEqual(clones.map(m=>[m.transparent,m.opacity,m.depthWrite]),flags);
+   for(const m of clones){assert.equal(m.color.getHexString(),'abc123');assert.equal(m.userData.materialRevision,40);}
+  }finally{v.dispose();}
+ }
+});
+await test('alpha_mode_change_rebuilds',async()=>{
+ for(const [before,after] of [['opaque','blend'],['opaque','cutout'],['blend','opaque'],['cutout','opaque'],['cutout','blend'],['blend','cutout']]){
+  const k=kit();k.manifest[id].params={alpha_mode:before,opacity:.4,alpha_cutoff:.3};
+  const v=await mount(k);
+  try{const m=siding(v),calls=buildCalls,applied=applyCalls.filter(x=>x===id).length;
+   k.manifest[id]={...k.manifest[id],revision:50,params:{alpha_mode:after,opacity:.6,alpha_cutoff:.7}};
+   await v.refreshMaterials([id]);assert.equal(buildCalls,calls+1,`${before} to ${after}`);
+   assert.equal(applyCalls.filter(x=>x===id).length,applied,'view never patches the changed-mode source');
+   assert.notEqual(siding(v),m);assert.equal(siding(v).userData.alphaMode,after);
+  }finally{v.dispose();}
+ }
+});
+await test('opacity_change_applies_in_place',async()=>{
+ const k=kit();k.manifest[id].params={alpha_mode:'blend',opacity:.4};const v=await mount(k);
+ try{const m=siding(v),calls=buildCalls,applied=applyCalls.length;
+  k.manifest[id]={...k.manifest[id],revision:51,params:{alpha_mode:'blend',opacity:.6}};
+  await v.refreshMaterials([id]);assert.equal(buildCalls,calls);assert.equal(siding(v),m);
+  assert.equal(m.opacity,.6);assert.ok(applyCalls.length>applied);
+ }finally{v.dispose();}
+});
+await test('cutoff_change_applies_in_place',async()=>{
+ const k=kit();k.manifest[id].params={alpha_mode:'cutout',alpha_cutoff:.4};const v=await mount(k);
+ try{const m=siding(v),calls=buildCalls;
+  k.manifest[id]={...k.manifest[id],revision:52,params:{alpha_mode:'cutout',alpha_cutoff:0}};
+  await v.refreshMaterials([id]);assert.equal(buildCalls,calls);assert.equal(siding(v),m);assert.equal(m.alphaTest,.01);
+ }finally{v.dispose();}
+});
+await test('lattice_refresh_still_in_place',async()=>{
+ const k=kit();k.materials.siding.pattern='lattice';k.manifest[id].params={alpha_mode:'blend'};const v=await mount(k);
+ try{const m=siding(v),calls=buildCalls;
+  k.manifest[id]={...k.manifest[id],revision:53,params:{alpha_mode:'cutout',alpha_cutoff:.8}};
+  await v.refreshMaterials([id]);assert.equal(buildCalls,calls);assert.equal(siding(v),m);assert.equal(m.alphaTest,.5);
+ }finally{v.dispose();}
+});
 await test('new_map_url_after_replace',async()=>{
  current=record();const k=kit(),v=await mount(k);let watch;
  try {const {watchMaterialCatalogue}=await import(file('static/twin/material_watch.js'));watch=watchMaterialCatalogue(v,{api});await watch.check();
@@ -274,6 +338,8 @@ finish();
 
 if __name__ == '__main__':
     plan = json.loads((ROOT / 'tests/fixtures/twin_poolhouse.plan.json').read_text(encoding='utf-8'))
-    code, out = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan})
+    sources = {path: subprocess.check_output(['git', 'show', '49d96582:chauffeur/' + path],
+               cwd=ROOT, encoding='utf-8') for path in ['static/twin/twin_view.js','static/twin/twin_library.js']}
+    code, out = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan, 'baselineSources': sources})
     print(out)
     sys.exit(code or 0)
