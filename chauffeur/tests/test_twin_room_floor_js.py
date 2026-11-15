@@ -14,7 +14,7 @@ const {openingFloor,roomFloor,foundationPieces} = await import(file('static/twin
 const {buildingBase,groundAt} = await import(file('static/twin/twin_ground.js'));
 const {parkingObjects,lotPoint} = await import(file('static/twin/live/energy_geometry.js'));
 const {buildAtlas} = await import(file('static/twin/bake/atlas.js'));
-const {authoredGeometry} = await import(file('static/twin/bake/fingerprint.js'));
+const {authoredGeometry} = await import(file('static/twin/bake/geometry_key.js'));
 const {lightSource} = await import(file('static/twin/bake/reach.js'));
 const {cutHeight} = await import(file('static/twin/viewing.js'));
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-4,`${a} != ${b}`);

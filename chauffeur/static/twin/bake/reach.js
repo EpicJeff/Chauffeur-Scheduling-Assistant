@@ -1,7 +1,7 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { FT, lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
-import { fingerprint } from './fingerprint.js';
+import { fingerprint } from './geometry_key.js';
 
 // Match the live lamp's bulb height and range, including the ceiling inset.
 export function lightSource(plan, light) {

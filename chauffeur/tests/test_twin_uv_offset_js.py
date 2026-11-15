@@ -29,7 +29,7 @@ const lib=await import(file('static/twin/twin_library.js'));
 const {buildTwin,buildingKey}=await import(file('static/twin/twin_generator.js'));
 const {buildYard,yardPartKeys,YARD_PARTS}=await import(file('static/twin/twin_yard.js'));
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
-const {fingerprint}=await import(file('static/twin/bake/fingerprint.js'));
+const {fingerprint}=await import(file('static/twin/bake/geometry_key.js'));
 const square=(x,y,w=12)=>[[x,y],[x+w,y],[x+w,y+w],[x,y+w]];
 const params=(extra={})=>({tint:'#ffffff',roughness:null,metalness:null,normal_scale:1,normal_convention:'gl',ao_intensity:1,tile_ft:[4,4],rotation_deg:0,...extra});
 const entry=(extra={},revision=1)=>({kind:'material',household:true,revision,maps:{},params:params(extra)});

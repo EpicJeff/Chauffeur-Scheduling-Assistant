@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.871 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.872 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.872 (2026-11-14, NOT device-verified): the house loads in a browser that runs a privacy filter. The bake module `fingerprint.js` is now `geometry_key.js`.**
+
+- **Why:** privacy filter lists (EasyPrivacy, and the browsers and extensions that ship it) refuse any request whose path ends in `/fingerprint.js`. On the Pi panel the module was reported blocked, so the whole house page failed to load: one refused import fails the module graph.
+- **Change:** `static/twin/bake/fingerprint.js` moved to `static/twin/bake/geometry_key.js`, unchanged inside. The exported names (`fingerprint`, `authoredGeometry`) and every bake key stay the same, so no stored bake goes stale. Importers (`bake/atlas.js`, `bake/atlas_transport.js`, `bake/reach.js`) and the import-map lists in `templates/house_twin.html` and `templates/house_editor.html` follow.
+- **Invariant:** no file under `static/` may be named after a tracker (`fingerprint`, `analytics`, `tracking`, `tracker`, `telemetry`, `beacon`, `pixel`, `adsbygoogle`). `tests/test_twin_import_maps.py` (5) walks the folder and fails on such a name.
+- **Not verified:** the Pi was not retested. The cause is inferred from the report ("blocked") and from the server, which sets no rule that could refuse the file.
 
 **v2.499.871 (2026-11-14, NOT device-verified): the house foundation takes a material. The building card's Foundation section has a Slab slot; empty means concrete, as before.**
 

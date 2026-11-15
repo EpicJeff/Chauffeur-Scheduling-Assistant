@@ -1,6 +1,6 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { packBanks, fingerprint, atlasMesh, heightfieldExtent } from './atlas.js';
-import { authoredGeometry } from './fingerprint.js';
+import { authoredGeometry } from './geometry_key.js';
 
 export function covered(root) {
   const meshes = [];

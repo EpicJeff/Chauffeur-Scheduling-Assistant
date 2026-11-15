@@ -217,7 +217,7 @@ const caps=fireFaces.filter(f=>Math.abs(f.normal.y)>=.5),yTop=Math.max(...caps.m
 for(const f of caps)assert.ok(f.centre.y>(yTop+yBottom)/2?f.normal.y>0:f.normal.y<0,'fire pit top faces up and bottom faces down');
 console.log('Passed: fire pit wall outward normals');
 const {buildFirePit,firePitOptions,firePitLayout,gasTableLayout,placedPit,fireFlameMaterial}=await import(file('static/twin/fire_pits.js'));
-const {authoredGeometry}=await import(file('static/twin/bake/fingerprint.js'));
+const {authoredGeometry}=await import(file('static/twin/bake/geometry_key.js'));
 const fireMaterials=new Map(),fireMat=name=>{if(!fireMaterials.has(name))fireMaterials.set(name,kitMaterial(name,kit,'low'));return fireMaterials.get(name);};
 const firePlain=(name,color,extra={})=>{if(!fireMaterials.has(name))fireMaterials.set(name,extra.fireShader?fireFlameMaterial():new THREE.MeshStandardMaterial({name,color,...extra}));return fireMaterials.get(name);};
 const fireBuild=pit=>{const group=new THREE.Group();return {group,...buildFirePit(group,pit,-2,{mat:fireMat,plain:firePlain,id:'pit:'+pit.id})};};
