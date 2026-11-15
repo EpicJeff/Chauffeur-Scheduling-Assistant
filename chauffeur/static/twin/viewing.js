@@ -78,7 +78,7 @@ export function createViewing(view, model, ground, changed, {explicit = false} =
             m.userData.viewingOpaque = !source.transparent;
             m.transparent = true; m.clippingPlanes = [plane];
             if (source.alphaTest > 0) m.forceSinglePass = true;
-            const binding = {m, opacity: source.opacity, depth: source.depthWrite};
+            const binding = {m, opacity: source.opacity, depth: source.depthWrite, alpha: 1};
             originals.set(source, m); materials.push(binding); bindings.set(m, {materials, binding, plane, source});
           }
           return originals.get(source);
@@ -186,7 +186,10 @@ export function createViewing(view, model, ground, changed, {explicit = false} =
       c.alpha = alpha; c.group.visible = alpha > .001;
       if (c.group.userData.levelId) for (const light of view.roomLights)
         if (light.userData.level === c.group.name) light.intensity = (light.userData.viewingIntensity || 0) * alpha;
-      for (const {m, opacity, depth} of c.materials) { m.opacity = opacity * alpha; m.depthWrite = depth && alpha > .999; }
+      for (const binding of c.materials) {
+        binding.alpha = alpha;
+        binding.m.opacity = binding.opacity * alpha; binding.m.depthWrite = binding.depth && alpha > .999;
+      }
       for (const {object, cast} of c.shadows) {
         const next = cast && alpha > .999;
         if (object.castShadow !== next) { object.castShadow = next; view.renderer3.shadowMap.needsUpdate = true; }
@@ -227,7 +230,13 @@ export function createViewing(view, model, ground, changed, {explicit = false} =
     },
     snapshot() { return {selected, pinned, channels: channels.map(c => ({name: c.group.name, alpha: c.alpha, target: c.to}))}; },
     refresh(source) {
-      for (const [material, record] of bindings) if (record.source === source) copyMaterialParams(source, material);
+      for (const [material, record] of bindings) if (record.source === source) {
+        copyMaterialParams(source, material);
+        const binding = record.binding;
+        binding.opacity = material.userData.viewingOpacity; binding.depth = material.userData.viewingDepthWrite;
+        material.opacity = binding.opacity * binding.alpha;
+        material.depthWrite = binding.depth && binding.alpha > .999;
+      }
     },
     adopt(source, material) {
       const record = bindings.get(source); if (!record) return;

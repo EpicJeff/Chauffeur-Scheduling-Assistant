@@ -3,6 +3,7 @@ import { modelLoader, colladaTexturesReady } from './import_loaders.js';
 import { normaliseModel, modelBudget, mergeByMaterial, singlePassMaterial, heavyStandIn } from './objects.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { tierModel } from './model_lods.js';
+import { BUILTIN_LOOKS, builtinMaterial } from './surface_kinds.js';
 
 export const base = () => window.chfBase ?? '../';
 export function libUrl(assetId, name) {
@@ -121,11 +122,20 @@ function applyGraniteShader(material) {
   material.customProgramCacheKey = () => 'granite-neutral-light-1';
 }
 
+export function alphaModeOf(entry, ref) {
+  return ref?.pattern === 'lattice' ? 'cutout' : entry?.params?.alpha_mode || 'opaque';
+}
+
 // Include the receiving role: the bake classifies surfaces by material.name.
 export function materialKey(value, role, tier, manifest) {
   const id = value.id || value.asset || role;
   const flags = [role === 'granite' && 'granite', value.pattern === 'lattice' && 'lattice', role === 'roof' && 'roof'].filter(Boolean);
-  return JSON.stringify(['m', id, manifest[id]?.revision ?? 0, tier, role, value.color || null, flags]);
+  const key = ['m', id, manifest[id]?.revision ?? 0, tier, role, value.color || null, flags];
+  // The lattice flag already belongs to legacy keys. Only a record's new mode
+  // extends the key; opaque records and the existing kit keep their old bytes.
+  const mode = manifest[id]?.params?.alpha_mode || 'opaque';
+  if (mode !== 'opaque') key.push(mode);
+  return JSON.stringify(key);
 }
 
 // params.random_offset: each surface's base `uv` moves by a stable point picked by a
@@ -203,7 +213,13 @@ export function copyMaterialParams(source, target) {
   for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'alphaMap',
     'roughness', 'metalness', 'aoMapIntensity', 'alphaTest', 'side']) target[key] = source[key];
   target.color.copy(source.color); target.normalScale.copy(source.normalScale);
-  for (const key of ['materialId', 'materialRevision', 'materialKey', 'materialRef', 'materialRole', 'randomOffset'])
+  if (target.userData.viewingOpaque !== undefined) {
+    target.userData.viewingOpacity = source.opacity;
+    target.userData.viewingDepthWrite = source.depthWrite;
+  } else {
+    for (const key of ['transparent', 'opacity', 'depthWrite']) target[key] = source[key];
+  }
+  for (const key of ['materialId', 'materialRevision', 'materialKey', 'materialRef', 'materialRole', 'randomOffset', 'alphaMode'])
     target.userData[key] = source.userData[key];
   target.needsUpdate = true;
 }
@@ -259,6 +275,14 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   const textures = new Set();
   const urls = new Set();
   material.alphaMap = null; material.alphaTest = 0; material.side = THREE.FrontSide;
+  material.transparent = false; material.opacity = 1; material.depthWrite = true;
+  const mode = alphaModeOf(entry, ref);
+  material.userData.alphaMode = mode;
+  if (mode === 'cutout') {
+    material.alphaTest = params.alpha_cutoff ?? .5; material.side = THREE.DoubleSide;
+  } else if (mode === 'blend') {
+    material.transparent = true; material.opacity = params.opacity ?? 1; material.depthWrite = false;
+  }
   if (ref.pattern === 'lattice') {
     material.alphaMap = latticeTexture(); material.alphaTest = .5; material.side = THREE.DoubleSide;
     textures.add(material.alphaMap);
@@ -286,6 +310,7 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
     material.dispatchEvent({ type: 'materialparamschange' });
   };
   const slots = [['base_color', ['map']]];
+  if (mode !== 'opaque' && ref.pattern !== 'lattice') slots.push(['opacity', ['alphaMap']]);
   if (tier !== 'low') {
     slots.push(['normal', ['normalMap']]);
     if (maps.orm) slots.push(['orm', ['roughnessMap', 'metalnessMap', 'aoMap']]);
@@ -316,6 +341,7 @@ export function kitMaterial(role, kit, tier) {
     metalness: role === 'roof' ? 0.45 : 0,
     side: THREE.FrontSide,
   });
+  material.userData.alphaMode = alphaModeOf(asset, ref);
   if (ref.pattern === 'lattice') {
     material.alphaMap = latticeTexture(); material.alphaTest = .5; material.side = THREE.DoubleSide;
     // r187 WebGLShadowMap caches depth/distance variants by this material's
@@ -378,6 +404,15 @@ export function kitMaterial(role, kit, tier) {
 // original path and appearance, including the kit's special shader behaviour.
 export function materialSlot(value, defaultRole, kit, tier, cache, roleMaterial) {
   if (!value) return roleMaterial(defaultRole);
+  if (Object.hasOwn(BUILTIN_LOOKS, value.id)) {
+    const key = JSON.stringify(['builtin-look', value.id, defaultRole, value.color || null]);
+    if (!cache.has(key)) {
+      const material = builtinMaterial(value.id, defaultRole);
+      if (value.color) material.color.set(value.color);
+      cache.set(key, material);
+    }
+    return cache.get(key);
+  }
   const refs = kit.materials || {}, named = refs[value.id];
   const known = manifest(kit), id = known[value.id]?.household ? value.id : named?.id || named?.asset;
   if (known[id]?.household) {
