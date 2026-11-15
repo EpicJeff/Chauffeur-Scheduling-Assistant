@@ -319,6 +319,29 @@ def scenario_probe_posts_a_result():
           and r['gpu'] and r['ua'] and r['at'], r)
 
 
+def scenario_frame_meter_reports_and_scales():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s, 'tier=low')
+        check(page.locator('.twin-frame-meter').count() == 0, 'no meter without ?perf=1')
+        _open(page, s, 'tier=low&perf=1')
+        page.wait_for_function("/fps/.test(document.querySelector('.twin-frame-meter')?.textContent || '')", timeout=15000)
+        text = page.inner_text('.twin-frame-meter')
+        print('    ' + text.replace('\n', ' | '))
+        check('draws' in text and 'tier low' in text and 'script' in text, text)
+        full = page.evaluate('() => window.__twin.renderer3.domElement.width')
+        page.click('.twin-frame-meter button')
+        page.click('.twin-frame-meter button')
+        half = page.evaluate('() => window.__twin.renderer3.domElement.width')
+        check(abs(half - full / 2) <= 1, f'50% render scale halves the canvas: {full} -> {half}')
+        css = page.evaluate('() => window.__twin.renderer3.domElement.clientWidth')
+        check(css >= full - 1, f'the canvas still fills the screen: {css} css px of {full}')
+        check(_stats(page)['drawCalls'] > 0, 'still draws at half scale')
+    check(not _unexpected(s.errors()), s.errors())
+
+
 def scenario_library_urls_carry_the_device_token():
     s = _serve()
     if s is None:
@@ -364,6 +387,7 @@ if __name__ == '__main__':
                scenario_no_requests_go_one_level_too_deep,
                scenario_rebuilds_do_not_leak,
                scenario_probe_posts_a_result,
+               scenario_frame_meter_reports_and_scales,
                scenario_library_urls_carry_the_device_token,
                scenario_page_draws_with_the_library_offline):
         fn()

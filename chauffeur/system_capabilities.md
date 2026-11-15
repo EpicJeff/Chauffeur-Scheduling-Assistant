@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.876 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.877 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.877 (2026-11-15, NOT device-verified): frame meter for the twin. Adding `?perf=1` to the twin's address shows what a frame costs on that screen, to tell a slow device from a slow scene before any tier or hardware change.**
+
+- **What it shows** (top left, refreshed twice a second): frames per second, average and worst frame time, the time each frame spends in the page's own draw call (`script`), draw calls, triangles, the canvas size in pixels, the tier, and the graphics driver string. A driver string naming SwiftShader, llvmpipe or another software renderer adds a `SOFTWARE RENDERING` line.
+- **Render scale switch:** a button cycles 100%, 75% and 50% of the tier's pixel ratio. It is a diagnosis aid, not a setting: nothing is stored and a reload returns to 100%. A frame rate that rises at 50% means the device is short on fill rate; one that does not move means the cost is in the scene or the script.
+- **Off by default:** without `?perf=1` no element is made and the frame loop takes no extra clock reads. It adds no request and no stream. The older `?hud=1` line (fps and draw calls) and `?probe=1` are unchanged.
+- **Code:** `static/twin/frame_meter.js` (`mountFrameMeter`), mounted from `mountTwin` in `static/twin/twin_view.js` as `view.meter`; removed in `dispose()`.
+- **Tests:** `tests/test_twin_frame_meter_js.py` (node run, 3 checks), `scenario_frame_meter_reports_and_scales` in `tests/test_twin_view_live.py` (Chromium: the real page, the meter's numbers, half scale halves the canvas while it still fills the screen), `tests/test_twin_import_maps.py`.
 
 **v2.499.876 (2026-11-15, NOT device-verified): drawn light fixtures bake. Spot, line and area fixtures, and entities with several fixtures, now take a channel in the shadowmask lightmap, so their light stops at walls on every tier. This completes the light fixtures arc (slices A v2.499.863, B .869, D .870).**
 

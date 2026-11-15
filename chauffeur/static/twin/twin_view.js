@@ -22,6 +22,7 @@ import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js'
 import { createUnlit } from './unlit.js';
 import { createViewing } from './viewing.js';
 import { createLevels } from './levels.js';
+import { mountFrameMeter } from './frame_meter.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {} } = {}) {
   kit = kit || {};
@@ -975,6 +976,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     dispose() {
       if (disposed) return;
       disposed = true; ++revision; view.ready = false;
+      view.meter?.stop();
       view.materialWatcher?.stop();
       for (const release of [...materialBindings.values()]) release();
       view.levels?.stop();
@@ -1162,7 +1164,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       }
       if (view.idle?.active()) view.idle.frame(now);
       else if (!view.cameraTransition) controls.update();
+      const drawn = view.meter ? performance.now() : 0;
       render();
+      view.meter?.frame(now, performance.now() - drawn);
       ++fpsFrames;
       if (now - fpsSince >= 500) {
         fps = fpsFrames * 1000 / (now - fpsSince); fpsFrames = 0; fpsSince = now;
@@ -1191,6 +1195,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         run.reject(error); // runProbe's finally restores the camera, view and controls.
       }
     });
+    if (new URLSearchParams(location.search).get('perf') === '1')
+      view.meter = mountFrameMeter(el, { renderer3, gpu: view.renderer, tier, pixelRatio: settings.pixelRatio, stats: () => lastStats });
     view.ready = true;
     timeTimer = setInterval(updateTime, 60000);
     for (const name of ['pointerdown', 'pointermove', 'keydown', 'input']) document.addEventListener(name, previewActivity);
