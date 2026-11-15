@@ -60,7 +60,7 @@ await test('read_only_for_non_parents',async()=>{
  for(const n of node.querySelectorAll('input')){n.value='4';await fire(n,'change');}
  const e=createFixtureEditor({...s,signal:s.signal.signal});e.add('light.a','point');assert.equal(e.pointerDown(evt(10)),false);assert.deepEqual(s.sent,[]);s.signal.abort();
 });
-await test('real_device_card_wiring_and_read_only_deferred_shapes',async()=>{
+await test('real_device_card_wiring_and_line_controls',async()=>{
  const {createHaLink}=await import(file('static/twin/editor/ha_link.js'));
  const {createDevicePlacement}=await import(file('static/twin/editor/device_placement.js'));
  const s=setup(),device={device_id:'d',entity_id:'light.a',entities:['light.a','switch.b'],name:'Garden lights',kind:'light',area_id:'garden'};
@@ -72,8 +72,8 @@ await test('real_device_card_wiring_and_read_only_deferred_shapes',async()=>{
  const placement=createDevicePlacement({...s,signal:s.signal.signal});
  const host=document.createElement('div'),record={kind:'yard_rooms',piece:s.plan.site.yard_rooms[0],building:null};link.draw(host,record);
  await click(byText(host,'Fixtures'));const card=document.getElementById('piece-card');assert.equal(card.querySelectorAll('[data-fixture-entity]').length,2);
- const line=card.querySelector('[data-fixture-id="fixture:line"]');assert.ok(line.querySelector('[aria-label="Share"]').disabled);
- assert.equal(line.querySelectorAll('button').map(textOf).join(','),'Delete');
+ const line=card.querySelector('[data-fixture-id="fixture:line"]');assert.equal(line.querySelector('[aria-label="Share"]').disabled,false);
+ for(const name of ['Redraw','Duplicate','Delete','Pick another edge'])assert.ok(byText(line,name));
  await click(byText(card,'Add point fixtures'));assert.equal(document.getElementById('device-tools').hidden,false);
  placement.pointerDown(evt(12));await placement.pointerUp(evt(12));assert.equal(s.sent.at(-1).op,'add_light_fixture');
  placement.cancel();s.lock();link.draw(host,record);await click(byText(host,'Fixtures'));assert.ok(card.querySelectorAll('input,select').every(n=>n.disabled));

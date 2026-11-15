@@ -57,7 +57,7 @@
     imports[new URL(window.chfBase + 'static/twin/editor/flags.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/flags.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/ha_link.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/ha_link.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/device_placement.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/device_placement.js' | ver | tojson }};
-    {% for name in ['fixtures', 'aim_tool'] %}
+    {% for name in ['fixtures', 'aim_tool', 'line_fixture_tool'] %}
     imports[new URL(window.chfBase + 'static/twin/editor/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/editor/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/editor/build_ghosts.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/build_ghosts.js' | ver | tojson }};

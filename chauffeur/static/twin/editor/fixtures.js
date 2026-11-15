@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { aimTool } from './aim_tool.js';
+import { createLineFixtureTool, facingOptions, areaOutline } from './line_fixture_tool.js';
 import { report as reportError } from './api.js';
 
 const FT = .3048;
@@ -13,7 +14,7 @@ const numeric = (value, low = -1e5, high = 1e5) => {
 };
 function field(root, label, value, save, { locked = false, low, high, step = 'any', type = 'number' } = {}) {
   const wrap = element('label', label), input = element('input'); input.type = type; input.step = step;
-  input.value = value; input.disabled = locked; if (locked) input.dataset.fixtureLocked = '';
+  input.value = typeof value === 'number' ? Math.round(value * 100) / 100 : value; input.disabled = locked; if (locked) input.dataset.fixtureLocked = '';
   if (low !== undefined) input.min = low; if (high !== undefined) input.max = high;
   input.setAttribute('aria-label', label); wrap.append(input); root.append(wrap);
   input.addEventListener('change', () => Promise.resolve().then(() => !input.disabled && save(input.value)).catch(reportError)); return input;
@@ -26,7 +27,7 @@ function button(root, text, action, locked) {
   node.addEventListener('click', action); root.append(node); return node;
 }
 
-export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onMove, onAim, report = reportError }) {
+export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onMove, onAim, onReattach, report = reportError }) {
   const root = element('section'); root.dataset.fixtureEntity = entity_id;
   root.append(element('h3', `Fixtures · ${entity_id}`));
   let pending = Promise.resolve();
@@ -39,17 +40,22 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onMove, on
     const row = element('details'), summary = element('summary', `${f.shape[0].toUpperCase() + f.shape.slice(1)} · ${f.id.slice(-8)}`);
     row.dataset.fixtureId = f.id; row.append(summary); root.append(row);
     const rowActions = element('div'); rowActions.className = 'editor-material-actions';
-    const editable = ['point', 'spot'].includes(f.shape);
+    const current = () => getPlan().light_fixtures?.[entity_id]?.find(r => r.id === f.id) || f;
     const change = delta => save(() => op({ op: 'update_light_fixture', entity_id, id: f.id, change: delta }));
+    const choice = (name, value, options, apply) => {
+      const label = element('label', name), select = element('select'); select.setAttribute('aria-label', name);
+      for (const [v, text] of options) { const option = element('option', text); option.value = v; select.append(option); }
+      select.value = value; select.disabled = !canEdit(); select.addEventListener('change', () => { if (canEdit()) apply(select.value); }); label.append(select); row.append(label); return select;
+    };
     row.append(element('p', `Reference: ${f.ref}${f.ref === 'floor' ? ` · ${f.building} · ${f.level}` : ''}`));
     if (f.at) for (const [i, name] of ['East (ft)', 'North (ft)', 'Height (ft)'].entries()) {
       field(row, name, f.at[i], v => save(() => {
         const current = getPlan().light_fixtures?.[entity_id]?.find(r => r.id === f.id) || f;
         const at = [...current.at]; at[i] = numeric(v);
         return op({ op: 'update_light_fixture', entity_id, id: f.id, change: { at } });
-      }), { locked: !canEdit() || !editable });
+      }), { locked: !canEdit() });
     }
-    field(row, 'Share', f.share ?? '', v => change({ share: v.trim() ? numeric(v, 0, 1e6) : null }), { locked: !canEdit() || !editable, low: 0, high: 1e6 });
+    field(row, 'Share', f.share ?? '', v => change({ share: v.trim() ? numeric(v, 0, 1e6) : null }), { locked: !canEdit(), low: 0, high: 1e6 });
     row.append(element('p', 'Leave Share blank for automatic output sharing.'));
     if (f.shape === 'spot') {
       for (const [i, name] of ['Aim east (ft)', 'Aim north (ft)', 'Aim height (ft)'].entries()) field(row, name, f.aim[i], v => save(() => {
@@ -60,25 +66,47 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onMove, on
       field(row, 'Softness', f.softness ?? .3, v => change({ softness: numeric(v, 0, 1) }), { locked: !canEdit(), low: 0, high: 1, step: '.05' });
       button(rowActions, 'Aim', () => { if (canEdit()) onAim?.(entity_id, f); }, !canEdit());
     }
-    if (!editable) {
-      for (const key of ['path', 'size_ft', 'facing', 'rotation_deg', 'width_in', 'snap']) if (f[key] !== undefined)
-        row.append(element('p', `${({path:'Path (ft)',size_ft:'Size (ft)',facing:'Facing',rotation_deg:'Rotation (degrees)',width_in:'Width (in)',snap:'Host'})[key]}: ${JSON.stringify(f[key])}`));
-      row.append(element('p', f.detached ? 'Detached. Reattach tools are coming in the next slice.' : 'Shape editing is coming in the next slice.'));
-      if (f.snap?.host.kind === 'wall') {
-        const label = element('label', 'Wall side'), select = element('select'); select.setAttribute('aria-label', 'Wall side');
-        for (const [value, text] of [['down','Down'],['up','Up'],['out','Out'],['in','In']]) { const option = element('option', text); option.value = value; select.append(option); }
-        select.value = f.facing; select.disabled = !canEdit(); select.addEventListener('change', () => change({ facing: select.value })); label.append(select); row.append(label);
+    if (f.shape === 'line') {
+      field(row, 'Width (in)', f.width_in ?? .5, v => change({ width_in: numeric(v, .25, 2) }), { locked: !canEdit(), low: .25, high: 2 });
+      choice(f.snap?.host.kind === 'wall' ? 'Wall side' : 'Facing', f.facing, facingOptions(f.snap?.host.kind), v => change({ facing: v }));
+      if (f.snap) {
+        const snapChange = apply => save(() => { const snap = structuredClone(current().snap); apply(snap); return op({ op:'update_light_fixture', entity_id, id:f.id, change:{snap, ...(snap.host.kind === 'step' ? {facing:'out'} : {})} }); });
+        choice('Snap host kind', f.snap.host.kind, [['retaining_wall','Retaining wall cap'],['hardscape','Patio, path or deck'],['step','Step nose'],['wall','Wall top'],['fence','Fence top']], v => snapChange(s => s.host.kind = v));
+        field(row, 'Snap host id', f.snap.host.id, v => { if (!v.trim()) throw new Error('Choose a host id.'); return snapChange(s => s.host.id = v.trim()); }, { type:'text', locked:!canEdit() });
+        for (const end of ['from','to']) for (const [i, name] of ['east','north'].entries()) field(row, `Edge ${end} ${name} (ft)`, f.snap.edge[end][i], v => snapChange(s => s.edge[end][i] = numeric(v)), {locked:!canEdit()});
+        for (const key of ['t0','t1']) field(row, key, f.snap[key], v => snapChange(s => s[key] = numeric(v,0,1)), {locked:!canEdit(),low:0,high:1});
+        button(rowActions, f.detached ? 'Reattach' : 'Pick another edge', () => { if (canEdit()) onReattach?.(entity_id, current()); }, !canEdit());
+        button(rowActions, 'Keep as drawn', () => change({snap:null}), !canEdit());
+      } else {
+        for (const [j, point] of f.path.entries()) for (const [i, name] of ['east','north','height'].entries()) field(row, `Point ${j + 1} ${name} (ft)`, point[i], v => save(() => {
+          const path = structuredClone(current().path); path[j][i] = numeric(v); return op({op:'update_light_fixture',entity_id,id:f.id,change:{path}});
+        }), {locked:!canEdit()});
+        button(rowActions, 'Add path point', () => save(() => {
+          const path = structuredClone(current().path), a = path.at(-2), b = path.at(-1); path.push(b.map((v,i) => v + v - a[i]));
+          return op({op:'update_light_fixture',entity_id,id:f.id,change:{path}});
+        }), !canEdit() || f.path.length >= 64);
+        button(rowActions, 'Remove last point', () => change({path:current().path.slice(0,-1)}), !canEdit() || f.path.length <= 2);
       }
+      if (f.detached) row.append(element('p', 'Detached: the host edge is missing. Reattach this run or keep its last path as drawn.'));
+    }
+    if (f.shape === 'area') {
+      for (const [i, name] of ['Width (ft)','Height of panel (ft)'].entries()) field(row, name, f.size_ft[i], v => save(() => {
+        const size_ft = [...current().size_ft]; size_ft[i] = numeric(v,.001); return op({op:'update_light_fixture',entity_id,id:f.id,change:{size_ft}});
+      }), {locked:!canEdit(),low:.001});
+      choice('Facing', Array.isArray(f.facing) ? 'normal' : f.facing, [['down','Down'],['out','Out'],['up','Up'],['normal','Custom normal']], v => change({facing:v === 'normal' ? Array.isArray(current().facing) ? current().facing : [0,0,-1] : v}));
+      for (const [i, name] of ['Normal east','Normal north','Normal up'].entries()) field(row, name, (Array.isArray(f.facing) ? f.facing : f.facing === 'up' ? [0,0,1] : f.facing === 'out' ? [0,-1,0] : [0,0,-1])[i], v => save(() => {
+        const face = current().facing, facing = Array.isArray(face) ? [...face] : face === 'up' ? [0,0,1] : face === 'out' ? [0,-1,0] : [0,0,-1]; facing[i] = numeric(v,-1,1);
+        if (Math.hypot(...facing) <= 1e-8) throw new Error('Choose a nonzero facing normal.'); return op({op:'update_light_fixture',entity_id,id:f.id,change:{facing}});
+      }), {locked:!canEdit(),low:-1,high:1});
+      field(row, 'Rotation (degrees)', f.rotation_deg ?? 0, v => change({rotation_deg:numeric(v)}), {locked:!canEdit()});
     }
     if (f.orphaned) row.append(element('p', f.orphan_reason || 'The floor reference is missing.'));
-    if (editable) {
-      button(rowActions, 'Move', () => { if (canEdit()) onMove?.(entity_id, f); }, !canEdit());
-      button(rowActions, 'Duplicate', () => save(() => {
-        const copy = structuredClone(getPlan().light_fixtures?.[entity_id]?.find(r => r.id === f.id) || f);
-        for (const key of ['id','orphaned','orphan_reason']) delete copy[key];
-        return op({ op: 'add_light_fixture', entity_id, fixture: copy });
-      }), !canEdit());
-    }
+    button(rowActions, f.shape === 'line' ? 'Redraw' : 'Move', () => { if (canEdit()) onMove?.(entity_id, current()); }, !canEdit());
+    button(rowActions, 'Duplicate', () => save(() => {
+      const copy = structuredClone(current());
+      for (const key of ['id','orphaned','orphan_reason','detached']) delete copy[key];
+      return op({ op: 'add_light_fixture', entity_id, fixture: copy });
+    }), !canEdit());
     button(rowActions, 'Delete', () => save(async () => {
       if (await window.promptConfirm('Delete this fixture?', 'Undo restores the fixture.', 'Delete', 'Cancel') && canEdit())
         await op({ op: 'delete_light_fixture', entity_id, id: f.id });
@@ -87,6 +115,7 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onMove, on
   }
   const addActions = actions(root);
   for (const shape of ['point', 'spot']) button(addActions, `Add ${shape} fixtures`, () => { if (canEdit()) onAdd?.(entity_id, shape); }, !canEdit());
+  for (const shape of ['line', 'area']) button(addActions, `Add ${shape} fixture`, () => { if (canEdit()) onAdd?.(entity_id, shape); }, !canEdit());
   return root;
 }
 
@@ -99,7 +128,7 @@ export function cameraView(plan, marker) {
 
 export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal, prepare = () => {}, report = reportError, getCameraMarker }) {
   const canvas = view.renderer3.domElement, root = new THREE.Group(), el = id => document.getElementById(id);
-  const ray = new THREE.Raycaster(); view.scene.add(root); root.name = 'editor-light-fixtures';
+  const ray = new THREE.Raycaster(); ray.params.Line.threshold = .08; view.scene.add(root); root.name = 'editor-light-fixtures';
   let mode = null, press = null, aiming = null, slider = null, cardDevice = null, cardKey = null, signature = null;
   function height(f, at) {
     if (f.ref === 'ground') return groundAt(getPlan(), ...at);
@@ -113,24 +142,38 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     if (hit) {
       const b = hit.building, a = (b.rotation || 0) * Math.PI / 180, p = b.position || [0, 0];
       let [x, y, z] = hit.point;
+      let normal = [0,0,hit.surface === 'ceiling' ? -1 : 1];
       if (standOff && hit.kind === 'wall' && hit.piece && hit.side) {
         const [dx, dy] = hit.piece.to.map((v, i) => v - hit.piece.from[i]), length = Math.hypot(dx, dy);
         const offset = (hit.piece.thickness / 2 + 1 / 12) * (hit.side === 'left' ? 1 : -1);
         if (length) { x -= dy / length * offset; y += dx / length * offset; }
+        const sign = hit.side === 'left' ? 1 : -1;
+        normal = length ? [sign * (-dy * Math.cos(a) - dx * Math.sin(a)) / length, sign * (-dy * Math.sin(a) + dx * Math.cos(a)) / length, 0] : normal;
       } else if (standOff && hit.kind === 'room') z += (hit.surface === 'ceiling' ? -1 : 1) / 12;
       return { at: [p[0] + x * Math.cos(a) - y * Math.sin(a), p[1] + x * Math.sin(a) + y * Math.cos(a),
-        z + (b.base || 0) + buildingGround(getPlan(), b)], building: b.id, level: hit.level,
+        z + (b.base || 0) + buildingGround(getPlan(), b)], building: b.id, level: hit.level, normal,
         ceiling: hit.kind === 'room' && hit.surface === 'ceiling', floor: (b.levels.find(l => l.id === hit.level)?.elevation || 0)
           + (hit.room?.floor_offset_ft || 0) + (b.base || 0) + buildingGround(getPlan(), b) };
     }
     const p = library.ground(event); return p && { at: [...p, groundAt(getPlan(), ...p)], ground: true };
   }
+  const shapeTool = createLineFixtureTool({ view, getPlan, surface, canEdit, report, host: el('device-tools'), onDone: cancel,
+    encode(fixture, hit) {
+      const context = hit.ground ? {ref:'ground'} : {ref:'floor',building:hit.building,level:hit.level};
+      const local = p => [p[0],p[1],p[2] - height(context,p)];
+      return {...fixture,...context,...(fixture.path ? {path:fixture.path.map(local)} : {at:local(fixture.at)})};
+    },
+    commit: (active, fixture) => {
+      if (!canEdit()) return false;
+      return op(active.fixture ? {op:'update_light_fixture',entity_id:active.entity_id,id:active.fixture.id,change:fixture}
+        : {op:'add_light_fixture',entity_id:active.entity_id,fixture});
+    } });
   function release() {
     if (!press) return; view.controls.enabled = press.enabled;
     if (canvas.hasPointerCapture(press.pointer)) canvas.releasePointerCapture(press.pointer); press = null;
   }
   function cancel() {
-    release(); aiming?.stop(); aiming = null; slider?.parentElement.remove(); slider = null; mode = null;
+    release(); aiming?.stop(); aiming = null; shapeTool.stop(); shapeTool.preview.removeFromParent(); slider?.parentElement.remove(); slider = null; mode = null;
     el('device-tools').hidden = true; canvas.style.cursor = ''; el('device-cancel').textContent = 'Cancel placement';
   }
   function start(next, text) {
@@ -139,8 +182,20 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   }
   function add(entity_id, shape) {
     if (canEdit() && ['point', 'spot'].includes(shape)) start({ kind: 'add', entity_id, shape }, `Click to add ${shape} fixtures. Done ends placement; Escape cancels.`);
+    else if (canEdit() && ['line','area'].includes(shape)) startShape(entity_id, shape === 'area' ? 'area' : 'draw');
   }
-  function move(entity_id, f) { if (canEdit()) start({ kind: 'move', entity_id, f }, 'Click a surface to move this fixture.'); }
+  function startShape(entity_id, kind, fixture) {
+    start({kind:'shape'}, kind === 'area' ? 'Drag a rectangle, choose its facing, then Finish. Escape cancels the rectangle; Done ends the mode.'
+      : 'Draw points or Snap to edge; drag along an edge for a shorter run. Enter or Finish completes a drawing; Backspace removes a point. Escape cancels the gesture; Done ends the mode.');
+    shapeTool.start({entity_id,kind,fixture});
+    root.add(shapeTool.preview);
+  }
+  function reattach(entity_id, f) { if (canEdit()) startShape(entity_id, 'snap', f); }
+  function move(entity_id, f) {
+    if (!canEdit()) return;
+    if (f.shape === 'line') startShape(entity_id, f.snap ? 'snap' : 'draw', f);
+    else start({ kind: 'move', entity_id, f }, 'Click a surface to move this fixture.');
+  }
   function startAim(at, aim, cone, commit, camera = false) {
     start({ kind: 'aim' }, 'Drag to aim on the ground or a wall. Done ends aiming; Escape cancels the current drag.');
     aiming = aimTool({ at, aim, cone_deg: cone, onCommit: async value => { if (canEdit()) await commit(value); } }); root.add(aiming.preview);
@@ -163,7 +218,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       view: { aim: value.aim, fov_deg: value.cone_deg } }), true);
   }
   function drawFixtures(host, device) {
-    for (const entity_id of entities(device)) host.append(fixtureCard({ entity_id, getPlan, canEdit, op, onAdd: add, onMove: move, onAim: aim, report }));
+    for (const entity_id of entities(device)) host.append(fixtureCard({ entity_id, getPlan, canEdit, op, onAdd: add, onMove: move, onAim: aim, onReattach: reattach, report }));
     if (device.kind === 'camera' || device.entity_id?.startsWith('camera.')) {
       const marker = getCameraMarker?.(device);
       if (marker) {
@@ -212,10 +267,12 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     if (event.button !== 0) return false;
     const picked = !mode && pick(event);
     if (!mode && !picked || mode && !canEdit()) return false;
+    if (mode?.kind === 'shape' && !shapeTool.down(event)) return false;
     press = { pointer: event.pointerId, x: event.clientX, y: event.clientY, enabled: view.controls.enabled, picked };
     view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); aiming?.begin(); return true;
   }
   function pointerMove(event) {
+    if (mode?.kind === 'shape' && canEdit()) return shapeTool.move(event);
     if (!press || press.pointer !== event.pointerId) return false;
     if (aiming && canEdit()) { const p = surface(event); if (p) aiming.move(p.at); } return true;
   }
@@ -227,6 +284,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
         showDevice(device || { device_id: p.picked.entity_id, entity_id: p.picked.entity_id, name: p.picked.entity_id }, p.picked.fixtureId);
       } return;
     }
+    if (mode?.kind === 'shape') { await shapeTool.up(event, cancelled); return; }
     if (aiming) { if (!cancelled && canEdit()) { const hit = surface(event); if (hit) aiming.move(hit.at); } await aiming.end(cancelled || !canEdit()); return; }
     if (cancelled || !canEdit() || !mode || Math.hypot(event.clientX - p.x, event.clientY - p.y) >= 3) return;
     const hit = surface(event, true); if (!hit) return;
@@ -256,20 +314,43 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   function refresh() {
     if (mode && !canEdit()) cancel(); refreshCard();
     const plan = getPlan(), next = JSON.stringify([plan.light_fixtures, plan.buildings, plan.site?.terraces]); if (signature === next) { draw(); return; } signature = next;
-    for (const child of [...root.children]) if (child !== aiming?.preview) { child.geometry?.dispose(); child.material?.dispose(); child.removeFromParent(); }
+    for (const child of [...root.children]) if (child !== aiming?.preview && child !== shapeTool.preview) { child.geometry?.dispose(); child.material?.dispose(); child.removeFromParent(); }
     for (const [entity_id, rows] of Object.entries(getPlan().light_fixtures || {})) for (const f of rows) {
-      const at = f.at || f.path?.[0]; if (!at) continue; const p = absolute(f, at);
-      const mesh = new THREE.Mesh(new THREE.SphereGeometry(.12, 10, 6), new THREE.MeshBasicMaterial({ color: '#9abfe5', toneMapped: false }));
-      mesh.position.set(p[0] * FT, p[2] * FT, -p[1] * FT); mesh.renderOrder = 21;
-      mesh.userData = { fixtureId: f.id, entity_id, building: f.ref === 'floor' ? f.building : null, level: f.level }; root.add(mesh);
+      const at = f.at || f.path?.[0]; if (!at) continue;
+      const kind = f.snap?.host.kind, building = ['wall','step'].includes(kind) && plan.buildings?.find(b => b[kind === 'wall' ? 'walls' : 'stairs']?.some(p => p.id === f.snap.host.id));
+      const piece = building && building[kind === 'wall' ? 'walls' : 'stairs'].find(p => p.id === f.snap.host.id);
+      const toAbsolute = p => {
+        const q = absolute(f, p);
+        if (f.snap) q[2] += (building ? buildingGround(plan, building) : 0) - (f.ref === 'floor' ? buildingGround(plan, plan.buildings.find(b => b.id === f.building)) : 0);
+        return q;
+      };
+      let mesh;
+      if (f.shape === 'line' || f.shape === 'area') {
+        const points = f.shape === 'line' ? f.path.map(toAbsolute) : areaOutline({...f,at:toAbsolute(f.at)});
+        mesh = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points.map(p => new THREE.Vector3(p[0] * FT,p[2] * FT,-p[1] * FT))), new THREE.LineBasicMaterial({color:'#9abfe5',toneMapped:false}));
+      } else {
+        const p = toAbsolute(at); mesh = new THREE.Mesh(new THREE.SphereGeometry(.12, 10, 6), new THREE.MeshBasicMaterial({ color: '#9abfe5', toneMapped: false }));
+        mesh.position.set(p[0] * FT, p[2] * FT, -p[1] * FT);
+      }
+      mesh.renderOrder = 21;
+      mesh.userData = { fixtureId: f.id, entity_id, building: building?.id || (f.ref === 'floor' ? f.building : null), level: piece?.level || f.level }; root.add(mesh);
     }
     draw();
   }
   el('device-cancel').addEventListener('click', () => { if (mode) cancel(); }, { signal });
-  document.addEventListener('keydown', event => { if (event.key === 'Escape' && mode) {
-    if (aiming && press) { release(); aiming.end(true).catch(report); } else cancel();
-    event.preventDefault(); event.stopImmediatePropagation();
-  } }, { signal, capture: true });
+  canvas.addEventListener('pointermove', event => { if (mode?.kind === 'shape' && !press) pointerMove(event); }, {signal});
+  document.addEventListener('keydown', event => {
+    if (!mode || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), #cc-choice-modal:not(.hidden), #cc-alert-modal:not(.hidden), dialog[open]')) return;
+    if (mode.kind === 'shape' && (event.key === 'Escape' || !event.target.closest?.('input,textarea,select,[contenteditable="true"]') && ['Enter','Backspace'].includes(event.key))) {
+      if (event.key === 'Escape') release();
+      if (!shapeTool.key(event) && event.key === 'Escape') cancel();
+      event.preventDefault(); event.stopImmediatePropagation(); return;
+    }
+    if (event.key === 'Escape') {
+      if (aiming && press) { release(); aiming.end(true).catch(report); } else cancel();
+      event.preventDefault(); event.stopImmediatePropagation();
+    }
+  }, { signal, capture: true });
   signal.addEventListener('abort', () => { cancel(); if (el('piece-card').dataset.fixtureCard) { releaseCard(); el('piece-card').hidden = true; } root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent(); }, { once: true });
   return { add, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, pointerDown, pointerMove, pointerUp, cancel, refresh, draw, active: () => !!mode };
 }
