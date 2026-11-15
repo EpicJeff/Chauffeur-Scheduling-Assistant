@@ -238,7 +238,8 @@ def _fields(mid, fields, record):
     result['maps'] = _maps(mid, fields.get('maps', {}), record['maps'])
     if 'alpha_mode' in fields.get('params', {}):
         result['opacity_derived_mode'] = False
-    if 'opacity' in fields.get('maps', {}):
+    if ('opacity' in fields.get('maps', {})
+            and result['maps'].get('opacity') != record['maps'].get('opacity')):
         result.update(opacity_derived=False, opacity_derived_mode=False)
     elif ('base_color' in fields.get('maps', {})
           and result['maps'].get('base_color') != record['maps'].get('base_color')):

@@ -139,9 +139,36 @@ await test('styled_fade_copies_cutout_values_without_replacing_the_fade', async 
   const target=new THREE.MeshStandardMaterial({transparent:true,opacity:.18,depthWrite:false});
   target.userData.styledFade=true;lib.copyMaterialParams(source,target);
   assert.deepEqual([target.transparent,target.opacity,target.depthWrite],[true,.18,false]);
-  assert.equal(target.alphaTest,.3);assert.equal(target.alphaMap,source.alphaMap);assert.equal(target.side,THREE.DoubleSide);
+  assert.equal(target.alphaTest,.3*.18);assert.equal(target.alphaMap,source.alphaMap);assert.equal(target.side,THREE.DoubleSide);
   assert.equal(target.userData.alphaMode,'cutout');assert.equal(target.userData.styledFade,true);
   target.dispose();source.dispose();
+});
+await test('styled_editor_cutouts_and_kit_lattice_keep_the_scaled_cutoff', async () => {
+  const {mountTwin}=await import(file('static/twin/twin_view.js'));
+  for(const kind of ['household','lattice','opaque'])for(const style of ['faint','room']){
+    const host=new Element(),shell=new Element();shell.className='editor-shell';shell.append(host);
+    const id='styled-'+kind,ref=kind==='lattice'?{pattern:'lattice'}:{id};
+    const kit={materials:Object.fromEntries(['siding','floor','interior_wall','lawn'].map(role=>[role,{...ref}])),
+      manifest:kind==='lattice'?{}:{[id]:{household:true,revision:1,params:{alpha_mode:kind==='opaque'?'opaque':'cutout',alpha_cutoff:.5},maps:{}}}};
+    const plan=structuredClone(input.plan);plan.site={lot:[[0,0],[6,0],[6,6],[0,6]],planting:[]};
+    const v=await mountTwin(host,{plan,kit,tier:'low',bake:false});
+    try{
+      const b=plan.buildings[0],key=b.id+':'+b.levels[0].id;
+      if(style==='faint')v.showLevels([key],{faint:[key]});
+      else {await v.setEditableLevel(key);v.setSelection({selected:null,hover:null,room:{building:b.id,level:b.levels[0].id,id:'focused',allowed:[],walls:[]}});}
+      const clones=new Set();v.scene.traverse(o=>{for(const m of [].concat(o.material||[]))if(m.userData.styledFade)clones.add(m);});
+      const opacity=style==='faint'?.18:.25,cutoff=kind==='opaque'?0:.5;
+      const affected=[...clones].filter(m=>['siding','floor','interior_wall','lawn'].includes(m.name));
+      assert.ok(affected.length,kind+' '+style+' has styled surfaces');
+      if(style==='room')assert.ok(affected.some(m=>m.name==='lawn'),'site ghost clone is covered');
+      for(const m of affected){assert.equal(m.opacity,opacity);assert.equal(m.alphaTest,cutoff*opacity);}
+      if(kind!=='lattice'){
+        kit.manifest[id]={...kit.manifest[id],revision:2,params:{alpha_mode:kind==='opaque'?'opaque':'cutout',alpha_cutoff:.7}};
+        await v.refreshMaterials([id]);
+        for(const m of affected){assert.equal(m.opacity,opacity);assert.equal(m.alphaTest,(kind==='opaque'?0:.7)*opacity);}
+      }
+    }finally{v.dispose();}
+  }
 });
 await test('copy_carries_mode_between_instances', async () => {
   const source = await ready(lib.kitMaterial('floor',make('copy',{alpha_mode:'blend',opacity:.35}),'high'));

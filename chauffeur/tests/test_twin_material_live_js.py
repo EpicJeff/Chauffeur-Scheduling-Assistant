@@ -76,6 +76,18 @@ await test('alpha_mode_change_rebuilds',async()=>{
   }finally{v.dispose();}
  }
 });
+await test('deleted_material_rebuilds_once_and_refreshes_the_rest_of_the_batch',async()=>{
+ const k=kit(),v=await mount(k);
+ try{
+  const trim=materials(v).find(m=>m.name==='trim'),calls=buildCalls,applied=applyCalls.filter(x=>x===other).length;
+  delete k.manifest[id];k.manifest[other]=entry({...record(54,'#abc123'),id:other});
+  await assert.doesNotReject(()=>v.refreshMaterials([id,other]));
+  assert.equal(buildCalls,calls+1,'one rebuild for the deleted material');
+  assert.ok(applyCalls.filter(x=>x===other).length>applied,'later id is refreshed in the same batch');
+  assert.equal(trim.color.getHexString(),'abc123');
+  assert.equal(materials(v).find(m=>m.name==='trim').color.getHexString(),'abc123');
+ }finally{v.dispose();}
+});
 await test('opacity_change_applies_in_place',async()=>{
  const k=kit();k.manifest[id].params={alpha_mode:'blend',opacity:.4};const v=await mount(k);
  try{const m=siding(v),calls=buildCalls,applied=applyCalls.length;

@@ -21,11 +21,11 @@ const plan={buildings:[{id:'b',position:[0,0],levels:[{id:'L1',elevation:0,ceili
 const kit=(mode,params={},maps={})=>({materials:{},manifest:{[id]:{household:true,kind:'material',revision:1,
  params:{alpha_mode:mode,...params},maps}}});
 const meshes=root=>{const a=[];root.traverse(o=>{if(atlasMesh(o))a.push(o);});return a;};
-async function scene(mode,tier='low',params={},maps={}){
- const out=buildTwin(plan,kit(mode,params,maps),tier);
+async function scene(mode,tier='low',params={},maps={},atlasLayout=layout,viewing=false){
+ const out=buildTwin(plan,kit(mode,params,maps),tier,{viewing});
  // Deliberately do not await optional maps: classification is synchronous.
  const receivers=meshes(out.root),siding=receivers.filter(m=>m.material.name==='siding');
- const atlas=buildAtlas(out.root,plan,layout);
+ const atlas=buildAtlas(out.root,plan,atlasLayout);
  return {out,atlas,count:receivers.length,siding:siding.length};
 }
 // Run the actual atlas worker module; only the browser's message boundary is faked.
@@ -46,9 +46,9 @@ globalThis.Worker=class{
 };
 const lights=[{device:'lamp',building:'b',level:'L1',room:'r',at:[4,4,6]}];
 const live={markers:lights.map(l=>({...l,device_id:l.device,kind:'light',placed:true}))};
-function stored(old){
- const packed=bakeLayout(old.atlas,layout,lights);
- const manifest={complete:true,round:1,densities:{room:1},lights:packed.entries,ownership:packed.ownership};
+function stored(old,storedLayout=layout){
+ const packed=bakeLayout(old.atlas,storedLayout,lights);
+ const manifest={complete:true,round:1,densities:{room:storedLayout.room.density},lights:packed.entries,ownership:packed.ownership};
  const calls=[];
  return {calls,api:async path=>{
   calls.push(path);
@@ -99,7 +99,22 @@ await test('low_and_high_tiers_build_the_same_key_with_a_cutout_material',async(
  }finally{THREE.TextureLoader.prototype.load=load;if(low)disposeObject(low.out.root);if(high)disposeObject(high.out.root);}
 });
 await test('mounted_mode_flip_remounts_bake_at_the_new_key',async()=>{
- const nativeFetch=globalThis.fetch,k=kit('opaque'),old=await scene('opaque'),server=stored(old);let v;
+ // Use the mounted runtime's production layout so its key can find the stored bake.
+ const mountedLayout={room:{density:8,page:2048,gutter:2}};
+ const nativeFetch=globalThis.fetch,nativeWorker=globalThis.Worker,k=kit('opaque');
+ const old=await scene('opaque','low',{},{},mountedLayout,true),server=stored(old,mountedLayout);let v;
+ // Atlas work remains real; only compressed page decoding and the GPU are doubled.
+ globalThis.Renderer.prototype.extensions={has:()=>false};
+ globalThis.Worker=class extends nativeWorker{
+  constructor(url){
+   if(String(url).includes('codec_worker'))return {
+    postMessage(job){const mipmaps=[];
+     for(let n=mountedLayout.room.page;n>=1;n=Math.floor(n/2))mipmaps.push({width:n,height:n,data:new Uint8Array(n*n*4)});
+     queueMicrotask(()=>this.onmessage?.({data:{id:job.id,result:{mipmaps,format:job.format}}}));
+    },terminate(){}};
+   super(url);
+  }
+ };
  globalThis.fetch=async url=>{
   const path=String(url).replace(/^\//,'');
   if(path==='api/house/twin/materials/manifest')return new Response(JSON.stringify({revision:1,entries:k.manifest}));
@@ -107,11 +122,24 @@ await test('mounted_mode_flip_remounts_bake_at_the_new_key',async()=>{
  };
  try{v=await mountTwin(new Element(),{plan,kit:k,tier:'low',bake:true});
   await v.bake.refresh();const oldController=v.bake,oldKey=oldController.state().key;
+  assert.equal(oldKey,old.atlas.key,'stored bake matches the mounted old key');
+  assert.ok(server.calls.includes(`api/house/bakes/${oldKey}`),'stored manifest was requested');
+  assert.ok(server.calls.some(p=>p.startsWith(`api/house/bakes/${oldKey}/`)),'stored pages were requested');
+  assert.ok(oldController.held(),'old-key pages are mounted before the flip');
+  assert.deepEqual(oldController.fresh(),['lamp'],'stored pages are fresh before the flip');
+  const oldTextures=oldController.held().textures.banks;
+  const callsBeforeFlip=server.calls.length;
   k.manifest[id]={...k.manifest[id],revision:2,params:{alpha_mode:'blend',opacity:.4}};
   await v.refreshMaterials([id]);await v.bake.refresh();
   assert.notEqual(v.bake,oldController);assert.notEqual(v.bake.state().key,oldKey);
   assert.equal(v.bake.state().error,null);assert.equal(v.bake.held(),null);assert.deepEqual(v.bake.fresh(),[]);
- }finally{v?.dispose();globalThis.fetch=nativeFetch;disposeObject(old.out.root);}
+  assert.ok(!server.calls.slice(callsBeforeFlip).some(p=>p.startsWith(`api/house/bakes/${oldKey}`)),'old key is never requested after the flip');
+  v.scene.traverse(o=>{for(const m of [].concat(o.material||[])){
+    assert.ok(!m.lightMap,'no old page remains mounted');
+    assert.equal(m.userData.lmOriginalKey,undefined,'no old shadowmask patch remains');
+    assert.ok(!Object.values(m).some(t=>oldTextures.includes(t)),'no old bank remains mounted');
+  }});
+ }finally{v?.dispose();globalThis.fetch=nativeFetch;globalThis.Worker=nativeWorker;delete globalThis.Renderer.prototype.extensions;disposeObject(old.out.root);}
 });
 finish();
 """

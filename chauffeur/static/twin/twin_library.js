@@ -207,6 +207,11 @@ export function currentMaterial(material, known) {
   return !id || material.userData.materialRevision === known[id]?.revision;
 }
 
+// Fragment alpha includes opacity: retain the source cutout threshold while fading.
+export function scaleStyledFadeAlpha(source, target) {
+  target.alphaTest = source.alphaTest * target.opacity;
+}
+
 // Copy only the surface values. Viewing opacity/clipping and bake shader hooks
 // belong to the receiving clone and must survive a material revision.
 export function copyMaterialParams(source, target) {
@@ -219,6 +224,7 @@ export function copyMaterialParams(source, target) {
   } else if (!target.userData.styledFade) {
     for (const key of ['transparent', 'opacity', 'depthWrite']) target[key] = source[key];
   }
+  if (target.userData.styledFade) scaleStyledFadeAlpha(source, target);
   for (const key of ['materialId', 'materialRevision', 'materialKey', 'materialRef', 'materialRole', 'randomOffset', 'alphaMode'])
     target.userData[key] = source.userData[key];
   target.needsUpdate = true;

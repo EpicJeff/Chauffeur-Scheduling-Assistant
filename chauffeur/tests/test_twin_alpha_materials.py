@@ -302,6 +302,21 @@ def test_replacing_an_rgba_base_with_an_rgb_one_drops_the_derived_mask_and_mode(
             assert not ({'opacity_derived', 'opacity_derived_mode'} & set(manifest['params']))
 
 
+def test_echoing_the_opacity_map_preserves_derived_cleanup():
+    seed()
+    with Ctx() as c:
+        row = checked(upload(c, create(c)['id'], alpha_image()))
+        assert_flags(row, True, True)
+        echoed = checked(c.client.patch(f"{API}/{row['id']}", headers=c.mum,
+                                        json={'maps': {'opacity': row['maps']['opacity']}}))
+        assert echoed['maps']['opacity'] == row['maps']['opacity']
+        assert_flags(echoed, True, True)
+        changed = checked(upload(c, row['id'], rgb_image()))
+        assert 'opacity' not in changed['maps']
+        assert changed['params']['alpha_mode'] == 'opaque'
+        assert_flags(changed, False, False)
+
+
 def test_replacing_an_rgba_base_with_another_rgba_resplits():
     seed()
     with Ctx() as c:
