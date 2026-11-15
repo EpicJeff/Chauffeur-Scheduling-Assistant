@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.873 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.874 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.874 (2026-11-15, NOT device-verified): a light in the house twin takes the colour its device reports in more ways, so fixtures follow lights that never publish `rgb_color`.**
+
+- **Why:** a pool light whose colours are set as effects stayed warm white in the twin, because `lightColor` (`static/twin/live/real_lights.js`) read only `rgb_color` and colour temperature.
+- **Order of sources:** `rgb_color`, then `hs_color`, then `xy_color`, then an effect named by its colour, then colour temperature, then warm white. Real lights, fixture glow, bulbs and the baked light tint all read this one resolver, so they change together.
+- **Effect names:** the current `effect` is split into words and matched, in any case, against a plain colour vocabulary (red, green, blue, white, magenta, purple, violet, indigo, lavender, pink, cyan, aqua, teal, turquoise, yellow, amber, orange, gold, lime). The last colour word wins. This is a vocabulary and not a vendor table, so any integration that names effects by colour works with no configuration.
+- **Known limits:** an effect whose name carries no colour word (a themed show, a rainbow) stays warm white; a multi-colour or animated effect cannot be matched, since Home Assistant reports one colour per entity. `switch`, `input_boolean` and `fan` sources still light at 2700 K. The marker dot and the long-press ring tint (`palette.js`, `controls/light.js`) still read `rgb_color` and colour temperature only.
 
 **v2.499.873 (2026-11-15, NOT device-verified): two coplanar pairs in the house twin no longer z-fight. The foundation slab stops just under the floor finish, and a retaining wall's exposed face stands proud of the pad edge.**
 

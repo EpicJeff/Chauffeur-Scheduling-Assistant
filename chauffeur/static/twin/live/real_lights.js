@@ -7,10 +7,49 @@ const clamp = (value, max = 255) => Math.max(0, Math.min(max, value));
 // Candela at full brightness lives with the pure lamp math, which the baked material shares.
 export { CANDELA };
 
+// Colour words an effect name may carry. A vocabulary, not a vendor table: any
+// integration that names an effect by its colour resolves with no configuration.
+const COLOUR_WORDS = {red: [255, 0, 0], green: [0, 255, 0], blue: [0, 0, 255], white: [255, 255, 255],
+  magenta: [255, 0, 255], purple: [160, 32, 240], violet: [143, 0, 255], indigo: [75, 0, 130],
+  lavender: [181, 126, 220], pink: [255, 105, 180], cyan: [0, 255, 255], aqua: [0, 255, 255],
+  teal: [0, 128, 128], turquoise: [64, 224, 208], yellow: [255, 255, 0], amber: [255, 191, 0],
+  orange: [255, 128, 0], gold: [255, 215, 0], lime: [191, 255, 0]};
+const triple = (value, n = 3) => Array.isArray(value) && value.length >= n && value.slice(0, n).every(Number.isFinite);
+
+function hsRgb([h, s]) {
+  const sat = clamp(s, 100) / 100, hue = ((h % 360) + 360) % 360 / 60;
+  const x = 1 - Math.abs(hue % 2 - 1);
+  const base = [[1, x, 0], [x, 1, 0], [0, 1, x], [0, x, 1], [x, 0, 1], [1, 0, x]][Math.floor(hue) % 6];
+  return base.map(value => Math.round(255 * (1 - sat + sat * value)));
+}
+
+function xyRgb([x, y]) {
+  if (!(y > 0)) return null;
+  // CIE xy at full luminance through the wide-gamut D65 matrix, scaled to the brightest channel.
+  const X = x / y, Z = (1 - x - y) / y;
+  const linear = [1.656492 * X - .354851 - .255038 * Z, -.707196 * X + 1.655397 + .036152 * Z,
+    .051713 * X - .121364 + 1.01153 * Z].map(value => Math.max(0, value));
+  const peak = Math.max(...linear);
+  if (!(peak > 0)) return null;
+  return linear.map(value => value / peak)
+    .map(value => Math.round(255 * (value <= .0031308 ? 12.92 * value : 1.055 * Math.pow(value, 1 / 2.4) - .055)));
+}
+
+function effectRgb(effect) {
+  if (typeof effect !== 'string') return null;
+  // The last colour word wins, so 'Deep Blue' and 'Blue Green' read as their head noun.
+  const word = effect.toLowerCase().split(/[^a-z]+/).filter(part => COLOUR_WORDS[part]).pop();
+  return word ? [...COLOUR_WORDS[word]] : null;
+}
+
+// The colour a light reports, most specific first: an explicit colour attribute, then an
+// effect named by its colour, then a colour temperature, then warm white.
 export function lightColor(attributes = {}) {
-  const { rgb_color: rgb, color_temp_kelvin: kelvin, color_temp: mireds } = attributes || {};
-  if (Array.isArray(rgb) && rgb.length >= 3 && rgb.slice(0, 3).every(Number.isFinite))
-    return rgb.slice(0, 3).map(value => Math.round(clamp(value)));
+  const { rgb_color: rgb, hs_color: hs, xy_color: xy, effect, color_temp_kelvin: kelvin, color_temp: mireds } = attributes || {};
+  if (triple(rgb)) return rgb.slice(0, 3).map(value => Math.round(clamp(value)));
+  if (triple(hs, 2)) return hsRgb(hs);
+  const named = (triple(xy, 2) && xyRgb(xy)) || effectRgb(effect);
+  if (named) return named;
   const temperature = Number(kelvin) > 0 ? Number(kelvin) : Number(mireds) > 0 ? 1e6 / Number(mireds) : null;
   if (!Number.isFinite(temperature) || temperature === null) return [255, 241, 201];
   // Black-body approximation, with HA's temperatures expressed in kelvin.
