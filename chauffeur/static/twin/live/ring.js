@@ -18,7 +18,9 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
   // A control that grows or shrinks inside the ring (the twin colour editor) asks to be placed again.
   root.addEventListener('twin-relayout', () => { if (row) draw(); }, {signal: events.signal});
   function close() {
-    builder?.stop?.(); builder = null; row = null; anchor = null; signature = '';
+    // The row is dropped first: a control that speaks while it stops finds no ring to redraw.
+    const old = builder; builder = null; row = null; anchor = null; signature = '';
+    old?.stop?.();
     root.hidden = true; root.replaceChildren(); settle('');
     // A ring opened from the room panel gives the keyboard focus back (review L7).
     const back = returnFocus; returnFocus = null;
@@ -30,9 +32,12 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
   function safeArea() {
     const width = window.innerWidth || 0, height = window.innerHeight || 0;
     let bottom = height - EDGE;
-    // The chat bar counts too: a tall side card must not end underneath it.
+    // The chat bar counts too: a tall side card must not end underneath it. A wall panel keeps
+    // the bar laid out but hidden, and a hidden bar is no edge.
     for (const id of ['panel-fade', 'panel-shelf', 'chat-overlay-container']) {
-      const box = document.getElementById?.(id)?.getBoundingClientRect?.();
+      const node = document.getElementById?.(id);
+      if (!node || globalThis.getComputedStyle?.(node)?.visibility === 'hidden') continue;
+      const box = node.getBoundingClientRect?.();
       if (box?.height > 0 && box.top > 0) bottom = Math.min(bottom, box.top - EDGE);
     }
     // The floor and mode pickers: the dial may cover them (it sits on the light), the side card

@@ -73,7 +73,7 @@ check('compact_readonly_nonparent_and_kiosk_have_no_edit_affordance',async()=>{
   for(const opts of [{compact:true,surface:'panel'},{canEdit:false},{offered:false},{surface:'panel',offered:false}]) {
     const t=await setup(opts);try {
       assert.equal(part(t.node,'effect-look-edit'),null);assert.equal(part(t.node,'fixed-look-edit'),null);
-      const readonly=opts.compact||opts.offered===false;
+      const readonly=opts.surface==='panel';
       assert.equal(t.node.querySelectorAll('[data-ring-part="effect-look-dot"]').length,readonly?0:3);
       if(readonly) assert.equal(part(t.node,'effects'),null);
       else for(const chip of t.node.querySelectorAll('[data-ring-part="effects-choice"]')) {
@@ -90,10 +90,10 @@ check('compact_readonly_nonparent_and_kiosk_have_no_edit_affordance',async()=>{
   }
 });
 check('compact_and_readonly_surfaces_only_show_assigned_noninteractive_previews',async()=>{
-  for(const opts of [{compact:true,surface:'panel'},{offered:false,surface:'panel'},{offered:false,surface:'ring'}]) {
+  for(const opts of [{compact:true,surface:'panel'},{offered:false,surface:'panel'}]) {
     const empty=await setup(opts);try {
       assert.equal(part(empty.node,'effects'),null);
-      if(opts.surface==='panel') assert.equal(empty.node.childNodes.length,0,'main rendered an empty compact/read-only row');
+      assert.equal(empty.node.childNodes.length,0,'main rendered an empty compact/read-only row');
     }finally{empty.cleanup();}
     const t=await setup({...opts,looks:{'light.pool':{effects:{caribbean:[[0,0,255]]}}}});try {
       const group=part(t.node,'effects');assert.ok(group);
@@ -102,6 +102,33 @@ check('compact_and_readonly_surfaces_only_show_assigned_noninteractive_previews'
       const item=part(t.node,'effect-look-preview');assert.equal(item.localName,'span');assert.equal(item.textContent,'Caribbean');
       const dot=part(item,'effect-look-dot');assert.equal(dot.style.background,'rgb(0,0,255)');
       assert.equal(dot.getAttribute('aria-hidden'),'true');await press(item);assert.equal(t.calls.length,0);
+    }finally{t.cleanup();}
+  }
+});
+check('readonly_ring_keeps_the_disabled_effect_list_with_the_running_effect_marked',async()=>{
+  for(const looks of [{},{'light.pool':{effects:{caribbean:[[0,0,255]]}}}]) {
+    const t=await setup({offered:false,surface:'ring',looks});try {
+      const chips=[...t.node.querySelectorAll('[data-ring-part="effects-choice"]')];
+      assert.deepEqual(chips.map(chip=>chip.textContent),['Caribbean','Party','Deep Blue']);
+      assert.ok(chips.every(chip=>chip.disabled),'a read-only ring cannot choose an effect');
+      assert.deepEqual(chips.map(chip=>chip.getAttribute('aria-pressed')),['true','false','false']);
+      assert.equal(part(t.node,'effect-look-edit'),null);
+      const dot=part(chips[0],'effect-look-dot');assert.equal(dot.getAttribute('aria-hidden'),'true');
+      assert.equal(dot.style.background,looks['light.pool']?'rgb(0,0,255)':'transparent');
+      await press(chips[1]);assert.equal(t.calls.length,0);
+    }finally{t.cleanup();}
+  }
+});
+check('ring_closes_cleanly_when_its_marker_leaves_view_with_an_editor_open_or_stale',async()=>{
+  for(const stale of [false,true]) {
+    const t=await setup();try {
+      t.live.openRing(t.live.marker('pool'));
+      const ring=document.querySelector('[data-ring]');
+      await press(part(ring,'effect-look-edit'));assert.ok(part(ring,'look-editor'));
+      if(stale){await press(part(ring,'look-cancel'));assert.equal(part(ring,'look-editor'),null);}
+      t.view.camera.lookAt(0,100,0);t.view.camera.updateMatrixWorld(true);t.live.draw();
+      assert.equal(ring.hidden,true,'the ring closes when its marker cannot be placed');
+      assert.deepEqual(domErrors,[],'closing does not recurse');
     }finally{t.cleanup();}
   }
 });

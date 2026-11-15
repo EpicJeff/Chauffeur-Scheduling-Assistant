@@ -621,7 +621,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       if (!response.ok) return;
       const value = await response.json();
       if (stopped || !value || typeof value !== 'object' || Array.isArray(value)) return;
-      looks = value; looksReady = true; changedLooks();
+      looks = value; looksReady = true;
+      try { changedLooks(); } catch (error) { report(error); }
     } catch { /* Appearance defaults remain available offline; editing stays off. */ }
     finally { limit.done(); }
   }

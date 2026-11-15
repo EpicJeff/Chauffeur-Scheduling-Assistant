@@ -58,7 +58,8 @@ export function lightControls(options) {
     wheel(c, options);
   }
   if (light && attrs.effect_list?.length) {
-    if (c.enabled) c.chips('effects', 'Effects', attrs.effect_list, s => s?.attributes?.effect, 'turn_on', 'effect',
+    // A read-only ring still lists the effects, disabled, with the running one marked.
+    if (c.enabled || c.ring) c.chips('effects', 'Effects', attrs.effect_list, s => s?.attributes?.effect, 'turn_on', 'effect',
       (node, effect, group) => effectDot(c, options, node, effect, group));
     else {
       const assigned = attrs.effect_list.filter(effect => effectPalette(effect, options.lightLooks?.get(row.entity_id)));
@@ -186,7 +187,12 @@ function lookEditor(c, options, effect, opener) {
   };
   // The editor changes the side card's height: the ring places itself again (a room row ignores it).
   const relayout = () => c.side.dispatchEvent?.(new Event('twin-relayout', {bubbles: true}));
-  const close = (focus = true) => { closed = true; wheels.forEach(w => w.stop()); editor.remove(); relayout(); if (focus) opener.focus?.(); };
+  // Only a person's close asks for a new layout: a control being torn down must not redraw its host.
+  const close = (focus = true) => {
+    if (closed) return;
+    closed = true; wheels.forEach(w => w.stop()); editor.remove();
+    if (focus) { relayout(); opener.focus?.(); }
+  };
   c.closeLookEditor = close;
   async function save(clear = false) {
     if (saving || editing || closed) return;
