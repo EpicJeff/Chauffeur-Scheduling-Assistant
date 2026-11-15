@@ -681,6 +681,10 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         building['base'] = base
         from services import twin_terrain
         twin_terrain.normalize_foundation(building, notes)
+        if 'materials' in building:
+            from services.twin_surface_kinds import clean_slots
+            building['materials'] = clean_slots(building['materials'], None, notes,
+                                                building.get('name') or 'House')
         walls = _walls(building, levels, notes)
         sections = _roof(building, notes)
         _rooms(building, levels, notes)

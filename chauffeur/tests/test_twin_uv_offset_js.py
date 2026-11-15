@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # and yard fixture below, with random_offset false, computed before this change.
 # Both were captured again when the house slab moved to just under the floor finish
 # and the retaining wall face moved proud of the pad edge.
-GOLDEN = {'building': '82c28968e3bff83ab3108f06e4ac5caa', 'yard': 'c9eac660122601e038e7f37e88920b1c'}
+# The yard was captured again when the pool wall split at the waterline tile (v2.499.880).
+GOLDEN = {'building': '82c28968e3bff83ab3108f06e4ac5caa', 'yard': '2cc5f5777be98ecf90b12401f7b5d2f3'}
 
 DRIVER = PREFIX + r"""
 globalThis.buildCalls=0;

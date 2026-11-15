@@ -52,7 +52,8 @@ def material_slot_error(value):
         return 'A material slot accepts only id and optional color.'
     if 'color' in value and (not isinstance(value['color'], str) or not value['color'].strip()):
         return 'Choose a material with a non-empty color.'
-    if value['id'] not in kit('modern_farmhouse')['materials']:
+    from services.twin_surface_kinds import BUILTIN_LOOKS
+    if value['id'] not in kit('modern_farmhouse')['materials'] and value['id'] not in BUILTIN_LOOKS:
         from services import twin_materials
         try:
             twin_materials.get(value['id'])  # Archived assets remain valid for house undo/load.

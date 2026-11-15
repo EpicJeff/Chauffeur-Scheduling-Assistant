@@ -9,7 +9,7 @@ export function stairGeometry(s, elevation, box) {
   const open = s.style === 'open';
   for (let i = 0; i < s.risers; i++) {
     const height = rise * (i + 1) / s.risers, thickness = open ? Math.min(.15, step / 3) : height;
-    parts.push({ part: open ? 'tread' : 'solid', role: 'floor', geometry: box(run, thickness, s.width).rotateY(angle)
+    parts.push({ part: open ? 'tread' : 'solid', role: 'floor', kind: 'stair_tread', geometry: box(run, thickness, s.width).rotateY(angle)
       .translate(s.from[0] + dx * (i + .5) / s.risers, elevation + height - thickness / 2, -s.from[1] - dy * (i + .5) / s.risers) });
   }
   const point = (u, side, z) => new THREE.Vector3(s.from[0] + dx / length * u - dy / length * side,
@@ -18,7 +18,7 @@ export function stairGeometry(s, elevation, box) {
     const direction = b.clone().sub(a), geometry = box(width, direction.length(), depth);
     geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize()));
     geometry.translate(...a.clone().add(b).multiplyScalar(.5).toArray());
-    parts.push({ part, role, geometry });
+    parts.push({ part, role, kind: 'stair_rail', geometry });
   };
   if (open) for (const side of [-1, 1]) {
     const across = side * (s.width / 2 - .2);

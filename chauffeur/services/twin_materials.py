@@ -18,6 +18,7 @@ import threading
 import uuid
 
 from services import twin_library, twin_store
+from services.twin_surface_kinds import BUILTIN_LOOKS, KINDS, label as surface_label
 
 SLOTS = ('base_color', 'normal', 'roughness', 'metalness', 'ao', 'orm', 'height', 'opacity')
 DEFAULT_PARAMS = dict(tint='#ffffff', roughness=None, metalness=None, normal_scale=1,
@@ -87,6 +88,11 @@ def builtin_rows(kit_id='modern_farmhouse'):
         rows.append(dict(id=mid, name=mid.replace('_', ' ').capitalize(), source='builtin',
                          color=color, thumbnail_url=None, builtin=True, archived=False, revision=0,
                          params={**deepcopy(DEFAULT_PARAMS), 'tint': color}))
+    for mid, look in BUILTIN_LOOKS.items():
+        params = {**deepcopy(DEFAULT_PARAMS), 'tint': look['color'], 'alpha_mode': 'blend',
+                  'opacity': look['opacity'], 'roughness': look.get('roughness', .8)}
+        rows.append(dict(id=mid, name='Built-in ' + mid, source='builtin', color=look['color'],
+                         thumbnail_url=None, builtin=True, archived=False, revision=0, params=params))
     return rows
 
 
@@ -95,8 +101,7 @@ def _builtin(mid):
     if row is None:
         return None
     entry = twin_library.manifest().get(mid, {})
-    params = deepcopy(DEFAULT_PARAMS)
-    params['tint'] = row['color']
+    params = deepcopy(row['params'])
     maps = {}
     for filename in entry.get('files', {}):
         slot = next((s for suffix, s in (('_diff_', 'base_color'), ('_nor_gl_', 'normal'),
@@ -500,7 +505,7 @@ def duplicate(material_id, actor) -> dict:
             record = deepcopy(source)
             record.update(id=mid, name=source['name'] + ' copy', source='user', based_on=material_id,
                           created_by=actor, archived=False, maps={}, source_snapshot=None)
-            if source['source'] == 'builtin':
+            if source['source'] == 'builtin' and material_id not in BUILTIN_LOOKS:
                 matches = [(role, ref) for role, ref in twin_library.kit('modern_farmhouse')['materials'].items()
                            if ref['asset'] == material_id]
                 # granite_tile also serves counters; retain granite's explicit
@@ -569,6 +574,8 @@ def _labels(value, material_id, owner='House', kind='surfaces', feature=False):
 
 
 def _surface_kind(key, default):
+    if any(row['kind'] == key for row in KINDS):
+        return surface_label(key).lower()
     return {'walls': 'walls', 'wall_material': 'walls', 'interior_wall': 'walls', 'siding': 'walls',
             'floor': 'floors', 'floor_material': 'floors', 'ceiling': 'ceilings', 'ceiling_material': 'ceilings',
             'porch_ceiling': 'ceilings', 'roof': 'roof', 'roofs': 'roof', 'roof_material': 'roof',

@@ -1,6 +1,17 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.880 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.881 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.881 (2026-11-15, NOT device-verified): surface kinds. One table names every kind of surface a house default can cover, and the generator reads a building's (or a level's) default for each. No panel yet: nothing on screen sets these defaults until the House materials panel ships, so a house draws exactly as before.**
+
+- **The table.** `static/twin/surface_kinds.js` and `services/twin_surface_kinds.py` hold the same rows (a parity test compares them): trim, fascia, casing, window frames, panes, doors, columns, screens, soffit, foundation, stair treads, stair rails, ceilings, roof, cabinets, counters, shower tile, shower glass, lawn, water. Each row has a label, a scope (building or site), its fallback (the look it has today) and the kind of item it belongs to.
+- **Lookup order.** `resolveSlot(kind, {building, level})`: the level's `materials[kind]`, then the building's. A per-item slot is reserved for a later slice. A fixture's own body or top colour still wins over a default.
+- **Built-in looks in the Library.** Glass, screen and water are now built-in Library rows (blend materials), so any slot can take them and a copy can be edited. The built-in catalogue is the earlier seventeen plus these three; nothing was removed.
+- **Untouched house.** With no default set, the house is mesh for mesh and reuse key for reuse key equal to main (`tests/test_twin_untouched_house_js.py`, pinned to v2.499.880). With a default set, batches may split per material; the geometry is the same triangles.
+- **Plan.** `twin_plan.normalize` cleans a building's `materials` map: a bad slot is dropped with a note, the others are kept, and unknown legacy roles are retained.
+- **Not yet wired:** lawn, pool and spa water, and room ceilings read no default yet.
+- **Code:** `static/twin/surface_kinds.js` (`KINDS`, `PANEL_ROLES`, `ITEM_PARTS`, `kindRow`, `resolveSlot`), `static/twin/twin_generator.js` (`kindMat`, building key), `static/twin/twin_stairs.js`, `services/twin_surface_kinds.py`, `services/twin_materials.py`, `services/twin_library.py`, `services/twin_plan.py`.
+- **Tests:** `tests/test_twin_surface_kinds.py` (7), `tests/test_twin_untouched_house_js.py` (3), `tests/test_twin_house_defaults_js.py` (26). `tests/test_twin_uv_offset_js.py` had its yard golden captured again: the v2.499.880 pool wall split changed it and that landing missed the file.
 
 **v2.499.880 (2026-11-15, NOT device-verified): pool finishes after the first device use. Waterline tile runs all round the pool, a spa's outer wall is pool finish under the water, and steps beside a tanning ledge start level with it. (Drawing a spa, a tanning ledge and steps was used on device by the user on 2026-11-15; these are the faults that use found.)**
 

@@ -15,3 +15,228 @@ export function builtinMaterial(id, name = id) {
   material.userData.alphaMode = 'blend';
   return material;
 }
+
+export const KINDS = [
+  {
+    "kind": "trim",
+    "label": "Trim",
+    "scope": "building",
+    "fallback": {
+      "role": "trim"
+    },
+    "item": null
+  },
+  {
+    "kind": "fascia",
+    "label": "Fascia",
+    "scope": "building",
+    "fallback": {
+      "role": "trim"
+    },
+    "item": null
+  },
+  {
+    "kind": "casing",
+    "label": "Casing",
+    "scope": "building",
+    "fallback": {
+      "role": "trim"
+    },
+    "item": "opening"
+  },
+  {
+    "kind": "window_frame",
+    "label": "Window frames",
+    "scope": "building",
+    "fallback": {
+      "role": "window_frame"
+    },
+    "item": "opening"
+  },
+  {
+    "kind": "pane",
+    "label": "Panes",
+    "scope": "building",
+    "fallback": {
+      "builtin": "glass"
+    },
+    "item": "opening"
+  },
+  {
+    "kind": "door",
+    "label": "Doors",
+    "scope": "building",
+    "fallback": {
+      "role": "door"
+    },
+    "item": "opening"
+  },
+  {
+    "kind": "column",
+    "label": "Columns",
+    "scope": "building",
+    "fallback": {
+      "role": "trim"
+    },
+    "item": "porch"
+  },
+  {
+    "kind": "screen",
+    "label": "Screens",
+    "scope": "building",
+    "fallback": {
+      "builtin": "screen"
+    },
+    "item": "porch"
+  },
+  {
+    "kind": "soffit",
+    "label": "Soffit",
+    "scope": "building",
+    "fallback": {
+      "role": "porch_ceiling"
+    },
+    "item": null
+  },
+  {
+    "kind": "base",
+    "label": "Foundation",
+    "scope": "building",
+    "fallback": {
+      "role": "base"
+    },
+    "item": null
+  },
+  {
+    "kind": "stair_tread",
+    "label": "Stair treads",
+    "scope": "building",
+    "fallback": {
+      "role": "floor"
+    },
+    "item": "stair"
+  },
+  {
+    "kind": "stair_rail",
+    "label": "Stair rails",
+    "scope": "building",
+    "fallback": {
+      "role": "porch_ceiling"
+    },
+    "item": "stair"
+  },
+  {
+    "kind": "ceiling",
+    "label": "Ceilings",
+    "scope": "building",
+    "fallback": {
+      "look": "ceiling"
+    },
+    "item": "room"
+  },
+  {
+    "kind": "roof",
+    "label": "Roof",
+    "scope": "building",
+    "fallback": {
+      "role": "roof"
+    },
+    "item": "roof"
+  },
+  {
+    "kind": "cabinet",
+    "label": "Cabinets",
+    "scope": "building",
+    "fallback": {
+      "look": "cabinet"
+    },
+    "item": "fixture"
+  },
+  {
+    "kind": "counter",
+    "label": "Counters",
+    "scope": "building",
+    "fallback": {
+      "look": "counter"
+    },
+    "item": "fixture"
+  },
+  {
+    "kind": "shower_tile",
+    "label": "Shower tile",
+    "scope": "building",
+    "fallback": {
+      "look": "ceramic"
+    },
+    "item": "fixture"
+  },
+  {
+    "kind": "shower_glass",
+    "label": "Shower glass",
+    "scope": "building",
+    "fallback": {
+      "builtin": "glass"
+    },
+    "item": "fixture"
+  },
+  {
+    "kind": "lawn",
+    "label": "Lawn",
+    "scope": "site",
+    "fallback": {
+      "role": "lawn"
+    },
+    "item": null
+  },
+  {
+    "kind": "water",
+    "label": "Water",
+    "scope": "site",
+    "fallback": {
+      "builtin": "water"
+    },
+    "item": "pool"
+  }
+];
+
+export const PANEL_ROLES = [
+  "siding",
+  "interior_wall",
+  "floor"
+];
+
+export const ITEM_PARTS = {
+  "opening": [
+    "casing",
+    "window_frame",
+    "pane",
+    "door"
+  ],
+  "porch": [
+    "column",
+    "screen"
+  ],
+  "stair": [
+    "stair_tread",
+    "stair_rail"
+  ],
+  "fixture": [
+    "cabinet",
+    "counter",
+    "shower_tile",
+    "shower_glass"
+  ],
+  "pool": [
+    "water"
+  ],
+  "spa": [
+    "water"
+  ]
+};
+
+export const kindRow = kind => KINDS.find(row => row.kind === kind);
+
+// Item slots are deliberately deferred to slice C; the argument is reserved.
+export function resolveSlot(kind, { item = null, building = null, level = null } = {}) {
+  return level?.materials?.[kind] ?? building?.materials?.[kind] ?? null;
+}
