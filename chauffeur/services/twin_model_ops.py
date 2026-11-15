@@ -1313,15 +1313,28 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
                        if d.get('entity_id') == entity or entity in d.get('entities', [])}
             devices.update((entity, 'entity:' + entity))
             value = model['camera_views'][entity]
-            dx, dy = (value['aim'][i] - value['at'][i] for i in (0, 1))
-            facing = math.degrees(math.atan2(dy, dx)) % 360
+            from services.twin_register import to_world
+
+            def set_facing(piece, at, rotation=0):
+                dx, dy = (value['aim'][i] - at[i] for i in (0, 1))
+                if math.hypot(dx, dy) > 1e-8:
+                    piece['facing_deg'] = (math.degrees(math.atan2(dy, dx)) - rotation) % 360
             for building in model['buildings']:
                 for piece in building.get('anchors', []) + building.get('devices', []):
                     if piece.get('device') in devices:
-                        piece['facing_deg'] = (facing - building.get('rotation', 0)) % 360
+                        try:
+                            at = to_world(building, hosts.world_point(building, piece.get('host', {}), piece.get('offset', 0))[:2])
+                        except ValueError:
+                            continue
+                        set_facing(piece, at, building.get('rotation', 0))
             for piece in model['site'].get('devices', []):
                 if piece.get('device') in devices:
-                    piece['facing_deg'] = facing
+                    from services.twin_site_shapes import yard_device_point
+                    try:
+                        at = yard_device_point(model['site'], piece)
+                    except ValueError:
+                        continue
+                    set_facing(piece, at)
         return model, words
     if kind == 'set_porch_foundation':
         from services import twin_porches

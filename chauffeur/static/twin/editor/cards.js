@@ -102,7 +102,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
   }
   function draw(next = selection) {
     if (!next && host.dataset.fixtureCard) return;
-    if (next) delete host.dataset.fixtureCard;
+    if (next || host.dataset.stairDraft) host.dispatchEvent(new Event('fixturecardrelease'));
     // The two-click add tool temporarily owns the same card surface. Polling
     // selection/HA while no piece is selected must leave its fields in place.
     if (!next && host.dataset.stairDraft) {

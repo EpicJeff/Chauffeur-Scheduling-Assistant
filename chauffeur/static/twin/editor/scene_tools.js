@@ -230,7 +230,11 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       return;
     }
     if (pointers.size > 1) return;
-    if (event.button !== 0 || !canEdit()) return;
+    if (event.button !== 0) return;
+    if (!canEdit()) {
+      if (delegate?.pointerBrowse?.(event)) { pointerId = event.pointerId; ownsGesture = true; event.stopImmediatePropagation(); }
+      return;
+    }
     pointerId = event.pointerId;
     if (delegate?.pointerDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
     if (event.shiftKey && tool === 'select' && !handles.hit(event)) {

@@ -7654,8 +7654,9 @@ def house_live(request: Request):
         if camera_view := model.get('camera_views', {}).get(device['entity_id']):
             import math
             markers[-1]['camera_view'] = camera_view
-            markers[-1]['facing_deg'] = math.degrees(math.atan2(camera_view['aim'][1] - camera_view['at'][1],
-                                                               camera_view['aim'][0] - camera_view['at'][0])) % 360
+            dx, dy = (camera_view['aim'][i] - at[i] for i in (0, 1))
+            if math.hypot(dx, dy) > 1e-8:
+                markers[-1]['facing_deg'] = math.degrees(math.atan2(dy, dx)) % 360
         if 'outdoor' in spot:
             markers[-1]['outdoor'] = spot['outdoor']
         if yard:

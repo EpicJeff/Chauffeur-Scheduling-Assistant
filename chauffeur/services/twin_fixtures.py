@@ -403,7 +403,10 @@ def normalize(model, notes):
             raw = {}
         for entity, value in raw.items():
             try:
-                kept[entity] = validate_camera_view(entity, value)
+                value = validate_camera_view(entity, value)
+                if len(kept) >= 64:
+                    raise ValueError('A house can have at most 64 camera views.')
+                kept[entity] = value
             except ValueError as exc:
                 notes.append(f'Dropped camera view for {entity}: {exc}')
         model['camera_views'] = kept
@@ -476,11 +479,11 @@ def validate_camera_view(entity, value):
     if not isinstance(entity, str) or not re.fullmatch(r'camera\.[a-z0-9_]+', entity):
         raise ValueError('Choose a camera entity.')
     if not isinstance(value, dict) or set(value) - {'at', 'aim', 'fov_deg'}:
-        raise ValueError('Choose a camera position, aim and field of view.')
-    at, aim = (_vector(value.get(k), 3, k) for k in ('at', 'aim'))
-    if math.dist(at, aim) <= 1e-8:
-        raise ValueError('Aim away from the camera.')
-    return {'at': at, 'aim': aim, 'fov_deg': _number(value.get('fov_deg', 90), 'field of view', 10, 160)}
+        raise ValueError('Choose a camera aim and field of view.')
+    aim = _vector(value.get('aim'), 3, 'aim')
+    if math.hypot(*aim) > 2000:
+        raise ValueError('Camera aim must stay within 2000 feet of the lot origin.')
+    return {'aim': aim, 'fov_deg': _number(value.get('fov_deg', 90), 'field of view', 10, 160)}
 
 
 def apply_op(model, op):
@@ -489,7 +492,10 @@ def apply_op(model, op):
     if kind == 'set_camera_view':
         entity = op.get('entity_id')
         value = validate_camera_view(entity, op.get('view'))
-        model.setdefault('camera_views', {})[entity] = value
+        views = model.setdefault('camera_views', {})
+        if entity not in views and len(views) >= 64:
+            raise ValueError('A house can have at most 64 camera views.')
+        views[entity] = value
         return 'Changed the camera view.'
     entity = _entity(op.get('entity_id'))
     if kind == 'set_light_output':

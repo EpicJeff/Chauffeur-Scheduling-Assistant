@@ -105,7 +105,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       if (!target) { panel.message('Add a floor above this one before adding stairs.'); return; }
       tools.select(null);
       stair = { level: level.id, width: 3, to_level: target.id, style: 'solid', rail: 'both' };
-      const card = el('piece-card'); card.replaceChildren(); card.hidden = false; card.dataset.stairDraft = 'true';
+      const card = el('piece-card'); card.dispatchEvent(new Event('fixturecardrelease')); card.replaceChildren(); card.hidden = false; card.dataset.stairDraft = 'true';
       const title = document.createElement('h3'); title.textContent = 'Add stair'; card.append(title);
       stairShelf(card, stair, building, { canEdit, report, change: (field, value) => { if (stair) stair[field] = value; } });
     }

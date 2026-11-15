@@ -20,7 +20,7 @@ export function securityAttention(row, state) {
 // Lot-frame facing is degrees, counterclockwise from +X toward plan +Y.
 export function cameraDirection(marker, roomCentre, houseCentre) {
   if (marker.camera_view) {
-    const { at, aim } = marker.camera_view, dx = aim[0] - at[0], dy = aim[1] - at[1], length = Math.hypot(dx, dy);
+    const { aim } = marker.camera_view, dx = aim[0] - marker.at[0], dy = aim[1] - marker.at[1], length = Math.hypot(dx, dy);
     if (length > 1e-8) return [dx / length, dy / length];
   }
   const facing = marker.facing_deg ?? marker.orientation;
@@ -49,8 +49,9 @@ export function mountSecurity({view, live, overlays = view.scene}) {
     if (marker.kind !== 'camera' && !marker.entity_id.startsWith('camera.')) continue;
     const saved = marker.camera_view || layout.camera_views?.[marker.entity_id];
     if (saved) {
-      const cone = conePreview(saved.at, saved.aim, saved.fov_deg); cone.visible = false;
-      cone.userData.cameraCone = { device: marker.device_id, length_ft: Math.hypot(...saved.aim.map((v, i) => v - saved.at[i])), fov_deg: saved.fov_deg };
+      const origin = [marker.at[0], marker.at[1], marker.at[2] + base];
+      const cone = conePreview(origin, saved.aim, saved.fov_deg); cone.visible = false;
+      cone.userData.cameraCone = { device: marker.device_id, length_ft: Math.hypot(...saved.aim.map((v, i) => v - origin[i])), fov_deg: saved.fov_deg };
       root.add(cone); cones.push({ marker, mesh: cone }); continue;
     }
     const room = layout.rooms.find(r => r.building === marker.building && r.room === marker.room);
@@ -76,7 +77,7 @@ export function mountSecurity({view, live, overlays = view.scene}) {
     },
     legend() {
       const alarms = Object.entries(live.peek()).filter(([id]) => id.startsWith('alarm_control_panel.'));
-      return 'Red · Open / unlocked   |   Camera view · 25 ft' + alarms.map(([id, s]) => `   |   ${s.attributes?.friendly_name || id}: ${live.stale() ? 'unavailable' : s.state.replaceAll('_', ' ')}`).join('');
+      return 'Red · Open / unlocked   |   Camera view' + (cones.some(r => r.marker.camera_view || layout.camera_views?.[r.marker.entity_id]) ? '' : ' · 25 ft') + alarms.map(([id, s]) => `   |   ${s.attributes?.friendly_name || id}: ${live.stale() ? 'unavailable' : s.state.replaceAll('_', ' ')}`).join('');
     },
     stop() { root.removeFromParent(); root.traverse(o => {o.geometry?.dispose(); o.material?.dispose();}); }};
 }

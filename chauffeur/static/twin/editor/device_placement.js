@@ -243,6 +243,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
   }
   function draw() {
     if (stopped) return;
+    fixtures.draw();
     const selected = tools.selection(), camera = view.camera, rect = canvas.getBoundingClientRect();
     camera.updateMatrixWorld(true);
     for (const { at, sprite } of sprites.values()) {
@@ -301,7 +302,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     sprites.clear(); textures.clear();
   }
   const controller = { anchors, doors, arm, startDrag, pointerDown, pointerMove: fixtures.pointerMove, pointerUp, cancel, refresh, draw, stop,
-    drawFixtures: fixtures.deviceLink };
+    drawFixtures: fixtures.deviceLink, pointerBrowse: event => !armed && !fixtures.active() && fixtures.pointerDown(event) };
   link.setPlacement(controller);
   signal.addEventListener('abort', stop, { once: true });
   return controller;

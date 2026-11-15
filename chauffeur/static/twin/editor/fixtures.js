@@ -18,6 +18,9 @@ function field(root, label, value, save, { locked = false, low, high, step = 'an
   input.setAttribute('aria-label', label); wrap.append(input); root.append(wrap);
   input.addEventListener('change', () => Promise.resolve().then(() => !input.disabled && save(input.value)).catch(reportError)); return input;
 }
+function actions(root) {
+  const node = element('div'); node.className = 'editor-material-actions'; root.append(node); return node;
+}
 function button(root, text, action, locked) {
   const node = element('button', text); node.type = 'button'; node.disabled = locked;
   node.addEventListener('click', action); root.append(node); return node;
@@ -35,6 +38,7 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onMove, on
   for (const f of rows) {
     const row = element('details'), summary = element('summary', `${f.shape[0].toUpperCase() + f.shape.slice(1)} · ${f.id.slice(-8)}`);
     row.dataset.fixtureId = f.id; row.append(summary); root.append(row);
+    const rowActions = element('div'); rowActions.className = 'editor-material-actions';
     const editable = ['point', 'spot'].includes(f.shape);
     const change = delta => save(() => op({ op: 'update_light_fixture', entity_id, id: f.id, change: delta }));
     row.append(element('p', `Reference: ${f.ref}${f.ref === 'floor' ? ` · ${f.building} · ${f.level}` : ''}`));
@@ -54,7 +58,7 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onMove, on
       }), { locked: !canEdit() });
       field(row, 'Cone (degrees)', f.cone_deg ?? 90, v => change({ cone_deg: numeric(v, 10, 160) }), { locked: !canEdit(), low: 10, high: 160 });
       field(row, 'Softness', f.softness ?? .3, v => change({ softness: numeric(v, 0, 1) }), { locked: !canEdit(), low: 0, high: 1, step: '.05' });
-      button(row, 'Aim', () => { if (canEdit()) onAim?.(entity_id, f); }, !canEdit());
+      button(rowActions, 'Aim', () => { if (canEdit()) onAim?.(entity_id, f); }, !canEdit());
     }
     if (!editable) {
       for (const key of ['path', 'size_ft', 'facing', 'rotation_deg', 'width_in', 'snap']) if (f[key] !== undefined)
@@ -68,25 +72,27 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onMove, on
     }
     if (f.orphaned) row.append(element('p', f.orphan_reason || 'The floor reference is missing.'));
     if (editable) {
-      button(row, 'Move', () => { if (canEdit()) onMove?.(entity_id, f); }, !canEdit());
-      button(row, 'Duplicate', () => save(() => {
+      button(rowActions, 'Move', () => { if (canEdit()) onMove?.(entity_id, f); }, !canEdit());
+      button(rowActions, 'Duplicate', () => save(() => {
         const copy = structuredClone(getPlan().light_fixtures?.[entity_id]?.find(r => r.id === f.id) || f);
         for (const key of ['id','orphaned','orphan_reason']) delete copy[key];
         return op({ op: 'add_light_fixture', entity_id, fixture: copy });
       }), !canEdit());
     }
-    button(row, 'Delete', () => save(async () => {
+    button(rowActions, 'Delete', () => save(async () => {
       if (await window.promptConfirm('Delete this fixture?', 'Undo restores the fixture.', 'Delete', 'Cancel') && canEdit())
         await op({ op: 'delete_light_fixture', entity_id, id: f.id });
     }), !canEdit());
+    row.append(rowActions);
   }
-  const actions = element('div'); actions.className = 'editor-material-actions'; root.append(actions);
-  for (const shape of ['point', 'spot']) button(actions, `Add ${shape} fixtures`, () => { if (canEdit()) onAdd?.(entity_id, shape); }, !canEdit());
+  const addActions = actions(root);
+  for (const shape of ['point', 'spot']) button(addActions, `Add ${shape} fixtures`, () => { if (canEdit()) onAdd?.(entity_id, shape); }, !canEdit());
   return root;
 }
 
 export function cameraView(plan, marker) {
-  if (plan.camera_views?.[marker.entity_id]) return structuredClone(plan.camera_views[marker.entity_id]);
+  const saved = plan.camera_views?.[marker.entity_id];
+  if (saved) return { at: [...marker.at], aim: [...saved.aim], fov_deg: saved.fov_deg };
   const at = [...marker.at], angle = (marker.facing_deg ?? marker.orientation ?? 0) * Math.PI / 180;
   return { at, aim: [at[0] + 20 * Math.cos(angle), at[1] + 20 * Math.sin(angle), at[2]], fov_deg: 90 };
 }
@@ -102,12 +108,20 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     return f.ref === 'floor' && level ? (b.base || 0) + buildingGround(getPlan(), b) + level.elevation : 0;
   }
   const absolute = (f, p) => [p[0], p[1], p[2] + height(f, p)];
-  function surface(event) {
+  function surface(event, standOff = false) {
     const hit = library.surfaceAt(event);
     if (hit) {
-      const b = hit.building, a = (b.rotation || 0) * Math.PI / 180, p = b.position || [0, 0], [x, y, z] = hit.point;
+      const b = hit.building, a = (b.rotation || 0) * Math.PI / 180, p = b.position || [0, 0];
+      let [x, y, z] = hit.point;
+      if (standOff && hit.kind === 'wall' && hit.piece && hit.side) {
+        const [dx, dy] = hit.piece.to.map((v, i) => v - hit.piece.from[i]), length = Math.hypot(dx, dy);
+        const offset = (hit.piece.thickness / 2 + 1 / 12) * (hit.side === 'left' ? 1 : -1);
+        if (length) { x -= dy / length * offset; y += dx / length * offset; }
+      } else if (standOff && hit.kind === 'room') z += (hit.surface === 'ceiling' ? -1 : 1) / 12;
       return { at: [p[0] + x * Math.cos(a) - y * Math.sin(a), p[1] + x * Math.sin(a) + y * Math.cos(a),
-        z + (b.base || 0) + buildingGround(getPlan(), b)], building: b.id, level: hit.level };
+        z + (b.base || 0) + buildingGround(getPlan(), b)], building: b.id, level: hit.level,
+        ceiling: hit.kind === 'room' && hit.surface === 'ceiling', floor: (b.levels.find(l => l.id === hit.level)?.elevation || 0)
+          + (hit.room?.floor_offset_ft || 0) + (b.base || 0) + buildingGround(getPlan(), b) };
     }
     const p = library.ground(event); return p && { at: [...p, groundAt(getPlan(), ...p)], ground: true };
   }
@@ -146,16 +160,16 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     if (!canEdit()) return;
     const current = cameraView(getPlan(), marker);
     startAim(current.at, current.aim, current.fov_deg, value => op({ op: 'set_camera_view', entity_id: marker.entity_id,
-      view: { at: current.at, aim: value.aim, fov_deg: value.cone_deg } }), true);
+      view: { aim: value.aim, fov_deg: value.cone_deg } }), true);
   }
   function drawFixtures(host, device) {
     for (const entity_id of entities(device)) host.append(fixtureCard({ entity_id, getPlan, canEdit, op, onAdd: add, onMove: move, onAim: aim, report }));
     if (device.kind === 'camera' || device.entity_id?.startsWith('camera.')) {
-      const marker = getCameraMarker?.(device) || (getPlan().camera_views?.[device.entity_id] && { entity_id: device.entity_id });
+      const marker = getCameraMarker?.(device);
       if (marker) {
         const row = element('section'); row.append(element('h3', 'Camera view'));
         const value = cameraView(getPlan(), marker); row.append(element('p', `Aim: ${value.aim.map(n => Math.round(n * 100) / 100).join(', ')} ft · Field of view: ${value.fov_deg}°`));
-        button(row, 'Aim camera', () => aimCamera(marker), !canEdit()); host.append(row);
+        button(actions(row), 'Aim camera', () => { const current = getCameraMarker?.(device); if (current) aimCamera(current); }, !canEdit()); host.append(row);
       } else host.append(element('p', 'Place this camera to set its view.'));
     }
   }
@@ -169,21 +183,30 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     const row = id && [...el('piece-card').querySelectorAll('[data-fixture-id]')].find(r => r.dataset.fixtureId === id);
     if (row) { row.open = true; row.scrollIntoView({ block: 'nearest' }); }
   }
+  function releaseCard() {
+    cardDevice = null; cardKey = null; delete el('piece-card').dataset.fixtureCard;
+  }
+  el('piece-card').addEventListener('fixturecardrelease', releaseCard, { signal });
   function refreshCard() {
     if (!cardDevice) return;
     const host = el('piece-card');
-    if (cardKey !== null && !host.dataset.fixtureCard) { cardDevice = null; return; }
-    const key = JSON.stringify([getPlan().light_fixtures, getPlan().light_fixtures_meta, getPlan().camera_views, canEdit()]);
+    if (host.dataset.stairDraft || cardKey !== null && !host.dataset.fixtureCard) { releaseCard(); return; }
+    const key = JSON.stringify([getPlan().light_fixtures, getPlan().light_fixtures_meta, getPlan().camera_views, getPlan().buildings, getPlan().site?.devices, getPlan().site?.terraces, canEdit()]);
     if (key === cardKey) return;
     const open = [...host.querySelectorAll('[data-fixture-id]')].filter(r => r.open).map(r => r.dataset.fixtureId);
     cardKey = key; host.replaceChildren(); host.dataset.fixtureCard = cardDevice.device_id; host.hidden = false;
-    host.append(element('h3', cardDevice.name)); button(host, 'Close', () => { cardDevice = null; delete host.dataset.fixtureCard; host.hidden = true; }, false);
+    host.append(element('h3', cardDevice.name)); button(host, 'Close', () => { releaseCard(); host.hidden = true; }, false);
     drawFixtures(host, cardDevice);
     for (const row of host.querySelectorAll('[data-fixture-id]')) row.open = open.includes(row.dataset.fixtureId);
   }
   function pick(event) {
     const rect = canvas.getBoundingClientRect(); ray.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1), view.camera);
-    root.updateMatrixWorld(true); return ray.intersectObjects(root.children, true).find(h => h.object.userData.fixtureId)?.object.userData;
+    draw(); root.updateMatrixWorld(true);
+    const hit = ray.intersectObjects(root.children, true).find(h => h.object.visible && h.object.userData.fixtureId);
+    if (!hit) return null;
+    const piece = view.pick(event.clientX, event.clientY);
+    if (piece?.point && ray.ray.origin.distanceTo(new THREE.Vector3(...piece.point)) < hit.distance - 1e-5) return null;
+    return hit.object.userData;
   }
   function pointerDown(event) {
     if (event.button !== 0) return false;
@@ -206,7 +229,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     }
     if (aiming) { if (!cancelled && canEdit()) { const hit = surface(event); if (hit) aiming.move(hit.at); } await aiming.end(cancelled || !canEdit()); return; }
     if (cancelled || !canEdit() || !mode || Math.hypot(event.clientX - p.x, event.clientY - p.y) >= 3) return;
-    const hit = surface(event); if (!hit) return;
+    const hit = surface(event, true); if (!hit) return;
     const active = mode, ref = hit.ground ? 'ground' : 'floor', base = ref === 'ground' ? groundAt(getPlan(), ...hit.at) : height({ ref, building: hit.building, level: hit.level }, hit.at);
     if (active.kind === 'move') {
       const context = { ref, ...(ref === 'floor' ? { building: hit.building, level: hit.level } : {}) };
@@ -217,26 +240,36 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     }
     const f = { shape: active.shape, ref, at: [hit.at[0], hit.at[1], hit.at[2] - base],
       ...(ref === 'floor' ? { building: hit.building, level: hit.level } : {}) };
-    if (f.shape === 'spot') Object.assign(f, { aim: [f.at[0] + 20, f.at[1], f.at[2]], cone_deg: 90, softness: .3 });
+    if (f.shape === 'spot') Object.assign(f, { aim: hit.ceiling ? [f.at[0], f.at[1], hit.floor - base] : [f.at[0] + 20, f.at[1], f.at[2]], cone_deg: 90, softness: .3 });
     await op({ op: 'add_light_fixture', entity_id: active.entity_id, fixture: f });
   }
   function pointerUp(event, cancelled = false) {
     if (!press || press.pointer !== event.pointerId) return false;
     return finish(event, cancelled).catch(report);
   }
+  function draw() {
+    for (const mesh of root.children) if (mesh.userData.fixtureId) {
+      const { building, level } = mesh.userData;
+      mesh.visible = !building || view.groups?.levels[`${building}:${level}`]?.visible !== false;
+    }
+  }
   function refresh() {
     if (mode && !canEdit()) cancel(); refreshCard();
-    const plan = getPlan(), next = JSON.stringify([plan.light_fixtures, plan.buildings, plan.site?.terraces]); if (signature === next) return; signature = next;
+    const plan = getPlan(), next = JSON.stringify([plan.light_fixtures, plan.buildings, plan.site?.terraces]); if (signature === next) { draw(); return; } signature = next;
     for (const child of [...root.children]) if (child !== aiming?.preview) { child.geometry?.dispose(); child.material?.dispose(); child.removeFromParent(); }
     for (const [entity_id, rows] of Object.entries(getPlan().light_fixtures || {})) for (const f of rows) {
       const at = f.at || f.path?.[0]; if (!at) continue; const p = absolute(f, at);
-      const mesh = new THREE.Mesh(new THREE.SphereGeometry(.12, 10, 6), new THREE.MeshBasicMaterial({ color: '#9abfe5', depthTest: false, toneMapped: false }));
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(.12, 10, 6), new THREE.MeshBasicMaterial({ color: '#9abfe5', toneMapped: false }));
       mesh.position.set(p[0] * FT, p[2] * FT, -p[1] * FT); mesh.renderOrder = 21;
-      mesh.userData = { fixtureId: f.id, entity_id }; root.add(mesh);
+      mesh.userData = { fixtureId: f.id, entity_id, building: f.ref === 'floor' ? f.building : null, level: f.level }; root.add(mesh);
     }
+    draw();
   }
   el('device-cancel').addEventListener('click', () => { if (mode) cancel(); }, { signal });
-  document.addEventListener('keydown', event => { if (event.key === 'Escape' && mode) { cancel(); event.preventDefault(); event.stopImmediatePropagation(); } }, { signal, capture: true });
-  signal.addEventListener('abort', () => { cancel(); root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent(); }, { once: true });
-  return { add, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, pointerDown, pointerMove, pointerUp, cancel, refresh, active: () => !!mode };
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && mode) {
+    if (aiming && press) { release(); aiming.end(true).catch(report); } else cancel();
+    event.preventDefault(); event.stopImmediatePropagation();
+  } }, { signal, capture: true });
+  signal.addEventListener('abort', () => { cancel(); if (el('piece-card').dataset.fixtureCard) { releaseCard(); el('piece-card').hidden = true; } root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent(); }, { once: true });
+  return { add, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, pointerDown, pointerMove, pointerUp, cancel, refresh, draw, active: () => !!mode };
 }

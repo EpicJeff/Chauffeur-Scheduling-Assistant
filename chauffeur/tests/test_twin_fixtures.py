@@ -538,10 +538,10 @@ def test_camera_views_roundtrip_validation_parent_gate_and_undo():
         view = {'at': [10, 10, 6], 'aim': [30, 10, 0], 'fov_deg': 70}
         operation = {'op': 'set_camera_view', 'entity_id': 'camera.front', 'view': view}
         m = post(c, operation)
-        assert m['camera_views'] == {'camera.front': view}
+        assert m['camera_views'] == {'camera.front': {k: v for k, v in view.items() if k != 'at'}}
         assert twin_model.normalize(m)[0]['camera_views'] == m['camera_views']
         assert c.client.get(LIVE, headers=c.mum).json()['camera_views'] == m['camera_views']
-        for bad in ({**view, 'fov_deg': 180}, {**view, 'aim': view['at']}, {**view, 'at': [True, 0, 0]}):
+        for bad in ({**view, 'fov_deg': 180}, {**view, 'aim': [True, 0, 0]}, {**view, 'aim': [0, 0]}):
             post(c, {**operation, 'view': bad}, 400)
         post(c, {**operation, 'entity_id': 'light.front'}, 400)
         post(c, operation, 403, c.kid)
@@ -573,16 +573,86 @@ def test_camera_view_keeps_legacy_facing_and_survives_flat_reads():
         with patch('services.twin_ha.safe_catalogue', return_value=catalogue):
             old = c.client.get(LIVE, headers=c.mum).json()['markers'][0]
             assert old['facing_deg'] == 120 and 'camera_view' not in old
-            view = {'at': [100, 50, 5], 'aim': [100, 30, 0]}
+            view = {'at': [100, 50, 5], 'aim': [*old['at'][:1], old['at'][1] - 20, 0]}
             m = post(c, {'op': 'set_camera_view', 'entity_id': 'camera.front', 'view': view})
             assert m['camera_views']['camera.front']['fov_deg'] == 90
             assert m['buildings'][0]['devices'][0]['facing_deg'] == 180
             marker = c.client.get(LIVE, headers=c.mum).json()['markers'][0]
             assert marker['facing_deg'] == 270 and marker['camera_view'] == m['camera_views']['camera.front']
+            def relocate(model):
+                b = model['buildings'][0]
+                b['devices'][0]['host']['u'] = .7
+                b['position'] = [110, 60]
+                b['rotation'] = 180
+                return model
+            ts.update_model(relocate)
+            moved = c.client.get(LIVE, headers=c.mum).json()['markers'][0]
+            import math
+            expected = math.degrees(math.atan2(view['aim'][1] - moved['at'][1], view['aim'][0] - moved['at'][0])) % 360
+            assert moved['at'] != marker['at'] and moved['facing_deg'] == expected
+            assert moved['camera_view'] == marker['camera_view']
         flat = bridge.flatten(m)
         flat.pop('camera_views')
         restored, _ = bridge.assemble(flat, m)
         assert restored['camera_views'] == m['camera_views']
+
+
+
+def test_camera_view_discards_legacy_origin_and_accepts_aim_only_over_http():
+    seed()
+    with Ctx() as c:
+        view = {'at': [10, 10, 6], 'aim': [30, 10, 0], 'fov_deg': 70}
+        m = post(c, {'op': 'set_camera_view', 'entity_id': 'camera.front', 'view': view})
+        expected = {'aim': view['aim'], 'fov_deg': 70}
+        assert m['camera_views']['camera.front'] == expected
+        legacy = copy.deepcopy(m)
+        legacy['camera_views']['camera.front']['at'] = [999, 999, 999]
+        assert twin_model.normalize(legacy)[0]['camera_views']['camera.front'] == expected
+        m = post(c, {'op': 'set_camera_view', 'entity_id': 'camera.front', 'view': expected})
+        assert m['camera_views']['camera.front'] == expected
+
+
+def test_straight_down_camera_aim_keeps_previous_legacy_facing():
+    seed()
+    with Ctx() as c:
+        def place(m):
+            m['buildings'][0]['devices'] = [{'id': 'camera-front', 'device': 'dev-camera',
+                'host': {'floor': 'kitchen', 'u': .2, 'v': .3}, 'offset': 5, 'facing_deg': 30}]
+            return m
+        ts.update_model(place)
+        catalogue = {'available': True, 'areas': [{'area_id': 'kitchen'}], 'devices': [
+            {'device_id': 'dev-camera', 'kind': 'camera', 'name': 'Front', 'entity_id': 'camera.front',
+             'entities': ['camera.front'], 'area_id': 'kitchen'}]}
+        with patch('services.twin_ha.safe_catalogue', return_value=catalogue):
+            old = c.client.get(LIVE, headers=c.mum).json()['markers'][0]
+            m = post(c, {'op': 'set_camera_view', 'entity_id': 'camera.front',
+                        'view': {'at': old['at'], 'aim': [*old['at'][:2], old['at'][2] - 5]}})
+            assert m['buildings'][0]['devices'][0]['facing_deg'] == 30
+            marker = c.client.get(LIVE, headers=c.mum).json()['markers'][0]
+            assert marker['facing_deg'] == old['facing_deg']
+
+
+
+def test_camera_view_limits_and_ignored_origin():
+    seed()
+    with Ctx() as c:
+        view = {'aim': [2000, 0, 0], 'at': 'ignored legacy input'}
+        m = post(c, {'op': 'set_camera_view', 'entity_id': 'camera.front', 'view': view})
+        assert m['camera_views']['camera.front'] == {'aim': [2000, 0, 0], 'fov_deg': 90}
+        for aim in ([2000.01, 0, 0], [1500, 1500, 0], [0, 0, 2001]):
+            error = post(c, {'op': 'set_camera_view', 'entity_id': 'camera.front', 'view': {'aim': aim}}, 400)
+            assert '2000 feet' in str(error)
+        def fill(m):
+            m['camera_views'] = {f'camera.c{i}': {'aim': [0, 10, 0], 'fov_deg': 90} for i in range(64)}
+            return m
+        ts.update_model(fill)
+        error = post(c, {'op': 'set_camera_view', 'entity_id': 'camera.extra', 'view': {'aim': [1, 2, 3]}}, 400)
+        assert 'at most 64 camera views' in str(error)
+        m = post(c, {'op': 'set_camera_view', 'entity_id': 'camera.c0', 'view': {'aim': [1, 2, 3]}})
+        assert len(m['camera_views']) == 64 and m['camera_views']['camera.c0']['aim'] == [1, 2, 3]
+        m['camera_views']['camera.extra'] = {'aim': [1, 2, 3]}
+        normalized, notes = twin_model.normalize(m)
+        assert len(normalized['camera_views']) == 64 and any('64 camera views' in n for n in notes)
 
 
 if __name__ == '__main__':
