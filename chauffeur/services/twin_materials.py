@@ -19,10 +19,11 @@ import uuid
 
 from services import twin_library, twin_store
 
-SLOTS = ('base_color', 'normal', 'roughness', 'metalness', 'ao', 'orm', 'height')
+SLOTS = ('base_color', 'normal', 'roughness', 'metalness', 'ao', 'orm', 'height', 'opacity')
 DEFAULT_PARAMS = dict(tint='#ffffff', roughness=None, metalness=None, normal_scale=1,
                       normal_convention='gl', ao_intensity=1, tile_ft=[4, 4],
-                      rotation_deg=0, random_offset=False)
+                      rotation_deg=0, random_offset=False,
+                      alpha_mode='opaque', opacity=1.0, alpha_cutoff=0.5)
 MAX_INPUT_BYTES = 40 * 1024 * 1024
 MAX_FILES = 16
 MAX_MATERIAL_BYTES = 200 * 1024 * 1024
@@ -84,7 +85,8 @@ def builtin_rows(kit_id='modern_farmhouse'):
     for mid in dict.fromkeys(ids):
         color = next((ref['color'] for ref in refs.values() if ref['asset'] == mid), '#b8b0a4')
         rows.append(dict(id=mid, name=mid.replace('_', ' ').capitalize(), source='builtin',
-                         color=color, thumbnail_url=None, builtin=True, archived=False, revision=0))
+                         color=color, thumbnail_url=None, builtin=True, archived=False, revision=0,
+                         params={**deepcopy(DEFAULT_PARAMS), 'tint': color}))
     return rows
 
 
@@ -113,9 +115,15 @@ def get(material_id) -> dict:
     if builtin:
         return builtin
     try:
-        return _read(root() / mid / 'material.json')
+        return _read_record(root() / mid / 'material.json')
     except FileNotFoundError as exc:
         raise ValueError('No such material.') from exc
+
+
+def _read_record(path):
+    record = _read(path)
+    record['params'] = {**deepcopy(DEFAULT_PARAMS), **record['params']}
+    return record
 
 
 def require_editable(material_id):
@@ -129,14 +137,14 @@ def catalogue(include_archived=False) -> dict:
     rows = builtin_rows()
     for path in sorted(root().glob('*/material.json')):
         try:
-            record = _read(path)
+            record = _read_record(path)
         except FileNotFoundError:  # A concurrent unreferenced deletion.
             continue
         if record['archived'] and not include_archived:
             continue
         rows.append(dict(id=record['id'], name=record['name'], source=record['source'],
                          color=record['params']['tint'], thumbnail_url=None, builtin=False,
-                         archived=record['archived'], revision=record['revision']))
+                         archived=record['archived'], revision=record['revision'], params=record['params']))
     path = root() / 'revision.json'
     return {'revision': _read(path) if path.exists() else 0, 'materials': rows}
 
@@ -159,7 +167,8 @@ def page_manifest() -> dict:
 def _params(change, current=None):
     if not isinstance(change, dict) or set(change) - set(DEFAULT_PARAMS):
         raise ValueError('Choose valid material parameters.')
-    result = deepcopy(DEFAULT_PARAMS if current is None else current)
+    result = deepcopy(DEFAULT_PARAMS)
+    result.update(deepcopy(current or {}))
     result.update(change)
     if not isinstance(result['tint'], str) or not re.fullmatch(r'#[a-fA-F0-9]{6}', result['tint']):
         raise ValueError('Tint must be a six-digit hex colour.')
@@ -177,6 +186,13 @@ def _params(change, current=None):
         raise ValueError('normal_convention must be gl or dx.')
     if type(result['random_offset']) is not bool:
         raise ValueError('random_offset must be a boolean.')
+    if result['alpha_mode'] not in ('opaque', 'cutout', 'blend'):
+        raise ValueError('alpha_mode must be opaque, cutout or blend.')
+    for key in ('opacity', 'alpha_cutoff'):
+        value = result[key]
+        if type(value) not in (int, float) or not math.isfinite(value):
+            raise ValueError(f'{key} must be a number from 0 to 1.')
+        result[key] = max(0.0, min(1.0, value))
     return result
 
 
@@ -271,6 +287,7 @@ def _history(mid):
 
 
 def _save(record, previous=None, history=None, *, snapshot=True):
+    record['params'] = {**deepcopy(DEFAULT_PARAMS), **record['params']}
     mid = record['id']
     if history is None:
         history = _history(mid)
@@ -318,10 +335,16 @@ def create(fields, actor, *, material_id=None, source=None) -> dict:
         record = dict(id=mid, name='', source=origin, licence=None, source_url=None, based_on=None,
                       revision=0, archived=False, created_by=actor, updated_at=None, maps={},
                       params=deepcopy(DEFAULT_PARAMS), source_snapshot=None)
+        staged_path = root() / mid / 'staged.json'
+        if staged_path.exists():
+            staged = _read_record(staged_path)
+            record.update(maps=staged['maps'], params=staged['params'])
         record = _fields(mid, fields, record)
         if source is not None:
             _set_source(record, source, dict(maps=deepcopy(record['maps']), params=deepcopy(record['params'])))
-        return _save(record)
+        saved = _save(record)
+        staged_path.unlink(missing_ok=True)
+        return saved
 
 
 def _update(mid, change, actor):
@@ -335,9 +358,12 @@ def update(material_id, change, actor) -> dict:
         return _update(material_id, change, actor)
 
 
-def _ingest(mid, slot, data):
-    record = require_editable(mid)
-    return _image_file(mid, slot, data, record)
+def _split_alpha(image):
+    """Return non-solid alpha as L, including palette PNG transparency."""
+    if 'A' not in image.getbands() and 'transparency' not in image.info:
+        return None
+    alpha = image.convert('RGBA').getchannel('A')
+    return None if alpha.getextrema() == (255, 255) else alpha
 
 
 def _image_file(mid, slot, data, record):
@@ -356,39 +382,69 @@ def _image_file(mid, slot, data, record):
             if source.mode == 'I' or source.mode.startswith('I;16'):
                 source = source.convert('I').point(lambda value: value / 257).convert('L')
             source.thumbnail((MAX_SIDE, MAX_SIDE), Image.Resampling.LANCZOS)
+            alpha = (_split_alpha(source) if slot == 'base_color' and 'opacity' not in record['maps']
+                     else None)
             decoded = source.convert('RGB' if slot == 'base_color' else 'RGBA' if 'A' in source.getbands() else 'RGB')
             out = io.BytesIO()
             decoded.save(out, format='JPEG' if slot == 'base_color' else 'PNG',
                          **({'quality': 92} if slot == 'base_color' else {}))
             encoded = out.getvalue()
+            if alpha is not None:
+                out = io.BytesIO()
+                alpha.convert('RGB').save(out, format='PNG')  # Same encoding as roughness.
+                alpha_encoded = out.getvalue()
     except Exception as exc:
         raise ValueError(f'Could not decode image: {exc}') from exc
     filename = 'maps/' + hashlib.sha256(encoded).hexdigest()[:12] + ('.jpg' if slot == 'base_color' else '.png')
-    target = root() / mid / filename
+    files = {filename: encoded}
     projected = deepcopy(record)
     projected['maps'][slot] = filename
-    _check_live_limits(mid, projected, {filename: len(encoded)})
-    if not target.exists():
-        _atomic(target, encoded)
+    if alpha is not None:
+        opacity_file = 'maps/' + hashlib.sha256(alpha_encoded).hexdigest()[:12] + '.png'
+        files[opacity_file] = alpha_encoded
+        projected['maps']['opacity'] = opacity_file
+        projected['params'] = _params({}, projected.get('params'))
+        if projected['params']['alpha_mode'] == 'opaque':
+            projected['params']['alpha_mode'] = 'cutout'
+    _check_live_limits(mid, projected, {name: len(content) for name, content in files.items()})
+    for name, content in files.items():
+        target = root() / mid / name
+        if not target.exists():
+            _atomic(target, content)
+    record.update(projected)
     return filename
 
 
 def ingest_image(material_id, slot, data: bytes, *, staged=False) -> str:
     """Decode, cap and store one map. `staged` ingests into a folder that has no
-    published record yet (a download job); `create(material_id=...)` publishes it."""
+    published record yet (a download job); `create(material_id=...)` publishes it.
+    A split alpha map and its mode travel with the image; for an existing material
+    the base and split map are attached together so history and GC retain both."""
     with _lock(material_id):
         if not staged:
-            return _ingest(material_id, slot, data)
+            previous = require_editable(material_id)
+            record = deepcopy(previous)
+            filename = _image_file(material_id, slot, data, record)
+            if record['maps'].get('opacity') != previous['maps'].get('opacity'):
+                _save(record, previous)
+            return filename
         if (root() / material_id / 'material.json').exists():
             raise ValueError('That material is already published.')
-        return _image_file(material_id, slot, data, dict(id=material_id, maps={}, source_snapshot=None))
+        path = root() / material_id / 'staged.json'
+        record = (_read_record(path) if path.exists() else
+                  dict(id=material_id, maps={}, params=deepcopy(DEFAULT_PARAMS), source_snapshot=None))
+        filename = _image_file(material_id, slot, data, record)
+        _json(path, record)
+        return filename
 
 
 def set_image(material_id, slot, data: bytes, actor) -> dict:
     """Ingest and attach under the same per-material lock (HTTP and chunk uploads)."""
     with _lock(material_id):
-        filename = _ingest(material_id, slot, data)
-        return _update(material_id, {'maps': {slot: filename}}, actor)
+        previous = require_editable(material_id)
+        record = deepcopy(previous)
+        _image_file(material_id, slot, data, record)
+        return _save(record, previous)
 
 
 def duplicate(material_id, actor) -> dict:

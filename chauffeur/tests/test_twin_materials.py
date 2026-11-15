@@ -105,7 +105,8 @@ def test_create_ingest_and_serve_immutable_map():
         row = create(c)
         assert row['params'] == dict(tint='#ffffff', roughness=None, metalness=None, normal_scale=1,
                                     normal_convention='gl', ao_intensity=1, tile_ft=[4, 4],
-                                    rotation_deg=0, random_offset=False)
+                                    rotation_deg=0, random_offset=False,
+                                    alpha_mode='opaque', opacity=1.0, alpha_cutoff=0.5)
         assert row['created_by'] == 'mum'
         r = upload(c, row['id'])
         assert r.status_code == 200, r.text
