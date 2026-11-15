@@ -1,13 +1,31 @@
 import * as THREE from 'three';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { pathOutline } from '../path_shapes.js';
-import { fixturePoint, fixtureRotation } from '../live/fixture_glow.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { fixturePoint, fixtureRotation, facingNormal } from '../live/fixture_glow.js';
 import { createSiteDrawing } from './site_drawing.js';
 
 const pieces = value => Array.isArray(value) ? value : value ? [value] : [];
 const lerp = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
-export const facingOptions = kind => kind === 'step' ? [['out', 'Downhill']]
-  : [['down', 'Down'], ['out', kind === 'fence' ? 'Right of drawn direction' : 'Out'], ['up', 'Up'], ['in', 'In']];
+export const facingOptions = (kind, current) => kind === 'step' ? [...(current && current !== 'out' ? [[current, `${current[0].toUpperCase() + current.slice(1)} (stored)`]] : []), ['out', 'Downhill']]
+  : [['down', 'Down'], ['out', kind === 'fence' ? 'Right of drawn direction' : kind === 'wall' ? 'Out (outside face)' : 'Out'], ['up', 'Up'], ['in', kind === 'wall' ? 'In (inside face)' : 'In']];
+
+export function screenRay(ray, view, event) {
+  const rect = view.renderer3.domElement.getBoundingClientRect();
+  ray.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2), view.camera);
+  return rect;
+}
+export const FIXTURE_COLOR = '#9abfe5';
+export function fixtureStroke(points, color = FIXTURE_COLOR) {
+  const parts = [], ps = points.map(fixturePoint), radius = .06;
+  for (let i = 1; i < ps.length; i++) {
+    if (!ps[i].equals(ps[i-1])) parts.push(new THREE.TubeGeometry(new THREE.LineCurve3(ps[i-1], ps[i]), 1, radius, 8, false));
+    if (i < ps.length - 1) parts.push(new THREE.SphereGeometry(radius, 8, 4).translate(...ps[i].toArray()));
+  }
+  const geometry = parts.length ? mergeGeometries(parts) : new THREE.BufferGeometry();
+  for (const part of parts) part.dispose();
+  return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({color, toneMapped:false}));
+}
 
 // Same un-offset host edges as twin_fixtures._host_edges; the resolver owns mounting offsets.
 export function snapEdges(plan) {
@@ -28,16 +46,21 @@ export function snapEdges(plan) {
       }
     }
   }
+  const counts = Object.fromEntries(['wall','step'].map(kind => {
+    const ids = new Map(); for (const b of plan.buildings || []) for (const p of b[kind === 'wall' ? 'walls' : 'stairs'] || []) if (!['ghost','proposal'].includes(p.state)) ids.set(p.id, (ids.get(p.id) || 0) + 1);
+    return [kind, ids];
+  }));
   for (const b of plan.buildings || []) {
+    const lift = buildingGround(plan, b);
     const angle = (b.rotation || 0) * Math.PI / 180, pos = b.position || [0, 0];
     const world = p => [pos[0] + p[0] * Math.cos(angle) - p[1] * Math.sin(angle), pos[1] + p[0] * Math.sin(angle) + p[1] * Math.cos(angle)];
     for (const kind of ['wall', 'step']) for (const p of b[kind === 'wall' ? 'walls' : 'stairs'] || []) {
       if (['ghost', 'proposal'].includes(p.state)) continue;
-      if ((plan.buildings || []).flatMap(b => b[kind === 'wall' ? 'walls' : 'stairs'] || []).filter(q => q.id === p.id && !['ghost','proposal'].includes(q.state)).length !== 1) continue;
+      if (counts[kind].get(p.id) !== 1) continue;
       const level = b.levels?.find(l => l.id === p.level); if (!level) continue;
-      const base = (b.base || 0) + level.elevation, context = { building: b.id, level: level.id, lift: buildingGround(plan, b) };
+      const base = (b.base || 0) + level.elevation, context = { building: b.id, level: level.id, lift };
       if (kind === 'wall') {
-        const ends = p.joints?.map(id => b.joints?.find(j => j.id === id)?.at) || [p.from, p.to];
+        const ends = p.joints?.map(id => b.joints?.find(j => j.id === id)?.at) || [];
         if (ends.length === 2 && ends.every(Boolean)) add(kind, p.id, [...world(ends[0]), base + (p.height ?? level.ceiling ?? 9)], [...world(ends[1]), base + (p.height ?? level.ceiling ?? 9)], context);
       } else if (p.from && p.to && p.width > 0 && p.risers >= 1 && p.risers <= 1000 && Number.isFinite(p.rise_to)) {
         const dx = p.to[0] - p.from[0], dy = p.to[1] - p.from[1], length = Math.hypot(dx, dy); if (!length) continue;
@@ -53,7 +76,7 @@ export function snapEdges(plan) {
 }
 
 export function areaOutline(f) {
-  const rotation = fixtureRotation({ ...f, normal: Array.isArray(f.facing) ? f.facing : f.facing === 'out' ? [0, -1, 0] : undefined });
+  const rotation = fixtureRotation({ ...f, normal: facingNormal(f.facing) });
   return [[-1,-1],[1,-1],[1,1],[-1,1],[-1,-1]].map(([x, y]) => {
     const v = new THREE.Vector3(x * f.size_ft[0] / 2, y * f.size_ft[1] / 2, 0).applyQuaternion(rotation);
     return [f.at[0] + v.x, f.at[1] - v.z, f.at[2] + v.y];
@@ -62,15 +85,15 @@ export function areaOutline(f) {
 
 export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit, report, host, onDone, encode = f => f }) {
   const preview = new THREE.Group(), ray = new THREE.Raycaster(), canvas = view.renderer3.domElement;
-  let active = null, gesture = null, rectangle = null, selected = null, anchor = null, facing = 'down', facingChosen = false, busy = false, controls = null, facingSelect = null;
+  let active = null, gesture = null, rectangle = null, selected = null, anchor = null, facing = 'down', facingChosen = false, busy = false, controls = null, facingSelect = null, finishButton = null, edgeKey = null, cachedEdges = [];
   const drawing = () => createSiteDrawing({ getPlan, commit: o => save(encode({ shape: 'line', ref: 'absolute', path: o.polyline, snap: null, facing, width_in: active.fixture?.width_in ?? .5 }, anchor)) });
   let draft = drawing();
   const node = (tag, text) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; return n; };
-  const button = (text, fn) => { const n = node('button', text); n.type = 'button'; n.addEventListener('click', () => { if (canEdit() && !busy) Promise.resolve().then(fn).catch(report); }); controls.append(n); };
+  const button = (text, fn) => { const n = node('button', text); n.type = 'button'; n.addEventListener('click', () => { if (canEdit() && !busy) Promise.resolve().then(fn).catch(report); }); controls.append(n); return n; };
   function clear() { for (const child of [...preview.children]) { child.geometry.dispose(); child.material.dispose(); child.removeFromParent(); } }
-  function line(points, color = '#9abfe5') {
+  function line(points, color = FIXTURE_COLOR) {
     if (points.length < 2) return;
-    preview.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points.map(fixturePoint)), new THREE.LineBasicMaterial({ color, toneMapped: false })));
+    preview.add(fixtureStroke(points, color));
   }
   function graphics(hover) {
     clear();
@@ -93,40 +116,50 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
     facing = options.some(([v]) => v === value) ? value : options[0][0]; facingSelect.value = facing;
   }
   function choose(kind) {
-    draft.cancel(); gesture = rectangle = selected = anchor = null; active.kind = kind; facingChosen = false;
+    draft.cancel(); gesture = rectangle = selected = anchor = null; active.kind = kind; facingChosen = !!active.fixture; edgeKey = null; cachedEdges = [];
+    finishButton.hidden = kind === 'snap'; if (kind === 'snap') edges();
     if (kind === 'draw') draft.start('fence');
     selectFacing(kind === 'area' ? 'area' : null, typeof active.fixture?.facing === 'string' ? active.fixture.facing : 'down'); graphics();
   }
   function start(value) {
     stop(); draft = drawing(); active = value; controls = node('div'); controls.className = 'editor-material-actions'; host.append(controls);
     if (value.kind !== 'area') { button('Draw line', () => choose('draw')); button('Snap to edge', () => choose('snap')); }
-    button('Finish', finish);
+    finishButton = button('Finish', finish);
     const label = node('label', 'Facing'); facingSelect = node('select'); facingSelect.setAttribute('aria-label', 'Facing'); label.append(facingSelect); controls.append(label);
     facingSelect.addEventListener('change', () => { if (!canEdit() || busy) return; facing = facingSelect.value; facingChosen = true; if (rectangle) { rectangle.facing = facing === 'surface' ? rectangle.surfaceNormal : facing; graphics(); } });
     choose(value.kind);
   }
-  function stop() { draft.cancel(); clear(); controls?.remove(); controls = facingSelect = null; active = gesture = rectangle = selected = anchor = null; }
+  function stop() { draft.cancel(); clear(); controls?.remove(); controls = facingSelect = finishButton = null; edgeKey = null; cachedEdges = []; active = gesture = rectangle = selected = anchor = null; }
   async function save(fixture) {
     if (!active || !canEdit() || busy) return false;
     const current = active; busy = true;
     try { return await commit(current, fixture); } finally { busy = false; }
   }
+  function edges() {
+    const plan = getPlan(), key = JSON.stringify([plan.buildings, plan.site?.terraces, plan.site?.hardscape, plan.site?.fence]);
+    if (key !== edgeKey) { cachedEdges = snapEdges(plan); edgeKey = key; }
+    return cachedEdges;
+  }
   function pick(event) {
-    const rect = canvas.getBoundingClientRect(); ray.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2), view.camera);
+    const rect = screenRay(ray, view, event);
     let best = null, distance = Infinity, screenDistance = Infinity;
-    for (const edge of snapEdges(getPlan())) {
+    for (const edge of edges()) {
       if (edge.building && view.groups?.levels[`${edge.building}:${edge.level}`]?.visible === false) continue;
       const a = fixturePoint(edge.a), b = fixturePoint(edge.b); a.y += (edge.lift || 0) * .3048; b.y += (edge.lift || 0) * .3048;
       const onRay = new THREE.Vector3(), onEdge = new THREE.Vector3(); ray.ray.distanceSqToSegment(a, b, onRay, onEdge);
       const screen = onEdge.clone().project(view.camera); if (screen.z < -1 || screen.z > 1) continue;
       const pixels = Math.hypot((screen.x + 1) * rect.width / 2 + rect.left - event.clientX, (1 - screen.y) * rect.height / 2 + rect.top - event.clientY);
       const depth = ray.ray.origin.distanceTo(onRay);
+      if (pixels > 12) continue;
+      const x = (screen.x + 1) * rect.width / 2 + rect.left, y = (1 - screen.y) * rect.height / 2 + rect.top;
+      const hit = view.pick(x, y), ownHost = hit?.kind === (edge.host.kind === 'step' ? 'stair' : edge.host.kind) && (hit.id || hit.pieceId) === edge.host.id && (!edge.building || (hit.building || hit.buildingId) === edge.building);
+      if (!ownHost && hit?.point && ray.ray.origin.distanceTo(new THREE.Vector3(...hit.point)) < ray.ray.origin.distanceTo(onEdge) - .15) continue;
       if (pixels <= 12 && (pixels < screenDistance - .25 || Math.abs(pixels - screenDistance) <= .25 && depth < distance)) { best = edge; distance = depth; screenDistance = pixels; }
     }
     return best;
   }
   function parameter(event, edge) {
-    const rect = canvas.getBoundingClientRect(); ray.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2), view.camera);
+    screenRay(ray, view, event);
     const a = fixturePoint(edge.a), b = fixturePoint(edge.b); a.y += (edge.lift || 0) * .3048; b.y += (edge.lift || 0) * .3048;
     const p = new THREE.Vector3(); ray.ray.distanceSqToSegment(a, b, new THREE.Vector3(), p);
     return Math.max(0, Math.min(1, p.sub(a).dot(b.clone().sub(a)) / a.distanceToSquared(b)));
@@ -142,7 +175,7 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
       gesture = { hit, x: event.clientX, y: event.clientY };
       if (active.kind === 'area') {
         rectangle = null; anchor = hit;
-        if (!facingChosen && hit.normal && Math.abs(hit.normal[2]) < .9) { facing = 'surface'; facingSelect.value = facing; }
+        if (!facingChosen) { facing = Math.abs(hit.normal?.[2] ?? 1) < .9 ? 'surface' : hit.ceiling ? 'down' : 'up'; facingSelect.value = facing; }
       }
     }
     graphics(); return true;
@@ -156,8 +189,8 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
     const hit = surface(event, true); if (!hit) return true;
     if (active.kind === 'draw') { draft.move(hit.at, true); graphics(); return true; }
     if (!gesture) return true;
-    const normal = gesture.hit.normal || [0,0,-1], face = facing === 'surface' ? normal : facing;
-    const q = fixtureRotation({ facing: face, normal: Array.isArray(face) ? face : face === 'out' ? [0,-1,0] : undefined });
+    const normal = gesture.hit.normal || [0,0,1], face = facing === 'surface' ? normal : facing;
+    const q = fixtureRotation({ facing: face, normal: facingNormal(face) });
     const start = new THREE.Vector3(gesture.hit.at[0], gesture.hit.at[2], -gesture.hit.at[1]);
     const delta = new THREE.Vector3(hit.at[0], hit.at[2], -hit.at[1]).sub(start).applyQuaternion(q.clone().invert());
     const centre = new THREE.Vector3(delta.x / 2, delta.y / 2, 0).applyQuaternion(q).add(start);
@@ -166,7 +199,8 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
   }
   async function up(event, cancelled) {
     if (!active || busy) return;
-    if (cancelled || !canEdit()) { cancelGesture(); return; }
+    if (!canEdit()) { cancelGesture(); return; }
+    if (cancelled) { if (active.kind === 'draw') { gesture = null; graphics(); } else cancelGesture(); return; }
     const g = gesture; if (!g) return;
     move(event); gesture = null;
     if (active.kind === 'draw') {
@@ -174,6 +208,12 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
         if (draft.current().points.length >= 64) throw new Error('A line can have at most 64 points.');
         if (!draft.current().points.length) anchor = g.hit;
         draft.add(g.hit.at, true);
+        if (!facingChosen) {
+          const ps = draft.current().points, normal = anchor.normal || [0,0,1];
+          if (Math.abs(normal[2]) >= .9) facing = anchor.ceiling ? 'down' : 'up';
+          else if (ps.length >= 2) { const a = ps[0], b = ps.at(-1); facing = (b[1]-a[1])*normal[0] - (b[0]-a[0])*normal[1] >= 0 ? 'out' : 'in'; }
+          facingSelect.value = facing;
+        }
       }
     } else if (active.kind === 'snap') {
       const current = active;
@@ -194,6 +234,11 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
       const { surfaceNormal, ...fixture } = rectangle; if (await save(encode(fixture, anchor)) !== false && active === current) onDone();
     }
   }
+  async function done() {
+    if (!active || busy || !canEdit()) return;
+    if (active.kind === 'draw' && draft.current()?.points.length >= 2 || active.kind === 'area' && rectangle && Math.min(...rectangle.size_ft) > .001) await finish();
+    else onDone();
+  }
   function cancelGesture() {
     const drawing = active?.kind === 'draw', had = !!gesture || !!rectangle || !!draft.current()?.points.length;
     gesture = rectangle = selected = anchor = null; draft.cancel(); if (drawing) draft.start('fence'); graphics(); return had;
@@ -205,5 +250,5 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
     if (event.key === 'Enter') { finish().catch(report); return true; }
     return false;
   }
-  return { start, stop, down, move, up, key, preview, cancelGesture };
+  return { start, stop, down, move, up, key, preview, cancelGesture, done };
 }

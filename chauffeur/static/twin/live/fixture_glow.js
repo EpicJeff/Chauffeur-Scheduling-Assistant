@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { FT } from '../twin_light_math.js';
 
 export const fixturePoint = p => new THREE.Vector3(p[0] * FT, p[2] * FT, -p[1] * FT);
+export const facingNormal = facing => Array.isArray(facing) ? [...facing] : facing === 'up' ? [0,0,1] : facing === 'out' ? [0,-1,0] : [0,0,-1];
 const materials = new Map();
 function materialFor(key, channels) {
   if (!materials.has(key)) materials.set(key, {refs: 0, material: new THREE.MeshBasicMaterial({
@@ -11,7 +12,7 @@ function materialFor(key, channels) {
 }
 
 export function fixtureRotation(emitter, along) {
-  let normal = emitter.normal || (emitter.facing === 'up' ? [0, 0, 1] : [0, 0, -1]);
+  let normal = emitter.normal || facingNormal(emitter.facing);
   if (along && ['out', 'in'].includes(emitter.facing) && Math.hypot(along.x, along.z) > 1e-10) {
     const sign = emitter.facing === 'out' ? 1 : -1;
     normal = [-sign * along.z, -sign * along.x, 0];

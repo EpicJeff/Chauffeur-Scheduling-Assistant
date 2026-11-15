@@ -30,7 +30,7 @@ export function emission(state, domain) {
   return {on, brightness: !on ? 0 : domain === 'light' ? lightIntensity(attributes) : domain === 'media_player' ? .3 : 1, rgb};
 }
 
-function reference(plan, fixture, point) {
+export function fixtureReference(plan, fixture, point) {
   // A snapped run's heights were resolved by the server, whose building frame
   // has no auto-foundation lift (buildingGround): wall and step tops are
   // base + elevation + height there, while site hosts are true lot heights.
@@ -124,9 +124,9 @@ function hostNormal(fixture, plan) {
   return normal;
 }
 
-function resolveFixture(fixture, plan) {
+export function resolveFixture(fixture, plan) {
   const f = {...fixture};
-  const lift = p => [p[0], p[1], p[2] + reference(plan, f, p)];
+  const lift = p => [p[0], p[1], p[2] + fixtureReference(plan, f, p)];
   if (f.at) f.at = lift(f.at);
   if (f.aim) f.aim = lift(f.aim);
   if (f.path) f.path = f.path.map(lift);
