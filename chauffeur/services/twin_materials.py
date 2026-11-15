@@ -106,7 +106,8 @@ def _builtin(mid):
             maps[slot] = filename
     return dict(id=mid, name=row['name'], source='builtin', licence=entry.get('licence'),
                 source_url=entry.get('page'), based_on=None, revision=0, archived=False,
-                created_by=None, updated_at=None, maps=maps, params=params, source_snapshot=None)
+                created_by=None, updated_at=None, maps=maps, params=params, source_snapshot=None,
+                opacity_derived=False, opacity_derived_mode=False)
 
 
 def get(material_id) -> dict:
@@ -123,6 +124,8 @@ def get(material_id) -> dict:
 def _read_record(path):
     record = _read(path)
     record['params'] = {**deepcopy(DEFAULT_PARAMS), **record['params']}
+    record.setdefault('opacity_derived', False)
+    record.setdefault('opacity_derived_mode', False)
     return record
 
 
@@ -232,6 +235,13 @@ def _fields(mid, fields, record):
             raise ValueError(f'{key} must be text or null.')
     result['params'] = _params(fields.get('params', {}), record['params'])
     result['maps'] = _maps(mid, fields.get('maps', {}), record['maps'])
+    if 'alpha_mode' in fields.get('params', {}):
+        result['opacity_derived_mode'] = False
+    if 'opacity' in fields.get('maps', {}):
+        result.update(opacity_derived=False, opacity_derived_mode=False)
+    elif ('base_color' in fields.get('maps', {})
+          and result['maps'].get('base_color') != record['maps'].get('base_color')):
+        _drop_derived_opacity(result)
     _check_live_limits(mid, result)
     return result
 
@@ -242,10 +252,14 @@ def _set_source(record, source, snapshot):
         raise ValueError('Choose a valid material source.')
     if record['source_snapshot'] is not None:
         raise ValueError('The source snapshot is immutable.')
-    if not isinstance(snapshot, dict) or set(snapshot) != {'maps', 'params'}:
+    if (not isinstance(snapshot, dict) or not {'maps', 'params'} <= set(snapshot)
+            or set(snapshot) - {'maps', 'params', 'opacity_derived', 'opacity_derived_mode'}):
         raise ValueError('A source snapshot contains maps and params.')
     record['source'] = source
     record['source_snapshot'] = dict(maps=_maps(record['id'], snapshot['maps']), params=_params(snapshot['params']))
+    if snapshot.get('opacity_derived', False) or snapshot.get('opacity_derived_mode', False):
+        record['source_snapshot'].update(opacity_derived=snapshot.get('opacity_derived', False),
+                                         opacity_derived_mode=snapshot.get('opacity_derived_mode', False))
     _check_live_limits(record['id'], record)
 
 
@@ -287,6 +301,8 @@ def _history(mid):
 
 
 def _save(record, previous=None, history=None, *, snapshot=True):
+    record.setdefault('opacity_derived', False)
+    record.setdefault('opacity_derived_mode', False)
     record['params'] = {**deepcopy(DEFAULT_PARAMS), **record['params']}
     mid = record['id']
     if history is None:
@@ -334,16 +350,23 @@ def create(fields, actor, *, material_id=None, source=None) -> dict:
             raise ValueError('That material already exists.')
         record = dict(id=mid, name='', source=origin, licence=None, source_url=None, based_on=None,
                       revision=0, archived=False, created_by=actor, updated_at=None, maps={},
-                      params=deepcopy(DEFAULT_PARAMS), source_snapshot=None)
+                      params=deepcopy(DEFAULT_PARAMS), source_snapshot=None,
+                      opacity_derived=False, opacity_derived_mode=False)
         staged_path = root() / mid / 'staged.json'
         if staged_path.exists():
             staged = _read_record(staged_path)
-            record.update(maps=staged['maps'], params=staged['params'])
+            record.update(maps=staged['maps'], params=staged['params'],
+                          opacity_derived=staged['opacity_derived'],
+                          opacity_derived_mode=staged['opacity_derived_mode'])
         record = _fields(mid, fields, record)
         if source is not None:
-            _set_source(record, source, dict(maps=deepcopy(record['maps']), params=deepcopy(record['params'])))
+            _set_source(record, source, {key: deepcopy(record[key]) for key in
+                                       ('maps', 'params', 'opacity_derived', 'opacity_derived_mode')})
         saved = _save(record)
-        staged_path.unlink(missing_ok=True)
+        try:
+            staged_path.unlink(missing_ok=True)
+        except OSError:
+            pass  # Cleanup must not turn a published create into a failure.
         return saved
 
 
@@ -366,6 +389,15 @@ def _split_alpha(image):
     return None if alpha.getextrema() == (255, 255) else alpha
 
 
+def _drop_derived_opacity(record):
+    if not record.get('opacity_derived', False):
+        return
+    record['maps'].pop('opacity', None)
+    if record.get('opacity_derived_mode', False) and record['params']['alpha_mode'] == 'cutout':
+        record['params']['alpha_mode'] = 'opaque'
+    record.update(opacity_derived=False, opacity_derived_mode=False)
+
+
 def _image_file(mid, slot, data, record):
     from PIL import Image
     if slot not in SLOTS:
@@ -382,8 +414,8 @@ def _image_file(mid, slot, data, record):
             if source.mode == 'I' or source.mode.startswith('I;16'):
                 source = source.convert('I').point(lambda value: value / 257).convert('L')
             source.thumbnail((MAX_SIDE, MAX_SIDE), Image.Resampling.LANCZOS)
-            alpha = (_split_alpha(source) if slot == 'base_color' and 'opacity' not in record['maps']
-                     else None)
+            alpha = (_split_alpha(source) if slot == 'base_color' and
+                     ('opacity' not in record['maps'] or record.get('opacity_derived', False)) else None)
             decoded = source.convert('RGB' if slot == 'base_color' else 'RGBA' if 'A' in source.getbands() else 'RGB')
             out = io.BytesIO()
             decoded.save(out, format='JPEG' if slot == 'base_color' else 'PNG',
@@ -404,8 +436,15 @@ def _image_file(mid, slot, data, record):
         files[opacity_file] = alpha_encoded
         projected['maps']['opacity'] = opacity_file
         projected['params'] = _params({}, projected.get('params'))
-        if projected['params']['alpha_mode'] == 'opaque':
-            projected['params']['alpha_mode'] = 'cutout'
+        if not projected.get('opacity_derived', False):
+            projected['opacity_derived_mode'] = projected['params']['alpha_mode'] == 'opaque'
+            if projected['opacity_derived_mode']:
+                projected['params']['alpha_mode'] = 'cutout'
+        projected['opacity_derived'] = True
+    elif slot == 'base_color':
+        _drop_derived_opacity(projected)
+    elif slot == 'opacity':
+        projected.update(opacity_derived=False, opacity_derived_mode=False)
     _check_live_limits(mid, projected, {name: len(content) for name, content in files.items()})
     for name, content in files.items():
         target = root() / mid / name
@@ -425,14 +464,17 @@ def ingest_image(material_id, slot, data: bytes, *, staged=False) -> str:
             previous = require_editable(material_id)
             record = deepcopy(previous)
             filename = _image_file(material_id, slot, data, record)
-            if record['maps'].get('opacity') != previous['maps'].get('opacity'):
+            if any(record.get(key) != previous.get(key) for key in
+                   ('opacity_derived', 'opacity_derived_mode', 'params')) or (
+                    record['maps'].get('opacity') != previous['maps'].get('opacity')):
                 _save(record, previous)
             return filename
         if (root() / material_id / 'material.json').exists():
             raise ValueError('That material is already published.')
         path = root() / material_id / 'staged.json'
         record = (_read_record(path) if path.exists() else
-                  dict(id=material_id, maps={}, params=deepcopy(DEFAULT_PARAMS), source_snapshot=None))
+                  dict(id=material_id, maps={}, params=deepcopy(DEFAULT_PARAMS), source_snapshot=None,
+                       opacity_derived=False, opacity_derived_mode=False))
         filename = _image_file(material_id, slot, data, record)
         _json(path, record)
         return filename
@@ -481,7 +523,8 @@ def duplicate(material_id, actor) -> dict:
                         file = filename
                         _atomic(root() / mid / file, data)
                     record['maps'][slot] = file
-                _set_source(record, 'user', {'maps': record['maps'], 'params': record['params']})
+                _set_source(record, 'user', {key: record[key] for key in
+                                             ('maps', 'params', 'opacity_derived', 'opacity_derived_mode')})
                 return _save(record)
             except Exception:
                 folder = root() / mid  # Generated id, always a direct child of materials.
@@ -579,6 +622,8 @@ def reset_to_source(material_id, actor) -> dict:
             raise ValueError('This material has no source snapshot.')
         record['maps'] = deepcopy(snapshot['maps'])
         record['params'] = deepcopy(snapshot['params'])
+        record['opacity_derived'] = snapshot.get('opacity_derived', False)
+        record['opacity_derived_mode'] = snapshot.get('opacity_derived_mode', False)
         return _save(record, require_editable(material_id))
 
 
