@@ -27,6 +27,30 @@ def baseline_sources():
                 read(child)
     for path in ('static/twin/twin_generator.js', 'static/twin/twin_yard.js', 'static/twin/bake/atlas.js'):
         read(path)
+    # Existing spas intentionally gain a bench and a shell down to the pool floor.
+    # Refresh only the spa shell/seat and its inset helper; every other baseline byte,
+    # including the pool floor, batching, house meshes, reuse keys and atlas, stays pinned.
+    path = 'static/twin/pool_features.js'
+    old = sources[path]
+    replacements = [
+        ('function basinOutline(poly)', 'function basinOutline(poly, requestedWidth = .3)'),
+        ('let width = .3;', 'let width = requestedWidth;'),
+        ('const spaTile = interior(', 'const poolFloor = height - depth, wallBottom = Math.min(floor, poolFloor);\n      const spaTile = interior('),
+        ('addMesh(group, polygon(inner, floor - .2, floor), spaTile);',
+         '''addMesh(group, polygon(inner, floor > poolFloor ? poolFloor : floor - .2, floor), spaTile);
+      const benchWidth = (f.bench_width_in ?? 18) / 12, seatTop = waterHeight - (f.bench_in ?? 18) / 12;
+      if (benchWidth > 0 && seatTop > floor) {
+        const footwell = basinOutline(inner, benchWidth);
+        addMesh(group, polygon(inner, floor, seatTop, [footwell]), spaTile);
+      }'''),
+        ('Math.max(floor, raised ?', 'Math.max(wallBottom, raised ?'),
+        ('if (split > floor) addMesh(group, polygon([a, b, middleB, middleA], floor, split), tile);',
+         'if (split > wallBottom) addMesh(group, polygon([a, b, middleB, middleA], wallBottom, split), tile);'),
+    ]
+    for before, after in replacements:
+        assert old.count(before) == 1, before
+        old = old.replace(before, after)
+    sources[path] = old
     return sources
 
 

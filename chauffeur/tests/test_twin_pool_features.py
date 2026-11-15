@@ -77,6 +77,50 @@ def test_parents_only_for_all_feature_ops_and_spa_room():
         post(op, 403, who='child')
 
 
+def test_spa_bench_optional_fields_ranges_and_history():
+    seed()
+    f = add('spa')
+    assert 'bench_in' not in f and 'bench_width_in' not in f
+    plan = bridge.flatten(twin_store.current_model())
+    normalized, notes = twin_plan.normalize(plan)
+    assert normalized['site']['pool']['features'] == [f]
+    assert bridge.flatten(bridge.assemble(normalized)[0])['site']['pool']['features'] == [f]
+    for field, low, high, label in [('bench_in', 12, 30, 'bench seat depth'),
+                                  ('bench_width_in', 0, 36, 'bench width')]:
+        for value in (low, high, (low + high) / 2):
+            before = twin_store.current_id()
+            previous = copy.deepcopy(twin_store.current_model()['site']['pool']['features'])
+            changed = post({'op': 'update_pool_feature', 'id': f['id'], field: value})
+            assert changed['site']['pool']['features'][0][field] == value
+            with _enforced():
+                response = _client().post('/api/house/twin/revert', headers=_people()['parent'], json={'round': before})
+            assert response.status_code == 200, response.text
+            assert twin_store.current_model()['site']['pool']['features'] == previous
+        for value in (low - .1, high + .1, True, None, '18'):
+            for op in ({'op': 'add_pool_feature', 'kind': 'spa', 'polygon': rect(0, 0), field: value},
+                       {'op': 'update_pool_feature', 'id': f['id'], field: value}):
+                refused = post(op, 400)
+                assert f'Choose a {label} from {low} to {high} inches.' in str(refused)
+        from services.twin_site_shapes import pool_feature
+        for value in (float('inf'), float('nan')):
+            try:
+                pool_feature(plan['site']['pool'], {**f, field: value})
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('accepted a nonfinite bench dimension')
+        bad = copy.deepcopy(plan)
+        bad['site']['pool']['features'][0][field] = high + 1
+        cleaned, notes = twin_plan.normalize(bad)
+        assert cleaned['site']['pool']['features'] == []
+        assert any('Dropped pool feature:' in note for note in notes)
+    accepted = add('spa', bench_in=12, bench_width_in=36)
+    assert accepted['bench_in'] == 12 and accepted['bench_width_in'] == 36
+    for kind in ('ledge', 'steps'):
+        for field in ('bench_in', 'bench_width_in'):
+            post({'op': 'add_pool_feature', 'kind': kind, 'polygon': rect(0, 0), field: 18}, 400)
+
+
 def test_ranges_topology_and_containment_are_refused():
     seed()
     for kind, changes in [('ledge', [{'depth_in': 5}, {'depth_in': 19}, {'depth_in': True}, {'depth_in': float('inf')},

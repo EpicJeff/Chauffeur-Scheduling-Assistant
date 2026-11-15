@@ -1500,7 +1500,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
         features = pool.setdefault('features', [])
         try:
             if kind == 'add_pool_feature':
-                if set(op) - {'op', 'kind', 'polygon', 'depth_in', 'treads', 'entry_edge', 'mode', 'raise_in', 'spillover', 'materials'}:
+                if set(op) - {'op', 'kind', 'polygon', 'depth_in', 'bench_in', 'bench_width_in', 'treads', 'entry_edge', 'mode', 'raise_in', 'spillover', 'materials'}:
                     raise ValueError('Choose supported pool feature properties.')
                 value = {k: v for k, v in op.items() if k != 'op'}
                 from uuid import uuid4

@@ -63,10 +63,10 @@ export function offsetOutline(poly, distance) {
   });
 }
 
-function basinOutline(poly) {
-  // A fixed liner width can invert a small spa or bridge a narrow concave
-  // neck. Keep the authored footprint; thin the liner until it fits inside.
-  for (let width = .3; ; width /= 2) {
+function basinOutline(poly, requestedWidth = .3) {
+  // A fixed liner or bench width can invert a small spa or bridge a narrow
+  // concave neck. Thin the inset until its outline fits inside.
+  for (let width = requestedWidth; ; width /= 2) {
     const inner = offsetOutline(poly, -width);
     const fits = Math.sign(area(inner)) === Math.sign(area(poly)) && Math.abs(area(inner)) < Math.abs(area(poly))
       && inner.every((a, i) => inPolygon(poly, ...a)
@@ -149,8 +149,14 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
       const wallTop = height + .3 + rise, copingTop = height + .45 + rise;
       const waterHeight = raised ? copingTop - 2 / 12 : height - .25;
       const floor = waterHeight - (f.depth_in ?? 36) / 12, inner = basinOutline(poly);
+      const poolFloor = height - depth, wallBottom = Math.min(floor, poolFloor);
       const spaTile = interior(f.materials?.interior || pool.materials?.interior);
-      addMesh(group, polygon(inner, floor - .2, floor), spaTile);
+      addMesh(group, polygon(inner, floor > poolFloor ? poolFloor : floor - .2, floor), spaTile);
+      const benchWidth = (f.bench_width_in ?? 18) / 12, seatTop = waterHeight - (f.bench_in ?? 18) / 12;
+      if (benchWidth > 0 && seatTop > floor) {
+        const footwell = basinOutline(inner, benchWidth);
+        addMesh(group, polygon(inner, floor, seatTop, [footwell]), spaTile);
+      }
       // Separate outer wall and tile liner, so wall slots never paint the basin.
       // Under the pool water the outer wall is the pool's own finish. Above it a raised spa
       // shows its cladding; a flush spa's wall ends at the pool edge, so it carries the
@@ -158,12 +164,12 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
       const band = waterlineMaterial(f.materials?.waterline || pool.materials?.waterline, { mat, plain });
       const above = raised ? (f.materials?.wall ? mat('base', f.materials.wall) : mat('base'))
         : waterlineMaterial(pool.materials?.waterline, { mat, plain });
-      const split = Math.min(wallTop, Math.max(floor, raised ? poolWater : poolWater - WATERLINE_BELOW));
+      const split = Math.min(wallTop, Math.max(wallBottom, raised ? poolWater : poolWater - WATERLINE_BELOW));
       const bandLow = Math.min(wallTop, Math.max(floor, waterHeight - WATERLINE_BELOW));
       poly.forEach((a, i) => {
         const j = (i + 1) % poly.length, b = poly[j], c = inner[j], d = inner[i];
         const middleA = a.map((v, k) => (v + d[k]) / 2), middleB = b.map((v, k) => (v + c[k]) / 2);
-        if (split > floor) addMesh(group, polygon([a, b, middleB, middleA], floor, split), tile);
+        if (split > wallBottom) addMesh(group, polygon([a, b, middleB, middleA], wallBottom, split), tile);
         if (wallTop > split) addMesh(group, polygon([a, b, middleB, middleA], split, wallTop), above);
         if (bandLow > floor) addMesh(group, polygon([middleA, middleB, c, d], floor, bandLow), spaTile);
         if (wallTop > bandLow) addMesh(group, polygon([middleA, middleB, c, d], bandLow, wallTop), band);

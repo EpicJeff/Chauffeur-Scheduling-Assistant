@@ -52,7 +52,7 @@ def pool_feature(pool, value):
     piece = deepcopy(value)
     kind = piece['kind']
     allowed = {'id', 'kind', 'polygon'} | {'ledge': {'depth_in'}, 'steps': {'treads', 'entry_edge'},
-        'spa': {'mode', 'raise_in', 'depth_in', 'spillover', 'materials'}}[kind]
+        'spa': {'mode', 'raise_in', 'depth_in', 'bench_in', 'bench_width_in', 'spillover', 'materials'}}[kind]
     if set(piece) - allowed or not isinstance(piece.get('id'), str) or not 1 <= len(piece['id']) <= 100:
         raise ValueError('Use a pool feature id and supported properties.')
     validate('beds', {'polygon': piece.get('polygon')})
@@ -74,6 +74,10 @@ def pool_feature(pool, value):
             piece['materials'] = material_slots('spa', piece['materials'])
             if not piece['materials']:
                 piece.pop('materials')
+        for field, label, low, high in [('bench_in', 'bench seat depth', 12, 30),
+                                        ('bench_width_in', 'bench width', 0, 36)]:
+            if field in piece and (not terrain.number(piece[field]) or not low <= piece[field] <= high):
+                raise ValueError(f'Choose a {label} from {low} to {high} inches.')
     ranges = {'ledge': [('depth_in', 10, 6, 18)], 'steps': [('treads', 3, 1, 6)],
               'spa': [('raise_in', 12, 6, 24), ('depth_in', 36, 24, 48)]}[kind]
     for field, default, low, high in ranges:

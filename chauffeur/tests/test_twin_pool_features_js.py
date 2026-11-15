@@ -27,6 +27,92 @@ const horizontal=(t,y)=>t.every(p=>Math.abs(p[1]-y)<2e-5);
 const topAt=(g,x,y,z,material=null)=>tris(g,material).some(t=>horizontal(t,z)&&hasPoint(t,x,y));
 const geometry=g=>tris(g).map(t=>JSON.stringify(t)).sort();
 const verticalWater=g=>tris(g,'water').filter(t=>Math.max(...t.map(p=>p[1]))-Math.min(...t.map(p=>p[1]))>1e-4);
+const {buildPoolFeatures}=await import(file('static/twin/pool_features.js'));
+const {buildPoolFeatures:oldFeatures}=await import(data(input.oldFeatures.replace(/from '(\.\/[^']+)'/g,(_,p)=>`from '${file('static/twin/'+p.slice(2))}'`)));
+function spaOnly(feature,depth=5,builder=buildPoolFeatures,height=0){
+ const g=new THREE.Group(),materials=new Map();
+ const material=name=>{if(!materials.has(name))materials.set(name,new THREE.MeshStandardMaterial({name,side:THREE.DoubleSide}));return materials.get(name);};
+ builder(g,{polygon:rect(0,0,30,20),depth,features:[{id:'spa',kind:'spa',polygon:rect(10,4,8,8),spillover:false,...feature}]},height,
+  {mat:role=>material(role),plain:name=>material(name),water:material('water')});
+ return g;
+}
+const ray=(g,origin,direction)=>{g.updateMatrixWorld(true);return new THREE.Raycaster(new THREE.Vector3(...origin),new THREE.Vector3(...direction)).intersectObjects(g.children,true);};
+const solidHits=(g,origin,direction)=>ray(g,origin,direction).filter(h=>h.object.material.name!=='water');
+await test('raised and flush spa shells reach the pool floor with no underwater gap; deeper shells stay unchanged',()=>{
+ for(const mode of ['raised','flush'])for(const height of [0,2]){
+  const water=height+(mode==='raised'?.45+1-2/12:-.25),floor=water-3,poolFloor=height-5;
+  const g=spaOnly({mode,depth_in:36},5,buildPoolFeatures,height);
+  near(Math.min(...tris(g).flat().map(p=>p[1])),poolFloor);
+  for(const y of [poolFloor+.05,(poolFloor+floor)/2,floor-.05]){
+   const hit=solidHits(g,[5,y,-8],[1,0,0])[0];assert.ok(hit,'pool-side ray hits wall below spa floor');near(hit.point.x,10);
+   assert.equal(hit.object.material.name,'pool tile');
+  }
+  const deep={mode,depth_in:48,bench_width_in:0};
+  const now=spaOnly(deep,2,buildPoolFeatures,height),old=spaOnly(deep,2,oldFeatures,height);
+  assert.deepEqual(geometry(now),geometry(old),'deeper-than-pool spa keeps its old shell');
+ }
+});
+await test('default bench has a closed seat ring and riser around a smaller visible footwell',()=>{
+ const water=.45+1-2/12,floor=water-3,seat=water-1.5,g=spaOnly({});
+ for(const [x,y] of [[10.6,8],[17.4,8],[14,4.6],[14,11.4]]){
+  assert.ok(topAt(g,x,y,seat,'pool tile'),'seat on each side');
+  near(solidHits(g,[x,water+.1,-y],[0,-1,0])[0].point.y,seat);
+ }
+ near(solidHits(g,[14,water+.1,-8],[0,-1,0])[0].point.y,floor);
+ const hit=solidHits(g,[14,(floor+seat)/2,-8],[-1,0,0])[0];near(hit.point.x,11.8);assert.equal(hit.object.material.name,'pool tile');
+ // Rays from above cover the whole basin; only the middle reaches the floor.
+ let floorSamples=0,seatSamples=0;
+ for(let x=10.4;x<17.7;x+=.3)for(let y=4.4;y<11.7;y+=.3){
+  const top=solidHits(g,[x,water+.1,-y],[0,-1,0])[0];assert.ok(top,'no open face in basin');
+  if(Math.abs(top.point.y-floor)<2e-5)floorSamples++;else {near(top.point.y,seat);seatSamples++;}
+ }
+ assert.ok(floorSamples>0&&seatSamples>floorSamples,'bench reduces the visible floor');
+ const custom=spaOnly({bench_in:12,bench_width_in:12});assert.ok(topAt(custom,10.6,8,water-1,'pool tile'));
+ const noBench=spaOnly({bench_width_in:0});assert.equal(meshes(g).length,meshes(noBench).length+1,'one bench mesh, shared interior material');
+ assert.equal(meshes(g)[0].material,meshes(g)[1].material);
+});
+await test('zero width and seats at or below the floor omit only the bench',()=>{
+ const off=spaOnly({bench_width_in:0});
+ for(const extra of [{bench_in:36},{bench_in:40},{bench_in:30,depth_in:24}]){
+  const expected=spaOnly({...extra,bench_width_in:0}),g=spaOnly(extra);
+  assert.deepEqual(geometry(g),geometry(expected));assert.equal(meshes(g).length,meshes(expected).length);
+ }
+ const old=spaOnly({bench_width_in:0},5,oldFeatures);
+ assert.equal(meshes(off).length,meshes(old).length,'pool-floor fix adds no meshes');
+ assert.deepEqual(geometry(spaOnly({bench_in:36})),geometry(off));
+});
+await test('small, narrow and concave footwells remain inside the basin with valid winding and finite positions',async()=>{
+ const {inPolygon,segmentIntersection}=await import(file('static/twin/twin_ground.js'));
+ const area=p=>p.reduce((s,a,i)=>{const b=p[(i+1)%p.length];return s+a[0]*b[1]-a[1]*b[0];},0);
+ for(const outline of [rect(1,1,3),rect(1,1,.1,.1),[[1,1],[7,1],[7,7],[4,7],[4,3],[3,3],[3,7],[1,7]],
+  [[1,1],[5,1],[5,5],[3.02,5],[3.02,2],[3,2],[3,5],[1,5]]])for(const poly of [outline,[...outline].reverse()]){
+  const g=spaOnly({polygon:poly,bench_width_in:36});assert.ok(tris(g).flat(2).every(Number.isFinite));
+  // Read the outlines actually passed to the seat extrusion, not a second offset implementation.
+  const bench=meshes(g)[1],shape=bench.geometry.parameters.shapes;
+  const points=path=>path.getPoints().map(p=>[p.x,p.y]).filter((p,i,a)=>i===0||Math.hypot(p[0]-a[0][0],p[1]-a[0][1])>1e-9);
+  const inner=points(shape),footwell=points(shape.holes[0]);
+  assert.equal(Math.sign(area(footwell)),Math.sign(area(inner)));assert.ok(Math.abs(area(footwell))<Math.abs(area(inner)));
+  for(const [i,a] of footwell.entries()){
+   const b=footwell[(i+1)%footwell.length];assert.ok(inPolygon(inner,...a));
+   assert.ok(!inner.some((c,j)=>segmentIntersection(a,b,c,inner[(j+1)%inner.length])));
+   assert.ok(!footwell.some((c,j)=>j>i+1&&!(i===0&&j===footwell.length-1)&&segmentIntersection(a,b,c,footwell[(j+1)%footwell.length])));
+  }
+ }
+});
+await test('bench edits rebuild only the pool part and invalidate the real bake layout',async()=>{
+ const Y=await import(file('static/twin/twin_yard.js')),A=await import(file('static/twin/bake/atlas.js'));
+ const p=plan([{id:'spa',kind:'spa',polygon:rect(10,4,8,8),spillover:false}]),k=input.kit;
+ const first=await Y.buildYard(p,k,'low'),keys=Y.yardPartKeys(p,k,'low');
+ const baked=A.buildAtlas(first.group,p,{room:{density:1,page:256,gutter:2}}).key;
+ for(const [field,value] of [['bench_in',24],['bench_width_in',12]]){
+  const next=structuredClone(p);next.site.pool.features[0][field]=value;
+  const changed=Y.yardPartKeys(next,k,'low');assert.notEqual(changed.pool,keys.pool);
+  for(const part of Object.keys(keys).filter(k=>k!=='pool'))assert.equal(changed[part],keys[part]);
+  const rebuilt=await Y.buildYard(next,k,'low',{previous:first.group});
+  assert.notDeepEqual(geometry(rebuilt.group),geometry(first.group));
+  assert.notEqual(A.buildAtlas(rebuilt.group,next,{room:{density:1,page:256,gutter:2}}).key,baked);
+ }
+});
 await test('ledge is its authored water depth below the pool water',async()=>{
  const g=await build([{id:'l',kind:'ledge',polygon:rect(1,1,8,6),depth_in:12}]);
  assert.ok(topAt(g,3,3,-1.25,'pool tile'));assert.ok(topAt(g,3,3,-.25,'water'));
@@ -161,7 +247,8 @@ if __name__ == '__main__':
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
     kit['manifest'] = {}
     baseline = subprocess.check_output(['git', 'show', '6b054474:chauffeur/static/twin/twin_yard.js'], cwd=ROOT, encoding='utf-8')
-    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'kit': kit, 'baseline': baseline,
+    old_features = subprocess.check_output(['git', 'show', 'HEAD:chauffeur/static/twin/pool_features.js'], cwd=ROOT, encoding='utf-8')
+    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'kit': kit, 'baseline': baseline, 'oldFeatures': old_features,
         'manifest': json.loads((ROOT / 'twin_library/manifest.json').read_text(encoding='utf-8'))})
     print(output)
     sys.exit(code or 0)

@@ -181,6 +181,9 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
     choice('Entry edge', piece.entry_edge ?? 0, piece.polygon.map((_, i) => [String(i), `Edge ${i + 1}`]), entry_edge => ({ entry_edge: Number(entry_edge) }));
   }
   if (kind === 'spa') {
+    const seat = field('Bench seat depth (in)', piece.bench_in ?? 18, (_, bench_in) => ({ bench_in })); seat.min = '12'; seat.max = '30';
+    const width = field('Bench width (in)', piece.bench_width_in ?? 18, (_, bench_width_in) => ({ bench_width_in })); width.min = '0'; width.max = '36';
+    const note = document.createElement('p'); note.textContent = '0 width means no bench.'; section.append(note);
     choice('Mode', piece.mode ?? 'raised', [['raised', 'Raised'], ['flush', 'Flush']], mode => ({ mode }));
     if ((piece.mode ?? 'raised') === 'raised') {
       const input = field('Raise above deck (in)', piece.raise_in ?? 12, (_, raise_in) => ({ raise_in })); input.min = '6'; input.max = '24';

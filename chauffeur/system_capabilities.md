@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.883 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.884 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.884 (2026-11-15, NOT device-verified): the spa stands on the pool floor and has a bench. Found on device: the spa shell stopped at its own floor, so from the pool it hung in the water, and it had nowhere to sit.**
+
+- **Down to the pool floor.** A spa shallower than the pool is a solid mass down to the pool floor: its outer wall runs to the pool floor in the pool's own finish and the space under its floor is closed. A spa as deep as or deeper than the pool is built as before.
+- **Bench.** Every spa has a bench round the inside with the footwell in the middle, with no edit needed: the seat is 18 in under the spa water and 18 in wide, and the footwell is at the spa's set depth. On a small or narrow spa the bench narrows until the footwell fits; it never inverts. The bench uses the spa's interior finish; there is no new material slot.
+- **Card.** The spa's card has "Bench seat depth (in)" (12 to 30) and "Bench width (in)" (0 to 36; 0 means no bench). A seat at or below the spa floor draws no bench.
+- **Model.** Optional spa feature fields `bench_in` and `bench_width_in`, validated in `pool_feature`; a stored spa without them is left as it is and gets the defaults when drawn. Both fields are part of the pool's redraw key and the bake's geometry key, so a change redraws the pool and puts down a stale bake.
+- **Cost.** One more mesh per spa with a bench, sharing the basin floor's material.
+- **Code:** `static/twin/pool_features.js` (`buildPoolFeatures`, `basinOutline`), `services/twin_site_shapes.py` (`pool_feature`), `services/twin_model_ops.py`, `static/twin/editor/site_shape_shelf.js`.
+- **Tests:** `tests/test_twin_pool_features_js.py` (19), `tests/test_twin_pool_features.py` (8), `tests/test_twin_pool_features_editor_js.py` (4), `tests/test_twin_untouched_house_js.py` (4; its pinned baseline takes the new spa shell and bench).
 
 **v2.499.883 (2026-11-15, NOT device-verified): a material on one thing. One window's pane, one door, one stair's rail, one porch's columns, one cabinet run, one shower, the pool's water or the spa's water can take its own material over the house default.**
 

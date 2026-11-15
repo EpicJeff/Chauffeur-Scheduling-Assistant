@@ -12,7 +12,8 @@ const {mountTwin}=await import(file('static/twin/twin_view.js'));
 const {createSceneTools}=await import(file('static/twin/editor/scene_tools.js'));
 const {createTerrainTools}=await import(file('static/twin/editor/terrain_tools.js'));
 const {transformShape}=await import(file('static/twin/editor/site_shapes.js'));
-const {yardRoomFeatures}=await import(file('static/twin/editor/site_shape_shelf.js'));
+const {yardRoomFeatures,drawSiteShapeShelf}=await import(file('static/twin/editor/site_shape_shelf.js'));
+const {createHistory}=await import(file('static/twin/editor/history.js'));
 const plan={buildings:[],materials:{},site:{lot:[[0,0],[40,0],[40,40],[0,40]],terraces:[],pool:{id:'pool',polygon:[[0,0],[30,0],[30,20],[0,20]],features:[]}}};
 const shell=document.createElement('div');shell.className='editor-shell';document.body.append(shell);
 const host=document.createElement('div');shell.append(host);
@@ -74,6 +75,38 @@ await test('rows save ledge, steps and spa properties, polygons, Library slots a
  // Pool transforms carry the children's lot coordinates with them.
  const moved=transformShape(plan.site.pool,{centre:[25,20]});assert.equal(moved.features.length,3);
  assert.notDeepEqual(moved.features[0].polygon,ledge.polygon);
+});
+await test('only spa cards show bench defaults and each field sends one undoable edit',async()=>{
+ tools.select({kind:'pool',id:'pool'});
+ const [ledge,steps,spa]=plan.site.pool.features;
+ const shelf=document.createElement('div');document.body.append(shelf);
+ let round=1;const snapshots=new Map([[round,structuredClone(plan.site.pool.features)]]),priorFetch=globalThis.fetch;
+ const current=()=>({kind:'spa',piece:plan.site.pool.features.find(f=>f.id===spa.id)});
+ const draw=()=>{shelf.replaceChildren();drawSiteShapeShelf(shelf,current(),{canEdit:()=>writable,queue:work=>work(),
+  op:operation=>history.perform(async()=>{await op(operation);snapshots.set(++round,structuredClone(plan.site.pool.features));}),
+  report:e=>errors.push(e.message),getRecord:current,onSaved:draw});};
+ const history=createHistory({getRound:()=>round,getBuild:()=>null,canEdit:()=>writable,refresh:async()=>{draw();tools.refreshCard();},signal:abort.signal});
+ globalThis.fetch=async(url,init)=>{
+  if(!String(url).endsWith('/revert'))return priorFetch(url,init);
+  const body=JSON.parse(init.body);plan.site.pool.features=structuredClone(snapshots.get(body.round));
+  snapshots.set(++round,structuredClone(plan.site.pool.features));return new Response(JSON.stringify({round}),{status:200});
+ };
+ draw();
+ for(const [label,key,min,max,value] of [['Bench seat depth (in)','bench_in','12','30',24],['Bench width (in)','bench_width_in','0','36',0]]){
+  for(const f of [ledge,steps])assert.ok(!row(f.id).querySelector(`[aria-label="${label}"]`));
+  let field=row(spa.id).querySelector(`[aria-label="${label}"]`);
+  assert.ok(field);assert.equal(Number(field.value),18);assert.equal(field.type,'number');assert.equal(field.step,'any');
+  assert.equal(field.min,min);assert.equal(field.max,max);assert.ok(textOf(row(spa.id)).includes('0 width means no bench.'));
+  const count=operations.length;
+  await change(shelf,label,value);
+  assert.equal(operations.length,count+1);assert.deepEqual(operations.at(-1),{op:'update_pool_feature',id:spa.id,[key]:value});
+  assert.equal(plan.site.pool.features.find(f=>f.id===spa.id)[key],value);
+  assert.equal(document.getElementById('rail-undo').disabled,false);
+  click(document.getElementById('rail-undo'));await settle();
+  field=row(spa.id).querySelector(`[aria-label="${label}"]`);assert.equal(Number(field.value),18);
+  assert.ok(!(key in plan.site.pool.features.find(f=>f.id===spa.id)),'undo keeps an absent optional field absent');
+ }
+ globalThis.fetch=priorFetch;shelf.remove();
 });
 await test('delete needs the shared confirmation; cancellation and read-only save nothing',async()=>{
  tools.select({kind:'pool',id:'pool'});const spa=plan.site.pool.features.find(f=>f.kind==='spa'),count=operations.length;

@@ -246,7 +246,7 @@ export function yardPartKeys(plan, kit, tier, { viewing = false } = {}) {
     hardscape: key(tier, grade, site.pool?.polygon, spaHoles, own[2], own[5],
       (site.edges || []).map(e => fields(e, 'id polygon elevation material materials')), finishes(['hardscape', 'beds', 'edges'])),
     // pool: tier; ground grade; polygon/depth/coping/elevation/material/slots;
-    // features kind/polygon/depth_in/treads/entry_edge/mode/raise_in/spillover/
+    // features kind/polygon/depth_in/bench_in/bench_width_in/treads/entry_edge/mode/raise_in/spillover/
     // materials, including spa coping/interior/wall inheritance and revisions.
     pool: key(tier, grade, own[3], finishes(['pool'])),
     // fire_pits: tier; ground grade; id/shape/at/radius/rotation/polygon/fuel/
