@@ -184,7 +184,9 @@ function lookEditor(c, options, effect, opener) {
   const makeButton = (name, label, fn) => {
     const button = c.part(element('button', label), name); button.type = 'button'; button.addEventListener('click', fn); return button;
   };
-  const close = (focus = true) => { closed = true; wheels.forEach(w => w.stop()); editor.remove(); if (focus) opener.focus?.(); };
+  // The editor changes the side card's height: the ring places itself again (a room row ignores it).
+  const relayout = () => c.side.dispatchEvent?.(new Event('twin-relayout', {bubbles: true}));
+  const close = (focus = true) => { closed = true; wheels.forEach(w => w.stop()); editor.remove(); relayout(); if (focus) opener.focus?.(); };
   c.closeLookEditor = close;
   async function save(clear = false) {
     if (saving || editing || closed) return;
@@ -225,6 +227,7 @@ function lookEditor(c, options, effect, opener) {
       }));
     });
     add.disabled = stops.length >= 4;
+    relayout();
   }
   if (effect) actions.append(add);
   actions.append(clear, done, cancel); editor.append(legend, note, list, actions); c.side.append(editor); render(); wheels[0]?.focus?.();

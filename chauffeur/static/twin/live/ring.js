@@ -15,6 +15,8 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
   const inside = event => root.contains?.(event.target);
   // The marker labels keep clear of the ring: the layer hears whenever it lands somewhere new.
   function settle(key) { if (placed !== key) { placed = key; moved(); } }
+  // A control that grows or shrinks inside the ring (the twin colour editor) asks to be placed again.
+  root.addEventListener('twin-relayout', () => { if (row) draw(); }, {signal: events.signal});
   function close() {
     builder?.stop?.(); builder = null; row = null; anchor = null; signature = '';
     root.hidden = true; root.replaceChildren(); settle('');
@@ -28,7 +30,8 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
   function safeArea() {
     const width = window.innerWidth || 0, height = window.innerHeight || 0;
     let bottom = height - EDGE;
-    for (const id of ['panel-fade', 'panel-shelf']) {
+    // The chat bar counts too: a tall side card must not end underneath it.
+    for (const id of ['panel-fade', 'panel-shelf', 'chat-overlay-container']) {
       const box = document.getElementById?.(id)?.getBoundingClientRect?.();
       if (box?.height > 0 && box.top > 0) bottom = Math.min(bottom, box.top - EDGE);
     }
@@ -49,7 +52,7 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
     const safe = safeArea(), side = builder?.side || null, title = root.firstElementChild;
     // A controller can fill the side card (or camera card) with many controls.
     // Scroll within the same usable space that positioning keeps above the shelf.
-    if (builder?.querySelector('.twin-accessories') && safe.bottom > safe.top)
+    if (builder?.querySelector('.twin-accessories, .twin-look-editor') && safe.bottom > safe.top)
       (side || builder).style.maxHeight = `${safe.bottom - safe.top}px`;
     if (!(safe.right > safe.left && safe.bottom > safe.top)) {
       root.style.left = `${at.x}px`; root.style.top = `${at.y}px`; settle(`${at.x}|${at.y}`); return;

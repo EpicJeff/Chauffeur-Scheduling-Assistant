@@ -7,6 +7,13 @@ ENTITY = 'light.ceiling_light'
 DEVICE = 'dev-k-ceiling'
 
 
+def _markers(page):
+    """The harness's wait_markers expects the Ceiling light off; this scenario starts it on."""
+    L.check(L.wait_for(page, lambda: {m.get('device_id') for m in L.markers(page)} >= set(L.NAMES)
+                       and L.marker(page, DEVICE).get('look') == 'on', 30),
+            ('every device has a marker drawn with its state', [(m.get('device_id'), m.get('look')) for m in L.markers(page)]))
+
+
 def scenario_parent_ring_and_room_editor_and_kiosk_previews():
     served = L.serve()
     if served is None:
@@ -21,7 +28,7 @@ def scenario_parent_ring_and_room_editor_and_kiosk_previews():
         L.H.signed_in(page)
         L.goto_retry(page, served.url('house/twin?tier=low&test=1'))
         page.wait_for_function('() => !!window.__twin?.live', timeout=90000)
-        L.wait_markers(page)
+        _markers(page)
         L.aim_kitchen(page)
         page.evaluate('(id) => window.__twin.live.openRing(window.__twin.live.marker(id))', DEVICE)
         edits = page.locator('[data-ring] [data-ring-part="effect-look-edit"]')
@@ -48,7 +55,9 @@ def scenario_parent_ring_and_room_editor_and_kiosk_previews():
         page.screenshot(path=str(OUTPUT / 'light-looks-room-dark.png'))
         L.no_errors(served)
     with served.browser(launch_args=L.GPU_ARGS, color_scheme='dark', has_touch=True) as page:
-        L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
+        L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true', live=False)
+        page.wait_for_function('() => !!window.__twin?.live', timeout=90000)
+        _markers(page)
         L.aim_kitchen(page)
         page.evaluate('(id) => window.__twin.live.openRing(window.__twin.live.marker(id))', DEVICE)
         assert page.locator('[data-ring] [data-ring-part="effect-look-dot"]').count() == 3
