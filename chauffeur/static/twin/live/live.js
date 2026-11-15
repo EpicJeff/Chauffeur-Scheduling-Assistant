@@ -125,6 +125,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   layout ||= await readLayout(api, requests.signal);
   if (!layout?.available || !view.ready) return null;
 
+  let looks = {}, looksReady = false, looksRevision = 0;
   const canvas = view.renderer3.domElement, host = canvas.parentElement;
   const root = new THREE.Group();
   const labels = document.createElement('div'); labels.className = 'twin-live-labels';
@@ -156,7 +157,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   const devices = layout.devices || layout.markers;
   const roomRows = () => roomStates(layout.rooms, states);
   const stateOf = row => markerState(row.kind, states[row.entity_id]?.state ?? 'unavailable',
-    states[row.entity_id]?.attributes, row.entity_id);
+    states[row.entity_id]?.attributes, row.entity_id, looks[row.entity_id]);
   function notify() {
     revision++; overlays = null;
     for (const row of rows) {
@@ -185,7 +186,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   // device or what it offers changes, so a press that spans a poll still lands (review M2).
   function showSheet(row) {
     roomPanel?.close();
-    const key = JSON.stringify([row.device_id, row.kind, row.offered]);
+    const key = JSON.stringify([row.device_id, row.kind, row.offered, looksRevision]);
     selected = row; sheet.hidden = false;
     if (key === sheetKey && sheetStatus) {
       if (sheetStatus.textContent !== row.label) sheetStatus.textContent = row.label;
@@ -197,7 +198,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const status = document.createElement('p'); status.textContent = row.label; sheetStatus = status;
     // control() asks before an unlock, an open or a disarm; the sheet never asks a second time.
     const act = Object.assign(async (...args) => { closeSheet(); return control(...args); }, { confirmsUnsafe: true });
-    const actions = deviceActions(row, states[row.entity_id], act, { compact: true });
+    const actions = deviceActions(row, states[row.entity_id], act, { compact: true, lightLooks: live.lightLooks });
     const button = (name, action) => {
       const node = document.createElement('button'); node.type = 'button'; node.textContent = name;
       node.addEventListener('click', action); actions.append(node);
@@ -605,6 +606,25 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     try { notify(); } catch (error) { report(error); }
     try { draw(); view.render(); } catch (error) { report(error); }
   }
+  // Load and save take the same local appearance refresh; neither reads HA again.
+  function changedLooks() {
+    if (stopped) return;
+    looksRevision++;
+    for (const row of rows) Object.assign(row, stateOf(row));
+    modes?.update(); notify(); draw(); view.render();
+  }
+  async function readLooks() {
+    const limit = deadline(requests.signal, REQUEST_MS);
+    try {
+      const response = await api('api/house/twin/light-looks', {signal: limit.signal});
+      if (!response.ok) return;
+      const value = await response.json();
+      if (stopped || !value || typeof value !== 'object' || Array.isArray(value)) return;
+      looks = value; looksReady = true;
+      try { changedLooks(); } catch (error) { report(error); }
+    } catch { /* Appearance defaults remain available offline; editing stays off. */ }
+    finally { limit.done(); }
+  }
   // Older saved rows omit Drive's fuel/range bindings. Accept those pushes
   // even when the entity had no reading in the initial state response.
   const energyEntities = () => [...mappedEntities(view.energySources?.mapping), ...mappedEntities({cars:view.energySources?.cars})];
@@ -683,6 +703,27 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   const live = {
     refresh, draw, control, openRoom, stop,
+    looks: () => looks,
+    looksRevision: () => looksRevision,
+    lightLooks: {
+      get canEdit() { return looksReady && !!layout.can_edit_house && !['panel', 'kiosk', 'tabs'].some(key => new URLSearchParams(window.location?.search || '').has(key)); },
+      get: entity => looks[entity],
+      async save(entity, look) {
+        if (!live.lightLooks.canEdit || stopped) return false;
+        const limit = deadline(requests.signal, REQUEST_MS);
+        try {
+          const response = await api('api/house/twin/light-looks', {method: 'PUT', signal: limit.signal,
+            headers: {'Content-Type': 'application/json'}, body: JSON.stringify({entity_id: entity, look})});
+          if (!response.ok) throw new Error('save refused');
+          const saved = (await response.json()).look;
+          looks = {...looks};
+          if (saved && Object.keys(saved).length) looks[entity] = saved; else delete looks[entity];
+          changedLooks();
+          return true;
+        } catch { if (!stopped) window.showGlobalAlert?.('Could not save the colour in the twin. Try again.'); return false; }
+        finally { limit.done(); }
+      },
+    },
     configureGlance(tiles) {
       live.glanceEntities = (tiles || []).map(tile => typeof tile === 'string' ? tile : tile.entity);
       const key = JSON.stringify(live.glanceEntities);
@@ -783,6 +824,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     if (view.live === live) view.live = null;
     return null;
   }
+  void readLooks();
   await refresh();
   view.glance?.attach(live);
   view.glanceSettings?.refreshChoices();

@@ -1,4 +1,5 @@
 import { controls } from './shared.js';
+import { twinFixedColour } from './light.js';
 
 export function fanControls(options) {
   const c = controls(options), a = c.attrs;
@@ -10,5 +11,6 @@ export function fanControls(options) {
   if (c.has(4)) c.button('direction', 'Reverse direction', 'set_direction',
     s => ({direction: s?.attributes?.direction === 'forward' ? 'reverse' : 'forward'}));
   if (c.has(8)) c.chips('presets', 'Preset', a.preset_modes, s => s?.attributes?.preset_mode, 'set_preset_mode', 'preset_mode');
+  twinFixedColour(c, options);
   return c.finish();
 }

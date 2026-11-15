@@ -1,3 +1,5 @@
+import { resolveLightColour } from './live/light_colours.js';
+
 // Shared twin chrome and device-state colours. The two pages mirror these on :root;
 // test_twin_palette_js.py keeps the canvas and CSS palettes in agreement.
 export const twinGlass = 'rgba(17,19,24,.62)';
@@ -40,15 +42,12 @@ export function climateModeColor(mode) {
     dry: twinDry, fan_only: twinDry}[mode] || twinText;
 }
 
-export function markerOnColor(kind, state = {}) {
+export function markerOnColor(kind, state = {}, look, entityId = '') {
   const attrs = state?.attributes || {}, value = state?.state;
-  if (kind === 'light') {
-    if (Array.isArray(attrs.rgb_color) && attrs.rgb_color.length === 3 && attrs.rgb_color.every(Number.isFinite))
-      return hex(attrs.rgb_color);
-    const kelvin = Number(attrs.color_temp_kelvin) > 0 ? Number(attrs.color_temp_kelvin)
-      : Number(attrs.color_temp) > 0 ? 1e6 / Number(attrs.color_temp) : null;
-    return kelvin && Number.isFinite(kelvin) ? kelvinColor(kelvin) : twinWarmWhite;
-  }
+  const domain = entityId.split('.')[0] || kind;
+  if (domain === 'light' || kind === 'light') return hex(resolveLightColour(attrs, look, 'light').rgb);
+  // An on/off source keeps its kind's colour until a person assigns one in the twin.
+  if (['switch', 'input_boolean', 'fan'].includes(domain) && look?.colour) return hex(resolveLightColour(attrs, look, domain).rgb);
   if (kind === 'climate') return climateModeColor(value || attrs.hvac_mode);
   if (kind === 'lock') return value === 'jammed' ? twinDanger : value === 'locked' ? twinOpen : twinAttention;
   if (kind === 'alarm' || kind === 'alarm_control_panel')

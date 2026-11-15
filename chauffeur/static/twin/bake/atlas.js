@@ -1,8 +1,8 @@
 // Geometry/UV density use plan feet; reach queries use world metres.
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { reachLights } from './reach.js';
-import { fingerprint, authoredGeometry } from './fingerprint.js';
-export { fingerprint } from './fingerprint.js';
+import { fingerprint, authoredGeometry } from './geometry_key.js';
+export { fingerprint } from './geometry_key.js';
 
 const VERSION = 'reach-atlas-11';
 const EPS = 1e-6;

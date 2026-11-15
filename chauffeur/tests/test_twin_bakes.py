@@ -534,7 +534,7 @@ def test_editor_state_says_when_lights_wait_to_rebake():
 
 
 BAKE_MODULES = ('bake/runtime', 'bake/lightmap_material', 'bake/atlas', 'bake/atlas_transport', 'bake/baker',
-                'bake/bake_pass', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker',
+                'bake/bake_pass', 'bake/reach', 'bake/geometry_key', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker',
                 'bake/codec_worker', 'live/real_lights')
 
 
@@ -550,7 +550,7 @@ def test_bake_modules_are_versioned():
                       (page, f'{name}.js is in the import map with ?v='))
             check("three-r187/three.module.js', location.href).href]" in r.text,
                   (page, 'the relative three import maps onto the same versioned three'))
-        for name in ('bake/atlas', 'bake/atlas_transport', 'bake/codec', 'bake/reach', 'bake/fingerprint', 'bake/slots', 'twin_light_math'):
+        for name in ('bake/atlas', 'bake/atlas_transport', 'bake/codec', 'bake/reach', 'bake/geometry_key', 'bake/slots', 'twin_light_math'):
             r = c.client.get(f'/static/twin/{name}.js')
             check(r.status_code == 200, (name, r.status_code))
             check('no-cache' in r.headers.get('cache-control', ''), (name, 'bake modules are revalidated', r.headers.get('cache-control')))

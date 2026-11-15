@@ -15,7 +15,9 @@ from test_twin_yard_reuse_js import PREFIX
 ROOT = Path(__file__).resolve().parents[1]
 # fingerprint() of every mesh's material name, position and uv in the generator
 # and yard fixture below, with random_offset false, computed before this change.
-GOLDEN = {'building': '82fcc379d97a2fed6867581730ac1951', 'yard': 'bfb84a281da58500d6dc1ae6addf71dc'}
+# Both were captured again when the house slab moved to just under the floor finish
+# and the retaining wall face moved proud of the pad edge.
+GOLDEN = {'building': '82c28968e3bff83ab3108f06e4ac5caa', 'yard': 'c9eac660122601e038e7f37e88920b1c'}
 
 DRIVER = PREFIX + r"""
 globalThis.buildCalls=0;
@@ -29,7 +31,7 @@ const lib=await import(file('static/twin/twin_library.js'));
 const {buildTwin,buildingKey}=await import(file('static/twin/twin_generator.js'));
 const {buildYard,yardPartKeys,YARD_PARTS}=await import(file('static/twin/twin_yard.js'));
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
-const {fingerprint}=await import(file('static/twin/bake/fingerprint.js'));
+const {fingerprint}=await import(file('static/twin/bake/geometry_key.js'));
 const square=(x,y,w=12)=>[[x,y],[x+w,y],[x+w,y+w],[x,y+w]];
 const params=(extra={})=>({tint:'#ffffff',roughness:null,metalness:null,normal_scale:1,normal_convention:'gl',ao_intensity:1,tile_ft:[4,4],rotation_deg:0,...extra});
 const entry=(extra={},revision=1)=>({kind:'material',household:true,revision,maps:{},params:params(extra)});

@@ -460,6 +460,8 @@ RULES = [
     ('GET', '/api/house/neighborhood', WALL_OR_SERVICE, None),
     ('GET', '/api/house/twin', WALL_OR_SERVICE, None),
     ('GET', '/api/house/twin/glance', WALL, None),
+    ('GET', '/api/house/twin/light-looks', WALL_OR_SERVICE, None),
+    ('PUT', '/api/house/twin/light-looks', PARENTS, None),
     ('PUT', '/api/house/twin/glance', PARENTS, None),
     ('GET', '/api/house/twin/energy', WALL_OR_SERVICE, None),
     ('PUT', '/api/house/twin/energy', PARENTS, None),

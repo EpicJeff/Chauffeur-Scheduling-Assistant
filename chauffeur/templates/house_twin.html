@@ -24,7 +24,7 @@
       'three/addons/': twinBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': twinBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['edit_timing', 'model_lods', 'lod_worker', 'objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_floors', 'twin_stairs', 'twin_yard', 'twin_tiers', 'twin_library', 'material_watch', 'import_loaders', 'twin_view', 'levels', 'viewing', 'unlit', 'twin_roof', 'twin_ground', 'path_shapes', 'pool_features', 'fire_pits', 'twin_porch_foundation', 'twin_retaining_wall', 'twin_terrain_mesh', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'live/controls/device', 'live/controls/inputs', 'bake/runtime', 'bake/lightmap_material', 'bake/transcode', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fixture_terms', 'bake/fingerprint', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/real_lights', 'live/emitters', 'live/fixture_glow', 'live/fixture_geometry'] %}
+    {% for name in ['edit_timing', 'model_lods', 'lod_worker', 'objects', 'palette', 'twin_generator', 'twin_hosts', 'twin_floors', 'twin_stairs', 'twin_yard', 'twin_tiers', 'twin_library', 'material_watch', 'import_loaders', 'twin_view', 'levels', 'viewing', 'unlit', 'twin_roof', 'twin_ground', 'path_shapes', 'pool_features', 'fire_pits', 'twin_porch_foundation', 'twin_retaining_wall', 'twin_terrain_mesh', 'sky/ephemeris', 'sky/look', 'live/markers', 'live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'live/controls/device', 'live/controls/inputs', 'bake/runtime', 'bake/lightmap_material', 'bake/transcode', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fixture_terms', 'bake/geometry_key', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/light_colours', 'live/real_lights', 'live/emitters', 'live/fixture_glow', 'live/fixture_geometry'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/solar_conduit', 'live/solar_conduit_core', 'live/solar_conduit_worker', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security', 'editor/aim_tool'] %}
@@ -222,6 +222,17 @@
     .twin-colour-wheel span { position:absolute; width:14px; height:14px; margin:-7px; border:2px solid var(--twinSelectedText); border-radius:50%; box-shadow:0 0 0 2px var(--twinText); pointer-events:none; }
     .twin-colour-wheel:focus-visible { outline:2px solid var(--twinSelected); outline-offset:2px; }
     .twin-colour-wheel[aria-disabled="true"] { opacity:.5; cursor:default; }
+    /* Effect pills, side card, wheel and 44px actions are shared by both hosts. */
+    .twin-look-chip { display:inline-flex; align-items:center; gap:4px; }
+    .twin-look-dot { display:inline-block; box-sizing:border-box; width:16px; height:16px; border:1px solid currentColor; border-radius:50%; vertical-align:middle; margin-right:6px; }
+    .twin-device-actions button.twin-look-edit { display:inline-flex; align-items:center; justify-content:center; gap:2px; min-width:44px; min-height:44px; padding:0 6px; }
+    .twin-look-edit .twin-look-dot { margin:0; }
+    .twin-look-edit::after { content:"+"; font-size:12px; }
+    .twin-look-editor { min-width:0; width:100%; box-sizing:border-box; padding:8px; margin:4px 0; border:1px solid var(--twinBorder); border-radius:8px; }
+    .twin-look-editor legend { font:inherit; }
+    .twin-look-stop { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px; margin:8px 0; }
+    .twin-ring-side:has(.twin-look-editor) { max-height:calc(100dvh - 32px); overflow-y:auto; touch-action:pan-y; scrollbar-color:var(--twinMarkerRing) transparent; }
+
     /* The chat box stays: on a panel it rests as the Argyle orb (ha_theme.html), the only way
        into Argyle and tap-to-talk there. */
     html[data-twin-wall] #top-nav-bar,

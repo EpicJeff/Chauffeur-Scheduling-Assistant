@@ -3,23 +3,10 @@ import { TIERS } from '../twin_tiers.js';
 import { CANDELA, FT } from '../twin_light_math.js';
 import { fixturePoint, fixtureRotation, linePieces } from './fixture_glow.js';
 
-const clamp = (value, max = 255) => Math.max(0, Math.min(max, value));
-// Candela at full brightness lives with the pure lamp math, which the baked material shares.
+import { paletteColour } from './light_colours.js';
+export { lightColor } from './light_colours.js';
 export { CANDELA };
-
-export function lightColor(attributes = {}) {
-  const { rgb_color: rgb, color_temp_kelvin: kelvin, color_temp: mireds } = attributes || {};
-  if (Array.isArray(rgb) && rgb.length >= 3 && rgb.slice(0, 3).every(Number.isFinite))
-    return rgb.slice(0, 3).map(value => Math.round(clamp(value)));
-  const temperature = Number(kelvin) > 0 ? Number(kelvin) : Number(mireds) > 0 ? 1e6 / Number(mireds) : null;
-  if (!Number.isFinite(temperature) || temperature === null) return [255, 241, 201];
-  // Black-body approximation, with HA's temperatures expressed in kelvin.
-  const t = Math.max(1000, Math.min(40000, temperature)) / 100;
-  return [t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -.1332047592),
-    t <= 66 ? 99.4708025861 * Math.log(t) - 161.1195681661 : 288.1221695283 * Math.pow(t - 60, -.0755148492),
-    t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307]
-    .map(value => Math.round(clamp(value)));
-}
+const clamp = (value, max = 255) => Math.max(0, Math.min(max, value));
 
 export function lightIntensity(attributes = {}) {
   const value = Number(attributes?.brightness ?? 255);
@@ -76,6 +63,7 @@ export function createRealLights(view, { tier = view.tier || 'low', fixtures = t
         const pieces = e?.shape === 'line' ? linePieces(e) : [null];
         pieces.forEach((piece, i) => expanded[type].push({...row, piece,
           device: `${row.device}:${i}`, owner: row.device,
+          rgb: piece && (row.palette || e.palette) ? paletteColour(row.palette || e.palette, piece.t) : row.rgb,
           at: piece ? [piece.position.x / FT, -piece.position.z / FT, piece.position.y / FT] : row.at,
           output: !e || e.legacy ? row.intensity * CANDELA * 4 * Math.PI : e.output_lm_share / pieces.length,
           intensity: !e || e.legacy ? row.intensity : e.shape === 'point' || e.shape === 'spot' ? e.cd : e.luminance}));

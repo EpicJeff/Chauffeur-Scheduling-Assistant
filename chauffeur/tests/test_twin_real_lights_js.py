@@ -214,6 +214,20 @@ check('color_from_rgb_kelvin_mireds_and_default', async () => {
   assert.deepEqual(lightColor({}), [255,241,201], 'no colour: warm white #fff1c9');
   assert.deepEqual(lightColor(undefined), [255,241,201], 'no attributes: warm white');
   assert.deepEqual(lightColor({brightness:120, rgb_color:null}), [255,241,201], 'a null rgb_color is no colour');
+  assert.deepEqual(lightColor({hs_color:[240,100]}), [0,0,255], 'hs_color alone gives its colour');
+  assert.deepEqual(lightColor({hs_color:[0,50]}), [255,128,128], 'hs saturation mixes toward white');
+  assert.deepEqual(lightColor({hs_color:[240,100], rgb_color:[9,8,7]}), [9,8,7], 'rgb_color wins over hs_color');
+  { const b = lightColor({xy_color:[.15,.06]}); assert.ok(b[2] === 255 && b[0] < 120 && b[1] < 120, 'xy blue primary reads blue: ' + b); }
+  { const w = lightColor({xy_color:[.3127,.329]}); assert.ok(Math.min(...w) > 225, 'xy D65 reads white: ' + w); }
+  assert.deepEqual(lightColor({xy_color:[.3,0]}), [255,241,201], 'a degenerate xy is no colour');
+  assert.deepEqual(lightColor({effect:'Blue'}), [0,0,255], 'an effect named by its colour gives that colour');
+  assert.deepEqual(lightColor({effect:'MAGENTA'}), [255,0,255], 'effect names match in any case');
+  assert.deepEqual(lightColor({effect:'Deep Purple Mode'}), [160,32,240], 'a colour word inside a longer effect name counts');
+  assert.deepEqual(lightColor({effect:'blue', color_temp_kelvin:2700}), [0,0,255], 'a colour effect wins over a colour temperature');
+  assert.deepEqual(lightColor({effect:'Caribbean'}), [255,241,201], 'an effect with no colour word stays warm white');
+  assert.deepEqual(lightColor({effect:'Blueberry'}), [255,241,201], 'a colour word must be a whole word');
+  assert.deepEqual(lightColor({effect:'Red', rgb_color:[1,2,3]}), [1,2,3], 'rgb_color wins over an effect name');
+  assert.deepEqual(lightColor({effect:null}), [255,241,201], 'a null effect is no colour');
   const warm = lightColor({color_temp_kelvin:2700});
   assert.ok(warm.every(v => Number.isInteger(v) && v >= 0 && v <= 255), `integers 0-255: ${warm}`);
   assert.ok(warm[0] >= 250 && warm[0] > warm[1] && warm[1] > warm[2] && warm[2] < 140, `2700 K is warm orange: ${warm}`);

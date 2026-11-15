@@ -35,7 +35,11 @@ export function linePieces(emitter) {
   };
   return Array.from({length: count}, (_, i) => {
     const a = sample(i * total / count), b = sample((i + 1) * total / count);
-    return {position: sample((i + .5) * total / count), width: total / count,
+    const start = i * total / count, end = (i + 1) * total / count;
+    let walked = 0;
+    // A boundary corner belongs to the piece starting there, exactly once.
+    const inside = path.filter((p, j) => { if (j) walked += lengths[j - 1]; return j > 0 && j < path.length - 1 && walked >= start && walked < end; });
+    return {t: (i + .5) / count, path: [a.clone(), ...inside, b.clone()], position: sample((i + .5) * total / count), width: total / count,
       height: emitter.width_in / 12 * FT, rotation: fixtureRotation(emitter, b.sub(a))};
   });
 }

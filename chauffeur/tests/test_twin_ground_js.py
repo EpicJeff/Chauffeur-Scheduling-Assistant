@@ -172,12 +172,12 @@ low.traverse(o=>{if(o.isMesh&&o.material.name==='patio_concrete'){
  // Per-piece merging keeps the foundation separate from the level's floor slab.
  o.geometry.computeBoundingBox();
  if(o.geometry.boundingBox.min.y<-1){
-  checkBoundaryNormals(o.geometry,foundationShape(plan,b).polygon,{top:0,bottom:-4.5,label:'generated building foundation'});checkedFoundation++;
+  checkBoundaryNormals(o.geometry,foundationShape(plan,b).polygon,{top:-.02,bottom:-4.5,label:'generated building foundation'});checkedFoundation++;
  }
  foundationBounds.union(o.geometry.boundingBox);
 }});
 assert.ok(checkedFoundation,'actual foundation mesh checked');
-assert.ok(Math.abs(foundationBounds.min.y+4.5)<1e-6&&Math.abs(foundationBounds.max.y)<1e-6,'actual concrete extends from the base down to the lowest ground');
+assert.ok(Math.abs(foundationBounds.min.y+4.5)<1e-6&&Math.abs(foundationBounds.max.y+.02)<1e-6,'actual concrete extends from just under the floor finish down to the lowest ground');
 const rebuilt=buildTwin(plan,kit,'low',{viewing:true,reuseMaterials:twin.materials});await rebuilt.ready;
 assert.equal(rebuilt.materials.get('patio_concrete'),twin.materials.get('patio_concrete'),'terrain/foundation changes retain the concrete material');
 disposeObject(twin.root,{keepMaterials:new Set(rebuilt.materials.values())});disposeObject(rebuilt.root);
@@ -217,7 +217,7 @@ const caps=fireFaces.filter(f=>Math.abs(f.normal.y)>=.5),yTop=Math.max(...caps.m
 for(const f of caps)assert.ok(f.centre.y>(yTop+yBottom)/2?f.normal.y>0:f.normal.y<0,'fire pit top faces up and bottom faces down');
 console.log('Passed: fire pit wall outward normals');
 const {buildFirePit,firePitOptions,firePitLayout,gasTableLayout,placedPit,fireFlameMaterial}=await import(file('static/twin/fire_pits.js'));
-const {authoredGeometry}=await import(file('static/twin/bake/fingerprint.js'));
+const {authoredGeometry}=await import(file('static/twin/bake/geometry_key.js'));
 const fireMaterials=new Map(),fireMat=name=>{if(!fireMaterials.has(name))fireMaterials.set(name,kitMaterial(name,kit,'low'));return fireMaterials.get(name);};
 const firePlain=(name,color,extra={})=>{if(!fireMaterials.has(name))fireMaterials.set(name,extra.fireShader?fireFlameMaterial():new THREE.MeshStandardMaterial({name,color,...extra}));return fireMaterials.get(name);};
 const fireBuild=pit=>{const group=new THREE.Group();return {group,...buildFirePit(group,pit,-2,{mat:fireMat,plain:firePlain,id:'pit:'+pit.id})};};

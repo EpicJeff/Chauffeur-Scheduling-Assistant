@@ -11,7 +11,7 @@ const THREE=await import(three);
 const {buildTwin,boxGeometry,polygon,stairHoles}=await import(file('static/twin/twin_generator.js'));
 const {stairGeometry,doorwaySteps}=await import(file('static/twin/twin_stairs.js'));
 const {buildAtlas}=await import(file('static/twin/bake/atlas.js'));
-const {authoredGeometry}=await import(file('static/twin/bake/fingerprint.js'));
+const {authoredGeometry}=await import(file('static/twin/bake/geometry_key.js'));
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-5,`${a} != ${b}`);
 const square=(a,b,c,d)=>[[a,b],[c,b],[c,d],[a,d]];
 const stair={id:'stairs',level:'L1',from:[2,4],to:[14,4],width:3,rise_to:9,risers:15};

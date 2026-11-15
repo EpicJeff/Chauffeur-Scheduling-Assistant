@@ -4,9 +4,9 @@ import { kindOf, stateLabel } from './kinds.js';
 import { markerOnColor, markerInk, twinMarkerOff, twinMarkerRing, twinMarkerUnavailable,
   twinMarkerUnavailableText, twinAttention, twinAttentionRing, twinDanger, twinSelectedText, twinText } from '../palette.js';
 
-export function markerState(kind, state, attributes, entityId = '') {
+export function markerState(kind, state, attributes, entityId = '', look) {
   const resolved = kindOf({kind, entity_id: entityId});
-  return { look: resolved.look({state, attributes}), color: markerOnColor(resolved.id, {state, attributes}),
+  return { look: resolved.look({state, attributes}), color: markerOnColor(resolved.id, {state, attributes}, look, entityId),
     label: stateLabel(kind, state, attributes) };
 }
 

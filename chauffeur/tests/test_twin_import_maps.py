@@ -55,6 +55,7 @@ def mapped(template):
 def check_page(template, entries):
     needed = graph(entries)
     have = mapped(template)
+    assert 'twin/live/light_colours.js' in have, f'{template}: pure light colour resolver must be versioned'
     # three and its addons are mapped by bare specifier ('three'), not by path.
     missing = sorted(p for p in needed if p not in have and not p.startswith('vendor/three'))
     assert not missing, f'{template}: modules imported but not versioned in the import map: {missing}'
@@ -141,8 +142,22 @@ def test_worker_import_graphs():
     return len(seen)
 
 
+def test_no_module_name_a_content_blocker_refuses():
+    # Privacy filter lists (EasyPrivacy and the browsers that ship it) refuse any URL
+    # ending in names like /fingerprint.js, so a module with such a name never loads.
+    refused = re.compile(r'(^|[/_.-])(fingerprint|fingerprint2|analytics|tracking|tracker|telemetry|beacon|adsbygoogle|pixel)(\.min)?\.m?js$', re.I)
+    static = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'static')
+    names = [os.path.relpath(os.path.join(folder, name), static).replace(os.sep, '/')
+             for folder, _, files in os.walk(static) for name in files if name.endswith(('.js', '.mjs'))]
+    bad = [name for name in names if refused.search(name)]
+    assert not bad, f'content blockers refuse these file names: {bad}'
+    assert refused.search('twin/bake/fingerprint.js') and not refused.search('twin/bake/geometry_key.js')
+    return len(names)
+
+
 if __name__ == '__main__':
-    tests = [test_house_twin_page, test_house_editor_page, test_house_library_page, test_lod_worker_urls, test_worker_import_graphs]
+    tests = [test_house_twin_page, test_house_editor_page, test_house_library_page, test_lod_worker_urls,
+             test_worker_import_graphs, test_no_module_name_a_content_blocker_refuses]
     passed = 0
     for fn in tests:
         try:

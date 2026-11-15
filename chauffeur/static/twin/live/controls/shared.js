@@ -128,14 +128,20 @@ export function controls({row, state, control, compact = false, surface = 'panel
     const node = part(element('p'), name); parent.append(node);
     updates.push(() => { node.textContent = valueOf(confirmed); }); return node;
   }
-  function chips(name, label, values, current, service, key) {
+  function chips(name, label, values, current, service, key, decorate) {
     if (!values?.length) return;
-    const caption = element('p', label); caption.className = 'twin-ring-caption'; side.append(caption);
-    const group = part(element('div'), name); group.className = 'twin-light-effects'; side.append(group);
+    const group = chipGroup(name, label);
     for (const value of values) {
       const node = button(name + '-choice', title(value), service, {[key]: value}, group);
+      decorate?.(node, value, group);
       updates.push(() => node.setAttribute('aria-pressed', String(normal(current(confirmed)) === normal(value))));
     }
+  }
+  function chipGroup(name, label, preview = false) {
+    const caption = element('p', label); caption.className = 'twin-ring-caption'; side.append(caption);
+    const group = part(element('div'), name); group.className = 'twin-light-effects'; side.append(group);
+    if (preview) { caption.setAttribute('data-look-preview', ''); group.setAttribute('data-look-preview', ''); }
+    return group;
   }
   // An arc at the marker (a native range in a room row). `look` shapes the light's arcs:
   // `stroke` paints the track (the kelvin gradient), `fill(state)` colours the filled part
@@ -246,13 +252,17 @@ export function controls({row, state, control, compact = false, surface = 'panel
     stops.push(() => clearTimeout(timer));
     return node;
   }
-  return {root, side, attrs, ring, enabled, part, button, toggle, text, chips, slider, place, send,
+  return {root, side, attrs, ring, enabled, part, button, toggle, text, chips, chipGroup, slider, place, send,
     confirmed: () => confirmed, disposed: () => disposed,
     watch: fn => updates.push(() => fn(confirmed)),
     onStop: fn => stops.push(fn),
     has: bit => !!(Number(attrs.supported_features) & bit),
     finish() {
-      if (!ring && (!row.offered || compact)) root.replaceChildren();
+      if (!ring && (!row.offered || compact)) {
+        // Read-only surfaces retain the shared, non-interactive effect previews.
+        const previews = [...root.querySelectorAll('[data-look-preview]')];
+        root.replaceChildren(...previews);
+      }
       if (ring) {
         // A dial with no arc and no centre switch is a plain dial: its stack sits in the middle.
         if (!arcs && !root.querySelector('[data-ring-part="center"]')) root.classList.add('twin-dial-plain');

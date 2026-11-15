@@ -15,8 +15,12 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
   const inside = event => root.contains?.(event.target);
   // The marker labels keep clear of the ring: the layer hears whenever it lands somewhere new.
   function settle(key) { if (placed !== key) { placed = key; moved(); } }
+  // A control that grows or shrinks inside the ring (the twin colour editor) asks to be placed again.
+  root.addEventListener('twin-relayout', () => { if (row) draw(); }, {signal: events.signal});
   function close() {
-    builder?.stop?.(); builder = null; row = null; anchor = null; signature = '';
+    // The row is dropped first: a control that speaks while it stops finds no ring to redraw.
+    const old = builder; builder = null; row = null; anchor = null; signature = '';
+    old?.stop?.();
     root.hidden = true; root.replaceChildren(); settle('');
     // A ring opened from the room panel gives the keyboard focus back (review L7).
     const back = returnFocus; returnFocus = null;
@@ -28,8 +32,12 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
   function safeArea() {
     const width = window.innerWidth || 0, height = window.innerHeight || 0;
     let bottom = height - EDGE;
-    for (const id of ['panel-fade', 'panel-shelf']) {
-      const box = document.getElementById?.(id)?.getBoundingClientRect?.();
+    // The chat bar counts too: a tall side card must not end underneath it. A wall panel keeps
+    // the bar laid out but hidden, and a hidden bar is no edge.
+    for (const id of ['panel-fade', 'panel-shelf', 'chat-overlay-container']) {
+      const node = document.getElementById?.(id);
+      if (!node || globalThis.getComputedStyle?.(node)?.visibility === 'hidden') continue;
+      const box = node.getBoundingClientRect?.();
       if (box?.height > 0 && box.top > 0) bottom = Math.min(bottom, box.top - EDGE);
     }
     // The floor and mode pickers: the dial may cover them (it sits on the light), the side card
@@ -49,7 +57,7 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
     const safe = safeArea(), side = builder?.side || null, title = root.firstElementChild;
     // A controller can fill the side card (or camera card) with many controls.
     // Scroll within the same usable space that positioning keeps above the shelf.
-    if (builder?.querySelector('.twin-accessories') && safe.bottom > safe.top)
+    if (builder?.querySelector('.twin-accessories, .twin-look-editor') && safe.bottom > safe.top)
       (side || builder).style.maxHeight = `${safe.bottom - safe.top}px`;
     if (!(safe.right > safe.left && safe.bottom > safe.top)) {
       root.style.left = `${at.x}px`; root.style.top = `${at.y}px`; settle(`${at.x}|${at.y}`); return;
@@ -87,7 +95,8 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
     if (!row) return;
     // One entity's confirmed state, read without copying the house (review M3).
     const state = live.state(row.entity_id), kind = kindOf(row);
-    const key = JSON.stringify([row.device_id, deviceControlShape(row, state, live.state),
+    const key = JSON.stringify([row.device_id, deviceControlShape(row, state, live.state), live.lightLooks?.canEdit,
+      row.offered ? null : live.looksRevision?.(),
       kind.ring ? null : state]);
     if (signature === key && builder?.update) { builder.update(state); return; }
     if (signature === key) return;
@@ -103,7 +112,7 @@ export function mountRing(view, live, {hit, position, tap, scene, dismiss, navig
     // answers after the ring closed still reads its own device.
     const entity = row.entity_id;
     builder = deviceControls({row, state, control: live.control, surface: 'ring',
-      getState: () => live.state(entity), getEntityState: live.state});
+      getState: () => live.state(entity), getEntityState: live.state, lightLooks: live.lightLooks});
     // A kind with nothing to control (a sensor) shows its value alone, not an empty card.
     if (!builder.childNodes.length) builder.hidden = true;
     root.append(builder);

@@ -114,6 +114,8 @@ export function boxRect(x0, y0, x1, y1, z0, z1) {
   const g = boxGeometry(Math.abs(x1 - x0), Math.abs(z1 - z0), Math.abs(y1 - y0));
   return g.translate((x0 + x1) / 2, (z0 + z1) / 2, -(y0 + y1) / 2);
 }
+// A structural slab tops out this far under the floor finish laid on it.
+const FLOOR_GAP_FT = 0.02;
 export function polygon(poly, z0, z1 = z0, holes = []) {
   const s = new THREE.Shape(poly.map(p => new THREE.Vector2(...p)));
   holes.filter(h => h.length >= 3).forEach(h => s.holes.push(new THREE.Path(h.map(p => new THREE.Vector2(...p)))));
@@ -525,10 +527,20 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const parts = lowered.length ? foundationPieces(b, first, triangles) : [{polygon: foundation.polygon, top: 0}];
       const slab = b.foundation?.materials?.slab;
       const finish = material(() => materialSlot(slab, 'patio_concrete', materialKit, tier, materials, mat));
-      for (const {polygon: area, top} of parts) {
-        const geometry = polygon(area, Math.min(foundation.bottom - base, top - (b.foundation?.thickness_ft ?? 1)), top);
+      const add = geometry => {
         if (slab) offsetSurfaceUvs(geometry, finish, `${b.id}:foundation`);
         addMesh(local[first.id], geometry, finish);
+      };
+      // The slab stops just under the floor finish, like every upper slab, so the two never share a plane.
+      for (const {polygon: area, top} of parts)
+        add(polygon(area, Math.min(foundation.bottom - base, top - (b.foundation?.thickness_ft ?? 1)), top - FLOOR_GAP_FT));
+      // Exterior walls stand on the slab itself: their mitred footprints carry it up to the floor line.
+      for (const wall of b.walls.filter(w => w.level === first.id && w.exterior
+        && w.kind !== 'separator' && w.state !== 'ghost' && w.footprint?.length === 4)) {
+        const strip = THREE.ShapeUtils.triangulateShape(wall.footprint.map(p => new THREE.Vector2(...p)), [])
+          .map(indices => indices.map(i => wall.footprint[i]));
+        for (const {polygon: area, top} of lowered.length ? foundationPieces(b, first, strip) : [{polygon: wall.footprint, top: 0}])
+          add(polygon(area, top - FLOOR_GAP_FT, top));
       }
     }
     // Triangulate concave floor outlines into convex roof cutters. A floor at
@@ -1201,7 +1213,9 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         // Rooms stay their own pieces for selection; the level is one floor origin, so a
         // finish running through several rooms stays continuous.
         const floorSeed = `${b.id}:floor:${l.id}`;
-        mesh(local[l.id], polygon(poly, slabBottom, elevation - 0.02, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'), null, floorSeed);
+        // The lowest floor at grade rests on the foundation, which already fills to this line.
+        if (slabBottom < elevation - FLOOR_GAP_FT)
+          mesh(local[l.id], polygon(poly, slabBottom, elevation - FLOOR_GAP_FT, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'), null, floorSeed);
         mesh(local[l.id], polygon(poly, elevation, elevation, cuts), mat(porch ? 'patio_concrete' : 'floor', l, room.floor_material), null, floorSeed);
       }
       // Room boundaries stop at the wall lines. Their slab plus these mitred

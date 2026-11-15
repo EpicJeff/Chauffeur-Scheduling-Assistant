@@ -4,6 +4,10 @@ import { TERRAIN_STEP_FT } from './twin_terrain_mesh.js';
 
 export const retainingWallRole = material => ({ stone: 'base', block: 'retaining_block', concrete: 'patio_concrete', brick: 'porch_brick', timber: 'retaining_timber' }[material] || 'base');
 
+// The exposed face stands this far proud of the pad edge, clear of the slab
+// and plinth faces that close the same terrain step on that line.
+export const RETAINING_WALL_PROUD_FT = 0.04;
+
 // Authored solids always use the high terrain sampling step on every tier so
 // their receiver topology and bake UVs do not depend on the viewing device.
 export function retainingWallGeometry(plan, pad, edge) {
@@ -53,11 +57,12 @@ export function retainingWallGeometry(plan, pad, edge) {
       // With equal ground (a curb), keep the body on the pad's inside.
       const sign = Math.abs(middle[1] - middle[0]) < 1e-9 ? inward : middle[1] > middle[0] ? 1 : -1;
       const thickness = (wall.thickness_in ?? 8) / 12, above = (wall.above_in ?? 0) / 12;
+      const front = p => p.map((v, j) => v - sign * left[j] * RETAINING_WALL_PROUD_FT);
       const p = point(lo), q = point(hi), back = p => p.map((v, j) => v + sign * left[j] * thickness);
       const atP = sides(lo + epsilon), atQ = sides(hi - epsilon);
       const low = [Math.min(...atP) - .5, Math.min(...atQ) - .5];
       const high = [Math.max(...atP) + above, Math.max(...atQ) + above];
-      let ring = [[p, 0], [q, 1], [back(q), 1], [back(p), 0]];
+      let ring = [[front(p), 0], [front(q), 1], [back(q), 1], [back(p), 0]];
       if (sign < 0) ring.reverse();
       const lower = ring.map(([p, j]) => [p, low[j]]);
       const upper = ring.map(([p, j]) => [p, high[j]]);
