@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.870 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.871 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.871 (2026-11-14, NOT device-verified): the house foundation takes a material. The building card's Foundation section has a Slab slot; empty means concrete, as before.**
+
+- **Where:** select a building in the house editor; under Foundation, **Slab** uses the shared material slot (`static/twin/editor/material_slot.js`), the same picker, tint override and "Use default" as the porch foundation. Parents edit; everyone else and a history preview see the value with no controls.
+- **Storage:** `building.foundation.materials.slab`, a material reference `{id, color?}`. Missing or empty means concrete. Loading and saving a house never adds the key. An invalid stored reference is dropped with a note and the foundation's mode, offset and thickness are kept (`services/twin_terrain.py`).
+- **Op:** the existing `set_foundation`; one history step per pick or reset. A change to offset or thickness keeps the material, and the reverse. The agent's existing generic edit path carries the field; the `house_design` schema is unchanged.
+- **Drawing** (`static/twin/twin_generator.js`): the slab resolves through the same resolver as porch foundation slots, with tint, texture scale and the per-surface texture offset. It stays in the lowest floor's group and never inherits siding or room wall materials. A house without the slot draws exactly as before, including its texture coordinates.
+- **Library:** the slot counts as a use. A material in use on a slab cannot be deleted; a rename keeps the reference.
+- **Bake and reuse:** the foundation record is already in the bake fingerprint, so a slab change makes the bake stale. The building reuse key now includes the slab finish and the material's revision.
+- **Tests:** `tests/test_twin_foundation_material.py` (6), `tests/test_twin_foundation_material_js.py` (7). The editor still loads in Chromium (`test_house_editor_model_live_t19` 12/12); picking a slab material was not done by hand in a browser.
 
 **v2.499.870 (2026-11-14, NOT device-verified): a person can place and edit light fixtures by hand in the house editor: point, spot, line and area, plus where a camera looks. Light fixtures Tasks 5 and 6 (slice D).**
 

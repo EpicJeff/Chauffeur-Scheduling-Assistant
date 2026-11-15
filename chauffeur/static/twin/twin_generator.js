@@ -322,6 +322,8 @@ function buildingKeyParts(plan, b, kit, tier, { viewing = false, showAnchors = f
       if (r.kind === 'porch') finishes.push(resolved('patio_concrete', r.floor_material));
     }
   }
+  const slab = b.foundation?.materials?.slab;
+  if (slab) finishes.push(['slab', slab, resolved('patio_concrete', slab), known[slab.id]]);
   for (const p of porches) for (const [slot, ref] of Object.entries(porchFoundation(p.foundation).materials)) if (ref) {
     const role = materialKit.materials[ref.id] ? ref.id : Object.keys(materialKit.materials).find(r => materialKit.materials[r].asset === ref.id);
     finishes.push([slot, ref, role, resolved(role || ref.id), known[ref.id]]);
@@ -514,15 +516,20 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     const envelope = roofMesh(sections);
     const outlines = new Map(ordered.map(l => [l.id, l.outline?.length >= 3 ? [l.outline] : footprints(b.walls.filter(w => w.level === l.id))]));
     // This belongs to the lowest floor domain, including its viewing fade and
-    // peel. Concrete never inherits siding or room wall materials.
+    // peel. Its finish never inherits siding or room wall materials.
     const foundation = foundationShape(plan, b);
     const lowered = (b.rooms || []).filter(r => r.level === first.id && r.state !== 'ghost' && r.floor_offset_ft);
     if (foundation.polygon.length >= 3 && foundation.top > foundation.bottom) {
       const triangles = THREE.ShapeUtils.triangulateShape(foundation.polygon.map(p => new THREE.Vector2(...p)), [])
         .map(indices => indices.map(i => foundation.polygon[i]));
       const parts = lowered.length ? foundationPieces(b, first, triangles) : [{polygon: foundation.polygon, top: 0}];
-      for (const {polygon: area, top} of parts)
-        addMesh(local[first.id], polygon(area, Math.min(foundation.bottom - base, top - (b.foundation?.thickness_ft ?? 1)), top), mat('patio_concrete'));
+      const slab = b.foundation?.materials?.slab;
+      const finish = material(() => materialSlot(slab, 'patio_concrete', materialKit, tier, materials, mat));
+      for (const {polygon: area, top} of parts) {
+        const geometry = polygon(area, Math.min(foundation.bottom - base, top - (b.foundation?.thickness_ft ?? 1)), top);
+        if (slab) offsetSurfaceUvs(geometry, finish, `${b.id}:foundation`);
+        addMesh(local[first.id], geometry, finish);
+      }
     }
     // Triangulate concave floor outlines into convex roof cutters. A floor at
     // the roof's plate also occupies the space above that roof (e.g. L2).

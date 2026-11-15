@@ -71,6 +71,24 @@ def pad_error(pad):
     return None
 
 
+def _foundation_materials_error(value):
+    from services.twin_library import normalize_material_slot
+    if 'materials' not in value:
+        return None
+    slots = value['materials']
+    if not isinstance(slots, dict) or set(slots) - {'slab'}:
+        return 'Choose a foundation slab material slot.'
+    try:
+        ref = normalize_material_slot(slots.get('slab'))
+    except ValueError as error:
+        return f'Foundation slab material: {error}'
+    if ref is None:
+        value.pop('materials')
+    else:
+        value['materials'] = {'slab': ref}
+    return None
+
+
 def foundation_error(value):
     if not isinstance(value, dict) or value.get('mode') not in ('auto', 'fixed'):
         return 'Choose Auto or Fixed for the foundation.'
@@ -78,11 +96,14 @@ def foundation_error(value):
         value.setdefault(field, default)
         if not number(value[field]) or not low <= value[field] <= high:
             return f'Choose {field} from {low} to {high} feet.'
-    return None
+    return _foundation_materials_error(value)
 
 
 def normalize_foundation(building, notes):
     value = building.setdefault('foundation', {'mode': 'fixed', 'offset_ft': 0, 'thickness_ft': 1})
+    if isinstance(value, dict) and (error := _foundation_materials_error(value)):
+        value.pop('materials', None)
+        notes.append('Reset foundation materials: ' + error)
     error = foundation_error(value)
     if error:
         building['foundation'] = {'mode': 'fixed', 'offset_ft': 0, 'thickness_ft': 1}
