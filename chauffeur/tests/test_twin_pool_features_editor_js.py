@@ -64,10 +64,10 @@ await test('rows save ledge, steps and spa properties, polygons, Library slots a
  await change(row(spa.id),'Mode','raised');assert.equal(spa.raise_in,18);
  await change(row(ledge.id),'Point 1 X (ft)',2);assert.equal(operations.at(-1).polygon[0][0],2);
  const count=operations.length;
- click(row(spa.id).querySelector('[aria-label="Change the wall material"]'));await settle();
+ click(row(spa.id).querySelector('[aria-label="Change the cladding material"]'));await settle();
  click(row(spa.id).querySelector('[data-material="red_brick_03"]'));await settle();
  assert.equal(operations.length,count+1);assert.equal(operations.at(-1).materials.wall.id,'red_brick_03');
- for(const part of ['Coping','Interior','Wall'])assert.ok(row(spa.id).querySelector(`[data-material-slot="${part}"]`));
+ for(const part of ['Coping','Interior','Waterline tile','Cladding'])assert.ok(row(spa.id).querySelector(`[data-material-slot="${part}"]`));
  click(button(row(spa.id),'Make this a room'));await settle();assert.deepEqual(operations.at(-1),{op:'make_yard_room',list:'pool',feature:spa.id});
  assert.equal(plan.site.yard_rooms[0].name,'Spa');
  assert.equal(yardRoomFeatures(plan,plan.site.yard_rooms[0]).length,1);

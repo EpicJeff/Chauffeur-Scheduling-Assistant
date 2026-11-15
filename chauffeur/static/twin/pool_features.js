@@ -99,21 +99,36 @@ function sharedSegments(spa, pool) {
   return result;
 }
 
+// The band of tile at the water's edge: from 3 in below the pool water to the coping.
+export const WATERLINE_BELOW = .25;
+export const waterlineMaterial = (slot, { mat, plain }) => slot ? mat('paving', slot)
+  : plain('waterline tile', '#2f6f96', { roughness: .25 });
+
+const touches = (a, b) => [[a, b], [b, a]].some(([p, q]) => p.some(v => inPolygon(q, ...v)
+  || q.some((c, i) => edgeDistance(v, c, q[(i + 1) % q.length]) < .1)));
+
 export function buildPoolFeatures(group, pool, height, { mat, plain, water, copingRole = 'paving' }) {
   const interior = slot => slot ? mat('paving', slot) : plain('pool tile', '#5fa8c4', { roughness: .35 });
   const tile = interior(pool.materials?.interior), depth = pool.depth ?? 5;
+  const poolWater = height - .25, ledgeTop = f => poolWater - (f.depth_in ?? 10) / 12;
+  const ledges = (pool.features || []).filter(f => f.kind === 'ledge');
   const spas = (pool.features || []).filter(f => f.kind === 'spa').map(f => f.polygon);
   const slab = (poly, top) => spas.length ? cutSurface(poly, spas, height - depth, top) : polygon(poly, height - depth, top);
   for (const f of pool.features || []) {
     const poly = f.polygon;
     if (f.kind === 'ledge') {
-      addMesh(group, slab(poly, height - .25 - (f.depth_in ?? 10) / 12), tile);
+      addMesh(group, slab(poly, ledgeTop(f)), tile);
     } else if (f.kind === 'steps') {
       const a = poly[f.entry_edge ?? 0], b = poly[((f.entry_edge ?? 0) + 1) % poly.length];
       const l = Math.hypot(b[0] - a[0], b[1] - a[1]), sign = Math.sign(area(poly));
       const n = [-sign * (b[1] - a[1]) / l, sign * (b[0] - a[0]) / l];
       const distances = poly.map(p => (p[0] - a[0]) * n[0] + (p[1] - a[1]) * n[1]);
       const low = Math.min(...distances), high = Math.max(...distances), count = f.treads ?? 3;
+      // Steps beside a tanning ledge start level with it, so the two read as one landing.
+      const beside = ledges.filter(l => touches(poly, l.polygon)).map(ledgeTop);
+      const treadTop = beside.length
+        ? i => Math.max(...beside) - (Math.max(...beside) - (height - depth)) * i / count
+        : i => height - depth * (i + 1) / (count + 1);
       // Clip triangulated pieces into bands; a concave outline can have several
       // disconnected pieces in a band. Each tread drops exactly one riser.
       for (let i = 0; i < count; i++) {
@@ -123,7 +138,7 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
         for (let part of triangles(poly)) {
           part = clipHalf(part, start, [start[0] + n[1], start[1] - n[0]]);
           part = clipHalf(part, end, [end[0] - n[1], end[1] + n[0]]);
-          if (part.length) slabs.push(slab(part, height - depth * (i + 1) / (count + 1)));
+          if (part.length) slabs.push(slab(part, treadTop(i)));
         }
         const geometry = mergeGeometries(slabs);
         if (geometry) addMesh(group, geometry, tile);
@@ -137,12 +152,21 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
       const spaTile = interior(f.materials?.interior || pool.materials?.interior);
       addMesh(group, polygon(inner, floor - .2, floor), spaTile);
       // Separate outer wall and tile liner, so wall slots never paint the basin.
-      const wall = f.materials?.wall ? mat('base', f.materials.wall) : mat('base');
+      // Under the pool water the outer wall is the pool's own finish. Above it a raised spa
+      // shows its cladding; a flush spa's wall ends at the pool edge, so it carries the
+      // pool's waterline tile instead.
+      const band = waterlineMaterial(f.materials?.waterline || pool.materials?.waterline, { mat, plain });
+      const above = raised ? (f.materials?.wall ? mat('base', f.materials.wall) : mat('base'))
+        : waterlineMaterial(pool.materials?.waterline, { mat, plain });
+      const split = Math.min(wallTop, Math.max(floor, raised ? poolWater : poolWater - WATERLINE_BELOW));
+      const bandLow = Math.min(wallTop, Math.max(floor, waterHeight - WATERLINE_BELOW));
       poly.forEach((a, i) => {
         const j = (i + 1) % poly.length, b = poly[j], c = inner[j], d = inner[i];
         const middleA = a.map((v, k) => (v + d[k]) / 2), middleB = b.map((v, k) => (v + c[k]) / 2);
-        addMesh(group, polygon([a, b, middleB, middleA], floor, wallTop), wall);
-        addMesh(group, polygon([middleA, middleB, c, d], floor, wallTop), spaTile);
+        if (split > floor) addMesh(group, polygon([a, b, middleB, middleA], floor, split), tile);
+        if (wallTop > split) addMesh(group, polygon([a, b, middleB, middleA], split, wallTop), above);
+        if (bandLow > floor) addMesh(group, polygon([middleA, middleB, c, d], floor, bandLow), spaTile);
+        if (wallTop > bandLow) addMesh(group, polygon([middleA, middleB, c, d], bandLow, wallTop), band);
       });
       const copingSlot = f.materials?.coping || pool.materials?.coping;
       addMesh(group, polygon(poly, wallTop, copingTop, [inner]), mat(copingRole, copingSlot));

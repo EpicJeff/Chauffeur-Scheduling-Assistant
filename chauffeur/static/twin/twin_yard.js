@@ -23,7 +23,7 @@ import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
 import { firePitRings, firePitOptions, roundPit, buildFirePit, fireFlameMaterial } from './fire_pits.js';
 import { porchFoundationRole } from './twin_porch_foundation.js';
 import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.js';
-import { buildPoolFeatures, cutSurface } from './pool_features.js';
+import { buildPoolFeatures, cutSurface, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';
 
 function random(seed) {
   let n = seed | 0;
@@ -134,10 +134,12 @@ function yardMaterialInputs(plan, kit) {
   }
   if (site.pool?.polygon?.length >= 3) {
     if (site.pool.materials?.interior) use('paving', site.pool.materials.interior);
+    if (site.pool.materials?.waterline) use('paving', site.pool.materials.waterline);
     if ((site.pool.coping ?? 1) > 0) use(authoredRole(site.pool.material, 'paving'), site.pool.materials?.coping);
     for (const f of site.pool.features || []) if (f.kind === 'spa') {
       use(authoredRole(site.pool.material, 'paving'), f.materials?.coping || site.pool.materials?.coping);
       if (f.materials?.interior || site.pool.materials?.interior) use('paving', f.materials?.interior || site.pool.materials?.interior);
+      if (f.materials?.waterline) use('paving', f.materials.waterline);
       use('base', f.materials?.wall);
     }
   }
@@ -390,7 +392,11 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         if (coping > 0) surfaceMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
         for (let i = 0; i < pool.length; i++) {
           const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
-          surfaceMesh(group, poolSurface([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'), seedOf(site.pool, 'walls'));
+          const slab = [a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]];
+          // Waterline tile all round: the top of each wall, from just under the water to the coping.
+          const band = Math.max(-d, -0.25 - WATERLINE_BELOW);
+          if (band > -d) surfaceMesh(group, poolSurface(slab, -d, band), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'), seedOf(site.pool, 'walls'));
+          surfaceMesh(group, poolSurface(slab, band, 0.3), waterlineMaterial(site.pool.materials?.waterline, { mat, plain }), seedOf(site.pool, 'waterline'));
         }
         const water = plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false });
         addMesh(group, poolSurface(pool, -0.25), water);

@@ -10,8 +10,8 @@ FIRE_FIELDS = {'fuel', 'body', 'top', 'height_in', 'glass', 'entity'}
 # Library material slots per feature part (user, 2026-11-13: "Why doesn't everything just have
 # a material slot"). A missing part is the feature's own default look.
 SLOTS = {'beds': ('fill',), 'hardscape': ('surface', 'edging'), 'fire_pit': ('body', 'top'),
-         'fence': ('boards', 'posts', 'rails'), 'pool': ('coping', 'interior'), 'edges': ('strip',),
-         'spa': ('coping', 'interior', 'wall')}
+         'fence': ('boards', 'posts', 'rails'), 'pool': ('coping', 'interior', 'waterline'),
+         'edges': ('strip',), 'spa': ('coping', 'interior', 'waterline', 'wall')}
 
 
 def _segments(poly):

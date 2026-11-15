@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.879 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.880 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.880 (2026-11-15, NOT device-verified): pool finishes after the first device use. Waterline tile runs all round the pool, a spa's outer wall is pool finish under the water, and steps beside a tanning ledge start level with it. (Drawing a spa, a tanning ledge and steps was used on device by the user on 2026-11-15; these are the faults that use found.)**
+
+- **Waterline tile.** The top of every pool wall, from 3 in under the water to the coping, is a band of waterline tile (a darker blue tile by default). New material slot `waterline` on the pool, and on a spa (a spa inherits the pool's). A spa's own basin has the same band round its own water.
+- **Spa outer wall.** Raised spa: the cladding (slot `wall`, shown as Cladding on the card) starts at the pool's water; below the water the wall is the pool's interior finish. Flush spa: the wall is the pool's interior finish with the pool's waterline tile above, and has no cladding; the card hides the Cladding line for a flush spa (a stored `wall` slot is kept and returns if the spa is raised again).
+- **Steps beside a tanning ledge.** Steps that touch or overlap a ledge put their first tread at the ledge's height and divide the rest of the depth evenly below it. Steps that touch no ledge keep their even risers from the deck.
+- **Code:** `static/twin/pool_features.js` (`waterlineMaterial`, `WATERLINE_BELOW`, split spa walls, `treadTop`), `static/twin/twin_yard.js` (split pool walls, yard key reads the new slot), `static/twin/editor/site_shape_shelf.js` (slot lines), `services/twin_site_shapes.py` (`SLOTS`).
+- **Tests:** `tests/test_twin_pool_features_js.py` (14; the plain-pool baseline is now pinned to v2.499.879 and allows only the wall split), `tests/test_twin_pool_features_editor_js.py`, `tests/test_twin_material_slot_js.py`. Checked in Chromium by screenshot.
 
 **v2.499.879 (2026-11-15, NOT device-verified): a material per roof. Each roof and each dormer of a building can carry its own Library material over the building's roof default, so a shingle main roof and a metal porch roof live on one building. Part of the glass, cutouts and material slots arc.**
 
@@ -555,7 +563,7 @@ Neighbours green: edit timing 4/4, twin store, house saves 19/19, model bridge 3
 
 **Tests.** `test_twin_materials` 23/23, `test_twin_material_render_js` (13 or more named checks, plus the 63-entry built-in snapshot), `test_twin_material_slot_js`, `test_twin_editor_library_js` 10/10, `test_twin_library_js` 15/15, yard material slots py and js, porch foundation js, bake runtime 17/17, energy 38/38, yard reuse js, import chunks py and js, house saves 19/19, model bridge 32/32, import maps 3/3, Tailwind 6/6. Chromium: a household material created through the API, with an uploaded base colour, assigned to the Main House siding, draws on the house after a reload, with no page errors. Live update without a reload is Task 4.
 
-**v2.499.853 (2026-11-13, NOT device-verified): pools can have a tanning ledge, steps and a spa (raised or flush).**
+**v2.499.853 (2026-11-13, drawing a spa, ledge and steps used on device 2026-11-15): pools can have a tanning ledge, steps and a spa (raised or flush).**
 
 **The ask.** The user: "the pool is just a pool - no spa, no tanning ledge, no steps. Maybe pools could have subtools for drawing out those things just like we draw yard features." Then: "As long as the spa can be raised, flush, etc."
 

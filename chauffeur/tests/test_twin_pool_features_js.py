@@ -108,12 +108,50 @@ await test('spa slots and inherited pool interior change materials without chang
  const inherited=await build(features,{materials:{interior:{id:'red_brick_03',color:'#abcdef'},coping:{id:'mocha_oak_veneer',color:'#123456'}}});
  assert.deepEqual(geometry(inherited),geometry(plain));assert.ok(!meshes(inherited).some(m=>m.material.name==='pool tile'));
 });
-await test('no features builds byte-identical geometry to main',async()=>{
+const heights=(g,material)=>tris(g,material).flat().map(p=>p[1]);
+await test('waterline tile runs all round the pool, from under the water to the coping',async()=>{
+ const g=await build(undefined);
+ near(Math.max(...heights(g,'pool tile')),-.5);near(Math.min(...heights(g,'waterline tile')),-.5);near(Math.max(...heights(g,'waterline tile')),.3);
+ for(const [x,y] of [[15,-.1],[30.1,10],[15,20.1],[-.1,10]])assert.ok(tris(g,'waterline tile').some(t=>hasPoint(t,x,y)),`band on the wall at ${x},${y}`);
+ const slotted=await build(undefined,{materials:{waterline:{id:'red_brick_03',color:'#aa3322'}}});
+ assert.deepEqual(geometry(slotted),geometry(g));assert.ok(!meshes(slotted).some(m=>m.material.name==='waterline tile'));
+ assert.ok(meshes(slotted).some(m=>m.material.color.getHexString()==='aa3322'));
+ const shallow=await build(undefined,{depth:.4});assert.ok(tris(shallow).flat(2).every(Number.isFinite));
+});
+await test('raised spa: cladding above the pool water, pool finish below it, waterline tile round its own water',async()=>{
+ const g=await build([{id:'spa',kind:'spa',polygon:rect(10,4,8,8),mode:'raised',raise_in:18,depth_in:36,spillover:false}]);
+ near(Math.min(...heights(g,'base')),-.25);near(Math.max(...heights(g,'base')),.3+18/12);
+ const outer=tris(g,'pool tile').filter(t=>hasPoint(t,10.05,8));
+ assert.ok(outer.length&&outer.every(t=>t.every(p=>p[1]<=-.25+1e-5)),'under the water the outer wall is pool tile');
+ const water=.45+18/12-2/12;assert.ok(tris(g,'waterline tile').some(t=>hasPoint(t,10.25,8)&&t.some(p=>Math.abs(p[1]-(water-.25))<1e-5)));
+ const clad=await build([{id:'spa',kind:'spa',polygon:rect(10,4,8,8),mode:'raised',raise_in:18,spillover:false,materials:{wall:{id:'red_brick_03',color:'#112233'}}}]);
+ const painted=meshes(clad).filter(m=>m.material.color.getHexString()==='112233');clad.updateMatrixWorld(true);
+ assert.ok(painted.length);for(const m of painted){const b=new THREE.Box3().setFromObject(m);assert.ok(b.min.y>=-.25-1e-5,'the cladding slot never paints under the water');}
+});
+await test('flush spa: no cladding, the outer wall is pool finish with the pool waterline tile',async()=>{
+ const g=await build([{id:'spa',kind:'spa',polygon:rect(10,4,8,8),mode:'flush',depth_in:36,materials:{wall:{id:'red_brick_03',color:'#112233'}}}]);
+ assert.ok(!meshes(g).some(m=>m.material.name==='base'||m.material.color.getHexString()==='112233'));
+ const outer=tris(g).filter(t=>hasPoint(t,10.05,8));
+ assert.ok(outer.some(t=>t.every(p=>p[1]<=-.5+1e-5)));
+ assert.ok(tris(g,'waterline tile').some(t=>hasPoint(t,10.05,8)&&t.some(p=>Math.abs(p[1]-.3)<1e-5)));
+});
+await test('steps beside a tanning ledge start level with it; steps elsewhere keep their own risers',async()=>{
+ const ledge={id:'l',kind:'ledge',polygon:rect(1,1,8,6),depth_in:10},top=-.25-10/12;
+ const g=await build([ledge,{id:'s',kind:'steps',polygon:rect(9,1,4,6),entry_edge:3,treads:3}]);
+ assert.ok(topAt(g,5,4,top,'pool tile'));
+ for(let i=0;i<3;i++)assert.ok([9.6,11,12.4].some(x=>topAt(g,x,4,top-(top+5)*i/3,'pool tile')),`tread ${i}`);
+ assert.ok(topAt(g,9.6,4,top,'pool tile'),'the first tread meets the ledge');
+ const apart=await build([ledge,{id:'s',kind:'steps',polygon:rect(20,10,4,6),entry_edge:3,treads:3}]);
+ for(let i=0;i<3;i++)assert.ok([20.6,22,23.4].some(x=>topAt(apart,x,13,-5*(i+1)/4,'pool tile')),`free tread ${i}`);
+});
+await test('no features: all but the waterline band equals the pool before it',async()=>{
  for(const extra of [{},{depth:8,coping:2,elevation:3},{coping:0,materials:{interior:{id:'red_brick_03'}}}]){
   const p=plan(undefined);delete p.site.pool.features;Object.assign(p.site.pool,extra);
   const old=(await baselineBuild(p,input.kit,'low')).group,newGroup=(await buildYard(p,input.kit,'low')).group;
   const raw=g=>meshes(g).map(o=>({positions:Array.from(o.geometry.attributes.position.array),normal:Array.from(o.geometry.attributes.normal.array),uv:Array.from(o.geometry.attributes.uv.array),index:o.geometry.index&&Array.from(o.geometry.index.array),matrix:o.matrix.toArray()}));
-  assert.deepEqual(raw(newGroup),raw(old));
+  // The wall now splits at the band, 0.5 ft under the pool's datum; every other level face is unchanged.
+  const level=g=>tris(g).filter(t=>horizontal(t,t[0][1])&&Math.abs(t[0][1]-((extra.elevation||0)-.5))>1e-4).map(t=>JSON.stringify(t.map(p=>p.map(v=>Math.round(v*1e4)/1e4+0)))).sort();
+  assert.deepEqual(level(newGroup),level(old));
  }
 });
 finish();
@@ -122,7 +160,7 @@ finish();
 if __name__ == '__main__':
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
     kit['manifest'] = {}
-    baseline = subprocess.check_output(['git', 'show', 'main:chauffeur/static/twin/twin_yard.js'], cwd=ROOT, encoding='utf-8')
+    baseline = subprocess.check_output(['git', 'show', '6b054474:chauffeur/static/twin/twin_yard.js'], cwd=ROOT, encoding='utf-8')
     code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'kit': kit, 'baseline': baseline,
         'manifest': json.loads((ROOT / 'twin_library/manifest.json').read_text(encoding='utf-8'))})
     print(output)
