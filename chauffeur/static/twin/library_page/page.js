@@ -294,8 +294,13 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
       if (!stopped && chosen.params.alpha_mode === 'opaque') {
         // glTF OPAQUE discards texture alpha. Keep this import-only exception
         // here: choosing a mode by hand must retain A1's derived-map ownership.
-        if (ctx.draft.opacity_derived) accept(ctx, await mutate(ctx, '/maps/opacity', 'DELETE'), true);
-        if (ctx.draft.params?.alpha_mode !== 'opaque') accept(ctx, await mutate(ctx, '', 'PATCH', { params: { alpha_mode: 'opaque' } }), true);
+        try {
+          if (ctx.draft.opacity_derived) accept(ctx, await mutate(ctx, '/maps/opacity', 'DELETE'), true);
+          if (ctx.draft.params?.alpha_mode !== 'opaque') accept(ctx, await mutate(ctx, '', 'PATCH', { params: { alpha_mode: 'opaque' } }), true);
+        } catch {
+          // The shared alert replaces its message; keep this with the import problems.
+          chosen.problems.push("The texture's transparency could not be turned off and the material is still set to Cutout.");
+        }
       }
       delete ctx.uploadStatus;
       if (!stopped) status.textContent = current ? `glTF import: ${uploaded} maps uploaded, ${failed} failed`

@@ -142,6 +142,17 @@ await test('glb_maps_and_factors', async () => {
   c.stop();
 });
 
+await test('fully_transparent_blend_keeps_opacity_and_explains_how_to_see_it', async () => {
+  for (const [mode, alpha] of [['BLEND', 0], ['BLEND', .4], ['BLEND', 1], ['OPAQUE', 0], ['MASK', 0]]) {
+    const model = new File([JSON.stringify({asset: {version: '2.0'}, materials: [{alphaMode: mode,
+      pbrMetallicRoughness: {baseColorFactor: [1, 1, 1, alpha]}}]})], 'transparent.gltf');
+    const [material] = await readGltfMaterials([model]);
+    if (mode === 'BLEND') assert.equal(material.params.opacity, alpha);
+    assert.deepEqual(material.problems, mode === 'BLEND' && alpha === 0
+      ? ['This material is fully transparent in the file; raise Opacity to see it'] : []);
+  }
+});
+
 await test('multiple_materials_ask_which', async () => {
   const found = await readGltfMaterials([glbFile(twoGlb(), 'woods.glb')]);
   assert.deepEqual(found.map(m => m.name), ['Oak', 'Walnut']);

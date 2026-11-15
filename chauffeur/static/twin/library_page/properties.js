@@ -28,6 +28,8 @@ export function mapUrl(entry, slot) {
 export function mountProperties(host, entry, { change, replaceMap, clearMap, uploadTextures, signal }) {
   host.replaceChildren();
   const readonly = entry.source === 'builtin', controls = [];
+  const alphaMode = () => alphaModeOf(entry, readonly
+    ? Object.values(window.twinKit?.materials || {}).find(ref => ref.asset === entry.id) : undefined);
   host.append(node('h2', 'Properties'));
   if (readonly) host.append(node('p', 'Built-in material. Duplicate to edit.', 'place-muted'));
   else {
@@ -66,7 +68,9 @@ export function mountProperties(host, entry, { change, replaceMap, clearMap, upl
     if (slot === 'opacity') {
       const note = node('p', null, 'place-muted');
       controls.push(() => { note.textContent = entry.opacity_derived ? "From the base colour's transparency" : ''; note.hidden = !entry.opacity_derived; });
-      row.append(note);
+      const unused = node('p', 'Not used while the mode is Opaque', 'place-muted');
+      controls.push(() => { unused.hidden = !mapUrl(entry, slot) || alphaMode() !== 'opaque'; });
+      row.append(note, unused);
     }
     if (slot === 'normal' && !readonly) {
       const label = node('label', 'Normal convention'), select = node('select');
@@ -84,12 +88,12 @@ export function mountProperties(host, entry, { change, replaceMap, clearMap, upl
   const param = (key, value) => change({ params: key.startsWith('tile_ft.')
     ? { tile_ft: entry.params.tile_ft.map((v, i) => i === Number(key.at(-1)) ? value : v) } : { [key]: value } });
   const modeRow = node('label', 'Alpha mode');
-  if (readonly) modeRow.append(node('output', alphaModes.find(([mode]) => mode === alphaModeOf(entry))[1]));
+  if (readonly) modeRow.append(node('output', alphaModes.find(([mode]) => mode === alphaMode())[1]));
   else {
     const select = node('select'); select.dataset.param = 'alpha_mode'; select.setAttribute('aria-label', 'Alpha mode');
     for (const [value, title] of alphaModes) { const option = node('option', title); option.value = value; select.append(option); }
     select.addEventListener('change', () => param('alpha_mode', select.value), { signal });
-    controls.push(() => { select.value = alphaModeOf(entry); }); modeRow.append(select);
+    controls.push(() => { select.value = alphaMode(); }); modeRow.append(select);
   }
   host.append(modeRow);
   for (const [key, title, min, max, step] of [
@@ -100,8 +104,9 @@ export function mountProperties(host, entry, { change, replaceMap, clearMap, upl
     ['rotation_deg', 'Rotation (°)', 0, 359, 1],
   ]) {
     const row = node('div', null, 'library-param'), label = node('span', title); row.append(label);
-    if (key === 'opacity' || key === 'alpha_cutoff') controls.push(() => {
-      row.hidden = alphaModeOf(entry) !== (key === 'opacity' ? 'blend' : 'cutout');
+    const isAlpha = key === 'opacity' || key === 'alpha_cutoff';
+    if (isAlpha) controls.push(() => {
+      row.hidden = alphaMode() !== (key === 'opacity' ? 'blend' : 'cutout');
     });
     if (readonly) { row.append(node('output', String(valueAt(key) ?? 'Auto'))); host.append(row); continue; }
     let auto;
@@ -116,13 +121,23 @@ export function mountProperties(host, entry, { change, replaceMap, clearMap, upl
       input.dataset.param = key; input.setAttribute('aria-label', `${title}${type === 'range' ? ' slider' : ''}`);
       input.addEventListener('input', () => {
         const value = Number(input.value);
+        if (input.value === '' || !Number.isFinite(value) || (isAlpha && input.value.endsWith('.'))) return;
+        if (value >= min && value <= max) param(key, value);
+      }, { signal });
+      if (isAlpha) input.addEventListener('change', () => {
+        const value = Number(input.value);
         if (input.value === '' || !Number.isFinite(value)) return;
-        if (key === 'opacity' || key === 'alpha_cutoff') param(key, Math.min(max, Math.max(min, value)));
-        else if (value >= min && value <= max) param(key, value);
-      }, { signal }); pair.append(input); inputs.push(input);
+        const clamped = Math.min(max, Math.max(min, value));
+        input.value = String(clamped); param(key, clamped);
+      }, { signal });
+      pair.append(input); inputs.push(input);
     }
     controls.push(() => { const value = valueAt(key); if (auto) auto.checked = value == null;
-      pair.hidden = value == null; inputs.forEach(input => { input.value = String(value ?? 1); }); });
+      pair.hidden = value == null; inputs.forEach(input => {
+        // A draft or save acknowledgement must not rewrite a number mid-typing.
+        if (isAlpha && input.type === 'number' && document.activeElement === input) return;
+        input.value = String(value ?? 1);
+      }); });
     row.append(pair); host.append(row);
   }
   for (const [key, title, type] of [['tint', 'Tint', 'color'], ['random_offset', 'Random UV offset per surface', 'checkbox']]) {

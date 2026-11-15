@@ -49,13 +49,13 @@ await test('mode_and_slider_visibility_sync_without_remount', async () => {
   c.mounted.sync(record('cutout')); assert.ok(shown(field(c.host, 'alpha_cutoff')));
   assert.equal(shown(field(c.host, 'opacity')), false);
 });
-await test('sliders_send_clamped_numbers', async () => {
+await test('sliders_send_numbers_and_number_changes_clamp', async () => {
   for (const [mode, key, min] of [['blend', 'opacity', 0], ['cutout', 'alpha_cutoff', .01]]) {
     const c = properties(record(mode));
     await edit(field(c.host, key), 'input', '0.35');
     assert.deepEqual(c.changes.pop(), {params: {[key]: .35}});
-    for (const [raw, expected] of [['-2', min], ['3', 1]]) {
-      await edit(field(c.host, key, 'number'), 'input', raw);
+    for (const [raw, expected] of [['-1', min], ['5', 1]]) {
+      await edit(field(c.host, key, 'number'), 'change', raw);
       assert.deepEqual(c.changes.pop(), {params: {[key]: expected}});
     }
     for (const raw of ['', 'no number']) await edit(field(c.host, key, 'number'), 'input', raw);
@@ -76,6 +76,20 @@ await test('derived_opacity_is_explained_and_manual_map_is_not', async () => {
   assert.ok(row.querySelector('img').src.endsWith('maps/mask.png'));
   c.mounted.sync({...entry, opacity_derived: false});
   assert.doesNotMatch(row.textContent, /From the base colour.s transparency/);
+});
+await test('opaque_opacity_map_note_tracks_mode_and_map_presence', async () => {
+  const entry = record(); entry.maps.opacity = 'maps/mask.png';
+  const c = properties(entry), row = c.host.querySelector('[data-slot="opacity"]');
+  const note = () => row.querySelectorAll('p').find(p => p.textContent === 'Not used while the mode is Opaque');
+  assert.ok(note()); assert.equal(note().className, c.host.querySelector('[data-slot="height"] p').className);
+  assert.ok(shown(note()));
+  for (const mode of ['cutout', 'blend']) {
+    c.mounted.sync({...entry, params: {...entry.params, alpha_mode: mode}});
+    assert.ok(!note() || !shown(note()));
+  }
+  c.mounted.sync(entry); assert.ok(shown(note()));
+  c.mounted.sync({...entry, maps: {}}); assert.ok(!note() || !shown(note()));
+  c.mounted.sync({...entry, maps: {}, previewMaps: {opacity: 'blob:mask'}}); assert.ok(shown(note()));
 });
 await test('read_only_builtin_shows_no_controls', async () => {
   const c = properties(record('blend', 'builtin'));
@@ -112,6 +126,19 @@ const render = Renderer.prototype.render;
 Renderer.prototype.render = function(scene, camera) {
   scene.traverse(n => { if (n.userData.librarySample) drawn = n; }); return render.call(this, scene, camera);
 };
+await test('read_only_lattice_mode_matches_the_kit_preview', async () => {
+  const previous = window.twinKit;
+  window.twinKit = {materials: {screen: {asset: 'material-alpha', pattern: 'lattice', color: '#ffffff'}}, manifest: {}};
+  try {
+    const c = properties(record('opaque', 'builtin'));
+    const row = c.host.querySelectorAll('label').find(label => label.textContent.startsWith('Alpha mode'));
+    assert.equal(row.querySelector('output').textContent, 'Cutout');
+    assert.equal(c.host.querySelectorAll('input,select,button').length, 0);
+    const p = createPreview(document.createElement('canvas'));
+    try { p.setMaterial(record('opaque', 'builtin')); tick(); assert.equal(drawn.material.userData.alphaMode, 'cutout'); }
+    finally { p.dispose(); }
+  } finally { window.twinKit = previous; }
+});
 await test('preview_material_follows_mode', async () => {
   const p = createPreview(document.createElement('canvas')), entry = record('blend');
   p.setMaterial(entry); tick(); const first = drawn.material;
@@ -132,9 +159,9 @@ await test('local_opacity_map_attaches_and_tiles_in_preview', async () => {
   p.setMaterial({...entry, previewMaps: {opacity: 'blob:mask'}}, {...entry.params, tile_ft: [8, 2]}); tick();
   assert.deepEqual(drawn.material.alphaMap.repeat.toArray(), [1/8, 1/2]); p.dispose();
 });
-async function pageSetup() {
-  const host = document.createElement('main'), calls = [], records = new Map(); document.body.append(host);
-  window.showGlobalAlert = text => { throw Error(text); }; window.promptConfirm = async () => true;
+async function pageSetup(resetFailure) {
+  const host = document.createElement('main'), calls = [], records = new Map(), alerts = []; document.body.append(host);
+  window.showGlobalAlert = text => { if (!resetFailure) throw Error(text); alerts.push(text); }; window.promptConfirm = async () => true;
   const api = async (path, method = 'GET', body) => {
     calls.push({path, method, body});
     if (path === 'materials') {
@@ -142,6 +169,7 @@ async function pageSetup() {
       const row = {...record(body.params?.alpha_mode), id: 'material-import', source: 'gltf'};
       row.params = {...row.params, ...body.params}; records.set(row.id, row); return clone(row);
     }
+    if (method === resetFailure) throw Error('Transparency reset rejected');
     const [, id,, slot] = path.split('/'), row = records.get(id);
     if (method === 'POST' && slot) {
       row.maps[slot] = 'maps/base.png';
@@ -155,13 +183,13 @@ async function pageSetup() {
     return clone(row);
   };
   location.search = ''; const page = mountLibraryPage(host, {api}); await page.ready;
-  return {host, calls, records, page};
+  return {host, calls, records, alerts, page};
 }
-function texturedGltf(mode) {
+function texturedGltf(mode, baseColorTexture = {index: 0}) {
   // Image bytes pass through without browser decoding, as in the real importer.
   return new File([JSON.stringify({asset: {version: '2.0'}, images: [{uri: 'leaf.png'}], textures: [{source: 0}],
     materials: [{alphaMode: mode, alphaCutoff: .3, pbrMetallicRoughness: {
-      baseColorTexture: {index: 0}, baseColorFactor: [1,1,1,.5]}}]})], 'leaf.gltf');
+      baseColorTexture, baseColorFactor: [1,1,1,.5]}}]})], 'leaf.gltf');
 }
 await test('page_import_restores_opaque_after_rgba_upload_and_removes_derived_mask', async () => {
   const c = await pageSetup(), input = c.host.querySelector('[data-gltf-files]');
@@ -173,6 +201,39 @@ await test('page_import_restores_opaque_after_rgba_upload_and_removes_derived_ma
     ['POST', 'materials'], ['POST', 'materials/material-import/maps/base_color'],
     ['DELETE', 'materials/material-import/maps/opacity'], ['PATCH', 'materials/material-import']]);
   assert.equal(writes.at(-1).body.params.alpha_mode, 'opaque'); c.page.stop(); c.host.remove();
+});
+for (const failure of ['DELETE', 'PATCH']) await test('page_import_keeps_counts_and_problems_when_reset_fails_' + failure, async () => {
+  const c = await pageSetup(failure), input = c.host.querySelector('[data-gltf-files]');
+  try {
+    input.files = [texturedGltf('OPAQUE', {index: 0, texCoord: 1}),
+      new File([new Uint8Array([137,80,78,71,13,10,26,10])], 'leaf.png')];
+    await assert.doesNotReject(() => fire(input, 'change'));
+    assert.equal(c.host.querySelector('[role="status"]').textContent, 'glTF import: 1 maps uploaded, 0 failed');
+    // showGlobalAlert replaces its current message, so both reports must share one alert.
+    assert.equal(c.alerts.length, 1);
+    assert.ok(c.alerts[0].includes("The texture's transparency could not be turned off and the material is still set to Cutout."));
+    assert.match(c.alerts[0], /Not everything in the glTF carried over:[\s\S]*second UV set/);
+    assert.equal(c.records.get('material-import').params.alpha_mode, 'cutout');
+    assert.equal(modeChoice(c.host).value, 'cutout'); assert.equal(input.value, '');
+  } finally { c.page.stop(); c.host.remove(); }
+});
+await test('alpha_number_typing_survives_sync_and_saves_only_valid_values', async () => {
+  for (const [mode, key, typed] of [['MASK', 'alpha_cutoff', '0.3'], ['BLEND', 'opacity', '0.4']]) {
+    const c = await pageSetup(), picker = c.host.querySelector('[data-gltf-files]');
+    try {
+      picker.files = [gltf(mode)]; await fire(picker, 'change');
+      const input = field(c.host, key, 'number'); input.focus();
+      for (const raw of ['', '0', '0.', typed]) {
+        await edit(input, 'input', raw); assert.equal(input.value, raw, 'typing is preserved');
+        await pause(340); assert.equal(input.value, raw, 'server sync preserves focused text');
+      }
+      assert.equal(c.records.get('material-import').params[key], Number(typed));
+      const values = c.calls.filter(call => call.method === 'PATCH').map(call => call.body.params[key]);
+      assert.ok(values.includes(Number(typed))); assert.ok(values.every(value => value >= (key === 'alpha_cutoff' ? .01 : 0)));
+      input.blur(); await edit(input, 'change', '5'); assert.equal(input.value, '1');
+      await edit(input, 'change', '-1'); assert.equal(input.value, key === 'alpha_cutoff' ? '0.01' : '0');
+    } finally { c.page.stop(); c.host.remove(); }
+  }
 });
 await test('page_mode_change_updates_slider_and_saves_then_import_preserves_mask_and_blend', async () => {
   for (const [mode, expected] of [['MASK', 'cutout'], ['BLEND', 'blend']]) {

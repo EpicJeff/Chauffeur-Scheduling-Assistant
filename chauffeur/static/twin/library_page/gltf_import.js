@@ -149,6 +149,8 @@ export async function readGltfMaterials(files, { maxModelBytes = MAX_MODEL_BYTES
     if (rm !== undefined && rm === ao) await take(['orm'], rm);
     else { await take(['roughness', 'metalness'], rm); await take(['ao'], ao); }
     const pbr = def.pbrMetallicRoughness || {};
+    if (def.alphaMode === 'BLEND' && pbr.baseColorFactor?.[3] === 0)
+      problems.push('This material is fully transparent in the file; raise Opacity to see it');
     // The Library has one UV set and its own tiling: say what did not carry over.
     for (const [info, slots] of [[pbr.baseColorTexture, ['base_color']], [def.normalTexture, ['normal']],
       [pbr.metallicRoughnessTexture, maps.orm ? ['orm'] : ['roughness', 'metalness']], [def.occlusionTexture, maps.orm ? [] : ['ao']]]) {

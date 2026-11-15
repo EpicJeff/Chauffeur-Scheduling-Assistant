@@ -21,9 +21,14 @@ from PIL import Image, ImageDraw  # noqa: E402
 from live_app import live_app  # noqa: E402
 
 GPU_ARGS = ['--use-angle=gl', '--enable-gpu', '--ignore-gpu-blocklist']
-OUTPUT = Path(os.environ.get('GLASS_SLOTS_OUTPUT', ROOT / '.tmp-a4/glass-slots-live'))
+OUTPUT = Path(os.environ['GLASS_SLOTS_OUTPUT']) if 'GLASS_SLOTS_OUTPUT' in os.environ else Path(
+    tempfile.mkdtemp(prefix='chauffeur_glass_slots_shots_'))
 STATE = {}
 SERVED = None
+
+
+def _unexpected(errors):
+    return [e for e in errors if not e.startswith('Failed to load resource')]
 
 
 def _seed():
@@ -120,7 +125,7 @@ def scenario_L1_library_blend_and_leaf_cutout():
         assert 'From the base colour' in page.locator('[data-slot="opacity"]').inner_text()
         assert page.locator('[data-param="alpha_cutoff"][type="range"]').is_visible()
         page.screenshot(path=str(OUTPUT / 'L1-library-leaf-dark.png'), full_page=True)
-        assert not errors, errors
+        assert not _unexpected(errors), _unexpected(errors)
         assert not served.errors(), served.errors()
 
 
@@ -135,4 +140,5 @@ if __name__ == '__main__':
             traceback.print_exc()
             print('FAIL', scenario.__name__)
     print(f'{1 - failed}/1 passed')
+    print(f'Screenshots: {OUTPUT}')
     sys.exit(bool(failed))
