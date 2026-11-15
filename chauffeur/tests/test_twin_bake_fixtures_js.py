@@ -83,7 +83,7 @@ async function renderProbe(light, blockers=[], point=V(0,0,0), normal=V(0,1,0), 
         return ray.intersectObjects(blockers,false).length?0:1;
       };
       const e=F.sampleValue([sample],point,normal,visible,0,1);
-      values[0]+=light.kind===3?e.irradiance/(light.scale||1):e.value;values[1]+=e.irradiance/(16*u.fillStrength.value);
+      values[0]+=light.kind===3?e.irradiance/u.scale.value:e.value;values[1]+=e.irradiance/(16*u.fillStrength.value);
     },
     readRenderTargetPixels(t,x,y,w,h,raw){values.forEach((v,i)=>raw[i]=THREE.DataUtils.toHalfFloat(v));}};
   const bytes=await P.renderPage({plan,scene,tier},renderer,[chart],1,light,{}, {room:{charts:[chart]}});
@@ -139,12 +139,17 @@ function physicalRoom(segments=1) {
 }
 check('group_reach_cached_and_within_legacy_timing',()=>{
   const run=(name,rows,legacyCount)=>{
-    const {p,options,atlas}=physicalRoom(60);
+    const {p,options,atlas}=physicalRoom(150);
     const input=RT.bakeLights({markers:[],light_fixtures:rows},null,p);
     const legacy=Array.from({length:legacyCount},(_,i)=>({device:'old'+i,absolute:true,at:[i%8-4,Math.floor(i/8)-1,7.9],range:18}));
-    const start=performance.now();B.bakeLayout(atlas,options,legacy);const old=performance.now()-start;
+    const legacyScene=physicalRoom(150);
+    const start=performance.now();B.bakeLayout(legacyScene.atlas,legacyScene.options,legacy);const old=performance.now()-start;
     const firstAt=performance.now(),first=B.bakeLayout(atlas,options,input),firstMs=performance.now()-firstAt;
+    const reader=B.bakeLayout(atlas,options,input,first.ownership,
+      Object.fromEntries(input.map(l=>[l.device,{scale:17}])));
     const secondAt=performance.now(),second=B.bakeLayout(atlas,options,input),secondMs=performance.now()-secondAt;
+    assert.deepEqual(reader.entries, Object.fromEntries(Object.entries(first.entries).map(([id,e])=>
+      [id,input.find(l=>l.device===id).kind===3?{...e,scale:17}:e])));
     assert.deepEqual(second.entries,first.entries);
     assert.ok(secondMs<50,`${name} cached ${secondMs} ms`);
     assert.ok(firstMs<old*3,`${name} first ${firstMs} ms vs legacy ${old} ms`);
@@ -155,23 +160,101 @@ check('group_reach_cached_and_within_legacy_timing',()=>{
   run('line + panel + 3 points',{'light.line':[fixture('l','line',{path:[[-4,0,7.9],[5,0,7.9]],width_in:.5,facing:'down'})],
     'light.panel':[panel()], 'light.cluster':Array.from({length:3},(_,i)=>fixture('p'+i,'point',{at:[i-1,0,7.9]}))},5);
 });
-check('production_sum_scale_uses_floor_codes_and_is_saved_and_keyed',()=>{
-  const {p,options,atlas}=physicalRoom(4);
-  const input=RT.bakeLights(fixtureLayout([[-3,-3],[3,-3],[-3,3],[3,3]].map(([x,y],i)=>
-    fixture('s'+i,'spot',{at:[x,y,7.9],aim:[x,y,0],cone_deg:60,softness:.3}))),null,p);
-  const packed=B.bakeLayout(atlas,options,input),l=packed.lights[0],samples=F.bakeSamples(p,l);
-  let brightest=0,peak=0;
-  for(let x=-9;x<=9;x+=.25)for(let z=-9;z<=9;z+=.25) {
-    const value=F.sampleValue(samples,V(x*FT,0,z*FT),V(0,1,0),()=>1,3,l.scale);
-    brightest=Math.max(brightest,value.value);peak=Math.max(peak,value.irradiance);
+// Raster the atlas's real receiver triangles in a renderer double. The production
+// pass submits every emitter uniform and reads half floats; this double supplies
+// unoccluded pixels at those UVs. No tessellation-dependent CPU scale estimate.
+async function renderedSumScene(rows) {
+  const {p,root,options,atlas}=physicalRoom(1),size=options.room.page;
+  const input=RT.bakeLights(fixtureLayout(rows),null,p),packed=B.bakeLayout(atlas,options,input),light=packed.lights[0];
+  assert.equal(light.scale,undefined,'there is no scale before a first bake');
+  const pages=[];
+  const charts=packed.banks.flatMap((bank,i)=>bank.charts.map(c=>({...c,page:c.page+packed.offsets[i]})));
+  for(const page of [...new Set(charts.map(c=>c.page))]) {
+    const mine=charts.filter(c=>c.page===page),texels=new Map(),values=new Float64Array(size*size*4);
+    for(const c of mine) {
+      const g=c.mesh.geometry,uv=g.attributes.uv3,pos=g.attributes.position,norm=g.attributes.normal;
+      const base=atlas.room.charts.find(b=>b.mesh===c.mesh&&b.faces===c.faces);
+      for(const f of c.faces) {
+        const ids=[0,1,2].map(k=>f*3+k),vs=ids.map(i=>new THREE.Vector2().fromBufferAttribute(uv,i).multiplyScalar(size)
+          .add(new THREE.Vector2(c.rect.x-base.rect.x,c.rect.y-base.rect.y)));
+        const ws=ids.map(i=>new THREE.Vector3().fromBufferAttribute(pos,i).applyMatrix4(c.mesh.matrixWorld));
+        const normal=new THREE.Vector3().fromBufferAttribute(norm,ids[0]).transformDirection(c.mesh.matrixWorld);
+        const denom=(vs[1].y-vs[2].y)*(vs[0].x-vs[2].x)+(vs[2].x-vs[1].x)*(vs[0].y-vs[2].y);
+        for(let y=c.rect.y;y<c.rect.y+c.rect.h;y++)for(let x=c.rect.x;x<c.rect.x+c.rect.w;x++) {
+          const a=((vs[1].y-vs[2].y)*(x+.5-vs[2].x)+(vs[2].x-vs[1].x)*(y+.5-vs[2].y))/denom;
+          const b=((vs[2].y-vs[0].y)*(x+.5-vs[2].x)+(vs[0].x-vs[2].x)*(y+.5-vs[2].y))/denom;
+          if(a< -1e-7||b< -1e-7||a+b>1+1e-7)continue;
+          const at=ws[0].clone().multiplyScalar(a).addScaledVector(ws[1],b).addScaledVector(ws[2],1-a-b);
+          texels.set((y*size+x)*4,{at,normal,floor:c.mesh.material.name==='floor'});
+        }
+      }
+    }
+    let target=null,color=new THREE.Color(),alpha=0;
+    const renderer={toneMapping:THREE.NoToneMapping,autoClear:true,xr:{enabled:false},
+      getRenderTarget:()=>target,setRenderTarget:t=>{target=t;},getClearColor:c=>c.copy(color),getClearAlpha:()=>alpha,
+      setClearColor:(c,a)=>{color.set(c);alpha=a;},clear:()=>{},
+      render(scene,camera){
+        if(camera.isPerspectiveCamera)return;
+        const u=scene.overrideMaterial.uniforms;
+        assert.equal(u.scale.value,1,'half-float targets contain raw irradiance');
+        const sample={source:u.source.value,origin:u.origin.value,range:u.reach.value,weight:u.weight.value,cd:u.cd.value,
+          normal:u.emitterNormal.value,axis:u.axis.value,outer:u.outer.value,inner:u.inner.value,
+          visibilityWeight:u.visibilityWeight.value};
+        for(const [i,t]of texels){
+          const e=F.sampleValue([sample],t.at,t.normal,()=>1,0,1);
+          values[i]+=e.irradiance;values[i+1]+=e.irradiance/(16*u.fillStrength.value);values[i+3]=1;
+        }
+      },readRenderTargetPixels(t,x,y,w,h,raw){for(let i=0;i<raw.length;i++)raw[i]=THREE.DataUtils.toHalfFloat(values[i]);}};
+    const result=await P.renderPage({plan:p,scene:root},renderer,mine,size,light,options,atlas,{deferBounce:true,deferSumEncoding:true});
+    pages.push({...result,charts:mine,texels});
   }
-  assert.ok(Math.round(brightest*255)>=96,`only ${Math.round(brightest*255)} codes, scale ${l.scale}`);
-  assert.ok(peak<=l.scale*1.03,`scale ${l.scale} clips the real floor peak ${peak}`);
-  assert.equal(packed.entries[l.device].scale,l.scale);
-  const reader=B.bakeLayout(atlas,options,[{...input[0],publishedScale:17}]);
-  assert.equal(reader.lights[0].scale,17,'reader uses manifest scale rather than deriving it from geometry');
-  assert.notEqual(B.lightKey(atlas,l,packed.slots[l.device],{}),B.lightKey(atlas,{...l,scale:l.scale*2},packed.slots[l.device],{}));
-  console.log(`       C3 floor uses ${Math.round(brightest*255)} codes, scale ${l.scale.toFixed(4)}`);
+  const scale=await P.encodeSumPages(pages,size);
+  for(const p of pages)P.filterCharts(p.bytes,p.charts,size);
+  const codes=pages.flatMap(p=>[...p.texels].filter(([i,t])=>t.floor&&p.bytes[i]>0).map(([i])=>p.bytes[i]));
+  const range=[Math.min(...codes),Math.max(...codes)];
+  assert.ok(range[1]>=96,`floor only reaches ${range[1]} codes at scale ${scale}`);
+  assert.ok(range[1]<255,'headroom avoids clipping the floor');
+  close(Math.log2(scale)*16,Math.round(Math.log2(scale)*16),1e-10);
+  const reader=B.bakeLayout(atlas,options,input,packed.ownership,{[light.device]:{scale}});
+  assert.equal(reader.entries[light.device].scale,scale);
+  assert.equal(B.lightKey(atlas,{...light,scale},packed.slots[light.device],{}),
+    B.lightKey(atlas,{...light,scale:scale*2},packed.slots[light.device],{}),'output scale is not an input key');
+  return {range,scale};
+}
+check('rendered_sum_scale_coarse_cones_and_four_ceiling_downlights',async()=>{
+  const spots=[[-3,-3],[3,-3],[-3,3],[3,3]].map(([x,y],i)=>
+    fixture('s'+i,'spot',{at:[x,y,7.9],aim:[x,y,0],cone_deg:60,softness:.3}));
+  const points=[[-3,-3],[3,-3],[-3,3],[3,3]].map(([x,y],i)=>fixture('p'+i,'point',{at:[x,y,7.9]}));
+  for(const [name,rows,expected]of [['coarse cones',spots,[1,224]],['four ceiling downlights',points,[27,96]]]) {
+    const {range,scale}=await renderedSumScene(rows);
+    assert.deepEqual(range,expected,'rendered half-float percentile uses the expected floor codes');
+    console.log(`       C3 ${name}: floor codes ${range.join('..')}, scale ${scale}`);
+  }
+});
+check('sum_percentile_is_entity_wide_quantised_and_ignores_padding',async()=>{
+  const make=(values)=>({charts:[{rect:{x:0,y:0,w:values.length,h:1}}],bytes:new Uint8Array(values.length*4),irradiance:new Uint16Array(values.length)});
+  const a=make(Array(200).fill(4)),b=make(Array(200).fill(16));
+  for(const [page,value]of [[a,4],[b,16]])for(let i=0;i<page.bytes.length;i+=4){page.bytes[i+3]=255;page.irradiance[i/4]=THREE.DataUtils.toHalfFloat(value);}
+  b.irradiance[0]=THREE.DataUtils.toHalfFloat(1000); // one hot texel is outside the 99.5th percentile
+  a.bytes[3]=0;a.irradiance[0]=THREE.DataUtils.toHalfFloat(60000); // padding is never a receiver
+  const scale=await P.encodeSumPages([a,b],200);
+  assert.equal(scale,2**(Math.ceil(Math.log2(16*1.25)*16)/16));
+  assert.equal(b.bytes[0],255,'intentional outlier clipping');
+  assert.ok(a.bytes[4]<b.bytes[4],'all pages use one entity scale');
+  // A whole 2048 page must not hide a main-thread scale search stall.
+  const page=make(Array(2048).fill(1));page.charts[0].rect.h=2048;
+  page.bytes=new Uint8Array(2048*2048*4);page.irradiance=new Uint16Array(page.bytes.length/4);
+  for(let i=0;i<page.bytes.length;i+=4){page.bytes[i+3]=255;page.irradiance[i/4]=THREE.DataUtils.toHalfFloat(4);}
+  const start=performance.now();let last=start,longest=0,yields=0;
+  await P.encodeSumPages([page],2048,async()=>{
+    longest=Math.max(longest,performance.now()-last);yields++;
+    await new Promise(resolve=>setImmediate(resolve));last=performance.now();
+  });
+  longest=Math.max(longest,performance.now()-last);
+  const ms=performance.now()-start;
+  assert.ok(yields>1,'large pages yield while selecting and encoding the scale');
+  assert.ok(longest<500,`scale blocked the main thread for ${longest} ms`);
+  console.log(`       sum 2048 page scale/encode ${ms.toFixed(2)} ms total, ${longest.toFixed(2)} ms longest block (${yields} yields)`);
 });
 check('mixed_point_and_legacy_ranking_share_photometric_units',()=>{
   const {p,options,atlas}=physicalRoom();
@@ -234,10 +317,10 @@ check('multi_fixture_entity_stores_scaled_irradiance_and_restores_it',async()=>{
   const one=F.sampleValue(samples.filter(s=>s.emitter===0),at,n,()=>1,3,100).irradiance;
   const two=F.sampleValue(samples.filter(s=>s.emitter===1),at,n,()=>1,3,100).irradiance;
   close(two/one,3,.02);
-  const {atlas,options}=physicalRoom(4),reached=B.bakeLayout(atlas,options,[l]).lights[0],scale=reached.scale;
+  const rendered=await renderProbe(l),scale=l.scale;
   const stored=F.sampleValue(samples,at,n,()=>1,3,scale);
   const byte=Math.round(stored.value*255);close(F.decodeIrradiance(byte/255,scale),one+two,scale/128);
-  const rendered=await renderProbe({...l,scale});close(F.decodeIrradiance(rendered.bytes[0]/255,scale),one+two,scale/128);
+  close(F.decodeIrradiance(rendered.bytes[0]/255,scale),one+two,scale/128);
 });
 check('reaim_changes_fingerprint_and_marks_only_that_entity_stale',async()=>{
   const a=group([fixture('s','spot',{aim:[0,0,0]})]),b=group([fixture('s','spot',{aim:[2,0,0]})]);
@@ -265,22 +348,6 @@ check('brightness_and_colour_do_not',()=>{
   needFixtures();const l=fixtureLayout([panel()]);const before=RT.bakeLights(l,null,plan);
   l.states={'light.test':{state:'on',attributes:{brightness:20,rgb_color:[10,30,90]}}};
   assert.deepEqual(RT.bakeLights(l,null,plan),before);
-});
-check('rect_cap_changes_shading_only',async()=>{
-  needFixtures();const lights=Array.from({length:10},(_,i)=>({...group([panel()]),device:'light.'+i,entity:'light.'+i}));
-  const low=F.exactRects(lights,'low'),high=F.exactRects(lights,'high');assert.equal(low.size,2);assert.equal(high.size,8);
-  const l=lights[5];
-  const {atlas,options}=physicalRoom();
-  // Both tiers submit the identical production bake list and persisted entries.
-  const lowInputs=RT.bakeLights({light_fixtures:Object.fromEntries(lights.map(l=>[l.device,[panel()]]))},null,plan);
-  const highInputs=RT.bakeLights({light_fixtures:Object.fromEntries(lights.map(l=>[l.device,[panel()]]))},null,plan);
-  const lowBake=B.bakeLayout(atlas,options,lowInputs),highBake=B.bakeLayout(atlas,options,highInputs);
-  assert.deepEqual(lowBake.lights,highBake.lights);assert.deepEqual(lowBake.entries,highBake.entries);
-  assert.ok(!low.has(l.device));const p=F.rectPieces(l.emitters[0])[0];assert.ok(F.rectIrradiance(p,V(0,0,0),V(0,1,0),false)>0);
-  const u=M.lightmapUniforms(1,1,{fixtures:true});
-  M.setLightSource(u,0,0,V(0,1,0),6,2,l,low.has(l.device));assert.equal(u.lmTints.value.image.data[11],0);
-  M.setLightSource(u,0,0,V(0,1,0),6,2,l,high.has(l.device));assert.equal(u.lmTints.value.image.data[11],1);
-  assert.deepEqual((await renderProbe(l,[],V(0,0,0),V(0,1,0),'low')).bytes,(await renderProbe(l,[],V(0,0,0),V(0,1,0),'high')).bytes);
 });
 check('fire_pit_bakes_from_emitters_with_flame_tint',()=>{
   const p={buildings:[],site:{fire_pit:[{id:'gas',at:[5,5],fuel:'gas',entity:'switch.fire',radius:2}]}};
@@ -319,6 +386,19 @@ check('default_panel_room_fill_does_not_clip_and_restores_strength',async()=>{
   const charts=[{room:0,rect:{x:0,y:0,w:1,h:1},mesh:{material:{color:new THREE.Color('white')}}}];
   close(P.roomFills([{bytes,charts}],1,l)[0],Math.min(4,bytes[1]*.08)*16/255*strength);
   const old={absolute:true,at:[0,0,4],range:18};assert.equal(F.fillStrength(old),1);
+});
+check('fixture_material_initialises_ltc_once_without_house_view',async()=>{
+  const {RectAreaLightUniformsLib:lib}=await import('three/addons/lights/RectAreaLightUniformsLib.js');
+  const init=lib.init,names=['LTC_FLOAT_1','LTC_FLOAT_2','LTC_HALF_1','LTC_HALF_2'];
+  const saved=names.map(name=>THREE.UniformsLib[name]);let calls=0;
+  try {
+    for(const name of names)delete THREE.UniformsLib[name];
+    lib.init=()=>{calls++;init.call(lib);};
+    const a=M.lightmapUniforms(1,1,{fixtures:true}),b=M.lightmapUniforms(1,1,{fixtures:true});
+    for(const name of names)assert.ok(THREE.UniformsLib[name]?.isDataTexture,name+' is ready');
+    assert.equal(calls,1,'materials on any page initialise the tables once');
+    a.lmTints.value.dispose();b.lmTints.value.dispose();
+  } finally {lib.init=init;names.forEach((name,i)=>THREE.UniformsLib[name]=saved[i]);}
 });
 check('worst_case_sampler_count_and_legacy_shader_work',()=>{
   needFixtures();const u=M.lightmapUniforms(1,1,{fixtures:true});M.setLightSource(u,0,0,V(0,1,0),6,2,group([panel()]),true);

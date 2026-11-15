@@ -1,5 +1,5 @@
 import { assignChannels, CHANNEL_FALLBACK, CHART_STATS, fingerprint } from './atlas.js';
-import { renderPage, roomFills, dilateCharts } from './bake_pass.js';
+import { renderPage, roomFills, dilateCharts, encodeSumPages, filterCharts } from './bake_pass.js';
 import { withBakeLease } from './bake_lock.js';
 import { reachLights } from './reach.js';
 import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
@@ -10,7 +10,7 @@ export function lightKey(atlas, light, slot, bank) {
   const hash=fingerprint();
   // light-slots-9: pages hold a shadowmask (visibility), not irradiance (2026-11-14).
   hash.add(JSON.stringify(['light-slots-9',light.reach || atlas.key,light.device,light.at,
-    ...(light.signature ? ['fixtures-2', light.signature, light.kind === 3 ? light.scale : null] : [])]));
+    ...(light.signature ? ['fixtures-2', light.signature, ...(light.kind === 3 ? [] : [null])] : [])]));
   if (slot.assignments) {
     const ranking=[...slot.assignments].sort((a,b)=>a.chartKey<b.chartKey?-1:a.chartKey>b.chartKey?1:0), rank=new Uint8Array(2);
     for (const a of ranking) {
@@ -20,8 +20,12 @@ export function lightKey(atlas, light, slot, bank) {
   return hash.key();
 }
 
-export function bakeLayout(atlas, layout, lights, history) {
-  lights = reachLights(atlas.room, lights);
+// Scales are rendered output. Layout only adopts a previously published scale;
+// an unbaked sum has none and cannot become fresh.
+export function bakeLayout(atlas, layout, lights, history, published = {}) {
+  lights = reachLights(atlas.room, lights).map(l => l.kind === 3 ? {...l,
+    scale: Number.isFinite(published[l.device]?.scale) && published[l.device].scale > 0
+      ? published[l.device].scale : undefined} : l);
   const slots = assignChannels(atlas.room.rooms, lights, decodeSlots(history,atlas.room.charts.length)), banks = atlas.room.packBanks(lights, slots);
   let offset = 0;
   // Geometry reserves a fixed address stride, even when its trailing pages are
@@ -85,12 +89,14 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     if (!response.ok) throw new Error(`Could not read the bake manifest (HTTP ${response.status}).`);
     return response.json();
   };
-  const isStale = device => packed.entries[device] && (redo.has(device) || manifest.lights[device]?.key !== packed.entries[device].key ||
+  const isStale = device => packed.entries[device] && (
+    lights.find(l => l.device === device)?.kind === 3 && !(packed.entries[device].scale > 0) ||
+    redo.has(device) || manifest.lights[device]?.key !== packed.entries[device].key ||
     manifest.lights[device]?.location !== packed.entries[device].location ||
     manifest.lights[device]?.scale !== packed.entries[device].scale);
   const ready = enabled ? readManifest().then(async m => {
     assignmentHistory=m?.ownership;
-    packed=bakeLayout(atlas,layout,lights,assignmentHistory);
+    packed=bakeLayout(atlas,layout,lights,assignmentHistory,m?.lights);
     lights=packed.lights;
     if(force) for(const l of lights) if(packed.entries[l.device]) redo.add(l.device);
     manifest = m || { pages: packed.pages, lights: {} };
@@ -123,10 +129,13 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     const latest = await readManifest();
     if(latest?.ownership && !sameSlots(latest.ownership,assignmentHistory)) {
       assignmentHistory=latest.ownership;
-      packed=bakeLayout(atlas,layout,lights,assignmentHistory);
+      packed=bakeLayout(atlas,layout,lights,assignmentHistory,latest?.lights);
       lights=packed.lights;
     }
     if (latest) {
+      for (const [id, entry] of Object.entries(packed.entries)) if (lights.find(l => l.device === id)?.kind === 3)
+        entry.scale = Number.isFinite(latest.lights[id]?.scale) && latest.lights[id].scale > 0
+          ? latest.lights[id].scale : undefined;
       for (const [device, e] of Object.entries(latest.lights))
         if (!unavailable.has(device) && !redo.has(device)) manifest.lights[device] = e;
     }
@@ -145,9 +154,16 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     for (const p of pages) {
       const page = p;
       const mine = charts.filter(c => c.page === p);
-      const pixels = await renderPage(view, renderer, mine, size, light, layout, atlas, {deferBounce:true});
+      const pixels = await renderPage(view, renderer, mine, size, light, layout, atlas, {deferBounce:true, deferSumEncoding:true});
       if (!valid()) return null;
-      rendered.push({page, charts:mine, bytes:pixels});
+      rendered.push({page, charts:mine, ...(light.kind === 3 ? pixels : {bytes:pixels})});
+    }
+    if (light.kind === 3) {
+      const scale = await encodeSumPages(rendered, size);
+      if (!valid()) return null;
+      light.scale = scale;
+      for (const r of rendered) { filterCharts(r.bytes, r.charts, size); delete r.irradiance; }
+      packed.entries[id].scale = light.scale;
     }
     // The room fill travels in the manifest entry; the pages hold visibility only.
     const fill = roomFills(rendered, size, light);

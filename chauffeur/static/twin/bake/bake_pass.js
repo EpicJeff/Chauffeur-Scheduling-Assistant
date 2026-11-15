@@ -97,7 +97,7 @@ export function occluders(view) {
   return scene;
 }
 
-export async function renderPage(view, renderer, charts, size, light, layout, atlas, { deferBounce = false } = {}) {
+export async function renderPage(view, renderer, charts, size, light, layout, atlas, { deferBounce = false, deferSumEncoding = false } = {}) {
   const target = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false, type: THREE.HalfFloatType });
   const scene = proxies(charts, size, atlas), blockers = occluders(view);
   const saved = { target: renderer.getRenderTarget(), color: renderer.getClearColor(new THREE.Color()),
@@ -136,7 +136,7 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
         emitterNormal: {value: new THREE.Vector3()}, axis: {value: new THREE.Vector3()}, origin: {value: source.clone()},
         pieceCentre: {value: new THREE.Vector3()}, pieceU: {value: new THREE.Vector3()}, pieceV: {value: new THREE.Vector3()},
         outer: {value: -1}, inner: {value: -1}, cd: {value: CANDELA}, kind: {value: light.kind || 0},
-        visibilityWeight: {value: 1 / 16}, scale: {value: light.scale || 1}, fillStrength: {value: fillStrength(light)} } });
+        visibilityWeight: {value: 1 / 16}, scale: {value: 1}, fillStrength: {value: fillStrength(light)} } });
     scene.overrideMaterial = material;
     for (const sample of samples) {
       await nextFrame();
@@ -156,11 +156,16 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
     restore();
     if (renderer.readRenderTargetPixelsAsync) await renderer.readRenderTargetPixelsAsync(target, 0, 0, size, size, raw);
     else renderer.readRenderTargetPixels(target, 0, 0, size, size, raw);
-    const bytes = new Uint8Array(raw.length);
+    const bytes = new Uint8Array(raw.length), irradiance = light.kind === 3 ? new Uint16Array(size * size) : null;
     for (let i = 0; i < raw.length; i++) {
-      let value = Math.min(1, Math.max(0, THREE.DataUtils.fromHalfFloat(raw[i])));
-      if (light.kind === 3 && i % 4 === 0) value = Math.sqrt(value);
+      if (irradiance && i % 4 === 0) { irradiance[i / 4] = raw[i]; continue; }
+      const value = Math.min(1, Math.max(0, THREE.DataUtils.fromHalfFloat(raw[i])));
       bytes[i] = Math.round(value * 255);
+    }
+    if (light.kind === 3) {
+      const page = {bytes, irradiance, charts};
+      if (deferSumEncoding) return page;
+      light.scale = await encodeSumPages([page], size);
     }
     filterCharts(bytes, charts, size);
     if (!deferBounce) dilateCharts(bytes, charts, size);
@@ -170,6 +175,45 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
     for (const o of scene.children) o.geometry.dispose();
     material?.dispose(); depth?.dispose(); target.dispose(); shadow?.dispose();
   }
+}
+
+// Sum targets carry raw half-float irradiance at scale 1 until every page of
+// the entity has been read back. A half-float histogram gives the exact nearest-
+// rank 99.5th percentile without sorting millions of receiver texels. Only
+// raster-written, non-zero receiver texels count, never padding or other lights.
+// Retain only R (two bytes per texel), not all four float channels, across pages.
+// Yield every 64 rows so scale selection/encoding cannot monopolise the desk.
+export async function encodeSumPages(pages, size, yieldWork = () => new Promise(resolve => setTimeout(resolve, 0))) {
+  const histogram = new Uint32Array(0x7c00);
+  let count = 0, rows = 0;
+  for (const {bytes, irradiance, charts} of pages) for (const c of charts) {
+    const r = c.rect;
+    for (let y = r.y; y < r.y + r.h; y++) {
+      for (let x = r.x; x < r.x + r.w; x++) {
+        const i = (y * size + x) * 4, value = irradiance[i / 4];
+        if (bytes[i + 3] && value > 0 && value <= 0x7c00) {
+          histogram[Math.min(value, 0x7bff)]++; count++;
+        }
+      }
+      if (++rows % 64 === 0) await yieldWork();
+    }
+  }
+  await yieldWork();
+  const rank = Math.ceil(count * .995);
+  let n = 0, code = 0;
+  while (code < 0x7bff && (n += histogram[code]) < rank) code++;
+  const measured = Math.max(1e-6, THREE.DataUtils.fromHalfFloat(code) * 1.25);
+  const scale = 2 ** (Math.ceil(Math.log2(measured) * 16) / 16);
+  for (const {bytes, irradiance} of pages) {
+    const stride = size * 64 * 4;
+    for (let start = 0; start < bytes.length; start += stride) {
+      const end = Math.min(bytes.length, start + stride);
+      for (let i = start; i < end; i += 4)
+        bytes[i] = Math.round(Math.sqrt(Math.min(1, Math.max(0, THREE.DataUtils.fromHalfFloat(irradiance[i / 4])) / scale)) * 255);
+      await yieldWork();
+    }
+  }
+  return scale;
 }
 
 // A small chart-local bilateral filter keeps shadow edges. Texels the raster never wrote (in

@@ -50,7 +50,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const controls = new OrbitControls(camera, renderer3.domElement);
   controls.maxPolarAngle = Math.PI * 0.49;
   controls.enableDamping = false;
-  RectAreaLightUniformsLib.init();
+  if (!THREE.UniformsLib.LTC_FLOAT_1) RectAreaLightUniformsLib.init();
   const SUN_INTENSITY = 3.0;
   const sun = new THREE.DirectionalLight('#fff0d4', SUN_INTENSITY);
   const moon = new THREE.DirectionalLight('#99b8ff', 0);

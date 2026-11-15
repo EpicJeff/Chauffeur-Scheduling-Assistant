@@ -2,7 +2,7 @@ import * as THREE from '../../vendor/three-r187/three.module.js';
 import { FT, CANDELA, lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { fingerprint } from './fingerprint.js';
-import { emitterSamples, rectPieces, sampleValue, coneWindow, reachWindow } from './fixture_terms.js';
+import { emitterSamples, rectPieces, coneWindow } from './fixture_terms.js';
 
 // Match the live lamp's bulb height and range, including the ceiling inset.
 export function lightSource(plan, light) {
@@ -96,7 +96,7 @@ export function reachLights(layout, lights, outer = true) {
     const result = lights.map(light => {
       if (!light.emitters) return reachLights(layout, [light], false)[0];
       if (light.reach && light.receivers) return light;
-      const input = JSON.stringify(['group', light.signature, light.publishedScale ?? null]);
+      const input = JSON.stringify(['group', light.signature]);
       const previous = saved.get(light.device);
       if (previous?.input === input) return {...light, ...previous.result};
       const samples = emitterSamples(light.emitters);
@@ -109,10 +109,8 @@ export function reachLights(layout, lights, outer = true) {
           : rectPieces(e).map(p => ({...first, source: p.position, normal: p.normal, piece: p,
             cd: p.luminance * p.width * p.height, weight: 1, padding: Math.hypot(p.width, p.height) / 2}));
       });
-      const scaleBound = {value: 0, probes};
       const inputs = probes.map((s, i) => ({device: light.device + ':reach:' + i, absolute: true,
-        at: [s.source.x / FT, -s.source.z / FT, s.source.y / FT], range: s.range / FT, probe: s,
-        ...(light.kind === 3 && light.publishedScale === undefined ? {scaleSamples: samples, scaleBound, signature: light.signature} : {})}));
+        at: [s.source.x / FT, -s.source.z / FT, s.source.y / FT], range: s.range / FT, probe: s}));
       const hits = reachLights(layout, inputs, false), receivers = new Set(), charts = new Set(), scores = {}, distances = {}, chartKeys = {};
       const hash = fingerprint();hash.add(light.signature);
       hits.forEach(hit => {
@@ -123,12 +121,8 @@ export function reachLights(layout, lights, outer = true) {
           distances[chart] = Math.min(distances[chart] ?? Infinity, hit.distances[chart]);chartKeys[chart] = hit.chartKeys[chart];
         }
       });
-      // Each sweep evaluated the real sample sum on its reached receiver
-      // triangles. Only a scalar maximum survives; no per-sample reach is held.
-      const scale = light.publishedScale ?? Math.max(1e-6, scaleBound.value);
       const result = {receivers: [...receivers].sort((a,b) => a-b), receivingCharts: [...charts].sort((a,b) => a-b),
-        scores, distances, chartKeys, reach: hash.key(), range: lightSource(layout.plan, light).range,
-        ...(light.kind === 3 ? {scale} : {})};
+        scores, distances, chartKeys, reach: hash.key(), range: lightSource(layout.plan, light).range};
       saved.set(light.device, {input, result});
       return {...light, ...result};
     });
@@ -148,27 +142,9 @@ export function reachLights(layout, lights, outer = true) {
     if (hit) { saved.set(light.device,{input,result:hit}); return { ...light, ...hit }; }
     const { source, range } = lightSource(layout.plan, light), receivers = new Set(), geometry = [];
     const receivingCharts = [], distances = {}, scores={}, chartKeys={};
-    let scale=0;
     const probe=light.probe;
     const delta=new THREE.Vector3(), limit=(range+(probe?.padding ?? .15*FT))**2, range4=range**4;
     const physicalScore = (point, normal, d, cosine) => {
-      if (light.scaleSamples && d<=limit && cosine>0) {
-        // A conservative distance/cosine bound avoids evaluating all jitter
-        // samples where even the unoccluded upper bound cannot beat the peak.
-        // This skips work, never a possible maximum, and retains only a scalar.
-        let bound=0;
-        for(const s of light.scaleBound.probes) {
-          const x=s.source.x-point.x,y=s.source.y-point.y,z=s.source.z-point.z;
-          const nearest=Math.max(0,Math.hypot(x,y,z)-s.padding);
-          const cos=Math.min(1,Math.max(0,(normal.x*x+normal.y*y+normal.z*z+s.padding)/Math.max(nearest,1e-4)));
-          bound+=s.cd*reachWindow(nearest,s.range)*cos/Math.max(.01,nearest*nearest);
-        }
-        if(bound>light.scaleBound.value) {
-          light.scaleBound.value=Math.max(light.scaleBound.value,
-            sampleValue(light.scaleSamples,point,normal,()=>1,3,1).irradiance);
-        }
-        scale=light.scaleBound.value;
-      }
       let score = Math.max(0,1-d*d/range4)**2/Math.max(d,.01)*cosine;
       if (probe) {
         const direction=delta.copy(source).sub(point).normalize();
@@ -223,7 +199,7 @@ export function reachLights(layout, lights, outer = true) {
     for (const key of geometry.sort()) hash.add(key);
     const reach=hash.key();
     const result = { receivers: [...receivers].sort((a, b) => a - b), receivingCharts,
-      distances, scores, chartKeys, range, reach, ...(light.scaleSamples ? {scale} : {}) };
+      distances, scores, chartKeys, range, reach };
     saved.set(light.device, { input, result });
     positions.set(input,result);
     return { ...light, ...result };

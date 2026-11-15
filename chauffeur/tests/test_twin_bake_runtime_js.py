@@ -21,8 +21,10 @@ DRIVER += B.DRIVER[B.DRIVER.index('const building ='):B.DRIVER.index('async func
 DRIVER += r"""
 const B = await import(file('static/twin/bake/baker.js'));
 const { mountBake, lightsOf, bakeLights } = await import(file('static/twin/bake/runtime.js'));
+let observeEncode = null;
 class CodecWorker {
   postMessage(job) {
+    if(job.kind==='encode')observeEncode?.(job.job);
     setImmediate(async () => {
       try {
         const result = job.kind === 'encode' ? B.encodePage(E, job.job) : job.kind === 'decode' ?
@@ -111,7 +113,7 @@ await check('every_placed_light_bakes_including_yard_and_fire_pit', async () => 
     {device_id:'pit-light',kind:'light',placed:true,entity_id:'light.pit',at:[5,5,2],room:'r',building:'b',level:'L1'},
     {device_id:'nowhere',kind:'light',placed:true,at:[5,5,2],room:null,building:null,level:null},
     {device_id:'unplaced',kind:'light',placed:false,at:[1,1,8],room:'r',building:'b',level:'L1'}]};
-  assert.deepEqual(lightsOf(layout).map(l=>l.device),['indoor','yard','pit-light','unplaced']);
+  assert.deepEqual(lightsOf(layout).map(l=>l.device),['indoor','yard','pit-light']);
   assert.equal(lightsOf(layout)[1].yard,true);
   // Object lamps come from the scene, as live modes.js makes them. A fire pit owns its
   // light-domain marker's light; a lamp object with a marker stays that marker.
@@ -124,10 +126,40 @@ await check('every_placed_light_bakes_including_yard_and_fire_pit', async () => 
   root.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1).translate(-6,.5,6),free));
   const withLamp={markers:[...layout.markers,{device_id:'lamp-marker',kind:'light',placed:true,entity_id:'light.lamp',at:[1,1,4],room:'r',building:'b',level:'L1'}]};
   const all=bakeLights(withLamp,root), ids=all.map(l=>l.device);
-  assert.deepEqual(ids,['indoor','yard','unplaced','lamp-marker','object:fire_pit:f','object:b:glow'],JSON.stringify(ids));
+  assert.deepEqual(ids,['indoor','yard','lamp-marker','object:fire_pit:f','object:b:glow'],JSON.stringify(ids));
   const fire=all.find(l=>l.device==='object:fire_pit:f');
   assert.equal(fire.absolute,true);assert.equal(fire.range,18);
   assert.deepEqual(fire.at.map(v=>+v.toFixed(6)),[3/FT,4/FT,1/FT].map(v=>+v.toFixed(6)),'the fire light point in lot feet');
+});
+await check('auto_placed_light_does_not_change_legacy_bake', async () => {
+  const atlas=buildAtlas(await house(),job.plan,job.layout),original=liveLayout([k1,k2,h1,c1]);
+  const withAuto=structuredClone(original);
+  withAuto.markers.push({...original.markers[0],device_id:'auto',entity_id:'light.auto',placed:false});
+  const before=bakeLights(original,null,job.plan),after=bakeLights(withAuto,null,job.plan);
+  assert.deepEqual(after,before);
+  const a=B.bakeLayout(atlas,job.layout,before),b=B.bakeLayout(atlas,job.layout,after);
+  assert.deepEqual(b.entries,a.entries);assert.deepEqual(b.ownership,a.ownership);
+});
+await check('transcode_failure_is_observable_once_per_page_and_keeps_live_fallback', async () => {
+  const desk=await context();
+  try {await until(()=>!desk.controller.state().baking&&desk.controller.fresh().length===4,'publish legacy bake');}
+  finally {desk.controller.stop();}
+  const Worker=globalThis.Worker,log=console.error,errors=[];let wall;
+  try {
+    console.error=(...args)=>errors.push(args);
+    globalThis.Worker=class {constructor(url,options) {
+      if(!String(url).includes('codec_worker'))return new Worker(url,options);
+      return {postMessage(job){setImmediate(()=>this.onmessage({data:{id:job.id,error:'codec transcode import broke'}}));},terminate(){}};
+    }};
+    wall=await context('low',desk.server,null,{poll:0});
+    await until(()=>wall.controller.state().error,'transcode rejection is exposed');
+    await wall.controller.refresh();
+    const count=errors.length;assert.ok(count>0);
+    assert.match(wall.controller.state().error,/codec transcode import broke/);
+    assert.deepEqual(wall.controller.fresh(),[]);assert.equal(wall.renderer.log.renders,0);
+    await wall.controller.refresh();await wall.controller.refresh();
+    assert.equal(errors.length,count,'polling does not repeat page diagnostics');
+  } finally {wall?.controller.stop();globalThis.Worker=Worker;console.error=log;}
 });
 await check('worker_failures_are_visible_in_state_and_console', async () => {
   const Worker=globalThis.Worker, db=globalThis.indexedDB, log=console.error, timeout=globalThis.setTimeout, errors=[];
@@ -487,12 +519,54 @@ await check('fixture_groups_bake_twice_settle_and_populate_shape_rows', async ()
     assert.deepEqual([t.image.data[24],t.image.data[28],t.image.data[32]],[1,2,3]);
     assert.ok(t.image.data[34]>0,'the sum scale reaches the shader');
     const manifest=desk.server.manifests.get(desk.controller.state().key);
+    const atlas=buildAtlas(await house(),job.plan,job.layout);
+    assert.equal(atlas.key,desk.controller.state().key,'second baker uses the identical receiver geometry');
+    const again=B.createBaker(desk.view,{renderer:desk.renderer,atlas,layout:job.layout,
+      lights:bakeLights(fixtureLayout,null,job.plan),api:desk.server.api,codec:{}});
+    assert.deepEqual(await again.staleLights(),[],'second sum run has nothing to bake');
+    const reads=desk.renderer.log.reads;
+    assert.equal(await again.bakeNext(),null);assert.equal(desk.renderer.log.reads,reads);again.cancel();
     assert.equal(t.image.data[34],Math.fround(manifest.lights['light.sum'].scale),'decode scale is the published manifest value');
     desk.controller.light('light.spot',[255,100,50],1);assert.ok(t.image.data[0]>0);
     await desk.controller.now();
     assert.deepEqual(desk.controller.state().stale,[]);assert.equal(desk.controller.state().baked.length,6);
     assert.deepEqual(desk.controller.fresh().sort(),['light.rect','light.spot','light.sum']);
   } finally {desk.controller.stop();}
+});
+await check('rect_cap_changes_shading_only',async()=>{
+  const {TIERS}=await import(file('static/twin/twin_tiers.js'));
+  const {createHash}=await import('node:crypto');
+  const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
+  const {lightSource}=await import(file('static/twin/bake/reach.js'));
+  const source=lightSource(job.plan,k1).source,at=[source.x/gen.FT,-source.z/gen.FT,source.y/gen.FT];
+  const fixtureLayout={light_fixtures:Object.fromEntries(Array.from({length:3},(_,i)=>['light.rect'+i,
+    [{id:'fixture:a'+i,shape:'area',ref:'absolute',at:[at[0]+i*.1,at[1],at[2]],size_ft:[2,2],facing:'down'}]]))};
+  const cap=TIERS.high.bakedRects,server=fakeServer();let c;
+  try {
+    const captures=[];
+    for(const limit of [2,16]) {
+      TIERS.high.bakedRects=limit;
+      // Give both caps the identical empty bake store. Re-encoding an older
+      // lossy page would measure compression drift rather than a tier input.
+      server.pages.clear();server.manifests.clear();server.etags.clear();
+      const channels=[];observeEncode=job=>channels.push(job.channels.map(hash));
+      c=await context('high',server,[],{fixtureLayout,poll:0});
+      await until(()=>c.controller.fresh().length===3&&!c.controller.state().baking,'all rect entities land');
+      const mesh=covered(c.out.root)[0],shader={uniforms:{},vertexShader:'#include <begin_vertex>',fragmentShader:'#include <lights_fragment_end>'};
+      mesh.material.onBeforeCompile(shader,c.renderer);
+      const data=[...shader.uniforms.lmTints.value.image.data],key=c.controller.state().key;
+      captures.push({inputs:bakeLights(fixtureLayout,null,job.plan),packing:structuredClone(c.controller.packing()),
+        manifest:JSON.stringify(server.manifests.get(key)),pages:[...server.pages].map(([key,bytes])=>[key,hash(bytes)]),channels,data});
+      c.controller.stop();c=null;
+    }
+    const [low,high]=captures;
+    assert.deepEqual(high.inputs,low.inputs);assert.deepEqual(high.packing.entries,low.packing.entries);
+    assert.deepEqual(high.packing.slots,low.packing.slots);assert.deepEqual(high.packing.banks,low.packing.banks);
+    assert.equal(high.manifest,low.manifest,'manifest text is independent of the cap');assert.deepEqual(high.pages,low.pages);assert.deepEqual(high.channels,low.channels);
+    assert.notDeepEqual(high.data,low.data,'the shader uniform list changes');
+    const flags=t=>Array.from({length:3},(_,i)=>t[(2*3+i)*4+3]);
+    assert.equal(flags(low.data).reduce((a,b)=>a+b,0),2);assert.equal(flags(high.data).reduce((a,b)=>a+b,0),3);
+  } finally {c?.controller.stop();TIERS.high.bakedRects=cap;observeEncode=null;}
 });
 await check('five_mixed_entries_become_fresh_and_force_bake_again',async()=>{
   const {lightSource}=await import(file('static/twin/bake/reach.js'));
@@ -512,16 +586,30 @@ await check('five_mixed_entries_become_fresh_and_force_bake_again',async()=>{
     const key=desk.controller.state().key,m=desk.server.manifests.get(key);
     const sumScale=m.lights['light.sum'].scale;assert.ok(sumScale>0);
     m.lights['light.sum'].scale*=2;
-    await desk.controller.refresh();assert.ok(desk.controller.state().stale.includes('light.sum'),'scale mismatch stales page');
+    const sumPages=m.lights['light.sum'].pages;
+    desk.server.fail=(method,path)=>method==='GET'&&sumPages.some(p=>path.endsWith('/'+p+'.png'))?500:null;
+    try {
+      await desk.controller.refresh();
+      assert.ok(desk.controller.state().stale.includes('light.sum'),'old held bytes cannot become fresh with a new scale while replacements are offline');
+    } finally {desk.server.fail=null;}
+    delete m.lights['light.sum'].scale;
+    await desk.controller.refresh();assert.ok(desk.controller.state().stale.includes('light.sum'),'missing scale leaves sum real-time');
     const wall=await context('low',desk.server,[k2],{fixtureLayout,poll:0});
     try {
-      await until(()=>wall.controller.fresh().length===4,'reader refuses the mismatched scale');
+      await until(()=>wall.controller.fresh().length===4,'reader refuses a sum with no scale');
       assert.ok(wall.controller.state().stale.includes('light.sum'));
     }finally{wall.controller.stop();}
+    const oldFill=FILL.value;FILL.value*=4;
+    try {
     await desk.controller.now();
     assert.equal(desk.controller.state().baked.length,10);assert.deepEqual(desk.controller.state().stale,[]);
     assert.equal(desk.controller.fresh().length,5);
-    assert.equal(desk.server.manifests.get(key).lights['light.sum'].scale,sumScale);
+    const nextScale=desk.server.manifests.get(key).lights['light.sum'].scale;
+    assert.ok(nextScale>sumScale,'a later rendered bake publishes its new scale');
+    const panel=await context('low',desk.server,[k2],{fixtureLayout,poll:0});
+    try {await until(()=>panel.controller.fresh().length===5,'reopened reader adopts rendered scale');}
+    finally {panel.controller.stop();}
+    } finally {FILL.value=oldFill;}
   }finally{desk.controller.stop();}
 });
 console.log(`${passed}/${ran} passed`); process.exit(passed === ran ? 0 : 1);
@@ -538,8 +626,12 @@ def run():
         data = pathlib.Path(directory) / 'job.json'
         driver.write_text(DRIVER, encoding='utf-8')
         data.write_text(json.dumps(job), encoding='utf-8')
-        result = subprocess.run([B.node(), str(driver), str(data), *sys.argv[1:]], capture_output=True,
-                                text=True, encoding='utf-8', timeout=280)
+        try:
+            result = subprocess.run([B.node(), str(driver), str(data), *sys.argv[1:]], capture_output=True,
+                                    text=True, encoding='utf-8', timeout=420)
+        except subprocess.TimeoutExpired as exc:
+            print((exc.stdout or b'').decode('utf-8', errors='replace'), end='')
+            raise
         print(result.stdout, end='')
         if result.returncode:
             print(result.stderr[-4000:], end='')

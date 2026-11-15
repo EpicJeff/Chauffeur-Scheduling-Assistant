@@ -105,8 +105,44 @@ def test_lod_worker_urls():
     return len(scripts)
 
 
+def test_worker_import_graphs():
+    # Workers have no import map. Follow the files they actually load, including
+    # classic-worker glue and transitive dynamic imports, before checking leaves.
+    imports = re.compile(r'''(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\bimportScripts\s*\(\s*)['"]([^'"]+)['"]''')
+    seen, stack = set(), [os.path.join(STATIC, 'twin', p) for p in
+                         ['bake/codec_worker.js', 'bake/atlas_worker.js', 'lod_worker.js']]
+    while stack:
+        path = os.path.normpath(stack.pop())
+        if path in seen:
+            continue
+        seen.add(path)
+        source = open(path, encoding='utf-8').read()
+        # Generated wasm glue contains CommonJS strings, not ES imports. Strip
+        # comments so prose such as "import 'three'" cannot masquerade as code.
+        source = re.sub(r"""('(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`)|/\*.*?\*/|//[^\n]*""",
+                        lambda m: m.group(1) or '', source, flags=re.S)
+        for expression in re.findall(r'\bimport\s*\(([^)]*)\)', source):
+            if expression.strip().startswith(("'", '"')):
+                continue
+            # LOD imports the explicit URL passed by the page. Walk its real
+            # configured on-disk target too, rather than ignoring variable imports.
+            assert os.path.basename(path) == 'lod_worker.js' and expression.strip() == 'simplifierUrl', f'unresolved worker import: {path}: {expression}'
+            targets = set()
+            for template in ['house_editor.html', 'house_twin.html']:
+                text = open(os.path.join(ROOT, 'templates', template), encoding='utf-8').read()
+                config = re.search(r'window\.chfLodWorker = \{.*?\n    \};', text, re.S).group()
+                targets.update(re.findall(r"'static/([^']*meshopt_simplifier\.js)'", config))
+            assert targets, 'LOD dynamic import must have a known configured target'
+            stack.extend(os.path.join(STATIC, target) for target in targets)
+        for spec in imports.findall(source):
+            assert spec.startswith(('./', '../', '/')), f'{os.path.relpath(path, STATIC)}: worker cannot resolve {spec!r}'
+            target = os.path.join(STATIC, spec.removeprefix('/static/')) if spec.startswith('/') else os.path.join(os.path.dirname(path), spec)
+            stack.append(target.split('?')[0])
+    return len(seen)
+
+
 if __name__ == '__main__':
-    tests = [test_house_twin_page, test_house_editor_page, test_house_library_page, test_lod_worker_urls]
+    tests = [test_house_twin_page, test_house_editor_page, test_house_library_page, test_lod_worker_urls, test_worker_import_graphs]
     passed = 0
     for fn in tests:
         try:

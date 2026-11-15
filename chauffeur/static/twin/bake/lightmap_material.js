@@ -223,22 +223,7 @@ export function pickTranscode(extensions, channels) {
   if (extensions.has('WEBGL_compressed_texture_etc')) return channels === 1 ? THREE.R11_EAC_Format : THREE.RG11_EAC_Format;
   return THREE.RGBAFormat;
 }
-export function transcodePage(module, bytes, format) {
-  const names = new Map([[THREE.RED_RGTC1_Format, 'cTFBC4_R'], [THREE.RED_GREEN_RGTC2_Format, 'cTFBC5_RG'],
-    [THREE.R11_EAC_Format, 'cTFETC2_EAC_R11'], [THREE.RG11_EAC_Format, 'cTFETC2_EAC_RG11'], [THREE.RGBAFormat, 'cTFRGBA32']]);
-  const fmt = module.transcoder_texture_format[names.get(format)]?.value;
-  const k = new module.KTX2File(new Uint8Array(bytes));
-  try {
-    if (fmt === undefined || !k.isValid() || !k.startTranscoding()) throw new Error('Invalid compressed lightmap.');
-    const width = k.getWidth(), height = k.getHeight(), mipmaps = [];
-    for (let level = 0; level < k.getLevels(); level++) {
-      const data = new Uint8Array(k.getImageTranscodedSizeInBytes(level, 0, 0, fmt));
-      if (!k.transcodeImage(data, level, 0, 0, fmt, 0, -1, -1)) throw new Error('Could not transcode the lightmap.');
-      mipmaps.push({ data, width: Math.max(1, width >> level), height: Math.max(1, height >> level) });
-    }
-    return { width, height, format, mipmaps };
-  } finally { k.close(); k.delete(); }
-}
+export { transcodePage } from './transcode.js';
 
 // One baked light's term in a lit material's main(), after lights_fragment_end: three's own
 // RE_Direct with an IncidentLight of the live light's colour, so diffuse (by metalness),

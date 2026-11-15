@@ -25,7 +25,7 @@ self.onmessage = event => {
       const module = await library(kind === 'encode');
       let result;
       if (kind === 'transcode') {
-        const { transcodePage } = await import('./lightmap_material.js');
+        const { transcodePage } = await import('./transcode.js');
         result = transcodePage(module, bytes, format);
       } else {
         const { encodePage, decodePage } = await import('./codec.js');
