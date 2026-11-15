@@ -330,6 +330,9 @@ function buildingKeyParts(plan, b, kit, tier, { viewing = false, showAnchors = f
   // Flat sections include dormers and every part of a split model roof.
   // Their Library revisions must invalidate retained materials as room slots do.
   for (const s of b.roof?.sections || []) if (s.material) finishes.push(resolved('roof', s.material));
+  for (const item of [...(b.openings || []), ...porches, ...(b.stairs || []), ...(b.fixtures || []), ...(b.items || []).filter(i => i.rect)])
+    for (const [kind, slot] of Object.entries(item.materials || {}))
+      if (slot && kindRow(kind)) finishes.push(['item-surface', item.id, kind, resolved(kind, slot)]);
   const slab = b.foundation?.materials?.slab;
   if (slab) finishes.push(['slab', slab, resolved('patio_concrete', slab), known[slab.id]]);
   for (const p of porches) for (const [slot, ref] of Object.entries(porchFoundation(p.foundation).materials)) if (ref) {
@@ -501,12 +504,13 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const levelId = item?.level || b.walls?.find(w => w.id === item?.wall)?.level;
       const level = b.levels.find(l => l.id === levelId);
       // A person's existing per-fixture colour wins over a house default.
-      if (kind === 'cabinet' && item?.body) return plain('cabinet', item.body);
-      if (kind === 'counter' && item?.top) return plain('counter', item.top);
+      const own = item?.materials?.[kind];
+      if (!own && kind === 'cabinet' && item?.body) return plain('cabinet', item.body);
+      if (!own && kind === 'counter' && item?.top) return plain('counter', item.top);
       // Existing role defaults already resolve through mat. Keep their shared
       // instances (notably roof covering and standing seams) and legacy tint.
-      if (fallback.role === kind || kind === 'counter') return mat(kind, level);
-      const slot = (kind === 'ceiling' && item?.ceiling_material) || resolveSlot(kind, { building: b, level });
+      if (!own && (fallback.role === kind || kind === 'counter')) return mat(kind, level);
+      const slot = (kind === 'ceiling' && item?.ceiling_material) || resolveSlot(kind, { item, building: b, level });
       if (!slot) {
         if (fallback.role) return mat(fallback.role);
         if (fallback.builtin) return fallback.builtin === 'screen' ? screen : glass;
@@ -639,6 +643,14 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         bounds.applyMatrix4(group.matrixWorld.clone().invert().multiply(object.matrixWorld));
       }
       records.get(key).box.union(bounds);
+      return object;
+    };
+    // Keep the original geometry for precise part hits after static batching.
+    // These are the meshes already made above, never extra scene meshes.
+    const tagPart = (object, part) => {
+      object.userData.part = part;
+      const key = `${b.id}:${object.userData.pieceId}`, record = records.get(key);
+      (record.partObjects ||= []).push({ object, group: object.parent });
       return object;
     };
     const retainLod = (group, model) => {
@@ -815,6 +827,8 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         if (h.kind === 'passage') continue;
         use({ ...h, state: wallPiece.ghost ? 'ghost' : h.state }, 'opening', `opening:${h.wall || h.section}:${h.u0}`);
         const width = h.u1 - h.u0, height = h.v1 - h.v0, cu = (h.u0 + h.u1) / 2, cv = (h.v0 + h.v1) / 2;
+        const openingBox = (part, u, v, w, height, depth, faceOffset = 0) =>
+          tagPart(localBox(u, v, w, height, depth, kindMat(part, h), faceOffset), part);
         if (h.model) {
           // The hole above has already been cut using opening dimensions alone.
           const placeholder = localBox(cu, cv, width, height, Math.min(thickness, .08), kindMat('window_frame', h));
@@ -850,21 +864,21 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         }
         const fw = 0.16;
         for (const u of [h.u0, h.u1]) {
-          localBox(u, cv, fw, height, 0.22, kindMat('window_frame', h));
-          if (exterior) localBox(u + (u === h.u0 ? -0.18 : 0.18), cv, 0.33, height + 0.66, 0.12, kindMat('casing', h), sign * (thickness / 2 + 0.06));
+          openingBox('window_frame', u, cv, fw, height, 0.22);
+          if (exterior) openingBox('casing', u + (u === h.u0 ? -0.18 : 0.18), cv, 0.33, height + 0.66, 0.12, sign * (thickness / 2 + 0.06));
         }
-        for (const v of [h.v0, h.v1]) localBox(cu, v, width, fw, 0.22, kindMat('window_frame', h));
-        if (exterior) for (const v of [h.v0, h.v1]) if (v > 0.01) localBox(cu, v + (v === h.v0 ? -0.18 : 0.18), width + 0.66, 0.33, 0.12, kindMat('casing', h), sign * (thickness / 2 + 0.06));
+        for (const v of [h.v0, h.v1]) openingBox('window_frame', cu, v, width, fw, 0.22);
+        if (exterior) for (const v of [h.v0, h.v1]) if (v > 0.01) openingBox('casing', cu, v + (v === h.v0 ? -0.18 : 0.18), width + 0.66, 0.33, 0.12, sign * (thickness / 2 + 0.06));
         if (h.kind === 'door') {
           if (h.glass === 'half') {
-            localBox(cu, h.v0 + height / 4, width - fw, height / 2, 0.15, kindMat('door', h));
-            localBox(cu, h.v0 + height * 0.75, width - fw, height / 2 - fw, 0.025, kindMat('pane', h));
-            localBox(cu, cv, width, fw, 0.22, kindMat('window_frame', h));
-          } else localBox(cu, cv, width - fw, height - fw, 0.15, kindMat('door', h));
+            openingBox('door', cu, h.v0 + height / 4, width - fw, height / 2, 0.15);
+            openingBox('pane', cu, h.v0 + height * 0.75, width - fw, height / 2 - fw, 0.025);
+            openingBox('window_frame', cu, cv, width, fw, 0.22);
+          } else openingBox('door', cu, cv, width - fw, height - fw, 0.15);
         } else {
-          for (let i = 1; i < (h.panels || 1); i++) localBox(h.u0 + width * i / h.panels, cv, fw, height, 0.22, kindMat('window_frame', h));
-          if (h.split === 'double_hung') localBox(cu, cv, width, fw, 0.22, kindMat('window_frame', h));
-          localBox(cu, cv, width - fw, height - fw, 0.025, kindMat('pane', h));
+          for (let i = 1; i < (h.panels || 1); i++) openingBox('window_frame', h.u0 + width * i / h.panels, cv, fw, height, 0.22);
+          if (h.split === 'double_hung') openingBox('window_frame', cu, cv, width, fw, 0.22);
+          openingBox('pane', cu, cv, width - fw, height - fw, 0.025);
         }
       }
       // Saved failures stay visible and selectable without cutting siding or
@@ -1309,7 +1323,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       use(room, 'room', room.id);
       for (const [group, patch] of ceilingPatches(room, supports)) {
         const ceiling = mesh(group, roofGeometry(patch), kindMat('ceiling', room));
-        ceiling.userData.part = 'ceiling';
+        tagPart(ceiling, 'ceiling');
       }
     }
     for (const [index, po] of porches.entries()) {
@@ -1341,7 +1355,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       for (const c of po.columns || []) {
         const top = topAt(...c.at);
         if (solid && top <= floor) continue;
-        mesh(local[first.id], boxRect(c.at[0] - c.size / 2, c.at[1] - c.size / 2, c.at[0] + c.size / 2, c.at[1] + c.size / 2, floor, top), kindMat('column', po));
+        tagPart(mesh(local[first.id], boxRect(c.at[0] - c.size / 2, c.at[1] - c.size / 2, c.at[0] + c.size / 2, c.at[1] + c.size / 2, floor, top), kindMat('column', po)), 'column');
       }
       const porchWalls = b.walls.filter(w => w.exterior && (levels[w.level]?.elevation ?? 0) <= floor
         && (levels[w.level]?.elevation ?? 0) + w.height > floor);
@@ -1376,7 +1390,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
               shape.lineTo(t, Math.max(0, topAt(c.at[0] + (d.at[0] - c.at[0]) * t / span, c.at[1] + (d.at[1] - c.at[1]) * t / span) - floor));
             }
             shape.closePath();
-            mesh(local[first.id], new THREE.ShapeGeometry(shape).applyMatrix4(basis.matrix), kindMat('screen', po));
+            tagPart(mesh(local[first.id], new THREE.ShapeGeometry(shape).applyMatrix4(basis.matrix), kindMat('screen', po)), 'screen');
           }
         }
       }
@@ -1394,7 +1408,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     for (const [index, s] of (b.stairs || []).entries()) {
       use(s, 'stair', `stair:${index}`);
       const l = levels[s.level] || first;
-      for (const part of stairGeometry(s, l.elevation, boxGeometry)) mesh(local[l.id], part.geometry, kindMat(part.kind, s));
+      for (const part of stairGeometry(s, l.elevation, boxGeometry)) tagPart(mesh(local[l.id], part.geometry, kindMat(part.kind, s)), part.kind);
     }
     for (const opening of b.openings || []) {
       use(opening, 'opening', `opening:${opening.wall}:${opening.at}`);
@@ -1411,20 +1425,21 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const floorRoom = f.host && !f.host.floor ? null
         : b.rooms?.find(r => r.id === f.host?.floor) || roomAt(b, l.id, [(x0+x1)/2, (y0+y1)/2]);
       const z = roomFloor(l, floorRoom) + (f.z0 || 0), h = f.height || 1;
-      const box = (a, c, d, e, lo, hi, m) => {
+      const box = (a, c, d, e, lo, hi, m, part = null) => {
         const origin = [(x0 + x1) / 2, z, -(y0 + y1) / 2];
         const geometry = boxRect(a, c, d, e, lo, hi).translate(-origin[0], -origin[1], -origin[2]);
         const object = applyObject(new THREE.Mesh(geometry, m), f, { units: 1, id: `${b.id}:${f.id}` });
         object.position.set(origin[0], origin[1] + (f.elevation || 0), origin[2]); object.updateMatrixWorld(true);
         geometry.applyMatrix4(object.matrixWorld);
-        return mesh(g, geometry, object.material);
+        const result = mesh(g, geometry, object.material);
+        return part ? tagPart(result, part) : result;
       };
       if (['counter', 'vanity'].includes(f.kind)) {
-        box(x0, y0, x1, y1, z, z + h - 0.12, kindMat('cabinet', f));
-        box(x0 - 0.05, y0 - 0.05, x1 + 0.05, y1 + 0.05, z + h - 0.12, z + h, kindMat('counter', f));
+        box(x0, y0, x1, y1, z, z + h - 0.12, kindMat('cabinet', f), 'cabinet');
+        box(x0 - 0.05, y0 - 0.05, x1 + 0.05, y1 + 0.05, z + h - 0.12, z + h, kindMat('counter', f), 'counter');
       } else if (f.kind === 'shower') {
-        box(x0, y0, x1, y1, z, z + 0.2, kindMat('shower_tile', f));
-        box(x0, y0, x1, y0 + 0.04, z + 0.2, z + h, kindMat('shower_glass', f));
+        box(x0, y0, x1, y1, z, z + 0.2, kindMat('shower_tile', f), 'shower_tile');
+        box(x0, y0, x1, y0 + 0.04, z + 0.2, z + h, kindMat('shower_glass', f), 'shower_glass');
       } else if (f.kind === 'sofa') {
         box(x0, y0, x1, y1, z, z + h / 2, plain('fabric', '#8c8f94'));
         box(x0, y1 - 0.8, x1, y1, z, z + h, plain('fabric', '#8c8f94'));
@@ -1519,7 +1534,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     // Proxies retain identity after settled render meshes are merged. Their
     // layer is never enabled on a rendering camera (including shadow cameras).
     const registerRecords = () => {
-      for (const [key, { data, group, box }] of records) {
+      for (const [key, { data, group, box, partObjects }] of records) {
         if (box.isEmpty() || pieceBounds.has(key)) continue;
         pieceBounds.set(key, { box: box.clone(), group, data });
         const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
@@ -1544,6 +1559,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         } else geometry = boxGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y), Math.max(0.01, size.z)).translate(...center.toArray());
         const proxy = new THREE.Mesh(geometry, pickMaterial);
         Object.assign(proxy.userData, data); proxy.layers.set(PICK_LAYER);
+        if (partObjects) Object.defineProperty(proxy.userData, 'partObjects', { value: partObjects });
         group.add(proxy); pickObjects.set(key, proxy);
       }
     };

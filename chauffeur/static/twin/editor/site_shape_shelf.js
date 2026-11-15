@@ -19,10 +19,10 @@ export function siteMaterialSlots(kind, piece) {
   if (kind === 'hardscape') return [['surface', 'Surface', ROLE_WORDS[role || 'paving'] || title(role)],
     ...(piece.kind === 'path' && piece.edging === 'curb' ? [['edging', 'Curb', 'Concrete']] : [])];
   if (kind === 'beds') return [['fill', 'Fill', ROLE_WORDS[role || 'mulch'] || title(role)]];
-  if (kind === 'pool') return [['coping', 'Coping', ROLE_WORDS[role || 'paving'] || title(role)], ['interior', 'Interior', 'Pool tile'], ['waterline', 'Waterline tile', 'Blue tile']];
+  if (kind === 'pool') return [['coping', 'Coping', ROLE_WORDS[role || 'paving'] || title(role)], ['interior', 'Interior', 'Pool tile'], ['waterline', 'Waterline tile', 'Blue tile'], ['water', 'Water', 'House water']];
   // A flush spa's outer wall is under the pool water, so only a raised spa has cladding.
   if (kind === 'spa') return [['coping', 'Coping', 'Pool coping'], ['interior', 'Interior', 'Pool interior'], ['waterline', 'Waterline tile', 'Pool waterline tile'],
-    ...((piece.mode ?? 'raised') === 'raised' ? [['wall', 'Cladding', 'Stone']] : [])];
+    ...((piece.mode ?? 'raised') === 'raised' ? [['wall', 'Cladding', 'Stone']] : []), ['water', 'Water', 'Pool water']];
   if (kind === 'edges') return [['strip', 'Strip', ROLE_WORDS[role || 'lawn'] || title(role)]];
   if (kind === 'fence') return [['boards', 'Boards', 'Wood'], ['posts', 'Posts', 'Wood'], ['rails', 'Rails', 'Wood']];
   return [];

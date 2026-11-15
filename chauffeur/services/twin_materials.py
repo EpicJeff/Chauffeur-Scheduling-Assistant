@@ -561,6 +561,13 @@ def _labels(value, material_id, owner='House', kind='surfaces', feature=False):
                             labels.extend(_labels(piece, material_id, name, 'surface', True))
                     else:
                         labels.extend(_labels(content, material_id, owner, kind))
+            elif key == 'features' and feature and isinstance(child, list):
+                for piece in child:
+                    labels.extend(_labels(piece, material_id, piece.get('name') or piece.get('kind', 'Pool feature').capitalize(), kind, True))
+            elif key in ('openings', 'porches_detail', 'stairs', 'items', 'fixtures') and isinstance(child, list):
+                for piece in child:
+                    labels.extend(_labels(piece, material_id, piece.get('name') or piece.get('kind')
+                                          or {'porches_detail': 'Porch', 'stairs': 'Stair'}.get(key, 'Item'), kind, feature))
             elif key == 'materials' and isinstance(child, dict):
                 for part, slot in child.items():
                     labels.extend(_labels(slot, material_id, owner,

@@ -113,6 +113,11 @@ async function compare(p,k){
  assert.equal(A.VERSION,oldA.VERSION);
 }
 await test('untouched_house_equals_main',()=>compare(fixture(),kit()));
+await test('untouched_solid_door_and_closed_stair_equal_main',()=>{
+ const p=fixture();p.buildings[0].openings.find(o=>o.id==='door').glass='none';
+ p.buildings[0].stairs[0].style='solid';p.buildings[0].stairs[0].rail='none';
+ return compare(p,kit());
+});
 await test('house_with_alpha_free_library_materials_equals_main',()=>{
  const p=fixture();p.buildings[0].materials.siding={id:'choice'};p.buildings[0].rooms[0].floor_material={id:'choice'};
  return compare(p,kit());

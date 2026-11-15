@@ -635,6 +635,7 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
                 value = 0
             room['floor_offset_ft'] = value
         _pieces(building, notes)
+        twin_plan._item_slots(building, notes)
         twin_floors.derive_openings(building)
         filter_checked_flags(building)
         buildings.append(building)

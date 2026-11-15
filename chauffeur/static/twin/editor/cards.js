@@ -1,6 +1,6 @@
 import { drawObjectShelf, isObject } from './object_shelf.js';
 import { solarLayout } from '../twin_solar.js';
-import { contains } from '../twin_generator.js';
+import { contains, allPorches } from '../twin_generator.js';
 import { materialLines } from './library.js';
 import { createEquipmentShelf } from './equipment_shelf.js';
 import { foundationShelf } from './foundation_shelf.js';
@@ -52,6 +52,8 @@ export function findPiece(plan, pieceId, buildingId) {
     const piece = building[list]?.find(p => p.id === pieceId);
     if (piece) return { piece, building, kind };
   }
+  const porch = allPorches(building).find(p => p.id === pieceId);
+  if (porch) return { piece: porch, building, kind: 'porch' };
   const section = building.roof?.sections?.find(p => p.id === pieceId);
   const dormer = building.dormers?.find(p => p.id === pieceId);
   if (dormer) return { piece: section || dormer, building, kind: 'dormer' };

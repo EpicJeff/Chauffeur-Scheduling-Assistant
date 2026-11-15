@@ -9,8 +9,6 @@ const yard=async p=>(await Y.buildYard(p,kit(),'low')).group;
 const all=g=>{const rows=[];g.traverse(o=>{if(o.isMesh)rows.push(o);});return rows;};
 await test('water_default_reaches_pool_and_spa',async()=>{
  const p=fixture();p.materials.water={id:'blend'};
- // Per-item water is slice C: even a stored value must not replace the site default.
- p.site.pool.materials={water:{id:'choice'}};p.site.pool.features[0].materials={water:{id:'choice'}};
  const g=await yard(p),water=all(g).filter(o=>o.material.name==='water');
  assert.ok(water.length);assert.ok(water.every(o=>o.material.userData.materialId==='blend'));
  const ys=water.flatMap(o=>Array.from(o.geometry.attributes.position.array).filter((_,i)=>i%3===1));

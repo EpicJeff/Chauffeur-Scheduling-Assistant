@@ -869,6 +869,25 @@ def _material(building, op, model=None):
         raise Refused(str(error)) from error
     if 'site' in target:
         container, key = model.setdefault('materials', {}), target['role']
+    elif any(kind in target for kind in ('opening', 'porch', 'stair', 'item')):
+        from services.twin_surface_kinds import ITEM_PARTS
+        kind = next(k for k in ('opening', 'porch', 'stair', 'item') if k in target)
+        if target.get('part') not in ITEM_PARTS['fixture' if kind == 'item' else kind]:
+            raise Refused('Choose a surface for the material.')
+        collection = {'opening': 'openings', 'porch': 'porches_detail', 'stair': 'stairs', 'item': 'items'}[kind]
+        # A hand-drawn porch room has no draft detail yet. Store its override
+        # on the same detail that flatten would otherwise synthesize.
+        if kind == 'porch' and not any(p['id'] == target[kind] for p in building.get(collection, [])):
+            room = _find(building, 'rooms', target[kind])
+            if room.get('kind') != 'porch':
+                raise Refused('Choose a surface for the material.')
+            level = _find(building, 'levels', room['level'])
+            building.setdefault(collection, []).append({'id': room['id'], 'polygon': deepcopy(room['polygon']),
+                'level': room['level'], 'floor': level['elevation'], 'columns': []})
+        owner = _find(building, collection, target[kind])
+        if kind == 'item' and 'rect' not in owner:
+            raise Refused('Choose a surface for the material.')
+        container, key = owner.setdefault('materials', {}), target['part']
     elif 'wall' in target and target.get('side') in ('left', 'right'):
         owner = _find(building, 'walls', target['wall'])
         container, key = owner.setdefault('faces', {}), target['side']
@@ -890,6 +909,8 @@ def _material(building, op, model=None):
         raise Refused('Choose a surface for the material.')
     if material is None:
         container.pop(key, None)
+        if 'part' in target and not container:
+            owner.pop('materials', None)
     else:
         container[key] = deepcopy(material)
 

@@ -110,14 +110,15 @@ await test('one_material_instance_per_default',async()=>{
  assert.ok(panes.length>=5);assert.equal(new Set(panes.map(o=>o.material.uuid)).size,1);
  assert.equal(rendered(out).length,rendered(before).length);
 });
-await test('level_default_precedes_building_and_new_item_slots_are_deferred',async()=>{
+await test('level_default_precedes_building_and_item_slot_precedes_both',async()=>{
  assert.equal(typeof S.resolveSlot,'function');
  const b={materials:{pane:{id:'choice'}}},l={materials:{pane:{id:'blend'}}};
  assert.deepEqual(S.resolveSlot('pane',{building:b,level:l}),{id:'blend'});
  assert.deepEqual(S.resolveSlot('pane',{building:b}),{id:'choice'});
  assert.equal(S.resolveSlot('pane',{}),null);
- const p=fixture();p.buildings[0].openings[0].materials={pane:{id:'choice'}};
- assert.deepEqual(signature(await build(p)),signature(await build(fixture())));
+ const p=fixture();p.buildings[0].materials.pane={id:'blend'};p.buildings[0].openings[0].materials={pane:{id:'choice'}};
+ const ids=meshes(await build(p)).map(o=>o.material.userData.materialId);
+ assert.equal(ids.filter(id=>id==='choice').length,1);assert.ok(ids.includes('blend'));
 });
 await test('new_level_default_invalidates_material_cache',async()=>{
  const p=fixture(),k=kit();p.buildings[0].levels[0].materials={pane:{id:'choice'}};

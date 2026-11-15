@@ -435,7 +435,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     },
     // `skip` names piece kinds the ray passes through (the opening tools look
     // through a porch's or a room's pick box for the wall behind it).
-    pick(clientX, clientY, { skip = [] } = {}) {
+    pick(clientX, clientY, { skip = [], water = false } = {}) {
       if (!twin) return null;
       const rect = renderer3.domElement.getBoundingClientRect();
       if (clientX < rect.left || clientX >= rect.right || clientY < rect.top || clientY >= rect.bottom) return null;
@@ -465,6 +465,19 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         return contains(room.polygon, [x, y]);
       });
       let hit = state.camera === 'top' ? hits.find(h => h.object.userData.kind === 'wall') || hits[0] : hits[0];
+      // Water uses the existing drawn geometry, retained through yard batching.
+      // It has no structural proxy and adds no selection mesh or draw call. Only a
+      // caller that asks gets a water hit, so every other tool still sees open ground.
+      const waterHits = [];
+      if (water && yardGroup && visible(yardGroup)) for (const object of yardGroup.userData.waterSurfaces || []) {
+        object.matrixWorld.multiplyMatrices(yardGroup.matrixWorld, object.matrix);
+        object.raycast(raycaster, waterHits);
+      }
+      waterHits.sort((a, b) => a.distance - b.distance);
+      if (waterHits[0] && (!hit || waterHits[0].distance < hit.distance)) {
+        const water = waterHits[0], { kind, pieceId, part } = water.object.userData;
+        return { kind, id: pieceId, pieceId, part, point: water.point.toArray() };
+      }
       if (!hit) return null;
       const surface = hit.object.userData;
       const building = plan.buildings.find(b => b.id === surface.buildingId);
@@ -480,10 +493,22 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           || surface.kind === 'room' && (piece.host?.floor === surface.pieceId || piece.host?.ceiling === surface.pieceId)
           || surface.kind === 'roof' && piece.host?.roof === surface.pieceId;
       }) || hit;
-      const { pieceId, kind, buildingId } = hit.object.userData;
+      // A single proxy still selects the whole object. Refine its hit against
+      // the original part meshes, whose CPU geometry survives static batching.
+      const partHits = [];
+      for (const { object, group } of hit.object.userData.partObjects || []) {
+        if (!visible(group) || viewing?.faded(group)) continue;
+        object.matrixWorld.multiplyMatrices(group.matrixWorld, object.matrix);
+        object.raycast(raycaster, partHits);
+      }
+      partHits.sort((a, b) => a.distance - b.distance);
+      const exact = partHits.find(h => !viewing || h.point.y <= viewing.cutAt(h.object) + .02);
+      const proxy = hit.object;
+      if (exact) hit = exact;
+      const { pieceId, kind, buildingId, part } = hit.object.userData;
       let level = null;
-      for (let p = hit.object; p; p = p.parent) if (p.userData.levelKey) { level = p.userData.levelKey.slice(buildingId.length + 1); break; }
-      return { kind, id: pieceId, building: buildingId, level, pieceId, buildingId, point: hit.point.toArray() };
+      for (let p = proxy; p; p = p.parent) if (p.userData.levelKey) { level = p.userData.levelKey.slice(buildingId.length + 1); break; }
+      return { kind, id: pieceId, building: buildingId, level, pieceId, buildingId, part, point: hit.point.toArray() };
     },
     worldBox(id, buildingId) {
       const box = pieceBox(id, buildingId); if (!box) return null;

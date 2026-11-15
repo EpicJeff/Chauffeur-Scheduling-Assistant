@@ -445,6 +445,26 @@ def _rooms(building, levels, notes):
     building['rooms'] = rooms
 
 
+def _item_slots(building, notes):
+    """Shared load repair for connected items and their flat drawing records."""
+    from services.twin_surface_kinds import ITEM_PARTS, clean_slots
+    for collection, kind in (('openings', 'opening'), ('porches', 'porch'),
+                             ('porches_detail', 'porch'), ('stairs', 'stair'),
+                             ('fixtures', 'fixture'), ('items', 'fixture')):
+        pieces = building.get(collection, [])
+        for piece in pieces if isinstance(pieces, list) else []:
+            if not isinstance(piece, dict):
+                continue
+            if 'materials' not in piece or (kind == 'fixture' and 'rect' not in piece):
+                continue
+            value = clean_slots(piece['materials'], ITEM_PARTS[kind], notes,
+                                piece.get('name') or piece.get('kind') or kind)
+            if value:
+                piece['materials'] = value
+            else:
+                piece.pop('materials', None)
+
+
 def _details(building, levels, notes):
     def porch_detail(porch):
         if (not isinstance(porch, dict) or not _polygon(porch.get('polygon'))
@@ -526,11 +546,16 @@ def _site(site, notes):
         # A material the Library no longer has resets that feature to its default look;
         # the feature itself is kept.
         if isinstance(piece, dict) and 'materials' in piece:
-            try:
-                piece['materials'] = twin_site_shapes.material_slots(name, piece['materials'])
-            except ValueError:
-                piece['materials'] = {}
-                notes.append(f'Reset {name} materials: unknown Library material.')
+            if name in ('pool', 'spa'):
+                from services.twin_surface_kinds import clean_slots
+                piece['materials'] = clean_slots(piece['materials'], twin_site_shapes.SLOTS[name], notes,
+                                                f'Reset {name} materials')
+            else:
+                try:
+                    piece['materials'] = twin_site_shapes.material_slots(name, piece['materials'])
+                except ValueError:
+                    piece['materials'] = {}
+                    notes.append(f'Reset {name} materials: unknown Library material.')
             if not piece['materials']:
                 piece.pop('materials')
         for edge in piece.get('edges', []) if isinstance(piece, dict) and name == 'terraces' and isinstance(piece.get('edges'), list) else []:
@@ -690,6 +715,7 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         _rooms(building, levels, notes)
         _openings(building, walls, sections, notes)
         _details(building, levels, notes)
+        _item_slots(building, notes)
         buildings.append(building)
     site = raw.get('site')
     if 'site' in raw and not isinstance(site, dict):

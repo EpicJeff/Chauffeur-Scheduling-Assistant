@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { svgIcon } from '../live/glance_icons.js';
-import { contains, FT } from '../twin_generator.js';
+import { contains, FT, allPorches } from '../twin_generator.js';
+import { ITEM_PARTS, kindRow, resolveSlot } from '../surface_kinds.js';
 import { groundAt, buildingGround, inPolygon, edgeDistance } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
 import { rememberImport, forgetImport, libUrl, materialUrl } from '../twin_library.js';
@@ -30,19 +31,45 @@ export function materialLines(record, plan, kit) {
   const { piece, building, kind } = record;
   if (!building) return [];
   const level = building.levels?.find(l => l.id === piece.level);
-  const line = (label, role, override, target, roomMaterial, surface) => {
+  const line = (label, role, override, target, roomMaterial, surface, inherited = null) => {
     const ref = override || roomMaterial || level?.materials?.[role] || building.materials?.[role]
       || plan.materials?.[role] || kit?.materials?.[role];
-    if (!ref && role !== 'ceiling') return null;
+    if (!ref && role !== 'ceiling' && !inherited) return null;
     const source = override ? 'set here' : `from the ${roomMaterial ? 'room' : level?.materials?.[role] ? 'level' : 'building'}`;
     const reset = override || roomMaterial ? null
       : level?.materials?.[role] ? { target: { level: level.id, role }, label: 'Clear for this floor' }
         : building.materials?.[role] ? { target: { building: building.id, role }, label: 'Clear for the building' } : null;
-    const result = { label, text: ref ? `${materialName(ref.id || ref.asset)}, ${source}` : 'House look', target, clear: !!override, reset };
+    const result = { label, text: !override && inherited || (ref ? `${materialName(ref.id || ref.asset)}, ${source}` : 'House look'), target, clear: !!override, reset: target.part ? null : reset };
     // Not enumerable: the card compares lines as text, never whole buildings.
     Object.defineProperty(result, 'surface', { value: { building, piece, kind, role, level: piece.level, ...surface } });
     return result;
   };
+  const itemLine = (part, item = piece, targetKind = kind) => {
+    const row = kindRow(part), fallback = row.fallback;
+    const itemLevel = building.levels?.find(l => l.id === (item.level || building.walls?.find(w => w.id === item.wall)?.level));
+    const colour = part === 'cabinet' ? item.body : part === 'counter' ? item.top : null;
+    const ref = resolveSlot(part, { building, level: itemLevel });
+    const parent = fallback.role && (building.materials?.[fallback.role] || plan.materials?.[fallback.role] || kit?.materials?.[fallback.role]);
+    const inherited = colour ? `Item colour ${colour}` : ref ? `${materialName(ref.id || ref.asset)}, from the ${itemLevel?.materials?.[part] ? 'level' : 'building'}`
+      : parent ? `${materialName(parent.id || parent.asset)}, house look`
+        : fallback.builtin ? `Built-in ${fallback.builtin}` : 'House look';
+    const labels = { window_frame: 'Frame', pane: 'Pane', door: 'Door', screen: 'Screen', stair_tread: 'Treads', stair_rail: 'Rail', counter: 'Counter' };
+    const target = { [targetKind]: item.id, part };
+    return line(labels[part] || row.label, part, item.materials?.[part], target, null,
+      { kind: targetKind, piece: item, target, label: `${item.name || item.kind || targetKind} ${labels[part] || row.label}` }, inherited);
+  };
+  if (kind === 'opening') {
+    const parts = piece.kind === 'door' ? ['door', 'casing', 'window_frame', ...(piece.glass === 'half' ? ['pane'] : [])]
+      : piece.kind === 'garage' ? ['pane', 'window_frame', 'casing'] : piece.kind === 'passage' ? [] : ['window_frame', 'casing', 'pane'];
+    return parts.filter(part => ITEM_PARTS.opening.includes(part)).map(part => itemLine(part));
+  }
+  if (kind === 'stair') return ITEM_PARTS.stair.filter(part => part !== 'stair_rail' || (piece.rail || 'none') !== 'none' || piece.style === 'open').map(part => itemLine(part));
+  if (['item', 'fixture'].includes(kind) && piece.rect) return (['counter', 'vanity'].includes(piece.kind) ? ['cabinet', 'counter']
+    : piece.kind === 'shower' ? ['shower_tile', 'shower_glass'] : []).filter(part => ITEM_PARTS.fixture.includes(part)).map(part => itemLine(part, piece, 'item'));
+  const porch = kind === 'room' && piece.kind === 'porch'
+    ? [...allPorches(building), ...(building.porches_detail || [])].find(p => p.id === piece.id) || piece : kind === 'porch' ? piece : null;
+  const porchLines = porch ? ITEM_PARTS.porch.filter(part => part !== 'screen' || porch.screened).map(part => itemLine(part, porch, 'porch')) : [];
+  if (kind === 'porch') return porchLines;
   if (kind === 'wall') return ['left', 'right'].map(side => {
     const face = wallFace(building, piece, side);
     // Which face a line speaks for: the room it faces, or the outside.
@@ -54,7 +81,7 @@ export function materialLines(record, plan, kit) {
   }).filter(Boolean);
   if (kind === 'room') return [line('Floor', 'floor', piece.floor_material, { room: piece.id, surface: 'floor' }, null, { room: piece, surface: 'floor', label: 'floor' }),
     line('Ceiling', piece.kind === 'porch' ? 'porch_ceiling' : 'ceiling', piece.ceiling_material, { room: piece.id, surface: 'ceiling' }, null, { room: piece, surface: 'ceiling', label: 'ceiling' }),
-    piece.wall_material && line('Walls', 'interior_wall', piece.wall_material, { room: piece.id, surface: 'walls' }, null, { room: piece, surface: 'walls', label: 'walls' })].filter(Boolean);
+    piece.wall_material && line('Walls', 'interior_wall', piece.wall_material, { room: piece.id, surface: 'walls' }, null, { room: piece, surface: 'walls', label: 'walls' }), ...porchLines].filter(Boolean);
   if (kind === 'roof') return [line('Roof', 'roof', piece.material, { roof: piece.roof || piece.id }, null, { label: 'roof' })].filter(Boolean);
   if (kind === 'dormer') return [line('Roof', 'roof', piece.material, { dormer: piece.id }, null, { label: 'roof' })].filter(Boolean);
   return [];
@@ -71,6 +98,10 @@ export function scopeChoices(surface) {
 
 export function surfaceOperation(surface, scope, material) {
   const { building, piece, kind, side, room, role } = surface;
+  if (role === 'water' && ['pool', 'spa'].includes(kind)) return kind === 'pool'
+    ? { op: 'update_site_shape', list: 'pool', ...(piece.id ? { id: piece.id } : { index: 0 }), materials: { water: { id: material.id } } }
+    : { op: 'update_pool_feature', id: piece.id, materials: { water: { id: material.id } } };
+  if (surface.target?.part) return { op: 'set_material', building: building.id, target: surface.target, material: { id: material.id } };
   let target;
   if (scope === 'building') target = { building: building.id, role };
   else if (scope === 'level') {
@@ -197,11 +228,25 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     return [point.x / FT, -point.z / FT];
   }
   function surfaceAt(event, options) {
-    const picked = view.pick(event.clientX, event.clientY, options); if (!picked) return null;
-    const building = getPlan().buildings.find(b => b.id === picked.building);
-    let kind = picked.kind, id = picked.id;
+    const picked = view.pick(event.clientX, event.clientY, { ...options, water: true }); if (!picked) return null;
+    const building = getPlan().buildings.find(b => b.id === (picked.building || picked.buildingId));
+    let kind = picked.kind, id = picked.id || picked.pieceId;
+    if (picked.part === 'water' && ['pool', 'spa'].includes(kind)) {
+      const pool = getPlan().site?.pool;
+      const piece = kind === 'pool' ? pool : pool?.features?.find(f => f.kind === 'spa' && f.id === id);
+      return piece && { kind, piece, role: 'water', target: { [kind]: piece.id, part: 'water' }, label: `${piece.name || (kind === 'spa' ? 'Spa' : 'Pool')} water` };
+    }
+    const targetKind = kind === 'fixture' ? 'item' : kind;
+    if (picked.part && ITEM_PARTS[targetKind === 'item' ? 'fixture' : targetKind]?.includes(picked.part)) {
+      const pieces = kind === 'porch' ? [...allPorches(building || {}), ...(building?.porches_detail || [])]
+        : kind === 'opening' ? building?.openings : kind === 'stair' ? building?.stairs : [...(building?.items || []), ...(building?.fixtures || [])];
+      const piece = pieces?.find(p => p.id === id);
+      if (piece) return { building, kind: targetKind, piece, role: picked.part, target: { [targetKind]: id, part: picked.part },
+        level: piece.level, point: picked.point && local(building, new THREE.Vector3(...picked.point)).toArray(),
+        label: `${piece.name || piece.kind || targetKind} ${picked.part.replaceAll('_', ' ')}` };
+    }
     if (['opening', 'anchor', 'item', 'fixture', 'light'].includes(kind)) {
-      const attached = ['openings', 'anchors', 'items'].flatMap(name => building?.[name] || []).find(p => p.id === id);
+      const attached = ['openings', 'anchors', 'items', 'fixtures', 'lights'].flatMap(name => building?.[name] || []).find(p => p.id === id);
       const host = attached?.host;
       if (host?.wall || attached?.wall) { kind = 'wall'; id = host?.wall || attached.wall; }
       else if (host?.floor || host?.ceiling) { kind = 'room'; id = host.floor || host.ceiling; }
@@ -223,8 +268,9 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       // Room scope on an outside face refers to the room behind that wall.
       room ||= wallFace(building, piece, side === 'left' ? 'right' : 'left').room;
     } else if (kind === 'room') {
-      surface = direction.z > 0 ? 'ceiling' : 'floor'; role = surface === 'floor' ? 'floor' : piece.kind === 'porch' ? 'porch_ceiling' : 'ceiling';
-      point = r.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -elevation - (surface === 'ceiling' ? building.levels.find(l => l.id === piece.level).ceiling : (piece.floor_offset_ft || 0))), new THREE.Vector3());
+      surface = picked.part === 'ceiling' || direction.z > 0 ? 'ceiling' : 'floor'; role = surface === 'floor' ? 'floor' : piece.kind === 'porch' ? 'porch_ceiling' : 'ceiling';
+      point = picked.part === 'ceiling' && picked.point ? local(building, new THREE.Vector3(...picked.point))
+        : r.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -elevation - (surface === 'ceiling' ? building.levels.find(l => l.id === piece.level).ceiling : (piece.floor_offset_ft || 0))), new THREE.Vector3());
     } else {
       point = picked.point && local(building, new THREE.Vector3(...picked.point));
       if(!point){const hit=raycaster.intersectObjects(view.scene.children,true).find(h=>h.object.userData.kind==='roof' && h.object.userData.buildingId===building.id);point=hit && local(building,hit.point);}
@@ -255,6 +301,14 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     picking = null; el('library-status').textContent = hint;
   }
   function choose(surface, material, event) {
+    if (surface.target?.part) {
+      if (!canEdit()) return;
+      dismiss(); stopPicking();
+      op(surfaceOperation(surface, 'face', material)).then(() => {
+        el('library-status').textContent = `Changed the ${surface.label || surface.role} material.`;
+      }).catch(report);
+      return;
+    }
     dismiss(); chooser = document.createElement('div'); chooser.id = 'material-chooser'; chooser.setAttribute('role', 'group'); chooser.setAttribute('aria-label', 'Apply material');
     chooser.style.left = `${Math.max(96, Math.min(event.clientX, window.innerWidth - 240))}px`;
     chooser.style.top = `${Math.max(74, Math.min(event.clientY, window.innerHeight - 240))}px`;

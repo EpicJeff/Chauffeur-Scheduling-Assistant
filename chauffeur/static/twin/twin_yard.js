@@ -135,6 +135,7 @@ function yardMaterialInputs(plan, kit) {
   }
   if (site.pool?.polygon?.length >= 3) {
     if (plan.materials?.water) use('water', plan.materials.water);
+    if (site.pool.materials?.water) use('water', site.pool.materials.water);
     if (site.pool.materials?.interior) use('paving', site.pool.materials.interior);
     if (site.pool.materials?.waterline) use('paving', site.pool.materials.waterline);
     if ((site.pool.coping ?? 1) > 0) use(authoredRole(site.pool.material, 'paving'), site.pool.materials?.coping);
@@ -142,6 +143,7 @@ function yardMaterialInputs(plan, kit) {
       use(authoredRole(site.pool.material, 'paving'), f.materials?.coping || site.pool.materials?.coping);
       if (f.materials?.interior || site.pool.materials?.interior) use('paving', f.materials?.interior || site.pool.materials?.interior);
       if (f.materials?.waterline) use('paving', f.materials.waterline);
+      if (f.materials?.water) use('water', f.materials.water);
       use('base', f.materials?.wall);
     }
   }
@@ -272,6 +274,7 @@ export const yardKey = (plan, kit, tier, options) => JSON.stringify(yardPartKeys
 
 export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null } = {}) {
   const root = new THREE.Group(); root.name = 'yard';
+  Object.defineProperty(root.userData, 'waterSurfaces', { value: [], writable: true });
   const keys = yardPartKeys(plan, kit, tier, { viewing }), reused = new Map();
   const site = plan.site || {}, mats = materials || new Map();
   const spas = (site.pool?.features || []).filter(f => f.kind === 'spa').map(f => f.polygon);
@@ -400,17 +403,21 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           if (band > -d) surfaceMesh(group, poolSurface(slab, -d, band), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'), seedOf(site.pool, 'walls'));
           surfaceMesh(group, poolSurface(slab, band, 0.3), waterlineMaterial(site.pool.materials?.waterline, { mat, plain }), seedOf(site.pool, 'waterline'));
         }
-        const waterSlot = plan.materials?.water;
+        const waterSlot = site.pool.materials?.water || plan.materials?.water;
         // Kit aliases need an isolated receiving role too: water must not
         // borrow and rename a paving/lawn material used elsewhere in the yard.
         const waterCache = { has: key => mats.has('water-slot:' + key), get: key => mats.get('water-slot:' + key),
           set: (key, value) => mats.set('water-slot:' + key, value) };
-        const water = waterSlot ? materialSlot(waterSlot, 'water', kit, tier, waterCache, role => {
+        const resolveWater = slot => slot ? materialSlot(slot, 'water', kit, tier, waterCache, role => {
           const result = kitMaterial(role, kit, tier); result.name = 'water'; return result;
         }) : plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false });
+        const water = resolveWater(waterSlot);
         if (waterSlot) water.name = 'water';
-        addMesh(group, poolSurface(pool, -0.25), water);
-        buildPoolFeatures(group, site.pool, poolHeight, { mat, plain, water, copingRole: kit.materials?.[site.pool.material] ? site.pool.material : 'paving' });
+        const waterMesh = addMesh(group, poolSurface(pool, -0.25), water);
+        Object.assign(waterMesh.userData, { kind: 'pool', pieceId: site.pool.id || 'pool:0', part: 'water' });
+        buildPoolFeatures(group, site.pool, poolHeight, { mat, plain, water,
+          spaWater: feature => { const result = feature.materials?.water ? resolveWater(feature.materials.water) : water; result.name = 'water'; return result; },
+          copingRole: kit.materials?.[site.pool.material] ? site.pool.material : 'paving' });
       }
       stopPool();
     },
@@ -552,10 +559,15 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   for (const name of YARD_PARTS) {
     if (previous && previousKeys[name] === keys[name]) {
       reused.set(name, previous.children.filter(o => o.userData.yardPart === name));
+      if (name === 'pool') root.userData.waterSurfaces = previous.userData.waterSurfaces;
       continue;
     }
     const scratch = new THREE.Group();
     await builders[name](scratch);
+    if (name === 'pool') {
+      root.userData.waterSurfaces = [];
+      scratch.traverse(object => { if (object.isMesh && object.userData.part === 'water') root.userData.waterSurfaces.push(object); });
+    }
     const stop = part('batch');
     // Full trees/cards own their materials and viewing domains. Everything else
     // batches only inside its part, so no later edit can replace a sibling buffer.

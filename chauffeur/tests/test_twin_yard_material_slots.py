@@ -86,7 +86,7 @@ def test_unknown_parts_ids_and_features_are_refused():
     _refused(model, {'op': 'update_site_shape', 'list': 'beds', 'id': 'bed', 'materials': {'fill': {'id': 'red_brick_03', 'shine': 1}}})
     _refused(model, {'op': 'update_site_shape', 'list': 'beds', 'id': 'bed', 'materials': ['fill']})
     from services import twin_site_shapes
-    for name, pid, part in [('pool', 'pool', 'water'), ('edges', 'edge', 'fill')]:
+    for name, pid, part in [('pool', 'pool', 'deck'), ('edges', 'edge', 'fill')]:
         _refused(model, {'op': 'update_site_shape', 'list': name, 'id': pid, 'materials': {part: BRICK}})
         for bad in ({'id': 'gold'}, {'id': 'red_brick_03', 'shine': 1}, 'red_brick_03'):
             _refused(model, {'op': 'update_site_shape', 'list': name, 'id': pid,

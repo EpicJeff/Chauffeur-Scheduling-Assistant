@@ -84,7 +84,7 @@ def test_ranges_topology_and_containment_are_refused():
                           ('steps', [{'treads': 0}, {'treads': 7}, {'treads': 2.5}, {'treads': True},
                                      {'entry_edge': -1}, {'entry_edge': 4}, {'entry_edge': False}, {'polygon': rect(-1, 0)}]),
                           ('spa', [{'mode': 'sunken'}, {'raise_in': 5}, {'raise_in': 25}, {'depth_in': 23}, {'depth_in': 49},
-                                   {'spillover': 'yes'}, {'polygon': rect(32.1, 0)}, {'materials': {'water': {'id': 'red_brick_03'}}}])]:
+                                   {'spillover': 'yes'}, {'polygon': rect(32.1, 0)}, {'materials': {'steam': {'id': 'red_brick_03'}}}])]:
         for change in changes:
             # JSON disallows infinity: exercise the validator directly for nonfinite values.
             if change.get('depth_in') == float('inf'):

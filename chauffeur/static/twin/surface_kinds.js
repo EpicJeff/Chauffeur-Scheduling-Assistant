@@ -236,7 +236,6 @@ export const ITEM_PARTS = {
 
 export const kindRow = kind => KINDS.find(row => row.kind === kind);
 
-// Item slots are deliberately deferred to slice C; the argument is reserved.
 export function resolveSlot(kind, { item = null, building = null, level = null } = {}) {
-  return level?.materials?.[kind] ?? building?.materials?.[kind] ?? null;
+  return item?.materials?.[kind] ?? level?.materials?.[kind] ?? building?.materials?.[kind] ?? null;
 }

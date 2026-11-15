@@ -107,7 +107,7 @@ export const waterlineMaterial = (slot, { mat, plain }) => slot ? mat('paving', 
 const touches = (a, b) => [[a, b], [b, a]].some(([p, q]) => p.some(v => inPolygon(q, ...v)
   || q.some((c, i) => edgeDistance(v, c, q[(i + 1) % q.length]) < .1)));
 
-export function buildPoolFeatures(group, pool, height, { mat, plain, water, copingRole = 'paving' }) {
+export function buildPoolFeatures(group, pool, height, { mat, plain, water, copingRole = 'paving', spaWater = () => water }) {
   const interior = slot => slot ? mat('paving', slot) : plain('pool tile', '#5fa8c4', { roughness: .35 });
   const tile = interior(pool.materials?.interior), depth = pool.depth ?? 5;
   const poolWater = height - .25, ledgeTop = f => poolWater - (f.depth_in ?? 10) / 12;
@@ -170,11 +170,17 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
       });
       const copingSlot = f.materials?.coping || pool.materials?.coping;
       addMesh(group, polygon(poly, wallTop, copingTop, [inner]), mat(copingRole, copingSlot));
-      addMesh(group, polygon(inner, waterHeight), water);
+      const waterMaterial = spaWater(f);
+      const waterMesh = geometry => {
+        const object = addMesh(group, geometry, waterMaterial);
+        Object.assign(object.userData, { kind: 'spa', pieceId: f.id, part: 'water' });
+        return object;
+      };
+      waterMesh(polygon(inner, waterHeight));
       if (raised && (f.spillover ?? true)) for (const [a, b] of sharedSegments(poly, pool.polygon)) {
         const n = [(b[1] - a[1]), -(b[0] - a[0])], l = Math.hypot(...n), sign = Math.sign(area(poly));
         const strip = [a, b, b.map((v, j) => v + sign * n[j] / l * .025), a.map((v, j) => v + sign * n[j] / l * .025)];
-        addMesh(group, polygon(strip, height - .25, waterHeight), water);
+        waterMesh(polygon(strip, height - .25, waterHeight));
       }
     }
   }

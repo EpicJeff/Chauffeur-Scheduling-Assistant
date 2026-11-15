@@ -93,7 +93,7 @@ def _saved(page, mid, mode, opacity=None):
         if (!response.ok) return false;
         const row = await response.json();
         return row.params.alpha_mode === mode && (opacity === null || row.params.opacity === opacity);
-    }''', arg={'mid': mid, 'mode': mode, 'opacity': opacity}, timeout=15000)
+    }''', arg={'mid': mid, 'mode': mode, 'opacity': opacity}, timeout=15000, polling=500)
 
 
 def scenario_L1_library_blend_and_leaf_cutout():
@@ -111,7 +111,7 @@ def scenario_L1_library_blend_and_leaf_cutout():
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(served.url('house/library?material=' + STATE['blend']))
-        page.wait_for_function('() => !!window.materialLibraryPage')
+        page.wait_for_function('() => !!window.materialLibraryPage', polling=500)
         page.evaluate('() => window.materialLibraryPage.ready')
         page.locator('[data-action="wall"]').click()
         canvas = page.locator('#material-library canvas')
@@ -128,7 +128,7 @@ def scenario_L1_library_blend_and_leaf_cutout():
         page.screenshot(path=str(OUTPUT / 'L1-library-blend-dark.png'), full_page=True)
 
         page.locator(f'[data-material="{STATE["leaf"]}"]').click()
-        page.wait_for_function("() => document.querySelector('[data-field=\"name\"]')?.value === 'Leaf cutout'")
+        page.wait_for_function("() => document.querySelector('[data-field=\"name\"]')?.value === 'Leaf cutout'", polling=500)
         image = Image.new('RGBA', (64, 64), (40, 130, 60, 0))
         ImageDraw.Draw(image).ellipse((8, 6, 52, 58), fill=(40, 130, 60, 255))
         buf = io.BytesIO()
@@ -136,11 +136,11 @@ def scenario_L1_library_blend_and_leaf_cutout():
         page.locator('[data-slot="base_color"] input[type="file"]').set_input_files({
             'name': 'leaf_basecolor.png', 'mimeType': 'image/png', 'buffer': buf.getvalue()})
         _saved(page, STATE['leaf'], 'cutout')
-        page.wait_for_function("() => document.querySelector('[data-param=\"alpha_mode\"]')?.value === 'cutout'")
+        page.wait_for_function("() => document.querySelector('[data-param=\"alpha_mode\"]')?.value === 'cutout'", polling=500)
         assert mode.input_value() == 'cutout'
         mask = page.locator('[data-slot="opacity"] img')
         mask.wait_for(state='visible')
-        page.wait_for_function("() => {const img=document.querySelector('[data-slot=\"opacity\"] img'); return img?.complete && img.naturalWidth > 0;}")
+        page.wait_for_function("() => {const img=document.querySelector('[data-slot=\"opacity\"] img'); return img?.complete && img.naturalWidth > 0;}", polling=500)
         assert 'From the base colour' in page.locator('[data-slot="opacity"]').inner_text()
         assert page.locator('[data-param="alpha_cutoff"][type="range"]').is_visible()
         page.screenshot(path=str(OUTPUT / 'L1-library-leaf-dark.png'), full_page=True)
@@ -163,7 +163,7 @@ def scenario_L2_house_materials_panes_and_draw_budget():
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(served.url('house/editor?tier=low&test=1&perf=1'))
-        page.wait_for_function('() => window.__editor?.ready && window.__twin?.ready', timeout=90000)
+        page.wait_for_function('() => window.__editor?.ready && window.__twin?.ready', timeout=90000, polling=500)
         if page.locator('#place-view').is_visible():
             page.locator('#place-close').click()
         # Use the person's navigation path, rather than the selection test hook.
@@ -172,8 +172,8 @@ def scenario_L2_house_materials_panes_and_draw_budget():
         page.locator('#editor-floors').get_by_role('button', name='All floors', exact=True).click()
         page.locator('#editor-floors').get_by_role('button', name='Change the house', exact=True).click()
         page.locator('#piece-card').get_by_text('House materials', exact=True).wait_for()
-        page.wait_for_function('() => window.__twin?.ready')
-        page.wait_for_function('() => /\\d+ draws/.test(document.querySelector(".twin-frame-meter")?.textContent || "")')
+        page.wait_for_function('() => window.__twin?.ready', polling=500)
+        page.wait_for_function('() => /\\d+ draws/.test(document.querySelector(".twin-frame-meter")?.textContent || "")', polling=500)
         before = page.evaluate('() => window.__twin.stats().drawCalls')
         slot = page.locator('#piece-card [data-material-slot="Panes"]')
         slot.get_by_role('button', name='Change the panes material', exact=True).click()
@@ -187,7 +187,7 @@ def scenario_L2_house_materials_panes_and_draw_budget():
                 if (o.isMesh && !o.layers.isEnabled(31) && parent?.userData.buildingId === b.id && o.material?.name === 'glass') panes.push(o);
             });
             return panes.length > 0 && panes.every(o => o.material.userData.materialId === mid);
-        }''', arg=STATE['panes'])
+        }''', arg=STATE['panes'], polling=500)
         _settle(page)
         after = page.evaluate('() => window.__twin.stats().drawCalls')
         assert after <= before, (before, after)
@@ -254,7 +254,7 @@ def scenario_L3_siding_mode_flip_drops_and_restores_finished_bake():
         try:
             library.on('pageerror', lambda error: errors.append(str(error)))
             library.goto(served.url('house/library?material=' + STATE['siding']))
-            library.wait_for_function('() => !!window.materialLibraryPage')
+            library.wait_for_function('() => !!window.materialLibraryPage', polling=500)
             library.evaluate('() => window.materialLibraryPage.ready')
             library.locator('[data-param="alpha_mode"]').select_option('cutout')
             _saved(library, STATE['siding'], 'cutout')
@@ -288,6 +288,141 @@ def scenario_L3_siding_mode_flip_drops_and_restores_finished_bake():
         assert not _unexpected(served.errors()), _unexpected(served.errors())
 
 
+def _item_editor(page, served):
+    page.set_viewport_size({'width': 1920, 'height': 1080})
+    page.add_init_script('''if (location.protocol.startsWith('http')) { try {
+        localStorage.setItem('chauffeur_admin_token', %s);
+        localStorage.setItem('chauffeur_admin_token_for', 'alpha-parent');
+        localStorage.setItem('chauffeur_theme', 'dark');
+    } catch (e) {} }''' % json.dumps(STATE['token']))
+    page.goto(served.url('house/editor?tier=low&test=1'))
+    page.wait_for_function('() => window.__editor?.ready && window.__twin?.ready', timeout=90000, polling=500)
+    if page.locator('#place-view').is_visible():
+        page.locator('#place-close').click()
+
+
+def scenario_L4_drop_on_one_window_pane_then_frame():
+    """Real pointer drags hit the pane and frame independently of their wall."""
+    served = _serve()
+    if served is None:
+        raise AssertionError('Chromium is required for L4 visual verification')
+    from services import twin_store
+    plan = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
+    twin_store.push_round(plan, 'build')
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    with served.browser(launch_args=GPU_ARGS, color_scheme='dark') as page:
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        _item_editor(page, served)
+        chosen = page.evaluate('''() => {
+            const v=window.__twin,b=v.plan.buildings.find(b=>b.id==='pool-house');
+            const opening=b.openings.find(o=>o.kind==='window' && b.walls.some(w=>w.id===o.wall && w.exterior));
+            if(!opening)throw Error('Fixture needs an exterior window');
+            const wall=b.walls.find(w=>w.id===opening.wall),d=wall.to.map((n,i)=>n-wall.from[i]),len=Math.hypot(...d);
+            const centre=wall.from.map((n,i)=>n+d[i]*opening.at/len),normal=[d[1]/len,-d[0]/len];
+            const outline=b.levels.find(l=>l.id===wall.level).outline;
+            const avg=[0,1].map(i=>outline.reduce((n,p)=>n+p[i],0)/outline.length);
+            if(normal.reduce((n,x,i)=>n+x*(centre[i]-avg[i]),0)<0)normal.forEach((x,i)=>normal[i]=-x);
+            const level=b.levels.find(l=>l.id===wall.level),z=level.elevation+(opening.sill+opening.head)/2;
+            const a=(b.rotation||0)*Math.PI/180;
+            const world=([x,y,z])=>[(Math.cos(a)*x-Math.sin(a)*y+b.position[0])*.3048,
+                (z+(b.base||0))*.3048,-(Math.sin(a)*x+Math.cos(a)*y+b.position[1])*.3048];
+            v.setCamera('front');v.setCameraState({position:world([centre[0]+normal[0]*14,centre[1]+normal[1]*14,z]),target:world([...centre,z])});
+            window.__slotWindow={building:b.id,id:opening.id};
+            return {building:b.id,id:opening.id,wall:wall.id,
+                walls:JSON.stringify(b.walls.map(w=>w.faces||null)),
+                others:JSON.stringify(b.openings.filter(o=>o.id!==opening.id).map(o=>o.materials||null))};
+        }''')
+        page.locator('#rail-library').click()
+        for part, mid in [('pane', STATE['panes']), ('window_frame', STATE['siding'])]:
+            # Sample the original part's triangles, then require the real view
+            # picker to identify that part before sending the pointer there.
+            point = page.evaluate('''part => {
+                const v=window.__twin,{building,id}=window.__slotWindow;v.scene.updateMatrixWorld(true);
+                let proxy;v.scene.traverse(o=>{if(o.layers.isEnabled(31)&&o.userData.buildingId===building&&o.userData.pieceId===id)proxy=o;});
+                const canvas=v.renderer3.domElement,r=canvas.getBoundingClientRect(),Vector=v.camera.position.constructor;
+                for(const {object,group} of proxy.userData.partObjects||[]){
+                    if(object.userData.part!==part)continue;
+                    const g=object.geometry,p=g.attributes.position,idx=g.index?.array||Array.from({length:p.count},(_,i)=>i);
+                    for(let i=0;i<idx.length;i+=3){
+                        const q=new Vector();for(let j=0;j<3;j++)q.add(new Vector().fromBufferAttribute(p,idx[i+j]).multiplyScalar([.2,.3,.5][j]));
+                        q.applyMatrix4(group.matrixWorld).project(v.camera);
+                        const x=r.left+(q.x+1)*r.width/2,y=r.top+(1-q.y)*r.height/2,hit=v.pick(x,y);
+                        if(hit?.pieceId===id&&hit.part===part&&canvas.contains(document.elementFromPoint(x,y)))return {x,y};
+                    }
+                }throw Error('No visible '+part+' target');
+            }''', part)
+            tile = page.locator(f'#library-entries [data-material="{mid}"]')
+            tile.wait_for()
+            tile.scroll_into_view_if_needed()
+            box = tile.bounding_box()
+            page.mouse.move(box['x'] + box['width']/2, box['y'] + box['height']/2)
+            page.mouse.down()
+            page.mouse.move(point['x'], point['y'], steps=16)
+            page.mouse.up()
+            page.wait_for_function('''({id,building,part,mid}) => {
+                const v=window.__twin,b=v.plan.buildings.find(b=>b.id===building);
+                if(!v.ready||b.openings.find(o=>o.id===id)?.materials?.[part]?.id!==mid)return false;
+                let proxy;v.scene.traverse(o=>{if(o.layers.isEnabled(31)&&o.userData.pieceId===id&&o.userData.buildingId===building)proxy=o;});
+                const own=proxy?.userData.partObjects?.filter(p=>p.object.userData.part===part)||[];
+                return own.length>0&&own.every(p=>p.object.material.userData.materialId===mid);
+            }''', arg={**chosen, 'part': part, 'mid': mid}, timeout=90000, polling=500)
+            assert page.locator('#material-chooser').count() == 0
+            assert page.evaluate('''old => {
+                const b=window.__twin.plan.buildings.find(b=>b.id===old.building);
+                return JSON.stringify(b.walls.map(w=>w.faces||null))===old.walls &&
+                    JSON.stringify(b.openings.filter(o=>o.id!==old.id).map(o=>o.materials||null))===old.others;
+            }''', chosen)
+        assert page.evaluate('''({building,id,pane,frame}) => {
+            const opening=window.__twin.plan.buildings.find(b=>b.id===building).openings.find(o=>o.id===id);
+            return opening.materials.pane.id===pane && opening.materials.window_frame.id===frame;
+        }''', {**chosen, 'pane': STATE['panes'], 'frame': STATE['siding']})
+        page.screenshot(path=str(OUTPUT / 'L4-window-pane-and-frame-dark-wall.png'), full_page=True)
+        assert not _unexpected(errors), _unexpected(errors)
+        assert not _unexpected(served.errors()), _unexpected(served.errors())
+
+
+def scenario_L5_stair_rail_pick_and_clear_returns_house_look():
+    served = _serve()
+    if served is None:
+        raise AssertionError('Chromium is required for L5 visual verification')
+    from services import twin_store
+    plan = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
+    building = plan['buildings'][0]
+    stair = building['stairs'][0]
+    stair.update(style='open', rail='both')
+    building.setdefault('materials', {})['stair_rail'] = {'id': STATE['siding']}
+    twin_store.push_round(plan, 'build')
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    with served.browser(launch_args=GPU_ARGS, color_scheme='dark') as page:
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        _item_editor(page, served)
+        page.evaluate('''({id,building}) => {
+            const v=window.__twin;v.setView(building+':L1');v.setCamera('top');window.__editor.clickPiece(id,building);
+        }''', {'id': stair['id'], 'building': building['id']})
+        row = page.locator('#piece-card .editor-material-line').filter(has=page.get_by_text('Rail', exact=True))
+        row.get_by_role('button', name='Change the rail material', exact=True).click()
+        page.locator(f'#library-entries [data-material="{STATE["panes"]}"]').click()
+        page.wait_for_function('''({id,building,mid}) => window.__twin.ready &&
+            window.__twin.plan.buildings.find(b=>b.id===building).stairs.find(s=>s.id===id).materials?.stair_rail?.id===mid
+        ''', arg={'id': stair['id'], 'building': building['id'], 'mid': STATE['panes']}, timeout=90000, polling=500)
+        if page.locator('#library-panel').is_visible():
+            page.locator('#rail-library').click()
+        row.get_by_role('button', name='Clear', exact=True).click()
+        page.wait_for_function('''({id,building,mid}) => {
+            const v=window.__twin,b=v.plan.buildings.find(b=>b.id===building);
+            if(!v.ready||b.stairs.find(s=>s.id===id).materials?.stair_rail)return false;
+            let proxy;v.scene.traverse(o=>{if(o.layers.isEnabled(31)&&o.userData.pieceId===id&&o.userData.buildingId===building)proxy=o;});
+            const rails=proxy?.userData.partObjects?.filter(p=>p.object.userData.part==='stair_rail')||[];
+            return rails.length>0&&rails.every(p=>p.object.material.userData.materialId===mid);
+        }''', arg={'id': stair['id'], 'building': building['id'], 'mid': STATE['siding']}, timeout=90000, polling=500)
+        row.get_by_text('Bake siding, from the building', exact=True).wait_for()
+        page.screenshot(path=str(OUTPUT / 'L5-stair-rail-cleared-dark-wall.png'), full_page=True)
+        assert not _unexpected(errors), _unexpected(errors)
+        assert not _unexpected(served.errors()), _unexpected(served.errors())
+
+
 def scenario_L_roof_two_materials():
     """Set two ordinary Library materials through the existing roof card row."""
     served = _serve()
@@ -304,7 +439,7 @@ def scenario_L_roof_two_materials():
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(served.url('house/editor?tier=high&test=1'))
-        page.wait_for_function('() => window.__editor?.ready && window.__twinEditor && window.__twin?.ready', timeout=90000)
+        page.wait_for_function('() => window.__editor?.ready && window.__twinEditor && window.__twin?.ready', timeout=90000, polling=500)
         if page.locator('#place-view').is_visible():
             page.locator('#place-close').click()
         for key in ['roof_main', 'roof_porch']:
@@ -317,7 +452,7 @@ def scenario_L_roof_two_materials():
             page.wait_for_function('''({rid, mid}) => {
                 const b = window.__twin.plan.buildings.find(b => b.id === 'pool-house');
                 return b.roof.sections.some(s => (s.id === rid || s.roof === rid) && s.material?.id === mid);
-            }''', arg={'rid': rid, 'mid': mid})
+            }''', arg={'rid': rid, 'mid': mid}, polling=500)
             # The Library panel stays open after a pick and covers the piece card.
             if page.locator('#library-panel').is_visible():
                 page.locator('#rail-library').click()
@@ -331,7 +466,7 @@ def scenario_L_roof_two_materials():
                     ids.add(o.material.userData.materialId);
             });
             return JSON.stringify([...ids].sort()) === JSON.stringify(expected);
-        }''', arg=expected)
+        }''', arg=expected, polling=500)
         page.evaluate('''() => {
             const view = window.__twin, b = view.plan.buildings.find(b => b.id === 'pool-house');
             const angle = (b.rotation || 0) * Math.PI / 180;
@@ -354,7 +489,9 @@ if __name__ == '__main__':
     failed = 0
     scenarios = [scenario_L1_library_blend_and_leaf_cutout, scenario_L_roof_two_materials,
                  scenario_L2_house_materials_panes_and_draw_budget,
-                 scenario_L3_siding_mode_flip_drops_and_restores_finished_bake]
+                 scenario_L3_siding_mode_flip_drops_and_restores_finished_bake,
+                 scenario_L4_drop_on_one_window_pane_then_frame,
+                 scenario_L5_stair_rail_pick_and_clear_returns_house_look]
     for scenario in scenarios:
         try:
             scenario()

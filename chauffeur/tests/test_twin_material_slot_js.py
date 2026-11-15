@@ -95,7 +95,7 @@ console.log('Passed: shared slot catalogue, swatch/name, choose, quick picks, ti
     ['hardscape',{id:'h',polygon:square},['Surface']],
     ['hardscape',{id:'w',kind:'path',points:[[0,0],[9,0]],width:3,edging:'curb'},['Surface','Curb']],
     ['beds',{id:'b',polygon:square},['Fill']],
-    ['pool',{id:'pool',polygon:square},['Coping','Interior','Waterline tile']],
+    ['pool',{id:'pool',polygon:square},['Coping','Interior','Waterline tile','Water']],
     ['edges',{id:'edge',polygon:square},['Strip']]]){
     const host=document.createElement('div'),sent=[];document.body.append(host);
     drawSiteShapeShelf(host,{kind,index:0,piece},{canEdit:()=>true,queue:work=>Promise.resolve().then(work),op:async o=>sent.push(o),
@@ -105,7 +105,7 @@ console.log('Passed: shared slot catalogue, swatch/name, choose, quick picks, ti
     for(const label of parts){
       const slot=host.querySelector(`[data-material-slot="${label}"]`),before=sent.length;
       await click(byText(slot,'Change'));await click(slot.querySelector('[data-material="wood_planks"]'));
-      const part={Boards:'boards',Posts:'posts',Rails:'rails',Body:'body',Top:'top',Surface:'surface',Curb:'edging',Fill:'fill',Coping:'coping',Interior:'interior','Waterline tile':'waterline',Strip:'strip'}[label];
+      const part={Boards:'boards',Posts:'posts',Rails:'rails',Body:'body',Top:'top',Surface:'surface',Curb:'edging',Fill:'fill',Coping:'coping',Interior:'interior','Waterline tile':'waterline',Water:'water',Strip:'strip'}[label];
       assert.equal(sent.length,before+1);
       assert.deepEqual(sent.at(-1),{op:'update_site_shape',list:kind,index:0,materials:{[part]:{id:'wood_planks'}}},`${kind} ${label}: one op`);
       await click(byText(slot,'Change'));await click(byText(slot,'Use default'));
