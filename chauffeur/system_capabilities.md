@@ -1,6 +1,19 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.874 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.875 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.875 (2026-11-15, NOT device-verified): light looks. A person assigns the colour a light shows in the house twin: a palette of one to four colours per effect, and one fixed colour for a light or on/off source that reports none.**
+
+- **Why:** Home Assistant reports one colour per entity and none at all for many effects (a themed pool show, a rainbow) or for a switch that powers a light. v2.499.874 could only read what the device reports. Assigning the look by hand works for any system, with no vendor or brand table.
+- **Store and routes:** `services/twin_light_looks.py` keeps one household map keyed by entity id, `{"light.pool": {"colour": [r,g,b], "effects": {"caribbean": [[r,g,b], ...]}}}` (effect names lower-cased, 1 to 4 stops). `GET /api/house/twin/light-looks` is open to the wall and services; `PUT` takes one entity per call (`{entity_id, look}`, null clears) and is parents-only. The twin reads the map once at mount without holding the mount; there is no stream, so another open tab keeps the old looks until it reloads.
+- **Order of sources (one resolver, `resolveLightColour`):** for a light, the palette assigned to the running effect (it wins even over a reported `rgb_color`), then the v2.499.874 order (`rgb_color`, `hs_color`, `xy_color`, a colour word in the effect name, colour temperature), then the light's assigned fixed colour, then warm white. For `switch`, `input_boolean` and `fan` sources: the assigned fixed colour, else 2700 K. Real lights, fixture glow, bulbs, the baked light tint, the marker dot and the ring's brightness arc all read it.
+- **Palettes:** a line fixture spreads the palette along its run, piece by piece. Every other shape, the bulb, the marker and the bake tint take the palette's linear-light average (red plus blue gives `[188, 0, 188]`).
+- **Markers:** a switch, input_boolean or fan marker keeps its kind's colour until a colour is assigned in the twin. The domain of the entity decides, so an outlet-kind `switch.*` takes its assigned colour.
+- **By hand (shared device control, ring and room row):** each effect chip carries a dot showing its twin colour; for a person who may edit the house the dot opens an editor in place (1 to 4 stops on colour wheels, add, remove, Clear (automatic), Done, Cancel). A light with no colour support and an on/off source get `Colour in the twin (display only)` with a one-stop editor. Nothing here calls the device. Editing is off on panel, kiosk, compact and tabs surfaces, which show the dots only. A read-only ring still lists the effects, disabled, with the running one marked.
+- **Ring layout:** the editor asks the ring to place itself again when it grows or shrinks (`twin-relayout`); the side card scrolls within the space above the shelf and the chat bar. A chat bar that is laid out but hidden (wall panels) is not an edge.
+- **Supersedes the v2.499.874 limits:** an effect with no colour word, a multi-colour effect (as a fixed palette, not an animation), on/off sources and the marker dot and ring tint are all covered now.
+- **Known limits:** palettes are static (no animation); dark assigned colours can make the brightness arc hard to see; looks do not sync between open tabs.
+- **Tests:** `test_twin_light_looks.py`, `test_twin_light_looks_js.py`, `test_twin_light_looks_controls_js.py`, `test_twin_light_looks_live.py` (Chromium), plus `test_twin_palette_js.py`.
 
 **v2.499.874 (2026-11-15, NOT device-verified): a light in the house twin takes the colour its device reports in more ways, so fixtures follow lights that never publish `rgb_color`.**
 
