@@ -2,9 +2,17 @@ import * as THREE from '../../vendor/three-r187/three.module.js';
 import { FT, lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { fingerprint } from './fingerprint.js';
+import { emitterSamples } from './fixture_terms.js';
 
 // Match the live lamp's bulb height and range, including the ceiling inset.
 export function lightSource(plan, light) {
+  if (light.emitters?.length === 1 && ['point','spot'].includes(light.emitters[0].shape))
+    return {source: new THREE.Vector3(...light.emitters[0].position), range: light.emitters[0].range * FT};
+  if (light.emitters) {
+    const samples = emitterSamples(light.emitters), source = new THREE.Vector3();
+    for (const s of samples) source.addScaledVector(s.source, 1 / samples.length);
+    return {source, range: Math.max(...samples.map(s => s.source.distanceTo(source) + s.range))};
+  }
   // Object lamps (fire pits, lamp furniture) carry their world position: modes.js range.
   if (light.absolute) return { source: new THREE.Vector3(light.at[0] * FT, light.at[2] * FT, -light.at[1] * FT),
     range: (light.range ?? 18) * FT };
@@ -75,6 +83,27 @@ function triangles(chart) {
 
 export function reachLights(layout, lights) {
   if (!layout.plan) return lights;
+  if (lights.some(l => l.emitters)) return lights.map(light => {
+    if (!light.emitters) return reachLights(layout, [light])[0];
+    const samples = emitterSamples(light.emitters);
+    const inputs = samples.map((s, i) => ({device: light.device + ':' + i, absolute: true,
+      at: [s.source.x / FT, -s.source.z / FT, s.source.y / FT],
+      range: (s.range + (s.piece ? Math.hypot(s.piece.width, s.piece.height) : 0)) / FT}));
+    const hits = reachLights(layout, inputs), receivers = new Set(), charts = new Set(), scores = {}, distances = {}, chartKeys = {};
+    let scale = 0;
+    const hash = fingerprint();hash.add(light.signature);
+    hits.forEach((hit, i) => {
+      const sample = samples[i];hash.add(hit.reach);
+      hit.receivers.forEach(r => receivers.add(r));
+      for (const chart of hit.receivingCharts) {
+        charts.add(chart);scores[chart] = (scores[chart] || 0) + hit.scores[chart] * sample.cd * sample.weight;
+        distances[chart] = Math.min(distances[chart] ?? Infinity, hit.distances[chart]);chartKeys[chart] = hit.chartKeys[chart];
+      }
+      scale += sample.cd * sample.weight / Math.max(.01, Math.min(Infinity, ...Object.values(hit.distances)));
+    });
+    return {...light, receivers: [...receivers].sort((a,b) => a-b), receivingCharts: [...charts].sort((a,b) => a-b),
+      scores, distances, chartKeys, reach: hash.key(), range: lightSource(layout.plan, light).range, scale: Math.max(scale, 1e-6)};
+  });
   if (!reaches.has(layout)) reaches.set(layout, new Map());
   const saved = reaches.get(layout);
   // Coincident fixtures have identical physical reach. Retain only current
@@ -86,7 +115,7 @@ export function reachLights(layout, lights) {
   return lights.map(light => {
     if (!light.at) return light;
     if (light.reach && light.receivers) return light;
-    const input = JSON.stringify([light.building, light.level, light.room, light.at]);
+    const input = JSON.stringify([light.building, light.level, light.room, light.at, ...(light.absolute ? [true, light.range] : [])]);
     const hit = positions.get(input);
     if (hit) { saved.set(light.device,{input,result:hit}); return { ...light, ...hit }; }
     const { source, range } = lightSource(layout.plan, light), receivers = new Set(), geometry = [];

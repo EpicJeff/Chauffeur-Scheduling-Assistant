@@ -64,7 +64,7 @@ async function context(tier = 'high', sharedServer = null, placed = null, extra 
   const controls = new THREE.EventDispatcher(); controls.target = new THREE.Vector3();
   const view = { plan, ready: true, scene, tier, renderer3: renderer, controls, render() {} };
   const server = sharedServer || fakeServer(), lights = placed || [k1, k2, h1, c1];
-  const api = (path, init) => path === 'api/house/live' ? Promise.resolve(new Response(JSON.stringify(liveLayout(lights)), { status: 200 }))
+  const api = (path, init) => path === 'api/house/live' ? Promise.resolve(new Response(JSON.stringify({...liveLayout(lights), ...extra.fixtureLayout}), { status: 200 }))
     : extra.deny && path.endsWith('/lease') ? Promise.resolve(new Response('{"detail":"Requires parent"}', { status: 403 }))
     : server.api(path, init);
   const host = extra.host || document.getElementById('twin-controls');
@@ -468,6 +468,30 @@ await check('crowded_charts_keep_all_lights_baked_somewhere', async () => {
   } finally {desk.controller.stop();}
 });
 
+await check('fixture_groups_bake_twice_settle_and_populate_shape_rows', async () => {
+  const {lightSource}=await import(file('static/twin/bake/reach.js'));
+  const source=lightSource(job.plan,k1).source, at=[source.x/gen.FT,-source.z/gen.FT,source.y/gen.FT];
+  const point=(id,x=0)=>({id:'fixture:'+id,shape:'point',ref:'absolute',at:[at[0]+x,at[1],at[2]]});
+  const fixtureLayout={light_fixtures:{
+    'light.spot':[{...point('s'),shape:'spot',aim:[at[0]+2,at[1],0],cone_deg:60,softness:.3}],
+    'light.rect':[{...point('a'),shape:'area',size_ft:[2,2],facing:'down'}],
+    'light.sum':[point('one',-1),point('two',1)]}};
+  const desk=await context('high',null,[],{fixtureLayout});
+  try {
+    await until(()=>desk.controller.fresh().length===3&&!desk.controller.state().baking,'fixture groups bake');
+    assert.deepEqual(desk.controller.state().stale,[]);
+    assert.equal(desk.controller.state().baked.length,3,'one publication per entity');
+    const mesh=covered(desk.out.root)[0],shader={uniforms:{},vertexShader:'#include <begin_vertex>',fragmentShader:'#include <lights_fragment_end>'};
+    mesh.material.onBeforeCompile(shader,desk.renderer);
+    const t=shader.uniforms.lmTints.value;assert.equal(t.image.height,17);assert.equal(t.image.width,3);
+    assert.deepEqual([t.image.data[24],t.image.data[28],t.image.data[32]],[1,2,3]);
+    assert.ok(t.image.data[34]>0,'the sum scale reaches the shader');
+    desk.controller.light('light.spot',[255,100,50],1);assert.ok(t.image.data[0]>0);
+    await desk.controller.now();
+    assert.deepEqual(desk.controller.state().stale,[]);assert.equal(desk.controller.state().baked.length,6);
+    assert.deepEqual(desk.controller.fresh().sort(),['light.rect','light.spot','light.sum']);
+  } finally {desk.controller.stop();}
+});
 console.log(`${passed}/${ran} passed`); process.exit(passed === ran ? 0 : 1);
 """
 

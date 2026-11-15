@@ -162,10 +162,10 @@ function photometry(f, lumens) {
   return {luminance: area > 0 ? lumens / (Math.PI * area * FT ** 2) : 0};
 }
 function resolved(f, entity, device, output, fraction, state) {
-  const lumens = output * fraction * state.brightness;
+  const lumens = output * fraction * state.brightness * (f.fire_pit ? .5 : 1);
   return {...f, fixture_id: f.id, entity_id: entity, device_id: device, legacy: false,
     output_lm: output, output_fraction: fraction, output_lm_share: lumens, ...photometry(f, lumens),
-    rgb: state.rgb, brightness: state.brightness, on: state.on && lumens > 0};
+    rgb: f.fire_pit ? [255,154,60] : state.rgb, ...(f.fire_pit ? {intensityScale: .5} : {}), brightness: state.brightness, on: state.on && lumens > 0};
 }
 
 // Geometry comes from the same bowl/pan helpers used to build the pit. These
@@ -253,7 +253,7 @@ export function resolveEmitters(layout, states = {}, plan = {}, {firePits = true
       emitters.push(e);
     });
   }
-  for (const marker of layout.markers || []) if (marker.kind === 'light' && !groups.has(marker.entity_id))
+  for (const marker of layout.markers || []) if (marker.kind === 'light' && marker.at && marker.placed !== false && !groups.has(marker.entity_id))
     emitters.push(legacyEmitter(marker, plan, stateOf(marker.entity_id)));
   return emitters;
 }

@@ -71,7 +71,7 @@ export function createRealLights(view, { tier = view.tier || 'low', fixtures = t
       const expanded = {point: [], spot: [], area: []};
       for (const row of candidates) {
         const e = row.emitter;
-        if (baked.has(row.device) && (!e || e.legacy)) continue;
+        if (baked.has(e && !e.legacy ? e.entity_id : row.device)) continue;
         const type = !e || e.legacy ? 'point' : e.shape === 'line' ? 'area' : e.shape;
         const pieces = e?.shape === 'line' ? linePieces(e) : [null];
         pieces.forEach((piece, i) => expanded[type].push({...row, piece,

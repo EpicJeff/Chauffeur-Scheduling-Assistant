@@ -5,6 +5,8 @@ import { groundAt, buildingGround } from '../twin_ground.js';
 import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, patchLightmaps, setLightTint, pickTranscode,
   setLightSource, setChartFill, setRoomFill, clearFills, roomRegions, patchWindowGlow } from './lightmap_material.js';
 import { lightSource } from './reach.js';
+import { resolveEmitters, emitterSignature } from '../live/emitters.js';
+import { kindOf, exactRects } from './fixture_terms.js';
 import { createBaker, bakeLayout } from './baker.js';
 import { mayBake } from './bake_lock.js';
 import { workerCodec } from './worker_codec.js';
@@ -86,9 +88,22 @@ export function objectLightsOf(root, layout) {
   }
   return { lights, replaced };
 }
-export function bakeLights(layout, root) {
+export function bakeLights(layout, root, plan = {}) {
+  const groups = new Map();
+  for (const e of resolveEmitters(layout || {}, {}, plan)) {
+    if (e.legacy) continue;
+    if (!groups.has(e.entity_id)) groups.set(e.entity_id, []);
+    groups.get(e.entity_id).push(e);
+  }
+  for (const emitters of groups.values()) emitters.sort((a,b) => a.fixture_id < b.fixture_id ? -1 : a.fixture_id > b.fixture_id ? 1 : 0);
+  const fixtures = [...groups].map(([entity, emitters]) => ({device: entity, entity, emitters,
+    kind: kindOf(emitters), signature: emitterSignature(emitters), at: [...(emitters[0].at || emitters[0].path[0])],
+    building: emitters[0].building || null, level: emitters[0].level || null, room: emitters[0].room || null}));
   const objects = root ? objectLightsOf(root, layout) : { lights: [], replaced: new Set() };
-  return [...lightsOf(layout).filter(l => !objects.replaced.has(l.device)), ...objects.lights];
+  const replaced = new Set((layout?.markers || []).filter(m => groups.has(m.entity_id)).map(m => m.device_id));
+  const pitIds = new Set([...groups.values()].flat().filter(e => e.fire_pit).map(e => e.device_id));
+  return [...lightsOf(layout).filter(l => !objects.replaced.has(l.device) && !replaced.has(l.device)),
+    ...objects.lights.filter(l => !pitIds.has(l.device)), ...fixtures];
 }
 
 export function mountBake(view, root, { host, controls = view.controls, layout: requestedLayout, poll: pollMs = 10000,
@@ -261,6 +276,16 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       patchWindowGlow(material, pages, uniforms);
     });
   }
+  function setSources() {
+    // Each slot's light, where its shadowmask was rendered from (the shader's falloff and N.L).
+    const exact = exactRects(lights, view.tier);
+    lights.forEach((input, index) => {
+      const l = packed.lights[index], s = packed.slots[l.device]; if (!s) return;
+      const { source, range } = lightSource(view.plan, l);
+      if (uniforms.lmChartMode) setLightSource(uniforms, 0, index, source, range, l.kind || 0, l, exact.has(l.device));
+      else for (const room of s.receivers || [s.room]) setLightSource(uniforms, room, s.bank * 2 + s.channel, source, range, l.kind || 0, l, exact.has(l.device));
+    });
+  }
   // The light list's layout: banks, layers, tints and the blank arrays it draws from.
   function prepare(list, history = packed?.ownership) {
     unpatch();
@@ -277,7 +302,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       .filter(p => p >= 0 && p < b.pages))].sort((a, c) => a - c));
     uniforms = packed.banks.some(b => b.chartPacking)
       ? chartLightmapUniforms(atlas.room.charts.length, packed, lights, layout.room.page, layers)
-      : lightmapUniforms(atlas.room.rooms.length, Math.max(2, packed.banks.length * 2));
+      : lightmapUniforms(atlas.room.rooms.length, Math.max(2, packed.banks.length * 2), {fixtures: lights.some(l => l.emitters)});
     if (!uniforms.lmRegions) uniforms.lmRegions = { value: regions() };
     const roomFormat = pickTranscode(view.renderer3.extensions, 2);
     pages = {
@@ -285,13 +310,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       banks: packed.banks.map((b, i) => layers[i].length ? blankArray(layers[i].length, roomFormat, layout.room.page)
         : blankArray(1, roomFormat, 4)) };
     pages.banks.forEach(t => textures.add(t));
-    // Each slot's light, where its shadowmask was rendered from (the shader's falloff and N.L).
-    lights.forEach((l, index) => {
-      const s = packed.slots[l.device]; if (!s) return;
-      const { source, range } = lightSource(view.plan, l);
-      if (uniforms.lmChartMode) setLightSource(uniforms, 0, index, source, range);
-      else for (const room of s.receivers || [s.room]) setLightSource(uniforms, room, s.bank * 2 + s.channel, source, range);
-    });
+    setSources();
     etags.clear(); present.clear(); manifestText = null; fresh.clear();
     stale = lights.map(l => l.device);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
@@ -388,7 +407,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   async function relight() {
     const layoutNow = view.live?.layout?.();
     if (!layoutNow || !atlas) return;
-    const next = bakeLights(layoutNow, root);
+    const next = bakeLights(layoutNow, root, view.plan);
     if (JSON.stringify(next) === lightsKey) return;
     if (running) { pendingRun = true; baker?.cancel(); }
     const text=await readManifest(atlas.key);if(!valid())return;
@@ -460,6 +479,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       // Retain the arrays, shader bindings and unrelated lights' fresh masks.
       const previous = packed;
       packed = bakeLayout(atlas, layout, lights, packed.ownership);
+      setSources();
       for (const id of [...fresh]) if (previous.entries[id]?.key !== packed.entries[id]?.key) {
         fresh.delete(id); light(id, [0, 0, 0], 0);
       }
@@ -498,7 +518,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       if (!covered(root).length) return;
       const response = await api('api/house/live'); const liveLayout = response.ok ? await response.json() : null;
       if (!valid()) return;
-      lights = bakeLights(liveLayout, root);
+      lights = bakeLights(liveLayout, root, view.plan);
       // The worker lays the atlas out; it is applied to the meshes only once a bake
       // exists or this desk will make one (M1).
       pending = await loadAtlas(root, round, layout, { signal: halt.signal, apply: false });

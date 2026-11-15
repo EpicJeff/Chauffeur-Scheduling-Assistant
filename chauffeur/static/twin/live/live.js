@@ -68,8 +68,7 @@ export const layoutKey = (layout, plan = {}) => JSON.stringify([
   layout?.camera_views,
   (layout?.rooms || []).map(r => [r.building, r.room, r.level, r.yard, r.area_id, r.name, r.lights, r.polygon_world]),
   (layout?.devices || []).map(d => [d.device_id, d.name, d.kind, d.entity_id, d.entities, d.area_id, d.building, d.room, d.yard, d.offered, d.accessories]),
-  // Fire pits are not emitters in live yet (see modes.js); the plan redraws them.
-  emitterSignature(resolveEmitters(layout || {}, {}, plan, {firePits: false}))]);
+  emitterSignature(resolveEmitters(layout || {}, {}, plan))]);
 
 // The wall keeps its live layer without a reload. A layer that could not mount (Home Assistant
 // away, a read that failed or timed out) is tried again every 45 s; a mounted one re-reads the

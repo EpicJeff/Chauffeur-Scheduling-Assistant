@@ -76,7 +76,7 @@ export function mountModes(view, live) {
   // they mount the current view, whose tier supplies the real-light budget.
   const realLighting = !!view.tier;
   let legacyRooms = [];
-  const layout = live.layout(), emitters = resolveEmitters(layout, {}, view.plan, {firePits: false});
+  const layout = live.layout(), emitters = resolveEmitters(layout, {}, view.plan);
   const fixtures = emitters.some(e => !e.legacy), rig = createRealLights(view, {fixtures});
   const effects = new Map();
   const overlays = new THREE.Group(); overlays.userData.twinMode = 'modes'; view.scene.add(overlays);
@@ -87,10 +87,6 @@ export function mountModes(view, live) {
   // Placement, vertical references and mounting offsets have one owner.
   // A small shared low-poly bulb adds no shadow draw calls.
   const bulbGeometry = new THREE.SphereGeometry(.1, 8, 6);
-  // Fire pits stay on the object-lamp path below, exactly as before fixtures:
-  // flame colour, intensityScale and the baked object:fire_pit:<id> channel.
-  // The bake slice moves pits onto firePitEmitters, and must carry that
-  // colour (#ff9a3c) and scale (.5) with them.
   for (const emitter of emitters) {
     const position = new THREE.Vector3(...emitter.position);
     const marker = emitter.legacy ? emitter.marker : {...emitter, at: [position.x / FT, -position.z / FT, position.y / FT]};
@@ -117,6 +113,8 @@ export function mountModes(view, live) {
     }
   });
   for (const { object, materials, box, firePosition } of objectLamps.values()) {
+    const derived = object.fire && lamps.find(lamp => lamp.emitter?.fire_pit && lamp.emitter.device_id === 'object:' + object.id);
+    if (derived) {derived.objectMaterials = [...materials];continue;}
     const position = firePosition || box.getCenter(new THREE.Vector3());
     if (!firePosition) position.y = box.max.y + .05;
     const at = [position.x / FT, -position.z / FT, position.y / FT];
@@ -201,7 +199,7 @@ export function mountModes(view, live) {
   function update() {
     // Read without copying the house: this runs on every push (review M3).
     const states = live.peek(), stale = live.stale();
-    const resolved = new Map((fixtures ? resolveEmitters(layout, stale ? {} : states, view.plan, {firePits: false}) : []).map(e => [e.fixture_id, e]));
+    const resolved = new Map((fixtures ? resolveEmitters(layout, stale ? {} : states, view.plan) : []).map(e => [e.fixture_id, e]));
     for (const flame of flames) flame.visible = !stale && states[flame.material.userData.objectLight.entity]?.state === 'on';
     legacyRooms = !realLighting && !stale ? live.rooms() : [];
     for (const lamp of lamps) {
@@ -211,13 +209,13 @@ export function mountModes(view, live) {
       lamp.intensity = object && !object.entity ? (object.on ? 1 : 0) : emitted.brightness;
       if (lamp.emitter && !lamp.emitter.legacy) {
         lamp.emitter = resolved.get(lamp.emitter.fixture_id);
-        lamp.intensity = lamp.emitter?.on ? lamp.emitter.brightness : 0;
+        lamp.intensity = lamp.emitter?.on ? lamp.emitter.brightness * (lamp.emitter.intensityScale ?? 1) : 0;
       }
       if (object?.fire) lamp.intensity *= object.intensityScale ?? .5;
       if (object && (!object.entity || object.fire)) {
         const color = new THREE.Color(object.color).getRGB(new THREE.Color(), THREE.SRGBColorSpace);
         lamp.rgb = [color.r * 255, color.g * 255, color.b * 255];
-      } else lamp.rgb = emitted.rgb;
+      } else lamp.rgb = lamp.emitter?.fire_pit ? lamp.emitter.rgb : emitted.rgb;
       for (const material of lamp.objectMaterials || []) {
         if (!material.emissive) continue; // Flame shaders carry the lamp tag too.
         material.emissive.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
@@ -267,19 +265,25 @@ export function mountModes(view, live) {
     const overflowText = modeShows(mode, 'lights') && rig.overflow() ? 'Some lights are shown as glow only on this tier' : '';
     legendText.textContent = [effects.get(mode)?.legend?.() || registry.get(mode)?.legend || '', overflowText].filter(Boolean).join(' · ');
     modeLegend.hidden = !modeLegend.textContent;
+    const bakeTints = new Map();
     for (const lamp of lamps) {
-      const baked = (!lamp.emitter || lamp.emitter.legacy) && fresh.has(lamp.marker.device_id);
+      const bakeId = lamp.emitter && !lamp.emitter.legacy ? lamp.emitter.entity_id : lamp.marker.device_id;
+      const baked = fresh.has(bakeId);
       const shown = candidates.some(row => row.device === lamp.key);
       // Clear a former bake too: losing freshness must never leave its tint on.
-      if (baked || lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, baked && shown ? lamp.intensity : 0);
+      if (baked || lamp.baked) {
+        const intensity = baked && shown ? lamp.intensity : 0, previous = bakeTints.get(bakeId);
+        if (!previous || intensity > previous.intensity) bakeTints.set(bakeId, {rgb: lamp.rgb, intensity});
+      }
       lamp.baked = baked;
       lamp.real = selected.has(lamp.key);
       if (lamp.glow) lamp.glow.update(lamp.rgb, lamp.intensity, shown);
       else {
-        lamp.bulb.visible = shown && !lamp.objectSource?.fire;
+        lamp.bulb.visible = shown && !lamp.objectSource?.fire && !lamp.emitter?.fire_pit;
         lamp.bulb.material.color.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
       }
     }
+    for (const [id, tint] of bakeTints) view.bake?.light(id, tint.rgb, tint.intensity);
     for (const floor of floors) {
       const { room, mesh, group, parent } = floor;
       const overflow = candidates.filter(lamp => (!lamp.emitter || lamp.emitter.legacy) && !selected.has(lamp.device) && !fresh.has(lamp.device) &&
@@ -311,7 +315,7 @@ export function mountModes(view, live) {
       rgb: [...lamp.rgb], intensity: lamp.intensity, real: lamp.real, baked: !!lamp.baked })),
     stop() {
       for (const flame of flames) flame.visible = false;
-      for (const lamp of lamps) if (lamp.baked) view.bake?.light(lamp.marker.device_id, lamp.rgb, 0);
+      for (const lamp of lamps) if (lamp.baked) view.bake?.light(lamp.emitter && !lamp.emitter.legacy ? lamp.emitter.entity_id : lamp.marker.device_id, lamp.rgb, 0);
       unsubscribe(); strip.remove(); climateLabels.remove(); modeLegend.remove();
       registry.get(mode)?.leave?.(context);
       rig.stop();

@@ -8,8 +8,8 @@ export { encodePage, decodePage } from './codec.js';
 
 export function lightKey(atlas, light, slot, bank) {
   const hash=fingerprint();
-  // light-slots-8: pages hold a shadowmask (visibility), not irradiance (2026-11-14).
-  hash.add(JSON.stringify(['light-slots-8',light.reach || atlas.key,light.device,light.at]));
+  // light-slots-9: pages hold a shadowmask (visibility), not irradiance (2026-11-14).
+  hash.add(JSON.stringify(['light-slots-9',light.reach || atlas.key,light.device,light.at, ...(light.signature ? [light.signature] : [])]));
   if (slot.assignments) {
     const ranking=[...slot.assignments].sort((a,b)=>a.chartKey<b.chartKey?-1:a.chartKey>b.chartKey?1:0), rank=new Uint8Array(2);
     for (const a of ranking) {
@@ -50,7 +50,7 @@ export function bakeLayout(atlas, layout, lights, history) {
       location: location.key(),
       key: lightKey(atlas, light, s, banks[s.bank]) };
   }
-  return { slots, banks, offsets, entries, pages: offset, fallback: slots[CHANNEL_FALLBACK],
+  return { lights, slots, banks, offsets, entries, pages: offset, fallback: slots[CHANNEL_FALLBACK],
     ownership:encodeSlots(slots,atlas.room.charts.length),
     ranking:slots[CHART_STATS] || {worstDroppedFraction:0,worstChart:null,droppedCharts:0},
     densities: { room: layout.room.density } };
@@ -88,6 +88,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
   const ready = enabled ? readManifest().then(async m => {
     assignmentHistory=m?.ownership;
     packed=bakeLayout(atlas,layout,lights,assignmentHistory);
+    lights=packed.lights;
     if(force) for(const l of lights) if(packed.entries[l.device]) redo.add(l.device);
     manifest = m || { pages: packed.pages, lights: {} };
     if (m) {
@@ -120,6 +121,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     if(latest?.ownership && !sameSlots(latest.ownership,assignmentHistory)) {
       assignmentHistory=latest.ownership;
       packed=bakeLayout(atlas,layout,lights,assignmentHistory);
+      lights=packed.lights;
     }
     if (latest) {
       for (const [device, e] of Object.entries(latest.lights))

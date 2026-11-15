@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { FT } from '../twin_generator.js';
 import { lightSource } from './reach.js';
 import { CANDELA } from '../live/real_lights.js';
 import { atlasMesh } from './atlas.js';
+import { bakeSamples } from './fixture_terms.js';
 
 const worldVertex = `varying vec3 wp;
 void main() { wp = (modelMatrix * vec4(position, 1.0)).xyz;
@@ -31,6 +31,25 @@ float visibility = step(reached - 0.02, stored);
 float attenuation = pow(clamp(1.0 - pow(d / reach, 4.0), 0.0, 1.0), 2.0) / max(d*d, 0.01);
 float irradiance = ${CANDELA.toFixed(1)} * attenuation * max(0.0, dot(n, normalize(delta)));
 gl_FragColor = vec4(visibility * weight, irradiance * visibility * weight / 16.0, 0.0, 1.0); }`;
+const fixtureFragment = pointFragment.replace('uniform float farPlane;', `uniform vec3 emitterNormal; uniform vec3 axis; uniform vec3 origin;
+uniform vec3 pieceCentre; uniform vec3 pieceU; uniform vec3 pieceV;
+uniform float outer; uniform float inner; uniform float cd; uniform float kind;
+uniform float visibilityWeight; uniform float scale; uniform float farPlane;`)
+  .replace('if (d >= reach) discard;', `float nearest = d;
+if (dot(pieceU,pieceU) > 0.0) {
+  vec3 offset = wp-pieceCentre;
+  vec3 closest = pieceCentre + pieceU * clamp(dot(offset,pieceU)/dot(pieceU,pieceU),-1.0,1.0)
+    + pieceV * clamp(dot(offset,pieceV)/dot(pieceV,pieceV),-1.0,1.0);
+  nearest = length(wp-closest);
+}
+if (nearest >= reach) discard;
+float facing = dot(emitterNormal,emitterNormal) > 0.0 ? max(0.0,dot(emitterNormal,-delta/max(d,1e-4))) : 1.0;
+float coneCos = dot(axis,normalize(wp-origin));
+float cone = outer < -0.5 ? 1.0 : inner == outer ? step(outer,coneCos) : smoothstep(outer,inner,coneCos);`)
+  .replace('pow(d / reach, 4.0)', 'pow(nearest / reach, 4.0)')
+  .replace(`${CANDELA.toFixed(1)} * attenuation`, 'cd * facing * cone * attenuation')
+  .replace('gl_FragColor = vec4(visibility * weight,', `visibility *= step(1e-8,facing);
+gl_FragColor = vec4(kind > 2.5 ? irradiance * visibility * weight / scale : visibility * visibilityWeight,`);
 function proxies(charts, size, layout) {
   const scene = new THREE.Scene(), groups = new Map();
   for (const c of charts) {
@@ -99,6 +118,7 @@ export async function renderPage(view, renderer, charts, size, light, layout, at
     renderer.toneMapping = THREE.NoToneMapping; renderer.xr.enabled = false;
     renderer.setClearColor(0, 0); renderer.setRenderTarget(target); renderer.clear();
     const { source, range: reach } = lightSource(view.plan, light), far = Math.max(reach * 2, 30);
+    const samples = bakeSamples(view.plan, light);
     shadow = new THREE.WebGLCubeRenderTarget(512, { type: THREE.HalfFloatType,
       minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
     const cube = new THREE.CubeCamera(.02, far, shadow);
@@ -108,15 +128,24 @@ export async function renderPage(view, renderer, charts, size, light, layout, at
       fragmentShader: `uniform vec3 source; uniform float farPlane; varying vec3 wp;
 void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
     blockers.overrideMaterial = depth;
-    material = new THREE.ShaderMaterial({ vertexShader: atlasVertex, fragmentShader: pointFragment,
+    material = new THREE.ShaderMaterial({ vertexShader: atlasVertex, fragmentShader: light.emitters ? fixtureFragment : pointFragment,
       depthTest: false, depthWrite: false, transparent: true, blending: THREE.AdditiveBlending,
       uniforms: { depthCube: { value: shadow.texture }, source: { value: source.clone() }, reach: { value: reach },
-        farPlane: { value: far }, weight: { value: 1 / 16 } } });
+        farPlane: { value: far }, weight: { value: 1 / 16 },
+        emitterNormal: {value: new THREE.Vector3()}, axis: {value: new THREE.Vector3()}, origin: {value: source.clone()},
+        pieceCentre: {value: new THREE.Vector3()}, pieceU: {value: new THREE.Vector3()}, pieceV: {value: new THREE.Vector3()},
+        outer: {value: -1}, inner: {value: -1}, cd: {value: CANDELA}, kind: {value: light.kind || 0},
+        visibilityWeight: {value: 1 / 16}, scale: {value: light.scale || 1} } });
     scene.overrideMaterial = material;
-    for (let i = 0; i < 16; i++) {
+    for (const sample of samples) {
       await nextFrame();
-      const z = 1 - 2 * (i + .5) / 16, a = i * 2.3999632297, radius = Math.sqrt(1 - z * z) * .15 * FT;
-      const p = source.clone().add(new THREE.Vector3(Math.cos(a) * radius, z * .15 * FT, Math.sin(a) * radius));
+      const p = sample.source, u = material.uniforms;
+      u.reach.value = sample.range;u.weight.value = sample.weight;u.cd.value = sample.cd;
+      u.visibilityWeight.value = sample.visibilityWeight ?? sample.weight;
+      u.emitterNormal.value.copy(sample.normal);u.axis.value.copy(sample.axis);u.origin.value.copy(sample.origin);
+      u.outer.value = sample.outer;u.inner.value = sample.inner;
+      u.pieceCentre.value.copy(sample.piece?.position || p);
+      u.pieceU.value.copy(sample.piece?.u || new THREE.Vector3());u.pieceV.value.copy(sample.piece?.v || new THREE.Vector3());
       cube.position.copy(p); depth.uniforms.source.value.copy(p); material.uniforms.source.value.copy(p);
       renderer.autoClear = true; renderer.setClearColor(0xffffff, 1); cube.updateMatrixWorld(true);
       for (let face = 0; face < 6; face++) { renderer.setRenderTarget(shadow, face); renderer.render(blockers, cube.children[face]); }
@@ -127,7 +156,11 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
     if (renderer.readRenderTargetPixelsAsync) await renderer.readRenderTargetPixelsAsync(target, 0, 0, size, size, raw);
     else renderer.readRenderTargetPixels(target, 0, 0, size, size, raw);
     const bytes = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) bytes[i] = Math.round(Math.min(1, Math.max(0, THREE.DataUtils.fromHalfFloat(raw[i]))) * 255);
+    for (let i = 0; i < raw.length; i++) {
+      let value = Math.min(1, Math.max(0, THREE.DataUtils.fromHalfFloat(raw[i])));
+      if (light.kind === 3 && i % 4 === 0) value = Math.sqrt(value);
+      bytes[i] = Math.round(value * 255);
+    }
     filterCharts(bytes, charts, size);
     if (!deferBounce) dilateCharts(bytes, charts, size);
     return bytes;

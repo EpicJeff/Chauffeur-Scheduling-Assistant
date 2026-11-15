@@ -1,6 +1,9 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { atlasJob, buffers, applyAtlas } from './atlas_transport.js';
-import { CANDELA } from '../twin_light_math.js';
+import { CANDELA, FT } from '../twin_light_math.js';
+import { fixturePoint } from '../live/fixture_geometry.js';
+import { rectPieces } from './fixture_terms.js';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 
 const floatTexture = (width, height) => {
   const t = new THREE.DataTexture(new Float32Array(Math.max(1, width) * Math.max(1, height) * 4),
@@ -12,26 +15,51 @@ const floatTexture = (width, height) => {
 // with the shading normal, diffuse and specular by the material's own metalness), times the
 // visibility from the page, coloured by the tint. Two data textures carry everything, so the
 // lightmap holds as many samplers as before the shadowmask (lmTints, lmRegions and a sampler
-// per bank: a fully mapped material, the sun and two point shadows still link on ANGLE's 16).
+// per bank). Fixture materials reuse the live pool's two LTC samplers (at most 16 total).
 //   lmTints   rows [0, R)    live colour x brightness by (slot, row): the switch, never a rebake
 //             rows [R, 2R)   the light's world position (m) and reach (m)
-//             rows [2R, 3R)  its shape: x = kind (0 point). Slice C (spot cone, line, area)
-//                            adds kinds and their parameters here and a term in lmPoint.
+//             rows [2R, 3R)  kind (0 point, 1 spot, 2 rect, 3 sum), pieces, sum scale, exact rect
+// Fixture variant only (17R rows; legacy-only keeps its original 3R texture and shader):
+//             rows [3R, 4R)  spot axis (world), outer cone cosine
+//             rows [4R, 5R)  inner cone cosine, full-output candela, unused, unused
+//             blocks 5..16   four rect pieces, three rows each: centre.xyz/luminance,
+//                            half-width.xyz/reach, half-height.xyz/unused
+// Sum channels store sqrt(irradiance/scale); point/spot/rect channels store visibility.
 //   lmRegions rows [0, Q)    a chart's (or room's) region per bank: offset, layer, owners
 //             rows [Q, 2Q)   the same address: the room fill of channel a (r) and b (g)
 // Chart mode: R = 1 and a slot per light index; Q rows of 1024 chart x bank addresses. Room
 // mode: R = a row per room, a slot per bank channel; Q = a row per room, a column per bank.
 // Every lookup is by data, never by a uniform array index, so merged batches need nothing more.
-const rowsOf = t => Math.max(1, Math.floor(t.image.height / 3));
-export function lightmapUniforms(roomCount, slotCount) {
-  return { lmTints: { value: floatTexture(slotCount, 3 * Math.max(1, roomCount)) } };
+const rowsOf = t => Math.max(1, Math.floor(t.image.height / (t.userData.fixtureRows ? 17 : 3)));
+export function lightmapUniforms(roomCount, slotCount, {fixtures = false} = {}) {
+  const t = floatTexture(slotCount, (fixtures ? 17 : 3) * Math.max(1, roomCount));t.userData.fixtureRows = fixtures;
+  if (fixtures && !THREE.UniformsLib.LTC_FLOAT_1) RectAreaLightUniformsLib.init();
+  return {lmTints: {value: t}};
 }
-// Where a light is: its bake source, as the shadowmask was rendered from (reach.js).
-export function setLightSource(uniforms, room, slot, position, reach, kind = 0) {
+export function setLightSource(uniforms, room, slot, position, reach, kind = 0, light = null, exact = false) {
   const t = uniforms.lmTints.value, rows = rowsOf(t);
   if (room < 0 || room >= rows || slot < 0 || slot >= t.image.width) return;
-  t.image.data.set([position.x, position.y, position.z, reach], ((rows + room) * t.image.width + slot) * 4);
-  t.image.data.set([kind, 0, 0, 0], ((2 * rows + room) * t.image.width + slot) * 4);
+  const put = (block, values) => t.image.data.set(values, ((block * rows + room) * t.image.width + slot) * 4);
+  put(1, [position.x, position.y, position.z, reach]);
+  put(2, [kind, 0, t.userData.fixtureRows ? light?.scale || 1 : 0, +exact]);
+  if (t.userData.fixtureRows) put(4, [-1, CANDELA, 0, 0]);
+  if (t.userData.fixtureRows && light?.emitters) {
+    const e = light.emitters[0];
+    if (kind < 2) {
+      const cd = e.output_lm * e.output_fraction / (kind === 1 ? 2 * Math.PI * (1 - Math.cos(e.cone_deg * Math.PI / 360)) : 4 * Math.PI);
+      put(4, [kind === 1 ? Math.cos(e.cone_deg * Math.PI / 360 * (1 - e.softness)) : -1, cd, 0, 0]);
+      if (kind === 1) {
+        const axis = fixturePoint(e.aim).sub(new THREE.Vector3(...e.position)).normalize();
+        put(3, [...axis.toArray(), Math.cos(e.cone_deg * Math.PI / 360)]);
+      }
+    } else if (kind === 2) {
+      const pieces = rectPieces(e);put(2, [kind, pieces.length, light.scale || 1, +exact]);
+      pieces.forEach((p, i) => {
+        put(5 + 3 * i, [...p.position.toArray(), p.luminance]);
+        put(6 + 3 * i, [...p.u.toArray(), e.range * FT]);put(7 + 3 * i, [...p.v.toArray(), 0]);
+      });
+    }
+  }
   t.needsUpdate = true;
 }
 const fillAt = (t, x, y, channel, value) => {
@@ -82,7 +110,7 @@ export function applyChartIndices(atlas) {
 }
 export function chartLightmapUniforms(chartCount, packed, lights, pageSize, layers) {
   if (lights.length > 4095) throw new Error('Too many light indices for a chart owner texture.');
-  const uniforms = lightmapUniforms(1, Math.max(1, lights.length)), banks = Math.max(1, packed.banks.length);
+  const uniforms = lightmapUniforms(1, Math.max(1, lights.length), {fixtures: lights.some(l => l.emitters)}), banks = Math.max(1, packed.banks.length);
   // Regions in the first half of the rows, each address's fills in the second (lmFillsAt).
   const texture = floatTexture(1024, 2 * Math.max(1, Math.ceil(chartCount*banks/1024)));
   const owners = new Map();
@@ -123,6 +151,65 @@ float lmPoint(int slot, int row, vec3 posV, out vec3 direction, out float cutoff
   return cutoff / max(d * d, 0.01);
 }
 int lmOwnerSlot(float owner) { return max(0, int(owner) - 1); }`;
+const RECT_GLSL = `
+vec4 lmData(int slot, int row, int block) { return texelFetch(lmTints, ivec2(slot, block * lmRows() + row), 0); }
+float lmWindow(float d, float reach) { return reach > 0.0 ? pow(clamp(1.0-pow(d/reach,4.0),0.0,1.0),2.0) : 0.0; }
+vec3 lmEdge(vec3 a, vec3 b) {
+  float x=dot(a,b),y=abs(x),v=(0.8543985+(0.4965155+0.0145206*y)*y)/(3.4175940+(4.1616724+y)*y);
+  return cross(a,b)*(x>0.0?v:0.5*inversesqrt(max(1.0-x*x,1e-7))-v);
+}
+float lmPolygon(vec3 n, vec3 delta, vec3 u, vec3 v) {
+  vec3 a=normalize(delta+u-v),b=normalize(delta-u-v),c=normalize(delta-u+v),d=normalize(delta+u+v);
+  vec3 f=lmEdge(a,b)+lmEdge(b,c)+lmEdge(c,d)+lmEdge(d,a);float l=length(f);
+  return max(0.0,(l*l-dot(f,n))/(l+1.0));
+}
+float lmRect(int slot, int row, vec3 pos, vec3 n, out float cutoff) {
+  vec4 kind=lmData(slot,row,2);float energy=0.0;cutoff=0.0;
+  for (int i=0;i<4;i++) {
+    if (float(i)>=kind.y) break;
+    vec4 p=lmData(slot,row,5+i*3),w=lmData(slot,row,6+i*3),h=lmData(slot,row,7+i*3);
+    vec3 delta=(viewMatrix*vec4(p.xyz,1.0)).xyz-pos,u=mat3(viewMatrix)*w.xyz,v=mat3(viewMatrix)*h.xyz;
+    vec3 facing=-normalize(cross(u,v));
+    vec3 nearest=delta-u*clamp(dot(delta,u)/dot(u,u),-1.0,1.0)-v*clamp(dot(delta,v)/dot(v,v),-1.0,1.0);
+    float cut=lmWindow(length(nearest),w.w);cutoff=max(cutoff,cut);
+    if (dot(facing,delta)>=0.0) continue;
+    if (kind.w>0.5) energy+=p.w*3.141592653589793*lmPolygon(n,delta,u,v)*cut;
+    else {
+      float d=length(delta);vec3 dir=delta/max(d,1e-4);
+      energy+=p.w*4.0*length(u)*length(v)*max(0.0,dot(n,dir))*max(0.0,-dot(facing,dir))*cut/max(d*d,0.01);
+    }
+  }
+  return energy;
+}`;
+function shadeGLSL(fixtures) {
+  if (!fixtures) return SHADE_GLSL;
+  return SHADE_GLSL.replace(' / 3)', ' / 17)').replace('kind.x > 0.5 || ', '')
+    .replace('return cutoff / max(d * d, 0.01);', `float factor = 1.0;
+  if (kind.x < 1.5) {
+    vec4 photometry=texelFetch(lmTints,ivec2(slot,4*lmRows()+row),0);factor=photometry.y/${CANDELA.toFixed(1)};
+    if (kind.x > 0.5) {
+      vec4 cone=texelFetch(lmTints,ivec2(slot,3*lmRows()+row),0);
+      float cosine=dot(mat3(viewMatrix)*cone.xyz,-direction);
+      factor*=cone.w==photometry.x?step(cone.w,cosine):smoothstep(cone.w,photometry.x,cosine);
+    }
+  }
+  return factor * cutoff / max(d * d, 0.01);`) + RECT_GLSL;
+}
+const rectSpecular = (slot, row, visibility) => `
+for (int i=0;i<4;i++) {
+  if (float(i)>=lmKind.y) break;
+  vec4 p=lmData(${slot},${row},5+i*3),w=lmData(${slot},${row},6+i*3),h=lmData(${slot},${row},7+i*3);
+  vec3 centre=(viewMatrix*vec4(p.xyz,1.0)).xyz,u=mat3(viewMatrix)*w.xyz,v=mat3(viewMatrix)*h.xyz;
+  vec3 delta=centre-geometryPosition;
+  vec3 nearest=delta-u*clamp(dot(delta,u)/dot(u,u),-1.0,1.0)-v*clamp(dot(delta,v)/dot(v,v),-1.0,1.0);
+  float cut=lmWindow(length(nearest),w.w);
+  vec3 coords[4];coords[0]=centre+u-v;coords[1]=centre-u-v;coords[2]=centre-u+v;coords[3]=centre+u+v;
+  vec2 uv=LTC_Uv(geometryNormal,geometryViewDir,material.roughness);
+  vec4 t1=texture2D(ltc_1,uv),t2=texture2D(ltc_2,uv);
+  mat3 inv=mat3(vec3(t1.x,0.0,t1.y),vec3(0.0,1.0,0.0),vec3(t1.z,0.0,t1.w));
+  vec3 fresnel=material.specularColorBlended*t2.x+(material.specularF90-material.specularColorBlended)*t2.y;
+  reflectedLight.directSpecular+=lmTint*p.w*fresnel*LTC_Evaluate(geometryNormal,geometryViewDir,geometryPosition,inv,coords)*cut*${visibility};
+}`;
 export const lightSwizzle = format => format === THREE.RGBAFormat ? 'ra' : 'rg';
 export function pickTranscode(extensions, channels) {
   if (extensions.has('EXT_texture_compression_rgtc')) return channels === 1 ? THREE.RED_RGTC1_Format : THREE.RED_GREEN_RGTC2_Format;
@@ -150,16 +237,28 @@ export function transcodePage(module, bytes, format) {
 // RE_Direct with an IncidentLight of the live light's colour, so diffuse (by metalness),
 // specular and the material's normal match the live PointLight and nothing pops when a light
 // goes fresh. The fill is indirect, faded by the light's reach cutoff at the pixel.
-const directTerm = (tint, slot, row, visibility, fill) => `{ vec3 lmTint = ${tint};
+const directTerm = (tint, slot, row, visibility, fill, fixtures = false) => `{ vec3 lmTint = ${tint};
   if (lmTint.r + lmTint.g + lmTint.b > 0.0) {
+    ${fixtures ? `vec4 lmKind = lmData(${slot}, ${row}, 2);
+    if (lmKind.x > 1.5) {
+      float lmCut = 0.0;float lmEnergy = lmKind.x > 2.5 ? ${visibility} * ${visibility} * lmKind.z
+        : lmRect(${slot}, ${row}, geometryPosition, geometryNormal, lmCut) * ${visibility};
+      if (lmKind.x > 2.5) {vec3 unused;lmPoint(${slot}, ${row}, geometryPosition, unused, lmCut);}
+      reflectedLight.directDiffuse += lmTint * lmEnergy * BRDF_Lambert(material.diffuseContribution);
+      lmFill += lmTint * (${fill}) * lmCut;
+      if (lmKind.x < 2.5 && lmKind.w > 0.5) {
+        ${rectSpecular(slot, row, visibility)}
+      }
+    } else {` : ''}
     vec3 lmDir; float lmCut, lmFall = lmPoint(${slot}, ${row}, geometryPosition, lmDir, lmCut);
     IncidentLight lmIncident; lmIncident.color = lmTint * (${CANDELA.toFixed(1)} * lmFall * ${visibility});
     lmIncident.direction = lmDir; lmIncident.visible = true;
     RE_Direct(lmIncident, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
     lmFill += lmTint * (${fill}) * lmCut;
+    ${fixtures ? '}' : ''}
   } }`;
 export function patchLightmaps(materials, pages, uniforms) {
-  const chartMode = !!uniforms.lmChartMode;
+  const chartMode = !!uniforms.lmChartMode, fixtures = !!uniforms.lmTints.value.userData.fixtureRows;
   // M8: a room's region sits two texels from its neighbours on a shared page. Sample no
   // coarser than mip 1 (gradients clamped to two texels a pixel), so a far-off room never
   // blends a neighbour's light into its border under its own tint. The gradients are
@@ -170,8 +269,8 @@ export function patchLightmaps(materials, pages, uniforms) {
     const address = chartMode ? `lmAddress(${b}, int(vLmRoom + 0.5))` : `ivec2(${b}, lmRow)`;
     const owner = k => chartMode ? [`mod(region${b}.w, 4096.0)`, `floor(region${b}.w / 4096.0)`][k] : null;
     const term = k => chartMode
-      ? directTerm(`lmOwnerTint(${owner(k)})`, `lmOwnerSlot(${owner(k)})`, '0', `bank${b}.${s[k]}`, `fill${b}.${'rg'[k]}`)
-      : directTerm(`lmTintAt(${2 * b + k}, lmRow)`, `${2 * b + k}`, 'lmRow', `bank${b}.${s[k]}`, `fill${b}.${'rg'[k]}`);
+      ? directTerm(`lmOwnerTint(${owner(k)})`, `lmOwnerSlot(${owner(k)})`, '0', `bank${b}.${s[k]}`, `fill${b}.${'rg'[k]}`, fixtures)
+      : directTerm(`lmTintAt(${2 * b + k}, lmRow)`, `${2 * b + k}`, 'lmRow', `bank${b}.${s[k]}`, `fill${b}.${'rg'[k]}`, fixtures);
     const live = chartMode ? `region${b}.w > 0.5`
       : `dot(lmTintAt(${2 * b}, lmRow) + lmTintAt(${2 * b + 1}, lmRow), vec3(1.0)) > 0.0`;
     return `vec4 region${b} = texelFetch(lmRegions, ${address}, 0);
@@ -188,7 +287,12 @@ if (${live}) {
 uniform sampler2D lmRegions;
 varying vec2 vLmUV; varying float vLmRoom;
 ${pages.banks.map((t, b) => `uniform highp sampler2DArray lmBank${b};`).join('\n')}
-${SHADE_GLSL}
+${fixtures ? `#if NUM_RECT_AREA_LIGHTS == 0
+uniform sampler2D lmLtc1; uniform sampler2D lmLtc2;
+#define ltc_1 lmLtc1
+#define ltc_2 lmLtc2
+#endif` : ''}
+${shadeGLSL(fixtures)}
 ${chartMode ? chartLookupGLSL(pages.banks.length) : ''}`;
   const slots = uniforms.lmTints.value.image.width, rooms = rowsOf(uniforms.lmTints.value);
   if (!uniforms.lmRegions) uniforms.lmRegions = { value: roomRegions(pages.banks.length, rooms) };
@@ -201,6 +305,11 @@ ${chartMode ? chartLookupGLSL(pages.banks.length) : ''}`;
     material.onBeforeCompile = (shader, renderer) => {
       before.call(material, shader, renderer);
       Object.assign(shader.uniforms, uniforms);
+      if (fixtures) {
+        const type = renderer?.extensions?.has('OES_texture_float_linear') ? 'FLOAT' : 'HALF';
+        shader.uniforms.lmLtc1 = {value: THREE.UniformsLib['LTC_' + type + '_1']};
+        shader.uniforms.lmLtc2 = {value: THREE.UniformsLib['LTC_' + type + '_2']};
+      }
       pages.banks.forEach((t, b) => { shader.uniforms[`lmBank${b}`] = { value: t }; });
       shader.vertexShader = `#ifndef USE_UV3
 attribute vec2 uv3;
@@ -226,7 +335,7 @@ ${bankCode}
   RE_IndirectDiffuse(lmFill, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
 }`);
     };
-    material.customProgramCacheKey = () => `${key}|lm-7-shadowmask-direct|${chartMode ? 'charts-2|' : ''}${slots}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
+    material.customProgramCacheKey = () => `${key}|lm-8-shadowmask-direct|${fixtures ? 'fixtures|' : ''}${chartMode ? 'charts-2|' : ''}${slots}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
     material.needsUpdate = true;
   }
 }
@@ -235,7 +344,7 @@ ${bankCode}
 // wall around it (glowRoom, glowUV) and lights it from its own point, with its normal on
 // whichever side faces the lamp, standing in for that wall. Emissive, so no lighting chunks.
 export function patchWindowGlow(material, pages, uniforms) {
-  const chartMode = !!uniforms.lmChartMode, banks = pages.banks;
+  const chartMode = !!uniforms.lmChartMode, banks = pages.banks, fixtures = !!uniforms.lmTints.value.userData.fixtureRows;
   const sum = banks.map((t, b) => {
     const s = lightSwizzle(t.format);
     const address = chartMode ? `lmAddress(${b}, int(vGlowRoom + 0.5))` : `ivec2(${b}, glowRow)`;
@@ -245,7 +354,11 @@ export function patchWindowGlow(material, pages, uniforms) {
       const slot = chartMode ? `lmOwnerSlot(${owner(k)})` : `${2 * b + k}`, row = chartMode ? '0' : 'glowRow';
       return `{ vec3 lmTint = ${tint}; if (lmTint.r + lmTint.g + lmTint.b > 0.0) {
     vec3 lmDir; float lmCut, lmFall = lmPoint(${slot}, ${row}, glowPos, lmDir, lmCut);
-    glow += lmTint * (${CANDELA.toFixed(1)} * lmFall * abs(dot(glowNormal, lmDir)) * value${b}.${s[k]} + fill${b}.${'rg'[k]} * lmCut); } }`;
+    float energy = ${CANDELA.toFixed(1)} * lmFall * abs(dot(glowNormal, lmDir)) * value${b}.${s[k]};
+    ${fixtures ? `vec4 kind = lmData(${slot}, ${row}, 2);
+    if (kind.x > 2.5) energy = value${b}.${s[k]} * value${b}.${s[k]} * kind.z;
+    else if (kind.x > 1.5) energy = lmRect(${slot}, ${row}, glowPos, faceforward(glowNormal, -lmDir, glowNormal), lmCut) * value${b}.${s[k]};` : ''}
+    glow += lmTint * (energy + fill${b}.${'rg'[k]} * lmCut); } }`;
     };
     return `vec4 region${b} = texelFetch(lmRegions, ${address}, 0);
 vec4 fill${b} = lmFillsAt(${address});
@@ -262,7 +375,7 @@ vGlowRoom = glowRoom; vGlowUV = glowUV;`);
     shader.fragmentShader = `uniform sampler2D lmTints; uniform sampler2D lmRegions;
 varying float vGlowRoom; varying vec2 vGlowUV;
 ${banks.map((t, b) => `uniform highp sampler2DArray glowBank${b};`).join('\n')}
-${SHADE_GLSL}
+${shadeGLSL(fixtures)}
 ${chartMode ? chartLookupGLSL(banks.length) : ''}
 ` + shader.fragmentShader;
     // Irradiance / 16 x 8, as the pane glowed when the page held irradiance / 16.
@@ -274,7 +387,7 @@ if (vGlowRoom > -0.5) {
   totalEmissiveRadiance += glow * 0.5;
 }`);
   };
-  material.customProgramCacheKey = () => `twin-window-glow-6-shadowmask-${chartMode ? 'charts-' : ''}${banks.map(t => lightSwizzle(t.format)).join(',')}`;
+  material.customProgramCacheKey = () => `twin-window-glow-7-shadowmask-${fixtures ? 'fixtures-' : ''}${chartMode ? 'charts-' : ''}${banks.map(t => lightSwizzle(t.format)).join(',')}`;
   material.needsUpdate = true;
 }
 

@@ -295,8 +295,8 @@ check('live_layout_key_covers_resolved_fixture_edits_without_server_signatures',
   }
   const c=structuredClone(l);c.light_fixtures_meta={'light.a':{output_lm:1000}};assert.notEqual(layoutKey(c),initial);
 });
-check('live_fire_pits_stay_object_lamps_with_flame_colour_scale_and_bake',async()=>{
-  // Existing houses: a pit lights exactly as before fixtures (review I-1).
+check('live_fire_pits_use_derived_emitters_with_flame_colour_scale_and_bake',async()=>{
+  // The bake slice moves authored pits to the shared emitter geometry.
   const close=(a,b)=>assert.ok(Math.abs(a-b)<1e-10,`${a} != ${b}`),near=(a,b)=>a.forEach((v,i)=>close(v,b[i]));
   const view=makeView('low');
   const pits=[{id:'gas',shape:'rectangle',polygon:[[0,0],[12,0],[12,2],[0,2]],fuel:'gas',entity:'switch.fire'},
@@ -310,25 +310,25 @@ check('live_fire_pits_stay_object_lamps_with_flame_colour_scale_and_bake',async(
   for(const pit of pits) buildFirePit(group,pit,0,{id:'fire_pit:'+pit.id,mat:name=>new THREE.MeshStandardMaterial({name}),
     plain:(name,color,extra={})=>extra.fireShader?fireFlameMaterial():new THREE.MeshStandardMaterial({name,color,...extra})});
   group.traverse(o=>{for(const m of o.material?[].concat(o.material):[]){const l=m.userData?.objectLight;if(l?.fireLightAt)fireAt[l.id]=l.fireLightAt;}});
-  const calls=[];view.bake={fresh:()=>['object:fire_pit:gas'],light:(id,rgb,intensity)=>calls.push({id,rgb,intensity})};
+  const calls=[];view.bake={fresh:()=>['switch.fire'],light:(id,rgb,intensity)=>calls.push({id,rgb,intensity})};
   states=initialStates();states['switch.fire']={state:'on'};states['input_boolean.fire']={state:'on'};reachable=true;
   const live=await mountLive(view,{api});
   try{
     live.setMode('lights');live.draw();
     const derived=resolveEmitters(layout,states,view.plan).filter(e=>e.fire_pit);
-    assert.equal(derived.length,3,'the resolver still derives pit emitters for the bake slice');
+    assert.equal(derived.length,3,'every pit has a derived emitter');
     const actual=live.lights().filter(e=>e.device.startsWith('object:fire_pit:'));
     assert.deepEqual(actual.map(e=>e.device).sort(),['object:fire_pit:gas','object:fire_pit:ib','object:fire_pit:wood'],'one lamp per pit, no derived duplicates');
-    assert.ok(!live.lights().some(e=>String(e.fixture_id||'').startsWith('fixture:fire_pit:')),'no derived emitter reaches the live pool');
+    assert.equal(actual.filter(e=>String(e.fixture_id||'').startsWith('fixture:fire_pit:')).length,3,'all pits use derived emitters');
     for(const row of actual){
-      const id=row.device.slice('object:'.length),at=fireAt[id];assert.ok(at,'flame anchor for '+id);
-      near(row.at,[at[0],-at[2],at[1]]);
+      const emitter=derived.find(e=>e.fixture_id===row.fixture_id);assert.ok(emitter);
+      near(row.at,emitter.position.map((v,i)=>i===0?v/FT:i===1?-emitter.position[2]/FT:emitter.position[1]/FT));
       assert.deepEqual(row.rgb.map(Math.round),[255,154,60],'flame colour #ff9a3c');
       close(row.intensity,.5);
     }
     const gas=actual.find(e=>e.device==='object:fire_pit:gas');assert.equal(gas.baked,true,'fresh bake drives the pit channel');
-    assert.ok(calls.some(c=>c.id==='object:fire_pit:gas'&&Math.abs(c.intensity-.5)<1e-12),'baked object:fire_pit:<id> channel lit at the flame scale');
-    assert.ok(!actual.find(e=>e.device==='object:fire_pit:wood').baked);
+    assert.ok(calls.some(c=>c.id==='switch.fire'&&Math.abs(c.intensity-.5)<1e-12),'one entity channel lit at the flame scale');
+    assert.ok(actual.find(e=>e.device==='object:fire_pit:wood').baked,'pits on one switch share their bake');
     assert.ok(tagged(view,'bulb').filter(b=>String(b.userData.bulb).startsWith('object:fire_pit:')).every(b=>!b.visible));
     states['input_boolean.fire'].state='off';await live.refresh();
     assert.equal(live.lights().find(e=>e.device==='object:fire_pit:ib').intensity,0);

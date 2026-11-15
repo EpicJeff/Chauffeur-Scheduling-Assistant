@@ -609,6 +609,19 @@ export function atlasMesh(mesh) {
 export const CHANNEL_FALLBACK = Symbol('channel fallback');
 export const CHART_STATS = Symbol('chart ranking statistics');
 export function assignChannels(rooms, lights, previous = new Map()) {
+  const grouped = new Map();
+  for (const light of lights) {
+    const id = light.entity || light.entity_id || light.device, old = grouped.get(id);
+    if (!old) {grouped.set(id, {...light, device: id});continue;}
+    old.receivers = [...new Set([...(old.receivers || []), ...(light.receivers || [])])];
+    old.receivingCharts = [...new Set([...(old.receivingCharts || []), ...(light.receivingCharts || [])])];
+    old.scores = {...old.scores};old.distances = {...old.distances};old.chartKeys = {...old.chartKeys, ...light.chartKeys};
+    for (const chart of light.receivingCharts || []) {
+      old.scores[chart] = (old.scores[chart] || 0) + (light.scores?.[chart] || 0);
+      old.distances[chart] = Math.min(old.distances[chart] ?? Infinity, light.distances?.[chart] ?? Infinity);
+    }
+  }
+  lights = [...grouped.values()];
   const byBuilding = new Map(), result = {};
   rooms.forEach((r, i) => {
     if (!byBuilding.has(r.building)) byBuilding.set(r.building, new Map());
