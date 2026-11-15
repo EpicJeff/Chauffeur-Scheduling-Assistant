@@ -107,7 +107,13 @@ export function bakeLights(layout, root, plan = {}) {
 }
 
 export function mountBake(view, root, { host, controls = view.controls, layout: requestedLayout, poll: pollMs = 10000,
-  api = (path, init) => fetch(base() + path, init) } = {}) {
+  api: request = (path, init) => fetch(base() + path, init) } = {}) {
+  // A fetch that rejects is the network being away, which the poll rides out in silence.
+  const offline = new WeakSet();
+  const api = async (path, init) => {
+    try { return await request(path, init); }
+    catch (error) { if (error instanceof TypeError) offline.add(error); throw error; }
+  };
   const round = view.plan, halt = new AbortController(), baked = [], fresh = new Set(), tints = new Map();
   const query = new URLSearchParams(location.search);
   // Only a parent's High or Max desk bakes (the lease is PARENTS: a child is refused, M4).
@@ -566,7 +572,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   // The same poll retries incomplete mounts as well as finding later publications.
   const tick = async () => {
     if (!valid()) return;
-    try { await refresh(); } catch (error) { reportError(error); }
+    // Offline: keep the last complete page and say nothing; the next poll tries again.
+    try { await refresh(); } catch (error) { if (!offline.has(error)) reportError(error); }
     finally { if (valid() && pollMs > 0) timer = setTimeout(tick, pollMs); }
   };
   (async () => {

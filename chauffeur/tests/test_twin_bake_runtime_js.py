@@ -234,6 +234,22 @@ await check('failed_mount_retries_from_existing_poll_and_finds_stored_bake',asyn
       await until(()=>wall.controller.state().error==='unexpected manifest structure','poll reports non-network failure');
       assert.ok(errors.some(args=>args.some(e=>e?.message==='unexpected manifest structure')));
     } finally {wall?.controller.stop();}
+    let down=false,dropped=0,quiet;
+    try {
+      quiet=await context('low',desk.server,null,{poll:200,api:async(path,init,next)=>{
+        if(down){++dropped;throw new TypeError('Failed to fetch');}
+        return next(path,init);
+      }});
+      await until(()=>quiet.controller.fresh().length===4,'wall mounted before the network drops');
+      const before=errors.length;down=true;
+      await until(()=>dropped>=3,'polls continue while offline');
+      assert.equal(quiet.controller.state().error,null,'an offline poll is not a bake failure');
+      assert.equal(errors.length,before,'an offline poll logs nothing');
+      assert.equal(quiet.controller.fresh().length,4,'the last complete pages stay lit');
+      down=false;const seen=dropped;
+      await new Promise(resolve=>setTimeout(resolve,700));
+      assert.equal(dropped,seen);assert.equal(quiet.controller.state().error,null);assert.equal(quiet.controller.fresh().length,4);
+    } finally {quiet?.controller.stop();}
   } finally {console.error=log;}
 });
 await check('worker_failures_are_visible_in_state_and_console', async () => {
