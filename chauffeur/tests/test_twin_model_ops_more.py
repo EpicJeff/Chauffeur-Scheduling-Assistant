@@ -345,6 +345,25 @@ def test_item_turn_and_size_and_anchor_offset_have_card_ops():
     check(close(_by_id(_b(m6)['anchors'], switch['id'])['offset'], 0.25), _b(m6)['anchors'])
 
 
+def test_site_material_target_sets_and_clears_water():
+    m0 = _house()
+    for role in ('water', 'lawn'):
+        op = {'op': 'set_material', 'target': {'site': True, 'role': role}, 'material': {'id': 'water'}}
+        m1 = _apply(m0, op)
+        check(m1['materials'][role] == {'id': 'water'}, m1['materials'])
+        check(_bridge.flatten(m1)['materials'][role] == {'id': 'water'}, 'bridge retains site default')
+        m2 = _apply(m1, {**op, 'material': None})
+        check(role not in m2['materials'], m2['materials'])
+    for target, material, message in [({'site': True, 'role': 'siding'}, {'id': 'water'}, 'Choose a surface for the material.'),
+                                      ({'site': True, 'role': 'water'}, {'id': 'unknown'}, 'Unknown material id')]:
+        try:
+            _apply(m0, {'op': 'set_material', 'target': target, 'material': material})
+        except ops().Refused as exc:
+            check(message in str(exc), str(exc))
+        else:
+            raise AssertionError('invalid site slot accepted')
+
+
 def test_level_and_building_materials_set_and_clear():
     """Final wave I4: the scope chooser's This floor writes level materials (R17);
     the card's Clear on a building or level line clears that role."""
@@ -1071,6 +1090,7 @@ def test_legacy_edit_ops_still_work():
 
 
 TESTS = (
+    test_site_material_target_sets_and_clears_water,
     test_item_turn_and_size_and_anchor_offset_have_card_ops,
     test_level_and_building_materials_set_and_clear,
     test_one_bad_dormer_is_flagged_and_every_other_op_proceeds,

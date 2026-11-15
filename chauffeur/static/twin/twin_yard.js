@@ -103,6 +103,7 @@ async function bakePreset(preset, seed, renderer) {
 function yardMaterialKit(plan, kit) {
   const materialKit = { ...kit, materials: { ...kit.materials } }, known = manifest(kit);
   for (const [role, ref] of Object.entries(plan.materials || {})) {
+    if (role === 'water') continue; // Code-side look, resolved as a slot below, never a kit role.
     const source = kit.materials?.[ref.id] || kit.materials?.[role];
     materialKit.materials[role] = { ...source, color: ref.color || (known[ref.id]?.household ? undefined : source?.color), asset: known[ref.id] ? ref.id : source?.asset };
   }
@@ -133,6 +134,7 @@ function yardMaterialInputs(plan, kit) {
     if (h.kind === 'path' && h.edging === 'curb') use('patio_concrete', h.materials?.edging);
   }
   if (site.pool?.polygon?.length >= 3) {
+    if (plan.materials?.water) use('water', plan.materials.water);
     if (site.pool.materials?.interior) use('paving', site.pool.materials.interior);
     if (site.pool.materials?.waterline) use('paving', site.pool.materials.waterline);
     if ((site.pool.coping ?? 1) > 0) use(authoredRole(site.pool.material, 'paving'), site.pool.materials?.coping);
@@ -398,7 +400,15 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           if (band > -d) surfaceMesh(group, poolSurface(slab, -d, band), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'), seedOf(site.pool, 'walls'));
           surfaceMesh(group, poolSurface(slab, band, 0.3), waterlineMaterial(site.pool.materials?.waterline, { mat, plain }), seedOf(site.pool, 'waterline'));
         }
-        const water = plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false });
+        const waterSlot = plan.materials?.water;
+        // Kit aliases need an isolated receiving role too: water must not
+        // borrow and rename a paving/lawn material used elsewhere in the yard.
+        const waterCache = { has: key => mats.has('water-slot:' + key), get: key => mats.get('water-slot:' + key),
+          set: (key, value) => mats.set('water-slot:' + key, value) };
+        const water = waterSlot ? materialSlot(waterSlot, 'water', kit, tier, waterCache, role => {
+          const result = kitMaterial(role, kit, tier); result.name = 'water'; return result;
+        }) : plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false });
+        if (waterSlot) water.name = 'water';
         addMesh(group, poolSurface(pool, -0.25), water);
         buildPoolFeatures(group, site.pool, poolHeight, { mat, plain, water, copingRole: kit.materials?.[site.pool.material] ? site.pool.material : 'paving' });
       }

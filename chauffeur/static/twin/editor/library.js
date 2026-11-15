@@ -33,12 +33,12 @@ export function materialLines(record, plan, kit) {
   const line = (label, role, override, target, roomMaterial, surface) => {
     const ref = override || roomMaterial || level?.materials?.[role] || building.materials?.[role]
       || plan.materials?.[role] || kit?.materials?.[role];
-    if (!ref) return null;
+    if (!ref && role !== 'ceiling') return null;
     const source = override ? 'set here' : `from the ${roomMaterial ? 'room' : level?.materials?.[role] ? 'level' : 'building'}`;
     const reset = override || roomMaterial ? null
       : level?.materials?.[role] ? { target: { level: level.id, role }, label: 'Clear for this floor' }
         : building.materials?.[role] ? { target: { building: building.id, role }, label: 'Clear for the building' } : null;
-    const result = { label, text: `${materialName(ref.id || ref.asset)}, ${source}`, target, clear: !!override, reset };
+    const result = { label, text: ref ? `${materialName(ref.id || ref.asset)}, ${source}` : 'House look', target, clear: !!override, reset };
     // Not enumerable: the card compares lines as text, never whole buildings.
     Object.defineProperty(result, 'surface', { value: { building, piece, kind, role, level: piece.level, ...surface } });
     return result;
@@ -53,7 +53,7 @@ export function materialLines(record, plan, kit) {
       { side, room, label: `${label.toLowerCase()} face` });
   }).filter(Boolean);
   if (kind === 'room') return [line('Floor', 'floor', piece.floor_material, { room: piece.id, surface: 'floor' }, null, { room: piece, surface: 'floor', label: 'floor' }),
-    line('Ceiling', 'porch_ceiling', piece.ceiling_material, { room: piece.id, surface: 'ceiling' }, null, { room: piece, surface: 'ceiling', label: 'ceiling' }),
+    line('Ceiling', piece.kind === 'porch' ? 'porch_ceiling' : 'ceiling', piece.ceiling_material, { room: piece.id, surface: 'ceiling' }, null, { room: piece, surface: 'ceiling', label: 'ceiling' }),
     piece.wall_material && line('Walls', 'interior_wall', piece.wall_material, { room: piece.id, surface: 'walls' }, null, { room: piece, surface: 'walls', label: 'walls' })].filter(Boolean);
   if (kind === 'roof') return [line('Roof', 'roof', piece.material, { roof: piece.roof || piece.id }, null, { label: 'roof' })].filter(Boolean);
   if (kind === 'dormer') return [line('Roof', 'roof', piece.material, { dormer: piece.id }, null, { label: 'roof' })].filter(Boolean);
@@ -223,7 +223,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       // Room scope on an outside face refers to the room behind that wall.
       room ||= wallFace(building, piece, side === 'left' ? 'right' : 'left').room;
     } else if (kind === 'room') {
-      surface = direction.z > 0 ? 'ceiling' : 'floor'; role = surface === 'floor' ? 'floor' : 'porch_ceiling';
+      surface = direction.z > 0 ? 'ceiling' : 'floor'; role = surface === 'floor' ? 'floor' : piece.kind === 'porch' ? 'porch_ceiling' : 'ceiling';
       point = r.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -elevation - (surface === 'ceiling' ? building.levels.find(l => l.id === piece.level).ceiling : (piece.floor_offset_ft || 0))), new THREE.Vector3());
     } else {
       point = picked.point && local(building, new THREE.Vector3(...picked.point));
@@ -246,7 +246,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     const point = new THREE.Ray(origin, direction).intersectPlane(
       new THREE.Plane(new THREE.Vector3(0, 0, 1), -(level.elevation || 0) - level.ceiling), new THREE.Vector3());
     if (!point || !contains(room.polygon, [point.x, point.y])) return null;
-    return { building, kind: 'room', piece: room, point: point.toArray(), room, role: 'porch_ceiling', surface: 'ceiling', level: room.level };
+    return { building, kind: 'room', piece: room, point: point.toArray(), room, role: room.kind === 'porch' ? 'porch_ceiling' : 'ceiling', surface: 'ceiling', level: room.level };
   }
   function dismiss() { chooser?.remove(); chooser = null; }
   const pickingWords = () => `Choose a material for the ${picking?.label || 'surface'}.`;

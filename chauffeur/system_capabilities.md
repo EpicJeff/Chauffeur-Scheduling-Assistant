@@ -1,6 +1,17 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.881 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.882 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.882 (2026-11-15, NOT device-verified): House materials panel. A building's card has a "House materials" section with one slot per kind of surface, so one choice changes every pane, every door, every ceiling and so on across the house. Lawn, pool and spa water, and room ceilings now read their defaults too.**
+
+- **The panel.** Select a building in the editor: "House materials" lists the slots in groups (Walls and floors, Trim, Openings, Porch and stairs, Roof and ceilings, Fixtures, Yard). Each row is the shared material slot control, takes any Library material (glass, cutout and blend included) and clears back to its default; the default line says "House look", "Follows <another slot>" or the built-in look it uses. Material editing itself stays on the Library page. Lawn and Water are site-wide and are written to the plan, not the building.
+- **Yard defaults.** The `set_material` op accepts the target `{site: true, role}` for site-scope kinds (lawn, water) and writes `plan.materials[role]`. The lawn and the pool and spa water read it; with none set the water is the plain water of before.
+- **Ceilings.** A room with a ceiling material, or a house with a ceiling default, draws a ceiling surface clipped to the underside of whatever is above it (the next floor's slab first, the roof for what remains, stair holes left open). Porch rooms keep the porch ceiling role; other rooms use the ceiling role. A house with neither set draws no ceiling surface, as before. Ceiling surfaces are separate meshes and are not merged into the static batches, so each lit room with a ceiling adds a draw call or two.
+- **Draw calls.** Giving the panes a house material does not raise the draw-call count (checked in Chromium on the household's pool house).
+- **Bake.** Changing a material's alpha mode changes the layout key, so the stored bake is put down and no mesh keeps a lightmap. Changing it back brings the layout key and the stored pages back, but the lights on that material wait for a re-bake, because a light's key carries the material's revision and each save moves it on.
+- **Not in this slice:** a slot on one item (one window's pane, one door) that overrides the house default; shadows through glass and cutouts.
+- **Code:** `static/twin/editor/house_materials.js` (`houseMaterialsShelf`), `static/twin/editor/cards.js`, `static/twin/editor/library.js`, `static/twin/twin_ceilings.js` (`ceilingPatches`), `static/twin/twin_generator.js`, `static/twin/twin_yard.js`, `services/twin_model_ops.py` (`_material`).
+- **Tests:** `tests/test_twin_house_materials_panel_js.py` (7), `tests/test_twin_ceiling_roof_slots_js.py` (8), `tests/test_twin_yard_defaults_js.py` (5), `tests/test_twin_model_ops_more.py` (29), and the Chromium scenarios L1, L2, L3 and roof in `tests/test_twin_glass_slots_live.py` (run by hand; they need Chromium).
 
 **v2.499.881 (2026-11-15, NOT device-verified): surface kinds. One table names every kind of surface a house default can cover, and the generator reads a building's (or a level's) default for each. No panel yet: nothing on screen sets these defaults until the House materials panel ships, so a house draws exactly as before.**
 

@@ -498,7 +498,7 @@ All in `tests/test_twin_glass_slots_live.py`, written by the implementer of the 
 
 - **L1 (A4):** on the Library page, switch a material to blend, move opacity to 0.4, upload a leaf PNG with alpha to another material; the preview canvas shows see-through pixels (sampled centre pixel differs from the opaque render), the cutout material shows the mode as cutout with an opacity map thumbnail, and no page error is logged.
 - **L2 (B5):** in the editor, open House materials, set Panes to a blend material; pane meshes in the live scene report that `materialId`; the draw-call count from `?perf=1` is no higher than before the change.
-- **L3 (B2, A3):** load a house with a finished bake, flip its siding material from opaque to cutout on the Library page; the twin tab rebuilds, the bake badge reports unbaked, and no mesh holds a lightmap. Flip back: the stored bake mounts again.
+- **L3 (B2, A3):** load a house with a finished bake, flip its siding material from opaque to cutout on the Library page; the twin tab rebuilds, the bake badge reports unbaked, and no mesh holds a lightmap. Flip back: the layout key returns and the stored pages mount again, but the light stays stale until a desk re-bakes it, because a light's key carries the material revision and the two saves moved it on.
 - **L4 (C4):** drag a material from the Library strip onto a window pane; only that window changes; drag onto the same window's frame; only the frame changes; the wall is untouched.
 - **L5 (C3):** select a stair, set Rail from the card, clear it, and confirm the rail returns to the house look.
 - Also rerun after the last task: `tests/test_twin_view_live.py`, `tests/test_twin_editor_scene_live.py`, `tests/test_twin_shadowmask_live.py`, `tests/test_twin_site_shapes_live.py`.

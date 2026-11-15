@@ -30,6 +30,7 @@
     {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_mapping', 'live/energy_geometry', 'live/solar_conduit', 'live/solar_conduit_core', 'live/solar_conduit_worker', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security', 'editor/aim_tool'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
+    twinImports[new URL(twinBase + 'static/twin/twin_ceilings.js', location.href).href] = twinBase + {{ 'static/twin/twin_ceilings.js' | ver | tojson }};
     twinImports[new URL(twinBase + 'static/vendor/lucide/icons.js', location.href).href] = twinBase + {{ 'static/vendor/lucide/icons.js' | ver | tojson }};
     twinImports[new URL(twinBase + 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js', location.href).href] = twinBase + {{ 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js' | ver | tojson }};
     // Workers have no import map; pass exactly the page's versioned paths.

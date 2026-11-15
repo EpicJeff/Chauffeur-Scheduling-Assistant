@@ -13,6 +13,7 @@ import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
 import { PORCH_SLAB_FT, POST_SLAB_FT, porchFoundation, porchOnGrade, porchSupportGeometry, porchPlinthGeometry } from './twin_porch_foundation.js';
 import { stairGeometry, doorwaySteps } from './twin_stairs.js';
 import { roomFloor, roomAt, openingFloor, wallFloorProfile, foundationPieces } from './twin_floors.js';
+import { ceilingPatches } from './twin_ceilings.js';
 import { LUCIDE } from '../vendor/lucide/icons.js';
 
 import { FT } from './twin_light_math.js';
@@ -40,7 +41,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
     // Independently faded viewing domains must never merge into their parent.
     for (let p = o.parent; p && p !== group; p = p.parent)
       if (p.userData.viewingWalls || p.userData.viewingTree) return;
-    if (!o.isMesh || o.userData.fireFlame || o.userData.modelLod || o.userData.pendingImport || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material?.vertexColors ||
+    if (!o.isMesh || o.userData.part === 'ceiling' || o.userData.fireFlame || o.userData.modelLod || o.userData.pendingImport || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material?.vertexColors ||
         !o.geometry?.attributes.position || Object.keys(o.geometry.morphAttributes || {}).length) return;
     let g;
     try {
@@ -319,6 +320,7 @@ function buildingKeyParts(plan, b, kit, tier, { viewing = false, showAnchors = f
   for (const l of b.levels || []) for (const [role, ref] of Object.entries(l.materials || {})) if (roles.has(role)) finishes.push(resolved(role, ref));
   for (const w of b.walls || []) for (const ref of Object.values(w.faces || {})) finishes.push(resolved('siding', ref), resolved('interior_wall', ref));
   for (const r of b.rooms || []) {
+    if (r.ceiling_material) finishes.push(resolved('ceiling', r.ceiling_material));
     if (r.wall_material) finishes.push(resolved('interior_wall', r.wall_material));
     if (r.floor_material) {
       finishes.push(resolved('floor', r.floor_material)); // also used by derived doorway steps
@@ -504,7 +506,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       // Existing role defaults already resolve through mat. Keep their shared
       // instances (notably roof covering and standing seams) and legacy tint.
       if (fallback.role === kind || kind === 'counter') return mat(kind, level);
-      const slot = resolveSlot(kind, { building: b, level });
+      const slot = (kind === 'ceiling' && item?.ceiling_material) || resolveSlot(kind, { building: b, level });
       if (!slot) {
         if (fallback.role) return mat(fallback.role);
         if (fallback.builtin) return fallback.builtin === 'screen' ? screen : glass;
@@ -1243,6 +1245,8 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       }
     }
     const porches = allPorches(b);
+    const ceilingSlabs = [];
+    const hasCeilings = (b.rooms || []).some(r => r.ceiling_material || resolveSlot('ceiling', { building: b, level: levels[r.level] }));
     const porchRoom = po => (b.rooms || []).find(r => r.kind === 'porch' && r.polygon?.length >= 3
       && (r.level === (po.level || first.id)) && (r.id === po.id
         || r.polygon.every(p => contains(po.polygon, p)) && po.polygon.every(p => contains(r.polygon, p))));
@@ -1267,8 +1271,18 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         // finish running through several rooms stays continuous.
         const floorSeed = `${b.id}:floor:${l.id}`;
         // The lowest floor at grade rests on the foundation, which already fills to this line.
-        if (slabBottom < elevation - FLOOR_GAP_FT)
-          mesh(local[l.id], polygon(poly, slabBottom, elevation - FLOOR_GAP_FT, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'), null, floorSeed);
+        if (slabBottom < elevation - FLOOR_GAP_FT) {
+          const slab = polygon(poly, slabBottom, elevation - FLOOR_GAP_FT, cuts);
+          mesh(local[l.id], slab, mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'), null, floorSeed);
+          // Keep only bottom faces, in plan x/y/z feet, before static merging.
+          if (hasCeilings) {
+            const g = slab.index ? slab.toNonIndexed() : slab, p = g.attributes.position, n = g.attributes.normal, positions = [];
+            for (let i = 0; i < p.count; i += 3) if (n.getY(i) < -.99)
+              for (let j = i; j < i + 3; j++) positions.push(p.getX(j), -p.getZ(j), p.getY(j));
+            if (g !== slab) g.dispose();
+            ceilingSlabs.push({ group: local[l.id], level: l, elevation: slabBottom, positions });
+          }
+        }
         mesh(local[l.id], polygon(poly, elevation, elevation, cuts), mat(porch ? 'patio_concrete' : 'floor', l, room.floor_material), null, floorSeed);
       }
       // Room boundaries stop at the wall lines. Their slab plus these mitred
@@ -1283,6 +1297,20 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         for (const {polygon: area, top} of parts) mesh(local[l.id], polygon(area, top - .8, top), mat('siding', l));
       }
       stopLevel();
+    }
+    for (const room of b.rooms || []) {
+      const level = levels[room.level], slot = room.ceiling_material || resolveSlot('ceiling', { building: b, level });
+      if (!slot || !level || !(room.polygon?.length >= 3)) continue;
+      const supports = ceilingSlabs.filter(s => s.level.elevation > level.elevation && s.elevation > roomFloor(level, room))
+        .sort((a, c) => a.elevation - c.elevation);
+      const roof = roofMesh(sections.filter(s => s.plate > level.elevation + .5));
+      const positions = Array.from(roof.positions, (v, i) => i % 3 === 2 ? v - ROOF_THICKNESS : v);
+      supports.push({ group: local.roof, positions });
+      use(room, 'room', room.id);
+      for (const [group, patch] of ceilingPatches(room, supports)) {
+        const ceiling = mesh(group, roofGeometry(patch), kindMat('ceiling', room));
+        ceiling.userData.part = 'ceiling';
+      }
     }
     for (const [index, po] of porches.entries()) {
       if (!po.polygon) continue;

@@ -853,16 +853,23 @@ def _set_field(building, op, ha_catalogue=None):
         _opening(building, piece)
 
 
-def _material(building, op):
+def _material(building, op, model=None):
     target, material = op.get('target'), op.get('material')
     if not isinstance(target, dict):
         raise Refused('Choose a surface for the material.')
+    if 'site' in target:
+        from services.twin_surface_kinds import KINDS
+        allowed = [row['kind'] for row in KINDS if row['scope'] == 'site']
+        if target.get('site') is not True or target.get('role') not in allowed or model is None:
+            raise Refused('Choose a surface for the material.')
     from services.twin_library import normalize_material_slot
     try:
         material = normalize_material_slot(material)
     except ValueError as error:
         raise Refused(str(error)) from error
-    if 'wall' in target and target.get('side') in ('left', 'right'):
+    if 'site' in target:
+        container, key = model.setdefault('materials', {}), target['role']
+    elif 'wall' in target and target.get('side') in ('left', 'right'):
         owner = _find(building, 'walls', target['wall'])
         container, key = owner.setdefault('faces', {}), target['side']
     elif 'room' in target and target.get('surface') in ('floor', 'ceiling', 'walls'):
@@ -1302,6 +1309,9 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     # save() also needs the normalized pre-edit model for its fix log. Reuse
     # that exact input's result, but keep our mutable working copy private.
     model, notes = twin_model.normalize(model) if _normalized is None else deepcopy(_normalized)
+    if kind == 'set_material' and isinstance(op.get('target'), dict) and 'site' in op['target']:
+        _material(None, op, model)
+        return model, 'Changed the material.'
     from services import twin_fixtures
     if kind in twin_fixtures.OPS:
         try:

@@ -1,4 +1,4 @@
-"""Glass/slots Chromium scenarios. A4 writes L1; Claude runs it at landing.
+"""Glass/slots Chromium scenarios. Claude runs these at landing.
 
 Run from chauffeur/: python tests/test_twin_glass_slots_live.py
 Uses the real Library page, HTTP writes, image decode and WebGL preview.
@@ -42,6 +42,10 @@ def _seed():
     STATE['token'] = storage.create_member_token('alpha-parent')
     for key, name in [('blend', 'Preview glass'), ('leaf', 'Leaf cutout')]:
         STATE[key] = twin_materials.create({'name': name, 'params': {'tint': '#e8f5d4'}}, 'alpha-parent')['id']
+    STATE['panes'] = twin_materials.create({'name': 'House glass',
+        'params': {'alpha_mode': 'blend', 'opacity': .4, 'tint': '#b9d7db'}}, 'alpha-parent')['id']
+    STATE['siding'] = twin_materials.create({'name': 'Bake siding',
+        'params': {'alpha_mode': 'opaque', 'tint': '#c9c4b8'}}, 'alpha-parent')['id']
     # The recorded house has a gable main roof and a separate shed porch roof.
     # Keep its rooms, openings, porch and yard for the wall-size editor screenshot.
     from services import twin_store
@@ -144,6 +148,146 @@ def scenario_L1_library_blend_and_leaf_cutout():
         assert not served.errors(), served.errors()
 
 
+def scenario_L2_house_materials_panes_and_draw_budget():
+    served = _serve()
+    if served is None:
+        raise AssertionError('Chromium is required for L2 visual verification')
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    with served.browser(launch_args=GPU_ARGS, color_scheme='dark') as page:
+        page.set_viewport_size({'width': 1920, 'height': 1080})
+        page.add_init_script('''if (location.protocol.startsWith('http')) { try {
+            localStorage.setItem('chauffeur_admin_token', %s);
+            localStorage.setItem('chauffeur_admin_token_for', 'alpha-parent');
+            localStorage.setItem('chauffeur_theme', 'dark');
+        } catch (e) {} }''' % json.dumps(STATE['token']))
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.goto(served.url('house/editor?tier=low&test=1&perf=1'))
+        page.wait_for_function('() => window.__editor?.ready && window.__twin?.ready', timeout=90000)
+        if page.locator('#place-view').is_visible():
+            page.locator('#place-close').click()
+        # Use the person's navigation path, rather than the selection test hook.
+        floor = page.locator('#editor-floors [data-floor^="pool-house:"]').first
+        floor.click()
+        page.locator('#editor-floors').get_by_role('button', name='All floors', exact=True).click()
+        page.locator('#editor-floors').get_by_role('button', name='Change the house', exact=True).click()
+        page.locator('#piece-card').get_by_text('House materials', exact=True).wait_for()
+        page.wait_for_function('() => window.__twin?.ready')
+        page.wait_for_function('() => /\\d+ draws/.test(document.querySelector(".twin-frame-meter")?.textContent || "")')
+        before = page.evaluate('() => window.__twin.stats().drawCalls')
+        slot = page.locator('#piece-card [data-material-slot="Panes"]')
+        slot.get_by_role('button', name='Change the panes material', exact=True).click()
+        slot.locator(f'[data-material="{STATE["panes"]}"]').click()
+        page.wait_for_function('''mid => {
+            const v = window.__twin, b = v.plan.buildings.find(b => b.id === 'pool-house');
+            if (b.materials?.pane?.id !== mid || !v.ready) return false;
+            const panes = [];
+            v.scene.traverse(o => {
+                let parent = o; while (parent && !parent.userData.buildingId) parent = parent.parent;
+                if (o.isMesh && !o.layers.isEnabled(31) && parent?.userData.buildingId === b.id && o.material?.name === 'glass') panes.push(o);
+            });
+            return panes.length > 0 && panes.every(o => o.material.userData.materialId === mid);
+        }''', arg=STATE['panes'])
+        _settle(page)
+        after = page.evaluate('() => window.__twin.stats().drawCalls')
+        assert after <= before, (before, after)
+        page.screenshot(path=str(OUTPUT / 'L2-house-materials-panes-dark-wall.png'), full_page=True)
+        assert not _unexpected(errors), _unexpected(errors)
+        assert not served.errors(), served.errors()
+
+
+def scenario_L3_siding_mode_flip_drops_and_restores_finished_bake():
+    """Real bake, material page, watcher rebuild and retained-page reload.
+
+    The editor's chip is round-based ('Lights wait to re-bake'), not an alpha
+    status. Assert the twin's actual unbaked state and shader bindings here.
+    """
+    served = _serve()
+    if served is None:
+        raise AssertionError('Chromium is required for L3 visual verification')
+    from services import twin_store
+    plan = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
+    building = next(b for b in plan['buildings'] if b['id'] == 'pool-house')
+    building.setdefault('materials', {})['siding'] = {'id': STATE['siding']}
+    # One real household building; omit distant yard pages to bound bake time.
+    plan['buildings'] = [building]
+    plan['site'] = {}
+    twin_store.push_round(plan, 'build')
+    room = next(r for r in building['rooms'] if r.get('kind') != 'porch')
+    # A marker's place is on the lot; the room polygon is in the building's own frame.
+    from services.twin_register import to_world
+    at = to_world(building, [sum(p[i] for p in room['polygon']) / len(room['polygon']) for i in (0, 1)]) + [6]
+    live = {'markers': [{'device_id': 'slot-bake-light', 'entity_id': 'light.slot_bake', 'kind': 'light',
+        'placed': True, 'building': building['id'], 'level': room['level'], 'room': room['id'],
+        'at': at, 'name': 'Room lamp'}], 'rooms': [], 'fixtures': []}
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    with served.browser(launch_args=GPU_ARGS, color_scheme='dark') as twin:
+        twin.set_viewport_size({'width': 1920, 'height': 1080})
+        twin.add_init_script('''if (location.protocol.startsWith('http')) { try {
+            localStorage.setItem('chauffeur_admin_token', %s);
+            localStorage.setItem('chauffeur_admin_token_for', 'alpha-parent');
+            localStorage.setItem('chauffeur_theme', 'dark');
+        } catch (e) {} }''' % json.dumps(STATE['token']))
+        twin.route('**/api/house/live', lambda route: route.fulfill(json=live))
+        errors = []
+        twin.on('pageerror', lambda error: errors.append(str(error)))
+        twin.goto(served.url('house/twin?tier=high&test=1'))
+        twin.wait_for_function('() => window.__twin?.ready && window.__twin.bake', timeout=90000, polling=500)
+        twin.wait_for_function('''() => {
+            const b = window.__twin.bake;
+            return !b.state().baking && !b.state().error && b.fresh().includes('slot-bake-light') && !!b.held();
+        }''', timeout=900000, polling=500)
+        old_key = twin.evaluate('() => window.__twin.bake.state().key')
+        # Low downloads only, so the changed mode cannot race an automatic rebake.
+        twin.goto(served.url('house/twin?tier=low&test=1'))
+        twin.wait_for_function('() => window.__twin?.ready && window.__twin.bake?.fresh().includes("slot-bake-light")', timeout=90000, polling=500)
+        assert twin.evaluate('() => window.__twin.bake.state().key') == old_key
+        twin.screenshot(path=str(OUTPUT / 'L3-finished-bake-dark-wall.png'), full_page=True)
+        # The rig's page owns its context, so the Library opens in a second one.
+        other = twin.context.browser.new_context(color_scheme='dark')
+        library = other.new_page()
+        library.add_init_script('''if (location.protocol.startsWith('http')) { try {
+            localStorage.setItem('chauffeur_admin_token', %s);
+            localStorage.setItem('chauffeur_admin_token_for', 'alpha-parent');
+            localStorage.setItem('chauffeur_theme', 'dark');
+        } catch (e) {} }''' % json.dumps(STATE['token']))
+        try:
+            library.on('pageerror', lambda error: errors.append(str(error)))
+            library.goto(served.url('house/library?material=' + STATE['siding']))
+            library.wait_for_function('() => !!window.materialLibraryPage')
+            library.evaluate('() => window.materialLibraryPage.ready')
+            library.locator('[data-param="alpha_mode"]').select_option('cutout')
+            _saved(library, STATE['siding'], 'cutout')
+            twin.bring_to_front()
+            twin.wait_for_function('''oldKey => {
+                const v = window.__twin, b = v?.bake;
+                if (!v?.ready || !b?.state().key || b.state().key === oldKey || b.fresh().length || b.held()) return false;
+                let clean = true;
+                v.scene.traverse(o => { for (const m of [].concat(o.material || []))
+                    if (m.lightMap || m.userData.lmOriginalKey !== undefined) clean = false; });
+                return clean && !b.state().error;
+            }''', arg=old_key, timeout=90000, polling=500)
+            twin.screenshot(path=str(OUTPUT / 'L3-cutout-unbaked-dark-wall.png'), full_page=True)
+            library.bring_to_front()
+            library.locator('[data-param="alpha_mode"]').select_option('opaque')
+            _saved(library, STATE['siding'], 'opaque')
+            twin.bring_to_front()
+            # The layout key comes back and the stored pages mount again, but a light's own
+            # key carries the material's revision (reach.js), and two saves moved it on:
+            # the lamp waits for a baking desk and is never drawn from the older bake.
+            twin.wait_for_function('''oldKey => {
+                const b = window.__twin?.bake;
+                return b?.state().key === oldKey && !b.state().error && !!b.held() && !b.fresh().length &&
+                    b.state().stale.includes('slot-bake-light');
+            }''', arg=old_key, timeout=90000, polling=500)
+            twin.screenshot(path=str(OUTPUT / 'L3-opaque-layout-restored-dark-wall.png'), full_page=True)
+        finally:
+            other.close()
+        assert not _unexpected(errors), _unexpected(errors)
+        # No bake exists at first, so the manifest and page reads start as 404s.
+        assert not _unexpected(served.errors()), _unexpected(served.errors())
+
+
 def scenario_L_roof_two_materials():
     """Set two ordinary Library materials through the existing roof card row."""
     served = _serve()
@@ -208,7 +352,9 @@ def scenario_L_roof_two_materials():
 
 if __name__ == '__main__':
     failed = 0
-    scenarios = [scenario_L1_library_blend_and_leaf_cutout, scenario_L_roof_two_materials]
+    scenarios = [scenario_L1_library_blend_and_leaf_cutout, scenario_L_roof_two_materials,
+                 scenario_L2_house_materials_panes_and_draw_budget,
+                 scenario_L3_siding_mode_flip_drops_and_restores_finished_bake]
     for scenario in scenarios:
         try:
             scenario()
