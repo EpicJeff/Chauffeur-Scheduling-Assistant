@@ -1,6 +1,49 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.869 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.870 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.870 (2026-11-14, NOT device-verified): a person can place and edit light fixtures by hand in the house editor: point, spot, line and area, plus where a camera looks. Light fixtures Tasks 5 and 6 (slice D).**
+
+This supersedes the v2.499.869 statement that there is no editor for fixtures. Baking the new shapes into the lightmap is still to come, so line and area light still passes through walls in the live house.
+
+**Where** (`static/twin/editor/fixtures.js`, `editor/aim_tool.js`, `editor/line_fixture_tool.js`; storage and ops unchanged in `services/twin_fixtures.py`).
+- A linked device row in the editor has a **Fixtures** button. It opens the fixture card for that device's light entities on the piece card. A fixture dot or path in the scene opens the same card.
+- Parents edit. Everyone else, and a history preview, sees the same rows read-only; the server refuses the ops from a non-parent.
+
+**Point and spot.**
+- "Add point fixtures" and "Add spot fixtures" drop one fixture per click until Done. A drop on a wall sits off the face by half the wall thickness plus 1 inch; on a floor 1 inch up; on a ceiling 1 inch down.
+- A spot is aimed by dragging its aim point, with a cone slider. Escape during the drag cancels only that drag.
+- Each row has Move, Aim (spot), Duplicate and Delete. Delete asks through the in-app confirm.
+
+**Line.**
+- "Add line fixture" draws a free polyline: click points, Backspace removes the last, Enter or Finish saves, Escape cancels the draw and keeps the mode.
+- "Snap to edge" offers the five host kinds the server resolves: retaining wall cap, patio/path/deck edge, step nose, wall top, fence top. Hover highlights the edge; a click takes the whole edge, a drag takes the part between press and release (`t0`, `t1`). An edge hidden behind a nearer piece is not offered. A wall without two joints is not offered.
+- Storage holds the host edge or the raw path. Facing offsets are applied by the resolver (`live/emitters.js`), never stored.
+- Facing: Down, Up, Out, In, or a custom normal. A step run faces downhill. A wall run labels the sides "Out (outside face)" and "In (inside face)". The default follows the surface drawn on: up on a floor or the ground, down on a ceiling, the clicked face on a wall; a facing the person chose first wins.
+
+**Area.**
+- "Add area fixture" drags a rectangle on the surface, with the same facing choice. Rows edit position, size, facing, rotation and share.
+
+**Detached runs.**
+- A snapped run whose host no longer resolves says so in its row and summary, with the server's reason when there is one.
+- "Reattach" picks a new edge for the same fixture id. "Keep as drawn" (detached rows only) turns the run into a free path at the place it is drawn now, lift included, and keeps the side it lights.
+
+**Shared rules.**
+- One history step per gesture: a whole polyline, a snap pick with its drag, a facing change, an area drag.
+- Done saves a draft that is complete enough to save and ends the mode; a failed save keeps the mode and the draft.
+- Line paths and area outlines show in the editor as thin tubes in the fixture accent colour, depth-tested and hidden with their level. A marker yields a press only to a piece more than 0.2 m nearer, so a fixture on a wall face can be clicked.
+- Number fields show at most two decimals and never rewrite the stored value unless the person edits the field.
+- No new streams or timers. No browser dialogs.
+
+**Cameras** (`camera_views` in the model, op `set_camera_view`).
+- A placed camera's row has "Aim camera": drag the aim point and set the field of view. The view stores `{aim, fov_deg}` only; the origin is always the live marker, so the view follows a camera that is moved.
+- At most 64 camera views; an aim farther than 2000 ft is refused, and such an entry is dropped on load.
+
+**Also fixed.** Dragging a Library item onto a wall crashed on an item without an id (`static/twin/editor/library.js`, `item.id?.startsWith('import-')`). Wall placement from the Library works again.
+
+**Tests.** `tests/test_twin_line_fixture_tool_js.py` (new, production JS in node against real raycasts and the real server ops), `tests/test_twin_fixture_editor_js.py`, `tests/test_house_editor_model_live_t19.py` (Chromium, 12/12).
+
+**Not checked in a browser:** Reattach, Done with a pending draft, snap on a retaining wall cap, a marker click on a wall-face fixture, the read-only dot click, a camera view after the camera is placed again.
 
 **v2.499.869 (2026-11-14, NOT device-verified): light fixtures shine in the live house. A fixture drawn as a spot, a line or a panel now lights the scene as that shape, and a line or panel shows as a glowing strip or panel. Light fixtures Task 3 (slice B).**
 
