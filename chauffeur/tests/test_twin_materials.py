@@ -427,6 +427,34 @@ def test_gltf_import_creates_a_gltf_material_through_the_map_route():
         listed = {r['id']: r for r in c.client.get(API, headers=c.mum).json()['materials']}
         assert listed[row['id']]['source'] == 'gltf'
 
+        rgba = Image.new('RGBA', (2, 2), (80, 160, 40, 255))
+        rgba.putpixel((0, 0), (80, 160, 40, 0))
+        png = io.BytesIO()
+        rgba.save(png, format='PNG')
+        for mode in ('cutout', 'blend', 'opaque'):
+            imported = create(c, name=mode, source='gltf', params={'alpha_mode': mode})
+            response = upload(c, imported['id'], png.getvalue())
+            assert response.status_code == 200, response.text
+            imported = response.json()
+            assert 'opacity' in imported['maps'] and imported['opacity_derived'] is True
+            listed = {r['id']: r for r in c.client.get(API, headers=c.mum).json()['materials']}
+            assert listed[imported['id']]['opacity_derived'] is True
+            assert 'opacity_derived' not in listed[imported['id']]['params']
+            assert 'opacity_derived' not in materials.page_manifest()[imported['id']]
+            if mode == 'opaque':
+                # The Library import owns glTF's OPAQUE exception. A hand-picked
+                # mode retains its derived mask under A1's ownership contract.
+                response = c.client.delete(f"{API}/{imported['id']}/maps/opacity", headers=c.mum)
+                assert response.status_code == 200, response.text
+            response = c.client.patch(f"{API}/{imported['id']}", headers=c.mum,
+                                      json={'params': {'alpha_mode': mode}})
+            assert response.status_code == 200, response.text
+            imported = c.client.get(f"{API}/{imported['id']}", headers=c.mum).json()
+            assert imported['params']['alpha_mode'] == mode
+            assert ('opacity' in imported['maps']) is (mode != 'opaque')
+            listed = {r['id']: r for r in c.client.get(API, headers=c.mum).json()['materials']}
+            assert listed[imported['id']]['opacity_derived'] is (mode != 'opaque')
+
 
 def test_huge_dimensions_refused_before_decode():
     seed()

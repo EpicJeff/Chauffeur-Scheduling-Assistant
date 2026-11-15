@@ -112,7 +112,7 @@ await test('glb_maps_and_factors', async () => {
   assert.deepEqual(Object.keys(material.maps), ['base_color', 'normal', 'orm']);
   await same(material.maps.base_color, BASE, 'base_color'); await same(material.maps.orm, ORM, 'orm'); await same(material.maps.normal, NORMAL, 'normal');
   // baseColorFactor is linear; the tint is the sRGB hex the colour picker shows.
-  assert.deepEqual(material.params, {tint: '#bc89ff', roughness: 0.6, metalness: 0.2, normal_scale: 0.75, normal_convention: 'gl', ao_intensity: 0.5});
+  assert.deepEqual(material.params, {alpha_mode: 'opaque', tint: '#bc89ff', roughness: 0.6, metalness: 0.2, normal_scale: 0.75, normal_convention: 'gl', ao_intensity: 0.5});
   assert.deepEqual(material.problems, []);
 
   const c = await setup();
@@ -147,7 +147,7 @@ await test('multiple_materials_ask_which', async () => {
   assert.deepEqual(found.map(m => m.name), ['Oak', 'Walnut']);
   await same(found[1].maps.base_color, WALNUT, 'walnut');
   // glTF defaults: a material with no factors is rough 1 and fully metallic.
-  assert.deepEqual(found[0].params, {tint: '#ffffff', roughness: 1, metalness: 1, normal_scale: 1, normal_convention: 'gl', ao_intensity: 1});
+  assert.deepEqual(found[0].params, {alpha_mode: 'opaque', tint: '#ffffff', roughness: 1, metalness: 1, normal_scale: 1, normal_convention: 'gl', ao_intensity: 1});
 
   const c = await setup({choose: (title, message, options) => options[1].value});
   await c.choose([glbFile(twoGlb(), 'woods.glb')]);

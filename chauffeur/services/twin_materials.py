@@ -147,7 +147,8 @@ def catalogue(include_archived=False) -> dict:
             continue
         rows.append(dict(id=record['id'], name=record['name'], source=record['source'],
                          color=record['params']['tint'], thumbnail_url=None, builtin=False,
-                         archived=record['archived'], revision=record['revision'], params=record['params']))
+                         archived=record['archived'], revision=record['revision'], params=record['params'],
+                         opacity_derived=record['opacity_derived']))
     path = root() / 'revision.json'
     return {'revision': _read(path) if path.exists() else 0, 'materials': rows}
 

@@ -7,6 +7,7 @@
 // ao|occlusion|ambientocclusion → ao
 // arm|orm → orm
 // height|disp|displacement → height
+// opacity|alpha|mask → opacity
 const suffixes = [
   ['basecolor|albedo|diff|diffuse|color|col', 'base_color'],
   ['normalgl|nor_gl|normal', 'normal', 'gl'],
@@ -16,6 +17,7 @@ const suffixes = [
   ['ao|occlusion|ambientocclusion', 'ao'],
   ['arm|orm', 'orm'],
   ['height|disp|displacement', 'height'],
+  ['opacity|alpha|mask', 'opacity'],
 ].map(([suffix, slot, convention]) => [new RegExp(`(?:^|[_-])(?:${suffix})$`, 'i'),
   convention ? { slot, convention } : { slot }]);
 

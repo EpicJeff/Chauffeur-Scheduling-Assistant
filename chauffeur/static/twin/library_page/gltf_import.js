@@ -169,6 +169,9 @@ export async function readGltfMaterials(files, { maxModelBytes = MAX_MODEL_BYTES
       name: name || `${model.name.replace(MODEL, '')} material ${index + 1}`,
       maps,
       params: {
+        alpha_mode: def.alphaMode === 'MASK' ? 'cutout' : def.alphaMode === 'BLEND' ? 'blend' : 'opaque',
+        ...(def.alphaMode === 'MASK' ? { alpha_cutoff: round(clamp(def.alphaCutoff, .01, 1, .5)) } : {}),
+        ...(def.alphaMode === 'BLEND' ? { opacity: round(clamp(pbr.baseColorFactor?.[3], 0, 1, 1)) } : {}),
         tint: '#' + color.getHexString(),
         // An unlit material (three's MeshBasicMaterial) has no factors of its own.
         roughness: factor(material.roughness ?? pbr.roughnessFactor ?? 1),

@@ -291,6 +291,12 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
         setStatus(ctx, ctx.uploadStatus);
         if (await uploadMap(ctx, slot, blob)) uploaded++; else failed++;
       }
+      if (!stopped && chosen.params.alpha_mode === 'opaque') {
+        // glTF OPAQUE discards texture alpha. Keep this import-only exception
+        // here: choosing a mode by hand must retain A1's derived-map ownership.
+        if (ctx.draft.opacity_derived) accept(ctx, await mutate(ctx, '/maps/opacity', 'DELETE'), true);
+        if (ctx.draft.params?.alpha_mode !== 'opaque') accept(ctx, await mutate(ctx, '', 'PATCH', { params: { alpha_mode: 'opaque' } }), true);
+      }
       delete ctx.uploadStatus;
       if (!stopped) status.textContent = current ? `glTF import: ${uploaded} maps uploaded, ${failed} failed`
         : `Imported ${chosen.name}: ${uploaded} maps uploaded, ${failed} failed. Open it to see them.`;

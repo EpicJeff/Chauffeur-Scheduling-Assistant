@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { applyMaterialParams, kitMaterial } from '../twin_library.js';
+import { alphaModeOf, applyMaterialParams, kitMaterial } from '../twin_library.js';
 import { sunPosition } from '../sky/ephemeris.js';
 import { resolveSite, previewDate, modelDirection, lookAt } from '../sky/look.js';
 
 // Preview geometry uses feet just like generator UVs. World positions are metres.
 const FT = .3048;
 const mapProperties = { base_color: ['map'], normal: ['normalMap'], roughness: ['roughnessMap'],
-  metalness: ['metalnessMap'], ao: ['aoMap'], orm: ['aoMap', 'roughnessMap', 'metalnessMap'] };
+  metalness: ['metalnessMap'], ao: ['aoMap'], orm: ['aoMap', 'roughnessMap', 'metalnessMap'], opacity: ['alphaMap'] };
 
 export function createPreview(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -55,6 +55,8 @@ export function createPreview(canvas) {
   function updateParams() {
     if (!currentParams || currentEntry.source === 'builtin') return;
     const p = currentParams;
+    if (material.userData.alphaMode === 'blend') material.opacity = p.opacity ?? 1;
+    if (material.userData.alphaMode === 'cutout') material.alphaTest = Math.max(p.alpha_cutoff ?? .5, .01);
     material.color.set(p.tint || '#ffffff');
     material.roughness = p.roughness ?? (material.roughnessMap ? 1 : .85);
     material.metalness = p.metalness ?? (material.metalnessMap ? 1 : 0);
@@ -67,7 +69,7 @@ export function createPreview(canvas) {
   }
   function setMaterial(entry, params = entry.params || {}) {
     currentEntry = entry; currentParams = params;
-    const key = JSON.stringify([entry.id, entry.source, entry.maps, entry.previewMaps]);
+    const key = JSON.stringify([entry.id, entry.source, entry.maps, entry.previewMaps, alphaModeOf({ ...entry, params })]);
     if (signature !== key) {
       signature = key; const turn = ++generation;
       material.dispose();
@@ -85,6 +87,7 @@ export function createPreview(canvas) {
       sample.material = material;
       const active = material;
       const local = Object.entries(entry.previewMaps || {}).filter(([slot]) => mapProperties[slot]
+        && (slot !== 'opacity' || active.userData.alphaMode !== 'opaque')
         && !((entry.previewMaps?.orm || entry.maps?.orm) && ['ao', 'roughness', 'metalness'].includes(slot))).map(([slot, url]) => new Promise(resolve => {
         new THREE.TextureLoader().load(url, texture => {
           if (stopped || generation !== turn) { texture.dispose(); resolve(); return; }

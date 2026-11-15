@@ -1,9 +1,12 @@
-import { libUrl, materialUrl } from '../twin_library.js';
+import { alphaModeOf, libUrl, materialUrl } from '../twin_library.js';
 
 export const slots = [['base_color', 'Base colour'], ['normal', 'Normal'], ['roughness', 'Roughness'],
-  ['metalness', 'Metalness'], ['ao', 'AO'], ['orm', 'ORM'], ['height', 'Height']];
+  ['metalness', 'Metalness'], ['ao', 'AO'], ['orm', 'ORM'], ['height', 'Height'], ['opacity', 'Opacity map']];
 export const defaults = { tint: '#ffffff', roughness: null, metalness: null, normal_scale: 1,
-  normal_convention: 'gl', ao_intensity: 1, tile_ft: [4, 4], rotation_deg: 0, random_offset: false };
+  normal_convention: 'gl', ao_intensity: 1, tile_ft: [4, 4], rotation_deg: 0, random_offset: false,
+  alpha_mode: 'opaque', opacity: 1, alpha_cutoff: .5 };
+
+const alphaModes = [['opaque', 'Opaque'], ['cutout', 'Cutout'], ['blend', 'Blend']];
 
 export function node(tag, text, className) {
   const out = document.createElement(tag);
@@ -39,6 +42,7 @@ export function mountProperties(host, entry, { change, replaceMap, clearMap, upl
     label.append(input); zone.append(label); host.append(zone);
   }
   function textField(key, label) {
+    if (readonly) { host.append(node('p', `${label}: ${entry[key] || ''}`)); return; }
     const row = node('label', label), input = node('input'); input.type = 'text';
     input.value = entry[key] || ''; input.disabled = readonly; input.dataset.field = key;
     input.addEventListener('change', () => change({ [key]: input.value }), { signal });
@@ -59,14 +63,19 @@ export function mountProperties(host, entry, { change, replaceMap, clearMap, upl
       }, { signal });
       label.append(input); row.append(label, button('Clear', 'clear', () => clearMap(slot), signal));
     }
-    if (slot === 'normal') {
+    if (slot === 'opacity') {
+      const note = node('p', null, 'place-muted');
+      controls.push(() => { note.textContent = entry.opacity_derived ? "From the base colour's transparency" : ''; note.hidden = !entry.opacity_derived; });
+      row.append(note);
+    }
+    if (slot === 'normal' && !readonly) {
       const label = node('label', 'Normal convention'), select = node('select');
       for (const [value, text] of [['gl', 'GL'], ['dx', 'DX']]) { const option = node('option', text); option.value = value; select.append(option); }
       select.value = entry.params.normal_convention; select.disabled = readonly;
       select.dataset.field = 'normal_convention';
       select.addEventListener('change', () => change({ params: { normal_convention: select.value } }), { signal });
       controls.push(() => { select.value = entry.params.normal_convention; }); label.append(select); row.append(label);
-    }
+    } else if (slot === 'normal') row.append(node('p', `Normal convention: ${(entry.params.normal_convention || 'gl').toUpperCase()}`, 'place-muted'));
     if (slot === 'orm') row.append(node('p', 'R: AO · G: Roughness · B: Metalness. ORM takes priority over separate maps.', 'place-muted'));
     if (slot === 'height') row.append(node('p', 'Stored for future displacement; not rendered.', 'place-muted'));
     host.append(row);
@@ -74,13 +83,26 @@ export function mountProperties(host, entry, { change, replaceMap, clearMap, upl
   const valueAt = key => key.startsWith('tile_ft.') ? entry.params.tile_ft[Number(key.at(-1))] : entry.params[key];
   const param = (key, value) => change({ params: key.startsWith('tile_ft.')
     ? { tile_ft: entry.params.tile_ft.map((v, i) => i === Number(key.at(-1)) ? value : v) } : { [key]: value } });
+  const modeRow = node('label', 'Alpha mode');
+  if (readonly) modeRow.append(node('output', alphaModes.find(([mode]) => mode === alphaModeOf(entry))[1]));
+  else {
+    const select = node('select'); select.dataset.param = 'alpha_mode'; select.setAttribute('aria-label', 'Alpha mode');
+    for (const [value, title] of alphaModes) { const option = node('option', title); option.value = value; select.append(option); }
+    select.addEventListener('change', () => param('alpha_mode', select.value), { signal });
+    controls.push(() => { select.value = alphaModeOf(entry); }); modeRow.append(select);
+  }
+  host.append(modeRow);
   for (const [key, title, min, max, step] of [
+    ['opacity', 'Opacity', 0, 1, .01], ['alpha_cutoff', 'Alpha cutoff', .01, 1, .01],
     ['roughness', 'Roughness', 0, 2, .01], ['metalness', 'Metalness', 0, 2, .01],
     ['normal_scale', 'Normal scale', 0, 4, .01], ['ao_intensity', 'AO intensity', 0, 2, .01],
     ['tile_ft.0', 'Tile width (ft)', .25, 200, .25], ['tile_ft.1', 'Tile height (ft)', .25, 200, .25],
     ['rotation_deg', 'Rotation (°)', 0, 359, 1],
   ]) {
     const row = node('div', null, 'library-param'), label = node('span', title); row.append(label);
+    if (key === 'opacity' || key === 'alpha_cutoff') controls.push(() => {
+      row.hidden = alphaModeOf(entry) !== (key === 'opacity' ? 'blend' : 'cutout');
+    });
     if (readonly) { row.append(node('output', String(valueAt(key) ?? 'Auto'))); host.append(row); continue; }
     let auto;
     if (key === 'roughness' || key === 'metalness') {
@@ -94,7 +116,9 @@ export function mountProperties(host, entry, { change, replaceMap, clearMap, upl
       input.dataset.param = key; input.setAttribute('aria-label', `${title}${type === 'range' ? ' slider' : ''}`);
       input.addEventListener('input', () => {
         const value = Number(input.value);
-        if (input.value !== '' && Number.isFinite(value) && value >= min && value <= max) param(key, value);
+        if (input.value === '' || !Number.isFinite(value)) return;
+        if (key === 'opacity' || key === 'alpha_cutoff') param(key, Math.min(max, Math.max(min, value)));
+        else if (value >= min && value <= max) param(key, value);
       }, { signal }); pair.append(input); inputs.push(input);
     }
     controls.push(() => { const value = valueAt(key); if (auto) auto.checked = value == null;
@@ -102,6 +126,7 @@ export function mountProperties(host, entry, { change, replaceMap, clearMap, upl
     row.append(pair); host.append(row);
   }
   for (const [key, title, type] of [['tint', 'Tint', 'color'], ['random_offset', 'Random UV offset per surface', 'checkbox']]) {
+    if (readonly) { host.append(node('p', `${title}: ${key === 'random_offset' ? (valueAt(key) ? 'On' : 'Off') : valueAt(key)}`)); continue; }
     const row = node('label', title), input = node('input'); input.type = type; input.disabled = readonly;
     if (!readonly) input.dataset.param = key;
     input.addEventListener(type === 'color' ? 'input' : 'change', () => param(key, type === 'checkbox' ? input.checked : input.value), { signal });
