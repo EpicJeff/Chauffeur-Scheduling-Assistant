@@ -142,7 +142,7 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
   }
   function pick(event) {
     const rect = screenRay(ray, view, event);
-    let best = null, distance = Infinity, screenDistance = Infinity;
+    const near = [];
     for (const edge of edges()) {
       if (edge.building && view.groups?.levels[`${edge.building}:${edge.level}`]?.visible === false) continue;
       const a = fixturePoint(edge.a), b = fixturePoint(edge.b); a.y += (edge.lift || 0) * .3048; b.y += (edge.lift || 0) * .3048;
@@ -150,13 +150,17 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
       const screen = onEdge.clone().project(view.camera); if (screen.z < -1 || screen.z > 1) continue;
       const pixels = Math.hypot((screen.x + 1) * rect.width / 2 + rect.left - event.clientX, (1 - screen.y) * rect.height / 2 + rect.top - event.clientY);
       const depth = ray.ray.origin.distanceTo(onRay);
-      if (pixels > 12) continue;
+      if (pixels <= 12) near.push({ edge, onEdge, screen, pixels, depth });
+    }
+    // Nearest on screen first, so the occlusion pick runs only until one visible edge is found.
+    near.sort((p, q) => Math.abs(p.pixels - q.pixels) <= .25 ? p.depth - q.depth : p.pixels - q.pixels);
+    for (const { edge, onEdge, screen } of near) {
       const x = (screen.x + 1) * rect.width / 2 + rect.left, y = (1 - screen.y) * rect.height / 2 + rect.top;
       const hit = view.pick(x, y), ownHost = hit?.kind === (edge.host.kind === 'step' ? 'stair' : edge.host.kind) && (hit.id || hit.pieceId) === edge.host.id && (!edge.building || (hit.building || hit.buildingId) === edge.building);
       if (!ownHost && hit?.point && ray.ray.origin.distanceTo(new THREE.Vector3(...hit.point)) < ray.ray.origin.distanceTo(onEdge) - .15) continue;
-      if (pixels <= 12 && (pixels < screenDistance - .25 || Math.abs(pixels - screenDistance) <= .25 && depth < distance)) { best = edge; distance = depth; screenDistance = pixels; }
+      return edge;
     }
-    return best;
+    return null;
   }
   function parameter(event, edge) {
     screenRay(ray, view, event);

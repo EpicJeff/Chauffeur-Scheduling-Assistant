@@ -84,7 +84,9 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onMove, on
           const free = resolveFixture({...fixture, snap:null, ref:'absolute'}, plan);
           // Preserve the current lift and host stand-off; the free resolver still applies its own vertical offset.
           const path = fixture.path.map((p,i) => p.map((v,k) => v + drawn.path[i][k] - free.path[i][k]));
-          return op({op:'update_light_fixture',entity_id,id:f.id,change:{snap:null,ref:'absolute',path}});
+          // A free run faces right of its drawn direction; keep the side the host gave it.
+          const flip = ['out','in'].includes(fixture.facing) && drawn.normal && free.normal && drawn.normal.reduce((sum,v,k) => sum + v * free.normal[k], 0) < 0;
+          return op({op:'update_light_fixture',entity_id,id:f.id,change:{snap:null,ref:'absolute',path,...(flip ? {facing:fixture.facing === 'out' ? 'in' : 'out'} : {})}});
         }), !canEdit());
       } else {
         for (const [j, point] of f.path.entries()) for (const [i, name] of ['east','north','height'].entries()) field(row, `Point ${j + 1} ${name} (ft)`, point[i], v => save(() => {
