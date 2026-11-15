@@ -873,6 +873,9 @@ def _material(building, op):
     elif 'roof' in target:
         owner = _find(building, 'roofs', target['roof'])
         container, key = owner, 'material'
+    elif 'dormer' in target:
+        owner = _find(building, 'dormers', target['dormer'])
+        container, key = owner, 'material'
     elif ('level' in target or target.get('building') == building['id']) and target.get('role'):
         owner = _find(building, 'levels', target['level']) if 'level' in target else building
         container, key = owner.setdefault('materials', {}), _text(target['role'])

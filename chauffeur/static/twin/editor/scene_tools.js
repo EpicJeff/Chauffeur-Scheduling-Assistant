@@ -3,6 +3,7 @@ import { isObject } from './object_shelf.js';
 import { report, idleInterval } from './api.js';
 import { createCards, findPiece, feetInches } from './cards.js';
 import { createHaLink } from './ha_link.js';
+import { readMaterialNames } from './material_catalog.js';
 import { snapPoint, snapRotation } from './snap.js';
 import { sheetMaster, localCentre } from './words.js';
 import { createSelection } from './selection.js';
@@ -55,7 +56,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let linkReadAt = 0;
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
+    op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: op,
     onPreview: drawDimensions, onClick: cards.edge, signal });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'

@@ -60,7 +60,8 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview, onDrawFeature }) {
+export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview, onDrawFeature, loadMaterialNames = null }) {
+  let namesAsked = false;
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
   let edgeIndex = null;
@@ -115,11 +116,16 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     const roof = record?.kind === 'roof' && record.building.roofs?.find(r => r.id === record.piece.id);
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
+    // One catalogue read per session names household materials on the lines.
+    if (materials.length && loadMaterialNames && !namesAsked && canEdit()) {
+      namesAsked = true;
+      Promise.resolve(loadMaterialNames()).then(() => draw(), () => { namesAsked = false; });
+    }
     const flags = roofFlags(record);
     const roomFeatures = record?.kind === 'yard_rooms' ? yardRoomFeatures(getPlan(), record.piece) : [];
     const porchLayout = record?.kind === 'room' && record.piece.kind === 'porch'
       ? JSON.stringify([record.piece.foundation, porchShelfOnGrade(getPlan(), record.building, record.piece), canEdit()]) : '';
-    const nextLayout = JSON.stringify([roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
+    const nextLayout = JSON.stringify([roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
     // save must not detach Turn while the person is typing the next edit.
@@ -162,15 +168,15 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       const words = document.createElement('div'), label = document.createElement('span'), text = document.createElement('p');
       label.textContent = material.label; text.textContent = material.text; words.append(label, text); row.append(words);
       const actions = document.createElement('div'); actions.className = 'editor-material-actions';
-      if (pickMaterial && material.surface) {
+      if (canEdit() && pickMaterial && material.surface) {
         const change = button('Change', () => pickMaterial(material.surface));
         change.setAttribute('aria-label', `Change the ${material.label.toLowerCase()} material`);
         actions.append(change);
       }
-      if (material.clear) actions.append(button('Clear', async () => {
+      if (canEdit() && material.clear) actions.append(button('Clear', async () => {
         if (canEdit()) await op({ op: 'set_material', building: building.id, target: material.target, material: null });
       }));
-      if (material.reset) actions.append(button(material.reset.label, async () => {
+      if (canEdit() && material.reset) actions.append(button(material.reset.label, async () => {
         if (canEdit()) await op({ op: 'set_material', building: building.id, target: material.reset.target, material: null });
       }));
       if (actions.children.length) row.append(actions);

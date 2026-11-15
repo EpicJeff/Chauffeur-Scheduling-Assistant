@@ -324,6 +324,9 @@ function buildingKeyParts(plan, b, kit, tier, { viewing = false, showAnchors = f
       if (r.kind === 'porch') finishes.push(resolved('patio_concrete', r.floor_material));
     }
   }
+  // Flat sections include dormers and every part of a split model roof.
+  // Their Library revisions must invalidate retained materials as room slots do.
+  for (const s of b.roof?.sections || []) if (s.material) finishes.push(resolved('roof', s.material));
   const slab = b.foundation?.materials?.slab;
   if (slab) finishes.push(['slab', slab, resolved('patio_concrete', slab), known[slab.id]]);
   for (const p of porches) for (const [slot, ref] of Object.entries(porchFoundation(p.foundation).materials)) if (ref) {
@@ -963,8 +966,10 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     for (let index = 0; index < sections.length; index++) {
       const section = sections[index], positions = [];
       use(section, 'roof', `roof:${index}`);
+      const roofMaterial = section.material
+        ? material(() => materialSlot(section.material, 'roof', materialKit, tier, materials, mat)) : mat('roof');
       for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) positions.push(...roofLayers.positions.slice(t * 9, t * 9 + 9));
-      if (positions.length) mesh(local.roof, roofGeometry(positions), mat('roof'));
+      if (positions.length) mesh(local.roof, roofGeometry(positions), roofMaterial);
       const block = section.block || section.rect;
       // Editor only: the live house view and wall panels never show the check marker (user,
       // 2026-11-14: "no idea why it shows on the panel").
@@ -999,7 +1004,8 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       }
       for (const [a, c] of edges.values()) band(a, c, stitching);
       if (underside.length) mesh(local.roof, roofGeometry(underside), mat('porch_ceiling'));
-      if (stitching.length) mesh(local.roof, roofGeometry(stitching), mat('roof'));
+      // These outward-facing shell edges are the visible covering thickness.
+      if (stitching.length) mesh(local.roof, roofGeometry(stitching), roofMaterial);
       // Only exposed section perimeters receive fascia / rake boards. Face
       // intersections and triangulation edges never grow decorative trim.
       const oh = section.overhang || 0, rect = section.rect.map((v, i) => v + (i < 2 ? -oh : oh));

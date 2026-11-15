@@ -543,6 +543,35 @@ def test_set_edits_fields_and_names_a_room():
 
 # ---------------------------------------------------------------- materials
 
+def test_roof_and_dormer_material_set_clear_and_validation():
+    from services import twin_materials
+    m = _house()
+    for area in ([[0, 0], [20, 0], [20, 10], [0, 10]],
+                 [[0, -8], [20, -8], [20, -2], [0, -2]]):
+        m = _apply(m, {'op': 'draw_roof', 'building': 'B1', 'area': area, 'plate': 9})
+    parent, porch = _b(m)['roofs'][-2:]
+    before = m
+    m = _apply(m, {'op': 'add_dormer', 'building': 'B1', 'roof': parent['id'],
+                   'edge': _edge_index(parent, 1, 0), 'at': 10, 'width': 4, 'pitch': 8})
+    dormer = _added(before, m, 'dormers')
+    material = {'id': twin_materials.create({'name': 'Roof regression metal'}, 'person')['id']}
+    untouched = copy.deepcopy(porch)
+    for kind, pid, collection in [('roof', parent['id'], 'roofs'), ('dormer', dormer['id'], 'dormers')]:
+        operation = {'op': 'set_material', 'building': 'B1', 'target': {kind: pid}, 'material': material}
+        changed = _apply(m, operation)
+        check(_by_id(_b(changed)[collection], pid)['material'] == material, changed)
+        check(_by_id(_b(changed)['roofs'], porch['id']) == untouched, 'second roof untouched')
+        flat = _bridge.flatten(changed)
+        sections = _b(flat)['roof']['sections']
+        own = [s for s in sections if s['id'] == pid or kind == 'roof' and s.get('roof') == pid and not s.get('dormer_of')]
+        check(own and all(s.get('material') == material for s in own), own)
+        cleared = _apply(changed, dict(operation, material=None))
+        check('material' not in _by_id(_b(cleared)[collection], pid), cleared)
+        check('Unknown material id' in _refused(m, dict(operation, material={'id': 'missing-roof-material'})), 'unknown material refused')
+        _refused(m, dict(operation, target={kind: 'missing-piece'}))
+        _refused(m, dict(operation, material={'id': material['id'], 'unexpected': True}))
+
+
 def test_set_material_cascade_and_clear():
     m0 = _house()
     m0 = _apply(m0, {'op': 'roof_over', 'building': 'B1', 'rooms': None})
@@ -1053,6 +1082,7 @@ TESTS = (
     test_dormer_reaches_the_roof_whatever_the_pitch,
     test_add_level_move_and_rotate_building,
     test_set_edits_fields_and_names_a_room,
+    test_roof_and_dormer_material_set_clear_and_validation,
     test_set_material_cascade_and_clear,
     test_accept_and_dismiss_a_proposal,
     test_flag_ok_removes_only_the_index_and_text_and_refuses_replay,

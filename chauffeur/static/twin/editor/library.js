@@ -56,6 +56,7 @@ export function materialLines(record, plan, kit) {
     line('Ceiling', 'porch_ceiling', piece.ceiling_material, { room: piece.id, surface: 'ceiling' }, null, { room: piece, surface: 'ceiling', label: 'ceiling' }),
     piece.wall_material && line('Walls', 'interior_wall', piece.wall_material, { room: piece.id, surface: 'walls' }, null, { room: piece, surface: 'walls', label: 'walls' })].filter(Boolean);
   if (kind === 'roof') return [line('Roof', 'roof', piece.material, { roof: piece.roof || piece.id }, null, { label: 'roof' })].filter(Boolean);
+  if (kind === 'dormer') return [line('Roof', 'roof', piece.material, { dormer: piece.id }, null, { label: 'roof' })].filter(Boolean);
   return [];
 }
 
@@ -79,7 +80,8 @@ export function surfaceOperation(surface, scope, material) {
     if (!room) throw new Error('This face has no room. Choose the face or the whole building.');
     target = { room: room.id, surface: kind === 'wall' ? 'walls' : surface.surface || 'floor' };
   } else target = kind === 'wall' ? { wall: piece.id, side }
-    : kind === 'room' ? { room: piece.id, surface: surface.surface || 'floor' } : { roof: piece.roof || piece.id };
+    : kind === 'room' ? { room: piece.id, surface: surface.surface || 'floor' }
+      : kind === 'dormer' ? { dormer: piece.id } : { roof: piece.roof || piece.id };
   return { op: 'set_material', building: building.id, target, material: { id: material.id } };
 }
 
@@ -206,8 +208,10 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       else if (host?.roof) { kind = 'roof'; id = host.roof; }
     }
     const piece = building?.[kind === 'wall' ? 'walls' : kind === 'room' ? 'rooms' : 'unused']?.find(p => p.id === id)
-      || (kind === 'roof' && building?.roof?.sections.find(p => p.id === id || p.roof === id));
-    if (!piece || !['wall', 'room', 'roof'].includes(kind)) return null;
+      || (['roof', 'dormer'].includes(kind) && building?.roof?.sections.find(p => p.id === id || p.roof === id));
+    // Dormer meshes are roof picks; their .roof names the parent, not the target.
+    if (piece && building?.dormers?.some(d => d.id === piece.id)) kind = 'dormer';
+    if (!piece || !['wall', 'room', 'roof', 'dormer'].includes(kind)) return null;
     const worldRay = ray(event), origin = local(building, worldRay.origin), direction = local(building, worldRay.origin.clone().add(worldRay.direction)).sub(origin).normalize();
     const r = new THREE.Ray(origin, direction), elevation = building.levels.find(l => l.id === piece.level)?.elevation || 0;
     let point, side, room = kind === 'room' ? piece : null, role = kind === 'room' ? 'floor' : 'roof', surface = 'floor';

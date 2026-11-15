@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.878 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.879 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.879 (2026-11-15, NOT device-verified): a material per roof. Each roof and each dormer of a building can carry its own Library material over the building's roof default, so a shingle main roof and a metal porch roof live on one building. Part of the glass, cutouts and material slots arc.**
+
+- **A roof is a surface and the material alone decides its look.** No roof geometry changed: vertices and UVs are the same with and without an override, and a house with no roof override builds exactly as before (mesh list and reuse key equal to v2.499.878). Nothing is keyed to a material's name or kind.
+- **Drawing:** a roof section with a `material` draws its covering, and the covering's exposed edge thickness, with that material; every section of one split roof shares one material instance. Fascia, rake boards, soffit and porch ceiling are unchanged. Roofs with different materials are separate batches, one more draw per distinct roof material.
+- **Dormers** take their own material the same way. `set_material` accepts the target `{dormer: <dormer id>}` (the dormer's own id, never its parent roof's); `material: null` clears it.
+- **By hand:** selecting a roof or a dormer shows its Roof material line with Change and Clear, and a Library material dropped on a roof or dormer sets that piece's material. The roof line and `{roof}` target existed before; the generator ignored them until now. Material lines on selection cards now show a household material's name instead of its id (one catalogue read per editor session), and show no buttons to someone who cannot edit.
+- **Reuse and baked light:** a roof or dormer material, and its revision, are part of that building's reuse key and of the bake atlas key, so a change redraws only that building and a bake made under the old material is not mounted. Clearing restores the original key.
+- **Code:** `static/twin/twin_generator.js` (roof covering material, `buildingKeyParts` finishes), `services/twin_model_ops.py` (`_material` dormer target), `static/twin/editor/library.js` (`materialLines`, `surfaceOperation`, `surfaceAt` for dormers), `static/twin/editor/cards.js`, `static/twin/editor/material_catalog.js` (`readMaterialNames`).
+- **Tests:** `tests/test_twin_roof_material_js.py` (13: two roofs two materials, triangle-for-triangle equal geometry, untouched house equal to v2.499.878, keys, dormer, card and drop), `tests/test_twin_model_ops_more.py` (28), `tests/test_twin_glass_slots_live.py` (Chromium: two materials set through the roof card on one building).
 
 **v2.499.878 (2026-11-15, NOT device-verified): Library materials can be see-through. A material in the Material library now has an alpha mode, so glass, screens, leaves and lattice can be made as ordinary materials. First slice of the glass, cutouts and material slots arc; which surfaces take a material is unchanged in this version.**
 
