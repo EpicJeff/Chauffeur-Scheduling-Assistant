@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.872 (2026-11-14).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.873 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.873 (2026-11-15, NOT device-verified): two coplanar pairs in the house twin no longer z-fight. The foundation slab stops just under the floor finish, and a retaining wall's exposed face stands proud of the pad edge.**
+
+- **Foundation and floor:** the foundation's top face sat in the same plane as every first-level floor finish, so the two flickered at any distance. The slab now tops out 0.02 ft under the finish (`FLOOR_GAP_FT` in `static/twin/twin_generator.js`), the convention every upper-level slab already used. This holds per piece for rooms with a `floor_offset_ft`. The degenerate zero-height slab under a first-level room at grade is no longer emitted.
+- **Exterior walls still stand on concrete:** each first-level exterior wall with a mitred `footprint` gets a strip of the slab, in the slab's finish (chosen material included), that fills from the lowered top up to the floor line. No gap opens under the wall.
+- **Retaining walls:** the wall's exposed face was on the pad edge line, where the slab skirt and the porch plinth skirt put a vertical face of their own. The face now stands 0.04 ft toward the lower ground (`RETAINING_WALL_PROUD_FT` in `static/twin/twin_retaining_wall.js`). The body still runs `thickness_in` toward the higher side from the pad edge, so the wall is 0.04 ft thicker than authored.
+- **No depth bias:** the fix is geometric separation. No surface material uses `polygonOffset`.
+- **Bake:** the changed meshes change the atlas key, so each house bakes again once.
+- **Known limits:** a first-level exterior wall without a 4-point `footprint` (legacy plans that the model bridge does not mitre) gets no strip, which leaves a 0.02 ft gap under it. Where a room outline reaches under an exterior door opening, the strip and the floor finish share the floor plane for the depth of the wall; this was not checked in a browser.
+- **Tests:** `test_twin_room_floor_js` (slab tops at -0.02 and 1.98 under the finish; a footprinted wall's strip reaches the floor line), `test_twin_ground_js`, `test_twin_retaining_wall_js` (face 0.04 ft proud, body only toward higher ground). Golden digests in `test_twin_porch_foundation_js` and `test_twin_uv_offset_js` were captured again for the moved faces.
 
 **v2.499.872 (2026-11-14, NOT device-verified): the house loads in a browser that runs a privacy filter. The bake module `fingerprint.js` is now `geometry_key.js`.**
 

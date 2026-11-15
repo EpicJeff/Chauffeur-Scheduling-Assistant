@@ -15,7 +15,9 @@ from test_twin_yard_reuse_js import PREFIX
 ROOT = Path(__file__).resolve().parents[1]
 # fingerprint() of every mesh's material name, position and uv in the generator
 # and yard fixture below, with random_offset false, computed before this change.
-GOLDEN = {'building': '82fcc379d97a2fed6867581730ac1951', 'yard': 'bfb84a281da58500d6dc1ae6addf71dc'}
+# Both were captured again when the house slab moved to just under the floor finish
+# and the retaining wall face moved proud of the pad edge.
+GOLDEN = {'building': '82c28968e3bff83ab3108f06e4ac5caa', 'yard': 'c9eac660122601e038e7f37e88920b1c'}
 
 DRIVER = PREFIX + r"""
 globalThis.buildCalls=0;

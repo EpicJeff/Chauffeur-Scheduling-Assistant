@@ -37,7 +37,12 @@ function topAt(x,y,role,model=twin){
  const hit=ray.intersectObjects(meshes,false)[0];assert.ok(hit,`missing ${role} at ${x},${y}`);return hit.point.y/.3048;
 }
 near(topAt(15,5,'floor'),0);near(topAt(5,5,'floor'),2);
-near(topAt(15,5,'patio_concrete'),0);near(topAt(5,5,'patio_concrete'),2);
+// Concrete tops out just under each finish: the two never share a plane.
+near(topAt(15,5,'patio_concrete'),-.02);near(topAt(5,5,'patio_concrete'),1.98);
+// A footprinted exterior wall stands on a strip of the slab that reaches the floor line.
+const stood=structuredClone(plan);stood.buildings[0].walls[3].footprint=[[-.25,0],[.25,0],[.25,10],[-.25,10]];
+const stoodTwin=buildTwin(stood,kit,'low',{viewing:true,editableLevel:'b:L1'});await stoodTwin.ready;stoodTwin.root.updateMatrixWorld(true);
+near(topAt(.1,5,'patio_concrete',stoodTwin),2);near(topAt(5,5,'patio_concrete',stoodTwin),1.98);near(topAt(5,5,'floor',stoodTwin),2);
 const bounds=(id,role)=>{const box=new THREE.Box3();for(const o of twin.pieces.get(`b:${id}`)||[])if(o.isMesh&&(!role||o.material.name===role))box.expandByObject(o);assert.ok(!box.isEmpty(),id);return box;};
 near(bounds('shared').min.y/.3048,0);near(bounds('shared').max.y/.3048,12);
 near(bounds('seat').min.y/.3048,0);

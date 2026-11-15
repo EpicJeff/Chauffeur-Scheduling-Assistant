@@ -47,13 +47,13 @@ const geometryDigest=out=>{const hash=createHash('sha256');out.root.traverse(o=>
 const before=build();await before.ready;
 const baselineDigest=geometryDigest(before);
 console.log('Posts fixture digest:',baselineDigest);
-assert.equal(baselineDigest,'29a2a577b5a6545c2acdfe18d1af6a8defe9550464b6d9a30bba5f9e12a57208','posts fixture unchanged');
+assert.equal(baselineDigest,'e06db5f84a7282f3cb1382c2373b57840e3ccb6605fb54ec91f7402b1e83ebb7','posts fixture unchanged');
 // Missing foundations now build real piers, just like explicit default posts.
 po.foundation={type:'posts'};
 const posts=build();await posts.ready;assert.equal(geometryDigest(posts),baselineDigest);
 po.foundation={type:'solid',material:'stone',lip_in:1};
 const goldenSolid=build();await goldenSolid.ready;
-assert.equal(geometryDigest(goldenSolid),'11bf1f94fd04080ec5c5bedd112e189888579310ac350b119b9e06f5d4faf459',
+assert.equal(geometryDigest(goldenSolid),'3a2c24e60bbef7593a7eae406bbded6bf6a829b91ef54083daecc1041240d77c',
  'solid fixture is byte-identical to the shipped generator');
 const goldenPlinth=porchPlinthGeometry({site:{terraces:[]}}, {}, {polygon:square(0,-6,10,0),foundation:{lip_in:1}},1.75,0);
 const gh=createHash('sha256');for(const key of Object.keys(goldenPlinth.attributes).sort())gh.update(Buffer.from(goldenPlinth.attributes[key].array.buffer));

@@ -12,7 +12,7 @@ PREFIX = PREFIX.replace("if (spec === 'three')", """if (spec === '@dgreenheck/ez
 DRIVER = PREFIX + NORMAL_CHECKS + r"""
 const THREE=await import(three);
 const {createHash}=await import('node:crypto');
-const {retainingWallGeometry,retainingWallRole}=await import(file('static/twin/twin_retaining_wall.js'));
+const {retainingWallGeometry,retainingWallRole,RETAINING_WALL_PROUD_FT:PROUD}=await import(file('static/twin/twin_retaining_wall.js'));
 const {terrainGeometry,terrainSlabGeometry}=await import(file('static/twin/twin_terrain_mesh.js'));
 const {porchPlinthGeometry}=await import(file('static/twin/twin_porch_foundation.js'));
 const {groundAt}=await import(file('static/twin/twin_ground.js'));
@@ -39,15 +39,18 @@ for(const height of [3,-3,0])for(const polygon of [square(0,0,4,4),square(0,0,4,
  const normal=[-dy*sign,dx*sign];
  for(let i=0;i<4;i++){
   const start=[a[0]+dx*i,a[1]+dy*i],end=[start[0]+dx,start[1]+dy];
-  const outline=[start,end,[end[0]+normal[0],end[1]+normal[1]],[start[0]+normal[0],start[1]+normal[1]]];
+  // The exposed face stands proud of the pad edge, clear of a slab or plinth face on that line.
+  const face=p=>[p[0]-normal[0]*PROUD,p[1]-normal[1]*PROUD];
+  const outline=[face(start),face(end),[end[0]+normal[0],end[1]+normal[1]],[start[0]+normal[0],start[1]+normal[1]]];
   const segment=new THREE.BufferGeometry();segment.setAttribute('position',new THREE.Float32BufferAttribute(g.attributes.position.array.slice(i*108,(i+1)*108),3));
   checkBoundaryNormals(segment,outline,{top:Math.max(0,height)+.5,bottom:Math.min(0,height)-.5,label:'retaining prism'});
  }
- const pos=g.attributes.position;
+ const pos=g.attributes.position;let nearest=Infinity;
  for(let i=0;i<pos.count;i++){
-  const along=(pos.getX(i)-a[0])*normal[0]+(-pos.getZ(i)-a[1])*normal[1];
-  assert.ok(along>=-1e-5&&along<=1+1e-5,'body only toward higher ground');
+  const along=(pos.getX(i)-a[0])*normal[0]+(-pos.getZ(i)-a[1])*normal[1];nearest=Math.min(nearest,along);
+  assert.ok(along>=-PROUD-1e-5&&along<=1+1e-5,'body only toward higher ground, past the proud face');
  }
+ assert.equal(PROUD,.04);near(nearest,-PROUD);
  const mesh=new THREE.Mesh(g,new THREE.MeshBasicMaterial({side:THREE.FrontSide}));
  const middle=[(a[0]+b[0])/2,(a[1]+b[1])/2];
  assert.ok(new THREE.Raycaster(new THREE.Vector3(middle[0]-normal[0]*2,height/2,-middle[1]+normal[1]*2),new THREE.Vector3(normal[0],0,-normal[1])).intersectObject(mesh).length,'front visible from low side');
@@ -63,7 +66,7 @@ for(const height of [3,-5,-3]){
   const sides=[groundAt(plan,at,-1e-5),groundAt(plan,at,1e-5)],h=pos.getY(i);
   assert.ok(Math.abs(h-(Math.min(...sides)-.5))<2e-5||Math.abs(h-(Math.max(...sides)+1.5))<2e-5,`slope sample ${x},${h}`);
  }
- for(const {centre} of trianglesOf(g))if(Math.abs(centre.z)>1e-5){
+ for(const {centre} of trianglesOf(g))if(Math.abs(centre.z)>PROUD+1e-5){
   const sides=[groundAt(plan,centre.x,-1e-5),groundAt(plan,centre.x,1e-5)];
   assert.ok((sides[1]-sides[0])*(-centre.z)>=-2e-5,'body follows the higher side, including a change along one edge');
  }
