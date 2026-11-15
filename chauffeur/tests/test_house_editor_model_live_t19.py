@@ -603,7 +603,7 @@ def scenario_a_carried_row_says_where_to_drop():
         note = page.locator('#device-tools')
         check(note.is_visible(), 'a carried row shows the placement note')
         text = ' '.join(page.inner_text('#device-note').split())
-        check(text == 'Drop Counter lamp on a wall, the floor, the ceiling or a spot. Escape cancels.', text)
+        check(text == 'Drop Counter lamp on a wall, the floor, the ceiling or inside a yard room. Escape cancels.', text)
         nb = note.bounding_box()
         under = page.evaluate("""([x, y]) => document.elementFromPoint(x, y) === window.__twin.renderer3.domElement""",
                               [nb['x'] + nb['width'] / 2, nb['y'] + nb['height'] / 2])
