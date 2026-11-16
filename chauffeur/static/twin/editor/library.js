@@ -60,7 +60,7 @@ export function materialLines(record, plan, kit) {
   };
   if (kind === 'opening') {
     const parts = piece.kind === 'door' ? ['door', 'casing', 'window_frame', ...(piece.glass === 'half' ? ['pane'] : [])]
-      : piece.kind === 'garage' ? ['pane', 'window_frame', 'casing'] : piece.kind === 'passage' ? [] : ['window_frame', 'casing', 'pane'];
+      : piece.kind === 'garage' ? ['garage_door', ...(piece.style === 'full_view' || piece.lites === 'top' ? ['pane'] : []), 'window_frame', 'casing'] : piece.kind === 'passage' ? [] : ['window_frame', 'casing', 'pane'];
     return parts.filter(part => ITEM_PARTS.opening.includes(part)).map(part => itemLine(part));
   }
   if (kind === 'stair') return ITEM_PARTS.stair.filter(part => part !== 'stair_rail' || (piece.rail || 'none') !== 'none' || piece.style === 'open').map(part => itemLine(part));

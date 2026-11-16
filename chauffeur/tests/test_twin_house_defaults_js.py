@@ -69,8 +69,9 @@ await test('opaque_pane_is_named_pane_and_joins_the_atlas',async()=>{
   if(receives)assert.notEqual(A.buildAtlas(out.root,p,layout).key,key);
  }
 });
-await test('garage_opening_takes_pane_and_frame',async()=>{
+await test('garage_with_windows_takes_pane_and_frame',async()=>{
  const p=fixture();p.buildings[0].materials.pane={id:'blend'};p.buildings[0].materials.window_frame={id:'choice'};
+ p.buildings[0].openings.find(o=>o.kind==='garage').lites='top';
  const out=await build(p),own=piece(out,'garage');assert.ok(own.some(o=>o.material.name==='glass'&&o.material.userData.materialId==='blend'));
  assert.ok(own.some(o=>o.material.name==='window_frame'&&o.material.userData.materialId==='choice'));
 });
@@ -107,7 +108,8 @@ await test('one_material_instance_per_default',async()=>{
  const p=fixture(),before=await build(p);p.buildings[0].materials.pane={id:'blend'};
  const out=await build(p),panes=piece(out,'window').concat(piece(out,'slider'),piece(out,'bifold'),piece(out,'garage'),piece(out,'door'))
   .filter(o=>o.material.userData.materialId==='blend');
- assert.ok(panes.length>=5);assert.equal(new Set(panes.map(o=>o.material.uuid)).size,1);
+ // A default garage is solid; the four remaining glazed openings share glass.
+ assert.ok(panes.length>=4);assert.equal(new Set(panes.map(o=>o.material.uuid)).size,1);
  assert.equal(rendered(out).length,rendered(before).length);
 });
 await test('level_default_precedes_building_and_item_slot_precedes_both',async()=>{

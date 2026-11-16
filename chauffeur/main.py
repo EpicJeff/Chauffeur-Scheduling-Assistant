@@ -7639,6 +7639,7 @@ def house_live(request: Request):
                 who, accessory['entity_id'], settings, states=states)}
             for accessory in twin_display.accessories(model, twin_ha.device_accessories(device, states))]
         if placement:
+            devices[-1].update(building=placement['building'], host=placement.get('host', {}))
             if yard_room:
                 spot = twin_ha.yard_spot(model, placement) if yard_linked else None
             else:
@@ -7663,6 +7664,8 @@ def house_live(request: Request):
                            placed=placement is not None,
                            offered=devices[-1]['offered'])
         markers[-1]['location_valid'] = spot.get('location_valid', True)
+        if placement:
+            markers[-1]['host'] = placement.get('host', {})
         if 'accessories' in devices[-1]:
             markers[-1]['accessories'] = devices[-1]['accessories']
         if 'facing_deg' in spot:

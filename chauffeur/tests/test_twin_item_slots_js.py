@@ -53,7 +53,7 @@ await test('item_slot_changes_reuse_and_atlas_keys',async()=>{
 await test('part_tags_are_present',async()=>{
  const out=await build(fixture());
  for(const [id,expected] of [['window',['pane','window_frame','casing']],['door',['door','pane','casing','window_frame']],
-  ['garage',['pane','window_frame','casing']],['porch',['column','screen']],['stairs',['stair_tread','stair_rail']],
+  ['garage',['garage_door','window_frame','casing']],['porch',['column','screen']],['stairs',['stair_tread','stair_rail']],
   ['kitchen',['cabinet','counter']],['shower',['shower_tile','shower_glass']]])
   assert.deepEqual([...new Set(parts(out,id).map(o=>o.userData.part))].sort(),expected.sort(),id);
 });

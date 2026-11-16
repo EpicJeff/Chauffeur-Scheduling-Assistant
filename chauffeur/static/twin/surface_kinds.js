@@ -72,6 +72,13 @@ export const KINDS = [
     "item": "opening"
   },
   {
+    "kind": "garage_door",
+    "label": "Garage door",
+    "scope": "building",
+    "fallback": { "role": "door" },
+    "item": "opening"
+  },
+  {
     "kind": "column",
     "label": "Columns",
     "scope": "building",
@@ -210,7 +217,8 @@ export const ITEM_PARTS = {
     "casing",
     "window_frame",
     "pane",
-    "door"
+    "door",
+    "garage_door"
   ],
   "porch": [
     "column",

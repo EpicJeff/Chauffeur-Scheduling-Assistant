@@ -501,6 +501,43 @@ check('light_domain_fire_uses_yard_position_and_two_pits_can_share_a_switch', as
   } finally {live.stop();}
 });
 
+check('garage_follows_placed_cover_without_rebuilding_in_every_mode', async () => {
+  const {buildGarageDoor}=await import(file('static/twin/garage_door.js'));
+  const view=makeView('low');
+  const build=id=>{const door=buildGarageDoor({id,width:16,head:7,sill:0,lites:'top'},{material:part=>new THREE.MeshStandardMaterial({name:part})});
+    door.userData.garageOpening.building='b';view.scene.add(door);return door;};
+  const door=build('g'),unplaced=build('unplaced'),otherBuilding=build('other');otherBuilding.userData.garageOpening.building='elsewhere';
+  const first={device_id:'garage-first',kind:'garage',entity_id:'cover.g',entities:['cover.g'],building:'b',host:{opening:'g'},at:[0,0,3],level:'L1',room:'A',name:'Garage',offered:true};
+  layout.devices.push({...first,kind:'blinds'},first,{...first,device_id:'second',entity_id:'cover.second'});layout.markers.push(first);
+  states=initialStates();states['cover.g']={state:'closed',attributes:{}};states['cover.second']={state:'open',attributes:{}};reachable=true;
+  const streams=[],previousSource=globalThis.EventSource;
+  globalThis.EventSource=class {constructor(url){this.url=url;streams.push(this);}close(){this.closed=true;}};
+  const identity=door.children.map(o=>[o.uuid,o.geometry.uuid]);let live;
+  const closed=()=>{assert.equal(door.rotation.x,0);assert.equal(unplaced.rotation.x,0);assert.equal(otherBuilding.rotation.x,0);};
+  try {
+    closed();live=await mountLive(view,{api});assert.ok(live);closed();
+    assert.equal(streams.length,1);assert.ok(streams[0].url.endsWith('api/ha/stream'));
+    for(const state of ['open','closed','opening','closing']){
+      streams[0].onmessage({data:JSON.stringify({entity_id:'cover.g',state:{state,attributes:{}}})});
+      await new Promise(r=>setImmediate(r));
+      assert.equal(Math.abs(door.rotation.x),['open','opening'].includes(state)?Math.PI/2:0,'existing push:'+state);
+    }
+    for(const mode of ['lights','climate','energy','security','all']){
+      live.setMode(mode);
+      for(const state of ['open','opening','closed','closing','unavailable','unknown']){
+        states['cover.g'].state=state;await live.refresh();
+        assert.equal(Math.abs(door.rotation.x),['open','opening'].includes(state)?Math.PI/2:0,mode+':'+state);
+        assert.equal(unplaced.rotation.x,0);assert.equal(otherBuilding.rotation.x,0);
+        assert.deepEqual(door.children.map(o=>[o.uuid,o.geometry.uuid]),identity);
+      }
+    }
+    delete states['cover.g'];await live.refresh();closed();
+    states['cover.g']={state:'open',attributes:{}};await live.refresh();assert.notEqual(door.rotation.x,0);
+    reachable=false;await live.refresh();closed();reachable=true;await live.refresh();assert.notEqual(door.rotation.x,0);
+    live.stop();live=null;closed();
+  } finally {live?.stop();globalThis.EventSource=previousSource;layout.devices.splice(-3);layout.markers.pop();reachable=true;}
+});
+
 let passed = 0;
 for (const [name, fn] of checks) {
   try { await fn(); passed++; console.log('  ok   ' + name); }

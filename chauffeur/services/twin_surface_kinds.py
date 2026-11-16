@@ -7,6 +7,7 @@ KINDS = [
     {'kind': 'window_frame', 'label': 'Window frames', 'scope': 'building', 'fallback': {'role': 'window_frame'}, 'item': 'opening'},
     {'kind': 'pane', 'label': 'Panes', 'scope': 'building', 'fallback': {'builtin': 'glass'}, 'item': 'opening'},
     {'kind': 'door', 'label': 'Doors', 'scope': 'building', 'fallback': {'role': 'door'}, 'item': 'opening'},
+    {'kind': 'garage_door', 'label': 'Garage door', 'scope': 'building', 'fallback': {'role': 'door'}, 'item': 'opening'},
     {'kind': 'column', 'label': 'Columns', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': 'porch'},
     {'kind': 'screen', 'label': 'Screens', 'scope': 'building', 'fallback': {'builtin': 'screen'}, 'item': 'porch'},
     {'kind': 'soffit', 'label': 'Soffit', 'scope': 'building', 'fallback': {'role': 'porch_ceiling'}, 'item': None},
@@ -24,7 +25,7 @@ KINDS = [
 ]
 PANEL_ROLES = ['siding', 'interior_wall', 'floor']
 ITEM_PARTS = {
-    'opening': ('casing', 'window_frame', 'pane', 'door'),
+    'opening': ('casing', 'window_frame', 'pane', 'door', 'garage_door'),
     'porch': ('column', 'screen'),
     'stair': ('stair_tread', 'stair_rail'),
     'fixture': ('cabinet', 'counter', 'shower_tile', 'shower_glass'),

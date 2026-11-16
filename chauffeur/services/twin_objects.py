@@ -60,7 +60,7 @@ def validate(field, value, spec):
         # Words a person can act on, matching the card ops' own size refusal.
         if field == 'scale' and 'min' in spec:
             raise ValueError(f"Choose a size from {round(spec['min'] * 100)}% to {round(spec['max'] * 100)}%.")
-        name = field.replace('_', ' ')
+        name = spec.get('label', field.replace('_', ' ')).lower()
         raise ValueError(f"Choose a {name} from {spec['min']} to {spec['max']}." if 'min' in spec else f'Choose a valid {name}.')
     return deepcopy(value)
 
@@ -79,6 +79,9 @@ def update(piece, changes, collection=None, *, opening=False):
             continue
         if field not in schema:
             raise ValueError(f'Unknown property: {field}.')
+        if spec_kind := schema[field].get('kind'):
+            if candidate.get('kind') != spec_kind:
+                raise ValueError(f"{schema[field]['label']} belongs to a garage door.")
         if field in ('pitch', 'roll') and candidate.get('host'):
             raise ValueError('Pitch and roll belong to free objects.')
         candidate[field] = validate(field, value, schema[field])

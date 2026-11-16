@@ -23,7 +23,7 @@ export function linkEntityPicker(input, domains = ['light', 'switch', 'input_boo
   });
 }
 
-export function drawObjectShelf(host, record, { canEdit, queue, op, report, getRecord = () => record }) {
+export function drawObjectShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, devices = [] }) {
   const { piece, kind } = record;
   const section = document.createElement('section'); section.setAttribute('aria-label', 'Object properties'); host.append(section);
   const advanced = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Advanced'; advanced.append(summary);
@@ -50,11 +50,11 @@ export function drawObjectShelf(host, record, { canEdit, queue, op, report, getR
   }
   const fields = kind === 'opening' ? s.opening : { object_kind: { type: 'choice', choices: Object.keys(s.kinds), default: kind === 'planting' ? 'plant' : 'furniture' }, ...propertyFields(piece, kind) };
   for (const [field, spec] of Object.entries(fields)) {
-    if (spec.free && piece.host || field === 'model' || kind === 'item' && ['scale', 'rotation'].includes(field)) continue;
-    const label = document.createElement('label'); label.textContent = labels[field] || field[0].toUpperCase() + field.slice(1);
+    if (spec.free && piece.host || spec.kind && spec.kind !== piece.kind || field === 'model' || kind === 'item' && ['scale', 'rotation'].includes(field)) continue;
+    const label = document.createElement('label'); label.textContent = spec.label || labels[field] || field[0].toUpperCase() + field.slice(1);
     const input = document.createElement(spec.type === 'choice' ? 'select' : 'input');
     input.setAttribute('aria-label', label.textContent);
-    if (spec.choices) for (const value of spec.choices) { const option = document.createElement('option'); option.value = value; option.textContent = value; input.append(option); }
+    if (spec.choices) for (const value of spec.choices) { const option = document.createElement('option'); option.value = value; option.textContent = spec.labels?.[value] || value; input.append(option); }
     const value = piece[field] ?? spec.default;
     if (spec.type === 'boolean') { input.type = 'checkbox'; input.checked = !!value; }
     else {
@@ -76,6 +76,10 @@ export function drawObjectShelf(host, record, { canEdit, queue, op, report, getR
     if (field === 'light_entity') linkEntityPicker(input, ['light', 'switch']);
   }
   if (kind !== 'opening') { section.append(advanced); return; }
+  if (piece.kind === 'garage' && !record.building.devices?.some(placed => placed.host?.opening === piece.id
+    && devices.some(device => device.device_id === placed.device && device.kind === 'garage' && device.entity_id?.startsWith('cover.')))) {
+    const hint = document.createElement('p'); hint.textContent = 'Opens and closes with the garage door device placed on it.'; section.append(hint);
+  }
   const title = document.createElement('h4'); title.textContent = 'Model'; section.append(title);
   const grid = document.createElement('div'); grid.className = 'object-model-grid'; section.append(grid);
   const button = (name, id, entry) => {

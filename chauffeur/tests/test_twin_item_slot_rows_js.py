@@ -15,7 +15,7 @@ await test('lines_per_item_type',async()=>{
  const window=b.openings[0],door=b.openings.find(o=>o.id==='door'),porch={id:'porch',kind:'porch',level:'L1',polygon:square(0,-8,16,8)};
  b.rooms.push(porch);b.porches[0].screened=true;
  const cases=[['opening',window,['window_frame','casing','pane'],'opening'],['opening',door,['door','casing','window_frame','pane'],'opening'],
-  ['opening',{...door,glass:'none'},['door','casing','window_frame'],'opening'],['opening',b.openings.find(o=>o.id==='garage'),['pane','window_frame','casing'],'opening'],
+  ['opening',{...door,glass:'none'},['door','casing','window_frame'],'opening'],['opening',b.openings.find(o=>o.id==='garage'),['garage_door','window_frame','casing'],'opening'],
   ['room',porch,['column','screen'],'porch'],['stair',{...b.stairs[0],style:'solid',rail:'none'},['stair_tread'],'stair'],
   ['stair',b.stairs[0],['stair_tread','stair_rail'],'stair'],['item',b.fixtures[0],['cabinet','counter'],'item'],
   ['item',b.fixtures[2],['shower_tile','shower_glass'],'item']];

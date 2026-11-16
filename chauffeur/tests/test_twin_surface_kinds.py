@@ -20,7 +20,7 @@ console.log(JSON.stringify({KINDS,PANEL_ROLES,ITEM_PARTS,BUILTIN_LOOKS}));
     assert code == 0, output
     expected = {key: getattr(surfaces, key) for key in ('KINDS', 'PANEL_ROLES', 'ITEM_PARTS', 'BUILTIN_LOOKS')}
     assert json.loads(output) == json.loads(json.dumps(expected))
-    assert [r['kind'] for r in surfaces.KINDS] == ['trim', 'fascia', 'casing', 'window_frame', 'pane', 'door',
+    assert [r['kind'] for r in surfaces.KINDS] == ['trim', 'fascia', 'casing', 'window_frame', 'pane', 'door', 'garage_door',
         'column', 'screen', 'soffit', 'base', 'stair_tread', 'stair_rail', 'ceiling', 'roof', 'cabinet',
         'counter', 'shower_tile', 'shower_glass', 'lawn', 'water']
 

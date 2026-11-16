@@ -28,6 +28,10 @@ await test('drop_on_a_pane_targets_the_opening',async()=>{
 await test('drop_on_a_frame_targets_the_frame',async()=>{
  assert.deepEqual((await drop('opening','window','window_frame')).target,{opening:'window',part:'window_frame'});
 });
+await test('drop_on_garage_parts_keeps_the_part_under_the_pointer',async()=>{
+ for(const part of ['garage_door','pane','window_frame','casing'])
+  assert.deepEqual((await drop('opening','garage',part)).target,{opening:'garage',part});
+});
 await test('drop_on_an_untagged_opening_still_goes_to_the_wall',async()=>{
  const surface=pick('opening','window');assert.equal(surface.kind,'wall');assert.equal(surface.piece.id,'L1w0');
 });
@@ -61,6 +65,18 @@ await test('real_pick_distinguishes_pane_frame_and_casing_after_batching',async(
  const at=(x,y)=>{const q=new THREE.Vector3(x*G.FT,y*G.FT,.15*G.FT).project(v.camera),r=v.renderer3.domElement.getBoundingClientRect();return v.pick(r.left+(q.x+1)*r.width/2,r.top+(1-q.y)*r.height/2);};
  for(const [x,y,part] of [[3,6,'pane'],[2.5,6,'window_frame'],[2.25,6,'casing']]){
   const hit=at(x,y);assert.equal(hit?.pieceId,'window',JSON.stringify(hit));assert.equal(hit.part,part,JSON.stringify(hit));
+ }
+ v.dispose();
+});
+await test('real_garage_pick_distinguishes_solid_glass_frame_and_casing',async()=>{
+ const plan=fixture();plan.buildings=[plan.buildings[0]];plan.buildings[0].porches=[];plan.site={};
+ plan.buildings[0].openings.find(o=>o.id==='garage').lites='top';
+ const el=document.createElement('div');document.body.append(el);const v=await mountTwin(el,{plan,kit:k,tier:'low',bake:false});
+ v.setCamera('front');v.setCameraState({position:[31*G.FT,5*G.FT,30*G.FT],target:[31*G.FT,5*G.FT,0]});
+ for(const [x,y,part] of [[29,5,'garage_door'],[29,8,'pane'],[27.07,5,'window_frame'],[26.75,5,'casing']]){
+  const q=new THREE.Vector3(x*G.FT,y*G.FT,.15*G.FT).project(v.camera),r=v.renderer3.domElement.getBoundingClientRect();
+  const hit=v.pick(r.left+(q.x+1)*r.width/2,r.top+(1-q.y)*r.height/2);
+  assert.equal(hit?.pieceId,'garage',JSON.stringify(hit));assert.equal(hit.part,part,JSON.stringify(hit));
  }
  v.dispose();
 });

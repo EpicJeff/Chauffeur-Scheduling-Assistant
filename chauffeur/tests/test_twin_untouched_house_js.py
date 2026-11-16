@@ -51,6 +51,35 @@ def baseline_sources():
         assert old.count(before) == 1, before
         old = old.replace(before, after)
     sources[path] = old
+    # Slice D intentionally replaces only the garage's glazed infill with an
+    # overhead panel door. Keep its fixed frame/casing and every other opening
+    # byte pinned. The moving door is excluded from static merging and the bake.
+    path = 'static/twin/twin_generator.js'
+    old = sources[path]
+    old = "import { buildGarageDoor } from './garage_door.js';\n" + old
+    before = "o.userData.fireFlame ||"
+    assert old.count(before) == 1
+    old = old.replace(before, "o.userData.garageDoor || " + before)
+    before = """        } else {
+          for (let i = 1; i < (h.panels || 1); i++) localBox(h.u0 + width * i / h.panels, cv, fw, height, 0.22, mat('window_frame'));"""
+    after = """        } else if (h.kind === 'garage') {
+          if (profile.cutaway) continue;
+          const door = buildGarageDoor({ ...h, width, head: height, sill: 0 }, {
+            material: part => part === 'garage_door' ? mat('door') : part === 'pane' ? glass : mat('window_frame'),
+            inward: -sign, setback: thickness / 2 + .16,
+          });
+          door.userData.garageOpening.building = b.id;
+          const placement = new THREE.Group();
+          placement.applyMatrix4(matrix.clone().multiply(new THREE.Matrix4().makeTranslation(cu, h.v0, offset)));
+          const doorLevel = h.level || b.walls.find(w => w.id === h.wall)?.level;
+          placement.add(door); (local[doorLevel] || group).add(placement);
+          door.updateWorldMatrix(true, true);
+          for (const object of door.children) mesh(group, object.geometry, object.material, object);
+        } else {
+          for (let i = 1; i < (h.panels || 1); i++) localBox(h.u0 + width * i / h.panels, cv, fw, height, 0.22, mat('window_frame'));"""
+    assert old.count(before) == 1
+    sources[path] = old.replace(before, after)
+    sources['static/twin/garage_door.js'] = (ROOT / 'static/twin/garage_door.js').read_text(encoding='utf-8')
     return sources
 
 

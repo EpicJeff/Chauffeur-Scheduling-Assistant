@@ -23,6 +23,8 @@
   "opening": {
     "model": {"type":"model", "default":null},
     "hinge": {"type":"choice", "choices":["left","right"], "default":"left"},
-    "swing": {"type":"choice", "choices":["in","out","fixed"], "default":"fixed"}
+    "swing": {"type":"choice", "choices":["in","out","fixed"], "default":"fixed"},
+    "style": {"type":"choice", "kind":"garage", "label":"Door style", "choices":["raised","flat","carriage","full_view"], "labels":{"raised":"Raised panel","flat":"Flat panel","carriage":"Carriage","full_view":"Full view glass"}, "default":"raised"},
+    "lites": {"type":"choice", "kind":"garage", "label":"Windows", "choices":["none","top"], "labels":{"none":"None","top":"Top row"}, "default":"none"}
   }
 }

@@ -10,6 +10,7 @@ import { registerClimate, roomClimate } from './climate.js';
 import { registerEnergy } from './energy.js';
 import { registerSecurity } from './security.js';
 import { svgIcon } from './glance_icons.js';
+import { garageEntity, garagePose } from '../garage_door.js';
 
 const registry = new Map();
 export function registerMode(mode) { registry.set(mode.id, mode); return mode; }
@@ -103,7 +104,12 @@ export function mountModes(view, live) {
   view.scene.updateMatrixWorld(true);
   const objectLamps = new Map();
   const flames = [];
+  const garageDoors = [];
   view.scene.traverse(mesh => {
+    if (mesh.userData.garageOpening) {
+      const { building, opening } = mesh.userData.garageOpening;
+      garageDoors.push({ group: mesh, entity: garageEntity(layout, building, opening) });
+    }
     if (mesh.userData.fireFlame) flames.push(mesh);
     for (const material of mesh.material ? [].concat(mesh.material) : []) {
       const object = material.userData?.objectLight;
@@ -200,6 +206,7 @@ export function mountModes(view, live) {
   function update() {
     // Read without copying the house: this runs on every push (review M3).
     const states = live.peek(), stale = live.stale();
+    for (const door of garageDoors) garagePose(door.group, !stale && ['open', 'opening'].includes(states[door.entity]?.state));
     const resolved = new Map((hasEmitters ? resolveEmitters(layout, stale ? {} : states, view.plan, {looks: live.looks?.() || {}}) : []).map(e => [e.fixture_id, e]));
     for (const flame of flames) flame.visible = !stale && states[flame.material.userData.objectLight.entity]?.state === 'on';
     legacyRooms = !realLighting && !stale ? live.rooms() : [];
@@ -322,6 +329,7 @@ export function mountModes(view, live) {
     lights: () => lamps.map(lamp => ({ device: lamp.marker.device_id, fixture_id: lamp.emitter?.fixture_id, at: [...lamp.marker.at],
       rgb: [...lamp.rgb], intensity: lamp.intensity, real: lamp.real, baked: !!lamp.baked })),
     stop() {
+      for (const door of garageDoors) garagePose(door.group, false);
       for (const flame of flames) flame.visible = false;
       for (const lamp of lamps) if (lamp.baked) view.bake?.light(lamp.emitter && !lamp.emitter.legacy ? lamp.emitter.entity_id : lamp.marker.device_id, lamp.rgb, 0);
       unsubscribe(); strip.remove(); climateLabels.remove(); modeLegend.remove();

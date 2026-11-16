@@ -12,7 +12,7 @@ export function houseMaterialsShelf(host, building, { getPlan, getKit = () => ({
   const groups = [
     ['Walls and floors', [...PANEL_ROLES, 'base']],
     ['Trim', ['trim', 'fascia']],
-    ['Openings', ['casing', 'window_frame', 'pane', 'door']],
+    ['Openings', ['casing', 'window_frame', 'pane', 'door', 'garage_door']],
     ['Porch and stairs', ['column', 'screen', 'stair_tread', 'stair_rail']],
     ['Roof and ceilings', ['soffit', 'ceiling', 'roof']],
     ['Fixtures', ['cabinet', 'counter', 'shower_tile', 'shower_glass']],

@@ -14,6 +14,7 @@ import { PORCH_SLAB_FT, POST_SLAB_FT, porchFoundation, porchOnGrade, porchSuppor
 import { stairGeometry, doorwaySteps } from './twin_stairs.js';
 import { roomFloor, roomAt, openingFloor, wallFloorProfile, foundationPieces } from './twin_floors.js';
 import { ceilingPatches } from './twin_ceilings.js';
+import { buildGarageDoor } from './garage_door.js';
 import { LUCIDE } from '../vendor/lucide/icons.js';
 
 import { FT } from './twin_light_math.js';
@@ -41,7 +42,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
     // Independently faded viewing domains must never merge into their parent.
     for (let p = o.parent; p && p !== group; p = p.parent)
       if (p.userData.viewingWalls || p.userData.viewingTree) return;
-    if (!o.isMesh || o.userData.part === 'ceiling' || o.userData.fireFlame || o.userData.modelLod || o.userData.pendingImport || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material?.vertexColors ||
+    if (!o.isMesh || o.userData.part === 'ceiling' || o.userData.garageDoor || o.userData.fireFlame || o.userData.modelLod || o.userData.pendingImport || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material?.vertexColors ||
         !o.geometry?.attributes.position || Object.keys(o.geometry.morphAttributes || {}).length) return;
     let g;
     try {
@@ -512,7 +513,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       if (!own && (fallback.role === kind || kind === 'counter')) return mat(kind, level);
       const slot = (kind === 'ceiling' && item?.ceiling_material) || resolveSlot(kind, { item, building: b, level });
       if (!slot) {
-        if (fallback.role) return mat(fallback.role);
+        if (fallback.role) return mat(fallback.role, kind === 'garage_door' ? level : null);
         if (fallback.builtin) return fallback.builtin === 'screen' ? screen : glass;
         if (kind === 'cabinet') return plain('cabinet', '#3a4a52');
         return plain('ceramic', '#f4f4f2');
@@ -875,6 +876,19 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
             openingBox('pane', cu, h.v0 + height * 0.75, width - fw, height / 2 - fw, 0.025);
             openingBox('window_frame', cu, cv, width, fw, 0.22);
           } else openingBox('door', cu, cv, width - fw, height - fw, 0.15);
+        } else if (h.kind === 'garage') {
+          if (profile.cutaway) continue;
+          const door = buildGarageDoor({ ...h, width, head: height, sill: 0 }, {
+            material: part => kindMat(part, h), inward: -sign, setback: thickness / 2 + .16,
+          });
+          door.userData.garageOpening.building = b.id;
+          const placement = new THREE.Group();
+          placement.applyMatrix4(matrix.clone().multiply(new THREE.Matrix4().makeTranslation(cu, h.v0, offset)));
+          // The floor's shared body owns the door in both full and cut views.
+          const doorLevel = h.level || b.walls.find(w => w.id === h.wall)?.level;
+          placement.add(door); (local[doorLevel] || group).add(placement);
+          door.updateWorldMatrix(true, true);
+          for (const object of door.children) tagPart(mesh(group, object.geometry, object.material, object), object.userData.part);
         } else {
           for (let i = 1; i < (h.panels || 1); i++) openingBox('window_frame', h.u0 + width * i / h.panels, cv, fw, height, 0.22);
           if (h.split === 'double_hung') openingBox('window_frame', cu, cv, width, fw, 0.22);

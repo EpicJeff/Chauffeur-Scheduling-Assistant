@@ -128,13 +128,15 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     const roomFeatures = record?.kind === 'yard_rooms' ? yardRoomFeatures(getPlan(), record.piece) : [];
     const porchLayout = record?.kind === 'room' && record.piece.kind === 'porch'
       ? JSON.stringify([record.piece.foundation, porchShelfOnGrade(getPlan(), record.building, record.piece), canEdit()]) : '';
+    const garageLayout = record?.kind === 'opening' && record.piece.kind === 'garage'
+      ? JSON.stringify([record.building.devices, haLink?.state()?.devices?.map(d => [d.device_id, d.kind, d.entity_id])]) : '';
     const nextLayout = JSON.stringify([roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
     // save must not detach Turn while the person is typing the next edit.
     const editingItem = record?.kind === 'item' && [...inputs.values()].some(({ input, baseline, queued }) =>
       document.activeElement === input || queued || raw(input) !== baseline);
-    if (record && (layout === nextLayout + porchLayout || editingItem) && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
+    if (record && (layout === nextLayout + porchLayout + garageLayout || editingItem) && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
       if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
       if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost' && !flags.length;
@@ -153,7 +155,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       if (kindIsEquipment(record)) equipmentShelf.refresh(record);
       return;
     }
-    selection = next; layout = nextLayout + porchLayout; host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
+    selection = next; layout = nextLayout + porchLayout + garageLayout; host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
     haSection = null;
     if (!record) return;
     const { piece, kind, building } = record;
@@ -225,7 +227,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (kind === 'room' && piece.kind === 'porch') porchFoundationShelf(host, piece, building,
       { getPlan, getKit, canEdit, queue, op, report, onSaved: () => draw() });
     if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { canEdit, queue, op, report,
-      getRecord: () => findPiece(getPlan(), piece.id, building?.id) });
+      getRecord: () => findPiece(getPlan(), piece.id, building?.id), devices: haLink?.state()?.devices || [] });
     if (siteShapeKinds.includes(kind)) {
       for (const feature of roomFeatures) {
         const button = document.createElement('button'); button.type = 'button';
