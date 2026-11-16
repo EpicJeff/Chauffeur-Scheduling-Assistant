@@ -132,6 +132,16 @@ b.foundation={mode:'auto',offset_ft:3,thickness_ft:1};
 const roomSolid=build();await roomSolid.ready;
 const roomSlab=roomSolid.pieces.get('b:porch').find(o=>o.material?.name==='patio_concrete');
 roomSlab.geometry.computeBoundingBox();near(roomSlab.geometry.boundingBox.min.y,po.floor-.5-PORCH_SLAB_FT);
+// The slab's sides wear the porch floor's own finish, never the bare default.
+b.rooms[0].floor_material={id:'base',color:'#123456'};
+const finished=build();await finished.ready;
+const deckTop=po.floor-.5,deckParts=finished.pieces.get('b:porch').filter(o=>{
+ if(!o.isMesh||o.layers.isEnabled(31))return false;o.geometry.computeBoundingBox();
+ const {min,max}=o.geometry.boundingBox;return max.y<=deckTop+1e-5&&max.y>deckTop-PORCH_SLAB_FT+1e-3&&min.y>=deckTop-PORCH_SLAB_FT-1e-5;});
+assert.ok(deckParts.some(o=>Math.abs(o.geometry.boundingBox.min.y-(deckTop-PORCH_SLAB_FT))<1e-5),'slab body found');
+assert.ok(deckParts.some(o=>Math.abs(o.geometry.boundingBox.max.y-deckTop)<1e-5),'floor face found');
+assert.equal(new Set(deckParts.map(o=>o.material)).size,1,'porch slab sides share the floor finish');
+delete b.rooms[0].floor_material;
 // Runtime support layout, terrain contact, floor slab and skirt construction.
 const testPlan=structuredClone(plan),tb=testPlan.buildings[0],tp=tb.porches[0];
 tb.rooms=[];tb.foundation={mode:'fixed'};tb.base=0;tb.position=[0,0];tb.rotation=0;testPlan.site.terraces=[];

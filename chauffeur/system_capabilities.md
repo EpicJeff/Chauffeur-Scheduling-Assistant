@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.893 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.894 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.894 (2026-11-16, NOT device-verified, not browser-checked): a porch slab's edges wear the porch floor's finish.**
+
+- **The fault, found on device.** A porch that is a room drew its floor face in the room's floor material but the slab under it (the edge that shows above the plinth or the posts) in the bare `patio_concrete` default, with no slot to change it. A white brick porch floor showed a strip of another finish along its sides.
+- **The fix.** The porch slab body takes the same material as the floor face: the room's `floor_material`, else the level's or house's `patio_concrete`. Setting the porch floor in the editor now sets its edges too. No new slot. Interior floors and a porch with no room are unchanged.
+- **Code:** `static/twin/twin_generator.js` (the room slab in the floor loop).
+- **Tests:** `tests/test_twin_porch_foundation_js.py` (the real generator: every part of a room-backed porch slab shares one material when the floor has its own finish).
 
 **v2.499.893 (2026-11-16, NOT device-verified, not browser-checked): Snap to edge takes the spa rim and the pool coping, and a fall off a rim lands where it is thrown.**
 

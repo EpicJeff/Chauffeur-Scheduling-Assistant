@@ -1304,7 +1304,9 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         // The lowest floor at grade rests on the foundation, which already fills to this line.
         if (slabBottom < elevation - FLOOR_GAP_FT) {
           const slab = polygon(poly, slabBottom, elevation - FLOOR_GAP_FT, cuts);
-          mesh(local[l.id], slab, mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'), null, floorSeed);
+          // A porch slab's edges show, so they wear the floor's own finish.
+          mesh(local[l.id], slab, porch ? mat('patio_concrete', l, room.floor_material)
+            : mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'), null, floorSeed);
           // Keep only bottom faces, in plan x/y/z feet, before static merging.
           if (hasCeilings) {
             const g = slab.index ? slab.toNonIndexed() : slab, p = g.attributes.position, n = g.attributes.normal, positions = [];
