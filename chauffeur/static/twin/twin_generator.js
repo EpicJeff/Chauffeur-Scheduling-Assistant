@@ -15,6 +15,7 @@ import { stairGeometry, doorwaySteps } from './twin_stairs.js';
 import { roomFloor, roomAt, openingFloor, wallFloorProfile, foundationPieces } from './twin_floors.js';
 import { ceilingPatches } from './twin_ceilings.js';
 import { buildGarageDoor } from './garage_door.js';
+import { buildEffects } from './effects/index.js';
 import { LUCIDE } from '../vendor/lucide/icons.js';
 
 import { FT } from './twin_light_math.js';
@@ -42,7 +43,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
     // Independently faded viewing domains must never merge into their parent.
     for (let p = o.parent; p && p !== group; p = p.parent)
       if (p.userData.viewingWalls || p.userData.viewingTree) return;
-    if (!o.isMesh || o.userData.part === 'ceiling' || o.userData.garageDoor || o.userData.fireFlame || o.userData.modelLod || o.userData.pendingImport || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material?.vertexColors ||
+    if (!o.isMesh || o.userData.part === 'ceiling' || o.userData.effectFixture || o.userData.garageDoor || o.userData.fireFlame || o.userData.modelLod || o.userData.pendingImport || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material?.vertexColors ||
         !o.geometry?.attributes.position || Object.keys(o.geometry.morphAttributes || {}).length) return;
     let g;
     try {
@@ -386,7 +387,9 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
   for (const [name, group] of Object.entries(groups)) if (group.isGroup) { group.name = name; root.add(group); }
   groups.gableCut.visible = false;
-  const next = { root, groups, buildings: new Map(), materials: new Map(), roomLights: [], levelElevations: {}, notes: [] };
+  const effects = buildEffects(plan, {tier, editor: !opts.viewing});
+  if (effects) root.add(effects.group);
+  const next = { root, groups, buildings: new Map(), materials: new Map(), roomLights: [], levelElevations: {}, notes: [], effects };
   for (const name of registries) next[name] = new Map();
   const reused = [], rebuilt = [];
   const copy = (entry, source = entry.model) => {

@@ -54,13 +54,13 @@
     {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_geometry', 'live/solar_conduit', 'live/solar_conduit_core', 'live/solar_conduit_worker', 'live/energy_mapping', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
-    {% for name in ['twin_ceilings', 'editor/house_materials'] %}
+    {% for name in ['twin_ceilings', 'editor/house_materials', 'effects/index', 'effects/driver', 'effects/water_material', 'effects/water_ripples', 'effects/waterfall', 'effects/fountain', 'effects/bubbler', 'effects/fire'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/editor/flags.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/flags.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/ha_link.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/ha_link.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/twin/editor/device_placement.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/device_placement.js' | ver | tojson }};
-    {% for name in ['fixtures', 'aim_tool', 'line_fixture_tool'] %}
+    {% for name in ['fixtures', 'aim_tool', 'line_fixture_tool', 'effects'] %}
     imports[new URL(window.chfBase + 'static/twin/editor/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/editor/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/editor/build_ghosts.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/build_ghosts.js' | ver | tojson }};
@@ -134,6 +134,7 @@
       <button id="rail-{{ tool }}" type="button" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool != 'select' %}disabled{% endif %}>{{ label }}</button>
       {% endfor %}
       <button id="rail-library" type="button" aria-pressed="false" aria-controls="library-panel">Library</button>
+      <button id="rail-add-effect" type="button">Add effect</button>
     </nav>
     <aside id="library-panel" aria-label="Library" hidden>
       <h3>Library</h3>

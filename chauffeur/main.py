@@ -7686,28 +7686,50 @@ def house_live(request: Request):
     marked = {eid for marker in markers
               for eid in [marker['entity_id'], *marker.get('entities', []),
                           *(a['entity_id'] for a in marker.get('accessories', []))]}
+    def fallback_marker(eid, device_id, name, at, **flags):
+        if not eid or not catalogue['available'] or eid in marked:
+            return
+        row = {'device_id': device_id, 'entity_id': eid, 'entities': [eid],
+               'kind': 'switch', 'name': name, 'accessories': [], **flags,
+               'offered': control_rules.offered(who, eid, settings, states=states)}
+        devices.insert(0, row)
+        markers.append({**row, 'building': None, 'level': None, 'room': None,
+                        'at': at, 'placed': True})
+        marked.add(eid)
+
     for index, pit in enumerate(twin_site_shapes.pieces(model.get('site', {}).get('fire_pit'))):
         eid = pit.get('entity')
-        if not eid or not catalogue['available']:
-            continue
         # One marker per thing: when the linked entity already shows where its
         # device sits, the pit only takes its flame and light from that entity.
-        if eid in marked:
+        if not eid or not catalogue['available'] or eid in marked:
             continue
         points = pit.get('polygon') or [pit['at']]
         at = [sum(p[i] for p in points) / len(points) for i in (0, 1)]
         height = twin_site_shapes.fire_properties(pit)['height_in'] / 12
-        row = {'device_id': 'fire_pit:' + str(pit.get('id', index)),
-               'entity_id': eid, 'entities': [eid], 'kind': 'switch',
-               'name': pit.get('name') or 'Fire pit', 'fire_pit': True, 'accessories': [],
-               'offered': control_rules.offered(who, eid, settings, states=states)}
-        # No other marker carries the entity, so the pit is its hand path.
-        devices.insert(0, row)
-        markers.append({**row, 'building': None, 'level': None, 'room': None,
-                        'at': [*at, height + (pit.get('elevation') or 0)], 'placed': True})
+        fallback_marker(eid, 'fire_pit:' + str(pit.get('id', index)), pit.get('name') or 'Fire pit',
+                        [*at, height + (pit.get('elevation') or 0)], fire_pit=True)
+    import math
+    from services import twin_effect_fixtures, twin_fixtures
+    for effect in model.get('effect_fixtures', []):
+        if effect.get('orphaned') or not effect.get('entity') or not catalogue['available']:
+            continue
+        placement = twin_effect_fixtures.placement(effect)
+        points = placement.get('path') or [placement['at']]
+        world = [[*p[:2], p[2] + twin_fixtures._reference(model, placement, p)] for p in points]
+        # Midpoint along the run, rather than the centroid of its control points.
+        distance = sum(math.dist(a, b) for a, b in zip(world, world[1:])) / 2
+        at = world[0]
+        for a, b in zip(world, world[1:]):
+            span = math.dist(a, b)
+            if distance <= span:
+                at = [a[i] + (b[i] - a[i]) * distance / span for i in range(3)]
+                break
+            distance -= span
+        fallback_marker(effect.get('entity'), 'effect:' + effect['id'],
+                        effect.get('name') or twin_effect_fixtures.TYPES[effect['type']]['label'], at,
+                        effect_fixture=True)
     # A parent may hide things from the house view right from a panel (the edit is parent-only).
-    from services import twin_fixtures
-    return {**twin_fixtures.live_layout(model),
+    return {**twin_fixtures.live_layout(model), **twin_effect_fixtures.live_layout(model),
             'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices,
             'can_edit_house': getattr(who, 'role', None) == 'parent'}
 
@@ -12339,6 +12361,7 @@ def _house_stream_entities(area: str | None = None) -> set:
         ids.update(p['light_entity'] for name in ('planting', 'furniture') for p in model.get('site', {}).get(name, []) if p.get('light_entity'))
         from services import twin_site_shapes
         ids.update(p['entity'] for p in twin_site_shapes.pieces(model.get('site', {}).get('fire_pit')) if p.get('entity'))
+        ids.update(f[key] for f in model.get('effect_fixtures', []) for key in ('entity', 'sensor') if f.get(key))
         ids.update(z['entity'] for b in model.get('buildings', []) for z in b.get('solar_zones', [])
                    if z.get('entity') and z.get('state') != 'ghost')
         ids.update(p['power'] for b in model.get('buildings', []) for p in b.get('anchors', [])

@@ -4,7 +4,7 @@ import { FT, polygon, contains, stairHoles } from '../twin_generator.js';
 export { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 import { buildingGround } from '../twin_ground.js';
 import { lightColor, createRealLights, paletteLineEntities } from './real_lights.js';
-import { resolveEmitters, emission } from './emitters.js';
+import { resolveEmitters, emission, fireEffectEmitters } from './emitters.js';
 import { createFixtureGlow } from './fixture_glow.js';
 import { registerClimate, roomClimate } from './climate.js';
 import { registerEnergy } from './energy.js';
@@ -71,7 +71,7 @@ export function mountModes(view, live) {
   const legendText = document.createElement('span'), legendContent = document.createElement('div'); modeLegend.append(legendText, legendContent);
   document.getElementById('twin-controls').append(modeLegend);
   document.body.append(climateLabels);
-  let mode = 'all', lastKey = '', revision = 0;
+  let mode = 'all', lastKey = '', revision = 0, effectLampKey = '';
   const floors = [], lamps = [];
   // Older embeds do not expose a render tier. Keep their room overview until
   // they mount the current view, whose tier supplies the real-light budget.
@@ -243,6 +243,18 @@ export function mountModes(view, live) {
     draw();
   }
   function draw() {
+    if (lamps.some(lamp => lamp.emitter?.fire_effect)) {
+      const rows = fireEffectEmitters(view.plan, live.peek(), live.stale(), view.effects?.fixtures);
+      const key = rows.map(e => `${e.fixture_id}:${e.brightness}`).join('|');
+      if (key !== effectLampKey) {
+        effectLampKey = key; revision++;
+      }
+      for (const lamp of lamps) if (lamp.emitter?.fire_effect) {
+        lamp.emitter = rows.find(e => e.fixture_id === lamp.emitter.fixture_id);
+        lamp.intensity = lamp.emitter?.on ? lamp.emitter.brightness * lamp.emitter.intensityScale : 0;
+        lamp.rgb = lamp.emitter?.rgb || [255,154,60];
+      }
+    }
     for (const flame of flames) flame.material.uniforms.time.value = performance.now() / 1000;
     climateLabels.hidden = !modeShows(mode, 'climate');
     for (const effect of effects.values()) effect.draw?.(mode);

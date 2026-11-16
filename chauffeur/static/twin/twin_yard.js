@@ -25,6 +25,7 @@ import { porchFoundationRole } from './twin_porch_foundation.js';
 import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.js';
 import { buildFence } from './fence_geometry.js';
 import { buildPoolFeatures, cutSurface, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';
+import { rippleSources, rippleMaterial, updateRipples } from './effects/water_ripples.js';
 
 function random(seed) {
   let n = seed | 0;
@@ -223,6 +224,7 @@ export function yardPartKeys(plan, kit, tier, { viewing = false } = {}) {
   const own = yardSiteInputs(site);
   const finishes = names => yardMaterialInputs({ ...plan, site: Object.fromEntries(names.map(n => [n, site[n]])) }, kit);
   const key = (...inputs) => JSON.stringify(inputs);
+  const ripples = rippleSources(plan);
   const buildings = (plan.buildings || []).map(b => [b.position, b.rotation, b.base, b.foundation?.mode, b.foundation?.offset_ft,
     canonicalOutline(buildingFootprint(b)), b.levels?.[0]?.id, allPorches(b).map(p => [canonicalOutline(p.polygon), p.level, p.floor]),
     (b.rooms || []).filter(r => r.kind === 'porch').map(r => [r.level, r.state, canonicalOutline(r.polygon), r.floor_offset_ft])]);
@@ -249,7 +251,7 @@ export function yardPartKeys(plan, kit, tier, { viewing = false } = {}) {
     // pool: tier; ground grade; polygon/depth/coping/elevation/material/slots;
     // features kind/polygon/depth_in/bench_in/bench_width_in/treads/entry_edge/mode/raise_in/spillover/
     // materials, including spa coping/interior/wall inheritance and revisions.
-    pool: key(tier, grade, own[3], finishes(['pool'])),
+    pool: key(tier, grade, own[3], finishes(['pool']), ...(ripples.length ? [ripples] : [])),
     // fire_pits: tier; ground grade; id/shape/at/radius/rotation/polygon/fuel/
     // body/top/height_in/glass/entity/elevation/materials; resolved finishes.
     fire_pits: key(tier, grade, own[4], finishes(['fire_pit'])),
@@ -569,6 +571,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     if (previous && previousKeys[name] === keys[name]) {
       reused.set(name, previous.children.filter(o => o.userData.yardPart === name));
       if (name === 'pool') root.userData.waterSurfaces = previous.userData.waterSurfaces;
+      if (name === 'pool' && previous.userData.ripples) Object.defineProperty(root.userData, 'ripples', {value: previous.userData.ripples});
       continue;
     }
     const scratch = new THREE.Group();
@@ -576,6 +579,21 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     if (name === 'pool') {
       root.userData.waterSurfaces = [];
       scratch.traverse(object => { if (object.isMesh && object.userData.part === 'water') root.userData.waterSurfaces.push(object); });
+      const rows = [];
+      for (const body of rippleSources(plan)) {
+        let row;
+        for (const mesh of root.userData.waterSurfaces) if (mesh.userData.pieceId === body.id) {
+          if (!row) {
+            await mesh.material.userData.ready;
+            row = rippleMaterial(mesh.material, body); rows.push(row);
+            mats.set('water-ripples:' + body.id, row.material);
+          }
+          mesh.material = row.material;
+        }
+      }
+      if (rows.length) Object.defineProperty(root.userData, 'ripples', {value: {
+        rows, update: (fixtures, seconds) => updateRipples(rows, fixtures, seconds, tier),
+      }});
     }
     const stop = part('batch');
     // Full trees/cards own their materials and viewing domains. Everything else

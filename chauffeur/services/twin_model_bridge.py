@@ -782,7 +782,7 @@ def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]
     flat['ha_display'] = (previous or {}).get('ha_display', flat.get('ha_display'))
     # Flat drawing reads do not own entity-authored emitters. In particular,
     # twin_plan.normalize has already stripped these connected-model fields.
-    for key in ('light_fixtures', 'light_fixtures_meta', 'camera_views'):
+    for key in ('light_fixtures', 'light_fixtures_meta', 'camera_views', 'effect_fixtures'):
         if key in (previous or {}):
             flat[key] = deepcopy(previous[key])
     old_buildings = {b['id']: b for b in (previous or {}).get('buildings', [])}

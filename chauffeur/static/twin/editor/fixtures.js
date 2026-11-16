@@ -5,6 +5,7 @@ import { createLineFixtureTool, facingOptions, areaOutline, screenRay, fixtureSt
 import { fixtureReference, resolveFixture } from '../live/emitters.js';
 import { facingNormal } from '../live/fixture_glow.js';
 import { report as reportError } from './api.js';
+import { effectCard, effectLabels } from './effects.js';
 
 const FT = .3048;
 const element = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
@@ -29,7 +30,7 @@ function button(root, text, action, locked) {
   node.addEventListener('click', action); root.append(node); return node;
 }
 
-export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onMove, onAim, onReattach, report = reportError }) {
+export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onAddEffect, onMove, onAim, onReattach, report = reportError }) {
   const root = element('section'); root.dataset.fixtureEntity = entity_id;
   root.append(element('h3', `Fixtures · ${entity_id}`));
   let pending = Promise.resolve();
@@ -127,6 +128,7 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onMove, on
   const addActions = actions(root);
   for (const shape of ['point', 'spot']) button(addActions, `Add ${shape} fixtures`, () => { if (canEdit()) onAdd?.(entity_id, shape); }, !canEdit());
   for (const shape of ['line', 'area']) button(addActions, `Add ${shape} fixture`, () => { if (canEdit()) onAdd?.(entity_id, shape); }, !canEdit());
+  if (onAddEffect) button(addActions, 'Add effect', () => onAddEffect(entity_id).catch(report), !canEdit());
   return root;
 }
 
@@ -140,7 +142,15 @@ export function cameraView(plan, marker) {
 export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal, prepare = () => {}, report = reportError, getCameraMarker }) {
   const canvas = view.renderer3.domElement, root = new THREE.Group(), el = id => document.getElementById(id);
   const ray = new THREE.Raycaster(); ray.params.Line.threshold = .08; view.scene.add(root); root.name = 'editor-light-fixtures';
-  let mode = null, press = null, aiming = null, slider = null, cardDevice = null, cardKey = null, signature = null;
+  let mode = null, press = null, aiming = null, slider = null, cardDevice = null, cardEffect = null, cardKey = null, signature = null;
+  const helpers = { element, numeric, field, actions, button };
+  const effectPlacement = f => f;
+  function effectFields(f) {
+    const { width_in, ...placement } = f;
+    return placement;
+  }
+  const effectEntities = device => [...new Set([device.entity_id, ...(device.entities || []).map(e => typeof e === 'string' ? e : e.entity_id),
+    ...(device.controls || []).map(e => e.entity_id), ...(device.accessories || []).map(e => e.entity_id)].filter(e => /^(switch|light|input_boolean|fan)\./.test(e)))];
   function height(f, at) {
     if (f.ref === 'ground') return groundAt(getPlan(), ...at);
     const b = getPlan().buildings?.find(b => b.id === f.building);
@@ -176,6 +186,9 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     },
     commit: (active, fixture) => {
       if (!canEdit()) return false;
+      if (active.effectType) return op(active.fixture
+        ? { op: 'update_effect_fixture', id: active.fixture.id, change: effectFields(fixture) }
+        : { op: 'add_effect_fixture', fixture: { ...effectFields(fixture), type: active.effectType, ...(active.entity_id ? { entity: active.entity_id } : {}) } });
       return op(active.fixture ? {op:'update_light_fixture',entity_id:active.entity_id,id:active.fixture.id,change:fixture}
         : {op:'add_light_fixture',entity_id:active.entity_id,fixture});
     } });
@@ -195,10 +208,21 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     if (canEdit() && ['point', 'spot'].includes(shape)) start({ kind: 'add', entity_id, shape }, `Click to add ${shape} fixtures. Done ends placement; Escape cancels.`);
     else if (canEdit() && ['line','area'].includes(shape)) startShape(entity_id, shape === 'area' ? 'area' : 'draw');
   }
-  function startShape(entity_id, kind, fixture) {
+  async function addEffect(entity_id = null) {
+    if (!canEdit()) return;
+    if (!/^(switch|light|input_boolean|fan)\./.test(entity_id || '')) entity_id = null;
+    const type = await window.promptChoice('Add effect', 'Choose the effect to place.', Object.entries(effectLabels).map(([value, label]) => ({ value, label })));
+    if (!type || !canEdit()) return;
+    const shape = type === 'fire' ? await window.promptChoice('Fire shape', 'Place one flame or draw a row of flames.', [{ value: 'point', label: 'Point' }, { value: 'line', label: 'Line' }])
+      : type === 'waterfall' ? 'line' : 'point';
+    if (!shape || !canEdit()) return;
+    if (shape === 'line') startShape(entity_id, 'draw', null, type);
+    else start({ kind: 'add', entity_id, shape, effectType: type }, 'Click to add effects. Done ends placement; Escape cancels.');
+  }
+  function startShape(entity_id, kind, fixture, effectType = null) {
     start({kind:'shape'}, kind === 'area' ? 'Drag a rectangle, choose its facing, then Finish. Escape cancels the rectangle; Done saves a complete rectangle and ends the mode.'
       : 'Draw points or Snap to edge; drag along an edge for a shorter run. Enter or Finish completes a drawing; Backspace removes a point. Escape cancels the gesture; Done saves a drawing with at least two points and ends the mode.');
-    shapeTool.start({entity_id,kind,fixture});
+    shapeTool.start({entity_id,kind,fixture,effectType});
     root.add(shapeTool.preview);
   }
   function reattach(entity_id, f) { if (canEdit()) startShape(entity_id, 'snap', f); }
@@ -206,6 +230,11 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     if (!canEdit()) return;
     if (f.shape === 'line') startShape(entity_id, f.snap ? 'snap' : 'draw', f);
     else start({ kind: 'move', entity_id, f }, 'Click a surface to move this fixture.');
+  }
+  function moveEffect(f) {
+    if (!f || !canEdit()) return;
+    if (f.shape === 'line') startShape(f.entity, f.snap ? 'snap' : 'draw', effectPlacement(f), f.type);
+    else start({ kind: 'move', effectType: f.type, f: effectPlacement(f) }, 'Click a surface to move this effect.');
   }
   function startAim(at, aim, cone, commit, camera = false) {
     start({ kind: 'aim' }, 'Drag to aim on the ground or a wall. Done ends aiming; Escape cancels the current drag.');
@@ -229,7 +258,10 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       view: { aim: value.aim, fov_deg: value.cone_deg } }), true);
   }
   function drawFixtures(host, device) {
-    for (const entity_id of entities(device)) host.append(fixtureCard({ entity_id, getPlan, canEdit, op, onAdd: add, onMove: move, onAim: aim, onReattach: reattach, report }));
+    for (const entity_id of entities(device)) host.append(fixtureCard({ entity_id, getPlan, canEdit, op, onAdd: add, onAddEffect: addEffect, onMove: move, onAim: aim, onReattach: reattach, report }));
+    const linked = effectEntities(device);
+    if (!entities(device).length && linked.length) button(actions(host), 'Add effect', () => addEffect(linked[0]).catch(report), !canEdit());
+    for (const f of getPlan().effect_fixtures || []) if (linked.includes(f.entity)) host.append(effectCard({ id: f.id, getPlan, canEdit, op, onMove: moveEffect, report, helpers }));
     if (device.kind === 'camera' || device.entity_id?.startsWith('camera.')) {
       const marker = getCameraMarker?.(device);
       if (marker) {
@@ -241,28 +273,34 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   }
   function deviceLink(host, device) {
     const camera = device.kind === 'camera' || device.entity_id?.startsWith('camera.');
-    if (!camera && !entities(device).length) return;
+    if (!camera && !entities(device).length && !effectEntities(device).length) return;
     const open = button(host, camera ? 'Fixtures and camera view' : 'Fixtures', () => showDevice(device), false); open.dataset.fixtureBrowse = '';
   }
   function showDevice(device, id = null) {
-    tools.select(null); cardDevice = device; cardKey = null; refreshCard();
+    tools.select(null); cardEffect = null; cardDevice = device; cardKey = null; refreshCard();
     const row = id && [...el('piece-card').querySelectorAll('[data-fixture-id]')].find(r => r.dataset.fixtureId === id);
     if (row) { row.open = true; row.scrollIntoView({ block: 'nearest' }); }
   }
+  function showEffect(id) {
+    tools.select(null); cardDevice = null; cardEffect = id; cardKey = null; refreshCard();
+  }
   function releaseCard() {
-    cardDevice = null; cardKey = null; delete el('piece-card').dataset.fixtureCard;
+    cardDevice = null; cardEffect = null; cardKey = null; delete el('piece-card').dataset.fixtureCard;
   }
   el('piece-card').addEventListener('fixturecardrelease', releaseCard, { signal });
   function refreshCard() {
-    if (!cardDevice) return;
+    if (!cardDevice && !cardEffect) return;
     const host = el('piece-card');
     if (host.dataset.stairDraft || cardKey !== null && !host.dataset.fixtureCard) { releaseCard(); return; }
-    const key = JSON.stringify([getPlan().light_fixtures, getPlan().light_fixtures_meta, getPlan().camera_views, getPlan().buildings, getPlan().site?.devices, getPlan().site?.terraces, canEdit()]);
+    const key = JSON.stringify([cardEffect, getPlan().effect_fixtures, getPlan().light_fixtures, getPlan().light_fixtures_meta, getPlan().camera_views, getPlan().buildings, getPlan().site?.devices, getPlan().site?.terraces, canEdit()]);
     if (key === cardKey) return;
     const open = [...host.querySelectorAll('[data-fixture-id]')].filter(r => r.open).map(r => r.dataset.fixtureId);
-    cardKey = key; host.replaceChildren(); host.dataset.fixtureCard = cardDevice.device_id; host.hidden = false;
-    host.append(element('h3', cardDevice.name)); button(host, 'Close', () => { releaseCard(); host.hidden = true; }, false);
-    drawFixtures(host, cardDevice);
+    cardKey = key; host.replaceChildren(); host.dataset.fixtureCard = cardEffect || cardDevice.device_id; host.hidden = false;
+    button(host, 'Close', () => { releaseCard(); host.hidden = true; }, false);
+    if (cardEffect) {
+      if (!getPlan().effect_fixtures?.some(f => f.id === cardEffect)) { releaseCard(); host.hidden = true; return; }
+      host.append(effectCard({ id: cardEffect, getPlan, canEdit, op, onMove: moveEffect, report, helpers }));
+    } else { host.prepend(element('h3', cardDevice.name)); drawFixtures(host, cardDevice); }
     for (const row of host.querySelectorAll('[data-fixture-id]')) row.open = open.includes(row.dataset.fixtureId);
   }
   function pick(event) {
@@ -291,6 +329,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     const p = press; release();
     if (p.picked) {
       if (!cancelled && Math.hypot(event.clientX - p.x, event.clientY - p.y) < 3) {
+        if (p.picked.effectId) { showEffect(p.picked.effectId); return; }
         const device = tools.haLink.state()?.devices?.find(d => entities(d).includes(p.picked.entity_id));
         showDevice(device || { device_id: p.picked.entity_id, entity_id: p.picked.entity_id, name: p.picked.entity_id }, p.picked.fixtureId);
       } return;
@@ -304,13 +343,15 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       const context = { ref, ...(ref === 'floor' ? { building: hit.building, level: hit.level } : {}) };
       const change = { ...context, at: [hit.at[0], hit.at[1], hit.at[2] - base] };
       if (active.f.aim) { const target = absolute(active.f, active.f.aim); change.aim = [target[0], target[1], target[2] - height(context, target)]; }
-      await op({ op: 'update_light_fixture', entity_id: active.entity_id, id: active.f.id, change });
+      await op(active.effectType ? { op: 'update_effect_fixture', id: active.f.id, change: effectFields(change) }
+        : { op: 'update_light_fixture', entity_id: active.entity_id, id: active.f.id, change });
       if (mode === active) cancel(); return;
     }
     const f = { shape: active.shape, ref, at: [hit.at[0], hit.at[1], hit.at[2] - base],
       ...(ref === 'floor' ? { building: hit.building, level: hit.level } : {}) };
     if (f.shape === 'spot') Object.assign(f, { aim: hit.ceiling ? [f.at[0], f.at[1], hit.floor - base] : [f.at[0] + 20, f.at[1], f.at[2]], cone_deg: 90, softness: .3 });
-    await op({ op: 'add_light_fixture', entity_id: active.entity_id, fixture: f });
+    await op(active.effectType ? { op: 'add_effect_fixture', fixture: { ...effectFields(f), type: active.effectType, ...(active.entity_id ? { entity: active.entity_id } : {}) } }
+      : { op: 'add_light_fixture', entity_id: active.entity_id, fixture: f });
   }
   function pointerUp(event, cancelled = false) {
     if (!press || press.pointer !== event.pointerId) return false;
@@ -324,9 +365,11 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   }
   function refresh() {
     if (mode && !canEdit()) cancel(); refreshCard();
-    const plan = getPlan(), next = JSON.stringify([plan.light_fixtures, plan.buildings, plan.site?.terraces]); if (signature === next) { draw(); return; } signature = next;
+    const plan = getPlan(), next = JSON.stringify([plan.light_fixtures, plan.effect_fixtures, plan.buildings, plan.site?.terraces]); if (signature === next) { draw(); return; } signature = next;
     for (const child of [...root.children]) if (child !== aiming?.preview && child !== shapeTool.preview) { child.geometry?.dispose(); child.material?.dispose(); child.removeFromParent(); }
-    for (const [entity_id, rows] of Object.entries(getPlan().light_fixtures || {})) for (const f of rows) {
+    const rows = [...Object.entries(getPlan().light_fixtures || {}).flatMap(([entity_id, fixtures]) => fixtures.map(f => ({ entity_id, f }))),
+      ...(plan.effect_fixtures || []).map(f => ({ entity_id: f.entity, f: effectPlacement(f), effectId: f.id }))];
+    for (const { entity_id, f, effectId } of rows) {
       const at = f.at || f.path?.[0]; if (!at) continue;
       const kind = f.snap?.host.kind, building = ['wall','step'].includes(kind) && plan.buildings?.find(b => b[kind === 'wall' ? 'walls' : 'stairs']?.some(p => p.id === f.snap.host.id));
       const piece = building && building[kind === 'wall' ? 'walls' : 'stairs'].find(p => p.id === f.snap.host.id);
@@ -340,7 +383,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
         mesh.position.set(p[0] * FT, p[2] * FT, -p[1] * FT);
       }
       mesh.renderOrder = 21;
-      mesh.userData = { fixtureId: f.id, entity_id, building: building?.id || (f.ref === 'floor' ? f.building : null), level: piece?.level || f.level }; root.add(mesh);
+      mesh.userData = { fixtureId: f.id, effectId, entity_id, building: building?.id || (f.ref === 'floor' ? f.building : null), level: piece?.level || f.level }; root.add(mesh);
     }
     draw();
   }
@@ -359,5 +402,5 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     }
   }, { signal, capture: true });
   signal.addEventListener('abort', () => { cancel(); if (el('piece-card').dataset.fixtureCard) { releaseCard(); el('piece-card').hidden = true; } root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent(); }, { once: true });
-  return { add, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, pointerDown, pointerMove, pointerUp, cancel, refresh, draw, active: () => !!mode };
+  return { add, addEffect, showEffect, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, pointerDown, pointerMove, pointerUp, cancel, refresh, draw, active: () => !!mode };
 }

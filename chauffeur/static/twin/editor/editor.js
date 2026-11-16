@@ -144,6 +144,7 @@ export async function boot() {
     el('editor-stop').hidden = !active(currentBuild);
     el('editor-stop').disabled = session.signedOut || stopping;
     const busy = !canEdit() || !hooks.ready || resuming || active(currentBuild);
+    el('rail-add-effect').disabled = busy;
     for (const id of ['menu-director', 'menu-advanced', 'menu-start-over', 'menu-reset-spend']) el(id).disabled = busy;
     el('menu-start-over').disabled = !canEdit() || !hooks.ready || resuming
       || currentBuild?.state === 'running';
@@ -584,6 +585,9 @@ export async function boot() {
     devices = createDevicePlacement({ view, tools, library, getPlan: () => timeline?.preview() || snapshot.plan,
       op: applyOp, canEdit, signal: lifecycle.signal,
       prepare() { onInteract(); roofTools.cancel(); draw.cancel(); } });
+    el('rail-add-effect').addEventListener('click', () => {
+      if (canEdit()) devices.addEffect().catch(report);
+    }, {signal: lifecycle.signal});
     terrain = createTerrainTools({ view, tools, getPlan: () => timeline?.preview() || snapshot.plan,
       op: applyOp, canEdit, signal: lifecycle.signal,
       pickObject: (x, y) => library.pickSite(x, y), getKit: () => kit,

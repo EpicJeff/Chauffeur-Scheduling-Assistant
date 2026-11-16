@@ -91,7 +91,7 @@ export function keepLive(view, { api = (path, options) => fetch(base() + path, o
         readAt = Date.now();
         const layout = await readLayout(api, halt.signal);
         // Away or failed: the mounted layer stays; its own poll already shows it stale.
-        if (halt.signal.aborted || !layout?.available || layoutKey(layout, view.plan) === layoutKey(live.layout(), view.plan)) return;
+        if (halt.signal.aborted || !layout?.available || !live.offlineEffects && layoutKey(layout, view.plan) === layoutKey(live.layout(), view.plan)) return;
         const old = live; live = null;
         const reopen = old.openedRoom?.();
         old.stop(); if (view.live === old) view.live = null;
@@ -101,7 +101,7 @@ export function keepLive(view, { api = (path, options) => fetch(base() + path, o
       finally {
         busy = null;
         if (halt.signal.aborted) { live?.stop(); if (live && view.live === live) view.live = null; live = null; }
-        else schedule(live ? LIVE_LAYOUT_MS : LIVE_RETRY_MS);
+        else schedule(live && !live.offlineEffects ? LIVE_LAYOUT_MS : LIVE_RETRY_MS);
       }
     })();
     return busy.then(() => live);
@@ -124,7 +124,27 @@ export function keepLive(view, { api = (path, options) => fetch(base() + path, o
 export async function mountLive(view, { api = (path, options) => fetch(base() + path, options), layout = null } = {}) {
   const events = new AbortController(), requests = new AbortController();
   layout ||= await readLayout(api, requests.signal);
-  if (!layout?.available || !view.ready) return null;
+  if (!view.ready) return null;
+  if (!layout?.available) {
+    if (!view.plan.effect_fixtures?.some(f => f.type === 'fire' && !f.orphaned)) return null;
+    // Reuse the pit's mode/lamp/bake rig even without HA. No poll or stream is
+    // needed for an always-on fire; keepLive retries the normal layout later.
+    const empty = {available: false, markers: [], devices: [], rooms: []};
+    let modes;
+    const live = {offlineEffects: true, layout: () => empty, peek: () => ({}), stale: () => true,
+      rooms: () => [], looks: () => ({}), state: () => undefined, subscribe: () => () => {},
+      draw: () => modes?.draw(), lights: () => modes?.lights() || [],
+      setMode: value => modes?.setMode(value), refresh: async () => {},
+      // The rest of the house calls these on whatever layer is mounted.
+      openRoom() {}, closeRoom() {}, openedRoom: () => null, configureEnergy() {}, configureGlance() {},
+      energy: () => modes?.energy(), markers: () => [], marker: () => null, devices: () => [], states: () => ({}),
+      looksRevision: () => 0, control: async () => false,
+      stop() { modes?.stop(); if (view.live === live) view.live = null; }};
+    view.live = live;
+    try { modes = mountModes(view, live); }
+    catch (error) { live.stop(); report(error); return null; }
+    return live;
+  }
 
   let looks = {}, looksReady = false, looksRevision = 0;
   const canvas = view.renderer3.domElement, host = canvas.parentElement;

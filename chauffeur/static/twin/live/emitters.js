@@ -8,6 +8,7 @@ import { pathOutline } from '../path_shapes.js';
 import { firePitOptions, firePitLayout, gasTableLayout } from '../fire_pits.js';
 import { lightIntensity } from './real_lights.js';
 import { resolveLightColour } from './light_colours.js';
+import { effectTarget, EFFECT_TYPES } from '../effects/driver.js';
 
 export const DEFAULT_OUTPUT_LM = 503;
 const pieces = value => Array.isArray(value) ? value : value ? [value] : [];
@@ -209,7 +210,7 @@ function legacyEmitter(marker, plan, state) {
 // firePits: false leaves derived fire-pit emitters out (live keeps pits on its
 // object-lamp path until the bake slice moves them); their entity's markers
 // then resolve through the legacy rules exactly as before fixtures existed.
-export function resolveEmitters(layout, states = {}, plan = {}, {firePits = true, looks = {}} = {}) {
+export function resolveEmitters(layout, states = {}, plan = {}, {firePits = true, looks = {}, effectRows} = {}) {
   // Accept either live.peek()'s map or the HA card-state response envelope.
   const stale = states?.stale || states?.reachable === false;
   const readings = states?.states || states || {};
@@ -239,7 +240,41 @@ export function resolveEmitters(layout, states = {}, plan = {}, {firePits = true
   }
   for (const marker of layout.markers || []) if (marker.kind === 'light' && marker.at && !groups.has(marker.entity_id))
     emitters.push(legacyEmitter(marker, plan, stateOf(marker.entity_id)));
+  emitters.push(...fireEffectEmitters(plan, readings, stale, effectRows));
   return emitters;
+}
+
+// Effects own their bake channel: two fires on one switch can have different
+// sensors and eased levels. Transport stays fixed at the full flame envelope.
+export const effectLightLevel = pose => pose.active ? pose.opacity * (1 + 2 * pose.t) / 3 : 0;
+export function fireEffectEmitters(plan, states = {}, stale = false, effectRows) {
+  return (plan.effect_fixtures || []).filter(f => f.type === 'fire' && !f.orphaned).flatMap(f => {
+    const row = effectRows?.find(r => r.fixture.id === f.id);
+    const pose = row || {...effectTarget(f, states, stale), opacity: 1};
+    const placement = resolveFixture(f, plan), path = placement.path;
+    const span = path ? length(path) : 0, count = path ? Math.min(6, Math.max(1, Math.ceil(span / 4))) : 1;
+    const height = Math.max(f.size_min ?? EFFECT_TYPES.fire.size_min, f.size_max ?? EFFECT_TYPES.fire.size_max) + .25;
+    const entity = `effect-fire:${f.id}`, level = effectLightLevel(pose);
+    return Array.from({length: count}, (_, i) => {
+      let at = placement.at;
+      if (path) {
+        let distance = span * (i + .5) / count;
+        for (let j = 1; j < path.length; j++) {
+          const a = path[j - 1], b = path[j], d = Math.hypot(...b.map((v,k) => v - a[k]));
+          if (distance <= d || j === path.length - 1) { at = a.map((v,k) => v + (b[k] - v) * distance / (d || 1)); break; }
+          distance -= d;
+        }
+      }
+      const source = {id: `${entity}:${i}`, shape: 'point', ref: 'absolute', at: [at[0], at[1], at[2] + height],
+        fire_pit: true, fire_effect: f.id, range: 18};
+      const e = resolved(source, entity, entity, DEFAULT_OUTPUT_LM, count > 1 ? .5 : 1,
+        {on: level > 0, brightness: level, rgb: [255,154,60]});
+      e.position = world(e.at);
+      // Single-point tint carries the pit's half output; sum samples carry it.
+      e.intensityScale *= count > 1 ? .5 : 1;
+      return e;
+    });
+  });
 }
 
 // A transport signature is independent of HA state. Include full authored

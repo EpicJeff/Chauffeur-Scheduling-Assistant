@@ -494,6 +494,7 @@ MORE_OPS = ('add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update
             'move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape', 'make_yard_room', 'place_device', 'unplace_device', 'set_ha_display',
             'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation', 'set_porch_foundation',
             'add_pool_feature', 'update_pool_feature', 'delete_pool_feature',
+            'add_effect_fixture', 'update_effect_fixture', 'delete_effect_fixture',
             'add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output', 'set_camera_view')
 
 
@@ -1312,9 +1313,11 @@ def solar_clear(building, previous):
 def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None) -> tuple[dict, str]:
     from services import twin_fixtures
     result, words = _apply(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized)
-    if result.get('light_fixtures'):
+    if result.get('light_fixtures') or result.get('effect_fixtures'):
         twin_fixtures.follow_host_moves(_normalized[0] if _normalized is not None else model, result)
         twin_fixtures.normalize(result, [])
+        from services import twin_effect_fixtures
+        twin_effect_fixtures.normalize(result, [])
     return result, words
 
 
@@ -1323,13 +1326,19 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     if not isinstance(op, dict):
         raise Refused('Choose an operation.')
     kind = op.get('op')
-    if kind not in MORE_OPS + ('move_joint', 'move_wall', 'move_room', 'add_wall',
+    from services import twin_effect_fixtures
+    if kind not in MORE_OPS + twin_effect_fixtures.OPS + ('move_joint', 'move_wall', 'move_room', 'add_wall',
                     'split_wall', 'draw_room', 'split_room', 'delete'):
         raise Refused('That operation is not available.')
     op = deepcopy(op)
     # save() also needs the normalized pre-edit model for its fix log. Reuse
     # that exact input's result, but keep our mutable working copy private.
     model, notes = twin_model.normalize(model) if _normalized is None else deepcopy(_normalized)
+    if kind in twin_effect_fixtures.OPS:
+        try:
+            return model, twin_effect_fixtures.apply_op(model, op)
+        except ValueError as exc:
+            raise Refused(str(exc)) from exc
     if kind == 'set_material' and isinstance(op.get('target'), dict) and 'site' in op['target']:
         _material(None, op, model)
         return model, 'Changed the material.'

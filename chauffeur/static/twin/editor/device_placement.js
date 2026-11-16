@@ -302,7 +302,8 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     sprites.clear(); textures.clear();
   }
   const controller = { anchors, doors, arm, startDrag, pointerDown, pointerMove: fixtures.pointerMove, pointerUp, cancel, refresh, draw, stop,
-    drawFixtures: fixtures.deviceLink, pointerBrowse: event => !armed && !fixtures.active() && fixtures.pointerDown(event) };
+    drawFixtures: fixtures.deviceLink, addEffect: fixtures.addEffect, showEffect: fixtures.showEffect,
+    pointerBrowse: event => !armed && !fixtures.active() && fixtures.pointerDown(event) };
   link.setPlacement(controller);
   signal.addEventListener('abort', stop, { once: true });
   return controller;

@@ -264,8 +264,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (disposed) return;
     viewing?.update(performance.now());
     view.levels?.draw();
-    view.live?.draw();
     view.cars?.draw();
+    // Effect water is unlit: it follows the sun down to a night floor.
+    if (twin?.effects) twin.effects.update(view.live?.peek?.() || {}, view.live?.stale?.() ?? true, performance.now() / 1000,
+      .18 + .82 * Math.min(1, (timeLook?.sun ?? 3) / 3));
+    yardGroup?.userData.ripples?.update(twin?.effects?.fixtures || [], performance.now() / 1000);
+    view.live?.draw();
     twin?.updateGhosts();
     if (state.unlit) {
       unlit.apply(twin?.root);
@@ -295,6 +299,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const view = {
     ready: false, scene, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
+    get effects() { return twin?.effects; },
     viewingState() {
       return viewing?.snapshot() || {selected: state.view, pinned: state.view === 'ext' ? null : state.view, channels: []};
     },

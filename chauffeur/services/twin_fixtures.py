@@ -551,7 +551,9 @@ def follow_host_moves(before, after):
     the building's explicit frame transform can carry a snap beyond 0.5 ft.
     A reshape/split cannot silently retarget a run to the edge at its old index.
     """
-    for rows in after.get('light_fixtures', {}).values():
+    rows_by_owner = list(after.get('light_fixtures', {}).values())
+    rows_by_owner.append(after.get('effect_fixtures', []))
+    for rows in rows_by_owner:
         for f in rows:
             snap = f.get('snap')
             if not snap or f.get('detached'):
