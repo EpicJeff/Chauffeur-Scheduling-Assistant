@@ -7683,9 +7683,16 @@ def house_live(request: Request):
     # Ground features need no HA area/device-registry membership. Their marker
     # uses exactly the same offered/control gate as a placed switch.
     from services import twin_site_shapes
+    marked = {eid for marker in markers
+              for eid in [marker['entity_id'], *marker.get('entities', []),
+                          *(a['entity_id'] for a in marker.get('accessories', []))]}
     for index, pit in enumerate(twin_site_shapes.pieces(model.get('site', {}).get('fire_pit'))):
         eid = pit.get('entity')
         if not eid or not catalogue['available']:
+            continue
+        # One marker per thing: when the linked entity already shows where its
+        # device sits, the pit only takes its flame and light from that entity.
+        if eid in marked:
             continue
         points = pit.get('polygon') or [pit['at']]
         at = [sum(p[i] for p in points) / len(points) for i in (0, 1)]
@@ -7694,8 +7701,7 @@ def house_live(request: Request):
                'entity_id': eid, 'entities': [eid], 'kind': 'switch',
                'name': pit.get('name') or 'Fire pit', 'fire_pit': True, 'accessories': [],
                'offered': control_rules.offered(who, eid, settings, states=states)}
-        # A linked entity may already have a room marker. The pit marker is an
-        # additional hand path at the physical feature, sharing the same entity.
+        # No other marker carries the entity, so the pit is its hand path.
         devices.insert(0, row)
         markers.append({**row, 'building': None, 'level': None, 'room': None,
                         'at': [*at, height + (pit.get('elevation') or 0)], 'placed': True})
