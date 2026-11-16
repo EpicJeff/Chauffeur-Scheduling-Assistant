@@ -31,7 +31,7 @@
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     twinImports[new URL(twinBase + 'static/twin/twin_ceilings.js', location.href).href] = twinBase + {{ 'static/twin/twin_ceilings.js' | ver | tojson }};
-    {% for name in ['effects/index', 'effects/driver', 'effects/water_material', 'effects/water_ripples', 'effects/waterfall', 'effects/fountain', 'effects/bubbler', 'effects/fire'] %}
+    {% for name in ['effects/index', 'effects/driver', 'effects/water_material', 'effects/water_ripples', 'effects/waterfall', 'effects/fountain', 'effects/bubbler', 'effects/fire', 'effects/spa_jet', 'effects/vapour', 'effects/sheer', 'effects/deck_jet', 'effects/laminar'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     twinImports[new URL(twinBase + 'static/vendor/lucide/icons.js', location.href).href] = twinBase + {{ 'static/vendor/lucide/icons.js' | ver | tojson }};

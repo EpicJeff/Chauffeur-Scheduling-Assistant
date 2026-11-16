@@ -5,7 +5,7 @@ import { createLineFixtureTool, facingOptions, areaOutline, screenRay, fixtureSt
 import { fixtureReference, resolveFixture } from '../live/emitters.js';
 import { facingNormal } from '../live/fixture_glow.js';
 import { report as reportError } from './api.js';
-import { effectCard, effectLabels } from './effects.js';
+import { effectCard, effectLabels, effectShapes } from './effects.js';
 
 const FT = .3048;
 const element = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
@@ -150,7 +150,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     return placement;
   }
   const effectEntities = device => [...new Set([device.entity_id, ...(device.entities || []).map(e => typeof e === 'string' ? e : e.entity_id),
-    ...(device.controls || []).map(e => e.entity_id), ...(device.accessories || []).map(e => e.entity_id)].filter(e => /^(switch|light|input_boolean|fan)\./.test(e)))];
+    ...(device.controls || []).map(e => e.entity_id), ...(device.accessories || []).map(e => e.entity_id)].filter(e => /^(switch|light|input_boolean|fan|binary_sensor|climate|water_heater)\./.test(e)))];
   function height(f, at) {
     if (f.ref === 'ground') return groundAt(getPlan(), ...at);
     const b = getPlan().buildings?.find(b => b.id === f.building);
@@ -210,11 +210,11 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   }
   async function addEffect(entity_id = null) {
     if (!canEdit()) return;
-    if (!/^(switch|light|input_boolean|fan)\./.test(entity_id || '')) entity_id = null;
+    if (!/^(switch|light|input_boolean|fan|binary_sensor|climate|water_heater)\./.test(entity_id || '')) entity_id = null;
     const type = await window.promptChoice('Add effect', 'Choose the effect to place.', Object.entries(effectLabels).map(([value, label]) => ({ value, label })));
     if (!type || !canEdit()) return;
-    const shape = type === 'fire' ? await window.promptChoice('Fire shape', 'Place one flame or draw a row of flames.', [{ value: 'point', label: 'Point' }, { value: 'line', label: 'Line' }])
-      : type === 'waterfall' ? 'line' : 'point';
+    const shape = effectShapes[type].length > 1 ? await window.promptChoice(`${effectLabels[type]} shape`, type === 'fire' ? 'Place one flame or draw a row of flames.' : 'Place one nozzle or draw a run of nozzles.', [{ value: 'point', label: 'Point' }, { value: 'line', label: 'Line' }])
+      : effectShapes[type][0];
     if (!shape || !canEdit()) return;
     if (shape === 'line') startShape(entity_id, 'draw', null, type);
     else start({ kind: 'add', entity_id, shape, effectType: type }, 'Click to add effects. Done ends placement; Escape cancels.');
@@ -292,7 +292,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     if (!cardDevice && !cardEffect) return;
     const host = el('piece-card');
     if (host.dataset.stairDraft || cardKey !== null && !host.dataset.fixtureCard) { releaseCard(); return; }
-    const key = JSON.stringify([cardEffect, getPlan().effect_fixtures, getPlan().light_fixtures, getPlan().light_fixtures_meta, getPlan().camera_views, getPlan().buildings, getPlan().site?.devices, getPlan().site?.terraces, canEdit()]);
+    const key = JSON.stringify([cardEffect, getPlan().effect_fixtures, getPlan().light_fixtures, getPlan().light_fixtures_meta, getPlan().camera_views, getPlan().buildings, getPlan().site?.devices, getPlan().site?.terraces, getPlan().site?.pool, canEdit()]);
     if (key === cardKey) return;
     const open = [...host.querySelectorAll('[data-fixture-id]')].filter(r => r.open).map(r => r.dataset.fixtureId);
     cardKey = key; host.replaceChildren(); host.dataset.fixtureCard = cardEffect || cardDevice.device_id; host.hidden = false;

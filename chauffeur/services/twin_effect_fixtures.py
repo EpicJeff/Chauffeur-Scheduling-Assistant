@@ -12,9 +12,17 @@ TYPES = {
     'fountain': {'label': 'Fountain', 'shapes': ('point',), 'size': (1, 6)},
     'bubbler': {'label': 'Bubbler', 'shapes': ('point',), 'size': (.3, 1.5)},
     'fire': {'label': 'Fire', 'shapes': ('point', 'line'), 'size': (.5, 2)},
+    'spa_jet': {'label': 'Spa jet', 'shapes': ('point',), 'size': (.5, 2.5)},
+    'steam': {'label': 'Steam', 'shapes': ('point',), 'size': (1, 4)},
+    'sheer': {'label': 'Sheer descent', 'shapes': ('line',), 'size': (.5, 3)},
+    'deck_jet': {'label': 'Deck jet', 'shapes': ('point',), 'size': (2, 8)},
+    'mist': {'label': 'Mist', 'shapes': ('point', 'line'), 'size': (1, 6)},
 }
+SWITCH_DOMAINS = ('switch', 'light', 'input_boolean', 'fan', 'binary_sensor', 'climate', 'water_heater')
+SENSOR_DOMAINS = ('sensor', 'number', 'input_number')
+ATTRIBUTE_DOMAINS = SENSOR_DOMAINS + ('fan', 'climate', 'water_heater', 'light', 'cover', 'valve')
 _COMMON = {'id', 'type', 'shape', 'ref', 'building', 'level', 'strength',
-           'entity', 'sensor', 'sensor_min', 'sensor_max', 'size_min', 'size_max', 'name'}
+           'entity', 'sensor', 'sensor_attribute', 'sensor_min', 'sensor_max', 'size_min', 'size_max', 'name'}
 _PLACEMENT = {'ref', 'building', 'level', 'at', 'path', 'snap', 'detached', 'facing'}
 
 
@@ -42,7 +50,7 @@ def _entity(value, domains, label):
 def validate(fixture):
     """Return canonical effect data; placement validation stays with lights."""
     if not isinstance(fixture, dict) or not isinstance(fixture.get('type'), str) or fixture['type'] not in TYPES:
-        raise ValueError('Choose waterfall, fountain, bubbler or fire.')
+        raise ValueError('Choose a supported effect type.')
     f = deepcopy(fixture)
     f.pop('orphaned', None)
     f.pop('orphan_reason', None)
@@ -50,7 +58,7 @@ def validate(fixture):
     if shape not in TYPES[kind]['shapes']:
         raise ValueError('Choose ' + ' or '.join(TYPES[kind]['shapes']) + ' for ' + kind + '.')
     allowed = _COMMON | ({'path', 'snap', 'detached', 'facing'} if shape == 'line' else {'at'})
-    if kind == 'waterfall':
+    if kind in ('waterfall', 'sheer'):
         allowed.add('drop_ft')
     if set(f) - allowed:
         raise ValueError('Choose supported effect fixture properties.')
@@ -61,8 +69,17 @@ def validate(fixture):
     except (ValueError, AttributeError):
         raise ValueError('An effect fixture needs a canonical effect:<uuid> id.') from None
     set_placement(f, fixtures.validate(placement(f)))
-    for key, domains, label in (('entity', ('switch', 'light', 'input_boolean', 'fan'), 'switch'),
-                                ('sensor', ('sensor', 'number', 'input_number'), 'sensor')):
+    attribute = f.get('sensor_attribute')
+    if attribute is None or attribute == '':
+        f.pop('sensor_attribute', None)
+    elif not isinstance(attribute, str) or not attribute.strip():
+        raise ValueError('Choose an attribute name, such as current_temperature.')
+    elif not f.get('sensor'):
+        raise ValueError('Link a sensor before setting its attribute.')
+    else:
+        f['sensor_attribute'] = attribute.strip()
+    for key, domains, label in (('entity', SWITCH_DOMAINS, 'switch'),
+                                ('sensor', ATTRIBUTE_DOMAINS if attribute else SENSOR_DOMAINS, 'sensor')):
         if f.get(key) is None:
             f.pop(key, None)
         else:
@@ -140,13 +157,14 @@ def apply_op(model, op):
         baseline = previous
         if 'shape' in change and change['shape'] != previous['shape']:
             baseline = {k: v for k, v in previous.items() if k not in {'at', 'path', 'snap', 'detached', 'facing'}}
-        if 'type' in change and change['type'] != 'waterfall':
+        if 'type' in change and change['type'] not in ('waterfall', 'sheer'):
             baseline = {k: v for k, v in baseline.items() if k != 'drop_ft'}
         candidate = {**baseline, **change}
-        for key in ('entity', 'sensor', 'drop_ft', 'name'):
+        for key in ('entity', 'sensor', 'sensor_attribute', 'drop_ft', 'name'):
             if key in change and change[key] is None:
                 candidate.pop(key, None)
                 if key == 'sensor':
+                    candidate.pop('sensor_attribute', None)
                     candidate.pop('sensor_min', None)
                     candidate.pop('sensor_max', None)
         value = validate(candidate)

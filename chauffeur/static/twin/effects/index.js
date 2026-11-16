@@ -6,6 +6,10 @@ import { buildFountain } from './fountain.js';
 import { buildBubbler } from './bubbler.js';
 import { buildFire } from './fire.js';
 import { buildWaterfall } from './waterfall.js';
+import { buildSpaJet } from './spa_jet.js';
+import { buildDeckJet } from './deck_jet.js';
+import { buildSheer } from './sheer.js';
+import { buildVapour } from './vapour.js';
 
 const world=p=>new THREE.Vector3(p[0],p[2],-p[1]);
 const midpoint=path=>{
@@ -34,6 +38,9 @@ export function buildEffects(plan, {tier='high',editor=false}={}) {
     if(fixture.type==='fountain')built=buildFountain();
     else if(fixture.type==='bubbler')built=buildBubbler();
     else if(fixture.type==='fire')built=buildFire({...resolved,...(resolved.path?{path:resolved.path.map(local)}:{at:[0,0,0]})});
+    else if(fixture.type==='spa_jet')built=buildSpaJet(plan,origin);
+    else if(fixture.type==='deck_jet')built=buildDeckJet(plan,origin);
+    else if(['steam','mist'].includes(fixture.type))built=buildVapour({...resolved,...(resolved.path?{path:resolved.path.map(local)}:{})},{plan,origin,mist:fixture.type==='mist'});
     else {
       const path=resolved.path;
       const normals=path.map((p,i)=>{
@@ -43,7 +50,7 @@ export function buildEffects(plan, {tier='high',editor=false}={}) {
         return resolveFixture({...placement,path:[a,b],facing:'out'},plan).normal||[(b[1]-a[1])/d,-(b[0]-a[0])/d,0];
       });
       const drops=path.map(p=>fixture.drop_ft??Math.max(.1,p[2]-landing(plan,p)));
-      built=buildWaterfall({...resolved,path:path.map(local)},{normals,drops});
+      built=(fixture.type==='sheer'?buildSheer:buildWaterfall)({...resolved,path:path.map(local)},{normals,drops});
     }
     built.group.position.copy(world(origin));group.add(built.group);
     const driver=createEffectDriver(fixture,{low:tier==='low'});

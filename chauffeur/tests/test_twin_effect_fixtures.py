@@ -82,6 +82,66 @@ def test_type_shape_defaults_and_identity():
     refused(fixture(id='effect:12345678-1234-4ABC-8123-123456789ABC'))
 
 
+def test_second_set_types_shapes_defaults_and_original_records():
+    expected = {'spa_jet': ('Spa jet', ('point',), (.5, 2.5)), 'steam': ('Steam', ('point',), (1, 4)),
+                'sheer': ('Sheer descent', ('line',), (.5, 3)), 'deck_jet': ('Deck jet', ('point',), (2, 8)),
+                'mist': ('Mist', ('point', 'line'), (1, 6))}
+    for kind, (label, shapes, size) in expected.items():
+        assert effects.TYPES[kind] == {'label': label, 'shapes': shapes, 'size': size}
+        for shape in ('point', 'line', 'area', 'spot'):
+            raw = fixture(kind, shape=shape)
+            if shape in shapes:
+                f = effects.validate(raw)
+                assert (f['size_min'], f['size_max']) == size
+            else:
+                refused(raw)
+    for kind in ('waterfall', 'fountain', 'bubbler', 'fire'):
+        f = effects.validate(fixture(kind))
+        model, notes = {'effect_fixtures': [copy.deepcopy(f)]}, []
+        effects.normalize(model, notes)
+        assert model['effect_fixtures'] == [f] and not notes
+        assert 'sensor_attribute' not in f
+    assert effects.validate(fixture('sheer', shape='line', drop_ft=3))['drop_ft'] == 3
+
+
+def test_second_set_domains_and_attribute_validation():
+    for domain in effects.SWITCH_DOMAINS:
+        assert effects.validate(fixture(entity=domain + '.heater'))['entity'] == domain + '.heater'
+    for domain in effects.ATTRIBUTE_DOMAINS:
+        f = effects.validate(fixture(sensor=domain + '.pump', sensor_attribute='current_temperature', sensor_min=0, sensor_max=100))
+        assert f['sensor_attribute'] == 'current_temperature'
+        if domain not in effects.SENSOR_DOMAINS:
+            refused(fixture(sensor=domain + '.pump', sensor_min=0, sensor_max=100))
+    for value in (True, 1, [], {}, ' '):
+        refused(fixture(sensor='sensor.rpm', sensor_attribute=value, sensor_min=0, sensor_max=100))
+    for value in ('custom.value', 'custom value'):
+        assert effects.validate(fixture(sensor='sensor.rpm', sensor_attribute=value, sensor_min=0, sensor_max=100))['sensor_attribute'] == value
+    refused(fixture(sensor_attribute='percentage'))
+    refused(fixture(sensor='switch.pump', sensor_attribute='percentage', sensor_min=0, sensor_max=100))
+    for value in ('', None):
+        assert 'sensor_attribute' not in effects.validate(fixture(sensor='sensor.rpm', sensor_attribute=value, sensor_min=0, sensor_max=100))
+
+
+def test_attribute_http_ops_clear_bridge_and_existing_stream():
+    import main
+    seed()
+    with Ctx() as c:
+        for kind in ('spa_jet', 'steam', 'sheer', 'deck_jet', 'mist'):
+            add(c, fixture(kind, shape='line' if kind == 'sheer' else 'point'))
+        f = add(c, fixture('steam', entity='climate.pool', sensor='water_heater.spa',
+                           sensor_attribute='current_temperature', sensor_min=70, sensor_max=100))
+        assert {'climate.pool', 'water_heater.spa'} <= main._house_stream_entities()
+        flat = bridge.flatten(ts.current_model())
+        restored, _ = bridge.assemble(flat, ts.current_model())
+        assert restored['effect_fixtures'][-1] == f
+        post(c, {'op': 'update_effect_fixture', 'id': f['id'], 'change': {'sensor_attribute': None}}, 400)
+        m = post(c, {'op': 'update_effect_fixture', 'id': f['id'], 'change': {'sensor': None}})
+        assert not set(m['effect_fixtures'][-1]) & {'sensor', 'sensor_attribute', 'sensor_min', 'sensor_max'}
+        f = add(c, fixture('sheer', shape='line', drop_ft=3))
+        m = post(c, {'op': 'update_effect_fixture', 'id': f['id'], 'change': {'type': 'waterfall'}})
+        assert m['effect_fixtures'][-1]['drop_ft'] == 3
+
+
 def test_entity_domains_and_sensor_range():
     for domain in ('switch', 'light', 'input_boolean', 'fan'):
         assert effects.validate(fixture(entity=domain + '.pump'))['entity'] == domain + '.pump'

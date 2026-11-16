@@ -4,18 +4,34 @@ export const EFFECT_TYPES = Object.freeze({
   fountain: { label: 'Fountain jet', shapes: ['point'], size_min: 1, size_max: 6 },
   bubbler: { label: 'Bubbler', shapes: ['point'], size_min: .3, size_max: 1.5 },
   fire: { label: 'Fire', shapes: ['point', 'line'], size_min: .5, size_max: 2 },
+  spa_jet: { label: 'Spa jet', shapes: ['point'], size_min: .5, size_max: 2.5 },
+  steam: { label: 'Steam', shapes: ['point'], size_min: 1, size_max: 4 },
+  sheer: { label: 'Sheer descent', shapes: ['line'], size_min: .5, size_max: 3 },
+  deck_jet: { label: 'Deck jet', shapes: ['point'], size_min: 2, size_max: 8 },
+  mist: { label: 'Mist', shapes: ['point', 'line'], size_min: 1, size_max: 6 },
 });
 
 const clamp = value => Math.max(0, Math.min(1, value));
 const finite = value => typeof value === 'number' && Number.isFinite(value);
-const numericState = row => {
-  const value = row?.state;
+const numeric = value => {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
   if (typeof value === 'string' && !value.trim()) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
-const available = (row, stale) => !!row && !stale && !row.stale && row.reachable !== false;
+const available = (row, stale) => !!row && !stale && !row.stale && row.reachable !== false && !['unavailable', 'unknown'].includes(row.state);
+function switchedOn(entity, row, stale) {
+  if (!available(row, stale) || ['unavailable', 'unknown', null, undefined].includes(row.state)) return false;
+  const domain = entity.split('.')[0], attrs = row.attributes || {};
+  const current = numeric(attrs.current_temperature), target = numeric(attrs.temperature);
+  if (domain === 'climate') {
+    if (attrs.hvac_action != null) return ['heating', 'preheating'].includes(attrs.hvac_action);
+    const setpoint = target ?? numeric(attrs.target_temp_low);
+    return ['heat', 'heat_cool', 'auto'].includes(row.state) && current !== null && setpoint !== null && current < setpoint;
+  }
+  if (domain === 'water_heater') return row.state !== 'off' && (current === null || target === null || current < target);
+  return row.state === 'on';
+}
 const sizeAt = (fixture, t) => {
   const defaults = EFFECT_TYPES[fixture.type] || EFFECT_TYPES.fountain;
   const min = finite(fixture.size_min) ? fixture.size_min : defaults.size_min;
@@ -26,13 +42,13 @@ const sizeAt = (fixture, t) => {
 export function effectTarget(fixture, states = {}, stale = false) {
   const strength = finite(fixture.strength) ? clamp(fixture.strength) : 1;
   const row = states?.[fixture.sensor];
-  const value = available(row, stale) ? numericState(row) : null;
+  const value = available(row, stale) ? numeric(fixture.sensor_attribute ? row.attributes?.[fixture.sensor_attribute] : row.state) : null;
   const range = fixture.sensor_max - fixture.sensor_min;
   const hasValue = !!fixture.sensor && value !== null && finite(fixture.sensor_min)
     && finite(fixture.sensor_max) && range !== 0;
   const t = hasValue ? clamp((value - fixture.sensor_min) / range) : strength;
   const switchRow = states?.[fixture.entity];
-  const active = fixture.entity ? available(switchRow, stale) && switchRow.state === 'on'
+  const active = fixture.entity ? switchedOn(fixture.entity, switchRow, stale)
     : fixture.sensor ? hasValue && t > 0 : true;
   return { active: !!active, t, size: sizeAt(fixture, t) };
 }

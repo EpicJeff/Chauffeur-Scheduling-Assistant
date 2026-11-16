@@ -37,7 +37,7 @@ async function change(s,label,value){
 async function place(s,x,y=10){s.editor.pointerDown(evt(x,y));await s.editor.pointerUp(evt(x,y));}
 await test('add_point_uses_choice_and_existing_surface_placement',async()=>{
  const s=setup();try{s.choices.push('fountain');await s.editor.addEffect('switch.pump');assert.equal(s.editor.active(),true);
- assert.deepEqual(s.prompts[0][2].map(o=>o.value),['waterfall','fountain','bubbler','fire']);
+ assert.deepEqual(s.prompts[0][2].map(o=>o.value),['waterfall','fountain','bubbler','fire','spa_jet','steam','sheer','deck_jet','mist']);
  await place(s,10,12);assert.deepEqual(s.sent,[{op:'add_effect_fixture',fixture:{type:'fountain',shape:'point',ref:'ground',at:[10,12,0],entity:'switch.pump'}}]);
  }finally{s.signal.abort();}
 });
@@ -131,6 +131,45 @@ await test('effect_pick_opens_its_card_and_read_only_blocks_placement',async()=>
  const e=evt((v.x+1)*720,(1-v.y)*450);assert.equal(s.editor.pointerDown(e),true);await s.editor.pointerUp(e);
  assert.ok(s.card().querySelector('[data-effect-id]'));s.lock();s.editor.refresh();
  assert.ok(s.card().querySelectorAll('input,select').every(field=>field.disabled));s.choices.push('fountain');await s.editor.addEffect();assert.equal(s.editor.active(),false);assert.equal(s.sent.length,0);
+ }finally{s.signal.abort();}
+});
+await test('new_type_placement_and_mist_shapes_keep_one_op_and_heater_link',async()=>{
+ for(const [type,shape] of [['spa_jet','point'],['steam','point'],['sheer','line'],['deck_jet','point'],['mist','point'],['mist','line']]){
+  const s=setup();try{s.choices.push(type,...(type==='mist'?[shape]:[]));await s.editor.addEffect('climate.spa');await place(s,10);
+   if(shape==='line'){await place(s,20);await fire(document,'keydown',{key:'Enter'});await settle();}
+   assert.equal(s.sent.length,1);assert.equal(s.sent[0].fixture.type,type);assert.equal(s.sent[0].fixture.shape,shape);assert.equal(s.sent[0].fixture.entity,'climate.spa');
+  }finally{s.signal.abort();}
+ }
+});
+await test('type_list_is_shape_specific_and_sheer_has_drop',async()=>{
+ for(const shape of ['point','line']){const s=setup([{...base(),type:shape==='line'?'sheer':'steam',shape,...(shape==='line'?{path:[[10,10,3],[20,10,3]],at:undefined}:{})}]);
+  try{s.editor.showEffect(id);const types=s.card().querySelector('[aria-label="Type"]').querySelectorAll('option').map(n=>n.value);
+   assert.deepEqual(types,shape==='point'?['fountain','bubbler','fire','spa_jet','steam','deck_jet','mist']:['waterfall','fire','sheer','mist']);
+   assert.ok(s.card().querySelector('[aria-label="Attribute"]'));assert.equal(s.card().querySelector('[aria-label="Attribute"]').value,'');
+   if(shape==='line'){await change(s,'Drop (ft)',2);assert.deepEqual(s.sent.at(-1).change,{drop_ft:2});}
+  }finally{s.signal.abort();}
+ }
+});
+await test('attribute_box_suggests_only_numeric_values_and_saves_one_op',async()=>{
+ const s=setup([{...base(),sensor:'climate.spa',sensor_attribute:'current_temperature',sensor_min:70,sensor_max:100}]);
+ try{globalThis.fetch=async url=>({ok:true,json:async()=>url.endsWith('card/states')?{states:{'climate.spa':{attributes:{current_temperature:85,temperature:'100',friendly_name:'Spa',empty:'',flag:true,options:[],missing:null}}}}:[]});
+  s.editor.showEffect(id);await settle();const input=s.card().querySelector('[aria-label="Attribute"]');
+  assert.equal(input.value,'current_temperature');assert.equal(input.disabled,false);
+  assert.deepEqual(input.parentElement.querySelectorAll('option').map(n=>n.value),['current_temperature','temperature']);
+  await change(s,'Attribute','temperature');assert.deepEqual(s.sent,[{op:'update_effect_fixture',id,change:{sensor_attribute:'temperature'}}]);
+ }finally{s.signal.abort();}
+});
+await test('no_ha_attribute_text_and_extended_sensor_link_are_atomic',async()=>{
+ const s=setup([base()]);try{const answers=['percentage','0','100'];window.promptInput=async()=>answers.shift();s.editor.showEffect(id);
+  await change(s,'Sensor','fan.spa');assert.deepEqual(s.sent,[{op:'update_effect_fixture',id,change:{sensor:'fan.spa',sensor_min:0,sensor_max:100,sensor_attribute:'percentage'}}]);
+  Object.assign(s.plan.effect_fixtures[0],s.sent[0].change);s.editor.refresh();await settle();
+  assert.equal(s.card().querySelector('[aria-label="Attribute"]').disabled,false);
+  await change(s,'Attribute','custom_value');assert.equal(s.sent.length,2);assert.deepEqual(s.sent[1].change,{sensor_attribute:'custom_value'});
+ }finally{s.signal.abort();}
+});
+await test('spa_jet_off_water_card_explains_and_heater_device_opens_card',async()=>{
+ const s=setup([{...base(),type:'spa_jet',entity:'water_heater.spa'}]);try{s.editor.showDevice({device_id:'spa',entity_id:'water_heater.spa',name:'Spa heater'});
+  assert.ok(textOf(s.card()).includes('Spa jet needs pool or spa water within 3 ft.'));assert.ok(byText(s.card(),'Add effect'));
  }finally{s.signal.abort();}
 });
 finish();

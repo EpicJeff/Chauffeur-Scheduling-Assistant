@@ -1,5 +1,6 @@
 """Execute the production effect driver in Node without a browser or Three.js."""
 import shutil
+import json
 import subprocess
 import sys
 import uuid
@@ -16,7 +17,59 @@ const {effectTarget,createEffectDriver,EFFECT_TYPES}=await import(pathToFileURL(
 const checks=[],test=(name,fn)=>checks.push([name,fn]);
 const close=(a,b)=>assert.ok(Math.abs(a-b)<1e-10,`${a} != ${b}`);
 const fixture={type:'fountain',sensor:'sensor.rpm',sensor_min:1000,sensor_max:3450};
+const pythonTypes=JSON.parse(process.argv[3]);
+test('python_and_js_type_shapes_and_sizes_match',()=>{
+ assert.deepEqual(Object.keys(EFFECT_TYPES),Object.keys(pythonTypes));
+ for(const [id,row] of Object.entries(pythonTypes)){
+  assert.deepEqual(EFFECT_TYPES[id].shapes,row.shapes);assert.equal(EFFECT_TYPES[id].size_min,row.size[0]);assert.equal(EFFECT_TYPES[id].size_max,row.size[1]);
+ }
+});
 const states=(value,switchState='on')=>({'sensor.rpm':{state:value},'switch.pump':{state:switchState}});
+test('every_switch_domain_and_heater_branch',()=>{
+ const active=(domain,state,attributes={},extra={},stale=false)=>effectTarget({type:'steam',entity:domain+'.heater'},{[domain+'.heater']:{state,attributes,...extra}},stale).active;
+ for(const domain of ['switch','light','input_boolean','fan','binary_sensor']){
+  assert.equal(active(domain,'on'),true);for(const state of ['off','unknown','unavailable'])assert.equal(active(domain,state),false);
+ }
+ for(const action of ['heating','preheating'])assert.equal(active('climate','heat',{hvac_action:action}),true);
+ for(const action of ['idle','cooling','off','drying','fan',''])assert.equal(active('climate','heat',{hvac_action:action,current_temperature:60,temperature:80}),false);
+ for(const mode of ['heat','heat_cool','auto']){
+  assert.equal(active('climate',mode,{current_temperature:'70',temperature:'80'}),true);
+  assert.equal(active('climate',mode,{current_temperature:80,temperature:80}),false);
+  assert.equal(active('climate',mode,{current_temperature:81,temperature:80}),false);
+ }
+ assert.equal(active('climate','heat_cool',{current_temperature:70,target_temp_low:75}),true);
+ for(const mode of ['off','cool','dry','fan_only'])assert.equal(active('climate',mode,{current_temperature:60,temperature:80}),false);
+ for(const attrs of [{},{current_temperature:60},{temperature:80},{current_temperature:'unknown',temperature:80}])assert.equal(active('climate','heat',attrs),false);
+ for(const state of ['on','heat_pump','electric','eco']){
+  assert.equal(active('water_heater',state),true);assert.equal(active('water_heater',state,{current_temperature:70,temperature:80}),true);
+  assert.equal(active('water_heater',state,{current_temperature:80,temperature:80}),false);
+  assert.equal(active('water_heater',state,{current_temperature:90,temperature:80}),false);
+  assert.equal(active('water_heater',state,{current_temperature:70}),true);
+  assert.equal(active('water_heater',state,{temperature:80}),true);
+ }
+ assert.equal(active('water_heater','off',{current_temperature:60,temperature:80}),false);
+ for(const domain of ['climate','water_heater']){
+  const attrs={hvac_action:'heating',current_temperature:60,temperature:80};
+  for(const state of ['unavailable','unknown',null,undefined])assert.equal(active(domain,state,attrs),false);
+  for(const extra of [{stale:true},{reachable:false}])assert.equal(active(domain,'heat',attrs,extra),false);
+  assert.equal(active(domain,'heat',attrs,{},true),false);
+  assert.equal(effectTarget({type:'steam',entity:domain+'.missing'}).active,false);
+ }
+});
+test('attribute_reads_and_missing_or_non_numeric_fall_back_to_level',()=>{
+ for(const domain of ['sensor','number','input_number','fan','climate','water_heater','light','cover','valve']){
+  const f={type:'steam',sensor:domain+'.water',sensor_attribute:'current_temperature',sensor_min:70,sensor_max:100,strength:.2};
+  const row=attributes=>({[f.sensor]:{state:'on',attributes}});
+  assert.equal(effectTarget(f,row({current_temperature:85})).t,.5);assert.equal(effectTarget(f,row({current_temperature:'85'})).active,true);
+  assert.equal(effectTarget(f,row({current_temperature:70})).active,false);
+  for(const value of [undefined,null,true,false,'',' ',[],{},'unknown','unavailable',Infinity]){
+   const states=row({current_temperature:value}),out=effectTarget(f,states);assert.equal(out.t,.2);assert.equal(out.active,false);
+   assert.equal(effectTarget({...f,entity:'switch.pump'},{...states,'switch.pump':{state:'on'}}).active,true);
+  }
+  assert.equal(effectTarget(f,row({current_temperature:90}),true).t,.2);
+  for(const state of ['unknown','unavailable'])assert.equal(effectTarget(f,{[f.sensor]:{state,attributes:{current_temperature:90}}}).t,.2);
+ }
+});
 test('normalisation_example_is_exact',()=>{
   const out=effectTarget(fixture,states('2225'));assert.equal(out.t,.5);assert.equal(out.size,3.5);assert.equal(out.active,true);
 });
@@ -101,6 +154,8 @@ console.log(`${passed}/${checks.length} passed`);process.exit(passed===checks.le
 
 
 def run():
+    sys.path.insert(0, str(ROOT))
+    from services.twin_effect_fixtures import TYPES
     node = shutil.which('node')
     assert node, 'Node is required'
     scratch = ROOT / '.tmp-effects'
@@ -108,7 +163,7 @@ def run():
     script = scratch / ('effect-driver-' + uuid.uuid4().hex + '.mjs')
     try:
         script.write_text(DRIVER, encoding='utf-8')
-        result = subprocess.run([node, str(script), str(ROOT / 'static/twin/effects/driver.js')],
+        result = subprocess.run([node, str(script), str(ROOT / 'static/twin/effects/driver.js'), json.dumps(TYPES)],
                                 capture_output=True, text=True, encoding='utf-8', timeout=30)
         print(result.stdout, end='')
         if result.returncode:

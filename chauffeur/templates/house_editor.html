@@ -54,7 +54,7 @@
     {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_geometry', 'live/solar_conduit', 'live/solar_conduit_core', 'live/solar_conduit_worker', 'live/energy_mapping', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
-    {% for name in ['twin_ceilings', 'editor/house_materials', 'effects/index', 'effects/driver', 'effects/water_material', 'effects/water_ripples', 'effects/waterfall', 'effects/fountain', 'effects/bubbler', 'effects/fire'] %}
+    {% for name in ['twin_ceilings', 'editor/house_materials', 'effects/index', 'effects/driver', 'effects/water_material', 'effects/water_ripples', 'effects/waterfall', 'effects/fountain', 'effects/bubbler', 'effects/fire', 'effects/spa_jet', 'effects/vapour', 'effects/sheer', 'effects/deck_jet', 'effects/laminar'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     imports[new URL(window.chfBase + 'static/twin/editor/flags.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/flags.js' | ver | tojson }};
