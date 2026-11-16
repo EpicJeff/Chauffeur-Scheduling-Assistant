@@ -2,11 +2,11 @@ import { roomFloor } from '../twin_floors.js';
 import * as THREE from 'three';
 import { FT, polygon, contains, stairHoles } from '../twin_generator.js';
 export { lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
-import { buildingGround } from '../twin_ground.js';
+import { buildingGround, groundAt } from '../twin_ground.js';
 import { lightColor, createRealLights, paletteLineEntities } from './real_lights.js';
 import { resolveEmitters, emission, fireEffectEmitters } from './emitters.js';
 import { createFixtureGlow } from './fixture_glow.js';
-import { registerClimate, roomClimate } from './climate.js';
+import { registerClimate, resolveClimateZones, climateRoomKey, climateColors } from './climate.js';
 import { registerEnergy } from './energy.js';
 import { registerSecurity } from './security.js';
 import { svgIcon } from './glance_icons.js';
@@ -20,7 +20,7 @@ export const modeForeground = (id, row, state) => registry.get(id)?.foreground?.
 export const modeShows = (mode, id) => mode === id || mode === 'all';
 const MODE_ICONS = {all: 'layers', lights: 'lightbulb', climate: 'thermometer', energy: 'zap', security: 'shield'};
 
-// All is every visualization at once: lit rooms, temperature tint, energy ribbons, security
+// All is every visualization at once: lit rooms, active HVAC, energy ribbons, security
 // emphasis and camera cones (user, 2026-11-12). It is registered first so its icon leads.
 registerMode({id: 'all', label: 'All', icon: 'layers',
   enter: ({lighting}) => lighting(true), update() {}, leave: ({lighting}) => lighting(false)});
@@ -85,7 +85,11 @@ export function mountModes(view, live) {
   const context = {view, live, warm, overlays, lighting(on) { view.setLiveLamps?.(on); rig.show(on); }};
   for (const definition of modes()) if (definition.mount) effects.set(definition.id, definition.mount(context));
   registry.get(mode).enter(context);
-  const climateDevices = layout.devices || layout.markers;
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+  const lowTier = view.tier?.id === 'low' || view.tier === 'low';
+  const washOpacity = () => lowTier || reducedMotion?.matches
+    ? .72 : .65 + .15 * Math.sin(performance.now() * 2 * Math.PI / 3000);
+  const breathing = [];
   // Placement, vertical references and mounting offsets have one owner.
   // A small shared low-poly bulb adds no shadow draw calls.
   const bulbGeometry = new THREE.SphereGeometry(.1, 8, 6);
@@ -154,25 +158,33 @@ export function mountModes(view, live) {
   }
   // Use the generator's slab shape, stair holes and building transform. Overlaying the
   // floor keeps shared/merged house materials intact and costs one draw per room.
-  for (const room of layout.rooms.filter(room => room.area_id)) {
+  for (const room of layout.rooms.filter(room => room.state !== 'ghost')) {
     const building = view.plan.buildings.find(b => b.id === room.building);
-    const planRoom = building?.rooms?.find(r => r.id === room.room);
-    const level = building?.levels.find(l => l.id === room.level);
-    const parent = view.groups.levels[`${room.building}:${room.level}`];
-    if (!planRoom?.polygon?.length || !level || !parent) continue;
-    const cuts = stairHoles(building, level).filter(h => h.every(p => contains(planRoom.polygon, p)));
+    const planRoom = room.yard ? view.plan.site?.yard_rooms?.find(r => r.id === room.room) : building?.rooms?.find(r => r.id === room.room);
+    const level = room.yard ? {elevation: 0} : building?.levels.find(l => l.id === room.level);
+    const parent = room.yard ? view.groups.site : view.groups.levels[`${room.building}:${room.level}`];
+    if (!planRoom?.polygon?.length || planRoom.state === 'ghost' || !level || !parent) continue;
+    const cuts = room.yard ? [] : stairHoles(building, level).filter(h => h.every(p => contains(planRoom.polygon, p)));
     const material = new THREE.MeshBasicMaterial({ color: '#fff1c9', transparent: true, opacity: 0,
       depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(polygon(planRoom.polygon, roomFloor(level, planRoom) + .035, roomFloor(level, planRoom) + .035, cuts), material);
+    if (room.yard) {
+      const points = mesh.geometry.attributes.position;
+      for (let i = 0; i < points.count; i++) points.setY(i, points.getY(i) + groundAt(view.plan, points.getX(i), -points.getZ(i)));
+    }
     mesh.userData.lightWash = { building: room.building, room: room.room };
+    // The merged floor under it sorts as transparent, and by distance it can draw
+    // after the wash and cover it. A later order keeps the wash on top of its floor.
+    mesh.renderOrder = 2;
     const group = new THREE.Group(); group.scale.setScalar(FT);
-    const position = building.position || [0, 0];
-    group.position.set(position[0] * FT, ((building.base || 0) + buildingGround(view.plan, building)) * FT, -position[1] * FT);
-    group.rotation.y = (building.rotation || 0) * Math.PI / 180;
+    const position = building?.position || [0, 0];
+    group.position.set(position[0] * FT, (building ? (building.base || 0) + buildingGround(view.plan, building) : 0) * FT, -position[1] * FT);
+    group.rotation.y = (building?.rotation || 0) * Math.PI / 180;
     group.visible = false;
     const label = document.createElement('span'); label.hidden = true; climateLabels.append(label);
     const centre = planRoom.polygon.reduce((sum, p) => [sum[0] + p[0], sum[1] + p[1]], [0, 0]).map(v => v / planRoom.polygon.length);
     const point = new THREE.Vector3(centre[0], roomFloor(level, planRoom) + .1, -centre[1]);
+    if (room.yard) point.y += groundAt(view.plan, ...centre);
     group.add(mesh); view.scene.add(group); floors.push({ room, mesh, group, parent, label, point });
   }
   // Compile Lights mode's shader programs now, with the pool, bulbs and washes
@@ -232,7 +244,8 @@ export function mountModes(view, live) {
       }
     }
     revision++;
-    for (const floor of floors) floor.climate = roomClimate(floor.room, climateDevices, stale ? {} : states);
+    const zones = resolveClimateZones(layout, states, stale);
+    for (const floor of floors) floor.climate = zones.get(climateRoomKey(floor.room));
     for (const effect of effects.values()) effect.update?.(mode);
     legendText.textContent = effects.get(mode)?.legend?.() || registry.get(mode)?.legend || '';
     const content = effects.get(mode)?.legendContent?.();
@@ -271,10 +284,15 @@ export function mountModes(view, live) {
         const p = floor.group.localToWorld(floor.point.clone()).project(view.camera);
         const rect = view.renderer3.domElement.getBoundingClientRect();
         floor.label.hidden = p.z < -1 || p.z > 1;
-        floor.label.textContent = `${floor.room.name || ''} ${floor.climate.label}`;
+        floor.label.textContent = floor.climate.label;
         floor.label.style.left = `${rect.left + (p.x + 1) * rect.width / 2}px`;
         floor.label.style.top = `${rect.top + (1 - p.y) * rect.height / 2}px`;
       }
+    }
+    // Breathing only changes shown wash materials; lamp selection and bake stay cached.
+    if (!lowTier && breathing.length) {
+      const opacity = washOpacity();
+      for (const floor of breathing) if (floor.group.visible && floor.parent.visible) floor.mesh.material.opacity = opacity;
     }
     if (key === lastKey) return;
     lastKey = key;
@@ -311,18 +329,19 @@ export function mountModes(view, live) {
       }
     }
     for (const [id, tint] of bakeTints) view.bake?.light(id, tint.rgb, tint.intensity);
+    breathing.length = 0;
     for (const floor of floors) {
       const { room, mesh, group, parent } = floor;
       const overflow = candidates.filter(lamp => (!lamp.emitter || lamp.emitter.legacy) && !selected.has(lamp.device) && !fresh.has(lamp.device) &&
         lamp.marker.building === room.building && lamp.marker.room === room.room);
       const legacy = legacyRooms.find(row => row.building === room.building && row.room === room.room);
       const glow = realLighting ? (overflow.length ? overflow.reduce((sum, lamp) => sum + lamp.intensity, 0) / overflow.length : 0) : legacy?.glow || 0;
-      // In All a room with a temperature reading carries the tint; any other room glows as in
-      // Lights. Light also shows through the real lights, the bake and the bulbs.
-      const tint = mode === 'climate' || mode === 'all' && !!floor.climate?.label;
+      const active = ['heat', 'cool'].includes(floor.climate?.action);
+      const tint = modeShows(mode, 'climate') && (active || mode === 'climate' && floor.climate?.action === 'idle');
       group.visible = parent.visible && (tint || modeShows(mode, 'lights') && glow > 0);
-      mesh.material.opacity = tint ? .72 : glow * .85;
-      const rgb = tint ? floor.climate.rgb : (realLighting ? overflow[0]?.rgb : legacy?.rgb) || [255, 241, 201];
+      mesh.material.opacity = tint ? active ? washOpacity() : .35 : glow * .85;
+      if (tint && active && group.visible) breathing.push(floor);
+      const rgb = tint ? climateColors[floor.climate.action] : (realLighting ? overflow[0]?.rgb : legacy?.rgb) || [255, 241, 201];
       mesh.material.color.setRGB(...rgb.map(value => value / 255), THREE.SRGBColorSpace);
     }
   }

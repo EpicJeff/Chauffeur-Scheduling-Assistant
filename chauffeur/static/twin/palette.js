@@ -42,6 +42,10 @@ export function climateModeColor(mode) {
     dry: twinDry, fan_only: twinDry}[mode] || twinText;
 }
 
+export const climateHeat = [240, 120, 40];
+export const climateCool = [65, 143, 232];
+export const climateIdle = [145, 153, 151];
+
 export function markerOnColor(kind, state = {}, look, entityId = '') {
   const attrs = state?.attributes || {}, value = state?.state;
   const domain = entityId.split('.')[0] || kind;

@@ -1,4 +1,7 @@
 import { svgIcon } from '../live/glance_icons.js';
+import { climateThermostats, climateZone } from '../live/climate.js';
+import { hostPoint } from '../twin_hosts.js';
+import { inPolygon } from '../twin_ground.js';
 
 const noHa = 'Home Assistant is not connected, so areas and devices are hidden.';
 const goneArea = "This room's Home Assistant area is gone; pick another.";
@@ -145,14 +148,92 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
       label.append(input); words.append(label);
     }
     row.addEventListener('pointerdown', event => {
+      if (event.target?.closest?.('input, select, button, label, summary')) return;
       if (event.pointerType !== 'mouse' && !event.target?.closest?.('.editor-device-grip')) return;
       placement?.startDrag(event, device);
     }, { signal });
     row.append(grip);
     if (device.kind === 'camera') row.append(svgIcon('camera', 'currentColor'));
     row.append(words, actions);
+    if (device.kind === 'climate') row.append(servesField(device, room));
     placement?.drawFixtures?.(actions, device);
     return row;
+  }
+
+  function thermostats() {
+    const plan = getPlan?.() || {}, devices = latest?.devices || [];
+    const markers = devices.map(device => {
+      for (const building of plan.buildings || []) {
+        const piece = [...(building.anchors || []), ...(building.devices || [])].find(p => p.device === device.device_id);
+        if (!piece) continue;
+        let host = piece.host || {};
+        if (host.opening) {
+          const opening = building.openings?.find(o => o.id === host.opening);
+          if (opening) host = {wall: opening.wall || opening.host?.wall, at: opening.at ?? opening.host?.at, z: 3.5};
+        }
+        let room = building.rooms?.find(r => r.id === (host.floor || host.ceiling));
+        const surface = room || building.walls?.find(w => w.id === host.wall);
+        try {
+          const point = hostPoint(building, host);
+          room ||= building.rooms?.find(r => r.level === surface?.level && inPolygon(r.polygon || [], ...point.slice(0, 2)));
+        } catch { /* a lost host still keeps its saved zone */ }
+        if (!room && host.wall) room = building.rooms?.find(r => (r.joints || []).includes(surface?.joints?.[0]) && (r.joints || []).includes(surface?.joints?.[1]));
+        return {...device, placed: true, building: building.id, level: room?.level || surface?.level, room: room?.id};
+      }
+      const yard = plan.site?.devices?.find(p => p.device === device.device_id);
+      if (yard) return {...device, placed: true, building: null, level: null, room: yard.host?.yard_room, yard: true};
+      return {...device, placed: false, ...device.auto};
+    });
+    return climateThermostats({devices, markers});
+  }
+
+  function servesField(device, room) {
+    const section = element('div'); section.className = 'editor-climate-zone';
+    const plan = getPlan?.() || {}, rows = thermostats();
+    const thermostat = rows.find(t => t.entity === device.entity_id) || {entity: device.entity_id};
+    let zone = climateZone(thermostat, rows, plan.climate_zones);
+    const building = plan.buildings?.find(b => b.id === (thermostat.building || room?.building));
+    const choices = choosable(building), own = thermostat.placed ? thermostat.room : null;
+    if (zone.area) zone.rooms = choices.filter(c => c.room.ha_area === device.area_id).map(c => c.room.id);
+    const label = element('label', 'Serves'), select = element('select'), list = element('fieldset');
+    const names = {house: 'Whole house', floor: 'Whole floor', rooms: 'These rooms'};
+    for (const [value, name] of Object.entries(names)) {
+      const option = element('option', name + (zone.default && value === zone.scope ? ' (default)' : ''));
+      option.value = value; select.append(option);
+    }
+    select.value = zone.scope; select.disabled = !canEdit(); select.setAttribute('aria-label', 'Serves');
+    select.dataset.haFocus = `serves:${device.entity_id}`;
+    const save = () => onCommit({op: 'set_climate_zone', entity: device.entity_id,
+      scope: zone.scope, rooms: zone.rooms || [], except: zone.except || []});
+    const drawRooms = () => {
+      const key = zone.scope === 'rooms' ? 'rooms' : 'except';
+      list.replaceChildren(element('legend', key === 'rooms' ? 'Rooms' : 'Except'));
+      for (const choice of choices) {
+        const line = element('label', choice.label), input = element('input'); input.type = 'checkbox';
+        const locked = key === 'rooms' && choice.room.id === own;
+        input.checked = locked || !!zone[key]?.includes(choice.room.id);
+        input.disabled = locked || !canEdit();
+        if (locked) input.dataset.fixtureLocked = '';
+        input.dataset.haFocus = `${key}:${device.entity_id}:${choice.room.id}`;
+        input.setAttribute('aria-label', choice.label);
+        listen(input, 'change', async () => {
+          if (!canEdit() || locked) return;
+          const ids = new Set(zone[key] || []);
+          input.checked ? ids.add(choice.room.id) : ids.delete(choice.room.id);
+          zone[key] = [...ids]; await save();
+        });
+        line.append(input); list.append(line);
+      }
+    };
+    listen(select, 'change', async () => {
+      if (!canEdit()) return;
+      zone = {...zone, scope: select.value, default: false}; drawRooms(); await save();
+    });
+    label.append(select); section.append(label, list); drawRooms();
+    if (!zone.default) section.append(button('Use default', () => {
+      if (canEdit()) return onCommit({op: 'set_climate_zone', entity: device.entity_id, scope: null});
+    }, `default:${device.entity_id}`));
+    return section;
   }
 
   function devicesSection(room, area, notes) {
@@ -230,7 +311,15 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     const section = element('section');
     section.dataset.haRoom = `${room.building}|${room.id}`;
     if (!latest) return section;
-    if (!latest.available) { section.append(element('p', noHa)); return section; }
+    if (!latest.available) {
+      section.append(element('p', noHa));
+      // Saved entity settings remain editable even while the HA catalogue is away.
+      for (const entity of Object.keys(getPlan?.()?.climate_zones || {})) {
+        const device = latest.devices?.find(d => d.entity_id === entity) || {entity_id: entity, name: entity, kind: 'climate'};
+        section.append(element('p', device.name), servesField(device, room));
+      }
+      return section;
+    }
     const { row, value, selected, known } = chosen(room);
     const areas = latest.areas || [];
     const label = element('label', 'Home Assistant area'), select = element('select');
@@ -315,7 +404,9 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
   function key({ kind, piece, building }) {
     if (!latest) return 'none';
     const plan = getPlan?.();
-    const base = [kind, building?.id, piece?.id, latest.available, canEdit(), !!placement, plan?.light_fixtures, plan?.light_fixtures_meta, plan?.camera_views];
+    const base = [kind, building?.id, piece?.id, latest.available, canEdit(), !!placement, plan?.light_fixtures, plan?.light_fixtures_meta, plan?.camera_views,
+      plan?.climate_zones, thermostats().map(t => [t.entity, t.placed, t.building, t.level, t.room]),
+      (plan?.buildings || []).map(b => [b.id, choosable(b).map(c => [c.room.id, c.room.level, c.label])])];
     if (!latest.available) return JSON.stringify(base);
     if (kind === 'anchor') {
       const device = latest.devices?.find(d => d.device_id === piece.device);
@@ -344,7 +435,7 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
       : record.kind === 'anchor' ? anchorSection(record.piece) : buildingSection(record.building);
     const focused = document.activeElement, old = host.firstElementChild;
     const inside = focused && focused !== host && host.contains(focused) ? focused : null;
-    const kept = inside?.localName === 'select' && old?.dataset?.haRoom
+    const kept = inside?.localName === 'select' && inside.dataset.haFocus === 'area' && old?.dataset?.haRoom
       && old.dataset.haRoom === fresh.dataset?.haRoom ? inside.closest('label') : null;
     const freshLabel = kept && fresh.querySelector('label');
     if (kept && freshLabel) {
@@ -355,7 +446,7 @@ export function createHaLink({ api, onCommit, signal, getPlan, canEdit = () => t
     } else {
       host.replaceChildren(fresh);
       const name = inside?.dataset?.haFocus;
-      if (name) [...host.querySelectorAll('select, button')].find(n => n.dataset.haFocus === name)?.focus();
+      if (name) [...host.querySelectorAll('input, select, button')].find(n => n.dataset.haFocus === name)?.focus();
     }
     host.querySelectorAll('input, select, button').forEach(node => { node.disabled = node.dataset.fixtureLocked !== undefined || !canEdit() && node.dataset.fixtureBrowse === undefined; });
     return true;

@@ -16,7 +16,7 @@ DEFAULT_OUTPUT_LM = 503
 MAX_FIXTURES = 64
 MAX_OUTPUT_LM = 1e6
 MAX_SHARE = 1e6
-OPS = ('add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output', 'set_camera_view')
+OPS = ('add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output', 'set_camera_view', 'set_climate_zone')
 _SHAPES = {
     'point': {'at'},
     'spot': {'at', 'aim', 'cone_deg', 'softness'},
@@ -395,6 +395,22 @@ def _resolve(model, f):
 
 def normalize(model, notes):
     """Drop structurally invalid fixtures; retain context orphans with reasons."""
+    if 'climate_zones' in model:
+        kept = {}
+        raw = model['climate_zones']
+        if not isinstance(raw, dict):
+            notes.append('Dropped invalid climate_zones; expected an entity map.')
+            raw = {}
+        ids = {r['id'] for b in model.get('buildings', []) for r in b.get('rooms', [])}
+        ids.update(r['id'] for r in model.get('site', {}).get('yard_rooms', []))
+        for entity, value in raw.items():
+            try:
+                zone = validate_climate_zone(entity, value)
+                if zone is not None:
+                    kept[entity] = {**zone, **{key: [r for r in zone[key] if r in ids] for key in ('rooms', 'except')}}
+            except ValueError as exc:
+                notes.append(f'Dropped climate zone for {entity}: {exc}')
+        model['climate_zones'] = kept
     if 'camera_views' in model:
         kept = {}
         raw = model['camera_views']
@@ -472,6 +488,7 @@ def live_layout(model):
     for entity in fixtures:
         meta.setdefault(entity, {'output_lm': DEFAULT_OUTPUT_LM})
     return {'light_fixtures': fixtures, 'light_fixtures_meta': meta, 'camera_views': deepcopy(model.get('camera_views', {})),
+            'climate_zones': deepcopy(model.get('climate_zones', {})),
             'light_fixtures_signatures': {eid: signature(eid, {'fixtures': rows, **meta[eid]}) for eid, rows in fixtures.items()}}
 
 
@@ -486,9 +503,34 @@ def validate_camera_view(entity, value):
     return {'aim': aim, 'fov_deg': _number(value.get('fov_deg', 90), 'field of view', 10, 160)}
 
 
+def validate_climate_zone(entity, value):
+    if not isinstance(entity, str) or not re.fullmatch(r'climate\.[a-z0-9_]+', entity):
+        raise ValueError('Choose a climate entity.')
+    if not isinstance(value, dict) or 'scope' not in value or set(value) - {'scope', 'rooms', 'except'}:
+        raise ValueError('Choose a climate scope, rooms and except list.')
+    if value['scope'] is not None and value['scope'] not in ('house', 'floor', 'rooms'):
+        raise ValueError('Choose house, floor or rooms.')
+    result = {'scope': value['scope']}
+    for key in ('rooms', 'except'):
+        rows = value.get(key, [])
+        if not isinstance(rows, list) or len(rows) > 64 or any(not isinstance(r, str) for r in rows):
+            raise ValueError('Choose at most 64 room ids per list.')
+        result[key] = list(dict.fromkeys(rows))
+    return result if value['scope'] is not None else None
+
+
 def apply_op(model, op):
     """Mutate the private editor model; validation errors abort its one round."""
     kind = op['op']
+    if kind == 'set_climate_zone':
+        entity = op.get('entity')
+        value = validate_climate_zone(entity, {key: op[key] for key in ('scope', 'rooms', 'except') if key in op})
+        zones = model.setdefault('climate_zones', {})
+        if value is None:
+            zones.pop(entity, None)
+        else:
+            zones[entity] = value
+        return 'Changed the climate zone.'
     if kind == 'set_camera_view':
         entity = op.get('entity_id')
         value = validate_camera_view(entity, op.get('view'))

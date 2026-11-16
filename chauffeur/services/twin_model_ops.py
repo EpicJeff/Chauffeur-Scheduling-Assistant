@@ -495,7 +495,7 @@ MORE_OPS = ('add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update
             'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation', 'set_porch_foundation',
             'add_pool_feature', 'update_pool_feature', 'delete_pool_feature',
             'add_effect_fixture', 'update_effect_fixture', 'delete_effect_fixture',
-            'add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output', 'set_camera_view')
+            'add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output', 'set_camera_view', 'set_climate_zone')
 
 
 def _item_scale(value):
