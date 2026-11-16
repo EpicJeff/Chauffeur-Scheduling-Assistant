@@ -58,6 +58,7 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onAddEffec
         return op({ op: 'update_light_fixture', entity_id, id: f.id, change: { at } });
       }), { locked: !canEdit() });
     }
+    if (['point','line'].includes(f.shape)) field(row, 'Offset (ft)', f.offset_ft ?? 0, v => change({ offset_ft: numeric(v, -50, 50) }), { locked: !canEdit(), low: -50, high: 50 });
     field(row, 'Share', f.share ?? '', v => change({ share: v.trim() ? numeric(v, 0, 1e6) : null }), { locked: !canEdit(), low: 0, high: 1e6 });
     row.append(element('p', 'Leave Share blank for automatic output sharing.'));
     if (f.shape === 'spot') {
@@ -91,13 +92,17 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onAddEffec
         }), !canEdit());
       } else {
         for (const [j, point] of f.path.entries()) for (const [i, name] of ['east','north','height'].entries()) field(row, `Point ${j + 1} ${name} (ft)`, point[i], v => save(() => {
-          const path = structuredClone(current().path); path[j][i] = numeric(v); return op({op:'update_light_fixture',entity_id,id:f.id,change:{path}});
+          const fixture = current(), path = structuredClone(fixture.path); path[j][i] = numeric(v);
+          const anchors = fixture.anchors?.map((anchor,k) => k === j ? null : anchor);
+          return op({op:'update_light_fixture',entity_id,id:f.id,change:{path,...(anchors ? {anchors} : {})}});
         }), {locked:!canEdit()});
         button(rowActions, 'Add path point', () => save(() => {
-          const path = structuredClone(current().path), a = path.at(-2), b = path.at(-1); path.push(b.map((v,i) => v + v - a[i]));
-          return op({op:'update_light_fixture',entity_id,id:f.id,change:{path}});
+          const fixture = current(), path = structuredClone(fixture.path), a = path.at(-2), b = path.at(-1); path.push(b.map((v,i) => v + v - a[i]));
+          return op({op:'update_light_fixture',entity_id,id:f.id,change:{path,...(fixture.anchors ? {anchors:[...fixture.anchors,null]} : {})}});
         }), !canEdit() || f.path.length >= 64);
-        button(rowActions, 'Remove last point', () => change({path:current().path.slice(0,-1)}), !canEdit() || f.path.length <= 2);
+        button(rowActions, 'Remove last point', () => save(() => {
+          const fixture = current(); return op({op:'update_light_fixture',entity_id,id:f.id,change:{path:fixture.path.slice(0,-1),...(fixture.anchors ? {anchors:fixture.anchors.slice(0,-1)} : {})}});
+        }), !canEdit() || f.path.length <= 2);
       }
       if (f.detached) row.append(element('p', `Detached: ${f.detached_reason || f.orphan_reason || 'this run no longer follows its edge.'} Reattach this run or keep its last path as drawn.`));
     }
@@ -181,12 +186,14 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   }
   const shapeTool = createLineFixtureTool({ view, getPlan, surface, canEdit, report, host: el('device-tools'), onDone: cancel,
     encode(fixture, hit) {
+      if (hit.snapped || fixture.anchors?.some(Boolean)) return {...fixture,ref:'absolute'};
       const context = hit.ground ? {ref:'ground'} : {ref:'floor',building:hit.building,level:hit.level};
       const local = p => [p[0],p[1],p[2] - height(context,p)];
       return {...fixture,...context,...(fixture.path ? {path:fixture.path.map(local)} : {at:local(fixture.at)})};
     },
     commit: (active, fixture) => {
       if (!canEdit()) return false;
+      if ((fixture.snap || fixture.shape !== 'line') && active.fixture?.anchors) fixture = {...fixture,anchors:null};
       if (active.effectType) return op(active.fixture
         ? { op: 'update_effect_fixture', id: active.fixture.id, change: effectFields(fixture) }
         : { op: 'add_effect_fixture', fixture: { ...effectFields(fixture), type: active.effectType, ...(active.entity_id ? { entity: active.entity_id } : {}) } });
@@ -375,12 +382,13 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       const kind = f.snap?.host.kind, building = ['wall','step'].includes(kind) && plan.buildings?.find(b => b[kind === 'wall' ? 'walls' : 'stairs']?.some(p => p.id === f.snap.host.id));
       const piece = building && building[kind === 'wall' ? 'walls' : 'stairs'].find(p => p.id === f.snap.host.id);
       const toAbsolute = p => [p[0],p[1],p[2] + fixtureReference(plan, f, p)];
+      const resolved = ['point','line'].includes(f.shape) ? resolveFixture(f, plan) : null;
       let mesh;
       if (f.shape === 'line' || f.shape === 'area') {
-        const points = f.shape === 'line' ? f.path.map(toAbsolute) : areaOutline({...f,at:toAbsolute(f.at)});
+        const points = f.shape === 'line' ? resolved.path : areaOutline({...f,at:toAbsolute(f.at)});
         mesh = fixtureStroke(points);
       } else {
-        const p = toAbsolute(at); mesh = new THREE.Mesh(new THREE.SphereGeometry(.12, 10, 6), new THREE.MeshBasicMaterial({ color: FIXTURE_COLOR, toneMapped: false }));
+        const p = resolved?.at || toAbsolute(at); mesh = new THREE.Mesh(new THREE.SphereGeometry(.12, 10, 6), new THREE.MeshBasicMaterial({ color: FIXTURE_COLOR, toneMapped: false }));
         mesh.position.set(p[0] * FT, p[2] * FT, -p[1] * FT);
       }
       mesh.renderOrder = 21;

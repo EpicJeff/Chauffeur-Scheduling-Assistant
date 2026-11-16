@@ -21,9 +21,9 @@ TYPES = {
 SWITCH_DOMAINS = ('switch', 'light', 'input_boolean', 'fan', 'binary_sensor', 'climate', 'water_heater')
 SENSOR_DOMAINS = ('sensor', 'number', 'input_number')
 ATTRIBUTE_DOMAINS = SENSOR_DOMAINS + ('fan', 'climate', 'water_heater', 'light', 'cover', 'valve')
-_COMMON = {'id', 'type', 'shape', 'ref', 'building', 'level', 'strength',
+_COMMON = {'id', 'type', 'shape', 'ref', 'building', 'level', 'strength', 'offset_ft',
            'entity', 'sensor', 'sensor_attribute', 'sensor_min', 'sensor_max', 'size_min', 'size_max', 'name'}
-_PLACEMENT = {'ref', 'building', 'level', 'at', 'path', 'snap', 'detached', 'facing'}
+_PLACEMENT = {'ref', 'building', 'level', 'at', 'path', 'snap', 'anchors', 'detached', 'facing', 'offset_ft'}
 
 
 def placement(fixture):
@@ -57,7 +57,7 @@ def validate(fixture):
     kind, shape = f['type'], f.get('shape')
     if shape not in TYPES[kind]['shapes']:
         raise ValueError('Choose ' + ' or '.join(TYPES[kind]['shapes']) + ' for ' + kind + '.')
-    allowed = _COMMON | ({'path', 'snap', 'detached', 'facing'} if shape == 'line' else {'at'})
+    allowed = _COMMON | ({'path', 'snap', 'anchors', 'detached', 'facing'} if shape == 'line' else {'at'})
     if kind in ('waterfall', 'sheer'):
         allowed.add('drop_ft')
     if set(f) - allowed:
@@ -156,11 +156,11 @@ def apply_op(model, op):
             raise ValueError('Choose effect fixture changes; the id stays fixed.')
         baseline = previous
         if 'shape' in change and change['shape'] != previous['shape']:
-            baseline = {k: v for k, v in previous.items() if k not in {'at', 'path', 'snap', 'detached', 'facing'}}
+            baseline = {k: v for k, v in previous.items() if k not in {'at', 'path', 'snap', 'anchors', 'detached', 'facing'}}
         if 'type' in change and change['type'] not in ('waterfall', 'sheer'):
             baseline = {k: v for k, v in baseline.items() if k != 'drop_ft'}
         candidate = {**baseline, **change}
-        for key in ('entity', 'sensor', 'sensor_attribute', 'drop_ft', 'name'):
+        for key in ('entity', 'sensor', 'sensor_attribute', 'drop_ft', 'name', 'anchors'):
             if key in change and change[key] is None:
                 candidate.pop(key, None)
                 if key == 'sensor':

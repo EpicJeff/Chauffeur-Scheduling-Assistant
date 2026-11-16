@@ -18,11 +18,14 @@ MAX_OUTPUT_LM = 1e6
 MAX_SHARE = 1e6
 OPS = ('add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output', 'set_camera_view', 'set_climate_zone')
 _SHAPES = {
-    'point': {'at'},
-    'spot': {'at', 'aim', 'cone_deg', 'softness'},
-    'line': {'path', 'snap', 'facing', 'width_in', 'detached'},
-    'area': {'at', 'size_ft', 'facing', 'rotation_deg'},
+    'point': {'at', 'offset_ft'},
+    'spot': {'at', 'aim', 'cone_deg', 'softness', 'offset_ft'},
+    'line': {'path', 'snap', 'anchors', 'facing', 'width_in', 'detached', 'offset_ft'},
+    'area': {'at', 'size_ft', 'facing', 'rotation_deg', 'offset_ft'},
 }
+_ANCHOR_KINDS = ('building', 'wall', 'roof', 'floor', 'room', 'porch', 'stair',
+                 'opening', 'item', 'fixture', 'light', 'anchor', 'solar_zone',
+                 'retaining_wall', 'terrace', 'hardscape', 'fence', 'pool', 'spa', 'ledge', 'steps')
 
 
 def _number(value, label, low=-1e5, high=1e5):
@@ -67,6 +70,26 @@ def _snap(value):
     return {'host': dict(host), 'edge': edge, 't0': t0, 't1': t1}
 
 
+def _anchors(value, path):
+    if not isinstance(value, list) or len(value) != len(path):
+        raise ValueError('Anchors must be a list with one entry per path point.')
+    result = []
+    for entry in value:
+        if entry is None:
+            result.append(None)
+            continue
+        if not isinstance(entry, dict) or set(entry) != {'host', 'local'}:
+            raise ValueError('An anchor needs a stable host and local coordinates.')
+        host = entry['host']
+        if (not isinstance(host, dict) or set(host) - {'kind', 'id', 'building'}
+                or host.get('kind') not in _ANCHOR_KINDS
+                or not isinstance(host.get('id'), str) or not host['id']
+                or 'building' in host and (not isinstance(host['building'], str) or not host['building'])):
+            raise ValueError('Choose a stable anchor host kind, id and optional building id.')
+        result.append({'host': dict(host), 'local': _vector(entry['local'], 3, 'Anchor local point')})
+    return result
+
+
 def validate(fixture):
     """Return a fresh canonical fixture, or raise ValueError for malformed data."""
     if not isinstance(fixture, dict) or not isinstance(fixture.get('shape'), str) or fixture['shape'] not in _SHAPES:
@@ -96,6 +119,8 @@ def validate(fixture):
         f.pop('level', None)
     if 'share' in f:
         _number(f['share'], 'share', 0, MAX_SHARE)
+    if 'offset_ft' in f:
+        f['offset_ft'] = _number(f['offset_ft'], 'vertical offset in feet', -50, 50)
     if shape != 'line':
         f['at'] = _vector(f.get('at'), 3, 'Position')
     if shape == 'spot':
@@ -111,6 +136,10 @@ def validate(fixture):
         f['path'] = [_vector(p, 3, 'Path point') for p in path]
         if any(math.dist(a, b) <= 1e-8 for a, b in zip(f['path'], f['path'][1:])):
             raise ValueError('Consecutive line points must differ.')
+        if 'anchors' in f:
+            if f.get('snap') is not None:
+                raise ValueError('Choose point anchors or a whole-edge snap, not both.')
+            f['anchors'] = _anchors(f['anchors'], f['path'])
         f['facing'] = f.get('facing', 'down')
         if f['facing'] not in ('down', 'out', 'up', 'in'):
             raise ValueError('Choose down, out, up or in for a line.')
@@ -596,6 +625,8 @@ def apply_op(model, op):
         candidate = {**baseline, **change}
         if 'share' in change and change['share'] is None:
             candidate.pop('share', None)
+        if 'anchors' in change and change['anchors'] is None:
+            candidate.pop('anchors', None)
         value = validate(candidate)
     _in_lot(model, value)
     _resolve(model, value)
@@ -607,6 +638,254 @@ def apply_op(model, op):
     return 'Added the light fixture.' if kind == 'add_light_fixture' else 'Changed the light fixture.'
 
 
+def _building_base(model, building):
+    """The rendered buildingBase, including the auto-foundation ground samples."""
+    if building.get('foundation', {}).get('mode') != 'auto':
+        return building.get('base', 0)
+    pads = model.get('site', {}).get('terraces', [])
+    first = min(building.get('levels', []), key=lambda l: l['elevation'], default={})
+    outline = first.get('outline', [])
+    if len(outline) < 3:
+        points = [p for r in building.get('rooms', []) if r.get('level') == first.get('id') for p in r.get('polygon', [])]
+        joints = {j['id']: j['at'] for j in building.get('joints', [])}
+        points += [p for w in building.get('walls', []) for p in
+                   ([w['from'], w['to']] if 'from' in w else [joints[j] for j in w.get('joints', []) if j in joints])]
+        if points:
+            lo, hi = ([fn(p[i] for p in points) for i in (0, 1)] for fn in (min, max))
+            outline = [[lo[0], lo[1]], [hi[0], lo[1]], [hi[0], hi[1]], [lo[0], hi[1]]]
+    poly = [_world(building, p) for p in outline]
+    if not poly:
+        return terrain.ground_at(pads, building.get('position', [0, 0])) + building['foundation'].get('offset_ft', 0)
+    samples = list(poly)
+    for a, b in zip(poly, poly[1:] + poly[:1]):
+        count = max(1, math.ceil(math.dist(a, b)))
+        samples.extend([[a[k] + (b[k]-a[k])*j/count for k in (0, 1)] for j in range(count+1)])
+    # Match the local one-foot grid used by footprintGround, then include pad
+    # vertices and intersections so a narrow high pad cannot fall between it.
+    from services.twin_register import to_local
+    local = [to_local(building, p) for p in poly]
+    x, y = min(p[0] for p in local), min(p[1] for p in local)
+    while x <= max(p[0] for p in local):
+        yy = y
+        while yy <= max(p[1] for p in local):
+            if terrain.inside(local, [x, yy]):
+                samples.append(_world(building, [x, yy]))
+            yy += 1
+        x += 1
+    samples.extend(p for pad in pads for p in pad['polygon'] if terrain.inside(poly, p))
+    for pad in pads:
+        for a, b in zip(pad['polygon'], pad['polygon'][1:] + pad['polygon'][:1]):
+            for c, d in zip(poly, poly[1:] + poly[:1]):
+                v, w = [b[i]-a[i] for i in (0, 1)], [d[i]-c[i] for i in (0, 1)]
+                den = v[0]*w[1]-v[1]*w[0]
+                if abs(den) < 1e-10:
+                    continue
+                q = [c[i]-a[i] for i in (0, 1)]
+                t, u = (q[0]*w[1]-q[1]*w[0])/den, (q[0]*v[1]-q[1]*v[0])/den
+                if 0 <= t <= 1 and 0 <= u <= 1:
+                    samples.append([a[i]+t*v[i] for i in (0, 1)])
+    return max(terrain.ground_at(pads, p) for p in samples) + building['foundation'].get('offset_ft', 0)
+
+
+def _anchor_geometry(value):
+    # Appearance and provenance do not reshape a host.
+    ignored = {'materials', 'material', 'tint', 'color', 'colour', 'name', 'label',
+               'src', 'source', 'confidence', 'visible_in', 'casts_shadow', 'light_entity',
+               'emissive', 'emissive_color', 'slots', 'finishes', 'faces',
+               'floor_material', 'ceiling_material', 'wall_material', 'ha_area'}
+    if isinstance(value, dict):
+        return {k: _anchor_geometry(v) for k, v in value.items() if k not in ignored}
+    if isinstance(value, list):
+        return [_anchor_geometry(v) for v in value]
+    if type(value) in (int, float):
+        return round(value, 8)
+    return value
+
+
+def _anchor_frame(model, host):
+    """Return geometry plus nested rigid frames in east/north/up feet."""
+    kind, hid = host['kind'], host['id']
+    lists = {'wall': 'walls', 'roof': 'roofs', 'room': 'rooms', 'porch': 'porches',
+             'stair': 'stairs', 'opening': 'openings', 'item': 'items',
+             'fixture': 'fixtures', 'light': 'lights', 'anchor': 'anchors', 'solar_zone': 'solar_zones'}
+    matches = []
+    for b in model.get('buildings', []):
+        if host.get('building') and b['id'] != host['building']:
+            continue
+        if kind == 'building':
+            pieces = [b] if hid in (b['id'], 'structure') else []
+        elif kind == 'floor':
+            pieces = [l for l in b.get('levels', []) if hid == 'floor:' + l['id'] or hid == l['id']]
+        elif kind == 'roof':
+            sections = b.get('roof', {}).get('sections', b.get('roofs', []))
+            pieces = [p for i, p in enumerate(sections) if (p.get('id') or f'roof:{i}') == hid]
+        else:
+            pieces = [p for p in b.get(lists.get(kind, ''), []) if p.get('id') == hid]
+            if kind == 'porch' and isinstance(b.get('porch'), dict) and hid == b['porch'].get('id', 'porch'):
+                pieces.append(b['porch'])
+        matches.extend((b, p) for p in pieces if p.get('state') not in ('ghost', 'proposal'))
+    if len(matches) == 1:
+        b, p = matches[0]
+        pos = b.get('position', [0, 0])
+        frames = [([*pos, _building_base(model, b)], [b.get('rotation', 0), 0, 0])]
+        geometry = deepcopy(p)
+        if kind == 'building':
+            geometry = {k: v for k, v in geometry.items() if k not in ('position', 'rotation', 'base', 'foundation')}
+            geometry['foundation'] = {k: v for k, v in b.get('foundation', {}).items() if k not in ('mode', 'offset_ft')}
+        if kind in ('item', 'fixture'):
+            from services.twin_model_hosts import world_point
+            try:
+                if kind == 'fixture' and p.get('rect'):
+                    x0, y0, x1, y1 = p['rect']
+                    centre = [(x0+x1)/2, (y0+y1)/2]
+                    level = next(l for l in b['levels'] if l['id'] == p['level'])
+                    host_floor = p.get('host', {}).get('floor')
+                    room = next((r for r in b.get('rooms', []) if r.get('id') == host_floor), None)
+                    if room is None and not (p.get('host') and not host_floor):
+                        room = next((r for r in b.get('rooms', []) if r.get('level') == p['level']
+                            and r.get('state') != 'ghost' and terrain.inside(r.get('polygon', []), centre)), None)
+                    point = [*centre, level['elevation'] + (room or {}).get('floor_offset_ft', 0) + p.get('z0', 0)]
+                elif 'host' in p:
+                    point = world_point(b, p['host'], p.get('offset', 0))
+                else:
+                    point = [*p['at'][:2], p['at'][2] if len(p['at']) > 2 else 0]
+            except (ValueError, KeyError, StopIteration):
+                return None
+            point[2] += p.get('elevation', 0)
+            frames.append((point, [p.get('rotation', 0), p.get('pitch', 0), p.get('roll', 0)]))
+            geometry = {k: v for k, v in geometry.items() if k not in ('host', 'at', 'rotation', 'pitch', 'roll', 'elevation', 'offset', 'z0')}
+            if kind == 'fixture' and p.get('rect'):
+                geometry['rect'] = [x1-x0, y1-y0]
+        else:
+            level = next((l for l in b.get('levels', []) if l['id'] == p.get('level')), None)
+            geometry = [geometry, {k: level.get(k) for k in ('elevation', 'ceiling')} if level else None]
+            # Connected walls store joint ids; changing a joint reshapes the mesh.
+            if kind in ('wall', 'opening'):
+                wall = p if kind == 'wall' else next((w for w in b.get('walls', []) if w['id'] == p.get('wall')), {})
+                geometry.extend([wall, [j for j in b.get('joints', []) if j['id'] in wall.get('joints', [])], b.get('roof', b.get('roofs', []))])
+                geometry.extend([[o for o in b.get('openings', []) if o.get('wall') == wall.get('id')],
+                                 [r for r in b.get('rooms', []) if r.get('level') == wall.get('level')]])
+        return _anchor_geometry(geometry), frames
+    if matches or host.get('building'):
+        return None
+    site = model.get('site', {})
+    name = {'terrace': 'terraces', 'retaining_wall': 'terraces', 'hardscape': 'hardscape', 'fence': 'fence'}.get(kind)
+    pool = site.get('pool') or {}
+    if kind == 'pool':
+        pieces = [pool] if hid == pool.get('id', 'pool:0') else []
+    elif kind in ('spa', 'ledge', 'steps'):
+        pieces = [p for p in pool.get('features', []) if p.get('id') == hid and p.get('kind') == kind]
+    else:
+        pieces = [p for p in _pieces(site.get(name)) if p.get('id') == hid]
+    if len(pieces) != 1:
+        return None
+    p = pieces[0]
+    key = next((k for k in ('polygon', 'points', 'polyline') if p.get(k)), None)
+    if key is None:
+        return None
+    points, pads = p[key], site.get('terraces', [])
+    origin = points[0]
+    height = p.get('elevation') if p.get('elevation') is not None else terrain.ground_at(pads, origin)
+    if kind in ('terrace', 'retaining_wall'):
+        height = p.get('height', 0)
+    if kind in ('pool', 'spa', 'ledge', 'steps'):
+        if not pool.get('polygon'):
+            return None
+        height = terrain.ground_at(pads, pool['polygon'][0]) + (pool.get('elevation') or 0)
+        if kind == 'spa':
+            raise_in = p.get('raise_in')
+            height += .45 + (((12 if raise_in is None else raise_in) / 12) if (p.get('mode') or 'raised') == 'raised' else 0)
+    geometry = {**p, key: [[q[i]-origin[i] for i in (0, 1)] for q in points]}
+    # Relative ground profiles distinguish a rigid translation from a pad step
+    # bending a fence/hardscape after it moves.
+    if kind in ('hardscape', 'fence') and p.get('elevation') is None:
+        geometry['_ground'] = [terrain.ground_at(pads, q)-height for q in points]
+    if kind in ('pool', 'spa', 'ledge', 'steps'):
+        pool_origin = pool['polygon'][0]
+        relative = lambda ps: [[q[i]-pool_origin[i] for i in (0, 1)] for q in ps]
+        # Pool depth sets feature slab bottoms; siblings cut their surfaces.
+        # Normalize against the pool so translating the whole group is rigid.
+        siblings = [{**f, 'polygon': relative(f.get('polygon', []))} for f in pool.get('features', [])
+                    if kind == 'pool' or f.get('id') != hid]
+        if kind == 'pool':
+            geometry['features'] = siblings
+        else:
+            geometry['_pool'] = {**pool, 'polygon': relative(pool['polygon']), 'features': siblings}
+    return _anchor_geometry(geometry), [([*origin, height], [0, 0, 0])]
+
+
+def _anchor_rotate(point, angles, inverse=False):
+    # THREE's YXZ object rotation, converted from [east, up, -north].
+    def yaw(p, a):
+        c, s = math.cos(a), math.sin(a)
+        return [p[0]*c-p[1]*s, p[0]*s+p[1]*c, p[2]]
+
+    def pitch(p, a):
+        c, s = math.cos(a), math.sin(a)
+        return [p[0], p[1]*c-p[2]*s, p[2]*c+p[1]*s]
+
+    def roll(p, a):
+        c, s = math.cos(a), math.sin(a)
+        return [p[0]*c-p[2]*s, p[1], p[0]*s+p[2]*c]
+
+    turns = [(yaw, angles[0]), (pitch, angles[1]), (roll, angles[2])]
+    for rotate, angle in turns if inverse else reversed(turns):
+        point = rotate(point, math.radians(-angle if inverse else angle))
+    return point
+
+
+def _anchor_transform(point, frames, inverse=False):
+    for origin, angles in frames if inverse else reversed(frames):
+        point = (_anchor_rotate([point[i]-origin[i] for i in range(3)], angles, True) if inverse
+                 else [v+origin[i] for i, v in enumerate(_anchor_rotate(point, angles))])
+    return point
+
+
+def _anchor_reference(model, fixture, point):
+    try:
+        reference = _reference(model, fixture, point)
+    except ValueError:
+        # The client resolves a missing floor at datum zero, retaining the
+        # authored reference so restoring the floor can repair the orphan.
+        return 0
+    if fixture['ref'] == 'floor':
+        building = next(b for b in model['buildings'] if b['id'] == fixture['building'])
+        reference += _building_base(model, building) - building.get('base', 0)
+    return reference
+
+
+def _follow_anchors(before, after, fixture, cache):
+    for i, anchor in enumerate(fixture.get('anchors', [])):
+        if anchor is None:
+            continue
+        host = anchor['host']
+        key = json.dumps(host, sort_keys=True)
+        if key not in cache:
+            cache[key] = _anchor_frame(before, host), _anchor_frame(after, host)
+        old, new = cache[key]
+        if old is None or new is None or old[0] != new[0]:
+            fixture['anchors'][i] = None
+            # A ground/floor reference can move even when its host is removed
+            # or reshaped. Preserve the last absolute position on detachment.
+            point = fixture['path'][i]
+            try:
+                height = point[2] + _anchor_reference(before, fixture, point)
+                fixture['path'][i] = [*point[:2], height - _anchor_reference(after, fixture, point)]
+            except (ValueError, StopIteration):
+                pass
+            continue
+        if old[1] == new[1]:
+            continue
+        point = fixture['path'][i]
+        try:
+            point = _anchor_transform(anchor['local'], new[1])
+            new_ref = _anchor_reference(after, fixture, point)
+        except (ValueError, StopIteration):
+            fixture['anchors'][i] = None
+            continue
+        fixture['path'][i] = [*point[:2], point[2]-new_ref]
+
+
 def follow_host_moves(before, after):
     """Carry endpoint references through rigid host moves before re-resolution.
 
@@ -616,8 +895,10 @@ def follow_host_moves(before, after):
     """
     rows_by_owner = list(after.get('light_fixtures', {}).values())
     rows_by_owner.append(after.get('effect_fixtures', []))
+    anchor_frames = {}
     for rows in rows_by_owner:
         for f in rows:
+            _follow_anchors(before, after, f, anchor_frames)
             snap = f.get('snap')
             if not snap or f.get('detached'):
                 continue

@@ -86,6 +86,16 @@ export function mergeStatic(group, { perPiece = false } = {}) {
     const mesh = new THREE.Mesh(geometry, mat);
     geometry.userData.bakeExcluded = !!entries[0].mesh.geometry.userData.bakeExcluded;
     mesh.userData.merged = true;
+    // Preserve ownership through material batching, without splitting draw calls.
+    // Ranges refer to the merged non-indexed position buffer.
+    let start = 0;
+    mesh.userData.snapRanges = entries.flatMap(e => {
+      const d = e.mesh.userData, count = e.geometry.attributes.position.count;
+      const ranges = d.snapRanges?.map(r => ({...r, start: r.start + start}))
+        || [{start, count, kind: d.kind, pieceId: d.pieceId, buildingId: d.buildingId, part: d.part, ghost: d.ghost, terrain: d.terrain}];
+      start += count; return ranges;
+    });
+    geometry.userData.snapRanges = mesh.userData.snapRanges;
     // Keep the piece registry pointing at live render objects after batching.
     entries.forEach(e => {
       const objects = e.mesh.userData.pieceObjects;
@@ -1436,9 +1446,9 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     }
     const itemIds = new Set((b.items || []).filter(item => item.asset).map(item => item.id));
     const fixtureFallbacks = new Map();
-    const drawFixture = (f, index, group = null) => {
+    const drawFixture = (f, index, group = null, owner = null) => {
       if (!objectShown(f, showAnchors || !!editableLevel)) return;
-      use(f, 'fixture', `fixture:${index}`);
+      use(owner || f, owner ? 'item' : 'fixture', `fixture:${index}`);
       const l = levels[f.level]; if (!l || !f.rect) return;
       const g = group || local[l.id], [x0, y0, x1, y1] = f.rect;
       const floorRoom = f.host && !f.host.floor ? null
@@ -1633,7 +1643,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           });
           const geometries = new Set(); model.traverse(o => { if (o.geometry) geometries.add(o.geometry); });
           geometries.forEach(g => g.dispose());
-        } else drawFixture(fallback.piece, fallback.index, group);
+        } else drawFixture(fallback.piece, fallback.index, group, item);
         registerRecords();
         if (item.state === 'ghost' && pieces.has(key)) {
           ghostUpdate = batchGhost(root, pieces.get(key), ghost, ghostEdges); ghostBatches.push(ghostUpdate);

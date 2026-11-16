@@ -1,13 +1,14 @@
 """Task 6: execute production fixture drawing, snapping, cards and scene picking."""
 import json
 import sys
+from copy import deepcopy
 from pathlib import Path
 from twin_editor_dom import PRELUDE, run_node
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = PRELUDE + r"""
 const THREE=await import('three');
-const snapChecks=[],keepChecks=[];
+const snapChecks=[],keepChecks=[],pointChecks=[],frameChecks=[];
 const modules=()=>import(file('static/twin/editor/fixtures.js'));
 const byText=(root,text)=>root.querySelectorAll('button').find(n=>textOf(n)===text);
 const evt=(x,y=10)=>({clientX:x,clientY:y,button:0,pointerId:1});
@@ -251,7 +252,7 @@ await test('tube_markers_and_previews_reuse_dot_accent_and_dispose_on_redraw',as
  assert.equal(marker.material.color.getHex(),dot.material.color.getHex());assert.equal(marker.material.depthTest,true);let geometry=0,material=0;marker.geometry.addEventListener('dispose',()=>geometry++);marker.material.addEventListener('dispose',()=>material++);
  s.plan.light_fixtures['light.a'][0]={...line,path:[[10,10,2],[25,10,2]]};e.refresh();assert.equal(geometry,1);assert.equal(material,1);
  e.add('light.a','line');for(const x of [2,8]){e.pointerDown(evt(x));await e.pointerUp(evt(x));}const preview=root.children.find(c=>!c.userData.fixtureId),stroke=preview.children[0];assert.equal(stroke.isMesh,true);assert.equal(stroke.material.color.getHex(),dot.material.color.getHex());
- let disposed=0;stroke.geometry.addEventListener('dispose',()=>disposed++);e.pointerMove(evt(12));assert.equal(disposed,1);const current=preview.children[0];let stopped=0;current.material.addEventListener('dispose',()=>stopped++);e.cancel();assert.equal(stopped,1);s.signal.abort();
+ let disposed=0;stroke.geometry.addEventListener('dispose',()=>disposed++);e.pointerMove(evt(12));await tick();assert.equal(disposed,1);const current=preview.children[0];let stopped=0;current.material.addEventListener('dispose',()=>stopped++);e.cancel();assert.equal(stopped,1);s.signal.abort();
 });
 for(const kind of ['wall','step'])await test(kind+'_top_marker_tolerates_proxy_but_yields_to_nearer_piece',async()=>{
  const {snapEdges}=await import(file('static/twin/editor/line_fixture_tool.js'));
@@ -275,6 +276,111 @@ await test('a_fall_off_the_spa_rim_lands_where_it_is_thrown',async()=>{
  assert.equal(effectLanding(s.plan,[88,68,1.95],bodies).body,spa);
 });
 
+function pointScene(){
+ const s=setup();s.plan.site.terraces=[];s.plan.site.hardscape=[{id:'patio',polygon:[[10,10],[20,10],[20,20],[10,20]],elevation:3}];
+ const mesh=new THREE.Mesh(new THREE.BoxGeometry(10*.3048,2*.3048,10*.3048),new THREE.MeshBasicMaterial());mesh.position.set(15*.3048,2*.3048,-15*.3048);s.view.scene.add(mesh);
+ mesh.userData={kind:'hardscape',pieceId:'patio'};
+ s.view.camera.position.set(15*.3048,12,-15*.3048);s.view.camera.up.set(0,0,-1);s.view.camera.lookAt(15*.3048,0,-15*.3048);s.view.camera.updateMatrixWorld(true);s.view.scene.updateMatrixWorld(true);
+ const ray=ev=>{const r=new THREE.Raycaster();r.setFromCamera(new THREE.Vector2(ev.clientX/720-1,1-ev.clientY/450),s.view.camera);return r;};
+ s.library.ground=ev=>{const p=ray(ev).ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),0),new THREE.Vector3());return [p.x/.3048,-p.z/.3048];};
+ s.view.pick=(x,y)=>{const h=ray(evt(x,y)).intersectObject(mesh)[0];return h&&{kind:'hardscape',id:'patio',point:h.point.toArray()};};
+ return {...s,mesh};
+}
+const shifted=(s,p,dx=3,dy=2)=>{const e=project(s,p);return {...e,clientX:e.clientX+dx,clientY:e.clientY+dy};};
+const nearSnap=(a,b)=>{assert.equal(a.length,b.length);a.forEach((p,i)=>p.forEach((v,k)=>assert.ok(Math.abs(v-b[i][k])<1e-6,JSON.stringify({a,b}))));};
+async function drawClicks(s,events){const e=await editor(s);e.add('light.a','line');for(const ev of events){e.pointerMove(ev);e.pointerDown(ev);await e.pointerUp(ev);}await fire(document,'keydown',{key:'Enter'});return e;}
+await test('draw_points_snap_vertices_and_chain_one_fixture_around_corner',async()=>{
+ const s=pointScene(),ps=[[10,10,3],[20,10,3],[20,20,3]],e=await drawClicks(s,ps.map(p=>shifted(s,p)));
+ assert.equal(s.sent.length,1,JSON.stringify(s.errors));const f=s.sent[0].fixture;nearSnap(f.path,ps);assert.equal(f.ref,'absolute');assert.equal(f.anchors.length,3);assert.ok(f.anchors.every(a=>a.host.kind==='hardscape'&&a.host.id==='patio'));
+ const vertices=Array.from({length:s.mesh.geometry.attributes.position.count},(_,i)=>new THREE.Vector3().fromBufferAttribute(s.mesh.geometry.attributes.position,i).applyMatrix4(s.mesh.matrixWorld)).map(p=>[p.x/.3048,-p.z/.3048,p.y/.3048]);
+ f.path.forEach(p=>assert.ok(vertices.some(v=>JSON.stringify(v)===JSON.stringify(p)),'saved point is the exact rendered vertex'));
+ nearSnap(f.anchors.map(a=>a.local),[[0,0,0],[10,0,0],[10,10,0]]);pointChecks.push({plan:s.plan,value:f});assert.equal(e.active(),false);s.signal.abort();
+});
+await test('draw_edge_lock_uses_closest_point_and_vertical_face_normal',async()=>{
+ const s=pointScene(),ps=[[12.5,10,3],[17.5,10,3]],e=await drawClicks(s,ps.map(p=>shifted(s,p,0,4)));const f=s.sent[0].fixture;
+ nearSnap(f.path,ps);assert.equal(f.facing,'out');assert.ok(f.anchors.every(Boolean));pointChecks.push({plan:s.plan,value:f});s.signal.abort();
+});
+await test('draw_far_points_and_snap_checkbox_and_alt_keep_free_path',async()=>{
+ for(const mode of ['far','off','alt','invert-off']){
+  const s=pointScene(),e=await editor(s);e.add('light.a','line');const toggle=document.getElementById('device-tools').querySelector('[aria-label="Snap points"]');assert.equal(toggle.checked,true);
+  if(['off','invert-off'].includes(mode)){toggle.checked=false;await fire(toggle,'change');}
+  const ps=mode==='far'?[[14,14,3],[16,16,3]]:[[10,10,3],[20,10,3]];
+  const events=ps.map(p=>({...shifted(s,p),altKey:['alt','invert-off'].includes(mode)})),free=events.map(ev=>[...s.library.ground(ev),0].map(v=>Math.round(v*1000)/1000));
+  for(const ev of events){e.pointerDown(ev);await e.pointerUp(ev);}await fire(document,'keydown',{key:'Enter'});const f=s.sent[0].fixture;
+  if(mode==='invert-off')nearSnap(f.path,ps);else{nearPath(f.path,free);assert.deepEqual(f.anchors,[null,null]);}
+  e.add('light.a','line');assert.equal(document.getElementById('device-tools').querySelector('[aria-label="Snap points"]').checked,!['off','invert-off'].includes(mode));s.signal.abort();
+ }
+});
+await test('draw_occluded_feature_does_not_win',async()=>{
+ for(const mode of ['proxy','mesh']){
+  const s=pointScene(),e=await editor(s);
+  if(mode==='proxy')s.view.pick=()=>({kind:'wall',id:'nearer',point:[15*.3048,5,-15*.3048]});
+  else{const blocker=new THREE.Mesh(new THREE.BoxGeometry(10,.2,10),new THREE.MeshBasicMaterial());blocker.position.set(15*.3048,3,-15*.3048);s.view.scene.add(blocker);}
+  e.add('light.a','line');for(const p of [[10,10,3],[20,10,3]]){const ev=shifted(s,p);e.pointerMove(ev);e.pointerDown(ev);await e.pointerUp(ev);}await fire(document,'keydown',{key:'Enter'});
+  assert.deepEqual(s.sent[0].fixture.anchors,[null,null]);assert.ok(s.sent[0].fixture.path.every(p=>p[2]===0));s.signal.abort();
+ }
+});
+await test('draw_marker_distinguishes_vertex_edge_and_disposes',async()=>{
+ const s=pointScene(),e=await editor(s);e.add('light.a','line');const root=s.view.scene.getObjectByName('editor-light-fixtures'),preview=root.children.find(c=>!c.userData.fixtureId);
+ e.pointerMove(shifted(s,[10,10,3]));await tick();const marker=preview.children.at(-1);assert.equal(marker.geometry.type,'SphereGeometry');let disposed=0;marker.geometry.addEventListener('dispose',()=>disposed++);
+ e.pointerMove(shifted(s,[15,10,3],0,3));await tick();assert.equal(disposed,1);assert.equal(preview.children.at(-1).geometry.type,'BoxGeometry');s.signal.abort();
+});
+await test('draw_moves_coalesce_to_latest_frame_and_up_resolves_exact_release',async()=>{
+ const s=pointScene(),e=await editor(s);e.add('light.a','line');let picks=0;const pick=s.view.pick;s.view.pick=(...args)=>{picks++;return pick(...args);};
+ const a=shifted(s,[10,10,3]),b=shifted(s,[20,10,3]);
+ for(let i=0;i<20;i++)e.pointerMove(i===19?b:a);
+ assert.equal(picks,0);await tick();assert.equal(picks,1,'one point pick for one animation frame');
+ const preview=s.view.scene.getObjectByName('editor-light-fixtures').children.find(c=>!c.userData.fixtureId);
+ nearSnap([preview.children.at(-1).position.toArray()],[[20*.3048,3*.3048,-10*.3048]]);
+ e.pointerDown(a);e.pointerMove(b);const release={...a,clientX:a.clientX+1};await e.pointerUp({...release,altKey:true});
+ e.pointerDown(b);await e.pointerUp(b);await fire(document,'keydown',{key:'Enter'});
+ const f=s.sent[0].fixture;assert.equal(f.anchors[0],null,'release Alt overrides the down lock');assert.ok(f.anchors[1]);
+ const ground=s.library.ground(release);nearSnap([f.path[0]],[[...ground,0].map(v=>Math.round(v*1000)/1000)]);
+ const before=picks;await tick();assert.equal(picks,before,'pending hover cancelled by release/stop');s.signal.abort();
+});
+await test('point_snap_transforms_instances_skips_hidden_helpers_and_caches_features',async()=>{
+ const {createPointSnap}=await import(file('static/twin/editor/point_snap.js')),s=pointScene();s.mesh.removeFromParent();
+ const geometry=new THREE.BoxGeometry(2,1,2),mesh=new THREE.InstancedMesh(geometry,new THREE.MeshBasicMaterial(),1),parent=new THREE.Group();parent.position.set(2,0,-2);parent.rotation.y=.3;
+ mesh.setMatrixAt(0,new THREE.Matrix4().makeTranslation(2,1,-2));parent.add(mesh);s.view.scene.add(parent);s.view.scene.updateMatrixWorld(true);s.view.pick=()=>null;
+ const target=new THREE.Vector3(1,.5,1).applyMatrix4(new THREE.Matrix4().makeTranslation(2,1,-2)).applyMatrix4(parent.matrixWorld),ev=project(s,[target.x/.3048,-target.z/.3048,target.y/.3048]);
+ const snap=createPointSnap(s.view,s.getPlan),hit=snap.pick(ev);assert.ok(hit);nearPath([hit.at],[[target.x/.3048,-target.z/.3048,target.y/.3048]]);assert.equal(hit.anchor,null);
+ let bounds=0;const compute=geometry.computeBoundingBox.bind(geometry);geometry.computeBoundingBox=()=>{bounds++;compute();};for(let i=0;i<4;i++)snap.pick(ev);assert.equal(bounds,0,'feature cache survives moves');
+ for(const skip of ['hidden','pick','preview','effect','marker','emitter']){
+  parent.visible=skip!=='hidden';mesh.layers.set(skip==='pick'?31:0);mesh.userData={};mesh.name='';if(skip==='preview')mesh.name='preview-line';if(skip==='effect')mesh.userData.effectFixture=true;if(skip==='marker')mesh.userData.marker=true;
+  if(skip==='emitter')mesh.userData.emitter=true;
+  assert.equal(snap.pick(ev),null,skip);
+ }s.signal.abort();
+});
+
+await test('point_snap_keeps_visible_edge_crossing_camera_near_plane',async()=>{
+ const {createPointSnap}=await import(file('static/twin/editor/point_snap.js')),s=pointScene();s.mesh.removeFromParent();
+ const geometry=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-1,0,1),new THREE.Vector3(1,0,-3),new THREE.Vector3(-1,3,-3)]);
+ const mesh=new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({side:THREE.DoubleSide}));s.view.scene.add(mesh);s.view.camera.position.set(0,0,0);s.view.camera.up.set(0,1,0);s.view.camera.lookAt(0,0,-1);s.view.camera.updateMatrixWorld(true);s.view.pick=()=>null;
+ const p=[.4/.3048,1.8/.3048,0],hit=createPointSnap(s.view,s.getPlan).pick(project(s,p));assert.ok(hit);nearSnap([hit.at],[p]);assert.equal(hit.vertex,false);s.signal.abort();
+});
+await test('draw_effect_corner_has_one_payload_and_three_anchors',async()=>{
+ const s=pointScene(),e=await editor(s);window.promptChoice=async()=> 'waterfall';await e.addEffect();
+ for(const p of [[10,10,3],[20,10,3],[20,20,3]]){const ev=shifted(s,p);e.pointerDown(ev);await e.pointerUp(ev);}await fire(document,'keydown',{key:'Enter'});
+ assert.equal(s.sent.length,1);assert.equal(s.sent[0].op,'add_effect_fixture');const f=s.sent[0].fixture;assert.equal(f.anchors.length,3);assert.equal(f.type,'waterfall');pointChecks.push({plan:s.plan,value:f,effect:true});s.signal.abort();
+});
+await test('offset_card_and_anchor_numeric_path_edits_preserve_parallel_entries',async()=>{
+ const s=setup(),anchors=[{host:{kind:'wall',id:'w',building:'b'},local:[0,0,0]},{host:{kind:'wall',id:'w',building:'b'},local:[10,0,0]}];
+ s.plan.light_fixtures['light.a']=[{...line,anchors,offset_ft:-1}];const n=await card(s),input=n.querySelector('[aria-label="Offset (ft)"]');assert.equal(input.value,-1);input.value='2.5';await fire(input,'change');assert.deepEqual(s.sent.at(-1).change,{offset_ft:2.5});
+ const point=n.querySelector('[aria-label="Point 1 height (ft)"]');point.value='3';await fire(point,'change');assert.deepEqual(s.sent.at(-1).change.anchors,[null,anchors[1]]);
+ await click(byText(n,'Add path point'));assert.deepEqual(s.sent.at(-1).change.anchors,[...anchors,null]);
+ input.value='51';await fire(input,'change');assert.equal(s.sent.at(-1).change.anchors.length,3);assert.equal(s.sent.length,3);
+});
+await test('point_anchor_local_frames_match_server_for_building_item_fixture_and_site',async()=>{
+ const {pointAnchor}=await import(file('static/twin/editor/point_snap.js')),s=setup(),b=s.plan.buildings[0];b.base=2;b.foundation={mode:'auto',offset_ft:1};b.levels[0].outline=[[0,0],[10,0],[10,10],[0,10]];
+ b.rooms=[{id:'room',level:'L1',polygon:[[0,0],[10,0],[10,10],[0,10]],floor_offset_ft:.5}];
+ b.items=[{id:'item',host:{ground:true,at:[2,3]},offset:1,elevation:.5,rotation:35,pitch:10,roll:15}];b.fixtures=[{id:'f',level:'L1',rect:[2,2,6,6],z0:1,elevation:.5,rotation:20,pitch:5,roll:10}];
+ for(const hit of [{kind:'wall',id:'w',building:'b'},{kind:'wall',id:'w'},{kind:'floor',id:'floor:L1',building:'b'},{kind:'item',id:'item',building:'b'},{kind:'fixture',id:'f',building:'b'},{kind:'hardscape',id:'patio'}]){
+  const at=[42,45,8],anchor=pointAnchor(s.plan,hit,at);assert.ok(anchor);frameChecks.push({plan:s.plan,anchor,at});
+ }
+});
+
+console.log('FRAME_CHECKS '+JSON.stringify(frameChecks));
+console.log('POINT_CHECKS '+JSON.stringify(pointChecks));
 console.log('SNAP_CHECKS '+JSON.stringify(snapChecks));
 console.log('KEEP_CHECKS '+JSON.stringify(keepChecks));
 finish();
@@ -283,10 +389,37 @@ finish();
 if __name__ == '__main__':
     code, output = run_node(DRIVER, {'root': ROOT.as_posix()})
     lines = output.splitlines()
-    print('\n'.join(line for line in lines if not line.startswith(('SNAP_CHECKS ', 'KEEP_CHECKS '))))
+    print('\n'.join(line for line in lines if not line.startswith(('SNAP_CHECKS ', 'KEEP_CHECKS ', 'POINT_CHECKS ', 'FRAME_CHECKS '))))
     if code == 0:
         sys.path.insert(0, str(ROOT))
-        from services.twin_fixtures import resolve_snap, apply_op
+        from services.twin_fixtures import resolve_snap, apply_op, follow_host_moves
+        from services.twin_fixtures import _anchor_frame, _anchor_transform
+        from services.twin_effect_fixtures import apply_op as effect_op
+        frames = json.loads(next(line[13:] for line in lines if line.startswith('FRAME_CHECKS ')))
+        for check in frames:
+            frame = _anchor_frame(check['plan'], check['anchor']['host'])
+            assert frame is not None, check
+            point = _anchor_transform(check['anchor']['local'], frame[1])
+            assert all(abs(a-b) < 1e-8 for a, b in zip(point, check['at'])), (point, check)
+        print(f'  ok   JS local anchor frames match real server: {len(frames)}/{len(frames)}')
+        points = json.loads(next(line[13:] for line in lines if line.startswith('POINT_CHECKS ')))
+        for check in points:
+            plan, value = check['plan'], check['value']
+            plan['light_fixtures'] = {}
+            if check.get('effect'):
+                effect_op(plan, {'op': 'add_effect_fixture', 'fixture': value})
+                stored = plan['effect_fixtures'][0]
+            else:
+                apply_op(plan, {'op': 'add_light_fixture', 'entity_id': 'light.a', 'fixture': value})
+                stored = plan['light_fixtures']['light.a'][0]
+            assert stored['path'] == value['path'] and stored['anchors'] == value['anchors']
+            moved = deepcopy(plan)
+            moved['site']['hardscape'][0]['polygon'] = [[x+3, y+4] for x, y in plan['site']['hardscape'][0]['polygon']]
+            follow_host_moves(plan, moved)
+            row = moved['effect_fixtures'][0] if check.get('effect') else moved['light_fixtures']['light.a'][0]
+            expected = [[p[0]+3, p[1]+4, p[2]] for p in value['path']]
+            assert all(abs(a-b) < 1e-8 for p, q in zip(row['path'], expected) for a, b in zip(p, q))
+        print(f'  ok   JS point paths and anchors accepted by real server ops: {len(points)}/{len(points)}')
         checks = json.loads(next(line[12:] for line in lines if line.startswith('SNAP_CHECKS ')))
         for check in checks:
             plan, value = check['plan'], check['value']

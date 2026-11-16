@@ -90,7 +90,7 @@ await test('cancel_choice_and_escape_leave_no_ops',async()=>{
 await test('card_changes_each_send_exactly_one_update',async()=>{
  const s=setup([base()]);try{s.editor.showEffect(id);
  for(const [label,value,delta]of [['Name','Spill',{name:'Spill'}],['Type','fire',{type:'fire'}],['Switch','switch.fire',{entity:'switch.fire'}],
-  ['Size at min (ft)',.5,{size_min:.5}],['Size at max (ft)',4,{size_max:4}],['Level (%)',25,{strength:.25}]]){
+  ['Offset (ft)',-1,{offset_ft:-1}],['Size at min (ft)',.5,{size_min:.5}],['Size at max (ft)',4,{size_max:4}],['Level (%)',25,{strength:.25}]]){
   const before=s.sent.length;await change(s,label,value);assert.equal(s.sent.length,before+1);assert.deepEqual(s.sent.at(-1),{op:'update_effect_fixture',id,change:delta});
  }
  assert.deepEqual(s.errors,[]);

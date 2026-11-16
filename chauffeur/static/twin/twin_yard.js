@@ -296,7 +296,11 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   };
   // A random-offset material shifts each surface's base uv by its piece id (server
   // plans give every site piece one); a surface without an id is drawn as made.
-  const surfaceMesh = (group, geometry, material, seed) => addMesh(group, offsetSurfaceUvs(geometry, material, seed), material);
+  const surfaceMesh = (group, geometry, material, seed, owner = null) => {
+    const mesh = addMesh(group, offsetSurfaceUvs(geometry, material, seed), material);
+    if (owner) Object.assign(mesh.userData, owner);
+    return mesh;
+  };
   const seedOf = (piece, ...rest) => piece?.id ? [piece.id, ...rest].join(':') : null;
   const plain = (name, color, extra = {}) => {
     if (!mats.has(name)) mats.set(name, extra.fireShader ? fireFlameMaterial() : new THREE.MeshStandardMaterial({ name, color, roughness: 0.85, ...extra }));
@@ -321,7 +325,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         const reach = 50;
         const terrainOutline = [[x0 + margin - reach, y0 + margin - reach], [x1 - margin + reach, y0 + margin - reach],
           [x1 - margin + reach, y1 - margin + reach], [x0 + margin - reach, y1 - margin + reach]];
-        addMesh(group, polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], -.06, -.06, [terrainOutline]), mat('lawn'));
+        addMesh(group, polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], -.06, -.06, [terrainOutline]), mat('lawn')).userData.terrain = true;
         const terrain = new THREE.Group(); terrain.userData.viewingWalls = 'terrain'; group.add(terrain);
         const lawn = mat('terrain_lawn');
         // Same kit role, same texture. Vertex colours are always enabled; Grade
@@ -343,30 +347,31 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       for (const pad of site.terraces || []) pad.polygon.forEach((_, edge) => {
         if (pad.edges?.[edge]?.edge !== 'sharp' || !pad.edges[edge].wall) return;
         const wall = pad.edges[edge].wall;
-        surfaceMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face), seedOf(pad, 'walls'));
+        surfaceMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face), seedOf(pad, 'walls'), {kind:'retaining_wall', pieceId:pad.id});
       });
       stopWalls();
     },
     hardscape: async group => {
       const stopHardscape = part('hardscape');
       for (const h of site.hardscape || []) if (h.kind === 'path' || h.polygon?.length >= 3) {
+        const owner = {kind:'hardscape', pieceId:h.id};
         const role = h.material === 'concrete' ? 'patio_concrete' : kit.materials?.[h.material] ? h.material : 'paving';
         if (h.kind === 'path') {
           // Swept pieces retain user-drawn crossings without even/odd cancellation.
-          for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spas), mat(role, h.materials?.surface), seedOf(h));
+          for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spas), mat(role, h.materials?.surface), seedOf(h), owner);
           if (h.edging === 'curb') {
             const inner = pathBoundaries(h), outer = pathBoundaries(h, (h.width ?? 3) / 2 + .5);
             for (const side of ['left', 'right']) for (let i = 1; i < inner[side].length; i++) {
               const poly = [inner[side][i - 1], inner[side][i], outer[side][i], outer[side][i - 1]];
               // Both offsets have the same mitre/bevel topology.
-              const curb = surfaceMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spas), mat('patio_concrete', h.materials?.edging), seedOf(h, 'curb', side));
+              const curb = surfaceMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spas), mat('patio_concrete', h.materials?.edging), seedOf(h, 'curb', side), owner);
               curb.geometry.userData.pathCurb = true;
             }
           }
           continue;
         }
         const holes = [...(pool && pool.every(p => inside(p, h.polygon)) ? [pool] : []), ...spas];
-        surfaceMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role, h.materials?.surface), seedOf(h));
+        surfaceMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role, h.materials?.surface), seedOf(h), owner);
       }
       stopHardscape();
       const stopBeds = part('hardscape');
@@ -382,13 +387,15 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     pool: async group => {
       const stopPool = part('pool');
       if (pool?.length >= 3) {
+        const owner = {kind:'pool', pieceId:site.pool.id || 'pool:0'};
+        const poolMesh = (geometry, material, seed) => surfaceMesh(group, geometry, material, seed, owner);
         const d = site.pool.depth ?? 5, coping = site.pool.coping ?? 1;
         const poolHeight = groundAt(plan, ...pool[0]) + (site.pool.elevation || 0);
         const poolSurface = (poly, z0, z1 = z0, holes = []) => spas.length
           ? cutSurface(poly, spas, poolHeight + z0, poolHeight + z1, holes)
           : polygon(poly, poolHeight + z0, poolHeight + z1, holes);
         const interior = site.pool.materials?.interior;
-        surfaceMesh(group, poolSurface(pool, -d - 0.2, -d), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4', { roughness: 0.35 }), seedOf(site.pool, 'floor'));
+        poolMesh(poolSurface(pool, -d - 0.2, -d), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4', { roughness: 0.35 }), seedOf(site.pool, 'floor'));
         // Offset each edge outwards by coping width. This works for the convex pool
         // polygons used by the plan and retains the original water outline.
         const area = pool.reduce((a, p, i) => a + p[0] * pool[(i + 1) % pool.length][1] - pool[(i + 1) % pool.length][0] * p[1], 0);
@@ -397,14 +404,14 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           const a = normal(pool[(i + pool.length - 1) % pool.length], p), b = normal(p, pool[(i + 1) % pool.length]), factor = coping / Math.max(0.1, 1 + a[0] * b[0] + a[1] * b[1]);
           return [p[0] + (a[0] + b[0]) * factor, p[1] + (a[1] + b[1]) * factor];
         });
-        if (coping > 0) surfaceMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
+        if (coping > 0) poolMesh(poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
         for (let i = 0; i < pool.length; i++) {
           const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
           const slab = [a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]];
           // Waterline tile all round: the top of each wall, from just under the water to the coping.
           const band = Math.max(-d, -0.25 - WATERLINE_BELOW);
-          if (band > -d) surfaceMesh(group, poolSurface(slab, -d, band), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'), seedOf(site.pool, 'walls'));
-          surfaceMesh(group, poolSurface(slab, band, 0.3), waterlineMaterial(site.pool.materials?.waterline, { mat, plain }), seedOf(site.pool, 'waterline'));
+          if (band > -d) poolMesh(poolSurface(slab, -d, band), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'), seedOf(site.pool, 'walls'));
+          poolMesh(poolSurface(slab, band, 0.3), waterlineMaterial(site.pool.materials?.waterline, { mat, plain }), seedOf(site.pool, 'waterline'));
         }
         const waterSlot = site.pool.materials?.water || plan.materials?.water;
         // Kit aliases need an isolated receiving role too: water must not
@@ -446,7 +453,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             material.userData.surfaceDoubleSide = true; material.side = THREE.DoubleSide;
             material.forceSinglePass = true;
           }
-          return surfaceMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), material, seedOf(f, part, ...seed));
+          return surfaceMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), material, seedOf(f, part, ...seed), {kind:'fence', pieceId:f.id});
         };
         if (['picket', 'metal', 'panel'].includes(f.type)) { buildFence(f, fenceMesh); continue; }
         for (let i = 0; i < f.polyline.length - 1; i++) {

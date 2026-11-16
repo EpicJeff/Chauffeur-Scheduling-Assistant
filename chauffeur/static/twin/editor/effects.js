@@ -65,6 +65,7 @@ export function effectCard({ id, getPlan, canEdit, op, onMove, report, helpers }
     field(root, 'Sensor max', f.sensor_max, v => change({ sensor_max: finite(v) }), { locked: !canEdit() });
   }
   const defaults = [EFFECT_TYPES[f.type].size_min, EFFECT_TYPES[f.type].size_max];
+  if (['point','line'].includes(f.shape)) field(root, 'Offset (ft)', f.offset_ft ?? 0, v => change({ offset_ft: numeric(v, -50, 50) }), { locked: !canEdit(), low: -50, high: 50 });
   field(root, 'Size at min (ft)', f.size_min ?? defaults[0], v => change({ size_min: numeric(v, 0, 30) }), { locked: !canEdit(), low: 0, high: 30 });
   field(root, 'Size at max (ft)', f.size_max ?? defaults[1], v => change({ size_max: numeric(v, 0, 30) }), { locked: !canEdit(), low: 0, high: 30 });
   field(root, 'Level (%)', (f.strength ?? 1) * 100, v => change({ strength: numeric(v, 0, 100) / 100 }), { locked: !canEdit(), low: 0, high: 100 });

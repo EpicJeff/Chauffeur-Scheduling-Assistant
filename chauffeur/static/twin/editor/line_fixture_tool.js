@@ -4,6 +4,7 @@ import { pathOutline } from '../path_shapes.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { fixturePoint, fixtureRotation, facingNormal } from '../live/fixture_glow.js';
 import { createSiteDrawing } from './site_drawing.js';
+import { createPointSnap } from './point_snap.js';
 
 const pieces = value => Array.isArray(value) ? value : value ? [value] : [];
 const lerp = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
@@ -96,8 +97,13 @@ export function areaOutline(f) {
 
 export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit, report, host, onDone, encode = f => f }) {
   const preview = new THREE.Group(), ray = new THREE.Raycaster(), canvas = view.renderer3.domElement;
+  const pointSnap = createPointSnap(view, getPlan);
+  preview.userData.preview = true;
+  let moveFrame = null, pendingMove = null;
+  function cancelMove() { if (moveFrame !== null) cancelAnimationFrame(moveFrame); moveFrame = pendingMove = null; }
+  let snapPoints = true, snapLabel = null, pointLock = null, pointAnchors = [], lockedPoints = [];
   let active = null, gesture = null, rectangle = null, selected = null, anchor = null, facing = 'down', facingChosen = false, busy = false, controls = null, facingSelect = null, finishButton = null, edgeKey = null, cachedEdges = [];
-  const drawing = () => createSiteDrawing({ getPlan, commit: o => save(encode({ shape: 'line', ref: 'absolute', path: o.polyline, snap: null, facing, width_in: active.fixture?.width_in ?? .5 }, anchor)) });
+  const drawing = () => createSiteDrawing({ getPlan, commit: o => save(encode({ shape: 'line', ref: 'absolute', path: o.polyline, snap: null, anchors: pointAnchors, facing, width_in: active.fixture?.width_in ?? .5 }, {...anchor,snapped:lockedPoints.some(Boolean)})) });
   let draft = drawing();
   const node = (tag, text) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; return n; };
   const button = (text, fn) => { const n = node('button', text); n.type = 'button'; n.addEventListener('click', () => { if (canEdit() && !busy) Promise.resolve().then(fn).catch(report); }); controls.append(n); return n; };
@@ -109,7 +115,15 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
   function graphics(hover) {
     clear();
     if (!active) return;
-    if (active.kind === 'draw') line(draft.preview());
+    if (active.kind === 'draw') {
+      const points = draft.preview();
+      if (pointLock && points.length > draft.current().points.length) points[points.length-1] = pointLock.at;
+      line(points);
+      if (pointLock) {
+        const marker = new THREE.Mesh(pointLock.vertex ? new THREE.SphereGeometry(.09, 10, 6) : new THREE.BoxGeometry(.14,.14,.14), new THREE.MeshBasicMaterial({color:pointLock.vertex ? '#ffffff' : FIXTURE_COLOR,depthTest:false,toneMapped:false}));
+        marker.position.copy(fixturePoint(pointLock.at)); marker.renderOrder = 10; preview.add(marker);
+      }
+    }
     else if (active.kind === 'area' && rectangle) line(areaOutline(rectangle));
     else if (active.kind === 'snap') {
       const edge = gesture?.edge || hover || selected;
@@ -127,24 +141,28 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
     facing = options.some(([v]) => v === value) ? value : options[0][0]; facingSelect.value = facing;
   }
   function choose(kind) {
-    draft.cancel(); gesture = rectangle = selected = anchor = null; active.kind = kind; facingChosen = !!active.fixture; edgeKey = null; cachedEdges = [];
+    cancelMove();
+    draft.cancel(); gesture = rectangle = selected = anchor = pointLock = null; pointAnchors = []; lockedPoints = []; active.kind = kind; facingChosen = !!active.fixture; edgeKey = null; cachedEdges = [];
+    snapLabel.hidden = kind !== 'draw';
     finishButton.hidden = kind === 'snap'; if (kind === 'snap') edges();
     if (kind === 'draw') draft.start('fence');
     selectFacing(kind === 'area' ? 'area' : null, typeof active.fixture?.facing === 'string' ? active.fixture.facing : 'down'); graphics();
   }
   function start(value) {
-    stop(); draft = drawing(); active = value; controls = node('div'); controls.className = 'editor-material-actions'; host.append(controls);
+    stop(); draft = drawing(); active = value; controls = node('div'); controls.className = 'editor-actions'; host.append(controls);
     if (value.kind !== 'area') { button('Draw line', () => choose('draw')); button('Snap to edge', () => choose('snap')); }
+    snapLabel = node('label', 'Snap points'); snapLabel.className = 'editor-material-line'; const snapInput = node('input'); snapInput.type = 'checkbox'; snapInput.checked = snapPoints; snapInput.setAttribute('aria-label', 'Snap points'); snapInput.title = 'Alt temporarily inverts snapping'; snapLabel.append(snapInput); controls.append(snapLabel);
+    snapInput.addEventListener('change', () => { snapPoints = snapInput.checked; pointLock = null; graphics(); });
     finishButton = button('Finish', finish);
     const label = node('label', 'Facing'); facingSelect = node('select'); facingSelect.setAttribute('aria-label', 'Facing'); label.append(facingSelect); controls.append(label);
     facingSelect.addEventListener('change', () => { if (!canEdit() || busy) return; facing = facingSelect.value; facingChosen = true; if (rectangle) { rectangle.facing = facing === 'surface' ? rectangle.surfaceNormal : facing; graphics(); } });
     choose(value.kind);
   }
-  function stop() { draft.cancel(); clear(); controls?.remove(); controls = facingSelect = finishButton = null; edgeKey = null; cachedEdges = []; active = gesture = rectangle = selected = anchor = null; }
+  function stop() { cancelMove(); draft.cancel(); clear(); controls?.remove(); controls = facingSelect = finishButton = snapLabel = null; edgeKey = null; cachedEdges = []; active = gesture = rectangle = selected = anchor = pointLock = null; pointAnchors = []; lockedPoints = []; }
   async function save(fixture) {
     if (!active || !canEdit() || busy) return false;
     const current = active; busy = true;
-    try { return await commit(current, fixture); } finally { busy = false; }
+    try { return await commit(current, {...(current.fixture?.offset_ft !== undefined ? {offset_ft:current.fixture.offset_ft} : {}),...fixture}); } finally { busy = false; }
   }
   function edges() {
     const plan = getPlan(), key = JSON.stringify([plan.buildings, plan.site?.terraces, plan.site?.hardscape, plan.site?.fence, plan.site?.pool]);
@@ -179,6 +197,11 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
     const p = new THREE.Vector3(); ray.ray.distanceSqToSegment(a, b, new THREE.Vector3(), p);
     return Math.max(0, Math.min(1, p.sub(a).dot(b.clone().sub(a)) / a.distanceToSquared(b)));
   }
+  function drawPoint(event) {
+    pointLock = snapPoints !== !!event.altKey ? pointSnap.pick(event) : null;
+    const hit = surface(event, true);
+    return pointLock ? {...hit,at:pointLock.at,normal:pointLock.normal,snapped:true,pointAnchor:pointLock.anchor} : hit;
+  }
   function down(event) {
     if (!active || busy) return false;
     if (active.kind === 'snap') {
@@ -186,7 +209,7 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
       selected = edge; selectFacing(edge.host.kind, facingChosen ? facing : active.fixture?.facing ?? (['hardscape', 'step', 'spa'].includes(edge.host.kind) ? 'out' : edge.host.kind === 'pool' ? 'in' : facing));
       gesture = { edge, t0: parameter(event, edge), t1: parameter(event, edge), x: event.clientX, y: event.clientY };
     } else {
-      const hit = surface(event, true); if (!hit) return true;
+      const hit = active.kind === 'draw' ? drawPoint(event) : surface(event, true); if (!hit) return true;
       gesture = { hit, x: event.clientX, y: event.clientY };
       if (active.kind === 'area') {
         rectangle = null; anchor = hit;
@@ -197,11 +220,23 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
   }
   function move(event) {
     if (!active || busy) return false;
+    if (active.kind !== 'draw') return resolveMove(event);
+    pendingMove = event;
+    if (moveFrame === null) moveFrame = requestAnimationFrame(() => {
+      const latest = pendingMove; moveFrame = pendingMove = null;
+      try { resolveMove(latest); } catch (error) { report(error); }
+    });
+    return true;
+  }
+  function resolveMove(event, committing = false) {
+    if (!active || busy) return false;
     if (active.kind === 'snap') {
       if (gesture?.edge) gesture.t1 = parameter(event, gesture.edge);
       graphics(pick(event)); return true;
     }
-    const hit = surface(event, true); if (!hit) return true;
+    const hit = active.kind === 'draw' ? drawPoint(event) : surface(event, true);
+    if (committing && active.kind === 'draw' && gesture) gesture.hit = hit;
+    if (!hit) { if (active.kind === 'draw') graphics(); return true; }
     if (active.kind === 'draw') { draft.move(hit.at, true); graphics(); return true; }
     if (!gesture) return true;
     const normal = gesture.hit.normal || [0,0,1], face = facing === 'surface' ? normal : facing;
@@ -215,14 +250,21 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
   async function up(event, cancelled) {
     if (!active || busy) return;
     if (!canEdit()) { cancelGesture(); return; }
-    if (cancelled) { if (active.kind === 'draw') { gesture = null; graphics(); } else cancelGesture(); return; }
+    if (cancelled) { cancelMove(); if (active.kind === 'draw') { gesture = null; graphics(); } else cancelGesture(); return; }
     const g = gesture; if (!g) return;
-    move(event); gesture = null;
+    cancelMove(); resolveMove(event, true);
+    gesture = null;
     if (active.kind === 'draw') {
-      if (Math.hypot(event.clientX - g.x, event.clientY - g.y) < 3) {
+      if (g.hit && Math.hypot(event.clientX - g.x, event.clientY - g.y) < 3) {
         if (draft.current().points.length >= 64) throw new Error('A line can have at most 64 points.');
         if (!draft.current().points.length) anchor = g.hit;
+        const count = draft.current().points.length;
         draft.add(g.hit.at, true);
+        if (draft.current().points.length > count) {
+          if (g.hit.snapped) draft.current().points[count] = [...g.hit.at];
+          pointAnchors.push(g.hit.pointAnchor || null);
+          lockedPoints.push(!!g.hit.snapped);
+        }
         if (!facingChosen) {
           const ps = draft.current().points, normal = anchor.normal || [0,0,1];
           if (Math.abs(normal[2]) >= .9) facing = anchor.ceiling ? 'down' : 'up';
@@ -255,13 +297,14 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
     else onDone();
   }
   function cancelGesture() {
+    cancelMove();
     const drawing = active?.kind === 'draw', had = !!gesture || !!rectangle || !!draft.current()?.points.length;
-    gesture = rectangle = selected = anchor = null; draft.cancel(); if (drawing) draft.start('fence'); graphics(); return had;
+    gesture = rectangle = selected = anchor = pointLock = null; pointAnchors = []; lockedPoints = []; draft.cancel(); if (drawing) draft.start('fence'); graphics(); return had;
   }
   function key(event) {
     if (!active) return false;
     if (event.key === 'Escape') return cancelGesture();
-    if (event.key === 'Backspace' && active.kind === 'draw') { draft.back(); graphics(); return true; }
+    if (event.key === 'Backspace' && active.kind === 'draw') { draft.back(); pointAnchors.pop(); lockedPoints.pop(); pointLock = null; graphics(); return true; }
     if (event.key === 'Enter') { finish().catch(report); return true; }
     return false;
   }

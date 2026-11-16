@@ -129,7 +129,7 @@ function hostNormal(fixture, plan) {
 
 export function resolveFixture(fixture, plan) {
   const f = {...fixture};
-  const lift = p => [p[0], p[1], p[2] + fixtureReference(plan, f, p)];
+  const lift = p => [p[0], p[1], p[2] + fixtureReference(plan, f, p) + (f.offset_ft || 0)];
   if (f.at) f.at = lift(f.at);
   if (f.aim) f.aim = lift(f.aim);
   if (f.path) f.path = f.path.map(lift);
