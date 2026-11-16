@@ -142,9 +142,9 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
   const spas = (pool.features || []).filter(f => f.kind === 'spa').map(f => f.polygon);
   const slab = (poly, top) => spas.length ? cutSurface(poly, spas, height - depth, top) : polygon(poly, height - depth, top);
   for (const f of pool.features || []) {
-    const featureMesh = (geometry, material) => {
+    const featureMesh = (geometry, material, waterBody = pool.id || 'pool:0') => {
       const mesh = addMesh(group, geometry, material);
-      Object.assign(mesh.userData, {kind:f.kind, pieceId:f.id}); return mesh;
+      Object.assign(mesh.userData, {kind:f.kind, pieceId:f.id, waterBody}); return mesh;
     };
     const poly = f.polygon;
     if (f.kind === 'ledge') {
@@ -186,11 +186,11 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
       const floor = waterHeight - (f.depth_in ?? 36) / 12, inner = basinOutline(poly, wallWidth, shared.some(Boolean) ? shared : null);
       const poolFloor = height - depth, wallBottom = Math.min(floor, poolFloor);
       const spaTile = interior(f.materials?.interior || pool.materials?.interior);
-      featureMesh(polygon(inner, floor > poolFloor ? poolFloor : floor - .2, floor), spaTile);
+      featureMesh(polygon(inner, floor > poolFloor ? poolFloor : floor - .2, floor), spaTile, f.id);
       const benchWidth = (f.bench_width_in ?? 18) / 12, seatTop = waterHeight - (f.bench_in ?? 18) / 12;
       if (benchWidth > 0 && seatTop > floor) {
         const footwell = basinOutline(inner, benchWidth);
-        featureMesh(polygon(inner, floor, seatTop, [footwell]), spaTile);
+        featureMesh(polygon(inner, floor, seatTop, [footwell]), spaTile, f.id);
       }
       // Separate outer wall and tile liner, so wall slots never paint the basin.
       // Under the pool water the outer wall is the pool's own finish. Above it a raised spa
@@ -207,8 +207,8 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
         const middleA = a.map((v, k) => (v + d[k]) / 2), middleB = b.map((v, k) => (v + c[k]) / 2);
         if (split > wallBottom) featureMesh(polygon([a, b, middleB, middleA], wallBottom, split), tile);
         if (wallTop > split) featureMesh(polygon([a, b, middleB, middleA], split, wallTop), above);
-        if (bandLow > floor) featureMesh(polygon([middleA, middleB, c, d], floor, bandLow), spaTile);
-        if (wallTop > bandLow) featureMesh(polygon([middleA, middleB, c, d], bandLow, wallTop), band);
+        if (bandLow > floor) featureMesh(polygon([middleA, middleB, c, d], floor, bandLow), spaTile, f.id);
+        if (wallTop > bandLow) featureMesh(polygon([middleA, middleB, c, d], bandLow, wallTop), band, f.id);
       });
       const copingSlot = f.materials?.coping || pool.materials?.coping;
       if (!shared.some(Boolean)) featureMesh(polygon(poly, wallTop, copingTop, [inner]), mat(copingRole, copingSlot));

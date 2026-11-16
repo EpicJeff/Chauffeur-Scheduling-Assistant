@@ -32,6 +32,12 @@ export function createUnlit() {
     if (!record) {
       matcap ||= studioMatcap();
       const material = new THREE.MeshMatcapMaterial({ matcap });
+      // Water retains its world-space optics in the studio view. Its variant
+      // omits standard-light/roughness chunks that a matcap does not have.
+      if (source.userData.waterUnlit) {
+        material.onBeforeCompile = source.userData.waterUnlit.hook;
+        material.customProgramCacheKey = source.userData.waterUnlit.key;
+      }
       const dispose = () => { material.dispose(); source.removeEventListener('dispose', dispose); cache.delete(source); };
       source.addEventListener('dispose', dispose);
       record = { material, dispose }; cache.set(source, record);

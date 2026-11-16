@@ -26,7 +26,10 @@ import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.
 import { buildFence } from './fence_geometry.js';
 import { buildPadEdge } from './pad_edge_geometry.js';
 import { buildPoolFeatures, cutSurface, offsetOutline, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';
-import { rippleSources, rippleMaterial, updateRipples } from './effects/water_ripples.js';
+import { waterBodies, rippleSources, updateRipples } from './effects/water_ripples.js';
+import { surfaceMaterial } from './effects/water_surface.js';
+import { underwaterMaterial } from './effects/underwater.js';
+import { createWaterSimulation } from './effects/water_sim.js';
 
 function random(seed) {
   let n = seed | 0;
@@ -623,6 +626,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     if (previous && previousKeys[name] === keys[name]) {
       reused.set(name, previous.children.filter(o => o.userData.yardPart === name));
       if (name === 'pool') root.userData.waterSurfaces = previous.userData.waterSurfaces;
+      if (name === 'pool' && previous.userData.water) Object.defineProperty(root.userData, 'water', {value: previous.userData.water});
       if (name === 'pool' && previous.userData.ripples) Object.defineProperty(root.userData, 'ripples', {value: previous.userData.ripples});
       continue;
     }
@@ -631,26 +635,87 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     if (name === 'pool') {
       root.userData.waterSurfaces = [];
       scratch.traverse(object => { if (object.isMesh && object.userData.part === 'water') root.userData.waterSurfaces.push(object); });
-      const rows = [];
-      for (const body of rippleSources(plan)) {
-        let row;
-        for (const mesh of root.userData.waterSurfaces) if (mesh.userData.pieceId === body.id) {
-          if (!row) {
-            await mesh.material.userData.ready;
-            row = rippleMaterial(mesh.material, body); rows.push(row);
-            mats.set('water-ripples:' + body.id, row.material);
-          }
-          mesh.material = row.material;
-        }
+      const bodies = waterBodies(plan), receiving = new Map(rippleSources(plan).map(b => [b.id,b]));
+      const rows = [], surfaces = [], submerged = [], simulations = new Map(), tints = new Map();
+      const poolBody = bodies.find(b => b.id === (site.pool?.id || 'pool:0'));
+      // Library map loads mutate their material. Clone only after all pool
+      // finishes have resolved, so a first build keeps every late-loaded map.
+      await Promise.all([...mats.values()].map(material => material.userData.ready));
+      for (const body of receiving.values()) if (tier === 'high' || tier === 'max') {
+        const holes = body.id === poolBody?.id ? bodies.filter(b => b !== poolBody).map(b => b.polygon) : [];
+        simulations.set(body.id, createWaterSimulation({...body, holes}));
       }
-      if (rows.length) Object.defineProperty(root.userData, 'ripples', {value: {
-        rows, update: (fixtures, seconds) => updateRipples(rows, fixtures, seconds, tier),
-      }});
+      const sourced = new Map();
+      for (const mesh of root.userData.waterSurfaces) {
+        const source = mesh.material, body = receiving.get(mesh.userData.pieceId);
+        await source.userData.ready;
+        let row = body && sourced.get(body.id);
+        const cacheKey = 'water-surface:' + source.uuid + ':' + tier;
+        if (!row && !body && mats.has(cacheKey)) {
+          const material = mats.get(cacheKey);
+          row = {material, uniforms:material.userData.waterSurface};
+        }
+        if (!row) {
+          row = surfaceMaterial(source, body, {tier, simulation:simulations.get(body?.id)});
+          mats.set(body ? 'water-ripples:' + body.id : cacheKey, row.material);
+          if (body) {
+            sourced.set(body.id, row); rows.push(row);
+            row.mesh = mesh;
+            if (row.simulation) row.material.addEventListener('dispose', () => row.simulation.dispose());
+          }
+        }
+        mesh.material = row.material;
+        tints.set(mesh.userData.pieceId, row.material.color);
+        if (!surfaces.some(s => s.material === row.material)) surfaces.push(row);
+      }
+      scratch.traverse(mesh => {
+        if (!mesh.isMesh || mesh.userData.part === 'water' || !poolBody) return;
+        const body = bodies.find(b => b.id === mesh.userData.waterBody) || poolBody;
+        const simulation = simulations.get(body.id), source = mesh.material;
+        const key = 'underwater:' + source.uuid + ':' + tier + ':' + (simulation ? body.id + ':' + sourced.get(body.id).material.uuid : body.height);
+        let material = mats.get(key);
+        if (!material) {
+          const row = underwaterMaterial(source, body, {tier, simulation, tint:tints.get(body.id) || tints.get(poolBody.id)});
+          material = row.material; mats.set(key, material);
+        }
+        mesh.material = material;
+        if (!submerged.some(s => s.material === material)) submerged.push({material, uniforms:material.userData.underwater,
+          tint:tints.get(body.id) || tints.get(poolBody.id)});
+      });
+      if (surfaces.length) {
+        const water = {rows, surfaces, submerged, simulations,
+          update(fixtures, seconds, {renderer, camera, sun = 3, sunDirection} = {}) {
+            updateRipples(rows, fixtures, seconds, tier);
+            for (const {material, uniforms} of surfaces) {
+              // A live Library edit can restore the slot's opaque parameters.
+              // The water interface always retains its Fresnel alpha contract.
+              if (!material.transparent || material.depthWrite) {
+                material.transparent = true; material.depthWrite = false; material.needsUpdate = true;
+              }
+              uniforms.waterBaseOpacity.value = Math.max(.0001, material.opacity);
+            }
+            for (const row of [...surfaces, ...submerged]) {
+              row.uniforms.waterTime.value = tier === 'low' ? 0 : seconds;
+              if (row.uniforms.waterSun) row.uniforms.waterSun.value = sun;
+              if (row.uniforms.waterSunDirection && sunDirection) row.uniforms.waterSunDirection.value.copy(sunDirection);
+              if (row.uniforms.waterTint && row.tint) row.uniforms.waterTint.value.copy(row.tint);
+            }
+            for (const row of rows) row.simulation?.update(renderer, seconds, row.uniforms, {camera, mesh:row.mesh});
+          },
+        };
+        Object.defineProperty(root.userData, 'water', {value:water});
+        if (rows.length) Object.defineProperty(root.userData, 'ripples', {value:water});
+      }
     }
     const stop = part('batch');
     // Full trees/cards own their materials and viewing domains. Everything else
     // batches only inside its part, so no later edit can replace a sibling buffer.
     if (name !== 'plants' && name !== 'grass' && !(name === 'retaining_walls' && padParts)) mergeStatic(scratch);
+    if (name === 'pool') for (const row of root.userData.water?.rows || []) {
+      // mergeStatic replaces the original surface objects. Visibility must use
+      // the live render mesh and its mounted world transform, not a detached one.
+      row.mesh = scratch.children.find(mesh => mesh.material === row.material) || row.mesh;
+    }
     stop();
     for (const child of [...scratch.children]) { child.userData.yardPart = name; root.add(child); }
   }

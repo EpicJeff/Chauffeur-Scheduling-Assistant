@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { surfaceMaterial } from './water_surface.js';
 import { groundAt, poolDatum, inPolygon, edgeDistance, segmentIntersection } from '../twin_ground.js';
 import { resolveFixture } from '../live/emitters.js';
 import { effectTarget } from './driver.js';
@@ -123,50 +124,9 @@ export function rippleSources(plan) {
   return bodies.filter(b => b.sources.length);
 }
 
-// Only receiving water gets a clone and shader hook. All its Library maps,
-// slot identity and earlier shader hooks remain in place; no extra surface draw.
-export function rippleMaterial(source, body) {
-  const material = source.clone(), before = source.onBeforeCompile;
-  const key = source.customProgramCacheKey();
-  const uniforms = {rippleTime: {value: 0}, rippleLines: {value: Array.from({length: 8}, () => new THREE.Vector4())},
-    rippleStrength: {value: Array(8).fill(0)}};
-  Object.defineProperty(material.userData, 'ripples', {value: uniforms});
-  material.onBeforeCompile = (shader, renderer) => {
-    before.call(material, shader, renderer);
-    Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = 'varying vec2 vRipplePoint;\n' + shader.vertexShader;
-    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvRipplePoint = vec2(position.x, -position.z);');
-    shader.fragmentShader = `varying vec2 vRipplePoint;
-uniform float rippleTime; uniform vec4 rippleLines[8]; uniform float rippleStrength[8];
-` + shader.fragmentShader;
-    shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-normal = normalize(normal + mat3(viewMatrix) * vec3(rippleSlope.x, 0.0, -rippleSlope.y));`);
-    shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
-// Foam takes scene lighting with the water instead of glowing at night.
-vec2 rippleSlope = vec2(0.0); float sourceFoam = 0.0;
-for (int i = 0; i < 8; i++) {
-  vec2 a = rippleLines[i].xy, run = rippleLines[i].zw - a;
-  vec2 delta = vRipplePoint - a - run * clamp(dot(vRipplePoint - a, run) / max(dot(run, run), .0001), 0.0, 1.0);
-  float d = length(delta), phase = d * 9.0 - rippleTime * 4.5;
-  float fade = exp(-d * .65) * smoothstep(0.0, .16, d);
-  float wave = (sin(phase) + .28 * sin(phase * 1.73 + .8)) * (1.0 - smoothstep(.5, 3.14, fwidth(phase)));
-  rippleSlope += delta / max(d, .01) * wave * fade * rippleStrength[i] * .24;
-  sourceFoam += exp(-d * d * 10.0) * (.65 + .35 * sin(phase * 1.7)) * rippleStrength[i];
-}
-diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.92,.97,.98), min(.65, sourceFoam * .5));`);
-  };
-  material.customProgramCacheKey = () => key + '|water-ripples-1';
-  // Three's clone omits shader hooks. Viewing, selection and the bake all
-  // clone surfaces; each must retain this body's shared live uniforms.
-  const clone = material.clone;
-  material.clone = function() {
-    const target = clone.call(this);
-    target.onBeforeCompile = this.onBeforeCompile;
-    target.customProgramCacheKey = this.customProgramCacheKey;
-    target.clone = this.clone;
-    return target;
-  };
-  return {material, body, uniforms};
+// Compatibility entry point; the surface owns the single water shader hook.
+export function rippleMaterial(source, body, options = {}) {
+  return surfaceMaterial(source, body, options);
 }
 
 export function updateRipples(rows, fixtures, seconds, tier) {

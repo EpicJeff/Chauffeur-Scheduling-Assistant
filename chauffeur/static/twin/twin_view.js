@@ -268,7 +268,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // Effect water is unlit: it follows the sun down to a night floor.
     if (twin?.effects) twin.effects.update(view.live?.peek?.() || {}, view.live?.stale?.() ?? true, performance.now() / 1000,
       .18 + .82 * Math.min(1, (timeLook?.sun ?? 3) / 3));
-    yardGroup?.userData.ripples?.update(twin?.effects?.fixtures || [], performance.now() / 1000);
+    yardGroup?.userData.water?.update(twin?.effects?.fixtures || [], performance.now() / 1000, {
+      renderer: renderer3, camera, sun: timeLook?.sun ?? 3,
+      sunDirection: sun.position.clone().sub(sun.target.position).normalize(),
+    });
     view.live?.draw();
     twin?.updateGhosts();
     if (state.unlit) {
@@ -337,6 +340,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         if (Array.isArray(source)) { source.forEach((m, i) => syncStyled(m, target[i])); return; }
         if (!ids.includes(source.userData.materialId)) return;
         copyMaterialParams(source, target);
+        if (source.userData.waterSurface) { target.transparent = true; target.depthWrite = false; }
         if (target.userData.selectionTint !== undefined) target.color.lerp(new THREE.Color(target.userData.selectionTint), .32);
       };
       const sync = source => {

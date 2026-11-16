@@ -141,6 +141,28 @@ def baseline_sources():
     assert old.count(before) == 1
     sources[path] = old.replace(before, after)
     sources['static/twin/garage_door.js'] = (ROOT / 'static/twin/garage_door.js').read_text(encoding='utf-8')
+    # Water optics intentionally change only the pool's material batches. Keep
+    # the rest of the yard and every house byte pinned to the original baseline.
+    path = 'static/twin/pool_features.js'
+    now = (ROOT / path).read_text(encoding='utf-8')
+    start = 'export function buildPoolFeatures('
+    sources[path] = sources[path][:sources[path].index(start)] + now[now.index(start):]
+    path = 'static/twin/twin_yard.js'
+    now = (ROOT / path).read_text(encoding='utf-8')
+    old = sources[path]
+    imports = [line for line in now.splitlines() if any(ref in line for ref in
+               ("from './effects/water_ripples.js'", "from './effects/water_surface.js'",
+                "from './effects/underwater.js'", "from './effects/water_sim.js'"))]
+    assert len(imports) == 4
+    old = '\n'.join(imports) + '\n' + old
+    start, end = '    pool: async group => {', '    fire_pits: async group => {'
+    assert start in old and end in old and start in now and end in now
+    old = old[:old.index(start)] + now[now.index(start):now.index(end)] + old[old.index(end):]
+    start = "    if (name === 'pool') {\n      root.userData.waterSurfaces = [];"
+    end = "    const stop = part('batch');"
+    assert start in now and end in old
+    old = old.replace(end, now[now.index(start):now.index(end)] + end)
+    sources[path] = old
     return sources
 
 
