@@ -66,8 +66,9 @@ async function readLayout(api, stop) {
 export const layoutKey = (layout, plan = {}) => JSON.stringify([
   (layout?.markers || []).map(m => [m.device_id, m.name, m.kind, m.entity_id, m.entities, m.building, m.level, m.room, m.yard, m.at, m.fire_pit, m.facing_deg, m.orientation, m.outdoor, m.location_valid, m.placed, m.offered, m.accessories, m.camera_view]),
   layout?.camera_views,
+  layout?.climate_zones,
   (layout?.devices || []).map(d => [d.device_id, d.host]),
-  (layout?.rooms || []).map(r => [r.building, r.room, r.level, r.yard, r.area_id, r.name, r.lights, r.polygon_world]),
+  (layout?.rooms || []).map(r => [r.building, r.room, r.level, r.yard, r.state, r.area_id, r.name, r.lights, r.polygon_world]),
   (layout?.devices || []).map(d => [d.device_id, d.name, d.kind, d.entity_id, d.entities, d.area_id, d.building, d.room, d.yard, d.offered, d.accessories]),
   emitterSignature(resolveEmitters(layout || {}, {}, plan))]);
 

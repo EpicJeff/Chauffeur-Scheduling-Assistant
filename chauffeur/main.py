@@ -7617,7 +7617,7 @@ def house_live(request: Request):
                   for eid in d['entities'] if eid.startswith('light.')]
         row = {'room': room['id'], 'building': building['id'],
                'level': room.get('level'), 'area_id': area,
-               'name': room.get('name', ''), 'lights': lights,
+               'name': room.get('name', ''), 'state': room.get('state'), 'lights': lights,
                'polygon_world': [list(p) if yard else _house_lot_point(building, p)
                                  for p in room.get('polygon', [])]}
         if yard:

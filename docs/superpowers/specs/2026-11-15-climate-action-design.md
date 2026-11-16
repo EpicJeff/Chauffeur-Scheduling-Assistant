@@ -1,6 +1,6 @@
 # Climate mode shows what the system is doing
 
-Date: 2026-11-15. Status: draft for the user's approval.
+Date: 2026-11-15. Status: shipped v2.499.890.
 
 ## Why
 
@@ -82,7 +82,7 @@ A default is computed on read and never stored, so it follows the house as therm
 - The room a thermostat stands in carries the zone's label: room name, current, arrow, setpoint, and the action word when heating or cooling. Example: `Hall 68° → 71° Heating`. An unplaced thermostat labels the first room it serves.
 - A served room with its own temperature sensor shows its own reading as a short label (`Office 66°`), so a cold room in a zone is still visible now that colour no longer says it.
 - Other rooms carry no label.
-- Labels show in Climate mode only, as today.
+- Labels show in Climate mode and in All, as today.
 
 ### Legend
 

@@ -87,6 +87,23 @@ def floor_rgb(page):
     }""", L.KITCHEN)
 
 
+def painted_rgb(page):
+    """The colour the canvas really shows at the middle of the kitchen wash.
+
+    The wash's own colour says nothing about paint order: a floor drawn after it
+    once covered it completely while every state check stayed green.
+    """
+    return page.evaluate("""async room => {
+      const v=window.__twin, THREE=await import('three'); let wash;
+      v.scene.traverse(o=>{if(o.userData.lightWash?.room===room && o.userData.lightWash?.building==='pool-house')wash=o;});
+      const at=new THREE.Box3().setFromObject(wash).getCenter(new THREE.Vector3()).project(v.camera);
+      const gl=v.renderer3.getContext(), px=new Uint8Array(4);
+      v.renderer3.render(v.scene,v.camera);
+      gl.readPixels(Math.round((at.x*.5+.5)*gl.drawingBufferWidth),Math.round((at.y*.5+.5)*gl.drawingBufferHeight),1,1,gl.RGBA,gl.UNSIGNED_BYTE,px);
+      return [...px];
+    }""", L.KITCHEN)
+
+
 def no_glance_argyle_overlap(page):
     # Measure the real panel orb (or the desk chat bar), including responsive
     # sizing and shelf placement, rather than assuming a pixel footprint.
@@ -104,7 +121,7 @@ def no_glance_argyle_overlap(page):
     check(True, 'no glance item bounding box intersects Argyle')
 
 
-def scenario_climate_kitchen_warm_at_80_cool_at_60():
+def scenario_climate_kitchen_heating_cooling_and_idle():
     served = setup()
     if served is None:
         return
@@ -113,16 +130,23 @@ def scenario_climate_kitchen_warm_at_80_cool_at_60():
         L.aim_kitchen(page)
         page.get_by_role('button', name='Climate', exact=True).click()
         page.wait_for_timeout(1000)  # allow the actual SSE subscriber to attach
-        push('climate.kitchen', attributes={'current_temperature': 80, 'unit_of_measurement': '°F'})
-        page.wait_for_function('() => window.__twin.live.state("climate.kitchen").attributes.current_temperature===80', timeout=3000)
+        push('climate.kitchen', attributes={'current_temperature': 60, 'unit_of_measurement': '°F', 'hvac_action': 'heating'})
+        page.wait_for_function('() => window.__twin.live.state("climate.kitchen").attributes.hvac_action==="heating"', timeout=3000)
+        # The wash repaints on the next batched frame after the push, so wait for it.
+        deadline = time.time() + 3
         warm = floor_rgb(page)
-        check(warm['visible'] and warm['rgb'][0] > warm['rgb'][2], ('warm floor', warm))
+        while not warm['rgb'][0] > warm['rgb'][2] and time.time() < deadline:
+            page.wait_for_timeout(100)
+            warm = floor_rgb(page)
+        check(warm['visible'] and warm['rgb'][0] > warm['rgb'][2], ('heating floor despite cold temperature', warm))
         # Labels repaint on the next batched frame, like the wash.
-        page.wait_for_function("() => (document.querySelector('.twin-climate-labels')?.textContent || '').includes('80°F')", timeout=3000)
-        check('80°F' in page.locator('.twin-climate-labels').inner_text(), 'current and target label')
+        page.wait_for_function("() => (document.querySelector('.twin-climate-labels')?.textContent || '').includes('60° → 68° Heating')", timeout=3000)
+        check('60° → 68° Heating' in page.locator('.twin-climate-labels').inner_text(), 'current, target and action label')
+        seen = painted_rgb(page)
+        check(seen[0] > seen[2] + 60, ('the heating wash is painted over its floor', seen))
         shot(page, 'climate-warm.png')
-        push('climate.kitchen', attributes={'current_temperature': 60})
-        page.wait_for_function('() => window.__twin.live.state("climate.kitchen").attributes.current_temperature===60', timeout=3000)
+        push('climate.kitchen', attributes={'current_temperature': 80, 'hvac_action': 'cooling'})
+        page.wait_for_function('() => window.__twin.live.state("climate.kitchen").attributes.hvac_action==="cooling"', timeout=3000)
         # The wash repaints on the next batched frame after the push, so wait for it.
         deadline = time.time() + 3
         cool = floor_rgb(page)
@@ -130,7 +154,15 @@ def scenario_climate_kitchen_warm_at_80_cool_at_60():
             page.wait_for_timeout(100)
             cool = floor_rgb(page)
         check(cool['rgb'][2] > cool['rgb'][0], ('cool floor', cool))
+        seen = painted_rgb(page)
+        check(seen[2] > seen[0] + 30, ('the cooling wash is painted over its floor', seen))
         shot(page, 'climate-cool.png')
+        push('climate.kitchen', attributes={'hvac_action': 'idle'})
+        page.wait_for_function('() => window.__twin.live.state("climate.kitchen").attributes.hvac_action==="idle"', timeout=3000)
+        page.wait_for_function("""() => {let yes=false;window.__twin.scene.traverse(o=>{
+          if(o.userData.lightWash?.room===%s)yes=o.parent.visible && o.material.opacity===.35;});return yes;}""" % repr(L.KITCHEN), timeout=3000)
+        page.get_by_role('button', name='All', exact=True).click()
+        check(not page.locator('.twin-climate-labels').is_hidden(), 'Climate labels still show in All, as before')
         L.no_errors(served)
 
 
@@ -410,7 +442,7 @@ def scenario_compact_hero_stays_light_under_a_light_panel_theme():
         L.no_errors(served)
 
 
-SCENARIOS = [scenario_climate_kitchen_warm_at_80_cool_at_60,
+SCENARIOS = [scenario_climate_kitchen_heating_cooling_and_idle,
              scenario_glance_order_live_push_and_unavailable,
              scenario_desk_glance_order_live_push_and_unavailable,
              scenario_idle_orbits_moves_bar_and_tap_restores_camera,
