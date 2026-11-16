@@ -2,7 +2,8 @@ import * as THREE from 'three';
 
 // Procedural water, one shader for every water effect. kind: 0 fountain jet
 // (a solid core, then a skirt of falling strands that break into drops),
-// 1 bubbler mound, 2 falling sheet, 3 splash ring and landing foam.
+// 1 bubbler column, 2 falling sheet, 3 splash ring and landing foam, 4 the apron
+// of broken foam that drifts out from a bubbler's foot.
 export function waterMaterial(kind = 0) {
   return new THREE.ShaderMaterial({ transparent: true, depthWrite: false,
     side: THREE.DoubleSide, forceSinglePass: true, toneMapped: false,
@@ -12,11 +13,19 @@ export function waterMaterial(kind = 0) {
       void main() {
         vUv=uv; vec3 p=position; vPart=0.;
         if(kind>1.5 && kind<2.5) p+=outward*flow*(1.-exp(-uv.y*6.));
-        else if(kind<1.5) {
+        else if(kind<.5) {
           // The fountain marks its skirt in the spare outward channel.
           vPart=outward.y;
           float swell=1.+.025*sin(uv.y*18.-time*3.)*sin(uv.x*37.69911+time);
           p.xz*=swell;
+        } else if(kind<1.5) {
+          // Lumps of froth climb the column; the tip sways and pulses. Whole turns of
+          // uv.x keep the seam closed.
+          float h=1.-uv.y, a=uv.x*6.28318;
+          float lump=.5*sin(a*3.+h*11.-time*6.)+.3*sin(a*5.-h*19.+time*8.3)+.2*sin(a*2.+h*29.-time*11.);
+          p.xz*=1.+lump*(.1+.2*h);
+          p.xz+=vec2(sin(time*2.3+h*3.),cos(time*1.7+h*2.))*.16*h*h;
+          p.y*=1.-.05*h*h*(.5+.5*sin(time*9.));
         }
         vec4 mv=modelViewMatrix*vec4(p,1.); vView=-mv.xyz;
         vNormal=normalize(normalMatrix*normal);
@@ -33,7 +42,14 @@ export function waterMaterial(kind = 0) {
         vec2 uv=vUv; vec3 color; float alpha;
         float fres=pow(1.-abs(dot(normalize(vNormal),normalize(vView))),2.);
         vec3 deep=vec3(.2,.55,.7), pale=vec3(.74,.9,1.), white=vec3(.96,.99,1.);
-        if(kind>2.5){
+        if(kind>3.5){
+          // Foam thick at the foot, breaking into patches that thin as they drift out.
+          float n=noise(vec2(uv.x*20.,uv.y*5.-time*.8),20.);
+          float fine=noise(vec2(uv.x*60.,uv.y*13.-time*1.5),60.);
+          float foam=smoothstep(.3+.3*uv.y,.56+.26*uv.y,n*.6+fine*.4);
+          alpha=max(foam*.92*(1.-smoothstep(.55,1.,uv.y)),(1.-smoothstep(0.,.3,uv.y))*(.55+.35*fine));
+          color=mix(vec3(.74,.9,.96),vec3(1.),foam);
+        } else if(kind>2.5){
           float n=noise(vec2(uv.x*64.,uv.y*12.-time*2.8),64.);
           float fine=noise(vec2(uv.x*192.,uv.y*28.-time*5.6),192.);
           float foam=smoothstep(.53,.86,n*.6+fine*.4);
@@ -54,12 +70,16 @@ export function waterMaterial(kind = 0) {
           alpha=(.46+.42*froth+fres*.1)*mix(ribbons,1.,smoothstep(.15,.75,strength));
           alpha*=smoothstep(0.,.08,x)*(1.-smoothstep(span-.08,span,x));
         } else if(kind>.5){
-          // A mound: white where it wells up, clearer as it runs off the rim.
-          float n=noise(vec2(uv.x*16.,uv.y*5.-time*2.2),16.);
-          float fine=noise(vec2(uv.x*40.,uv.y*12.-time*3.6),40.);
-          float foam=smoothstep(.32,.78,n*.6+fine*.4);
-          color=mix(mix(deep,pale,.5+fres*.4),white,clamp(foam*.75+(1.-uv.y)*.55,0.,1.));
-          alpha=mix(.92,.4,uv.y)*(.55+.45*foam)*(1.-smoothstep(.86,1.,uv.y));
+          // A column of air and water: white froth with cool shade in the hollows, a
+          // ragged tip, and a foot that stays solid where it boils over.
+          float h=1.-uv.y;
+          float n=noise(vec2(uv.x*24.,h*18.-time*7.),24.);
+          float fine=noise(vec2(uv.x*72.,h*50.-time*12.),72.);
+          float froth=n*.55+fine*.45;
+          color=mix(vec3(.72,.84,.93),white,smoothstep(.26,.52,froth));
+          color=mix(color,pale,fres*.12);
+          alpha=(.9+.08*froth)*(.75+.25*strength);
+          alpha*=mix(1.,smoothstep(.3,.56,froth),smoothstep(.8,1.,h));
         } else if(vPart<.5){
           // The rising jet: aerated, nearly opaque.
           float n=noise(vec2(uv.x*8.,uv.y*7.-time*6.),8.);
@@ -89,10 +109,10 @@ export function effectMesh(geometry, material) {
   return mesh;
 }
 
-export function splashRing() {
-  const geometry = new THREE.RingGeometry(.55, 1, 64, 4).rotateX(-Math.PI / 2);
+export function splashRing(kind = 3, inner = .55) {
+  const geometry = new THREE.RingGeometry(inner, 1, 64, 4).rotateX(-Math.PI / 2);
   // RingGeometry's stock UV is planar; radial UV makes the traveling rings circular.
   const p = geometry.attributes.position, uv = geometry.attributes.uv;
-  for (let i = 0; i < p.count; i++) uv.setXY(i, (Math.atan2(p.getZ(i), p.getX(i)) / Math.PI + 1) / 2, (Math.hypot(p.getX(i), p.getZ(i)) - .55) / .45);
-  return effectMesh(geometry, waterMaterial(3));
+  for (let i = 0; i < p.count; i++) uv.setXY(i, (Math.atan2(p.getZ(i), p.getX(i)) / Math.PI + 1) / 2, (Math.hypot(p.getX(i), p.getZ(i)) - inner) / (1 - inner));
+  return effectMesh(geometry, waterMaterial(kind));
 }

@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.900 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.901 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.901 (2026-11-16, NOT device-verified, browser-checked in Chromium): a bubbler is a narrow white column of aerated water over an apron of foam.**
+
+- **What changed for a person.** A bubbler effect fixture used to draw a low, wide, bluish mound. It now draws a narrow column of white froth whose outline churns and whose tip sways, standing in a patch of foam that breaks up as it drifts out across the water. More flow mainly makes it taller: the column is about 0.3 ft across at any size and only widens a little. Nothing on the fixture's card changed: size still sets the height in feet and the switch and sensor drive it as before.
+- **Shape.** `static/twin/effects/bubbler.js` lathes a column profile (rounded tip, near-straight sides, a short flare at the foot) and scales it to `reach = 0.12 + size * 0.03` ft radius by `size` ft tall. The foam apron is a flat ring 4.5 times that radius, 0.015 ft above the water.
+- **Shader.** `static/twin/effects/water_material.js` kind 1 (the column) now displaces its outline in the vertex stage with three travelling sine lumps that grow toward the tip, sways and pulses the tip, and shades fine white froth with a cool tone in the hollows; the tip breaks up into ragged froth. New kind 4 is the foam apron: solid at the foot, breaking into patches that thin outward. `splashRing(kind = 3, inner = .55)` takes the kind and inner radius; the fountain's ring calls it with the defaults and is unchanged.
+- **Invariants.** Still two draws per bubbler (column and apron), no texture, no extra pass, no new uniform. The column's bounding height equals the fixture's size in feet. All noise repeats in whole turns of the lathe, so there is no seam.
+- **Tests:** `tests/test_twin_effect_visuals_js.py` adds `bubbler_is_a_narrow_column_over_a_wide_foam_apron` (height equals size, width under half the height from 1 ft up, apron more than 2.5 times the column's width and flat, kinds 1 and 4) and `bubbler_grows_taller_not_wider_with_flow` (four times the size is four times the height and under 1.5 times the width).
 
 **v2.499.900 (2026-11-16, NOT device-verified, browser-checked in Chromium): a yard pad edge is None, a Wall or a Stair, with a wall cap, treads and railings.**
 

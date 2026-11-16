@@ -34,6 +34,22 @@ for(const type of ['fountain','bubbler','fire'])await test(type+'_bounding_heigh
   assert.equal(out.fixtures[0].size,size);
  }
 });
+await test('bubbler_is_a_narrow_column_over_a_wide_foam_apron',async()=>{
+ for(const size of [.3,1,1.5]){const out=buildEffects(planWith(basic('bubbler',{size_min:size,size_max:size})),{editor:true});
+  const [body,apron]=effectMeshes(out.group),box=mesh=>new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3());
+  const column=box(body),foam=box(apron);close(column.y,size);
+  // Measured above the flared foot, the column is far taller than wide once it has any height.
+  if(size>=1)assert.ok(column.x<size*.5,`column ${column.x} wide for ${size} tall`);
+  assert.ok(foam.x>column.x*2.5,'foam spreads well past the foot');assert.ok(foam.y<.001);
+  assert.equal(body.material.uniforms.kind.value,1);assert.equal(apron.material.uniforms.kind.value,4);
+ }
+});
+await test('bubbler_grows_taller_not_wider_with_flow',async()=>{
+ const column=size=>{const out=buildEffects(planWith(basic('bubbler',{size_min:size,size_max:size})),{editor:true});
+  return new THREE.Box3().setFromObject(effectMeshes(out.group)[0]).getSize(new THREE.Vector3());};
+ const low=column(.5),high=column(2);close(high.y/low.y,4);
+ assert.ok(high.x>low.x,'a little wider');assert.ok(high.x/low.x<1.5,`width grew ${high.x/low.x} times`);
+});
 await test('line_fire_spans_entire_path_with_two_draws',async()=>{
  const f=basic('fire',{shape:'line',at:undefined,path:[[10,10,2],[20,10,2],[20,20,2]],facing:'out',size_min:2,size_max:2});
  const out=buildEffects(planWith(f),{editor:true}),bounds=new THREE.Box3().setFromObject(out.group);
