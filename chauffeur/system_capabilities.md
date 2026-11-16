@@ -1,6 +1,12 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.898 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.899 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.899 (2026-11-16, NOT device-verified, not browser-checked): pool steam stays off a spa inside the pool.**
+
+- **The fault, found on device.** A steam fixture placed on the pool covered the pool's whole outline, so it also steamed over a spa set into the pool. A spa is normally heated on its own.
+- **The fix.** `buildVapour` in `static/twin/effects/vapour.js` drops every wisp of pool steam whose foot is over a spa or within its own half width of a spa wall. Steam placed on the spa still covers the spa only, and a pool with no spa steams all over as before.
+- **Tests:** `tests/test_twin_effect_second_set_js.py` (`pool_steam_stays_off_a_spa_inside_the_pool`: no vertex over the spa, the rest of the pool still steams, a pool with no spa has more wisps).
 
 **v2.499.898 (2026-11-16, NOT device-verified, browser-checked in Chromium): a drawn fixture line snaps point by point to real geometry, and the points follow what they locked to.**
 

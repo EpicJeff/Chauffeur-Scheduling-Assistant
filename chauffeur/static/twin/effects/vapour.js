@@ -1,18 +1,23 @@
 import * as THREE from 'three';
-import { inPolygon } from '../twin_ground.js';
+import { inPolygon, edgeDistance } from '../twin_ground.js';
 import { waterBodies } from './water_ripples.js';
 import { effectMesh } from './water_material.js';
 
 export function buildVapour(fixture,{plan,origin,mist=false}) {
   const group=new THREE.Group(),anchors=[],positions=[],uvs=[],seeds=[],indices=[],bases=[];
-  let width=3,body=null;
-  if(!mist)body=waterBodies(plan).find(b=>inPolygon(b.polygon,...origin));
+  let width=3,body=null,spas=[];
+  if(!mist) {
+    const bodies=waterBodies(plan);body=bodies.find(b=>inPolygon(b.polygon,...origin));
+    // A spa is heated on its own: pool steam stays off the spa, and a wisp's foot clear of its wall.
+    if(body&&body===bodies[bodies.length-1])spas=bodies.slice(0,-1).map(b=>b.polygon);
+  }
   if(body) {
     const xs=body.polygon.map(p=>p[0]),ys=body.polygon.map(p=>p[1]),x0=Math.min(...xs),y0=Math.min(...ys),dx=Math.max(...xs)-x0,dy=Math.max(...ys)-y0;
     const nx=Math.max(1,Math.min(12,Math.ceil(dx/2.5))),ny=Math.max(1,Math.min(12,Math.ceil(dy/2.5)));width=Math.max(dx/nx,dy/ny)*1.7;
     for(let x=0;x<nx;x++)for(let y=0;y<ny;y++) {
       const at=[x0+(x+.5)*dx/nx,y0+(y+.5)*dy/ny,body.height+.025];
-      if(inPolygon(body.polygon,...at))anchors.push(at.map((v,k)=>v-origin[k]));
+      const clear=spas.every(spa=>!inPolygon(spa,...at)&&spa.every((a,i)=>edgeDistance(at,a,spa[(i+1)%spa.length])>=width*.35));
+      if(clear&&inPolygon(body.polygon,...at))anchors.push(at.map((v,k)=>v-origin[k]));
     }
     if(!anchors.length)anchors.push([0,0,body.height+.025-origin[2]]);
   } else if(mist && fixture.path) {

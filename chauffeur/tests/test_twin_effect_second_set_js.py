@@ -52,6 +52,19 @@ await test('steam_covers_its_body_and_dry_steam_is_three_feet_across',()=>{
  const dry=buildEffects(plan(f('steam',{at:[50,50,2],size_min:2,size_max:2})),{editor:true});
  const box=new THREE.Box3().setFromObject(dry.group);close(box.max.x-box.min.x,3);close(box.max.y-box.min.y,2);assert.equal(dry.fixtures[0].built.body,undefined);
 });
+await test('pool_steam_stays_off_a_spa_inside_the_pool',()=>{
+ const fx=buildEffects(plan(f('steam',{at:[5,5,0],size_min:4,size_max:4})),{editor:true});
+ assert.equal(fx.fixtures[0].built.body.id,'pool');
+ const p=effectMeshes(fx.group)[0].geometry.attributes.position;let over=0;
+ for(let i=0;i<p.count;i++)if(p.getX(i)>12&&p.getX(i)<18&&-p.getZ(i)>12&&-p.getZ(i)<18)over++;
+ assert.ok(p.count>0);assert.equal(over,0,'no wisp stands over the spa');
+ const bounds=new THREE.Box3().setFromObject(fx.group);
+ assert.ok(bounds.min.x<3&&bounds.max.x>17&&bounds.min.z<-17&&bounds.max.z>-3,'the rest of the pool still steams');
+ // The same pool with no spa steams all over.
+ const bare=plan(f('steam',{at:[5,5,0],size_min:4,size_max:4}));bare.site.pool.features=[];
+ const q=effectMeshes(buildEffects(bare,{editor:true}).group)[0].geometry.attributes.position;
+ assert.ok(q.count>p.count);
+});
 await test('mist_point_and_line_drop_the_authored_distance',()=>{
  for(const shape of ['point','line']){
   const fixture=f('mist',{shape,at:undefined,...(shape==='line'?{path:[[1,1,8],[12,1,8]]}:{at:[1,1,8]}),size_min:6,size_max:6});
