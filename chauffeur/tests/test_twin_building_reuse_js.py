@@ -117,7 +117,7 @@ await test('household_draw_calls_do_not_increase_after_building_reuse',async()=>
   const old=buildTwin(input.household,input.householdKit,'high',{viewing});await old.ready;const before=calls(old.root);
   const p=structuredClone(input.household);p.buildings[0].openings[0].width+=.1;
   const next=buildTwin(p,input.householdKit,'high',{viewing,previous:old});await next.ready;next.adoptBuildings();
-  assert.deepEqual(next.buildingsReused,['pool-house']);assert.equal(calls(next.root),before);assert.equal(before,viewing?71:42,'v2.499.861 baseline structure submissions');
+  assert.deepEqual(next.buildingsReused,['pool-house']);assert.equal(calls(next.root),before);assert.equal(before,viewing?73:44,'v2.499.885 baseline structure submissions: v2.499.861 plus one moving door per garage');
   console.log(`  household ${viewing?'viewer':'editor'} structure: ${before} -> ${calls(next.root)} calls`);
  }
 });

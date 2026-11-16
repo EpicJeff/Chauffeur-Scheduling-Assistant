@@ -165,9 +165,12 @@ check('step_runs_face_downhill_off_the_nosing',()=>{
 });
 check('fence_out_is_right_of_the_drawn_direction',()=>{
   const p={buildings:[],site:{fence:[{id:'fence',polyline:[[0,0],[10,0],[10,10]],height:6}]}};
+  for(const type of [undefined,'plank','picket','metal','panel']){
+  if(type)p.site.fence[0].type=type;
   for(const [edge,path,at] of [[{from:[10,0],to:[0,0]},[[8,0,6],[2,0,6]],[8,-1/12,6]],[{from:[10,2],to:[10,8]},[[10,2,6],[10,8,6]],[10+1/12,2,6]]]){
     const f=fixture('fence','line',{path,facing:'out',width_in:.5,snap:{host:{kind:'fence',id:'fence'},edge,t0:0,t1:1}});
     near(resolveEmitters(layout([f]),states,p)[0].path[0],at);
+  }
   }
 });
 check('snapped_runs_take_the_auto_foundation_lift_from_building_hosts_only',async()=>{

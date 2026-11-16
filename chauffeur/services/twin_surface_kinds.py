@@ -35,6 +35,7 @@ BUILTIN_LOOKS = {
     'glass': {'color': '#b9d7db', 'transparent': True, 'opacity': 0.26, 'roughness': 0.1, 'depthWrite': False},
     'screen': {'color': '#59615d', 'transparent': True, 'opacity': 0.3, 'depthWrite': False, 'doubleSide': True},
     'water': {'color': '#7fd0e6', 'transparent': True, 'opacity': 0.65, 'roughness': 0.12, 'depthWrite': False},
+    'chain_link': {'color': '#9da5a8', 'opacity': 1, 'roughness': 0.45, 'metalness': 0.65, 'alphaTest': 0.5, 'doubleSide': True},
 }
 
 

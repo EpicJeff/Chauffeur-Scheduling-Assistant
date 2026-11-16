@@ -519,7 +519,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         return plain('ceramic', '#f4f4f2');
       }
       const ref = materialKit.materials?.[slot.id], known = manifest(kit);
-      const mode = Object.hasOwn(BUILTIN_LOOKS, slot.id) ? 'blend' : alphaModeOf(known[slot.id] || known[ref?.id || ref?.asset], ref);
+      const mode = Object.hasOwn(BUILTIN_LOOKS, slot.id) ? (BUILTIN_LOOKS[slot.id].alphaTest > 0 ? 'cutout' : 'blend') : alphaModeOf(known[slot.id] || known[ref?.id || ref?.asset], ref);
       const name = kind === 'pane' || kind === 'shower_glass' ? (mode === 'opaque' ? 'pane' : 'glass')
         : fallback.role || (kind === 'shower_tile' ? 'ceramic' : kind);
       // materialSlot's legacy alias cache keeps its original role. Namespace

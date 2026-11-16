@@ -243,12 +243,17 @@ for(const shape of ['round','square','rect','outline']) {
  if(shape==='square')assert.equal(ops.at(-1).side,4);
  if(shape==='rect'){assert.equal(ops.at(-1).width,4);assert.equal(ops.at(-1).depth,6);}
 }
-plan.site.fence.style='wood';terrain.show();click('Draw fence');const beforeFence=ops.length, fenceMaterial=new THREE.MeshStandardMaterial().id;
+plan.site.fence.style='wood';plan.site.fence.type='metal';terrain.show();click('Draw fence');const beforeFence=ops.length, fenceMaterial=new THREE.MeshStandardMaterial().id;
 change('Height (ft)',7);change('Style','rail');
 for(const p of [[28,20],[32,20],[32,24]]){terrain.pointerDown({...event(p),shiftKey:true});terrain.pointerUp(event(p),false);}
 assert.equal(ops.length,beforeFence);assert.equal(new THREE.MeshStandardMaterial().id,fenceMaterial+1);
 key=new Event('keydown');key.key='Enter';document.dispatchEvent(key);await new Promise(r=>setTimeout(r,0));
 assert.equal(ops.length,beforeFence+1);assert.equal(ops.at(-1).list,'fence');assert.equal(ops.at(-1).polyline.length,3);assert.equal(ops.at(-1).height,7);assert.equal(ops.at(-1).style,'rail');
+assert.equal(ops.at(-1).type,'metal','draw tool inherits type alongside free text style');
+delete plan.site.fence;terrain.show();click('Draw fence');
+for(const p of [[26,26],[30,26]]){terrain.pointerDown({...event(p),shiftKey:true});terrain.pointerUp(event(p),false);}
+click('Finish');await new Promise(r=>setTimeout(r,0));assert.equal(ops.at(-1).list,'fence');
+assert.ok(!('type' in ops.at(-1))&&!('style' in ops.at(-1)),'first fence omits optional type and style');
 const host=new Element(), building={id:'b',base:0,foundation:{mode:'fixed',offset_ft:0,thickness_ft:1}};
 let preview;
 foundationShelf(host,building,{getPlan:()=>({buildings:[building]}),canEdit:()=>true,queue:fn=>Promise.resolve().then(fn),op,report:error=>{throw error;},preview:async plan=>{preview=plan;}});

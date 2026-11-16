@@ -48,6 +48,11 @@ for(const kind of ['hardscape','fence','step','wall'])await test('snap_'+kind+'_
  for(const [i,t]of [value.snap.t0,value.snap.t1].entries())for(let k=0;k<3;k++)assert.ok(Math.abs(value.path[i][k]-(edge.a[k]+(edge.b[k]-edge.a[k])*t))<1e-5,JSON.stringify({value,edge}));
  s.signal.abort();
 });
+for(const type of ['plank','picket','metal','panel'])await test('snap_fence_top_'+type,async()=>{
+ const s=setup();s.plan.site.fence[0].type=type;
+ const e=await editor(s),{value}=await snapRun(s,e,'fence');assert.equal(s.sent.length,1);
+ assert.ok(value.path.every(p=>Math.abs(p[2]-6)<1e-5));s.signal.abort();
+});
 await test('facing_select_updates_once',async()=>{
  const s=setup();s.plan.light_fixtures['light.a']=[{...line,snap:{host:{kind:'wall',id:'w'},edge:{from:[40,40],to:[40,50]},t0:0,t1:1}}];
  const n=await card(s),f=n.querySelector('[aria-label="Facing"]');assert.ok(f);assert.ok(f.children.some(n=>n.value==='out'));assert.ok(f.children.some(n=>n.value==='in'));

@@ -239,7 +239,7 @@ def create(name, values, lot):
         allowed |= FIRE_FIELDS
     if name == 'fence':
         defaults = {'height': 6}
-        allowed = {'polyline', 'height', 'style'}
+        allowed = {'polyline', 'height', 'style', 'type'}
     if path:
         preset = values.get('preset')
         if preset is not None and (not isinstance(preset, str) or preset not in PATH_PRESETS):
@@ -319,6 +319,8 @@ def validate(name, piece, *, legacy_height=False):
             raise ValueError(f'Choose {field} from {low} to {high}.')
     if 'style' in piece and (not isinstance(piece['style'], str) or not 1 <= len(piece['style'].strip()) <= 80):
         raise ValueError('Use a fence style of 1 to 80 characters.')
+    if name == 'fence' and 'type' in piece and piece['type'] not in ('plank', 'picket', 'metal', 'panel'):
+        raise ValueError('Choose Wood plank, Picket, Metal picket or Panel.')
     if 'materials' in piece:
         material_slots(name, piece['materials'])
     if name == 'pool' and 'features' in piece:
@@ -344,7 +346,7 @@ def update(name, piece, change, lot):
         if piece.get('shape', 'round') == 'round':
             allowed |= {'at', 'radius'}
     if name == 'fence':
-        allowed |= {'height', 'style'}
+        allowed |= {'height', 'style', 'type'}
     if name in SLOTS:
         allowed |= {'materials'}
     if not change or set(change) - allowed:

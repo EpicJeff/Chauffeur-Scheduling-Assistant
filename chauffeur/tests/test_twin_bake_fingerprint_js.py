@@ -127,6 +127,17 @@ assert.equal(buildAtlas(await scene('low',lodPlan),lodPlan,options).key,b.key,'L
  house.root.remove(first.group);house.root.add(second.group);house.root.updateMatrixWorld(true);
  assert.deepEqual(keysOf(house.root,moved,'terrain'),terrainBefore,'a fence edit leaves every terrain chart key as it was');
  assert.notDeepEqual(keysOf(house.root,moved,'fences'),fenceBefore,'the fence charts change');
+ let previous=second,previousPlan=moved;
+ for(const type of ['plank','picket','metal','panel']){
+  const typed=structuredClone(moved);typed.site.fence[0].type=type;
+  const before=buildAtlas(house.root,previousPlan,options).key;
+  const next=await buildYard(typed,kit,'high',{viewing:true,previous:previous.group});next.group.userData.adoptParts();
+  assert.deepEqual(next.group.userData.yardRebuiltParts,['fences'],'a type change rebuilds only fences');
+  house.root.remove(previous.group);house.root.add(next.group);house.root.updateMatrixWorld(true);
+  assert.notEqual(buildAtlas(house.root,typed,options).key,before,'type invalidates the stored bake');
+  assert.deepEqual(keysOf(house.root,typed,'terrain'),terrainBefore,'type preserves terrain charts');
+  previous=next;previousPlan=typed;
+ }
 }
 // Per-building reuse retains geometry already prepared by the bake, so an edit to
 // the other building cannot stale this building's chart identities.

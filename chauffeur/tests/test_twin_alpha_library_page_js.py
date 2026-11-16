@@ -152,6 +152,16 @@ await test('preview_material_follows_mode', async () => {
   p.setMaterial({...record('cutout'), params: {...entry.params, alpha_mode: 'cutout', alpha_cutoff: .3}}); tick();
   assert.equal(drawn.material, cutout); assert.equal(cutout.alphaTest, .3); p.dispose();
 });
+await test('chain_link_preview_uses_the_generated_cutout', async () => {
+  const p = createPreview(document.createElement('canvas'));
+  try {
+    p.setMaterial({...record('cutout', 'builtin'), id: 'chain_link', name: 'Chain link'}); tick();
+    assert.equal(drawn.material.userData.alphaMode, 'cutout');
+    assert.equal(drawn.material.alphaTest, .5); assert.equal(drawn.material.side, THREE.DoubleSide);
+    assert.ok(drawn.material.alphaMap.isDataTexture); assert.equal(drawn.material.alphaMap.repeat.x, 6);
+    assert.equal(drawn.material.transmission, undefined);
+  } finally { p.dispose(); }
+});
 await test('local_opacity_map_attaches_and_tiles_in_preview', async () => {
   const p = createPreview(document.createElement('canvas')), entry = record('cutout');
   p.setMaterial({...entry, previewMaps: {opacity: 'blob:mask'} }); await pause(5); tick();

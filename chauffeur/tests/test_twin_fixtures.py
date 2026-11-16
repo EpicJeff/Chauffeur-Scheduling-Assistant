@@ -261,6 +261,12 @@ def test_snap_endpoint_tolerance_reversal_and_all_host_kinds():
                              ('wall', 's1', [[100, 50], [100, 62]]), ('step', 'stair1', [[98, 51], [102, 51]])]:
         result = tf.resolve_snap(m, {'host': {'kind': kind, 'id': host}, 'edge': dict(zip(('from', 'to'), ends)), 't0': 0, 't1': 1})
         assert result and len(result) == 2 and all(len(p) == 3 for p in result), (kind, result)
+    fence_snap = {'host': {'kind': 'fence', 'id': 'fence1'}, 'edge': {'from': [1, 1], 'to': [5, 1]}, 't0': .2, 't1': .8}
+    baseline = tf.resolve_snap(m, fence_snap)
+    for fence_type in ('plank', 'picket', 'metal', 'panel'):
+        m['site']['fence'][0]['type'] = fence_type
+        assert tf.resolve_snap(m, fence_snap) == baseline
+        assert all(point[2] == 6 for point in baseline), 'fence top height remains unchanged'
 
 
 def test_update_refuses_identity_changes_and_preserves_model_on_failure():

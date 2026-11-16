@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { alphaModeOf, applyMaterialParams, kitMaterial } from '../twin_library.js';
+import { BUILTIN_LOOKS, builtinMaterial } from '../surface_kinds.js';
 import { sunPosition } from '../sky/ephemeris.js';
 import { resolveSite, previewDate, modelDirection, lookAt } from '../sky/look.js';
 
@@ -76,7 +77,8 @@ export function createPreview(canvas) {
       if (entry.source === 'builtin') {
         const kit = window.twinKit || { materials: {}, manifest: window.twinManifest || {} };
         const role = Object.keys(kit.materials).find(role => kit.materials[role].asset === entry.id) || 'preview';
-        material = kitMaterial(role, { ...kit, materials: { ...kit.materials, [role]: kit.materials[role] || { asset: entry.id, color: params.tint } } }, 'high');
+        material = Object.hasOwn(BUILTIN_LOOKS, entry.id) ? builtinMaterial(entry.id, 'preview')
+          : kitMaterial(role, { ...kit, materials: { ...kit.materials, [role]: kit.materials[role] || { asset: entry.id, color: params.tint } } }, 'high');
       } else {
         material = applyMaterialParams(new THREE.MeshStandardMaterial(), {
           ...entry, params, maps: Object.fromEntries(Object.entries(entry.maps || {}).filter(([slot, path]) => path && !entry.previewMaps?.[slot]

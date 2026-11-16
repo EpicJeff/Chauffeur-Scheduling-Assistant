@@ -23,6 +23,7 @@ import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
 import { firePitRings, firePitOptions, roundPit, buildFirePit, fireFlameMaterial } from './fire_pits.js';
 import { porchFoundationRole } from './twin_porch_foundation.js';
 import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.js';
+import { buildFence } from './fence_geometry.js';
 import { buildPoolFeatures, cutSurface, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';
 
 function random(seed) {
@@ -172,7 +173,7 @@ function yardSiteInputs(site) {
     sitePieces(site.fire_pit).map(f => fields(f, 'id shape at radius rotation polygon fuel body top height_in glass entity elevation materials')),
     (site.beds || []).map(b => fields(b, 'id polygon elevation material materials')),
     (site.edges || []).map(e => fields(e, 'id polygon points polyline elevation material materials')),
-    sitePieces(site.fence).map(f => fields(f, 'id polyline height elevation materials')),
+    sitePieces(site.fence).map(f => fields(f, 'id polyline height elevation materials' + ('type' in f ? ' type' : ''))),
     (site.planting || []).map(p => fields(p, objectFields)), (site.furniture || []).map(f => fields(f, objectFields))];
 }
 
@@ -236,7 +237,7 @@ export function yardPartKeys(plan, kit, tier, { viewing = false } = {}) {
     // plants: tier/viewing; ground grade; planting object fields (see
     // objectFields), including preset/height/seed and applyObject appearance.
     plants: key(tier, viewing, grade, own[8]),
-    // fences: tier; ground grade; polyline/height/elevation and boards/posts/
+    // fences: tier; ground grade; polyline/height/elevation/type and boards/posts/
     // rails slots; resolved fence role/slot refs, aliases and manifest revisions.
     fences: key(tier, grade, own[7], finishes(['fence'])),
     // hardscape: tier; ground grade; pool polygon/spa holes; hardscape kind/
@@ -437,7 +438,15 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       const stopFences = part('fences');
       for (const f of sitePieces(site.fence).filter(f => f.polyline?.length > 1)) {
         const height = f.height || 6;
-        const fenceMesh = (geometry, part, ...seed) => surfaceMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), mat('fence', f.materials?.[part]), seedOf(f, part, ...seed));
+        const fenceMesh = (geometry, part, ...seed) => {
+          const material = mat('fence', f.materials?.[part]);
+          if (f.type === 'panel' && (material.transparent || material.alphaTest > 0)) {
+            material.userData.surfaceDoubleSide = true; material.side = THREE.DoubleSide;
+            material.forceSinglePass = true;
+          }
+          return surfaceMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), material, seedOf(f, part, ...seed));
+        };
+        if (['picket', 'metal', 'panel'].includes(f.type)) { buildFence(f, fenceMesh); continue; }
         for (let i = 0; i < f.polyline.length - 1; i++) {
           const a = f.polyline[i], b = f.polyline[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
           if (!length) continue;

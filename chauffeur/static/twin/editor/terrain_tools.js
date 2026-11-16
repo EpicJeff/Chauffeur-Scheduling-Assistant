@@ -257,7 +257,8 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       card.append(button('Add fire pit', () => startDrawing('fire_pit', { shape: 'round', radius: 2 })));
       card.append(button('Draw fence', () => {
         const existing = sitePieces(getPlan().site?.fence).find(f => f.style);
-        startDrawing('fence', { height: 6, ...(existing ? { style: existing.style } : {}) });
+        const typed = sitePieces(getPlan().site?.fence).find(f => f.type);
+        startDrawing('fence', { height: 6, ...(existing ? { style: existing.style } : {}), ...(typed ? { type: typed.type } : {}) });
       }));
       const toggle = button('Grade', () => { grade = !grade; toggle.setAttribute('aria-pressed', String(grade)); tint(); });
       toggle.setAttribute('aria-pressed', String(grade)); card.append(toggle);

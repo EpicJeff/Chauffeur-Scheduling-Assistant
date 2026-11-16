@@ -280,7 +280,7 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   let disposed = false;
   const textures = new Set();
   const urls = new Set();
-  material.alphaMap = null; material.alphaTest = 0; material.side = THREE.FrontSide;
+  material.alphaMap = null; material.alphaTest = 0; material.side = material.userData.surfaceDoubleSide ? THREE.DoubleSide : THREE.FrontSide;
   material.transparent = false; material.opacity = 1; material.depthWrite = true;
   const mode = alphaModeOf(entry, ref);
   material.userData.alphaMode = mode;

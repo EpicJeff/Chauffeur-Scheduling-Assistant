@@ -89,9 +89,12 @@ def builtin_rows(kit_id='modern_farmhouse'):
                          color=color, thumbnail_url=None, builtin=True, archived=False, revision=0,
                          params={**deepcopy(DEFAULT_PARAMS), 'tint': color}))
     for mid, look in BUILTIN_LOOKS.items():
-        params = {**deepcopy(DEFAULT_PARAMS), 'tint': look['color'], 'alpha_mode': 'blend',
-                  'opacity': look['opacity'], 'roughness': look.get('roughness', .8)}
-        rows.append(dict(id=mid, name='Built-in ' + mid, source='builtin', color=look['color'],
+        params = {**deepcopy(DEFAULT_PARAMS), 'tint': look['color'], 'alpha_mode': 'cutout' if look.get('alphaTest') else 'blend',
+                  'opacity': look['opacity'], 'roughness': look.get('roughness', .8),
+                  'metalness': look.get('metalness', DEFAULT_PARAMS['metalness']), 'alpha_cutoff': look.get('alphaTest', .5)}
+        if mid == 'chain_link':
+            params['tile_ft'] = [1 / 3, 1 / 3]
+        rows.append(dict(id=mid, name='Chain link' if mid == 'chain_link' else 'Built-in ' + mid, source='builtin', color=look['color'],
                          thumbnail_url=None, builtin=True, archived=False, revision=0, params=params))
     return rows
 
@@ -530,6 +533,19 @@ def duplicate(material_id, actor) -> dict:
                         file = filename
                         _atomic(root() / mid / file, data)
                     record['maps'][slot] = file
+                if material_id == 'chain_link':
+                    from PIL import Image
+                    size = 128
+                    tile = Image.new('L', (size, size))
+                    tile.putdata([255 if min((x+y) % size, size-(x+y) % size, abs(x-y), size-abs(x-y)) < 3 else 0
+                                  for y in range(size) for x in range(size)])
+                    mask = Image.new('L', (size * 2, size * 2))
+                    for x in (0, size):
+                        for y in (0, size):
+                            mask.paste(tile, (x, y))
+                    data = io.BytesIO()
+                    mask.save(data, format='PNG')
+                    _image_file(mid, 'opacity', data.getvalue(), record)
                 _set_source(record, 'user', {key: record[key] for key in
                                              ('maps', 'params', 'opacity_derived', 'opacity_derived_mode')})
                 return _save(record)

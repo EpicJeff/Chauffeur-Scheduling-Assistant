@@ -5,6 +5,7 @@ export const BUILTIN_LOOKS = {
   glass: { color: '#b9d7db', transparent: true, opacity: 0.26, roughness: 0.1, depthWrite: false },
   screen: { color: '#59615d', transparent: true, opacity: 0.3, depthWrite: false, doubleSide: true },
   water: { color: '#7fd0e6', transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false },
+  chain_link: { color: '#9da5a8', opacity: 1, roughness: 0.45, metalness: 0.65, alphaTest: 0.5, doubleSide: true },
 };
 
 export function builtinMaterial(id, name = id) {
@@ -12,7 +13,21 @@ export function builtinMaterial(id, name = id) {
   const material = new THREE.MeshStandardMaterial({
     name, roughness: 0.8, ...params, side: doubleSide ? THREE.DoubleSide : THREE.FrontSide,
   });
-  material.userData.alphaMode = 'blend';
+  material.userData.alphaMode = material.alphaTest > 0 ? 'cutout' : 'blend';
+  if (id === 'chain_link') {
+    const size = 128, pixels = new Uint8Array(size * size * 4);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const diagonal = Math.min((x + y) % size, size - (x + y) % size, Math.abs(x - y), size - Math.abs(x - y));
+      const wire = diagonal < 3 ? 255 : 0, at = (y * size + x) * 4;
+      pixels.set([wire, wire, wire, 255], at);
+    }
+    const mask = new THREE.DataTexture(pixels, size, size);
+    mask.name = 'generated chain link: 2in diamonds';
+    mask.wrapS = mask.wrapT = THREE.RepeatWrapping; mask.repeat.set(6, 6); mask.needsUpdate = true;
+    mask.magFilter = THREE.LinearFilter; mask.minFilter = THREE.LinearMipmapLinearFilter; mask.generateMipmaps = true;
+    material.alphaMap = mask;
+    material.addEventListener('dispose', () => mask.dispose());
+  }
   return material;
 }
 

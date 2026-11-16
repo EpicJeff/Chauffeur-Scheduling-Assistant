@@ -32,7 +32,7 @@ def test_every_role_fallback_is_a_kit_role():
 
 
 def test_builtin_ids_validate_as_slots():
-    for mid in ('glass', 'screen', 'water'):
+    for mid in surfaces.BUILTIN_LOOKS:
         assert twin_library.normalize_material_slot({'id': mid}) == {'id': mid}
     seed()
     try:
@@ -43,7 +43,7 @@ def test_builtin_ids_validate_as_slots():
         raise AssertionError('unknown material accepted')
 
 
-def test_catalogue_lists_three_code_builtins_read_only():
+def test_catalogue_lists_code_builtins_read_only():
     seed()
     with Ctx() as c:
         rows = c.client.get(API, headers=c.mum).json()['materials']
@@ -52,8 +52,8 @@ def test_catalogue_lists_three_code_builtins_read_only():
         kit_assets = [ref['asset'] for ref in twin_library.kit('modern_farmhouse')['materials'].values()]
         expected_ids = list(dict.fromkeys([*manifest_ids, *kit_assets, *surfaces.BUILTIN_LOOKS]))
         assert [row['id'] for row in builtins] == expected_ids
-        assert [r['id'] for r in builtins[-3:]] == ['glass', 'screen', 'water']
-        assert [r['id'] for r in twin_library.material_choices()][-3:] == ['glass', 'screen', 'water']
+        assert [r['id'] for r in builtins[-4:]] == ['glass', 'screen', 'water', 'chain_link']
+        assert [r['id'] for r in twin_library.material_choices()][-4:] == ['glass', 'screen', 'water', 'chain_link']
         kit_id = builtins[0]['id']
         for method, payload in (('patch', {'name': 'No'}), ('delete', None)):
             def call(mid):
@@ -63,11 +63,32 @@ def test_catalogue_lists_three_code_builtins_read_only():
                 return getattr(c.client, method)(f'{API}/{mid}', **kwargs)
             expected = call(kit_id).status_code
             assert expected == 400
-            for mid in ('glass', 'screen', 'water'):
+            for mid in surfaces.BUILTIN_LOOKS:
                 row = next(r for r in builtins if r['id'] == mid)
                 assert row['source'] == 'builtin' and row['revision'] == 0
                 assert call(mid).status_code == expected
-                assert materials.get(mid)['params']['alpha_mode'] == 'blend'
+                assert materials.get(mid)['params']['alpha_mode'] == ('cutout' if mid == 'chain_link' else 'blend')
+
+
+def test_chain_link_copy_keeps_the_generated_cutout():
+    from PIL import Image
+    seed()
+    source = materials.get('chain_link')
+    assert source['name'] == 'Chain link'
+    assert source['params']['tile_ft'] == [1 / 3, 1 / 3]
+    assert source['params']['alpha_cutoff'] == .5
+    assert 'transmission' not in source['params']
+    with Ctx() as c:
+        response = c.client.post(f'{API}/chain_link/duplicate', headers=c.mum)
+        assert response.status_code == 200, response.text
+        copied = materials.get(response.json()['id'])
+        assert copied['params'] == source['params']
+        assert copied['maps'].keys() == {'opacity'}
+        with Image.open(materials.root() / copied['id'] / copied['maps']['opacity']) as mask:
+            assert mask.size == (256, 256)
+            assert mask.convert('L').getpixel((20, 20)) == 255
+            assert mask.convert('L').getpixel((32, 64)) == 0
+            assert mask.convert('L').getpixel((160, 192)) == 0
 
 
 def test_load_resets_an_unknown_house_default():

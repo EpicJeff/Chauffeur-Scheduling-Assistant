@@ -24,7 +24,8 @@ export function siteMaterialSlots(kind, piece) {
   if (kind === 'spa') return [['coping', 'Coping', 'Pool coping'], ['interior', 'Interior', 'Pool interior'], ['waterline', 'Waterline tile', 'Pool waterline tile'],
     ...((piece.mode ?? 'raised') === 'raised' ? [['wall', 'Cladding', 'Stone']] : []), ['water', 'Water', 'Pool water']];
   if (kind === 'edges') return [['strip', 'Strip', ROLE_WORDS[role || 'lawn'] || title(role)]];
-  if (kind === 'fence') return [['boards', 'Boards', 'Wood'], ['posts', 'Posts', 'Wood'], ['rails', 'Rails', 'Wood']];
+  if (kind === 'fence') return [['boards', piece.type === 'panel' ? 'Panel' : ['picket', 'metal'].includes(piece.type) ? 'Pickets' : 'Boards', 'Wood'],
+    ['posts', 'Posts', 'Wood'], ['rails', piece.type === 'panel' ? 'Top rail' : 'Rails', 'Wood']];
   return [];
 }
 
@@ -191,6 +192,7 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
     choice('Spillover', (piece.spillover ?? true) ? 'yes' : 'no', [['yes', 'Yes'], ['no', 'No']], spillover => ({ spillover: spillover === 'yes' }));
   }
   if (kind === 'fence') {
+    choice('Fence type', piece.type || 'plank', [['plank', 'Wood plank'], ['picket', 'Picket'], ['metal', 'Metal picket'], ['panel', 'Panel']], type => ({ type }));
     const height = field('Height (ft)', piece.height ?? 6, (_, height) => ({ height })); height.min = '2'; height.max = '10';
     if ('style' in piece) field('Style', piece.style, (_, style) => ({ style }), section, false);
   }

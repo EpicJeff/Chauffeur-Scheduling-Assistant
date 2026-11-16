@@ -86,6 +86,27 @@ def run():
     assert len(added['site']['fence']) == 2 and added['site']['fence'][1]['height'] == 6
     assert added['site']['fence'][0]['polyline'] == model['site']['fence']['polyline']
     assert added['site']['fence'][1]['style'] == 'wood'
+    assert 'type' not in added['site']['fence'][0] and 'type' not in added['site']['fence'][1]
+    assert migrated['site']['fence'] == model['site']['fence'], 'stored fence without type is not rewritten'
+    for fence_type in ('plank', 'picket', 'metal', 'panel'):
+        added, _ = ops.apply(model, {**fence_op, 'type': fence_type})
+        assert added['site']['fence'][1]['type'] == fence_type
+        changed, _ = ops.apply(model, {'op': 'update_site_shape', 'list': 'fence', 'index': 0,
+                                      'type': fence_type, 'style': 'still free text'})
+        assert changed['site']['fence']['type'] == fence_type
+        assert changed['site']['fence']['style'] == 'still free text'
+        assert bridge.assemble(bridge.flatten(changed))[0]['site']['fence']['type'] == fence_type
+        assert ops.apply(tall, {'op': 'update_site_shape', 'list': 'fence', 'type': fence_type})[0]['site']['fence']['height'] == 12
+    for invalid_type in ('chain_link', '', None, True, [], {}):
+        for operation in ({**fence_op, 'type': invalid_type},
+                          {'op': 'update_site_shape', 'list': 'fence', 'type': invalid_type}):
+            try:
+                ops.apply(model, operation)
+            except ops.Refused as error:
+                assert str(error) == 'Choose Wood plank, Picket, Metal picket or Panel.'
+            else:
+                raise AssertionError(operation)
+    assert model == original, 'fence type add/change/refusal leaves its input untouched'
     for operation in [dict(fence_op, height=1.99), dict(fence_op, height=10.01), dict(fence_op, polyline=[[0, 0]]),
                       {'op': 'add_site_shape', 'list': 'fire_pit', 'shape': 'triangle', 'at': [1, 1]},
                       {'op': 'add_site_shape', 'list': 'fire_pit', 'shape': 'square', 'at': [1, 1], 'side': 0},
@@ -157,6 +178,14 @@ def run():
     twin_store.revert(after)
     assert twin_store.current_model()['site']['pool']['coping'] == 0
     before_draw = twin_store.current_id()
+    typed = twin_store.update_model(lambda m: ops.apply(m, {'op': 'update_site_shape', 'list': 'fence', 'type': 'metal'})[0])
+    assert twin_store.current_model()['site']['fence']['type'] == 'metal'
+    twin_store.revert(before_draw)
+    assert 'type' not in twin_store.current_model()['site']['fence']
+    twin_store.revert(typed)
+    assert twin_store.current_model()['site']['fence']['type'] == 'metal'
+    twin_store.revert(before_draw)
+    before_draw = twin_store.current_id()
     after_draw = twin_store.update_model(lambda m: ops.apply(m, path_op)[0])
     assert twin_store.current_model()['site']['hardscape'][-1]['kind'] == 'path'
     twin_store.revert(before_draw)
@@ -201,6 +230,20 @@ def run():
         response = client.post('/api/house/editor/op', headers=tokens['parent'], json={'op': op})
         assert response.status_code == 200, response.text
         assert response.json()['plan']['site']['pool']['depth'] == 7
+        for fence_type in ('plank', 'picket', 'metal', 'panel'):
+            for type_op in ({**fence_op, 'type': fence_type},
+                            {'op': 'update_site_shape', 'list': 'fence', 'index': 0, 'type': fence_type}):
+                before_type = twin_store.current_id()
+                response = client.post('/api/house/editor/op', headers=tokens['parent'], json={'op': type_op})
+                assert response.status_code == 200, response.text
+                assert twin_store.current_id() != before_type
+                fence = response.json()['plan']['site']['fence']
+                assert fence[-1 if type_op['op'] == 'add_site_shape' else 0]['type'] == fence_type
+        before_type = twin_store.current_id()
+        response = client.post('/api/house/editor/op', headers=tokens['parent'],
+                               json={'op': {'op': 'update_site_shape', 'list': 'fence', 'index': 0, 'type': 'chain_link'}})
+        assert response.status_code == 400 and twin_store.current_id() == before_type
+        assert response.json()['error'] == 'Choose Wood plank, Picket, Metal picket or Panel.'
     # A normal plot/site rebuild must still run with multiple hand-authored pits.
     from test_twin_build_parts import _lot_only, _confirm_lot, Reader, tb, ts
     plot = _lot_only()
