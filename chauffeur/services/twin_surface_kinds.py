@@ -36,7 +36,14 @@ BUILTIN_LOOKS = {
     'screen': {'color': '#59615d', 'transparent': True, 'opacity': 0.3, 'depthWrite': False, 'doubleSide': True},
     'water': {'color': '#7fd0e6', 'transparent': True, 'opacity': 0.65, 'roughness': 0.12, 'depthWrite': False},
     'chain_link': {'color': '#9da5a8', 'opacity': 1, 'roughness': 0.45, 'metalness': 0.65, 'alphaTest': 0.5, 'doubleSide': True},
+    # Powder coat is a paint film over the metal, so it shades as a dielectric.
+    'black_metal': {'color': '#1b1c1e', 'opacity': 1, 'roughness': 0.42, 'metalness': 0},
 }
+BUILTIN_NAMES = {'chain_link': 'Chain link', 'black_metal': 'Black metal'}
+
+
+def builtin_alpha_mode(look):
+    return 'cutout' if look.get('alphaTest') else 'blend' if look.get('transparent') else 'opaque'
 
 
 def label(kind):

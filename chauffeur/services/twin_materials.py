@@ -18,7 +18,7 @@ import threading
 import uuid
 
 from services import twin_library, twin_store
-from services.twin_surface_kinds import BUILTIN_LOOKS, KINDS, label as surface_label
+from services.twin_surface_kinds import BUILTIN_LOOKS, BUILTIN_NAMES, KINDS, builtin_alpha_mode, label as surface_label
 
 SLOTS = ('base_color', 'normal', 'roughness', 'metalness', 'ao', 'orm', 'height', 'opacity')
 DEFAULT_PARAMS = dict(tint='#ffffff', roughness=None, metalness=None, normal_scale=1,
@@ -89,12 +89,12 @@ def builtin_rows(kit_id='modern_farmhouse'):
                          color=color, thumbnail_url=None, builtin=True, archived=False, revision=0,
                          params={**deepcopy(DEFAULT_PARAMS), 'tint': color}))
     for mid, look in BUILTIN_LOOKS.items():
-        params = {**deepcopy(DEFAULT_PARAMS), 'tint': look['color'], 'alpha_mode': 'cutout' if look.get('alphaTest') else 'blend',
+        params = {**deepcopy(DEFAULT_PARAMS), 'tint': look['color'], 'alpha_mode': builtin_alpha_mode(look),
                   'opacity': look['opacity'], 'roughness': look.get('roughness', .8),
                   'metalness': look.get('metalness', DEFAULT_PARAMS['metalness']), 'alpha_cutoff': look.get('alphaTest', .5)}
         if mid == 'chain_link':
             params['tile_ft'] = [1 / 3, 1 / 3]
-        rows.append(dict(id=mid, name='Chain link' if mid == 'chain_link' else 'Built-in ' + mid, source='builtin', color=look['color'],
+        rows.append(dict(id=mid, name=BUILTIN_NAMES.get(mid, 'Built-in ' + mid), source='builtin', color=look['color'],
                          thumbnail_url=None, builtin=True, archived=False, revision=0, params=params))
     return rows
 

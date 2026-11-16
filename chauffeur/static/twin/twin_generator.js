@@ -5,7 +5,7 @@ import { applyObject, fitOpening, objectShown, objectMaterialKey } from './objec
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, alphaModeOf } from './twin_library.js';
-import { KINDS, BUILTIN_LOOKS, kindRow, resolveSlot } from './surface_kinds.js';
+import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
@@ -522,7 +522,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         return plain('ceramic', '#f4f4f2');
       }
       const ref = materialKit.materials?.[slot.id], known = manifest(kit);
-      const mode = Object.hasOwn(BUILTIN_LOOKS, slot.id) ? (BUILTIN_LOOKS[slot.id].alphaTest > 0 ? 'cutout' : 'blend') : alphaModeOf(known[slot.id] || known[ref?.id || ref?.asset], ref);
+      const mode = Object.hasOwn(BUILTIN_LOOKS, slot.id) ? builtinAlphaMode(slot.id) : alphaModeOf(known[slot.id] || known[ref?.id || ref?.asset], ref);
       const name = kind === 'pane' || kind === 'shower_glass' ? (mode === 'opaque' ? 'pane' : 'glass')
         : fallback.role || (kind === 'shower_tile' ? 'ceramic' : kind);
       // materialSlot's legacy alias cache keeps its original role. Namespace

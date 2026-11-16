@@ -6,14 +6,18 @@ export const BUILTIN_LOOKS = {
   screen: { color: '#59615d', transparent: true, opacity: 0.3, depthWrite: false, doubleSide: true },
   water: { color: '#7fd0e6', transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false },
   chain_link: { color: '#9da5a8', opacity: 1, roughness: 0.45, metalness: 0.65, alphaTest: 0.5, doubleSide: true },
+  // Powder coat is a paint film over the metal, so it shades as a dielectric.
+  black_metal: { color: '#1b1c1e', opacity: 1, roughness: 0.42, metalness: 0 },
 };
+
+export const builtinAlphaMode = id => BUILTIN_LOOKS[id].alphaTest > 0 ? 'cutout' : BUILTIN_LOOKS[id].transparent ? 'blend' : 'opaque';
 
 export function builtinMaterial(id, name = id) {
   const { doubleSide, ...params } = BUILTIN_LOOKS[id];
   const material = new THREE.MeshStandardMaterial({
     name, roughness: 0.8, ...params, side: doubleSide ? THREE.DoubleSide : THREE.FrontSide,
   });
-  material.userData.alphaMode = material.alphaTest > 0 ? 'cutout' : 'blend';
+  material.userData.alphaMode = builtinAlphaMode(id);
   if (id === 'chain_link') {
     const size = 128, pixels = new Uint8Array(size * size * 4);
     for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {

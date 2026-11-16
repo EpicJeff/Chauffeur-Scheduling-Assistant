@@ -152,6 +152,14 @@ console.log('ok short segments and legacy heights keep finite, upright infill fo
  assert.equal(at(20,20),255);assert.equal(at(20,108),255);assert.equal(at(32,64),0,'diamond holes');
  console.log('ok generated Chain link: diamond wire mask, 2 inch repeat, alpha test, double sided, no transmission');
 }
+{
+ const m=builtinMaterial('black_metal');assert.equal(m.userData.alphaMode,'opaque');assert.equal(m.transparent,false);assert.equal(m.alphaTest,0);
+ assert.equal(m.opacity,1);assert.equal(m.metalness,0);near(m.roughness,.42);assert.equal(m.map,null);assert.equal(m.depthWrite,true);
+ const p=structuredClone(plan);p.site.fence={...fence,type:'metal',materials:{boards:{id:'black_metal'},posts:{id:'black_metal'},rails:{id:'black_metal'}}};
+ const batch=drawn(await buildYard(p,input.kit,'low'));assert.ok(batch.length>=1&&batch.length<=3);
+ for(const o of batch){assert.equal(o.material.color.getHexString(),'1b1c1e');assert.equal(o.material.transparent,false);assert.equal(o.material.userData.alphaMode,'opaque');}
+ console.log('ok Black metal: opaque powder-coat look with no maps, drawn on every slot of a metal picket fence');
+}
 console.log('Fence geometry, batching, keys, card and material checks passed');
 """
 

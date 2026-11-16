@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.888 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.889 (2026-11-15).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.889 (2026-11-15, NOT device-verified): a built-in Black metal look in the Library.**
+
+- **The look.** The Library lists **Black metal** beside Chain link: a satin black powder-coat finish with no textures (base colour `#1b1c1e`, roughness 0.42, metalness 0, because powder coat is a paint film over the metal and shades as a dielectric). It is opaque, read-only like the other built-ins, and can be duplicated to make an editable copy. It goes on any material slot; the intended use is a Metal picket fence's pickets, posts and rails.
+- **Alpha mode of a built-in.** A code-side look is now cutout when it has an alpha test, blend when it is transparent, and opaque otherwise (`builtin_alpha_mode` / `builtinAlphaMode`). Glass, screen, water and chain link resolve exactly as before.
+- **Code:** `services/twin_surface_kinds.py` (`BUILTIN_LOOKS`, `BUILTIN_NAMES`, `builtin_alpha_mode`), `services/twin_materials.py`, `static/twin/surface_kinds.js`, `static/twin/twin_generator.js`.
+- **Tests:** `tests/test_twin_surface_kinds.py`, `tests/test_twin_fence_js.py`.
 
 **v2.499.888 (2026-11-15, NOT device-verified): effect fixtures. A waterfall, fountain jet, bubbler or fire is placed in the house like a light fixture, a switch turns it on, and a sensor can drive how big it is.**
 

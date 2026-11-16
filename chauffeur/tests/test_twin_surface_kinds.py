@@ -52,8 +52,8 @@ def test_catalogue_lists_code_builtins_read_only():
         kit_assets = [ref['asset'] for ref in twin_library.kit('modern_farmhouse')['materials'].values()]
         expected_ids = list(dict.fromkeys([*manifest_ids, *kit_assets, *surfaces.BUILTIN_LOOKS]))
         assert [row['id'] for row in builtins] == expected_ids
-        assert [r['id'] for r in builtins[-4:]] == ['glass', 'screen', 'water', 'chain_link']
-        assert [r['id'] for r in twin_library.material_choices()][-4:] == ['glass', 'screen', 'water', 'chain_link']
+        assert [r['id'] for r in builtins[-5:]] == ['glass', 'screen', 'water', 'chain_link', 'black_metal']
+        assert [r['id'] for r in twin_library.material_choices()][-5:] == ['glass', 'screen', 'water', 'chain_link', 'black_metal']
         kit_id = builtins[0]['id']
         for method, payload in (('patch', {'name': 'No'}), ('delete', None)):
             def call(mid):
@@ -67,7 +67,21 @@ def test_catalogue_lists_code_builtins_read_only():
                 row = next(r for r in builtins if r['id'] == mid)
                 assert row['source'] == 'builtin' and row['revision'] == 0
                 assert call(mid).status_code == expected
-                assert materials.get(mid)['params']['alpha_mode'] == ('cutout' if mid == 'chain_link' else 'blend')
+                assert materials.get(mid)['params']['alpha_mode'] == {'chain_link': 'cutout', 'black_metal': 'opaque'}.get(mid, 'blend')
+
+
+def test_black_metal_is_an_opaque_named_look_and_copies_as_one():
+    seed()
+    source = materials.get('black_metal')
+    assert source['name'] == 'Black metal' and source['maps'] == {}
+    params = source['params']
+    assert (params['tint'], params['alpha_mode'], params['opacity'], params['roughness'], params['metalness']) == (
+        '#1b1c1e', 'opaque', 1, .42, 0)
+    with Ctx() as c:
+        response = c.client.post(f'{API}/black_metal/duplicate', headers=c.mum)
+        assert response.status_code == 200, response.text
+        copied = materials.get(response.json()['id'])
+        assert copied['params'] == params and copied['maps'] == {} and copied['name'] == 'Black metal copy'
 
 
 def test_chain_link_copy_keeps_the_generated_cutout():
