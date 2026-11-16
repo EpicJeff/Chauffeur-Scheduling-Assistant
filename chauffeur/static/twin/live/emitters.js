@@ -93,6 +93,8 @@ function hostNormal(fixture, plan) {
     const p = pieces(plan.site?.hardscape).find(p => p.id === host.id);
     outline = p?.kind === 'path' ? pathOutline(p) : p?.polygon;
   }
+  if (host?.kind === 'pool') outline = plan.site?.pool?.polygon;
+  if (host?.kind === 'spa') outline = plan.site?.pool?.features?.find(f => f.kind === 'spa' && f.id === host.id)?.polygon;
   if (host?.kind === 'wall') {
     const owner = plan.buildings?.find(b => b.walls?.some(w => w.id === host.id));
     const wall = owner?.walls?.find(w => w.id === host.id);

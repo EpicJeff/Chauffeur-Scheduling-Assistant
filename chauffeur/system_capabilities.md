@@ -1,6 +1,15 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.892 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.893 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.893 (2026-11-16, NOT device-verified, not browser-checked): Snap to edge takes the spa rim and the pool coping, and a fall off a rim lands where it is thrown.**
+
+- **The gap, found on device.** There was no way to put a waterfall on top of the spa wall. Snap to edge offered retaining walls, patios, paths, decks, fences, wall tops and step noses only, and a line drawn over the spa landed on the ground reference.
+- **Two new snap hosts.** `spa` is the spa's outline at its coping top (pool grade + 0.45 ft + the raise of a raised spa); `pool` is the pool's outline at its coping top (pool grade + 0.45 ft, or 0.3 ft with no coping). Both work for light fixtures and effect fixtures, follow the host when it moves, and detach when it is deleted, as every snap does. Facing reads Out (away from its water) and In (over its water); a new spa run defaults to Out and a pool run to In. The fixture card's Snap host kind list gained Pool coping and Spa rim.
+- **Landing.** A waterfall or sheer descent used to land in the first water body within 3 ft of the run, which for a run on the spa rim is the spa itself, two inches down. `effectLanding` now takes the throw direction: the fall lands in the body 0.75 ft ahead of the run if there is one, and never in a body that lies behind the run. A spillover from the spa rim falls to the pool; the same run facing In falls into the spa; a free-standing spa's outward fall reaches the ground. The ripple source uses the same rule. Drop on the card still overrides.
+- **Not done:** snapping to an edge of any surface (roof edges, beds, fire pits, pool ledges and steps) is still host-by-host.
+- **Code:** `static/twin/editor/line_fixture_tool.js` (`snapEdges`, facing labels, edge cache key), `static/twin/live/emitters.js` (`hostNormal`), `static/twin/effects/water_ripples.js` (`effectLanding`, `rippleSources`), `static/twin/effects/index.js`, `static/twin/editor/fixtures.js`, `services/twin_fixtures.py` (`_snap`, `_host_edges`).
+- **Tests:** `tests/test_twin_line_fixture_tool_js.py` (the real editor snaps to each rim and the real server ops resolve the same heights; landing ahead of, behind and beside a rim).
 
 **v2.499.892 (2026-11-16, NOT device-verified): fix: an effect or a light fixture can be placed by clicking on pool or spa water.**
 

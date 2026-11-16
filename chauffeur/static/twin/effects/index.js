@@ -21,8 +21,8 @@ const midpoint=path=>{
   return [...path[0]];
 };
 
-function landing(plan, point) {
-  return effectLanding(plan, point).height;
+function landing(plan, point, normal) {
+  return effectLanding(plan, point, undefined, normal).height;
 }
 
 export function buildEffects(plan, {tier='high',editor=false}={}) {
@@ -49,7 +49,7 @@ export function buildEffects(plan, {tier='high',editor=false}={}) {
         // Down/up choose the host's outside in plan, keeping the vertical fall.
         return resolveFixture({...placement,path:[a,b],facing:'out'},plan).normal||[(b[1]-a[1])/d,-(b[0]-a[0])/d,0];
       });
-      const drops=path.map(p=>fixture.drop_ft??Math.max(.1,p[2]-landing(plan,p)));
+      const drops=path.map((p,i)=>fixture.drop_ft??Math.max(.1,p[2]-landing(plan,p,normals[i])));
       built=(fixture.type==='sheer'?buildSheer:buildWaterfall)({...resolved,path:path.map(local)},{normals,drops});
     }
     built.group.position.copy(world(origin));group.add(built.group);

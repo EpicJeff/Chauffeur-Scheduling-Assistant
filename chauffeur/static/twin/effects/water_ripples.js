@@ -13,7 +13,14 @@ export function waterBodies(plan) {
 }
 
 // The waterfall visual and surface response must agree about the receiving water.
-export function effectLanding(plan, point, bodies = waterBodies(plan)) {
+export function effectLanding(plan, point, bodies = waterBodies(plan), normal = null) {
+  if (normal) {
+    // A fall off a rim lands where it is thrown, never in the basin behind the rim.
+    const step = sign => [point[0] + sign * normal[0] * .75, point[1] + sign * normal[1] * .75];
+    const into = bodies.find(body => inPolygon(body.polygon, ...step(1)));
+    if (into) return {height: into.height, body: into};
+    bodies = bodies.filter(body => !inPolygon(body.polygon, ...step(-1)));
+  }
   for (const body of bodies) if (inPolygon(body.polygon, ...point) || body.polygon.some((p,i) =>
     edgeDistance(point, p, body.polygon[(i + 1) % body.polygon.length]) <= 3)) return {height: body.height, body};
   return {height: groundAt(plan, ...point), body: null};
@@ -94,11 +101,11 @@ export function rippleSources(plan) {
       if (body) body.sources.push({fixture: f, a: resolved.at.slice(0,2), b: resolved.at.slice(0,2)});
     } else for (let i = 1; i < resolved.path.length; i++) {
       const a = resolved.path[i - 1], b = resolved.path[i], mid = a.map((v,k) => (v + b[k]) / 2);
-      const body = effectLanding(plan, mid, bodies).body;
-      if (!body) continue;
-      if (f.drop_ft != null && Math.abs(mid[2] - f.drop_ft - body.height) > .1) continue;
       const normal = ['out','in'].includes(f.facing) ? resolved.normal
         : resolveFixture({...f, path: [a,b], ref: 'absolute', facing: 'out'}, plan).normal;
+      const body = effectLanding(plan, mid, bodies, normal).body;
+      if (!body) continue;
+      if (f.drop_ft != null && Math.abs(mid[2] - f.drop_ft - body.height) > .1) continue;
       if(f.type==='sheer') {
         const sizes=[f.size_min??.5,f.size_max??3],offset=(p,size)=>p.slice(0,2).map((v,k)=>v+normal[k]*size);
         const sweep=[offset(a,sizes[0]),offset(b,sizes[0]),offset(b,sizes[1]),offset(a,sizes[1])];

@@ -7,8 +7,9 @@ import { createSiteDrawing } from './site_drawing.js';
 
 const pieces = value => Array.isArray(value) ? value : value ? [value] : [];
 const lerp = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+const water = kind => kind === 'pool' || kind === 'spa';
 export const facingOptions = (kind, current) => kind === 'step' ? [...(current && current !== 'out' ? [[current, `${current[0].toUpperCase() + current.slice(1)} (stored)`]] : []), ['out', 'Downhill']]
-  : [['down', 'Down'], ['out', kind === 'fence' ? 'Right of drawn direction' : kind === 'wall' ? 'Out (outside face)' : 'Out'], ['up', 'Up'], ['in', kind === 'wall' ? 'In (inside face)' : 'In']];
+  : [['down', 'Down'], ['out', kind === 'fence' ? 'Right of drawn direction' : kind === 'wall' ? 'Out (outside face)' : water(kind) ? 'Out (away from its water)' : 'Out'], ['up', 'Up'], ['in', kind === 'wall' ? 'In (inside face)' : water(kind) ? 'In (over its water)' : 'In']];
 
 export function screenRay(ray, view, event) {
   const rect = view.renderer3.domElement.getBoundingClientRect();
@@ -45,6 +46,16 @@ export function snapEdges(plan) {
         add(kind, p.id, [...a, z(a)], [...b, z(b)]);
       }
     }
+  }
+  const pool = site.pool;
+  if (pool?.polygon?.length >= 3) {
+    // Coping tops, at the heights twin_yard and pool_features build them.
+    const base = groundAt(plan, ...pool.polygon[0]) + (pool.elevation || 0);
+    const ring = (kind, id, ps, z) => ps.forEach((a, i) => add(kind, id, [...a, z], [...ps[(i + 1) % ps.length], z]));
+    ring('pool', pool.id || 'pool:0', pool.polygon, base + ((pool.coping ?? 1) > 0 ? .45 : .3));
+    const spas = (pool.features || []).filter(f => f.kind === 'spa' && f.id && f.polygon?.length >= 3);
+    for (const f of spas) if (spas.filter(q => q.id === f.id).length === 1)
+      ring('spa', f.id, f.polygon, base + .45 + ((f.mode ?? 'raised') === 'raised' ? (f.raise_in ?? 12) / 12 : 0));
   }
   const counts = Object.fromEntries(['wall','step'].map(kind => {
     const ids = new Map(); for (const b of plan.buildings || []) for (const p of b[kind === 'wall' ? 'walls' : 'stairs'] || []) if (!['ghost','proposal'].includes(p.state)) ids.set(p.id, (ids.get(p.id) || 0) + 1);
@@ -136,7 +147,7 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
     try { return await commit(current, fixture); } finally { busy = false; }
   }
   function edges() {
-    const plan = getPlan(), key = JSON.stringify([plan.buildings, plan.site?.terraces, plan.site?.hardscape, plan.site?.fence]);
+    const plan = getPlan(), key = JSON.stringify([plan.buildings, plan.site?.terraces, plan.site?.hardscape, plan.site?.fence, plan.site?.pool]);
     if (key !== edgeKey) { cachedEdges = snapEdges(plan); edgeKey = key; }
     return cachedEdges;
   }
@@ -172,7 +183,7 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
     if (!active || busy) return false;
     if (active.kind === 'snap') {
       const edge = pick(event); if (!edge) return true;
-      selected = edge; selectFacing(edge.host.kind, facingChosen ? facing : active.fixture?.facing ?? (edge.host.kind === 'hardscape' || edge.host.kind === 'step' ? 'out' : facing));
+      selected = edge; selectFacing(edge.host.kind, facingChosen ? facing : active.fixture?.facing ?? (['hardscape', 'step', 'spa'].includes(edge.host.kind) ? 'out' : edge.host.kind === 'pool' ? 'in' : facing));
       gesture = { edge, t0: parameter(event, edge), t1: parameter(event, edge), x: event.clientX, y: event.clientY };
     } else {
       const hit = surface(event, true); if (!hit) return true;

@@ -75,7 +75,7 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onAddEffec
       if (f.snap?.host.kind === 'step' && f.facing !== 'out') [...select.children].find(option => option.value === f.facing).disabled = true;
       if (f.snap) {
         const snapChange = apply => save(() => { const snap = structuredClone(current().snap); apply(snap); return op({ op:'update_light_fixture', entity_id, id:f.id, change:{snap, ...(snap.host.kind === 'step' ? {facing:'out'} : {})} }); });
-        choice('Snap host kind', f.snap.host.kind, [['retaining_wall','Retaining wall cap'],['hardscape','Patio, path or deck'],['step','Step nose'],['wall','Wall top'],['fence','Fence top']], v => snapChange(s => s.host.kind = v));
+        choice('Snap host kind', f.snap.host.kind, [['retaining_wall','Retaining wall cap'],['hardscape','Patio, path or deck'],['step','Step nose'],['wall','Wall top'],['fence','Fence top'],['pool','Pool coping'],['spa','Spa rim']], v => snapChange(s => s.host.kind = v));
         field(row, 'Snap host id', f.snap.host.id, v => { if (!v.trim()) throw new Error('Choose a host id.'); return snapChange(s => s.host.id = v.trim()); }, { type:'text', locked:!canEdit() });
         for (const end of ['from','to']) for (const [i, name] of ['east','north'].entries()) field(row, `Edge ${end} ${name} (ft)`, f.snap.edge[end][i], v => snapChange(s => s.edge[end][i] = numeric(v)), {locked:!canEdit()});
         for (const key of ['t0','t1']) field(row, key, f.snap[key], v => snapChange(s => s[key] = numeric(v,0,1)), {locked:!canEdit(),low:0,high:1});

@@ -53,7 +53,7 @@ def _snap(value):
         raise ValueError('Choose a snap host, edge endpoints and t0/t1.')
     host, edge = value.get('host'), value.get('edge')
     if (not isinstance(host, dict) or set(host) != {'kind', 'id'}
-            or host['kind'] not in ('retaining_wall', 'hardscape', 'fence', 'step', 'wall')
+            or host['kind'] not in ('retaining_wall', 'hardscape', 'fence', 'step', 'wall', 'pool', 'spa')
             or not isinstance(host['id'], str) or not host['id']):
         raise ValueError('Choose a stable snap host kind and id.')
     if not isinstance(edge, dict) or set(edge) != {'from', 'to'}:
@@ -276,6 +276,27 @@ def _host_edges(model, host):
             height = base + (p['rise_to']-level['elevation'])*(i+1)/risers
             result.append(([*ends[0], height], [*ends[1], height]))
         return result
+    if kind in ('pool', 'spa'):
+        # Coping tops, at the heights the renderer builds them (twin_yard.js, pool_features.js).
+        pool = site.get('pool') or {}
+        outline = pool.get('polygon') or []
+        if len(outline) < 3:
+            return []
+        top = terrain.ground_at(site.get('terraces', []), outline[0]) + (pool.get('elevation') or 0)
+        if kind == 'pool':
+            if hid != (pool.get('id') or 'pool:0'):
+                return []
+            coping = pool.get('coping')
+            points, top = outline, top + (.45 if (1 if coping is None else coping) > 0 else .3)
+        else:
+            spas = [f for f in pool.get('features') or []
+                    if f.get('kind') == 'spa' and f.get('id') == hid and len(f.get('polygon') or []) >= 3]
+            if len(spas) != 1:
+                return []
+            spa, points = spas[0], spas[0]['polygon']
+            raise_in = spa.get('raise_in')
+            top += .45 + ((12 if raise_in is None else raise_in) / 12 if (spa.get('mode') or 'raised') == 'raised' else 0)
+        return [([*a, top], [*b, top]) for a, b in zip(points, points[1:] + points[:1])]
     name = {'retaining_wall': 'terraces', 'hardscape': 'hardscape', 'fence': 'fence'}.get(kind)
     matches = [p for p in _pieces(site.get(name)) if p.get('id') == hid]
     if len(matches) != 1:
