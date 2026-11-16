@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.894 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.895 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.895 (2026-11-16, NOT device-verified, browser-checked in Chromium): a spa's wall and coping are as wide as the pool coping, a flush spa on the pool's edge shares the pool wall, and the pool coping sits on the ground.**
+
+- **The faults, found on device.** A spa's wall and coping were a fixed 0.3 ft, a thin lip beside a 1 ft pool coping. A flush spa drawn in a pool corner built its own wall and coping on all four sides, so the two outer sides doubled the pool wall. The pool coping overhung its 0.25 ft wall slab with nothing under it, and showed a gap wherever the paving or the ground sat lower than the coping's underside.
+- **Spa wall width.** The spa wall and its coping take the pool's `coping` width (default 1 ft; 0.3 ft when the pool has no coping). The basin is the spa outline inset by that width, so a wider coping means a smaller basin: a 7 ft spa under a 1 ft coping has a 5 ft basin. The width still thins itself when the outline cannot hold it. Bench, steps and water follow the new basin.
+- **Shared sides.** A side of a flush spa that lies on a pool edge (both ends within 0.05 ft of the same edge) builds no spa wall and no spa coping, and the basin runs to that edge: the pool's own wall and coping finish it. A corner spa has coping on its two inside sides only. A raised spa keeps all of its sides. A spa that fills the whole pool builds no spa coping.
+- **Coping fill.** When the pool coping is wider than the 0.25 ft wall slab, a band in the coping material fills under it, from the wall slab out to the coping's outer edge and from 0.3 ft below the pool datum up to the coping's underside. A pool with no coping, or one 0.25 ft or narrower, is unchanged.
+- **Limits.** On a shared side the spa shows the pool's wall finish. A flush corner spa deeper than the pool has no wall below the pool floor on its shared sides. A baked house needs its bake run again to pick up the new geometry.
+- **Code:** `static/twin/pool_features.js` (`insetOutline`, `crossing`, `onEdge`, `basinOutline`, the spa branch), `static/twin/twin_yard.js` (the fill under the coping).
+- **Tests:** `tests/test_twin_pool_features_js.py` (wall and coping width follows the pool coping; a flush corner spa in both windings, the one-side case, a raised spa and a whole-pool spa; the fill under the coping), `tests/test_twin_untouched_house_js.py` (baseline takes today's spa branch and fill).
 
 **v2.499.894 (2026-11-16, NOT device-verified, not browser-checked): a porch slab's edges wear the porch floor's finish.**
 
