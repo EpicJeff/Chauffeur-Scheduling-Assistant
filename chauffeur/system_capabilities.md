@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.891 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.892 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.892 (2026-11-16, NOT device-verified): fix: an effect or a light fixture can be placed by clicking on pool or spa water.**
+
+- **The fault, found on device.** Adding a bubbler and clicking the pool raised a Notice, `Cannot read properties of undefined (reading 'rotation')`, and placed nothing. The Library's surface pick has answered pool and spa water (for painting its material) since the House materials work, with no building and no point; the fixture editor's `surface()` read the building of any hit. Every point, line and area placement of an effect or a light fixture over water failed the same way.
+- **The fix.** A surface hit with no building is a ground placement, as a click on the pool was before water became pickable. The fixture lands on the ground reference under the click and the effect finds its water body from there.
+- **Code:** `static/twin/editor/fixtures.js` (`surface`).
+- **Tests:** `tests/test_twin_effect_editor_js.py` (a click on pool water runs the real editor and sends one `add_effect_fixture`).
 
 **v2.499.891 (2026-11-16, NOT device-verified): five more effect fixtures (spa jet, steam, sheer descent, deck jet, mist), a heater can be the switch, and the sensor can read an attribute.**
 

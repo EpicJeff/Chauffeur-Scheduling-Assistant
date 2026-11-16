@@ -41,6 +41,13 @@ await test('add_point_uses_choice_and_existing_surface_placement',async()=>{
  await place(s,10,12);assert.deepEqual(s.sent,[{op:'add_effect_fixture',fixture:{type:'fountain',shape:'point',ref:'ground',at:[10,12,0],entity:'switch.pump'}}]);
  }finally{s.signal.abort();}
 });
+await test('a_click_on_pool_water_places_on_the_ground_under_it',async()=>{
+ // The Library's surface pick answers pool and spa water with no building and no point.
+ const s=setup();try{s.library.surfaceAt=()=>({kind:'pool',piece:{id:'pool'},role:'water',target:{pool:'pool',part:'water'},label:'Pool water'});
+ s.choices.push('bubbler');await s.editor.addEffect();await place(s,10,12);assert.deepEqual(s.errors,[]);
+ assert.deepEqual(s.sent,[{op:'add_effect_fixture',fixture:{type:'bubbler',shape:'point',ref:'ground',at:[10,12,0]}}]);
+ }finally{s.signal.abort();}
+});
 await test('add_waterfall_runs_existing_polyline_tool_and_one_op',async()=>{
  const s=setup();try{s.choices.push('waterfall');await s.editor.addEffect();await place(s,10);await place(s,20);assert.equal(s.sent.length,0);
  await fire(document,'keydown',{key:'Enter'});await settle();assert.equal(s.sent.length,1);

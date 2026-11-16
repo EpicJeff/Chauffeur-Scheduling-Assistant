@@ -160,7 +160,8 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   const absolute = (f, p) => [p[0], p[1], p[2] + height(f, p)];
   function surface(event, standOff = false) {
     const hit = library.surfaceAt(event);
-    if (hit) {
+    // Pool and spa water answer the pick with no building: that is a ground placement.
+    if (hit?.building) {
       const b = hit.building, a = (b.rotation || 0) * Math.PI / 180, p = b.position || [0, 0];
       let [x, y, z] = hit.point;
       let normal = [0,0,hit.surface === 'ceiling' ? -1 : 1];
