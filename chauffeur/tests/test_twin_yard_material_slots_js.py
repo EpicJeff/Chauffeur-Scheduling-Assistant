@@ -119,6 +119,79 @@ await pair('bed',extra=>({beds:[{id:'b',polygon:square(0,0,6,4),material:'mulch'
   assert.equal(bricks.size,1,'one shared brick material');
 }
 console.log(`Passed: ${cases}/${cases} slot scenarios (fence, wood/gas fire pit, patio, path/curb, bed, pool coping/interior, edge strip, retaining wall); defaults unchanged; shared materials`);
+// New pad edges exercise actual solids and the material-batched yard path.
+const {buildPadEdge}=await import(file('static/twin/pad_edge_geometry.js'));
+const {retainingWallGeometry}=await import(file('static/twin/twin_retaining_wall.js'));
+const {groundAt}=await import(file('static/twin/twin_ground.js'));
+const near=(a,b)=>assert.ok(Math.abs(a-b)<2e-5,`${a} != ${b}`);
+const bounds=g=>{g.computeBoundingBox();return g.boundingBox;};
+const parts=(plan,pad)=>{const rows=[];buildPadEdge(plan,pad,0,(geometry,part,role,slot)=>rows.push({geometry,part,role,slot}));return rows;};
+for(const polygon of [square(0,0,10,8),square(0,0,10,8).reverse()]){
+ const pad={id:'new-pad',polygon,height:3,blend:0,edges:polygon.map(()=>({edge:'sharp'}))};
+ const plan=site({terraces:[pad]});
+ pad.edges[0].wall={material:'block',above_in:6,thickness_in:12};
+ const wallBefore=retainingWallGeometry(plan,pad,0);
+ assert.deepEqual(parts(plan,pad),[],'no optional geometry on legacy wall');
+ pad.edges[0].wall.cap={thickness_in:3,overhang_in:2};
+ let rows=parts(plan,pad),cap=rows.filter(r=>r.part==='cap');assert.ok(cap.length);
+ const wb=bounds(wallBefore),cb=new THREE.Box3();for(const row of cap)cb.union(bounds(row.geometry));
+ near(cb.min.y,3.5);near(cb.max.y,3.75);
+ // Both faces gain the specified overhang, irrespective of winding.
+ near(cb.min.z,wb.min.z-2/12);near(cb.max.z,wb.max.z+2/12);
+ for(const row of cap){const uv=row.geometry.attributes.uv;
+  for(let i=0;i<uv.count;i+=3)assert.ok(Math.abs((uv.getX(i+1)-uv.getX(i))*(uv.getY(i+2)-uv.getY(i))-(uv.getY(i+1)-uv.getY(i))*(uv.getX(i+2)-uv.getX(i)))>1e-7,'physical cap UVs');}
+ for(const style of ['pickets','cable','panel']){
+  pad.edges[0].wall.rail={style,height_in:36};rows=parts(plan,pad);
+  const rails=rows.filter(r=>r.part==='rail'),rb=new THREE.Box3();for(const row of rails)rb.union(bounds(row.geometry));
+  assert.ok(rails.length);near(rb.min.y,3.75);near(rb.max.y,6.75);
+ }
+ delete pad.edges[0].wall.cap;delete pad.edges[0].wall.rail;
+ const again=retainingWallGeometry(plan,pad,0);
+ for(const key of Object.keys(wallBefore.attributes))assert.deepEqual(again.attributes[key].array,wallBefore.attributes[key].array,'wall bytes unchanged');
+ pad.edges[0]={edge:'sharp',stair:{riser_in:7,tread_in:11,treads:false,materials:{riser:BRICK,tread:OAK}}};
+ rows=parts(plan,pad);assert.equal(rows.length,6,'3 ft at 7 in gives six solid steps');
+ const tops=rows.map(r=>bounds(r.geometry).max.y);assert.deepEqual(tops,[3,2.5,2,1.5,1,.5]);
+ assert.ok(rows.every(r=>r.part==='riser'&&Math.abs(bounds(r.geometry).min.y+.5)<2e-5),'closed blocks reach footing');
+ near(groundAt(plan,5,-2),0);near(groundAt(plan,5,2),3);
+ let yard=await buildYard(plan,input.kit,'low');assert.ok(colours(yard.group).has('#aa3322'));
+ assert.ok(!colours(yard.group).has('#336699'),'blocks only has no tread material mesh');
+ pad.edges[0].stair.treads=true;rows=parts(plan,pad);
+ assert.equal(rows.filter(r=>r.part==='riser').length,6);assert.equal(rows.filter(r=>r.part==='tread').length,6);
+ const tb=bounds(rows.find(r=>r.part==='tread').geometry);near(tb.max.y,3);near(tb.min.y,3-1.5/12);
+ near(tb.min.x,-1/12);near(tb.max.x,10+1/12);near(tb.max.z-tb.min.z,12/12);
+ yard=await buildYard(plan,input.kit,'low');assert.ok(colours(yard.group).has('#aa3322')&&colours(yard.group).has('#336699'));
+ const owned=meshes(yard.group);for(const mesh of owned)assert.ok(mesh.userData.kind==='retaining_wall'||mesh.geometry.userData.snapRanges?.every(r=>r.kind==='retaining_wall'),'owner tags survive merging');
+ for(const style of ['pickets','cable','panel']){
+  pad.edges[0].stair.rail={style};rows=parts(plan,pad);
+  const rails=rows.filter(r=>r.part==='rail');assert.ok(rails.length);
+  assert.ok(rails.some(r=>bounds(r.geometry).min.x<.2)&&rails.some(r=>bounds(r.geometry).max.x>9.8),'rails at both open ends');
+  const rb=new THREE.Box3();for(const row of rails)rb.union(bounds(row.geometry));near(rb.max.y,6);
+ }
+ delete pad.edges[0].stair.rail;assert.ok(parts(plan,pad).every(r=>r.part!=='rail'));
+ // Low ground that falls away under the flight is buried by every block.
+ plan.site.terraces.unshift({id:'low',polygon:square(-5,-10,5,10),height:-2,blend:4,edges:[]});
+ rows=parts(plan,pad);assert.ok(rows.filter(r=>r.part==='riser').every(r=>bounds(r.geometry).min.y<=-2.5+1e-5));
+}
+{
+ const pad={id:'layered-wall',polygon:square(0,0,10,8),height:3,blend:0,
+  edges:[{edge:'sharp',wall:{material:'block',cap:{},rail:{style:'pickets'}}},...Array.from({length:3},()=>({edge:'sharp'}))]};
+ const upper={id:'crossing',polygon:square(4,-1,6,1),height:5,blend:0,edges:[]};
+ const rows=parts(site({terraces:[pad,upper]}),pad),rb=new THREE.Box3();
+ for(const row of rows.filter(r=>r.part==='rail'))rb.union(bounds(row.geometry));
+ near(rb.max.y,5+2/12+3);near(rb.min.y,3+2/12);
+}
+{
+ const pad={id:'thin-drop',polygon:square(0,0,10,8),height:3,blend:0,
+  edges:[{edge:'sharp',stair:{treads:false}},...Array.from({length:3},()=>({edge:'sharp'}))]};
+ const depression={id:'thin',polygon:square(1.4,-8,1.6,1),height:-1,blend:0,edges:[]};
+ const plan=site({terraces:[depression,pad]}),rows=parts(plan,pad);
+ assert.equal(rows.length,7,'narrow depression between the one-foot samples sets the largest drop');
+ near(bounds(rows[0].geometry).min.y,-1.5);near(bounds(rows.at(-1).geometry).max.y,-1+4/7);
+}
+const {buildRailing}=await import(file('static/twin/fence_geometry.js'));
+let posts=[];buildRailing([0,0,0],[10,0,2],{style:'pickets'},g=>{const b=bounds(g);if(b.max.y-b.min.y>2.9)posts.push((b.min.x+b.max.x)/2);});
+posts.sort((a,b)=>a-b);assert.equal(posts.length,4);for(let i=1;i<posts.length;i++)assert.ok(posts[i]-posts[i-1]<=4);
+console.log('Passed: cap top/overhang/UVs, legacy wall bytes, six real risers, closed footing, tread materials, owner tags and all rail styles on wall and both stair ends');
 """
 
 if __name__ == '__main__':

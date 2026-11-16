@@ -42,7 +42,7 @@ export function snapEdges(plan) {
       for (let i = 0; i < ps.length - (closed ? 0 : 1); i++) {
         const a = ps[i], b = ps[(i + 1) % ps.length], edge = p.edges?.[i];
         if (kind === 'retaining_wall' && (edge?.edge !== 'sharp' || !edge.wall)) continue;
-        const z = q => kind === 'retaining_wall' ? p.height + (edge.wall.above_in || 0) / 12
+        const z = q => kind === 'retaining_wall' ? p.height + (edge.wall.above_in || 0) / 12 + (edge.wall.cap ? (edge.wall.cap.thickness_in ?? 2) / 12 : 0)
           : (p.elevation ?? groundAt(plan, ...q)) + (kind === 'fence' ? p.height ?? 6 : 0);
         add(kind, p.id, [...a, z(a)], [...b, z(b)]);
       }

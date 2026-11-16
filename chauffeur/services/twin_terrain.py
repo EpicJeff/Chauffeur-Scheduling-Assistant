@@ -44,30 +44,61 @@ def pad_error(pad):
     if (not isinstance(pad['edges'], list) or len(pad['edges']) != len(poly)
             or any(not isinstance(e, dict) or e.get('edge') not in ('sharp', 'slope') for e in pad['edges'])):
         return 'Choose slope or sharp for each pad edge.'
+
+    def dimensions(value, specs):
+        for key, default, low, high in specs:
+            value.setdefault(key, default)
+            if not number(value[key]) or not low <= value[key] <= high:
+                return f'Choose {key} from {low} to {high} inches.'
+
+    def materials(value, allowed):
+        if 'materials' not in value:
+            return None
+        from services.twin_library import material_slot_error
+        slots = value['materials']
+        if not isinstance(slots, dict) or set(slots) - allowed or any(material_slot_error(v) for v in slots.values()):
+            return 'Choose null or a Library material for each pad edge material slot.'
+        for key in [k for k, v in slots.items() if v is None]:
+            slots.pop(key)
+        if not slots:
+            value.pop('materials')
+
     for edge in pad['edges']:
+        if 'wall' in edge and 'stair' in edge:
+            return 'Choose either a wall or a stair for each pad edge.'
         if edge['edge'] == 'slope':
             edge.pop('wall', None)
+            edge.pop('stair', None)
             continue
-        if 'wall' not in edge:
+        kind = 'wall' if 'wall' in edge else 'stair' if 'stair' in edge else None
+        if kind is None:
             continue
-        wall = edge['wall']
-        if not isinstance(wall, dict) or wall.get('material') not in ('stone', 'block', 'concrete', 'brick', 'timber'):
-            return 'Choose stone, block, concrete, brick or timber for the retaining wall.'
-        if 'materials' in wall:
-            from services.twin_library import material_slot_error
-            slots = wall['materials']
-            if not isinstance(slots, dict) or set(slots) - {'face'} or any(material_slot_error(v) for v in slots.values()):
-                return 'A retaining wall takes face: null or a Library material.'
-            for key in [k for k, v in slots.items() if v is None]:
-                slots.pop(key)
-            if not slots:
-                wall.pop('materials')
-        for key, default, low, high, title in (
-                ('thickness_in', 8, 4, 24, 'wall thickness'),
-                ('above_in', 0, 0, 36, 'wall height above ground')):
-            wall.setdefault(key, default)
-            if not number(wall[key]) or not low <= wall[key] <= high:
-                return f'Choose {title} from {low} to {high} inches.'
+        value = edge[kind]
+        if not isinstance(value, dict):
+            return 'Choose valid pad edge settings.'
+        if kind == 'wall':
+            if value.get('material') not in ('stone', 'block', 'concrete', 'brick', 'timber'):
+                return 'Choose stone, block, concrete, brick or timber for the retaining wall.'
+            error = dimensions(value, [('thickness_in', 8, 4, 24), ('above_in', 0, 0, 36)])
+            if 'cap' in value:
+                if not isinstance(value['cap'], dict):
+                    return 'Choose valid wall cap settings.'
+                error = error or dimensions(value['cap'], [('thickness_in', 2, 1, 8), ('overhang_in', 1, 0, 6)])
+        else:
+            error = dimensions(value, [('riser_in', 7, 4, 8), ('tread_in', 11, 9, 24)])
+            value.setdefault('treads', True)
+            if type(value['treads']) is not bool:
+                return 'Choose whether to add stair treads.'
+        error = error or materials(value, {'face', 'cap'} if kind == 'wall' else {'riser', 'tread'})
+        if error:
+            return error
+        if 'rail' in value:
+            rail = value['rail']
+            if not isinstance(rail, dict) or rail.get('style') not in ('pickets', 'cable', 'panel'):
+                return 'Choose pickets, cable or panel for the railing.'
+            error = dimensions(rail, [('height_in', 36, 24, 48)]) or materials(rail, {'rail'})
+            if error:
+                return error
     return None
 
 

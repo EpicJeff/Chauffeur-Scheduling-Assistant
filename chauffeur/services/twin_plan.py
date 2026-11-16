@@ -559,13 +559,19 @@ def _site(site, notes):
             if not piece['materials']:
                 piece.pop('materials')
         for edge in piece.get('edges', []) if isinstance(piece, dict) and name == 'terraces' and isinstance(piece.get('edges'), list) else []:
-            wall = edge.get('wall') if isinstance(edge, dict) else None
-            if isinstance(wall, dict) and 'materials' in wall:
-                from services.twin_library import material_slot_error
-                value = wall['materials']
-                if not isinstance(value, dict) or set(value) - {'face'} or any(material_slot_error(v) for v in value.values()):
-                    wall.pop('materials')
-                    notes.append('Reset retaining wall materials: unknown Library material.')
+            if not isinstance(edge, dict):
+                continue
+            for kind, allowed in (('wall', {'face', 'cap'}), ('stair', {'riser', 'tread'})):
+                value = edge.get(kind)
+                if not isinstance(value, dict):
+                    continue
+                for owner, keys in ((value, allowed), (value.get('rail'), {'rail'})):
+                    if isinstance(owner, dict) and 'materials' in owner:
+                        from services.twin_library import material_slot_error
+                        refs = owner['materials']
+                        if not isinstance(refs, dict) or set(refs) - keys or any(material_slot_error(v) for v in refs.values()):
+                            owner.pop('materials')
+                            notes.append(f'Reset retaining {kind} materials: unknown Library material.')
     slots('pool', site.get('pool'))
     pool = site.get('pool')
     if isinstance(pool, dict) and 'features' in pool:

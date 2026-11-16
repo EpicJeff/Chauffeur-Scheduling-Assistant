@@ -24,6 +24,7 @@ import { firePitRings, firePitOptions, roundPit, buildFirePit, fireFlameMaterial
 import { porchFoundationRole } from './twin_porch_foundation.js';
 import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.js';
 import { buildFence } from './fence_geometry.js';
+import { buildPadEdge } from './pad_edge_geometry.js';
 import { buildPoolFeatures, cutSurface, offsetOutline, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';
 import { rippleSources, rippleMaterial, updateRipples } from './effects/water_ripples.js';
 
@@ -129,7 +130,17 @@ function yardMaterialInputs(plan, kit) {
   if (site.lot?.length >= 3) use('lawn');
   for (const pad of site.terraces || []) pad.polygon.forEach((_, edge) => {
     const e = pad.edges?.[edge];
-    if (e?.edge === 'sharp' && e.wall) use(retainingWallRole(e.wall.material), e.wall.materials?.face);
+    if (e?.edge !== 'sharp') return;
+    if (e.wall) {
+      use(retainingWallRole(e.wall.material), e.wall.materials?.face);
+      if (e.wall.cap) use('patio_concrete', e.wall.materials?.cap);
+    }
+    if (e.stair) {
+      use('patio_concrete', e.stair.materials?.riser);
+      if (e.stair.treads !== false) use('patio_concrete', e.stair.materials?.tread);
+    }
+    const rail = (e.wall || e.stair)?.rail;
+    if (rail) use('black_metal', rail.materials?.rail);
   });
   for (const h of site.hardscape || []) if (h.kind === 'path' || h.polygon?.length >= 3) {
     use(h.material === 'concrete' ? 'patio_concrete' : authoredRole(h.material, 'paving'), h.materials?.surface);
@@ -168,7 +179,8 @@ const fields = (value, names) => names.split(' ').map(k => value?.[k]);
 const objectFields = 'id kind asset at elevation visible_in scale scale_axes pitch rotation roll tint casts_shadow object_kind emissive emissive_color light_entity preset height seed';
 function yardSiteInputs(site) {
   return [site.lot, (site.terraces || []).map(p => [p.id, p.polygon, p.height, p.blend,
-    (p.edges || []).map(e => [e.edge, e.wall && fields(e.wall, 'material thickness_in above_in materials')])]),
+    (p.edges || []).map(e => [e.edge, e.wall && fields(e.wall, 'material thickness_in above_in materials cap rail'),
+      e.stair && fields(e.stair, 'riser_in tread_in treads materials rail')])]),
     (site.hardscape || []).map(h => fields(h, 'id kind polygon points width corner smooth radius edging elevation material materials')),
     site.pool && fields(site.pool, 'id polygon depth coping elevation material materials features'),
     sitePieces(site.fire_pit).map(f => fields(f, 'id shape at radius rotation polygon fuel body top height_in glass entity elevation materials')),
@@ -231,10 +243,10 @@ export function yardPartKeys(plan, kit, tier, { viewing = false } = {}) {
   const models = [...(site.furniture || []), ...(site.planting || []).filter(p => p.asset?.startsWith('import-'))]
     .map(f => (f.asset || kit.furniture?.[f.kind] || '').replace(/^polyhaven:/, ''));
   return {
-    // terrain: tier, lot; ordered grade; sharp-edge wall presence (suppresses
+    // terrain: tier, lot; ordered grade; sharp-edge wall/stair presence (suppresses
     // earth skirts); pool polygon and spa polygons only; resolved lawn finish.
     // No hardscape/building holes are cut by the current terrain builder.
-    terrain: key(tier, site.lot, grade, (site.terraces || []).map(p => (p.edges || []).map(e => !!e.wall)),
+    terrain: key(tier, site.lot, grade, (site.terraces || []).map(p => (p.edges || []).map(e => !!(e.wall || e.stair))),
       site.pool?.polygon, spaHoles, finishes(['lot'])),
     // plants: tier/viewing; ground grade; planting object fields (see
     // objectFields), including preset/height/seed and applyObject appearance.
@@ -255,8 +267,8 @@ export function yardPartKeys(plan, kit, tier, { viewing = false } = {}) {
     // fire_pits: tier; ground grade; id/shape/at/radius/rotation/polygon/fuel/
     // body/top/height_in/glass/entity/elevation/materials; resolved finishes.
     fire_pits: key(tier, grade, own[4], finishes(['fire_pit'])),
-    // retaining_walls: tier; ordered grade; each terrace edge's wall material/
-    // thickness_in/above_in/face slot; resolved retaining-wall finishes.
+    // retaining_walls: tier; ordered grade; wall/cap/stair/rail dimensions,
+    // styles and material slots; resolved pad-edge finishes.
     retaining_walls: key(tier, own[1], finishes(['terraces'])),
     // furniture: tier/viewing; ground grade; furniture objectFields and imported
     // planting objectFields; resolved asset or kit.furniture[kind], model metadata/
@@ -280,6 +292,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   Object.defineProperty(root.userData, 'waterSurfaces', { value: [], writable: true });
   const keys = yardPartKeys(plan, kit, tier, { viewing }), reused = new Map();
   const site = plan.site || {}, mats = materials || new Map();
+  const padParts = (site.terraces || []).some(p => p.edges?.some(e => e.stair || e.wall?.cap || e.wall?.rail));
+  const padKeys = {};
   const spas = (site.pool?.features || []).filter(f => f.kind === 'spa').map(f => f.polygon);
   root.userData.materials = mats;
   const surface = (poly, z0, z1 = z0, holes = []) => {
@@ -289,6 +303,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   const materialKit = yardMaterialKit(plan, kit);
   const mat = (role, slot = null) => {
     if (slot) return materialSlot(slot, role, materialKit, tier, mats, mat);
+    if (role === 'black_metal' && !materialKit.materials[role]) return plain('black_metal', '#1b1c1e', { roughness: .42 });
     const sourceRole = role === 'terrain_lawn' ? 'lawn' : role;
     const key = materialKey(materialKit.materials[sourceRole] || {}, role, tier, manifest(materialKit));
     if (!mats.has(key)) mats.set(key, kitMaterial(sourceRole, materialKit, tier));
@@ -353,11 +368,29 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     },
     retaining_walls: async group => {
       const stopWalls = part('retaining_walls');
-      for (const pad of site.terraces || []) pad.polygon.forEach((_, edge) => {
-        if (pad.edges?.[edge]?.edge !== 'sharp' || !pad.edges[edge].wall) return;
-        const wall = pad.edges[edge].wall;
-        surfaceMesh(group, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face), seedOf(pad, 'walls'), {kind:'retaining_wall', pieceId:pad.id});
-      });
+      for (const [index, pad] of (site.terraces || []).entries()) {
+        const id = pad.id || String(index), target = padParts ? new THREE.Group() : group;
+        if (padParts) {
+          const keyPlan = { ...plan, site: { terraces: [pad] } };
+          const grade = (site.terraces || []).map(p => [p.polygon, p.height, p.blend, p.edges?.map(e => e.edge)]);
+          padKeys[id] = JSON.stringify([tier, grade, yardSiteInputs(keyPlan.site)[1], yardMaterialInputs(keyPlan, kit)]);
+          if (previous?.userData.padEdgeKeys?.[id] === padKeys[id]) {
+            reused.set('pad:' + id, previous.children.filter(o => o.userData.padEdgeId === id));
+            continue;
+          }
+        }
+        pad.polygon.forEach((_, edge) => {
+          if (pad.edges?.[edge]?.edge !== 'sharp') return;
+          const wall = pad.edges[edge].wall;
+          if (wall) surfaceMesh(target, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face), seedOf(pad, 'walls'), {kind:'retaining_wall', pieceId:pad.id});
+          buildPadEdge(plan, pad, edge, (geometry, part, role, slot) => surfaceMesh(target, geometry, mat(role, slot),
+            seedOf(pad, 'walls'), {kind:'retaining_wall', pieceId:pad.id}));
+        });
+        if (padParts) {
+          mergeStatic(target);
+          for (const child of [...target.children]) { child.userData.padEdgeId = id; group.add(child); }
+        }
+      }
       stopWalls();
     },
     hardscape: async group => {
@@ -617,7 +650,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     const stop = part('batch');
     // Full trees/cards own their materials and viewing domains. Everything else
     // batches only inside its part, so no later edit can replace a sibling buffer.
-    if (name !== 'plants' && name !== 'grass') mergeStatic(scratch);
+    if (name !== 'plants' && name !== 'grass' && !(name === 'retaining_walls' && padParts)) mergeStatic(scratch);
     stop();
     for (const child of [...scratch.children]) { child.userData.yardPart = name; root.add(child); }
   }
@@ -625,7 +658,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   // that its loads resolve. Reused parts keep the key they were built with.
   const built = yardPartKeys(plan, kit, tier, { viewing });
   root.userData.yardPartKeys = Object.fromEntries(YARD_PARTS.map(name => [name, reused.has(name) ? previousKeys[name] : built[name]]));
-  root.userData.yardReusedParts = [...reused.keys()];
+  root.userData.padEdgeKeys = reused.has('retaining_walls') ? previous.userData.padEdgeKeys : padKeys;
+  root.userData.yardReusedParts = [...reused.keys()].filter(name => YARD_PARTS.includes(name));
   root.userData.yardRebuiltParts = YARD_PARTS.filter(name => !reused.has(name));
   // Commit only after twin_view's revision check. Until then the live scene
   // owns reused groups and can survive a failed/superseded asynchronous rebuild.
@@ -633,7 +667,15 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     for (const objects of reused.values()) for (const object of objects) root.add(object);
     // Stable part order (and stable order within a part) keeps chart packing deterministic.
     const order = o => YARD_PARTS.indexOf(o.userData.yardPart);
+    for (const [name, objects] of reused) if (name.startsWith('pad:')) for (const object of objects) object.userData.yardPart = 'retaining_walls';
     root.children.sort((a, b) => order(a) - order(b));
+    if (padParts) {
+      const padOrder = (site.terraces || []).map((p, i) => p.id || String(i));
+      const walls = root.children.filter(o => o.userData.yardPart === 'retaining_walls')
+        .sort((a, b) => padOrder.indexOf(a.userData.padEdgeId) - padOrder.indexOf(b.userData.padEdgeId));
+      let index = 0;
+      root.children = root.children.map(o => o.userData.yardPart === 'retaining_walls' ? walls[index++] : o);
+    }
     // The material map started as a copy of the previous yard's, so reused parts keep their
     // materials. Drop what no mesh uses any more (a replaced slot material and its maps),
     // keeping only the tree and plant-card caches that later builds reuse by key; the

@@ -31,6 +31,34 @@ def run():
         assert twin_terrain.pad_error(p), wall
     p = copy.deepcopy(pad); p['edges'][0]['edge'] = 'slope'
     assert twin_terrain.pad_error(p) is None and 'wall' not in p['edges'][0]
+    for kind, settings, expected in (
+            ('wall', {'material': 'block', 'cap': {}, 'rail': {'style': 'pickets'}},
+             {'material': 'block', 'thickness_in': 8, 'above_in': 0, 'cap': {'thickness_in': 2, 'overhang_in': 1},
+              'rail': {'style': 'pickets', 'height_in': 36}}),
+            ('stair', {'rail': {'style': 'cable'}},
+             {'riser_in': 7, 'tread_in': 11, 'treads': True, 'rail': {'style': 'cable', 'height_in': 36}})):
+        p = copy.deepcopy(pad); p['edges'][0] = {'edge': 'sharp', kind: settings}
+        assert twin_terrain.pad_error(p) is None
+        assert p['edges'][0][kind] == expected
+        p['edges'][0]['edge'] = 'slope'
+        assert twin_terrain.pad_error(p) is None and p['edges'][0] == {'edge': 'slope'}
+    invalid_edges = [
+        {'wall': {'material': 'block'}, 'stair': {}},
+        {'stair': {'treads': 1}}, {'stair': []},
+        *({'stair': {key: v}} for key, values in [('riser_in', [3.9, 8.1, True, float('nan')]),
+                                                  ('tread_in', [8.9, 24.1, None])] for v in values),
+        *({'wall': {'material': 'block', 'cap': {key: v}}} for key, values in
+          [('thickness_in', [.9, 8.1, True]), ('overhang_in', [-.1, 6.1])] for v in values),
+        {'wall': {'material': 'block', 'cap': False}},
+        *({'stair': {'rail': r}} for r in [None, {}, {'style': 'wood'}, {'style': 'panel', 'height_in': 23.9},
+                                          {'style': 'panel', 'height_in': 48.1}, {'style': 'panel', 'height_in': True}]),
+        {'stair': {'materials': {'face': None}}}, {'stair': {'materials': {'riser': {'id': 'missing'}}}},
+        {'wall': {'material': 'block', 'materials': {'cap': {'id': 'missing'}}}},
+        {'stair': {'rail': {'style': 'cable', 'materials': {'rail': {'id': 'missing'}}}}},
+    ]
+    for edge in invalid_edges:
+        p = copy.deepcopy(pad); p['edges'][0] = {'edge': 'sharp', **edge}
+        assert twin_terrain.pad_error(p), edge
     fixture = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
     model = bridge.assemble(fixture)[0]
     bare = {**pad, 'edges': [{'edge': 'sharp'} for _ in range(4)]}
@@ -55,6 +83,37 @@ def run():
         assert 'wall' not in twin_store.current_model()['site']['terraces'][-1]['edges'][0]
         twin_store.revert(added)
         assert twin_store.current_model()['site']['terraces'][-1]['edges'] == stored['edges']
+        for edge in [
+                {'edge': 'sharp', 'wall': {'material': 'block', 'cap': {}, 'materials': {'cap': {'id': 'red_brick_03'}},
+                                         'rail': {'style': 'panel', 'materials': {'rail': {'id': 'black_metal'}}}}},
+                {'edge': 'sharp', 'stair': {'materials': {'riser': {'id': 'red_brick_03'}, 'tread': {'id': 'mocha_oak_veneer'}},
+                                          'rail': {'style': 'cable'}}}]:
+            operation = {'op': 'update_pad', 'id': target, 'edges': [edge] + [{'edge': 'slope'} for _ in range(3)]}
+            response = client.post('/api/house/editor/op', headers=tokens['parent'], json={'op': operation})
+            assert response.status_code == 200, response.text
+            from services import twin_plan
+            loaded, notes = twin_plan.normalize(bridge.flatten(twin_store.current_model()))
+            assert loaded['site']['terraces'][-1]['edges'] == response.json()['plan']['site']['terraces'][-1]['edges']
+            authored = twin_store.current_id()
+            slope = copy.deepcopy(operation); slope['edges'][0]['edge'] = 'slope'
+            response = client.post('/api/house/editor/op', headers=tokens['parent'], json={'op': slope})
+            assert response.status_code == 200, response.text
+            assert response.json()['plan']['site']['terraces'][-1]['edges'][0] == {'edge': 'slope'}
+            twin_store.revert(authored)
+        # Unknown slots are reset at load, preserving the pad and its geometry settings.
+        broken = bridge.flatten(twin_store.current_model())
+        stair = broken['site']['terraces'][-1]['edges'][0]['stair']
+        stair['materials']['tread'] = {'id': 'retired'}
+        stair['rail']['materials'] = {'rail': {'id': 'retired'}}
+        loaded, notes = twin_plan.normalize(broken)
+        stair = loaded['site']['terraces'][-1]['edges'][0]['stair']
+        assert 'materials' not in stair and 'materials' not in stair['rail'] and notes
+        for invalid_edge in invalid_edges:
+            invalid = copy.deepcopy(operation); invalid['edges'][0] = {'edge': 'sharp', **invalid_edge}
+            before_invalid = twin_store.current_id()
+            response = client.post('/api/house/editor/op', headers={**tokens['parent'], 'Content-Type': 'application/json'},
+                                   content=json.dumps({'op': invalid}))
+            assert response.status_code == 400 and twin_store.current_id() == before_invalid, response.text
         slope = copy.deepcopy(operation); slope['edges'][0]['edge'] = 'slope'
         response = client.post('/api/house/editor/op', headers=tokens['parent'], json={'op': slope})
         assert response.status_code == 200, response.text
@@ -66,6 +125,7 @@ def run():
     assert len(json.dumps(schema)) <= 6000  # shared house_design budget (5,689 at v2.499.836)
     assert all(word in schema['properties']['edit']['description'] for word in ('wall?', 'thickness_in', 'above_in', 'timber', 'slope drops it'))
     print('Passed: wall validation/defaults, update_pad API/refusals, round trip, undo/redo, slope removal and compact tool docs')
+    print('Passed: cap/stair/rail defaults, range and slot refusals, API round trips and load-time slot reset')
 
 
 if __name__ == '__main__':

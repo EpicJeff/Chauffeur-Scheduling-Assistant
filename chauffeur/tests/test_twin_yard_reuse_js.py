@@ -40,6 +40,30 @@ async function mount(plan,editor=true,tier='high',kit={materials:{}}) {
  return mountTwin(host,{plan:structuredClone(plan),kit,tier,bake:false});
 }
 const yard=v=>v.scene.getObjectByName('yard');
+await test('stair_edit_rebuilds_only_its_pad_and_keeps_other_parts',async()=>{
+ const plan={buildings:[],materials:{},site:{terraces:[0,20].map((x,i)=>({id:'pad'+i,polygon:square(x,0,10),height:3,blend:0,
+  edges:[{edge:'sharp',stair:{riser_in:7,tread_in:11,treads:true}},...Array.from({length:3},()=>({edge:'sharp'}))]}))}};
+ const view=await mount(plan);
+ try{
+  const old=yard(view),neighbour=old.children.filter(o=>o.userData.padEdgeId==='pad1');assert.ok(neighbour.length);
+  const changed=structuredClone(plan);changed.site.terraces[0].edges[0].stair.riser_in=6;
+  const before=yardPartKeys(plan,{materials:{}},'high'),after=yardPartKeys(changed,{materials:{}},'high');
+  assert.deepEqual(YARD_PARTS.filter(k=>before[k]!==after[k]),['retaining_walls']);
+  await view.rebuild(changed);assert.ok(neighbour.every(o=>yard(view).children.includes(o)),'neighbour keeps its exact meshes');
+  assert.ok(old.children.every(o=>o.userData.padEdgeId!=='pad1'),'adopt before old yard release');
+  const base=yardKey(changed,{materials:{}},'high');
+  for(const edit of [s=>s.tread_in=12,s=>s.treads=false,s=>s.materials={riser:{id:'brick'}},s=>s.rail={style:'panel',height_in:42}]){
+   const p=structuredClone(changed);edit(p.site.terraces[0].edges[0].stair);assert.notEqual(yardKey(p,{materials:{}},'high'),base);
+  }
+  const w=structuredClone(changed);w.site.terraces[0].edges[0]={edge:'sharp',wall:{material:'block',cap:{thickness_in:2,overhang_in:1},rail:{style:'pickets',height_in:36}}};
+  const wk=yardPartKeys(w,{materials:{}},'high');
+  for(const edit of [v=>v.cap.thickness_in=3,v=>v.cap.overhang_in=2,v=>v.materials={cap:{id:'brick'}},
+    v=>v.rail.style='cable',v=>v.rail.height_in=42,v=>v.rail.materials={rail:{id:'metal'}}]){
+   const p=structuredClone(w);edit(p.site.terraces[0].edges[0].wall);const pk=yardPartKeys(p,{materials:{}},'high');
+   assert.deepEqual(YARD_PARTS.filter(k=>wk[k]!==pk[k]),['retaining_walls']);
+  }
+ }finally{view.dispose();}
+});
 await test('an_equivalent_rederived_outline_keeps_the_yard_key', async()=>{
  // The shape the server re-derived on the first edit in Chromium: extra collinear corners,
  // float noise and another start corner.

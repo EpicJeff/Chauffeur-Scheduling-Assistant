@@ -55,7 +55,7 @@ export function terrainGeometry(plan, outline, tier = 'high', { holes = [], offs
   if (skirts) for (const pad of pads) pad.polygon.forEach((a, i) => {
     // Lawn yields its earth face to the wall. Slabs and plinth undersides
     // still need their own vertical closure across the same terrain step.
-    if (!retainWallSkirts && pad.edges?.[i]?.edge === 'sharp' && pad.edges[i].wall) return;
+    if (!retainWallSkirts && pad.edges?.[i]?.edge === 'sharp' && (pad.edges[i].wall || pad.edges[i].stair)) return;
     if ((pad.edges?.[i]?.edge ?? 'slope') !== 'sharp' && pad.blend !== 0) return;
     const b = pad.polygon[(i + 1) % pad.polygon.length], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
     const n = [(b[1] - a[1]) / length * 1e-5, -(b[0] - a[0]) / length * 1e-5];

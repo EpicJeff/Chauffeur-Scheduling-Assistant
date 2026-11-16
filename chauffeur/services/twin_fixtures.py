@@ -344,7 +344,8 @@ def _host_edges(model, host):
             edge = p.get('edges', [])[i] if i < len(p.get('edges', [])) else {}
             if edge.get('edge') != 'sharp' or not edge.get('wall'):
                 continue
-            height = p['height'] + edge['wall'].get('above_in', 0)/12
+            wall = edge['wall']
+            height = p['height'] + wall.get('above_in', 0)/12 + (wall['cap'].get('thickness_in', 2)/12 if 'cap' in wall else 0)
             heights = [height, height]
         else:
             heights = [p.get('elevation') if p.get('elevation') is not None else terrain.ground_at(site.get('terraces', []), q) for q in (a, b)]

@@ -44,6 +44,17 @@ await test('snap_to_retaining_wall_cap_sets_snap_and_path',async()=>{
  assert.equal(s.sent.length,1);assert.equal(value.snap.host.kind,'retaining_wall');assert.deepEqual(value.snap.edge,{from:[10,10],to:[20,10]});
  assert.ok(Math.abs(value.snap.t0-.25)<1e-5);assert.ok(Math.abs(value.snap.t1-.75)<1e-5);assert.ok(value.path.every(p=>p[1]===10&&p[2]===2.5));s.signal.abort();
 });
+await test('cap_thickness_agrees_with_server_and_live_emitter_and_stair_has_no_cap_snap',async()=>{
+ const s=setup();s.plan.site.terraces[0].edges[0].wall.cap={thickness_in:3,overhang_in:2};
+ const e=await editor(s),{value}=await snapRun(s,e,'retaining_wall',null,'out');
+ snapChecks.at(-1).plan=structuredClone(s.plan);
+ assert.ok(value.path.every(p=>Math.abs(p[2]-2.75)<1e-5));
+ const {resolveFixture}=await import(file('static/twin/live/emitters.js'));
+ const resolved=resolveFixture(value,s.plan);assert.ok(resolved.path.every(p=>Math.abs(p[2]-2.75)<1e-5));
+ const {snapEdges}=await import(file('static/twin/editor/line_fixture_tool.js'));
+ s.plan.site.terraces[0].edges[0]={edge:'sharp',stair:{riser_in:7}};
+ assert.ok(!snapEdges(s.plan).some(v=>v.host.kind==='retaining_wall'));s.signal.abort();
+});
 for(const kind of ['hardscape','fence','step','wall'])await test('snap_'+kind+'_stores_raw_host_without_facing_offset',async()=>{
  const s=setup(),e=await editor(s),{value,edge}=await snapRun(s,e,kind);assert.equal(s.sent.length,1);assert.equal(value.snap.host.kind,kind);
  for(const [i,t]of [value.snap.t0,value.snap.t1].entries())for(let k=0;k<3;k++)assert.ok(Math.abs(value.path[i][k]-(edge.a[k]+(edge.b[k]-edge.a[k])*t))<1e-5,JSON.stringify({value,edge}));

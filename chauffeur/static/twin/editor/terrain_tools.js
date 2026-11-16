@@ -120,6 +120,12 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       saveValue(choices || !numeric ? input.value : Number(input.value));
     }); l.append(input); card.append(l); return input;
   }
+  function checkbox(text, value, saveValue) {
+    const label = node('label', text), input = node('input'); input.type = 'checkbox';
+    input.checked = !!value; input.setAttribute('aria-label', text); input.disabled = !canEdit();
+    listen(input, 'change', () => { if (canEdit()) saveValue(input.checked); });
+    label.append(input); card.append(label); return input;
+  }
   function cancelPadDrag() {
     const drag = padDrag; padDrag = null;
     if (!drag) return;
@@ -156,8 +162,8 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
         const grip = node('span', '⠿'); grip.className = 'editor-pad-grip'; grip.setAttribute('aria-hidden', 'true'); row.append(grip);
       }
       row.append(node('span', `Pad ${index + 1} · ${height} ft`));
-      if (pad.edges?.some(edge => edge.wall)) {
-        const badge = node('span', 'Wall'); badge.className = 'editor-pad-wall'; badge.title = 'Retaining wall'; row.append(badge);
+      for (const [kind, title] of [['wall', 'Wall'], ['stair', 'Stair']]) if (pad.edges?.some(edge => edge[kind])) {
+        const badge = node('span', title); badge.className = 'editor-pad-wall'; badge.title = title; row.append(badge);
       }
       listen(row, 'keydown', event => {
         if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
@@ -286,28 +292,62 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
         const updateEdge = change => {
           const edges = current().polygon.map((_, j) => structuredClone(current().edges?.[j] || { edge: 'slope' }));
           edges[i] = { ...edges[i], ...change };
-          if (edges[i].edge === 'slope' || !edges[i].wall) delete edges[i].wall;
+          for (const kind of ['wall', 'stair']) if (edges[i].edge === 'slope' || !edges[i][kind]) delete edges[i][kind];
           return update({ edges });
         };
         field(`Edge ${i + 1}`, edge.edge, edge => updateEdge({ edge }), ['slope', 'sharp']);
         if (edge.edge !== 'sharp') return;
-        field(`Edge ${i + 1} Wall`, edge.wall?.material || '', material => updateEdge({ wall: material
-          ? { thickness_in: 8, above_in: 0, ...edge.wall, material } : null }),
-          [['', 'None'], ['stone', 'Stone'], ['block', 'Block'], ['concrete', 'Concrete'], ['brick', 'Brick'], ['timber', 'Timber']]);
-        if (!edge.wall) return;
-        for (const [key, title, fallback, min, max] of [['thickness_in', 'Thickness (in)', 8, 4, 24], ['above_in', 'Above ground (in)', 0, 0, 36]]) {
-          const input = field(`Edge ${i + 1} ${title}`, edge.wall[key] ?? fallback, value => updateEdge({ wall: { ...edge.wall, [key]: value } }));
-          input.min = String(min); input.max = String(max);
+        const kind = edge.wall ? 'wall' : edge.stair ? 'stair' : '';
+        field(`Edge ${i + 1} Type`, kind, next => updateEdge({
+          wall: next === 'wall' ? { material: 'block', thickness_in: 8, above_in: 0 } : null,
+          stair: next === 'stair' ? { riser_in: 7, tread_in: 11, treads: true } : null,
+        }), [['', 'None'], ['wall', 'Wall'], ['stair', 'Stair']]);
+        if (!kind) return;
+        const value = edge[kind], latest = () => structuredClone(current().edges[i][kind]);
+        const change = patch => updateEdge({ [kind]: { ...latest(), ...patch } });
+        const number = (title, value, min, max, save) => {
+          const input = field(`Edge ${i + 1} ${title}`, value, save); input.min = String(min); input.max = String(max);
+        };
+        const slot = (title, key, fallback, nested = false) => {
+          const owner = nested ? value.rail : value;
+          card.append(materialSlot({ label: `Edge ${i + 1} ${title}`, value: owner.materials?.[key] || null,
+            defaultLabel: fallback, kit: getKit(), readOnly: () => !canEdit(), report,
+            onChange: ref => {
+              const next = latest(), owner = nested ? next.rail : next;
+              owner.materials = { ...owner.materials, [key]: ref };
+              if (!ref) delete owner.materials[key];
+              if (!Object.keys(owner.materials).length) delete owner.materials;
+              return updateEdge({ [kind]: next });
+            } }));
+        };
+        if (kind === 'wall') {
+          number('Thickness (in)', value.thickness_in ?? 8, 4, 24, thickness_in => change({ thickness_in }));
+          number('Above ground (in)', value.above_in ?? 0, 0, 36, above_in => change({ above_in }));
+          checkbox(`Edge ${i + 1} Wall cap`, !!value.cap, enabled => {
+            const next = latest(); if (enabled) next.cap = { thickness_in: 2, overhang_in: 1 }; else delete next.cap;
+            return updateEdge({ wall: next });
+          });
+          if (value.cap) {
+            number('Cap thickness (in)', value.cap.thickness_in ?? 2, 1, 8, thickness_in => change({ cap: { ...latest().cap, thickness_in } }));
+            number('Cap overhang (in)', value.cap.overhang_in ?? 1, 0, 6, overhang_in => change({ cap: { ...latest().cap, overhang_in } }));
+          }
+          slot('Wall face', 'face', value.material[0].toUpperCase() + value.material.slice(1));
+          if (value.cap) slot('Cap', 'cap', 'Concrete');
+        } else {
+          number('Step height (in)', value.riser_in ?? 7, 4, 8, riser_in => change({ riser_in }));
+          number('Tread depth (in)', value.tread_in ?? 11, 9, 24, tread_in => change({ tread_in }));
+          checkbox(`Edge ${i + 1} Treads`, value.treads !== false, treads => change({ treads }));
+          slot('Risers', 'riser', 'Concrete');
+          if (value.treads !== false) slot('Treads material', 'tread', 'Concrete');
         }
-        // The wall's face takes any Library material; the default is its kind's own look.
-        card.append(materialSlot({ label: `Edge ${i + 1} Wall face`, value: edge.wall.materials?.face || null,
-          defaultLabel: edge.wall.material[0].toUpperCase() + edge.wall.material.slice(1), kit: getKit(), readOnly: () => !canEdit(), report,
-          onChange: face => {
-            const wall = { ...current().edges[i].wall, materials: { ...(current().edges[i].wall.materials || {}), face } };
-            if (!face) delete wall.materials.face;
-            if (!Object.keys(wall.materials).length) delete wall.materials;
-            return updateEdge({ wall });
-          } }));
+        field(`Edge ${i + 1} Railing`, value.rail?.style || '', style => {
+          const next = latest(); if (style) next.rail = { ...next.rail, style }; else delete next.rail;
+          return updateEdge({ [kind]: next });
+        }, [['', 'None'], ['pickets', 'Pickets'], ['cable', 'Cable'], ['panel', 'Panel']]);
+        if (value.rail) {
+          number('Railing height (in)', value.rail.height_in ?? 36, 24, 48, height_in => change({ rail: { ...latest().rail, height_in } }));
+          slot('Railing material', 'rail', 'Black metal', true);
+        }
       });
       card.append(node('p', 'Drag corners to reshape. Tap + to add a corner. Alt-click a corner to remove it (at least three remain).'));
     }

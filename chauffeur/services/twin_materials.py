@@ -569,7 +569,7 @@ def _labels(value, material_id, owner='House', kind='surfaces', feature=False):
             elif key == 'site' and isinstance(child, dict):
                 from services.twin_site_shapes import pieces
                 names = {'fence': 'Fence', 'pool': 'Pool', 'beds': 'Planting bed', 'hardscape': 'Patio',
-                         'edges': 'Lawn edge', 'fire_pit': 'Fire pit', 'terraces': 'Retaining wall'}
+                         'edges': 'Lawn edge', 'fire_pit': 'Fire pit', 'terraces': 'Pad edge'}
                 for collection, content in child.items():
                     if collection in names:
                         for piece in pieces(content):
