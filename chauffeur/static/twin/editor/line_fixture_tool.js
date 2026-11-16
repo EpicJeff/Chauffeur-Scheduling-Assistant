@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { groundAt, buildingGround } from '../twin_ground.js';
+import { groundAt, poolDatum, buildingGround } from '../twin_ground.js';
 import { pathOutline } from '../path_shapes.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { fixturePoint, fixtureRotation, facingNormal } from '../live/fixture_glow.js';
@@ -50,7 +50,7 @@ export function snapEdges(plan) {
   const pool = site.pool;
   if (pool?.polygon?.length >= 3) {
     // Coping tops, at the heights twin_yard and pool_features build them.
-    const base = groundAt(plan, ...pool.polygon[0]) + (pool.elevation || 0);
+    const base = poolDatum(plan, pool);
     const ring = (kind, id, ps, z) => ps.forEach((a, i) => add(kind, id, [...a, z], [...ps[(i + 1) % ps.length], z]));
     ring('pool', pool.id || 'pool:0', pool.polygon, base + ((pool.coping ?? 1) > 0 ? .45 : .3));
     const spas = (pool.features || []).filter(f => f.kind === 'spa' && f.id && f.polygon?.length >= 3);

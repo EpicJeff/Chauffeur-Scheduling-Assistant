@@ -68,7 +68,7 @@ await test('sheer_lands_at_throw_and_respects_automatic_and_manual_drop',()=>{
   let checked=0;
   for(let i=0;i<p.count;i++)if(part.getX(i)===0&&uv.getY(i)===1){
    const world=[p.getX(i)+row.path[0][0],-p.getZ(i)+row.path[0][1],p.getY(i)+row.path[0][2]];
-   close(world[1],4);close(world[2],drop?2:-.25);checked++;
+   close(world[1],4);close(world[2],drop?2:-.37);checked++;
   }
   assert.equal(checked,2);
  }

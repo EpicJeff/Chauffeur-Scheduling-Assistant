@@ -12,7 +12,9 @@ const THREE=await import(three);
 const {buildYard}=await import(file('static/twin/twin_yard.js'));
 const {buildYard:baselineBuild}=await import(data(input.baseline.replace(/from '(\.\/[^']+)'/g,(_,p)=>`from '${file('static/twin/'+p.slice(2))}'`)));
 const rect=(x,y,w=4,h=4)=>[[x,y],[x+w,y],[x+w,y+h],[x,y+h]];
-const plan=features=>({units:'ft',materials:{},buildings:[],site:{terraces:[],pool:{id:'pool',polygon:rect(0,0,30,20),depth:5,coping:1,features}}});
+// A pool with a coping is seated 0.12 ft into the ground. These pools are raised by as much,
+// so every height below reads against the pool's datum at 0.
+const SEAT=.12,plan=features=>({units:'ft',materials:{},buildings:[],site:{terraces:[],pool:{id:'pool',polygon:rect(0,0,30,20),depth:5,coping:1,elevation:SEAT,features}}});
 const near=(a,b)=>assert.ok(Math.abs(a-b)<2e-5,`${a} != ${b}`);
 const build=async(features,extra={})=>{const p=plan(features);Object.assign(p.site.pool,extra);return (await buildYard(p,input.kit,'low')).group;};
 const meshes=g=>{const out=[];g.traverse(o=>{if(o.isMesh)out.push(o);});return out;};
@@ -233,8 +235,10 @@ await test('steps beside a tanning ledge start level with it; steps elsewhere ke
 });
 await test('no features: all but the waterline band equals the pool before it',async()=>{
  for(const extra of [{},{depth:8,coping:2,elevation:3},{coping:0,materials:{interior:{id:'red_brick_03'}}}]){
-  const p=plan(undefined);delete p.site.pool.features;Object.assign(p.site.pool,extra);
-  const old=(await baselineBuild(p,input.kit,'low')).group,newGroup=(await buildYard(p,input.kit,'low')).group;
+  const p=plan(undefined);delete p.site.pool.features;Object.assign(p.site.pool,{elevation:0},extra);
+  // The pool before it had no seat: raise today's pool by the seat to compare like with like.
+  const seated={...p,site:{...p.site,pool:{...p.site.pool,elevation:(extra.elevation||0)+((extra.coping??1)>0?SEAT:0)}}};
+  const old=(await baselineBuild(p,input.kit,'low')).group,newGroup=(await buildYard(seated,input.kit,'low')).group;
   const raw=g=>meshes(g).map(o=>({positions:Array.from(o.geometry.attributes.position.array),normal:Array.from(o.geometry.attributes.normal.array),uv:Array.from(o.geometry.attributes.uv.array),index:o.geometry.index&&Array.from(o.geometry.index.array),matrix:o.matrix.toArray()}));
   // The wall now splits at the band, 0.5 ft under the pool's datum; every other level face is unchanged.
   const level=g=>tris(g).filter(t=>horizontal(t,t[0][1])&&Math.abs(t[0][1]-((extra.elevation||0)-.5))>1e-4).map(t=>JSON.stringify(t.map(p=>p.map(v=>Math.round(v*1e4)/1e4+0)))).sort();
@@ -243,21 +247,31 @@ await test('no features: all but the waterline band equals the pool before it',a
   const before=level(old),after=level(newGroup),had=new Set(before),extra2=after.filter(t=>!had.has(t));
   assert.deepEqual(after.filter(t=>had.has(t)),before);
   assert.equal(extra2.length>0,(extra.coping??1)>.25);
-  for(const t of extra2.map(t=>JSON.parse(t)))assert.ok(t.every(p=>[-.05,.3].some(z=>Math.abs(p[1]-(extra.elevation||0)-z)<1e-4)
+  for(const t of extra2.map(t=>JSON.parse(t)))assert.ok(t.every(p=>[SEAT-.05,.3].some(z=>Math.abs(p[1]-(extra.elevation||0)-z)<1e-4)
    &&!(p[0]>-.24&&p[0]<30.24&&-p[2]>-.24&&-p[2]<20.24)),'only the fill under the coping is new');
  }
 });
 await test('the coping sits on a fill from the ground up, outside the pool wall, no deeper than the ground',async()=>{
  const g=await build(undefined);
  for(const [x,y] of [[15,-.6],[30.6,10],[15,20.6],[-.6,10],[-.6,-.6]]){
-  assert.ok(topAt(g,x,y,-.05,'paving'),`fill under the coping at ${x},${y}`);assert.ok(topAt(g,x,y,.45,'paving'));
+  assert.ok(topAt(g,x,y,SEAT-.05,'paving'),`fill under the coping at ${x},${y}`);assert.ok(topAt(g,x,y,.45,'paving'));
  }
- for(const [x,y] of [[15,-.1],[-.1,10],[15,-1.1]])assert.ok(!topAt(g,x,y,-.05),'not in the wall, not beyond the coping');
+ for(const [x,y] of [[15,-.1],[-.1,10],[15,-1.1]])assert.ok(!topAt(g,x,y,SEAT-.05),'not in the wall, not beyond the coping');
  const hit=solidHits(g,[-3,.15,-10],[1,0,0])[0];near(hit.point.x,-1);assert.equal(hit.object.material.name,'paving');
- assert.equal(solidHits(g,[-3,-.15,-10],[1,0,0]).filter(h=>Math.abs(h.point.x+1)<1e-3).length,0,'no band of coping below the ground');
- const none=await build(undefined,{coping:0});assert.ok(!tris(none).some(t=>horizontal(t,-.05)));
+ assert.equal(solidHits(g,[-3,0,-10],[1,0,0]).filter(h=>Math.abs(h.point.x+1)<1e-3).length,0,'no band of coping below the ground');
+ const none=await build(undefined,{coping:0});assert.ok(!tris(none).some(t=>horizontal(t,SEAT-.05)));
  const cut=await build([{id:'spa',kind:'spa',polygon:rect(26,4,8,8),spillover:false}]);
- assert.ok(!topAt(cut,30.6,8,-.05),'a spa that crosses the edge cuts the fill as it cuts the coping');
+ assert.ok(!topAt(cut,30.6,8,SEAT-.05),'a spa that crosses the edge cuts the fill as it cuts the coping');
+});
+await test('a pool with a coping is seated so its coping top meets the paving beside it',async()=>{
+ const yard=async extra=>{const p=plan(undefined);delete p.site.pool.elevation;Object.assign(p.site.pool,extra);
+  p.site.hardscape=[{id:'patio',kind:'patio',polygon:rect(-10,-12,50,12)}];return (await buildYard(p,input.kit,'low')).group;};
+ const g=await yard({});
+ // Paving top at 0.3 ft; the coping top 0.03 ft over it, never in its plane; water 0.7 ft under the coping.
+ assert.ok(topAt(g,15,-5,.3));assert.ok(topAt(g,15,-.5,.33,'paving'));assert.ok(!topAt(g,15,-.5,.45));assert.ok(topAt(g,15,10,-.37,'water'));
+ const raised=await yard({elevation:2});assert.ok(topAt(raised,15,-.5,2.33,'paving'));
+ // No coping, no seat: the wall top stays level with the paving.
+ const bare=await yard({coping:0});assert.ok(topAt(bare,15,10,-.25,'water'));assert.ok(!topAt(bare,15,10,-.37,'water'));
 });
 await test('paving beside the pool stands no slab edge round a spa inside the pool',async()=>{
  const yard=async(spa,patio)=>{const p=plan([{id:'spa',kind:'spa',polygon:spa,mode:'flush',spillover:false}]);
@@ -273,7 +287,7 @@ await test('paving beside the pool stands no slab edge round a spa inside the po
 await test('a spa wall and its coping are as wide as the pool coping',async()=>{
  const spa={id:'spa',kind:'spa',polygon:rect(10,4,8,8),mode:'raised',raise_in:12,spillover:false},top=.45+1;
  for(const [coping,width] of [[1,1],[2,2],[.5,.5],[0,.3]]){
-  const g=await build([spa],{coping});
+  const g=await build([spa],{coping,elevation:coping>0?SEAT:0});
   for(const [x,y] of [[10+width-.05,8],[18-width+.05,8],[14,4+width-.05],[14,12-width+.05]])assert.ok(topAt(g,x,y,top,'paving'),`coping ${coping} covers ${x},${y}`);
   for(const [x,y] of [[10+width+.05,8],[18-width-.05,8]])assert.ok(!topAt(g,x,y,top,'paving'),`coping ${coping} stops before ${x},${y}`);
   assert.ok(topAt(g,10+width+.05,8,top-2/12,'water'),'the water starts where the coping ends');

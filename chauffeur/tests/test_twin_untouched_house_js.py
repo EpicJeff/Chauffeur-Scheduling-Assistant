@@ -88,7 +88,27 @@ def baseline_sources():
     fill = next(line for line in now.splitlines() if 'if (coping > 0.25) surfaceMesh(' in line)
     before = next(line for line in old.splitlines() if 'if (coping > 0) surfaceMesh(' in line)
     assert old.count(before) == 1
-    sources[path] = old.replace(before, before + '\n' + fill)
+    old = old.replace(before, before + '\n' + fill)
+    # A pool with a coping is seated into the ground so its coping top meets the paving.
+    for before, after in [
+        ("import { groundAt, buildingBase,", "import { groundAt, poolDatum, POOL_SEAT, buildingBase,"),
+        ("const poolHeight = groundAt(plan, ...pool[0]) + (site.pool.elevation || 0);", "const poolHeight = poolDatum(plan, site.pool);"),
+    ]:
+        assert old.count(before) == 1 and now.count(after) == 1, before
+        old = old.replace(before, after)
+    sources[path] = old
+    for path, before, after in [
+        ('static/twin/effects/water_ripples.js', "const base = groundAt(plan, ...pool.polygon[0]) + (pool.elevation || 0);", "const base = poolDatum(plan, pool);"),
+        ('static/twin/effects/water_ripples.js', "import { groundAt, inPolygon,", "import { groundAt, poolDatum, inPolygon,"),
+    ]:
+        if path in sources:
+            assert sources[path].count(before) == 1, before
+            sources[path] = sources[path].replace(before, after)
+    path = 'static/twin/twin_ground.js'
+    old, now = sources[path].replace('\r\n', '\n'), (ROOT / path).read_text(encoding='utf-8').replace('\r\n', '\n')
+    start, end = "// A pool's datum.", 'export function buildingFootprint(b) {'
+    assert now.count(start) == 1 and now.count(end) == 1 and old.count(end) == 1
+    sources[path] = old.replace(end, now[now.index(start):now.index(end)] + end)
     # Slice D intentionally replaces only the garage's glazed infill with an
     # overhead panel door. Keep its fixed frame/casing and every other opening
     # byte pinned. The moving door is excluded from static merging and the bake.

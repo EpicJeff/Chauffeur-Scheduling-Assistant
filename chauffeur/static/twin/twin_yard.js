@@ -16,7 +16,7 @@ export function presetTree(preset, seed) {
 }
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
 import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey, offsetSurfaceUvs } from './twin_library.js';
-import { groundAt, buildingBase, buildingFootprint } from './twin_ground.js';
+import { groundAt, poolDatum, POOL_SEAT, buildingBase, buildingFootprint } from './twin_ground.js';
 import { span as editSpan } from './edit_timing.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
 import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
@@ -392,7 +392,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       const stopPool = part('pool');
       if (pool?.length >= 3) {
         const d = site.pool.depth ?? 5, coping = site.pool.coping ?? 1;
-        const poolHeight = groundAt(plan, ...pool[0]) + (site.pool.elevation || 0);
+        const poolHeight = poolDatum(plan, site.pool);
         const poolSurface = (poly, z0, z1 = z0, holes = []) => spas.length
           ? cutSurface(poly, spas, poolHeight + z0, poolHeight + z1, holes)
           : polygon(poly, poolHeight + z0, poolHeight + z1, holes);
@@ -409,7 +409,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         if (coping > 0) surfaceMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
         // The coping overhangs the wall. Fill under the overhang from the ground up, so a coping
         // over lawn sits on it. Beside paving the fill is inside the slab and never seen.
-        if (coping > 0.25) surfaceMesh(group, poolSurface(outer, -0.05, 0.3, [offsetOutline(pool, 0.25)]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
+        if (coping > 0.25) surfaceMesh(group, poolSurface(outer, POOL_SEAT - 0.05, 0.3, [offsetOutline(pool, 0.25)]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
         for (let i = 0; i < pool.length; i++) {
           const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
           const slab = [a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]];

@@ -115,7 +115,7 @@ await test('fountain_pool_bubbler_spa_and_waterfall_register_receiving_sources',
  const bodies=W.rippleSources(p);assert.equal(bodies.length,2);
  const pool=bodies.find(b=>b.id==='pool'),spa=bodies.find(b=>b.id==='spa');
  assert.equal(pool.sources.length,2);assert.equal(spa.sources.length,1);assert.deepEqual(spa.sources[0].a,[23,23]);
- assert.deepEqual(pool.sources[0].a,[10,10]);assert.deepEqual(pool.sources[1].b,[12,-1]);close(pool.height,-.25);
+ assert.deepEqual(pool.sources[0].a,[10,10]);assert.deepEqual(pool.sources[1].b,[12,-1]);close(pool.height,-.37);
  assert.equal(W.rippleSources(plan(f('fountain',{at:[50,50,0]}),f('waterfall',{shape:'line',at:undefined,path:[[50,50,5],[60,50,5]]}))).length,0);
 });
 await test('ninth_water_source_is_ignored_nearest_centre_first',()=>{

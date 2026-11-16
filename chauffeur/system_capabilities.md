@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.896 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.897 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.897 (2026-11-16, NOT device-verified, browser-checked in Chromium): a pool's coping top meets the paving beside it.**
+
+- **The fault, found on device.** The coping is built from 0.3 to 0.45 ft over the pool's datum and a paving slab is 0.3 ft thick, so the whole pool stood 0.15 ft above the paving round it.
+- **The seat.** A pool with a coping is seated 0.12 ft into the ground: `poolDatum(plan, pool)` in `static/twin/twin_ground.js` is the ground at the pool's first point plus `elevation`, less `POOL_SEAT` (0.12 ft) when `coping` is over 0. The coping top is then 0.03 ft over the paving, level to the eye and never in the paving's plane. Water, walls, waterline tile, ledge, steps and every spa move down with it. A pool with no coping has no seat. "Height above ground" still raises or lowers the pool from there.
+- **One datum.** The yard builder (`twin_yard.js`), the water bodies that effects land on and ripple (`effects/water_ripples.js`), the Snap to edge rims (`editor/line_fixture_tool.js`) and the server's snap resolver (`services/twin_fixtures.py`) all take the seated datum. The fill under the coping still starts 0.05 ft under the ground.
+- **Limits.** A fixture snapped to a pool or spa rim moves down with it when its snap is next resolved. A light or effect placed free on the pool or spa keeps its stored height and now sits 0.12 ft high until it is moved. A baked house needs its bake run again. This replaces the "coping top is still 0.15 ft above a paving slab" limit in the v2.499.896 entry.
+- **Tests:** `tests/test_twin_pool_features_js.py` (coping top 0.03 ft over the paving, raised pool, no seat without a coping; the other pool tests raise their pool by the seat and read against the datum), `tests/test_twin_line_fixture_tool_js.py` and its server check (rim heights), `tests/test_twin_effect_lighting_water_js.py`, `tests/test_twin_effect_second_set_js.py`, `tests/test_twin_effect_visuals_js.py` (water heights), `tests/test_twin_untouched_house_js.py` (baseline takes the datum).
 
 **v2.499.896 (2026-11-16, NOT device-verified, browser-checked in Chromium): paving stands no slab edge on the pool wall round a spa, and the fill under the pool coping stops at the ground.**
 

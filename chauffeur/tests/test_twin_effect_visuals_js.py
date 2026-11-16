@@ -70,9 +70,9 @@ await test('waterfall_automatic_landing_uses_ground_pool_and_spa',async()=>{
  const f=basic('waterfall');
  const ground=buildEffects(planWith(f),{editor:true});close(new THREE.Box3().setFromObject(ground.group).min.y,0);
  const poolPlan=planWith(f);poolPlan.site.pool={polygon:square(8,8,20),elevation:1,depth:4,features:[]};
- const pool=buildEffects(poolPlan,{editor:true});close(new THREE.Box3().setFromObject(pool.group).min.y,.75);
+ const pool=buildEffects(poolPlan,{editor:true});close(new THREE.Box3().setFromObject(pool.group).min.y,.63);
  poolPlan.site.pool.features=[{id:'spa',kind:'spa',polygon:square(8,8,20),mode:'raised',raise_in:12,depth_in:36}];
- const spa=buildEffects(poolPlan,{editor:true});close(new THREE.Box3().setFromObject(spa.group).min.y,1+.45+1-2/12);
+ const spa=buildEffects(poolPlan,{editor:true});close(new THREE.Box3().setFromObject(spa.group).min.y,1-.12+.45+1-2/12);
 });
 await test('all_non_low_tiers_advance_time_while_low_stays_fixed',async()=>{
  for(const tier of ['low','medium','high'])for(const type of ['waterfall','fountain','bubbler','fire']){
