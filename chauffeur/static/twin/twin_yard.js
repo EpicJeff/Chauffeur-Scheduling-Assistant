@@ -306,6 +306,15 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   if (timing) for (const name of ['terrain', 'grass', 'plants', 'fences', 'hardscape', 'pool', 'fire_pits', 'retaining_walls', 'cards', 'batch', 'models', 'furniture', 'materials']) timing['yard_' + name] = 0;
   const pool = site.pool?.polygon;
   const inside = (p, poly) => { let v = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) v = !v; return v; };
+  // A spa is a hole in paving only where it reaches into that paving. A spa inside the pool is
+  // not: its hole would stand a ring of slab edge on the pool wall, in the same plane as the tile.
+  const spasIn = poly => spas.filter(spa => {
+    const centre = spa[0].map((_, k) => spa.reduce((s, p) => s + p[k], 0) / spa.length);
+    return spa.flatMap((p, i) => [p, p.map((v, k) => (v + spa[(i + 1) % spa.length][k]) / 2)]).some(p => {
+      const l = Math.hypot(centre[0] - p[0], centre[1] - p[1]) || 1, q = p.map((v, k) => v + (centre[k] - v) * .05 / l);
+      return inside(q, poly) && !(pool && inside(q, pool));
+    });
+  });
   const builders = {
     terrain: async group => {
       const stopTerrain = part('terrain');
@@ -353,19 +362,19 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         const role = h.material === 'concrete' ? 'patio_concrete' : kit.materials?.[h.material] ? h.material : 'paving';
         if (h.kind === 'path') {
           // Swept pieces retain user-drawn crossings without even/odd cancellation.
-          for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spas), mat(role, h.materials?.surface), seedOf(h));
+          for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spasIn(poly)), mat(role, h.materials?.surface), seedOf(h));
           if (h.edging === 'curb') {
             const inner = pathBoundaries(h), outer = pathBoundaries(h, (h.width ?? 3) / 2 + .5);
             for (const side of ['left', 'right']) for (let i = 1; i < inner[side].length; i++) {
               const poly = [inner[side][i - 1], inner[side][i], outer[side][i], outer[side][i - 1]];
               // Both offsets have the same mitre/bevel topology.
-              const curb = surfaceMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spas), mat('patio_concrete', h.materials?.edging), seedOf(h, 'curb', side));
+              const curb = surfaceMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spasIn(poly)), mat('patio_concrete', h.materials?.edging), seedOf(h, 'curb', side));
               curb.geometry.userData.pathCurb = true;
             }
           }
           continue;
         }
-        const holes = [...(pool && pool.every(p => inside(p, h.polygon)) ? [pool] : []), ...spas];
+        const holes = [...(pool && pool.every(p => inside(p, h.polygon)) ? [pool] : []), ...spasIn(h.polygon)];
         surfaceMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role, h.materials?.surface), seedOf(h));
       }
       stopHardscape();
@@ -398,9 +407,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           return [p[0] + (a[0] + b[0]) * factor, p[1] + (a[1] + b[1]) * factor];
         });
         if (coping > 0) surfaceMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
-        // The coping overhangs the wall. Fill under the overhang, down past a paving slab beside it,
-        // so the coping sits on whatever is below and never shows the back of the wall through a gap.
-        if (coping > 0.25) surfaceMesh(group, poolSurface(outer, -0.3, 0.3, [offsetOutline(pool, 0.25)]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
+        // The coping overhangs the wall. Fill under the overhang from the ground up, so a coping
+        // over lawn sits on it. Beside paving the fill is inside the slab and never seen.
+        if (coping > 0.25) surfaceMesh(group, poolSurface(outer, -0.05, 0.3, [offsetOutline(pool, 0.25)]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
         for (let i = 0; i < pool.length; i++) {
           const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
           const slab = [a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]];

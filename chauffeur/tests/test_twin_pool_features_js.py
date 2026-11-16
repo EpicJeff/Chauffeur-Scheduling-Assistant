@@ -238,25 +238,37 @@ await test('no features: all but the waterline band equals the pool before it',a
   const raw=g=>meshes(g).map(o=>({positions:Array.from(o.geometry.attributes.position.array),normal:Array.from(o.geometry.attributes.normal.array),uv:Array.from(o.geometry.attributes.uv.array),index:o.geometry.index&&Array.from(o.geometry.index.array),matrix:o.matrix.toArray()}));
   // The wall now splits at the band, 0.5 ft under the pool's datum; every other level face is unchanged.
   const level=g=>tris(g).filter(t=>horizontal(t,t[0][1])&&Math.abs(t[0][1]-((extra.elevation||0)-.5))>1e-4).map(t=>JSON.stringify(t.map(p=>p.map(v=>Math.round(v*1e4)/1e4+0)))).sort();
-  // The fill under the coping adds level faces of its own, 0.3 ft either side of the datum and
-  // outside the wall; every face the pool had before is still there.
+  // The fill under the coping adds level faces of its own, from just under the ground to the
+  // coping's underside and outside the wall; every face the pool had before is still there.
   const before=level(old),after=level(newGroup),had=new Set(before),extra2=after.filter(t=>!had.has(t));
   assert.deepEqual(after.filter(t=>had.has(t)),before);
   assert.equal(extra2.length>0,(extra.coping??1)>.25);
-  for(const t of extra2.map(t=>JSON.parse(t)))assert.ok(t.every(p=>Math.abs(Math.abs(p[1]-(extra.elevation||0))-.3)<1e-4
+  for(const t of extra2.map(t=>JSON.parse(t)))assert.ok(t.every(p=>[-.05,.3].some(z=>Math.abs(p[1]-(extra.elevation||0)-z)<1e-4)
    &&!(p[0]>-.24&&p[0]<30.24&&-p[2]>-.24&&-p[2]<20.24)),'only the fill under the coping is new');
  }
 });
-await test('the coping sits on a fill that reaches below a paving slab, outside the pool wall',async()=>{
+await test('the coping sits on a fill from the ground up, outside the pool wall, no deeper than the ground',async()=>{
  const g=await build(undefined);
  for(const [x,y] of [[15,-.6],[30.6,10],[15,20.6],[-.6,10],[-.6,-.6]]){
-  assert.ok(topAt(g,x,y,-.3,'paving'),`fill under the coping at ${x},${y}`);assert.ok(topAt(g,x,y,.45,'paving'));
+  assert.ok(topAt(g,x,y,-.05,'paving'),`fill under the coping at ${x},${y}`);assert.ok(topAt(g,x,y,.45,'paving'));
  }
- for(const [x,y] of [[15,-.1],[-.1,10],[15,-1.1]])assert.ok(!topAt(g,x,y,-.3),'not in the wall, not beyond the coping');
+ for(const [x,y] of [[15,-.1],[-.1,10],[15,-1.1]])assert.ok(!topAt(g,x,y,-.05),'not in the wall, not beyond the coping');
  const hit=solidHits(g,[-3,.15,-10],[1,0,0])[0];near(hit.point.x,-1);assert.equal(hit.object.material.name,'paving');
- const none=await build(undefined,{coping:0});assert.ok(!tris(none).some(t=>horizontal(t,-.3)));
+ assert.equal(solidHits(g,[-3,-.15,-10],[1,0,0]).filter(h=>Math.abs(h.point.x+1)<1e-3).length,0,'no band of coping below the ground');
+ const none=await build(undefined,{coping:0});assert.ok(!tris(none).some(t=>horizontal(t,-.05)));
  const cut=await build([{id:'spa',kind:'spa',polygon:rect(26,4,8,8),spillover:false}]);
- assert.ok(!topAt(cut,30.6,8,-.3),'a spa that crosses the edge cuts the fill as it cuts the coping');
+ assert.ok(!topAt(cut,30.6,8,-.05),'a spa that crosses the edge cuts the fill as it cuts the coping');
+});
+await test('paving beside the pool stands no slab edge round a spa inside the pool',async()=>{
+ const yard=async(spa,patio)=>{const p=plan([{id:'spa',kind:'spa',polygon:spa,mode:'flush',spillover:false}]);
+  p.site.hardscape=[{id:'patio',kind:'patio',polygon:patio}];return (await buildYard(p,input.kit,'low')).group;};
+ // Slab edges are the only upright paving faces between the ground and the slab top.
+ const edges=(g,x0,y0,x1,y1)=>tris(g).filter(t=>t.every(p=>p[1]>-1e-4&&p[1]<.3+1e-4)&&Math.max(...t.map(p=>p[1]))-Math.min(...t.map(p=>p[1]))>.2
+  &&t.every(p=>p[0]>x0-1e-3&&p[0]<x1+1e-3&&-p[2]>y0-1e-3&&-p[2]<y1+1e-3)).length;
+ // A patio along the pool's low-y edge; the corner spa's edge lies on the same line.
+ assert.equal(edges(await yard(rect(0,0,7,7),rect(-10,-12,50,12)),0,.5,7,7),0,'no slab edge inside the pool');
+ // A spa that reaches out of the pool into the patio still cuts it.
+ assert.ok(edges(await yard(rect(10,-3,7,7),rect(-10,-12,50,12)),10,-3,17,-.5)>0,'the patio is cut where the spa reaches into it');
 });
 await test('a spa wall and its coping are as wide as the pool coping',async()=>{
  const spa={id:'spa',kind:'spa',polygon:rect(10,4,8,8),mode:'raised',raise_in:12,spillover:false},top=.45+1;

@@ -1,6 +1,15 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.895 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.896 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.896 (2026-11-16, NOT device-verified, browser-checked in Chromium): paving stands no slab edge on the pool wall round a spa, and the fill under the pool coping stops at the ground.**
+
+- **The faults, found on device after v2.499.895.** The waterline tile on a flush corner spa's two shared sides flickered against another surface. Where the ground fell away beside the pool, the fill under the coping showed as a tall band of coping material.
+- **Flicker.** Every paving slab took every spa outline as a hole, whether or not the spa reached into that paving, and a hole stands a ring of slab edge from the ground to the slab top. Round a spa inside the pool that ring stood on the pool outline, in the same plane as the pool wall's waterline band; until v2.499.895 the spa's own wall hid it. Now `spasIn(poly)` in `static/twin/twin_yard.js` passes a spa to a slab, a path or a curb only when a point just inside the spa's outline lies inside that paving and outside the pool. A spa that reaches out of the pool into paving still cuts it.
+- **Coping fill.** The fill now runs from 0.05 ft below the pool datum to the coping's underside (it was 0.3 ft below). Over lawn the coping reads as one block on the ground; beside paving the fill is inside the slab. This replaces the fill range stated in the v2.499.895 entry.
+- **Limits.** The coping top is still 0.15 ft above a paving slab beside it: the coping is built on top of the slab level. Where the ground drops more than 0.05 ft under the coping overhang, the gap below the fill shows again. A baked house needs its bake run again.
+- **Code:** `static/twin/twin_yard.js` (`spasIn`, the fill under the coping).
+- **Tests:** `tests/test_twin_pool_features_js.py` (paving beside the pool stands no slab edge round a spa inside the pool, a spa reaching into paving still cuts it; the fill starts at the ground and shows no band below it), `tests/test_twin_untouched_house_js.py` (baseline takes `spasIn` and the fill).
 
 **v2.499.895 (2026-11-16, NOT device-verified, browser-checked in Chromium): a spa's wall and coping are as wide as the pool coping, a flush spa on the pool's edge shares the pool wall, and the pool coping sits on the ground.**
 

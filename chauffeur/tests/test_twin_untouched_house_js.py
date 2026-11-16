@@ -67,9 +67,21 @@ def baseline_sources():
            + old[old.index(shared):old.index(spa)]
            + now[now.index(spa):].replace(per_spa, 'const waterMaterial = water;'))
     sources[path] = old
-    # The pool coping gains a fill under its overhang, so it sits on what is below it.
+    # Paving no longer takes a spa inside the pool as a hole, so it stands no slab edge on
+    # the pool wall. Take the filter and its three call sites; the rest stays baseline bytes.
     path = 'static/twin/twin_yard.js'
-    old, now = sources[path], (ROOT / path).read_text(encoding='utf-8')
+    old, now = sources[path].replace('\r\n', '\n'), (ROOT / path).read_text(encoding='utf-8').replace('\r\n', '\n')
+    start, end = '  // A spa is a hole in paving only where it reaches into that paving.', '  const builders = {\n'
+    assert now.count(start) == 1 and now.count(end) == 1 and old.count(end) == 1
+    old = old.replace(end, now[now.index(start):now.index(end)] + end)
+    for before, after in [
+        ("(h.elevation || 0), spas), mat(role,", "(h.elevation || 0), spasIn(poly)), mat(role,"),
+        ("(h.elevation || 0), spas), mat('patio_concrete',", "(h.elevation || 0), spasIn(poly)), mat('patio_concrete',"),
+        ("? [pool] : []), ...spas];", "? [pool] : []), ...spasIn(h.polygon)];"),
+    ]:
+        assert old.count(before) == 1 and now.count(after) == 1, before
+        old = old.replace(before, after)
+    # The pool coping gains a fill under its overhang, so over lawn it sits on the ground.
     before = "import { buildPoolFeatures, cutSurface, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';"
     assert old.count(before) == 1
     old = old.replace(before, before.replace('cutSurface,', 'cutSurface, offsetOutline,'))
