@@ -65,7 +65,9 @@ def baseline_sources():
     assert now.count(per_spa) == 1
     old = (old[:old.index(helpers)] + now[now.index(first):now.index(shared)]
            + old[old.index(shared):old.index(spa)]
-           + now[now.index(spa):].replace(per_spa, 'const waterMaterial = water;'))
+           + now[now.index(spa):].replace(per_spa, 'const waterMaterial = water;')
+           # Today's builder names the feature on each mesh; the baseline has no such helper.
+           .replace('featureMesh(', 'addMesh(group, '))
     sources[path] = old
     # Paving no longer takes a spa inside the pool as a hole, so it stands no slab edge on
     # the pool wall. Take the filter and its three call sites; the rest stays baseline bytes.
