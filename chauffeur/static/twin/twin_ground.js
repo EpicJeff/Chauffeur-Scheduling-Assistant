@@ -50,6 +50,12 @@ export function groundAt(plan, x, y) {
   }
   return height;
 }
+// A pool's datum. The coping is built from 0.3 to 0.45 ft over it, and a paving slab is 0.3 ft
+// thick, so a pool with a coping is seated 0.12 ft into the ground: its coping top then stands
+// 0.03 ft over the paving beside it, level to the eye and never in the same plane.
+export const POOL_SEAT = .12;
+export const poolDatum = (plan, pool) => groundAt(plan, ...pool.polygon[0]) + (pool.elevation || 0)
+  - ((pool.coping ?? 1) > 0 ? POOL_SEAT : 0);
 export function buildingFootprint(b) {
   const first = [...(b.levels || [])].sort((a, c) => a.elevation - c.elevation)[0];
   if (first?.outline?.length >= 3) return first.outline;

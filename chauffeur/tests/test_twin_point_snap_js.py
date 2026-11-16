@@ -40,7 +40,7 @@ function aim(p) {const target=point(p);camera.position.copy(target).add(new THRE
 function event(p,dx=0,dy=0) {const v=point(p).project(camera);return {clientX:(v.x+1)*720+dx,clientY:(1-v.y)*450+dy};}
 const near=(a,b)=>a.forEach((v,i)=>assert.ok(Math.abs(v-b[i])<2e-5,JSON.stringify({a,b})));
 const real=createPointSnap(view,()=>plan);
-for(const [kind,id,p] of [['spa','spa',[18,13,1.45]],['pool','pool',[0,0,.45]],['fence','fence',[39.83,-.17,6.3]],['hardscape','patio',[55,0,.3]]]) {
+for(const [kind,id,p] of [['spa','spa',[18,13,1.33]],['pool','pool',[0,0,.33]],['fence','fence',[39.83,-.17,6.3]],['hardscape','patio',[55,0,.3]]]) {
  aim(p);const hit=real.pick(event(p));assert.ok(hit,kind);assert.equal(hit.vertex,true,kind);near(hit.at,p);assert.deepEqual(hit.anchor?.host,{kind,id});
  frameChecks.push({plan,anchor:hit.anchor,at:hit.at});console.log(`ok real generated ${kind} vertex with stable ${id} anchor`);
 }
@@ -54,16 +54,16 @@ for(const [kind,id,p] of [['spa','spa',[18,13,1.45]],['pool','pool',[0,0,.45]],[
 }
 // A wall vertex below the coping, viewed from outside, also names the spa.
 {
- const p=[18,13,1.3],target=point(p);camera.position.copy(target).add(new THREE.Vector3(3,1,-3));camera.up.set(0,1,0);camera.lookAt(target);camera.updateMatrixWorld(true);
+ const p=[18,13,1.18],target=point(p);camera.position.copy(target).add(new THREE.Vector3(3,1,-3));camera.up.set(0,1,0);camera.lookAt(target);camera.updateMatrixWorld(true);
  const hit=real.pick(event(p));assert.ok(hit);assert.equal(hit.anchor?.host.kind,'spa');assert.equal(hit.anchor.host.id,'spa');
  frameChecks.push({plan,anchor:hit.anchor,at:hit.at});console.log('ok generated spa wall anchor');
 }
 // Real spillover geometry is present, but cannot steal the coping corner.
 let water=0;yard.group.traverse(o=>{if(o.isMesh&&o.material.name==='water')water++;});assert.ok(water>0);
-aim([18,13,1.45]);const rim=real.pick(event([18,13,1.45],1,1));near(rim.at,[18,13,1.45]);assert.equal(rim.anchor.host.kind,'spa');
+aim([18,13,1.33]);const rim=real.pick(event([18,13,1.33],1,1));near(rim.at,[18,13,1.33]);assert.equal(rim.anchor.host.kind,'spa');
 {
  const onlyWater=new THREE.Group();yard.group.traverse(o=>{if(o.isMesh&&o.material.name==='water')onlyWater.add(o.clone());});onlyWater.scale.setScalar(.3048);view.scene=onlyWater;
- assert.equal(createPointSnap(view,()=>plan).pick(event([18,13,1.45])),null,'water and spillovers alone never lock');view.scene=yard.group;
+ assert.equal(createPointSnap(view,()=>plan).pick(event([18,13,1.33])),null,'water and spillovers alone never lock');view.scene=yard.group;
 }
 // Cached world features invalidate only for geometry/transform changes.
 {

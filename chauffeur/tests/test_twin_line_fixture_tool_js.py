@@ -261,19 +261,19 @@ for(const kind of ['wall','step'])await test(kind+'_top_marker_tolerates_proxy_b
  for(const gap of [.1,.8]){const dispose=boxPick(s,target.clone().addScaledVector(toward,gap),[.02,.02,.02]);const event=project(s,p);assert.ok(s.view.pick(event.clientX,event.clientY));assert.equal(e.pointerDown(event),gap<.2);if(gap<.2)await e.pointerUp(event);dispose();}s.signal.abort();
 });
 const withPool=s=>{s.plan.site.pool={id:'pool',polygon:[[60,60],[80,60],[80,80],[60,80]],features:[{id:'spa1',kind:'spa',raise_in:18,polygon:[[80,64],[88,64],[88,72],[80,72]]}]};return s;};
-for(const [kind,z] of [['spa',1.95],['pool',.45]])await test('snap_'+kind+'_rim_runs_at_the_coping_top',async()=>{
+for(const [kind,z] of [['spa',1.83],['pool',.33]])await test('snap_'+kind+'_rim_runs_at_the_coping_top',async()=>{
  const s=withPool(setup()),e=await editor(s),{value}=await snapRun(s,e,kind);assert.equal(s.sent.length,1,JSON.stringify(s.errors));assert.equal(value.snap.host.kind,kind);
  assert.ok(value.path.every(p=>Math.abs(p[2]-z)<1e-6),JSON.stringify(value.path));s.signal.abort();
 });
 await test('a_fall_off_the_spa_rim_lands_where_it_is_thrown',async()=>{
  const s=withPool(setup()),{effectLanding,waterBodies}=await import(file('static/twin/effects/water_ripples.js')),{resolveFixture}=await import(file('static/twin/live/emitters.js'));
- const rim={...line,path:[[80,64,1.95],[80,72,1.95]],facing:'out',snap:{host:{kind:'spa',id:'spa1'},edge:{from:[80,64],to:[80,72]},t0:0,t1:1}};
+ const rim={...line,path:[[80,64,1.83],[80,72,1.83]],facing:'out',snap:{host:{kind:'spa',id:'spa1'},edge:{from:[80,64],to:[80,72]},t0:0,t1:1}};
  const out=resolveFixture(rim,s.plan).normal;assert.ok(out[0]<-.99,JSON.stringify(out));
  const bodies=waterBodies(s.plan),pool=bodies.find(b=>b.id==='pool'),spa=bodies.find(b=>b.id==='spa1');
- assert.equal(effectLanding(s.plan,[80,68,1.95],bodies,out).body,pool);
- assert.equal(effectLanding(s.plan,[80,68,1.95],bodies,out.map(v=>-v)).body,spa);
- assert.equal(effectLanding(s.plan,[88,68,1.95],bodies,[1,0,0]).body,null);
- assert.equal(effectLanding(s.plan,[88,68,1.95],bodies).body,spa);
+ assert.equal(effectLanding(s.plan,[80,68,1.83],bodies,out).body,pool);
+ assert.equal(effectLanding(s.plan,[80,68,1.83],bodies,out.map(v=>-v)).body,spa);
+ assert.equal(effectLanding(s.plan,[88,68,1.83],bodies,[1,0,0]).body,null);
+ assert.equal(effectLanding(s.plan,[88,68,1.83],bodies).body,spa);
 });
 
 function pointScene(){

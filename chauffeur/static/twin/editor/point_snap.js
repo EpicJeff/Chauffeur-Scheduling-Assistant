@@ -1,6 +1,6 @@
 // Feature edges of rendered geometry. Only the editor's draw tool calls this.
 import * as THREE from 'three';
-import { buildingBase, groundAt } from '../twin_ground.js';
+import { buildingBase, groundAt, poolDatum } from '../twin_ground.js';
 import { hostPoint } from '../twin_hosts.js';
 import { roomFloor, roomAt } from '../twin_floors.js';
 
@@ -92,7 +92,7 @@ export function pointAnchor(plan, hit, point) {
     let z = p.elevation ?? groundAt(plan,...first);
     if (['terrace','retaining_wall'].includes(kind)) z = p.height;
     if (['pool','spa','ledge','steps'].includes(kind)) {
-      z = groundAt(plan,...pool.polygon[0])+(pool.elevation || 0);
+      z = poolDatum(plan,pool);
       if (kind === 'spa') z += .45+((p.mode || 'raised') === 'raised' ? (p.raise_in ?? 12)/12 : 0);
     }
     frame.makeTranslation(first[0],first[1],z);

@@ -1,12 +1,12 @@
 import * as THREE from 'three';
-import { groundAt, inPolygon, edgeDistance, segmentIntersection } from '../twin_ground.js';
+import { groundAt, poolDatum, inPolygon, edgeDistance, segmentIntersection } from '../twin_ground.js';
 import { resolveFixture } from '../live/emitters.js';
 import { effectTarget } from './driver.js';
 
 export function waterBodies(plan) {
   const pool = plan.site?.pool;
   if (!pool?.polygon || pool.polygon.length < 3) return [];
-  const base = groundAt(plan, ...pool.polygon[0]) + (pool.elevation || 0);
+  const base = poolDatum(plan, pool);
   return [...(pool.features || []).filter(f => f.kind === 'spa' && f.polygon?.length >= 3).reverse().map(f => ({
     id: f.id, polygon: f.polygon, height: (f.mode || 'raised') === 'raised' ? base + .45 + (f.raise_in ?? 12) / 12 - 2 / 12 : base - .25,
   })), {id: pool.id || 'pool:0', polygon: pool.polygon, height: base - .25}];

@@ -311,12 +311,14 @@ def _host_edges(model, host):
         outline = pool.get('polygon') or []
         if len(outline) < 3:
             return []
-        top = terrain.ground_at(site.get('terraces', []), outline[0]) + (pool.get('elevation') or 0)
+        coping = pool.get('coping')
+        coped = (1 if coping is None else coping) > 0
+        # A pool with a coping is seated 0.12 ft into the ground (poolDatum in twin_ground.js).
+        top = terrain.ground_at(site.get('terraces', []), outline[0]) + (pool.get('elevation') or 0) - (.12 if coped else 0)
         if kind == 'pool':
             if hid != (pool.get('id') or 'pool:0'):
                 return []
-            coping = pool.get('coping')
-            points, top = outline, top + (.45 if (1 if coping is None else coping) > 0 else .3)
+            points, top = outline, top + (.45 if coped else .3)
         else:
             spas = [f for f in pool.get('features') or []
                     if f.get('kind') == 'spa' and f.get('id') == hid and len(f.get('polygon') or []) >= 3]
@@ -791,7 +793,10 @@ def _anchor_frame(model, host):
     if kind in ('pool', 'spa', 'ledge', 'steps'):
         if not pool.get('polygon'):
             return None
-        height = terrain.ground_at(pads, pool['polygon'][0]) + (pool.get('elevation') or 0)
+        # The seated datum (poolDatum in twin_ground.js).
+        coping = pool.get('coping')
+        height = (terrain.ground_at(pads, pool['polygon'][0]) + (pool.get('elevation') or 0)
+                  - (.12 if (1 if coping is None else coping) > 0 else 0))
         if kind == 'spa':
             raise_in = p.get('raise_in')
             height += .45 + (((12 if raise_in is None else raise_in) / 12) if (p.get('mode') or 'raised') == 'raised' else 0)
