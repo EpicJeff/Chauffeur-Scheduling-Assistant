@@ -24,7 +24,7 @@ import { firePitRings, firePitOptions, roundPit, buildFirePit, fireFlameMaterial
 import { porchFoundationRole } from './twin_porch_foundation.js';
 import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.js';
 import { buildFence } from './fence_geometry.js';
-import { buildPoolFeatures, cutSurface, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';
+import { buildPoolFeatures, cutSurface, offsetOutline, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';
 import { rippleSources, rippleMaterial, updateRipples } from './effects/water_ripples.js';
 
 function random(seed) {
@@ -398,6 +398,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           return [p[0] + (a[0] + b[0]) * factor, p[1] + (a[1] + b[1]) * factor];
         });
         if (coping > 0) surfaceMesh(group, poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
+        // The coping overhangs the wall. Fill under the overhang, down past a paving slab beside it,
+        // so the coping sits on whatever is below and never shows the back of the wall through a gap.
+        if (coping > 0.25) surfaceMesh(group, poolSurface(outer, -0.3, 0.3, [offsetOutline(pool, 0.25)]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
         for (let i = 0; i < pool.length; i++) {
           const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
           const slab = [a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]];

@@ -50,7 +50,33 @@ def baseline_sources():
     for before, after in replacements:
         assert old.count(before) == 1, before
         old = old.replace(before, after)
+    # The spa wall is now as wide as the pool coping and a flush spa shares the pool wall.
+    # Take the inset helpers and the spa branch from today's file; the cutters, the
+    # waterline band, the ledge and the steps between them stay baseline bytes.
+    now = (ROOT / path).read_text(encoding='utf-8').replace('\r\n', '\n')
+    old = old.replace('\r\n', '\n')
+    helpers, shared, spa = 'function basinOutline(', 'function sharedSegments(', "    } else if (f.kind === 'spa') {"
+    for marker in (helpers, shared, spa):
+        assert old.count(marker) == 1 and now.count(marker) == 1, marker
+    first = '// Inset each edge by its own width.'
+    assert now.count(first) == 1
+    # The baseline builder predates per-spa water: its spa takes the pool's water.
+    per_spa = 'const waterMaterial = spaWater(f);'
+    assert now.count(per_spa) == 1
+    old = (old[:old.index(helpers)] + now[now.index(first):now.index(shared)]
+           + old[old.index(shared):old.index(spa)]
+           + now[now.index(spa):].replace(per_spa, 'const waterMaterial = water;'))
     sources[path] = old
+    # The pool coping gains a fill under its overhang, so it sits on what is below it.
+    path = 'static/twin/twin_yard.js'
+    old, now = sources[path], (ROOT / path).read_text(encoding='utf-8')
+    before = "import { buildPoolFeatures, cutSurface, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';"
+    assert old.count(before) == 1
+    old = old.replace(before, before.replace('cutSurface,', 'cutSurface, offsetOutline,'))
+    fill = next(line for line in now.splitlines() if 'if (coping > 0.25) surfaceMesh(' in line)
+    before = next(line for line in old.splitlines() if 'if (coping > 0) surfaceMesh(' in line)
+    assert old.count(before) == 1
+    sources[path] = old.replace(before, before + '\n' + fill)
     # Slice D intentionally replaces only the garage's glazed infill with an
     # overhead panel door. Keep its fixed frame/casing and every other opening
     # byte pinned. The moving door is excluded from static merging and the bake.

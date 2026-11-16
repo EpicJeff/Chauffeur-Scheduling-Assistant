@@ -54,20 +54,21 @@ await test('raised and flush spa shells reach the pool floor with no underwater 
 });
 await test('default bench has a closed seat ring and riser around a smaller visible footwell',()=>{
  const water=.45+1-2/12,floor=water-3,seat=water-1.5,g=spaOnly({});
- for(const [x,y] of [[10.6,8],[17.4,8],[14,4.6],[14,11.4]]){
+ // The wall is as wide as the pool's coping (1 ft by default), so the basin is 11..17 by 5..11.
+ for(const [x,y] of [[11.6,8],[16.4,8],[14,5.6],[14,10.4]]){
   assert.ok(topAt(g,x,y,seat,'pool tile'),'seat on each side');
   near(solidHits(g,[x,water+.1,-y],[0,-1,0])[0].point.y,seat);
  }
  near(solidHits(g,[14,water+.1,-8],[0,-1,0])[0].point.y,floor);
- const hit=solidHits(g,[14,(floor+seat)/2,-8],[-1,0,0])[0];near(hit.point.x,11.8);assert.equal(hit.object.material.name,'pool tile');
+ const hit=solidHits(g,[14,(floor+seat)/2,-8],[-1,0,0])[0];near(hit.point.x,12.5);assert.equal(hit.object.material.name,'pool tile');
  // Rays from above cover the whole basin; only the middle reaches the floor.
  let floorSamples=0,seatSamples=0;
- for(let x=10.4;x<17.7;x+=.3)for(let y=4.4;y<11.7;y+=.3){
+ for(let x=11.1;x<16.95;x+=.3)for(let y=5.1;y<10.95;y+=.3){
   const top=solidHits(g,[x,water+.1,-y],[0,-1,0])[0];assert.ok(top,'no open face in basin');
   if(Math.abs(top.point.y-floor)<2e-5)floorSamples++;else {near(top.point.y,seat);seatSamples++;}
  }
  assert.ok(floorSamples>0&&seatSamples>floorSamples,'bench reduces the visible floor');
- const custom=spaOnly({bench_in:12,bench_width_in:12});assert.ok(topAt(custom,10.6,8,water-1,'pool tile'));
+ const custom=spaOnly({bench_in:12,bench_width_in:12});assert.ok(topAt(custom,11.6,8,water-1,'pool tile'));
  const noBench=spaOnly({bench_width_in:0});assert.equal(meshes(g).length,meshes(noBench).length+1,'one bench mesh, shared interior material');
  assert.equal(meshes(g)[0].material,meshes(g)[1].material);
 });
@@ -209,7 +210,7 @@ await test('raised spa: cladding above the pool water, pool finish below it, wat
  near(Math.min(...heights(g,'base')),-.25);near(Math.max(...heights(g,'base')),.3+18/12);
  const outer=tris(g,'pool tile').filter(t=>hasPoint(t,10.05,8));
  assert.ok(outer.length&&outer.every(t=>t.every(p=>p[1]<=-.25+1e-5)),'under the water the outer wall is pool tile');
- const water=.45+18/12-2/12;assert.ok(tris(g,'waterline tile').some(t=>hasPoint(t,10.25,8)&&t.some(p=>Math.abs(p[1]-(water-.25))<1e-5)));
+ const water=.45+18/12-2/12;assert.ok(tris(g,'waterline tile').some(t=>hasPoint(t,10.75,8)&&t.some(p=>Math.abs(p[1]-(water-.25))<1e-5)));
  const clad=await build([{id:'spa',kind:'spa',polygon:rect(10,4,8,8),mode:'raised',raise_in:18,spillover:false,materials:{wall:{id:'red_brick_03',color:'#112233'}}}]);
  const painted=meshes(clad).filter(m=>m.material.color.getHexString()==='112233');clad.updateMatrixWorld(true);
  assert.ok(painted.length);for(const m of painted){const b=new THREE.Box3().setFromObject(m);assert.ok(b.min.y>=-.25-1e-5,'the cladding slot never paints under the water');}
@@ -237,8 +238,56 @@ await test('no features: all but the waterline band equals the pool before it',a
   const raw=g=>meshes(g).map(o=>({positions:Array.from(o.geometry.attributes.position.array),normal:Array.from(o.geometry.attributes.normal.array),uv:Array.from(o.geometry.attributes.uv.array),index:o.geometry.index&&Array.from(o.geometry.index.array),matrix:o.matrix.toArray()}));
   // The wall now splits at the band, 0.5 ft under the pool's datum; every other level face is unchanged.
   const level=g=>tris(g).filter(t=>horizontal(t,t[0][1])&&Math.abs(t[0][1]-((extra.elevation||0)-.5))>1e-4).map(t=>JSON.stringify(t.map(p=>p.map(v=>Math.round(v*1e4)/1e4+0)))).sort();
-  assert.deepEqual(level(newGroup),level(old));
+  // The fill under the coping adds level faces of its own, 0.3 ft either side of the datum and
+  // outside the wall; every face the pool had before is still there.
+  const before=level(old),after=level(newGroup),had=new Set(before),extra2=after.filter(t=>!had.has(t));
+  assert.deepEqual(after.filter(t=>had.has(t)),before);
+  assert.equal(extra2.length>0,(extra.coping??1)>.25);
+  for(const t of extra2.map(t=>JSON.parse(t)))assert.ok(t.every(p=>Math.abs(Math.abs(p[1]-(extra.elevation||0))-.3)<1e-4
+   &&!(p[0]>-.24&&p[0]<30.24&&-p[2]>-.24&&-p[2]<20.24)),'only the fill under the coping is new');
  }
+});
+await test('the coping sits on a fill that reaches below a paving slab, outside the pool wall',async()=>{
+ const g=await build(undefined);
+ for(const [x,y] of [[15,-.6],[30.6,10],[15,20.6],[-.6,10],[-.6,-.6]]){
+  assert.ok(topAt(g,x,y,-.3,'paving'),`fill under the coping at ${x},${y}`);assert.ok(topAt(g,x,y,.45,'paving'));
+ }
+ for(const [x,y] of [[15,-.1],[-.1,10],[15,-1.1]])assert.ok(!topAt(g,x,y,-.3),'not in the wall, not beyond the coping');
+ const hit=solidHits(g,[-3,.15,-10],[1,0,0])[0];near(hit.point.x,-1);assert.equal(hit.object.material.name,'paving');
+ const none=await build(undefined,{coping:0});assert.ok(!tris(none).some(t=>horizontal(t,-.3)));
+ const cut=await build([{id:'spa',kind:'spa',polygon:rect(26,4,8,8),spillover:false}]);
+ assert.ok(!topAt(cut,30.6,8,-.3),'a spa that crosses the edge cuts the fill as it cuts the coping');
+});
+await test('a spa wall and its coping are as wide as the pool coping',async()=>{
+ const spa={id:'spa',kind:'spa',polygon:rect(10,4,8,8),mode:'raised',raise_in:12,spillover:false},top=.45+1;
+ for(const [coping,width] of [[1,1],[2,2],[.5,.5],[0,.3]]){
+  const g=await build([spa],{coping});
+  for(const [x,y] of [[10+width-.05,8],[18-width+.05,8],[14,4+width-.05],[14,12-width+.05]])assert.ok(topAt(g,x,y,top,'paving'),`coping ${coping} covers ${x},${y}`);
+  for(const [x,y] of [[10+width+.05,8],[18-width-.05,8]])assert.ok(!topAt(g,x,y,top,'paving'),`coping ${coping} stops before ${x},${y}`);
+  assert.ok(topAt(g,10+width+.05,8,top-2/12,'water'),'the water starts where the coping ends');
+ }
+ const flush=await build([{...spa,mode:'flush'}]);
+ assert.ok(topAt(flush,10.9,8,.45,'paving'));assert.ok(!topAt(flush,11.1,8,.45,'paving'));
+});
+await test('a flush spa in the pool corner shares the pool wall: coping only on its two inside edges',async()=>{
+ const corner={id:'spa',kind:'spa',polygon:rect(0,0,8,8),mode:'flush',depth_in:36};
+ for(const poly of [corner.polygon,[...corner.polygon].reverse()]){
+  const g=await build([{...corner,polygon:poly}]);
+  for(const [x,y] of [[7.5,4],[4,7.5],[7.5,7.5],[7.5,.2],[.2,7.5]])assert.ok(topAt(g,x,y,.45,'paving'),`coping on the inside edge at ${x},${y}`);
+  for(const [x,y] of [[.5,4],[4,.5],[.5,.5],[6.9,6.9]])assert.ok(!topAt(g,x,y,.45,'paving'),`no spa coping at ${x},${y}`);
+  for(const [x,y] of [[.1,4],[4,.1],[.1,.1],[6.9,6.9]])assert.ok(topAt(g,x,y,-.25,'water'),`spa water reaches the pool wall at ${x},${y}`);
+  for(const [x,y] of [[.2,4],[4,.2]])assert.ok(!topAt(g,x,y,.3),'no second wall inside the pool wall');
+  assert.ok(topAt(g,7.8,4,.3)&&topAt(g,7.2,4,.3),'the inside edges keep their wall');
+  assert.ok(topAt(g,-.5,4,.45,'paving')&&topAt(g,4,-.5,.45,'paving'),'the pool coping runs past the spa');
+  // The bench still runs all round, against the pool wall too.
+  assert.ok(topAt(g,.5,4,-.25-1.5)&&topAt(g,6.5,4,-.25-1.5));
+  assert.ok(tris(g).flat(2).every(Number.isFinite));
+ }
+ const one=await build([{...corner,polygon:rect(10,0,8,8)}]);
+ assert.ok(!topAt(one,14,.5,.45,'paving'));for(const [x,y] of [[10.5,4],[17.5,4],[14,7.5]])assert.ok(topAt(one,x,y,.45,'paving'));
+ const raised=await build([{...corner,mode:'raised',raise_in:12,spillover:false}]);
+ for(const [x,y] of [[.5,4],[4,.5],[7.5,4],[4,7.5]])assert.ok(topAt(raised,x,y,.45+1,'paving'),'a raised spa keeps its wall and coping all round');
+ const whole=await build([{...corner,polygon:rect(0,0,30,20)}]);assert.ok(topAt(whole,15,10,-.25,'water'));
 });
 finish();
 """
