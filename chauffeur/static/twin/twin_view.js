@@ -272,6 +272,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       renderer: renderer3, camera, sun: timeLook?.sun ?? 3,
       sunDirection: sun.position.clone().sub(sun.target.position).normalize(),
     });
+    yardGroup?.userData.grass?.update(performance.now() / 1000);
     view.live?.draw();
     twin?.updateGhosts();
     if (state.unlit) {
@@ -1117,6 +1118,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     twin.root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'fixture') m.emissiveIntensity = !liveLamps && night ? 2 : 0; });
   }
   if (new URLSearchParams(location.search).get('test') === '1') Object.assign(view, {
+    grassInfo() {
+      const {instances = 0, draws = 0, regions = 0, animated = false} = yardGroup?.userData.grass || {};
+      return {tier, instances, draws, regions, animated};
+    },
     expireTimePreview,
     setClock(isoString) {
       if (isoString !== null && !Number.isFinite(Date.parse(isoString))) throw new Error('Give an ISO clock time or null.');

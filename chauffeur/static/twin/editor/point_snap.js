@@ -102,7 +102,7 @@ export function pointAnchor(plan, hit, point) {
 
 function excluded(o) {
   const d = o.userData || {};
-  return o.visible === false || o.layers?.isEnabled(31) || o.isHelper || d.effectFixture || d.effectFixtures || d.fireFlame || d.fixtureId || d.marker || d.helper || d.preview || d.ghost || d.emitter
+  return o.visible === false || o.layers?.isEnabled(31) || o.isHelper || d.yardGrass || d.effectFixture || d.effectFixtures || d.fireFlame || d.fixtureId || d.marker || d.helper || d.preview || d.ghost || d.emitter
     || /^(editor-|effect-fixtures|sky|sun|stars|marker|preview|helper)/i.test(o.name || '');
 }
 

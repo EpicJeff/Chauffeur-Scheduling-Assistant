@@ -40,7 +40,7 @@ async function mount(plan,editor=true,tier='high',kit={materials:{}}) {
  return mountTwin(host,{plan:structuredClone(plan),kit,tier,bake:false});
 }
 const yard=v=>v.scene.getObjectByName('yard');
-await test('stair_edit_rebuilds_only_its_pad_and_keeps_other_parts',async()=>{
+await test('stair_edit_keeps_neighbour_and_only_changed_footprints_invalidate_grass',async()=>{
  const plan={buildings:[],materials:{},site:{terraces:[0,20].map((x,i)=>({id:'pad'+i,polygon:square(x,0,10),height:3,blend:0,
   edges:[{edge:'sharp',stair:{riser_in:7,tread_in:11,treads:true}},...Array.from({length:3},()=>({edge:'sharp'}))]}))}};
  const view=await mount(plan);
@@ -48,7 +48,9 @@ await test('stair_edit_rebuilds_only_its_pad_and_keeps_other_parts',async()=>{
   const old=yard(view),neighbour=old.children.filter(o=>o.userData.padEdgeId==='pad1');assert.ok(neighbour.length);
   const changed=structuredClone(plan);changed.site.terraces[0].edges[0].stair.riser_in=6;
   const before=yardPartKeys(plan,{materials:{}},'high'),after=yardPartKeys(changed,{materials:{}},'high');
-  assert.deepEqual(YARD_PARTS.filter(k=>before[k]!==after[k]),['retaining_walls']);
+  assert.deepEqual(YARD_PARTS.filter(k=>before[k]!==after[k]),['retaining_walls'],'same six-tread footprint');
+  const longer=structuredClone(changed);longer.site.terraces[0].edges[0].stair.riser_in=5;
+  assert.notEqual(yardPartKeys(longer,{materials:{}},'high').grass,after.grass,'longer flight changes the grass mask');
   await view.rebuild(changed);assert.ok(neighbour.every(o=>yard(view).children.includes(o)),'neighbour keeps its exact meshes');
   assert.ok(old.children.every(o=>o.userData.padEdgeId!=='pad1'),'adopt before old yard release');
   const base=yardKey(changed,{materials:{}},'high');
@@ -57,10 +59,10 @@ await test('stair_edit_rebuilds_only_its_pad_and_keeps_other_parts',async()=>{
   }
   const w=structuredClone(changed);w.site.terraces[0].edges[0]={edge:'sharp',wall:{material:'block',cap:{thickness_in:2,overhang_in:1},rail:{style:'pickets',height_in:36}}};
   const wk=yardPartKeys(w,{materials:{}},'high');
-  for(const edit of [v=>v.cap.thickness_in=3,v=>v.cap.overhang_in=2,v=>v.materials={cap:{id:'brick'}},
-    v=>v.rail.style='cable',v=>v.rail.height_in=42,v=>v.rail.materials={rail:{id:'metal'}}]){
+  for(const [i,edit] of [v=>v.cap.thickness_in=3,v=>v.cap.overhang_in=2,v=>v.materials={cap:{id:'brick'}},
+    v=>v.rail.style='cable',v=>v.rail.height_in=42,v=>v.rail.materials={rail:{id:'metal'}}].entries()){
    const p=structuredClone(w);edit(p.site.terraces[0].edges[0].wall);const pk=yardPartKeys(p,{materials:{}},'high');
-   assert.deepEqual(YARD_PARTS.filter(k=>wk[k]!==pk[k]),['retaining_walls']);
+   assert.deepEqual(YARD_PARTS.filter(k=>wk[k]!==pk[k]),i===1?['retaining_walls','grass']:['retaining_walls'],'wall edit '+i);
   }
  }finally{view.dispose();}
 });
@@ -290,7 +292,7 @@ await test('plant_move_rebuilds_only_plants',()=>partEdit(p=>{p.site.planting[0]
 await test('fence_material_slot_rebuilds_only_fences',()=>partEdit(p=>{p.site.fence[0].materials.boards={id:'other-slot'};},['fences'],'fence slot'));
 await test('pad_edit_rebuilds_terrain_and_what_sits_on_it',()=>partEdit(p=>{p.site.terraces[0].height+=1;},
  ['terrain','plants','fences','hardscape','pool','fire_pits','retaining_walls','furniture','grass'],'pad'));
-await test('pool_outline_rebuilds_pool_terrain_and_hardscape_holes',()=>partEdit(p=>{p.site.pool.polygon[0][0]-=.5;},['terrain','hardscape','pool'],'pool outline'));
+await test('pool_outline_rebuilds_pool_terrain_hardscape_holes_and_grass_mask',()=>partEdit(p=>{p.site.pool.polygon[0][0]-=.5;},['terrain','hardscape','pool','grass'],'pool outline'));
 await test('pool_depth_rebuilds_only_pool',()=>partEdit(p=>{p.site.pool.depth+=1;},['pool'],'pool depth'));
 await test('replaced_slot_material_is_released',async()=>{
  const plan=fixture();const v=await mount(plan,true);
@@ -315,22 +317,27 @@ await test('part_key_guard',()=>{
  // What each site input feeds, by the part builders' reads.
  const expected=path=>{
   const [list,,field,...rest]=path;
-  if(list==='lot')return ['terrain'];
+  if(list==='lot')return ['terrain','grass'];
   if(list==='terraces'){
-   if(field==='edges'&&rest[1]==='wall'||field==='edges'&&rest.includes('wall'))return ['retaining_walls'];
+   if(field==='edges'&&rest[1]==='wall'||field==='edges'&&rest.includes('wall')){
+    const footprint=rest.at(-1)==='thickness_in'&&!rest.includes('cap') || rest.at(-1)==='overhang_in';
+    return footprint?['retaining_walls','grass']:['retaining_walls'];
+   }
    if(field==='edges'&&rest[1]==='edge')return grade;
    return grade;
   }
-  if(list==='hardscape'||list==='beds')return ['hardscape'];
+  if(list==='hardscape')return ['kind','polygon','points','width','corner','smooth','radius','edging'].includes(field)?['hardscape','grass']:['hardscape'];
+  if(list==='beds')return field==='polygon'?['hardscape','grass']:['hardscape'];
   if(list==='pool'){
    // pool is an object, not a list: path is pool.<field>[.<index>.<sub>…]
    const poolField=path[1],sub=path[3];
    // The pool outline and spa outlines (and whether a feature is a spa) cut the
    // lawn and patio holes.
-   if(poolField==='polygon'||poolField==='features'&&(sub==='polygon'||sub==='kind'))return ['terrain','hardscape','pool'];
+   if(poolField==='polygon'||poolField==='features'&&(sub==='polygon'||sub==='kind'))return ['terrain','hardscape','pool','grass'];
+   if(poolField==='coping')return ['pool','grass'];
    return ['pool'];
   }
-  if(list==='fire_pit')return ['fire_pits'];
+  if(list==='fire_pit')return ['shape','polygon','at','radius','rotation'].includes(field)?['fire_pits','grass']:['fire_pits'];
   if(list==='edges')return field==='polygon'?['hardscape','grass']:['points','polyline'].includes(field)?['grass']:['hardscape'];
   if(list==='fence')return ['fences'];
   if(list==='planting')return ['plants'];

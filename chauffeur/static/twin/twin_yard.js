@@ -30,6 +30,8 @@ import { waterBodies, rippleSources, updateRipples, updateChop } from './effects
 import { surfaceMaterial } from './effects/water_surface.js';
 import { underwaterMaterial } from './effects/underwater.js';
 import { createWaterSimulation } from './effects/water_sim.js';
+import { buildGrass, grassCovers } from './yard_grass.js';
+import { TIERS } from './twin_tiers.js';
 
 function random(seed) {
   let n = seed | 0;
@@ -281,9 +283,10 @@ export function yardPartKeys(plan, kit, tier, { viewing = false } = {}) {
     // floor_offset_ft. These place models on porches, never shape lawn.
     furniture: key(tier, viewing, grade, own[9], (site.planting || []).filter(p => p.asset?.startsWith('import-')).map(p => fields(p, objectFields)),
       buildings, models.map(id => [id, modelAssetKey(id, kit)])),
-    // grass: High only; ground grade; edge polygon, else points or polyline.
-    // Elevation and strip finishes do not affect the existing blade builder.
-    grass: key(tier === 'high' ? [grade, (site.edges || []).map(e => e.polygon || e.points || e.polyline || [])] : null),
+    // Field positions depend only on lot/grade/cover geometry and lawn identity.
+    // Preserve the existing fringe's inputs, independently of the lawn finish.
+    grass: TIERS[tier].lawnBlades ? key(tier, grade, site.lot, grassCovers(plan, canonicalOutline), finishes(['lot']),
+      TIERS[tier].edgeGrass ? (site.edges || []).map(e => e.polygon || e.points || e.polyline || []) : null) : key(null),
   };
 }
 
@@ -598,7 +601,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     },
     grass: async group => {
       const stopGrass = part('grass');
-      if (tier === 'high') {
+      let fringeCount = 0;
+      if (TIERS[tier].edgeGrass) {
         const placements = [], rng = random(1);
         for (const edge of site.edges || []) {
           const line = edge.polygon ? [...edge.polygon, edge.polygon[0]] : edge.points || edge.polyline || [];
@@ -613,9 +617,14 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           geo.computeVertexNormals();
           const grass = new THREE.InstancedMesh(geo, plain('edge grass', '#56783a', { side: THREE.DoubleSide }), placements.length), dummy = new THREE.Object3D();
           placements.forEach(([x, z, n], i) => { dummy.position.set(x, groundAt(plan, x, -z) + 0.12, z); dummy.rotation.y = n * Math.PI * 2; dummy.scale.setScalar(0.6 + n); dummy.updateMatrix(); grass.setMatrixAt(i, dummy.matrix); });
-          grass.receiveShadow = true; group.add(grass);
+          grass.receiveShadow = true; grass.raycast = () => {}; grass.userData.yardGrass = true; group.add(grass);
+          fringeCount = placements.length;
         }
       }
+      const field = buildGrass(plan, materialKit, tier, TIERS[tier].lawnBlades && site.lot?.length ? mat('lawn') : null, fringeCount);
+      if (field.mesh) { group.add(field.mesh); mats.set('yard-blades:' + field.mesh.material.uuid, field.mesh.material); }
+      field.instances += fringeCount; field.draws += fringeCount ? 1 : 0;
+      Object.defineProperty(root.userData, 'grass', {value:field});
       stopGrass();
     },
   };
@@ -625,6 +634,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   for (const name of YARD_PARTS) {
     if (previous && previousKeys[name] === keys[name]) {
       reused.set(name, previous.children.filter(o => o.userData.yardPart === name));
+      if (name === 'grass') Object.defineProperty(root.userData, 'grass', {value:previous.userData.grass});
       if (name === 'pool') root.userData.waterSurfaces = previous.userData.waterSurfaces;
       if (name === 'pool' && previous.userData.water) Object.defineProperty(root.userData, 'water', {value: previous.userData.water});
       if (name === 'pool' && previous.userData.ripples) Object.defineProperty(root.userData, 'ripples', {value: previous.userData.ripples});
