@@ -1,5 +1,6 @@
 import { applyObject, objectShown, objectMaterialKey, sitePieces } from './objects.js';
 import * as THREE from 'three';
+import { reflectionMaterial } from './reflection_probes.js';
 import * as EZTree from '@dgreenheck/ez-tree';
 const { Tree } = EZTree;
 
@@ -665,6 +666,14 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           }
         }
         mesh.material = row.material;
+        if (tier !== 'low') {
+          reflectionMaterial(row.material, 'water', mesh.userData.pieceId);
+          const basin = bodies.find(b=>b.id===mesh.userData.pieceId);
+          const centre = [0,1].map(k=>(Math.min(...basin.polygon.map(p=>p[k]))+Math.max(...basin.polygon.map(p=>p[k])))/2);
+          const values = new Float32Array(mesh.geometry.attributes.position.count*3);
+          for (let i=0;i<values.length;i+=3) values.set([centre[0]*FT,basin.height*FT,-centre[1]*FT],i);
+          mesh.geometry.setAttribute('reflectionBodyCentre', new THREE.BufferAttribute(values,3));
+        }
         tints.set(mesh.userData.pieceId, row.material.color);
         if (!surfaces.some(s => s.material === row.material)) surfaces.push(row);
       }

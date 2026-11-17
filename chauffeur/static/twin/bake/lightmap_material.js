@@ -337,6 +337,10 @@ ${bankCode}
 // wall around it (glowRoom, glowUV) and lights it from its own point, with its normal on
 // whichever side faces the lamp, standing in for that wall. Emissive, so no lighting chunks.
 export function patchWindowGlow(material, pages, uniforms) {
+  // Probed panes carry the slot's hooks as well as the reflection hook. Keep
+  // the existing low-tier and interior-glass program completely unchanged.
+  const before = material.userData.reflection ? material.onBeforeCompile : null;
+  const key = before ? material.customProgramCacheKey() + '|' : '';
   const chartMode = !!uniforms.lmChartMode, banks = pages.banks, fixtures = !!uniforms.lmTints.value.userData.fixtureRows;
   const sum = banks.map((t, b) => {
     const s = lightSwizzle(t.format);
@@ -359,7 +363,8 @@ vec4 value${b} = textureLod(glowBank${b}, vec3(vGlowUV + region${b}.xy, region${
 ${term(0)}
 ${term(1)}`;
   }).join('\n');
-  material.onBeforeCompile = shader => {
+  material.onBeforeCompile = (shader, renderer) => {
+    before?.call(material, shader, renderer);
     Object.assign(shader.uniforms, uniforms);
     banks.forEach((t, b) => { shader.uniforms[`glowBank${b}`] = { value: t }; });
     shader.vertexShader = 'attribute float glowRoom; attribute vec2 glowUV; varying float vGlowRoom; varying vec2 vGlowUV;\n' + shader.vertexShader;
@@ -380,7 +385,7 @@ if (vGlowRoom > -0.5) {
   totalEmissiveRadiance += glow * 0.5;
 }`);
   };
-  material.customProgramCacheKey = () => `twin-window-glow-7-shadowmask-${fixtures ? 'fixtures-' : ''}${chartMode ? 'charts-' : ''}${banks.map(t => lightSwizzle(t.format)).join(',')}`;
+  material.customProgramCacheKey = () => `${key}twin-window-glow-7-shadowmask-${fixtures ? 'fixtures-' : ''}${chartMode ? 'charts-' : ''}${banks.map(t => lightSwizzle(t.format)).join(',')}`;
   material.needsUpdate = true;
 }
 
