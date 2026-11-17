@@ -23,4 +23,23 @@ Added 2026-11-12 for level-of-detail export (same verified tarball):
 | --- | --- |
 | addons/exporters/GLTFExporter.js | 569793baeba62bae |
 
+Added 2026-11-17 for screen-space sky occlusion and bloom (same tarball, sha512 re-verified against the registry that day):
+
+| File | sha256 |
+| --- | --- |
+| addons/postprocessing/EffectComposer.js | 4e079a5886152d7e |
+| addons/postprocessing/Pass.js | 444b409c235ead98 |
+| addons/postprocessing/RenderPass.js | 817f6c3cdcd0fd41 |
+| addons/postprocessing/ShaderPass.js | e2500a5913b26bbf |
+| addons/postprocessing/MaskPass.js | 7cd08eee9d5d6f55 |
+| addons/postprocessing/GTAOPass.js | 78f278563029f53a |
+| addons/postprocessing/OutputPass.js | 02e4a261af34de71 |
+| addons/postprocessing/UnrealBloomPass.js | ba8f2fcadfa65883 |
+| addons/shaders/CopyShader.js | a33057d5ac91c433 |
+| addons/shaders/GTAOShader.js | f7663d7726e884ce |
+| addons/shaders/PoissonDenoiseShader.js | b07ccfcdcd74f83c |
+| addons/shaders/OutputShader.js | 353479f77a8d7e26 |
+| addons/shaders/LuminosityHighPassShader.js | 5044f780b6e6cf86 |
+| addons/math/SimplexNoise.js | 4b1455617135e6b4 |
+
 License: MIT (see LICENSE). fflate is MIT.
