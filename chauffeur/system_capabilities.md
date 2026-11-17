@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.913 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.914 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.914 (2026-11-17, NOT device-verified, browser-checked in Chromium on high with a household's own yard and stand-in pool materials): pool water mirrors its surroundings, and sun glints no longer wash the picture white.**
+
+- **What changed for a person.** A pool or spa surface used to be drawn as a tinted film: the mirrored sky and buildings were scaled down by the film's own opacity, so at a low viewing angle about a tenth of the reflection reached the eye and the water read as a bright painted floor. The surface is now a mirror laid over the body below. It covers the floor by exactly the share of light it mirrors (2% looking straight down, rising to all of it at a glancing angle) and the mirrored light arrives whole. Looking across a pool you see the surroundings in it; looking down you see the floor.
+- **Glow.** A sun glint on water is far brighter than a lit lamp, and the glow pass read it at up to sixteen times scene white, so a field of glints washed a large part of the picture white. The glow now reads nothing brighter than two and a half times its own threshold, just above a lit lamp, so a glint glows like one lamp. The guard against a pixel that is not a number is unchanged.
+- **Floor light pattern.** The sun's pattern on a pool floor no longer darkens the floor between its bright lines by more than a little; the dark cells read as stains from above. The pool is not darker than before.
+- **Invariants.** The surface uses premultiplied blending and writes `vec4(light / cover, cover)`, the same form outside glass uses, so tone mapping on the plain path treats it as one surface colour. Only foam shows the surface's own colour. A viewing or ghost fade still fades the whole surface, mirror included. The unlit view keeps the old film, because it has no mirrored light to show. No `transmission` anywhere. Low quality is unchanged in cost: no new pass, texture or draw.
+- **Files.** `static/twin/effects/water_surface.js`, `static/twin/effects/underwater.js`, `static/twin/post.js`.
+- **Tests.** `tests/test_twin_water_surface_js.py` (24), `tests/test_twin_post_js.py` (24), `tests/test_twin_effect_lighting_water_js.py` (18), `tests/test_twin_pool_features_js.py` (24).
+- **Not covered.** The check used stand-in pool materials, not the household's own dark interior, and the editor view rather than `/house`. The thin white line the household reports at the waterline was not reproduced and is not claimed fixed.
 
 **v2.499.913 (2026-11-17, NOT device-verified, browser-checked in Chromium on high with a household's own yard and a stand-in lawn material): the lawn material decides whether grass blades grow, and yard pads grow them.**
 

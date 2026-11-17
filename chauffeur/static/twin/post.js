@@ -29,9 +29,12 @@ export const EMITTER_GAIN = 3;
 // A pixel that is not a number poisons every pixel a blur mixes it into: one
 // such pixel anywhere blacked out the whole picture through the glow. A pixel
 // past what the half-float target holds whites it out the same way. The glow
-// reads nothing brighter than GLOW_CEILING and the output nothing brighter
-// than OUTPUT_CEILING; either turns a value that is not a number into black.
-const GLOW_CEILING = 16;
+// reads nothing brighter than GLOW_CEILING times its own threshold and the
+// output nothing brighter than OUTPUT_CEILING; either turns a value that is
+// not a number into black. The glow ceiling sits just above a lit lamp
+// (EMITTER_GAIN over the threshold), so a sun glint on water glows like one
+// lamp and a field of glints cannot wash the picture white.
+const GLOW_CEILING = 2.5;
 const OUTPUT_CEILING = 4096;
 const SAMPLE = 'texture2D( tDiffuse, vUv );';
 function guardSample(material, name, ceiling) {
@@ -39,7 +42,7 @@ function guardSample(material, name, ceiling) {
   if (!source.includes(SAMPLE) || !source.includes('void main() {')) throw new Error('Post shader missing anchor');
   // The comparison is false for a value that is not a number, so it lands on 0.
   material.fragmentShader = source
-    .replace('void main() {', `float held( float v ) { return v >= 0.0 ? min( v, ${ceiling.toFixed(1)} ) : 0.0; }\nvoid main() {`)
+    .replace('void main() {', `float held( float v ) { return v >= 0.0 ? min( v, ${ceiling} ) : 0.0; }\nvoid main() {`)
     .replace(SAMPLE, `${SAMPLE}\n${name}.rgb = vec3( held( ${name}.r ), held( ${name}.g ), held( ${name}.b ) );`);
   material.needsUpdate = true;
 }
@@ -87,11 +90,11 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
   }, {radius: DENOISE_RADIUS});
   occlusion.blendIntensity = OCCLUSION_STRENGTH;
   const output = new OutputPass();
-  guardSample(output.material, 'gl_FragColor', OUTPUT_CEILING);
+  guardSample(output.material, 'gl_FragColor', OUTPUT_CEILING.toFixed(1));
   composer.addPass(beauty);
   composer.addPass(occlusion);
   const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), BLOOM_STRENGTH, BLOOM_RADIUS, BLOOM_THRESHOLD);
-  guardSample(bloom.materialHighPassFilter, 'texel', GLOW_CEILING);
+  guardSample(bloom.materialHighPassFilter, 'texel', `luminosityThreshold * ${GLOW_CEILING.toFixed(1)}`);
   let bloomThreshold = BLOOM_THRESHOLD;
   const drawBloom = bloom.render.bind(bloom);
   bloom.render = (...args) => {

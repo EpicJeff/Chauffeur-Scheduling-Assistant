@@ -106,7 +106,8 @@ for (int i = 0; i < 8; i++) {
   }
   sourceFoam += exp(-d*d*10.0) * (.65 + .35*sin(phase*1.7)) * rippleStrength[i];
 }
-diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.92,.97,.98), min(.65, sourceFoam * .5));
+waterFoam = min(.65, sourceFoam * .5);
+diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.92,.97,.98), waterFoam);
 `;
 
 export function surfaceMaterial(source, body = null, {tier = 'medium', simulation = null} = {}) {
@@ -120,7 +121,7 @@ export function surfaceMaterial(source, body = null, {tier = 'medium', simulatio
   if (simulation) Object.assign(uniforms, simulation.uniforms);
   // Keep the slot's roughness parameter intact (and editable); the optical
   // water interface uses its own narrow standard specular lobe in the shader.
-  material.transparent = true; material.depthWrite = false;
+  material.transparent = true; material.depthWrite = false; material.premultipliedAlpha = true;
   const compile = (shader, renderer, unlit = false) => {
     if (!unlit) before.call(material, shader, renderer);
     Object.assign(shader.uniforms, uniforms);
@@ -130,6 +131,7 @@ export function surfaceMaterial(source, body = null, {tier = 'medium', simulatio
     waterReplace(shader, 'fragmentShader', '#include <color_fragment>', `#include <color_fragment>
 vec2 waterPoint = vec2(vWaterWorld.x, -vWaterWorld.z) / .3048;
 vec2 rippleSlope = waterSlope(waterPoint, waterMotion);
+float waterFoam = 0.0;
 float waterAnalytic = ${simulation ? '1.0 - waterFieldActive' : '1.0'};
 ${sourced ? RIPPLE_SLOPE : ''}
 ${simulation ? 'rippleSlope += waterFieldShape(waterPoint).xy;' : ''}`);
@@ -138,12 +140,22 @@ normal = normalize(normal + mat3(viewMatrix) * vec3(rippleSlope.x, 0.0, -rippleS
 vec3 waterView = normalize(cameraPosition - vWaterWorld);
 vec3 waterNormal = inverseTransformDirection(normal, viewMatrix);
 float waterFresnel = .02 + .98 * pow(1.0 - abs(dot(waterNormal, waterView)), 5.0);
-// Retain map alpha and the native opacity uniform used by viewing/ghost clones.
-diffuseColor.a *= mix(.30, .92, waterFresnel) / waterBaseOpacity;`);
+${unlit ? `// Retain map alpha and the native opacity uniform used by viewing/ghost clones.
+diffuseColor.a *= mix(.30, .92, waterFresnel) / waterBaseOpacity;` : ''}`);
+    // A water surface is a mirror laid over the body below, not a tinted film.
+    // The share of light it mirrors covers the body by exactly that share, and
+    // the mirrored light arrives whole instead of scaled down by the cover.
+    // Only foam shows the surface's own colour. The body is the floor's job.
+    if (!unlit) waterReplace(shader, 'fragmentShader', '#include <opaque_fragment>',
+      `// Viewing/ghost fades still fade the whole surface, mirror included.
+float waterFade = clamp(diffuseColor.a / waterBaseOpacity, 0.0, 1.0);
+float waterCover = clamp(max(waterFresnel, waterFoam) * waterFade, .0001, 1.0);
+vec3 waterLight = (totalSpecular + totalDiffuse * waterFoam) * waterFade;
+gl_FragColor = vec4(waterLight / waterCover, waterCover);`);
     if (!unlit) waterReplace(shader, 'fragmentShader', '#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor, .08, .12) / (1.0 + waterMotion.x * ${CHOP_SHIMMER_GAIN.toFixed(2)});`);
   };
   material.onBeforeCompile = (shader, renderer) => compile(shader, renderer);
-  material.customProgramCacheKey = () => key + '|water-surface-2' + (sourced ? '|water-ripples-2' : '') + (simulation ? '|water-field-1' : '');
+  material.customProgramCacheKey = () => key + '|water-surface-3' + (sourced ? '|water-ripples-2' : '') + (simulation ? '|water-field-1' : '');
   Object.defineProperty(material.userData, 'waterUnlit', {value:{
     hook:(shader, renderer) => compile(shader, renderer, true), key:() => material.customProgramCacheKey() + '|matcap',
   }});

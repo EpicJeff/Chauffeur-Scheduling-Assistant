@@ -102,7 +102,7 @@ await test('the glow and the output read a held value: not-a-number is black and
   const c=setup();
   try {
     c.post.render();
-    for(const [material,name,ceiling] of [[passes.UnrealBloomPass.materialHighPassFilter,'texel','16.0'],[passes.OutputPass.material,'gl_FragColor','4096.0']]) {
+    for(const [material,name,ceiling] of [[passes.UnrealBloomPass.materialHighPassFilter,'texel','luminosityThreshold * 2.5'],[passes.OutputPass.material,'gl_FragColor','4096.0']]) {
       const source=material.fragmentShader;
       assert.ok(source.includes(`float held( float v ) { return v >= 0.0 ? min( v, ${ceiling} ) : 0.0; }`),name);
       const read=source.indexOf('texture2D( tDiffuse, vUv );'),held=source.indexOf(`${name}.rgb = vec3( held( ${name}.r ), held( ${name}.g ), held( ${name}.b ) );`);
