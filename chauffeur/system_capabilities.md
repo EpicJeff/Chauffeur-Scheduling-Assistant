@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.910 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.911 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.911 (2026-11-17, NOT device-verified, browser-checked in Chromium on high with stand-in pixels): one bad pixel no longer blacks out the lit picture.**
+
+- **What changed for a person.** Reported from the editor: with lighting on (Day, Night or Now), a large part of the 3D view went solid black as soon as the pool came into view; Unlit was fine. A lit view now stays whole. At worst the one surface point that caused it shows as a single dark pixel, as it did before v2.499.910.
+- **Cause.** The lamp glow added in v2.499.910 blurs the picture through a chain of smaller copies. A pixel whose value is not a number cannot be averaged: every pixel a blur mixes it into also stops being a number, and the output draws those black. So one such pixel anywhere spread across the picture. A pixel brighter than the half-float picture can hold did the same in white.
+- **How.** `static/twin/post.js` `guardSample` patches two vendored shaders where they read the picture. The glow's high-pass reads each channel as 0 when it is negative or not a number and as at most 16 otherwise (`GLOW_CEILING`); the output pass does the same with a ceiling of 4096 (`OUTPUT_CEILING`) before tone mapping. The patch throws at start-up if the vendored shader text it anchors on has changed. Nothing changes for an ordinary picture: lamps reach at most 3, and the brightest sunlit surface is far below 16.
+- **Known limits.** Which surface on the reporting house produces the bad pixel is not found: the fixture house and that house's plan without its own imported materials do not produce one. The guard was proven with stand-in pixels in Chromium on the editor page: before, a not-a-number pixel blacked out 100% of the view and an over-range pixel whited out most of it; after, each is a single dot and the rest of the picture is unchanged.- **Tests:** `tests/test_twin_post_js.py` (24 checks): both shaders carry the guard directly after their picture lookup, with their ceilings. This reads shader text; the Chromium stand-in run is the proof that it works on a GPU.
 
 **v2.499.910 (2026-11-17, NOT device-verified, browser-checked in Chromium on medium and high with stand-in lamps): lit lamps glow.**
 

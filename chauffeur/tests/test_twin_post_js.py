@@ -98,6 +98,21 @@ await test('glow sits before the output transform and its threshold follows expo
     near(glow.strength,.1);near(glow.radius,.2);near(glow.threshold*view.renderer3.toneMappingExposure,2);
   } finally {view.dispose();}
 });
+await test('the glow and the output read a held value: not-a-number is black and neither passes its ceiling',()=>{
+  const c=setup();
+  try {
+    c.post.render();
+    for(const [material,name,ceiling] of [[passes.UnrealBloomPass.materialHighPassFilter,'texel','16.0'],[passes.OutputPass.material,'gl_FragColor','4096.0']]) {
+      const source=material.fragmentShader;
+      assert.ok(source.includes(`float held( float v ) { return v >= 0.0 ? min( v, ${ceiling} ) : 0.0; }`),name);
+      const read=source.indexOf('texture2D( tDiffuse, vUv );'),held=source.indexOf(`${name}.rgb = vec3( held( ${name}.r ), held( ${name}.g ), held( ${name}.b ) );`);
+      assert.ok(read>0&&held>read,name);
+      // Nothing reads the sample between the lookup and the guard.
+      assert.equal(source.slice(read+'texture2D( tDiffuse, vUv );'.length,held).trim(),'');
+      assert.equal(source.split('void main()').length,2);
+    }
+  } finally {c.post.dispose();}
+});
 await test('lamps are drawn brighter than white only where the glow chain runs',async()=>{
   assert.equal(EMITTER_GAIN,3);
   const high=await mount();
