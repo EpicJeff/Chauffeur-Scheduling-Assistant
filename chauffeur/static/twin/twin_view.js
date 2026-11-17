@@ -9,6 +9,7 @@ import { groundAt, buildingGround } from './twin_ground.js';
 import { buildYard, yardKey, yardMaterialKey, yardPartKeys } from './twin_yard.js';
 import { base, loadSky, disposeObject, manifest, currentMaterial, applyMaterialParams, copyMaterialParams, alphaModeOf, scaleStyledFadeAlpha } from './twin_library.js';
 import { watchMaterialCatalogue } from './material_watch.js';
+import { grassLawn } from './yard_grass.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 import { hostPoint } from './twin_hosts.js';
 import { keepLive } from './live/live.js';
@@ -352,6 +353,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const known = manifest(kit), caches = [twin.materials, yardGroup?.userData.materials].filter(Boolean);
       const changed = [...new Set(caches.flatMap(cache => [...cache.values()]))]
         .filter(m => ids.includes(m.userData.materialId) && !currentMaterial(m, known));
+      // Vegetation is geometry. Reuse the watcher's existing rebuild path when
+      // the lawn's switch changes, before acknowledging its new revision.
+      if (TIERS[tier].lawnBlades && yardGroup?.userData.grass && changed.some(m =>
+        m.userData.materialRole === 'lawn' && grassLawn({ materials: { lawn: m.userData.materialRef }, manifest: known })
+          !== yardGroup.userData.grass.growsGrass)) {
+        await view.rebuild(plan); return;
+      }
       // A deleted catalogue entry needs fallback geometry. Refresh surviving ids
       // first so one missing record cannot abort the rest of this batch.
       const needsRebuild = changed.some(m => !known[m.userData.materialId]);

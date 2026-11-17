@@ -5,6 +5,7 @@ import { pathSurfacePolygons } from './path_shapes.js';
 import { firePitOutline } from './fire_pits.js';
 import { TIERS } from './twin_tiers.js';
 import { manifest } from './twin_library.js';
+import { materialGrass } from './material_rules.js';
 import { doorwaySteps } from './twin_stairs.js';
 import { buildPadEdge } from './pad_edge_geometry.js';
 import { retainingWallGeometry } from './twin_retaining_wall.js';
@@ -18,13 +19,10 @@ function footprint(points) {
   return [...half(points),...half([...points].reverse())];
 }
 
-// Materials have stable identities, but the household manifest has no vegetation
-// taxonomy. Fail closed for unknown/user materials, including gravel and mulch.
-// A plain lawn role (including a tint-only override) remains grass.
+// An empty lawn role (including a tint-only override) remains grass.
 export function grassLawn(kit) {
   const ref = kit.materials?.lawn || {}, id = ref.id || ref.asset;
-  return !id || ['lawn', 'grass', 'leafy_grass'].includes(id)
-    || manifest(kit)[id]?.source_id === 'leafy_grass';
+  return !id || materialGrass(manifest(kit)[id], id);
 }
 
 export function grassCovers(plan, outline = p => p) {
@@ -45,9 +43,8 @@ export function grassCovers(plan, outline = p => p) {
     }
     for (const opening of b.openings || []) for (const step of doorwaySteps(b,opening)) add(world(step.polygon));
   }
-  // Pads are deliberately clear, including ones that currently use a lawn look:
-  // they are independently authored ground surfaces, not the lot's lawn.
-  for (const p of [...(site.terraces || []), ...(site.beds || [])]) add(p.polygon);
+  // Pads are the lawn at another height. Only beds and pad-edge solids clear it.
+  for (const p of site.beds || []) add(p.polygon);
   for (const pad of site.terraces || []) for (let i=0;i<pad.polygon.length;i++) {
     if (pad.edges?.[i]?.edge !== 'sharp') continue;
     const points=[];
@@ -57,7 +54,9 @@ export function grassCovers(plan, outline = p => p) {
     };
     if (pad.edges[i].wall) project(retainingWallGeometry(plan,pad,i),'wall');
     buildPadEdge(plan,pad,i,project);
-    if (points.length) add(footprint(points));
+    // The pad no longer clears its high side for us. Allow the full coarser
+    // clump spread, distant widening and gust on both faces and around corners.
+    if (points.length) add(footprint(points), 1.2);
   }
   for (const h of site.hardscape || []) {
     if (h.kind === 'path') for (const p of pathSurfacePolygons(h)) add(p, h.edging === 'curb' ? .9 : .4);
@@ -206,9 +205,10 @@ diffuseColor.rgb *= lawn * mix(lawnPatch * lawnBlade * lawnTip, vec3(1.0), vGras
 export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   const budget = Math.max(0,TIERS[tier].lawnBlades-fringeCount), polygon = plan.site?.lot;
   let clock;
-  const result = {tier, instances:0, draws:0, regions:0, animated:false, mesh:null,
+  const growsGrass = grassLawn(kit);
+  const result = {tier, growsGrass, instances:0, draws:0, regions:0, animated:false, mesh:null,
     update(seconds) { if (this.animated) clock.value = seconds; }};
-  if (!budget || !grassLawn(kit) || !polygon?.length) return result;
+  if (!budget || !growsGrass || !polygon?.length) return result;
   const lot = prepared(polygon,.4), covers = grassCovers(plan).map(p => prepared(p.polygon,p.margin));
   // Grid spacing depends only on lot geometry and tier, never on its obstacles.
   // Thus a moving feature reveals the exact cells it used to cover.
