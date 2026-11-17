@@ -23,6 +23,7 @@ import { createUnlit } from './unlit.js';
 import { createViewing } from './viewing.js';
 import { createLevels } from './levels.js';
 import { mountFrameMeter } from './frame_meter.js';
+import { createReflectionProbes } from './reflection_probes.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {} } = {}) {
   kit = kit || {};
@@ -89,6 +90,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let lastStats = { drawCalls: 0, triangles: 0, tier, fps: 0 };
   let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
+  const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
+    extras:() => [sheet?.object, ...selectionLines], sky:() => sky});
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
@@ -346,6 +349,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       };
       const sync = source => {
         if (disposed) return;
+        reflections.request();
         view.prepareViewingMaterial(source);
         for (const [object, original] of faded) syncStyled(original, object.material);
         for (const [object, original] of selectedMaterials) syncStyled(original, object.material);
@@ -377,6 +381,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     },
     get roofSurfaces() { return twin?.roofSurfaces; },
     render,
+    reflectionsChanged: () => reflections.request(),
     prepareViewingMaterial(source, material) { if (material) viewing?.adopt(source, material); else viewing?.refresh(source); },
     cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
     saveView() {
@@ -615,6 +620,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     },
     setTime(time) {
       if (!['now', 'day', 'night'].includes(time)) return;
+      if (state.time !== time) reflections.request();
       state.time = time;
       resetPreviewIdle(); updateTime();
     },
@@ -623,6 +629,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (state.unlit === on) return;
       unlit.restore();
       state.unlit = on;
+      reflections.setUnlit(on);
       if (on) {
         shadowAutoUpdate = renderer3.shadowMap.autoUpdate;
         renderer3.shadowMap.autoUpdate = false;
@@ -644,6 +651,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       // all show on leaving it.
       if (liveLamps === !!on) return;
       liveLamps = !!on;
+      reflections.request();
       applyLights(); render();
     },
     setCamera(name) {
@@ -969,6 +977,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         return matches.length === 1 ? target[matches[0]] : undefined;
       } }) };
       view.roomLights = twin.roomLights; view.plan = plan;
+      // Register originals before unlit/viewing presentation swaps their materials.
+      reflections.rebuild(plan, twin.root);
       const points = (plan.buildings || []).flatMap(b => {
         const angle = (b.rotation || 0) * Math.PI / 180, c = Math.cos(angle), s = Math.sin(angle);
         // Before any walls settle, the editor previews only a floor outline.
@@ -1010,6 +1020,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       try { await viewing?.warm(); }
       finally { releaseViewing?.(); }
       view.ready = true;
+      reflections.request();
       startBake();
       el.dispatchEvent(new CustomEvent('twinrebuilt', { detail: view }));
       } finally { if (version === revision) view.ready = !disposed && !!twin; }
@@ -1018,6 +1029,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       return work.finally(() => { if (rebuildWork === work) rebuildWork = null; });
     },
     dispose() {
+      reflections.dispose();
       if (disposed) return;
       disposed = true; ++revision; view.ready = false;
       view.meter?.stop();
@@ -1081,6 +1093,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // it at most once per minute, including rapid preview/test-clock changes.
     if (performance.now() - lastShadowUpdate >= 60000) {
       sun.shadow.needsUpdate = true; lastShadowUpdate = performance.now();
+      reflections.request();
     }
   }
   function updateTime() {
@@ -1122,6 +1135,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const {instances = 0, draws = 0, regions = 0, animated = false} = yardGroup?.userData.grass || {};
       return {tier, instances, draws, regions, animated};
     },
+    reflectionInfo: () => reflections.info(),
     expireTimePreview,
     setClock(isoString) {
       if (isoString !== null && !Number.isFinite(Date.parse(isoString))) throw new Error('Give an ISO clock time or null.');
@@ -1186,6 +1200,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       environmentTarget = pmrem.fromEquirectangular(sky); environment = environmentTarget.texture;
     } catch { environment = fallbackEnvironment; }
     finally { pmrem?.dispose(); }
+    reflections.request();
     updateTime();
   };
   try {
@@ -1214,6 +1229,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       else if (!view.cameraTransition) controls.update();
       const drawn = view.meter ? performance.now() : 0;
       render();
+      // Captures belong only to animation frames, never synchronous editor
+      // render/rebuild/apply calls. One cube after 1.5 seconds of quiet.
+      if (view.ready && !rebuildWork) reflections.frame();
       view.meter?.frame(now, performance.now() - drawn);
       ++fpsFrames;
       if (now - fpsSince >= 500) {

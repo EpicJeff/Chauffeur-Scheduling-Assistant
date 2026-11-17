@@ -172,6 +172,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     if (paused()) return idle();
   }
   function light(device, rgb, intensity) {
+    const previous = tints.get(device);
+    if (!previous || previous.intensity !== intensity || previous.rgb.some((v,i) => v !== rgb[i])) view.reflectionsChanged?.();
     tints.set(device, { rgb: [...rgb], intensity });
     const s = packed?.slots[device];
     if (s && uniforms) {
@@ -361,7 +363,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       for (const id of fresh) light(id, [0, 0, 0], 0);
       for (const p of present) { const at = locate(p); if (at) writeLayer(at.texture, at.layer, null); }
       fresh.clear(); present.clear(); etags.clear(); manifestText = null;
-      stale = lights.map(l => l.device); view.render();
+      stale = lights.map(l => l.device); view.reflectionsChanged?.(); view.render();
       return;
     }
     const m = JSON.parse(text);
@@ -422,6 +424,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
 
     // Refresh the pool selection as soon as a light becomes fresh.
     if (view.live) await view.live.refresh();
+    view.reflectionsChanged?.();
     view.render();
   }
   // M3: a light placed or moved while the view is open follows the live layer's layout.

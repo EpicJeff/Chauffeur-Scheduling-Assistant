@@ -247,7 +247,9 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   // otherwise double the placement work. Upload the packed buffer directly.
   mesh.instanceMatrix = new THREE.InstancedBufferAttribute(matrices.subarray(0,count*16),16); mesh.count=count;
   mesh.receiveShadow=true; mesh.castShadow=false; mesh.raycast=()=>{};
-  mesh.userData.yardGrass=true;
+  // At a cube's 256 px a blade is far below a texel; the lawn under it already
+  // carries the colour, so a capture skips the field's millions of triangles.
+  mesh.userData.yardGrass=true; mesh.userData.reflectionExclude=true;
   mesh.boundingBox=new THREE.Box3(new THREE.Vector3(lot.x0-.3,low-.1,-lot.y1-.3),new THREE.Vector3(lot.x1+.3,high+.7,-lot.y0+.3));
   mesh.boundingSphere=mesh.boundingBox.getBoundingSphere(new THREE.Sphere());
   return Object.assign(result,{instances:count,draws:1,regions:1,animated:true,mesh});

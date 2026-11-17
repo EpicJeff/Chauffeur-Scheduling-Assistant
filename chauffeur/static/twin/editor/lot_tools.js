@@ -214,6 +214,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
       sheet = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide,
         transparent: true, opacity: .6, depthWrite: false, toneMapped: false }));
       sheet.renderOrder = 1; view.scene.add(sheet);
+      sheet.userData.reflectionExclude = true;
     }, undefined, () => { if (version === sheetVersion) report(new Error('The plot plan image could not load. Try reopening the editor.')); });
   }
   function refresh() {
