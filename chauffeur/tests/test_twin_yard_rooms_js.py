@@ -18,7 +18,7 @@ const v = await mountTwin(host,{plan:{buildings:[b],site:{
  terraces:[{polygon:[[15,-5],[55,-5],[55,15],[15,15]],height:4,blend:0}],
  yard_rooms:[{id:'pool',name:'Pool deck',polygon:rect(20,0)},{id:'grill',name:'Grill',polygon:rect(40,0)}]},materials:{}},
  kit:{materials:{}},tier:'low',bake:false});
-await test('yard House target, orbit framing, selected outline, back and directional swipes',()=>{
+await test('yard House target, orbit framing, no room outline, back and directional swipes',()=>{
  const l = v.levels; assert.equal(l.snapshot().level,'house'); l.draw();
  const button = host.querySelector('[data-level-room="pool"]'); assert.ok(button); assert.equal(button.hidden,false); click(button);
  assert.deepEqual(l.snapshot(),{level:'room',building:null,floor:null,room:'pool'});
@@ -29,13 +29,13 @@ await test('yard House target, orbit framing, selected outline, back and directi
  assert.ok(Math.abs(v.controls.target.y - 4 * .3048) < 1e-6);
  assert.ok(Math.abs(v.controls.target.z + 5 * .3048) < 1e-6);
  assert.ok(v.camera.position.clone().sub(v.controls.target).normalize().y < .99,'an angle, not straight down');
- assert.ok(v.scene.getObjectByName('yard-room-outline:pool').visible);
- assert.equal(v.scene.getObjectByName('yard-room-outline:grill').visible,false);
+ // User, 2026-11-17: the outline of an open yard room is dropped on the view page.
+ let outlines = 0; v.scene.traverse(o => { if (o.isLine && String(o.name).startsWith('yard-room-outline')) outlines++; });
+ assert.equal(outlines,0,'no yard room outline in the scene');
  assert.equal(textOf(document.getElementById('twin-path')),'House \u203a Pool deck');
  assert.ok(l.swipe(80,0)); assert.equal(l.snapshot().room,'grill');
  assert.equal(l.swipe(80,0),false); assert.equal(l.snapshot().room,'grill');
  assert.ok(l.up()); assert.equal(l.snapshot().level,'house');
- assert.equal(v.scene.getObjectByName('yard-room-outline:grill').visible,false);
  l.go({building:'b',room:'inside'},{immediate:true});
  assert.ok(l.swipe(80,0)); assert.equal(l.snapshot().room,'pool');
 });

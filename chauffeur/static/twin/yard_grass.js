@@ -54,9 +54,10 @@ export function grassCovers(plan, outline = p => p) {
     };
     if (pad.edges[i].wall) project(retainingWallGeometry(plan,pad,i),'wall');
     buildPadEdge(plan,pad,i,project);
-    // The pad no longer clears its high side for us. Allow the full coarser
-    // clump spread, distant widening and gust on both faces and around corners.
-    if (points.length) add(footprint(points), 1.2);
+    // The pad no longer clears its high side for us. A wall or a stair stands
+    // up out of the lawn, so its margin grows with a coarser tier's wider clump
+    // (`reach`) and a blade never comes out through a face, in still air or gust.
+    if (points.length) covers.push({polygon: footprint(points), margin: .4, reach: true});
   }
   for (const h of site.hardscape || []) {
     if (h.kind === 'path') for (const p of pathSurfacePolygons(h)) add(p, h.edging === 'curb' ? .9 : .4);
@@ -101,6 +102,8 @@ const hash = n => { n = Math.imul(n ^ n >>> 16, 0x21f0aaad); n = Math.imul(n ^ n
 // The clump is modelled for this grid spacing (plan feet); a coarser tier's grid
 // spreads and widens its clumps to match, so the cover stays even.
 const BLADES = 5, CLUMP_SPACING = .28;
+// Feet of shortening lawn past the lot line, and the open-share sample per side.
+const SKIRT = 4, SAMPLES = 96;
 function bladeGeometry() {
   const positions = [], normals = [], shape = [], indices = [];
   // Five bent, two-segment blades per clump, 25 vertices / 15 triangles. The
@@ -209,48 +212,65 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   const result = {tier, growsGrass, instances:0, draws:0, regions:0, animated:false, mesh:null,
     update(seconds) { if (this.animated) clock.value = seconds; }};
   if (!budget || !growsGrass || !polygon?.length) return result;
-  const lot = prepared(polygon,.4), covers = grassCovers(plan).map(p => prepared(p.polygon,p.margin));
-  // Grid spacing depends only on lot geometry and tier, never on its obstacles.
-  // Thus a moving feature reveals the exact cells it used to cover.
-  const w = lot.x1-lot.x0, h = lot.y1-lot.y0;
-  const spacing = Math.max(TIERS[tier].lawnSpacing, Math.sqrt(w*h/budget));
-  const nx = Math.min(budget,Math.max(1,Math.floor(w/spacing)));
-  const ny = Math.min(Math.floor(budget/nx),Math.max(1,Math.floor(h/spacing)));
-  const spread = Math.max(1,Math.min(2,Math.sqrt(w*h/(nx*ny))/CLUMP_SPACING));
+  // The field runs to the lot line and a skirt past it, so a fence standing on
+  // or just outside the line stands in grass (user, 2026-11-17).
+  const lot = prepared(polygon,SKIRT), raw = grassCovers(plan);
+  const w = lot.x1-lot.x0, h = lot.y1-lot.y0, X0 = lot.x0+SKIRT, X1 = lot.x1-SKIRT, Y0 = lot.y0+SKIRT, Y1 = lot.y1-SKIRT;
   // A small spatial lookup keeps many distant garden/path polygons out of the
   // hot loop. It is build-only and introduces no extra meshes or frame work.
   const bins = Array.from({length:256},()=>[]);
-  for (const p of covers) {
-    const bx0=Math.max(0,Math.floor((p.x0-lot.x0)*16/w)), bx1=Math.min(15,Math.floor((p.x1-lot.x0)*16/w));
-    const by0=Math.max(0,Math.floor((p.y0-lot.y0)*16/h)), by1=Math.min(15,Math.floor((p.y1-lot.y0)*16/h));
-    for(let bx=bx0;bx<=bx1;bx++)for(let by=by0;by<=by1;by++)bins[bx*16+by].push(p);
-  }
+  const bin = covers => {
+    for (const list of bins) list.length = 0;
+    for (const p of covers) {
+      const bx0=Math.max(0,Math.floor((p.x0-lot.x0)*16/w)), bx1=Math.min(15,Math.floor((p.x1-lot.x0)*16/w));
+      const by0=Math.max(0,Math.floor((p.y0-lot.y0)*16/h)), by1=Math.min(15,Math.floor((p.y1-lot.y0)*16/h));
+      for(let bx=bx0;bx<=bx1;bx++)for(let by=by0;by<=by1;by++)bins[bx*16+by].push(p);
+    }
+  };
+  // Share of full blade height a root at this point grows to; 0 where none grows.
+  const grows = (x,y) => {
+    let rim = 1;
+    if (lot.rectangle ? x<X0||x>X1||y<Y0||y>Y1 : !contains(lot,x,y,false)) {
+      let d = SKIRT;
+      if (lot.rectangle) d = Math.hypot(Math.max(X0-x,0,x-X1),Math.max(Y0-y,0,y-Y1));
+      else for (let i=0,j=polygon.length-1;i<polygon.length;j=i++) {
+        const a=polygon[j],b=polygon[i],dx=b[0]-a[0],dy=b[1]-a[1];
+        const t=Math.max(0,Math.min(1,((x-a[0])*dx+(y-a[1])*dy)/(dx*dx+dy*dy||1)));
+        d=Math.min(d,Math.hypot(x-a[0]-t*dx,y-a[1]-t*dy));
+      }
+      if (d >= SKIRT) return 0;
+      rim = 1-d/SKIRT;
+    }
+    const nearby=bins[Math.min(15,Math.floor((x-lot.x0)*16/w))*16+Math.min(15,Math.floor((y-lot.y0)*16/h))];
+    for (const p of nearby) if (contains(p,x,y)) return 0;
+    // The ground goes on past the skirt bare, so the blades shorten across it
+    // rather than stopping as a wall.
+    return .35+.65*rim*rim*(3-2*rim);
+  };
+  // The budget is what grows, not the lot's bounding box: a coarse sample finds
+  // the open share, rounded up to sixteenths so that moving a feature within the
+  // lawn keeps the grid, and so reveals the exact cells it used to cover.
+  bin(raw.map(p => prepared(p.polygon,p.margin)));
+  let open = 0;
+  for (let ix = 0; ix < SAMPLES; ix++) for (let iy = 0; iy < SAMPLES; iy++)
+    if (grows(lot.x0+(ix+.5)*w/SAMPLES, lot.y0+(iy+.5)*h/SAMPLES)) open++;
+  const share = Math.min(1,Math.ceil((open/(SAMPLES*SAMPLES)+.02)*16)/16), cells = Math.floor(budget/share);
+  const spacing = Math.max(TIERS[tier].lawnSpacing, Math.sqrt(w*h/cells));
+  const nx = Math.min(cells,Math.max(1,Math.floor(w/spacing)));
+  const ny = Math.min(Math.floor(cells/nx),Math.max(1,Math.floor(h/spacing)));
+  const spread = Math.max(1,Math.min(2,Math.sqrt(w*h/(nx*ny))/CLUMP_SPACING));
+  bin(raw.map(p => prepared(p.polygon,p.margin+(p.reach ? .24*(spread-1) : 0))));
   let seed = 0;
   for (const p of polygon) for (const n of p) seed = (Math.imul(seed,31)+Math.round(n*100))|0;
-  const matrices = new Float32Array(nx*ny*16), pads = (plan.site.terraces || []).map(p => prepared(p.polygon,p.blend ?? 6));
+  const matrices = new Float32Array(Math.min(nx*ny,budget)*16), pads = (plan.site.terraces || []).map(p => prepared(p.polygon,p.blend ?? 6));
   let count = 0, low = 0, high = 0;
-  for (let ix = 0; ix < nx; ix++) for (let iy = 0; iy < ny; iy++) {
+  for (let ix = 0; ix < nx && count < budget; ix++) for (let iy = 0; iy < ny && count < budget; iy++) {
     const id = (Math.imul(ix,73856093)^Math.imul(iy,19349663)^seed)|0;
     const r = hash(id), s = hash(id+1);
     const x = lot.x0+(ix+.2+.6*r)*w/nx, y = lot.y0+(iy+.2+.6*s)*h/ny;
-    if (!lot.rectangle && !contains(lot,x,y,false)) continue;
-    // Keep roots and their maximum lean/gust clear of the lot boundary too.
-    let edge = Math.min(x-lot.x0, lot.x1-x, y-lot.y0, lot.y1-y)-.4;
-    if (!lot.rectangle) for (let i=0,j=polygon.length-1;i<polygon.length;j=i++) {
-      const a=polygon[j],b=polygon[i],dx=b[0]-a[0],dy=b[1]-a[1];
-      const t=Math.max(0,Math.min(1,((x-a[0])*dx+(y-a[1])*dy)/(dx*dx+dy*dy||1)));
-      edge=Math.min(edge,Math.hypot(x-a[0]-t*dx,y-a[1]-t*dy));
-      if (edge < .4) break;
-    }
-    if (edge < .4) continue;
-    const nearby=bins[Math.min(15,Math.floor((x-lot.x0)*16/w))*16+Math.min(15,Math.floor((y-lot.y0)*16/h))];
-    let covered=false;
-    for (const p of nearby) if (contains(p,x,y)) {covered=true;break;}
-    if (covered) continue;
+    const short = grows(x,y);
+    if (!short) continue;
     const height = pads.some(p => x>=p.x0&&x<=p.x1&&y>=p.y0&&y<=p.y1) ? groundAt(plan,x,y) : 0;
-    // The lawn goes on past the lot as bare ground, so the blades shorten over
-    // the last few feet rather than stopping as a wall.
-    const rim = Math.min(1,(edge-.4)/4), short = .35+.65*rim*rim*(3-2*rim);
     const a = r*Math.PI*2, c = Math.cos(a)*spread, sn = Math.sin(a)*spread, scale = (.68+.42*s)*short, k = count++*16;
     matrices[k]=c; matrices[k+2]=-sn; matrices[k+5]=scale; matrices[k+8]=sn; matrices[k+10]=c;
     matrices[k+12]=x; matrices[k+13]=height-.04; matrices[k+14]=-y; matrices[k+15]=1;

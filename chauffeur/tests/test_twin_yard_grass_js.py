@@ -69,17 +69,39 @@ await test('existing_fringe_remains_and_total_hook_counts_both_draws',async()=>{
   assert.ok(draws.every(o=>o.userData.yardGrass));
  }
 });
-await test('every_root_is_in_the_lot_and_clear_of_every_cover_with_margin',()=>{
+await test('every_root_is_in_the_lot_or_its_skirt_and_clear_of_every_cover_with_margin',()=>{
  const p=make(),f=buildField(p),covers=B.grassCovers(p);
  assert.equal(covers.length,10,'building, porch, paving, driveway, deck, swept path, bed, pool, spa, pit; pads grow lawn');
- for(const [x,y] of positions(f)){
-  assert.ok(inPolygon(p.site.lot,x,y));
+ const off=(lot,x,y)=>inPolygon(lot,x,y)?0:Math.min(...lot.map((a,i)=>edgeDistance([x,y],a,lot[(i+1)%lot.length])));
+ const a=f.mesh.instanceMatrix.array;let inside=0,skirt=0,rim=0,far=0;
+ for(let i=0;i<f.instances;i++){
+  const x=a[i*16+12],y=-a[i*16+14],d=off(p.site.lot,x,y);
+  // User, 2026-11-17: the lawn reaches the lot line; past it a 4 ft skirt shortens.
+  assert.ok(d<4);if(d)skirt++;else inside++;
+  if(!d&&Math.min(x,110-x,y,100-y)<.3){rim++;assert.ok(a[i*16+5]>=.68-1e-6,'full height at the lot line');}
+  if(d>3.5){far++;assert.ok(a[i*16+5]<1.1*.4,'short at the end of the skirt');}
   for(const {polygon,margin} of covers){assert.ok(!inPolygon(polygon,x,y));
    for(let i=0;i<polygon.length;i++)assert.ok(edgeDistance([x,y],polygon[i],polygon[(i+1)%polygon.length])>=margin-1e-5);
   }
  }
+ assert.ok(inside>100000&&skirt>10000&&rim>1000&&far>500,`${inside} ${skirt} ${rim} ${far}`);
  const concave={buildings:[],site:{lot:[[0,0],[20,0],[20,8],[8,8],[8,20],[0,20]]}};
- const g=buildField(concave);assert.ok(positions(g).every(([x,y])=>inPolygon(concave.site.lot,x,y)));release(f);release(g);
+ const g=buildField(concave),notch=positions(g).filter(([x,y])=>x>8.5&&x<11.5&&y>8.5&&y<11.5);
+ assert.ok(positions(g).every(([x,y])=>off(concave.site.lot,x,y)<4));
+ assert.ok(notch.length>50,'the skirt follows a concave lot');
+ assert.equal(positions(g).filter(([x,y])=>x>12.1&&y>12.1).length,0,'nothing past the skirt in the notch');release(f);release(g);
+});
+await test('a_fence_on_the_lot_line_stands_in_grass_and_the_budget_is_what_grows',()=>{
+ const p={buildings:[],site:{lot:square(0,0,100),fence:[{id:'f',height:5,polyline:[[-1,0],[-1,100]]},{id:'g',height:5,polyline:[[50,10],[50,90]]}]}};
+ assert.deepEqual(B.grassCovers(p),[],'a fence clears no lawn');
+ const f=buildField(p);let west=0,east=0,mid=0;
+ for(const [x,y] of positions(f)){if(y<10||y>90)continue;if(x>-1.6&&x<-1)west++;if(x>-1&&x<-.4)east++;if(Math.abs(x-50)<.3)mid++;}
+ assert.ok(west>400&&east>400&&mid>400,`${west} ${east} ${mid}`);release(f);
+ // Half the lot is paved: the lawn that is left still gets the tier's whole budget.
+ for(const tier of ['medium','high','max']){
+  const half={buildings:[],site:{lot:square(0,0,600),hardscape:[{id:'h',polygon:square(0,0,600,300)}]}},g=buildField(half,tier);
+  assert.ok(g.instances>T.TIERS[tier].lawnBlades*.85,`${tier} ${g.instances}`);assert.ok(g.instances<=T.TIERS[tier].lawnBlades);release(g);
+ }
 });
 await test('roots_follow_sampled_slopes_in_feet_and_geometry_is_bent_strips',()=>{
  const p=make(),f=buildField(p);let slopes=0;
@@ -118,9 +140,11 @@ await test('blades_clear_both_sides_of_pad_wall_caps_and_stairs_even_at_maximum_
   if(!bounds.some(b=>x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1))continue;
   if(m.elements[13]>1)high++;else low++;
   for(let j=0;j<a.count;j++){
-   // Shader's far-distance width and full gust envelope; roots remain fixed.
+   // Full gust envelope at the coarsest spread; roots remain fixed. The shader's
+   // far-distance widening is left out: it starts 25 m away, where what it adds
+   // is under a pixel, and clearing it left a bare foot around every wall.
    const t=f.mesh.geometry.attributes.grassShape.getX(j);
-   v.fromBufferAttribute(a,j);v.x*=2.2;v.z*=2.2;v.applyMatrix4(m);
+   v.fromBufferAttribute(a,j);v.applyMatrix4(m);
    for(const sx of [-1,1])for(const sy of [-1,1])for(const c of covers)
     assert.ok(!inPolygon(c.polygon,v.x+sx*.043*1.4*t*t,-v.z+sy*.027*1.4*t*t),`blade at ${x},${y} enters pad solid`);
   }
