@@ -309,6 +309,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       renderer3.shadowMap.needsUpdate = false; sun.shadow.needsUpdate = false;
     }
     renderer3.info.reset();
+    // The pool's mirror image belongs to this frame's camera.
+    if (!state.unlit) reflections.mirror(camera);
     post?.setCamera(camera);
     // Count only the beauty pass: AO depth and fullscreen draws are extra work,
     // not extra house geometry. createPost snapshots the RenderPass counters.

@@ -20,12 +20,17 @@ vec3 probeBox(vec3 direction, vec3 centre) {
 }
 vec3 probeDirection(vec3 direction) { return mix(direction, probeBox(direction, probeCentre), probeActive); }
 `;
+// Metres an object in the mirror image moves per unit of wave bend.
+const PLANAR_BEND = 1.2;
 const waterDeclarations = `attribute vec3 reflectionBodyCentre; varying vec3 vReflectionBodyCentre;\n`;
 const waterFragment = `varying vec3 vReflectionBodyCentre;
 uniform vec3 waterProbeCentre[4];
 uniform float waterProbeFresh[4];
 uniform int waterProbeCount;
 uniform samplerCube waterProbe0, waterProbe1, waterProbe2, waterProbe3;
+uniform sampler2D waterPlanar;
+uniform mat4 waterPlanarMatrix;
+uniform float waterPlanarActive, waterPlanarHeight;
 vec3 waterProbeSample(int index, vec3 direction, float roughness) {
   // Calm bodies share a merged draw. Sample the selected linear cube's mip
   // chain directly; glass uses three's PMREM. Water roughness remains .08..12.
@@ -50,6 +55,8 @@ export function reflectionMaterial(material, kind, owner) {
     waterProbeCentre:{value:Array.from({length:4},()=>new THREE.Vector3())},
     waterProbeFresh:{value:[0,0,0,0]}, waterProbeCount:{value:0},
     ...Object.fromEntries([0,1,2,3].map(i=>['waterProbe'+i,{value:null}])),
+    waterPlanar:{value:null}, waterPlanarMatrix:{value:new THREE.Matrix4()},
+    waterPlanarActive:{value:0}, waterPlanarHeight:{value:0},
   });
   if (kind === 'exterior') binding.uniforms.paneBaseOpacity = {get value() { return material.opacity; }};
   const before = material.onBeforeCompile, key = material.customProgramCacheKey();
@@ -68,6 +75,20 @@ export function reflectionMaterial(material, kind, owner) {
       replace(shader, 'vertexShader', '#include <project_vertex>', 'vReflectionBodyCentre = reflectionBodyCentre;\n#include <project_vertex>');
       shader.fragmentShader = waterFragment + shader.fragmentShader;
       replace(chunk, 'fragmentShader', anchor, anchor + `
+// A wave steep enough to send the mirrored ray below the horizon would show
+// the pool's own shell, which the water hides. Such a ray meets the water
+// again and leaves upward, so fold it back up, clear of the pool's own rim;
+// without this a dark pool reads as a field of dark blobs instead of a
+// picture of what stands beside it.
+reflectVec = normalize(vec3(reflectVec.x, max(abs(reflectVec.y), .12), reflectVec.z));
+if (waterPlanarActive > .5 && abs(vProbeWorld.y - waterPlanarHeight) < .05) {
+  // The mirror image of the scene, drawn from the camera's reflection. A wave
+  // bends the mirrored ray; an object a few metres off moves by that bend.
+  vec3 waterFlat = reflect(normalize(vProbeWorld - cameraPosition), vec3(0.0, 1.0, 0.0));
+  vec2 waterBend = (reflectVec - waterFlat).xz * ${PLANAR_BEND.toFixed(1)};
+  vec4 waterClip = waterPlanarMatrix * vec4(vProbeWorld.x + waterBend.x, waterPlanarHeight, vProbeWorld.z + waterBend.y, 1.0);
+  return texture2D(waterPlanar, clamp(waterClip.xy / waterClip.w * .5 + .5, .002, .998)).rgb;
+}
 int waterProbeIndex = 0; float waterProbeDistance = 1e30;
 for (int i = 0; i < 4; i++) {
   if (i >= waterProbeCount) break;
@@ -112,7 +133,7 @@ vec3 paneLight = (outgoingLight - totalSpecular) * diffuseColor.a + totalSpecula
 gl_FragColor = vec4(paneLight / paneCover, paneCover);`);
     }
   };
-  material.customProgramCacheKey = () => key + '|box-reflection-1|' + kind;
+  material.customProgramCacheKey = () => key + '|box-reflection-2|' + kind;
   if (kind === 'exterior') { material.premultipliedAlpha = true; material.depthWrite = false; }
   const attach = target => {
     Object.defineProperty(target.userData, 'reflection', {value: binding, configurable: true});
@@ -141,6 +162,100 @@ const visible = object => { for (let p = object; p; p = p.parent) if (!p.visible
 export function createReflectionProbes({scene, renderer, tier, extras = () => [], sky = () => null, now = () => performance.now(), warn = error => console.warn('House reflection capture failed:', error)}) {
   let probes = [], bindings = new Set(), queue = [], requested = false, quietAt = 0, unlit = false, disposed = false, lightsKey = null, lightsAt = -Infinity;
   const enabled = tier !== 'low';
+  // A flat pool mirrors what stands beside it. One cube taken at the pool's
+  // centre cannot place a wall ten metres away, so on high quality the largest
+  // body's water level gets a true mirror image: the scene drawn once more from
+  // the camera's reflection, at half size, only while that water is in view.
+  // Bodies at another height, and medium quality, keep the cube.
+  const planar = tier === 'high' ? {target:null, camera:new THREE.PerspectiveCamera(), boxes:[], hidden:[], hiddenAt:-Infinity, passes:0, active:false} : null;
+  const frustum = new THREE.Frustum(), scratch = new THREE.Matrix4(), size = new THREE.Vector2();
+  const eye = new THREE.Vector3(), aim = new THREE.Vector3(), up = new THREE.Vector3(), plane = new THREE.Plane(), clip = new THREE.Vector4(), corner = new THREE.Vector4();
+  // What a reflection must not contain: markers, handles, effects, the water
+  // itself and every other mirror.
+  const excluded = (o, owner = null) => {
+    const d = o.userData;
+    return o.isSprite || o.isPoints || o.isLine || o.isHelper || o.layers.isEnabled(31) ||
+      d.effectFixtures || d.effectFixture || d.fireFlame || d.reflectionExclude || d.preview || d.aimHandle || d.fixtureId || d.kind==='sheet' || o.name.startsWith('editor-') ||
+      (owner && d.buildingId===owner) ||
+      [].concat(o.material || []).some(m=>m.userData.waterSurface || m.userData.reflection || m.depthTest===false || m.name==='sheet');
+  };
+  function mirror(camera) {
+    if (!planar) return;
+    const water = probes.find(p=>p.kind==='water');
+    let on = false;
+    if (!unlit && !disposed && !planar.broken && water && camera.isPerspectiveCamera) {
+      camera.updateMatrixWorld();
+      camera.getWorldPosition(eye);
+      if (eye.y > water.centre.y + .02) {
+        frustum.setFromProjectionMatrix(scratch.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+        on = planar.boxes.some(box => Math.abs(box.min.y - water.centre.y) < .05 && frustum.intersectsBox(box));
+      }
+    }
+    // A mirror that cannot be drawn is not retried every frame; the cube
+    // stands in until the scene is next rebuilt.
+    if (on) try { drawMirror(camera, water.centre.y); } catch (error) { on = false; planar.broken = true; warn(error); }
+    planar.active = on;
+    for (const b of bindings) if (b.kind==='water') {
+      b.uniforms.waterPlanarActive.value = on ? 1 : 0;
+      b.uniforms.waterPlanar.value = on ? planar.target.texture : null;
+      if (on) { b.uniforms.waterPlanarHeight.value = water.centre.y; b.uniforms.waterPlanarMatrix.value.copy(scratch); }
+    }
+  }
+  function drawMirror(camera, height) {
+    renderer.getDrawingBufferSize(size);
+    const w = Math.max(1, Math.floor(size.x / 2)), h = Math.max(1, Math.floor(size.y / 2));
+    if (!planar.target) planar.target = new THREE.WebGLRenderTarget(w, h, {type:THREE.HalfFloatType, colorSpace:THREE.LinearSRGBColorSpace,
+      generateMipmaps:false, minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter});
+    else if (planar.target.width !== w || planar.target.height !== h) planar.target.setSize(w, h);
+    // The camera's reflection in the water plane: same lens, mirrored pose.
+    const virtual = planar.camera;
+    camera.getWorldDirection(aim).add(eye); aim.y = 2 * height - aim.y;
+    up.set(0, 1, 0).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion())); up.y = -up.y;
+    virtual.position.set(eye.x, 2 * height - eye.y, eye.z); virtual.up.copy(up); virtual.lookAt(aim);
+    virtual.updateMatrixWorld();
+    virtual.projectionMatrix.copy(camera.projectionMatrix);
+    scratch.multiplyMatrices(virtual.projectionMatrix, virtual.matrixWorldInverse);
+    // Nothing below the water belongs in the image, and the pool shell would
+    // hide everything: put the near plane on the water (an oblique frustum).
+    plane.set(up.set(0, 1, 0), -height).applyMatrix4(virtual.matrixWorldInverse);
+    clip.set(plane.normal.x, plane.normal.y, plane.normal.z, plane.constant);
+    const pm = virtual.projectionMatrix.elements;
+    corner.set((Math.sign(clip.x) + pm[8]) / pm[0], (Math.sign(clip.y) + pm[9]) / pm[5], -1, (1 + pm[10]) / pm[14]);
+    clip.multiplyScalar(2 / clip.dot(corner));
+    pm[2] = clip.x; pm[6] = clip.y; pm[10] = clip.z + 1; pm[14] = clip.w;
+    virtual.projectionMatrixInverse.copy(virtual.projectionMatrix).invert();
+    // The scene walk that finds what to leave out runs twice a second, not
+    // every frame; the hiding itself is a short list.
+    if (now() - planar.hiddenAt >= 500) {
+      planar.hiddenAt = now(); planar.hidden = [];
+      scene.traverse(o => { if (excluded(o)) planar.hidden.push(o); });
+    }
+    const hidden = [...planar.hidden, ...extras()].filter(Boolean).map(o => [o, o.visible]);
+    const save = {target:renderer.getRenderTarget(), face:renderer.getActiveCubeFace(), mip:renderer.getActiveMipmapLevel(),
+      auto:renderer.autoClear, xr:renderer.xr.enabled, tone:renderer.toneMapping,
+      viewport:renderer.getViewport(new THREE.Vector4()), scissor:renderer.getScissor(new THREE.Vector4()), scissorTest:renderer.getScissorTest(),
+      clipping:renderer.clippingPlanes, local:renderer.localClippingEnabled,
+      shadowAuto:renderer.shadowMap.autoUpdate, shadowNeeds:renderer.shadowMap.needsUpdate,
+      info:{...renderer.info.render}, infoAuto:renderer.info.autoReset};
+    try {
+      for (const [o] of hidden) o.visible = false;
+      // Shadows are sampled as the picture has them; none is drawn again.
+      renderer.shadowMap.autoUpdate = renderer.shadowMap.needsUpdate = false;
+      renderer.autoClear = true; renderer.xr.enabled = false; renderer.toneMapping = THREE.NoToneMapping;
+      renderer.clippingPlanes = []; renderer.localClippingEnabled = false; renderer.info.autoReset = false;
+      renderer.setRenderTarget(planar.target);
+      renderer.render(scene, virtual);
+      planar.passes++;
+    } finally {
+      for (const [o, value] of hidden) o.visible = value;
+      renderer.setRenderTarget(save.target, save.face, save.mip); renderer.autoClear = save.auto;
+      renderer.setViewport(save.viewport); renderer.setScissor(save.scissor); renderer.setScissorTest(save.scissorTest);
+      renderer.xr.enabled = save.xr; renderer.toneMapping = save.tone;
+      renderer.clippingPlanes = save.clipping; renderer.localClippingEnabled = save.local;
+      renderer.shadowMap.autoUpdate = save.shadowAuto; renderer.shadowMap.needsUpdate = save.shadowNeeds;
+      Object.assign(renderer.info.render, save.info); renderer.info.autoReset = save.infoAuto;
+    }
+  }
   function apply(binding) {
     const p = binding.probe, active = !unlit && !!p?.fresh;
     binding.uniforms.probeActive.value = active ? 1 : 0;
@@ -186,8 +301,10 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       }
     });
     const candidates = [];
+    if (planar) { planar.boxes = []; planar.broken = false; }
     for (const body of waterBodies(plan)) if (waterVisible.has(body.id)) {
       const c = centreOf(body.polygon);
+      if (planar) planar.boxes.push(new THREE.Box3().setFromPoints(body.polygon.map(p => new THREE.Vector3(p[0]*FT, body.height*FT, -p[1]*FT))));
       candidates.push({id:'water:' + body.id, owner:body.id, kind:'water', area:area(body.polygon), centre:new THREE.Vector3(c[0]*FT, body.height*FT, -c[1]*FT)});
     }
     for (const b of plan.buildings || []) {
@@ -243,12 +360,8 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     const hide = o => { if (o && !hidden.has(o)) { hidden.set(o,o.visible); o.visible = false; } };
     try {
       scene.traverse(o => {
-        const d = o.userData;
         if (o.shadow) { shadows.push([o.shadow,o.shadow.autoUpdate,o.shadow.needsUpdate]); o.shadow.autoUpdate = o.shadow.needsUpdate = false; }
-        if (o.isSprite || o.isPoints || o.isLine || o.isHelper || o.layers.isEnabled(31) ||
-          d.effectFixtures || d.effectFixture || d.fireFlame || d.reflectionExclude || d.preview || d.aimHandle || d.fixtureId || d.kind==='sheet' || o.name.startsWith('editor-') ||
-          (p.kind==='exterior' && d.buildingId===p.owner) ||
-          [].concat(o.material || []).some(m=>m.userData.waterSurface || m.userData.reflection || m.depthTest===false || m.name==='sheet')) hide(o);
+        if (excluded(o, p.kind==='exterior' ? p.owner : null)) hide(o);
       });
       extras().forEach(hide);
       // Keep shadow sampling, but prohibit every shadow render, including a
@@ -280,7 +393,7 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     }
   }
   return {
-    rebuild, request,
+    rebuild, request, mirror,
     setUnlit(on) { if (unlit===on) return; unlit=on; for (const b of bindings) apply(b); if (!on) request(); },
     frame() {
       if (!enabled || unlit || disposed) return;
@@ -297,7 +410,7 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       if (requested && now()-quietAt>=1500) { queue=[...probes]; requested=false; }
       const p=queue.shift(); if (p) capture(p);
     },
-    info() { return {tier, probes:probes.map(p=>({id:p.id,kind:p.kind,captures:p.captures,fresh:p.fresh,centre:p.centre.toArray(),box:{min:p.box.min.toArray(),max:p.box.max.toArray()}})), pending:requested || queue.length>0}; },
-    dispose() { disposed=true; queue=[]; requested=false; const old=probes; probes=[]; for (const b of bindings) { b.probe=null; apply(b); } for (const p of old) p.target.dispose(); bindings.clear(); },
+    info() { return {tier, ...(planar ? {planar:{active:planar.active, passes:planar.passes, size:planar.target ? [planar.target.width, planar.target.height] : null}} : {}), probes:probes.map(p=>({id:p.id,kind:p.kind,captures:p.captures,fresh:p.fresh,centre:p.centre.toArray(),box:{min:p.box.min.toArray(),max:p.box.max.toArray()}})), pending:requested || queue.length>0}; },
+    dispose() { disposed=true; queue=[]; requested=false; const old=probes; probes=[]; for (const b of bindings) { b.probe=null; apply(b); } for (const p of old) p.target.dispose(); planar?.target?.dispose(); bindings.clear(); },
   };
 }
