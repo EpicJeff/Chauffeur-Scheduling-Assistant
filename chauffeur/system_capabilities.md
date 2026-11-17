@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.904 (2026-11-16).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.905 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.905 (2026-11-17, NOT device-verified, browser-checked in Chromium on low, medium and high): pool and spa waves travel every way and collide, instead of all marching one way.**
+
+- **What changed for a person.** The water surface used to read as gentle waves all drifting the same way, because the four wave trains of v2.499.902 all travelled within about 55 degrees of one direction. The surface is now nine trains: a swell, a chop and a fine ripple, each sent three ways about 120 degrees apart, so crests cross, meet and break up into moving cells. Calm water is a little livelier than before (slope about .11, was about .07). Stirred water is much busier, and running features now stir the short waves hardest: at full chop the swell grows x2.3, the chop x3.2 and the fine ripple x4.3. The net of light on the pool floor follows the same waves, so it crosses too.
+- **Where.** `WAVE_GLSL` in `static/twin/effects/water_surface.js`, shared by the surface and by `effects/underwater.js`. Each train is still warped so no straight crest shows and still fades before it would alias. No new uniform, texture, pass or draw call. Low quality remains a still pose of the same waves.
+- **Simulation edge.** On high and max, `waterFieldShape` now treats a dry neighbour cell (alpha 0) or a cell outside the field as a wall carrying the centre cell's height, the same rule the simulation itself uses, and returns no slope for a dry centre. Reading a dry neighbour's zero height tilted the last wet cell along every wall. This was changed as the likely cause of a thin bright line reported along a pool wall under the surface; the line was not reproduced on the test house, so that link is not confirmed.
+- **Tests:** `tests/test_twin_water_surface_js.py` grows from 22 to 24: at every heading at least two trains travel toward it and two against it, and a dry or out-of-field neighbour returns the centre height.
 
 **v2.499.904 (2026-11-16, NOT device-verified, browser-checked in Chromium on low, medium and high): running water features stir the whole pool or spa, not only the spot they hit.**
 

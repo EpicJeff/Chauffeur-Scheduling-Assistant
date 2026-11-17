@@ -10,9 +10,11 @@ export const WATER_VERTEX = `varying vec3 vWaterWorld;
 export const WATER_POSITION = `vWaterWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;`;
 export const WAVE_GLSL = `
 uniform float waterTime;
-// Four wave trains in plan feet, from a slow swell down to wind chop. Each one is
-// warped by the others so no straight crest line shows, and each fades out before
-// it would alias.
+// Nine wave trains in plan feet: a swell, a chop and a fine ripple, each sent
+// three ways about 120 degrees apart, so crests cross and collide instead of
+// marching one way. A negative speed carries a train along its own k. Each one
+// is warped so no straight crest line shows, and fades out before it would alias.
+// Running features stir the short waves hardest.
 vec2 waterTrain(vec2 p, vec2 k, float speed, float slope, float time) {
   float phase = dot(p, k) + time * speed;
   return normalize(k) * cos(phase) * slope * (1.0 - smoothstep(.6, 2.6, fwidth(phase)));
@@ -20,11 +22,18 @@ vec2 waterTrain(vec2 p, vec2 k, float speed, float slope, float time) {
 vec2 waterSlope(vec2 p, vec3 motion) {
   float time = waterTime + motion.y;
   vec2 warp = vec2(sin(p.y * .31 + time * .21), cos(p.x * .27 - time * .17)) * 1.4;
-  vec2 q = p + warp;
-  return (waterTrain(q, vec2(.62, .33), -.74, .05, time)
-    + waterTrain(q + warp, vec2(-1.1, 1.5), 1.2, .055, time)
-    + waterTrain(p - warp, vec2(2.9, 1.7), -1.9, .045, time)
-    + waterTrain(p + warp * .5, vec2(-3.6, -5.2), 2.7, .035, time)) * (1.0 + motion.x * ${CHOP_WAVE_STRENGTH_GAIN.toFixed(2)});
+  vec2 a = p + warp, b = p - warp * .7, c = p + warp.yx * .5;
+  vec2 swell = waterTrain(a, vec2(.658, .239), -1.05, .05, time)
+    + waterTrain(b, vec2(-.628, .527), -1.13, .05, time)
+    + waterTrain(c, vec2(-.106, -.601), -.98, .05, time);
+  vec2 chop = waterTrain(b, vec2(.492, 1.835), -1.72, .06, time)
+    + waterTrain(c, vec2(-2.125, -.569), -1.85, .06, time)
+    + waterTrain(a, vec2(1.202, -1.202), -1.63, .06, time);
+  vec2 fine = waterTrain(p + warp * .5, vec2(3.253, 3.253), -2.68, .05, time)
+    + waterTrain(p - warp * .4, vec2(-5.119, 1.372), -2.88, .05, time)
+    + waterTrain(p + warp.yx * .3, vec2(1.061, -3.96), -2.53, .05, time);
+  float stir = motion.x * ${CHOP_WAVE_STRENGTH_GAIN.toFixed(2)};
+  return swell * (1.0 + stir * .6) + chop * (1.0 + stir) + fine * (1.0 + stir * 1.5);
 }
 `;
 export const FIELD_GLSL = `
@@ -33,15 +42,24 @@ uniform vec4 waterFieldBounds;
 uniform vec2 waterFieldTexel;
 uniform float waterFieldActive;
 vec2 waterFieldUv(vec2 p) { return (p - waterFieldBounds.xy) / waterFieldBounds.zw; }
+float waterFieldHeight(vec2 uv, float centre) {
+  vec4 state = texture2D(waterField, uv);
+  return state.a < .5 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) ? centre : state.r;
+}
 vec3 waterFieldShape(vec2 p) {
   if (waterFieldActive < .5) return vec3(0.0);
   vec2 uv = waterFieldUv(p), t = waterFieldTexel;
   if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec3(0.0);
-  float h = texture2D(waterField, uv).r;
-  float l = texture2D(waterField, uv - vec2(t.x, 0.0)).r;
-  float r = texture2D(waterField, uv + vec2(t.x, 0.0)).r;
-  float b = texture2D(waterField, uv - vec2(0.0, t.y)).r;
-  float f = texture2D(waterField, uv + vec2(0.0, t.y)).r;
+  // The simulation writes alpha 0 into dry cells. A dry neighbour is a wall and
+  // carries this cell's height, as it does inside the simulation; reading its
+  // zero instead tilts the last wet cell and draws a bright line along the wall.
+  vec4 centre = texture2D(waterField, uv);
+  if (centre.a < .5) return vec3(0.0);
+  float h = centre.r;
+  float l = waterFieldHeight(uv - vec2(t.x, 0.0), h);
+  float r = waterFieldHeight(uv + vec2(t.x, 0.0), h);
+  float b = waterFieldHeight(uv - vec2(0.0, t.y), h);
+  float f = waterFieldHeight(uv + vec2(0.0, t.y), h);
   vec2 cell = t * waterFieldBounds.zw;
   return vec3(vec2(r-l, f-b) / (2.0 * cell),
     (l+r-2.0*h)/(cell.x*cell.x) + (b+f-2.0*h)/(cell.y*cell.y));

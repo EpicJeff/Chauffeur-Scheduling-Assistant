@@ -341,6 +341,24 @@ await test('unsupported_half_float_falls_back_without_corrupting_renderer',()=>{
  const sim=SIM.createWaterSimulation({polygon:square(0,0,10),height:0});sim.update({},1,{rippleStrength:{value:[1]}});
  assert.equal(sim.uniforms.waterFieldActive.value,0);assert.equal(sim.uniforms.waterField.value,null);sim.dispose();
 });
+await test('wave_trains_travel_every_way_so_crests_collide',()=>{
+ // phase = dot(p,k) + time*speed, so a train travels along -k*sign(speed).
+ const trains=[...S.WAVE_GLSL.matchAll(/waterTrain\([^,]+, vec2\(([-.\d]+), ([-.\d]+)\), ([-.\d]+),/g)].map(([,x,y,speed])=>{
+  const k=new THREE.Vector2(+x,+y).normalize();return k.multiplyScalar(-Math.sign(+speed));});
+ assert.equal(trains.length,9);
+ for(let deg=0;deg<360;deg+=5){const a=deg*Math.PI/180,u=new THREE.Vector2(Math.cos(a),Math.sin(a));
+  assert.ok(trains.filter(t=>t.dot(u)>.3).length>=2,'two trains travel toward '+deg);
+  assert.ok(trains.filter(t=>t.dot(u)<-.3).length>=2,'two trains travel against '+deg);}
+});
+await test('a_dry_simulation_neighbour_is_a_wall_not_a_zero_height',()=>{
+ // Dry cells hold alpha 0. Execute the neighbour rule's scalar GLSL as JavaScript.
+ const match=S.FIELD_GLSL.match(/float waterFieldHeight\(vec2 uv, float centre\) \{([\s\S]*?)\n\}/);assert.ok(match);
+ const body=match[1].replace('vec4 state = texture2D(waterField, uv);','')
+  .replace(/any\(lessThan\(uv, vec2\(0\.0\)\)\)/,'(uv.x<0||uv.y<0)').replace(/any\(greaterThan\(uv, vec2\(1\.0\)\)\)/,'(uv.x>1||uv.y>1)');
+ const height=new Function('uv','centre','state',body);
+ near(height({x:.5,y:.5},.4,{r:0,a:0}),.4);near(height({x:.5,y:.5},.4,{r:.1,a:1}),.1);near(height({x:-.01,y:.5},.4,{r:.1,a:1}),.4);
+ assert.ok(/if \(centre\.a < \.5\) return vec3\(0\.0\);/.test(S.FIELD_GLSL));
+});
 await test('pool_part_draw_counts_against_head_for_raised_flush_and_sources',async()=>{
  const old=await headYard();
  for(const tier of ['low','medium','high','max'])for(const raised of [false,true])for(const sourced of [false,true]){
