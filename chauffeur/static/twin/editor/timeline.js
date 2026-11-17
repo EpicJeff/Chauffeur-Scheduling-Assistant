@@ -1,84 +1,83 @@
 import { request, report, active } from './api.js';
 
 export function createTimeline({ getState, render, onPreview, log, signal, canScrub = () => true }) {
-  const el = id => document.getElementById(id), slider = el('editor-scrub');
-  let preview = null, index = null, version = 0, busy = false, loading = false, justReturned = false, currentBuild = null, scrubTimer = null;
-  const rounds = () => (getState().rounds || []).filter(row => row.kind !== 'start_over');
+  const el = id => document.getElementById(id);
+  let preview = null, version = 0, busy = false, loading = false, justReturned = false, currentBuild = null, selected = null;
+  const rounds = () => (getState().rounds || []).slice(-50).filter(row => row.kind !== 'start_over');
   function sync(build) {
     if (build !== undefined) currentBuild = build;
-    const marks = el('editor-time-labels'), rows = rounds();
-    const signature = JSON.stringify([rows, currentBuild?.steps.map(s => [s.id, s.kind, s.level, s.level_name])]);
+    const marks = el('editor-history-list'), rows = rounds();
+    const current = getState().current_round ?? [...(getState().rounds || [])].reverse().find(r => !r.stale)?.id;
+    const signature = JSON.stringify([rows, current, selected, busy, canScrub()]);
     if (marks.dataset.rounds !== signature) {
       marks.dataset.rounds = signature; marks.replaceChildren();
-      const stages = new Set();
-      rows.forEach((round, i) => {
+      [...rows].reverse().forEach(round => {
         const button = document.createElement('button'); button.type = 'button'; button.dataset.kind = round.kind;
+        button.dataset.round = round.id;
         const label = round.step?.label || round.note || ({ draft: 'Build', build: 'Build', edit: 'Change', hand: 'Change', revert: 'Returned to an earlier house', director: 'Art director' })[round.kind] || 'House saved';
-        button.title = `Step ${i + 1} · ${label}`; button.setAttribute('aria-label', button.title);
-        button.style.left = `${rows.length > 1 ? i / (rows.length - 1) * 100 : 0}%`;
-        const step = currentBuild?.steps.find(s => s.id === round.step?.id);
-        const stage = step ? `${step.kind}:${step.level || ''}` : round.step?.id?.split(':').slice(0, 2).join(':');
-        if (['build', 'draft'].includes(round.kind) && stage && !stages.has(stage)) {
-          stages.add(stage);
-          const name = document.createElement('span'); name.textContent = step?.kind === 'walls' ? `${step.level_name || 'Floor'} walls` : label;
-          button.append(name);
-        }
-        button.addEventListener('click', () => scrubTo(i).catch(report)); marks.append(button);
+        button.textContent = `${label}${round.id === current ? ' · Current' : ''}`;
+        button.setAttribute('aria-pressed', String(round.id === selected));
+        if (round.id === current) button.setAttribute('aria-current', 'step');
+        button.disabled = busy || !canScrub();
+        button.addEventListener('click', () => previewRound(round).catch(report));
+        const item = document.createElement('li'); item.append(button); marks.append(item);
       });
     }
-    slider.max = Math.max(0, rows.length - 1); slider.disabled = !rows.length || busy || !canScrub();
-    if (index === null && !loading) slider.value = slider.max;
     const steps = currentBuild?.steps || [], done = steps.filter(s => s.status === 'done').length;
     el('editor-progress').max = steps.length || 1; el('editor-progress').value = done;
     const count = plan => (plan?.buildings || []).flatMap(b => [...(b.walls || []), ...(b.openings || []), ...(b.rooms || []), ...(b.roof?.sections || [])]);
     const pieces = count(preview || getState().plan), settled = pieces.filter(p => p.state !== 'ghost').length;
     el('editor-step-count').textContent = `${settled} of ${pieces.length} pieces · $${Number(getState().cost?.total || 0).toFixed(2)}`;
-    el('editor-time-note').textContent = preview ? 'This earlier house is read-only. Return here adds a new step.'
-      : rows.length ? 'Drag back to see an earlier house.' : 'Your build will appear here, one step at a time.';
+    el('editor-history-note').textContent = preview ? 'This earlier house is read-only. Return to this house adds a new step.'
+      : rows.length ? 'Choose a step to see an earlier house.' : 'Your build will appear here, one step at a time.';
     el('time-chip').hidden = !preview;
     el('time-actions').hidden = !preview && !justReturned;
-    el('time-return').disabled = busy || loading || active(currentBuild) || !preview || index === rows.length - 1;
-    if (preview) el('time-chip').textContent = `Looking at step ${index + 1}`;
+    el('time-return').disabled = busy || loading || active(currentBuild) || !preview || selected === current;
+    if (preview) el('time-chip').textContent = `Looking at step ${selected}`;
   }
   async function scrubTo(i) {
-    if (!canScrub()) return;
-    clearTimeout(scrubTimer);
     const rows = rounds(); i = Math.max(0, Math.min(rows.length - 1, Math.round(i)));
     if (!rows[i]) return;
+    return previewRound(rows[i]);
+  }
+  async function previewRound(round) {
+    if (!canScrub() || busy) return;
     const ticket = ++version;
+    el('editor-history').open = true;
     // Freeze editing before the historical request can race an edit.
     loading = true; justReturned = false; onPreview(true); sync();
     try {
-      const result = await request(`rounds/${rows[i].id}`, 'GET', undefined, 'twin');
+      const result = await request(`rounds/${round.id}`, 'GET', undefined, 'twin');
       if (ticket !== version) return;
-      loading = false; preview = result.plan; index = i; slider.value = i;
+      loading = false; preview = result.plan; selected = round.id;
       await render(); sync();
-    } catch (error) { if (ticket === version) { loading = false; onPreview(!!preview); sync(); } throw error; }
+    } catch (error) {
+      if (ticket !== version) return;
+      loading = false;
+      if (error.status === 404) { await missing(); return; }
+      onPreview(!!preview); sync(); throw error;
+    }
   }
   async function now() {
-    clearTimeout(scrubTimer);
-    ++version; preview = null; index = null; loading = false; justReturned = false; onPreview(false); await render(); sync();
+    ++version; preview = null; selected = null; loading = false; justReturned = false; onPreview(false); await render(); sync();
   }
-  slider.addEventListener('input', () => {
-    if (!canScrub()) return;
-    const i = Number(slider.value);
-    clearTimeout(scrubTimer); ++version; loading = true; onPreview(true); sync();
-    scrubTimer = setTimeout(() => scrubTo(i).catch(report), 120);
-  }, { signal });
-  slider.addEventListener('change', () => scrubTo(Number(slider.value)).catch(report), { signal });
-  signal.addEventListener('abort', () => { clearTimeout(scrubTimer); ++version; }, { once: true });
+  async function missing() {
+    const state = await request('state'); Object.assign(getState(), state);
+    await now(); window.showGlobalAlert('That step is no longer kept.');
+  }
+  signal.addEventListener('abort', () => { ++version; }, { once: true });
   el('time-now').addEventListener('click', () => now().catch(report), { signal });
   el('time-return').addEventListener('click', async () => {
-    if (busy || loading || active(currentBuild) || index === null || index === rounds().length - 1) return;
-    const round = rounds()[index]; if (!round) return;
+    if (busy || loading || active(currentBuild) || selected === null || selected === (getState().current_round ?? rounds().findLast(r => !r.stale)?.id)) return;
+    const round = selected;
     busy = true; sync();
     try {
-      await request('revert', 'POST', { round: round.id }, 'twin');
+      await request('revert', 'POST', { round }, 'twin');
       const state = await request('state'); Object.assign(getState(), state);
-      log?.(`Returned to the house at step ${index + 1}.`);
+      log?.(`Returned to the house at step ${round}.`);
       await now(); justReturned = true;
-    } catch (error) { report(error); }
+    } catch (error) { if (error.status === 404) await missing(); else report(error); }
     finally { busy = false; sync(); }
   }, { signal });
-  return { sync, scrubTo, now, preview: () => preview, roundCount: () => getState().rounds?.length || 0 };
+  return { sync, scrubTo, now, preview: () => preview, roundCount: () => rounds().length };
 }

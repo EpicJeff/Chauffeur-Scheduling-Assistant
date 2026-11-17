@@ -48,7 +48,7 @@ export function mountHouses({ history, afterLoad, capture, canLoad, signal, api 
       const details = document.createElement('div'), heading = document.createElement('h3');
       heading.textContent = save.name; details.append(heading);
       const meta = document.createElement('p'); meta.className = 'place-muted';
-      meta.textContent = `${new Date(save.created_at).toLocaleString()} · ${save.summary.building_count} buildings · ${save.summary.room_count} rooms · ${Math.ceil(save.size / 1024)} KB`;
+      meta.textContent = `${save.auto ? 'Automatic · ' : ''}${new Date(save.created_at).toLocaleString()} · ${save.summary.building_count} buildings · ${save.summary.room_count} rooms · ${Math.ceil(save.size / 1024)} KB`;
       details.append(meta);
       const actions = document.createElement('div'); actions.className = 'editor-actions'; details.append(actions);
       const path = `houses/${encodeURIComponent(save.id)}`;

@@ -36,13 +36,13 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-menu summary { list-style: none; border: 1px solid var(--editor-line); border-radius: 10px; padding: 10px; background: var(--editor-panel); backdrop-filter: blur(16px); }
 #editor-menu > div { position: absolute; left: 0; top: 48px; width: 210px; padding: 8px; background: var(--editor-panel); backdrop-filter: blur(16px); border: 1px solid var(--editor-line); border-radius: 12px; }
 #editor-menu button, #editor-menu a { display: block; width: 100%; text-align: left; text-decoration: none; padding: 10px; border: 0; border-radius: 8px; }
-/* Centred in the band between the header (the top bar and the step strip) and the timeline (160px), so no tool
+/* Centred in the band between the header (the top bar and the step strip) and the bottom of the scene, so no tool
    sits under either. */
-#editor-rail { position: absolute; left: 16px; top: calc(var(--editor-header-bottom, 130px) + (100dvh - var(--editor-header-bottom, 130px) - 160px) / 2); transform: translateY(-50%); display: flex; flex-direction: column; padding: 6px; gap: 2px; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); backdrop-filter: blur(16px); z-index: 2; max-height: calc(100dvh - var(--editor-header-bottom, 130px) - 172px); overflow-y: auto; }
+#editor-rail { position: absolute; left: 16px; top: calc(var(--editor-header-bottom, 130px) + (100dvh - var(--editor-header-bottom, 130px) - 24px) / 2); transform: translateY(-50%); display: flex; flex-direction: column; padding: 6px; gap: 2px; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); backdrop-filter: blur(16px); z-index: 2; max-height: calc(100dvh - var(--editor-header-bottom, 130px) - 36px); overflow-y: auto; }
 #editor-rail button { font-size: 11px; border: 0; background: transparent; padding: 6px; }
 #editor-rail button[aria-pressed="true"] { background: var(--twinSelected); color: var(--twinSelectedText); }
 /* Sixteen tools at the 44px touch height need about 750px. Where the band between the header and the
-   timeline is shorter, the rail stands in two columns so no tool scrolls out of sight; whatever sits
+   scene is shorter, the rail stands in two columns so no tool scrolls out of sight; whatever sits
    right of the rail starts at --editor-rail-right, which the editor keeps at the rail's right edge. */
 @media (min-width: 701px) and (max-height: 1100px) {
   #editor-rail { display: grid; grid-template-columns: repeat(2, auto); align-content: start; }
@@ -83,14 +83,11 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-say { display: flex; gap: 6px; padding: 0 12px 12px; }
 #editor-message { width: 100%; min-width: 0; background: transparent; }
 #editor-message::placeholder { color: var(--editor-muted); font-size: 12px; }
-#editor-time { position: absolute; left: 14px; right: calc(var(--editor-side) + 28px); bottom: 14px; padding: 10px 16px; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); backdrop-filter: blur(16px); color: var(--editor-muted); font-size: 11px; }
-#editor-time-labels, #editor-time > div:last-child { display: flex; justify-content: space-between; gap: 8px; }
-#editor-time-labels { position: relative; height: 52px; margin: 0 8px; }
 #editor-progress { display: block; width: 100%; height: 8px; margin: 8px 0; border: 0; border-radius: 10px; accent-color: #18af84; overflow: hidden; }
 #editor-progress::-webkit-progress-bar { background: var(--twinHover); }
 #editor-progress::-webkit-progress-value { background: linear-gradient(90deg, #16a45f, #10b2e0); }
 .editor-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-#editor-cameras { position: absolute; left: calc(var(--editor-rail-right, 96px) + 16px); bottom: 160px; display: flex; flex-wrap: wrap; gap: 4px; z-index: 2; pointer-events: none; }
+#editor-cameras { position: absolute; left: calc(var(--editor-rail-right, 96px) + 16px); bottom: 24px; display: flex; flex-wrap: wrap; gap: 4px; z-index: 2; pointer-events: none; }
 #editor-cameras button { pointer-events: auto; background: var(--editor-panel); backdrop-filter: blur(16px); }
 #editor-lighting { flex-basis: 100%; }
 /* The label and help sit over the 3D view (bright sky by day): a dark chip keeps them legible. */
@@ -167,16 +164,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-floors .editor-floor-row button { flex: 1; min-width: 0; font-size: 12px; }
 #editor-floors .editor-floor-row [data-floor-visible] { flex: 0 0 36px; padding: 6px; display: grid; place-items: center; }
 #editor-floors [data-floor-visible][aria-pressed="false"] { opacity: .5; }
-#editor-time { z-index: 3; }
-#editor-time-labels button { --mark: #18af84; position: absolute; bottom: 0; transform: translateX(-50%); width: 16px; min-height: 44px; padding: 0; border: 0; border-radius: 0; background: transparent; }
-#editor-time-labels button::after { content: ''; position: absolute; width: 4px; height: 9px; left: 6px; bottom: 0; background: var(--mark); border-radius: 2px; }
-#editor-time-labels button span { position: absolute; left: 8px; bottom: 16px; width: max-content; max-width: 90px; white-space: normal; text-align: left; font-size: 10px; line-height: 12px; }
-#editor-time-labels button:last-child span { left: auto; right: 8px; text-align: right; }
-#editor-time-labels button[data-kind="edit"], #editor-time-labels button[data-kind="hand"] { --mark: var(--twinCyan); }
-#editor-time-labels button[data-kind="revert"] { --mark: #c5a1ff; }
-#editor-time-labels button[data-kind="director"] { --mark: var(--twinAttention); }
 #editor-progress { height: 4px; margin: 4px 0; }
-#editor-scrub { display: block; padding: 0; border: 0; width: 100%; min-height: 30px; height: 30px; accent-color: var(--editor-accent); background: transparent; cursor: ew-resize; }
 #time-chip { position: absolute; top: var(--editor-header-bottom, 130px); left: var(--editor-rail-right, 96px); padding: 10px 14px; border: 1px solid #c5a1ff; border-radius: 24px; background: var(--editor-panel); backdrop-filter: blur(16px); z-index: 4; }
 #time-actions { display: flex; justify-content: flex-start; gap: 8px; margin-bottom: 8px; }
 /* Your place reuses the editor's panel, page fieldset and action treatments.
@@ -268,9 +256,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   #editor-rail { left: 8px; top: 100px; transform: none; max-height: calc(52% - 160px); overflow: auto; }
   #editor-floors { left: 8px; right: 8px; top: calc(52% + 8px); width: auto; height: 56px; flex-direction: row; align-items: center; overflow: auto; }
   #editor-floors > *, #editor-floors .editor-floor-row { flex: 0 0 auto; }
-  #editor-time { left: 8px; right: 8px; bottom: 49%; padding: 6px 10px; }
-  #editor-time-labels { height: 44px; }
-  #editor-cameras { left: 76px; bottom: calc(49% + 96px); }
+  #editor-cameras { left: 76px; bottom: calc(48% + 12px); }
   #editor-cameras button { padding: 5px 8px; }
   #piece-card, :is(#review-card, #check-card) { top: calc(52% + 134px); right: 8px; width: calc(100vw - 16px); max-height: calc(48dvh - 224px); }
   .editor-lot-card { top: calc(52% + 134px); right: 8px; width: calc(100vw - 16px); max-height: calc(48dvh - 224px); }
@@ -300,11 +286,11 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #check-card #pause-title { display: none; }
 #check-card[data-check-kind="pause"] { left: var(--editor-rail-right, 96px); right: auto; top: var(--editor-header-bottom, 130px); width: 280px; max-height: calc(100dvh - var(--editor-header-bottom, 130px) - 100px); }
 @media (max-width: 700px) {
-  /* Below the header and the rail's column, over the scene band; above the rail and timeline. */
+  /* Below the header and the rail's column, over the scene band; above the rail. */
   #editor-front-door { top: var(--editor-header-bottom, 110px); left: 104px; right: 8px; width: auto; }
-  /* The header is two rows here too: the rail starts under it and ends above the timeline. */
-  #editor-rail { top: var(--editor-header-bottom, 110px); max-height: calc(51dvh - 140px - var(--editor-header-bottom, 110px)); }
-  #editor-cameras { left: 104px; bottom: calc(49% + 132px); }
+  /* The header is two rows here too: the rail starts under it and ends above the bottom of the scene. */
+  #editor-rail { top: var(--editor-header-bottom, 110px); max-height: calc(51dvh - 20px - var(--editor-header-bottom, 110px)); }
+  #editor-cameras { left: 104px; bottom: calc(48% + 12px); }
   #draw-tools, #roof-tools, #device-tools, #time-chip { top: var(--editor-header-bottom, 110px); }
   /* One check at a time keeps all its actions in view: they sit side by side. */
   #check-card > button:not([aria-label]) { display: inline-block; width: auto; margin: 8px 6px 0 0; }
@@ -314,7 +300,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 
 /* Viewer and editor share the same glass bars and white selected pills. */
 #editor-top h1, #editor-top output, #editor-chip, #editor-rail,
-#editor-floors button, #editor-floors p, .editor-floor-row, #editor-time,
+#editor-floors button, #editor-floors p, .editor-floor-row, #editor-history,
 #editor-cameras button { background: var(--twinGlass); backdrop-filter: blur(16px); }
 .editor-shell button:is([aria-pressed="true"], [aria-selected="true"]),
 .editor-shell button:is([aria-pressed="true"], [aria-selected="true"]):is(:hover, :focus-visible),
@@ -377,3 +363,21 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-edit-timing pre { margin: 6px 0 0; font: 11px/1.5 ui-monospace, monospace; white-space: pre-wrap; }
 #editor-menu button[aria-pressed="true"] { color: var(--editor-accent); }
 @media (max-width: 760px) { #editor-edit-timing { right: 16px; } }
+
+/* History uses the Floors buttons, the Argyle glass panel and its scrolling body. */
+#editor-sidebar { position: absolute; right: 14px; top: 14px; bottom: 96px; width: var(--editor-side); display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+#editor-sidebar #editor-floors { position: static; width: auto; flex-shrink: 0; }
+#editor-sidebar #editor-agent { position: static; width: auto; flex: 1; min-height: 130px; }
+#editor-history { flex-shrink: 0; min-height: 44px; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); backdrop-filter: blur(16px); overflow: hidden; }
+#editor-history summary { cursor: pointer; padding: 10px 14px; min-height: 44px; font-weight: 600; }
+#editor-history-body { padding: 0 12px 12px; max-height: min(28dvh, 260px); overflow-y: auto; color: var(--editor-muted); font-size: 12px; }
+#editor-history-list { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 5px; }
+#editor-history-list button { width: 100%; text-align: left; overflow-wrap: anywhere; }
+#editor-history-list [aria-current="step"] { border-color: var(--editor-accent); color: var(--editor-accent); }
+#time-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+@media (max-width: 700px) {
+  #editor-sidebar { left: 8px; right: 8px; top: calc(52% + 8px); bottom: calc(8px + env(safe-area-inset-bottom)); width: auto; gap: 8px; overflow-y: auto; }
+  #editor-sidebar #editor-floors { height: 56px; }
+  #editor-sidebar #editor-agent { flex-shrink: 0; }
+  #editor-history-body { max-height: 140px; }
+}

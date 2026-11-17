@@ -515,6 +515,7 @@ RULES = [
     ('PUT', '/api/house/editor/imports/uploads/{upload_id}/{index}', PARENTS, None),
     ('POST', '/api/house/editor/imports/uploads/{upload_id}/finish', PARENTS, None),
     ('DELETE', '/api/house/editor/imports/uploads/{upload_id}', PARENTS, None),
+    ('POST', '/api/house/editor/session', PARENTS, None),
     ('GET', '/api/house/editor/houses', PARENTS, None),
     ('POST', '/api/house/editor/houses', PARENTS, None),
     ('POST', '/api/house/editor/houses/upload', PARENTS, None),

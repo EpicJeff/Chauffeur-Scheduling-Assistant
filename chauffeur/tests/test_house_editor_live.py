@@ -271,7 +271,7 @@ def scenario_shell_matches_the_mockup_regions():
         _signed_in(page)
         _open(page, s)
         for sel in ('#editor-scene canvas', '#editor-top', '#editor-rail', '#editor-floors', '#editor-agent',
-                    '#editor-time'):
+                    '#editor-history'):
             check(page.locator(sel).first.is_visible(), sel)
         check('$' in page.inner_text('#editor-top'), 'running cost in the top bar')
         bar = page.get_by_placeholder("Ask Argyle... (e.g. 'What is my driving schedule today?')")
@@ -820,11 +820,16 @@ def scenario_timeline_previews_and_returns_without_rewriting_history():
         # a settled main-floor wall of the house it leaves current; an early
         # round (the whole-floor walls read, which the fake reader answers with
         # the crop's own edges) has only ghosts.
-        page.evaluate("(i) => window.__editor.scrubTo(i)", n - 2)
+        page.locator('#editor-history summary').click()
+        rows = page.locator('#editor-history-list button')
+        check(rows.count() == min(n, 50), 'the History list shows the kept steps')
+        check(rows.first.get_attribute('aria-current') == 'step', 'newest first, current marked')
+        rows.nth(1).click()
         page.wait_for_selector('#time-chip', state='visible', timeout=10000)
         check(len(_api(page, 'GET', 'state')['body']['rounds']) == n, 'preview only')
         page.click('#time-return')
-        page.wait_for_function("(n) => window.__editor.roundCount() === n + 1", arg=n, timeout=10000)
+        page.wait_for_selector('#time-chip', state='hidden', timeout=10000)
+        page.wait_for_function("(n) => window.__editor.roundCount() === Math.min(50, n + 1)", arg=n, timeout=10000)
         rounds = _api(page, 'GET', 'state')['body']['rounds']
         check(rounds[-1]['kind'] == 'revert', rounds[-1])
         page.click('#time-now')
@@ -1149,7 +1154,8 @@ def scenario_return_here_leaves_preview():
         check(page.locator('#time-return').is_disabled(), 'nothing to return to at the newest step')
         page.evaluate("(i) => window.__editor.scrubTo(i)", 1)
         page.click('#time-return')
-        page.wait_for_function("(n) => window.__editor.roundCount() === n + 1", arg=n, timeout=10000)
+        page.wait_for_selector('#time-chip', state='hidden', timeout=10000)
+        page.wait_for_function("(n) => window.__editor.roundCount() === Math.min(50, n + 1)", arg=n, timeout=10000)
         check(not page.locator('#time-chip').is_visible(), 'back to the present after returning')
 
 

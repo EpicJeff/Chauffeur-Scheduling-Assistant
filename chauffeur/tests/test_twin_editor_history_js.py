@@ -68,7 +68,7 @@ try {
   solar_zones:[{id:'z',roof:'roof',plane:[0,0,10],rect:[28,28,32,34]}],
   openings:[{id:'door',kind:'door',width:3,sill:0,head:7,at:4,state:'ghost'}]}],site:{}};
  let seq=0,rounds=[{id:'r0'}],saved=new Map([['r0',structuredClone(plan)]]),holdResponse=null,holdRender=null;
- const writes=[],reverts=[];let sheetReads=0,failSheets=false;
+ const writes=[],reverts=[];let sheetReads=0,failSheets=false,sessionStarts=0;
  const response=(status,body)=>({ok:status<400,status,text:async()=>JSON.stringify(body)});
  const state=()=>({plan:structuredClone(plan),model:structuredClone(plan),rounds:structuredClone(rounds),cost:{},build:null});
  const record=()=>{const id='r'+(++seq);saved.set(id,structuredClone(plan));rounds.push({id});return id;};
@@ -78,6 +78,7 @@ try {
   if(path==='editor/sheets'){sheetReads++;if(failSheets)throw Error('Sheets temporarily unavailable');return response(200,{sources:[],page_roles:[],place:{buildings:[{id:'b'}]}});}
   if(path==='twin/kit/modern_farmhouse')return response(200,{});
   if(path==='editor/state')return response(200,state());
+  if(path==='editor/session'){sessionStarts++;return response(200,{cleaned:250,saved:{name:'Before cleanup 2026-11-16'}});}
   if(path==='twin/revert'){
    const {round}=JSON.parse(init.body);reverts.push(round);plan=structuredClone(saved.get(round));return response(200,{round:record()});
   }
@@ -102,6 +103,9 @@ try {
   return next(spec,ctx);
  }});
  const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready);
+ assert.equal(sessionStarts,1);
+ assert.deepEqual(alerts,['Older history was cleared. A copy of the house was saved as Before cleanup 2026-11-16.']);alerts.length=0;
+ ok('editor starts one session and reports its saved cleanup copy');
  assert.equal(editorView.state.time,'day');assert.equal(editorView.state.unlit,false);
  const hooks=window.__twinEditor,card=document.getElementById('piece-card');
  const button=text=>card.querySelectorAll('button').find(b=>b.textContent===text);

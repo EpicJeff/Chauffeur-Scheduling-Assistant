@@ -8412,6 +8412,12 @@ def _house_editor_call(operation, *args, lookup=False, **kwargs):
         raise HTTPException(status_code=500, detail='The house could not finish this request. Please try again.') from exc
 
 
+@app.post('/api/house/editor/session')
+def house_editor_session(request: Request):
+    from services import twin_history
+    return _house_editor_call(twin_history.start_session, _acting_id(request, None))
+
+
 @app.get('/api/house/editor/houses')
 def house_saves_list():
     from services import twin_house_saves as saves

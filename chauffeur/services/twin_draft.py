@@ -197,11 +197,10 @@ def _materials(answer, kit, notes):
 
 
 def _unfinished_run(inputs):
-    finished = {row.get('run') for row in twin_store.rounds() if row['kind'] == 'draft'}
     runs = Path(twin_store.DATA_DIR) / 'runs'
     if runs.is_dir():
         for path in sorted(runs.glob('*/run.json'), key=lambda p: p.stat().st_mtime, reverse=True):
-            if path.parent.name in finished:
+            if twin_store.draft_finished(path.parent.name):
                 continue
             metadata = json.loads(path.read_text(encoding='utf-8'))
             if metadata.get('inputs') == inputs:

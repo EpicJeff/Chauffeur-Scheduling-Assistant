@@ -119,8 +119,7 @@ def critique(run: str, renders: list[str], cameras: list[str], base: int | None 
             _validate(run, renders, cameras, base)
         except ValueError as exc:
             return None, str(exc)
-        if sum(r['kind'] == 'director' and r.get('run') == run
-               for r in twin_store.rounds()) >= twin_cost.ROUND_CAP:
+        if twin_store.director_round_count(run) >= twin_cost.ROUND_CAP:
             return None, 'round cap reached'
         settings = storage.get_settings()
         _, key = model_pools.credentials('twin', settings)

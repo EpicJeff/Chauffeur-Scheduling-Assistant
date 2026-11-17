@@ -68,6 +68,8 @@ assert.equal(prompts.length, 1); assert.match(prompts[0][0], /Save current house
 assert.equal(calls.filter(c => c.method === 'POST' && c.path === 'editor/houses').length, 1);
 assert.deepEqual(JSON.parse(calls.find(c => c.method === 'POST').body), {name: answer, thumbnail: 'data:image/png;base64,test'});
 assert.match(node('houses-list').textContent, /Before <experiment>/); assert.match(node('houses-list').textContent, /2 buildings · 5 rooms/); count++;
+rows = [{...saved, auto: true}]; await ui.refresh();
+assert.match(node('houses-list').textContent, /Automatic/); count++;
 answer = null; await press('houses-save');
 assert.equal(calls.filter(c => c.method === 'POST' && c.path === 'editor/houses').length, 1); count++;
 confirmed = false; await action('Load').click(); await flush(); assert.equal(loaded, 0); count++;

@@ -632,6 +632,13 @@ export async function boot() {
     // its own daylight sky, with the same renderer and lighting.
     view.scene.background?.set?.('#171e27');
     await polling.resume();
+    try {
+      const session = await request('session', 'POST');
+      if (session.cleaned) {
+        await polling.refreshState(); await renderScene();
+        if (session.saved) window.showGlobalAlert(`Older history was cleared. A copy of the house was saved as ${session.saved.name}.`);
+      }
+    } catch (error) { report(error); }
     view.scene.background?.set?.('#171e27');
     hooks.ready = true;
     syncBuildButton();

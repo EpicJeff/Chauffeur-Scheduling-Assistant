@@ -191,7 +191,18 @@
     <output id="editor-drag-hint" hidden></output><div id="editor-pin-marks" aria-hidden="true"></div>
     <svg id="editor-drag-layer" aria-hidden="true"><polygon id="editor-drag-outline" points=""></polygon></svg>
     <output id="time-chip" role="status" hidden></output>
+    <div id="editor-sidebar">
     <aside id="editor-floors" aria-label="Floors"><span>Floors</span><p>No floors yet</p></aside>
+    <details id="editor-history">
+      <summary>History</summary>
+      <div id="editor-history-body">
+        <p id="editor-history-note">Your build will appear here, one step at a time.</p>
+        <div id="time-actions" hidden><button id="time-return" type="button">Return to this house</button><button id="time-now" type="button">Return to now</button></div>
+        <ol id="editor-history-list" aria-label="House history"></ol>
+        <progress id="editor-progress" max="1" value="0" aria-label="Build progress"></progress>
+        <output id="editor-step-count">0 steps</output>
+      </div>
+    </details>
     <aside id="editor-agent" aria-label="Argyle">
       <header><h2>Argyle</h2><span id="editor-source-count">Drawings and photos</span></header>
       <div id="editor-panel-scroll">
@@ -217,14 +228,7 @@
         <button type="submit" aria-label="Send to Argyle">Send</button>
       </form>
     </aside>
-    <footer id="editor-time" aria-label="Build timeline">
-      <div id="editor-time-labels"></div>
-      <progress id="editor-progress" max="1" value="0" aria-label="Build progress"></progress>
-      <label for="editor-scrub" class="editor-sr-only">Look back through the house</label>
-      <input id="editor-scrub" type="range" min="0" max="0" value="0" step="1">
-      <div id="time-actions" hidden><button id="time-return" type="button">Return here</button><button id="time-now" type="button">Back to now</button></div>
-      <div><span id="editor-time-note">Your build will appear here, one step at a time.</span><output id="editor-step-count">0 steps</output></div>
-    </footer>
+    </div>
     <section id="place-view" aria-label="Your files" hidden>
       <header class="place-header">
         <div><h2 id="place-title">Your files</h2><p id="place-about">The lot and every building, with their drawings and photos.</p></div>

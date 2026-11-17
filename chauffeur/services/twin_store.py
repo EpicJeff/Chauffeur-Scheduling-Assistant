@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import io
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -21,6 +22,8 @@ from services.twin_timing import timed as _edit_timed
 from services import storage, twin_model, twin_model_bridge, twin_pdf, twin_plan, twin_place
 
 DATA_DIR = os.path.join(os.path.dirname(storage.DB_PATH), 'twin')
+HISTORY_KEEP = 50
+logger = logging.getLogger(__name__)
 _LOCK = threading.RLock()
 LIFECYCLE = threading.RLock()
 _MASTER_LOCKS = weakref.WeakValueDictionary()  # Only active page readers retain locks.
@@ -52,6 +55,8 @@ def _state(settings=None):
     row.setdefault('generation', 0)
     for key in ('rounds', 'fixes', 'sources', 'page_roles', 'registrations', 'tombstones'):
         row.setdefault(key, [])
+    row.setdefault('history_cleaned', len(row['rounds']) <= HISTORY_KEEP)
+    row.setdefault('pruned_runs', {})
     return row
 
 
@@ -398,6 +403,7 @@ def start_over() -> None:
             raise ValueError('Twin files must stay within the twin data directory.')
         # Invalidate late workers and clear pointers before any fallible deletion.
         _save({'generation': next_generation, 'place': twin_place.empty_place()})
+        (root / 'fixes.jsonl').unlink(missing_ok=True)
         for target in targets:
             if target.is_symlink():
                 target.unlink()
@@ -539,6 +545,73 @@ def round_state_path(round_id):
     return Path(DATA_DIR) / 'rounds' / f'{round_id}.state.json'
 
 
+def _prune_history(row):
+    """Prepare retention in the private row; unlink only after it is published."""
+    if not row['history_cleaned']:
+        return []
+    older = row['rounds'][:-HISTORY_KEEP]
+    anchor = next((r['id'] for r in reversed(older) if round_state_path(r['id']).is_file()), None)
+    dropped = [r for r in older if r['id'] not in (row['current'], anchor)]
+    ids = {r['id'] for r in dropped}
+    row['rounds'] = [r for r in row['rounds'] if r['id'] not in ids]
+    for record in dropped:
+        if record.get('run') and record['kind'] in ('draft', 'director'):
+            tally = row['pruned_runs'].setdefault(record['run'], {'draft': False, 'director': 0})
+            if record['kind'] == 'draft':
+                tally['draft'] = True
+            else:
+                tally['director'] += 1
+    return dropped
+
+
+def _delete_round_files(dropped):
+    for record in dropped:
+        for path in (Path(DATA_DIR) / 'rounds' / f'{record["id"]}.json', round_state_path(record['id'])):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning('Could not remove old house round %s', path, exc_info=True)
+
+
+def _save_with_fixes(row, changes=()):
+    """Roll back the appended bytes if the settings mutation refuses publication."""
+    rows = [*row['fixes'], *changes]
+    path = Path(DATA_DIR) / 'fixes.jsonl'
+    offset = path.stat().st_size if path.exists() else 0
+    existed = path.exists()
+    try:
+        if rows:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = ''.join(json.dumps(r, ensure_ascii=False, allow_nan=False) + '\n' for r in rows).encode('utf-8')
+            with path.open('ab') as file:
+                file.write(data)
+                file.flush()
+                os.fsync(file.fileno())
+        row['fixes'] = []
+        _save(row)
+    except Exception:
+        if path.exists():
+            with path.open('r+b') as file:
+                file.truncate(offset)
+            if not existed:
+                path.unlink()
+        raise
+
+
+def draft_finished(run):
+    with _LOCK:
+        row = _state()
+        return bool(row['pruned_runs'].get(run, {}).get('draft') or any(
+            r['kind'] == 'draft' and r.get('run') == run for r in row['rounds']))
+
+
+def director_round_count(run):
+    with _LOCK:
+        row = _state()
+        return row['pruned_runs'].get(run, {}).get('director', 0) + sum(
+            r['kind'] == 'director' and r.get('run') == run for r in row['rounds'])
+
+
 @_edit_timed('round')
 def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, changes=(), step=None, partial=False,
                   *, restored_from=None, normalized=False):
@@ -574,8 +647,8 @@ def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, chan
             row['current'] = round_id
         if kind == 'load':
             atomic_json(round_state_path(round_id), house_state(row))
-        row['fixes'].extend({**change, 'round': round_id, 'at': at} for change in changes)
-        _save(row)
+        dropped = _prune_history(row)
+        _save_with_fixes(row, ({**change, 'round': round_id, 'at': at} for change in changes))
         if not stale:
             _write_through(row, text, normalized)
     except Exception:
@@ -584,6 +657,7 @@ def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, chan
         target.unlink(missing_ok=True)
         round_state_path(round_id).unlink(missing_ok=True)
         raise
+    _delete_round_files(dropped)
     return round_id
 
 
@@ -770,7 +844,9 @@ def save_hand_edit(plan: dict, reason: str, base: int | None = None) -> int:
 
 def fixes() -> list[dict]:
     with _LOCK:
-        return _state()['fixes']
+        path = Path(DATA_DIR) / 'fixes.jsonl'
+        rows = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line] if path.exists() else []
+        return rows + _state()['fixes']
 
 
 def save_source(kind: str, filename: str, data: bytes, *, content_type: str | None = None,

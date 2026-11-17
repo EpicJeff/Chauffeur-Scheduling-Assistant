@@ -691,8 +691,8 @@ def scenario_every_tool_is_in_view_at_1280x800():
         for b in got['buttons']:
             check(got['top'] - 0.5 <= b['top'] and b['bottom'] <= got['bottom'] + 0.5,
                   (f"{b['text']} is inside the rail's visible box", b, got['top'], got['bottom']))
-            check(b['top'] >= got['header'] and b['bottom'] <= got['height'] - 160,
-                  (f"{b['text']} sits between the header and the timeline", b, got['header'], got['height']))
+            check(b['top'] >= got['header'] and b['bottom'] <= got['height'] - 24,
+                  (f"{b['text']} sits between the header and the bottom of the scene", b, got['header'], got['height']))
         for name in ('Delete', 'Undo', 'Redo', 'Sheet'):
             rail_button = page.locator('#editor-rail button', has_text=name).first
             check(rail_button.is_visible() and _uncovered(page, rail_button), f'{name} is in view and on top at 1280x800')

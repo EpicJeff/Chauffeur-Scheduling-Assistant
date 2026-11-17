@@ -165,7 +165,8 @@ def _normalize(document):
 
 
 def _metadata(document):
-    return {key: deepcopy(document[key]) for key in ('id', 'name', 'created_at', 'created_by', 'size', 'summary', 'thumbnail')}
+    return {**{key: deepcopy(document[key]) for key in ('id', 'name', 'created_at', 'created_by', 'size', 'summary', 'thumbnail')},
+            'auto': document.get('auto') is True}
 
 
 def _document(model, state, title, member, thumbnail=None):
@@ -206,9 +207,12 @@ def current_document(title='Current house', member=None, thumbnail=None):
         return document
 
 
-def save_current(title, member, thumbnail=None):
+def save_current(title, member, thumbnail=None, *, auto=False):
     with store.LIFECYCLE, store._LOCK:
-        return _write(current_document(title, member, thumbnail))
+        document = current_document(title, member, thumbnail)
+        if auto:
+            document['auto'] = True
+        return _write(document)
 
 
 def download(sid=None):
