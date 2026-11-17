@@ -1,8 +1,12 @@
 import * as THREE from 'three';
-import { surfaceMaterial } from './water_surface.js';
+import { surfaceMaterial, CHOP_WAVE_SPEED_GAIN } from './water_surface.js';
+import { CHOP_CAUSTIC_SPEED_GAIN } from './underwater.js';
 import { groundAt, poolDatum, inPolygon, edgeDistance, segmentIntersection } from '../twin_ground.js';
 import { resolveFixture } from '../live/emitters.js';
 import { effectTarget } from './driver.js';
+
+export const CHOP_EASE_SECONDS = 3;
+const amplitude = pose => pose?.active ? pose.opacity * (.25 + .75 * pose.t) : 0;
 
 export function waterBodies(plan) {
   const pool = plan.site?.pool;
@@ -116,6 +120,9 @@ export function rippleSources(plan) {
     }
   }
   for (const body of bodies) {
+    // A multi-segment fall is one fixture; the contact budget must not weight it
+    // more heavily or leave a running feature out of the whole-body response.
+    body.fixtures = [...new Map(body.sources.map(s => [s.fixture.id, s.fixture])).values()];
     const centre = body.polygon.reduce((s,p) => s.map((v,k) => v + p[k] / body.polygon.length), [0,0]);
     const distance = s => edgeDistance(centre, s.a, s.b);
     body.sources.sort((a,b) => distance(a) - distance(b));
@@ -129,12 +136,34 @@ export function rippleMaterial(source, body, options = {}) {
   return surfaceMaterial(source, body, options);
 }
 
+export function updateChop(rows, fixtures, seconds, tier) {
+  const poses = new Map(fixtures.map(row => [row.fixture.id, row]));
+  for (const row of rows) {
+    const sources = row.body.fixtures || [...new Map(row.body.sources.map(s => [s.fixture.id, s.fixture])).values()];
+    const target = Math.sqrt(sources.reduce((sum, f) => sum + amplitude(poses.get(f.id)), 0) / sources.length);
+    const motion = row.uniforms.waterMotion.value;
+    const now = Number.isFinite(seconds) ? Math.max(row.chop?.clock ?? seconds, seconds) : row.chop?.clock ?? 0;
+    const dt = row.chop ? now - row.chop.clock : 0, previous = motion.x;
+    row.chop = {target, clock:now};
+    // Low shows the current still pose, like the fixture driver. It never
+    // animates a settling transition or asks for another frame.
+    if (tier === 'low') { motion.x = target; continue; }
+    const decay = Math.exp(-dt / CHOP_EASE_SECONDS);
+    motion.x = target + (previous - target) * decay;
+    // Integrate speed rather than multiplying the wall clock by a changing
+    // gain, which would jump wave phases whenever a pump changes level.
+    const travel = target * dt + (previous - target) * CHOP_EASE_SECONDS * (1 - decay);
+    motion.y += travel * CHOP_WAVE_SPEED_GAIN;
+    motion.z += travel * CHOP_CAUSTIC_SPEED_GAIN;
+  }
+}
+
 export function updateRipples(rows, fixtures, seconds, tier) {
   for (const {body, uniforms} of rows) {
     uniforms.rippleTime.value = tier === 'low' ? 0 : seconds;
     body.sources.forEach((source,i) => {
       const f = source.fixture, pose = fixtures.find(r => r.fixture.id === f.id) || {...effectTarget(f), opacity: 0};
-      uniforms.rippleStrength.value[i] = pose.active ? pose.opacity * (.25 + .75 * pose.t) : 0;
+      uniforms.rippleStrength.value[i] = amplitude(pose);
       if(source.aim) {
         const p=waterReach(source.aim,pose.size);uniforms.rippleLines.value[i].set(p[0],p[1],p[0],p[1]);return;
       }

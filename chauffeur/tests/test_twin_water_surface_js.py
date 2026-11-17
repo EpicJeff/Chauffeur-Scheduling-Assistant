@@ -15,6 +15,7 @@ const W=await import(file('static/twin/effects/water_ripples.js'));
 const S=await import(file('static/twin/effects/water_surface.js'));
 const U=await import(file('static/twin/effects/underwater.js'));
 const SIM=await import(file('static/twin/effects/water_sim.js'));
+const {buildEffects}=await import(file('static/twin/effects/index.js'));
 const {createUnlit}=await import(file('static/twin/unlit.js'));
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,`${a} != ${b}`);
@@ -32,6 +33,147 @@ const compile=material=>{const shader={uniforms:{},vertexShader:THREE.ShaderLib.
  fragmentShader:THREE.ShaderLib.standard.fragmentShader};material.onBeforeCompile(shader,{});return shader;};
 const all=group=>{const found=[];group.traverse(o=>{if(o.isMesh)found.push(o);});return found;};
 const poolDraws=group=>all(group).filter(o=>o.userData.yardPart==='pool').length;
+let baselineYard;
+async function headYard(){
+ if(baselineYard)return baselineYard;
+ const urls=new Map();for(const [path,original] of Object.entries(input.baseline)){
+  const source=original.replace(/((?:from|import)\s*['"])(\.[^'"]+)(['"])/g,(_,a,s,b)=>{
+   const target=new URL(s,file(path)).href,child=Object.keys(input.baseline).find(p=>file(p)===target);
+   return a+(child?'water-baseline:'+child:target)+b;});
+  urls.set(path,'data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+ }
+ registerHooks({resolve(spec,ctx,next){return spec.startsWith('water-baseline:')?{url:urls.get(spec.slice(15)),shortCircuit:true}:next(spec,ctx);}});
+ baselineYard=await import(urls.get('static/twin/twin_yard.js'));return baselineYard;
+}
+const rowFor=(water,id='pool')=>water.rows.find(row=>row.body.id===id);
+const waterFor=async(p,tier='medium')=>(await Y.buildYard(p,kit(),tier)).group.userData.water;
+function motionAt(shader,p){
+ // Execute the generated selector's scalar GLSL control flow as JavaScript.
+ // No vector arithmetic is involved; only its local type declarations differ.
+ const start=shader.fragmentShader.indexOf('vec3 waterMotionAt(vec2 p) {');assert.ok(start>=0);
+ const open=shader.fragmentShader.indexOf('{',start);let end=open+1,depth=1;
+ while(depth){const c=shader.fragmentShader[end++];if(c==='{')depth++;if(c==='}')depth--;}
+ const body=shader.fragmentShader.slice(open+1,end-1).replace(/\b(bool|int|vec2)\b/g,'let');
+ const entries=Object.entries(shader.uniforms).filter(([key])=>key.startsWith('water'));
+ return new Function(...entries.map(([key])=>key),'p',body)(...entries.map(([,u])=>u.value),new THREE.Vector2(...p));
+}
+await test('zero_chop_matches_shipped_uniforms_on_every_tier',async()=>{
+ const old=await headYard();
+ for(const tier of ['low','medium','high','max'])for(const sourced of [false,true]){
+  const p=plan(true,sourced),before=(await old.buildYard(p,kit(),tier)).group.userData.water,after=await waterFor(p,tier);
+  for(const time of [0,1,10]){
+   before.update([],time);after.update([],time);
+   for(const name of ['surfaces','submerged']){
+    assert.equal(after[name].length,before[name].length);
+    after[name].forEach((row,i)=>{
+     for(const [key,u] of Object.entries(before[name][i].uniforms))assert.deepEqual(row.uniforms[key].value,u.value,key);
+     assert.deepEqual(row.uniforms.waterMotion.value.toArray(),[0,0,0]);
+     const shader=compile(row.material);assert.equal(shader.uniforms.waterMotion,row.uniforms.waterMotion);
+    });
+   }
+  }
+ }
+});
+await test('chop_averages_unique_wet_fixtures_and_excludes_steam_and_mist',async()=>{
+ const p=plan();p.effect_fixtures=['fountain','bubbler','deck_jet','steam','mist'].map((type,i)=>({...effect,
+  id:type,type,at:[12+i,10,0],entity:'switch.'+type}));
+ const water=await waterFor(p),fx=buildEffects(p),row=rowFor(water);
+ water.update(fx.fixtures,0);
+ let states={'switch.fountain':{state:'on'},'switch.steam':{state:'on'},'switch.mist':{state:'on'}};
+ fx.update(states,false,0);fx.update(states,false,1);water.update(fx.fixtures,1);
+ assert.equal(row.body.fixtures.length,3);near(row.chop.target,Math.sqrt(1/3));
+ states=Object.fromEntries(p.effect_fixtures.map(f=>[f.entity,{state:'on'}]));
+ fx.update(states,false,1);fx.update(states,false,2);water.update(fx.fixtures,2);near(row.chop.target,1);
+ const vapour={...p,effect_fixtures:p.effect_fixtures.filter(f=>['steam','mist'].includes(f.type))};
+ const quiet=await waterFor(vapour);quiet.update(buildEffects(vapour).fixtures,100);
+ assert.equal(quiet.rows.length,0);assert.equal(quiet.simulations.size,0);
+ assert.ok([...quiet.surfaces,...quiet.submerged].every(r=>r.uniforms.waterMotion.value.x===0));
+ assert.equal(Y.yardPartKeys(vapour,kit(),'medium').pool,Y.yardPartKeys({...p,effect_fixtures:[]},kit(),'medium').pool);
+});
+await test('chop_counts_a_line_once_and_keeps_fixtures_beyond_the_contact_budget',async()=>{
+ const p=plan();p.effect_fixtures=[{...effect,id:'fall',type:'waterfall',shape:'line',at:undefined,
+  path:[[4,8,3],[8,8,3],[12,8,3]],facing:'out'},...Array.from({length:8},(_,i)=>({...effect,id:'point'+i,
+   at:[10+i,12,0],entity:'switch.off'}))];
+ const water=await waterFor(p),fx=buildEffects(p),row=rowFor(water);
+ water.update(fx.fixtures,0);assert.equal(row.body.sources.length,8);assert.equal(row.body.fixtures.length,9);
+ near(row.chop.target,Math.sqrt(1/9));
+});
+await test('chop_uses_the_real_eased_fixture_amplitude',async()=>{
+ const p=plan();p.effect_fixtures=[{...effect,entity:'switch.pump',sensor:'sensor.rpm',sensor_min:0,sensor_max:100}];
+ const water=await waterFor(p),fx=buildEffects(p),row=rowFor(water);
+ const states={'switch.pump':{state:'on'},'sensor.rpm':{state:'20'}};
+ fx.update(states,false,0);water.update(fx.fixtures,0);fx.update(states,false,.5);water.update(fx.fixtures,.5);
+ const pose=fx.fixtures[0];near(row.chop.target,Math.sqrt(pose.opacity*(.25+.75*pose.t)));
+ assert.ok(row.chop.target>0&&row.chop.target<1);
+ fx.update({},true,1);water.update(fx.fixtures,1);near(row.chop.target,0);
+});
+await test('chop_eases_over_seconds_both_ways_and_integrates_phase_without_frame_rate_drift',async()=>{
+ const p=plan(),fx=buildEffects(p),water=await waterFor(p),other=await waterFor(p),row=rowFor(water);
+ water.update(fx.fixtures,0);other.update(fx.fixtures,0);
+ water.update(fx.fixtures,1/60);near(row.uniforms.waterMotion.value.x,1-Math.exp(-1/180));
+ assert.ok(row.uniforms.waterMotion.value.x<.01);
+ water.update(fx.fixtures,3);near(row.uniforms.waterMotion.value.x,1-Math.exp(-1));
+ water.update(fx.fixtures,9);other.update(fx.fixtures,9);
+ row.uniforms.waterMotion.value.toArray().forEach((v,i)=>near(v,rowFor(other).uniforms.waterMotion.value.getComponent(i)));
+ const motion=row.uniforms.waterMotion.value.clone();
+ near(motion.y,(9-3*(1-Math.exp(-3)))*S.CHOP_WAVE_SPEED_GAIN);
+ near(motion.z,(9-3*(1-Math.exp(-3)))*U.CHOP_CAUSTIC_SPEED_GAIN);
+ water.update([],9);near(row.uniforms.waterMotion.value.x,motion.x);
+ water.update([],9+1/60);assert.ok(row.uniforms.waterMotion.value.x>.9);
+ water.update([],12);near(row.uniforms.waterMotion.value.x,motion.x/Math.E);
+ water.update([],8);near(row.uniforms.waterMotion.value.x,motion.x/Math.E);
+ water.update([],NaN);assert.ok(row.uniforms.waterMotion.value.toArray().every(Number.isFinite));
+});
+await test('low_chop_holds_a_still_pose_and_never_schedules_or_renders',async()=>{
+ const p=plan(),water=await waterFor(p,'low'),fx=buildEffects(p,{tier:'low'});
+ let requests=0,draws=0;const raf=globalThis.requestAnimationFrame;
+ globalThis.requestAnimationFrame=()=>{requests++;};
+ try{
+  const renderer={render(){draws++;}};water.update(fx.fixtures,0,{renderer});
+  const snapshot=JSON.stringify([...water.surfaces,...water.submerged].map(r=>r.uniforms));
+  for(const seconds of [1/60,3,30])water.update(fx.fixtures,seconds,{renderer});
+  assert.equal(JSON.stringify([...water.surfaces,...water.submerged].map(r=>r.uniforms)),snapshot);
+  assert.deepEqual(rowFor(water).uniforms.waterMotion.value.toArray(),[1,0,0]);
+  assert.equal(requests,0);assert.equal(draws,0);assert.equal(water.simulations.size,0);
+  water.update([],31,{renderer});assert.deepEqual(rowFor(water).uniforms.waterMotion.value.toArray(),[0,0,0]);
+ }finally{globalThis.requestAnimationFrame=raf;}
+});
+await test('pool_and_inset_spas_have_independent_chop_without_splitting_shared_floor_draws',async()=>{
+ const old=await headYard();
+ for(const tier of ['low','medium','high','max']){
+  const p=plan();p.effect_fixtures=[effect,{...effect,id:'spa-bubbler',type:'bubbler',at:[28,20,0],entity:'switch.spa'},
+   {...effect,id:'raised-jet',type:'spa_jet',at:[28,5,2],entity:'switch.raised'}];
+  const yard=await Y.buildYard(p,kit(),tier),water=yard.group.userData.water,fx=buildEffects(p,{tier});
+  water.update(fx.fixtures,0);water.update(fx.fixtures,30);
+  near(rowFor(water).chop.target,1);near(rowFor(water,'flush').chop.target,0);near(rowFor(water,'raised').chop.target,0);
+  assert.equal(poolDraws(yard.group),poolDraws((await old.buildYard(p,kit(),tier)).group));
+  for(const row of water.submerged){
+   const shader=compile(row.material);
+   for(const [key,u] of Object.entries(row.uniforms))assert.equal(shader.uniforms[key],u);
+  }
+  if(tier==='low'||tier==='medium'){
+   const shared=water.submerged.find(r=>r.uniforms.waterRegionMotion0);assert.ok(shared);
+   const ids=W.waterBodies(p).filter(b=>b.height===rowFor(water).body.height).map(b=>b.id);
+   assert.deepEqual(ids,['flush','pool']);
+   ids.forEach((id,i)=>{
+    assert.equal(shared.uniforms['waterRegionMotion'+i],rowFor(water,id).uniforms.waterMotion);
+    assert.deepEqual(shared.uniforms['waterRegionPolygon'+i].value.map(v=>v.toArray()),rowFor(water,id).body.polygon);
+   });
+   const shader=compile(shared.material);
+   assert.equal(motionAt(shader,[28,20]),rowFor(water,'flush').uniforms.waterMotion.value);
+   assert.equal(motionAt(shader,[16,10]),rowFor(water).uniforms.waterMotion.value);
+  }
+  const states={'switch.spa':{state:'on'}};fx.update(states,false,30);fx.update(states,false,31);water.update(fx.fixtures,31);
+  near(rowFor(water,'flush').chop.target,1);near(rowFor(water,'raised').chop.target,0);
+ }
+});
+await test('a_fall_off_a_spa_rim_drives_pool_chop_only',async()=>{
+ const p=plan();p.effect_fixtures=[{...effect,id:'rim-fall',type:'waterfall',shape:'line',at:undefined,
+  path:[[24,8,2],[24,1,2]],facing:'out'}];
+ const water=await waterFor(p),fx=buildEffects(p);water.update(fx.fixtures,0);water.update(fx.fixtures,3);
+ assert.deepEqual(water.rows.map(r=>r.body.id),['pool']);near(rowFor(water).chop.target,1);
+ assert.ok(rowFor(water).uniforms.waterMotion.value.x>.6);
+});
 for(const tier of ['low','medium','high','max'])await test('all_water_and_submerged_surfaces_'+tier,async()=>{
  const p=plan(),yard=await Y.buildYard(p,kit(),tier),water=yard.group.userData.water;
  assert.ok(water);assert.equal(water, yard.group.userData.ripples);
@@ -200,14 +342,7 @@ await test('unsupported_half_float_falls_back_without_corrupting_renderer',()=>{
  assert.equal(sim.uniforms.waterFieldActive.value,0);assert.equal(sim.uniforms.waterField.value,null);sim.dispose();
 });
 await test('pool_part_draw_counts_against_head_for_raised_flush_and_sources',async()=>{
- const urls=new Map();for(const [path,original] of Object.entries(input.baseline)){
-  const source=original.replace(/((?:from|import)\s*['"])(\.[^'"]+)(['"])/g,(_,a,s,b)=>{
-   const target=new URL(s,file(path)).href,child=Object.keys(input.baseline).find(p=>file(p)===target);
-   return a+(child?'water-baseline:'+child:target)+b;});
-  urls.set(path,'data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
- }
- registerHooks({resolve(spec,ctx,next){return spec.startsWith('water-baseline:')?{url:urls.get(spec.slice(15)),shortCircuit:true}:next(spec,ctx);}});
- const old=await import(urls.get('static/twin/twin_yard.js'));
+ const old=await headYard();
  for(const tier of ['low','medium','high','max'])for(const raised of [false,true])for(const sourced of [false,true]){
   const p=plan(raised,sourced),before=poolDraws((await old.buildYard(p,kit(),tier)).group),after=poolDraws((await Y.buildYard(p,kit(),tier)).group);
   console.log(`POOL_DRAWS tier=${tier} raised=${raised} sources=${sourced} before=${before} after=${after}`);
@@ -222,7 +357,9 @@ finish();
 def run():
     baseline = {path: subprocess.check_output(['git', 'show', 'HEAD:chauffeur/' + path],
                 cwd=ROOT, encoding='utf-8') for path in
-                ['static/twin/twin_yard.js', 'static/twin/pool_features.js']}
+                ['static/twin/twin_yard.js', 'static/twin/pool_features.js',
+                 'static/twin/effects/water_surface.js', 'static/twin/effects/underwater.js',
+                 'static/twin/effects/water_ripples.js']}
     node = shutil.which('node')
     assert node, 'Node is required'
     scratch = ROOT / '.tmp-effects'

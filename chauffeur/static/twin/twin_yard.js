@@ -26,7 +26,7 @@ import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.
 import { buildFence } from './fence_geometry.js';
 import { buildPadEdge } from './pad_edge_geometry.js';
 import { buildPoolFeatures, cutSurface, offsetOutline, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';
-import { waterBodies, rippleSources, updateRipples } from './effects/water_ripples.js';
+import { waterBodies, rippleSources, updateRipples, updateChop } from './effects/water_ripples.js';
 import { surfaceMaterial } from './effects/water_surface.js';
 import { underwaterMaterial } from './effects/underwater.js';
 import { createWaterSimulation } from './effects/water_sim.js';
@@ -672,10 +672,16 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         if (!mesh.isMesh || mesh.userData.part === 'water' || !poolBody) return;
         const body = bodies.find(b => b.id === mesh.userData.waterBody) || poolBody;
         const simulation = simulations.get(body.id), source = mesh.material;
-        const key = 'underwater:' + source.uuid + ':' + tier + ':' + (simulation ? body.id + ':' + sourced.get(body.id).material.uuid : body.height);
+        const peers = simulation ? [] : bodies.filter(b => b.height === body.height && !simulations.has(b.id));
+        const moving = peers.filter(b => sourced.has(b.id));
+        const regions = moving.length && peers.length > 1 ? peers.map(b => ({polygon:b.polygon,
+          motion:sourced.get(b.id)?.uniforms.waterMotion || {value:new THREE.Vector3()}})) : [];
+        const key = 'underwater:' + source.uuid + ':' + tier + ':' + (simulation ? body.id + ':' + sourced.get(body.id).material.uuid : body.height)
+          + (moving.length ? ':chop:' + moving.map(b => sourced.get(b.id).material.uuid).join(':') : '');
         let material = mats.get(key);
         if (!material) {
-          const row = underwaterMaterial(source, body, {tier, simulation, tint:tints.get(body.id) || tints.get(poolBody.id)});
+          const row = underwaterMaterial(source, body, {tier, simulation, tint:tints.get(body.id) || tints.get(poolBody.id),
+            motion:sourced.get(body.id)?.uniforms.waterMotion, regions});
           material = row.material; mats.set(key, material);
         }
         mesh.material = material;
@@ -686,6 +692,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         const water = {rows, surfaces, submerged, simulations,
           update(fixtures, seconds, {renderer, camera, sun = 3, sunDirection} = {}) {
             updateRipples(rows, fixtures, seconds, tier);
+            updateChop(rows, fixtures, seconds, tier);
             for (const {material, uniforms} of surfaces) {
               // A live Library edit can restore the slot's opaque parameters.
               // The water interface always retains its Fresnel alpha contract.

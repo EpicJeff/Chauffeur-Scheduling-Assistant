@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 
+export const CHOP_WAVE_STRENGTH_GAIN = 2.2;
+export const CHOP_WAVE_SPEED_GAIN = .65;
+export const CHOP_SHIMMER_GAIN = .35;
+
 // World positions are metres in the mounted scene; plan geometry and sources are feet.
 export const WATER_VERTEX = `varying vec3 vWaterWorld;
 `;
@@ -9,17 +13,18 @@ uniform float waterTime;
 // Four wave trains in plan feet, from a slow swell down to wind chop. Each one is
 // warped by the others so no straight crest line shows, and each fades out before
 // it would alias.
-vec2 waterTrain(vec2 p, vec2 k, float speed, float slope) {
-  float phase = dot(p, k) + waterTime * speed;
+vec2 waterTrain(vec2 p, vec2 k, float speed, float slope, float time) {
+  float phase = dot(p, k) + time * speed;
   return normalize(k) * cos(phase) * slope * (1.0 - smoothstep(.6, 2.6, fwidth(phase)));
 }
-vec2 waterSlope(vec2 p) {
-  vec2 warp = vec2(sin(p.y * .31 + waterTime * .21), cos(p.x * .27 - waterTime * .17)) * 1.4;
+vec2 waterSlope(vec2 p, vec3 motion) {
+  float time = waterTime + motion.y;
+  vec2 warp = vec2(sin(p.y * .31 + time * .21), cos(p.x * .27 - time * .17)) * 1.4;
   vec2 q = p + warp;
-  return waterTrain(q, vec2(.62, .33), -.74, .05)
-    + waterTrain(q + warp, vec2(-1.1, 1.5), 1.2, .055)
-    + waterTrain(p - warp, vec2(2.9, 1.7), -1.9, .045)
-    + waterTrain(p + warp * .5, vec2(-3.6, -5.2), 2.7, .035);
+  return (waterTrain(q, vec2(.62, .33), -.74, .05, time)
+    + waterTrain(q + warp, vec2(-1.1, 1.5), 1.2, .055, time)
+    + waterTrain(p - warp, vec2(2.9, 1.7), -1.9, .045, time)
+    + waterTrain(p + warp * .5, vec2(-3.6, -5.2), 2.7, .035, time)) * (1.0 + motion.x * ${CHOP_WAVE_STRENGTH_GAIN.toFixed(2)});
 }
 `;
 export const FIELD_GLSL = `
@@ -87,7 +92,7 @@ diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.92,.97,.98), min(.65, sourceFoam 
 export function surfaceMaterial(source, body = null, {tier = 'medium', simulation = null} = {}) {
   const material = source.clone(), before = source.onBeforeCompile, key = source.customProgramCacheKey();
   const sourced = !!body?.sources?.length;
-  const uniforms = {waterTime: {value: 0}, waterBaseOpacity:{value:Math.max(.0001, source.opacity)}};
+  const uniforms = {waterTime: {value: 0}, waterMotion:{value:new THREE.Vector3()}, waterBaseOpacity:{value:Math.max(.0001, source.opacity)}};
   if (sourced) Object.assign(uniforms, {
     rippleTime: {value: 0}, rippleLines: {value: Array.from({length:8}, () => new THREE.Vector4())},
     rippleStrength: {value: Array(8).fill(0)},
@@ -101,10 +106,10 @@ export function surfaceMaterial(source, body = null, {tier = 'medium', simulatio
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = WATER_VERTEX + shader.vertexShader;
     waterReplace(shader, 'vertexShader', '#include <project_vertex>', WATER_POSITION + '\n#include <project_vertex>');
-    shader.fragmentShader = WATER_VERTEX + WAVE_GLSL + 'uniform float waterBaseOpacity;\n' + (sourced ? RIPPLE_GLSL : '') + (simulation ? FIELD_GLSL : '') + shader.fragmentShader;
+    shader.fragmentShader = WATER_VERTEX + WAVE_GLSL + 'uniform float waterBaseOpacity; uniform vec3 waterMotion;\n' + (sourced ? RIPPLE_GLSL : '') + (simulation ? FIELD_GLSL : '') + shader.fragmentShader;
     waterReplace(shader, 'fragmentShader', '#include <color_fragment>', `#include <color_fragment>
 vec2 waterPoint = vec2(vWaterWorld.x, -vWaterWorld.z) / .3048;
-vec2 rippleSlope = waterSlope(waterPoint);
+vec2 rippleSlope = waterSlope(waterPoint, waterMotion);
 float waterAnalytic = ${simulation ? '1.0 - waterFieldActive' : '1.0'};
 ${sourced ? RIPPLE_SLOPE : ''}
 ${simulation ? 'rippleSlope += waterFieldShape(waterPoint).xy;' : ''}`);
@@ -115,7 +120,7 @@ vec3 waterNormal = inverseTransformDirection(normal, viewMatrix);
 float waterFresnel = .02 + .98 * pow(1.0 - abs(dot(waterNormal, waterView)), 5.0);
 // Retain map alpha and the native opacity uniform used by viewing/ghost clones.
 diffuseColor.a *= mix(.30, .92, waterFresnel) / waterBaseOpacity;`);
-    if (!unlit) waterReplace(shader, 'fragmentShader', '#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor, .08, .12);');
+    if (!unlit) waterReplace(shader, 'fragmentShader', '#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor, .08, .12) / (1.0 + waterMotion.x * ${CHOP_SHIMMER_GAIN.toFixed(2)});`);
   };
   material.onBeforeCompile = (shader, renderer) => compile(shader, renderer);
   material.customProgramCacheKey = () => key + '|water-surface-2' + (sourced ? '|water-ripples-2' : '') + (simulation ? '|water-field-1' : '');

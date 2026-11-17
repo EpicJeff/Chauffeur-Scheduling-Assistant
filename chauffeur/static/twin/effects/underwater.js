@@ -1,28 +1,55 @@
 import * as THREE from 'three';
 import {WATER_VERTEX, WATER_POSITION, WAVE_GLSL, FIELD_GLSL, waterReplace, keepWaterHook} from './water_surface.js';
 
+export const CHOP_CAUSTIC_CONTRAST_GAIN = .9;
+export const CHOP_CAUSTIC_SPEED_GAIN = .8;
+export const CHOP_FLOOR_WOBBLE_GAIN = .4;
+
 // One clone per source/level (source/body with a field), cached by the pool owner.
-export function underwaterMaterial(source, body, {tier = 'medium', simulation = null, tint = '#7fd0e6'} = {}) {
+export function underwaterMaterial(source, body, {tier = 'medium', simulation = null, tint = '#7fd0e6', motion = null, regions = []} = {}) {
   const material = source.clone(), before = source.onBeforeCompile, key = source.customProgramCacheKey();
-  const uniforms = {waterTime:{value:0}, waterLevel:{value:body.height * .3048},
+  const uniforms = {waterTime:{value:0}, waterMotion:motion || {value:new THREE.Vector3()}, waterLevel:{value:body.height * .3048},
     waterTint:{value:tint?.isColor ? tint.clone() : new THREE.Color(tint)},
     waterSun:{value:3}, waterSunDirection:{value:new THREE.Vector3(.4, .8, .3).normalize()}};
   if (simulation) Object.assign(uniforms, simulation.uniforms);
+  // Equal-height basins share a material and draw. Select their motion in the
+  // shader so a flush spa can stay calm while the surrounding pool is running.
+  let regionUniforms = '', regionTests = '';
+  regions.forEach((region, i) => {
+    uniforms['waterRegionMotion' + i] = region.motion;
+    uniforms['waterRegionPolygon' + i] = {value:region.polygon.map(p => new THREE.Vector2(...p))};
+    const count = region.polygon.length;
+    regionUniforms += `uniform vec3 waterRegionMotion${i}; uniform vec2 waterRegionPolygon${i}[${count}];\n`;
+    regionTests += `{
+  bool inside = false;
+  for (int i = 0; i < ${count}; i++) {
+    vec2 a = waterRegionPolygon${i}[i], b = waterRegionPolygon${i}[i == 0 ? ${count - 1} : i - 1];
+    if ((a.y > p.y) != (b.y > p.y)) {
+      if (p.x < (b.x-a.x) * (p.y-a.y) / (b.y-a.y) + a.x) inside = !inside;
+    }
+  }
+  if (inside) return waterRegionMotion${i};
+}\n`;
+  });
+  const motionGlsl = `uniform vec3 waterMotion;\n${regionUniforms}
+vec3 waterMotionAt(vec2 p) {
+${regionTests}return waterMotion;
+}\n`;
   const iterations = tier === 'max' ? 5 : tier === 'high' ? 4 : 3;
   const prepare = (shader, renderer, unlit) => {
     if (!unlit) before.call(material, shader, renderer);
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = WATER_VERTEX + shader.vertexShader;
     waterReplace(shader, 'vertexShader', '#include <project_vertex>', WATER_POSITION + '\n#include <project_vertex>');
-    shader.fragmentShader = WATER_VERTEX + WAVE_GLSL + (simulation ? FIELD_GLSL : '') + `
+    shader.fragmentShader = WATER_VERTEX + WAVE_GLSL + motionGlsl + (simulation ? FIELD_GLSL : '') + `
 uniform float waterLevel; uniform vec3 waterTint;
 uniform float waterSun; uniform vec3 waterSunDirection;
 // The bright net a rippled surface focuses on the floor: a point is warped through
 // itself a few times and the folds become the light lines. Returns the change in
 // sunlight around zero, so the floor keeps its average brightness. depth is metres.
-float waterCaustic(vec2 p, float depth) {
+float waterCaustic(vec2 p, float depth, vec3 motion) {
   vec2 q = p * 1.35, i = q;
-  float c = 1.0, time = waterTime * .55;
+  float c = 1.0, time = (waterTime + motion.z) * .55;
   for (int n = 0; n < ${iterations}; n++) {
     float t = time * (1.0 - 3.5 / float(n + 1));
     i = q + vec2(cos(t - i.x) + sin(t + i.y), sin(t - i.y) + cos(t + i.x));
@@ -33,7 +60,7 @@ float waterCaustic(vec2 p, float depth) {
   float net = pow(abs(c), 8.0);
   // Faint in the shallows where the light has not yet focused, soft again when deep.
   float reach = smoothstep(0.0, .25, depth) * exp(-depth * .18);
-  return (net * 6.5 - .55) * reach / (1.0 + fwidth(net) * 3.0);
+  return (net * 6.5 - .55) * reach / (1.0 + fwidth(net) * 3.0) * (1.0 + motion.x * ${CHOP_CAUSTIC_CONTRAST_GAIN.toFixed(2)});
 }
 ` + shader.fragmentShader;
     // These are the material's own lookups. Offsetting each transformed UV by
@@ -59,7 +86,8 @@ float waterCaustic(vec2 p, float depth) {
     waterReplace(shader, 'fragmentShader', 'void main() {', `void main() {
 float waterDepth = max(0.0, waterLevel - vWaterWorld.y);
 vec2 waterPoint = vec2(vWaterWorld.x, -vWaterWorld.z) / .3048;
-${tier !== 'low' ? `vec2 waterWobble = waterSlope(waterPoint) * waterDepth * .16;
+vec3 waterBodyMotion = waterMotionAt(waterPoint);
+${tier !== 'low' ? `vec2 waterWobble = waterSlope(waterPoint, waterBodyMotion) * waterDepth * .16 * (1.0 + waterBodyMotion.x * ${CHOP_FLOOR_WOBBLE_GAIN.toFixed(2)});
 ${simulation ? 'waterWobble += waterFieldShape(waterPoint).xy * waterDepth * .48;' : ''}` : ''}`);
     // Only directional sunlight is modulated; hemisphere/environment and local
     // lamps are never multiplied by the projected caustic pattern.
@@ -73,7 +101,7 @@ if (waterDepth > 0.0 && waterSun > 0.0) {
   float sunMatch = step(.999, dot(waterSunV, directLight.direction));
   float facing = max(0.0, dot(normal, waterSunV));
   vec2 projected = waterPoint + vec2(waterSunDirection.x, -waterSunDirection.z) * waterDepth / (.3048 * max(.2, waterSunDirection.y));
-  float focus = waterCaustic(projected, waterDepth);
+  float focus = waterCaustic(projected, waterDepth, waterBodyMotion);
   ${simulation ? 'focus += clamp(-waterFieldShape(projected).z * .12, -.35, .65) * exp(-waterDepth * .55);' : ''}
   directLight.color *= 1.0 + focus * facing * sunMatch * min(1.0, waterSun / 3.0);
 }`));
@@ -94,7 +122,7 @@ if (waterDepth > 0.0) {
 #include <opaque_fragment>`);
   };
   material.onBeforeCompile = (shader, renderer) => compile(shader, renderer);
-  material.customProgramCacheKey = () => key + '|underwater-2:' + tier + (simulation ? '|water-field-1' : '');
+  material.customProgramCacheKey = () => key + '|underwater-2:' + tier + (simulation ? '|water-field-1' : '') + (regions.length ? '|water-regions:' + regions.map(r => r.polygon.length).join(',') : '');
   Object.defineProperty(material.userData, 'waterUnlit', {value:{
     hook:(shader, renderer) => compile(shader, renderer, true), key:() => material.customProgramCacheKey() + '|matcap',
   }});
