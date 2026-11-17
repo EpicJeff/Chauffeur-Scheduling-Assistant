@@ -74,6 +74,8 @@ export function waterReplace(shader, stage, anchor, replacement) {
 }
 
 export function keepWaterHook(material, name, uniforms) {
+  // The override normal/depth material cannot reproduce water vertex motion.
+  material.userData.noOcclusion = true;
   Object.defineProperty(material.userData, name, {value: uniforms, configurable: true});
   const clone = material.clone;
   material.clone = function() {

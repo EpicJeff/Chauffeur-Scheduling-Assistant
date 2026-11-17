@@ -23,6 +23,7 @@ import { createUnlit } from './unlit.js';
 import { createViewing } from './viewing.js';
 import { createLevels } from './levels.js';
 import { mountFrameMeter } from './frame_meter.js';
+import { createPost } from './post.js';
 import { createReflectionProbes } from './reflection_probes.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {} } = {}) {
@@ -49,6 +50,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const scene = new THREE.Scene(), perspective = new THREE.PerspectiveCamera(38, 1, 0.1, 1000);
   const orthographic = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
   let camera = perspective;
+  const post = settings.occlusion ? createPost(renderer3, scene, camera, {samples: settings.antialias ? 4 : 0}) : null;
   const controls = new OrbitControls(camera, renderer3.domElement);
   controls.maxPolarAngle = Math.PI * 0.49;
   controls.enableDamping = false;
@@ -306,12 +308,17 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       renderer3.shadowMap.needsUpdate = false; sun.shadow.needsUpdate = false;
     }
     renderer3.info.reset();
-    renderer3.render(scene, camera);
-    lastStats = { drawCalls: renderer3.info.render.calls, triangles: renderer3.info.render.triangles, tier, fps };
+    post?.setCamera(camera);
+    // Count only the beauty pass: AO depth and fullscreen draws are extra work,
+    // not extra house geometry. createPost snapshots the RenderPass counters.
+    let picture;
+    if (post && !state.unlit) picture = post.render();
+    else { renderer3.render(scene, camera); picture = renderer3.info.render; }
+    lastStats = { drawCalls: picture.calls, triangles: picture.triangles, tier, fps };
     if (editFrames.size) {
       let meshes = 0;
       twin?.root.traverse(object => { if (object.isMesh) ++meshes; });
-      const stats = { meshes, draw_calls: renderer3.info.render.calls, triangles: renderer3.info.render.triangles };
+      const stats = { meshes, draw_calls: lastStats.drawCalls, triangles: lastStats.triangles };
       const waiting = [...editFrames]; editFrames.clear();
       requestAnimationFrame(() => waiting.forEach(resolve => resolve(stats)));
     }
@@ -319,6 +326,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   function resize() {
     const width = Math.max(1, el.clientWidth), height = Math.max(1, el.clientHeight);
     renderer3.setSize(width, height);
+    post?.setSize(width, height, renderer3.getPixelRatio());
     perspective.aspect = width / height; perspective.updateProjectionMatrix();
     orthographic.left = -orthographic.top * width / height; orthographic.right = -orthographic.left;
     orthographic.updateProjectionMatrix();
@@ -326,7 +334,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
-    ready: false, scene, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
+    ready: false, scene, post, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
     get effects() { return twin?.effects; },
     viewingState() {
@@ -596,7 +604,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         texture.colorSpace = THREE.SRGBColorSpace;
         const material = new THREE.MeshBasicMaterial({ name: 'sheet', map: texture, transparent: true, opacity: spec.opacity ?? 0.6, depthWrite: false, side: THREE.DoubleSide });
         const object = new THREE.Mesh(geometry, material);
-        Object.assign(object.userData, { pieceId: `${building.id}:sheet:${level.id}`, kind: 'sheet', buildingId: building.id });
+        Object.assign(object.userData, { pieceId: `${building.id}:sheet:${level.id}`, kind: 'sheet', noOcclusion: true, buildingId: building.id });
         object.renderOrder = 1;
         sheet = { ready: true, object, elevationFt: elevation, widthFt: master[0] * reg.scale, depthFt: master[1] * reg.scale }; attachSheet(); render();
       }, undefined, () => { if (version === sheetRevision) { sheet = null; render(); } });
@@ -707,10 +715,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       };
       const out = [];
       try {
-        // r187 only applies the screen's tone mapping/exposure on the canvas.
+        // Read the canvas after the same output transform as the screen.
         // Render and read synchronously, before the drawing buffer is cleared.
         renderer3.setRenderTarget(null);
         renderer3.setPixelRatio(1); renderer3.setSize(width, height, false);
+        post?.setSize(width, height, 1);
         for (const name of names) {
           view.setCamera(name);
           camera.aspect = width / height; camera.updateProjectionMatrix();
@@ -719,6 +728,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         return out;
       } finally {
         renderer3.setPixelRatio(previous.pixelRatio); renderer3.setSize(previous.size.x, previous.size.y, false);
+        post?.setSize(previous.size.x, previous.size.y, previous.pixelRatio);
         renderer3.setRenderTarget(previous.target3);
         camera = previous.camera; view.camera = camera; controls.object = camera; controls.enableRotate = !camera.isOrthographicCamera;
         camera.position.copy(previous.position); controls.target.copy(previous.target); controls.update();
@@ -1077,6 +1087,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (twin) { scene.remove(twin.root); release(twin); }
       unlit.dispose();
       sky?.dispose(); environmentTarget?.dispose(); fallbackEnvironment.dispose(); sun.shadow.dispose();
+      post?.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();
       if (window.__twin === view) delete window.__twin;
     },

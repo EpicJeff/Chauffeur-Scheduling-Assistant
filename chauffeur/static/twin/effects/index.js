@@ -28,7 +28,7 @@ function landing(plan, point, normal) {
 export function buildEffects(plan, {tier='high',editor=false}={}) {
   if(!plan.effect_fixtures?.length)return null;
   const group=new THREE.Group(),fixtures=[];
-  group.name='effect-fixtures';group.userData.effectFixtures=true;
+  group.name='effect-fixtures';group.userData.noOcclusion=true;group.userData.effectFixtures=true;
   for(const fixture of plan.effect_fixtures) {
     if(fixture.orphaned)continue;
     const placement={...fixture};

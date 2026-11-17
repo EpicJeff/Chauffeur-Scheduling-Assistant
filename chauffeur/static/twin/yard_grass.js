@@ -266,7 +266,7 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   mesh.receiveShadow=true; mesh.castShadow=false; mesh.raycast=()=>{};
   // At a cube's 256 px a blade is far below a texel; the lawn under it already
   // carries the colour, so a capture skips the field's millions of triangles.
-  mesh.userData.yardGrass=true; mesh.userData.reflectionExclude=true;
+  mesh.userData.noOcclusion=true; mesh.userData.yardGrass=true; mesh.userData.reflectionExclude=true;
   mesh.boundingBox=new THREE.Box3(new THREE.Vector3(lot.x0-.3,low-.1,-lot.y1-.3),new THREE.Vector3(lot.x1+.3,high+.7,-lot.y0+.3));
   mesh.boundingSphere=mesh.boundingBox.getBoundingSphere(new THREE.Sphere());
   return Object.assign(result,{instances:count,draws:1,regions:1,animated:true,mesh});
