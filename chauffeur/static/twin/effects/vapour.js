@@ -61,7 +61,8 @@ export function buildVapour(fixture,{plan,origin,mist=false}) {
         float n=noise(p+vec2(noise(p*.7+clock),0.))*.55+noise(p*2.07-vec2(clock*.3,clock))*.3+noise(p*4.13+clock*.5)*.15;
         float sides=pow(max(0.,sin(uv.x*3.14159)),mix(1.8,1.1,mist));
         // Steam is densest at the water; mist leaves a nozzle thin and hangs as a cloud below it.
-        float height=mix(smoothstep(0.,.12,uv.y)*pow(1.-uv.y,1.35),smoothstep(0.,.3,uv.y)*pow(1.-uv.y,.8),mist);
+        // Multisampling reads uv past a wisp's top edge: a negative base there is not a number, and the lamp glow spreads it.
+        float height=mix(smoothstep(0.,.12,uv.y)*pow(max(0.,1.-uv.y),1.35),smoothstep(0.,.3,uv.y)*pow(max(0.,1.-uv.y),.8),mist);
         float wisps=smoothstep(mix(.25,.08,mist),.74,n);
         float alpha=sides*height*wisps*mix(.1+.22*strength,.32+.4*strength,mist)*smoothstep(0.,.3,vFacing);
         vec3 color=mix(vec3(.64,.72,.75),vec3(.88,.93,.94),n);

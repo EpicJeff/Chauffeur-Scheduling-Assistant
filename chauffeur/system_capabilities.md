@@ -1,6 +1,15 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.911 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.912 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.912 (2026-11-17, NOT device-verified, browser-checked in Chromium on high with the reporting house's own effects): steam no longer writes pixels that are not a number.**
+
+- **What changed for a person.** This is the source of the black lit view that v2.499.911 guarded against, and it corrects that entry's statement that the source was not found. The person who reported it narrowed it down by deleting effects one at a time: the lit view came back when the steam effects were removed, with or without the pool. Steam and mist now draw cleanly, so the view has no dark specks along the top of a wisp either.
+- **Cause.** `static/twin/effects/vapour.js` fades a wisp out toward its top with `pow(1.-uv.y, ...)`. With multisampling (the lit picture on high quality) the interpolated `uv.y` goes slightly past 1 on a wisp's top edge, the base turns negative, and a negative number raised to a power is not a number. That reached the alpha, and blending wrote it into the picture. Unlit and lower qualities did not show it because nothing there spread the pixel.
+- **How.** Both bases are now `max(0.,1.-uv.y)`. The picture is unchanged everywhere the old value was a number.
+- **Measured.** The reporting house has two steam fixtures among sixteen effects. Looking at them from 36 camera positions, by day and by night, a float render of the scene had 2,700 to 18,000 pixels that were not a number in 34 of 36 views before the change, all of them from the steam meshes and none from any other effect. After the change: 0 in all 72.
+- **Known limits.** The guard from v2.499.911 stays as a safety net. Other effect and water shaders raise values to a power too; they measured clean on this house and were not changed.
+- **Tests:** `tests/test_twin_effect_second_set_js.py` (16 checks): every power in the steam and mist fragment shader has a base held at 0 or above. This reads shader text from the built material; the Chromium count above is the proof on a GPU.
 
 **v2.499.911 (2026-11-17, NOT device-verified, browser-checked in Chromium on high with stand-in pixels): one bad pixel no longer blacks out the lit picture.**
 

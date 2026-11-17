@@ -65,6 +65,14 @@ await test('pool_steam_stays_off_a_spa_inside_the_pool',()=>{
  const q=effectMeshes(buildEffects(bare,{editor:true}).group)[0].geometry.attributes.position;
  assert.ok(q.count>p.count);
 });
+await test('steam_and_mist_never_raise_a_negative_number_to_a_power',()=>{
+ // Multisampling reads uv past a wisp's edge; a negative base is not a number and blacked out the lit picture.
+ for(const type of ['steam','mist']){
+  const mesh=effectMeshes(buildEffects(plan(f(type)),{editor:true}).group)[0];
+  const bases=mesh.material.fragmentShader.split('pow(').slice(1);assert.equal(bases.length,3);
+  for(const base of bases)assert.ok(base.startsWith('max(0.,'),'unguarded power base: '+base.slice(0,24));
+ }
+});
 await test('mist_point_and_line_drop_the_authored_distance',()=>{
  for(const shape of ['point','line']){
   const fixture=f('mist',{shape,at:undefined,...(shape==='line'?{path:[[1,1,8],[12,1,8]]}:{at:[1,1,8]}),size_min:6,size_max:6});
