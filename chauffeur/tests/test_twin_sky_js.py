@@ -19,6 +19,14 @@ await test('continuous colour/intensity at all four band edges', () => {
       aa.forEach((v,i) => assert.ok(Math.abs(v-bb[i]) < 1e-5, key + ' at ' + edge));
     }
   }
+  for (const edge of [-12,-6,0,6]) {
+    const a = lookAt(edge - 1e-6, {altitude:.5,fraction:1}, {shadows:true}), b = lookAt(edge + 1e-6, {altitude:.5,fraction:1}, {shadows:true});
+    for (const key of ['ambient','environment','sun']) assert.ok(Math.abs(a[key]-b[key]) < 1e-4, 'shadowed ' + key + ' at ' + edge);
+  }
+  const flat = lookAt(40), lit = lookAt(40, undefined, {shadows:true});
+  assert.deepEqual([flat.sun,flat.ambient,flat.environment],[3,1.8,.65],'views without sun shadows keep their fill');
+  assert.deepEqual([lit.sun,lit.ambient,lit.environment],[7,.5,.4],'the sun carries the day where it casts shadows');
+  assert.deepEqual(lookAt(-20,undefined,{shadows:true}).ambient,lookAt(-20).ambient,'night is the same either way');
   assert.ok(lookAt(-3.01).lamps); assert.ok(!lookAt(-3).lamps);
   assert.equal(lookAt(-20, {altitude:-.1,fraction:1}).moon, 0);
   assert.equal(lookAt(-20, {altitude:1,fraction:0}).moon, 0);
@@ -121,7 +129,42 @@ await test('high tier throttles only the sun and invalidates its shadow on rebui
     high.showLevels([]); assert.equal(sun.shadow.needsUpdate,true,'level visibility invalidates shadow casters');
     sun.shadow.needsUpdate=false;
     await high.rebuild(input.plan); assert.equal(sun.shadow.needsUpdate,true,'changed geometry refreshes shadows');
+    sun.shadow.needsUpdate=false;
+    high.setTime('day'); assert.equal(sun.shadow.needsUpdate,true,'a chosen time of day shows its shadows at once');
+    assert.equal(sun.intensity,7);
+    sun.shadow.needsUpdate=false;
+    high.setTime('day'); assert.equal(sun.shadow.needsUpdate,false,'the same time again is not a move');
+    const texel = 2 * sun.shadow.camera.right / sun.shadow.mapSize.x;
+    assert.ok(sun.shadow.radius >= 1 && sun.shadow.radius <= 4);
+    assert.ok(sun.shadow.radius * texel <= .0501, 'the soft edge stays within 5 cm');
   } finally { high?.dispose(); location.search=previousQuery; }
+});
+await test('rooms under a roof take a fraction of the sky, and only where the sun casts shadows', async () => {
+  const {disposeObject} = await import(file('static/twin/twin_library.js')), THREE = await import('three');
+  const indoor = v => { const out = []; for (const g of Object.values(v.groups.levels)) g.traverse(o => {
+    for (const m of [].concat(o.material || [])) if (['interior_wall','floor','ceiling'].includes(m.name)) out.push(m); }); return out; };
+  const previousQuery=location.search; location.search='?test=1&tier=high';
+  let high, low;
+  try {
+    high = await mountTwin(new Element(), {plan:input.plan,kit:{materials:{}},tier:'high',bake:false});
+    high.setTime('day'); high.render();
+    const env = high.scene.environment, rooms = indoor(high);
+    assert.ok(env && rooms.length, 'the fixture has rooms and a sky');
+    for (const m of rooms) { assert.equal(m.envMap,env); assert.ok(Math.abs(m.envMapIntensity - .3 * .4) < 1e-9); }
+    let outdoor = 0; high.scene.traverse(o => { for (const m of [].concat(o.material || [])) if (['siding','roof','trim'].includes(m.name)) { outdoor++; assert.equal(m.envMap,null); } });
+    assert.ok(outdoor, 'outside surfaces keep the whole sky');
+    high.setTime('night'); high.render();
+    for (const m of indoor(high)) assert.ok(Math.abs(m.envMapIntensity - .3 * high.scene.environmentIntensity) < 1e-9);
+    await high.rebuild(input.plan); high.setTime('day'); high.render();
+    assert.ok(indoor(high).every(m => m.envMap === high.scene.environment), 'a rebuilt house is dimmed again');
+    let disposed = 0; env.addEventListener('dispose', () => disposed++);
+    const scrap = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial({envMap: env}));
+    disposeObject(scrap); assert.equal(disposed,0,'a discarded surface never takes the sky with it');
+    location.search='?test=1&tier=low';
+    low = await mountTwin(new Element(), {plan:input.plan,kit:{materials:{}},tier:'low',bake:false});
+    low.setTime('day'); low.render();
+    assert.ok(indoor(low).length && indoor(low).every(m => m.envMap === null), 'low quality is untouched');
+  } finally { high?.dispose(); low?.dispose(); location.search=previousQuery; }
 });
 finish();
 """

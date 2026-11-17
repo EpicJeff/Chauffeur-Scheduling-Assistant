@@ -612,7 +612,8 @@ export function disposeObject(root, { keepMaterials = new Set() } = {}) {
     for (const m of o.material ? [].concat(o.material) : []) {
       if (keepMaterials.has(m)) continue;
       materials.add(m);
-      for (const value of Object.values(m)) if (value?.isTexture) textures.add(value);
+      // An environment map belongs to the view (the sky, a reflection probe), never to the surface.
+      for (const [key, value] of Object.entries(m)) if (value?.isTexture && key !== 'envMap') textures.add(value);
     }
   });
   geometries.forEach(g => g.dispose());

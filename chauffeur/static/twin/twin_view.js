@@ -263,9 +263,31 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     parent.add(sheet.object);
   }
   const editFrames = new Set();
+  // A room under its roof sees a fraction of the sky. At the yard's full share
+  // it sits as bright as the lawn and a window reads as nothing. Lifting the
+  // roof away (a floor view, the editor's level buttons) gives the sky back.
+  const INDOOR_SKY = .3, INDOOR = new Set(['interior_wall', 'floor', 'ceiling']);
+  let indoorSky = null;
+  function applyIndoorSky() {
+    if (!twin || !settings.shadows) return;
+    // The meshes are found once a build; their materials are read each frame,
+    // because the bake and the level fades swap in copies of their own.
+    indoorSky ??= Object.values(twin.groups.levels).map(group => {
+      const meshes = [];
+      group.traverse(o => { if ([].concat(o.material || []).some(m => INDOOR.has(m.name))) meshes.push(o); });
+      return { id: group.userData.buildingId, meshes };
+    });
+    const map = state.unlit ? null : environment;
+    for (const { id, meshes } of indoorSky) {
+      const roofed = viewing ? viewing.roofAlpha(id) : +twin.groups.roof.visible;
+      const share = (timeLook?.environment ?? 0) * (1 + (INDOOR_SKY - 1) * roofed);
+      for (const mesh of meshes) for (const m of [].concat(mesh.material)) if (INDOOR.has(m.name)) { m.envMap = map; m.envMapIntensity = share; }
+    }
+  }
   function render() {
     if (disposed) return;
     viewing?.update(performance.now());
+    applyIndoorSky();
     view.levels?.draw();
     view.cars?.draw();
     // Effect water is unlit: it follows the sun down to a night floor.
@@ -620,9 +642,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     },
     setTime(time) {
       if (!['now', 'day', 'night'].includes(time)) return;
-      if (state.time !== time) reflections.request();
+      const moved = state.time !== time;
       state.time = time;
-      resetPreviewIdle(); updateTime();
+      resetPreviewIdle(); updateTime(moved);
     },
     setUnlit(on) {
       on = !!on;
@@ -993,8 +1015,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       }
       const reach = Math.max(bounds.span * FT, 20);
       Object.assign(sun.shadow.camera, { left: -reach, right: reach, top: reach, bottom: -reach, near: 0.5, far: reach * 6 }); sun.shadow.camera.updateProjectionMatrix();
+      // The filter is counted in texels: hold the soft edge near 5 cm on any lot.
+      sun.shadow.radius = Math.min(4, Math.max(1, .05 / (2 * reach / sun.shadow.mapSize.x)));
       // Geometry invalidation is independent of the once-a-minute clock move.
-      sun.shadow.needsUpdate = true;
+      sun.shadow.needsUpdate = true; indoorSky = null;
       if (!editor) {
         twin.groups.roof.visible = twin.groups.gableFull.visible = true;
         twin.groups.gableCut.visible = false;
@@ -1063,7 +1087,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // Materials with no geometry (e.g. an empty polygon) still own requests.
     model.materials.forEach(m => { if (!keepMaterials.has(m)) m.dispose(); });
   }
-  function applyTimeLook() {
+  function applyTimeLook(moved = false) {
     if (state.unlit) {
       timeLook = lookAt(45);
       scene.background = new THREE.Color().setRGB(...timeLook.background, THREE.SRGBColorSpace);
@@ -1074,7 +1098,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     }
     const now = clockNow(), located = resolveSite(site, now), date = previewDate(now, state.time, located);
     const solar = sunPosition(date, located.lat, located.lon), lunar = moonPosition(date, located.lat, located.lon);
-    timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: moonIllumination(date).fraction });
+    timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: moonIllumination(date).fraction }, { shadows: settings.shadows });
     scene.background = new THREE.Color().setRGB(...timeLook.background, THREE.SRGBColorSpace);
     scene.environment = environment;
     scene.environmentIntensity = timeLook.environment;
@@ -1090,15 +1114,16 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       light.position.set(bounds.x * FT + x * radius, y * radius, -bounds.y * FT + z * radius);
     }
     // Rendering and lamp changes do not refresh the sun map. The clock moves
-    // it at most once per minute, including rapid preview/test-clock changes.
-    if (performance.now() - lastShadowUpdate >= 60000) {
+    // it at most once per minute, including rapid test-clock changes. A person
+    // choosing another time of day sees its shadows at once.
+    if (moved || performance.now() - lastShadowUpdate >= 60000) {
       sun.shadow.needsUpdate = true; lastShadowUpdate = performance.now();
       reflections.request();
     }
   }
-  function updateTime() {
+  function updateTime(moved = false) {
     if (disposed) return;
-    applyTimeLook(); applyLights(); view.onTimeLook?.(); viewing?.warm(); render();
+    applyTimeLook(moved); applyLights(); view.onTimeLook?.(); viewing?.warm(); render();
     el.dispatchEvent(new CustomEvent('twintimechange', { detail: state.time }));
   }
   function resetPreviewIdle() {
