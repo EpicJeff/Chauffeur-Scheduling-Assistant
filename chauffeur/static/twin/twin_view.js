@@ -23,7 +23,7 @@ import { createUnlit } from './unlit.js';
 import { createViewing } from './viewing.js';
 import { createLevels } from './levels.js';
 import { mountFrameMeter } from './frame_meter.js';
-import { createPost } from './post.js';
+import { createPost, EMITTER_GAIN } from './post.js';
 import { createReflectionProbes } from './reflection_probes.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {} } = {}) {
@@ -334,7 +334,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
-    ready: false, scene, post, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
+    ready: false, scene, post, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
     get effects() { return twin?.effects; },
     viewingState() {

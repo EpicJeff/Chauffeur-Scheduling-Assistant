@@ -81,7 +81,15 @@ const pool=[];scene.traverse(o=>{if(o.isPointLight)pool.push(o);});assert.equal(
 const material=lamp.material;states['light.desk'].state='off';modes.update();assert.equal(material.emissiveIntensity,0);
 states['light.desk'].state='on';modes.update();assert.equal(lamp.material,material);assert.equal(pool.filter(l=>l.parent).length,4);
 view.groups.levels['b:L1'].visible=false;modes.draw();assert.equal(modes.lights()[0].real,false);
-modes.stop();controls.remove();console.log('ok linked object lamp follows HA state in the same fixed four-light pool, retains material and follows floor visibility');
+modes.stop();console.log('ok linked object lamp follows HA state in the same fixed four-light pool, retains material and follows floor visibility');
+// A view that glows what is brighter than white draws the lit shade and bulb above white.
+view.emitterGain=3;view.groups.levels['b:L1'].visible=true;
+const bright=mountModes(view,live);bright.setMode('lights');
+assert.ok(Math.abs(lamp.material.emissiveIntensity-3*128/255)<.00001);
+const bulbs=scene.children.filter(o=>o.isMesh&&o.material.isMeshBasicMaterial&&o.geometry.type==='SphereGeometry'&&o.visible);
+assert.equal(bulbs.length,1);assert.ok(Math.abs(bulbs[0].material.color.b-3)<.00001);assert.equal(bulbs[0].material.color.r,0);
+assert.equal(bright.lights()[0].intensity,128/255,'the lamp itself is no brighter');
+bright.stop();controls.remove();console.log('ok a glowing view draws the lit shade and bulb three times brighter and leaves the lamp output alone');
 """
 
 if __name__ == '__main__':

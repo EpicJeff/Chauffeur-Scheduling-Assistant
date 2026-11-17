@@ -122,6 +122,12 @@ check('glow_strip_follows_path_and_state',async()=>{
   assert.equal(scene.children[1].material,mesh.material,'one material per colour bucket');
   glow.update(rows[0].rgb,0,true);assert.equal(mesh.visible,false);assert.equal(scene.children[1].visible,true);
   const panel=createFixtureGlow(scene,rows[1]);panel.update(rows[1].rgb,1,true);assert.equal(scene.children[2].geometry.parameters.width,4*FT);
+  const plain=scene.children[2].material.color.clone();
+  const hot=createFixtureGlow(scene,rows[1],3);hot.update(rows[1].rgb,1,true);
+  assert.notEqual(scene.children[3].material,scene.children[2].material);
+  plain.toArray().forEach((v,i)=>assert.ok(Math.abs(scene.children[3].material.color.toArray()[i]-3*v)<.02));
+  assert.ok(Math.max(...scene.children[3].material.color.toArray())>1,'a glowing view draws the strip above white');
+  hot.stop();
   glow.stop();second.stop();panel.stop();assert.equal(scene.children.length,0);
 });
 check('mounted_shapes_state_overflow_and_cleanup',async()=>{

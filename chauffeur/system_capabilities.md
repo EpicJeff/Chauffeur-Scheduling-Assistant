@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.909 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.910 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.910 (2026-11-17, NOT device-verified, browser-checked in Chromium on medium and high with stand-in lamps): lit lamps glow.**
+
+- **What changed for a person.** On medium quality and up, a lamp that is on now has a soft glow around it: bulbs, light strips, light panels and the shades of lamp objects. The glow is the same strength at night and at dusk. Nothing else glows: sunlit white trim, water highlights, markers and labels look as they did, and a daytime picture with no lamp on is unchanged. Low quality looks exactly as it did.
+- **How.** `static/twin/post.js` adds three's `UnrealBloomPass` (strength 0.4, radius 0.6) after the contact-darkening pass and before the one `OutputPass`. Its threshold is 1.6 in displayed brightness, which is the stored value divided by the current exposure on every frame, so it sits above paper white whatever the time of day. Lamps were drawn at no more than white, so none would pass that threshold; `post.js` exports `EMITTER_GAIN = 3`, the view carries it as `view.emitterGain` (1 where there is no chain), and `live/modes.js` and `live/fixture_glow.js` draw a lit bulb, strip, panel and lamp shade that many times brighter. The lamp's light output, its bake tint and its place in the light pool are untouched. The chain's `tune({bloom: {strength, radius, threshold}})` is there for tuning by eye. Disposal frees the pass's targets and materials, including the high-pass material the vendored pass leaves behind.
+- **Cost.** On the development desktop at 1920 by 1080 on high, about 0.3 ms a frame.
+- **Known limits.** A dim lamp glows less, and one below about half brightness may not glow at all. Flames and the built-in fixtures shown when Home Assistant is absent are not boosted. In the unlit view the chain is bypassed, so a boosted bulb there is drawn clipped. The glow was checked in a browser with stand-in lamps, because the fixture house has none; the real lamp path is covered by the node tests.
+- **Tests:** `tests/test_twin_post_js.py` (23 checks): the chain order, the glow values, the threshold following exposure and `tune`, the gain per tier, and disposal of the glow's targets and materials. `tests/test_twin_object_shelf_js.py`: a view with a gain of 3 draws the lit shade and bulb three times brighter and leaves the lamp output alone. `tests/test_twin_fixture_lights_js.py`: a strip or panel built with a gain is drawn above white from its own material.
 
 **v2.499.909 (2026-11-17, NOT device-verified, browser-checked in Chromium on low, medium and high): surfaces darken where they meet.**
 

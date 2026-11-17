@@ -13,7 +13,8 @@ const {EffectComposer} = await import('three/addons/postprocessing/EffectCompose
 const {RenderPass} = await import('three/addons/postprocessing/RenderPass.js');
 const {GTAOPass} = await import('three/addons/postprocessing/GTAOPass.js');
 const {OutputPass} = await import('three/addons/postprocessing/OutputPass.js');
-const {createPost} = await import(file('static/twin/post.js'));
+const {UnrealBloomPass} = await import('three/addons/postprocessing/UnrealBloomPass.js');
+const {createPost, EMITTER_GAIN} = await import(file('static/twin/post.js'));
 const {mountTwin} = await import(file('static/twin/twin_view.js'));
 const {TIERS} = await import(file('static/twin/twin_tiers.js'));
 const {buildGrass} = await import(file('static/twin/yard_grass.js'));
@@ -29,7 +30,7 @@ EffectComposer.prototype.addPass = function(pass) {
 };
 const compose = EffectComposer.prototype.render;
 EffectComposer.prototype.render = function(...args) { ++composeCount; return compose.apply(this,args); };
-for (const Type of [RenderPass,GTAOPass,OutputPass]) {
+for (const Type of [RenderPass,GTAOPass,UnrealBloomPass,OutputPass]) {
   const draw = Type.prototype.render;
   Type.prototype.render = function(...args) { passes[Type.name] = this; events.push(Type.name); return draw.apply(this,args); };
 }
@@ -71,8 +72,8 @@ await test('high mounts real render occlusion output chain with half-float four-
   const {view} = await mount();
   try {
     events.length=0; targets.clear(); view.render();
-    assert.deepEqual(view.post.info().passes,['RenderPass','GTAOPass','OutputPass']);
-    assert.deepEqual(events,['RenderPass','GTAOPass','OutputPass']);
+    assert.deepEqual(view.post.info().passes,['RenderPass','GTAOPass','UnrealBloomPass','OutputPass']);
+    assert.deepEqual(events,['RenderPass','GTAOPass','UnrealBloomPass','OutputPass']);
     const beautyTargets=[...targets].filter(t=>t.samples===4);
     assert.equal(beautyTargets.length,2);
     for(const t of beautyTargets)assert.equal(t.texture.type,THREE.HalfFloatType);
@@ -82,6 +83,27 @@ await test('high mounts real render occlusion output chain with half-float four-
     assert.equal(ao.gtaoMaterial.defines.SCREEN_SPACE_RADIUS,0);near(ao.gtaoMaterial.uniforms.distanceFallOff.value,.6);
     assert.equal(ao.output,GTAOPass.OUTPUT.Default);assert.equal(ao.pdMaterial.uniforms.radius.value,8);
   } finally {view.dispose();}
+});
+await test('glow sits before the output transform and its threshold follows exposure above paper white',async()=>{
+  const {view} = await mount();
+  try {
+    view.setTime('day');view.render();const glow=passes.UnrealBloomPass;
+    near(glow.strength,.4);near(glow.radius,.6);
+    near(glow.threshold*view.renderer3.toneMappingExposure,1.6);
+    near(glow.highPassUniforms.luminosityThreshold.value,glow.threshold);
+    const day=glow.threshold;
+    view.setTime('night');view.render();
+    assert.notEqual(glow.threshold,day);near(glow.threshold*view.renderer3.toneMappingExposure,1.6);
+    view.post.tune({bloom:{strength:.1,radius:.2,threshold:2}});view.render();
+    near(glow.strength,.1);near(glow.radius,.2);near(glow.threshold*view.renderer3.toneMappingExposure,2);
+  } finally {view.dispose();}
+});
+await test('lamps are drawn brighter than white only where the glow chain runs',async()=>{
+  assert.equal(EMITTER_GAIN,3);
+  const high=await mount();
+  try {assert.equal(high.view.emitterGain,3);} finally {high.view.dispose();}
+  const low=await mount('low');
+  try {assert.equal(low.view.emitterGain,1);} finally {low.view.dispose();}
 });
 await test('unlit bypasses the composer then lit returns with current exposure',async()=>{
   const {view} = await mount();
@@ -288,10 +310,12 @@ await test('saved-house thumbnail callback in the real editor boot renders throu
     assert.equal(composeCount,before+1);
   } finally {Element.prototype.toDataURL=old;view.dispose();}
 });
-await test('dispose frees both composer targets all AO targets textures and shader materials once',()=>{
+const glowResources=glow=>[glow.renderTargetBright,...glow.renderTargetsHorizontal,...glow.renderTargetsVertical,
+  glow.materialHighPassFilter,...glow.separableBlurMaterials,glow.compositeMaterial,glow.blendMaterial];
+await test('dispose frees both composer targets all AO and glow targets textures and shader materials once',()=>{
   const c=setup();targets.clear();c.post.render();
-  const ao=passes.GTAOPass,out=passes.OutputPass;
-  const resources=new Set([...targets,ao.normalRenderTarget,ao.gtaoRenderTarget,ao.pdRenderTarget,
+  const ao=passes.GTAOPass,out=passes.OutputPass,glow=passes.UnrealBloomPass;
+  const resources=new Set([...targets,...glowResources(glow),ao.normalRenderTarget,ao.gtaoRenderTarget,ao.pdRenderTarget,
     ao.normalRenderTarget.depthTexture,ao.gtaoNoiseTexture,ao.pdNoiseTexture,ao.normalMaterial,
     ao.gtaoMaterial,ao.pdMaterial,ao.copyMaterial,ao.depthRenderMaterial,ao.blendMaterial,out.material,composers.at(-1).copyPass.material]);
   // WebGLRenderer disposes a target's depth texture in its GPU deallocator;
@@ -305,7 +329,7 @@ await test('disposal before the first frame releases unrendered targets and mate
   const c=setup(),composer=composers.at(-1),ao=composer.passes[1];
   const resources=[composer.renderTarget1,composer.renderTarget2,ao.normalRenderTarget,ao.gtaoRenderTarget,ao.pdRenderTarget,
     ao.gtaoNoiseTexture,ao.pdNoiseTexture,ao.normalMaterial,ao.gtaoMaterial,ao.pdMaterial,ao.copyMaterial,
-    ao.depthRenderMaterial,ao.blendMaterial,composer.passes[2].material,composer.copyPass.material];
+    ao.depthRenderMaterial,ao.blendMaterial,...glowResources(composer.passes[2]),composer.passes[3].material,composer.copyPass.material];
   const freed=new Set();resources.forEach(r=>r.addEventListener('dispose',()=>freed.add(r)));
   c.post.dispose();assert.equal(freed.size,resources.length);
 });

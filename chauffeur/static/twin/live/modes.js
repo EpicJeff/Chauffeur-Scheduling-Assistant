@@ -93,10 +93,12 @@ export function mountModes(view, live) {
   // Placement, vertical references and mounting offsets have one owner.
   // A small shared low-poly bulb adds no shadow draw calls.
   const bulbGeometry = new THREE.SphereGeometry(.1, 8, 6);
+  // Above 1 only where the view glows what is brighter than white.
+  const gain = view.emitterGain ?? 1;
   for (const emitter of emitters) {
     const position = new THREE.Vector3(...emitter.position);
     const marker = emitter.legacy ? emitter.marker : {...emitter, at: [position.x / FT, -position.z / FT, position.y / FT]};
-    const glow = !emitter.fire_pit && ['line', 'area'].includes(emitter.shape) ? createFixtureGlow(view.scene, emitter) : null;
+    const glow = !emitter.fire_pit && ['line', 'area'].includes(emitter.shape) ? createFixtureGlow(view.scene, emitter, gain) : null;
     const bulb = glow?.mesh || new THREE.Mesh(bulbGeometry, new THREE.MeshBasicMaterial({ color: '#fff1c9', toneMapped: false }));
     if (!glow) { bulb.position.copy(position); bulb.userData.bulb = marker.device_id; view.scene.add(bulb); }
     bulb.visible = false;
@@ -240,7 +242,7 @@ export function mountModes(view, live) {
       for (const material of lamp.objectMaterials || []) {
         if (!material.emissive) continue; // Flame shaders carry the lamp tag too.
         material.emissive.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
-        material.emissiveIntensity = lamp.intensity;
+        material.emissiveIntensity = lamp.intensity * gain;
       }
     }
     revision++;
@@ -325,7 +327,7 @@ export function mountModes(view, live) {
       if (lamp.glow) lamp.glow.update(lamp.rgb, lamp.intensity, shown, lamp.palette);
       else {
         lamp.bulb.visible = shown && !lamp.objectSource?.fire && !lamp.emitter?.fire_pit;
-        lamp.bulb.material.color.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace);
+        lamp.bulb.material.color.setRGB(...lamp.rgb.map(value => value / 255), THREE.SRGBColorSpace).multiplyScalar(gain);
       }
     }
     for (const [id, tint] of bakeTints) view.bake?.light(id, tint.rgb, tint.intensity);

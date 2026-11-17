@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 // Metres, not feet. Screen-space AO darkens the whole lit picture, not just
@@ -14,6 +15,17 @@ const OCCLUSION_DISTANCE_FALLOFF = .6;
 const OCCLUSION_CONTRAST = 1.5;
 const OCCLUSION_THICKNESS = 2;
 const DENOISE_RADIUS = 8;
+// Glow around what is brighter than the picture can show. The threshold is in
+// displayed brightness (after exposure), where 1 is roughly paper white, so
+// the same lamp glows the same at night as at dusk.
+const BLOOM_STRENGTH = .4;
+const BLOOM_RADIUS = .6;
+const BLOOM_THRESHOLD = 1.6;
+// Lit bulbs, strips and lamp shades are drawn at no more than paper white, so
+// none would pass the threshold. Where this chain runs they are drawn this
+// many times brighter; the output pass rolls that off, so hue survives. The
+// plain path has no roll-off for them, so it keeps them as they were.
+export const EMITTER_GAIN = 3;
 
 function excluded(object) {
   const d = object.userData;
@@ -60,7 +72,14 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
   const output = new OutputPass();
   composer.addPass(beauty);
   composer.addPass(occlusion);
-  // Future bloom belongs here, before the single output transform.
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), BLOOM_STRENGTH, BLOOM_RADIUS, BLOOM_THRESHOLD);
+  let bloomThreshold = BLOOM_THRESHOLD;
+  const drawBloom = bloom.render.bind(bloom);
+  bloom.render = (...args) => {
+    bloom.threshold = bloomThreshold / Math.max(renderer.toneMappingExposure, 1e-3);
+    drawBloom(...args);
+  };
+  composer.addPass(bloom);
   composer.addPass(output);
   let disposed = false, size = {}, mainStats = {calls: 0, triangles: 0};
   const backgroundColor = new THREE.Color();
@@ -155,7 +174,11 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
     },
     // For tuning by eye: strength 0 is the picture without the pass, and
     // output takes GTAOPass.OUTPUT (2 depth, 3 normals, 5 the occlusion alone).
-    tune({ strength, output, ...shape } = {}) {
+    // bloom takes {strength, radius, threshold}.
+    tune({ strength, output, bloom: glow, ...shape } = {}) {
+      if (glow?.strength !== undefined) bloom.strength = glow.strength;
+      if (glow?.radius !== undefined) bloom.radius = glow.radius;
+      if (glow?.threshold !== undefined) bloomThreshold = glow.threshold;
       occlusion.updateGtaoMaterial(shape);
       if (strength !== undefined) occlusion.blendIntensity = strength;
       if (output !== undefined) occlusion.output = output;
@@ -167,6 +190,8 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
       composer.passes.forEach(p => p.dispose());
       // r187 GTAOPass.dispose omits these two owned shader materials.
       occlusion.gtaoMaterial.dispose(); occlusion.blendMaterial.dispose();
+      // r187 UnrealBloomPass.dispose omits its high-pass material.
+      bloom.materialHighPassFilter.dispose();
       clipped.forEach(m => m.dispose()); clipped.clear();
       composer.dispose();
     },
