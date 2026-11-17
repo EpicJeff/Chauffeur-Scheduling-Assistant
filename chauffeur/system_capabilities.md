@@ -1,6 +1,15 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.915 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.916 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.916 (2026-11-17, NOT device-verified, browser-checked in Chromium on high on the `/house` view page with a household's own yard and a blue stand-in pool interior; the test page draws no buildings): calmer pool water, and the mirror image smears the way a real pool smears it.**
+
+- **What was wrong.** With a true mirror image on the water (v2.499.915), the waves read far too rough: they had been sized while the water mirrored nothing recognisable. The image broke into a field of detached pale and dark cells. A wave also slid the image the same distance in every direction, where a real pool seen low across the water stretches reflections up and down and hardly moves them sideways.
+- **What changed for a person.** A pool at rest is calmer on every quality: the swell, chop and fine ripple are each well under half as steep (slopes .05/.06/.05 became .022/.02/.012), so the floor wobbles less and the surface no longer breaks into dark and bright cells. Running features still stir the water by the same ratios. On high quality the mirror image now holds together: a wall, a tree or a building beside the pool keeps its shape with a wavy edge, and stretches vertically when seen from low down.
+- **How.** The planar lookup in `static/twin/reflection_probes.js` follows the wave-bent mirrored ray `PLANAR_REACH` (5) metres to where it would meet the surroundings and projects that point into the mirror image, in place of sliding the sample point along the water. A flat surface lands on the same pixel as before. Cache keys: `|box-reflection-3`, `|water-surface-4`, `|underwater-4`.
+- **Found, not changed.** The thin pale line a household saw over their pool is the open yard room's outline (`static/twin/levels.js`): it is drawn .04 ft above the ground the yard pad defines, which over a pool is a quarter of a foot above the water, so wherever the room's edge crosses the pool it floats over the water. Reproduced by moving a yard room's edge inside the pool. Whether to keep, restyle or drop that outline is the household's decision and is open.
+- **Still open.** Medium quality keeps the cube and its blobs. The mirror pass's frame cost is not measured. Glass still mirrors from a cube. Nothing here was compared on a device.
+- **Tests.** `tests/test_twin_reflection_probes_js.py` (26, the lookup line and the new key), `tests/test_twin_water_surface_js.py` (24), `tests/test_twin_effect_lighting_water_js.py` (18), `tests/test_twin_pool_features_js.py` (24).
 
 **v2.499.915 (2026-11-17, NOT device-verified, browser-checked in Chromium on high and medium on the `/house` view page with a household's own yard and a dark stand-in pool interior): on high quality a pool shows a true mirror image of what stands beside it.**
 

@@ -20,8 +20,8 @@ vec3 probeBox(vec3 direction, vec3 centre) {
 }
 vec3 probeDirection(vec3 direction) { return mix(direction, probeBox(direction, probeCentre), probeActive); }
 `;
-// Metres an object in the mirror image moves per unit of wave bend.
-const PLANAR_BEND = 1.2;
+// Metres from the water to what it mirrors, along the mirrored ray.
+const PLANAR_REACH = 5;
 const waterDeclarations = `attribute vec3 reflectionBodyCentre; varying vec3 vReflectionBodyCentre;\n`;
 const waterFragment = `varying vec3 vReflectionBodyCentre;
 uniform vec3 waterProbeCentre[4];
@@ -83,10 +83,11 @@ export function reflectionMaterial(material, kind, owner) {
 reflectVec = normalize(vec3(reflectVec.x, max(abs(reflectVec.y), .12), reflectVec.z));
 if (waterPlanarActive > .5 && abs(vProbeWorld.y - waterPlanarHeight) < .05) {
   // The mirror image of the scene, drawn from the camera's reflection. A wave
-  // bends the mirrored ray; an object a few metres off moves by that bend.
-  vec3 waterFlat = reflect(normalize(vProbeWorld - cameraPosition), vec3(0.0, 1.0, 0.0));
-  vec2 waterBend = (reflectVec - waterFlat).xz * ${PLANAR_BEND.toFixed(1)};
-  vec4 waterClip = waterPlanarMatrix * vec4(vProbeWorld.x + waterBend.x, waterPlanarHeight, vProbeWorld.z + waterBend.y, 1.0);
+  // bends the mirrored ray; follow the bent ray to where it would meet what
+  // stands beside the pool and look that point up in the image. Seen low
+  // across the water this smears the image up and down far more than
+  // sideways, which is the streaking a real pool shows.
+  vec4 waterClip = waterPlanarMatrix * vec4(vProbeWorld + reflectVec * ${PLANAR_REACH.toFixed(1)}, 1.0);
   return texture2D(waterPlanar, clamp(waterClip.xy / waterClip.w * .5 + .5, .002, .998)).rgb;
 }
 int waterProbeIndex = 0; float waterProbeDistance = 1e30;
@@ -133,7 +134,7 @@ vec3 paneLight = (outgoingLight - totalSpecular) * diffuseColor.a + totalSpecula
 gl_FragColor = vec4(paneLight / paneCover, paneCover);`);
     }
   };
-  material.customProgramCacheKey = () => key + '|box-reflection-2|' + kind;
+  material.customProgramCacheKey = () => key + '|box-reflection-3|' + kind;
   if (kind === 'exterior') { material.premultipliedAlpha = true; material.depthWrite = false; }
   const attach = target => {
     Object.defineProperty(target.userData, 'reflection', {value: binding, configurable: true});

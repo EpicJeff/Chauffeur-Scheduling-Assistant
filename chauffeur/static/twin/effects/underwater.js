@@ -123,7 +123,7 @@ if (waterDepth > 0.0) {
 #include <opaque_fragment>`);
   };
   material.onBeforeCompile = (shader, renderer) => compile(shader, renderer);
-  material.customProgramCacheKey = () => key + '|underwater-3:' + tier + (simulation ? '|water-field-1' : '') + (regions.length ? '|water-regions:' + regions.map(r => r.polygon.length).join(',') : '');
+  material.customProgramCacheKey = () => key + '|underwater-4:' + tier + (simulation ? '|water-field-1' : '') + (regions.length ? '|water-regions:' + regions.map(r => r.polygon.length).join(',') : '');
   Object.defineProperty(material.userData, 'waterUnlit', {value:{
     hook:(shader, renderer) => compile(shader, renderer, true), key:() => material.customProgramCacheKey() + '|matcap',
   }});

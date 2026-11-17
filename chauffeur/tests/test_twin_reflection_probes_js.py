@@ -150,7 +150,7 @@ await test('real_water_and_baked_glass_hooks_survive_viewing_and_bake_clones',as
  const baked=pane.clone(),tints=new THREE.DataTexture(new Uint8Array(4),1,1);
  patchWindowGlow(baked,{banks:[]},{lmTints:{value:tints}});
  for(const material of [baked,baked.clone()]){const s=compile(material);assert.ok(s.uniforms.probeCentre&&s.uniforms.lmTints);assert.ok(s.fragmentShader.includes('totalEmissiveRadiance += glow'));
-  assert.ok(s.fragmentShader.includes('reflectVec = probeDirection(reflectVec)'));assert.ok(material.customProgramCacheKey().includes('|box-reflection-2|exterior|twin-window-glow'));}
+  assert.ok(s.fragmentShader.includes('reflectVec = probeDirection(reflectVec)'));assert.ok(material.customProgramCacheKey().includes('|box-reflection-3|exterior|twin-window-glow'));}
  c.manager.dispose();
 });
 await test('late_library_maps_reach_pane_and_its_presentation_clones',async()=>{
@@ -252,6 +252,8 @@ await test('water_shader_folds_below_horizon_rays_up_and_reads_the_mirror_image_
  const fold='reflectVec = normalize(vec3(reflectVec.x, max(abs(reflectVec.y), .12), reflectVec.z));';
  assert.ok(at(fold)>0);assert.ok(at(fold)<at('if (waterPlanarActive > .5'));assert.ok(at('if (waterPlanarActive > .5')<at('waterProbeSample(waterProbeIndex, probeBox'));
  assert.ok(f.includes('texture2D(waterPlanar, clamp(waterClip.xy / waterClip.w * .5 + .5, .002, .998)).rgb'));
+ // The image is looked up where the bent ray lands, not at a point slid along the water.
+ assert.ok(f.includes('waterPlanarMatrix * vec4(vProbeWorld + reflectVec * 5.0, 1.0)'));assert.ok(!f.includes('waterBend'));
  for(const name of ['waterPlanar','waterPlanarMatrix','waterPlanarActive','waterPlanarHeight'])assert.ok(s.uniforms[name],name);
  assert.equal(s.uniforms.waterPlanarActive.value,0,'a surface nobody drew a mirror for uses the cube');
  const pane=compile(R.reflectionMaterial(new THREE.MeshStandardMaterial({transparent:true,opacity:.26}),'exterior','b'));assert.ok(!pane.fragmentShader.includes('waterPlanar'));

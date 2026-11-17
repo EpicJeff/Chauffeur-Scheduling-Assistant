@@ -23,15 +23,15 @@ vec2 waterSlope(vec2 p, vec3 motion) {
   float time = waterTime + motion.y;
   vec2 warp = vec2(sin(p.y * .31 + time * .21), cos(p.x * .27 - time * .17)) * 1.4;
   vec2 a = p + warp, b = p - warp * .7, c = p + warp.yx * .5;
-  vec2 swell = waterTrain(a, vec2(.658, .239), -1.05, .05, time)
-    + waterTrain(b, vec2(-.628, .527), -1.13, .05, time)
-    + waterTrain(c, vec2(-.106, -.601), -.98, .05, time);
-  vec2 chop = waterTrain(b, vec2(.492, 1.835), -1.72, .06, time)
-    + waterTrain(c, vec2(-2.125, -.569), -1.85, .06, time)
-    + waterTrain(a, vec2(1.202, -1.202), -1.63, .06, time);
-  vec2 fine = waterTrain(p + warp * .5, vec2(3.253, 3.253), -2.68, .05, time)
-    + waterTrain(p - warp * .4, vec2(-5.119, 1.372), -2.88, .05, time)
-    + waterTrain(p + warp.yx * .3, vec2(1.061, -3.96), -2.53, .05, time);
+  vec2 swell = waterTrain(a, vec2(.658, .239), -1.05, .022, time)
+    + waterTrain(b, vec2(-.628, .527), -1.13, .022, time)
+    + waterTrain(c, vec2(-.106, -.601), -.98, .022, time);
+  vec2 chop = waterTrain(b, vec2(.492, 1.835), -1.72, .02, time)
+    + waterTrain(c, vec2(-2.125, -.569), -1.85, .02, time)
+    + waterTrain(a, vec2(1.202, -1.202), -1.63, .02, time);
+  vec2 fine = waterTrain(p + warp * .5, vec2(3.253, 3.253), -2.68, .012, time)
+    + waterTrain(p - warp * .4, vec2(-5.119, 1.372), -2.88, .012, time)
+    + waterTrain(p + warp.yx * .3, vec2(1.061, -3.96), -2.53, .012, time);
   float stir = motion.x * ${CHOP_WAVE_STRENGTH_GAIN.toFixed(2)};
   return swell * (1.0 + stir * .6) + chop * (1.0 + stir) + fine * (1.0 + stir * 1.5);
 }
@@ -155,7 +155,7 @@ gl_FragColor = vec4(waterLight / waterCover, waterCover);`);
     if (!unlit) waterReplace(shader, 'fragmentShader', '#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor, .08, .12) / (1.0 + waterMotion.x * ${CHOP_SHIMMER_GAIN.toFixed(2)});`);
   };
   material.onBeforeCompile = (shader, renderer) => compile(shader, renderer);
-  material.customProgramCacheKey = () => key + '|water-surface-3' + (sourced ? '|water-ripples-2' : '') + (simulation ? '|water-field-1' : '');
+  material.customProgramCacheKey = () => key + '|water-surface-4' + (sourced ? '|water-ripples-2' : '') + (simulation ? '|water-field-1' : '');
   Object.defineProperty(material.userData, 'waterUnlit', {value:{
     hook:(shader, renderer) => compile(shader, renderer, true), key:() => material.customProgramCacheKey() + '|matcap',
   }});
