@@ -88,7 +88,7 @@ float waterCaustic(vec2 p, float depth, vec3 motion) {
 float waterDepth = max(0.0, waterLevel - vWaterWorld.y);
 vec2 waterPoint = vec2(vWaterWorld.x, -vWaterWorld.z) / .3048;
 vec3 waterBodyMotion = waterMotionAt(waterPoint);
-${tier !== 'low' ? `vec2 waterWobble = waterSlope(waterPoint, waterBodyMotion) * waterDepth * .16 * (1.0 + waterBodyMotion.x * ${CHOP_FLOOR_WOBBLE_GAIN.toFixed(2)});
+${tier !== 'low' ? `vec2 waterWobble = waterSlope(waterPoint, waterBodyMotion) * waterDepth * .9 * (1.0 + waterBodyMotion.x * ${CHOP_FLOOR_WOBBLE_GAIN.toFixed(2)});
 ${simulation ? 'waterWobble += waterFieldShape(waterPoint).xy * waterDepth * .48;' : ''}` : ''}`);
     // Only directional sunlight is modulated; hemisphere/environment and local
     // lamps are never multiplied by the projected caustic pattern.
@@ -123,7 +123,7 @@ if (waterDepth > 0.0) {
 #include <opaque_fragment>`);
   };
   material.onBeforeCompile = (shader, renderer) => compile(shader, renderer);
-  material.customProgramCacheKey = () => key + '|underwater-4:' + tier + (simulation ? '|water-field-1' : '') + (regions.length ? '|water-regions:' + regions.map(r => r.polygon.length).join(',') : '');
+  material.customProgramCacheKey = () => key + '|underwater-5:' + tier + (simulation ? '|water-field-1' : '') + (regions.length ? '|water-regions:' + regions.map(r => r.polygon.length).join(',') : '');
   Object.defineProperty(material.userData, 'waterUnlit', {value:{
     hook:(shader, renderer) => compile(shader, renderer, true), key:() => material.customProgramCacheKey() + '|matcap',
   }});

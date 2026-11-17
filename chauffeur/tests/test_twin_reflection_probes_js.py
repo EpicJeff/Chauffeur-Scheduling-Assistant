@@ -201,7 +201,9 @@ for(const failure of [false,true])await test('high_water_mirror_is_the_scene_see
   assert.ok(hidden.every(o=>!o.visible));assert.ok(!sheet.visible);
   for(const o of meshes(c.out))if(o.material.userData.reflection)assert.equal(o.visible,false,'no mirror inside the mirror');
   assert.equal(c.renderer.shadowMap.autoUpdate,false);assert.equal(c.renderer.shadowMap.needsUpdate,false);
-  assert.equal(c.renderer.xr.enabled,false);assert.equal(c.renderer.toneMapping,THREE.NoToneMapping);assert.equal(c.renderer.localClippingEnabled,false);
+  assert.equal(c.renderer.xr.enabled,false);assert.equal(c.renderer.toneMapping,THREE.NoToneMapping);
+  // Same plane count as the picture's own pass: no material is set up again per pass.
+  assert.equal(c.renderer.localClippingEnabled,saved.local);assert.equal(c.renderer.clippingPlanes,saved.clipping);
   const t=c.renderer.target;assert.deepEqual([t.width,t.height],[960,540]);assert.equal(t.texture.type,THREE.HalfFloatType);
   assert.equal(t.texture.colorSpace,THREE.LinearSRGBColorSpace);assert.equal(t.texture.generateMipmaps,false);
  };

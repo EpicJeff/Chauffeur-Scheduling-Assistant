@@ -243,7 +243,10 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       // Shadows are sampled as the picture has them; none is drawn again.
       renderer.shadowMap.autoUpdate = renderer.shadowMap.needsUpdate = false;
       renderer.autoClear = true; renderer.xr.enabled = false; renderer.toneMapping = THREE.NoToneMapping;
-      renderer.clippingPlanes = []; renderer.localClippingEnabled = false; renderer.info.autoReset = false;
+      // The cut planes on a material stay on: the mirror shows the house as
+      // the picture has it, and a material whose plane count differs between
+      // two passes of one frame is set up again on every pass.
+      renderer.info.autoReset = false;
       renderer.setRenderTarget(planar.target);
       renderer.render(scene, virtual);
       planar.passes++;

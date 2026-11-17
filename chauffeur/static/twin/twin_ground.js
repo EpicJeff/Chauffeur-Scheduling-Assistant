@@ -25,8 +25,18 @@ export function groundAt(plan, x, y) {
   const smooth = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
   let height = 0;
   for (const pad of pads) {
-    if (inPolygon(pad.polygon, x, y)) { height = pad.height; continue; }
     const blend = pad.blend ?? 6;
+    // A point further than the blend from the pad's bounding box is neither
+    // on the pad nor in its slope: skip the per-edge work, which is most of
+    // the cost of building a yard.
+    const reach = Math.max(blend, 1e-6);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const p of pad.polygon) {
+      if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+      if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1];
+    }
+    if (x < x0 - reach || x > x1 + reach || y < y0 - reach || y > y1 + reach) continue;
+    if (inPolygon(pad.polygon, x, y)) { height = pad.height; continue; }
     if (!blend) continue;
     const ds = pad.polygon.map((a, i) => edgeDistance([x, y], a, pad.polygon[(i + 1) % pad.polygon.length]));
     const d = Math.min(...ds.filter((_, i) => pad.edges?.[i]?.edge !== 'sharp'));

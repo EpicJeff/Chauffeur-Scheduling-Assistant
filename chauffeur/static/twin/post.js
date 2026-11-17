@@ -18,9 +18,15 @@ const DENOISE_RADIUS = 8;
 // Glow around what is brighter than the picture can show. The threshold is in
 // displayed brightness (after exposure), where 1 is roughly paper white, so
 // the same lamp glows the same at night as at dusk.
-const BLOOM_STRENGTH = .4;
-const BLOOM_RADIUS = .6;
+const BLOOM_STRENGTH = .25;
+const BLOOM_RADIUS = .45;
 const BLOOM_THRESHOLD = 1.6;
+// Only what a pixel has over the threshold glows. The stock filter passes the
+// whole pixel once it is over, so a wall or a floor a lamp lights brightly fed
+// the glow at full strength over its whole area: lamps looked like they were
+// melting the house.
+const HIGH_PASS = 'gl_FragColor = mix( outputColor, texel, alpha );';
+const EXCESS = 'gl_FragColor = mix( outputColor, texel * max( 0.0, 1.0 - luminosityThreshold / max( v, 1e-4 ) ), alpha );';
 // Lit bulbs, strips and lamp shades are drawn at no more than paper white, so
 // none would pass the threshold. Where this chain runs they are drawn this
 // many times brighter; the output pass rolls that off, so hue survives. The
@@ -31,10 +37,11 @@ export const EMITTER_GAIN = 3;
 // past what the half-float target holds whites it out the same way. The glow
 // reads nothing brighter than GLOW_CEILING times its own threshold and the
 // output nothing brighter than OUTPUT_CEILING; either turns a value that is
-// not a number into black. The glow ceiling sits just above a lit lamp
-// (EMITTER_GAIN over the threshold), so a sun glint on water glows like one
-// lamp and a field of glints cannot wash the picture white.
-const GLOW_CEILING = 2.5;
+// not a number into black. The glow ceiling sits at a lit lamp at night
+// (EMITTER_GAIN at the night exposure, over the threshold), so a sun glint on
+// water glows like one lamp and a field of glints cannot wash the picture
+// white.
+const GLOW_CEILING = 2.2;
 const OUTPUT_CEILING = 4096;
 const SAMPLE = 'texture2D( tDiffuse, vUv );';
 function guardSample(material, name, ceiling) {
@@ -95,6 +102,8 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
   composer.addPass(occlusion);
   const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), BLOOM_STRENGTH, BLOOM_RADIUS, BLOOM_THRESHOLD);
   guardSample(bloom.materialHighPassFilter, 'texel', `luminosityThreshold * ${GLOW_CEILING.toFixed(1)}`);
+  if (!bloom.materialHighPassFilter.fragmentShader.includes(HIGH_PASS)) throw new Error('Post shader missing anchor');
+  bloom.materialHighPassFilter.fragmentShader = bloom.materialHighPassFilter.fragmentShader.replace(HIGH_PASS, EXCESS);
   let bloomThreshold = BLOOM_THRESHOLD;
   const drawBloom = bloom.render.bind(bloom);
   bloom.render = (...args) => {

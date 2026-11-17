@@ -23,15 +23,15 @@ vec2 waterSlope(vec2 p, vec3 motion) {
   float time = waterTime + motion.y;
   vec2 warp = vec2(sin(p.y * .31 + time * .21), cos(p.x * .27 - time * .17)) * 1.4;
   vec2 a = p + warp, b = p - warp * .7, c = p + warp.yx * .5;
-  vec2 swell = waterTrain(a, vec2(.658, .239), -1.05, .022, time)
-    + waterTrain(b, vec2(-.628, .527), -1.13, .022, time)
-    + waterTrain(c, vec2(-.106, -.601), -.98, .022, time);
-  vec2 chop = waterTrain(b, vec2(.492, 1.835), -1.72, .02, time)
-    + waterTrain(c, vec2(-2.125, -.569), -1.85, .02, time)
-    + waterTrain(a, vec2(1.202, -1.202), -1.63, .02, time);
-  vec2 fine = waterTrain(p + warp * .5, vec2(3.253, 3.253), -2.68, .012, time)
-    + waterTrain(p - warp * .4, vec2(-5.119, 1.372), -2.88, .012, time)
-    + waterTrain(p + warp.yx * .3, vec2(1.061, -3.96), -2.53, .012, time);
+  vec2 swell = waterTrain(a, vec2(.658, .239), -1.05, .008, time)
+    + waterTrain(b, vec2(-.628, .527), -1.13, .008, time)
+    + waterTrain(c, vec2(-.106, -.601), -.98, .008, time);
+  vec2 chop = waterTrain(b, vec2(.492, 1.835), -1.72, .009, time)
+    + waterTrain(c, vec2(-2.125, -.569), -1.85, .009, time)
+    + waterTrain(a, vec2(1.202, -1.202), -1.63, .009, time);
+  vec2 fine = waterTrain(p + warp * .5, vec2(3.253, 3.253), -2.68, .006, time)
+    + waterTrain(p - warp * .4, vec2(-5.119, 1.372), -2.88, .006, time)
+    + waterTrain(p + warp.yx * .3, vec2(1.061, -3.96), -2.53, .006, time);
   float stir = motion.x * ${CHOP_WAVE_STRENGTH_GAIN.toFixed(2)};
   return swell * (1.0 + stir * .6) + chop * (1.0 + stir) + fine * (1.0 + stir * 1.5);
 }
@@ -139,7 +139,13 @@ ${simulation ? 'rippleSlope += waterFieldShape(waterPoint).xy;' : ''}`);
 normal = normalize(normal + mat3(viewMatrix) * vec3(rippleSlope.x, 0.0, -rippleSlope.y));
 vec3 waterView = normalize(cameraPosition - vWaterWorld);
 vec3 waterNormal = inverseTransformDirection(normal, viewMatrix);
-float waterFresnel = .02 + .98 * pow(1.0 - abs(dot(waterNormal, waterView)), 5.0);
+// How much the surface mirrors is set by the view angle to the water as a
+// whole, with only a part of each wave's tilt. The full tilt swings that share
+// from a tenth to a half between neighbouring waves, and the mirror image then
+// shows in patches with bare floor between them. The waves still bend the
+// image itself by their full tilt.
+vec3 waterSteady = normalize(mix(vec3(0.0, 1.0, 0.0), waterNormal, .3));
+float waterFresnel = .02 + .98 * pow(1.0 - abs(dot(waterSteady, waterView)), 5.0);
 ${unlit ? `// Retain map alpha and the native opacity uniform used by viewing/ghost clones.
 diffuseColor.a *= mix(.30, .92, waterFresnel) / waterBaseOpacity;` : ''}`);
     // A water surface is a mirror laid over the body below, not a tinted film.
@@ -150,12 +156,19 @@ diffuseColor.a *= mix(.30, .92, waterFresnel) / waterBaseOpacity;` : ''}`);
       `// Viewing/ghost fades still fade the whole surface, mirror included.
 float waterFade = clamp(diffuseColor.a / waterBaseOpacity, 0.0, 1.0);
 float waterCover = clamp(max(waterFresnel, waterFoam) * waterFade, .0001, 1.0);
-vec3 waterLight = (totalSpecular + totalDiffuse * waterFoam) * waterFade;
+// The standard material weighs the mirrored scene by the tilted wave. Take the
+// scene again unweighed and give it the same steady share that covers the body.
+#if defined( USE_ENVMAP ) && defined( ENVMAP_TYPE_CUBE_UV )
+vec3 waterMirror = getIBLRadiance(geometryViewDir, geometryNormal, material.roughness) * waterFresnel;
+#else
+vec3 waterMirror = reflectedLight.indirectSpecular;
+#endif
+vec3 waterLight = (waterMirror + reflectedLight.directSpecular + totalDiffuse * waterFoam) * waterFade;
 gl_FragColor = vec4(waterLight / waterCover, waterCover);`);
     if (!unlit) waterReplace(shader, 'fragmentShader', '#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor, .08, .12) / (1.0 + waterMotion.x * ${CHOP_SHIMMER_GAIN.toFixed(2)});`);
   };
   material.onBeforeCompile = (shader, renderer) => compile(shader, renderer);
-  material.customProgramCacheKey = () => key + '|water-surface-4' + (sourced ? '|water-ripples-2' : '') + (simulation ? '|water-field-1' : '');
+  material.customProgramCacheKey = () => key + '|water-surface-5' + (sourced ? '|water-ripples-2' : '') + (simulation ? '|water-field-1' : '');
   Object.defineProperty(material.userData, 'waterUnlit', {value:{
     hook:(shader, renderer) => compile(shader, renderer, true), key:() => material.customProgramCacheKey() + '|matcap',
   }});

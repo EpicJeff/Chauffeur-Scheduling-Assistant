@@ -253,7 +253,12 @@ await test('surface_and_underwater_chain_library_hooks_and_clone_shared_uniforms
    const coverAt=(fresnel,foam,waterFade)=>new Function('waterFresnel','waterFoam','waterFade','clamp','max','return '+cover[1])(fresnel,foam,waterFade,clamp,Math.max);
    near(fadeAt(source.opacity),1);near(fadeAt(copy.opacity),copy.opacity/source.opacity);
    near(coverAt(.02,0,1),.02);near(coverAt(.9,0,1),.9);near(coverAt(.02,.5,1),.5);near(coverAt(.9,0,.25),.225);
-   assert.ok(/totalSpecular \+ totalDiffuse \* waterFoam/.test(light[1]),'mirrored light whole, own colour only as foam');
+   assert.ok(/waterMirror \+ reflectedLight\.directSpecular \+ totalDiffuse \* waterFoam/.test(light[1]),'mirrored light whole, own colour only as foam');
+   // The mirror share follows the view angle to the water as a whole, so the
+   // image covers the surface evenly instead of in patches between waves.
+   assert.ok(f.includes('vec3 waterSteady = normalize(mix(vec3(0.0, 1.0, 0.0), waterNormal, .3));'));
+   assert.ok(/float waterFresnel = [^;]*dot\(waterSteady, waterView\)/.test(f));
+   assert.ok(f.includes('getIBLRadiance(geometryViewDir, geometryNormal, material.roughness) * waterFresnel'));
    const plain=S.surfaceMaterial(source,body,{tier:'high'}).material.userData.waterUnlit,flat={uniforms:{},vertexShader:THREE.ShaderLib.matcap.vertexShader,fragmentShader:THREE.ShaderLib.matcap.fragmentShader};
    plain.hook(flat);assert.ok(/diffuseColor\.a \*= mix\(\.30, \.92, waterFresnel\) \/ waterBaseOpacity;/.test(flat.fragmentShader),'the unlit surface keeps its film');}
  }

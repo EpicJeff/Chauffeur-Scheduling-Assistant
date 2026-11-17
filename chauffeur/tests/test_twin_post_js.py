@@ -88,8 +88,12 @@ await test('glow sits before the output transform and its threshold follows expo
   const {view} = await mount();
   try {
     view.setTime('day');view.render();const glow=passes.UnrealBloomPass;
-    near(glow.strength,.4);near(glow.radius,.6);
+    near(glow.strength,.25);near(glow.radius,.45);
     near(glow.threshold*view.renderer3.toneMappingExposure,1.6);
+    // Only what a pixel has over the threshold glows, so a brightly lit wall does not glow whole.
+    const pass=glow.materialHighPassFilter.fragmentShader;
+    assert.ok(pass.includes('gl_FragColor = mix( outputColor, texel * max( 0.0, 1.0 - luminosityThreshold / max( v, 1e-4 ) ), alpha );'));
+    assert.ok(!pass.includes('mix( outputColor, texel, alpha )'));
     near(glow.highPassUniforms.luminosityThreshold.value,glow.threshold);
     const day=glow.threshold;
     view.setTime('night');view.render();
@@ -102,7 +106,7 @@ await test('the glow and the output read a held value: not-a-number is black and
   const c=setup();
   try {
     c.post.render();
-    for(const [material,name,ceiling] of [[passes.UnrealBloomPass.materialHighPassFilter,'texel','luminosityThreshold * 2.5'],[passes.OutputPass.material,'gl_FragColor','4096.0']]) {
+    for(const [material,name,ceiling] of [[passes.UnrealBloomPass.materialHighPassFilter,'texel','luminosityThreshold * 2.2'],[passes.OutputPass.material,'gl_FragColor','4096.0']]) {
       const source=material.fragmentShader;
       assert.ok(source.includes(`float held( float v ) { return v >= 0.0 ? min( v, ${ceiling} ) : 0.0; }`),name);
       const read=source.indexOf('texture2D( tDiffuse, vUv );'),held=source.indexOf(`${name}.rgb = vec3( held( ${name}.r ), held( ${name}.g ), held( ${name}.b ) );`);
