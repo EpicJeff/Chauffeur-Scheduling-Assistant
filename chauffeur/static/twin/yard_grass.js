@@ -99,23 +99,28 @@ function contains(p, x, y, border = true) {
 }
 const hash = n => { n = Math.imul(n ^ n >>> 16, 0x21f0aaad); n = Math.imul(n ^ n >>> 15, 0x735a2d97); return ((n ^ n >>> 15) >>> 0) / 4294967296; };
 
+// The clump is modelled for this grid spacing (plan feet); a coarser tier's grid
+// spreads and widens its clumps to match, so the cover stays even.
+const BLADES = 5, CLUMP_SPACING = .28;
 function bladeGeometry() {
   const positions = [], normals = [], shape = [], indices = [];
-  // Three bent, three-segment strips per clump, 21 vertices / 15 triangles.
-  for (let b = 0; b < 3; b++) {
+  // Five bent, two-segment blades per clump, 25 vertices / 15 triangles. The
+  // blades stand spread over the clump's whole grid cell and lean different ways,
+  // so the field reads as an even lawn rather than as rows of separate tufts.
+  for (let b = 0; b < BLADES; b++) {
     const a = b * 2.39996, c = Math.cos(a), s = Math.sin(a), start = positions.length/3;
-    for (let row = 0; row <= 3; row++) {
-      const t = row/3, width = .031*(1-t), lean = .065*t*t;
-      for (let side = 0; side < (row === 3 ? 1 : 2); side++) {
-        const x = (side ? width : -width) + .025*b;
-        positions.push(c*x+s*lean, t*(.29+b*.035), -s*x+c*lean);
+    const reach = .13*Math.sqrt((b+.5)/BLADES), ox = Math.cos(a+1.1)*reach, oz = Math.sin(a+1.1)*reach;
+    for (const [t, width] of [[0,.02],[.55,.016],[1,0]]) {
+      const lean = .1*t*t;
+      for (let side = 0; side < (width ? 2 : 1); side++) {
+        const x = side ? width : -width;
+        positions.push(ox+c*x+s*lean, t*(.29+b*.0175), oz-s*x+c*lean);
         // Up-biased normals suppress the alternating bright/dark card faces.
         const n = new THREE.Vector3(s*.32, .95, c*.32).normalize(); normals.push(...n.toArray());
-        shape.push(t, b/3);
+        shape.push(t, b/BLADES);
       }
     }
-    for (let r = 0; r < 2; r++) { const i = start+r*2; indices.push(i,i+1,i+2, i+1,i+3,i+2); }
-    indices.push(start+4,start+5,start+6);
+    indices.push(start,start+1,start+2, start+1,start+3,start+2, start+2,start+3,start+4);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
@@ -129,7 +134,7 @@ export function grassReplace(shader, stage, anchor, replacement) {
   if (!shader[stage].includes(anchor)) throw new Error('Grass shader missing anchor: ' + anchor);
   shader[stage] = shader[stage].replace(anchor, replacement);
 }
-const VARYING = 'varying vec4 vGrass; varying vec2 vGrassUv;\n';
+const VARYING = 'varying vec4 vGrass; varying vec3 vGrassUv;\n';
 export function grassMaterial(source) {
   const material = new THREE.MeshStandardMaterial({name:'yard blades', side:THREE.DoubleSide, roughness:.9});
   const uniforms = {grassTime:{value:0}, grassTint:{value:source.color}, grassMap:{value:null},
@@ -151,25 +156,32 @@ vec3 grassRoot = instanceMatrix[3].xyz;
 vec3 grassWorld = (modelMatrix * vec4(grassRoot, 1.0)).xyz;
 float grassDistance = distance(cameraPosition, grassWorld);
 float grassSeed = fract(sin(dot(grassRoot.xz, vec2(12.9898,78.233))) * 43758.5453);
-float grassKeep = mix(1.0, .08, smoothstep(8.0, 48.0, grassDistance));
+// The whole house is usually on screen from 30 m or more, so the field stays
+// complete that far; beyond it clumps thin out, grow to hold the cover, and
+// their colour settles onto the lawn's own so sub-pixel blades do not sparkle.
+float grassKeep = mix(1.0, .2, smoothstep(30.0, 120.0, grassDistance));
 float grassScale = smoothstep(grassSeed-.045, grassSeed+.045, grassKeep);
-transformed.x *= 1.0 + .65*smoothstep(8.0, 40.0, grassDistance);
+transformed.xz *= 1.0 + 1.2*smoothstep(25.0, 110.0, grassDistance);
 // A fixed seed threshold shrinks each clump over its own distance interval.
 transformed *= grassScale;
 float gust = sin(grassRoot.x*.11 + grassRoot.z*.07 + grassTime*.8)
   + .4*sin(grassRoot.z*.23 - grassRoot.x*.09 - grassTime*.57);
 // Convert the world-directed wind into the instance's local yaw frame.
 vec2 wind = vec2(.043, .027) * gust * grassShape.x*grassShape.x * grassScale;
-transformed.xz += vec2(dot(instanceMatrix[0].xz, wind), dot(instanceMatrix[2].xz, wind));
+transformed.xz += vec2(dot(instanceMatrix[0].xz, wind), dot(instanceMatrix[2].xz, wind)) / dot(instanceMatrix[0].xz, instanceMatrix[0].xz);
 vGrass = vec4(grassShape, grassSeed, .5+.5*sin(grassRoot.x*.037+sin(grassRoot.z*.041)*2.0));
-vGrassUv = (grassUvMatrix * vec3(grassRoot.x, grassRoot.z, 1.0)).xy;`);
+vGrassUv = vec3((grassUvMatrix * vec3(grassRoot.x, grassRoot.z, 1.0)).xy, .8*smoothstep(35.0, 110.0, grassDistance));`);
     shader.fragmentShader = VARYING + 'uniform vec3 grassTint; uniform sampler2D grassMap; uniform float grassHasMap;\n' + shader.fragmentShader;
     grassReplace(shader, 'fragmentShader', '#include <color_fragment>', `#include <color_fragment>
 vec3 lawn = grassTint;
-if (grassHasMap > .5) lawn *= texture2D(grassMap, vGrassUv).rgb;
-vec3 patch = mix(vec3(.89,1.02,.82), vec3(1.10,.98,.80), vGrass.w);
-vec3 blade = mix(vec3(.93,1.02,.92), vec3(1.06,.99,.86), fract(vGrass.z+vGrass.y));
-diffuseColor.rgb *= lawn * patch * blade * mix(.46,1.15,vGrass.x) * mix(.88,1.12,vGrass.z);`);
+if (grassHasMap > .5) lawn *= texture2D(grassMap, vGrassUv.xy).rgb;
+// "patch" is a reserved word in GLSL ES 3.
+vec3 lawnPatch = mix(vec3(.90,1.0,.84), vec3(1.10,1.02,.82), vGrass.w);
+vec3 lawnBlade = mix(vec3(.88,1.0,.90), vec3(1.12,1.04,.80), fract(vGrass.z*7.0+vGrass.y*3.3));
+// Shaded at the root, lit and a little yellow at the tip: the tips sit above the
+// lawn colour under them, which is what gives the field its depth.
+vec3 lawnTip = mix(vec3(.55), vec3(1.42,1.36,1.0), vGrass.x);
+diffuseColor.rgb *= lawn * mix(lawnPatch * lawnBlade * lawnTip, vec3(1.0), vGrassUv.z);`);
     grassReplace(shader, 'fragmentShader', '#include <normal_fragment_begin>',
       '#include <normal_fragment_begin>\nnormal *= gl_FrontFacing ? 1.0 : -1.0;');
     if (!unlit) grassReplace(shader, 'fragmentShader', '#include <roughnessmap_fragment>',
@@ -204,6 +216,7 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   const spacing = Math.max(TIERS[tier].lawnSpacing, Math.sqrt(w*h/budget));
   const nx = Math.min(budget,Math.max(1,Math.floor(w/spacing)));
   const ny = Math.min(Math.floor(budget/nx),Math.max(1,Math.floor(h/spacing)));
+  const spread = Math.max(1,Math.min(2,Math.sqrt(w*h/(nx*ny))/CLUMP_SPACING));
   // A small spatial lookup keeps many distant garden/path polygons out of the
   // hot loop. It is build-only and introduces no extra meshes or frame work.
   const bins = Array.from({length:256},()=>[]);
@@ -222,19 +235,23 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
     const x = lot.x0+(ix+.2+.6*r)*w/nx, y = lot.y0+(iy+.2+.6*s)*h/ny;
     if (!lot.rectangle && !contains(lot,x,y,false)) continue;
     // Keep roots and their maximum lean/gust clear of the lot boundary too.
-    let boundary = x<lot.x0+.8 || x>lot.x1-.8 || y<lot.y0+.8 || y>lot.y1-.8;
+    let edge = Math.min(x-lot.x0, lot.x1-x, y-lot.y0, lot.y1-y)-.4;
     if (!lot.rectangle) for (let i=0,j=polygon.length-1;i<polygon.length;j=i++) {
       const a=polygon[j],b=polygon[i],dx=b[0]-a[0],dy=b[1]-a[1];
       const t=Math.max(0,Math.min(1,((x-a[0])*dx+(y-a[1])*dy)/(dx*dx+dy*dy||1)));
-      if ((x-a[0]-t*dx)**2+(y-a[1]-t*dy)**2 < .16) { boundary=true; break; }
+      edge=Math.min(edge,Math.hypot(x-a[0]-t*dx,y-a[1]-t*dy));
+      if (edge < .4) break;
     }
-    if (boundary) continue;
+    if (edge < .4) continue;
     const nearby=bins[Math.min(15,Math.floor((x-lot.x0)*16/w))*16+Math.min(15,Math.floor((y-lot.y0)*16/h))];
     let covered=false;
     for (const p of nearby) if (contains(p,x,y)) {covered=true;break;}
     if (covered) continue;
     const height = pads.some(p => x>=p.x0&&x<=p.x1&&y>=p.y0&&y<=p.y1) ? groundAt(plan,x,y) : 0;
-    const a = r*Math.PI*2, c = Math.cos(a), sn = Math.sin(a), scale = .68+.42*s, k = count++*16;
+    // The lawn goes on past the lot as bare ground, so the blades shorten over
+    // the last few feet rather than stopping as a wall.
+    const rim = Math.min(1,(edge-.4)/4), short = .35+.65*rim*rim*(3-2*rim);
+    const a = r*Math.PI*2, c = Math.cos(a)*spread, sn = Math.sin(a)*spread, scale = (.68+.42*s)*short, k = count++*16;
     matrices[k]=c; matrices[k+2]=-sn; matrices[k+5]=scale; matrices[k+8]=sn; matrices[k+10]=c;
     matrices[k+12]=x; matrices[k+13]=height-.04; matrices[k+14]=-y; matrices[k+15]=1;
     low=Math.min(low,height); high=Math.max(high,height);

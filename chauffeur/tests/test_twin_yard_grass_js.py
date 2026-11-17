@@ -84,9 +84,10 @@ await test('every_root_is_in_the_lot_and_clear_of_every_cover_with_margin',()=>{
 await test('roots_follow_sampled_slopes_in_feet_and_geometry_is_bent_strips',()=>{
  const p=make(),f=buildField(p);let slopes=0;
  for(const [x,y,z] of positions(f)){const h=groundAt(p,x,y);assert.ok(Math.abs(z-(h-.04))<2e-5);if(h>.05)slopes++;}
- assert.ok(slopes>100);const g=f.mesh.geometry;assert.equal(g.attributes.position.count,21);assert.equal(g.index.count,45);
- const a=g.attributes.position;assert.ok(a.getZ(6)!==a.getZ(0));assert.ok(g.attributes.normal.getY(0)>.9);
- assert.ok(a.getY(6)*.68*.3048>=.06);assert.ok(a.getY(20)*1.1*.3048<=.121);release(f);
+ assert.ok(slopes>100);const g=f.mesh.geometry;assert.equal(g.attributes.position.count,25);assert.equal(g.index.count,45);
+ // Vertex 4 is the shortest blade's tip, vertex 24 the tallest's; a tip leans off its root.
+ const a=g.attributes.position;assert.ok(Math.hypot(a.getX(4)-(a.getX(0)+a.getX(1))/2,a.getZ(4)-(a.getZ(0)+a.getZ(1))/2)>.05);assert.ok(g.attributes.normal.getY(0)>.9);
+ assert.ok(a.getY(4)*.68*.3048>=.06);assert.ok(a.getY(24)*1.1*.3048<=.121);release(f);
 });
 await test('placements_repeat_byte_for_byte_and_moving_one_cover_only_changes_local_cells',()=>{
  const p=make(),a=buildField(p),b=buildField(structuredClone(p));assert.deepEqual(a.mesh.instanceMatrix.array,b.mesh.instanceMatrix.array);
@@ -121,8 +122,10 @@ await test('distance_thinning_is_continuous_per_clump_and_widens_distant_blades'
  const keep=new Function('grassDistance','mix','smoothstep','return '+expression('grassKeep'));
  const fade=new Function('grassSeed','grassKeep','smoothstep','return '+expression('grassScale'));
  assert.equal(fade(.5,keep(0,mix,smoothstep),smoothstep),1);assert.equal(fade(.5,keep(100,mix,smoothstep),smoothstep),0);
- let transitions=0;for(let d=0;d<60;d+=.05){const v=fade(.5,keep(d,mix,smoothstep),smoothstep);if(v>0&&v<1)transitions++;}assert.ok(transitions>10);
- assert.ok(s.includes('transformed.x *= 1.0 + .65*'));release(f);
+ // Nothing thins inside 30 m, where the whole house is normally framed.
+ for(const seed of [.05,.5,.95])assert.equal(fade(seed,keep(30,mix,smoothstep),smoothstep),1);
+ let transitions=0;for(let d=0;d<130;d+=.05){const v=fade(.5,keep(d,mix,smoothstep),smoothstep);if(v>0&&v<1)transitions++;}assert.ok(transitions>10);
+ assert.ok(s.includes('transformed.xz *= 1.0 + 1.2*'));release(f);
 });
 await test('unlit_and_viewing_clones_keep_shape_wind_colour_and_opaque_contract',()=>{
  const f=buildField(make()),m=f.mesh.material,unlit=createUnlit(),root=new THREE.Group();root.add(f.mesh);unlit.apply(root);
