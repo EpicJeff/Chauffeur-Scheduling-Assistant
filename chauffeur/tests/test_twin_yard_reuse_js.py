@@ -6,7 +6,7 @@ from twin_editor_dom import PRELUDE, run_node
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = '\n'.join(line for line in PRELUDE.splitlines() if "if (spec === './twin_yard.js')" not in line)
-PREFIX = PREFIX.replace("if (spec === 'three')", """if (spec === '@dgreenheck/ez-tree') return {url:data(`import {Group} from '${three}'; export class Tree extends Group { constructor(){super();this.options={};} loadPreset(){} generate(){ this.clear?.(); this.add(new (globalThis.__THREE_MESH)(new (globalThis.__THREE_BOX)(1,2,1), new (globalThis.__THREE_STD)())); } }`),shortCircuit:true};
+PREFIX = PREFIX.replace("if (spec === 'three')", """if (spec === '@dgreenheck/ez-tree') return {url:data(`import {Group} from '${three}'; export class Tree extends Group { constructor(){super();this.options={};} loadPreset(){} generate(){ globalThis.__plantGenerations=(globalThis.__plantGenerations||0)+1; this.clear?.(); this.add(new (globalThis.__THREE_MESH)(new (globalThis.__THREE_BOX)(1,2,1), new (globalThis.__THREE_STD)())); } }`),shortCircuit:true};
   if (spec === 'three')""")
 
 DRIVER = PREFIX + r"""
@@ -40,6 +40,142 @@ async function mount(plan,editor=true,tier='high',kit={materials:{}}) {
  return mountTwin(host,{plan:structuredClone(plan),kit,tier,bake:false});
 }
 const yard=v=>v.scene.getObjectByName('yard');
+const {groundAt} = await import(file('static/twin/twin_ground.js'));
+const {disposeObject} = await import(file('static/twin/twin_library.js'));
+const planted=()=>({buildings:[],materials:{},site:{
+ terraces:[{polygon:square(0,0,10),height:3,blend:4}],
+ planting:[
+  {id:'a',preset:'oak',at:[20,20],height:12,seed:1},
+  {id:'b',preset:'pine',at:[2,2],height:9,seed:2,scale:1.2,scale_axes:[.8,1.3,1.1],pitch:4,rotation:25,roll:3,tint:'#789abc'},
+  {id:'c',preset:'birch',at:[4,4],height:7,seed:3,casts_shadow:false}
+ ]}});
+const plantObjects=g=>g.children.filter(o=>o.userData.yardPart==='plants');
+const plantSnapshot=g=>plantObjects(g).map(plant=>{
+ const meshes=[];plant.traverse(o=>{if(o.isMesh)meshes.push({
+  position:o.position.toArray(),rotation:o.rotation.toArray(),scale:o.scale.toArray(),
+  vertices:Array.from(o.geometry.attributes.position.array),castShadow:o.castShadow,receiveShadow:o.receiveShadow,
+  materials:[].concat(o.material).map(m=>({name:m.name,color:m.color?.getHex(),roughness:m.roughness,
+   side:m.side,alphaTest:m.alphaTest,opacity:m.opacity,emissive:m.emissive?.getHex(),userData:m.userData}))
+ });});
+ return {name:plant.name,position:plant.position.toArray(),rotation:plant.rotation.toArray(),scale:plant.scale.toArray(),meshes};
+});
+const buildPlants=(p,previous=null,tier='high',viewing=false)=>buildYard(p,{materials:{}},tier,
+ {previous,viewing,materials:previous?new Map(previous.userData.materials):null});
+await test('moving_one_plant_generates_no_trees',async()=>{
+ const plan=planted(),first=(await buildPlants(plan)).group,before=plantObjects(first);
+ assert.equal(before.length,3);const oldPosition=before[0].position.clone();
+ plan.site.planting[0].at=[2,3];globalThis.__plantGenerations=0;
+ const next=(await buildPlants(plan,first)).group;
+ assert.equal(globalThis.__plantGenerations,0,'moving runs neither presetTree nor bakePreset');
+ assert.equal(before[0].parent,first,'preparation must not steal the live plant');
+ assert.deepEqual(before[0].position,oldPosition,'preparation must not move the live plant');
+ next.userData.adoptParts();
+ assert.deepEqual(plantObjects(next),before,'all three exact objects survive');
+ assert.deepEqual(before[0].position.toArray(),[2,groundAt(plan,2,3)+6,-3],'new grade plus the preset base offset');
+ let releases=0;before[0].traverse(o=>{o.geometry?.addEventListener('dispose',()=>releases++);o.material?.addEventListener('dispose',()=>releases++);});
+ const keep=new Set(next.userData.materials.values());first.userData.releasePlants(keep);disposeObject(first,{keepMaterials:keep});
+ assert.equal(releases,0,'previous yard disposal preserves adopted resources');
+ next.userData.releasePlants();disposeObject(next);assert.ok(releases>0,'final disposal releases the plant');
+});
+await test('changed_preset_regenerates_only_that_plant',async()=>{
+ const plan=planted(),first=(await buildPlants(plan)).group,before=plantObjects(first);
+ plan.site.planting[1].preset='maple';globalThis.__plantGenerations=0;
+ const next=(await buildPlants(plan,first)).group;next.userData.adoptParts();
+ assert.equal(globalThis.__plantGenerations,1);
+ const after=plantObjects(next);assert.equal(after[0],before[0]);assert.notEqual(after[1],before[1]);assert.equal(after[2],before[2]);
+});
+await test('fresh_and_reused_match',async()=>{
+ for(const viewing of [false,true]){
+  const plan=planted(),first=(await buildPlants(plan,null,'high',viewing)).group;
+  plan.site.planting[0].at=[2,3];plan.site.planting[0].elevation=1.25;
+  plan.site.planting[1].at=[-2,5];plan.site.planting[1].elevation=-.4;
+  plan.site.terraces[0].height=5;
+  const next=(await buildPlants(plan,first,'high',viewing)).group;next.userData.adoptParts();
+  const fresh=(await buildPlants(plan,null,'high',viewing)).group;
+  assert.deepEqual(plantSnapshot(next),plantSnapshot(fresh),'position, scale, rotation, geometry and materials match');
+ }
+});
+await test('plant_reuse_covers_tiers_and_viewing',async()=>{
+ const savedContext=Element.prototype.getContext;
+ Element.prototype.getContext=function(){return {drawImage(){}};};
+ try{
+  for(const tier of ['low','medium','high','max'])for(const viewing of [false,true]){
+   const plan=planted(),first=(await buildPlants(plan,null,tier,viewing)).group,before=plantObjects(first);
+   plan.site.planting[1].at=[-2,5];plan.site.planting[1].elevation=.75;globalThis.__plantGenerations=0;
+   const next=(await buildPlants(plan,first,tier,viewing)).group;next.userData.adoptParts();
+   assert.equal(globalThis.__plantGenerations,0,tier+' move never generates/bakes');assert.deepEqual(plantObjects(next),before);
+   const fresh=(await buildPlants(plan,null,tier,viewing)).group;
+   const transforms=g=>plantObjects(g).map(o=>[o.name,o.position.toArray(),o.rotation.toArray(),o.scale.toArray()]);
+   assert.deepEqual(transforms(next),transforms(fresh),tier+' transforms match fresh');
+  }
+ }finally{if(savedContext)Element.prototype.getContext=savedContext;else delete Element.prototype.getContext;}
+});
+await test('plant_appearance_changes_regenerate_only_the_changed_plant',async()=>{
+ const edits=[p=>p.seed++,p=>p.height++,p=>p.scale=.7,p=>p.scale_axes=[.5,2,1],p=>p.rotation=70,
+  p=>p.pitch=10,p=>p.roll=15,p=>p.tint='#123456',p=>p.casts_shadow=false,p=>p.kind='shrub',
+  p=>p.id='renamed',p=>p.object_kind='lamp',p=>p.visible_in=['editor'],p=>p.custom={future:'field'}];
+ for(const edit of edits){
+  const plan=planted(),first=(await buildPlants(plan)).group,before=plantObjects(first);
+  edit(plan.site.planting[0]);plan.site.planting[0].at=[2,3];globalThis.__plantGenerations=0;
+  const next=(await buildPlants(plan,first)).group;next.userData.adoptParts();
+  assert.equal(globalThis.__plantGenerations,1,String(edit));
+  const after=plantObjects(next);assert.notEqual(after[0],before[0]);assert.equal(after[1],before[1]);assert.equal(after[2],before[2]);
+  assert.deepEqual(plantSnapshot(next),plantSnapshot((await buildPlants(plan)).group));
+ }
+ for(const [tier,viewing] of [['medium',false],['high',true]]){
+  const plan=planted(),first=(await buildPlants(plan)).group;globalThis.__plantGenerations=0;
+  const next=(await buildPlants(plan,first,tier,viewing)).group;next.userData.adoptParts();
+  assert.equal(globalThis.__plantGenerations,3,'tier/viewing form part of the appearance');
+ }
+});
+await test('low_cards_follow_the_first_seed_for_a_shared_preset',async()=>{
+ const savedContext=Element.prototype.getContext;
+ Element.prototype.getContext=function(){return {drawImage(){}};};
+ try{
+  const plan=planted();plan.site.planting=plan.site.planting.slice(0,2);plan.site.planting[1].preset='oak';
+  const first=(await buildPlants(plan,null,'low')).group,before=plantObjects(first);
+  plan.site.planting.reverse();globalThis.__plantGenerations=0;
+  const next=(await buildPlants(plan,first,'low')).group;next.userData.adoptParts();
+  assert.equal(globalThis.__plantGenerations,1,'a new first seed rebakes the shared preset once');
+  const after=plantObjects(next);
+  assert.ok(after.every(o=>!before.includes(o)),'the shared baked appearance changed for both cards');
+  for(let i=0;i<2;i++)assert.notEqual(after[i].children[0].material.map,before[1-i].children[0].material.map,'no stale card material');
+  plan.site.planting[0].at=[5,6];globalThis.__plantGenerations=0;
+  const moved=(await buildPlants(plan,next,'low')).group;moved.userData.adoptParts();
+  assert.equal(globalThis.__plantGenerations,0,'moving with the same first seed never rebakes');
+  assert.deepEqual(plantObjects(moved),after);
+ }finally{if(savedContext)Element.prototype.getContext=savedContext;else delete Element.prototype.getContext;}
+});
+await test('plant_materials_survive_an_omitted_or_reset_material_cache',async()=>{
+ for(const materials of [null,new Map()]){
+  const plan=planted(),first=(await buildPlants(plan)).group,before=plantObjects(first);
+  plan.site.planting[0].at=[2,3];globalThis.__plantGenerations=0;
+  const next=(await buildYard(plan,{materials:{}},'high',{previous:first,materials})).group;next.userData.adoptParts();
+  assert.equal(globalThis.__plantGenerations,0);assert.deepEqual(plantObjects(next),before);
+  let disposed=0;const keep=new Set(next.userData.materials.values());
+  for(const object of before)object.traverse(o=>{for(const m of o.material?[].concat(o.material):[]){
+   assert.ok(keep.has(m),'adopted material belongs to the new yard');m.addEventListener('dispose',()=>disposed++);
+  }});
+  first.userData.releasePlants(keep);disposeObject(first,{keepMaterials:keep});assert.equal(disposed,0);
+ }
+});
+await test('plant_order_removal_visibility_and_cancellation_preserve_ownership',async()=>{
+ const plan=planted(),first=(await buildPlants(plan,null,'high',true)).group,before=plantObjects(first);
+ plan.site.planting.reverse();plan.site.planting[0].at=[-2,5];globalThis.__plantGenerations=0;
+ const abandoned=(await buildPlants(plan,first,'high',true)).group;
+ const keep=new Set(first.userData.materials.values());abandoned.userData.releasePlants(keep);disposeObject(abandoned,{keepMaterials:keep});
+ assert.ok(before.every(o=>o.parent===first&&!o.userData.disposed),'discarding a candidate leaves plants alive');
+ const next=(await buildPlants(plan,first,'high',true)).group;next.userData.adoptParts();
+ assert.equal(globalThis.__plantGenerations,0,'id-based plants survive reorder');
+ assert.deepEqual(plantObjects(next),[...before].reverse());
+ assert.deepEqual(plantSnapshot(next),plantSnapshot((await buildPlants(plan,null,'high',true)).group));
+ let removed=0;before[1].traverse(o=>o.geometry?.addEventListener('dispose',()=>removed++));
+ plan.site.planting.splice(1,1);plan.site.planting[0].visible_in=['editor'];
+ const last=(await buildPlants(plan,next,'high',true)).group;last.userData.adoptParts();
+ assert.deepEqual(plantObjects(last),[before[0]],'removed and hidden plants stay in the previous yard');
+ const retained=new Set(last.userData.materials.values());next.userData.releasePlants(retained);disposeObject(next,{keepMaterials:retained});
+ assert.ok(removed>0,'removed geometry is released');assert.equal(before[0].userData.disposed,undefined);
+});
 await test('stair_edit_keeps_neighbour_and_only_changed_footprints_invalidate_grass',async()=>{
  const plan={buildings:[],materials:{},site:{terraces:[0,20].map((x,i)=>({id:'pad'+i,polygon:square(x,0,10),height:3,blend:0,
   edges:[{edge:'sharp',stair:{riser_in:7,tread_in:11,treads:true}},...Array.from({length:3},()=>({edge:'sharp'}))]}))}};
@@ -277,9 +413,10 @@ async function partEdit(change,expectRebuilt,label){
   const record=beginEdit({op:'edit'});await v.rebuild(plan,{timing:record});
   const after=parts(v);
   const rebuilt=YARD_PARTS.filter(n=>(before[n]||after[n])&&!same(after[n],before[n])).sort();
-  // Identity can only be compared for parts that draw something in this fixture; the timing
-  // record below lists every rebuilt part, empty or not.
-  const drawn=expectRebuilt.filter(n=>before[n]?.length||after[n]?.length);
+  // A refreshed plants part retains its matching objects. Other rebuilt parts
+  // replace their drawn objects; timing still lists every refreshed part.
+  const drawn=expectRebuilt.filter(n=>n!=='plants'&&(before[n]?.length||after[n]?.length));
+  if(expectRebuilt.includes('plants'))assert.ok(same(after.plants,before.plants),label+': unchanged plant appearances keep their objects');
   assert.deepEqual(rebuilt,[...drawn].sort(),label+': rebuilt '+JSON.stringify(rebuilt));
   assert.deepEqual([...record.yard_rebuilt_parts].sort(),[...expectRebuilt].sort(),label+' timing');
   for(const n of YARD_PARTS)if(!expectRebuilt.includes(n))for(const o of after[n]||[])assert.ok(o.parent===yard(v),label+': '+n+' adopted into the new yard');

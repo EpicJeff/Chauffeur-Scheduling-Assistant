@@ -298,7 +298,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   const root = new THREE.Group(); root.name = 'yard';
   Object.defineProperty(root.userData, 'waterSurfaces', { value: [], writable: true });
   const keys = yardPartKeys(plan, kit, tier, { viewing }), reused = new Map();
-  const site = plan.site || {}, mats = materials || new Map();
+  const plantPlacements = [];
+  const site = plan.site || {}, mats = materials || new Map(previous?.userData.materials || []);
   const padParts = (site.terraces || []).some(p => p.edges?.some(e => e.stair || e.wall?.cap || e.wall?.rail));
   const padKeys = {};
   const spas = (site.pool?.features || []).filter(f => f.kind === 'spa').map(f => f.polygon);
@@ -522,20 +523,49 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     },
     plants: async group => {
       const stopPlants = part('plants');
-      const cards = new Map();
+      const cards = new Map(), cardSeeds = new Map();
+      // Low keeps the existing fresh-build look: every instance of a preset
+      // shares the image baked from its first visible, valid planting's seed.
+      if (tier === 'low') for (const p of site.planting || []) {
+        if (objectShown(p, !viewing) && p.at && p.preset && p.height > 0 && !cardSeeds.has(p.preset)) cardSeeds.set(p.preset, p.seed ?? 1);
+      }
+      const available = new Map();
+      for (const object of previous?.children || []) if (object.userData.yardPart === 'plants' && object.userData.plantAppearance) {
+        const key = object.userData.plantAppearance;
+        if (!available.has(key)) available.set(key, []);
+        available.get(key).push(object);
+      }
       let baker = null;
       try {
-        if (tier === 'low' && site.planting?.some(p => !mats.has('plant_card:' + p.preset))) baker = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
         for (let index = 0; index < (site.planting || []).length; index++) {
           const p = site.planting[index]; if (!objectShown(p, !viewing)) continue; if (!p.at || !p.preset || !(p.height > 0)) continue;
+          // Snapshot every authored appearance field. The fallback identity also
+          // covers index-dependent lamp material keys; position and grade do not.
+          const cardSeed = cardSeeds.get(p.preset);
+          const appearance = JSON.stringify([tier, viewing, p.id || index, cardSeed,
+            Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'at' && key !== 'elevation').sort(([a], [b]) => a.localeCompare(b)))]);
+          const kept = available.get(appearance)?.shift();
+          if (kept) {
+            reused.set('plant:' + index, [kept]);
+            plantPlacements.push({ object: kept, index, position: [p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0) + kept.userData.plantBaseOffset, -p.at[1]] });
+            const used = new Set();
+            kept.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) used.add(m); });
+            for (const [key, material] of previous.userData.materials || []) if (used.has(material)) mats.set(key, material);
+            continue;
+          }
+          let object, baseOffset = 0;
           if (tier === 'low') {
             const holder = new THREE.Group(); holder.userData.placedPlant = true; group.add(holder);
+            object = holder;
             if (viewing) { holder.userData.viewingTree = true; holder.name = `tree:${index}`; }
             if (!cards.has(p.preset)) {
-              const cached = mats.get('plant_card:' + p.preset);
+              const old = mats.get('plant_card:' + p.preset);
+              const cached = old && (old.userData.cardSeed === undefined || old.userData.cardSeed === cardSeed) ? old : null;
+              if (!cached && !baker) baker = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
               const card = cached ? { material: cached, texture: cached.map, aspect: cached.userData.cardAspect }
-                : await bakePreset(p.preset, p.seed ?? 1, baker);
-              card.material.userData.cardAspect = card.aspect; mats.set('plant_card:' + p.preset, card.material); cards.set(p.preset, card);
+                : await bakePreset(p.preset, cardSeed, baker);
+              Object.assign(card.material.userData, { cardAspect: card.aspect, cardSeed });
+              mats.set('plant_card:' + p.preset, card.material); cards.set(p.preset, card);
             }
             const card = cards.get(p.preset), h = p.height * 1.08;
             for (const angle of [0, Math.PI / 2]) {
@@ -543,18 +573,21 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
               addMesh(holder, geometry, card.material);
             }
             applyObject(holder, p, { units: 1 }); holder.position.set(p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0), -p.at[1]);
-            cacheModelMaterials(holder, 'plant-card:' + p.preset + ':' + objectMaterialKey(p, p.id || index), mats);
+            cacheModelMaterials(holder, 'plant-card:' + p.preset + ':' + cardSeed + ':' + objectMaterialKey(p, p.id || index), mats);
             if (viewing) mergeStatic(holder);
           } else {
             const tree = presetTree(p.preset, p.seed ?? 1); standardTree(tree, mats);
+            object = tree;
             const bounds = new THREE.Box3().setFromObject(tree), h = bounds.max.y - bounds.min.y, scale = p.height / Math.max(0.01, h);
             tree.scale.setScalar(scale);
             applyObject(tree, p, { units: 1 });
             cacheModelMaterials(tree, 'plant:' + p.preset + ':' + objectMaterialKey(p, p.id || index), mats);
-            tree.position.set(p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0) - bounds.min.y * scale * (p.scale ?? 1) * (p.scale_axes?.[1] ?? 1), -p.at[1]);
+            baseOffset = -bounds.min.y * scale * (p.scale ?? 1) * (p.scale_axes?.[1] ?? 1);
+            tree.position.set(p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0) + baseOffset, -p.at[1]);
             tree.rotation.y += (p.seed || 0) * 2.39996; group.add(tree);
             if (viewing) { tree.userData.viewingTree = true; tree.name = `tree:${index}`; }
           }
+          Object.assign(object.userData, { plantAppearance: appearance, plantBaseOffset: baseOffset, yardPlantIndex: index });
           // Let loading/status controls paint while full presets are generated.
           if (index % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
         }
@@ -756,10 +789,14 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   // owns reused groups and can survive a failed/superseded asynchronous rebuild.
   root.userData.adoptParts = () => {
     for (const objects of reused.values()) for (const object of objects) root.add(object);
+    for (const { object, index, position } of plantPlacements) {
+      object.position.set(...position); object.userData.yardPlantIndex = index;
+      if (viewing) object.name = `tree:${index}`;
+    }
     // Stable part order (and stable order within a part) keeps chart packing deterministic.
     const order = o => YARD_PARTS.indexOf(o.userData.yardPart);
     for (const [name, objects] of reused) if (name.startsWith('pad:')) for (const object of objects) object.userData.yardPart = 'retaining_walls';
-    root.children.sort((a, b) => order(a) - order(b));
+    root.children.sort((a, b) => order(a) - order(b) || (a.userData.yardPart === 'plants' ? a.userData.yardPlantIndex - b.userData.yardPlantIndex : 0));
     if (padParts) {
       const padOrder = (site.terraces || []).map((p, i) => p.id || String(i));
       const walls = root.children.filter(o => o.userData.yardPart === 'retaining_walls')
