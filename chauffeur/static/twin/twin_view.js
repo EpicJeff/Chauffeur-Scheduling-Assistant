@@ -52,6 +52,28 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const orthographic = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
   let camera = perspective;
   const post = settings.occlusion ? createPost(renderer3, scene, camera, {samples: settings.antialias ? 4 : 0}) : null;
+  // three keys every program on where it draws. With the composer on, the
+  // picture draws into its half-float target (linear, no tone mapping), so a
+  // warm-up compiled for the canvas warmed programs nothing draws, and the real
+  // ones compiled on the main thread at first draw: seconds of frozen page each
+  // time the light set or the bake changed on a full house. Every warm-up
+  // compiles for where the picture draws. While one is in flight, render()
+  // keeps the last picture (HOLD_MS at most): a frame drawn with a program
+  // still compiling waits for the GPU on the main thread.
+  const compileFor = renderer3.compileAsync?.bind(renderer3), HOLD_MS = 15000;
+  let compiling = 0, holdSince = 0;
+  const compileBehind = (target, eye, targetScene = null) => {
+    const saved = [renderer3.getRenderTarget(), renderer3.getActiveCubeFace(), renderer3.getActiveMipmapLevel()];
+    try {
+      renderer3.setRenderTarget(post && !state.unlit ? post.target : null);
+      return compileFor(target, eye, targetScene);
+    } finally { renderer3.setRenderTarget(...saved); }
+  };
+  if (compileFor) renderer3.compileAsync = (target, eye, targetScene = null) => {
+    const ready = compileBehind(target, eye, targetScene);
+    if (!compiling++) holdSince = performance.now();
+    return ready.finally(() => { if (!--compiling && !disposed) render(); });
+  };
   const controls = new OrbitControls(camera, renderer3.domElement);
   controls.maxPolarAngle = Math.PI * 0.49;
   controls.enableDamping = false;
@@ -94,7 +116,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
   const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
-    extras:() => [sheet?.object, ...selectionLines], sky:() => sky});
+    extras:() => [sheet?.object, ...selectionLines], sky:() => sky, uncut:() => viewing?.uncut?.()});
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
@@ -289,6 +311,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   function render() {
     if (disposed) return;
+    if (compiling && performance.now() - holdSince < HOLD_MS) return;
     viewing?.update(performance.now());
     applyIndoorSky();
     view.levels?.draw();
@@ -422,6 +445,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     get roofSurfaces() { return twin?.roofSurfaces; },
     render,
     reflectionsChanged: () => reflections.request(),
+    // A warm-up for a change not yet on screen: the picture keeps drawing.
+    compileBehind: () => compileFor ? compileBehind(scene, camera) : null,
     prepareViewingMaterial(source, material) { if (material) viewing?.adopt(source, material); else viewing?.refresh(source); },
     cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
     saveView() {

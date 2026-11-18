@@ -160,7 +160,7 @@ const area = poly => Math.abs(poly.reduce((sum, p, i) => {
 const centreOf = poly => [0, 1].map(k => (Math.min(...poly.map(p => p[k])) + Math.max(...poly.map(p => p[k]))) / 2);
 const visible = object => { for (let p = object; p; p = p.parent) if (!p.visible) return false; return true; };
 
-export function createReflectionProbes({scene, renderer, tier, extras = () => [], sky = () => null, now = () => performance.now(), warn = error => console.warn('House reflection capture failed:', error)}) {
+export function createReflectionProbes({scene, renderer, tier, extras = () => [], sky = () => null, uncut = () => null, now = () => performance.now(), warn = error => console.warn('House reflection capture failed:', error)}) {
   let probes = [], bindings = new Set(), queue = [], requested = false, quietAt = 0, unlit = false, disposed = false, lightsKey = null, lightsAt = -Infinity;
   const enabled = tier !== 'low';
   // A flat pool mirrors what stands beside it. One cube taken at the pool's
@@ -352,6 +352,7 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
   }
   function capture(p) {
     const hidden = new Map(), shadows = [];
+    let restoreCut = null;
     const save = {target:renderer.getRenderTarget(), face:renderer.getActiveCubeFace(), mip:renderer.getActiveMipmapLevel(),
       auto:renderer.autoClear, xr:renderer.xr.enabled, tone:renderer.toneMapping,
       color:renderer.getClearColor(new THREE.Color()), alpha:renderer.getClearAlpha(),
@@ -372,7 +373,10 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       // pending sun invalidation. Restore each light's flags exactly afterwards.
       renderer.shadowMap.autoUpdate = renderer.shadowMap.needsUpdate = false;
       renderer.autoClear = true; renderer.xr.enabled = false; renderer.toneMapping = THREE.NoToneMapping;
-      renderer.clippingPlanes = []; renderer.localClippingEnabled = false; renderer.info.autoReset = false;
+      // Clipping stays on, as in the mirror pass: switching it off made every
+      // clipped material compile a second program on the main thread. The cut
+      // planes are lifted instead, so the cube still holds the whole house.
+      renderer.info.autoReset = false; restoreCut = uncut();
       scene.background = sky() || save.background;
       scene.backgroundIntensity = scene.environmentIntensity;
       p.camera.update(renderer,scene);
@@ -382,6 +386,7 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       p.captures++; p.fresh = true;
     } catch (error) { p.fresh = false; warn(error); }
     finally {
+      restoreCut?.();
       for (const [o,value] of hidden) o.visible = value;
       for (const [shadow,auto,needs] of shadows) { shadow.autoUpdate = auto; shadow.needsUpdate = needs; }
       scene.background = save.background;

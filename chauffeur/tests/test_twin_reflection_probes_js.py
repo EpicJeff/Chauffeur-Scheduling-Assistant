@@ -36,9 +36,11 @@ async function setup(tier='medium',p=fixture()){
  const yard=(await Y.buildYard(p,kit(),tier)).group;out.groups.site.add(yard);
  const scene=new THREE.Scene();scene.add(out.root);scene.environment=new THREE.Texture();scene.environmentIntensity=.13;
  const renderer=new CaptureRenderer();let time=0;const warnings=[];const extra=[];
- const manager=R.createReflectionProbes({scene,renderer,tier,now:()=>time,extras:()=>extra,warn:e=>warnings.push(e)});
+ const cut=new THREE.Plane(new THREE.Vector3(0,-1,0),2);
+ const uncut=()=>{const v=cut.constant;cut.constant=1e6*.3048;return()=>{cut.constant=v;};};
+ const manager=R.createReflectionProbes({scene,renderer,tier,now:()=>time,extras:()=>extra,uncut,warn:e=>warnings.push(e)});
  manager.rebuild(p,out.root);
- return {out,yard,scene,renderer,manager,warnings,extra,p,advance(t){time+=t;},round(){manager.frame();time+=1500;for(let i=0;i<4;i++)manager.frame();}};
+ return {out,yard,scene,renderer,manager,warnings,extra,p,cut,advance(t){time+=t;},round(){manager.frame();time+=1500;for(let i=0;i<4;i++)manager.frame();}};
 }
 await test('sets_centres_world_boxes_and_four_probe_cap_keep_largest_of_each_kind',async()=>{
  const p=fixture();p.buildings.push(building('tiny',150),building('huge',220));p.buildings[2].levels[0].outline=square(0,0,2);p.buildings[3].levels[0].outline=square(0,0,90);
@@ -78,11 +80,16 @@ for(const failure of [false,true])await test('capture_restores_hidden_objects_an
  c.renderer.fail=failure;c.renderer.inspect=()=>{
   assert.ok(hidden.every(o=>!o.visible));assert.ok(!sheet.visible);
   assert.equal(c.renderer.shadowMap.autoUpdate,false);assert.equal(c.renderer.shadowMap.needsUpdate,false);assert.equal(lamp.shadow.needsUpdate,false);
-  assert.equal(c.renderer.xr.enabled,false);assert.equal(c.renderer.toneMapping,THREE.NoToneMapping);assert.equal(c.renderer.localClippingEnabled,false);
+  assert.equal(c.renderer.xr.enabled,false);assert.equal(c.renderer.toneMapping,THREE.NoToneMapping);
+  // Clipping as the picture has it, so no material needs a second program;
+  // the cut planes are lifted instead, so the cube holds the whole house.
+  assert.equal(c.renderer.localClippingEnabled,saved.local);assert.equal(c.renderer.clippingPlanes,saved.clipping);
+  assert.equal(c.cut.constant,1e6*.3048);
   assert.equal(c.scene.backgroundIntensity,.13);
   for(const o of meshes(c.out))if(o.material.userData.reflection)assert.equal(o.visible,false);
  };
  c.round();assert.deepEqual(state(c.renderer),saved);assert.deepEqual(hidden.map(o=>o.visible),savedVis);assert.equal(sheet.visible,true);
+ assert.equal(c.cut.constant,2,'the cut is back after the capture, even on a throw');
  assert.equal(lamp.shadow.autoUpdate,true);assert.equal(lamp.shadow.needsUpdate,true);assert.equal(c.scene.background,bg);assert.equal(c.scene.backgroundIntensity,bi);
  assert.equal(c.manager.info().probes.every(p=>p.fresh),!failure);
  if(failure){assert.equal(c.warnings.length,4);for(const o of meshes(c.out))if(o.material.userData.reflection)assert.equal(o.material.envMap,null);}
@@ -271,6 +278,32 @@ await test('mounted_high_view_draws_the_water_mirror_inside_its_own_frame_and_no
   const before=view.reflectionInfo().planar.passes;view.render();assert.equal(view.reflectionInfo().planar.passes,before+1);assert.equal(calls[0],'mirror','the mirror is drawn before the picture that shows it');
   view.setUnlit(true);view.render();assert.equal(view.reflectionInfo().planar.passes,before+1);
  }finally{view?.dispose();CaptureRenderer.prototype.setAnimationLoop=originalLoop;globalThis.Renderer=rendererClass;}
+});
+await test('warm_ups_compile_for_the_composer_target_and_frames_hold_until_programs_are_ready',async()=>{
+ // A program compiled for the canvas (sRGB, ACES) is not the one the composer's
+ // half-float target draws with; a frame drawn while one compiles froze the page.
+ location.search='?test=1';const rendererClass=globalThis.Renderer;globalThis.Renderer=CaptureRenderer;
+ const proto=CaptureRenderer.prototype,originalLoop=proto.setAnimationLoop;proto.setAnimationLoop=function(fn){this.loop=fn;};
+ const compiled=[];let manual=null;proto.compileAsync=function(s,c){compiled.push(this.target);
+  return manual?new Promise(resolve=>manual.push(resolve)):Promise.resolve(s);};
+ const originalNow=performance.now;let time=100000;Object.defineProperty(performance,'now',{configurable:true,value:()=>time});
+ let view;try{
+  view=await mountTwin(new Element(),{plan:fixture(),kit:kit(),tier:'high',bake:false});
+  assert.ok(view.post?.target?.isWebGLRenderTarget);assert.ok(compiled.length,'the mount warms its programs');
+  assert.ok(compiled.every(t=>t===view.post.target),'every warm-up compiles for the composer target');
+  const saved=view.renderer3.getRenderTarget();let draws=0;const real=view.renderer3.render;view.renderer3.render=function(s,c){draws++;return real.call(this,s,c);};
+  manual=[];const ready=view.renderer3.compileAsync(view.scene,view.camera);
+  assert.equal(view.renderer3.getRenderTarget(),saved,'the renderer target is put back');
+  view.render();view.renderer3.loop();assert.equal(draws,0,'no frame draws while programs compile');
+  manual.forEach(resolve=>resolve());await ready;assert.ok(draws>0,'the picture draws as soon as they are ready');
+  draws=0;view.renderer3.compileAsync(view.scene,view.camera);view.render();assert.equal(draws,0);
+  time+=15001;view.render();assert.ok(draws>0,'a compile that never settles holds the picture 15 s at most');
+  manual.forEach(resolve=>resolve());manual=null;
+  view.setUnlit(true);compiled.length=0;await view.renderer3.compileAsync(view.scene,view.camera);
+  assert.deepEqual(compiled,[null],'the unlit view draws to the canvas and warms for it');
+  assert.equal(view.compileBehind()===null,false,'a warm-up for a change not yet shown');
+ }finally{view?.dispose();proto.setAnimationLoop=originalLoop;delete proto.compileAsync;globalThis.Renderer=rendererClass;
+  Object.defineProperty(performance,'now',{configurable:true,value:originalNow});}
 });
 await test('glass_mirror_share_covers_the_room_and_the_pane_is_tone_mapped_as_one_surface',()=>{
  const m=R.reflectionMaterial(new THREE.MeshStandardMaterial({transparent:true,opacity:.26}),'exterior','a');const s=compile(m);

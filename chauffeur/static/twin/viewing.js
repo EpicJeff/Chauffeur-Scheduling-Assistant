@@ -229,6 +229,13 @@ export function createViewing(view, model, ground, changed, {explicit = false} =
       return !!b?.roofs.length && Math.max(...b.roofs.map(c => c.alpha)) < .5;
     },
     snapshot() { return {selected, pinned, channels: channels.map(c => ({name: c.group.name, alpha: c.alpha, target: c.to}))}; },
+    // The whole house for one pass (a reflection capture): the cut planes lift
+    // without changing any program. Returns the undo.
+    uncut() {
+      const saved = channels.map(c => [c.plane, c.plane.constant]);
+      for (const [plane] of saved) plane.constant = 1e6 * .3048;
+      return () => saved.forEach(([plane, constant]) => { plane.constant = constant; });
+    },
     refresh(source) {
       for (const [material, record] of bindings) if (record.source === source) {
         copyMaterialParams(source, material);

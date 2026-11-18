@@ -64,7 +64,8 @@ async function context(tier = 'high', sharedServer = null, placed = null, extra 
   const renderer = fakeRenderer(); renderer.domElement = new Node('canvas');
   const scene = new THREE.Scene(); scene.add(out.root); scene.updateMatrixWorld(true);
   const controls = new THREE.EventDispatcher(); controls.target = new THREE.Vector3();
-  const view = { plan, ready: true, scene, tier, renderer3: renderer, controls, render() {} };
+  const view = { plan, ready: true, scene, tier, renderer3: renderer, controls, render() {},
+    ...(extra.compileBehind ? { compileBehind: () => extra.compileBehind(out.root) } : {}) };
   const server = sharedServer || fakeServer(), lights = placed || [k1, k2, h1, c1];
   const defaultApi = (path, init) => path === 'api/house/live' ? Promise.resolve(new Response(JSON.stringify({...liveLayout(lights), ...extra.fixtureLayout}), { status: 200 }))
     : extra.deny && path.endsWith('/lease') ? Promise.resolve(new Response('{"detail":"Requires parent"}', { status: 403 }))
@@ -102,6 +103,25 @@ await check('material_revision_invalidates_bake_and_refreshes_affected_clones', 
     await desk.controller.refresh();
     assert.ok(desk.controller.state().stale.length,'the old publication cannot make the revision fresh again');
   } finally { desk.controller.stop(); }
+});
+
+await check('lightmapped_programs_compile_before_any_frame_draws_them', async () => {
+  // The first baked light swaps lightmapped copies onto the house. Drawn before
+  // their programs compiled, a full house froze the page for seconds.
+  let originals = null, release = null, compiled = null;
+  const desk = await context('high', null, null, { compileBehind(root) {
+    compiled = covered(root).map(m => m.material);
+    return new Promise(resolve => { release = resolve; });
+  } });
+  try {
+    originals = covered(desk.out.root).map(m => m.material);
+    await until(() => release, 'the first landed light compiles its programs');
+    assert.ok(compiled.every((m, i) => m !== originals[i]), 'the compile sees the lightmapped copies');
+    const meshes = covered(desk.out.root);
+    assert.ok(meshes.every((m, i) => m.material === originals[i]), 'the plain materials stay on screen meanwhile');
+    release();
+    await until(() => meshes.every((m, i) => m.material === compiled[i]), 'the copies go on once compiled');
+  } finally { release?.(); desk.controller.stop(); }
 });
 
 await check('every_placed_light_bakes_including_yard_and_fire_pit', async () => {

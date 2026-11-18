@@ -186,6 +186,8 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
   }
   return {
     setCamera, setSize,
+    // Where the scene's materials draw: their programs are keyed on this target.
+    get target() { return disposed ? null : target; },
     render() {
       if (disposed) return mainStats;
       const dimensions = renderer.getSize(new THREE.Vector2());
