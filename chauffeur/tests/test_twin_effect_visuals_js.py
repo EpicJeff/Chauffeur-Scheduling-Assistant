@@ -23,9 +23,13 @@ for(const type of ['waterfall','fountain','bubbler','fire'])await test(type+'_bu
  assert.equal(out.fixtures.length,1);assert.ok(rows.length>0&&rows.length<=2);
  for(const mesh of rows){assert.equal(mesh.castShadow,false);assert.equal(mesh.receiveShadow,false);assert.equal(mesh.userData.effectFixture,true);
  assert.equal(mesh.geometry.userData.bakeExcluded,true);assert.equal('transmission' in mesh.material,false);
- assert.ok(mesh.geometry.attributes.position.count>=4);assert.ok(mesh.material.isShaderMaterial);assert.ok(mesh.material.uniforms.time);
- assert.equal(mesh.material.map,undefined);
+ assert.ok(mesh.geometry.attributes.position.count>=4);assert.ok(mesh.material.uniforms.time);
+ // A falling sheet is lit water like the pool's surface; every other effect is procedural.
+ if(mesh.material.userData.fallingWater){assert.ok(mesh.material.isMeshStandardMaterial);assert.equal(mesh.material.map,null);
+  assert.equal(mesh.material.premultipliedAlpha,true);assert.ok(mesh.material.userData.unlitHook,'the studio view keeps the sheet');}
+ else{assert.ok(mesh.material.isShaderMaterial);assert.equal(mesh.material.map,undefined);}
  }
+ if(type==='waterfall')assert.equal(rows.filter(mesh=>mesh.material.userData.fallingWater).length,1);
  if(type!=='fire')assert.equal(rows[0].material.side,THREE.DoubleSide);
 });
 for(const type of ['fountain','bubbler','fire'])await test(type+'_bounding_height_tracks_real_feet',async()=>{

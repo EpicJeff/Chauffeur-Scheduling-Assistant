@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { resolveFixture, emission } from '../live/emitters.js';
 import { inPolygon } from '../twin_ground.js';
-import { effectLanding } from './water_ripples.js';
+import { effectLanding, waterBodies } from './water_ripples.js';
 import { createEffectDriver, effectTarget } from './driver.js';
 import { buildFountain } from './fountain.js';
 import { buildBubbler } from './bubbler.js';
@@ -34,8 +34,11 @@ function waterLamps(plan, body) {
     return at && inPolygon(body.polygon, at[0], at[1]) && at[2] <= body.height + .5;
   })).map(([entity]) => entity);
 }
-// Pool steam is lit from beneath by the water's lamps: their colour at their brightness.
+// Steam, foam and falling water over a lit pool are lit from beneath by its lamps:
+// their colour at their brightness.
 const GLOW = .45;
+const WET = ['steam', 'waterfall', 'sheer', 'fountain', 'bubbler', 'spa_jet', 'deck_jet'];
+const bodyAt = (plan, point) => point && waterBodies(plan).find(b => inPolygon(b.polygon, point[0], point[1]));
 function lampGlow(entities, states, stale, target) {
   target.setRGB(0, 0, 0);
   for (const entity of entities) {
@@ -56,7 +59,8 @@ export function buildEffects(plan, {tier='high',editor=false}={}) {
     const placement={...fixture};
     const resolved=resolveFixture(placement,plan),position=resolved.at||midpoint(resolved.path);
     const origin=resolved.at||resolved.path[0],local=p=>p.map((v,k)=>v-origin[k]);
-    let built;
+    // Where the water stands or lands: a line falls out from its lip.
+    let built,wet=resolved.at;
     if(fixture.type==='fountain')built=buildFountain();
     else if(fixture.type==='bubbler')built=buildBubbler();
     else if(fixture.type==='fire')built=buildFire({...resolved,...(resolved.path?{path:resolved.path.map(local)}:{at:[0,0,0]})});
@@ -73,10 +77,12 @@ export function buildEffects(plan, {tier='high',editor=false}={}) {
       });
       const drops=path.map((p,i)=>fixture.drop_ft??Math.max(.1,p[2]-landing(plan,p,normals[i])));
       built=(fixture.type==='sheer'?buildSheer:buildWaterfall)({...resolved,path:path.map(local)},{normals,drops});
+      const m=midpoint(path),n=normals[Math.floor(normals.length/2)]||[0,0,0];
+      wet=[.6,1.2,2].map(d=>[m[0]+n[0]*d,m[1]+n[1]*d]).find(p=>bodyAt(plan,p))||null;
     }
     built.group.position.copy(world(origin));group.add(built.group);
     const driver=createEffectDriver(fixture,{low:tier==='low'});
-    const lamps=fixture.type==='steam'?waterLamps(plan,built.body):[];
+    const lamps=!WET.includes(fixture.type)?[]:waterLamps(plan,fixture.type==='steam'?built.body:bodyAt(plan,wet));
     fixtures.push({fixture,group:built.group,position:[...position],...(resolved.path?{path:resolved.path.map(p=>[...p])}:{}),driver,built,lamps});
   }
   const update=(states={},stale=false,seconds=0,light=1)=>{

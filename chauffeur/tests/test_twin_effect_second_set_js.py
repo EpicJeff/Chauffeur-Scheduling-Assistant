@@ -89,6 +89,48 @@ await test('pool_steam_takes_the_light_of_lamps_in_its_water_and_never_darkens_i
  const m=effectMeshes(fx.group)[0].material;assert.equal(m.premultipliedAlpha,true);
  assert.ok(/gl_FragColor=vec4\(color\*alpha,alpha\*mix\(\.5,1\.,mist\)\)/.test(m.fragmentShader.replace(/\s/g,'')),'steam covers half of what it adds');
 });
+await test('a_waterfall_into_a_lit_pool_and_its_foam_take_the_lamp_light',()=>{
+ // Foam drawn at the night light level lay dark over lit water like dirt.
+ const fall={id:'effect:fall',type:'waterfall',shape:'line',ref:'absolute',path:[[2,-.8,4],[8,-.8,4]],facing:'in',entity:'switch.fall'};
+ const p=plan(fall,f('bubbler',{at:[5,8,-.7],entity:'switch.fall'}),f('fire',{at:[30,30,0],entity:'switch.fall'}));
+ p.light_fixtures={'light.pool':[{id:'fixture:a',shape:'point',at:[4,4,-2],ref:'absolute'}]};
+ const fx=buildEffects(p);
+ assert.deepEqual(fx.fixtures.map(r=>r.lamps),[['light.pool'],['light.pool'],[]],'a lip just outside the pool still lands in it; fire takes none');
+ fx.update({'switch.fall':{state:'on'},'light.pool':{state:'on',attributes:{brightness:255,rgb_color:[255,255,255]}}},false,1,.18);
+ // The sheet is lit by the scene's own lamps; its procedural foam takes the lamp glow.
+ const foam=effectMeshes(fx.fixtures[0].group).find(mesh=>!mesh.material.userData.fallingWater);
+ assert.ok(foam.material.uniforms.glow.value.r>.3,'foam');
+ assert.ok(foam.material.fragmentShader.includes('color*(light+glow*share)'),'lamp light adds to the scene light');
+});
+await test('a_falling_sheet_is_lit_water_whose_ripples_run_down_it',()=>{
+ // User, 2026-11-17: the pool water's base with the ripples moving top to bottom.
+ const fall={id:'effect:fall',type:'waterfall',shape:'line',ref:'absolute',path:[[2,-.8,4],[8,-.8,4]],facing:'in'};
+ const fx=buildEffects(plan(fall)),sheet=effectMeshes(fx.group).find(mesh=>mesh.material.userData.fallingWater);
+ const m=sheet.material;assert.ok(m.isMeshStandardMaterial);assert.equal(m.uniforms.span.value,6);assert.ok(m.uniforms.fall.value>3);
+ const lit={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};
+ m.onBeforeCompile(lit);const fs=lit.fragmentShader.replace(/\s/g,'');
+ assert.ok(lit.uniforms.time===m.uniforms.time&&lit.uniforms.flow===m.uniforms.flow,'the driver moves the compiled sheet');
+ assert.ok(fs.includes('sqrt(max(sheetV,0.))*fall'),'the pattern stretches as the water speeds up');
+ assert.ok(/sheetDown\*\.9-time\*2\.6/.test(fs),'ripples travel down the fall');
+ assert.ok(!fs.includes('sheetFroth')&&fs.includes('floatsheetLanding=smoothstep(.93,1.,sheetV)')&&fs.includes('floatsheetWhite=clamp(sheetLanding*.7,0.,1.)'),
+  'no painted streaks: white only in a thin band at the water; the ripples and the light make the streaks');
+ assert.ok(fs.includes('reflectedLight.indirectSpecular+reflectedLight.directSpecular'),'reflections and highlights arrive whole');
+ assert.ok(lit.vertexShader.includes('transformed += outward * flow'),'the sheet still arcs off the lip');
+ const matcap={uniforms:{},vertexShader:THREE.ShaderLib.matcap.vertexShader,fragmentShader:THREE.ShaderLib.matcap.fragmentShader};
+ m.userData.unlitHook.hook(matcap);assert.ok(matcap.fragmentShader.includes('diffuseColor.a *= max(.3, sheetWhite) * sheetMask'));
+ // A doubly declared uniform fails to compile and the sheet silently vanishes;
+ // and the driver's fade must not share three's own opacity slot, refreshed each frame.
+ for(const s of [lit,matcap])for(const stage of ['vertexShader','fragmentShader']){
+  const chunks=s[stage].replace(/#include <(\w+)>/g,(_,c)=>THREE.ShaderChunk[c]||'');
+  const all=[...chunks.matchAll(/\buniform\s+(?:(?:lowp|mediump|highp)\s+)?\w+\s+(\w+)\s*(?:\[[^\]]*\])?\s*;/g)].map(x=>x[1]);
+  // Shadow samplers are declared in alternative #if branches, not twice.
+  const twice=all.filter((n,i)=>all.indexOf(n)!==i&&!/Shadow|Lights$/.test(n));
+  assert.ok(all.includes(stage==='vertexShader'?'flow':'sheetFade'));assert.deepEqual([...new Set(twice)],[],stage+' declares a uniform twice');
+ }
+ assert.notEqual(lit.uniforms.opacity,m.uniforms.opacity,'three keeps its own opacity slot');
+ assert.equal(lit.uniforms.sheetFade,m.uniforms.opacity,'the driver fades the sheet through its own name');
+ assert.notEqual(m.userData.unlitHook.key(),m.customProgramCacheKey());
+});
 await test('mist_point_and_line_drop_the_authored_distance',()=>{
  for(const shape of ['point','line']){
   const fixture=f('mist',{shape,at:undefined,...(shape==='line'?{path:[[1,1,8],[12,1,8]]}:{at:[1,1,8]}),size_min:6,size_max:6});
