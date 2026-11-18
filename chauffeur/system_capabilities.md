@@ -1,6 +1,15 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.920 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.921 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.921 (2026-11-17, NOT device-verified, browser-checked in Chromium on high on the `/house` view page with a household's own yard by day, with a stand-in lawn material): lawn blades are broad ribbons that close the canopy, so the ground no longer shows between them.**
+
+- **What was wrong.** Side by side with a household's TwinMotion lawn, the twin's grass read thin: each blade was a needle about half an inch wide at the root, so the pale ground showed between them at eye height.
+- **What changed for a person.** Blades are about an inch wide at the root, taper to a short point and arc over by different amounts, so they overlap like a lawn and the ground is hidden up close. The canopy is shaded deeper toward the roots.
+- **How.** `static/twin/yard_grass.js` `bladeGeometry`: half-widths .046 ft at the root and .038 ft at 60 percent (were .02 and .016 at 55 percent); tip lean .1 to .18 ft by blade (was .1 for all). Same 25 vertices and 15 triangles a clump, same instance budgets. The blade shader shades the root to .3 (was .55) on a smoothstep up the blade.
+- **Cost.** Measured in Chromium on a desktop GPU at 1080p from three close cameras: 1.5 to 2.3 ms a frame with the grass against the same without it, as before the change; no extra triangles.
+- **Limits.** Checked with a stand-in lawn that renders straw-coloured, so the look with a household's own lawn material is not verified. No blade-to-blade shadows. Not checked on medium quality.
+- **Tests.** `tests/test_twin_yard_grass_js.py` (23: blade face per square foot of lawn on high is over 1.6, the old needles gave about .85; wall and stair clearance at the widest spread and gust), `tests/test_twin_post_js.py`.
 
 **v2.499.920 (2026-11-17, NOT device-verified, checked in Chromium on high on the `/house` view page): the house pages version every twin module, so an update never pairs fresh code with a stale cached file.**
 

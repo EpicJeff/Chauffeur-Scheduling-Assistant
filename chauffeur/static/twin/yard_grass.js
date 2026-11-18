@@ -109,11 +109,14 @@ function bladeGeometry() {
   // Five bent, two-segment blades per clump, 25 vertices / 15 triangles. The
   // blades stand spread over the clump's whole grid cell and lean different ways,
   // so the field reads as an even lawn rather than as rows of separate tufts.
+  // Broad ribbons (about an inch at the root) that overlap and close the canopy,
+  // as a real lawn does; needles left the ground showing between them
+  // (user's comparison with their TwinMotion lawn, 2026-11-17).
   for (let b = 0; b < BLADES; b++) {
     const a = b * 2.39996, c = Math.cos(a), s = Math.sin(a), start = positions.length/3;
     const reach = .13*Math.sqrt((b+.5)/BLADES), ox = Math.cos(a+1.1)*reach, oz = Math.sin(a+1.1)*reach;
-    for (const [t, width] of [[0,.02],[.55,.016],[1,0]]) {
-      const lean = .1*t*t;
+    for (const [t, width] of [[0,.046],[.6,.038],[1,0]]) {
+      const lean = (.1+.08*((b*3)%BLADES)/BLADES)*t*t;
       for (let side = 0; side < (width ? 2 : 1); side++) {
         const x = side ? width : -width;
         positions.push(ox+c*x+s*lean, t*(.29+b*.0175), oz-s*x+c*lean);
@@ -182,7 +185,9 @@ vec3 lawnPatch = mix(vec3(.90,1.0,.84), vec3(1.10,1.02,.82), vGrass.w);
 vec3 lawnBlade = mix(vec3(.88,1.0,.90), vec3(1.12,1.04,.80), fract(vGrass.z*7.0+vGrass.y*3.3));
 // Shaded at the root, lit and a little yellow at the tip: the tips sit above the
 // lawn colour under them, which is what gives the field its depth.
-vec3 lawnTip = mix(vec3(.55), vec3(1.42,1.36,1.0), vGrass.x);
+// The canopy shades its own floor: deep at the root, so what shows between the
+// tips reads as more grass, not as ground.
+vec3 lawnTip = mix(vec3(.3), vec3(1.42,1.36,1.0), smoothstep(0.0, 1.0, vGrass.x));
 diffuseColor.rgb *= lawn * mix(lawnPatch * lawnBlade * lawnTip, vec3(1.0), vGrassUv.z);`);
     grassReplace(shader, 'fragmentShader', '#include <normal_fragment_begin>',
       '#include <normal_fragment_begin>\nnormal *= gl_FrontFacing ? 1.0 : -1.0;');

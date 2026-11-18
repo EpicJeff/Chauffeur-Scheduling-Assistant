@@ -50,6 +50,19 @@ await test('tier_caps_cover_density_and_large_lots_are_bounded',()=>{
   const narrow=buildField({site:{lot:square(0,0,1000000,2)}},tier);assert.ok(narrow.instances<=T.TIERS[tier].lawnBlades);release(narrow);
  }
 });
+await test('blades_are_broad_enough_to_close_the_canopy_on_high',()=>{
+ // Needle blades left the ground showing between them; a lawn's blades overlap
+ // (user's comparison with their TwinMotion lawn, 2026-11-17).
+ const lot={buildings:[],site:{lot:square(0,0,100)}},f=buildField(lot,'high'),g=f.mesh.geometry;
+ const p=g.attributes.position,ix=g.index.array,v=i=>new THREE.Vector3().fromBufferAttribute(p,i);let face=0;
+ for(let i=0;i<ix.length;i+=3)face+=new THREE.Triangle(v(ix[i]),v(ix[i+1]),v(ix[i+2])).getArea();
+ const a=f.mesh.instanceMatrix.array;let scale=0;for(let i=0;i<f.instances;i++)scale+=a[i*16+5];
+ // Face area grows with height (y scale); blade width does not change with it.
+ // The needles came to about .85 ft2 per ft2 of lawn; the ribbons about 1.9.
+ const perFoot=face*scale/(100*100);
+ assert.ok(face/5>.016,`one blade face ${face/5} ft2`);assert.ok(perFoot>1.6,`${perFoot} ft2 of blade face per ft2 of lawn`);
+ release(f);
+});
 await test('pad_stair_treads_walls_and_outdoor_building_stairs_cover_the_lawn',()=>{
  const p={buildings:[{position:[2,2],levels:[{elevation:0,outline:square(0,0,8)}],
  stairs:[{from:[8,10],to:[18,10],width:4}]}],site:{lot:square(0,0,60),terraces:[
