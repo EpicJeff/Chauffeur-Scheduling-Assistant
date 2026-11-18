@@ -9,6 +9,8 @@ import { createSiteDrawing, snapSitePoint, polygonArea } from './site_drawing.js
 import { pathPresets, pathOutline } from '../path_shapes.js';
 import { placedPit, firePitOutline } from '../fire_pits.js';
 import { materialSlot } from './material_slot.js';
+import { contains } from '../twin_generator.js';
+import { DRAG_THRESHOLD_PX, HANDLE_HIT_PX } from './picking.js';
 
 const FT = .3048;
 const words = { terraces: 'Terrace pad', ledge: 'Tanning ledge', steps: 'Steps', spa: 'Spa', ...siteShapeLabels };
@@ -19,7 +21,7 @@ export function siteRows(plan) {
 export const snapPadPoint = snapSitePoint;
 
 // Separate lot tools keep the object-library/placed-item merge seam small.
-export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, prepare = () => {}, pickObject, getKit = () => ({}) }) {
+export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, prepare = () => {}, getKit = () => ({}) }) {
   const canvas = view.renderer3.domElement, shell = document.querySelector('.editor-shell');
   const card = document.createElement('aside'); card.className = 'place-card editor-lot-card'; card.id = 'terrain-card'; card.hidden = true; shell.append(card);
   const layer = document.createElement('div'); layer.className = 'editor-handles'; canvas.parentElement.append(layer);
@@ -106,7 +108,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     busy = true; card.querySelectorAll('button,input,select').forEach(n => { n.disabled = true; });
     try { await op(operation); }
     catch (error) { report(error); return false; }
-    finally { busy = false; signature = ''; refresh(); }
+    finally { busy = false; signature = ''; refresh(); resumeHeldHandle(); }
     return true;
   }
   function field(text, value, saveValue, choices, numeric = true) {
@@ -385,53 +387,87 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     if ((menu || chosen || drawing) && key !== signature) { signature = key; drawCard(); }
     graphics(); tint();
   }
-  function pointerDown(event) {
-    if (!canEdit() || busy || event.button !== 0 || view.state.view !== 'ext') return false;
-    if (!drawing && !['select', 'move'].some(id => document.getElementById(`rail-${id}`)?.getAttribute('aria-pressed') === 'true')) return false;
-    if (drawing) {
-      const p = ground(event); if (p) { draft.add(p, event.shiftKey); drawCard(); graphics(); }
-      gesture = { kind: 'draw', enabled: view.controls.enabled, pointer: event.pointerId }; view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); return true;
+  function handleMode(event) {
+    return canEdit() && event.button === 0 && view.state.view === 'ext'
+      && !drawing && ['select', 'move'].some(id => document.getElementById(`rail-${id}`)?.getAttribute('aria-pressed') === 'true');
+  }
+  function hit(event) {
+    if (!handleMode(event) || !current()) return null;
+    // Project from the current camera, including while a save is pending.
+    graphics();
+    return handles.find(h => Math.hypot(h.screen[0] - event.clientX, h.screen[1] - event.clientY) <= HANDLE_HIT_PX) || null;
+  }
+  function padHits(x, y) {
+    if (view.state.view !== 'ext') return [];
+    const r = ray({ clientX: x, clientY: y }), point = new THREE.Vector3(), hits = [];
+    for (const pad of [...(getPlan()?.site?.terraces || [])].reverse()) {
+      if (!r.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -pad.height * FT), point)) continue;
+      const q = [point.x / FT, -point.z / FT];
+      if (contains(pad.polygon, q) || pad.polygon.some((a, i) => edgeDistance(q, a, pad.polygon[(i + 1) % pad.polygon.length]) < .6))
+        hits.push({ kind: 'terraces', id: pad.id, building: null, distance: r.origin.distanceTo(point), point: point.toArray() });
     }
-    const hit = handles.find(h => Math.hypot(h.screen[0] - event.clientX, h.screen[1] - event.clientY) < 16);
-    // Plants/furniture keep their existing selection and drag path even when
-    // they stand in a bed or on hardscape. A selected pad handle still wins.
-    if (!hit && pickObject?.(event.clientX, event.clientY)) { close(); return false; }
-    const piece = current();
-    if (hit && piece) {
-      const start = ground(event, chosen.kind === 'terraces' ? piece.height : undefined); if (!start) return false;
-      gesture = { kind: 'vertex', index: hit.index, handle: hit, source: piece.polygon, remove: event.altKey, polygon: editVertex(piece.polygon, hit, hit.at, { remove: event.altKey }), start, enabled: view.controls.enabled, height: piece.height, client: [event.clientX, event.clientY], pointer: event.pointerId };
-    } else {
-      // A pad's filled area is selectable only in its own ground menu; its
-      // outline is always selectable, leaving house and tree picks reachable.
-      const p = ground(event); if (!p) return false;
-      for (const pad of [...(getPlan().site?.terraces || [])].reverse()) {
-        const q = ground(event, pad.height); if (!q) continue;
-        if (pad.polygon.some((a, i) => edgeDistance(q, a, pad.polygon[(i + 1) % pad.polygon.length]) < .6)) { choose('terraces', pad.id); return true; }
-      }
-      return false;
-    }
+    return hits;
+  }
+  const padShape = piece => JSON.stringify([piece.polygon, piece.height]);
+  function begin(event, handle = hit(event)) {
+    if (!handle || !handleMode(event) || gesture) return false;
+    const piece = current(); if (!piece) return false;
+    const start = ground(event, piece.height); if (!start) return false;
+    gesture = { kind: 'vertex', id: piece.id, index: handle.index, handle, source: piece.polygon,
+      shape: padShape(piece), waiting: busy,
+      remove: event.altKey, polygon: editVertex(piece.polygon, handle, handle.at, { remove: event.altKey }),
+      start, enabled: view.controls.enabled, height: piece.height, client: [event.clientX, event.clientY], pointer: event.pointerId };
     view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); return true;
+  }
+  function resumeHeldHandle() {
+    const g = gesture; if (!g?.waiting) return;
+    g.waiting = false;
+    const piece = current();
+    if (!canEdit() || signal.aborted || piece?.id !== g.id || padShape(piece) !== g.shape) {
+      g.refused = true;
+      report(new Error('The pad changed while it was saving. Try dragging its corner again.'));
+    } else if (g.latest) pointerMove(g.latest);
+    if (g.released) pointerUp(g.released, g.refused);
+  }
+  function pointerArmedDown(event) {
+    if (!canEdit() || busy || event.button !== 0 || view.state.view !== 'ext') return false;
+    if (!drawing) return false;
+    const p = ground(event); if (p) { draft.add(p, event.shiftKey); drawCard(); graphics(); }
+    gesture = { kind: 'draw', enabled: view.controls.enabled, pointer: event.pointerId }; view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); return true;
+  }
+  function pointerDown(event) {
+    return pointerArmedDown(event) || begin(event);
   }
   function pointerMove(event) {
     if (drawing && !busy) { const p = ground(event); if (p) { draft.move(p, event.shiftKey); graphics(); } return true; }
-    if (!gesture) return false;
+    if (!gesture || gesture.pointer !== event.pointerId) return false;
     if (gesture.kind === 'draw') return true;
+    if (gesture.refused) return true;
+    if (gesture.waiting) { gesture.latest = { clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId, shiftKey: event.shiftKey }; return true; }
     const p = ground(event, gesture.height); if (!p) return true;
-    gesture.moved = !gesture.client || Math.hypot(event.clientX - gesture.client[0], event.clientY - gesture.client[1]) >= 3;
+    gesture.moved ||= Math.hypot(event.clientX - gesture.client[0], event.clientY - gesture.client[1]) >= DRAG_THRESHOLD_PX;
+    if (!gesture.moved) return true;
     if (gesture.kind === 'vertex') gesture.polygon = editVertex(gesture.source, gesture.handle, event.shiftKey ? p : snapPadPoint(p, getPlan(), chosen.id), { remove: gesture.remove });
     else gesture.by = p.map((v, i) => v - gesture.start[i]);
     graphics(); return true;
   }
   function pointerUp(event, cancel) {
-    if (!gesture) return false;
-    const g = gesture; gesture = null; view.controls.enabled = g.enabled;
+    if (!gesture || gesture.pointer !== event.pointerId) return false;
+    const g = gesture; view.controls.enabled = g.enabled;
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-    if (!cancel && canEdit() && g.kind !== 'draw') {
+    if (g.waiting && !cancel) {
+      g.released = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY };
+      return true;
+    }
+    gesture = null;
+    if (!cancel && !g.refused && canEdit() && g.kind !== 'draw') {
       if (g.kind === 'vertex' && (g.moved || g.handle.insert || g.remove) && JSON.stringify(g.polygon) !== JSON.stringify(g.source)) {
-        const edges = current().edges?.map(e => ({ ...e })) || g.source.map(() => ({ edge: 'slope' }));
+        const piece = current();
+        if (piece?.id !== g.id) { graphics(); return true; }
+        const edges = piece.edges?.map(e => ({ ...e })) || g.source.map(() => ({ edge: 'slope' }));
         if (g.remove && g.polygon.length < g.source.length) edges.splice(g.index, 1);
         else if (g.handle.insert) edges.splice(g.index + 1, 0, { ...edges[g.index] });
-        save({ op: 'update_pad', id: chosen.id, polygon: g.polygon, edges }).catch(report);
+        save({ op: 'update_pad', id: g.id, polygon: g.polygon, edges }).catch(report);
       }
     }
     if (g.kind === 'draw' && drawing?.kind === 'fire_pit' && drawing.options.shape !== 'outline') {
@@ -455,6 +491,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   listen(canvas, 'pointermove', event => { if (drawing && !gesture) pointerMove(event); });
   view.controls.addEventListener('change', graphics);
   listen(canvas.parentElement, 'twinrebuilt', refresh);
-  signal.addEventListener('abort', () => { cancelPadDrag(); if (gesture) view.controls.enabled = gesture.enabled; clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
-  return { show, choose, startDrawing, refresh, pointerDown, pointerMove, pointerUp, cancel: close, handles: () => handles };
+  signal.addEventListener('abort', () => { cancelPadDrag(); if (gesture) pointerUp({ pointerId: gesture.pointer }, true); clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
+  return { show, choose, startDrawing, refresh, hit, begin, padHits, pointerArmedDown, pointerDown, pointerMove, pointerUp,
+    selectionChanged(state) { if (state.id && chosen) close(); }, cancel: close, handles: () => handles };
 }

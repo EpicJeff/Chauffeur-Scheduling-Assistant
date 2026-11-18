@@ -117,6 +117,15 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     (x, y) => fixtureHits?.(x, y) || [],
   ] });
   const pick = (x, y) => picker.peek(x, y);
+  // Each source exposes hit(event) and begin(event, handle); its existing
+  // pointerMove/pointerUp methods keep ownership through release or cancel.
+  function handleHit(event) {
+    for (const source of [handles, ...(delegate?.handleSources || [])]) {
+      const handle = source?.hit?.(event);
+      if (handle) return { source, handle };
+    }
+    return null;
+  }
   function setTool(name) {
     if (name !== 'select') haLink.cancelPlacement();
     tool = name; onInteract?.();
@@ -246,14 +255,17 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       return;
     }
     pointerId = event.pointerId;
-    if (delegate?.pointerDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
-    if (event.shiftKey && tool === 'select' && !handles.hit(event)) {
-      gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true, addRoom: true }; return;
-    }
-    if (handles.begin(event)) {
-      gesture = { x: event.clientX, y: event.clientY, pointerId, dragging: true, enabled: view.controls.enabled };
+    if (delegate?.pointerArmedDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
+    const hit = handleHit(event);
+    if (hit) {
+      const enabled = view.controls.enabled, started = hit.source.begin(event, hit.handle);
+      gesture = { x: event.clientX, y: event.clientY, pointerId, dragging: true, source: hit.source, started, enabled };
       ownsGesture = true; onInteract?.(); view.controls.enabled = false;
       canvas.setPointerCapture(event.pointerId); event.stopImmediatePropagation(); return;
+    }
+    if (delegate?.pointerDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
+    if (event.shiftKey && tool === 'select') {
+      gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true, addRoom: true }; return;
     }
     if (tool === 'select') {
       gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true }; return;
@@ -276,7 +288,12 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   listen(canvas, 'pointermove', event => {
     if (!pointers.size && !event.buttons && tool === 'select' && canEdit()) roomSelection.hover(pick(event.clientX, event.clientY));
     if (event.pointerId !== pointerId) return;
-    if (delegate?.pointerMove?.(event)) return;
+    if (gesture?.dragging && gesture.source !== handles) {
+      if (gesture.started) gesture.source.pointerMove?.(event);
+      return;
+    }
+    if (gesture?.dragging && !gesture.started) return;
+    if (!gesture?.dragging && delegate?.pointerMove?.(event)) return;
     if (!gesture) return;
     if (gesture.selecting) {
       if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= DRAG_THRESHOLD_PX) gesture.moved = true;
@@ -315,13 +332,15 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     const tracked = pointers.delete(event.pointerId);
     if (event.pointerId !== pointerId) { if (ownsGesture && tracked) event.stopImmediatePropagation(); return; }
     pointerId = null; ownsGesture = false;
-    if (delegate?.pointerUp?.(event, cancel)) return;
+    if (!gesture?.dragging && delegate?.pointerUp?.(event, cancel)) return;
     if (!gesture) return;
     const g = gesture; gesture = null; el('editor-drag-hint').hidden = true;
     if (g.dragging) {
+      if (g.source !== handles && g.started) g.source.pointerUp?.(event, cancel);
       view.controls.enabled = g.enabled;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-      handles.finish(cancel || !g.moved, !cancel && !g.moved).catch(report); return;
+      if (g.source === handles && g.started) handles.finish(cancel || !g.moved, !cancel && !g.moved).catch(report);
+      return;
     }
     if (g.selecting) {
       if (!cancel && !g.moved && Math.hypot(event.clientX - g.x, event.clientY - g.y) < DRAG_THRESHOLD_PX) {
@@ -334,7 +353,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
             roofRooms.add(room.id); roofRoomBuilding = target.building.id;
           }
         } else {
-          roofRooms.clear(); roomSelection.select(picker.click(event.clientX, event.clientY));
+          roofRooms.clear();
+          const picked = picker.click(event.clientX, event.clientY);
+          if (!delegate?.selectPick?.(picked)) roomSelection.select(picked);
         }
       }
       return;
@@ -386,6 +407,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     roomSelection.back();
   });
   signal.addEventListener('abort', () => { if (gesture && !gesture.selecting) view.controls.enabled = gesture.enabled;
+    if (gesture?.dragging && gesture.source !== handles && gesture.started) gesture.source.pointerUp?.({ pointerId }, true);
     if (handles.active()) handles.finish(true).catch(report);
     gesture = null; pointerId = null; ownsGesture = false; pointers.clear(); }, { once: true });
   for (const id of ['select', 'move', 'rotate']) {
@@ -404,7 +426,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     handles: handles.handles,
     selectedRooms: () => roofRooms.size ? [...roofRooms] : null,
     // A press on the selected piece's handle belongs to the handle, never to a yard item behind it.
-    handleAt: event => !!handles.hit(event),
+    handleAt: event => !!handleHit(event),
     get lastDragFrameMs() { return handles.lastDragFrameMs; }, clearDragFrame: () => handles.clearDragFrame(), dragging: handles.active,
     buildingCentre(id) { const b = getPlan()?.buildings.find(b => b.id === id); return b && rotatePoint(localCentre(b), b.rotation || 0).map((v, i) => v + (b.position?.[i] || 0)); },
     delegate(value) { delegate = value; },

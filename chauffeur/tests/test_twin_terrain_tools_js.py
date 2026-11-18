@@ -57,7 +57,7 @@ const op=async operation=>{ops.push(operation);if(operation.op==='add_pad')plan.
 };
 let library;
 const tools=createSceneTools({view,getPlan:()=>plan,getModel:()=>plan,getKit:()=>kit,getSheets:()=>({}),op,edit:op,
-  panel:{clearSelection(){},focusSelection(){}},canEdit:()=>writable,signal:abort.signal,pickSite:(x,y)=>library?.pickSite(x,y)});
+  panel:{clearSelection(){},focusSelection(){}},canEdit:()=>writable,signal:abort.signal,pickSite:(x,y)=>library?.pickSite(x,y),padHits:(x,y)=>terrain.padHits?.(x,y)||[]});
 library=createLibrary({view,kit,getPlan:()=>plan,tools,op,canEdit:()=>writable,signal:abort.signal});
 const terrain=createTerrainTools({view,tools,getPlan:()=>plan,op,canEdit:()=>writable,signal:abort.signal});
 terrain.show();const card=descendants(shell).find(n=>n.id==='terrain-card');
@@ -292,17 +292,58 @@ abort.abort();view.dispose();console.log('Terrain editor draw, edge, nudge, vert
 """
 
 
+PICKING_DRIVER = DRIVER.split('terrain.show();const card=')[0] + r"""
+tools.setTool('select');
+tools.delegate({handleSources:[terrain],pointerArmedDown:event=>terrain.pointerArmedDown?.(event),
+  selectPick:hit=>hit?.kind==='terraces'&&(terrain.choose('terraces',hit.id),true),
+  pointerDown:terrain.pointerDown,pointerMove:terrain.pointerMove,pointerUp:terrain.pointerUp});
+const tick=()=>new Promise(r=>setTimeout(r,0)),canvas=view.renderer3.domElement;
+const pixel=(p,height=0)=>{const v=new THREE.Vector3(p[0]*.3048,height*.3048,-p[1]*.3048).project(view.camera);return [(v.x+1)*720,(1-v.y)*450];};
+const fire=(type,p)=>{const e=new Event(type);Object.assign(e,{button:0,pointerId:1,clientX:p[0],clientY:p[1],buttons:type==='pointerdown'?1:0});canvas.dispatchEvent(e);};
+let passed=0,failed=0;
+async function test(name,body){try{terrain.cancel();tools.select(null);await body();passed++;console.log('  ok '+name);}catch(error){failed++;console.error('  FAIL '+name+'\n'+error.stack);}finally{fire('pointercancel',[0,0]);}}
+plan.site.terraces=[{id:'pick-pad',polygon:[[15,15],[25,15],[25,25],[15,25]],height:2,blend:0}];
+await test('pad_click_selects_through_picker',async()=>{
+  const p=pixel([20,15],2),before=ops.length;
+  fire('pointerdown',p);assert.equal(terrain.handles().length,0,'no selection on press');assert.equal(view.controls.enabled,true);
+  fire('pointerup',p);assert.equal(terrain.handles().length,8,'picker chooses pad on release');assert.equal(ops.length,before);
+  terrain.cancel();fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]]);fire('pointerup',[p[0]+40,p[1]]);
+  assert.equal(terrain.handles().length,0,'outline drag leaves nothing chosen');assert.equal(view.controls.enabled,true);assert.equal(ops.length,before);
+});
+await test('pad_filled_area_and_top_surface_distance',async()=>{
+  const p=pixel([20,20],2),hit=terrain.padHits(...p)[0];
+  assert.equal(hit.id,'pick-pad');assert.equal(hit.kind,'terraces');
+  const top=new THREE.Vector3(20*.3048,2*.3048,-20*.3048);
+  assert.ok(Math.abs(hit.distance-view.camera.position.distanceTo(top))<.001,'distance is to the top surface in ray units');
+  fire('pointerdown',p);fire('pointerup',p);assert.equal(terrain.handles().length,8,'filled area selects through picker');
+});
+await test('pad_handle_radius_is_16',async()=>{
+  terrain.choose('terraces','pick-pad');const h=terrain.handles()[0],before=ops.length;
+  assert.ok(terrain.hit({button:0,clientX:h.screen[0]+15,clientY:h.screen[1]}));
+  assert.equal(terrain.hit({button:0,clientX:h.screen[0]+17,clientY:h.screen[1]}),null);
+  assert.equal(ops.length,before);
+});
+await test('armed_pad_drawing_keeps_its_press',async()=>{
+  terrain.startDrawing('terraces');const p=pixel([30,30]);fire('pointerdown',p);
+  assert.equal(view.controls.enabled,false);fire('pointerup',p);assert.equal(view.controls.enabled,true);
+  assert.equal(terrain.handles().length,0);assert.equal(ops.length,0);
+});
+abort.abort();view.dispose();console.log(`${passed}/${passed+failed} pad picking tests passed`);if(failed)process.exitCode=1;
+"""
+
+
 def run():
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
     kit['manifest'] = {}
     with tempfile.TemporaryDirectory(prefix='chauffeur_ground_tools_') as directory:
         driver, data = Path(directory) / 'driver.mjs', Path(directory) / 'input.json'
-        driver.write_text(DRIVER, encoding='utf-8')
         data.write_text(json.dumps({'root': ROOT.as_posix(), 'flat': {}, 'kit': kit}), encoding='utf-8')
-        result = subprocess.run([shutil.which('node'), str(driver), str(data)], capture_output=True, text=True, timeout=300)
-        print(result.stdout, end='')
-        if result.returncode:
-            raise AssertionError(result.stderr)
+        for source in (PICKING_DRIVER, DRIVER):
+            driver.write_text(source, encoding='utf-8')
+            result = subprocess.run([shutil.which('node'), str(driver), str(data)], capture_output=True, text=True, timeout=300)
+            print(result.stdout, end='')
+            if result.returncode:
+                raise AssertionError(result.stderr)
 
 
 if __name__ == '__main__':

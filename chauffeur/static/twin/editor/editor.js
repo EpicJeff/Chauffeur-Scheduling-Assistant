@@ -745,13 +745,16 @@ export async function boot() {
     }, {signal: lifecycle.signal});
     terrain = createTerrainTools({ view, tools, getPlan: () => timeline?.preview() || shownPlan(),
       op: applyOp, canEdit, signal: lifecycle.signal,
-      pickObject: (x, y) => library.pickSite(x, y), getKit: () => kit,
+      getKit: () => kit,
       prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });
     view.live = { draw: devices.draw, stop: devices.stop };
     tools.delegate({
-      selectionChanged: () => library.refresh(),
+      handleSources: [terrain, lot],
+      selectPick: hit => hit?.kind === 'terraces' && (terrain.choose('terraces', hit.id), true),
+      selectionChanged: state => { terrain.selectionChanged(state); library.refresh(); },
       pick: flags.pick, pointerBrowse: event => devices.pointerBrowse(event),
-      pointerDown: event => terrain.pointerDown(event) || devices.pointerDown(event) || lot.pointerDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event) || library.pointerDown(event),
+      pointerArmedDown: event => terrain.pointerArmedDown(event) || devices.pointerArmedDown(event) || lot.pointerArmedDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event),
+      pointerDown: event => devices.pointerDown(event) || lot.pointerDown(event) || library.pointerDown(event),
       pointerMove: event => terrain.pointerMove(event) || devices.pointerMove(event) || lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event) || library.pointerMove(event),
       pointerUp: (event, cancel) => terrain.pointerUp(event, cancel) || devices.pointerUp(event, cancel) || lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
       floorChanged() { terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.floorChanged(); }, cancel() { terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.cancel(); },

@@ -4,6 +4,7 @@ import { groundAt, buildingBase } from '../twin_ground.js';
 import { snapRotation } from './snap.js';
 import { plotSuggestionCard } from './place.js';
 import { request, report } from './api.js';
+import { DRAG_THRESHOLD_PX, HANDLE_HIT_PX } from './picking.js';
 
 const FT = .3048;
 const rotate = (p, degrees) => {
@@ -332,12 +333,16 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
       await op(operations);
     } finally { busy = false; previewBuilding(building(before.id) || before); }
   }
-  function begin(event) {
+  function hit(event) {
+    if (!enabled() || event.button !== 0 || drawing || !pauseBuilding() && !sceneTool()) return null;
+    return handles().find(h => distance(h.screen, [event.clientX, event.clientY]) <= HANDLE_HIT_PX) || null;
+  }
+  function begin(event, handle = hit(event)) {
     if (!enabled() || event.button !== 0) return false;
     if (!drawing && !pauseBuilding() && !sceneTool()) return false;
     const point = ground(event); if (!point) return false;
     const descriptors = handles();
-    let hit = descriptors.find(h => distance(h.screen, [event.clientX, event.clientY]) <= 18);
+    let hit = handle;
     if (!hit && descriptors.length && !pauseBuilding()) {
       const kind = ['move', 'rotate'].find(id => document.getElementById(`rail-${id}`).getAttribute('aria-pressed') === 'true');
       const picked = kind && view.pick(event.clientX, event.clientY);
@@ -369,7 +374,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     if (!gesture || gesture.pointer !== event.pointerId) return false;
     const g = gesture; g.client = [event.clientX, event.clientY];
     const point = ground(event); if (!point || !g.hit && !g.drawing) return true;
-    g.moved = Math.hypot(event.clientX - g.x, event.clientY - g.y) >= 3;
+    g.moved = Math.hypot(event.clientX - g.x, event.clientY - g.y) >= DRAG_THRESHOLD_PX;
     if (g.drawing) {
       const [x, y] = g.start, [a, b] = point;
       g.outline = [[Math.min(x, a), Math.min(y, b)], [Math.max(x, a), Math.min(y, b)], [Math.max(x, a), Math.max(y, b)], [Math.min(x, a), Math.max(y, b)]];
@@ -402,7 +407,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
       if (g.moved) mutate(`place/buildings/${encodeURIComponent(g.drawing)}`, 'PATCH', { footprint: g.outline, footprint_from: 'drawn' });
     } else if (g.preview && g.moved) commit(g.b, g.preview, g.hit.kind, g.about).catch(report);
     else if (g.hit) previewBuilding(g.b);
-    else if (!g.hit && Math.hypot(event.clientX - g.x, event.clientY - g.y) < 3) {
+    else if (!g.hit && Math.hypot(event.clientX - g.x, event.clientY - g.y) < DRAG_THRESHOLD_PX) {
       if (g.edge >= 0 && read()) streetCard(g.edge);
       else if (g.suggestion) suggestionCard(g.suggestion);
       else if (g.part) focusBuilding(g.part.id);
@@ -422,7 +427,8 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     disposeSheet(); clearGroup(graphics); graphics.removeFromParent(); layer.remove(); card.remove();
   }, { once: true });
   refresh();
-  const tools = { pointerDown: begin, pointerMove: update, pointerUp: finish, focusBuilding, showLot,
+  const tools = { hit, begin, pointerArmedDown: event => !!drawing && begin(event),
+    pointerDown: begin, pointerMove: update, pointerUp: finish, focusBuilding, showLot,
     cancel() { if (gesture) finish({ pointerId: gesture.pointer }, true); drawing = null; selected = null; closeCard(); },
     dragging: () => !!gesture?.hit || !!gesture?.drawing,
     lotHandles: handles,

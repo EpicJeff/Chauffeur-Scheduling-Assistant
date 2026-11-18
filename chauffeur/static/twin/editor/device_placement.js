@@ -301,7 +301,9 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     sprites.forEach(row => row.sprite.material.dispose()); textures.forEach(texture => texture.dispose());
     sprites.clear(); textures.clear();
   }
-  const controller = { anchors, doors, arm, startDrag, pointerDown, pointerMove: fixtures.pointerMove, pointerUp, cancel, refresh, draw, stop,
+  const controller = { anchors, doors, arm, startDrag, pointerDown,
+    pointerArmedDown: event => !!(armed || fixtures.active()) && pointerDown(event),
+    pointerMove: fixtures.pointerMove, pointerUp, cancel, refresh, draw, stop,
     fixtureHits: (x, y) => fixtures.hits?.(x, y) || [],
     drawFixtures: fixtures.deviceLink, addEffect: fixtures.addEffect, showEffect: fixtures.showEffect,
     pointerBrowse: event => !armed && !fixtures.active() && fixtures.pointerDown(event) };

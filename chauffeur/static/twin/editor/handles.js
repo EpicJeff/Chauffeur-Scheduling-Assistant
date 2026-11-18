@@ -139,8 +139,14 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     if (stair && stair.state !== 'ghost') for (const end of ['from', 'to'])
       add('stair_end', stair.id, [...stair[end], end === 'to' ? stair.rise_to
         : building.levels.find(l => l.id === stair.level)?.elevation || 0], stair.level, { end });
-    if (wall && wall.state !== 'ghost') add('wall', wall.id, [...wall.from.map((v, i) => (v + wall.to[i]) / 2),
-      building.levels.find(l => l.id === wall.level)?.elevation || 0], wall.level);
+    if (wall && wall.state !== 'ghost') {
+      const z = building.levels.find(l => l.id === wall.level)?.elevation || 0;
+      add('wall', wall.id, [...wall.from.map((v, i) => (v + wall.to[i]) / 2), z], wall.level);
+      for (const id of wall.joints || []) {
+        const joint = building.joints.find(j => j.id === id);
+        if (joint && !result.some(h => h.kind === 'joint' && h.id === id)) add('joint', id, [...joint.at, z], wall.level);
+      }
+    }
     const opening = building.openings.find(o => selected.kind === 'opening' && o.id === selected.id);
     if (opening && opening.state !== 'ghost') {
       const wall = building.walls.find(w => w.id === opening.wall);
@@ -253,9 +259,9 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     }
     return null;
   }
-  function begin(event) {
+  function begin(event, handle = hit(event)) {
     if (gesture) return false;
-    const handle = hit(event); if (!handle) return false;
+    if (!handle) return false;
     lastFrameMs = null; drag.clearDragFrame?.();
     const source = getPlan(), building = coordinateBuilding(handle.building);
     if (handle.kind === 'stair_end') {

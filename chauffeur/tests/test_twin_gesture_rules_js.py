@@ -19,16 +19,18 @@ const THREE = await import(three);
 const {mountTwin} = await import(file('static/twin/twin_view.js'));
 const {createSceneTools} = await import(file('static/twin/editor/scene_tools.js'));
 const {createLibrary} = await import(file('static/twin/editor/library.js'));
+const {createTerrainTools} = await import(file('static/twin/editor/terrain_tools.js'));
 const nodes = new Map(), doc = new Element();
+const shell = new Element(), descendants = n => n.children.flatMap(c=>[c,...descendants(c)]);
 Element.prototype.getAttribute = function(k) { return this[k]; };
-Element.prototype.querySelectorAll = () => [];
+Element.prototype.querySelectorAll = function(selector) { return descendants(this).filter(n=>selector.split(',').includes(n.tag)); };
 Element.prototype.querySelector = () => null;
 Element.prototype.setPointerCapture = function(id) { this.capture = id; };
 Element.prototype.hasPointerCapture = function(id) { return this.capture === id; };
 Element.prototype.releasePointerCapture = function() { this.capture = null; };
-doc.createElement = () => new Element();
+doc.createElement = tag => Object.assign(new Element(),{tag});
 doc.getElementById = id => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
-doc.querySelector = () => null; doc.querySelectorAll = () => []; globalThis.document = doc;
+doc.querySelector = selector => selector==='.editor-shell'?shell:null; doc.querySelectorAll = () => []; globalThis.document = doc;
 window.showGlobalAlert = message => { throw Error(message); };
 globalThis.fetch = async () => new Response(JSON.stringify({limit_mb:50,unpacked_limit_mb:200,entries:{},revision:1,materials:[],items:[],imports:[]}));
 flat.site = {planting:[{id:'tree:gesture',kind:'tree',at:[200,200],height:10}],
@@ -40,21 +42,27 @@ const tick=()=>new Promise(r=>setTimeout(r,0));
 async function test(name, body) {
   const view=await mountTwin(new Element(),{plan:flat,kit,tier:'low',preserveCamera:true});
   const abort=new AbortController(), ops=[], controlStates=[];
-  let library, enabled=true, writable=true;
+  let library, terrain, enabled=true, writable=true, saveGate=null, ordinaryPresses=0;
   Object.defineProperty(view.controls,'enabled',{get:()=>enabled,set:value=>{enabled=value;controlStates.push(value);}});
-  const op=async(operation,options)=>ops.push({operation,options});
+  const op=async(operation,options)=>{ops.push({operation,options});if(saveGate)await saveGate;};
   const tools=createSceneTools({view,getPlan:()=>flat,getModel:()=>flat,getKit:()=>kit,getSheets:()=>({}),op,edit:op,
     panel:{clearSelection(){},focusSelection(){}},canEdit:()=>writable,signal:abort.signal,
-    siteHits:(x,y)=>library?.siteHits(x,y) || [],pickSite:(x,y)=>library?.pickSite(x,y)});
+    siteHits:(x,y)=>library?.siteHits(x,y) || [],pickSite:(x,y)=>library?.pickSite(x,y),padHits:(x,y)=>terrain?.padHits?.(x,y)||[]});
   library=createLibrary({view,kit,getPlan:()=>flat,tools,op,canEdit:()=>true,signal:abort.signal});
-  tools.delegate({pointerDown:library.pointerDown,pointerMove:library.pointerMove,pointerUp:library.pointerUp,selectionChanged:library.refresh});
+  terrain=createTerrainTools({view,tools,getPlan:()=>flat,op,canEdit:()=>writable,signal:abort.signal,pickObject:library.pickSite});
+  tools.delegate({handleSources:[terrain],pointerArmedDown:event=>terrain.pointerArmedDown?.(event),
+    selectPick:hit=>hit?.kind==='terraces'&&(terrain.choose('terraces',hit.id),true),
+    pointerDown:event=>{ordinaryPresses++;return terrain.pointerDown(event)||library.pointerDown(event);},
+    pointerMove:event=>terrain.pointerMove(event)||library.pointerMove(event),
+    pointerUp:(event,cancel)=>terrain.pointerUp(event,cancel)||library.pointerUp(event,cancel),
+    selectionChanged:state=>{terrain.selectionChanged(state);library.refresh();}});
   const canvas=view.renderer3.domElement;
   const world=(p,b=null)=>{
     const angle=(b?.rotation||0)*Math.PI/180, pos=b?.position||[0,0];
     return new THREE.Vector3((Math.cos(angle)*p[0]-Math.sin(angle)*p[1]+pos[0])*.3048,
       ((p[2]||0)+(b?.base||0))*.3048,-(Math.sin(angle)*p[0]+Math.cos(angle)*p[1]+pos[1])*.3048);
   };
-  const look=(point,b=null)=>view.setCameraState({position:world([point[0],point[1]-.01,150],b).toArray(),target:world(point,b).toArray()});
+  const look=(point,b=null,height=150)=>view.setCameraState({position:world([point[0],point[1]-.01,height],b).toArray(),target:world(point,b).toArray()});
   const pixel=(point,b=null)=>{const p=world(point,b).project(view.camera);return [(p.x+1)*720,(1-p.y)*450];};
   function fire(type,p,button=0,extra={}) {
     const event=new Event(type);Object.assign(event,{pointerId:1,button,buttons:type==='pointerdown'?1:0,clientX:p[0],clientY:p[1],...extra});
@@ -62,10 +70,90 @@ async function test(name, body) {
   }
   const click=p=>{fire('pointerdown',p);fire('pointerup',p);};
   const ready=async()=>{while(!view.ready)await tick();};
-  try {await body({view,tools,library,ops,controlStates,look,pixel,fire,click,ready,setWritable:value=>writable=value});passed++;console.log('  ok '+name);}
+  try {await body({view,tools,library,terrain,ops,controlStates,look,pixel,fire,click,ready,
+    ordinaryPresses:()=>ordinaryPresses,setSaveGate:value=>saveGate=value,setWritable:value=>writable=value});passed++;console.log('  ok '+name);}
   catch(error){failed++;console.error('  FAIL '+name+'\n'+error.stack);}
-  finally {abort.abort();await tick();view.dispose();}
+  finally {abort.abort();delete flat.site.terraces;await tick();view.dispose();}
 }
+await test('pad_corner_wins_over_tree',async({view,tools,library,terrain,ops,look,fire,ordinaryPresses})=>{
+  flat.site.terraces=[{id:'pad:gesture',polygon:[[200,200],[220,200],[220,220],[200,220]],height:0,blend:0}];
+  look([200,200,0]);terrain.choose('terraces','pad:gesture');
+  const h=terrain.handles().find(h=>!h.insert&&h.index===0),p=[h.screen[0]+12,h.screen[1]];
+  assert.equal(library.siteHits(...p)[0]?.id,'tree:gesture','real tree box covers the pad corner press');
+  fire('pointerdown',p);assert.equal(view.controls.enabled,false);
+  fire('pointermove',[p[0]+30,p[1]]);fire('pointerup',[p[0]+30,p[1]]);await tick();
+  assert.equal(ops.length,1);assert.equal(ops[0].operation.op,'update_pad');
+  assert.notDeepEqual(ops[0].operation.polygon[0],[200,200]);
+  assert.equal(tools.selection().id,null,'tree never selected');assert.equal(terrain.handles().length,8,'pad stays chosen');
+  assert.equal(ordinaryPresses(),0,'handle wins before any ordinary delegate');assert.equal(view.controls.enabled,true);
+});
+await test('handle_radius_is_16',async({view,tools,ops,look,pixel,fire,ready})=>{
+  view.setView(B+':L1');tools.select({kind:'wall',id:W,building:B});await ready();
+  look([...wall.from,0],building);
+  const h=tools.handles().find(h=>h.kind==='joint'&&h.id===wall.joints[0]),p=pixel(h.at,building);
+  assert.equal(tools.handleAt({clientX:p[0]-17,clientY:p[1]}),false);
+  fire('pointerdown',[p[0]-15,p[1]]);assert.equal(view.controls.enabled,false);
+  fire('pointermove',[p[0]-45,p[1]]);fire('pointerup',[p[0]-45,p[1]]);await tick();
+  assert.equal(ops.length,1);assert.equal(ops[0].operation.op,'move_joint');assert.equal(view.controls.enabled,true);
+});
+await test('busy_pad_holds_its_handle',async({view,tools,terrain,ops,look,fire,setSaveGate,ordinaryPresses})=>{
+  flat.site.terraces=[{id:'pad:gesture',polygon:[[200,200],[220,200],[220,220],[200,220]],height:0,blend:0}];
+  look([200,200,0]);terrain.choose('terraces','pad:gesture');
+  const p=terrain.handles()[0].screen;let release;
+  setSaveGate(new Promise(resolve=>release=resolve));
+  fire('pointerdown',p);fire('pointermove',[p[0]+30,p[1]]);fire('pointerup',[p[0]+30,p[1]]);
+  assert.equal(ops.length,1);
+  fire('pointerdown',p);assert.equal(view.controls.enabled,false,'pending save still captures the corner');
+  fire('pointermove',[p[0]+30,p[1]]);assert.equal(ops.length,1,'second save waits');
+  setSaveGate(null);release();await tick();
+  fire('pointerup',[p[0]+30,p[1]]);await tick();
+  assert.equal(ops.length,2,'held drag resumes after save');assert.equal(ops[1].operation.op,'update_pad');
+  assert.equal(tools.selection().id,null);assert.equal(ordinaryPresses(),0);assert.equal(terrain.handles().length,8);
+  assert.equal(view.controls.enabled,true);
+});
+await test('busy_pad_keeps_a_release_until_save_answers',async({view,terrain,ops,look,fire,setSaveGate})=>{
+  flat.site.terraces=[{id:'pad:gesture',polygon:[[200,200],[220,200],[220,220],[200,220]],height:0,blend:0}];
+  look([200,200,0]);terrain.choose('terraces','pad:gesture');const p=terrain.handles()[0].screen;let release;
+  setSaveGate(new Promise(resolve=>release=resolve));
+  fire('pointerdown',p);fire('pointermove',[p[0]+30,p[1]]);fire('pointerup',[p[0]+30,p[1]]);
+  fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]]);fire('pointerup',[p[0]+40,p[1]]);
+  assert.equal(ops.length,1);assert.equal(view.controls.enabled,true);
+  setSaveGate(null);release();await tick();assert.equal(ops.length,2);assert.equal(ops[1].operation.op,'update_pad');
+  assert.equal(view.controls.enabled,true);
+});
+await test('busy_pad_refuses_a_changed_corner_and_cancels_safely',async({view,tools,terrain,ops,look,fire,setSaveGate})=>{
+  flat.site.terraces=[{id:'pad:gesture',polygon:[[200,200],[220,200],[220,220],[200,220]],height:0,blend:0}];
+  look([200,200,0]);terrain.choose('terraces','pad:gesture');const p=terrain.handles()[0].screen,alerts=[];
+  const previousAlert=window.showGlobalAlert;window.showGlobalAlert=message=>alerts.push(message);
+  try {
+    let release;setSaveGate(new Promise(resolve=>release=resolve));
+    fire('pointerdown',p);fire('pointermove',[p[0]+30,p[1]]);fire('pointerup',[p[0]+30,p[1]]);
+    fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]]);
+    flat.site.terraces[0].polygon[0]=[201,200];setSaveGate(null);release();await tick();
+    fire('pointerup',[p[0]+40,p[1]]);await tick();
+    assert.equal(ops.length,1);assert.equal(alerts.length,1);assert.match(alerts[0],/pad changed/);
+    assert.equal(tools.selection().id,null);assert.equal(view.controls.enabled,true);
+    const q=terrain.handles()[0].screen;setSaveGate(new Promise(resolve=>release=resolve));
+    fire('pointerdown',q);fire('pointermove',[q[0]+30,q[1]]);fire('pointerup',[q[0]+30,q[1]]);
+    fire('pointerdown',q);fire('pointermove',[q[0]+40,q[1]]);fire('pointercancel',[q[0]+40,q[1]]);
+    setSaveGate(null);release();await tick();assert.equal(ops.length,2);assert.equal(alerts.length,1);
+    assert.equal(view.controls.enabled,true);
+  } finally {window.showGlobalAlert=previousAlert;}
+});
+await test('armed_modes_then_first_handle_source_own_the_press',async({view,tools,fire})=>{
+  let armed=true,beginWorks=true,hits=0,begins=0,ordinary=0,moves=0,ups=0;
+  const handle={kind:'future-fixture-point'},source={hit(){hits++;return handle;},
+    begin(event,chosen){assert.equal(chosen,handle);begins++;return beginWorks;},pointerMove(){moves++;},pointerUp(){ups++;}};
+  tools.delegate({pointerArmedDown:()=>armed,handleSources:[source,{hit(){throw Error('later source must not be asked');}}],
+    pointerDown(){ordinary++;return true;}});
+  fire('pointerdown',[700,400]);fire('pointerup',[700,400]);assert.equal(hits,0);
+  armed=false;fire('pointerdown',[700,400]);assert.equal(view.controls.enabled,false);assert.equal(view.renderer3.domElement.capture,1);
+  fire('pointermove',[730,400]);fire('pointerup',[730,400]);
+  assert.equal(begins,1);assert.equal(moves,1);assert.equal(ups,1);assert.equal(ordinary,0);assert.equal(view.controls.enabled,true);
+  beginWorks=false;fire('pointerdown',[700,400]);assert.equal(view.controls.enabled,false);
+  fire('pointermove',[730,400]);fire('pointerup',[730,400]);
+  assert.equal(begins,2);assert.equal(moves,1);assert.equal(ups,1);assert.equal(ordinary,0);assert.equal(view.controls.enabled,true);
+});
 await test('unselected_press_navigates',async({view,tools,ops,controlStates,look,pixel,fire})=>{
   look([200,200,0]);const p=pixel([200,200,0]), before=JSON.stringify(flat);
   fire('pointerdown',p);assert.equal(tools.selection().id,null);assert.equal(view.controls.enabled,true);
@@ -81,9 +169,10 @@ await test('jitter_under_threshold_is_a_click',async({tools,ops,look,pixel,fire}
 });
 await test('selected_wall_body_does_not_move_with_select_tool',async({view,tools,ops,controlStates,look,pixel,fire,ready})=>{
   view.setView(B+':L1');tools.select({kind:'wall',id:W,building:B});await ready();
-  const point=wall.from.map((v,i)=>v*.8+wall.to[i]*.2);look([...point,0],building);
+  const point=wall.from.map((v,i)=>v*.8+wall.to[i]*.2);look([...point,0],building,40);
   const p=pixel([...point,0],building);
   assert.equal(view.pick(...p)?.id,W,'press is on the actual wall');
+  assert.equal(tools.handleAt({clientX:p[0],clientY:p[1]}),false,'body press is outside the drawn end and middle handles');
   fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]]);fire('pointerup',[p[0]+40,p[1]]);await tick();
   assert.equal(ops.length,0);assert.ok(controlStates.every(Boolean));assert.equal(view.controls.enabled,true);
   assert.equal(tools.selection().id,W);
