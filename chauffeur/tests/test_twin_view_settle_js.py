@@ -24,6 +24,7 @@ PREFIX = PREFIX.replace("return url.startsWith('file:')", """
     let source=String(loaded.source);
     source=source.replace(/(function generateTwin\\([^\\n]+\\{)\\r?\\n/, '$1\\n globalThis.generations++;\\n');
     source=source.replace('function startBake() {', 'function startBake() { globalThis.bakeStarts++;');
+    source=source.replace('next.editableLevel = editableLevel;', 'next.editableLevel = editableLevel; globalThis.lastTwin = next;');
     return {...loaded,format:'module',source};
   }
   return url.startsWith('file:')""")
@@ -32,17 +33,83 @@ globalThis.__THREE_MESH=T.Mesh;globalThis.__THREE_BOX=T.BoxGeometry;globalThis._
 const yard=v=>v.scene.getObjectByName('yard');
 const hosts=new WeakMap();
 const reset=()=>{globalThis.generations=0;globalThis.bakeStarts=0;globalThis.yardCalls=0;};
-async function mount(plan=fixture()){
+async function mount(plan=fixture(),editable='a:L1'){
  reset();location.search='?test=1';const shell=new Element();shell.className='editor-shell';const host=new Element();shell.append(host);
  const v=await mountTwin(host,{plan,kit,tier:'low',bake:false});
  hosts.set(v,host);
- await v.setEditableLevel('a:L1');reset();return v;
+ await v.setEditableLevel(editable);reset();return v;
 }
 const split=p=>{
  const b=p.buildings[0],old=b.walls.find(w=>w.id==='w1');
  b.walls=b.walls.filter(w=>w!==old);
  b.walls.push({...old,id:'w1a',to:[12,3]},{...old,id:'w1b',from:[12,3]});
 };
+await test('drag_preview_draws_on_unfocused_level',async()=>{
+ const v=await mount(fixture(),null);try{
+  assert.equal(lastTwin.editableLevel,null);
+  const group=v.groups.levels['a:L1'],snapshots=[];
+  group.traverse(o=>{for(const r of o.userData.snapRanges||[])snapshots.push({o,r,
+   values:Array.from(o.geometry.attributes.position.array.slice(r.start*3,(r.start+r.count)*3))});});
+  const owned=snapshots.filter(s=>s.r.pieceId==='w0');assert.ok(owned.length);
+  assert.ok(owned.some(s=>s.o.userData.snapRanges.some(r=>r.pieceId!=='w0')),'exercise a shared batch');
+  const p=structuredClone(v.plan);p.buildings[0].walls[0].from[1]++;p.buildings[0].walls[0].to[1]++;
+  v.rebuildLevel('a','L1',p,{walls:['w0']});
+  assert.equal(v.plan,p);assert.equal(v.groups.levels['a:L1'],group);assert.equal(generations,0);
+  assert.equal(lastTwin.editableLevel,null);assert.equal(lastTwin.buildings.get('a').model.stale,true);
+  for(const s of snapshots){
+   const actual=Array.from(s.o.geometry.attributes.position.array.slice(s.r.start*3,(s.r.start+s.r.count)*3));
+   if(s.r.pieceId==='w0'){
+    const expected=s.values.map((n,i)=>i%3===2?n-1:n);assert.deepEqual(actual,expected);
+   }else assert.deepEqual(actual,s.values,'other pieces must stay put');
+  }
+ }finally{v.dispose();}
+});
+await test('unfocused_keep_does_not_mark_building_stale',async()=>{
+ const v=await mount(fixture(),null);try{
+  const p=structuredClone(v.plan);p.buildings[0].walls[0].from[1]++;p.buildings[0].walls[0].to[1]++;
+  v.rebuildLevel('a','L1',p,{walls:['w0']},{keep:true});
+  assert.equal(v.plan,p);assert.ok(!lastTwin.buildings.get('a').model.stale);
+  assert.equal(lastTwin.editableLevel,null);assert.equal(generations,0);
+ }finally{v.dispose();}
+});
+await test('unfocused_batch_without_ranges_is_skipped',async()=>{
+ const v=await mount(fixture(),null);try{
+  const batches=[];v.groups.levels['a:L1'].traverse(o=>{
+   if(o.userData.merged&&o.userData.snapRanges?.some(r=>r.pieceId==='w0')){
+    batches.push({o,values:Array.from(o.geometry.attributes.position.array)});delete o.userData.snapRanges;
+   }
+  });assert.ok(batches.length);
+  const p=structuredClone(v.plan);p.buildings[0].walls[0].from[1]++;p.buildings[0].walls[0].to[1]++;
+  v.rebuildLevel('a','L1',p,{walls:['w0']});assert.equal(v.plan,p);
+  for(const {o,values} of batches)assert.deepEqual(Array.from(o.geometry.attributes.position.array),values);
+ }finally{v.dispose();}
+});
+await test('batched_room_drag_reuses_arrays_and_preserves_neighbours',async()=>{
+ const plan=fixture();plan.buildings[0].rooms.push({id:'neighbour',level:'L1',polygon:square(20,0),state:'settled'});
+ const v=await mount(plan,null);try{
+  const group=v.groups.levels['a:L1'],snapshots=[];
+  group.traverse(o=>{if(o.userData.snapRanges?.some(r=>r.pieceId==='room'))snapshots.push({o,geometry:o.geometry,
+   arrays:Object.fromEntries(Object.entries(o.geometry.attributes).map(([name,a])=>[name,a.array])),
+   neighbours:o.userData.snapRanges.filter(r=>r.pieceId!=='room').map(r=>({r,
+    values:Object.fromEntries(Object.entries(o.geometry.attributes).map(([name,a])=>[name,
+     Array.from(a.array.slice(r.start*a.itemSize,(r.start+r.count)*a.itemSize))]))}))});});
+  assert.ok(snapshots.some(s=>s.neighbours.length),'exercise rooms sharing one batch');
+  const old=v.worldBox('room','a');
+  for(let frame=0;frame<2;frame++){
+   const p=structuredClone(v.plan);p.buildings[0].rooms[0].polygon[1][0]++;
+   v.rebuildLevel('a','L1',p,{rooms:['room']});assert.equal(v.plan,p);
+   for(const s of snapshots){
+    assert.equal(s.o.geometry,s.geometry);
+    for(const [name,array] of Object.entries(s.arrays))assert.equal(s.o.geometry.attributes[name].array,array);
+    for(const {r,values} of s.neighbours)for(const [name,expected] of Object.entries(values)){
+     const a=s.o.geometry.attributes[name];
+     assert.deepEqual(Array.from(a.array.slice(r.start*a.itemSize,(r.start+r.count)*a.itemSize)),expected);
+    }
+   }
+  }
+  assert.notDeepEqual(v.worldBox('room','a'),old);assert.equal(generations,0);
+ }finally{v.dispose();}
+});
 await test('same_topology_deforms',async()=>{
  const v=await mount();try{
   const group=v.groups.levels['a:L1'],old=v.worldBox('room','a'),p=structuredClone(v.plan);

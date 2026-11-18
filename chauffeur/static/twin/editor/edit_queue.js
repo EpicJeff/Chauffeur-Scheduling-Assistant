@@ -46,7 +46,7 @@ export function createEditQueue({ send, onChange, onSignedOut,
         if (!(error instanceof LocalMissing)) { console.warn('Local replay failed', error); continue; }
         // A request already sent still needs its own server answer. Only unsent
         // dependencies can be discarded when the confirmed house changes.
-        if (step !== inFlight) drop(step, error);
+        if (step !== inFlight && step.applied) drop(step, error);
       }
     }
     shownPlan = plan;
@@ -113,10 +113,12 @@ export function createEditQueue({ send, onChange, onSignedOut,
     const id = `${now()}-${++sequence}`;
     const step = { id, op, label, selection, resolve, reject, attempt: 0 };
     steps.push(step);
-    try { shownPlan = local || applyLocal(shownPlan, op)?.plan || shownPlan; }
+    // A step that names a piece the shown house lacks still goes to the server,
+    // which refuses it in its own words. Only a step that applied here can later
+    // be dropped as depending on a refused one.
+    try { shownPlan = local || applyLocal(shownPlan, op)?.plan || shownPlan; step.applied = true; }
     catch (error) {
-      if (error instanceof LocalMissing) drop(step, error);
-      else console.warn('Local preview failed', error);
+      if (!(error instanceof LocalMissing)) console.warn('Local preview failed', error);
     }
     changed(); start();
     return { id, saved };

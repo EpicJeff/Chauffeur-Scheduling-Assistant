@@ -810,10 +810,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     rebuildLevel(buildingId, levelId, flat, touched = null, { keep = false } = {}) {
       const key = `${buildingId}:${levelId}`, group = twin?.groups.levels[key];
       const before = plan.buildings.find(b => b.id === buildingId), after = flat.buildings.find(b => b.id === buildingId);
-      if (!group || !before || !after || (!keep && twin.editableLevel !== key)) return;
+      if (!group || !before || !after) return;
       view.bake?.stop();
-      // The focused level has per-piece meshes (R42). Rebuild its changed
-      // buffers in place: no roof, yard, texture or optional-model work per frame.
+      // Focused levels have per-piece meshes (R42); unfocused levels retain
+      // material batches. Both update only owned geometry, without changing focus.
       // Keep selection materials alive throughout a gesture. Replacing every
       // tinted/ghosted material per update churns the renderer's shader cache.
       const changedPieces = new Set();
@@ -840,6 +840,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           const ranges = object.userData.snapRanges;
           const owned = ranges?.filter(r => r.pieceId === id && r.buildingId === buildingId);
           if (ranges && !owned.length) continue;
+          // A batch without ownership metadata cannot safely move as a whole.
+          // The pick proxy and explicitly tagged single-piece meshes are safe.
+          if (!ranges && (object.userData.merged || twin.editableLevel !== key && object !== proxy
+              && (object.userData.pieceId !== id || object.userData.buildingId !== buildingId))) continue;
+          // Bounds for batches stay conservative during a gesture. Scan the
+          // complete buffer only once, then expand them from the changed ranges.
+          if (owned && !geometry.boundingBox) geometry.computeBoundingBox();
           if (room && object !== proxy && object.isMesh) {
             const level = after.levels.find(l => l.id === levelId);
             const holes = stairHoles(after, level).filter(h => h.every(p => contains(room.polygon, p)));
@@ -852,30 +859,51 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
                 for (let i = r.start; i < r.start + r.count; i++) {
                   const y = geometry.attributes.position.getY(i); min = Math.min(min, y); max = Math.max(max, y);
                 }
-                const poly = polygon(room.polygon, min, max, holes);
+                // Rotating a flat floor into X/Z leaves sub-micron Y noise;
+                // keep it flat instead of adding extrusion faces each frame.
+                const poly = polygon(room.polygon, min, max - min < 1e-6 ? min : max, holes);
                 if (!poly.index) return poly;
                 const triangles = poly.toNonIndexed(); poly.dispose(); return triangles;
               });
-              const replacement = new THREE.BufferGeometry();
-              for (const [name, attribute] of Object.entries(geometry.attributes)) {
-                const values = [];
-                ranges.forEach((r, index) => {
-                  const chunk = chunks[index], attr = chunk?.attributes[name] || attribute;
-                  const start = chunk ? 0 : r.start, count = chunk ? chunk.attributes.position.count : r.count;
-                  for (let i = start; i < start + count; i++) for (let c = 0; c < attribute.itemSize; c++)
-                    values.push(chunk && !chunk.attributes[name] ? 0 : attr.getComponent(i, c));
-                });
-                replacement.setAttribute(name, new THREE.Float32BufferAttribute(values, attribute.itemSize));
+              const sameCounts = chunks.every((g, i) => !g || g.attributes.position.count === ranges[i].count);
+              if (sameCounts) {
+                // Most drag frames keep the triangulation size: reuse every
+                // attribute array and upload only this room's changed ranges.
+                for (const [name, attribute] of Object.entries(geometry.attributes)) {
+                  chunks.forEach((chunk, index) => {
+                    if (!chunk) return;
+                    const r = ranges[index], source = chunk.attributes[name];
+                    for (let i = 0; i < r.count; i++) for (let c = 0; c < attribute.itemSize; c++)
+                      attribute.setComponent(r.start + i, c, source ? source.getComponent(i, c) : 0);
+                    attribute.addUpdateRange(r.start * attribute.itemSize, r.count * attribute.itemSize);
+                  });
+                  attribute.needsUpdate = true;
+                }
+              } else {
+                const replacement = new THREE.BufferGeometry();
+                for (const [name, attribute] of Object.entries(geometry.attributes)) {
+                  const values = [];
+                  ranges.forEach((r, index) => {
+                    const chunk = chunks[index], attr = chunk?.attributes[name] || attribute;
+                    const start = chunk ? 0 : r.start, count = chunk ? chunk.attributes.position.count : r.count;
+                    for (let i = start; i < start + count; i++) for (let c = 0; c < attribute.itemSize; c++)
+                      values.push(chunk && !chunk.attributes[name] ? 0 : attr.getComponent(i, c));
+                  });
+                  replacement.setAttribute(name, new THREE.Float32BufferAttribute(values, attribute.itemSize));
+                }
+                let start = 0;
+                ranges.forEach((r, i) => { r.start = start; r.count = chunks[i]?.attributes.position.count ?? r.count; start += r.count; });
+                replacement.userData = { ...geometry.userData, snapRanges: ranges };
+                replacement.boundingBox = geometry.boundingBox.clone();
+                object.geometry = replacement;
               }
-              let start = 0;
-              ranges.forEach((r, i) => { r.start = start; r.count = chunks[i]?.attributes.position.count ?? r.count; start += r.count; });
-              replacement.userData = { ...geometry.userData, snapRanges: ranges };
-              chunks.forEach(g => g?.dispose()); object.geometry = replacement;
+              chunks.forEach(g => g?.dispose());
             } else {
               geometry.computeBoundingBox();
               object.geometry = polygon(room.polygon, geometry.boundingBox.min.y, geometry.boundingBox.max.y, holes);
             }
-            geometry.dispose(); geometry = object.geometry;
+            if (geometry !== object.geometry) geometry.dispose();
+            geometry = object.geometry;
           } else {
             const positions = geometry.attributes.position;
             for (const range of owned || [{ start: 0, count: positions.count }]) {
@@ -883,10 +911,31 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
                 const p = deform(positions.getX(i), -positions.getZ(i), positions.getY(i));
                 positions.setXYZ(i, p[0], p[2], -p[1]);
               }
+              if (owned) positions.addUpdateRange(range.start * 3, range.count * 3);
             }
-            positions.needsUpdate = true; geometry.computeVertexNormals();
+            positions.needsUpdate = true;
+            if (owned) {
+              // snapRanges describe non-indexed triangles. Recompute only
+              // their normals, preserving every neighbour's attributes.
+              const normal = geometry.attributes.normal;
+              const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
+              for (const r of owned) {
+                for (let i = r.start; i < r.start + r.count; i += 3) {
+                  a.fromBufferAttribute(positions, i); b.fromBufferAttribute(positions, i + 1); c.fromBufferAttribute(positions, i + 2);
+                  THREE.Triangle.getNormal(a, b, c, n);
+                  for (let j = i; j < i + 3; j++) normal.setXYZ(j, n.x, n.y, n.z);
+                }
+                normal.addUpdateRange(r.start * 3, r.count * 3);
+              }
+              normal.needsUpdate = true;
+            } else geometry.computeVertexNormals();
           }
-          geometry.computeBoundingBox(); geometry.computeBoundingSphere();
+          if (owned) {
+            const point = new THREE.Vector3();
+            for (const r of owned) for (let i = r.start; i < r.start + r.count; i++)
+              geometry.boundingBox.expandByPoint(point.fromBufferAttribute(geometry.attributes.position, i));
+            geometry.boundingBox.getBoundingSphere(geometry.boundingSphere ||= new THREE.Sphere());
+          } else { geometry.computeBoundingBox(); geometry.computeBoundingSphere(); }
           if (object !== proxy) {
             if (owned) for (const r of owned) for (let i = r.start; i < r.start + r.count; i++)
               box.expandByPoint(new THREE.Vector3().fromBufferAttribute(geometry.attributes.position, i));

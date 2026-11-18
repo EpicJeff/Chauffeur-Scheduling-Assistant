@@ -63,6 +63,9 @@ def _summary(records, refused=None):
             'total': {'median': _middle(totals), 'min': min(totals, default=0), 'max': max(totals, default=0)},
             **{name: {'median': _middle([r[name] for r in records])}
                for name in ('request', 'parse', 'rebuild', 'first_frame')},
+            # first_frame remains available under its original name as well.
+            'local_frame': {'median': _middle([r['first_frame'] for r in records])},
+            'settle': {'median': _middle([r['settle'] for r in records if 'settle' in r])},
             **{group: {name: _middle([r.get(group, {}).get(name, 0) for r in records]) for name in names}
                for group, names in (('server', SERVER), ('detail', DETAIL))},
             'bytes': _middle([r['bytes'] for r in records])}
@@ -83,26 +86,143 @@ def _operation(page, operation):
     return page.evaluate('window.__twinEditTiming.at(-1)'), None
 
 
-def _measure_operation(page, operation, distance, runs):
+def _measure_operation(page, operation, distance, runs, release=None):
     def moved(sign):
         return {**operation, 'by': [sign * v for v in distance] if isinstance(distance, list) else sign * distance}
 
     # Warm-up returns to the start before the measured alternating sequence.
     for sign in (1, -1):
-        _, refused = _operation(page, moved(sign))
+        _, refused = (release or _operation)(page, moved(sign))
         if refused:
             return _summary([], refused)
     records = []
     for index in range(runs):
-        record, refused = _operation(page, moved(1 if index % 2 == 0 else -1))
+        record, refused = (release or _operation)(page, moved(1 if index % 2 == 0 else -1))
         if refused:
             return _summary(records, refused)
         records.append(record)
     if runs % 2:
-        _, refused = _operation(page, moved(-1))
+        _, refused = (release or _operation)(page, moved(-1))
         if refused:
             return _summary(records, refused)
     return _summary(records)
+
+
+def _track_view_work(page):
+    """Observe actual view promises, since rebuildWork is private to twin_view."""
+    page.evaluate("""() => {
+        const v = window.__twin;
+        if (v.__measureWork !== undefined) return;
+        v.__measureWork = 0;
+        for (const name of ['rebuild', 'settle']) {
+            const original = v[name].bind(v);
+            v[name] = (...args) => {
+                ++v.__measureWork;
+                try { return Promise.resolve(original(...args)).finally(() => --v.__measureWork); }
+                catch (e) { --v.__measureWork; throw e; }
+            };
+        }
+    }""")
+
+
+def _wait_settled(page):
+    condition = """() => window.__twin.ready && !window.__twin.__measureWork
+        && document.querySelector('#editor-save-state').textContent.trim() === 'Saved'"""
+    page.wait_for_function(condition, timeout=60000)
+    page.evaluate('async () => { await window.__twin.afterNextRender(); await window.__twin.afterNextRender(); }')
+    page.wait_for_function(condition, timeout=60000)
+
+
+def _mouse_release(page, start, end):
+    """Keep the real gesture, including a preview frame before pointerup."""
+    import house_editor_model_harness as H
+
+    for x, y in (start, end):
+        assert page.evaluate("""([x,y]) => {
+            const canvas = window.__twin.renderer3.domElement, r = canvas.getBoundingClientRect();
+            return x > r.left && x < r.right && y > r.top && y < r.bottom
+                && document.elementFromPoint(x,y) === canvas;
+        }""", [x, y]), f'Drag point {(x, y)} is outside or covered over the canvas'
+    assert math.dist(start, end) >= 3, 'The drag must exceed the editor gesture threshold'
+    page.mouse.move(*start)
+    page.mouse.down()
+    try:
+        page.mouse.move(*end, steps=10)
+        H.settle(page)
+    finally:
+        page.mouse.up()
+
+
+def _wall_drag(page, operation):
+    import house_editor_model_harness as H
+
+    plan = page.evaluate('window.__twin.plan')
+    building = next(b for b in plan['buildings'] if b['id'] == operation['building'])
+    wall = next((w for w in building['walls'] if w['id'] == operation['wall']), None)
+    if wall is None:
+        raise ValueError(f"No draggable wall {operation['wall']}")
+    level = next(l for l in building['levels'] if l['id'] == wall['level'])
+    H.choose_floor(page, f"{building['id']}:{level['id']}")
+    centre = [(a + b) / 2 for a, b in zip(wall['from'], wall['to'])]
+    H.look_down(page, building['id'], *centre, height=30 + level.get('elevation', 0))
+    page.evaluate('() => window.__editor.clickPiece(null, null)')
+    page.evaluate('([id,bid]) => window.__editor.clickPiece(id,bid)', [wall['id'], building['id']])
+    H.settle(page)
+    page.wait_for_function('window.__twin.ready && !window.__twin.__measureWork', timeout=60000)
+    handle = next(h for h in H.editor_state(page, 'handles') if h['kind'] == 'wall' and h['id'] == wall['id'])
+    dx, dy = [b - a for a, b in zip(wall['from'], wall['to'])]
+    length = math.hypot(dx, dy)
+    by = operation['by']
+    delta = by if isinstance(by, list) else [-dy / length * by, dx / length * by]
+    start = H.screen_of_world(page, *handle['at'], building['id'])
+    end = H.screen_of_world(page, handle['at'][0] + delta[0], handle['at'][1] + delta[1],
+                            handle['at'][2], building['id'])
+    _mouse_release(page, start, end)
+
+
+def _wall_release(page, operation):
+    # Preserve --wall's refusal reporting for a nonexistent id.
+    exists = page.evaluate("""op => window.__twin.plan.buildings.find(b => b.id === op.building)
+        ?.walls.some(w => w.id === op.wall)""", operation)
+    if not exists:
+        return _operation(page, operation)
+    return _release_record(page, lambda: _wall_drag(page, operation), 'move_wall')
+
+
+def _plant_release(page, operation):
+    import house_editor_model_harness as H
+
+    piece = page.evaluate('(id) => window.__twin.plan.site.planting.find(p => p.id === id)', operation['id'])
+    H.all_floors(page)
+    page.wait_for_function('window.__twin.ready && !window.__twin.__measureWork', timeout=60000)
+    pixels = page.evaluate("""([at,by]) => {
+        const v=window.__twin, ft=.3048;
+        v.setCamera('front');
+        v.setCameraState({position:[at[0]*ft,90*ft,-(at[1]-.01)*ft], target:[at[0]*ft,0,-at[1]*ft]});
+        v.camera.updateMatrixWorld(true);
+        const r=v.renderer3.domElement.getBoundingClientRect();
+        return [at, at.map((n,i)=>n+by[i])].map(p => {
+            const q=v.camera.position.clone().set(p[0]*ft,0,-p[1]*ft).project(v.camera);
+            return [r.left+(q.x+1)*r.width/2,r.top+(1-q.y)*r.height/2];
+        });
+    }""", [piece['at'], operation['by']])
+    H.settle(page)
+    return _release_record(page, lambda: _mouse_release(page, *pixels), 'move_site_item')
+
+
+def _release_record(page, release, expected_op):
+    page.evaluate('window.__twinEditTiming.length = 0')
+    release()
+    page.wait_for_function("""() => window.__twinEditTiming.length > 0 ||
+        (document.querySelector('#cc-alert-modal').classList.contains('flex') &&
+         document.querySelector('#cc-alert-message').textContent.includes('was not saved'))""", timeout=60000)
+    if not page.evaluate('window.__twinEditTiming.length'):
+        return None, page.inner_text('#cc-alert-message').strip()
+    _wait_settled(page)
+    record = page.evaluate('window.__twinEditTiming.at(-1)')
+    assert record['op'] == expected_op, record
+    assert isinstance(record.get('settle'), (int, float)), 'Release did not record its settled frame'
+    return record, None
 
 
 def _drag_frames(page, building, level, wall):
@@ -157,18 +277,14 @@ def _measure_page(page, runs, tier, wall=None, house='fixture'):
                 levels:v.plan.buildings.reduce((n,b)=>n+b.levels.length,0)};
         }""")
         idle = page.evaluate('() => new Promise(resolve => requestAnimationFrame(a => requestAnimationFrame(b => resolve(b-a))))')
-        ops = {'move_wall': _measure_operation(page, {'op': 'move_wall', 'building': building['id'], 'wall': wall_id}, .25, runs)}
-        ops['move_site_item'] = (_measure_operation(page, {'op': 'move_site_item', 'list': 'planting', 'id': planting['id']}, [1, 0], runs)
+        ops = {'move_wall': _measure_operation(page, {'op': 'move_wall', 'building': building['id'], 'wall': wall_id}, .25, runs, _wall_release)}
+        # A refused wall's notice must not cover the following plant gesture.
+        alert = _dismiss_alert(page)
+        ops['move_site_item'] = (_measure_operation(page, {'op': 'move_site_item', 'list': 'planting', 'id': planting['id']}, [1, 0], runs, _plant_release)
                                  if planting else _summary([], 'no planting'))
         # A notice raised by an operation covers the scene; report its words
         # and close it, so the timings above are never lost to the drag step.
-        alert = page.evaluate("""() => {
-            const modal = document.getElementById('cc-alert-modal');
-            if (!modal || !modal.classList.contains('flex')) return null;
-            const text = modal.innerText.replace(/\\s+/g, ' ').trim();
-            modal.classList.remove('flex'); modal.classList.add('hidden');
-            return text;
-        }""")
+        alert = _dismiss_alert(page) or alert
         drag = {'median': 0, 'max': 0, 'frames': 0}
         if wall_id == chosen['id']:
             from playwright.sync_api import Error
@@ -183,6 +299,14 @@ def _measure_page(page, runs, tier, wall=None, house='fixture'):
         # A saved snapshot also survives pruning when a caller asks for many runs.
         _request(page, f'api/house/editor/houses/{safe}/load', 'POST')
         _request(page, f'api/house/editor/houses/{safe}', 'DELETE')
+
+
+def _dismiss_alert(page):
+    if not page.locator('#cc-alert-modal').is_visible():
+        return None
+    text = page.inner_text('#cc-alert-message').strip()
+    page.locator('#cc-alert-modal button').click()
+    return text
 
 
 def _prepare(house_path):
@@ -224,6 +348,9 @@ def measure(house_path=None, runs=5, tier='high', wall=None):
         browser = served.browser(launch_args=H.GPU_ARGS)
         with browser as page:
             H.open_editor(page, served, query=f'tier={tier}&test=1&timing=1&perf=1')
+            _dismiss_alert(page)
+            _track_view_work(page)
+            _wait_settled(page)
             return _measure_page(page, runs, tier, wall, 'file' if house_path is not None else 'fixture')
     except Error as error:
         if "Executable doesn't exist" in str(error) or 'playwright install' in str(error):
@@ -238,12 +365,14 @@ def measure(house_path=None, runs=5, tier='high', wall=None):
 
 def _table(result):
     print(f"{result['house']} house | tier {result['tier']} | {result['runs']} measured runs")
-    print('operation          runs   total ms  request   parse  rebuild  frame')
+    columns = [('total', 'total ms'), ('request', 'request'), ('parse', 'parse'), ('rebuild', 'rebuild'),
+               ('first_frame', 'frame'), ('local_frame', 'local_frame'), ('settle', 'settle')]
+    print('operation          runs ' + ' '.join(f'{label:>{max(8, len(label))}}' for _, label in columns))
     for name, op in result['ops'].items():
         if op['refused']:
             print(f"{name:18} {op['runs']:4}   refused: {op['refused']}")
         else:
-            values = ' '.join(f"{op[field]['median']:8.1f}" for field in ('total', 'request', 'parse', 'rebuild', 'first_frame'))
+            values = ' '.join(f"{op[field]['median']:{max(8, len(label))}.1f}" for field, label in columns)
             print(f"{name:18} {op['runs']:4} {values}")
     drag = result['drag_frame_ms']
     print(f"drag frame: {drag['median']:.1f} ms median, {drag['max']:.1f} ms max ({drag['frames']} frames)"
