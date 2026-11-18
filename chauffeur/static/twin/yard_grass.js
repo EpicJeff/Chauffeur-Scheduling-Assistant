@@ -117,6 +117,8 @@ const hash = n => { n = Math.imul(n ^ n >>> 16, 0x21f0aaad); n = Math.imul(n ^ n
 const BLADES = 5, CLUMP_SPACING = .28;
 // Bound the bent ribbons, not just their root offsets, for squeezed joints.
 const JOINT_REACH = .36;
+// Feet a lawn root keeps from a paver's edge.
+export const PAVER_ROOT_MARGIN = .04;
 // Feet of shortening lawn past the lot line, and the open-share sample per side.
 const SKIRT = 4, SAMPLES = 96;
 function bladeGeometry() {
@@ -334,10 +336,9 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   const nx = Math.min(cells,Math.max(1,Math.floor(w/spacing)));
   const ny = Math.min(Math.floor(cells/nx),Math.max(1,Math.floor(h/spacing)));
   const spread = Math.max(1,Math.min(2,Math.sqrt(w*h/(nx*ny))/CLUMP_SPACING));
-  const fieldCovers = raw.map(p => prepared(p.polygon,p.margin+(p.paver ? .13*spread : p.reach ? .24*(spread-1) : 0)));
-  // .13 is the root spread; bent tips and gusts reach farther. Keep the whole
-  // near-field blade envelope off the stone, as we do for pad-edge solids.
-  for (const p of raw) if (p.paver) fieldCovers.push(prepared(p.polygon,JOINT_REACH*spread));
+  // Lawn grows right up to a paver and leans over its edge, as real grass does
+  // (owner, 2026-11-18: "no border"); only the roots stay off the stone.
+  const fieldCovers = raw.map(p => prepared(p.polygon,p.margin+(p.paver ? PAVER_ROOT_MARGIN : p.reach ? .24*(spread-1) : 0)));
   bin(fieldCovers);
   const joints = jointClumps(plan,spread,budget,raw), jointCount = joints.length/16, fieldBudget = budget-jointCount;
   let seed = 0;

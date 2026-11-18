@@ -129,6 +129,7 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
       }
       choice('Edges', pavers.edge, [['whole', 'Whole pavers only'], ['cut', 'Cut at the edge']], edge => p => change(p,{edge}));
       choice('Joints', pavers.joint, [['grass', 'Grass'], ['gravel', 'Gravel'], ['sand', 'Sand'], ['none', 'None']], joint => p => change(p,{joint}));
+      choice('Lay', pavers.lay, [['ground', 'Follow the ground'], ['level', 'Level']], lay => p => change(p,{lay}));
     }
     const width = field('Width (ft)', piece.width ?? 3, (_, width) => ({ width })); width.min = '1'; width.max = '30';
     choice('Corner style', piece.corner || 'mitred', [['mitred', 'Mitred'], ['rounded', 'Rounded']], corner => ({ corner }));
