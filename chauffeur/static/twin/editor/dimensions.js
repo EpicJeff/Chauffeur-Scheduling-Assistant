@@ -104,6 +104,16 @@ export function createDimensions({ view, onCommit, canEdit, signal, getHandles =
   const host = view.renderer3.domElement.parentElement;
   const layer = document.createElement('div'); layer.className = 'editor-dimensions'; host.append(layer);
   let context = null, rows = [], busy = false;
+  let currentProblem = null, previousStatus = '';
+  function showProblem(problem) {
+    const status = document.getElementById('editor-status');
+    if (problem === currentProblem && (!problem || status.textContent === problem)) return;
+    if (problem) {
+      if (!currentProblem || status.textContent !== currentProblem) previousStatus = status.textContent;
+      status.textContent = problem;
+    } else if (status.textContent === currentProblem) status.textContent = previousStatus;
+    currentProblem = problem;
+  }
   const sizeObserver = new ResizeObserver(entries => {
     if (entries.some(entry => !entry.target.hidden)) position();
   });
@@ -150,11 +160,12 @@ export function createDimensions({ view, onCommit, canEdit, signal, getHandles =
       if (p) { row.node.style.left = `${p[0]}px`; row.node.style.top = `${p[1]}px`; }
     }
   }
-  function clear() { context = null; rows.forEach(row => sizeObserver.unobserve?.(row.node)); rows = []; layer.replaceChildren(); }
+  function clear() { showProblem(null); context = null; rows.forEach(row => sizeObserver.unobserve?.(row.node)); rows = []; layer.replaceChildren(); }
   function show(ctx) {
     const building = ctx?.building, piece = ctx?.piece;
-    if (!building || !piece?.from || !canEdit()) { clear(); return; }
+    if (!building || !piece?.from || !canEdit()) { clear(); showProblem(ctx?.problem || null); return; }
     if (context?.building.id !== building.id || context?.piece.id !== piece.id) clear();
+    showProblem(ctx.problem || null);
     context = ctx;
     const dx = piece.to[0] - piece.from[0], dy = piece.to[1] - piece.from[1], length = Math.hypot(dx, dy);
     if (!length) { clear(); return; }
@@ -181,7 +192,7 @@ export function createDimensions({ view, onCommit, canEdit, signal, getHandles =
         }, { signal });
       }
       Object.assign(row, { at, value, operation, away, neighbour });
-      const text = feetInches(value), { node } = row;
+      const text = feetInches(value) + (name === 'Wall length' && ctx.problem ? ` · ${ctx.problem}` : ''), { node } = row;
       if (node.textContent !== text) { node.textContent = text; node.setAttribute('aria-label', `${name}: ${text}`); }
       node.dataset.dimension = name; node.disabled = !operation;
     }
@@ -214,6 +225,6 @@ export function createDimensions({ view, onCommit, canEdit, signal, getHandles =
   view.controls.addEventListener('change', position);
   host.addEventListener('twinrebuilt', position, { signal });
   window.addEventListener('resize', position, { signal });
-  signal.addEventListener('abort', () => { sizeObserver.disconnect(); view.controls.removeEventListener('change', position); layer.remove(); }, { once: true });
+  signal.addEventListener('abort', () => { showProblem(null); sizeObserver.disconnect(); view.controls.removeEventListener('change', position); layer.remove(); }, { once: true });
   return { show, clear, position };
 }

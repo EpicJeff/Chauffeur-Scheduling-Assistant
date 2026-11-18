@@ -1,6 +1,6 @@
 import { snapTo } from './snap.js';
 import { hostPoint } from '../twin_hosts.js';
-import { LocalMissing, moveGesture, movePreview } from './local_ops.js';
+import { LocalMissing, moveGesture, movePreview, moveProblem } from './local_ops.js';
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
 const delta = (a, b) => a.map((v, i) => v - b[i]);
@@ -50,16 +50,22 @@ export function createDrag({ view, model, onPreview, onCommit }) {
       by = delta(snap.point, origin);
     else if (g.normal) by = g.normal.map(v => v * Math.round(dot(by, g.normal) * 12) / 12);
     const preview = movePreview(g.source, g, by);
+    // Snapping onto a joint can collapse an attached wall to nothing (a wall
+    // dragged onto its neighbour's corner). That shape has no direction and
+    // would deform the scene into NaN, so keep the last drawn frame instead.
     if (!preview) return true;
     g.by = by; g.preview = preview;
     view.rebuildLevel(b.id, level.id, preview, g.touched);
-    onPreview?.(preview, g.selection);
+    // The server stays the judge: a problem is shown, the release still sends.
+    onPreview?.(preview, g.selection, moveProblem(g.source, preview, b.id));
     lastDragFrameMs = Math.max(.001, performance.now() - started);
     return true;
   }
   async function finish(cancel = false) {
     const g = gesture; gesture = null;
     if (!g) return;
+    // Clear the advisory before the server answers, keeping the released plan.
+    if (g.preview) onPreview?.(g.preview, g.selection, null);
     if (cancel || !g.preview || Math.hypot(...g.by) < .001) {
       if (g.preview) { view.rebuildLevel(g.building.id, g.piece.level, g.source, g.touched); onPreview?.(g.source, g.selection); }
       return;

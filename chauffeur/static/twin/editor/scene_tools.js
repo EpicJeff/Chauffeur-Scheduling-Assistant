@@ -24,13 +24,16 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let roofRooms = new Set(), roofRoomBuilding = null;
   const pointers = new Set();
   const dimensions = createDimensions({ view, onCommit: op, canEdit, signal, getHandles: () => handles?.handles() || [] });
-  function drawDimensions(plan = getPlan(), state = roomSelection.current()) {
+  function drawDimensions(plan = getPlan(), state = roomSelection.current(), problem = null) {
     const building = plan?.buildings.find(b => b.id === state.building);
-    dimensions.show({ building, piece: building?.walls.find(w => state.kind === 'wall' && w.id === state.id),
-      room: building?.rooms.find(r => r.id === state.room) });
+    const room = building?.rooms.find(r => r.id === (state.kind === 'room' ? state.id : state.room));
+    const piece = building?.walls.find(w => state.kind === 'wall' && w.id === state.id)
+      || (problem && building?.walls.find(w => w.state !== 'ghost' && w.level === state.level
+        && w.joints?.some(id => state.kind === 'joint' ? id === state.id : room?.joints?.includes(id))));
+    dimensions.show({ building, piece, room, problem });
   }
-  const drag = createDrag({ view, model: getPlan, onPreview(plan, state) {
-    handles?.show(plan); drawDimensions(plan, state);
+  const drag = createDrag({ view, model: getPlan, onPreview(plan, state, problem) {
+    handles?.show(plan); drawDimensions(plan, state, problem);
   }, onCommit(operation, options) {
     if (operation.op === 'move_wall') {
       const wall = getPlan().buildings.find(b => b.id === operation.building).walls.find(w => w.id === operation.wall);

@@ -3,6 +3,79 @@ import { hostPoint } from '../twin_hosts.js';
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
 const delta = (a, b) => a.map((v, i) => v - b[i]);
 const shifted = (p, by) => p.map((v, i) => v + by[i]);
+const EPS = 1e-9, MIN_CLEAR = .5;
+const SHORT = 'A wall must be at least 1 ft long.';
+const NARROW = 'That would leave the door narrower than its wall.';
+const CROSS = 'That would cross another wall.';
+const cross = (a, b) => a[0] * b[1] - a[1] * b[0];
+
+// Same open-segment intersection and collinear overlap as twin_model_ops.
+function crosses(a, b, c, d) {
+  const v = delta(b, a), w = delta(d, c), between = delta(c, a), denominator = cross(v, w);
+  if (Math.abs(denominator) > EPS) {
+    const t = cross(between, w) / denominator, u = cross(between, v) / denominator;
+    if (t > EPS && t < 1 - EPS && u > EPS && u < 1 - EPS) return true;
+  }
+  const length = Math.hypot(...v);
+  if (length <= EPS) return false;
+  const axis = v.map(n => n / length);
+  if ([c, d].some(p => Math.abs(cross(axis, delta(p, a))) > EPS)) return false;
+  const ends = [dot(delta(c, a), axis), dot(delta(d, a), axis)].sort((x, y) => x - y);
+  return Math.min(length, ends[1]) - Math.max(0, ends[0]) > EPS;
+}
+
+function wallLines(building) {
+  const positions = new Map((building.joints || []).map(j => [j.id, j.at]));
+  const lines = new Map();
+  for (const wall of building.walls || []) {
+    if (wall.state === 'ghost' || wall.joints?.length !== 2) continue;
+    const [a, b] = wall.joints.map(id => positions.get(id));
+    if (a && b && Math.hypot(...delta(b, a)) > EPS) lines.set(wall.id, { ...wall, a, b });
+  }
+  return lines;
+}
+
+export function moveProblem(before, after, buildingId) {
+  // movePreview's null sentinel means an attached wall lost its direction.
+  if (after === null) return SHORT;
+  const previous = before?.buildings.find(b => b.id === buildingId);
+  const building = after?.buildings.find(b => b.id === buildingId);
+  if (!previous || !building) return null;
+  const oldLines = wallLines(previous), lines = wallLines(building), changed = [];
+  for (const [id, wall] of lines) {
+    const old = oldLines.get(id);
+    if (old && wall.level === old.level && (wall.thickness || 0) === (old.thickness || 0)
+      && wall.joints.every((j, i) => j === old.joints[i])
+      && wall.a.every((v, i) => v === old.a[i]) && wall.b.every((v, i) => v === old.b[i])) continue;
+    changed.push(wall);
+    const length = Math.hypot(...delta(wall.b, wall.a));
+    if (length < 1 - EPS) return SHORT;
+    if (old && length < Math.hypot(...delta(old.b, old.a)) - EPS) {
+      const widths = ['openings', 'anchors', 'items'].flatMap(name => (building[name] || [])
+        .filter(p => (name === 'openings' ? p : p.host)?.wall === id).map(p => p.width || 0));
+      if (widths.length && length < Math.max(...widths) + 2 * MIN_CLEAR - EPS) return NARROW;
+    }
+  }
+  // The server snapshot omits collapsed walls and checks them separately.
+  if (building.walls.some(w => w.state !== 'ghost' && oldLines.has(w.id) && !lines.has(w.id))) return SHORT;
+  const levels = new Map();
+  for (const wall of lines.values()) {
+    if (!levels.has(wall.level)) levels.set(wall.level, []);
+    levels.get(wall.level).push(wall);
+  }
+  // Only changed walls against their level, never every pair in the house.
+  const checked = new Set();
+  for (const wall of changed) {
+    for (const other of levels.get(wall.level)) {
+      if (other.id === wall.id || checked.has(other.id)) continue;
+      if (!crosses(wall.a, wall.b, other.a, other.b)) continue;
+      const old = oldLines.get(wall.id), prior = oldLines.get(other.id);
+      if (!old || !prior || !crosses(old.a, old.b, prior.a, prior.b)) return CROSS;
+    }
+    checked.add(wall.id);
+  }
+  return null;
+}
 
 // Geometry and hosts that can change when these joints move. Crossings used
 // by room cycles are included even when they are not persisted wall ends.

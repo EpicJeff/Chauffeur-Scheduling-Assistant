@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 DRIVER = r"""
-const {LocalMissing, moveGesture, movePreview, applyLocal} = await import(file('static/twin/editor/local_ops.js'));
+const {LocalMissing, moveGesture, movePreview, applyLocal, moveProblem} = await import(file('static/twin/editor/local_ops.js'));
 const {createDrag} = await import(file('static/twin/editor/drag.js'));
 const plan = input.flat, before = structuredClone(plan);
 const building = plan.buildings.find(b => b.walls.some(w => w.state !== 'ghost'));
@@ -130,14 +130,172 @@ assert.equal(applyLocal(collapse,{op:'move_wall',building:'c',wall:'W',by:[4,0]}
 assert.deepEqual(collapse,collapseBefore);
 ok('collapsed_wall_returns_null');
 console.log(`${passed}/${passed} local-op checks passed`);
+
+// Keep an actual household wall and its hosts, isolated from unrelated rooms
+// so each refusal has one cause. All after geometry comes from movePreview.
+function checkFixture() {
+  const source = structuredClone(plan), b = source.buildings.find(b => b.id === building.id);
+  const w = b.walls.find(w => w.state !== 'ghost' && Math.hypot(...delta2(w.to,w.from)) > 8);
+  b.walls = [w]; b.rooms = []; b.joints = b.joints.filter(j => w.joints.includes(j.id));
+  b.openings = []; b.anchors = []; b.items = [];
+  const axis = delta2(w.to,w.from), length = Math.hypot(...axis);
+  return {source,b,w,length,axis:axis.map(v=>v/length)};
+}
+const delta2 = (a,b) => a.map((v,i)=>v-b[i]);
+function shorten(f, length) {
+  return movePreview(f.source,moveGesture(f.source,{kind:'joint',building:f.b.id,id:f.w.joints[1]}),
+    f.axis.map(v=>v*(length-f.length)));
+}
+let shortText, narrowText, crossText;
+await test('short_wall_problem', () => {
+  const f = checkFixture(), saved = structuredClone(f.source), after = shorten(f,.5);
+  shortText = moveProblem(f.source,after,f.b.id);
+  assert.equal(shortText,'A wall must be at least 1 ft long.');
+  assert.equal(moveProblem(f.source,shorten(f,1),f.b.id),null);
+  assert.deepEqual(f.source,saved);
+});
+await test('narrow_door_problem', () => {
+  for (const name of ['openings','anchors','items']) {
+    const f = checkFixture();
+    f.b[name] = [{id:'hosted',width:3,...(name==='openings'?{wall:f.w.id}:{host:{wall:f.w.id,at:2,side:'left'}})}];
+    narrowText = moveProblem(f.source,shorten(f,3.5),f.b.id);
+    assert.equal(narrowText,'That would leave the door narrower than its wall.');
+    assert.equal(moveProblem(f.source,shorten(f,4),f.b.id),null);
+    assert.equal(moveProblem(f.source,shorten(f,.5),f.b.id),'A wall must be at least 1 ft long.');
+    // Only shortening, not translation/lengthening, invokes host clearance.
+    f.b[name][0].width = f.length + 2;
+    assert.equal(moveProblem(f.source,shorten(f,f.length+1),f.b.id),null);
+  }
+});
+function addLine(f, a, b, level=f.w.level, state='settled') {
+  const id = 'obstacle';
+  f.b.joints.push({id:id+'a',level,at:a},{id:id+'b',level,at:b});
+  f.b.walls.push({id,level,state,from:a,to:b,joints:[id+'a',id+'b']});
+}
+function along(f, x, y) {
+  return f.w.from.map((v,i)=>v+f.axis[i]*x+[-f.axis[1],f.axis[0]][i]*y);
+}
+function translate(f, distance) {
+  return movePreview(f.source,moveGesture(f.source,{kind:'wall',building:f.b.id,id:f.w.id}),
+    [-f.axis[1]*distance,f.axis[0]*distance]);
+}
+await test('crossing_problem', () => {
+  const f = checkFixture(); addLine(f,along(f,2,1),along(f,2,3));
+  crossText = moveProblem(f.source,translate(f,2),f.b.id);
+  assert.equal(crossText,'That would cross another wall.');
+  const overlap = checkFixture(); addLine(overlap,along(overlap,2,2),along(overlap,4,2));
+  assert.equal(moveProblem(overlap.source,translate(overlap,2),overlap.b.id),crossText);
+});
+await test('clean_move_has_no_problem', () => {
+  const f = checkFixture(); assert.equal(moveProblem(f.source,translate(f,1),f.b.id),null);
+  for (const mode of ['other_level','ghost','existing_crossing','existing_overlap','endpoint']) {
+    const f = checkFixture();
+    if (mode==='existing_overlap') addLine(f,along(f,2,0),along(f,4,0));
+    else addLine(f,along(f,2,mode==='existing_crossing'?-2:1),along(f,2,3),
+      mode==='other_level'?'another-level':f.w.level,mode==='ghost'?'ghost':'settled');
+    const after = mode==='existing_overlap' ? shorten(f,f.length-1) : translate(f,mode==='endpoint'?1:2);
+    assert.equal(moveProblem(f.source,after,f.b.id),null,mode);
+  }
+  // An unchanged short wall is not a new problem.
+  const small = shorten(f,.5); assert.equal(moveProblem(small,small,f.b.id),null);
+});
+await test('texts_match_server', () => {
+  assert.deepEqual([shortText,narrowText,crossText],input.serverTexts);
+});
+await test('drag_problem_displays_clears_and_still_releases', async () => {
+  const {createDimensions} = await import(file('static/twin/editor/dimensions.js'));
+  const f = checkFixture(), canvas = document.createElement('canvas'), host = document.createElement('div');
+  document.body.append(host); host.append(canvas);
+  const abort = new AbortController(), commits = [], frames = [];
+  const view = {renderer3:{domElement:canvas},controls:new Element('controls'),
+    screenOfFloor:(x,y)=>[700+(x-f.w.from[0])*100,400+(y-f.w.from[1])*100],
+    floorAt:(x,y)=>[(x-700)/100+f.w.from[0],(y-400)/100+f.w.from[1]],
+    rebuildLevel() {}};
+  const dimensions = createDimensions({view,canEdit:()=>true,onCommit:()=>{},signal:abort.signal});
+  const status = document.getElementById('editor-status'); status.textContent = 'Ready';
+  const drag = createDrag({view,model:f.source,onPreview(p,s,problem) {
+    const b = p.buildings.find(b=>b.id===f.b.id);
+    dimensions.show({building:b,piece:b.walls.find(w=>w.id===f.w.id),problem});
+    frames.push(problem ?? null);
+  },onCommit(op) {
+    assert.equal(status.textContent,'Ready','clears before waiting for the server'); commits.push(op);
+  }});
+  const selection = {kind:'joint',building:f.b.id,id:f.w.joints[1]};
+  assert.ok(drag.begin(selection,f.w.to)); drag.update(along(f,.5,0));
+  assert.equal(frames.at(-1),input.serverTexts[0]);
+  assert.equal(status.textContent,input.serverTexts[0]);
+  assert.ok(host.querySelector('[data-dimension="Wall length"]').textContent.includes(input.serverTexts[0]));
+  status.textContent = 'Ready'; // A normal editor refresh during the gesture.
+  drag.update(along(f,.5,0)); assert.equal(status.textContent,input.serverTexts[0]);
+  drag.update(along(f,4,0));
+  assert.equal(status.textContent,'Ready');
+  assert.ok(!host.textContent.includes(input.serverTexts[0]));
+  drag.update(along(f,.5,0)); await drag.finish();
+  assert.equal(commits.length,1); assert.equal(commits[0].op,'move_joint');
+  assert.ok(!host.textContent.includes(input.serverTexts[0]));
+  assert.ok(drag.begin(selection,f.w.to)); drag.update(along(f,.5,0));
+  status.textContent = 'A newer status'; await drag.finish(true);
+  assert.equal(status.textContent,'A newer status','does not overwrite a newer editor status');
+  assert.ok(!host.textContent.includes(input.serverTexts[0])); assert.equal(commits.length,1);
+  abort.abort(); host.remove();
+});
+await test('collapsed_drag_keeps_the_last_drawn_frame', async () => {
+  // A wall dragged onto its neighbour's corner has no direction; the drag keeps
+  // and releases the last drawn frame, as it did before the checks existed.
+  const f = checkFixture(), drawn = [], notices = [], ops = [];
+  const drag = createDrag({model:f.source,view:{screenOfFloor:(x,y)=>[x*1e6,y*1e6],
+    floorAt:(x,y)=>[x/1e6,y/1e6],rebuildLevel:(b,l,p)=>drawn.push(p)},
+    onPreview:(p,s,problem)=>notices.push(problem ?? null),onCommit:(op,options)=>{ ops.push({op,options}); }});
+  assert.ok(drag.begin({kind:'joint',building:f.b.id,id:f.w.joints[1]},f.w.to));
+  drag.update(f.w.from);
+  assert.equal(drawn.length,0); assert.equal(notices.length,0);
+  await drag.finish();
+  assert.equal(ops.length,0,'nothing drawn, nothing sent');
+  assert.ok(drag.begin({kind:'joint',building:f.b.id,id:f.w.joints[1]},f.w.to));
+  drag.update(along(f,4,0)); const kept = drawn.at(-1); drag.update(f.w.from);
+  assert.equal(drawn.at(-1),kept);
+  await drag.finish();
+  assert.equal(notices.at(-1),null); assert.equal(ops.length,1);
+  assert.ok(Math.hypot(...ops[0].op.to.map((v,i)=>v-along(f,4,0)[i])) < 1e-9); assert.equal(ops[0].options.local,kept);
+});
+await test('scene_tools_connects_joint_warning_to_label_and_status', async () => {
+  registerHooks({resolve(spec,ctx,next) {
+    if (!ctx.parentURL?.endsWith('/scene_tools.js')) return next(spec,ctx);
+    const stubs = {
+      './cards.js': `export * from '${file('static/twin/editor/cards.js')}'; export const createCards=()=>({});`,
+      './handles.js': `export const createHandles=options=>{globalThis.sceneDrag=options.drag;return {show(){},refresh(){},handles:()=>[],active:()=>false};};`,
+      './ha_link.js': 'export const createHaLink=()=>({});',
+    };
+    return stubs[spec] ? {url:data(stubs[spec]),shortCircuit:true} : next(spec,ctx);
+  }});
+  const {createSceneTools} = await import(file('static/twin/editor/scene_tools.js'));
+  const f = checkFixture(), host = document.createElement('div'), canvas = document.createElement('canvas');
+  document.body.append(host); host.append(canvas);
+  const abort = new AbortController(), commits = [], status = document.getElementById('editor-status');
+  status.textContent = 'Ready';
+  const view = {renderer3:{domElement:canvas},controls:new Element('controls'),
+    screenOfFloor:(x,y)=>[x*1e6,y*1e6],floorAt:(x,y)=>[x/1e6,y/1e6],rebuildLevel(){}};
+  createSceneTools({view,getPlan:()=>f.source,getModel:()=>f.source,getKit:()=>({}),getSheets:()=>({}),
+    canEdit:()=>true,op:op=>commits.push(op),signal:abort.signal});
+  sceneDrag.begin({kind:'joint',building:f.b.id,id:f.w.joints[1],level:f.w.level},f.w.to);
+  sceneDrag.update(along(f,.5,0));
+  assert.equal(status.textContent,input.serverTexts[0]);
+  assert.ok(host.querySelector('[data-dimension="Wall length"]').textContent.includes(input.serverTexts[0]));
+  await sceneDrag.finish(); assert.equal(status.textContent,'Ready'); assert.equal(commits.length,1);
+  assert.ok(!host.textContent.includes(input.serverTexts[0]));
+  abort.abort(); host.remove();
+});
+finish();
 """
 
 
 def run():
     from services.twin_model_bridge import assemble, flatten
+    from services import twin_model_ops
     fixture = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
     flat = flatten(assemble(fixture)[0])
-    code, output = run_node(PRELUDE + DRIVER, {'root': ROOT.as_posix(), 'flat': flat})
+    code, output = run_node(PRELUDE + DRIVER, {'root': ROOT.as_posix(), 'flat': flat,
+        'serverTexts': [twin_model_ops._SHORT, twin_model_ops._NARROW, twin_model_ops._CROSS]})
     print(output, end='')
     if code is not None:
         assert code == 0, output
