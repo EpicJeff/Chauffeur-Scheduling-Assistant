@@ -1,6 +1,17 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.934 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.935 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.935 (2026-11-18, NOT device-verified, browser-checked in Chromium with the test household): paver fixes from the household's first look. Grass grows right up to the stones, stones can follow the ground, each stone carries exactly one tile of its material, and moving a path point lays the stones again at once.**
+
+- **What was wrong.** On the owner's yard: a bare border of 0.4 to 0.7 ft around every stone; stones always level; the texture ran across stones as one continuous surface; and after a card change, dragging a path point saved the new point but the yard kept drawing the old stones until an undo.
+- **What changed for a person.**
+  - Lawn roots keep only half an inch from a stone, and the blades lean over its edge, as real grass does. Joint grass still stays inside its joint.
+  - A new **Lay** setting on the path card: Follow the ground (the default, every stone's corners sit on the ground under them) or Level (flat at the ground under the stone's centre). Paver paths saved before have no setting and now follow the ground.
+  - Each stone's top shows one whole tile of its material from edge to edge (the library material's tile size, 4 ft for kit materials); a cut stone shows its share of that tile. The sides run the material along the edge. The per-stone random texture offset is gone.
+  - Dragging a point, turning or resizing any yard shape now redraws it at once, also when the server's answer equals what was drawn.
+- **How.** `static/twin/yard_grass.js` `PAVER_ROOT_MARGIN = .04` replaces the blade-envelope border around stones. `pavers.lay` (`ground` or `level`) in `paver_defaults.js`, `services/twin_site_shapes.py` and the card. `paver_geometry.js` takes the material's `userData.tileFt` (set by `twin_library.js` for library and kit materials), samples the ground per corner, and drops the unseen bottom face; `paver_layout.js` gives each stone its uncut `size`. `editor/editor.js` settles the view for `update_site_shape` with a drag-supplied preview, as it already did for `move_site_item`: the drag drew only an outline, and recording the preview as shown hid the change.
+- **Tests.** `tests/test_twin_paver_paths_live.py` (3, Chromium; new: change the layout on the card, then drag the path's end point, and the stones follow), `tests/test_twin_paver_yard_js.py` (one tile per stone top, tilt on a slope, level stays flat), `tests/test_twin_yard_grass_js.py` (roots half an inch off the stone, joint blades still inside joints), `tests/test_twin_site_shapes.py`, `tests/test_twin_paver_layout_js.py`, `tests/test_twin_paver_card_js.py`, `tests/test_twin_yard_reuse_js.py`, `tests/test_twin_yard_material_slots_js.py`, `tests/test_twin_library_js.py`, `tests/test_twin_edit_queue_editor_js.py`, `tests/test_twin_site_drawing_js.py`.
 
 **v2.499.934 (2026-11-18, NOT device-verified, browser-checked in Chromium on `/house/editor` with the test household on High): a yard path can be laid as real pavers (stepping stones, grid, running bond, diagonal, herringbone) with grass, gravel, sand or nothing in the joints.**
 
