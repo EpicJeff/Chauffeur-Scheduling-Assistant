@@ -149,7 +149,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #pause-instruction:empty, #pause-instruction:empty + #pause-cancel { display: none; }
 #pause-card[data-pinning="true"] { top: var(--editor-header-bottom, 130px) !important; left: var(--editor-rail-right, 96px) !important; width: 280px; }
 #pause-card[data-pinning="true"] > div, #pause-card[data-pinning="true"] #pause-reason { display: none; }
-#editor-drag-hint, .editor-pin-dot { position: fixed; z-index: 6; pointer-events: none; background: var(--twinGlassStrong); backdrop-filter: blur(16px); border: 1px solid var(--editor-accent); border-radius: 12px; padding: 8px; }
+#editor-drag-hint, .editor-pin-dot, .editor-shell .editor-typed-value { position: fixed; z-index: 6; pointer-events: none; background: var(--twinGlassStrong); backdrop-filter: blur(16px); border: 1px solid var(--editor-accent); border-radius: 12px; padding: 8px; }
+.editor-shell .editor-typed-value { width: 145px; color: var(--editor-accent); font-size: 12px; }
+.editor-typed-value:not([readonly]) { pointer-events: auto; }
 .editor-dimensions { pointer-events: none; }
 .editor-handles { pointer-events: none; }
 .editor-handle { position: fixed; z-index: 3; width: 10px; height: 10px; transform: translate(-50%, -50%); border: 1px solid var(--editor-accent); border-radius: 50%; background: var(--editor-panel); backdrop-filter: blur(16px); }

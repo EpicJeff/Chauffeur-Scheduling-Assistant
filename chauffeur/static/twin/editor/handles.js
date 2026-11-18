@@ -12,6 +12,8 @@ import { shapeKey, shapeCentre, transformShape, shapeOperation, closedShape } fr
 import { pathOutline } from '../path_shapes.js';
 import { roundPit, firePitOutline } from '../fire_pits.js';
 import { HANDLE_HIT_PX } from './picking.js';
+import { snapValue } from './snap.js';
+import { createTypedValue } from './typed_value.js';
 
 const FT = .3048;
 const inch = value => Math.round(value * 12) / 12;
@@ -28,6 +30,7 @@ const basis = wall => {
 export function createHandles({ view, getPlan, getSelection, getTool = () => 'move', canEdit, drag, onCommit, onPreview, onClick, signal }) {
   const canvas = view.renderer3.domElement, host = canvas.parentElement;
   const layer = document.createElement('div'); layer.className = 'editor-handles'; host.append(layer);
+  const typed = createTypedValue(layer);
   const ring = document.createElement('span'); ring.className = 'editor-site-ring'; ring.hidden = true; layer.append(ring);
   const raycaster = new THREE.Raycaster();
   let rows = [], gesture = null, preview = null, lastFrameMs = null, ringPoints = [];
@@ -311,7 +314,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     gesture = { handle, source, building, piece, list, wall, normal, start, operation: null };
     return true;
   }
-  function wallHost(event, g) {
+  function wallHost(event, g, free) {
     const r = ray(event, g.building), old = g.piece.host, current = g.building.walls.find(w => w.id === (g.operation?.host?.wall || old.wall));
     let best = null;
     for (const wall of g.building.walls) {
@@ -329,19 +332,31 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
         const level = g.building.levels.find(l => l.id === wall.level), z = point.z - level.elevation;
         if (along < 0 || along > length || z < 0 || z > level.ceiling) continue;
         const depth = point.distanceTo(r.origin);
-        if (!best || depth < best.depth) best = { depth, host: { wall: wall.id, side, at: inch(along), z: inch(z) } };
+        if (!best || depth < best.depth) best = { depth, host: { wall: wall.id, side,
+          at: free ? along : inch(along), z: free ? z : inch(z) } };
       }
     }
     return best?.host;
   }
-  function update(event) {
+  function update(event, { free = !!event.shiftKey, typed: exact } = {}) {
     if (!gesture) return;
     const started = performance.now(), g = gesture, { handle, building, piece } = g;
+    g.event = event;
+    const inch = value => free ? value : Math.round(value * 12) / 12;
+    const move = value => snapValue('move', value, free);
+    const showValue = (kind, value) => typed.show(kind, value, [event.clientX, event.clientY]);
     if (['wall', 'joint', 'room'].includes(handle.kind)) {
       const floorOffset = handle.at[2] - (building.levels.find(l => l.id === handle.level)?.elevation || 0);
-      drag.update(view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`, floorOffset)); return;
+      drag.update(view.floorAt(event.clientX, event.clientY, `${building.id}:${handle.level}`, floorOffset), { free });
+      showValue('length', drag.value()); return;
     }
-    const point = onPlane(event, building, handle.at, g.normal); if (!point) return;
+    let point = onPlane(event, building, handle.at, g.normal); if (!point) return;
+    if (handle.kind === 'hosted' && !piece.host.wall && !piece.host.roof)
+      point = point.map((v, i) => g.start[i] + move(v - g.start[i]));
+    if (Number.isFinite(exact) && handle.kind === 'site_move') {
+      const by = point.slice(0, 2).map((v, i) => v - g.start[i]), length = Math.hypot(...by);
+      point = [...g.start.slice(0, 2).map((v, i) => v + exact * (length ? by[i] / length : i === 0 ? 1 : 0)), point[2]];
+    }
     if (handle.kind === 'stair_end') {
       const to = piece[handle.end].map((v, i) => v + inch(point[i] - g.start[i]));
       g.operation = sameValue(to, piece[handle.end]) ? null
@@ -357,15 +372,21 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     if (handle.kind.startsWith('site_')) {
       const centre = handle.centre, a = g.start.slice(0, 2).map((v, i) => v - centre[i]), b = point.slice(0, 2).map((v, i) => v - centre[i]);
       let change;
-      if (handle.kind === 'site_move') change = transformShape(piece, { centre: centre.slice(0, 2).map((v, i) => v + inch(point[i] - g.start[i])) });
-      else if (handle.kind === 'site_radius') change = { radius: Math.max(.1, Math.hypot(...b)) };
+      if (handle.kind === 'site_move') {
+        const by = point.slice(0, 2).map((v, i) => move(v - g.start[i]));
+        change = transformShape(piece, { centre: centre.slice(0, 2).map((v, i) => v + by[i]) });
+        showValue('length', Math.hypot(...by));
+      }
+      else if (handle.kind === 'site_radius') change = { radius: Math.max(.1, move(Math.hypot(...b))) };
       else if (handle.kind === 'site_rotate') {
-        let angle = (piece.rotation || 0) + (Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0])) * 180 / Math.PI;
-        if (!event.shiftKey) angle = Math.round(angle / 15) * 15;
+        const delta = Number.isFinite(exact) ? exact : (Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0])) * 180 / Math.PI;
+        const angle = snapValue('angle', (piece.rotation || 0) + delta, free);
         change = transformShape(piece, { rotation: angle });
+        showValue('angle', angle - (piece.rotation || 0));
       } else if (handle.kind === 'site_scale') {
-        const scale = Math.max(.001, Math.hypot(...b) / Math.max(.01, Math.hypot(...a)));
+        const scale = Math.max(.001, snapValue('scale', Number.isFinite(exact) ? exact : Math.hypot(...b) / Math.max(.01, Math.hypot(...a)), free));
         change = transformShape(piece, { scale: [scale, scale] });
+        showValue('factor', scale);
       } else {
         // Snap the movement, preserving an already rotated corner's coordinates.
         const target = handle.kind === 'site_vertex' ? sitePoints(piece)[handle.index].map((v, i) => v + inch(point[i] - g.start[i]))
@@ -373,7 +394,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
         change = { [shapeKey(piece)]: editVertex(sitePoints(piece), { ...handle, insert: handle.kind === 'site_insert' }, target, { remove: g.remove, closed: closedShape(g.record) }) };
       }
       g.operation = handle.kind === 'site_move'
-        ? { op: 'move_site_item', list: g.record.kind, index: g.record.index, by: point.slice(0, 2).map((v, i) => inch(v - g.start[i])) }
+        ? { op: 'move_site_item', list: g.record.kind, index: g.record.index, by: point.slice(0, 2).map((v, i) => move(v - g.start[i])) }
         : shapeOperation(g.record, change);
       preview = structuredClone(g.source);
       const next = sitePieces(preview.site[g.record.kind])[g.record.index];
@@ -386,9 +407,13 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     if (handle.kind.startsWith('object_')) {
       const centre = handle.centre, delta = p => p.slice(0, 2).map((v, i) => v - centre[i]);
       const a = delta(g.start), b = delta(point);
+      const angle = Number.isFinite(exact) ? exact : (Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0])) * 180 / Math.PI;
+      const factor = snapValue('scale', Number.isFinite(exact) ? exact : Math.hypot(...b) / Math.max(.01, Math.hypot(...a)), free);
       const properties = handle.kind === 'object_rotate'
-        ? { rotation: ((piece.rotation || 0) + (Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0])) * 180 / Math.PI + 720) % 360 }
-        : { scale: Math.max(.05, Math.min(20, (piece.scale ?? 1) * Math.hypot(...b) / Math.max(.01, Math.hypot(...a)))) };
+        ? { rotation: ((snapValue('angle', (piece.rotation || 0) + angle, free) % 360) + 360) % 360 }
+        : { scale: Math.max(.05, Math.min(20, (piece.scale ?? 1) * factor)) };
+      showValue(handle.kind === 'object_rotate' ? 'angle' : 'factor', handle.kind === 'object_rotate'
+        ? snapValue('angle', (piece.rotation || 0) + angle, free) - (piece.rotation || 0) : properties.scale / (piece.scale ?? 1));
       g.operation = objectOperation(g.record, properties);
       preview = structuredClone(g.source);
       const next = g.record.building ? preview.buildings.find(b => b.id === g.building.id)[g.record.list].find(p => p.id === piece.id)
@@ -452,7 +477,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       else if (handle.kind === 'opening_edge_top') operation.head = piece.head + up;
       else operation.sill = piece.sill + up;
     } else if (piece.host.wall) {
-      const host = wallHost(event, g); if (!host) return;
+      const host = wallHost(event, g, free); if (!host) return;
       operation.host = host;
     } else if (piece.host.roof) {
       const roof = building.roofs?.find(r => r.id === piece.host.roof), edge = piece.host.edge;
@@ -461,7 +486,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       const d = b.map((v, i) => v - a[i]), length = Math.hypot(...d);
       operation.host = { ...piece.host, at: piece.host.at + inch(point.slice(0, 2).reduce((n, v, i) => n + (v - g.start[i]) * d[i] / length, 0)) };
     } else if (piece.host.ground) {
-      operation.host={ground:true,at:piece.host.at.map((v,i)=>inch(v+point[i]-g.start[i]))};
+      operation.host={ground:true,at:piece.host.at.map((v,i)=>v+point[i]-g.start[i])};
     } else {
       const rooms = building.rooms.filter(r => r.state !== 'ghost' && r.level === handle.level);
       const room = rooms.find(r => contains(r.polygon, point));
@@ -485,8 +510,11 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     onPreview?.(preview, getSelection()); refresh();
     lastFrameMs = Math.max(.001, performance.now() - started);
   }
-  async function finish(cancel = false, clicked = false) {
+  async function finish(cancel = false, clicked = false, exact) {
+    if (!cancel && Number.isFinite(exact) && gesture?.event && !['wall', 'joint', 'room'].includes(gesture.handle.kind))
+      update(gesture.event, { free: true, typed: exact });
     const g = gesture, released = preview; gesture = null; preview = null;
+    typed.hide();
     if (!g) return;
     if (g.handle.kind === 'stair_end') {
       document.getElementById('editor-drag-outline')?.setAttribute('points', '');
@@ -528,7 +556,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       return;
     }
     if (['wall', 'joint', 'room'].includes(g.handle.kind)) {
-      try { await drag.finish(cancel); }
+      try { await drag.finish(cancel, exact); }
       finally { preview = null; refresh(); }
       return;
     }
@@ -541,8 +569,9 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
   view.controls.addEventListener('change', refresh);
   host.addEventListener('twinrebuilt', refresh, { signal });
   window.addEventListener('resize', refresh, { signal });
-  signal.addEventListener('abort', () => { view.controls.removeEventListener('change', refresh); layer.remove(); }, { once: true });
+  signal.addEventListener('abort', () => { typed.hide(); view.controls.removeEventListener('change', refresh); layer.remove(); }, { once: true });
   return { begin, update, finish, refresh, hit, active: () => !!gesture,
+    key: typed.key, typedValue: typed.value, commit: exact => finish(false, false, exact),
     show(value) { preview = value; refresh(); },
     handles() {
       refresh();

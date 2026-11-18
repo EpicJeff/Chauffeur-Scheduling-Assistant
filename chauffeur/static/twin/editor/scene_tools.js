@@ -304,7 +304,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (!pointers.size && !event.buttons && tool === 'select' && canEdit()) roomSelection.hover(pick(event.clientX, event.clientY));
     if (event.pointerId !== pointerId) return;
     if (gesture?.dragging && gesture.source !== handles) {
-      if (gesture.started) gesture.source.pointerMove?.(event);
+      if (gesture.started) gesture.source.pointerMove?.(event, { free: !!event.shiftKey });
       return;
     }
     if (gesture?.dragging && !gesture.started) return;
@@ -317,7 +317,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (gesture.dragging) {
       if (gesture.moved || Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= DRAG_THRESHOLD_PX) {
         gesture.moved = true;
-        try { handles.update(event); } catch (error) { finish(event, true); report(error); }
+        try { handles.update(event, { free: !!event.shiftKey }); } catch (error) { finish(event, true); report(error); }
       }
       return;
     }
@@ -344,13 +344,18 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     let delta = (Math.atan2(end[1] - g.centre[1], end[0] - g.centre[0]) - Math.atan2(g.start[1] - g.centre[1], g.start[0] - g.centre[0])) * 180 / Math.PI;
     delta = (delta + 540) % 360 - 180; return delta;
   }
-  const finish = (event, cancel = false) => {
+  const finish = (event, cancel = false, typedOwner = null) => {
     const tracked = pointers.delete(event.pointerId);
     if (event.pointerId !== pointerId) { if (ownsGesture && tracked) event.stopImmediatePropagation(); return; }
     const owned = ownsGesture, g = gesture;
     pointerId = null; ownsGesture = false; gesture = null;
     el('editor-drag-hint').hidden = true;
     el('editor-drag-outline').setAttribute('points', '');
+    if (typedOwner) {
+      view.controls.enabled = g?.enabled ?? controlsBeforePress;
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      Promise.resolve(typedOwner.commit(typedOwner.typedValue())).catch(report); return;
+    }
     if (!g?.dragging) {
       const handled = delegate?.pointerUp?.(event, cancel);
       if (owned) {
@@ -429,6 +434,16 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // Cancel the owner before a card's capture listener can close it or change
   // selection. Idle Escape stays in bubble, after the card's own close action.
   listen(document, 'keydown', event => {
+    if (ownsGesture && pointerId !== null && !event.defaultPrevented && (canEdit() || event.key === 'Escape')) {
+      for (const source of new Set([gesture?.source, handles, ...(delegate?.handleSources || [])])) {
+        const result = source?.key?.(event);
+        if (!result) continue;
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (result === 'commit') finish({ pointerId }, false, source);
+        else if (result === 'cancel') finish({ pointerId }, true);
+        return;
+      }
+    }
     if (!canEscape(event) || !ownsGesture || pointerId === null) return;
     const armed = !gesture;
     finish({ pointerId }, true);
