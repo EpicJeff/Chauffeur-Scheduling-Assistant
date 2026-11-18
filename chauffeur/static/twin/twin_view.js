@@ -65,7 +65,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const compileBehind = (target, eye, targetScene = null) => {
     const saved = [renderer3.getRenderTarget(), renderer3.getActiveCubeFace(), renderer3.getActiveMipmapLevel()];
     try {
-      renderer3.setRenderTarget(post && !state.unlit ? post.target : null);
+      // Never undefined: three reads the target's fields when it is not null.
+      renderer3.setRenderTarget((!state.unlit && post?.target) || null);
       return compileFor(target, eye, targetScene);
     } finally { renderer3.setRenderTarget(...saved); }
   };

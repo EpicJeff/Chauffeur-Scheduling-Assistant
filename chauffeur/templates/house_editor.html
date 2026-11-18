@@ -48,31 +48,11 @@
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['edit_timing', 'model_lods', 'lod_worker', 'objects', 'palette', 'twin_generator', 'garage_door', 'twin_hosts', 'twin_floors', 'twin_stairs', 'twin_yard', 'twin_tiers', 'frame_meter', 'twin_library', 'surface_kinds', 'material_watch', 'import_loaders', 'twin_view', 'levels', 'viewing', 'unlit', 'sky/ephemeris', 'sky/look', 'twin_roof', 'twin_ground', 'path_shapes', 'pool_features', 'fire_pits', 'fence_geometry', 'pad_edge_geometry', 'twin_porch_foundation', 'twin_retaining_wall', 'twin_terrain_mesh', 'twin_director', 'editor/editor', 'editor/lighting', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/object_shelf', 'editor/site_shape_shelf', 'editor/site_shapes', 'editor/polygon_handles', 'editor/imports', 'editor/equipment_shelf', 'editor/snap', 'editor/draw', 'editor/history', 'editor/houses', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place', 'editor/roof_tools', 'editor/lot_tools', 'editor/terrain_tools', 'editor/site_drawing', 'editor/foundation_shelf', 'editor/porch_foundation_shelf', 'editor/material_slot', 'editor/material_catalog', 'editor/stair_shelf', 'editor/library', 'editor/flags'] %}
+    {# Every twin module, so no fresh module meets a stale cached neighbour (main.py _twin_modules). #}
+    {% for name in twin_modules() %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
-    {% for name in ['twin_solar', 'live/climate', 'live/room_cards', 'live/glance', 'live/glance_icons', 'live/idle', 'live/glance_settings', 'live/energy', 'live/energy_geometry', 'live/solar_conduit', 'live/solar_conduit_core', 'live/solar_conduit_worker', 'live/energy_mapping', 'live/energy_check', 'live/energy_settings', 'live/cars', 'live/security'] %}
-    imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
-    {% endfor %}
-    {% for name in ['twin_ceilings', 'editor/house_materials', 'effects/index', 'effects/driver', 'effects/water_material', 'effects/water_ripples', 'effects/waterfall', 'effects/fountain', 'effects/bubbler', 'effects/fire', 'effects/spa_jet', 'effects/vapour', 'effects/sheer', 'effects/deck_jet', 'effects/laminar'] %}
-    imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
-    {% endfor %}
-    imports[new URL(window.chfBase + 'static/twin/editor/flags.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/flags.js' | ver | tojson }};
-    imports[new URL(window.chfBase + 'static/twin/editor/ha_link.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/ha_link.js' | ver | tojson }};
-    imports[new URL(window.chfBase + 'static/twin/editor/device_placement.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/device_placement.js' | ver | tojson }};
-    {% for name in ['fixtures', 'aim_tool', 'line_fixture_tool', 'point_snap', 'effects'] %}
-    imports[new URL(window.chfBase + 'static/twin/editor/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/editor/' ~ name ~ '.js') | ver | tojson }};
-    {% endfor %}
-    imports[new URL(window.chfBase + 'static/twin/editor/build_ghosts.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/build_ghosts.js' | ver | tojson }};
-    imports[new URL(window.chfBase + 'static/twin/editor/status_chip.js', location.href).href] = window.chfBase + {{ 'static/twin/editor/status_chip.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/vendor/lucide/icons.js', location.href).href] = window.chfBase + {{ 'static/vendor/lucide/icons.js' | ver | tojson }};
-    {% for name in ['steps', 'checks', 'ghost_geometry'] %}
-    imports[new URL(window.chfBase + 'static/twin/editor/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/editor/' ~ name ~ '.js') | ver | tojson }};
-    {% endfor %}
-    imports[new URL(window.chfBase + 'static/twin/live/markers.js', location.href).href] = window.chfBase + {{ 'static/twin/live/markers.js' | ver | tojson }};
-    {% for name in ['live/live', 'live/room_panel', 'live/modes', 'live/kinds', 'live/ring', 'live/controls/light', 'live/controls/shared', 'live/controls/climate', 'live/controls/fan', 'live/controls/cover', 'live/controls/media', 'live/controls/lock', 'live/controls/alarm', 'live/controls/vacuum', 'live/controls/humidifier', 'live/controls/water_heater', 'live/controls/scene', 'live/controls/camera', 'live/controls/device', 'live/controls/inputs', 'bake/runtime', 'bake/lightmap_material', 'bake/transcode', 'bake/atlas', 'bake/atlas_transport', 'bake/baker', 'bake/bake_pass', 'bake/reach', 'bake/fixture_terms', 'bake/geometry_key', 'bake/slots', 'twin_light_math', 'bake/bake_lock', 'bake/codec', 'bake/worker_codec', 'bake/atlas_worker', 'bake/codec_worker', 'live/light_colours', 'live/real_lights', 'live/emitters', 'live/fixture_glow', 'live/fixture_geometry'] %}
-    imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
-    {% endfor %}
     imports[new URL(window.chfBase + 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js', location.href).href] = window.chfBase + {{ 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js' | ver | tojson }};
     // Workers have no import map; pass exactly the page's versioned paths.
     window.chfSolarConduitWorker = {
