@@ -194,7 +194,7 @@ export function createFlags({ view, getModel, getPlan, tools, panel, op, canEdit
     // Like the check markers, review ghosts take priority over the live
     // piece's coarse pick proxy (a stair proxy can enclose empty space).
     const row = proposals.find(p => p.mesh === hit.object);
-    return { kind: 'proposal', id: row.id, building: row.building, level: row.piece.level };
+    return { kind: 'proposal', id: row.id, building: row.building, level: row.piece.level, distance: hit.distance };
   }
   function tick() {
     const key = selectionKey();

@@ -302,6 +302,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     sprites.clear(); textures.clear();
   }
   const controller = { anchors, doors, arm, startDrag, pointerDown, pointerMove: fixtures.pointerMove, pointerUp, cancel, refresh, draw, stop,
+    fixtureHits: (x, y) => fixtures.hits?.(x, y) || [],
     drawFixtures: fixtures.deviceLink, addEffect: fixtures.addEffect, showEffect: fixtures.showEffect,
     pointerBrowse: event => !armed && !fixtures.active() && fixtures.pointerDown(event) };
   link.setPlacement(controller);

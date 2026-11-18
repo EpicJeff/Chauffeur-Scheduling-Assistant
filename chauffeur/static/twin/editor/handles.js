@@ -11,6 +11,7 @@ import { vertexHandles, editVertex } from './polygon_handles.js';
 import { shapeKey, shapeCentre, transformShape, shapeOperation, closedShape } from './site_shapes.js';
 import { pathOutline } from '../path_shapes.js';
 import { roundPit, firePitOutline } from '../fire_pits.js';
+import { HANDLE_HIT_PX } from './picking.js';
 
 const FT = .3048;
 const inch = value => Math.round(value * 12) / 12;
@@ -24,7 +25,7 @@ const basis = wall => {
 
 // Screen affordances and hit testing share the same model points. Structural
 // previews stay in drag.js; the server alone decides whether a release fits.
-export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCommit, onPreview, onClick, signal }) {
+export function createHandles({ view, getPlan, getSelection, getTool = () => 'move', canEdit, drag, onCommit, onPreview, onClick, signal }) {
   const canvas = view.renderer3.domElement, host = canvas.parentElement;
   const layer = document.createElement('div'); layer.className = 'editor-handles'; host.append(layer);
   const ring = document.createElement('span'); ring.className = 'editor-site-ring'; ring.hidden = true; layer.append(ring);
@@ -224,14 +225,15 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   }
   function hit(event) {
     refresh();
-    const close = rows.filter(r => Math.hypot(r.pixel[0] - event.clientX, r.pixel[1] - event.clientY) <= 10)
+    const close = rows.filter(r => Math.hypot(r.pixel[0] - event.clientX, r.pixel[1] - event.clientY) <= HANDLE_HIT_PX)
       .sort((a, b) => (a.handle.kind === 'joint' ? -1 : 0) - (b.handle.kind === 'joint' ? -1 : 0)
         || Math.hypot(a.pixel[0] - event.clientX, a.pixel[1] - event.clientY) - Math.hypot(b.pixel[0] - event.clientX, b.pixel[1] - event.clientY));
     if (close.length) return close[0].handle;
     const turn = descriptors().find(h => h.kind === 'site_rotate');
     if (turn) {
-      if (ringPoints.some((p, i) => i && p && ringPoints[i - 1] && edgeDistance([event.clientX, event.clientY], ringPoints[i - 1], p) <= 8)) return turn;
+      if (ringPoints.some((p, i) => i && p && ringPoints[i - 1] && edgeDistance([event.clientX, event.clientY], ringPoints[i - 1], p) <= HANDLE_HIT_PX)) return turn;
     }
+    if (getTool() === 'select') return null;
     const all = descriptors(), selected = getSelection(), building = plan()?.buildings.find(b => b.id === selected.building);
     const wallHandle = all.find(h => h.kind === 'wall');
     if (wallHandle) {
@@ -239,7 +241,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       if (a && b) {
         const d = b.map((v, i) => v - a[i]), length2 = d[0] ** 2 + d[1] ** 2;
         const t = Math.max(0, Math.min(1, ((event.clientX - a[0]) * d[0] + (event.clientY - a[1]) * d[1]) / length2));
-        if (Math.hypot(event.clientX - a[0] - t * d[0], event.clientY - a[1] - t * d[1]) <= 10) return wallHandle;
+        if (Math.hypot(event.clientX - a[0] - t * d[0], event.clientY - a[1] - t * d[1]) <= HANDLE_HIT_PX) return wallHandle;
       }
       const picked = view.pick(event.clientX, event.clientY);
       if (picked?.id === wallHandle.id && picked.building === building.id) return wallHandle;
@@ -254,7 +256,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   function begin(event) {
     if (gesture) return false;
     const handle = hit(event); if (!handle) return false;
-    lastFrameMs = null; drag.clearDragFrame();
+    lastFrameMs = null; drag.clearDragFrame?.();
     const source = getPlan(), building = coordinateBuilding(handle.building);
     if (handle.kind === 'stair_end') {
       const piece = building.stairs.find(s => s.id === handle.id), normal = [0, 0, 1];
@@ -544,6 +546,6 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       return [...rows.map(({ handle }) => handle).filter(h => h.kind !== 'roof_edge' && !h.kind.startsWith('dormer_')), ...roof]
         .map(handle => ({ kind: handle.kind, id: handle.id, at: [...handle.at] }));
     },
-    clearDragFrame() { lastFrameMs = null; drag.clearDragFrame(); },
+    clearDragFrame() { lastFrameMs = null; drag.clearDragFrame?.(); },
     get lastDragFrameMs() { return lastFrameMs ?? drag.lastDragFrameMs; } };
 }

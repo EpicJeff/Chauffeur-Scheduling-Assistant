@@ -114,9 +114,9 @@ const ops = [], op = async operation => {ops.push(operation);};
 const abort = new AbortController(), host = new Element(), view = await mountTwin(host,{plan:flat,kit,tier:'high',preserveCamera:true});
 let library;
 const tools = createSceneTools({view,getPlan:()=>flat,getModel:()=>flat,getKit:()=>kit,getSheets:()=>({}),op,edit:op,
-  panel:{clearSelection(){},focusSelection(){}},canEdit:()=>true,signal:abort.signal,pickSite:(x,y)=>library?.pickSite(x,y)});
+  panel:{clearSelection(){},focusSelection(){}},canEdit:()=>true,signal:abort.signal,siteHits:(x,y)=>library?.siteHits(x,y)||[]});
 library = createLibrary({view,kit,getPlan:()=>flat,tools,op,canEdit:()=>true,signal:abort.signal});
-tools.delegate({pointerDown:library.pointerDown,pointerMove:library.pointerMove,pointerUp:library.pointerUp});
+tools.delegate({pointerDown:library.pointerDown,pointerMove:library.pointerMove,pointerUp:library.pointerUp,selectionChanged:library.refresh});
 let passed=0;const ok = label => {passed++;console.log('  ok '+label);};
 const record = {kind:'wall',piece:front,building:b};
 assert.ok(materialLines(record,flat,kit).some(l=>l.text.endsWith(', from the building')));
@@ -224,11 +224,11 @@ const start=screen(original),end=screen([96,75]),canvas=view.renderer3.domElemen
 canvas.dispatchEvent(event('pointerdown',...start));doc.dispatchEvent(event('pointerup',...start));
 assert.equal(tools.selection().kind,'planting');assert.equal(tools.selection().id,tree.id);
 canvas.dispatchEvent(event('pointerdown',...start));canvas.dispatchEvent(event('pointermove',...end));doc.dispatchEvent(event('pointerup',...end));await settle();
-const moved=ops.pop();assert.equal(moved.op,'move_site_item');assert.equal(moved.index,flat.site.planting.indexOf(tree));
-assert.ok(Math.hypot(moved.at[0]-96,moved.at[1]-75)<.1);assert.equal(view.controls.enabled,true);
+assert.equal(ops.length,0,'Select-tool body drag navigates without moving the tree');
+assert.equal(tools.selection().id,tree.id);assert.deepEqual(tree.at,original);assert.equal(view.controls.enabled,true);
 const del=descendants(doc.getElementById('piece-card')).find(n=>n.textContent==='Delete');del.dispatchEvent(new Event('click'));await settle();
 assert.deepEqual(ops.pop(),{op:'delete_site_item',list:'planting',index:flat.site.planting.indexOf(tree)});
-ok('canvas delegates select and move a yard tree; its card Delete uses the site operation');
+ok('canvas click selects a yard tree, Select-tool body drag navigates, and its card Delete uses the site operation');
 // Final wave I3: the card's Change opens the same list on its materials; a
 // thumbnail pressed there (a button, so Enter and Space press it too) opens the
 // same scope chooser, which now offers This floor (I4, R17).

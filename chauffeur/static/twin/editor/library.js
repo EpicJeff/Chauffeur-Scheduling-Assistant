@@ -1,4 +1,5 @@
 import { applyLocal } from './local_ops.js';
+import { DRAG_THRESHOLD_PX } from './picking.js';
 import * as THREE from 'three';
 import { svgIcon } from '../live/glance_icons.js';
 import { contains, FT, allPorches } from '../twin_generator.js';
@@ -503,35 +504,37 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     return new THREE.Box3(new THREE.Vector3((x - radius) * FT, y * FT, -(z + radius) * FT),
       new THREE.Vector3((x + radius) * FT, (y + height) * FT, -(z - radius) * FT));
   }
-  function pickSite(x, y) {
-    const r = ray({ clientX: x, clientY: y }); let nearest = null;
+  function siteHits(x, y) {
+    const r = ray({ clientX: x, clientY: y }), hits = [];
     for (const kind of ['planting', 'furniture']) for (const [index, piece] of (getPlan()?.site?.[kind] || []).entries()) {
       if (!piece.at || !objectShown(piece, true)) continue;
       const point = r.intersectBox(siteBox(piece, kind), new THREE.Vector3());
       if (!point) continue;
       const distance = point.distanceTo(r.origin);
-      if (!nearest || distance < nearest.distance) nearest = { kind, id: piece.id || `${kind}:${index}`, distance };
+      hits.push({ kind, id: piece.id || `${kind}:${index}`, building: null, distance, point: point.toArray() });
     }
-    // Shape footprints come after free objects, so a chair or tree remains
-    // reachable even when it stands inside a bed or on a path.
-    if (!nearest && !view.pick(x, y)) {
-      const p = ground({ clientX: x, clientY: y });
-      if (p) for (const { kind, piece } of siteRecords(getPlan()).filter(r => siteShapeKinds.includes(r.kind)).reverse()) {
+    // Keep every footprint under the ray so repeated clicks can reach a bed
+    // beneath a tree. The shared picker compares all sources by ray distance.
+    const p = ground({ clientX: x, clientY: y });
+    if (p) {
+      const point = new THREE.Vector3(p[0] * FT, groundAt(getPlan(), ...p) * FT, -p[1] * FT);
+      const distance = point.distanceTo(r.origin);
+      for (const { kind, piece } of siteRecords(getPlan()).filter(r => siteShapeKinds.includes(r.kind)).reverse()) {
+        if (!objectShown(piece, true)) continue;
         const ps = sitePoints(piece);
         const hit = kind === 'yard_rooms' ? ps.some((a, i) => edgeDistance(p, a, ps[(i + 1) % ps.length]) < .6)
           : piece.kind === 'path' ? pathSurfacePolygons(piece).some(poly => inPolygon(poly, ...p)) : piece.polygon ? inPolygon(ps, ...p) : piece.at ? Math.hypot(p[0] - piece.at[0], p[1] - piece.at[1]) < (piece.radius || 2)
           : ps.some((a, i) => i + 1 < ps.length && edgeDistance(p, a, ps[i + 1]) < .6);
-        if (hit) return { kind, id: piece.id };
+        if (hit) hits.push({ kind, id: piece.id, building: null, distance, point: point.toArray() });
       }
     }
-    if (!nearest) return null;
-    const picked = view.pick(x, y), box = picked && view.worldBox(picked.id, picked.building);
-    if (box) {
-      const point = r.intersectBox(new THREE.Box3(new THREE.Vector3(box.min[0] * FT, box.min[2] * FT, -box.max[1] * FT),
-        new THREE.Vector3(box.max[0] * FT, box.max[2] * FT, -box.min[1] * FT)), new THREE.Vector3());
-      if (point && point.distanceTo(r.origin) < nearest.distance) return null;
-    }
-    return { kind: nearest.kind, id: nearest.id };
+    return hits.sort((a, b) => a.distance - b.distance);
+  }
+  function pickSite(x, y) {
+    const hit = siteHits(x, y)[0];
+    // Legacy placement/Move callers still respect a nearer house surface;
+    // the shared selection picker consumes the complete source instead.
+    return hit && !(view.pickAll(x, y)[0]?.distance < hit.distance) ? hit : null;
   }
   function refresh() {
     const selected = tools.selection(), kind = selected.kind;
@@ -541,6 +544,9 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   }
   function pointerDown(event) {
     if (!canEdit() || event.button !== 0 || tools.handleAt?.(event)) return false;
+    // Select-tool bodies belong to the passive click/orbit arbiter. Retain
+    // the explicit Move/Rotate path until their shared body drag owns it.
+    if (!['move', 'rotate'].some(id => el(`rail-${id}`).getAttribute('aria-pressed') === 'true')) return false;
     const picked = pickSite(event.clientX, event.clientY); if (!picked) return false;
     onInteract?.(); tools.select(picked);
     refresh();
@@ -554,7 +560,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     const g = siteDrag; siteDrag = null; view.controls.enabled = g.enabled;
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     refresh();
-    if (!cancel && canEdit() && Math.hypot(event.clientX - g.x, event.clientY - g.y) >= 3) {
+    if (!cancel && canEdit() && Math.hypot(event.clientX - g.x, event.clientY - g.y) >= DRAG_THRESHOLD_PX) {
       const at = ground(event);
       if (at) {
         const operation = { op: 'move_site_item', list: g.kind, index: g.index,
@@ -584,5 +590,5 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     dismiss(); thumbnails.current?.dispose(); if (siteDrag) view.controls.enabled = siteDrag.enabled;
     view.controls.removeEventListener('change', refresh); outline.removeFromParent(); outline.geometry.dispose(); outline.material.dispose();
   }, { once: true });
-  return { pickSite, surfaceAt, ceilingAt, ground, pointerDown, pointerMove, pointerUp, refresh, pick };
+  return { siteHits, pickSite, surfaceAt, ceilingAt, ground, pointerDown, pointerMove, pointerUp, refresh, pick };
 }

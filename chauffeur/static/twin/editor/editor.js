@@ -710,7 +710,9 @@ export async function boot() {
       },
     });
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || shownPlan(), getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
-      pickSite: (x, y) => library?.pickSite(x, y), pickMaterial: surface => library?.pick(surface), onDrawFeature: kind => terrain?.startDrawing(kind),
+      siteHits: (x, y) => library?.siteHits(x, y) || [],
+      padHits: (x, y) => terrain?.padHits?.(x, y) || [], fixtureHits: (x, y) => devices?.fixtureHits?.(x, y) || [],
+      pickMaterial: surface => library?.pick(surface), onDrawFeature: kind => terrain?.startDrawing(kind),
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
     library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || shownPlan(), tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
@@ -747,6 +749,7 @@ export async function boot() {
       prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });
     view.live = { draw: devices.draw, stop: devices.stop };
     tools.delegate({
+      selectionChanged: () => library.refresh(),
       pick: flags.pick, pointerBrowse: event => devices.pointerBrowse(event),
       pointerDown: event => terrain.pointerDown(event) || devices.pointerDown(event) || lot.pointerDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event) || library.pointerDown(event),
       pointerMove: event => terrain.pointerMove(event) || devices.pointerMove(event) || lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event) || library.pointerMove(event),
