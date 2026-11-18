@@ -267,6 +267,23 @@ def forge_sizes(data, name, size):
 
 # --- tests -------------------------------------------------------------------
 
+def test_leafy_grass_download_publishes_grass_default_and_reset():
+    reset()
+    with Ctx() as c, patch.object(sources, '_urlopen', FakeNet(ph_routes('leafy_grass'))):
+        job = wait(c, download(c, 'polyhaven', 'leafy_grass', '2k'))
+        assert job['state'] == 'done', job
+        record = materials.get(job['material_id'])
+        assert record['source_id'] == 'leafy_grass'
+        assert record['params']['grass'] is True
+        assert record['source_snapshot']['params']['grass'] is True
+        files = {name: (materials.root() / record['id'] / name).read_bytes()
+                 for name in record['maps'].values()}
+        materials.update(record['id'], {'params': {'grass': False}}, 'mum')
+        restored = materials.reset_to_source(record['id'], 'mum')
+        assert restored['params']['grass'] is True
+        assert files == {name: (materials.root() / record['id'] / name).read_bytes() for name in files}
+
+
 def test_polyhaven_download_maps_slots():
     reset()
     net = FakeNet(ph_routes('red_brick_03'))

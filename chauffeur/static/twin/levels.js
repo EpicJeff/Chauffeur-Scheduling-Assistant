@@ -190,7 +190,6 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     state = resolved; view.live?.closeRoom();
     const frame = framing(); distance = frame.distance;
     configure(); visibility(frame.top && state.building != null ? `${state.building}:${state.floor}` : 'ext');
-    for (const icon of icons) if (icon.outline) icon.outline.visible = icon.r === state.room && state.building == null;
     view.state.camera = frame.top ? 'top' : 'orbit'; syncPath();
     const axis = frame.top ? new THREE.Vector3(0, 1, LEVEL_TUNING.topOffsetFeet / (distance / FT)).normalize() : orbit;
     if (immediate) {
@@ -289,16 +288,9 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     const button = document.createElement('button'); button.type = 'button'; button.textContent = room.name || room.id;
     button.dataset.levelRoom = room.id; button.setAttribute('aria-label', `Open ${button.textContent}`);
     button.addEventListener('click', () => go({room: room.id})); targets.append(button);
-    const points = [];
-    for (let i = 0; i < room.polygon.length; i++) {
-      const p = room.polygon[i], q = room.polygon[(i + 1) % room.polygon.length], steps = Math.max(1, Math.min(128, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]))));
-      for (let j = 0; j < steps; j++) { const x = p[0] + (q[0] - p[0]) * j / steps, y = p[1] + (q[1] - p[1]) * j / steps;
-        points.push(new THREE.Vector3(x * FT, (groundAt(view.plan, x, y) + .04) * FT, -y * FT)); }
-    }
-    if (points.length) points.push(points[0].clone());
-    const outline = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({color: twinText, transparent: true, opacity: .5, depthWrite: false}));
-    outline.name = `yard-room-outline:${room.id}`; outline.visible = false; root.add(outline);
-    icons.push({r: room.id, sprite, button, outline});
+    // An open yard room draws no outline: the line floated over water and
+    // paving (user, 2026-11-17). The path chip and the framing name the room.
+    icons.push({r: room.id, sprite, button});
   }
   // Include both target kinds in initial warm-up, including a house which skips
   // straight to its sole floor. A later idle House pose introduces no program.
@@ -365,7 +357,7 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     restore(saved) {go(saved.state, {immediate: true, idle: saved.state.level === 'house'}); distance = saved.distance; configure();},
     save: () => ({state: snapshot(), distance}),
     stop() {view.cancelCameraMotion?.(); clearTimeout(wheelTimer); events.abort(); controls.removeEventListener('start', cancelMotion);
-      root.removeFromParent(); icons.forEach(i => { i.sprite.material.dispose(); i.outline?.geometry.dispose(); i.outline?.material.dispose(); }); textures.forEach(t => t.dispose()); targets.remove(); chip.remove();},
+      root.removeFromParent(); icons.forEach(i => i.sprite.material.dispose()); textures.forEach(t => t.dispose()); targets.remove(); chip.remove();},
   };
 }
 function inside(poly, [x, y]) {

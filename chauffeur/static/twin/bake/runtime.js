@@ -172,6 +172,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     if (paused()) return idle();
   }
   function light(device, rgb, intensity) {
+    const previous = tints.get(device);
+    if (!previous || previous.intensity !== intensity || previous.rgb.some((v,i) => v !== rgb[i])) view.reflectionsChanged?.();
     tints.set(device, { rgb: [...rgb], intensity });
     const s = packed?.slots[device];
     if (s && uniforms) {
@@ -189,10 +191,11 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     }));
     t.needsUpdate = true; return t;
   }
-  function patch() {
+  let patchRound = 0;
+  async function patch() {
     if (patched) return;
     patched = true;
-    const materials = new Set();
+    const mine = ++patchRound, materials = new Set();
     // Atlas attributes exist only on covered meshes. Give those meshes their own
     // materials; props sharing a kit material must not sample uninitialised UVs.
     for (const m of covered(root)) {
@@ -202,8 +205,19 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     }
     patchLightmaps([...materials], pages, uniforms);
     patchWindows();
+    // The lightmapped programs compile off the main thread before a frame draws
+    // them; the unlit materials stay on screen meanwhile. A first draw compiles
+    // synchronously, which froze the page for seconds on a full house.
+    const ready = view.compileBehind ? view.compileBehind() : view.renderer3.compileAsync?.(view.scene, view.camera);
+    if (!ready) return;
+    const shown = clones.slice();
+    for (const { mesh, original } of shown) mesh.material = original;
+    await ready.catch(() => {});
+    if (mine !== patchRound || !patched) return;
+    for (const { mesh, material } of shown) mesh.material = material;
   }
   function unpatch() {
+    ++patchRound;
     for (const { mesh, original, material } of clones) { if (mesh.material === material) mesh.material = original; material.dispose(); }
     clones.length = 0; patched = false;
   }
@@ -361,7 +375,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       for (const id of fresh) light(id, [0, 0, 0], 0);
       for (const p of present) { const at = locate(p); if (at) writeLayer(at.texture, at.layer, null); }
       fresh.clear(); present.clear(); etags.clear(); manifestText = null;
-      stale = lights.map(l => l.device); view.render();
+      stale = lights.map(l => l.device); view.reflectionsChanged?.(); view.render();
       return;
     }
     const m = JSON.parse(text);
@@ -416,12 +430,13 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     }
     stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
     setSources(m);fills(m);
-    if (present.size) patch();
+    if (present.size) { await patch(); if (!valid()) return; }
     for (const id of previous) if (!fresh.has(id)) light(id, [0, 0, 0], 0);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
 
     // Refresh the pool selection as soon as a light becomes fresh.
     if (view.live) await view.live.refresh();
+    view.reflectionsChanged?.();
     view.render();
   }
   // M3: a light placed or moved while the view is open follows the live layer's layout.

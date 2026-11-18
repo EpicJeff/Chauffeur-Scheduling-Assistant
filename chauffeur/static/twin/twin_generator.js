@@ -1,10 +1,11 @@
 import { span as editSpan } from './edit_timing.js';
+import { reflectionMaterial } from './reflection_probes.js';
 import { applyObject, fitOpening, objectShown, objectMaterialKey } from './objects.js';
 // Plan -> geometry. Plan x/y map to world X/-Z; heights are world Y.
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, alphaModeOf } from './twin_library.js';
+import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, alphaModeOf, copyMaterialParams } from './twin_library.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
@@ -50,7 +51,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
       g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
       const count = g.attributes.position.count;
       if (g.attributes.position.itemSize !== 3 || !count || count % 3) { g.dispose(); return; }
-      for (const key of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(key)) g.deleteAttribute(key);
+      for (const key of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'reflectionBodyCentre'].includes(key)) g.deleteAttribute(key);
       if (g.attributes.normal?.count !== count || g.attributes.normal.itemSize !== 3) {
         g.deleteAttribute('normal'); g.computeVertexNormals();
       }
@@ -513,7 +514,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         ref ? materialKitFor({ ...plan.materials, ...b.materials, [role]: ref }) : materialKit, tier));
       return materials.get(key);
     });
-    const kindMat = (kind, item = null) => material(() => {
+    const resolveKindMat = (kind, item = null) => material(() => {
       const row = kindRow(kind), fallback = row.fallback;
       const levelId = item?.level || b.walls?.find(w => w.id === item?.wall)?.level;
       const level = b.levels.find(l => l.id === levelId);
@@ -549,6 +550,25 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       result.name = name;
       return result;
     });
+    const kindMat = (kind, item = null) => {
+      const source = resolveKindMat(kind, item);
+      const wall = b.walls?.find(w => w.id === item?.wall);
+      if (tier === 'low' || kind !== 'pane' || wall?.exterior === false || !source.transparent || source.alphaTest > 0) return source;
+      const key = 'reflection-pane:' + b.id + ':' + source.uuid;
+      if (!materials.has(key)) {
+        const target = source.clone();
+        target.onBeforeCompile = source.onBeforeCompile; target.customProgramCacheKey = source.customProgramCacheKey;
+        reflectionMaterial(target, 'exterior', b.id);
+        // Library textures arrive after geometry is batched. Keep the original
+        // slot as their owner and propagate late maps into every viewing clone.
+        const sync = () => { for (const m of target.userData.reflection.materials) copyMaterialParams(source, m); };
+        source.addEventListener('materialparamschange', sync);
+        target.addEventListener('dispose', () => source.removeEventListener('materialparamschange', sync));
+        target.userData.ready = Promise.resolve(source.userData.ready).then(sync);
+        materials.set(key, target);
+      }
+      return materials.get(key);
+    };
     // Walls/openings (including CSG) and floor slabs are attributable by level;
     // roof, foundation and shared preparation stay at building granularity.
     const levelTiming = timing ? b.levels.map(l => ({ id: l.id, walls: 0, floors: 0 })) : [];

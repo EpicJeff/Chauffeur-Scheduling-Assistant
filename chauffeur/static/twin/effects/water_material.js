@@ -1,13 +1,16 @@
 import * as THREE from 'three';
 
-// Procedural water, one shader for every water effect. kind: 0 fountain jet
+// Procedural water, one shader for every unlit water effect. kind: 0 fountain jet
 // (a solid core, then a skirt of falling strands that break into drops),
-// 1 bubbler column, 2 falling sheet, 3 splash ring and landing foam, 4 the apron
-// of broken foam that drifts out from a bubbler's foot.
+// 1 bubbler column, 3 splash ring and landing foam, 4 the apron of broken foam
+// that drifts out from a bubbler's foot or a waterfall's landing. A falling
+// sheet is lit water instead (sheet_material.js); kind 2's outward push stays
+// for the landing foam that follows it.
 export function waterMaterial(kind = 0) {
   return new THREE.ShaderMaterial({ transparent: true, depthWrite: false,
     side: THREE.DoubleSide, forceSinglePass: true, toneMapped: false,
-    uniforms: { time: {value: 0}, strength: {value: 1}, opacity: {value: 1}, kind: {value: kind}, flow: {value: 1}, span: {value: 1}, light: {value: 1} },
+    uniforms: { time: {value: 0}, strength: {value: 1}, opacity: {value: 1}, kind: {value: kind}, flow: {value: 1}, span: {value: 1}, light: {value: 1},
+      glow: {value: new THREE.Color(0, 0, 0)} },
     vertexShader: `uniform float time; uniform float kind; uniform float flow;
       attribute vec3 outward; varying vec2 vUv; varying vec3 vNormal; varying vec3 vView; varying float vPart;
       void main() {
@@ -31,7 +34,7 @@ export function waterMaterial(kind = 0) {
         vNormal=normalize(normalMatrix*normal);
         gl_Position=projectionMatrix*mv;
       }`,
-    fragmentShader: `uniform float time; uniform float strength; uniform float opacity; uniform float kind; uniform float span; uniform float light;
+    fragmentShader: `uniform float time; uniform float strength; uniform float opacity; uniform float kind; uniform float span; uniform float light; uniform vec3 glow;
       varying vec2 vUv; varying vec3 vNormal; varying vec3 vView; varying float vPart;
       float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
       // Value noise that repeats every period cells in x, so a lathe has no seam.
@@ -49,6 +52,19 @@ export function waterMaterial(kind = 0) {
           float foam=smoothstep(.3+.3*uv.y,.56+.26*uv.y,n*.6+fine*.4);
           alpha=max(foam*.92*(1.-smoothstep(.55,1.,uv.y)),(1.-smoothstep(0.,.3,uv.y))*(.55+.35*fine));
           color=mix(vec3(.74,.9,.96),vec3(1.),foam);
+          // Kind 4.5, a faint bubbling disturbance where moving water meets the
+          // pool, mostly broken and fading as it leaves the impact. Little white
+          // (user, 2026-11-17). Along a waterfall's lip (span in feet) it thins out
+          // toward both ends; around a bubbler's ring it closes without a seam.
+          if(kind>4.25){
+            bool lip=span>1.5;
+            float x=lip?uv.x*span*7.:uv.x*28., period=lip?4096.:28.;
+            float boil=noise(vec2(x,uv.y*4.-time*2.2),period)*.6+noise(vec2(x*2.7,uv.y*9.-time*3.6),period*2.7)*.4;
+            float bubbles=smoothstep(.45,.85,boil);
+            alpha=bubbles*.55*(1.-smoothstep(.15,1.,uv.y));
+            color=mix(vec3(.82,.93,.97),vec3(1.),bubbles);
+            if(lip)alpha*=smoothstep(0.,.35,min(uv.x,1.-uv.x)*span);
+          }
         } else if(kind>2.5){
           float n=noise(vec2(uv.x*64.,uv.y*12.-time*2.8),64.);
           float fine=noise(vec2(uv.x*192.,uv.y*28.-time*5.6),192.);
@@ -56,19 +72,6 @@ export function waterMaterial(kind = 0) {
           float rings=.5+.5*sin(uv.y*36.-time*4.+n*2.);
           alpha=(.22+.6*foam)*rings*sin(uv.y*3.14159);
           color=mix(vec3(.53,.84,.9),vec3(1.),foam);
-        } else if(kind>1.5){
-          // A sheet: glassy at the lip, long streaks that whiten as the water falls.
-          float x=uv.x*span;
-          float n=noise(vec2(x*6.,uv.y*2.2-time*1.7),4096.);
-          float fine=noise(vec2(x*23.,uv.y*7.-time*3.4),4096.);
-          float streak=n*.62+fine*.38, air=smoothstep(.04,.9,uv.y);
-          float froth=smoothstep(.5-.28*air,.82-.22*air,streak);
-          color=mix(deep,pale,.35+fres*.4);
-          color=mix(color,white,clamp(froth*(.3+.7*air),0.,1.));
-          // A weak flow tears into ribbons instead of fading as one pane.
-          float ribbons=smoothstep(.34,.52,n-uv.y*.12);
-          alpha=(.46+.42*froth+fres*.1)*mix(ribbons,1.,smoothstep(.15,.75,strength));
-          alpha*=smoothstep(0.,.08,x)*(1.-smoothstep(span-.08,span,x));
         } else if(kind>.5){
           // A column of air and water: white froth with cool shade in the hollows, a
           // ragged tip, and a foot that stays solid where it boils over.
@@ -96,8 +99,11 @@ export function waterMaterial(kind = 0) {
           alpha=strand*broken*(.95-.3*uv.y)*(.6+.4*strength);
           alpha=max(alpha,(1.-smoothstep(0.,.14,uv.y))*.82);
         }
-        // Unlit water takes the scene's light level, so it does not glow at night.
-        gl_FragColor=vec4(color*light,clamp(alpha*opacity,0.,.95));
+        // Unlit water takes the scene's light level, so it does not glow at night,
+        // plus the light of the lamps in the water it falls into or stands in:
+        // foam on lit water is lit, foam most of all.
+        float share=kind>2.5?1.8:1.2;
+        gl_FragColor=vec4(color*(light+glow*share),clamp(alpha*opacity,0.,.95));
       }` });
 }
 

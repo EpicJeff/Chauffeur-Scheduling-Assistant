@@ -24,6 +24,7 @@ SLOTS = ('base_color', 'normal', 'roughness', 'metalness', 'ao', 'orm', 'height'
 DEFAULT_PARAMS = dict(tint='#ffffff', roughness=None, metalness=None, normal_scale=1,
                       normal_convention='gl', ao_intensity=1, tile_ft=[4, 4],
                       rotation_deg=0, random_offset=False,
+                      grass=False,
                       alpha_mode='opaque', opacity=1.0, alpha_cutoff=0.5)
 MAX_INPUT_BYTES = 40 * 1024 * 1024
 MAX_FILES = 16
@@ -34,6 +35,36 @@ MAX_INPUT_PIXELS = 64_000_000
 MAX_REVISIONS = 20
 _GUARD = threading.Lock()
 _LOCKS = {}
+_MATERIAL_DEFAULTS = json.loads((Path(__file__).resolve().parents[1] /
+                               'static/twin/material_defaults.json').read_text(encoding='utf-8'))
+
+
+def _source_id(record):
+    if record.get('source_id'):
+        return record['source_id']
+    # Older household copies and downloads predate retained source ids.
+    if record.get('based_on'):
+        origin = twin_library.manifest().get(record['based_on'], {})
+        if origin.get('source_id'):
+            return origin['source_id']
+    prefix = 'https://polyhaven.com/a/'
+    url = record.get('source_url') or ''
+    if record.get('source') == 'polyhaven' and url.startswith(prefix):
+        return url[len(prefix):].rstrip('/')
+    return None
+
+
+def material_grass(record):
+    """Resolve the same explicit override/default rule as material_rules.js."""
+    value = record.get('params', {}).get('grass')
+    if type(value) is bool:
+        return value
+    return (record.get('id') in _MATERIAL_DEFAULTS['grass_ids']
+            or _source_id(record) in _MATERIAL_DEFAULTS['grass_sources'])
+
+
+def _record_params(record):
+    return {**deepcopy(DEFAULT_PARAMS), **record['params'], 'grass': material_grass(record)}
 
 
 def root() -> Path:
@@ -80,14 +111,16 @@ def _bump():
 
 def builtin_rows(kit_id='modern_farmhouse'):
     refs = twin_library.kit(kit_id)['materials']
-    ids = [mid for mid, entry in twin_library.manifest().items() if entry['kind'] == 'material']
+    assets = twin_library.manifest()
+    ids = [mid for mid, entry in assets.items() if entry['kind'] == 'material']
     ids += [ref['asset'] for ref in refs.values() if ref['asset'] not in ids]
     rows = []
     for mid in dict.fromkeys(ids):
         color = next((ref['color'] for ref in refs.values() if ref['asset'] == mid), '#b8b0a4')
         rows.append(dict(id=mid, name=mid.replace('_', ' ').capitalize(), source='builtin',
                          color=color, thumbnail_url=None, builtin=True, archived=False, revision=0,
-                         params={**deepcopy(DEFAULT_PARAMS), 'tint': color}))
+                         params={**deepcopy(DEFAULT_PARAMS), 'tint': color,
+                                 'grass': material_grass({**assets.get(mid, {}), 'id': mid})}))
     for mid, look in BUILTIN_LOOKS.items():
         params = {**deepcopy(DEFAULT_PARAMS), 'tint': look['color'], 'alpha_mode': builtin_alpha_mode(look),
                   'opacity': look['opacity'], 'roughness': look.get('roughness', .8),
@@ -131,7 +164,11 @@ def get(material_id) -> dict:
 
 def _read_record(path):
     record = _read(path)
-    record['params'] = {**deepcopy(DEFAULT_PARAMS), **record['params']}
+    # Downloads published before source_id was retained already name their
+    # origin in source_url. Resolve it on read without rewriting source files.
+    if origin := _source_id(record):
+        record['source_id'] = origin
+    record['params'] = _record_params(record)
     record.setdefault('opacity_derived', False)
     record.setdefault('opacity_derived_mode', False)
     return record
@@ -173,6 +210,8 @@ def page_manifest() -> dict:
         result[row['id']] = dict(kind='material', household=True, revision=record['revision'],
                                  maps={s: f"materials/{row['id']}/{f}" for s, f in record['maps'].items()},
                                  params=record['params'])
+        if record.get('source_id'):
+            result[row['id']]['source_id'] = record['source_id']
     return result
 
 
@@ -198,6 +237,8 @@ def _params(change, current=None):
         raise ValueError('normal_convention must be gl or dx.')
     if type(result['random_offset']) is not bool:
         raise ValueError('random_offset must be a boolean.')
+    if type(result['grass']) is not bool:
+        raise ValueError('grass must be a boolean.')
     if result['alpha_mode'] not in ('opaque', 'cutout', 'blend'):
         raise ValueError('alpha_mode must be opaque, cutout or blend.')
     for key in ('opacity', 'alpha_cutoff'):
@@ -313,7 +354,7 @@ def _history(mid):
 def _save(record, previous=None, history=None, *, snapshot=True):
     record.setdefault('opacity_derived', False)
     record.setdefault('opacity_derived_mode', False)
-    record['params'] = {**deepcopy(DEFAULT_PARAMS), **record['params']}
+    record['params'] = _record_params(record)
     mid = record['id']
     if history is None:
         history = _history(mid)
@@ -340,7 +381,7 @@ def new_id() -> str:
     return 'material-' + uuid.uuid4().hex
 
 
-def create(fields, actor, *, material_id=None, source=None) -> dict:
+def create(fields, actor, *, material_id=None, source=None, source_id=None) -> dict:
     """Publish a new material. `material_id` adopts a staged folder whose maps were
     ingested with `ingest_image(..., staged=True)`; `source` records a download's
     origin and snapshots its maps and params for "Reset to source".
@@ -362,12 +403,17 @@ def create(fields, actor, *, material_id=None, source=None) -> dict:
                       revision=0, archived=False, created_by=actor, updated_at=None, maps={},
                       params=deepcopy(DEFAULT_PARAMS), source_snapshot=None,
                       opacity_derived=False, opacity_derived_mode=False)
+        if source_id is not None:
+            record['source_id'] = source_id
         staged_path = root() / mid / 'staged.json'
         if staged_path.exists():
             staged = _read_record(staged_path)
             record.update(maps=staged['maps'], params=staged['params'],
                           opacity_derived=staged['opacity_derived'],
                           opacity_derived_mode=staged['opacity_derived_mode'])
+        # Staging ingests maps, not editable vegetation. Resolve the origin's
+        # default after those staging defaults; _fields applies an explicit edit.
+        record['params']['grass'] = material_grass({'id': mid, 'source_id': source_id})
         record = _fields(mid, fields, record)
         if source is not None:
             _set_source(record, source, {key: deepcopy(record[key]) for key in

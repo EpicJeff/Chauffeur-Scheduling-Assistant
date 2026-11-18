@@ -549,7 +549,7 @@ def _run(job_id, source, source_id, resolution, actor):
             raise DownloadError('That material has no colour map.')
         fields['maps'] = maps
         fields.setdefault('params', {})['normal_convention'] = convention
-        record = twin_materials.create(fields, actor, material_id=material_id, source=source)
+        record = twin_materials.create(fields, actor, material_id=material_id, source=source, source_id=source_id)
         (folder / JOB_MARKER).unlink(missing_ok=True)
         return record['id']
     except BaseException:

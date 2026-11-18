@@ -302,9 +302,26 @@ let rafId = 0; const frames = new Map();
 globalThis.requestAnimationFrame = fn => { frames.set(++rafId, fn); return rafId; };
 globalThis.cancelAnimationFrame = id => frames.delete(id);
 const tick = () => { const batch = [...frames]; frames.clear(); for (const [, fn] of batch) fn(performance.now()); };
+const RendererTypes = await import(three);
 globalThis.Renderer = class {
-  constructor() { this.domElement = new Element('canvas'); this.shadowMap = {}; this.info = {render: {calls: 0, triangles: 0}, reset() {}}; }
-  setPixelRatio() {} getContext() { return {getExtension: () => null}; } setSize() {} setAnimationLoop() {}
+  constructor() {
+    this.domElement = new Element('canvas'); this.shadowMap = {};
+    this.info = {autoReset:true, render: {calls: 0, triangles: 0}, reset() { this.render.calls = this.render.triangles = 0; }};
+    this.pixelRatio = 1; this.size = new RendererTypes.Vector2(1,1); this.target = null;
+    this.autoClear = true; this.color = new RendererTypes.Color(); this.alpha = 1;
+    this.toneMappingExposure = 1; this.outputColorSpace = RendererTypes.SRGBColorSpace;
+  }
+  setPixelRatio(r) { this.pixelRatio = r; this.setSize(this.size.x, this.size.y); }
+  getPixelRatio() { return this.pixelRatio; }
+  getContext() { return {getExtension: () => null}; }
+  setSize(w,h) { this.size.set(w,h); this.domElement.width = Math.floor(w*this.pixelRatio); this.domElement.height = Math.floor(h*this.pixelRatio); }
+  getSize(v) { return v.copy(this.size); }
+  setRenderTarget(t,face=0,mip=0) { this.target=t; this.face=face; this.mip=mip; }
+  getRenderTarget() { return this.target; }
+  getActiveCubeFace() { return this.face || 0; } getActiveMipmapLevel() { return this.mip || 0; }
+  getClearColor(c) { return c.copy(this.color); } getClearAlpha() { return this.alpha; }
+  setClearColor(c,a) { this.color.set(c); if(a!==undefined)this.alpha=a; }
+  setClearAlpha(a) { this.alpha=a; } clear() {} clearDepth() {} setAnimationLoop() {}
   render(scene) { scene.updateMatrixWorld(true); } dispose() {} forceContextLoss() {}
 };
 // Each named test runs alone; the driver reports N/M and exits non-zero on any failure.

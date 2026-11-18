@@ -1,4 +1,5 @@
 import { alphaModeOf, libUrl, materialUrl } from '../twin_library.js';
+import { materialGrass } from '../material_rules.js';
 
 export const slots = [['base_color', 'Base colour'], ['normal', 'Normal'], ['roughness', 'Roughness'],
   ['metalness', 'Metalness'], ['ao', 'AO'], ['orm', 'ORM'], ['height', 'Height'], ['opacity', 'Opacity map']];
@@ -84,7 +85,8 @@ export function mountProperties(host, entry, { change, replaceMap, clearMap, upl
     if (slot === 'height') row.append(node('p', 'Stored for future displacement; not rendered.', 'place-muted'));
     host.append(row);
   }
-  const valueAt = key => key.startsWith('tile_ft.') ? entry.params.tile_ft[Number(key.at(-1))] : entry.params[key];
+  const valueAt = key => key === 'grass' ? materialGrass(entry)
+    : key.startsWith('tile_ft.') ? entry.params.tile_ft[Number(key.at(-1))] : entry.params[key];
   const param = (key, value) => change({ params: key.startsWith('tile_ft.')
     ? { tile_ft: entry.params.tile_ft.map((v, i) => i === Number(key.at(-1)) ? value : v) } : { [key]: value } });
   const modeRow = node('label', 'Alpha mode');
@@ -140,13 +142,15 @@ export function mountProperties(host, entry, { change, replaceMap, clearMap, upl
       }); });
     row.append(pair); host.append(row);
   }
-  for (const [key, title, type] of [['tint', 'Tint', 'color'], ['random_offset', 'Random UV offset per surface', 'checkbox']]) {
-    if (readonly) { host.append(node('p', `${title}: ${key === 'random_offset' ? (valueAt(key) ? 'On' : 'Off') : valueAt(key)}`)); continue; }
+  for (const [key, title, type] of [['tint', 'Tint', 'color'], ['random_offset', 'Random UV offset per surface', 'checkbox'],
+    ['grass', 'Grows grass blades', 'checkbox']]) {
+    if (readonly) { host.append(node('p', `${title}: ${type === 'checkbox' ? (valueAt(key) ? 'On' : 'Off') : valueAt(key)}`)); continue; }
     const row = node('label', title), input = node('input'); input.type = type; input.disabled = readonly;
     if (!readonly) input.dataset.param = key;
     input.addEventListener(type === 'color' ? 'input' : 'change', () => param(key, type === 'checkbox' ? input.checked : input.value), { signal });
     controls.push(() => { if (type === 'checkbox') input.checked = !!valueAt(key); else input.value = valueAt(key); });
     row.prepend(input); host.append(row);
+    if (key === 'grass') host.append(node('p', 'Applies where this material is used as the lawn.', 'place-muted'));
   }
   const sync = next => { entry = next; controls.forEach(update => update()); source.textContent = `Source: ${entry.source} · Revision ${entry.revision}`; };
   sync(entry); return { sync };

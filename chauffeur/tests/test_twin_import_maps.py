@@ -40,10 +40,19 @@ def graph(entries):
     return {os.path.relpath(p, STATIC).replace(os.sep, '/') for p in seen}
 
 
+def twin_modules():
+    """What main._twin_modules() lists: every .js under static/twin."""
+    root = os.path.join(STATIC, 'twin')
+    return sorted(os.path.relpath(os.path.join(folder, name), root).replace(os.sep, '/')[:-3]
+                  for folder, _, files in os.walk(root) for name in files if name.endswith('.js'))
+
+
 def mapped(template):
     """Every static/... .js path the template versions: literal entries and for-loops."""
     text = open(os.path.join(ROOT, 'templates', template), encoding='utf-8').read()
     paths = set(re.findall(r"'static/([A-Za-z0-9_./-]+\.js)'\s*\|\s*ver", text))
+    if re.search(r"\{%\s*for name in twin_modules\(\)\s*%\}.*?\('static/twin/'\s*~\s*name\s*~\s*'\.js'\)\s*\|\s*ver", text, re.S):
+        paths.update(f'twin/{name}.js' for name in twin_modules())
     for names, prefix in re.findall(
             r"\{%\s*for name in \[([^\]]*)\]\s*%\}.*?\('static/([A-Za-z0-9_./-]*)'\s*~\s*name\s*~\s*'\.js'\)",
             text, re.S):
@@ -75,6 +84,22 @@ def test_house_editor_page():
 
 def test_house_library_page():
     return check_page('house_library.html', ['twin/library_page/page.js'])
+
+
+def test_rendered_pages_version_every_twin_module():
+    # The real routes render the generated loop: every module, each with its own version.
+    sys.path.insert(0, HERE)
+    from test_twin_ha_routes import Ctx, seed
+    seed()
+    names = twin_modules()
+    assert 'post' in names and 'reflection_probes' in names
+    with Ctx() as c:
+        for path in ['/house/twin', '/house/editor', '/house/library']:
+            page = c.client.get(path, headers=c.mum)
+            assert page.status_code == 200, f'{path}: {page.status_code}'
+            missing = [n for n in names if f'static/twin/{n}.js?v=' not in page.text]
+            assert not missing, f'{path}: not versioned in the rendered import map: {missing}'
+    return len(names)
 
 
 def test_lod_worker_urls():
@@ -156,7 +181,8 @@ def test_no_module_name_a_content_blocker_refuses():
 
 
 if __name__ == '__main__':
-    tests = [test_house_twin_page, test_house_editor_page, test_house_library_page, test_lod_worker_urls,
+    tests = [test_house_twin_page, test_house_editor_page, test_house_library_page,
+             test_rendered_pages_version_every_twin_module, test_lod_worker_urls,
              test_worker_import_graphs, test_no_module_name_a_content_blocker_refuses]
     passed = 0
     for fn in tests:

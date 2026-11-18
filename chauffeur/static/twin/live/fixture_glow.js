@@ -12,7 +12,7 @@ function materialFor(key, channels, vertexColors = false) {
   const entry = materials.get(key); entry.refs++; return entry.material;
 }
 
-export function createFixtureGlow(scene, emitter) {
+export function createFixtureGlow(scene, emitter, gain = 1) {
   let geometry;
   const sections = [];
   if (emitter.shape === 'line') {
@@ -58,7 +58,7 @@ export function createFixtureGlow(scene, emitter) {
         colors.needsUpdate = true;
       }
       paletteKey = nextPalette;
-      const color = new THREE.Color().setRGB(...(multicolour ? [255, 255, 255] : rgb).map(v => v / 255), THREE.SRGBColorSpace).multiplyScalar(brightness);
+      const color = new THREE.Color().setRGB(...(multicolour ? [255, 255, 255] : rgb).map(v => v / 255), THREE.SRGBColorSpace).multiplyScalar(brightness * gain);
       const channels = color.toArray().map(v => Math.round(v * 255));
       const key = (multicolour ? 'palette:' : '') + channels.join(',');
       if (key === bucket) return;

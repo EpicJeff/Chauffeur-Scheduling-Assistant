@@ -53,12 +53,17 @@ const bands = [
   [0, { background: [.60, .49, .52], ambient: .8, environment: .3, exposure: 1.07, sunColor: [1, .55, .28] }],
   [6, { background: [.725, .796, .843], ambient: 1.8, environment: .65, exposure: 1, sunColor: [1, .94, .83] }],
 ];
-export function lookAt(altitudeDeg, moon = { altitude: 0, fraction: 0 }) {
-  let lower = bands[0], upper = bands.at(-1);
-  for (let i = 1; i < bands.length; i++) if (altitudeDeg <= bands[i][0]) { lower = bands[i - 1]; upper = bands[i]; break; }
+// Where the sun casts shadows the sky fill steps back and the sun carries the
+// day, so shade reads about a stop under sunlit ground. Without sun shadows
+// that balance would only flatten the picture, so those views keep the fill.
+const shadowedBands = new Map([[0, { ambient: .5 }], [6, { ambient: .5, environment: .4 }]]);
+export function lookAt(altitudeDeg, moon = { altitude: 0, fraction: 0 }, { shadows = false } = {}) {
+  const band = ([edge, look]) => [edge, shadows ? { ...look, ...shadowedBands.get(edge) } : look];
+  let lower = band(bands[0]), upper = band(bands.at(-1));
+  for (let i = 1; i < bands.length; i++) if (altitudeDeg <= bands[i][0]) { lower = band(bands[i - 1]); upper = band(bands[i]); break; }
   const t = smooth((altitudeDeg - lower[0]) / (upper[0] - lower[0]));
   const look = Object.fromEntries(Object.keys(lower[1]).map(key => [key, mix(lower[1][key], upper[1][key], t)]));
-  return { ...look, sun: 3 * smooth(altitudeDeg / 6),
+  return { ...look, sun: (shadows ? 7 : 3) * smooth(altitudeDeg / 6),
     moon: .16 * Math.max(0, Math.sin(moon.altitude)) * clamp(moon.fraction) * (1 - smooth((altitudeDeg + 6) / 6)),
     moonColor: [.60, .72, 1], lamps: altitudeDeg < -3 };
 }

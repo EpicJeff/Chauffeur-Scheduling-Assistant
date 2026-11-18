@@ -105,7 +105,7 @@ def test_create_ingest_and_serve_immutable_map():
         row = create(c)
         assert row['params'] == dict(tint='#ffffff', roughness=None, metalness=None, normal_scale=1,
                                     normal_convention='gl', ao_intensity=1, tile_ft=[4, 4],
-                                    rotation_deg=0, random_offset=False,
+                                    rotation_deg=0, random_offset=False, grass=False,
                                     alpha_mode='opaque', opacity=1.0, alpha_cutoff=0.5)
         assert row['created_by'] == 'mum'
         r = upload(c, row['id'])
@@ -574,6 +574,84 @@ def test_gc_keeps_source_and_all_retained_undo_redo_maps():
     reset = materials.reset_to_source(row['id'], 'mum')
     assert reset['maps'] == row['maps']
     assert (folder / source_file).is_file()
+
+
+def test_grass_property_http_roundtrip_history_reset_and_boolean_validation():
+    seed()
+    with Ctx() as c:
+        row = create(c, params={'grass': True})
+        mid = row['id']
+        assert row['params']['grass'] is True
+        before = ts._state()
+        for value in (False, True):
+            response = c.client.patch(f'{API}/{mid}', headers=c.mum, json={'params': {'grass': value}})
+            assert response.status_code == 200, response.text
+            assert response.json()['id'] == mid
+            assert materials.get(mid)['params']['grass'] is value
+            assert c.client.get(f'{API}/{mid}', headers=c.mum).json()['params']['grass'] is value
+            entry = c.client.get('/api/house/twin/materials/manifest', headers=c.panel).json()['entries'][mid]
+            assert entry['params']['grass'] is value
+        assert ts._state() == before, 'material edits must not write house history'
+        for value in (None, 0, 1, 'true', [], {}):
+            for method, path, fields in (
+                    ('PATCH', f'{API}/{mid}', {'params': {'grass': value}}),
+                    ('POST', API, {'name': 'Invalid', 'params': {'grass': value}})):
+                response = c.client.request(method, path, headers=c.mum, json=fields)
+                assert response.status_code == 400, (value, response.text)
+                assert 'boolean' in response.text
+        copy = c.client.post(f'{API}/{mid}/duplicate', headers=c.mum).json()
+        assert copy['params']['grass'] is True
+        cid = copy['id']
+        c.client.patch(f'{API}/{cid}', headers=c.mum, json={'params': {'grass': False}}).raise_for_status()
+        assert c.client.post(f'{API}/{cid}/undo', headers=c.mum).json()['params']['grass'] is True
+        assert c.client.post(f'{API}/{cid}/redo', headers=c.mum).json()['params']['grass'] is False
+        assert c.client.post(f'{API}/{cid}/reset', headers=c.mum).json()['params']['grass'] is True
+
+
+def test_grass_legacy_defaults_and_source_reset():
+    seed()
+    for mid in ('lawn', 'grass', 'leafy_grass'):
+        assert materials.material_grass({'id': mid}) is True
+        assert materials.material_grass({'id': mid, 'params': {'grass': False}}) is False
+    assert materials.get('leafy_grass')['params']['grass'] is True
+    assert materials.material_grass({'id': 'material-random'}) is False
+    assert materials.material_grass({'source_id': 'leafy_grass'}) is True
+    assert materials.material_grass({'based_on': 'leafy_grass'}) is True
+    # An old downloaded record and source snapshot have no grass parameter.
+    row = materials.create({'name': 'Legacy grass'}, 'mum', source='polyhaven', source_id='leafy_grass')
+    path = materials.root() / row['id'] / 'material.json'
+    row['params'].pop('grass')
+    row['source_snapshot']['params'].pop('grass')
+    row.pop('source_id')
+    row['source_url'] = 'https://polyhaven.com/a/leafy_grass'
+    materials._json(path, row)
+    assert materials.get(row['id'])['params']['grass'] is True
+    assert materials.page_manifest()[row['id']]['params']['grass'] is True
+    materials.update(row['id'], {'params': {'grass': False}}, 'mum')
+    assert materials.reset_to_source(row['id'], 'mum')['params']['grass'] is True
+    # Duplicating a built-in preserves its default and permits an explicit off.
+    directory = materials.root() / 'builtin-fixture'
+    directory.mkdir(parents=True)
+    for filename in materials.get('leafy_grass')['maps'].values():
+        (directory / filename).write_bytes(image())
+    with patch.object(library, 'ensure', return_value=str(directory)):
+        copy = materials.duplicate('leafy_grass', 'mum')
+    assert copy['params']['grass'] is True
+    assert materials.update(copy['id'], {'params': {'grass': False}}, 'mum')['params']['grass'] is False
+    assert materials.reset_to_source(copy['id'], 'mum')['params']['grass'] is True
+    old_copy = materials.get(copy['id'])
+    old_copy['params'].pop('grass')
+    old_copy['source_snapshot']['params'].pop('grass')
+    old_copy.pop('source_id', None)
+    materials._json(materials.root() / copy['id'] / 'material.json', old_copy)
+    assert materials.get(copy['id'])['params']['grass'] is True
+    materials.update(copy['id'], {'params': {'grass': False}}, 'mum')
+    assert materials.reset_to_source(copy['id'], 'mum')['params']['grass'] is True
+    row = materials.create({'name': 'Legacy ordinary'}, 'mum')
+    path = materials.root() / row['id'] / 'material.json'
+    row['params'].pop('grass')
+    materials._json(path, row)
+    assert materials.get(row['id'])['params']['grass'] is False
 
 
 if __name__ == '__main__':

@@ -548,7 +548,7 @@ export async function boot() {
     houses = mountHouses({ history, signal: lifecycle.signal,
       canLoad: () => canEdit() && !active(currentBuild),
       async capture() {
-        view.renderer3.render(view.scene, view.camera);
+        view.render();
         const canvas = document.createElement('canvas'); canvas.width = 240; canvas.height = 160;
         canvas.getContext('2d').drawImage(view.renderer3.domElement, 0, 0, 240, 160);
         return canvas.toDataURL('image/png');

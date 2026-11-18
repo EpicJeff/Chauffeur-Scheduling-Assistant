@@ -80,6 +80,19 @@ await test('random_offset_toggle_saves_the_param',async()=>{
  await edit(box,'change',{checked:false});await pause(340);
  assert.equal(c.calls.filter(x=>x.method==='PATCH').at(-1).body.params.random_offset,false);c.page.stop();
 });
+await test('grass_control_shows_stored_value_and_saves_through_ordinary_patch',async()=>{
+ const r=record();r.params.grass=true;const c=await setup(r),box=c.field('grass','checkbox');
+ assert.ok(box);assert.equal(box.checked,true);assert.equal(!!box.disabled,false);
+ assert.match(box.closest('label').textContent,/Grows grass blades/);
+ assert.match(textOf(c.host),/Applies where this material is used as the lawn/);
+ await edit(box,'change',{checked:false});await pause(340);
+ assert.equal(c.calls.filter(x=>x.method==='PATCH').at(-1).body.params.grass,false);
+ assert.equal(c.saved.params.grass,false);assert.equal(box.checked,false);
+ await edit(box,'change',{checked:true});await pause(340);
+ assert.equal(c.saved.params.grass,true);c.page.stop();
+ const legacy=record();legacy.source_id='leafy_grass';const d=await setup(legacy);
+ assert.equal(d.field('grass','checkbox').checked,true);d.page.stop();
+});
 await test('builtin_shows_duplicate_not_edit',async()=>{
  const c=await setup(record('brick','builtin'));assert.ok(c.action('duplicate'));
  assert.equal(c.action('delete'),null);assert.equal(c.action('undo'),null);

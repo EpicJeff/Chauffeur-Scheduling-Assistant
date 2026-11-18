@@ -1,10 +1,10 @@
 // Renderer settings and deterministic selection, shared by the page and embeds.
 export const TIERS = {
-  low: { bakedRects: 2, pixelRatio: 1, antialias: false, shadows: false, shadowSize: 0, plantCards: true, edgeGrass: false, realLights: {point: 4, spot: 1, area: 2, shadows: 0} },
-  medium: { bakedRects: 4, pixelRatio: 1, antialias: true, shadows: true, shadowSize: 2048, plantCards: true, edgeGrass: false, realLights: {point: 8, spot: 2, area: 4, shadows: 1} },
+  low: { occlusion: false, bakedRects: 2, pixelRatio: 1, antialias: false, shadows: false, shadowSize: 0, plantCards: true, edgeGrass: false, lawnBlades: 0, lawnSpacing: 0, realLights: {point: 4, spot: 1, area: 2, shadows: 0} },
+  medium: { occlusion: true, bakedRects: 4, pixelRatio: 1, antialias: true, shadows: true, shadowSize: 2048, plantCards: true, edgeGrass: false, lawnBlades: 60000, lawnSpacing: .43, realLights: {point: 8, spot: 2, area: 4, shadows: 1} },
   // Fully mapped + DFG + environment + 3 bake banks + LTC + sun leaves one lamp shadow on 16-sampler GPUs.
-  high: { bakedRects: 8, pixelRatio: Math.min(globalThis.devicePixelRatio || 1, 2), antialias: true, shadows: true, shadowSize: 4096, plantCards: false, edgeGrass: true, realLights: {point: 12, spot: 4, area: 8, shadows: 1} },
-  max: { bakedRects: 16, pixelRatio: Math.min(globalThis.devicePixelRatio || 1, 2), antialias: true, shadows: true, shadowSize: 4096, plantCards: false, edgeGrass: true, realLights: {point: 16, spot: 6, area: 12, shadows: 1} },
+  high: { occlusion: true, bakedRects: 8, pixelRatio: Math.min(globalThis.devicePixelRatio || 1, 2), antialias: true, shadows: true, shadowSize: 4096, plantCards: false, edgeGrass: true, lawnBlades: 200000, lawnSpacing: .2, realLights: {point: 12, spot: 4, area: 8, shadows: 1} },
+  max: { occlusion: true, bakedRects: 16, pixelRatio: Math.min(globalThis.devicePixelRatio || 1, 2), antialias: true, shadows: true, shadowSize: 4096, plantCards: false, edgeGrass: true, lawnBlades: 400000, lawnSpacing: .166, realLights: {point: 16, spot: 6, area: 12, shadows: 1} },
 };
 
 export function rendererName(gl) {

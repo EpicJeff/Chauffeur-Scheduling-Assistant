@@ -1501,6 +1501,25 @@ def _versioned(path: str) -> str:
 templates.env.filters['ver'] = _versioned
 
 
+def _twin_modules() -> list:
+    """Every module under static/twin, as `editor/drag` for `static/twin/editor/drag.js`.
+
+    The house pages version their import maps from this list. A hand-kept
+    list missed modules (post.js among them), so a browser could pair a fresh
+    module with last week's cached neighbour and fail mid-frame.
+    """
+    root = os.path.join(STATIC_DIR, 'twin')
+    names = []
+    for folder, _, files in os.walk(root):
+        for file in files:
+            if file.endswith('.js'):
+                names.append(os.path.relpath(os.path.join(folder, file), root).replace(os.sep, '/')[:-3])
+    return sorted(names)
+
+
+templates.env.globals['twin_modules'] = _twin_modules
+
+
 def _shelf_order(request: Request) -> list:
     """Which buttons the panel shelf shows, in order, resolved SERVER-SIDE.
 

@@ -46,7 +46,8 @@ uniform float waterLevel; uniform vec3 waterTint;
 uniform float waterSun; uniform vec3 waterSunDirection;
 // The bright net a rippled surface focuses on the floor: a point is warped through
 // itself a few times and the folds become the light lines. Returns the change in
-// sunlight around zero, so the floor keeps its average brightness. depth is metres.
+// sunlight: bright lines over a floor that is barely dimmed between them, because
+// dark cells read as stains from above. depth is metres.
 float waterCaustic(vec2 p, float depth, vec3 motion) {
   vec2 q = p * 1.35, i = q;
   float c = 1.0, time = (waterTime + motion.z) * .55;
@@ -60,7 +61,7 @@ float waterCaustic(vec2 p, float depth, vec3 motion) {
   float net = pow(abs(c), 8.0);
   // Faint in the shallows where the light has not yet focused, soft again when deep.
   float reach = smoothstep(0.0, .25, depth) * exp(-depth * .18);
-  return (net * 6.5 - .55) * reach / (1.0 + fwidth(net) * 3.0) * (1.0 + motion.x * ${CHOP_CAUSTIC_CONTRAST_GAIN.toFixed(2)});
+  return max(net * 6.5 - .55, -.12) * reach / (1.0 + fwidth(net) * 3.0) * (1.0 + motion.x * ${CHOP_CAUSTIC_CONTRAST_GAIN.toFixed(2)});
 }
 ` + shader.fragmentShader;
     // These are the material's own lookups. Offsetting each transformed UV by
@@ -87,7 +88,7 @@ float waterCaustic(vec2 p, float depth, vec3 motion) {
 float waterDepth = max(0.0, waterLevel - vWaterWorld.y);
 vec2 waterPoint = vec2(vWaterWorld.x, -vWaterWorld.z) / .3048;
 vec3 waterBodyMotion = waterMotionAt(waterPoint);
-${tier !== 'low' ? `vec2 waterWobble = waterSlope(waterPoint, waterBodyMotion) * waterDepth * .16 * (1.0 + waterBodyMotion.x * ${CHOP_FLOOR_WOBBLE_GAIN.toFixed(2)});
+${tier !== 'low' ? `vec2 waterWobble = waterSlope(waterPoint, waterBodyMotion) * waterDepth * .9 * (1.0 + waterBodyMotion.x * ${CHOP_FLOOR_WOBBLE_GAIN.toFixed(2)});
 ${simulation ? 'waterWobble += waterFieldShape(waterPoint).xy * waterDepth * .48;' : ''}` : ''}`);
     // Only directional sunlight is modulated; hemisphere/environment and local
     // lamps are never multiplied by the projected caustic pattern.
@@ -122,7 +123,7 @@ if (waterDepth > 0.0) {
 #include <opaque_fragment>`);
   };
   material.onBeforeCompile = (shader, renderer) => compile(shader, renderer);
-  material.customProgramCacheKey = () => key + '|underwater-2:' + tier + (simulation ? '|water-field-1' : '') + (regions.length ? '|water-regions:' + regions.map(r => r.polygon.length).join(',') : '');
+  material.customProgramCacheKey = () => key + '|underwater-5:' + tier + (simulation ? '|water-field-1' : '') + (regions.length ? '|water-regions:' + regions.map(r => r.polygon.length).join(',') : '');
   Object.defineProperty(material.userData, 'waterUnlit', {value:{
     hook:(shader, renderer) => compile(shader, renderer, true), key:() => material.customProgramCacheKey() + '|matcap',
   }});
