@@ -11,10 +11,11 @@ export function laminarMesh(positions, uvs, parts, indices, sheet = false) {
   geometry.setAttribute('part',new THREE.Float32BufferAttribute(parts,1));
   geometry.setIndex(indices);
   const material=new THREE.ShaderMaterial({transparent:true,depthWrite:false,side:THREE.DoubleSide,forceSinglePass:true,toneMapped:false,
-    uniforms:{time:{value:0},strength:{value:1},opacity:{value:1},light:{value:1},sheet:{value:Number(sheet)},grain:{value:new THREE.Vector2(4,6)}},
+    uniforms:{time:{value:0},strength:{value:1},opacity:{value:1},light:{value:1},sheet:{value:Number(sheet)},grain:{value:new THREE.Vector2(4,6)},
+      glow:{value:new THREE.Color(0,0,0)}},
     vertexShader:`attribute float part; varying vec2 vUv; varying float vPart; varying vec3 vNormal; varying vec3 vView;
       void main(){vUv=uv;vPart=part;vNormal=normalMatrix*normal;vec4 p=modelViewMatrix*vec4(position,1.);vView=-p.xyz;gl_Position=projectionMatrix*p;}`,
-    fragmentShader:`uniform float time; uniform float strength; uniform float opacity; uniform float light; uniform float sheet; uniform vec2 grain;
+    fragmentShader:`uniform float time; uniform float strength; uniform float opacity; uniform float light; uniform float sheet; uniform vec2 grain; uniform vec3 glow;
       varying vec2 vUv; varying float vPart; varying vec3 vNormal; varying vec3 vView;
       float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
       float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1.,0.)),f.x),mix(hash(i+vec2(0.,1.)),hash(i+1.),f.x),f.y);}
@@ -41,7 +42,8 @@ export function laminarMesh(positions, uvs, parts, indices, sheet = false) {
           alpha=exp(-r*r*4.)*(1.-smoothstep(.6,1.,r))*(.25+.4*spray);
           if(sheet>.5)alpha*=smoothstep(0.,.03,vUv.x)*(1.-smoothstep(.97,1.,vUv.x));
         }
-        gl_FragColor=vec4(color*light,min(.92,alpha*opacity));
+        // The lamps in the water it runs in light it, as they light the other water effects.
+        gl_FragColor=vec4(color*(light+glow*1.2),min(.92,alpha*opacity));
       }`});
   return effectMesh(geometry,material);
 }

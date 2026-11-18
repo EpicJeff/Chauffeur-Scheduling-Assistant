@@ -52,16 +52,18 @@ export function waterMaterial(kind = 0) {
           float foam=smoothstep(.3+.3*uv.y,.56+.26*uv.y,n*.6+fine*.4);
           alpha=max(foam*.92*(1.-smoothstep(.55,1.,uv.y)),(1.-smoothstep(0.,.3,uv.y))*(.55+.35*fine));
           color=mix(vec3(.74,.9,.96),vec3(1.),foam);
-          // Along a waterfall's lip (span in feet): a faint, bubbling disturbance
-          // where the sheet meets the water, mostly broken, fading as it leaves the
-          // impact and toward both ends of the lip. Little white (user, 2026-11-17).
-          if(span>1.5){
-            float x=uv.x*span;
-            float boil=noise(vec2(x*7.,uv.y*4.-time*2.2),4096.)*.6+noise(vec2(x*19.,uv.y*9.-time*3.6),4096.)*.4;
+          // Kind 4.5, a faint bubbling disturbance where moving water meets the
+          // pool, mostly broken and fading as it leaves the impact. Little white
+          // (user, 2026-11-17). Along a waterfall's lip (span in feet) it thins out
+          // toward both ends; around a bubbler's ring it closes without a seam.
+          if(kind>4.25){
+            bool lip=span>1.5;
+            float x=lip?uv.x*span*7.:uv.x*28., period=lip?4096.:28.;
+            float boil=noise(vec2(x,uv.y*4.-time*2.2),period)*.6+noise(vec2(x*2.7,uv.y*9.-time*3.6),period*2.7)*.4;
             float bubbles=smoothstep(.45,.85,boil);
             alpha=bubbles*.55*(1.-smoothstep(.15,1.,uv.y));
             color=mix(vec3(.82,.93,.97),vec3(1.),bubbles);
-            alpha*=smoothstep(0.,.35,min(x,span-x));
+            if(lip)alpha*=smoothstep(0.,.35,min(uv.x,1.-uv.x)*span);
           }
         } else if(kind>2.5){
           float n=noise(vec2(uv.x*64.,uv.y*12.-time*2.8),64.);

@@ -1,8 +1,10 @@
 import * as THREE from 'three';
-import { effectMesh, splashRing, waterMaterial } from './water_material.js';
+import { effectMesh, splashRing } from './water_material.js';
+import { columnMaterial } from './sheet_material.js';
 
-// A bubbler is a narrow aerated column that boils
-// over at the foot into foam drifting out across the water. The shader churns its outline.
+// A bubbler is a narrow column of clear water, lit like the pool, with
+// turbulence climbing it; it breaks white only in a small crown and boils a
+// little at the foot, where a faint bubbling ring spreads on the water.
 export function buildBubbler() {
   const group = new THREE.Group();
   // Tip first, so uv.y runs 0 at the tip to 1 at the foot.
@@ -11,12 +13,12 @@ export function buildBubbler() {
   const curve = new THREE.SplineCurve(profile).getPoints(40);
   for (const p of curve) p.set(Math.max(0, p.x), Math.min(1, Math.max(0, p.y)));
   curve[0].set(0, 1); curve[40].y = 0;
-  const body = effectMesh(new THREE.LatheGeometry(curve, 48), waterMaterial(1));
-  const ring = splashRing(4, .18); ring.position.y=.015; group.add(body,ring);
+  const body = effectMesh(new THREE.LatheGeometry(curve, 48), columnMaterial());
+  const ring = splashRing(4.5, .18); ring.position.y=.015; group.add(body,ring);
   return {group, pose(size) {
     // More flow lifts the column; the nozzle sets its width, so that barely grows.
     const reach=.12+size*.03;
-    body.scale.set(reach,size,reach);
+    body.scale.set(reach,size,reach); body.material.uniforms.fall.value=size;
     ring.scale.set(reach*4.5,1,reach*4.5);
   }};
 }

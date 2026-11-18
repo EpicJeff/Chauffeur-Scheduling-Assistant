@@ -24,12 +24,13 @@ for(const type of ['waterfall','fountain','bubbler','fire'])await test(type+'_bu
  for(const mesh of rows){assert.equal(mesh.castShadow,false);assert.equal(mesh.receiveShadow,false);assert.equal(mesh.userData.effectFixture,true);
  assert.equal(mesh.geometry.userData.bakeExcluded,true);assert.equal('transmission' in mesh.material,false);
  assert.ok(mesh.geometry.attributes.position.count>=4);assert.ok(mesh.material.uniforms.time);
- // A falling sheet is lit water like the pool's surface; every other effect is procedural.
- if(mesh.material.userData.fallingWater){assert.ok(mesh.material.isMeshStandardMaterial);assert.equal(mesh.material.map,null);
-  assert.equal(mesh.material.premultipliedAlpha,true);assert.ok(mesh.material.userData.unlitHook,'the studio view keeps the sheet');}
+ // A falling sheet and a bubbler's column are lit water like the pool's surface; the rest is procedural.
+ if(mesh.material.userData.litWater){assert.ok(mesh.material.isMeshStandardMaterial);assert.equal(mesh.material.map,null);
+  assert.equal(mesh.material.premultipliedAlpha,true);assert.ok(mesh.material.userData.unlitHook,'the studio view keeps it');}
  else{assert.ok(mesh.material.isShaderMaterial);assert.equal(mesh.material.map,undefined);}
  }
  if(type==='waterfall')assert.equal(rows.filter(mesh=>mesh.material.userData.fallingWater).length,1);
+ if(type==='bubbler')assert.equal(rows.filter(mesh=>mesh.material.userData.risingWater).length,1);
  if(type!=='fire')assert.equal(rows[0].material.side,THREE.DoubleSide);
 });
 for(const type of ['fountain','bubbler','fire'])await test(type+'_bounding_height_tracks_real_feet',async()=>{
@@ -45,7 +46,9 @@ await test('bubbler_is_a_narrow_column_over_a_wide_foam_apron',async()=>{
   // Measured above the flared foot, the column is far taller than wide once it has any height.
   if(size>=1)assert.ok(column.x<size*.5,`column ${column.x} wide for ${size} tall`);
   assert.ok(foam.x>column.x*2.5,'foam spreads well past the foot');assert.ok(foam.y<.001);
-  assert.equal(body.material.uniforms.kind.value,1);assert.equal(apron.material.uniforms.kind.value,4);
+  // A clear lit column over a faint bubbling ring (user, 2026-11-17: little white).
+  assert.ok(body.material.userData.risingWater);close(body.material.uniforms.fall.value,size);
+  assert.equal(apron.material.uniforms.kind.value,4.5);
  }
 });
 await test('bubbler_grows_taller_not_wider_with_flow',async()=>{

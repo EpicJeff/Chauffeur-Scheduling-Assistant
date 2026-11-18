@@ -131,6 +131,33 @@ await test('a_falling_sheet_is_lit_water_whose_ripples_run_down_it',()=>{
  assert.equal(lit.uniforms.sheetFade,m.uniforms.opacity,'the driver fades the sheet through its own name');
  assert.notEqual(m.userData.unlitHook.key(),m.customProgramCacheKey());
 });
+await test('a_bubbler_is_a_clear_lit_column_and_a_spa_jet_boils_at_the_surface',()=>{
+ // Little white (user, 2026-11-17): turbulence climbs a clear column; a small crown breaks.
+ const p=plan(f('bubbler',{at:[5,8,-.7],size_min:1.5,size_max:1.5}),f('spa_jet',{at:[11.8,15,1],size_min:2,size_max:2}));
+ p.light_fixtures={'light.pool':[{id:'fixture:a',shape:'point',at:[4,4,-2],ref:'absolute'}],'light.spa':[{id:'fixture:b',shape:'point',at:[15,15,-1],ref:'absolute'}]};
+ const fx=buildEffects(p),column=effectMeshes(fx.fixtures[0].group).find(mesh=>mesh.material.userData.risingWater).material;
+ const lit={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};
+ column.onBeforeCompile(lit);const fs=lit.fragmentShader.replace(/\s/g,'');
+ assert.ok(/sheetUp\*1\.4-time\*3\.2/.test(fs),'turbulence climbs the column');
+ assert.ok(fs.includes('sheetNoiseP(vec2(sheetU*10.')&&fs.includes(',10.)'),'ripples close around the column without a seam');
+ assert.ok(fs.includes('floatsheetWhite=clamp(sheetCrown*.75+sheetFoot*.45,0.,1.)'),'white only in the crown and at the foot');
+ const chunks=lit.fragmentShader.replace(/#include <(\w+)>/g,(_,c)=>THREE.ShaderChunk[c]||'');
+ const all=[...chunks.matchAll(/\buniform\s+(?:(?:lowp|mediump|highp)\s+)?\w+\s+(\w+)\s*(?:\[[^\]]*\])?\s*;/g)].map(x=>x[1]);
+ assert.deepEqual([...new Set(all.filter((n,i)=>all.indexOf(n)!==i&&!/Shadow|Lights$/.test(n)))],[],'no uniform declared twice');
+ assert.notEqual(column.userData.unlitHook.key(),column.customProgramCacheKey());
+ assert.equal(lit.uniforms.sheetFade,column.uniforms.opacity);
+ const jet=effectMeshes(fx.fixtures[1].group)[0].material;
+ assert.ok(jet.fragmentShader.includes("A jet's boil")&&jet.fragmentShader.includes('color*(light+glow*1.2)'),'the boil, lit by its lamps');
+ // The plume is a loose, tinted cloud that meanders differently for every jet (user, 2026-11-17).
+ const pf=jet.fragmentShader.replace(/\s/g,'');
+ assert.ok(pf.includes('alpha=(.03+.22*bubbles)*patches*face*envelope'),'patchy, soft-edged and far less white');
+ assert.ok(jet.vertexShader.includes('uniform float time;')&&jet.vertexShader.includes('modelMatrix[3].xyz')&&jet.vertexShader.includes('held'),
+  'meanders per jet, held at both ends');
+ assert.ok(fx.fixtures[0].lamps.includes('light.pool'),'the bubbler stands in the lit pool');
+ assert.ok(fx.fixtures[1].lamps.includes('light.spa'),'the jet runs in the lit spa');
+ fx.update({'light.spa':{state:'on',attributes:{brightness:255,rgb_color:[255,255,255]}},'light.pool':{state:'on',attributes:{brightness:255,rgb_color:[255,255,255]}}},false,1,.18);
+ assert.ok(jet.uniforms.glow.value.r>.3,'the jet takes the lamp light');
+});
 await test('mist_point_and_line_drop_the_authored_distance',()=>{
  for(const shape of ['point','line']){
   const fixture=f('mist',{shape,at:undefined,...(shape==='line'?{path:[[1,1,8],[12,1,8]]}:{at:[1,1,8]}),size_min:6,size_max:6});

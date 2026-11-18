@@ -26,7 +26,7 @@ function sheet(path, normals, drops, foam = false) {
   // The falling sheet is lit water like the pool's; its landing foam stays procedural.
   // Streak width and ripples are in feet, whatever the length of the lip and fall.
   const fallFt=drops.reduce((s,d)=>s+d,0)/Math.max(1,drops.length);
-  const material=foam?waterMaterial(4):sheetMaterial(total,fallFt);
+  const material=foam?waterMaterial(4.5):sheetMaterial(total,fallFt);
   material.uniforms.span.value=total;
   if(foam)material.vertexShader=material.vertexShader.replace('if(kind>1.5 && kind<2.5)', 'if(kind>1.5)')
     .replace('(1.-exp(-uv.y*6.))','(1.-exp(-6.))');
