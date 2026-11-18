@@ -203,6 +203,9 @@ for(const failure of [false,true])await test('high_water_mirror_is_the_scene_see
  const hidden=[new THREE.Sprite(),new THREE.LineSegments(),new THREE.Group()];hidden[2].userData.reflectionExclude=true;hidden.forEach(o=>c.scene.add(o));
  const sheet=new THREE.Mesh(new THREE.PlaneGeometry(),new THREE.MeshBasicMaterial());c.scene.add(sheet);c.extra.push(sheet);
  const lamp=new THREE.PointLight();lamp.shadow.autoUpdate=true;lamp.shadow.needsUpdate=true;c.scene.add(lamp);
+ // A household's imported model can carry a null name (seen on device 2026-11-18:
+ // the name test threw and the mirror gave up for good).
+ const nameless=new THREE.LOD();nameless.name=null;nameless.add(new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial()));c.scene.add(nameless);
  const saved=state(c.renderer);let virtual=null;c.renderer.failMirror=failure;
  c.renderer.inspectMirror=(s,v)=>{virtual=v;
   assert.ok(hidden.every(o=>!o.visible));assert.ok(!sheet.visible);
@@ -223,6 +226,7 @@ for(const failure of [false,true])await test('high_water_mirror_is_the_scene_see
  if(failure){assert.equal(c.warnings.length,1);assert.equal(u.waterPlanar.value,null);
   c.renderer.failMirror=false;c.manager.mirror(camera);assert.equal(c.renderer.mirrors.length,1,'a failed mirror is not retried every frame');
   c.manager.rebuild(c.p,c.out.root);c.round();c.manager.mirror(camera);assert.equal(c.manager.info().planar.active,true,'a rebuild tries again');c.manager.dispose();return;}
+ assert.deepEqual(c.warnings,[],'a nameless object never stops the mirror');
  assert.equal(info.passes,1);assert.deepEqual(info.size,[960,540]);near(u.waterPlanarHeight.value,pool[1]);assert.equal(u.waterPlanar.value,c.renderer.mirrors[0].texture);
  // A point above the water sits in the image where the eye sees its mirror
  // twin below the water, left and right swapped as in any mirror; the water

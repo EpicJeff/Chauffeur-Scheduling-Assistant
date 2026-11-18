@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.928 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.929 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.929 (2026-11-18, NOT device-verified; the fault was found from the household's own browser console on device): a household's house with an imported model gets its pool mirror and reflection captures back.**
+
+- **What was wrong.** On the household's device the pool showed only the generic environment reflection, never the house, while the same house file mirrored correctly on the test page. The console said `House reflection capture failed: TypeError: Cannot read properties of null (reading 'startsWith')`: an object inside an imported model's level-of-detail group carries a null name, and the test of what a reflection must leave out read `o.name.startsWith(...)`. The throw stopped every reflection capture and, once, the pool mirror for good. The test page has no imported models, so it never threw there.
+- **What changed for a person.** Water and outside glass mirror the house and yard on a house with imported models (the v2.499.928 water changes now reach the household's device).
+- **How.** `static/twin/reflection_probes.js` `excluded` reads the name as `String(o.name ?? '')`.
+- **Tests.** `tests/test_twin_reflection_probes_js.py` (27: a level-of-detail object with a null name in the scene, the mirror draws with no warning; failed before the fix), `tests/test_twin_water_mirror_define.py`, `tests/test_twin_water_surface_js.py`, `tests/test_twin_import_maps.py`.
 
 **v2.499.928 (2026-11-18, NOT device-verified, browser-checked in Chromium on high and medium on the `/house` view page with a household's own house loaded through the house-file load path, every water effect running through a stand-in Home Assistant, by day and night, and on the `/house/editor` page): the pool mirrors the house and sky again in daylight.**
 

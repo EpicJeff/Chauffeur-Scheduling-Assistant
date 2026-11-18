@@ -174,11 +174,12 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
   const frustum = new THREE.Frustum(), scratch = new THREE.Matrix4(), size = new THREE.Vector2();
   const eye = new THREE.Vector3(), aim = new THREE.Vector3(), up = new THREE.Vector3(), plane = new THREE.Plane(), clip = new THREE.Vector4(), corner = new THREE.Vector4();
   // What a reflection must not contain: markers, handles, effects, the water
-  // itself and every other mirror.
+  // itself and every other mirror. An imported model can carry a null name;
+  // a throw here would stop every capture and the pool mirror for good.
   const excluded = (o, owner = null) => {
     const d = o.userData;
     return o.isSprite || o.isPoints || o.isLine || o.isHelper || o.layers.isEnabled(31) ||
-      d.effectFixtures || d.effectFixture || d.fireFlame || d.reflectionExclude || d.preview || d.aimHandle || d.fixtureId || d.kind==='sheet' || o.name.startsWith('editor-') ||
+      d.effectFixtures || d.effectFixture || d.fireFlame || d.reflectionExclude || d.preview || d.aimHandle || d.fixtureId || d.kind==='sheet' || String(o.name ?? '').startsWith('editor-') ||
       (owner && d.buildingId===owner) ||
       [].concat(o.material || []).some(m=>m.userData.waterSurface || m.userData.reflection || m.depthTest===false || m.name==='sheet');
   };
