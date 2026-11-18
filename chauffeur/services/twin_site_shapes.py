@@ -9,7 +9,7 @@ MATERIALS = ('mulch', 'patio_concrete', 'paving', 'lawn', 'base', 'fence')
 FIRE_FIELDS = {'fuel', 'body', 'top', 'height_in', 'glass', 'entity'}
 # Library material slots per feature part (user, 2026-11-13: "Why doesn't everything just have
 # a material slot"). A missing part is the feature's own default look.
-SLOTS = {'beds': ('fill',), 'hardscape': ('surface', 'edging'), 'fire_pit': ('body', 'top'),
+SLOTS = {'beds': ('fill',), 'hardscape': ('surface', 'edging', 'joint'), 'fire_pit': ('body', 'top'),
          'fence': ('boards', 'posts', 'rails'), 'pool': ('coping', 'interior', 'waterline', 'water'),
          'edges': ('strip',), 'spa': ('coping', 'interior', 'waterline', 'wall', 'water')}
 
@@ -143,9 +143,37 @@ def fire_properties(piece):
             **({'glass': piece.get('glass', 'amber')} if gas else {})}
 
 
+PAVER_DEFAULTS = {'layout': 'grid', 'length_in': 24, 'width_in': 24, 'gap_in': 3,
+                  'rotation': 0, 'edge': 'whole', 'joint': 'grass'}
+MAX_PAVERS = 5000
+
+
+def pavers(value):
+    if not isinstance(value, dict) or set(value) - set(PAVER_DEFAULTS):
+        raise ValueError('Choose supported paver properties.')
+    result = {**PAVER_DEFAULTS, **value}
+    for field, low, high in [('length_in', 2, 60), ('width_in', 2, 60), ('gap_in', 0, 48), ('rotation', -90, 90)]:
+        if not terrain.number(result[field]) or not low <= result[field] <= high:
+            raise ValueError(f'Choose paver {field} from {low} to {high}.')
+    for field, choices in [('layout', ('stepping', 'grid', 'running_bond', 'diagonal', 'herringbone')),
+            ('edge', ('whole', 'cut')), ('joint', ('grass', 'gravel', 'sand', 'none'))]:
+        if result[field] not in choices:
+            raise ValueError(f'Choose a supported paver {field}.')
+    return result
+
+
+def paver_estimate(piece, settings):
+    # Same area / cell-area formula as paverEstimate; raw points conservatively
+    # estimate rounded corners without reproducing client curve tessellation.
+    length = sum(math.dist(a, b) for a, b in zip(piece['points'], piece['points'][1:]))
+    width = settings['width_in'] / 12 if settings['layout'] == 'stepping' else piece.get('width', 3)
+    return math.ceil(length * width / (((settings['length_in'] + settings['gap_in']) / 12)
+                                      * ((settings['width_in'] + settings['gap_in']) / 12)))
+
+
 PATH_PRESETS = {
     'sidewalk': {'width': 4, 'material': 'patio_concrete', 'corner': 'mitred'},
-    'paver': {'width': 3, 'material': 'paving', 'corner': 'rounded'},
+    'paver': {'width': 3, 'material': 'paving', 'corner': 'rounded', 'pavers': dict(PAVER_DEFAULTS)},
     'driveway': {'width': 10, 'material': 'patio_concrete', 'corner': 'mitred'},
 }
 
@@ -246,10 +274,15 @@ def create(name, values, lot):
             raise ValueError('Choose Sidewalk, Paver path or Driveway.')
         defaults.update(width=3, corner='mitred', smooth=False, edging='none')
         defaults.update(PATH_PRESETS.get(preset, {}))
-        allowed = {'kind', 'points', 'width', 'corner', 'radius', 'smooth', 'material', 'edging', 'preset'}
+        allowed = {'kind', 'points', 'width', 'corner', 'radius', 'smooth', 'material', 'edging', 'preset', 'pavers'}
     if set(values) - allowed:
         raise ValueError('Choose supported drawing properties.')
     piece = {**defaults, **values}
+    if path and 'pavers' in piece:
+        if piece['pavers'] is None:
+            piece.pop('pavers')
+        else:
+            piece['pavers'] = pavers(piece['pavers'])
     if 'material' in piece and piece['material'] not in MATERIALS:
         raise ValueError('Choose an existing kit material role.')
     validate(name, piece)
@@ -310,6 +343,10 @@ def validate(name, piece, *, legacy_height=False):
                 raise ValueError(f'Choose {field} from {low} to {high} feet.')
         if piece.get('corner', 'mitred') not in ('mitred', 'rounded') or type(piece.get('smooth', False)) is not bool or piece.get('edging', 'none') not in ('none', 'curb'):
             raise ValueError('Choose mitred or rounded corners, a smooth curve, and none or curb edging.')
+        if 'pavers' in piece:
+            settings = pavers(piece['pavers'])
+            if paver_estimate(piece, settings) > MAX_PAVERS:
+                raise ValueError('Use larger pavers or a shorter path.')
     for field, default, low, high in [('rotation', 0, -360, 360),
             *([('depth', 5, 2, 12), ('coping', 1, 0, 3)] if name == 'pool' else []),
             *([('radius', 2, .1, 100)] if round_pit else []),
@@ -338,7 +375,7 @@ def update(name, piece, change, lot):
     if name in ('beds', 'hardscape', 'edges', 'pool'):
         allowed |= {'material'}
     if name == 'hardscape' and piece.get('kind') == 'path':
-        allowed |= {'width', 'corner', 'radius', 'smooth', 'edging'}
+        allowed |= {'width', 'corner', 'radius', 'smooth', 'edging', 'pavers'}
     if name == 'pool':
         allowed |= {'depth', 'coping', 'features'}
     if name == 'fire_pit':
@@ -361,7 +398,10 @@ def update(name, piece, change, lot):
     if name == 'fire_pit' and change.get('fuel') == 'wood' and 'glass' not in change:
         piece.pop('glass', None)
     if 'rotation' in change and geometry and geometry not in change:
-        validate(name, {**piece, **change}, legacy_height=legacy_height)
+        candidate = {**piece, **change}
+        if candidate.get('pavers') is None:
+            candidate.pop('pavers', None)
+        validate(name, candidate, legacy_height=legacy_height)
         angle = change['rotation']
         if not terrain.number(angle) or not -360 <= angle <= 360:
             raise ValueError('Choose rotation from -360 to 360.')
@@ -384,7 +424,14 @@ def update(name, piece, change, lot):
                                        round(origin[1]+(p[0]-origin[0])*math.sin(a)+(p[1]-origin[1])*math.cos(a), 9)] for p in feature['polygon']]
     if 'materials' in change:
         change = {**change, 'materials': material_slots(name, change['materials'], piece.get('materials'))}
+    if 'pavers' in change and change['pavers'] is not None:
+        change = {**change, 'pavers': pavers(change['pavers'])}
     piece.update(change)
+    if 'pavers' in piece:
+        if piece['pavers'] is None:
+            piece.pop('pavers')
+        else:
+            piece['pavers'] = pavers(piece['pavers'])
     if not piece.get('materials', True):
         piece.pop('materials')
     if name == 'yard_rooms' and isinstance(piece.get('name'), str):

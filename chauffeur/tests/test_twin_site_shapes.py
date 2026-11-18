@@ -15,7 +15,79 @@ os.environ['CHAUFFEUR_DATA_DIR'] = DATA
 from services import twin_model_bridge as bridge, twin_model_ops as ops, twin_store
 
 
+def paver_checks():
+    from services import twin_site_shapes as shapes
+    defaults = {'layout': 'grid', 'length_in': 24, 'width_in': 24, 'gap_in': 3,
+                'rotation': 0, 'edge': 'whole', 'joint': 'grass'}
+    values = {'kind': 'path', 'points': [[0, 0], [20, 0]], 'width': 6}
+    path, _ = shapes.create('hardscape', dict(values, preset='paver'), None)
+    assert path['pavers'] == defaults
+    sidewalk, _ = shapes.create('hardscape', dict(values, preset='sidewalk'), None)
+    assert 'pavers' not in sidewalk
+    shapes.validate('hardscape', sidewalk)
+    shapes.update('hardscape', sidewalk, {'width': 5}, None)
+    assert sidewalk['width'] == 5 and 'pavers' not in sidewalk
+    for bad in [{'length_in': 1}, {'width_in': 61}, {'gap_in': -1}, {'rotation': 91},
+                {'layout': 'basket'}, {'edge': 'half'}, {'joint': 'moss'}, {'unknown': 1},
+                {'length_in': True}, {'gap_in': float('nan')}, {'rotation': float('inf')},
+                {'layout': []}, [], 'grid', False]:
+        for action in ('create', 'update', 'validate'):
+            try:
+                if action == 'create':
+                    shapes.create('hardscape', dict(values, pavers=bad), None)
+                elif action == 'update':
+                    shapes.update('hardscape', copy.deepcopy(sidewalk), {'pavers': bad}, None)
+                else:
+                    shapes.validate('hardscape', dict(sidewalk, pavers=bad))
+            except ValueError:
+                pass
+            else:
+                raise AssertionError((action, bad))
+    shapes.update('hardscape', path, {'pavers': {'layout': 'herringbone'}}, None)
+    assert path['pavers'] == dict(defaults, layout='herringbone')
+    shapes.update('hardscape', path, {'pavers': {'gap_in': 6}}, None)
+    assert path['pavers'] == dict(defaults, gap_in=6), 'a replacement starts from defaults'
+    shapes.update('hardscape', path, {'pavers': None, 'rotation': 45}, None)
+    assert 'pavers' not in path
+    assert 'pavers' not in shapes.create('hardscape', dict(values, preset='paver', pavers=None), None)[0]
+    small = {'length_in': 2, 'width_in': 2, 'gap_in': 0}
+    long = dict(values, points=[[0, 0], [200, 0]], width=4)
+    for action in ('create', 'update', 'validate'):
+        try:
+            if action == 'create':
+                shapes.create('hardscape', dict(long, pavers=small), None)
+            elif action == 'update':
+                shapes.update('hardscape', dict(long), {'pavers': small}, None)
+            else:
+                shapes.validate('hardscape', dict(long, pavers=small))
+        except ValueError as exc:
+            assert str(exc) == 'Use larger pavers or a shorter path.'
+        else:
+            raise AssertionError(action)
+    # Geometry and width changes must recheck the cap on an existing paver path.
+    for change in ({'points': [[0, 0], [200, 0]]}, {'width': 30}):
+        existing = dict(values, width=1, points=[[0, 0], [10, 0]], pavers=dict(small))
+        try:
+            shapes.update('hardscape', existing, change, None)
+        except ValueError as exc:
+            assert str(exc) == 'Use larger pavers or a shorter path.'
+        else:
+            raise AssertionError(change)
+    stepping = dict(long, width=30, pavers={**small, 'layout': 'stepping', 'length_in': 24})
+    shapes.validate('hardscape', stepping)  # Estimate uses stone width, not strip width.
+    assert shapes.paver_estimate(dict(long, points=[[0, 0], [100, 0]]), shapes.pavers(small)) == 14400
+    assert shapes.paver_estimate(stepping, shapes.pavers(stepping['pavers'])) == 100
+    slot = {'id': 'red_brick_03'}
+    shapes.update('hardscape', path, {'materials': {'joint': slot}}, None)
+    assert path['materials']['joint'] == slot
+    assert shapes.SLOTS['hardscape'] == ('surface', 'edging', 'joint')
+    assert shapes.PATH_PRESETS['paver']['pavers'] == defaults
+    assert shapes.MAX_PAVERS == 5000
+    print('Paver defaults, replacement, removal, field validation, cap and joint material passed')
+
+
 def run():
+    paver_checks()
     fixture = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
     model = bridge.assemble(fixture)[0]
     rect = [[5, 5], [15, 5], [15, 10], [5, 10]]
@@ -124,12 +196,23 @@ def run():
         path = added['site']['hardscape'][-1]
         assert path['width'] == width and path['material'] == material
         assert path['corner'] == ('rounded' if preset == 'paver' else 'mitred')
+        assert ('pavers' in path) == (preset == 'paver')
+        if preset == 'paver':
+            from services.twin_site_shapes import PAVER_DEFAULTS
+            assert path['pavers'] == PAVER_DEFAULTS
         assert bridge.assemble(bridge.flatten(added))[0]['site']['hardscape'][-1] == path
     path_op = {'op': 'add_site_shape', 'list': 'hardscape', 'kind': 'path', 'points': [[5, 5], [15, 15], [5, 15], [15, 5]]}
     added, _ = ops.apply(model, path_op)  # User-authored crossing is allowed.
     assert added['site']['hardscape'][-1]['width'] == 3
     changed, _ = ops.apply(added, {'op': 'update_site_shape', 'list': 'hardscape', 'index': 1, 'width': 4, 'smooth': True, 'edging': 'curb', 'radius': 2})
     assert changed['site']['hardscape'][1]['width'] == 4
+    assert 'pavers' not in changed['site']['hardscape'][1], 'legacy path updates stay solid'
+    paved, _ = ops.apply(changed, {'op': 'update_site_shape', 'list': 'hardscape', 'index': 1,
+                                  'pavers': {'layout': 'herringbone'}})
+    assert paved['site']['hardscape'][1]['pavers'] == dict(PAVER_DEFAULTS, layout='herringbone')
+    assert bridge.assemble(bridge.flatten(paved))[0]['site']['hardscape'] == paved['site']['hardscape']
+    solid, _ = ops.apply(paved, {'op': 'update_site_shape', 'list': 'hardscape', 'index': 1, 'pavers': None})
+    assert solid['site']['hardscape'][1] == changed['site']['hardscape'][1]
     for change in [{'points': [[1, 1]]}, {'points': [[1, 1], [1, 1]]}, {'points': [[1, 1], [float('nan'), 1]]},
                    {'width': .99}, {'width': 30.01}, {'width': True}, {'smooth': 'yes'}, {'corner': 'spike'}, {'edging': 'wall'},
                    {'preset': 'unknown'}, {'material': 'made-up'}, {'polygon': rect}, {'radius': 0}]:
