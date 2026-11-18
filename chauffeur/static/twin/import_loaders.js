@@ -5,6 +5,20 @@ import { unzipSync, zipSync, strToU8, strFromU8 } from 'three/addons/libs/fflate
 
 const refusal = () => new Error('Imported models must use their included resources.');
 
+// SketchUp, and so 3D Warehouse, writes a model's edges (its smoothed ones too)
+// into glTF and Collada as line primitives, usually with no material, which
+// three draws white over every facet. A household's model never wants them:
+// keep the faces only. Returns how many line and point objects were dropped.
+export function dropEdgeLines(root) {
+  const drop = [];
+  root?.traverse(o => { if (o.isLine || o.isLineSegments || o.isLineLoop || o.isPoints) drop.push(o); });
+  for (const o of drop) {
+    o.removeFromParent(); o.geometry?.dispose();
+    for (const m of o.material ? [].concat(o.material) : []) m.dispose?.();
+  }
+  return drop.length;
+}
+
 function xml(text) {
   if (/<!DOCTYPE|<!ENTITY/i.test(text)) throw refusal();
   const doc = new DOMParser().parseFromString(text, 'application/xml');

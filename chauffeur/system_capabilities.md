@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.931 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.932 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.932 (2026-11-18, NOT device-verified; node-checked through the real model loader): imported models no longer show their edges as white lines.**
+
+- **What was wrong.** Every glTF the household took from 3D Warehouse drew a white line along every edge, smoothed curves included ("It makes them useless"). SketchUp, and so 3D Warehouse, exports a model's edges as line primitives, usually with no material; three gives them the default white material and draws them over the faces.
+- **What changed for a person.** Imported models show their faces only. Models imported earlier are fixed too, with no re-import: the lines are dropped every time a model loads, so the thumbnails and lighter versions made from now on have none either.
+- **How.** `static/twin/import_loaders.js` `dropEdgeLines(root)` removes and disposes line, line-segment, line-loop and point objects; `static/twin/twin_library.js` `loadModel` calls it for every imported model (glTF, Collada, KMZ) right after loading.
+- **Tests.** `tests/test_twin_import_chunks_js.py` (a glTF with an edge-line primitive: the stock loader makes a line object; the imported model keeps its faces and no lines; failed before the fix), `tests/test_twin_collada_js.py`, `tests/test_model_lod_import_js.py`, `tests/test_twin_library_js.py` (28), `tests/test_twin_import_maps.py`.
 
 **v2.499.931 (2026-11-18, NOT device-verified, browser-checked in Chromium on the `/house` view page with a household's own house, a floor pinned): a floor viewed on its own shows its walls at full height, cut just under the ceiling.**
 
