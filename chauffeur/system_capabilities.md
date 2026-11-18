@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.930 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.931 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.931 (2026-11-18, NOT device-verified, browser-checked in Chromium on the `/house` view page with a household's own house, a floor pinned): a floor viewed on its own shows its walls at full height, cut just under the ceiling.**
+
+- **What was wrong.** Viewing one floor or room cut its walls 4 ft under the ceiling (6 ft on a 10 ft floor), a low dollhouse cut. The household: "They should be cut off at the ceiling height for the floor."
+- **What changed for a person.** The walls of the viewed floor stand to its ceiling; the ceiling, the floors above and the roof are taken away, so the rooms are open from above. Looking in at a shallow angle, full-height walls hide more of a room than the low cut did.
+- **How.** One value, `cutHeight(level)` in `static/twin/twin_floors.js`: `max(1, ceiling - .05)` ft above the floor (a hair under the ceiling so the ceiling itself is cut away rather than lidding the room). `static/twin/viewing.js` re-exports it for the view's clip plane, and `static/twin/twin_generator.js` builds the closed cut walls to the same height (it repeated the old 4 ft formula before).
+- **Tests.** `tests/test_twin_viewing_js.py` (20: just under the ceiling, bounded for short levels, one shared value; the cap and sunken-room checks at the new height), `tests/test_house_twin_viewing_live.py` (5, Chromium: flat closed wall tops at the cut, roofs and floors above restored on leaving), `tests/test_twin_room_floor_js.py`, `tests/test_twin_import_maps.py`.
 
 **v2.499.930 (2026-11-18, NOT device-verified, browser-checked in Chromium on high on the `/house` view page with a household's own house loaded through the house-file load path and every water effect running): a bubbler is a white, aerated column again.**
 

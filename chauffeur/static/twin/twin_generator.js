@@ -13,7 +13,7 @@ import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
 import { PORCH_SLAB_FT, POST_SLAB_FT, porchFoundation, porchOnGrade, porchSupportGeometry, porchPlinthGeometry } from './twin_porch_foundation.js';
 import { stairGeometry, doorwaySteps } from './twin_stairs.js';
-import { roomFloor, roomAt, openingFloor, wallFloorProfile, foundationPieces } from './twin_floors.js';
+import { roomFloor, roomAt, openingFloor, wallFloorProfile, foundationPieces, cutHeight } from './twin_floors.js';
 import { ceilingPatches } from './twin_ceilings.js';
 import { buildGarageDoor } from './garage_door.js';
 import { buildEffects } from './effects/index.js';
@@ -1040,7 +1040,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       if (viewing) {
         // Closed plain slabs, including opening notches. Built once;
         // the view only cross-fades these and the unchanged exterior walls.
-        const height = Math.max(1, (l.ceiling || 8) - 4);
+        const height = cutHeight(l);
         wall(wallCut[w.level], w.from, w.to, l.elevation, w.thickness, () => height,
           holes, w.exterior, null, false, { ...profile, cutaway: true, limits: null, panels: [] });
       }

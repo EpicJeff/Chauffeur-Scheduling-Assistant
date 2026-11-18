@@ -1,5 +1,9 @@
 // Building-local feet. Ceilings and wall tops remain relative to the level.
 export const roomFloor = (level, room) => (level?.elevation || 0) + (room?.floor_offset_ft || 0);
+// Feet above a level's floor where its walls are cut when the floor is viewed
+// on its own: at the ceiling (household, 2026-11-18), a hair under it so the
+// ceiling itself is cut away and does not lid the room.
+export const cutHeight = level => Math.max(1, (level.ceiling || 8) - .05);
 function inside(poly, x, y) {
   let yes = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
