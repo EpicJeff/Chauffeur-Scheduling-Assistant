@@ -144,7 +144,7 @@ def fire_properties(piece):
 
 
 PAVER_DEFAULTS = {'layout': 'grid', 'length_in': 24, 'width_in': 24, 'gap_in': 3,
-                  'rotation': 0, 'edge': 'whole', 'joint': 'grass'}
+                  'rotation': 0, 'edge': 'whole', 'joint': 'grass', 'lay': 'ground'}
 MAX_PAVERS = 5000
 
 
@@ -156,7 +156,7 @@ def pavers(value):
         if not terrain.number(result[field]) or not low <= result[field] <= high:
             raise ValueError(f'Choose paver {field} from {low} to {high}.')
     for field, choices in [('layout', ('stepping', 'grid', 'running_bond', 'diagonal', 'herringbone')),
-            ('edge', ('whole', 'cut')), ('joint', ('grass', 'gravel', 'sand', 'none'))]:
+            ('edge', ('whole', 'cut')), ('joint', ('grass', 'gravel', 'sand', 'none')), ('lay', ('ground', 'level'))]:
         if result[field] not in choices:
             raise ValueError(f'Choose a supported paver {field}.')
     return result

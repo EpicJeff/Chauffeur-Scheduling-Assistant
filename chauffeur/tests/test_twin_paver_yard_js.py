@@ -21,10 +21,27 @@ assert.deepEqual(pathPresets.paver.pavers,PAVER_DEFAULTS);
 const blocks=await meshes(path),layout=paverLayout(path);
 assert.equal(paverGeometry(plan(path),path,layout).userData.paverPath,true);
 assert.equal(blocks.length,1,'one surface and no continuous slab');
-assert.equal(triangles(blocks[0].geometry),layout.pavers.length*20,'bevelled rectangular prism: 2 top, 2 bottom, 8 bevel, 8 side triangles');
+assert.equal(triangles(blocks[0].geometry),layout.pavers.length*18,'bevelled rectangular prism: 2 top, 8 bevel, 8 side triangles (no bottom: it stands in the ground)');
 assert.ok(blocks[0].userData.snapRanges.every(r=>r.kind==='hardscape'&&r.pieceId==='walk'));
 assert.ok(atlasMesh(blocks[0]),'merged pavers receive bake exactly like the slab');
 assert.ok(blocks[0].geometry.attributes.normal&&blocks[0].geometry.attributes.uv);
+// Each stone's top carries exactly one tile of its material, edge to edge (owner, 2026-11-18).
+{
+ const g=paverGeometry(plan(path),path,layout,[3,5]),uv=g.attributes.uv,top=[];
+ for(let i=0;i<6;i++)top.push([uv.getX(i),uv.getY(i)]);
+ const span=k=>Math.max(...top.map(v=>v[k]))-Math.min(...top.map(v=>v[k])),bevel=.25/12/2;
+ assert.ok(Math.abs(span(0)-3*(1-2*bevel))<1e-4&&Math.abs(span(1)-5*(1-2*bevel))<1e-4,`top uv spans one tile: ${span(0)} ${span(1)}`);
+ assert.ok(top.every(([u,v])=>u>0&&u<3&&v>0&&v<5),'top uv inside the tile');
+}
+// Follow the ground: on a slope each corner sits on the ground under it; Level stays flat.
+{
+ const slope={buildings:[],site:{hardscape:[path],terraces:[{polygon:[[0,7],[20,7],[20,20],[0,20]],height:-2,blend:6}]}};
+ assert.ok(Math.abs(groundAt(slope,2,4)-groundAt(slope,2,6))>1e-3,'the walk crosses the pad blend');
+ const tops=h=>{const g=paverGeometry(slope,h,paverLayout(h)),a=g.attributes.position;return Array.from({length:6},(_,i)=>a.getY(i));};
+ const follow=tops(path),flat=tops({...path,pavers:{...path.pavers,lay:'level'}});
+ assert.ok(Math.max(...follow)-Math.min(...follow)>1e-3,'stones tilt with the ground');
+ assert.ok(Math.max(...flat)-Math.min(...flat)<1e-9,'level stones stay flat');
+}
 for(const joint of ['grass','none','sand','gravel']){
  const h={...path,pavers:{...path.pavers,joint}},m=await meshes(h);
  assert.equal(m.length,['sand','gravel'].includes(joint)?2:1,joint);

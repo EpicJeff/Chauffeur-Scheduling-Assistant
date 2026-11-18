@@ -272,6 +272,8 @@ export function applyMaterialParams(material, entry, ref, role, tier) {
   const scale = params.normal_scale ?? 1;
   material.normalScale.set(scale, params.normal_convention === 'dx' ? -scale : scale);
   const tile = params.tile_ft || [4, 4];
+  // Pavers lay exactly one tile on each stone (paver_geometry.js).
+  material.userData.tileFt = tile;
   // Read by the generator and yard when they make geometry (offsetSurfaceUvs).
   material.userData.randomOffset = params.random_offset === true;
   const properties = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap'];
@@ -348,6 +350,8 @@ export function kitMaterial(role, kit, tier) {
     side: THREE.FrontSide,
   });
   material.userData.alphaMode = alphaModeOf(asset, ref);
+  // The kit's maps repeat every 4 ft (8 for lawn); see the repeat set below.
+  material.userData.tileFt = role === 'lawn' ? [8, 8] : [4, 4];
   if (ref.pattern === 'lattice') {
     material.alphaMap = latticeTexture(); material.alphaTest = .5; material.side = THREE.DoubleSide;
     // r187 WebGLShadowMap caches depth/distance variants by this material's

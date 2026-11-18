@@ -145,7 +145,8 @@ export function paverLayout(path) {
     const frame = line.frame(centre[0]), polygon = local.map(p => add(frame.at, turn(sub(p, [centre[0], 0]), frame.angle)));
     const size = area(polygon);
     if (grid.near(polygon).some(p => area(clip(polygon, p.polygon)) > .1 * Math.min(size, area(p.polygon)) + EPS)) return;
-    const p = { polygon, centre: add(frame.at, turn([0, centre[1]], frame.angle)), angle: frame.angle + a, index: id };
+    // `size` is the whole stone along `angle` and across it, before any cut.
+    const p = { polygon, centre: add(frame.at, turn([0, centre[1]], frame.angle)), angle: frame.angle + a, size: [length, width], index: id };
     pavers.push(p); grid.put(p);
     if (pavers.length > MAX_PAVERS) throw new Error('Use larger pavers or a shorter path.');
   };

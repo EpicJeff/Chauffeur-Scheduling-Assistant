@@ -18,7 +18,7 @@ from services import twin_model_bridge as bridge, twin_model_ops as ops, twin_st
 def paver_checks():
     from services import twin_site_shapes as shapes
     defaults = {'layout': 'grid', 'length_in': 24, 'width_in': 24, 'gap_in': 3,
-                'rotation': 0, 'edge': 'whole', 'joint': 'grass'}
+                'rotation': 0, 'edge': 'whole', 'joint': 'grass', 'lay': 'ground'}
     values = {'kind': 'path', 'points': [[0, 0], [20, 0]], 'width': 6}
     path, _ = shapes.create('hardscape', dict(values, preset='paver'), None)
     assert path['pavers'] == defaults

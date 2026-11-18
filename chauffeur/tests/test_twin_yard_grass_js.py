@@ -61,8 +61,8 @@ await test('paver_field_and_joint_roots_fit_joints_share_one_draw_and_obey_budge
   const a=f.mesh.instanceMatrix.array,spread=Math.hypot(a[0],a[2]);
   for(let i=0;i<f.instances;i++){
    const x=a[i*16+12],y=-a[i*16+14];
-   if(i<f.instances-f.jointInstances){
-    for(const {polygon} of layout.pavers){assert.ok(!inPolygon(polygon,x,y));assert.ok(polygon.every((v,j)=>edgeDistance([x,y],v,polygon[(j+1)%polygon.length])>=.13*spread-2e-6));}
+    if(i<f.instances-f.jointInstances){
+    for(const {polygon} of layout.pavers){assert.ok(!inPolygon(polygon,x,y));assert.ok(polygon.every((v,j)=>edgeDistance([x,y],v,polygon[(j+1)%polygon.length])>=B.PAVER_ROOT_MARGIN-2e-6));}
    }else{
     assert.ok(inPolygon(p.site.lot,x,y));assert.ok(layout.joints.some(([v,w])=>edgeDistance([x,y],v,w)<1e-6));
     assert.ok(.13*Math.hypot(a[i*16],a[i*16+2])<=layout.jointWidth/2+1e-6);assert.ok(Math.abs(a[i*16+5]-.6)<1e-6);
@@ -77,9 +77,10 @@ await test('paver_field_and_joint_roots_fit_joints_share_one_draw_and_obey_budge
     f.mesh.getMatrixAt(i,m);
     for(let j=0;j<g.attributes.position.count;j++){
      v.fromBufferAttribute(g.attributes.position,j).applyMatrix4(m);if(v.y<=1/12)continue;
-     const t=g.attributes.grassShape.getX(j),joint=i>=f.instances-f.jointInstances;
-     for(const sx of [-1,1])for(const sy of [-1,1])for(const q of layout.pavers)
-      assert.ok(!inPolygon(q.polygon,v.x+(joint?0:sx*.043*1.4*t*t),-v.z+(joint?0:sy*.027*1.4*t*t)),`blade at ${x},${y} enters paver`);
+     // Lawn blades lean over a stone's edge (owner: grass right up to the paver);
+     // the squeezed joint clumps still stay inside their joint.
+     if(i<f.instances-f.jointInstances)continue;
+     for(const q of layout.pavers)assert.ok(!inPolygon(q.polygon,v.x,-v.z),`joint blade at ${x},${y} enters paver`);
     }
    }
   }

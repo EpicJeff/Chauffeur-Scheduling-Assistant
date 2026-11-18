@@ -205,7 +205,10 @@ export async function boot() {
     if (local) {
       // Walls and hosted pieces already have drawable preview buffers. Site
       // gestures have only an outline, so settle their local geometry now.
-      if (!kept || operation.op === 'move_site_item') await settleView(queue.shown(), { selection });
+      // A shape's vertex, turn or size drag also draws only an outline: without
+      // this settle an equal answer never redrew it (owner, 2026-11-18: pavers
+      // stayed put after moving a path point).
+      if (!kept || ['move_site_item', 'update_site_shape'].includes(operation.op)) await settleView(queue.shown(), { selection });
       lastScene = JSON.stringify(queue.shown());
       frame = api.observeEditFrame(view, timing);
       frame.catch(report);
