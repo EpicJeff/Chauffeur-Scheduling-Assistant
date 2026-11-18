@@ -35,6 +35,61 @@ const rows=f=>{const a=f.mesh?.instanceMatrix.array||[],m=new Map();for(let i=0;
 const release=f=>{f.mesh?.geometry.dispose();f.mesh?.material.dispose();};
 const compile=(m,kind='standard')=>{const s={uniforms:{},vertexShader:THREE.ShaderLib[kind].vertexShader,
  fragmentShader:THREE.ShaderLib[kind].fragmentShader};m.onBeforeCompile(s,{});return s;};
+const P=await import(file('static/twin/paver_layout.js'));
+const {pathSurfacePolygons}=await import(file('static/twin/path_shapes.js'));
+const paverPlan=()=>({buildings:[],site:{lot:square(0,0,40,30),hardscape:[{id:'pavers',kind:'path',points:[[5,15],[35,15]],width:5,pavers:{...P.PAVER_DEFAULTS}}]}});
+await test('paver_covers_follow_joint_fill_and_cap_fallback_warns_once',async()=>{
+ const p=paverPlan(),h=p.site.hardscape[0],layout=P.paverLayout(h);
+ assert.deepEqual(B.grassCovers(p),layout.pavers.map(p=>({polygon:p.polygon,margin:0,paver:true})));
+ for(const joint of ['gravel','sand','none']){
+  h.pavers.joint=joint;assert.deepEqual(B.grassCovers(p),pathSurfacePolygons(h).map(polygon=>({polygon,margin:.4})));
+ }
+ delete h.pavers;assert.deepEqual(B.grassCovers(p),pathSurfacePolygons(h).map(polygon=>({polygon,margin:.4})));
+ const refused={...h,points:[[0,15],[1000,15]],width:30,pavers:{...P.PAVER_DEFAULTS,length_in:2,width_in:2,gap_in:0}};
+ p.site.hardscape=[refused];let warnings=0;const warn=console.warn;console.warn=()=>warnings++;
+ try{
+  await Y.buildYard(p,kit(),'low');const covers=B.grassCovers(p);assert.deepEqual(covers,pathSurfacePolygons(refused).map(polygon=>({polygon,margin:.4})));
+  assert.equal(B.jointClumps(p,1).length,0);assert.equal(warnings,1,'yard and lawn share a single refusal');
+ }finally{console.warn=warn;}
+});
+await test('paver_field_and_joint_roots_fit_joints_share_one_draw_and_obey_budget',()=>{
+ const p=paverPlan(),layout=P.paverLayout(p.site.hardscape[0]);
+ for(const tier of ['low','medium','high','max']){
+  const f=buildField(p,tier);assert.ok(f.instances<=T.TIERS[tier].lawnBlades);assert.equal(f.draws,tier==='low'?0:1);
+  if(tier==='low'){assert.equal(f.jointInstances,0);continue;}
+  assert.ok(f.jointInstances>0);assert.equal(f.mesh.count,f.instances);
+  const a=f.mesh.instanceMatrix.array,spread=Math.hypot(a[0],a[2]);
+  for(let i=0;i<f.instances;i++){
+   const x=a[i*16+12],y=-a[i*16+14];
+   if(i<f.instances-f.jointInstances){
+    for(const {polygon} of layout.pavers){assert.ok(!inPolygon(polygon,x,y));assert.ok(polygon.every((v,j)=>edgeDistance([x,y],v,polygon[(j+1)%polygon.length])>=.13*spread-2e-6));}
+   }else{
+    assert.ok(inPolygon(p.site.lot,x,y));assert.ok(layout.joints.some(([v,w])=>edgeDistance([x,y],v,w)<1e-6));
+    assert.ok(.13*Math.hypot(a[i*16],a[i*16+2])<=layout.jointWidth/2+1e-6);assert.ok(Math.abs(a[i*16+5]-.6)<1e-6);
+    for(const {polygon} of layout.pavers)assert.ok(!inPolygon(polygon,x,y));
+   }
+  }
+  assert.deepEqual(a.slice(-f.jointInstances*16),B.jointClumps(p,spread).slice(0,f.jointInstances*16));
+  if(tier==='high'){
+   const m=new THREE.Matrix4(),v=new THREE.Vector3(),g=f.mesh.geometry;
+   for(let i=0;i<f.instances;i++){
+    const x=a[i*16+12],y=-a[i*16+14];if(x<4||x>36||y<12||y>18)continue;
+    f.mesh.getMatrixAt(i,m);
+    for(let j=0;j<g.attributes.position.count;j++){
+     v.fromBufferAttribute(g.attributes.position,j).applyMatrix4(m);if(v.y<=1/12)continue;
+     const t=g.attributes.grassShape.getX(j),joint=i>=f.instances-f.jointInstances;
+     for(const sx of [-1,1])for(const sy of [-1,1])for(const q of layout.pavers)
+      assert.ok(!inPolygon(q.polygon,v.x+(joint?0:sx*.043*1.4*t*t),-v.z+(joint?0:sy*.027*1.4*t*t)),`blade at ${x},${y} enters paver`);
+    }
+   }
+  }
+  release(f);
+ }
+ const n=paverPlan();n.site.hardscape[0].pavers.gap_in=.49;assert.equal(B.jointClumps(n,1).length,0);
+ const dry=kit();dry.materials.lawn={asset:'paving'};assert.equal(buildField(p,'high',dry).jointInstances,0);
+ const capped=T.TIERS.medium.lawnBlades;
+ try{T.TIERS.medium.lawnBlades=20;const f=buildField(p,'medium');assert.ok(f.instances<=20);assert.ok(f.jointInstances>0);release(f);}finally{T.TIERS.medium.lawnBlades=capped;}
+});
 await test('low_has_no_field_no_draw_and_never_touches_a_clock',async()=>{
  const p=make(),f=buildField(p,'low');assert.equal(f.instances,0);assert.equal(f.draws,0);assert.equal(f.mesh,null);assert.equal(f.animated,false);
  f.update(50);f.update(500);assert.equal(f.mesh,null);
@@ -293,6 +348,13 @@ await test('grass_switch_never_enters_material_or_atlas_keys',async()=>{
  assert.ok(on.group.userData.grass.instances>0);assert.equal(off.group.userData.grass.instances,0);
  assert.equal(A.buildAtlas(on.group,p,layout).key,atlas.key);
  disposeObject(off.group);disposeObject(on.group);
+});
+await test('paver_path_build_cost_is_printed',()=>{
+ const p={buildings:[],site:{lot:square(0,0,110,100),hardscape:[{id:'timed',kind:'path',points:[[20,50],[80,50]],width:5,
+  pavers:{layout:'grid',length_in:24,width_in:24,gap_in:3,rotation:0,edge:'whole',joint:'grass'}}]}};
+ release(buildField(p));const samples=[];
+ for(let i=0;i<7;i++){const q=structuredClone(p),start=performance.now(),f=buildField(q);samples.push(performance.now()-start);release(f);}
+ console.log(`PAVER_GRASS_BUILD high 60ft_ms=${samples.map(n=>n.toFixed(2)).join(',')} median_ms=${[...samples].sort((a,b)=>a-b)[3].toFixed(2)}`);
 });
 await test('high_budget_build_cost_is_printed',()=>{
  const p=make(),empty={buildings:[],site:{lot:square(0,0,110,100)}};

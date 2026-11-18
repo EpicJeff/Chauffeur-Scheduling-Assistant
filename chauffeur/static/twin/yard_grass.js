@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { groundAt, buildingFootprint } from './twin_ground.js';
 import { allPorches } from './twin_generator.js';
-import { pathSurfacePolygons } from './path_shapes.js';
+import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
+import { paverSettings } from './paver_layout.js';
+import { yardPaverLayout } from './paver_path.js';
 import { firePitOutline } from './fire_pits.js';
 import { TIERS } from './twin_tiers.js';
 import { manifest } from './twin_library.js';
@@ -60,7 +62,18 @@ export function grassCovers(plan, outline = p => p) {
     if (points.length) covers.push({polygon: footprint(points), margin: .4, reach: true});
   }
   for (const h of site.hardscape || []) {
-    if (h.kind === 'path') for (const p of pathSurfacePolygons(h)) add(p, h.edging === 'curb' ? .9 : .4);
+    if (h.kind === 'path') {
+      const layout = paverSettings(h)?.joint === 'grass' ? yardPaverLayout(h) : null;
+      if (layout) {
+        for (const p of layout.pavers) covers.push({polygon:p.polygon, margin:0, paver:true});
+        if (h.edging === 'curb') {
+          const inner=pathBoundaries(h), outer=pathBoundaries(h,(h.width ?? 3)/2+.5);
+          for (const side of ['left','right']) for (let i=1;i<inner[side].length;i++)
+            add([inner[side][i-1],inner[side][i],outer[side][i],outer[side][i-1]]);
+        }
+      }
+      else for (const p of pathSurfacePolygons(h)) add(p, h.edging === 'curb' ? .9 : .4);
+    }
     else add(h.polygon);
   }
   const pool = site.pool;
@@ -102,6 +115,8 @@ const hash = n => { n = Math.imul(n ^ n >>> 16, 0x21f0aaad); n = Math.imul(n ^ n
 // The clump is modelled for this grid spacing (plan feet); a coarser tier's grid
 // spreads and widens its clumps to match, so the cover stays even.
 const BLADES = 5, CLUMP_SPACING = .28;
+// Bound the bent ribbons, not just their root offsets, for squeezed joints.
+const JOINT_REACH = .36;
 // Feet of shortening lawn past the lot line, and the open-share sample per side.
 const SKIRT = 4, SAMPLES = 96;
 function bladeGeometry() {
@@ -155,7 +170,7 @@ export function grassMaterial(source) {
   material.addEventListener('dispose', () => { disposed = true; source.removeEventListener('materialparamschange', sync); });
   const compile = (shader, unlit = false) => {
     Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = VARYING + 'attribute vec2 grassShape; uniform float grassTime; uniform mat3 grassUvMatrix;\n' + shader.vertexShader;
+    shader.vertexShader = VARYING + 'attribute vec2 grassShape; attribute float grassJoint; uniform float grassTime; uniform mat3 grassUvMatrix;\n' + shader.vertexShader;
     grassReplace(shader, 'vertexShader', '#include <begin_vertex>', `#include <begin_vertex>
 vec3 grassRoot = instanceMatrix[3].xyz;
 vec3 grassWorld = (modelMatrix * vec4(grassRoot, 1.0)).xyz;
@@ -166,13 +181,13 @@ float grassSeed = fract(sin(dot(grassRoot.xz, vec2(12.9898,78.233))) * 43758.545
 // their colour settles onto the lawn's own so sub-pixel blades do not sparkle.
 float grassKeep = mix(1.0, .2, smoothstep(30.0, 120.0, grassDistance));
 float grassScale = smoothstep(grassSeed-.045, grassSeed+.045, grassKeep);
-transformed.xz *= 1.0 + 1.2*smoothstep(25.0, 110.0, grassDistance);
+transformed.xz *= 1.0 + 1.2*smoothstep(25.0, 110.0, grassDistance)*(1.0-grassJoint);
 // A fixed seed threshold shrinks each clump over its own distance interval.
 transformed *= grassScale;
 float gust = sin(grassRoot.x*.11 + grassRoot.z*.07 + grassTime*.8)
   + .4*sin(grassRoot.z*.23 - grassRoot.x*.09 - grassTime*.57);
 // Convert the world-directed wind into the instance's local yaw frame.
-vec2 wind = vec2(.043, .027) * gust * grassShape.x*grassShape.x * grassScale;
+vec2 wind = vec2(.043, .027) * gust * grassShape.x*grassShape.x * grassScale*(1.0-grassJoint);
 transformed.xz += vec2(dot(instanceMatrix[0].xz, wind), dot(instanceMatrix[2].xz, wind)) / dot(instanceMatrix[0].xz, instanceMatrix[0].xz);
 vGrass = vec4(grassShape, grassSeed, .5+.5*sin(grassRoot.x*.037+sin(grassRoot.z*.041)*2.0));
 vGrassUv = vec3((grassUvMatrix * vec3(grassRoot.x, grassRoot.z, 1.0)).xy, .8*smoothstep(35.0, 110.0, grassDistance));`);
@@ -195,8 +210,8 @@ diffuseColor.rgb *= lawn * mix(lawnPatch * lawnBlade * lawnTip, vec3(1.0), vGras
       '#include <roughnessmap_fragment>\nroughnessFactor = mix(.96, .53, vGrass.x);');
   };
   material.onBeforeCompile = shader => compile(shader);
-  material.customProgramCacheKey = () => 'yard-grass-1';
-  const unlitHook = {hook:shader => compile(shader,true), key:() => 'yard-grass-1|matcap'};
+  material.customProgramCacheKey = () => 'yard-grass-2';
+  const unlitHook = {hook:shader => compile(shader,true), key:() => 'yard-grass-2|matcap'};
   const attach = target => {
     Object.defineProperty(target.userData,'grassUniforms',{value:uniforms});
     Object.defineProperty(target.userData,'unlitHook',{value:unlitHook});
@@ -210,11 +225,66 @@ diffuseColor.rgb *= lawn * mix(lawnPatch * lawnBlade * lawnTip, vec3(1.0), vGras
   return material;
 }
 
+export function jointClumps(plan, spread, budget = TIERS.max.lawnBlades, raw = grassCovers(plan)) {
+  const lot = plan.site?.lot;
+  const paths = (plan.site?.hardscape || []).filter(h => h.kind === 'path' && paverSettings(h)?.joint === 'grass');
+  if (!lot?.length || !budget || !paths.length) return new Float32Array();
+  const boundary = prepared(lot,0), covers = raw.map(p => ({...prepared(p.polygon,p.margin), paver:p.paver}));
+  // A local lookup bounds the work even for thousands of stones on a long path.
+  const bins = new Map(), wide = [], size = Math.max(2, spread*JOINT_REACH*2);
+  for (const p of covers) {
+    const x0=Math.floor((p.x0-JOINT_REACH*spread)/size), x1=Math.floor((p.x1+JOINT_REACH*spread)/size);
+    const y0=Math.floor((p.y0-JOINT_REACH*spread)/size), y1=Math.floor((p.y1+JOINT_REACH*spread)/size);
+    if ((x1-x0+1)*(y1-y0+1)>256) { wide.push(p); continue; }
+    for (let x=x0;x<=x1;x++) for (let y=y0;y<=y1;y++) {
+      const k=x+','+y;if(!bins.has(k))bins.set(k,[]);bins.get(k).push(p);
+    }
+  }
+  const matrices = [];
+  for (const h of paths) {
+    const layout = yardPaverLayout(h);
+    if (!layout || layout.jointWidth < .5/12) continue;
+    for (const [a,b] of layout.joints) {
+      const dx=b[0]-a[0], dy=b[1]-a[1], length=Math.hypot(dx,dy), ux=dx/length, uy=dy/length;
+      for (let d=.075;d<length;d+=.15) {
+        if (matrices.length/16 >= budget) return new Float32Array(matrices);
+        const x=a[0]+ux*d, y=a[1]+uy*d;
+        if (!contains(boundary,x,y,false)) continue;
+        const nearby=[...(bins.get(Math.floor(x/size)+','+Math.floor(y/size)) || []), ...wide];
+        if (nearby.some(p=>contains(p,x,y))) continue;
+        let clearance=layout.jointWidth/2;
+        for (const p of nearby) if (p.paver) for (let i=0;i<p.polygon.length;i++) {
+          const v=p.polygon[i],w=p.polygon[(i+1)%p.polygon.length],ex=w[0]-v[0],ey=w[1]-v[1];
+          const t=Math.max(0,Math.min(1,((x-v[0])*ex+(y-v[1])*ey)/(ex*ex+ey*ey||1)));
+          clearance=Math.min(clearance,Math.hypot(x-v[0]-t*ex,y-v[1]-t*ey));
+        }
+        const across=Math.min(spread,clearance/JOINT_REACH);
+        let along=spread;
+        if (across < .001) continue;
+        // Preserve length along straight joints. At fanned corners shorten only
+        // until the clump's rectangle clears every neighbouring convex stone.
+        const clear = p => p.polygon.some((v,i) => {
+          const w=p.polygon[(i+1)%p.polygon.length], ex=w[0]-v[0], ey=w[1]-v[1], len=Math.hypot(ex,ey);
+          const outside=(ey*(x-v[0])-ex*(y-v[1]))/len;
+          const reach=JOINT_REACH*(Math.abs(ey*uy+ex*ux)*across+Math.abs(ey*ux-ex*uy)*along)/len;
+          return outside >= reach-1e-8;
+        });
+        while (along >= .001 && nearby.some(p=>p.paver&&!clear(p))) along *= .5;
+        if (along < .001) continue;
+        // Local x runs across the joint, z along it; the same five-blade clump.
+        matrices.push(-uy*across,0,-ux*across,0, 0,.6,0,0, ux*along,0,-uy*along,0,
+          x,groundAt(plan,x,y)-.04,-y,1);
+      }
+    }
+  }
+  return new Float32Array(matrices);
+}
+
 export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   const budget = Math.max(0,TIERS[tier].lawnBlades-fringeCount), polygon = plan.site?.lot;
   let clock;
   const growsGrass = grassLawn(kit);
-  const result = {tier, growsGrass, instances:0, draws:0, regions:0, animated:false, mesh:null,
+  const result = {tier, growsGrass, instances:0, jointInstances:0, draws:0, regions:0, animated:false, mesh:null,
     update(seconds) { if (this.animated) clock.value = seconds; }};
   if (!budget || !growsGrass || !polygon?.length) return result;
   // The field runs to the lot line and a skirt past it, so a fence standing on
@@ -264,12 +334,17 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   const nx = Math.min(cells,Math.max(1,Math.floor(w/spacing)));
   const ny = Math.min(Math.floor(cells/nx),Math.max(1,Math.floor(h/spacing)));
   const spread = Math.max(1,Math.min(2,Math.sqrt(w*h/(nx*ny))/CLUMP_SPACING));
-  bin(raw.map(p => prepared(p.polygon,p.margin+(p.reach ? .24*(spread-1) : 0))));
+  const fieldCovers = raw.map(p => prepared(p.polygon,p.margin+(p.paver ? .13*spread : p.reach ? .24*(spread-1) : 0)));
+  // .13 is the root spread; bent tips and gusts reach farther. Keep the whole
+  // near-field blade envelope off the stone, as we do for pad-edge solids.
+  for (const p of raw) if (p.paver) fieldCovers.push(prepared(p.polygon,JOINT_REACH*spread));
+  bin(fieldCovers);
+  const joints = jointClumps(plan,spread,budget,raw), jointCount = joints.length/16, fieldBudget = budget-jointCount;
   let seed = 0;
   for (const p of polygon) for (const n of p) seed = (Math.imul(seed,31)+Math.round(n*100))|0;
-  const matrices = new Float32Array(Math.min(nx*ny,budget)*16), pads = (plan.site.terraces || []).map(p => prepared(p.polygon,p.blend ?? 6));
+  const matrices = new Float32Array((Math.min(nx*ny,fieldBudget)+jointCount)*16), pads = (plan.site.terraces || []).map(p => prepared(p.polygon,p.blend ?? 6));
   let count = 0, low = 0, high = 0;
-  for (let ix = 0; ix < nx && count < budget; ix++) for (let iy = 0; iy < ny && count < budget; iy++) {
+  for (let ix = 0; ix < nx && count < fieldBudget; ix++) for (let iy = 0; iy < ny && count < fieldBudget; iy++) {
     const id = (Math.imul(ix,73856093)^Math.imul(iy,19349663)^seed)|0;
     const r = hash(id), s = hash(id+1);
     const x = lot.x0+(ix+.2+.6*r)*w/nx, y = lot.y0+(iy+.2+.6*s)*h/ny;
@@ -281,8 +356,13 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
     matrices[k+12]=x; matrices[k+13]=height-.04; matrices[k+14]=-y; matrices[k+15]=1;
     low=Math.min(low,height); high=Math.max(high,height);
   }
+  const fieldCount = count;
+  matrices.set(joints,count*16); count += jointCount;
+  for (let i=0;i<jointCount;i++) { low=Math.min(low,joints[i*16+13]); high=Math.max(high,joints[i*16+13]); }
   if (!count) return result;
   const geometry = bladeGeometry(), material = grassMaterial(source);
+  const jointFlags = new Float32Array(count); jointFlags.fill(1,fieldCount);
+  geometry.setAttribute('grassJoint',new THREE.InstancedBufferAttribute(jointFlags,1));
   clock = material.userData.grassUniforms.grassTime;
   const mesh = new THREE.InstancedMesh(geometry,material,0);
   // Constructor's identity-matrix fill and per-instance Object3D.compose would
@@ -294,5 +374,5 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   mesh.userData.noOcclusion=true; mesh.userData.yardGrass=true; mesh.userData.reflectionExclude=true;
   mesh.boundingBox=new THREE.Box3(new THREE.Vector3(lot.x0-.3,low-.1,-lot.y1-.3),new THREE.Vector3(lot.x1+.3,high+.7,-lot.y0+.3));
   mesh.boundingSphere=mesh.boundingBox.getBoundingSphere(new THREE.Sphere());
-  return Object.assign(result,{instances:count,draws:1,regions:1,animated:true,mesh});
+  return Object.assign(result,{instances:count,jointInstances:jointCount,draws:1,regions:1,animated:true,mesh});
 }

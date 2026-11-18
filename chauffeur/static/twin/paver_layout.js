@@ -1,7 +1,8 @@
 import { pathCentreline } from './path_shapes.js';
+import { PAVER_DEFAULTS } from './paver_defaults.js';
+export { PAVER_DEFAULTS } from './paver_defaults.js';
 
 // Pure lot-foot geometry; nothing derived here is written over the authored path.
-export const PAVER_DEFAULTS = { layout: 'grid', length_in: 24, width_in: 24, gap_in: 3, rotation: 0, edge: 'whole', joint: 'grass' };
 export const MAX_PAVERS = 5000;
 const EPS = 1e-8;
 const add = (a, b) => a.map((v, i) => v + b[i]);

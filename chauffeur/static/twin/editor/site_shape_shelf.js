@@ -4,6 +4,7 @@ import { shapeKey, shapeCentre, shapeSize, transformShape, shapeOperation, close
 import { roundPit, firePitOptions } from '../fire_pits.js';
 import { linkEntityPicker } from './object_shelf.js';
 import { pathOutline } from '../path_shapes.js';
+import { PAVER_DEFAULTS, paverSettings } from '../paver_layout.js';
 import { materialSlot } from './material_slot.js';
 
 const title = word => word[0].toUpperCase() + word.slice(1);
@@ -17,7 +18,9 @@ export function siteMaterialSlots(kind, piece) {
     return [['body', 'Body', title(piece.body || 'stone')], ...(top === 'none' ? [] : [['top', 'Top', title(top)]])];
   }
   if (kind === 'hardscape') return [['surface', 'Surface', ROLE_WORDS[role || 'paving'] || title(role)],
-    ...(piece.kind === 'path' && piece.edging === 'curb' ? [['edging', 'Curb', 'Concrete']] : [])];
+    ...(piece.kind === 'path' && piece.edging === 'curb' ? [['edging', 'Curb', 'Concrete']] : []),
+    ...(piece.kind === 'path' && ['gravel', 'sand'].includes(paverSettings(piece)?.joint)
+      ? [['joint', 'Joint', paverSettings(piece).joint === 'gravel' ? 'Stone' : 'Sand']] : [])];
   if (kind === 'beds') return [['fill', 'Fill', ROLE_WORDS[role || 'mulch'] || title(role)]];
   if (kind === 'pool') return [['coping', 'Coping', ROLE_WORDS[role || 'paving'] || title(role)], ['interior', 'Interior', 'Pool tile'], ['waterline', 'Waterline tile', 'Blue tile'], ['water', 'Water', 'House water']];
   // A flush spa's outer wall is under the pool water, so only a raised spa has cladding.
@@ -115,6 +118,18 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
       await op(shapeOperation(current, { materials: { [part]: slot } }));
     }).finally(onSaved) }));
   if (path) {
+    const pavers = paverSettings(piece);
+    choice('Surface', pavers ? 'pavers' : 'solid', [['solid', 'Solid'], ['pavers', 'Pavers']], surface => ({pavers:surface === 'pavers' ? {...PAVER_DEFAULTS} : null}));
+    if (pavers) {
+      const change = (p, values) => ({pavers:{...PAVER_DEFAULTS, ...p.pavers, ...values}});
+      choice('Layout', pavers.layout, [['stepping', 'Stepping stones'], ['grid', 'Grid'], ['running_bond', 'Running bond'], ['diagonal', 'Diagonal'], ['herringbone', 'Herringbone']], layout => p => change(p,{layout}));
+      for (const [key, text, min, max] of [['length_in', 'Paver length (in)', 2, 60], ['width_in', 'Paver width (in)', 2, 60],
+        ['gap_in', 'Gap (in)', 0, 48], ['rotation', 'Rotation (degrees)', -90, 90]]) {
+        const input = field(text, pavers[key], (p, value) => change(p,{[key]:value})); input.min = String(min); input.max = String(max);
+      }
+      choice('Edges', pavers.edge, [['whole', 'Whole pavers only'], ['cut', 'Cut at the edge']], edge => p => change(p,{edge}));
+      choice('Joints', pavers.joint, [['grass', 'Grass'], ['gravel', 'Gravel'], ['sand', 'Sand'], ['none', 'None']], joint => p => change(p,{joint}));
+    }
     const width = field('Width (ft)', piece.width ?? 3, (_, width) => ({ width })); width.min = '1'; width.max = '30';
     choice('Corner style', piece.corner || 'mitred', [['mitred', 'Mitred'], ['rounded', 'Rounded']], corner => ({ corner }));
     field('Corner radius (ft)', piece.radius ?? piece.width ?? 3, (_, radius) => ({ radius }));

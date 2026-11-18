@@ -1,3 +1,5 @@
+import { PAVER_DEFAULTS } from './paver_defaults.js';
+
 // Lot feet throughout. Derived geometry is never written back over the centre line.
 const add = (a, b) => a.map((v, i) => v + b[i]);
 const sub = (a, b) => a.map((v, i) => v - b[i]);
@@ -8,7 +10,7 @@ const cross = (a, b) => a[0] * b[1] - a[1] * b[0];
 const normal = a => [-a[1], a[0]];
 export const pathPresets = {
   sidewalk: { width: 4, material: 'patio_concrete', corner: 'mitred', smooth: false, edging: 'none' },
-  paver: { width: 3, material: 'paving', corner: 'rounded', smooth: false, edging: 'none' },
+  paver: { width: 3, material: 'paving', corner: 'rounded', smooth: false, edging: 'none', pavers: { ...PAVER_DEFAULTS } },
   driveway: { width: 10, material: 'patio_concrete', corner: 'mitred', smooth: false, edging: 'none' },
 };
 

@@ -21,6 +21,9 @@ import { groundAt, poolDatum, POOL_SEAT, buildingBase, buildingFootprint } from 
 import { span as editSpan } from './edit_timing.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
 import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
+import { paverSettings } from './paver_layout.js';
+import { yardPaverLayout } from './paver_path.js';
+import { paverGeometry } from './paver_geometry.js';
 import { firePitRings, firePitOptions, roundPit, buildFirePit, fireFlameMaterial } from './fire_pits.js';
 import { porchFoundationRole } from './twin_porch_foundation.js';
 import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.js';
@@ -150,6 +153,7 @@ function yardMaterialInputs(plan, kit) {
   });
   for (const h of site.hardscape || []) if (h.kind === 'path' || h.polygon?.length >= 3) {
     use(h.material === 'concrete' ? 'patio_concrete' : authoredRole(h.material, 'paving'), h.materials?.surface);
+    if (h.kind === 'path' && ['gravel', 'sand'].includes(paverSettings(h)?.joint)) use(paverSettings(h).joint === 'gravel' ? 'base' : 'paver_sand', h.materials?.joint);
     if (h.kind === 'path' && h.edging === 'curb') use('patio_concrete', h.materials?.edging);
   }
   if (site.pool?.polygon?.length >= 3) {
@@ -187,7 +191,7 @@ function yardSiteInputs(site) {
   return [site.lot, (site.terraces || []).map(p => [p.id, p.polygon, p.height, p.blend,
     (p.edges || []).map(e => [e.edge, e.wall && fields(e.wall, 'material thickness_in above_in materials cap rail'),
       e.stair && fields(e.stair, 'riser_in tread_in treads materials rail')])]),
-    (site.hardscape || []).map(h => fields(h, 'id kind polygon points width corner smooth radius edging elevation material materials')),
+    (site.hardscape || []).map(h => fields(h, 'id kind polygon points width corner smooth radius edging elevation material materials pavers')),
     site.pool && fields(site.pool, 'id polygon depth coping elevation material materials features'),
     sitePieces(site.fire_pit).map(f => fields(f, 'id shape at radius rotation polygon fuel body top height_in glass entity elevation materials')),
     (site.beds || []).map(b => fields(b, 'id polygon elevation material materials')),
@@ -407,8 +411,18 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         const owner = {kind:'hardscape', pieceId:h.id};
         const role = h.material === 'concrete' ? 'patio_concrete' : kit.materials?.[h.material] ? h.material : 'paving';
         if (h.kind === 'path') {
-          // Swept pieces retain user-drawn crossings without even/odd cancellation.
-          for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spasIn(poly)), mat(role, h.materials?.surface), seedOf(h), owner);
+          const layout = yardPaverLayout(h), e = h.elevation || 0, joint = paverSettings(h)?.joint;
+          if (layout) {
+            surfaceMesh(group, paverGeometry(plan, h, layout), mat(role, h.materials?.surface), seedOf(h), owner);
+            if (joint === 'gravel' || joint === 'sand') {
+              const fill = h.materials?.joint ? mat(joint === 'gravel' ? 'base' : 'paver_sand', h.materials.joint)
+                : joint === 'gravel' ? mat('base') : plain('paver_sand', '#cdb994', {roughness:.95});
+              for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, e, e+.5/12), fill, seedOf(h, 'joint'), owner);
+            }
+          } else {
+            // Swept pieces retain user-drawn crossings without even/odd cancellation.
+            for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spasIn(poly)), mat(role, h.materials?.surface), seedOf(h), owner);
+          }
           if (h.edging === 'curb') {
             const inner = pathBoundaries(h), outer = pathBoundaries(h, (h.width ?? 3) / 2 + .5);
             for (const side of ['left', 'right']) for (let i = 1; i < inner[side].length; i++) {
