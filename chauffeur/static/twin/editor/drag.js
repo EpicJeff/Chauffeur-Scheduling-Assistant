@@ -44,6 +44,7 @@ export function createDrag({ view, model, onPreview, onCommit }) {
     }
     const touched = piecesOnMovedJoints(building, moved);
     const oldWalls = new Map(building.walls.map(w => [w.id, w]));
+    lastDragFrameMs = null;
     gesture = { source, building, piece, selection, moved, touched, oldWalls, normal, start: [...start], by: [0, 0], preview: null };
     return true;
   }
@@ -128,5 +129,6 @@ export function createDrag({ view, model, onPreview, onCommit }) {
       view.rebuildLevel(building, g.piece.level, g.source, g.touched); onPreview?.(g.source, g.selection); throw error;
     }
   }
-  return { begin, update, finish, active: () => !!gesture, get lastDragFrameMs() { return lastDragFrameMs; } };
+  return { begin, update, finish, active: () => !!gesture, clearDragFrame() { lastDragFrameMs = null; },
+    get lastDragFrameMs() { return lastDragFrameMs; } };
 }

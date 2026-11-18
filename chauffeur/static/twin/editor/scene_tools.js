@@ -37,7 +37,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       const d = wall.to.map((v, i) => v - wall.from[i]), length = Math.hypot(...d);
       operation = { ...operation, by: (-d[1] * operation.by[0] + d[0] * operation.by[1]) / length };
     }
-    return op(operation);
+    return op(operation, { drag: true });
   } });
   const getLabel = item => getSheets().piece_labels?.find(p => p.piece === item.pieceId && p.building === item.buildingId)?.label || 'this piece';
   const roomSelection = createSelection({ view, getModel, onChange(state) {
@@ -57,7 +57,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
     op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
-  handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: op,
+  handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: operation => op(operation, { drag: true }),
     onPreview: drawDimensions, onClick: cards.edge, signal });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'
     && (['wall', 'joint', 'room', 'roof', 'dormer', 'solar_zone', 'stair'].includes(kind)
@@ -392,7 +392,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     selectedRooms: () => roofRooms.size ? [...roofRooms] : null,
     // A press on the selected piece's handle belongs to the handle, never to a yard item behind it.
     handleAt: event => !!handles.hit(event),
-    get lastDragFrameMs() { return handles.lastDragFrameMs; }, dragging: handles.active,
+    get lastDragFrameMs() { return handles.lastDragFrameMs; }, clearDragFrame: () => handles.clearDragFrame(), dragging: handles.active,
     buildingCentre(id) { const b = getPlan()?.buildings.find(b => b.id === id); return b && rotatePoint(localCentre(b), b.rotation || 0).map((v, i) => v + (b.position?.[i] || 0)); },
     delegate(value) { delegate = value; },
     refresh() { drawFloors(); if (selection && !findPiece(getPlan(), selection.pieceId, selection.buildingId)) select(null); else roomSelection.refresh(); },

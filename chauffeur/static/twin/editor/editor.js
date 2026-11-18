@@ -71,9 +71,11 @@ export async function boot() {
     panel.message(text);
   }
   const edit = change => history.perform(() => editNow(change));
-  const applyOp = operation => {
+  const applyOp = (operation, { drag = false } = {}) => {
     const start = performance.now();
-    return history.perform(() => applyOpNow(operation, { start }));
+    const dragFrame = drag ? tools?.lastDragFrameMs ?? null : null;
+    if (drag) tools?.clearDragFrame();
+    return history.perform(() => applyOpNow(operation, { start, dragFrame }));
   };
   async function editNow(change) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
@@ -91,9 +93,10 @@ export async function boot() {
   // roof tools select the new piece then). `settle: false` returns once the
   // round is saved and read back; the scene rebuild follows. The lot tools
   // already show the building where it landed.
-  async function applyOpNow(operation, { saved, settle = true, start } = {}) {
+  async function applyOpNow(operation, { saved, settle = true, start, dragFrame = null } = {}) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
     const timing = api.beginEdit(operation, start);
+    timing.drag_frame = dragFrame;
     const result = await api.op(operation, timing);
     snapshot = { ...snapshot, plan: result.plan, model: result.model };
     saved?.(result);
@@ -349,7 +352,8 @@ export async function boot() {
   });
   listen(el('editor-manage-sources'), 'click', () => steps.open('Your files'));
   api.mountEditTiming({ toggle: el('menu-edit-timing'), overlay: el('editor-edit-timing'), send: el('menu-send-timing'),
-    signal: lifecycle.signal, post: body => request('perf', 'POST', body, 'twin'), report });
+    signal: lifecycle.signal, post: body => request('perf', 'POST', body, 'twin'), report,
+    force: new URLSearchParams(location.search).get('timing') === '1' });
   listen(el('menu-upload'), 'click', () => steps.open('Your files'));
   listen(el('editor-add-files'), 'click', () => steps.open('Your files'));
   listen(el('editor-draw-myself'), 'click', async () => {

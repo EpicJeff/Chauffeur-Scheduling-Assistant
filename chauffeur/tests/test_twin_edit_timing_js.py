@@ -50,6 +50,62 @@ LEAN_STUBS = STUBS.replace('const cards=createCards', 'globalThis.sceneOptions=o
     'export const createPlace=()=>({sync(){},isOpen:()=>false});',
     'export const createPlace=()=>({sync(sheets,state){globalThis.lastSnapshot=state;},isOpen:()=>false});')
 
+DRAG_STUBS = STUBS.replace('const cards=createCards', 'globalThis.sceneOptions=options;const cards=createCards').replace(
+    'return {select,selected:', 'return globalThis.sceneTools={lastDragFrameMs:null,clearDragFrame(){this.lastDragFrameMs=null;},select,selected:')
+DRAG_TIMING = HISTORY_DRIVER.split(' const zoneResize=')[0].replace(
+    "location.search='?test=1';", """
+ location.search=config.timingCase==='force_shows_overlay'?'?test=1&timing=1':'?test=1';
+ let storageWrites=0;
+ globalThis.localStorage={getItem:()=> 'false',setItem:key=>{if(key==='chf.editor.editTiming')storageWrites++;}};
+ """).replace("else assert.fail('unexpected mutation '+JSON.stringify(op));",
+               "else if(op.op!=='move_wall')assert.fail('unexpected mutation '+JSON.stringify(op));") + r"""
+ const {beginEdit,mountEditTiming}=await import(file('static/twin/edit_timing.js'));
+ const operation={op:'move_wall',building:'b',wall:'w',by:.25};
+ const applied=async (drag=false)=>{
+  const before=window.__twinEditTiming.length;
+  await sceneOptions.op(operation,{drag});
+  await until(()=>window.__twinEditTiming.length>before);
+  return window.__twinEditTiming.at(-1);
+ };
+ if(config.timingCase==='drag_frame_is_recorded'){
+  assert.equal(beginEdit(operation,0).drag_frame,null);
+  assert.equal((await applied()).drag_frame,null);
+  sceneTools.lastDragFrameMs=7.5;
+  assert.equal((await applied(true)).drag_frame,7.5);
+ }
+ if(config.timingCase==='drag_frame_resets'){
+  sceneTools.lastDragFrameMs=7.5;await applied(true);
+  assert.equal(sceneTools.lastDragFrameMs,null);
+  assert.equal((await applied()).drag_frame,null);
+ }
+ if(config.timingCase==='overlay_shows_drag_frame'){
+  const overlay=document.getElementById('editor-edit-timing');
+  await press(document.getElementById('menu-edit-timing'));
+  sceneTools.lastDragFrameMs=7.5;await applied(true);
+  assert.match(overlay.textContent,/drag frame: 7\.5 ms/);
+  await applied();assert.match(overlay.textContent,/drag frame: n\/a/);
+  assert.doesNotMatch(overlay.textContent,/NaN|null/);
+ }
+ if(config.timingCase==='force_shows_overlay'){
+  assert.equal(document.getElementById('editor-edit-timing').hidden,false);
+  assert.equal(storageWrites,0);
+  for(const unavailable of [false,true]){
+   const toggle=document.createElement('button'),overlay=document.createElement('aside'),abort=new AbortController();
+   globalThis.localStorage={getItem:()=>{if(unavailable)throw Error('private');return 'false';},setItem:()=>{storageWrites++;}};
+   mountEditTiming({toggle,overlay,force:true,signal:abort.signal});
+   assert.equal(overlay.hidden,false);assert.equal(storageWrites,0);
+   await press(toggle);assert.equal(overlay.hidden,true);
+   await press(toggle);assert.equal(overlay.hidden,false);
+   assert.equal(storageWrites,0);abort.abort();
+  }
+ }
+ ok(config.timingCase);
+ assert.deepEqual(domErrors,[]);assert.deepEqual(escaped,[]);
+ window.dispatchEvent(new Event('pagehide'));
+ console.log(`${passed}/${passed} drag timing checks passed`);process.exit(0);
+}catch(error){console.error(error);process.exit(1);}
+"""
+
 # Reuse the history rig's real editor boot and transport fixtures, then test
 # timing through its public op hook. The renderer is tested separately below.
 EDITOR = HISTORY_DRIVER.split(' const zoneResize=')[0].replace(
@@ -146,6 +202,9 @@ finish();
 
 if __name__ == '__main__':
     ids = sorted(set(re.findall(r'id="([\w-]+)"', (ROOT / 'templates/house_editor.html').read_text(encoding='utf-8'))) | {'piece-card', 'rail-undo', 'rail-redo'})
+    failed = 0
+    for case in ('drag_frame_is_recorded', 'drag_frame_resets', 'overlay_shows_drag_frame', 'force_shows_overlay'):
+        failed += bool(run(DRAG_TIMING, {'stubs': DRAG_STUBS, 'ids': ids, 'timingCase': case}, timeout=45))
     result = run(EDITOR, {'stubs': STUBS, 'ids': ids}, timeout=45)
     if result:
         sys.exit(result)
@@ -155,4 +214,4 @@ if __name__ == '__main__':
     plan = json.loads((ROOT / 'tests/fixtures/twin_poolhouse.plan.json').read_text(encoding='utf-8'))
     code, out = run_node(VIEW, {'root': ROOT.as_posix(), 'plan': plan})
     print(out)
-    sys.exit(code or 0)
+    sys.exit(code or bool(failed))

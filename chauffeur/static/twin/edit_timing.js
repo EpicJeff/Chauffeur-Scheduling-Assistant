@@ -15,7 +15,7 @@ export function serverTiming(header = '') {
 
 export function beginEdit(operation, start = performance.now()) {
   return { op: operation?.op || '', at: new Date().toISOString(), start,
-    request: 0, parse: 0, rebuild: 0, first_frame: 0, refresh_state: 0,
+    request: 0, parse: 0, rebuild: 0, first_frame: 0, refresh_state: 0, drag_frame: null,
     detail: { generate: 0, batch: 0, yard: 0, materials: 0, dispose: 0, bake_stop: 0 },
     counts: { meshes: 0, draw_calls: 0, triangles: 0, buildings: 0, levels: 0 }, buildings: [] };
 }
@@ -42,11 +42,12 @@ export function keepEdit(record) {
 }
 
 // Same device preference and aria-pressed pattern as the Lighting controls.
-export function mountEditTiming({ toggle, overlay, send, signal, post, report }) {
+export function mountEditTiming({ toggle, overlay, send, signal, post, report, force = false }) {
   window.__twinEditTiming ||= [];
   const key = 'chf.editor.editTiming';
   let shown = false, sending = false;
   try { shown = localStorage.getItem(key) === 'true'; } catch { /* Private storage. */ }
+  if (force) shown = true;
   function draw() {
     toggle?.setAttribute('aria-pressed', String(shown));
     if (!overlay) return;
@@ -64,6 +65,7 @@ export function mountEditTiming({ toggle, overlay, send, signal, post, report })
         ...Object.fromEntries(Object.entries(last.server || {}).map(([k, v]) => [`  server ${k}`, v])) })
         .sort((a, b) => b[1] - a[1]).map(([name, ms]) => `${name}: ${ms.toFixed(1)} ms`),
       `refresh_state: ${last.refresh_state.toFixed(1)} ms (overlaps frame)`,
+      `drag frame: ${Number.isFinite(last.drag_frame) ? `${last.drag_frame.toFixed(1)} ms` : 'n/a'}`,
       `${last.counts.meshes} meshes · ${last.counts.draw_calls} calls · ${last.counts.triangles} triangles`,
       `${last.counts.buildings} buildings · ${last.counts.levels} levels`,
     ].join('\n') : 'Make an edit to measure it.';
@@ -71,7 +73,7 @@ export function mountEditTiming({ toggle, overlay, send, signal, post, report })
   }
   toggle?.addEventListener('click', () => {
     shown = !shown;
-    try { localStorage.setItem(key, String(shown)); } catch { /* Still usable. */ }
+    try { if (!force) localStorage.setItem(key, String(shown)); } catch { /* Still usable. */ }
     draw();
   }, { signal });
   send?.addEventListener('click', async () => {

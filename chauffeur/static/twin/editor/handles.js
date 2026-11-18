@@ -253,6 +253,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
   function begin(event) {
     if (gesture) return false;
     const handle = hit(event); if (!handle) return false;
+    lastFrameMs = null; drag.clearDragFrame();
     const source = getPlan(), building = coordinateBuilding(handle.building);
     if (handle.kind === 'stair_end') {
       const piece = building.stairs.find(s => s.id === handle.id), normal = [0, 0, 1];
@@ -542,5 +543,6 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       return [...rows.map(({ handle }) => handle).filter(h => h.kind !== 'roof_edge' && !h.kind.startsWith('dormer_')), ...roof]
         .map(handle => ({ kind: handle.kind, id: handle.id, at: [...handle.at] }));
     },
+    clearDragFrame() { lastFrameMs = null; drag.clearDragFrame(); },
     get lastDragFrameMs() { return lastFrameMs ?? drag.lastDragFrameMs; } };
 }
