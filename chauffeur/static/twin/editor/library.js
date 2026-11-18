@@ -1,3 +1,5 @@
+import { snapValue } from './snap.js';
+import { createTypedValue } from './typed_value.js';
 import { applyLocal } from './local_ops.js';
 import { DRAG_THRESHOLD_PX } from './picking.js';
 import * as THREE from 'three';
@@ -542,6 +544,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     outline.visible = !!piece && kind !== 'yard_rooms';
     if (piece) outline.box.copy(siteBox(piece, kind));
   }
+  const typed = createTypedValue(canvas.parentElement);
   function pointerDown(event) {
     if (!canEdit() || event.button !== 0 || tools.handleAt?.(event)) return false;
     // Only Move can drag the already selected yard body. Other presses stay
@@ -553,44 +556,51 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     onInteract?.();
     const { index, piece } = siteRecord(getPlan(), picked.id);
     const start = ground(event); if (!start) return false;
-    siteDrag = { ...picked, index, start, piece, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
+    siteDrag = { ...picked, index, start, piece, pointerId: event.pointerId, event, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
     view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); return true;
+  }
+  function finishBody(cancel = false, exact) {
+    const g = siteDrag; if (!g) return false;
+    if (!cancel && Number.isFinite(exact)) pointerMove(g.event, exact);
+    siteDrag = null; typed.hide(); view.controls.enabled = g.enabled;
+    if (canvas.hasPointerCapture(g.pointerId)) canvas.releasePointerCapture(g.pointerId);
+    refresh();
+    if (!cancel && canEdit() && g.operation && g.by.some(v => Math.abs(v) > 1e-8))
+      return Promise.resolve(op(g.operation, { drag: true, local: applyLocal(getPlan(), g.operation)?.plan, selection: { kind: g.kind, id: g.id },
+        label: g.kind === 'planting' ? 'Moving the plant' : 'Moving the item' }));
+    return true;
   }
   function pointerUp(event, cancel) {
     if (!siteDrag) return false;
-    const g = siteDrag; siteDrag = null; view.controls.enabled = g.enabled;
-    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-    refresh();
-    if (!cancel && canEdit() && Math.hypot(event.clientX - g.x, event.clientY - g.y) >= DRAG_THRESHOLD_PX) {
-      const at = ground(event);
-      if (at) {
-        const operation = { op: 'move_site_item', list: g.kind, index: g.index,
-          ...(g.piece.at ? { at: at.map((v, i) => v + g.piece.at[i] - g.start[i]) } : { by: at.map((v, i) => v - g.start[i]) }) };
-        let local = null;
-        try { local = applyLocal(getPlan(), operation)?.plan || null; } catch { /* The server judges a missing item. */ }
-        op(operation, { drag: true, local,
-          selection: { kind: g.kind, id: g.id }, label: g.kind === 'planting' ? 'Moving the plant' : 'Moving the item' }).catch(report);
-      }
-    }
-    return true;
+    if (!cancel) pointerMove(event);
+    Promise.resolve(finishBody(cancel)).catch(report); return true;
   }
-  function pointerMove(event) {
+  function pointerMove(event, exact) {
     if (!siteDrag) return false;
-    if (Math.hypot(event.clientX - siteDrag.x, event.clientY - siteDrag.y) < DRAG_THRESHOLD_PX) return true;
+    siteDrag.event = event;
+    if (!Number.isFinite(exact) && !siteDrag.operation && Math.hypot(event.clientX - siteDrag.x, event.clientY - siteDrag.y) < DRAG_THRESHOLD_PX) return true;
     const at = ground(event);
     if (at) {
-      const piece = structuredClone(siteDrag.piece), by = at.map((v, i) => v - siteDrag.start[i]);
+      const g = siteDrag, piece = structuredClone(g.piece);
+      let by = at.map((v, i) => v - g.start[i]);
+      if (Number.isFinite(exact)) { const length = Math.hypot(...by); by = by.map((v, i) => exact * (length ? v / length : i === 0 ? 1 : 0)); }
+      else by = by.map(v => snapValue('move', v, !!event.shiftKey));
+      g.by = by; g.operation = { op: 'move_site_item', list: g.kind, index: g.index,
+        ...(piece.at ? { at: piece.at.map((v, i) => v + by[i]) } : { by }) };
+      typed.show('length', Math.hypot(...by), [event.clientX, event.clientY]);
       for (const key of ['at', 'polygon', 'points', 'polyline']) if (piece[key])
         piece[key] = key === 'at' ? piece[key].map((v, i) => v + by[i]) : piece[key].map(p => p.map((v, i) => v + by[i]));
-      outline.box.copy(siteBox(piece, siteDrag.kind));
+      outline.box.copy(siteBox(piece, g.kind));
     }
     return true;
   }
   view.controls.addEventListener('change', refresh);
   listen(canvas.parentElement, 'twinrebuilt', refresh);
   signal.addEventListener('abort', () => {
-    dismiss(); thumbnails.current?.dispose(); if (siteDrag) view.controls.enabled = siteDrag.enabled;
+    typed.hide(); dismiss(); thumbnails.current?.dispose(); if (siteDrag) view.controls.enabled = siteDrag.enabled;
     view.controls.removeEventListener('change', refresh); outline.removeFromParent(); outline.geometry.dispose(); outline.material.dispose();
   }, { once: true });
-  return { siteHits, pickSite, surfaceAt, ceilingAt, ground, pointerDown, pointerMove, pointerUp, refresh, pick };
+  return { key: typed.key, typedValue: typed.value, commit: exact => finishBody(false, exact),
+    preview(plan) { const selected = tools.selection(), record = !selected.building && siteRecord(plan, selected.id); if (record) outline.box.copy(siteBox(record.piece, record.kind)); },
+    siteHits, pickSite, surfaceAt, ceilingAt, ground, pointerDown, pointerMove, pointerUp, refresh, pick };
 }

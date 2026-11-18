@@ -1,11 +1,11 @@
 import { applyLocal } from './local_ops.js';
 import { roomFloor, openingFloor } from '../twin_floors.js';
-import { objectOperation, siteRecord, siteShapeKinds, sitePoints, sitePieces } from '../objects.js';
+import { siteRecord, siteShapeKinds, sitePoints, sitePieces } from '../objects.js';
 import { solarPoint, solarFrame, solarUV } from '../twin_solar.js';
 import { contains } from '../twin_generator.js';
 import * as THREE from 'three';
 import { hostPoint, parkingPoint } from '../twin_hosts.js';
-import { groundAt, buildingGround, edgeDistance } from '../twin_ground.js';
+import { groundAt, buildingGround } from '../twin_ground.js';
 import { roofEdge } from './roof_tools.js';
 import { vertexHandles, editVertex } from './polygon_handles.js';
 import { shapeKey, shapeCentre, transformShape, shapeOperation, closedShape } from './site_shapes.js';
@@ -31,9 +31,8 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
   const canvas = view.renderer3.domElement, host = canvas.parentElement;
   const layer = document.createElement('div'); layer.className = 'editor-handles'; host.append(layer);
   const typed = createTypedValue(layer);
-  const ring = document.createElement('span'); ring.className = 'editor-site-ring'; ring.hidden = true; layer.append(ring);
   const raycaster = new THREE.Raycaster();
-  let rows = [], gesture = null, preview = null, lastFrameMs = null, ringPoints = [];
+  let rows = [], gesture = null, preview = null, lastFrameMs = null;
   const plan = () => preview || getPlan();
   function world(building, point) {
     const a = (building.rotation || 0) * Math.PI / 180, [x, y, z] = point, p = building.position || [0, 0];
@@ -66,45 +65,12 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom ? [x, y] : null;
   }
   const coordinateBuilding = id => plan()?.buildings.find(b => b.id === id) || { id: null, position: [0, 0], base: 0 };
-  function objectRecord(source = plan()) {
-    const selected = getSelection();
-    if (['planting', 'furniture'].includes(selected.kind)) {
-      const index = source.site?.[selected.kind]?.findIndex((p, i) => (p.id || `${selected.kind}:${i}`) === selected.id) ?? -1;
-      if (index >= 0) return { piece: source.site[selected.kind][index], kind: selected.kind, index, building: null };
-    }
-    const building = source?.buildings.find(b => b.id === selected.building);
-    if (!building) return null;
-    for (const [list, kind] of [['items', 'item'], ['anchors', 'anchor']]) {
-      const piece = building[list]?.find(p => p.id === selected.id);
-      if (piece && !piece.device) return { piece, kind, building, list };
-    }
-    return null;
-  }
-  function objectDescriptors() {
-    const record = objectRecord(); if (!record || record.piece.state === 'ghost') return [];
-    const { piece, building } = record;
-    let centre;
-    try { centre = building ? hostPoint(building, piece.host, piece.offset || 0)
-      : [...piece.at, groundAt(plan(), ...piece.at)]; } catch { return []; }
-    centre[2] += piece.elevation || 0;
-    let radius = Math.max(.5, 2 * (piece.scale ?? 1));
-    // At lot zoom a two-foot handle can project onto the move target itself.
-    // Keep the transform controls outside that target at every camera distance.
-    const frame = building || coordinateBuilding(null), middle = project(frame, centre);
-    const edge = project(frame, [centre[0] + radius, centre[1], centre[2]]);
-    if (middle && edge) radius *= Math.max(1, 32 / Math.max(.1, Math.hypot(edge[0] - middle[0], edge[1] - middle[1])));
-    const level = building && (building.walls.find(w => w.id === piece.host?.wall)?.level
-      || building.rooms.find(r => r.id === (piece.host?.floor || piece.host?.ceiling))?.level || getSelection().level || building.levels[0]?.id);
-    if (building && view.groups?.levels[`${building.id}:${level}`]?.visible === false) return [];
-    return [['object_rotate', [radius, 0, 0]], ['object_scale', [radius, radius, 0]]].map(([kind, delta]) => ({ kind, id: getSelection().id,
-      at: centre.map((v, i) => v + delta[i]), centre, level, building: building?.id || null }));
-  }
   function descriptors() {
     if (!canEdit()) return [];
     const selected = getSelection(), building = plan()?.buildings.find(b => b.id === selected.building);
     if (!building) {
       const record = siteRecord(plan(), selected.id);
-      if (!record || !siteShapeKinds.includes(record.kind)) return objectDescriptors();
+      if (!record || !siteShapeKinds.includes(record.kind)) return [];
       const ps = sitePoints(record.piece); if (!ps.length) return [];
       const centre = shapeCentre(record.piece), z = groundAt(plan(), ...centre) + (record.piece.elevation || 0);
       const round = record.kind === 'fire_pit' && roundPit(record.piece);
@@ -117,12 +83,11 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
         move = [centre[0], centre[1] - distance];
       }
       const result = [add('site_move', move)];
-      if (round) return [...result, add('site_radius', [centre[0] + radius, centre[1]]), add('site_rotate', [centre[0] + radius + 2, centre[1]])];
+      if (round) return [...result, add('site_radius', [centre[0] + radius, centre[1]])];
       result.push(...vertexHandles(ps, closedShape(record)).map(({ at, ...h }) => add(h.insert ? 'site_insert' : 'site_vertex', at, h)));
-      if (record.kind !== 'fence') result.push(add('site_rotate', [centre[0] + radius, centre[1]]), add('site_scale', [centre[0] + radius, centre[1] + radius]));
       return result;
     }
-    const result = objectDescriptors(), add = (kind, id, at, level, extra = {}) => {
+    const result = [], add = (kind, id, at, level, extra = {}) => {
       if (view.groups?.levels[`${building.id}:${level}`]?.visible === false) return;
       result.push({ kind, id, at, building: building.id, level, ...extra });
     };
@@ -199,23 +164,6 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
   }
   function refresh() {
     const handles = descriptors(), building = coordinateBuilding(getSelection().building);
-    const turn = handles.find(h => h.kind === 'site_rotate');
-    ring.hidden = !turn;
-    ringPoints = [];
-    if (turn) {
-      const radius = turn.at[0] - turn.centre[0];
-      ringPoints = Array.from({ length: 49 }, (_, i) => project(building, [turn.centre[0] + radius * Math.cos(i * Math.PI / 24), turn.centre[1] + radius * Math.sin(i * Math.PI / 24), turn.at[2]]));
-    }
-    let segments = 0;
-    for (let i = 1; i < ringPoints.length; i++) {
-      const a = ringPoints[i - 1], b = ringPoints[i]; if (!a || !b) continue;
-      let line = ring.children[segments++];
-      if (!line) { line = document.createElement('span'); ring.append(line); }
-      line.style.left = `${a[0]}px`; line.style.top = `${a[1]}px`;
-      line.style.width = `${Math.hypot(b[0] - a[0], b[1] - a[1])}px`;
-      line.style.transform = `rotate(${Math.atan2(b[1] - a[1], b[0] - a[0])}rad)`;
-    }
-    while (ring.children.length > segments) ring.children[ring.children.length - 1].remove();
     let count = 0;
     for (const handle of handles) {
       const pixel = project(building, handle.at); if (!pixel) continue;
@@ -238,10 +186,6 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       .sort((a, b) => (a.handle.kind === 'joint' ? -1 : 0) - (b.handle.kind === 'joint' ? -1 : 0)
         || Math.hypot(a.pixel[0] - event.clientX, a.pixel[1] - event.clientY) - Math.hypot(b.pixel[0] - event.clientX, b.pixel[1] - event.clientY));
     if (close.length) return close[0].handle;
-    const turn = descriptors().find(h => h.kind === 'site_rotate');
-    if (turn) {
-      if (ringPoints.some((p, i) => i && p && ringPoints[i - 1] && edgeDistance([event.clientX, event.clientY], ringPoints[i - 1], p) <= HANDLE_HIT_PX)) return turn;
-    }
     if (getTool() === 'select') return null;
     const all = descriptors(), selected = getSelection(), building = plan()?.buildings.find(b => b.id === selected.building);
     const wallHandle = all.find(h => h.kind === 'wall');
@@ -279,12 +223,6 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       // Midpoint click inserts; Alt-click removes. Both post only on release.
       if (handle.kind === 'site_insert' || handle.kind === 'site_vertex' && event.altKey) update(event);
       return true;
-    }
-    if (handle.kind.startsWith('object_')) {
-      const start = onPlane(event, building, handle.centre, [0, 0, 1]);
-      if (!start) return false;
-      const record = objectRecord(source);
-      gesture = { handle, source, building, record, piece: record.piece, normal: [0, 0, 1], start, operation: null }; return true;
     }
     if (['wall', 'joint', 'room'].includes(handle.kind)) {
       lastFrameMs = null;
@@ -370,7 +308,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       onPreview?.(preview, getSelection()); refresh(); lastFrameMs = Math.max(.001, performance.now() - started); return;
     }
     if (handle.kind.startsWith('site_')) {
-      const centre = handle.centre, a = g.start.slice(0, 2).map((v, i) => v - centre[i]), b = point.slice(0, 2).map((v, i) => v - centre[i]);
+      const centre = handle.centre, b = point.slice(0, 2).map((v, i) => v - centre[i]);
       let change;
       if (handle.kind === 'site_move') {
         const by = point.slice(0, 2).map((v, i) => move(v - g.start[i]));
@@ -378,16 +316,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
         showValue('length', Math.hypot(...by));
       }
       else if (handle.kind === 'site_radius') change = { radius: Math.max(.1, move(Math.hypot(...b))) };
-      else if (handle.kind === 'site_rotate') {
-        const delta = Number.isFinite(exact) ? exact : (Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0])) * 180 / Math.PI;
-        const angle = snapValue('angle', (piece.rotation || 0) + delta, free);
-        change = transformShape(piece, { rotation: angle });
-        showValue('angle', angle - (piece.rotation || 0));
-      } else if (handle.kind === 'site_scale') {
-        const scale = Math.max(.001, snapValue('scale', Number.isFinite(exact) ? exact : Math.hypot(...b) / Math.max(.01, Math.hypot(...a)), free));
-        change = transformShape(piece, { scale: [scale, scale] });
-        showValue('factor', scale);
-      } else {
+      else {
         // Snap the movement, preserving an already rotated corner's coordinates.
         const target = handle.kind === 'site_vertex' ? sitePoints(piece)[handle.index].map((v, i) => v + inch(point[i] - g.start[i]))
           : point.slice(0, 2).map(v => inch(v) || 0);
@@ -403,24 +332,6 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       const points = outline.map(p => project(building, [...p, handle.at[2]])).filter(Boolean);
       document.getElementById('editor-drag-outline')?.setAttribute('points', points.map(p => p.join(',')).join(' '));
       refresh(); lastFrameMs = Math.max(.001, performance.now() - started); return;
-    }
-    if (handle.kind.startsWith('object_')) {
-      const centre = handle.centre, delta = p => p.slice(0, 2).map((v, i) => v - centre[i]);
-      const a = delta(g.start), b = delta(point);
-      const angle = Number.isFinite(exact) ? exact : (Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0])) * 180 / Math.PI;
-      const factor = snapValue('scale', Number.isFinite(exact) ? exact : Math.hypot(...b) / Math.max(.01, Math.hypot(...a)), free);
-      const properties = handle.kind === 'object_rotate'
-        ? { rotation: ((snapValue('angle', (piece.rotation || 0) + angle, free) % 360) + 360) % 360 }
-        : { scale: Math.max(.05, Math.min(20, (piece.scale ?? 1) * factor)) };
-      showValue(handle.kind === 'object_rotate' ? 'angle' : 'factor', handle.kind === 'object_rotate'
-        ? snapValue('angle', (piece.rotation || 0) + angle, free) - (piece.rotation || 0) : properties.scale / (piece.scale ?? 1));
-      g.operation = objectOperation(g.record, properties);
-      preview = structuredClone(g.source);
-      const next = g.record.building ? preview.buildings.find(b => b.id === g.building.id)[g.record.list].find(p => p.id === piece.id)
-        : preview.site[g.record.kind][g.record.index];
-      Object.assign(next, properties);
-      if (g.record.building) view.rebuildLevel(g.building.id, handle.level, preview, { [g.record.list]: [piece.id] });
-      onPreview?.(preview, getSelection()); refresh(); lastFrameMs = Math.max(.001, performance.now() - started); return;
     }
     if (handle.kind === 'roof_edge' || handle.kind.startsWith('dormer_')) {
       const edge = handle.kind === 'roof_edge' ? handle.edge : piece.edge, frame = roofEdge(g.roof, edge);
@@ -531,14 +442,6 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
         : Object.entries(g.operation).some(([k, v]) => !['op', 'list', 'index'].includes(k) && !sameValue(v, g.piece[k] ?? (k === 'rotation' ? 0 : undefined))));
       try { if ((!cancel || cornerClick) && changed) await onCommit(g.operation, { local: applyLocal(getPlan(), g.operation)?.plan || released }); }
       finally { refresh(); }
-      return;
-    }
-    if (g.handle.kind.startsWith('object_')) {
-      try { if (!cancel && g.operation) await onCommit(g.operation); }
-      finally {
-        if (g.record.building) view.rebuildLevel(g.building.id, g.handle.level, getPlan(), { [g.record.list]: [g.piece.id] });
-        onPreview?.(getPlan(), getSelection()); refresh();
-      }
       return;
     }
     if (g.handle.kind === 'roof_edge' || g.handle.kind.startsWith('dormer_') || g.handle.kind.startsWith('solar_')) {

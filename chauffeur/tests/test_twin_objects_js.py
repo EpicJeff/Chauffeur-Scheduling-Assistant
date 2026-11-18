@@ -81,7 +81,7 @@ console.log('ok actual asynchronous opening builder replaces its placeholder and
 // Real canvas rays reach both object handles. The editor's existing history
 // owns undo/redo, so each release must be exactly one history.perform.
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
-const {createHandles}=await import(file('static/twin/editor/handles.js'));
+const {createGizmo}=await import(file('static/twin/editor/gizmo.js'));
 const {createHistory}=await import(file('static/twin/editor/history.js'));
 const nodes=new Map();document.getElementById=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};document.querySelector=()=>null;
 const view=await mountTwin(new Element(),{plan:flat,kit,tier:'low',preserveCamera:true});
@@ -90,17 +90,17 @@ const snapshots=new Map([[1,structuredClone(source)]]), abort=new AbortControlle
 const selected={kind:'furniture',id:'free-chair',building:null};
 const history=createHistory({getRound:()=>round,getBuild:()=>null,canEdit:()=>true,refresh:async()=>{},signal:abort.signal});
 let commits=0;
-const handles=createHandles({view,getPlan:()=>source,getSelection:()=>selected,canEdit:()=>true,drag:{},signal:abort.signal,
- onCommit:operation=>history.perform(async()=>{commits++;assert.equal(operation.op,'set_object');Object.assign(source.site.furniture[operation.index],operation.properties);snapshots.set(++round,structuredClone(source));})});
+let tool='rotate';const handles=createGizmo({view,layer:view.renderer3.domElement.parentElement,getTool:()=>tool,getPlan:()=>source,getSelection:()=>selected,canEdit:()=>true,
+ op:operation=>history.perform(async()=>{commits++;assert.equal(operation.op,'set_object');Object.assign(source.site.furniture[operation.index],operation.properties);snapshots.set(++round,structuredClone(source));})});
 view.camera.position.set(0,30,.01);view.camera.lookAt(0,0,0);view.camera.updateMatrixWorld(true);
 function event(at){const p=new THREE.Vector3(at[0]*.3048,at[2]*.3048,-at[1]*.3048).project(view.camera);return {clientX:(p.x+1)*720,clientY:(1-p.y)*450};}
-let handle=handles.handles().find(h=>h.kind==='object_rotate');assert.ok(handle);
+let handle=handles.handles().find(h=>h.kind==='gizmo_turn');assert.ok(handle);
 assert.ok(handles.begin(event(handle.at)));handles.update(event([0,2,0]));await handles.finish();
 near(source.site.furniture[0].rotation,90);assert.equal(commits,1);
-handle=handles.handles().find(h=>h.kind==='object_scale');assert.ok(handles.begin(event(handle.at)));
+tool='scale';handle=handles.handles().find(h=>h.kind==='gizmo_scale');assert.ok(handles.begin(event(handle.at)));
 handles.update(event(handle.at.map(n=>n*1.5)));await handles.finish();near(source.site.furniture[0].scale,1.5);assert.equal(commits,2);
 const scaleBeforeCancel=source.site.furniture[0].scale;
-handle=handles.handles().find(h=>h.kind==='object_scale');handles.begin(event(handle.at));handles.update(event(handle.at.map(n=>n*2)));await handles.finish(true);
+tool='scale';handle=handles.handles().find(h=>h.kind==='gizmo_scale');handles.begin(event(handle.at));handles.update(event(handle.at.map(n=>n*2)));await handles.finish(true);
 assert.equal(commits,2);near(source.site.furniture[0].scale,scaleBeforeCancel);
 globalThis.fetch=async(_url,options)=>{const body=JSON.parse(options.body);source=structuredClone(snapshots.get(body.round));snapshots.set(++round,structuredClone(source));return {ok:true,text:async()=>JSON.stringify({round})};};
 nodes.get('rail-undo').dispatchEvent(new Event('click'));await new Promise(resolve=>setTimeout(resolve,10));near(source.site.furniture[0].scale,1);

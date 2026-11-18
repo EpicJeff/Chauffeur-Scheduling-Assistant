@@ -1,4 +1,5 @@
 import { hostPoint } from '../twin_hosts.js';
+import { sitePieces } from '../objects.js';
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
 const delta = (a, b) => a.map((v, i) => v - b[i]);
@@ -158,6 +159,39 @@ export function movePreview(plan, gesture, by) {
 }
 
 export function applyLocal(plan, operation) {
+  if (operation.op === 'set_object' || operation.op === 'move_hosted') {
+    // Opening slides use {at}, not a replacement object host.
+    if (operation.op === 'move_hosted' && !operation.host) return null;
+    const properties = operation.op === 'move_hosted' ? { host: operation.host } : operation.properties;
+    if (!properties || Object.keys(properties).some(k => !['rotation', 'scale', 'scale_axes', 'host'].includes(k))) return null;
+    const preview = structuredClone(plan), building = preview.buildings.find(b => b.id === operation.building);
+    const list = building && ['items', 'anchors', 'openings'].find(name => building[name]?.some(p => p.id === operation.id));
+    const piece = list ? building[list].find(p => p.id === operation.id) : !operation.building && sitePieces(preview.site?.[operation.list])[operation.index];
+    if (!piece || piece.device) throw new LocalMissing(`Missing object: ${operation.id || operation.list}`);
+    Object.assign(piece, structuredClone(properties));
+    if (piece.host && building) {
+      try { piece.position = hostPoint(building, piece.host, piece.offset || 0); } catch { /* Server judges missing hosts. */ }
+    }
+    return { plan: preview, building: building?.id || null, level: building?.walls.find(w => w.id === (piece.wall || piece.host?.wall))?.level
+      || building?.rooms.find(r => r.id === (piece.host?.floor || piece.host?.ceiling))?.level || building?.levels[0]?.id || null,
+      touched: list ? { [list]: [piece.id] } : { site: [operation.list] } };
+  }
+  if (operation.op === 'update_site_shape') {
+    if (Object.keys(operation).some(k => !['op', 'list', 'index', 'id', 'polygon', 'points', 'polyline', 'at', 'radius', 'rotation', 'features'].includes(k))) return null;
+    const preview = structuredClone(plan);
+    const pieces = sitePieces(preview.site?.[operation.list]);
+    const index = operation.id ? pieces.findIndex(p => p.id === operation.id) : operation.index ?? 0, piece = pieces[index];
+    if (!piece) throw new LocalMissing(`Missing site shape: ${operation.id || operation.list}`);
+    for (const [key, value] of Object.entries(operation)) if (!['op', 'list', 'index', 'id'].includes(key)) piece[key] = structuredClone(value);
+    return { plan: preview, building: null, level: null, touched: { site: [operation.list] } };
+  }
+  if (operation.op === 'update_light_fixture') {
+    if (Object.keys(operation.change).some(k => !['at', 'aim', 'rotation_deg'].includes(k))) return null;
+    const preview = structuredClone(plan), piece = preview.light_fixtures?.[operation.entity_id]?.find(f => f.id === operation.id);
+    if (!piece) throw new LocalMissing(`Missing light fixture: ${operation.id}`);
+    Object.assign(piece, structuredClone(operation.change));
+    return { plan: preview, building: null, level: null, touched: { light_fixtures: [operation.id] } };
+  }
   const kind = operation.op === 'move_wall' ? 'wall' : operation.op === 'move_joint' ? 'joint'
     : operation.op === 'move_room' ? 'room' : null;
   if (kind) {

@@ -67,6 +67,25 @@ assert.equal(plantAt.building,null); assert.equal(plantAt.level,null);
 assert.deepEqual(plan,before);
 ok('site_item_moves');
 
+const transforms = {buildings:[{id:'b',levels:[{id:'L'}],walls:[],rooms:[],anchors:[],
+  items:[{id:'chair',host:{ground:true,at:[1,2]}}]}],site:{planting:[{id:'tree',at:[0,0]}],
+  pool:{id:'pool',polygon:[[0,0],[4,0],[0,4]]},beds:[{id:'bed',polygon:[[0,0],[2,0],[0,2]]}]}};
+const transformBefore=structuredClone(transforms), properties={rotation:33,scale:2,scale_axes:[2,1,3]};
+for(const target of [{building:'b',id:'chair'},{list:'planting',index:0}]) {
+  const result=applyLocal(transforms,{op:'set_object',...target,properties});
+  const piece=target.building?result.plan.buildings[0].items[0]:result.plan.site.planting[0];
+  for(const [key,value] of Object.entries(properties))assert.deepEqual(piece[key],value);
+}
+for(const target of [{list:'beds',index:0},{list:'pool',index:0}]) {
+  const polygon=[[1,1],[6,1],[1,6]],result=applyLocal(transforms,{op:'update_site_shape',...target,polygon,rotation:15});
+  const piece=target.list==='pool'?result.plan.site.pool:result.plan.site.beds[0];assert.deepEqual(piece.polygon,polygon);assert.equal(piece.rotation,15);
+}
+assert.deepEqual(applyLocal(transforms,{op:'move_hosted',building:'b',id:'chair',host:{ground:true,at:[4,5]}}).plan.buildings[0].items[0].host.at,[4,5]);
+assert.throws(()=>applyLocal(transforms,{op:'set_object',building:'b',id:'gone',properties}),LocalMissing);
+assert.throws(()=>applyLocal(transforms,{op:'update_site_shape',list:'beds',index:5,rotation:15}),LocalMissing);
+assert.deepEqual(transforms,transformBefore);ok('object_and_shape_transforms_are_pure_and_missing_targets_refused');
+assert.equal(applyLocal(transforms,{op:'move_hosted',building:'b',id:'opening',at:3}),null,'opening slides retain their existing supplied-preview path');
+
 assert.equal(applyLocal(plan,{op:'add_opening',building:building.id,wall:wall.id}),null);
 for(const op of ['unknown','constructor','toString','__proto__']) assert.equal(applyLocal(plan,{op}),null);
 ok('other_ops_return_null');

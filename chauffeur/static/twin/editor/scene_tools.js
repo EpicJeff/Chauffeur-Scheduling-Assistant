@@ -9,6 +9,7 @@ import { sheetMaster, localCentre } from './words.js';
 import { createSelection } from './selection.js';
 import { createDrag } from './drag.js';
 import { createDimensions } from './dimensions.js';
+import { createGizmo } from './gizmo.js';
 import { createHandles } from './handles.js';
 import { contains } from '../twin_generator.js';
 import { createPicker, DRAG_THRESHOLD_PX } from './picking.js';
@@ -21,10 +22,10 @@ const rotatePoint = (p, angle) => {
 export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, pickMaterial, api, onDrawFeature }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let selection = null, tool = 'select', levelKey = null, sheetOn = false, gesture = null, delegate = null, pointerId = null;
-  let ownsGesture = false, handles = null, controlsBeforePress = null;
+  let ownsGesture = false, handles = null, gizmo = null, controlsBeforePress = null;
   let roofRooms = new Set(), roofRoomBuilding = null;
   const pointers = new Set(), cancelledEscapes = new WeakSet();
-  const dimensions = createDimensions({ view, onCommit: op, canEdit, signal, getHandles: () => handles?.handles() || [] });
+  const dimensions = createDimensions({ view, onCommit: op, canEdit, signal, getHandles: () => [...(handles?.handles() || []), ...(gizmo?.handles() || [])] });
   function drawDimensions(plan = getPlan(), state = roomSelection.current(), problem = null) {
     const building = plan?.buildings.find(b => b.id === state.building);
     const room = building?.rooms.find(r => r.id === (state.kind === 'room' ? state.id : state.room));
@@ -52,7 +53,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (!selection) panel.clearSelection();
     if (state.level) levelKey = `${state.building}:${state.level}`;
     cards.draw(selection);
-    handles?.refresh();
+    handles?.refresh(); gizmo?.draw();
     drawDimensions(getPlan(), state);
     delegate?.selectionChanged?.(state);
   } });
@@ -64,6 +65,14 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
     onPreview: drawDimensions, onClick: cards.edge, signal });
+  const gizmoLayer = document.createElement('div'); gizmoLayer.className = 'editor-handles'; canvas.parentElement.append(gizmoLayer);
+  gizmo = createGizmo({ view, layer: gizmoLayer, getPlan, getSelection: roomSelection.current, getTool: () => tool, canEdit,
+    onPreview: plan => delegate?.preview?.(plan),
+    op: (operation, options) => op(operation, { ...options, selection: selection?.buildingId ? selection : { kind: selection?.kind, id: selection?.pieceId } }) });
+  view.controls.addEventListener('change', gizmo.draw);
+  canvas.parentElement.addEventListener('twinrebuilt', gizmo.draw, { signal });
+  window.addEventListener('resize', gizmo.draw, { signal });
+  signal.addEventListener('abort', () => { gizmo.finish(true); gizmoLayer.remove(); view.controls.removeEventListener('change', gizmo.draw); }, { once: true });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'
     && (['wall', 'joint', 'room', 'roof', 'dormer', 'solar_zone', 'stair'].includes(kind)
       || kind === 'opening' && building.walls.some(w => w.id === piece.wall)
@@ -120,7 +129,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // Each source exposes hit(event) and begin(event, handle); its existing
   // pointerMove/pointerUp methods keep ownership through release or cancel.
   function handleHit(event) {
-    for (const source of [handles, ...(delegate?.handleSources || [])]) {
+    for (const source of new Set([gizmo, handles, ...(delegate?.handleSources || [])])) {
       const handle = source?.hit?.(event);
       if (handle) return { source, handle };
     }
@@ -129,7 +138,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   function setTool(name) {
     if (name !== 'select') haLink.cancelPlacement();
     tool = name; onInteract?.();
-    for (const id of ['select', 'move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-stair', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking']) el(`rail-${id}`).setAttribute('aria-pressed', String(id === name));
+    for (const id of ['select', 'move', 'rotate', 'scale', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-stair', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking']) el(`rail-${id}`).setAttribute('aria-pressed', String(id === name));
+    handles.refresh(); gizmo.draw();
+    for (const source of delegate?.handleSources || []) source.draw?.();
     canvas.style.cursor = name === 'move' ? 'grab' : name === 'select' ? '' : 'crosshair';
   }
   async function sheet(key = floor()?.key, show = !sheetOn) {
@@ -435,7 +446,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // selection. Idle Escape stays in bubble, after the card's own close action.
   listen(document, 'keydown', event => {
     if (ownsGesture && pointerId !== null && !event.defaultPrevented && (canEdit() || event.key === 'Escape')) {
-      for (const source of new Set([gesture?.source, handles, ...(delegate?.handleSources || [])])) {
+      for (const source of new Set([gesture?.source, gizmo, handles, ...(delegate?.handleSources || []), delegate])) {
         const result = source?.key?.(event);
         if (!result) continue;
         event.preventDefault(); event.stopImmediatePropagation();
@@ -460,7 +471,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (gesture?.dragging && gesture.source !== handles && gesture.started) gesture.source.pointerUp?.({ pointerId }, true);
     if (handles.active()) handles.finish(true).catch(report);
     gesture = null; pointerId = null; ownsGesture = false; pointers.clear(); }, { once: true });
-  for (const id of ['select', 'move', 'rotate']) {
+  for (const id of ['select', 'move', 'rotate', 'scale']) {
     el(`rail-${id}`).disabled = false; listen(el(`rail-${id}`), 'click', () => { delegate?.cancel?.(); setTool(id); });
   }
   el('rail-sheet').disabled = false; listen(el('rail-sheet'), 'click', () => { onInteract?.(); sheet().catch(report); });
@@ -473,11 +484,11 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     haLink,
     deleteSelected: () => cards.remove(),
     select, pick, selected: () => selection, selection: roomSelection.current, dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,
-    handles: handles.handles,
+    gizmo, handles: () => [...handles.handles(), ...gizmo.handles()],
     selectedRooms: () => roofRooms.size ? [...roofRooms] : null,
     // A press on the selected piece's handle belongs to the handle, never to a yard item behind it.
     handleAt: event => !!handleHit(event),
-    get lastDragFrameMs() { return handles.lastDragFrameMs; }, clearDragFrame: () => handles.clearDragFrame(), dragging: handles.active,
+    get lastDragFrameMs() { return gizmo.lastDragFrameMs ?? handles.lastDragFrameMs; }, clearDragFrame: () => { handles.clearDragFrame(); gizmo.clearDragFrame(); }, dragging: () => handles.active() || gizmo.active(),
     buildingCentre(id) { const b = getPlan()?.buildings.find(b => b.id === id); return b && rotatePoint(localCentre(b), b.rotation || 0).map((v, i) => v + (b.position?.[i] || 0)); },
     delegate(value) { delegate = value; },
     refresh() { drawFloors(); if (selection && !findPiece(getPlan(), selection.pieceId, selection.buildingId)) select(null); else roomSelection.refresh(); },

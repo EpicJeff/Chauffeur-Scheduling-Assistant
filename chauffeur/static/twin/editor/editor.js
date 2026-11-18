@@ -752,7 +752,8 @@ export async function boot() {
       prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });
     view.live = { draw: devices.draw, stop: devices.stop };
     tools.delegate({
-      handleSources: [terrain, lot, devices.fixtureHandles],
+      preview: plan => library.preview(plan), key: event => library.key(event), typedValue: () => library.typedValue(), commit: value => library.commit(value),
+      handleSources: [tools.gizmo, terrain, lot, devices.fixtureHandles],
       selectPick: hit => hit?.kind === 'terraces' && (terrain.choose('terraces', hit.id), true) || devices.selectFixturePick(hit),
       selectionChanged: state => { terrain.selectionChanged(state); library.refresh(); },
       pick: flags.pick, pointerBrowse: event => devices.pointerBrowse(event),
@@ -768,7 +769,7 @@ export async function boot() {
       onPreview(value) {
         previewing = value; terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.cancel(); tools.select(null); pauses.dismiss(); panel.readOnly(value);
         tools.refreshCard(); syncBuildButton();
-        for (const id of ['move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-level', 'delete', 'roof']) el(`rail-${id}`).disabled = value;
+        for (const id of ['move', 'rotate', 'scale', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-level', 'delete', 'roof']) el(`rail-${id}`).disabled = value;
         if (!value) pauses.resume();
       },
     });
