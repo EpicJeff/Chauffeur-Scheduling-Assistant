@@ -3,6 +3,9 @@
 The exposed face clipping matches twin_roof.js; panel packing matches
 twin_solar.js. Nothing here reads HA or stores display preferences.
 """
+from copy import deepcopy
+from functools import lru_cache
+import json
 import math
 from services.twin_roof_issues import _planes
 
@@ -90,6 +93,21 @@ def rectangle(rect):
 
 
 def faces(building):
+    """Reuse roof clipping by value, keeping cached faces private to callers."""
+    dormers = [d for d in building.get('dormers', []) if d.get('state') != 'ghost']
+    parents = {d['roof'] for d in dormers}
+    # A live dormer can still use a ghost parent's geometry in the existing
+    # clipping path. Keep that dependency; unrelated ghosts contribute nothing.
+    roof_input = dict(roofs=[r for r in building.get('roofs', [])
+                            if r.get('state') != 'ghost' or r['id'] in parents],
+                      dormers=dormers)
+    key = json.dumps(roof_input, sort_keys=True, separators=(',', ':'))
+    return deepcopy(_cached_faces(key))
+
+
+@lru_cache(maxsize=32)
+def _cached_faces(key):
+    building = json.loads(key)
     from services import twin_model_roofs as roofs
     sections = [s for r in building.get('roofs', []) if r.get('state') != 'ghost'
                 for s in roofs.to_sections(r)]

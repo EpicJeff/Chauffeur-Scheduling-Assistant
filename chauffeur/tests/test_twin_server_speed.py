@@ -12,7 +12,7 @@ import traceback
 from unittest.mock import patch
 
 from test_twin_ha_routes import Ctx, ts
-from services import storage, twin_model, twin_model_bridge as bridge, twin_plan
+from services import storage, twin_edit, twin_model, twin_model_bridge as bridge, twin_model_ops as ops, twin_plan, twin_solar
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'twin_model'
 GOLDEN = FIXTURES / 'server-speed-v2.499.850.json.gz'
@@ -39,12 +39,12 @@ def house():
 
 
 @contextmanager
-def counted():
+def counted(*extra):
     counts = {}
     with ExitStack() as stack:
         for obj, name, label in ((twin_model, 'normalize', 'normalize'), (twin_plan, 'normalize', 'plan_normalize'),
                                  (bridge, 'flatten', 'flatten'), (ts, '_read_round', 'read_round'),
-                                 (ts, 'current', 'current'), (ts, 'current_model', 'current_model')):
+                                 (ts, 'current', 'current'), (ts, 'current_model', 'current_model'), *extra):
             original = getattr(obj, name)
             counts[label] = 0
             def wrapped(*args, _fn=original, _label=label, **kwargs):
@@ -52,6 +52,135 @@ def counted():
                 return _fn(*args, **kwargs)
             stack.enter_context(patch.object(obj, name, wrapped))
         yield counts
+
+
+def clear_solar_cache():
+    cached = getattr(twin_solar, '_cached_faces', None)
+    if cached is not None:
+        cached.cache_clear()
+
+
+def add_first_roof_zone():
+    model = ts.current_model()
+    building = model['buildings'][0]
+    roof = building['roofs'][0]
+    for face in twin_solar.faces(building):
+        if face['roof'] != roof['id']:
+            continue
+        x, y = [sum(p[i] for p in face['polygon']) / len(face['polygon']) for i in (0, 1)]
+        zone = dict(roof=roof['id'], plane=list(face['plane']), rect=[x-.25, y-.25, x+.25, y+.25])
+        if twin_solar.error(building, zone) is None:
+            ts.update_model(lambda current: ops.apply(current, dict(
+                op='add_solar_zone', building=building['id'], **zone))[0])
+            return ts.current_model()['buildings'][0]
+    raise AssertionError('The fixture first roof needs a clear solar zone.')
+
+
+def test_wall_move_computes_roof_faces_at_most_once():
+    with house():
+        building = add_first_roof_zone()
+        clear_solar_cache()
+        with counted((twin_solar, 'clip', 'clip')) as baseline:
+            twin_solar.faces(building)
+        assert baseline['clip'] > 0
+        clear_solar_cache()
+        wall = next(w for w in building['walls'] if w.get('state') != 'ghost')
+        before = ts.current_id()
+        with counted((twin_solar, 'clip', 'clip')) as counts:
+            for _ in range(2):
+                result = twin_edit.save(dict(op='move_wall', building=building['id'],
+                                            wall=wall['id'], by=[.1, 0]), 'mum')
+                assert result['round'] > before
+                before = result['round']
+        assert len(ts.current_model()['buildings'][0]['solar_zones']) == 1
+        assert counts['clip'] <= baseline['clip'], (counts['clip'], baseline['clip'])
+
+
+def test_solar_clear_skips_unchanged_roofs():
+    with house():
+        building = add_first_roof_zone()
+        with counted((twin_solar, 'error', 'solar_error')) as counts:
+            ops.solar_clear(building, deepcopy(building))
+        assert counts['solar_error'] == 0, counts
+
+
+def test_roof_edit_still_strands_zone():
+    refusal = 'That would move a solar zone off its roof plane. Move or delete the zone before changing the roof.'
+    with house():
+        building = add_first_roof_zone()
+        roof = building['roofs'][0]
+        original = ts.current_model()
+        before = ts.current_id()
+        for warm in (False, True):
+            clear_solar_cache()
+            if warm:
+                twin_solar.faces(building)
+            try:
+                twin_edit.save(dict(op='set', building=building['id'], id=roof['id'],
+                                    field='plate', value=roof['plate']+2), 'mum')
+            except ops.Refused as exc:
+                assert str(exc) == refusal, str(exc)
+            else:
+                raise AssertionError('A roof edit stranded its solar zone.')
+            assert ts.current_id() == before
+            assert ts.current_model() == original
+
+
+def test_roof_faces_cache_by_value_and_returned_copies():
+    with house():
+        building = ts.current_model()['buildings'][0]
+        clear_solar_cache()
+        expected = twin_solar.faces(building)
+        returned = twin_solar.faces(building)
+        returned[0]['polygon'][0][0] = -9999
+        returned[0]['roof'] = 'corrupted'
+        returned.pop()
+        same = deepcopy(building)
+        same['roofs'] = [dict(reversed(list(r.items()))) for r in same['roofs']]
+        same['walls'].clear()
+        same['solar_zones'] = []
+        same['roofs'].append(dict(id='ignored', state='ghost'))
+        same['dormers'].append(dict(id='ignored', roof=same['roofs'][0]['id'], state='ghost'))
+        with counted((twin_solar, 'clip', 'clip')) as counts:
+            assert twin_solar.faces(same) == expected
+        assert counts['clip'] == 0, counts
+        # Mutating the input in place must also select a new cache entry.
+        building['roofs'][0]['plate'] += 2
+        with counted((twin_solar, 'clip', 'clip')) as counts:
+            changed = twin_solar.faces(building)
+        assert counts['clip'] > 0 and changed != expected
+
+
+def test_roof_faces_cache_tracks_dormers_and_is_bounded():
+    building = dict(roofs=[dict(id='r', area=[[0, 0], [40, 0], [40, 30], [0, 30]],
+                               edges=[dict(setting='sloped', pitch=6) for _ in range(4)],
+                               kind='hip', pitch=6, plate=10, overhang=0)],
+                    dormers=[dict(id='d', roof='r', edge=0, at=20, width=8, pitch=6, plate_offset=2)])
+    clear_solar_cache()
+    expected = twin_solar.faces(building)
+    building['dormers'][0]['width'] = 10
+    with counted((twin_solar, 'clip', 'clip')) as counts:
+        changed = twin_solar.faces(building)
+    assert counts['clip'] > 0 and changed != expected
+    # The existing geometry also lets a live dormer reference a ghost parent.
+    building['roofs'][0]['state'] = 'ghost'
+    assert twin_solar.faces(building)
+    building['roofs'][0]['plate'] += 1
+    with counted((twin_solar, 'clip', 'clip')) as counts:
+        assert twin_solar.faces(building)
+    assert counts['clip'] > 0
+    clear_solar_cache()
+    building['roofs'][0].pop('state')
+    building['dormers'] = []
+    for height in range(33):
+        building['roofs'][0]['plate'] = height
+        twin_solar.faces(building)
+    info = twin_solar._cached_faces.cache_info()
+    assert info.maxsize == info.currsize == 32, info
+    building['roofs'][0]['plate'] = 0
+    with counted((twin_solar, 'clip', 'clip')) as counts:
+        twin_solar.faces(building)
+    assert counts['clip'] > 0, 'The oldest of 33 roof inputs must be evicted.'
 
 
 def corpus():

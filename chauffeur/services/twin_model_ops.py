@@ -1303,6 +1303,9 @@ def _site_op(model, op, actor):
 
 def solar_clear(building, previous):
     # A structural edit must never silently strand a person's roof objects.
+    if all(building.get(key, []) == previous.get(key, [])
+           for key in ('roofs', 'dormers', 'solar_zones')):
+        return
     from services import twin_solar
     for zone in previous.get('solar_zones', []):
         current = next((z for z in building.get('solar_zones', []) if z['id'] == zone['id']), None)
