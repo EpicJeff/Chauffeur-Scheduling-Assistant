@@ -413,7 +413,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         if (h.kind === 'path') {
           const layout = yardPaverLayout(h), e = h.elevation || 0, joint = paverSettings(h)?.joint;
           if (layout) {
-            surfaceMesh(group, paverGeometry(plan, h, layout), mat(role, h.materials?.surface), seedOf(h), owner);
+            // The part survives material batching in snapRanges, so the stones stay findable.
+            surfaceMesh(group, paverGeometry(plan, h, layout), mat(role, h.materials?.surface), seedOf(h), {...owner, part:'pavers'});
             if (joint === 'gravel' || joint === 'sand') {
               const fill = h.materials?.joint ? mat(joint === 'gravel' ? 'base' : 'paver_sand', h.materials.joint)
                 : joint === 'gravel' ? mat('base') : plain('paver_sand', '#cdb994', {roughness:.95});
