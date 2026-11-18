@@ -39,11 +39,29 @@ DRIVER = HISTORY_DRIVER.split(' const zoneResize=')[0].replace(
  const local=applyLocal(plan,operation).plan;
  if(config.case==='dropped_dependencies_share_one_notice')local.buildings[0].walls.push({...local.buildings[0].walls[0],id:'dependent'});
  const gate=deferred();holdResponse=gate;
+ let settles=[];
+ if(config.case==='server_correction_remaps_selection'){
+  window.__editor.clickPiece('w','b');editorView.plan=structuredClone(local);
+  editorView.settle=async(p,info)=>{
+   settles.push(info);editorView.plan=p;
+   return {path:'rebuild',selection:{pieceId:'w-new',buildingId:'b',kind:'wall'}};
+  };
+ }
  if(config.case==='undo_refuses_over_foreign_round_after_replay')holdAnswer=deferred();
  let completed=false;
  const save=hooks.op(operation,{drag:true,local,label:'Moving the wall',selection});
  save.then(()=>completed=true,()=>{});save.catch(()=>{});
  await until(()=>writes.length===1);
+ if(config.case==='server_correction_remaps_selection'){
+  // Force the accepted answer to differ from the held preview. The queue's
+  // real onChange enters settleView(plan, {}) after replay.
+  plan.buildings[0].rooms.push({id:'correction',level:'L1',polygon:[[0,0],[2,0],[0,2]]});
+  gate.resolve();await save;await until(()=>settles.length===1);
+  assert.equal(settles[0].buildingId,'b');assert.equal(settles[0].levelId,'L1');assert.equal(settles[0].touched,null);
+  assert.deepEqual(settles[0].selection,{pieceId:'w',buildingId:'b'});
+  assert.deepEqual(window.__editor.selected(),{pieceId:'w-new',buildingId:'b',kind:'wall'});
+  assert.equal(rebuilds.length,0);
+ }
  if(config.case==='kept_release_draws_once'){
   assert.equal(rebuilds.length,0);assert.equal(completed,false);
   assert.equal(document.getElementById('editor-save-state').textContent,'Saving 1 change');
@@ -153,7 +171,7 @@ DRIVER = HISTORY_DRIVER.split(' const zoneResize=')[0].replace(
 if __name__ == '__main__':
     ids = sorted(set(re.findall(r'id="([\w-]+)"', (ROOT / 'templates/house_editor.html').read_text(encoding='utf-8'))) | {'piece-card', 'rail-undo', 'rail-redo', 'editor-save-state'})
     failed = 0
-    for case in ('kept_release_draws_once', 'stale_poll_ignored', 'refusal_notice_and_selection', 'dropped_dependencies_share_one_notice',
+    for case in ('server_correction_remaps_selection', 'kept_release_draws_once', 'stale_poll_ignored', 'refusal_notice_and_selection', 'dropped_dependencies_share_one_notice',
                  'undo_waits_for_in_flight_step', 'undo_refuses_over_foreign_round_after_replay',
                  'second_release_is_local_while_first_saves', 'multi_round_gesture_keeps_its_history_turn',
                  'signed_out_401', 'signed_out_403', 'raw_sender_does_not_alert', 'start_over_clears_the_queue_base', 'leaving_with_unsaved_warns'):

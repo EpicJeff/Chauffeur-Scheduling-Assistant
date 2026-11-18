@@ -94,6 +94,7 @@ try {
   record();return response(200,{...state(),words:'Saved the change.',summary:'Saved the change.'});
  };
  globalThis.editorView={scene:{},plan:null,state:{time:'now',unlit:false},
+  async settle(p,{selection=null}={}){await this.rebuild(p);return {path:'rebuild',selection};},
   setTime(time){this.state.time=time;},setUnlit(on){this.state.unlit=on;},dispose(){},rebuild:async p=>{
   editorView.plan=p;if(holdRender){const gate=holdRender;holdRender=null;await gate.promise;}
  }};

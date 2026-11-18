@@ -128,8 +128,17 @@ export async function boot() {
     el('editor-save-state').textContent = state.saved ? 'Saved'
       : `${state.unsaved ? '' : 'Saving '}${count} ${count === 1 ? 'change' : 'changes'}${state.unsaved ? ' not saved' : ''}`;
   }
-  function settleView(plan, info) {
-    return view.settle ? view.settle(plan, info) : view.rebuild(plan, info);
+  async function settleView(plan, info) {
+    const selection = info.selection ?? tools?.selected?.() ?? null;
+    const buildingId = info.buildingId ?? selection?.buildingId ?? selection?.building ?? null;
+    const building = view.plan?.buildings?.find(b => b.id === buildingId);
+    const id = selection?.pieceId ?? selection?.id;
+    const piece = ['walls', 'rooms', 'openings', 'joints', 'anchors', 'items']
+      .flatMap(list => building?.[list] || []).find(p => p.id === id);
+    const result = await view.settle(plan, { buildingId, levelId: info.levelId ?? piece?.level ?? null,
+      touched: info.touched ?? null, selection });
+    if (result.selection !== selection) tools?.select(result.selection);
+    return result;
   }
   function summary(text) {
     lastSummary = text;
@@ -196,7 +205,7 @@ export async function boot() {
     if (local) {
       // Walls and hosted pieces already have drawable preview buffers. Site
       // gestures have only an outline, so settle their local geometry now.
-      if (!kept || operation.op === 'move_site_item') await settleView(queue.shown(), { timing });
+      if (!kept || operation.op === 'move_site_item') await settleView(queue.shown(), { selection });
       lastScene = JSON.stringify(queue.shown());
       frame = api.observeEditFrame(view, timing);
       frame.catch(report);

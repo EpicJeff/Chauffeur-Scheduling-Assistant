@@ -807,10 +807,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
       }
     },
-    rebuildLevel(buildingId, levelId, flat, touched = null) {
+    rebuildLevel(buildingId, levelId, flat, touched = null, { keep = false } = {}) {
       const key = `${buildingId}:${levelId}`, group = twin?.groups.levels[key];
       const before = plan.buildings.find(b => b.id === buildingId), after = flat.buildings.find(b => b.id === buildingId);
-      if (!group || !before || !after || twin.editableLevel !== key) return;
+      if (!group || !before || !after || (!keep && twin.editableLevel !== key)) return;
       view.bake?.stop();
       // The focused level has per-piece meshes (R42). Rebuild its changed
       // buffers in place: no roof, yard, texture or optional-model work per frame.
@@ -837,23 +837,61 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           changed.add(object.geometry);
           let geometry = object.geometry;
           if (!geometry?.attributes.position) continue;
+          const ranges = object.userData.snapRanges;
+          const owned = ranges?.filter(r => r.pieceId === id && r.buildingId === buildingId);
+          if (ranges && !owned.length) continue;
           if (room && object !== proxy && object.isMesh) {
-            geometry.computeBoundingBox();
-            const { min, max } = geometry.boundingBox;
             const level = after.levels.find(l => l.id === levelId);
             const holes = stairHoles(after, level).filter(h => h.every(p => contains(room.polygon, p)));
-            object.geometry = polygon(room.polygon, min.y, max.y, holes);
+            if (ranges) {
+              // Unfocused levels batch several pieces into one buffer. Replace
+              // only this room's ranges, preserving the other pieces and calls.
+              const chunks = ranges.map(r => {
+                if (!owned.includes(r)) return null;
+                let min = Infinity, max = -Infinity;
+                for (let i = r.start; i < r.start + r.count; i++) {
+                  const y = geometry.attributes.position.getY(i); min = Math.min(min, y); max = Math.max(max, y);
+                }
+                const poly = polygon(room.polygon, min, max, holes);
+                if (!poly.index) return poly;
+                const triangles = poly.toNonIndexed(); poly.dispose(); return triangles;
+              });
+              const replacement = new THREE.BufferGeometry();
+              for (const [name, attribute] of Object.entries(geometry.attributes)) {
+                const values = [];
+                ranges.forEach((r, index) => {
+                  const chunk = chunks[index], attr = chunk?.attributes[name] || attribute;
+                  const start = chunk ? 0 : r.start, count = chunk ? chunk.attributes.position.count : r.count;
+                  for (let i = start; i < start + count; i++) for (let c = 0; c < attribute.itemSize; c++)
+                    values.push(chunk && !chunk.attributes[name] ? 0 : attr.getComponent(i, c));
+                });
+                replacement.setAttribute(name, new THREE.Float32BufferAttribute(values, attribute.itemSize));
+              }
+              let start = 0;
+              ranges.forEach((r, i) => { r.start = start; r.count = chunks[i]?.attributes.position.count ?? r.count; start += r.count; });
+              replacement.userData = { ...geometry.userData, snapRanges: ranges };
+              chunks.forEach(g => g?.dispose()); object.geometry = replacement;
+            } else {
+              geometry.computeBoundingBox();
+              object.geometry = polygon(room.polygon, geometry.boundingBox.min.y, geometry.boundingBox.max.y, holes);
+            }
             geometry.dispose(); geometry = object.geometry;
           } else {
             const positions = geometry.attributes.position;
-            for (let i = 0; i < positions.count; i++) {
-              const p = deform(positions.getX(i), -positions.getZ(i), positions.getY(i));
-              positions.setXYZ(i, p[0], p[2], -p[1]);
+            for (const range of owned || [{ start: 0, count: positions.count }]) {
+              for (let i = range.start; i < range.start + range.count; i++) {
+                const p = deform(positions.getX(i), -positions.getZ(i), positions.getY(i));
+                positions.setXYZ(i, p[0], p[2], -p[1]);
+              }
             }
             positions.needsUpdate = true; geometry.computeVertexNormals();
           }
           geometry.computeBoundingBox(); geometry.computeBoundingSphere();
-          if (object !== proxy) box.union(geometry.boundingBox);
+          if (object !== proxy) {
+            if (owned) for (const r of owned) for (let i = r.start; i < r.start + r.count; i++)
+              box.expandByPoint(new THREE.Vector3().fromBufferAttribute(geometry.attributes.position, i));
+            else box.union(geometry.boundingBox);
+          }
         }
         if (!box.isEmpty()) {
           record.box.copy(box);
@@ -920,7 +958,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       plan = flat; view.plan = flat;
       // A gesture deforms retained buffers in place; the next full rebuild
       // must regenerate this building from its final authoritative record.
-      if (twin.buildings?.has(buildingId)) twin.buildings.get(buildingId).model.stale = true;
+      if (!keep && twin.buildings?.has(buildingId)) twin.buildings.get(buildingId).model.stale = true;
       for (const line of selectionLines) {
         const key = line.userData.selectionKey;
         if (!changedPieces.has(key)) continue;
@@ -935,7 +973,73 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       render();
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
     },
-    rebuild(nextPlan, { preserveYard = false, timing = null } = {}) {
+    async settle(nextPlan, { buildingId = null, levelId = null, touched = null, selection = null } = {}) {
+      const beforePlan = plan, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const previous = new Map((beforePlan.buildings || []).map(b => [b.id, b]));
+      const onLevel = (b, list, id) => (b[list] || []).filter(p =>
+        (p.level || b.walls?.find(w => w.id === (p.wall || p.host?.wall))?.level
+          || b.rooms?.find(r => r.id === (p.host?.floor ?? p.host?.ceiling))?.level
+          || b.roofs?.find(r => r.id === p.host?.roof)?.level
+          || b.levels?.[0]?.id) === id);
+      const ids = list => list.map(p => p.id).sort();
+      const changed = [];
+      let rebuild = previous.size !== (nextPlan.buildings || []).length || !same(beforePlan.materials, nextPlan.materials);
+      for (const after of nextPlan.buildings || []) {
+        const before = previous.get(after.id);
+        if (!before || !same(ids(before.levels || []), ids(after.levels || []))) { rebuild = true; continue; }
+        // Changes outside the deformable level records still need the complete
+        // generator (roofs, placement, materials, fixtures, and so on).
+        const fixed = b => Object.fromEntries(Object.entries(b).filter(([k]) => !['walls', 'rooms', 'openings', 'anchors', 'items', 'joints'].includes(k)));
+        if (!same(fixed(before), fixed(after))) rebuild = true;
+        for (const level of after.levels || []) {
+          for (const list of ['walls', 'rooms', 'openings'])
+            if (!same(ids(onLevel(before, list, level.id)), ids(onLevel(after, list, level.id)))) rebuild = true;
+          const lists = ['walls', 'rooms', 'openings', 'anchors', 'items'];
+          if (lists.some(list => !same(onLevel(before, list, level.id), onLevel(after, list, level.id))))
+            changed.push({ buildingId: after.id, levelId: level.id });
+        }
+      }
+      // Selection shapes from the scene tools and direct callers are both used.
+      const selectedBuilding = selection?.buildingId ?? selection?.building ?? buildingId;
+      const selectedId = selection?.pieceId ?? selection?.id;
+      const oldWall = previous.get(selectedBuilding)?.walls?.find(w => w.id === selectedId);
+      const newBuilding = nextPlan.buildings?.find(b => b.id === selectedBuilding);
+      if (oldWall && !newBuilding?.walls?.some(w => w.id === selectedId)) {
+        const midpoint = oldWall.from.map((v, i) => (v + oldWall.to[i]) / 2);
+        const replacement = newBuilding?.walls?.find(w => {
+          if (w.level !== oldWall.level) return false;
+          const dx = w.to[0] - w.from[0], dy = w.to[1] - w.from[1], length2 = dx * dx + dy * dy;
+          const t = length2 ? Math.max(0, Math.min(1, ((midpoint[0] - w.from[0]) * dx + (midpoint[1] - w.from[1]) * dy) / length2)) : 0;
+          return Math.hypot(midpoint[0] - w.from[0] - t * dx, midpoint[1] - w.from[1] - t * dy) <= .05;
+        });
+        selection = replacement ? { ...selection, [selection.pieceId !== undefined ? 'pieceId' : 'id']: replacement.id } : null;
+      }
+      if (rebuild) {
+        // rebuild owns the single bake restart on this path.
+        await view.rebuild(nextPlan, { yardLater: true });
+        return { path: 'rebuild', selection };
+      }
+      const version = ++revision;
+      // Each level compares against the same shown plan; rebuildLevel updates
+      // plan itself, so restore that baseline between synchronous deforms.
+      for (const change of changed) {
+        plan = beforePlan;
+        const after = nextPlan.buildings.find(b => b.id === change.buildingId);
+        // Hosts may move without changing a hosted record. Visit the level's
+        // hosted pieces as well as the hinted ids; rebuildLevel skips equals.
+        const hint = Object.fromEntries(['walls', 'rooms', 'openings', 'anchors', 'items'].map(list => [list,
+          [...new Set([...(change.buildingId === buildingId && change.levelId === levelId ? touched?.[list] || [] : []),
+            ...onLevel(after, list, change.levelId).map(p => p.id)])]]));
+        view.rebuildLevel(change.buildingId, change.levelId, nextPlan, hint, { keep: true });
+      }
+      plan = nextPlan; view.plan = nextPlan;
+      view.ready = !disposed && !!twin;
+      sun.shadow.needsUpdate = true; reflections.request();
+      deferYard(nextPlan, version);
+      startBake();
+      return { path: 'deform', selection };
+    },
+    rebuild(nextPlan, { preserveYard = false, timing = null, yardLater = false, force = false } = {}) {
       const work = (async () => {
       const version = ++revision; view.ready = false;
       try {
@@ -943,7 +1047,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const stopBake = editSpan(detail, 'bake_stop');
       view.bake?.stop();
       stopBake();
-      const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor, previous: twin, timing });
+      const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor, previous: force ? null : twin, timing });
       const reuseYard = !!yardGroup && (preserveYard || yardGroup.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor }));
       if (timing) timing.yard_reused = reuseYard;
       const yardMaterials = reuseYard || yardGroup?.userData.yardMaterialKey === yardMaterialKey(nextPlan, kit, tier)
@@ -998,7 +1102,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         const stopBatch = editSpan(detail, 'batch');
         for (const [parent, group] of extras) mergeStatic(group, { perPiece: !!editableLevel && parent.userData.levelKey === editableLevel });
         stopBatch();
-        if (!reuseYard) {
+        if (!reuseYard && !yardLater) {
           const stopYard = editSpan(detail, 'yard');
           const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, materials: yardMaterials, timing: detail, previous: yardGroup }); next.groups.site.add(yard.group);
           stopYard();
@@ -1011,7 +1115,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (disposed || version !== revision) { release(next, keepMaterials); return; }
       next.yardGroup?.userData.adoptParts?.();
       // Both caches now own exactly the resources surviving the accepted build.
-      const keepAfter = new Set([...(next.yardGroup?.userData.materials?.values() || []), ...next.materials.values()]);
+      const keepAfter = new Set([...((next.yardGroup || yardGroup)?.userData.materials?.values() || []), ...next.materials.values()]);
       if (timing) {
         timing.yard_reused_parts = reuseYard ? Object.keys(yardGroup?.userData.yardPartKeys || {}) : next.yardGroup?.userData.yardReusedParts || [];
         timing.yard_rebuilt_parts = reuseYard ? [] : next.yardGroup?.userData.yardRebuiltParts || [];
@@ -1089,9 +1193,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       paintSelection();
       try { await viewing?.warm(); }
       finally { releaseViewing?.(); }
+      if (disposed || version !== revision) return;
       view.ready = true;
       reflections.request();
       startBake();
+      if (yardLater && !reuseYard) deferYard(nextPlan, version, timing);
       el.dispatchEvent(new CustomEvent('twinrebuilt', { detail: view }));
       } finally { if (version === revision) view.ready = !disposed && !!twin; }
       })();
@@ -1128,6 +1234,47 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (window.__twin === view) delete window.__twin;
     },
   };
+  function deferYard(nextPlan, version, timing = null) {
+    // A task boundary lets the accepted house paint before synchronous yard
+    // builders run. The complete old yard stays attached until adoption.
+    setTimeout(async () => {
+      if (disposed || version !== revision || yardGroup?.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor })) return;
+      const previous = yardGroup, materials = new Map(previous?.userData.materials);
+      const retained = () => new Set([...(twin?.materials.values() || []), ...(yardGroup?.userData.materials?.values() || [])]);
+      let group;
+      try {
+        const stop = editSpan(timing?.detail, 'yard');
+        try { ({ group } = await buildYard(nextPlan, kit, tier, { viewing: !editor, materials, timing: timing?.detail, previous })); }
+        finally { stop(); }
+        if (disposed || version !== revision) {
+          const keep = retained(); group.userData.releasePlants?.(keep); disposeObject(group, { keepMaterials: keep }); return;
+        }
+        const selected = viewing?.snapshot().pinned;
+        const releaseViewing = viewing?.dispose({ deferMaterials: true }); viewing = null;
+        group.userData.adoptParts?.();
+        twin.groups.site.add(group); twin.yardGroup = group; yardGroup = group;
+        if (previous) {
+          const keep = retained(); previous.removeFromParent();
+          previous.userData.releasePlants?.(keep); disposeObject(previous, { keepMaterials: keep });
+        }
+        if (timing) {
+          timing.yard_reused_parts = group.userData.yardReusedParts || [];
+          timing.yard_rebuilt_parts = group.userData.yardRebuiltParts || [];
+        }
+        reflections.rebuild(plan, twin.root);
+        if (!editor) {
+          viewing = createViewing(view, twin, b => buildingGround(plan, b), key => {
+            state.view = key; sun.shadow.needsUpdate = true; applyLights();
+            el.dispatchEvent(new CustomEvent('twinviewchange', { detail: key }));
+          }, { explicit: true });
+          viewing.select(selected || 'ext');
+        }
+        releaseViewing?.();
+        sun.shadow.needsUpdate = true; reflections.request(); render();
+        el.dispatchEvent(new CustomEvent('twinyardrebuilt', { detail: view }));
+      } catch (error) { el.dispatchEvent(new CustomEvent('twinerror', { detail: error })); }
+    }, 0);
+  }
   function release(model, keepMaterials = new Set()) {
     model.root.traverse(o => o.userData.releasePlants?.(keepMaterials));
     disposeObject(model.root, { keepMaterials });
