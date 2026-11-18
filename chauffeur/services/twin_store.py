@@ -478,11 +478,12 @@ def _read_round(row, round_id):
 
 
 @_edit_timed('read')
-def current() -> dict | None:
-    """Return the flat view used by the build pipeline and existing editor."""
+def current(*, model=None) -> dict | None:
+    """Return the flat view; a locked caller may supply its current model snapshot."""
     with _LOCK:
         global _READ_PLAN
-        model = current_model()
+        if model is None:
+            model = current_model()
         if model is None:
             return None
         if _READ_PLAN is None:
@@ -501,6 +502,18 @@ def current_model(*, settings=None) -> dict | None:
             _READ_PLAN = None
             _READ_KEY = key
         return deepcopy(_READ_MODEL)
+
+
+def prime_reads(round_id, model, plan):
+    """Cache a just-published normalized edit and its flat view, privately."""
+    with _LOCK:
+        global _READ_KEY, _READ_MODEL, _READ_PLAN, _READ_NORMALIZED
+        row = _state()
+        if row['current'] != round_id:
+            return
+        _READ_KEY = _read_key(row)
+        _READ_MODEL, _READ_PLAN = deepcopy(model), deepcopy(plan)
+        _READ_NORMALIZED = True
 
 
 def current_id() -> int | None:
@@ -694,8 +707,9 @@ def update_current(mutator, kind, note='', step=None, cost=None, generation=None
         return _append_round(row, model, kind, note=note, cost=cost, step=step, partial=partial)
 
 
-def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, state_mutator=None) -> int:
-    """Publish a connected-model edit with its paired fix log."""
+def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, state_mutator=None,
+                 return_model=False) -> int | tuple[int, dict]:
+    """Publish an edit; optionally return its exact serialized model with the id."""
     with LIFECYCLE, _LOCK:
         row = _state()
         if generation is not None and generation != row['generation']:
@@ -711,7 +725,8 @@ def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, 
             state_mutator(row)
         _follow_place(row, model)
         # _follow_place only copies registry names onto buildings normalize already kept.
-        return _append_round(row, model, kind, note=note, changes=changes, normalized=True)
+        round_id = _append_round(row, model, kind, note=note, changes=changes, normalized=True)
+        return (round_id, deepcopy(_READ_MODEL)) if return_model else round_id
 
 
 def _restore_load_state(row, target):

@@ -892,17 +892,17 @@ def save(edit, actor_id, reason=''):
     # Same lock order as update_current/start_over. Keep the snapshot, new round,
     # fixes and ancillary metadata together against other readers and writers.
     with twin_store.LIFECYCLE, twin_store._LOCK:
-        before = twin_store.current()
-        if before is None:
+        from services import twin_model, twin_model_bridge
+        current = twin_store.current_model()
+        if current is None:
             raise ValueError('Build a house before editing it.')
+        before = twin_store.current(model=current)
         if edit.get('op') == 'registration':
             edit['from_reg'] = twin_store.registration(edit.get('source'), edit.get('page'), edit.get('level'))
             if edit['from_reg'] is None:
                 raise ValueError('No registration on file for this sheet yet')
             edit['reg'] = _registration(edit.get('reg'))
             twin_store._source_page(twin_store._state(), edit.get('source'), edit.get('page'))
-        from services import twin_model, twin_model_bridge
-        current = twin_store.current_model()
         # A model update_model just published is already normalized: skip the second pass.
         normalized = ((deepcopy(current), []) if twin_store.current_is_normalized()
                       else twin_model.normalize(current))
@@ -938,11 +938,12 @@ def save(edit, actor_id, reason=''):
             if place_row is not None:
                 row['place'], row['page_roles'] = place_row['place'], place_row['page_roles']
                 row['sources'] = place_row['sources']
-        round_id = twin_store.update_model(
-            lambda current: model, 'edit', note=summary, changes=changes, state_mutator=metadata)
+        round_id, written_model = twin_store.update_model(
+            lambda current: model, 'edit', note=summary, changes=changes, state_mutator=metadata,
+            return_model=True)
         for tombstone in tombstones:
             twin_store.add_tombstone({**tombstone, 'round': round_id})
         if edit.get('op') == 'registration':
             edit['reg']['source'] = 'person'
             twin_store.set_registration(edit['source'], edit['page'], edit['level'], edit['reg'])
-        return {'round': round_id, 'summary': summary}
+        return {'round': round_id, 'summary': summary, 'model': written_model}

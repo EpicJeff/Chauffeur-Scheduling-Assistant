@@ -244,6 +244,28 @@ def test_op_and_state_responses_identical_with_cache():
         assert encoded(actual) == encoded(expected), actual['kind']
 
 
+def test_op_response_matches_state_without_reread():
+    with house() as c:
+        building = ts.current_model()['buildings'][0]
+        wall = next(w for w in building['walls'] if w.get('state') != 'ghost')
+        ts._invalidate_reads()
+        with counted() as counts:
+            response = c.client.post(OP, headers=c.mum, json={'op': {
+                'op': 'move_wall', 'building': building['id'], 'wall': wall['id'], 'by': [.1, 0]}})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        with counted() as state_counts:
+            state_response = c.client.get(STATE, headers=c.mum)
+        assert state_response.status_code == 200, state_response.text
+        state = state_response.json()
+        assert body['plan'] == state['plan']
+        assert body['model'] == state['model']
+        on_disk = json.loads((Path(ts.DATA_DIR) / 'rounds' / f'{body["round"]}.json').read_text(encoding='utf-8'))
+        assert body['model'] == on_disk
+        assert counts['current_model'] <= 1, counts
+        assert state_counts['read_round'] == state_counts['flatten'] == 0, state_counts
+
+
 def test_normalize_calls_per_op_reduced():
     baseline = json.loads(METRICS.read_text())
     _, after = capture()
