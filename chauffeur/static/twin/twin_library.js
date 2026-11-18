@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { modelLoader, colladaTexturesReady } from './import_loaders.js';
+import { modelLoader, colladaTexturesReady, dropEdgeLines } from './import_loaders.js';
 import { normaliseModel, modelBudget, mergeByMaterial, singlePassMaterial, heavyStandIn } from './objects.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { tierModel } from './model_lods.js';
@@ -530,6 +530,8 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
       throw error;
     } finally { loader.release?.(); }
     if (!result) return null;
+    // Applied on every load, so models imported before this keep no edge lines either.
+    if (isImport) dropEdgeLines(result.scene);
     const converted = new Map();
     result.scene.traverse(o => {
       if (!o.isMesh) return;

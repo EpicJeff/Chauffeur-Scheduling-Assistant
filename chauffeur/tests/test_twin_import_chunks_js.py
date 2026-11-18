@@ -111,6 +111,20 @@ document.createElement=()=>({getContext:()=>carContext});
 const car=objects.heavyStandIn([2,1,4],'car');assert.equal(car.children.length,2);assert.ok(car.children[1].material.map);
 for(const item of [low,medium,high,car])disposeObject(item);
 ok('Low selects the footprint stand-in only above 300k; Medium/High keep full model; car uses twin icon');
+
+// 3D Warehouse (SketchUp) glTF carries the model's edges as a line primitive
+// with no material, drawn white over every facet (household, 2026-11-18).
+const edged=structuredClone(doc);
+edged.meshes[0].primitives.push({attributes:{POSITION:edged.meshes[0].primitives[0].attributes.POSITION},mode:1});
+const edgeAsset='import-'+'7'.repeat(32);rememberImport({id:edgeAsset,model:'edges.gltf',files:{'edges.gltf':true},triangles:1000,kind:'other',size:[1,2,3]});
+globalThis.fetch=async input=>{const url=typeof input==='string'?input:input.url;if(url.startsWith('data:'))return nativeFetch(input);return new Response(JSON.stringify(edged),{status:200});};
+const raw=await new GLTFLoader().parseAsync(JSON.stringify(edged),'');let rawLines=0;raw.scene.traverse(o=>{if(o.isLine)rawLines++;});
+assert.ok(rawLines>0,'the stock loader makes a line object from the edge primitive');
+const edgeModel=await loadModel(edgeAsset,{},undefined,{tier:'high',editor:true});
+let lines=0,faces=0;edgeModel.traverse(o=>{if(o.isLine||o.isPoints)lines++;if(o.isMesh)faces++;});
+assert.equal(lines,0,'imported models keep no edge lines');assert.ok(faces>0,'the faces stay');
+disposeObject(edgeModel);
+ok('an imported model loses the edge lines SketchUp exports and keeps its faces');
 """
 
 

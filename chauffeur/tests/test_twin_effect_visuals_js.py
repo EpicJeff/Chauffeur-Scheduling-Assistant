@@ -46,9 +46,10 @@ await test('bubbler_is_a_narrow_column_over_a_wide_foam_apron',async()=>{
   // Measured above the flared foot, the column is far taller than wide once it has any height.
   if(size>=1)assert.ok(column.x<size*.5,`column ${column.x} wide for ${size} tall`);
   assert.ok(foam.x>column.x*2.5,'foam spreads well past the foot');assert.ok(foam.y<.001);
-  // A clear lit column over a faint bubbling ring (user, 2026-11-17: little white).
+  // A lit, aerated column over a foam ring (household, 2026-11-18, from a photo:
+  // real bubblers are mostly white bubbles).
   assert.ok(body.material.userData.risingWater);close(body.material.uniforms.fall.value,size);
-  assert.equal(apron.material.uniforms.kind.value,4.5);
+  assert.equal(apron.material.uniforms.kind.value,4);
  }
 });
 await test('bubbler_grows_taller_not_wider_with_flow',async()=>{

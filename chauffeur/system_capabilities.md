@@ -1,6 +1,27 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.929 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.932 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.932 (2026-11-18, NOT device-verified; node-checked through the real model loader): imported models no longer show their edges as white lines.**
+
+- **What was wrong.** Every glTF the household took from 3D Warehouse drew a white line along every edge, smoothed curves included ("It makes them useless"). SketchUp, and so 3D Warehouse, exports a model's edges as line primitives, usually with no material; three gives them the default white material and draws them over the faces.
+- **What changed for a person.** Imported models show their faces only. Models imported earlier are fixed too, with no re-import: the lines are dropped every time a model loads, so the thumbnails and lighter versions made from now on have none either.
+- **How.** `static/twin/import_loaders.js` `dropEdgeLines(root)` removes and disposes line, line-segment, line-loop and point objects; `static/twin/twin_library.js` `loadModel` calls it for every imported model (glTF, Collada, KMZ) right after loading.
+- **Tests.** `tests/test_twin_import_chunks_js.py` (a glTF with an edge-line primitive: the stock loader makes a line object; the imported model keeps its faces and no lines; failed before the fix), `tests/test_twin_collada_js.py`, `tests/test_model_lod_import_js.py`, `tests/test_twin_library_js.py` (28), `tests/test_twin_import_maps.py`.
+
+**v2.499.931 (2026-11-18, NOT device-verified, browser-checked in Chromium on the `/house` view page with a household's own house, a floor pinned): a floor viewed on its own shows its walls at full height, cut just under the ceiling.**
+
+- **What was wrong.** Viewing one floor or room cut its walls 4 ft under the ceiling (6 ft on a 10 ft floor), a low dollhouse cut. The household: "They should be cut off at the ceiling height for the floor."
+- **What changed for a person.** The walls of the viewed floor stand to its ceiling; the ceiling, the floors above and the roof are taken away, so the rooms are open from above. Looking in at a shallow angle, full-height walls hide more of a room than the low cut did.
+- **How.** One value, `cutHeight(level)` in `static/twin/twin_floors.js`: `max(1, ceiling - .05)` ft above the floor (a hair under the ceiling so the ceiling itself is cut away rather than lidding the room). `static/twin/viewing.js` re-exports it for the view's clip plane, and `static/twin/twin_generator.js` builds the closed cut walls to the same height (it repeated the old 4 ft formula before).
+- **Tests.** `tests/test_twin_viewing_js.py` (20: just under the ceiling, bounded for short levels, one shared value; the cap and sunken-room checks at the new height), `tests/test_house_twin_viewing_live.py` (5, Chromium: flat closed wall tops at the cut, roofs and floors above restored on leaving), `tests/test_twin_room_floor_js.py`, `tests/test_twin_import_maps.py`.
+
+**v2.499.930 (2026-11-18, NOT device-verified, browser-checked in Chromium on high on the `/house` view page with a household's own house loaded through the house-file load path and every water effect running): a bubbler is a white, aerated column again.**
+
+- **What was wrong.** v2.499.924 made the bubbler a clear, glassy column with a small white crown. The household, with a photo of real ones: "They really are mostly white bubbles."
+- **What changed for a person.** The column is mostly white with air: froth streaks climb it with a little clearer water between them, whitest in the crown and at the foot, still lit like the pool water (and by its lamps at night), and it boils into a foam ring on the water.
+- **How.** `static/twin/effects/sheet_material.js` `COLUMN`: white share `mix(.55, .95, streak) + .3 x crown x fine + .3 x foot` (never under .55), the streak noise climbing at 2.6 per foot and closing around the column; `static/twin/effects/bubbler.js` foam ring `splashRing(4, .18)` (was the faint 4.5).
+- **Tests.** `tests/test_twin_effect_second_set_js.py` (20: mostly white, never under .55; streaks climb and close around), `tests/test_twin_effect_visuals_js.py` (22: the foam ring), `tests/test_twin_effect_lighting_water_js.py`, `tests/test_twin_effect_editor_js.py`, `tests/test_twin_import_maps.py`.
 
 **v2.499.929 (2026-11-18, NOT device-verified; the fault was found from the household's own browser console on device): a household's house with an imported model gets its pool mirror and reflection captures back.**
 

@@ -1,10 +1,10 @@
-import { roomFloor, roomAt } from './twin_floors.js';
+import { roomFloor, roomAt, cutHeight } from './twin_floors.js';
 // Viewing LOD uses lot feet (x, y, height). No work here depends on frame rate.
 import * as THREE from 'three';
 import { copyMaterialParams } from './twin_library.js';
 
 const smooth = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
-export const cutHeight = level => Math.max(1, (level.ceiling || 8) - 4);
+export { cutHeight };
 export const fadeAlpha = (distance, near, far) => smooth((distance - near) / (far - near));
 export function bandActive(distance, threshold, active, margin) {
   return active ? distance < threshold + margin : distance < threshold - margin;

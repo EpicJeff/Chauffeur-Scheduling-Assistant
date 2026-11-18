@@ -29,7 +29,8 @@ GEOMETRY = r"""() => {
   const box=v.groups.levels[`${b.id}:${levels[0].id}`];box.updateWorldMatrix(true,true);
   // The generator's local group records ground + foundation in lot feet.
   const base=box.children.find(g=>g.userData.buildingId===b.id)?.position.y||0;
-  return {building:b.id,levels:levels.map(l=>({key:`${b.id}:${l.id}`,elevation:l.elevation,cut:Math.max(1,(l.ceiling||8)-4)})),
+  // The view cuts a floor's walls just under its ceiling (twin_floors.js cutHeight).
+  return {building:b.id,levels:levels.map(l=>({key:`${b.id}:${l.id}`,elevation:l.elevation,cut:Math.max(1,(l.ceiling||8)-.05)})),
     x,y,span,height:base+levels[0].elevation+.1,base};
 }"""
 

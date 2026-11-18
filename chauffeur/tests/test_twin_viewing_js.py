@@ -117,9 +117,13 @@ await test('actual tree domain fades and restores its original materials on cont
   controller.update(1700);
   assert.equal(tree.children[0].material.opacity,1);assert.equal(tree.visible,true);controller.dispose();assert.equal(tree.children[0].material,source);
 });
-await test('cut height is four feet below ceiling, bounded for short levels',()=>{
-  assert.equal(M.cutHeight({ceiling:10}),6);assert.equal(M.cutHeight({ceiling:9}),5);
-  assert.equal(M.cutHeight({ceiling:3}),1);
+await test('cut height is just under the ceiling, bounded for short levels',async()=>{
+  // At the ceiling (household, 2026-11-18), a hair under it so the ceiling is cut away.
+  assert.ok(Math.abs(M.cutHeight({ceiling:10})-9.95)<1e-9);assert.ok(Math.abs(M.cutHeight({ceiling:9})-8.95)<1e-9);
+  assert.ok(M.cutHeight({ceiling:10})<10,'the ceiling itself is cut away');
+  assert.equal(M.cutHeight({ceiling:.5}),1);assert.ok(Math.abs(M.cutHeight({})-7.95)<1e-9);
+  // One value for the view's cut and the closed walls the generator builds for it.
+  const floors=await import(file('static/twin/twin_floors.js'));assert.equal(M.cutHeight,floors.cutHeight);
 });
 await test('generated variants have closed horizontal caps on all four gabled walls',()=>{
   const p=plan(), model=buildTwin(p,{materials:{}},'low',{viewing:true});
@@ -127,7 +131,7 @@ await test('generated variants have closed horizontal caps on all four gabled wa
   model.root.traverse(g=>{if(g.userData.viewingWalls!=='cut')return;groups++;
     const elevation=g.name.includes('L2')?10:0;
     g.traverse(o=>{if(!o.isMesh || o.material.name==='glass')return;const a=o.geometry.attributes.position,n=o.geometry.attributes.normal;
-      for(let i=0;i<a.count;i+=3)if(n.getY(i)>.9 && [i,i+1,i+2].every(j=>Math.abs(a.getY(j)-elevation-6)<1e-4))caps++;
+      for(let i=0;i<a.count;i+=3)if(n.getY(i)>.9 && [i,i+1,i+2].every(j=>Math.abs(a.getY(j)-elevation-M.cutHeight({ceiling:10}))<1e-4))caps++;
     });
   });assert.equal(groups,3);assert.ok(caps>=24,`cap triangles: ${caps}`);
 });
@@ -144,7 +148,7 @@ await test('cut slabs have continuous plain tops without batten teeth, including
   group.traverse(o=>{
     if(!o.isMesh||o.layers.isEnabled(31))return;
     const a=o.geometry.attributes.position,n=o.geometry.attributes.normal;
-    for(let i=0;i<a.count;i+=3)if(n.getY(i)>.9&&[i,i+1,i+2].every(j=>Math.abs(a.getY(j)-6)<1e-4)){
+    for(let i=0;i<a.count;i+=3)if(n.getY(i)>.9&&[i,i+1,i+2].every(j=>Math.abs(a.getY(j)-M.cutHeight({ceiling:10}))<1e-4)){
       assert.equal(o.material.name,'viewing_wall_top','cap uses a plain plan tone');
       tops++;
       area+=Math.abs((a.getX(i+1)-a.getX(i))*(a.getZ(i+2)-a.getZ(i))-(a.getZ(i+1)-a.getZ(i))*(a.getX(i+2)-a.getX(i)))/2;
@@ -323,8 +327,8 @@ await test('a sunken room keeps its floor under the level cut and its wall cap s
           assert.ok(o.material.clippingPlanes.every(plane=>plane.distanceToPoint(q)>=0));floorSeen=true;
         }
         if(o.material.name==='viewing_wall_top'&&n.getY(i)>.9){
-          assert.ok(q.y/.3048<=8.001,'notch and wall caps stay below the level cut');
-          if(Math.abs(q.y/.3048-8)<.001)capSeen=true;
+          assert.ok(q.y/.3048<=2+M.cutHeight({ceiling:10})+.001,'notch and wall caps stay below the level cut');
+          if(Math.abs(q.y/.3048-2-M.cutHeight({ceiling:10}))<.001)capSeen=true;
         }
       }
     });

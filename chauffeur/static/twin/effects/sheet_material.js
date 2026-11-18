@@ -43,15 +43,17 @@ float sheetHeight = (sheetNoise(vec2(sheetX * 9., sheetDown * .9 - time * 2.6)) 
 float sheetFilm = .22, sheetLampShare = .2 + .8 * sheetV;
 `;
 // A bubbler's column, a lathe with uv.x around it and uv.y from the tip (0) to
-// the foot (1); fall is its height in feet. Turbulence climbs it; it breaks
-// white only in a small crown where the water stalls and falls back, and
-// boils a little where it leaves the water.
+// the foot (1); fall is its height in feet. A bubbler's nozzle mixes air into
+// the water, so the column is mostly white with bubbles (household, 2026-11-18,
+// with a photo of real ones): streaks of froth climb it with a little clearer
+// water between them, and it is whitest in the crown and at the foot.
 const COLUMN = `
 float sheetU = vSheet.x, sheetV = vSheet.y, sheetUp = (1. - sheetV) * fall;
 float sheetFine = sheetNoiseP(vec2(sheetU * 24., sheetUp * 9. - time * 5.), 24.);
-float sheetCrown = (1. - smoothstep(0., .2, sheetV)) * smoothstep(.4, .8, sheetFine);
-float sheetFoot = smoothstep(.9, 1., sheetV) * (.4 + .6 * sheetFine);
-float sheetWhite = clamp(sheetCrown * .75 + sheetFoot * .45, 0., 1.);
+float sheetStreak = sheetNoiseP(vec2(sheetU * 12., sheetUp * 2.6 - time * 4.), 12.);
+float sheetCrown = 1. - smoothstep(0., .25, sheetV);
+float sheetFoot = smoothstep(.85, 1., sheetV);
+float sheetWhite = clamp(mix(.55, .95, sheetStreak) + .3 * sheetCrown * sheetFine + .3 * sheetFoot, 0., 1.);
 // The tip is ragged where the column breaks up.
 float sheetMask = sheetFade * (.8 + .2 * strength) * mix(1., smoothstep(.25, .6, sheetFine), 1. - smoothstep(0., .1, sheetV));
 float sheetHeight = (sheetNoiseP(vec2(sheetU * 10., sheetUp * 1.4 - time * 3.2), 10.) * .6
