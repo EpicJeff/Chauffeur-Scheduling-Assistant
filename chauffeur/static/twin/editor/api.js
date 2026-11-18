@@ -9,6 +9,17 @@ export const plain = value => String(value ?? '');
 export const session = { signedOut: false, notices: 0, noticeShown: false };
 let checkpointPrompt = null;
 
+export function noticeSignedOut() {
+  if (!session.signedOut) {
+    session.signedOut = true;
+    window.dispatchEvent(new CustomEvent('editor-signed-out'));
+  }
+  if (!session.noticeShown) {
+    session.noticeShown = true; ++session.notices;
+    window.showGlobalAlert(signedOut);
+  }
+}
+
 export function report(error) {
   if (!error.cancelled && !error.shown) window.showGlobalAlert(plain(error.message || 'Could not reach the house. Try again.'));
 }
@@ -53,14 +64,7 @@ export async function request(path, method = 'GET', body, area = 'editor', timin
         : `The house could not answer (HTTP ${response.status}). Try again.`);
       error.status = response.status;
       if (response.status === 401) {
-        if (!session.signedOut) {
-          session.signedOut = true;
-          window.dispatchEvent(new CustomEvent('editor-signed-out'));
-          if (!session.noticeShown) {
-            session.noticeShown = true; ++session.notices;
-            window.showGlobalAlert(signedOut);
-          }
-        }
+        noticeSignedOut();
         error.shown = true; error.signedOut = true;
       }
       throw error;
@@ -94,6 +98,11 @@ export async function op(operation, timing = null) {
   catch (error) {
     report(error); error.shown = true; throw error;
   }
+}
+
+// The queue owns refusals, retries and sign-out notices.
+export function sendOp(operation, timing = null) {
+  return request('op', 'POST', { op: operation }, 'editor', timing);
 }
 
 export const active = build => ['running', 'paused', 'checkpoint'].includes(build?.state);

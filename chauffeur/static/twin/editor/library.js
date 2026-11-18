@@ -1,3 +1,4 @@
+import { applyLocal } from './local_ops.js';
 import * as THREE from 'three';
 import { svgIcon } from '../live/glance_icons.js';
 import { contains, FT, allPorches } from '../twin_generator.js';
@@ -555,8 +556,14 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     refresh();
     if (!cancel && canEdit() && Math.hypot(event.clientX - g.x, event.clientY - g.y) >= 3) {
       const at = ground(event);
-      if (at) op({ op: 'move_site_item', list: g.kind, index: g.index,
-        ...(g.piece.at ? { at: at.map((v, i) => v + g.piece.at[i] - g.start[i]) } : { by: at.map((v, i) => v - g.start[i]) }) }).catch(report);
+      if (at) {
+        const operation = { op: 'move_site_item', list: g.kind, index: g.index,
+          ...(g.piece.at ? { at: at.map((v, i) => v + g.piece.at[i] - g.start[i]) } : { by: at.map((v, i) => v - g.start[i]) }) };
+        let local = null;
+        try { local = applyLocal(getPlan(), operation)?.plan || null; } catch { /* The server judges a missing item. */ }
+        op(operation, { drag: true, local,
+          selection: { kind: g.kind, id: g.id }, label: g.kind === 'planting' ? 'Moving the plant' : 'Moving the item' }).catch(report);
+      }
     }
     return true;
   }

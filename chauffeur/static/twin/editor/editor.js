@@ -21,6 +21,8 @@ import { createBuildGhosts } from './build_ghosts.js';
 import { createStatusChip } from './status_chip.js';
 import { createSteps } from './steps.js';
 import { createChecks } from './checks.js';
+import { createEditQueue } from './edit_queue.js';
+import { applyLocal, LocalMissing } from './local_ops.js';
 
 const el = id => document.getElementById(id);
 const STREAM_ONLY = new Set(['piece', 'stage', 'stream_reset', 'log']);
@@ -66,16 +68,81 @@ export async function boot() {
     lifecycle.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
   }
   const currentRound = () => [...snapshot.rounds].reverse().find(row => !row.stale)?.id ?? null;
+  const roundOf = state => state.current_round ?? state.round ?? [...(state.rounds || [])].reverse().find(row => !row.stale)?.id ?? null;
+  const opInfo = new WeakMap();
+  let pushing = false, optimistic = 0, sceneWork = Promise.resolve(), refusedSelection = null, queueSignedOut = false, rollback = false;
+  const queueOptions = {
+    async send(operation) {
+      const info = opInfo.get(operation);
+      await info.ready;
+      info.before = currentRound();
+      let result;
+      try { result = await api.sendOp(operation, info.timing); }
+      catch (error) {
+        error.shown = true;
+        if (info.ready && [400, 409, 422].includes(error.status)) {
+          if (!rollback && refusedSelection === null) refusedSelection = info.selection;
+          rollback = true;
+        }
+        throw error;
+      }
+      info.answer = performance.now();
+      info.haveRound = result.round;
+      const round = roundOf(result);
+      // A poll may already have delivered a newer foreign round.
+      if (round >= currentRound() || currentRound() == null) {
+        snapshot = { ...snapshot, plan: result.plan, model: result.model };
+        if (!snapshot.rounds.some(row => row.id === round)) snapshot.rounds = [...snapshot.rounds, { id: round }].slice(-50);
+      }
+      info.after = round;
+      return { ...result, round };
+    },
+    onChange(change) {
+      syncSaveState();
+      const rebuild = rollback || change.dropped.length > 0;
+      rollback = false;
+      if (!pushing && optimistic && change.plan && JSON.stringify(change.plan) !== lastScene) {
+        sceneWork = sceneWork.catch(report).then(async () => {
+          const plan = queue.shown(), signature = JSON.stringify(plan);
+          if (signature === lastScene) return;
+          if (rebuild) await view?.rebuild(plan);
+          else await settleView(plan, {});
+          lastScene = signature;
+          tools?.refresh(); library?.refresh();
+        });
+      }
+      if (change.refused.length || change.dropped.length) {
+        const first = change.refused[0];
+        let text = first ? `${first.label} was not saved: ${first.reason}` : '';
+        if (change.dropped.length) text += `${text ? '\n' : ''}Also undone because it needed that change: ${change.dropped.join(', ')}.`;
+        window.showGlobalAlert(text);
+        tools?.select(refusedSelection); refusedSelection = null;
+      }
+    },
+    onSignedOut() { queueSignedOut = true; api.noticeSignedOut(); },
+  };
+  let queue = createEditQueue(queueOptions);
+  const shownPlan = () => queue.shown() || snapshot.plan;
+  function syncSaveState() {
+    const state = queue.state(), count = state.unsaved || state.saving;
+    el('editor-save-state').textContent = state.saved ? 'Saved'
+      : `${state.unsaved ? '' : 'Saving '}${count} ${count === 1 ? 'change' : 'changes'}${state.unsaved ? ' not saved' : ''}`;
+  }
+  function settleView(plan, info) {
+    return view.settle ? view.settle(plan, info) : view.rebuild(plan, info);
+  }
   function summary(text) {
     lastSummary = text;
     panel.message(text);
   }
   const edit = change => history.perform(() => editNow(change));
-  const applyOp = (operation, { drag = false } = {}) => {
-    const start = performance.now();
-    const dragFrame = drag ? tools?.lastDragFrameMs ?? null : null;
-    if (drag) tools?.clearDragFrame();
-    return history.perform(() => applyOpNow(operation, { start, dragFrame }));
+  const applyOp = (operation, { drag = false, local = null, label = '', selection = null } = {}) => {
+    let release;
+    const ready = new Promise(resolve => { release = resolve; });
+    const step = {};
+    const saved = applyOpNow(operation, { drag, local, label, selection, ready, step });
+    saved.catch(() => {});
+    return history.perform(() => { release(); return saved; }, { step: () => step });
   };
   async function editNow(change) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
@@ -84,7 +151,7 @@ export async function boot() {
       result = await request('edit', 'POST', { edit: op });
       const line = document.createElement('li'); line.textContent = plain(result.summary); el('editor-log').append(line);
     }
-    [snapshot, sheets] = await Promise.all([request('state'), request('sheets')]);
+    await polling.refreshState(); sheets = await request('sheets');
     await renderScene(); timeline?.sync(currentBuild);
     lastSummary = result.summary;
     return result;
@@ -93,12 +160,57 @@ export async function boot() {
   // roof tools select the new piece then). `settle: false` returns once the
   // round is saved and read back; the scene rebuild follows. The lot tools
   // already show the building where it landed.
-  async function applyOpNow(operation, { saved, settle = true, start, dragFrame = null } = {}) {
+  async function applyOpNow(operation, { saved, settle = true, drag = false, local = null, label = '', selection = null, ready = null, step = {} } = {}) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
-    const timing = api.beginEdit(operation, start);
-    timing.drag_frame = dragFrame;
-    const result = await api.op(operation, timing);
-    snapshot = { ...snapshot, plan: result.plan, model: result.model };
+    const timing = api.beginEdit(operation);
+    timing.drag_frame = drag ? tools?.lastDragFrameMs ?? null : null;
+    if (drag) tools?.clearDragFrame?.();
+    const info = { ready, timing };
+    operation = { ...operation }; opInfo.set(operation, info);
+    const labels = { move_wall: 'Moving the wall', move_joint: 'Moving the corner', move_room: 'Moving the room',
+      move_site_item: operation.list === 'planting' ? 'Moving the plant' : 'Moving the item',
+      move_opening: 'Moving the opening', move_anchor: 'Moving the anchor', move_item: 'Moving the item' };
+    label ||= labels[operation.op] || 'That change';
+    selection ||= tools?.selected?.() || null;
+    info.selection = selection;
+    const kept = !!local;
+    // Missing local targets are judged by the queue, which drops dependencies.
+    if (!local) {
+      try { local = applyLocal(shownPlan(), operation)?.plan || null; }
+      catch (error) { if (!(error instanceof LocalMissing)) console.warn('Local preview failed', error); }
+    }
+    if (local) ++optimistic;
+    pushing = true;
+    // Multi-round drawing/lot gestures already own the history lane. Their
+    // remaining rounds must finish before a later release can send; feeding
+    // their answers back as bases also replays that release's local preview.
+    const queued = ready ? queue.push({ op: operation, label, selection, local }) : {
+      saved: queueOptions.send(operation).then(result => { queue.base(result); return result; }).catch(error => {
+        if ([401, 403].includes(error.status)) queueOptions.onSignedOut();
+        else report({ message: `${label} was not saved: ${error.message}` });
+        throw error;
+      }),
+    };
+    pushing = false;
+    let frame = null;
+    if (local) {
+      // Walls and hosted pieces already have drawable preview buffers. Site
+      // gestures have only an outline, so settle their local geometry now.
+      if (!kept || operation.op === 'move_site_item') await settleView(queue.shown(), { timing });
+      lastScene = JSON.stringify(queue.shown());
+      frame = api.observeEditFrame(view, timing);
+      frame.catch(report);
+      tools?.refreshCard();
+    }
+    let result;
+    try { result = await queued.saved; }
+    catch (error) {
+      error.shown = true;
+      await sceneWork;
+      if (local) --optimistic;
+      throw error;
+    }
+    Object.assign(step, { before: info.before, after: info.after });
     saved?.(result);
     // The card shows the saved change at once (a device reads Placed); the
     // scene rebuild below can take seconds on a large house.
@@ -107,15 +219,30 @@ export async function boot() {
     lastSummary = result.words;
     const refresh = async () => {
       const stop = api.span(timing, 'refresh_state');
-      try { await polling.refreshState(result.round); timeline?.sync(currentBuild); }
+      try { await polling.refreshState(info.haveRound); timeline?.sync(currentBuild); }
       finally { stop(); }
     };
     const rebuild = async () => {
       const stop = api.span(timing, 'rebuild');
-      try { await renderScene(timing); }
+      try { await sceneWork; await renderScene(timing); }
       finally { stop(); }
       return { frame: api.observeEditFrame(view, timing) };
     };
+    if (local) {
+      // An equal authoritative answer keeps the release frame. Task 6 can
+      // settle differing pieces without a whole-house rebuild.
+      (async () => {
+        try {
+          await sceneWork;
+          const settled = view.afterNextRender ? view.afterNextRender() : new Promise(resolve => requestAnimationFrame(resolve));
+          await Promise.all([frame, settled]);
+          timing.settle = performance.now() - info.answer;
+          await refresh();
+          api.keepEdit(timing);
+        } finally { --optimistic; }
+      })().catch(report);
+      return result;
+    }
     if (!settle) {
       await refresh();
       rebuild().then(({ frame }) => frame).then(() => api.keepEdit(timing)).catch(report);
@@ -123,7 +250,7 @@ export async function boot() {
     }
     // Observe the frame without holding up state refresh or the history queue.
     // refresh_state can overlap first_frame, or finish after it.
-    const { frame } = await rebuild();
+    ({ frame } = await rebuild());
     try { await refresh(); }
     finally { frame.then(() => api.keepEdit(timing)).catch(report); }
     return result;
@@ -131,6 +258,7 @@ export async function boot() {
 
   function setStatus(text) { el('editor-status').textContent = plain(text); }
   function syncBuildButton() {
+    syncSaveState();
     syncChip();
     steps.render(stepState());
     el('editor-front-door').hidden = drawingStarted || !!sheets.place?.buildings?.length || !!sheets.sources?.length
@@ -166,7 +294,7 @@ export async function boot() {
       n + (value && typeof value === 'object' ? countGhosts(value) : 0), 0);
   }
   function previewPlan() {
-    const plan = structuredClone(snapshot.plan || emptyPlan());
+    const plan = structuredClone(shownPlan() || emptyPlan());
     const savedPause = currentBuild?.pause;
     const pause = savedPause && pauses?.current()?.step === savedPause.step ? pauses.current() : savedPause;
     if (pause?.kind === 'lot_placement' && pause.transform && currentBuild.part !== 'lot') {
@@ -246,6 +374,12 @@ export async function boot() {
   }
   const polling = createPolling({
     async onState(state) {
+      const round = roundOf(state);
+      pushing = true;
+      const accepted = queue.base({ round, plan: 'plan' in state ? state.plan : snapshot.plan, model: 'model' in state ? state.model : snapshot.model });
+      if (accepted && queueSignedOut) { queueSignedOut = false; queue.resume(); }
+      pushing = false;
+      if (!accepted) return;
       if (!state.build && currentBuild) {
         currentBuild = null; ghostBuild = null; ghosts.clear(); buildGhosts?.clear(); panel.reset(); drawTimeline(null);
         await loadSheets();
@@ -325,7 +459,7 @@ export async function boot() {
   place = createPlace({ request, getSheets: () => sheets,
     reload: async () => { await polling.pollNow(true); await loadSheets(); },
     follow: id => polling.follow(id), canEdit: () => canEdit() && !resuming && !stopping, panel, lotTools: () => lot,
-    onClose: () => steps.close(), getLink: () => tools?.haLink, getPlan: () => snapshot.plan });
+    onClose: () => steps.close(), getLink: () => tools?.haLink, getPlan: shownPlan });
 
   listen(el('editor-resume'), 'click', async () => {
     if (!canEdit() || resuming || !['stopped', 'checkpoint'].includes(currentBuild?.state)) return;
@@ -479,7 +613,9 @@ export async function boot() {
       if (!await window.promptConfirm('Start over?',
         'This clears the house, its history and the uploaded drawings and photos. The spend total stays.',
         'Start over', 'Keep it')) return;
-      await request('start-over', 'POST', {});
+      await history.perform(() => request('start-over', 'POST', {}));
+      queue = createEditQueue(queueOptions);
+      snapshot = { plan: null, rounds: [], cost: snapshot.cost, build: null };
       currentBuild = null; ghostBuild = null; ghosts.clear(); prompted.clear();
       panel.reset(); tools?.select(null); pauses?.dismiss(); draw?.cancel(); history?.clear();
       el('editor-advanced').hidden = true; advancedBase = null;
@@ -508,6 +644,10 @@ export async function boot() {
   window.addEventListener('editor-signed-out', signedOut);
   document.addEventListener('visibilitychange', foreground);
   window.addEventListener('focus', foreground);
+  listen(window, 'beforeunload', event => {
+    if (!queue.pending()) return;
+    event.preventDefault(); event.returnValue = '';
+  });
   // A successful answer in this tab should be reflected immediately, even
   // when the paused build is on its one-minute idle cadence.
   const originalFetch = window.fetch;
@@ -560,39 +700,39 @@ export async function boot() {
         await polling.refreshState(); await loadSheets(); await renderScene();
       },
     });
-    tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
+    tools = createSceneTools({ view, getPlan: () => timeline?.preview() || shownPlan(), getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
       pickSite: (x, y) => library?.pickSite(x, y), pickMaterial: surface => library?.pick(surface), onDrawFeature: kind => terrain?.startDrawing(kind),
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
-    library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || snapshot.plan, tools,
+    library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || shownPlan(), tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
-    flags = createFlags({ view, getModel: () => snapshot.model, getPlan: () => snapshot.plan,
+    flags = createFlags({ view, getModel: () => snapshot.model, getPlan: shownPlan,
       tools, panel, op: applyOp, canEdit, signal: lifecycle.signal, onInteract, managed: true,
       onReview: item => checks?.show(item) });
-    draw = createDraw({ view, tools, getPlan: () => snapshot.plan, op: operation => applyOpNow(operation),
+    draw = createDraw({ view, tools, getPlan: shownPlan, op: operation => applyOpNow(operation),
       gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract, surfaceAt: (event, options) => library.surfaceAt(event, options), groundPoint: event => library.ground(event) });
-    roofTools = createRoofTools({ view, tools, getPlan: () => snapshot.plan,
+    roofTools = createRoofTools({ view, tools, getPlan: shownPlan,
       op: (operation, options) => history.perform(() => applyOpNow(operation, options)),
       canEdit, panel, signal: lifecycle.signal, onInteract, cancelDrawing: draw.cancel });
     pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
       getSheets: () => sheets, refresh: () => polling.pollNow(true), preview: () => renderScene().catch(report),
       visibilityChanged: syncBuildButton, canEdit, signal: lifecycle.signal, guided: true });
     checks = createChecks(view, { api, getBuild: () => currentBuild, getModel: () => snapshot.model,
-      getPlan: () => snapshot.plan, tools, panel, canEdit, signal: lifecycle.signal, op: applyOp, flags, pauses,
+      getPlan: shownPlan, tools, panel, canEdit, signal: lifecycle.signal, op: applyOp, flags, pauses,
       onClose: () => steps.close() });
-    lot = createLotTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getSheets: () => sheets,
+    lot = createLotTools({ view, getPlan: () => timeline?.preview() || shownPlan(), getSheets: () => sheets,
       getSelection: tools.selection, select: tools.select, pauses, signal: lifecycle.signal,
       canEdit: () => canEdit() && (!active(currentBuild) || !!pauses.lotPlacement()),
       op: operations => history.perform(async () => { for (const operation of operations) await applyOpNow(operation, { settle: false }); }),
       // The lot card frees itself once the place rows are fresh; the scene
       // rebuild (seconds for a refitted house) follows on the poll's tick.
       reload: async () => { await loadSheets(); polling.pollNow(true).catch(report); } });
-    devices = createDevicePlacement({ view, tools, library, getPlan: () => timeline?.preview() || snapshot.plan,
+    devices = createDevicePlacement({ view, tools, library, getPlan: () => timeline?.preview() || shownPlan(),
       op: applyOp, canEdit, signal: lifecycle.signal,
       prepare() { onInteract(); roofTools.cancel(); draw.cancel(); } });
     el('rail-add-effect').addEventListener('click', () => {
       if (canEdit()) devices.addEffect().catch(report);
     }, {signal: lifecycle.signal});
-    terrain = createTerrainTools({ view, tools, getPlan: () => timeline?.preview() || snapshot.plan,
+    terrain = createTerrainTools({ view, tools, getPlan: () => timeline?.preview() || shownPlan(),
       op: applyOp, canEdit, signal: lifecycle.signal,
       pickObject: (x, y) => library.pickSite(x, y), getKit: () => kit,
       prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });

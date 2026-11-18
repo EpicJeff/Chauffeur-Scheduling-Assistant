@@ -1,3 +1,4 @@
+import { applyLocal } from './local_ops.js';
 import { roomFloor, openingFloor } from '../twin_floors.js';
 import { objectOperation, siteRecord, siteShapeKinds, sitePoints, sitePieces } from '../objects.js';
 import { solarPoint, solarFrame, solarUV } from '../twin_solar.js';
@@ -492,7 +493,7 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
       const cornerClick = clicked && (g.handle.kind === 'site_insert' || g.handle.kind === 'site_vertex' && g.remove);
       const changed = g.operation && (g.operation.op === 'move_site_item' ? g.operation.by.some(v => Math.abs(v) > 1e-8)
         : Object.entries(g.operation).some(([k, v]) => !['op', 'list', 'index'].includes(k) && !sameValue(v, g.piece[k] ?? (k === 'rotation' ? 0 : undefined))));
-      try { if ((!cancel || cornerClick) && changed) await onCommit(g.operation); }
+      try { if ((!cancel || cornerClick) && changed) await onCommit(g.operation, { local: applyLocal(getPlan(), g.operation)?.plan || released }); }
       finally { refresh(); }
       return;
     }
@@ -525,8 +526,8 @@ export function createHandles({ view, getPlan, getSelection, canEdit, drag, onCo
     }
     const restore = () => { view.rebuildLevel(g.building.id, g.handle.level, g.source, { [g.list]: [g.piece.id] }); onPreview?.(g.source, getSelection()); refresh(); };
     if (cancel || !g.operation) { restore(); return; }
-    try { await onCommit(g.operation); }
-    catch (error) { restore(); throw error; }
+    try { await onCommit(g.operation, { local: released }); }
+    catch (error) { if (!error.refused && !error.dropped) restore(); throw error; }
     refresh();
   }
   view.controls.addEventListener('change', refresh);

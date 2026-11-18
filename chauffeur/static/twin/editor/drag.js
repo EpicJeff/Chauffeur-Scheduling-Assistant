@@ -67,9 +67,12 @@ export function createDrag({ view, model, onPreview, onCommit }) {
     const { kind, id, building } = g.selection;
     const operation = kind === 'joint' ? { op: 'move_joint', building, joint: id, to: shifted(g.piece.at, g.by) }
       : { op: kind === 'wall' ? 'move_wall' : 'move_room', building, [kind]: id, by: g.by };
-    try { await onCommit(operation); }
+    try { await onCommit(operation, { local: g.preview }); }
     catch (error) {
-      view.rebuildLevel(building, g.piece.level, g.source, g.touched); onPreview?.(g.source, g.selection); throw error;
+      if (!error.refused && !error.dropped) {
+        view.rebuildLevel(building, g.piece.level, g.source, g.touched); onPreview?.(g.source, g.selection);
+      }
+      throw error;
     }
   }
   return { begin, update, finish, active: () => !!gesture, clearDragFrame() { lastDragFrameMs = null; },

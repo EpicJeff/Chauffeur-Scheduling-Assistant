@@ -17,19 +17,19 @@ LEAN = HISTORY_DRIVER.split(' const zoneResize=')[0].replace(
    stateReads.push(path);
    if(serverAhead){serverAhead=false;plan.buildings[0].name='Another writer';record();return response(200,{...state(),current_round:rounds.at(-1).id});}
    if(path.includes('?have_round=')){
-    assert.equal(new URL('https://test/'+path).searchParams.get('have_round'),rounds.at(-1).id);
+    assert.equal(new URL('https://test/'+path).searchParams.get('have_round'),String(rounds.at(-1).id));
     return response(200,{rounds:structuredClone(rounds),site:{lat:17},cost:{total:42},build:null,bake:{state:'waiting'},current_round:rounds.at(-1).id});
    }
    return response(200,state());
   }""").replace(
     "{...state(),words:'Saved the change.'", "{...state(),round:rounds.at(-1).id,words:'Saved the change.'") + r"""
  await hooks.op({op:'resize_opening',building:'b',id:'door',width:4});
- assert.equal(stateReads.at(-1),'editor/state?have_round=r1');
+ assert.equal(stateReads.at(-1),'editor/state?have_round=1');
  assert.equal(editorView.plan.buildings[0].openings[0].width,4);
  assert.equal(sceneOptions.getPlan().buildings[0].openings[0].width,4);
  assert.equal(sceneOptions.getModel().buildings[0].openings[0].width,4);
  assert.equal(lastSnapshot.plan.buildings[0].openings[0].width,4);
- assert.equal(lastSnapshot.rounds.at(-1).id,'r1');
+ assert.equal(lastSnapshot.rounds.at(-1).id,1);
  assert.deepEqual(lastSnapshot.site,{lat:17});assert.deepEqual(lastSnapshot.cost,{total:42});
  assert.equal(lastSnapshot.build,null);assert.deepEqual(lastSnapshot.bake,{state:'waiting'});
  ok('applyOp_refreshes_state_with_have_round_and_keeps_plan (and model and ancillary fields)');
@@ -53,6 +53,7 @@ LEAN_STUBS = STUBS.replace('const cards=createCards', 'globalThis.sceneOptions=o
 DRAG_STUBS = STUBS.replace('const cards=createCards', 'globalThis.sceneOptions=options;const cards=createCards').replace(
     'return {select,selected:', 'return globalThis.sceneTools={lastDragFrameMs:null,clearDragFrame(){this.lastDragFrameMs=null;},select,selected:')
 DRAG_TIMING = HISTORY_DRIVER.split(' const zoneResize=')[0].replace(
+    "let seq=0,rounds=", "plan.buildings[0].joints=[{id:'a',level:'L1',at:[0,0]},{id:'c',level:'L1',at:[10,0]}];plan.buildings[0].walls=[{id:'w',level:'L1',joints:['a','c'],from:[0,0],to:[10,0]}];let seq=0,rounds=").replace(
     "location.search='?test=1';", """
  location.search=config.timingCase==='force_shows_overlay'?'?test=1&timing=1':'?test=1';
  let storageWrites=0;

@@ -9,10 +9,10 @@ export function createHistory({ getRound, getBuild, canEdit, refresh, latest, si
   const undo = [], redo = [];
   const el = id => document.getElementById(id);
   let pending = 0, queue = Promise.resolve();
-  const enabled = () => canEdit() && !active(getBuild()) && !pending;
+  const enabled = () => canEdit() && !active(getBuild());
   function sync() {
-    el('rail-undo').disabled = !enabled() || !undo.length;
-    el('rail-redo').disabled = !enabled() || !redo.length;
+    el('rail-undo').disabled = !enabled() || !(undo.length || pending);
+    el('rail-redo').disabled = !enabled() || !(redo.length || pending);
   }
   function enqueue(work) {
     ++pending; sync();
@@ -25,15 +25,17 @@ export function createHistory({ getRound, getBuild, canEdit, refresh, latest, si
   }
   // A gesture may write several rounds (for example a split and its name).
   // Capture its starting round when it runs, after earlier saves and redraws.
-  function perform(work) {
+  function perform(work, { step } = {}) {
     return enqueue(async () => {
       const before = getRound();
       try { return await work(); }
       finally {
-        const after = getRound();
-        if (before !== null && after !== null && before !== after) {
-          const connected = undo[undo.length - 1]?.at === before;
-          undo.push({ before, after, at: after, connected }); redo.length = 0;
+        const own = step?.(), start = step ? own?.before : before;
+        const after = step ? own?.after : getRound();
+        if (start != null && after != null && start !== after) {
+          const connected = undo[undo.length - 1]?.at === start;
+          undo.push({ before: start, after, at: after, connected }); redo.length = 0;
+          if (undo.length > 50) undo.shift();
         }
       }
     });

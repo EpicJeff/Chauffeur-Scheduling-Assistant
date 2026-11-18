@@ -67,11 +67,11 @@ try {
  let plan={buildings:[{id:'b',name:'House',levels:[{id:'L1',elevation:0,ceiling:10}],rooms:[],walls:[],roofs:[],
   solar_zones:[{id:'z',roof:'roof',plane:[0,0,10],rect:[28,28,32,34]}],
   openings:[{id:'door',kind:'door',width:3,sill:0,head:7,at:4,state:'ghost'}]}],site:{}};
- let seq=0,rounds=[{id:'r0'}],saved=new Map([['r0',structuredClone(plan)]]),holdResponse=null,holdRender=null;
+ let seq=0,rounds=[{id:0}],saved=new Map([[0,structuredClone(plan)]]),holdResponse=null,holdRender=null;
  const writes=[],reverts=[];let sheetReads=0,failSheets=false,sessionStarts=0;
  const response=(status,body)=>({ok:status<400,status,text:async()=>JSON.stringify(body)});
  const state=()=>({plan:structuredClone(plan),model:structuredClone(plan),rounds:structuredClone(rounds),cost:{},build:null});
- const record=()=>{const id='r'+(++seq);saved.set(id,structuredClone(plan));rounds.push({id});return id;};
+ const record=()=>{const id=++seq;saved.set(id,structuredClone(plan));rounds.push({id});return id;};
  const piece=id=>plan.buildings[0].solar_zones.concat(plan.buildings[0].openings).find(p=>p.id===id);
  globalThis.fetch=window.fetch=async(url,init={})=>{
   const path=String(url).split('api/house/')[1];
@@ -99,7 +99,7 @@ try {
  }};
  const stubs='data:text/javascript,'+encodeURIComponent(config.stubs.replace('CARDS_URL',file('static/twin/editor/cards.js')));
  registerHooks({resolve(spec,ctx,next){
-  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js'].includes(spec))return {url:stubs,shortCircuit:true};
+  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js'].includes(spec))return {url:stubs,shortCircuit:true};
   return next(spec,ctx);
  }});
  const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready);

@@ -31,13 +31,13 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   }
   const drag = createDrag({ view, model: getPlan, onPreview(plan, state) {
     handles?.show(plan); drawDimensions(plan, state);
-  }, onCommit(operation) {
+  }, onCommit(operation, options) {
     if (operation.op === 'move_wall') {
       const wall = getPlan().buildings.find(b => b.id === operation.building).walls.find(w => w.id === operation.wall);
       const d = wall.to.map((v, i) => v - wall.from[i]), length = Math.hypot(...d);
       operation = { ...operation, by: (-d[1] * operation.by[0] + d[0] * operation.by[1]) / length };
     }
-    return op(operation, { drag: true });
+    return op(operation, { ...options, drag: true, selection });
   } });
   const getLabel = item => getSheets().piece_labels?.find(p => p.piece === item.pieceId && p.building === item.buildingId)?.label || 'this piece';
   const roomSelection = createSelection({ view, getModel, onChange(state) {
@@ -57,7 +57,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
     op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
-  handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: operation => op(operation, { drag: true }),
+  handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
     onPreview: drawDimensions, onClick: cards.edge, signal });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'
     && (['wall', 'joint', 'room', 'roof', 'dormer', 'solar_zone', 'stair'].includes(kind)
