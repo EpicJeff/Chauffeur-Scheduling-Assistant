@@ -42,8 +42,10 @@ export function buildVapour(fixture,{plan,origin,mist=false}) {
   });
   const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
   geometry.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));geometry.setAttribute('seed',new THREE.Float32BufferAttribute(seeds,1));geometry.setIndex(indices);
-  const material=new THREE.ShaderMaterial({transparent:true,depthWrite:false,side:THREE.DoubleSide,forceSinglePass:true,toneMapped:false,
-    uniforms:{time:{value:0},strength:{value:1},opacity:{value:1},light:{value:1},mist:{value:Number(mist)}},
+  // Premultiplied: steam scatters light into the view more than it blocks what
+  // lies behind, so over lit water it brightens and never reads as dark smoke.
+  const material=new THREE.ShaderMaterial({transparent:true,premultipliedAlpha:true,depthWrite:false,side:THREE.DoubleSide,forceSinglePass:true,toneMapped:false,
+    uniforms:{time:{value:0},strength:{value:1},opacity:{value:1},light:{value:1},mist:{value:Number(mist)},glow:{value:new THREE.Color(0,0,0)}},
     vertexShader:`uniform float time; uniform float mist; attribute float seed; varying vec2 vUv; varying float vSeed; varying float vFacing;
       void main(){vUv=uv;vSeed=seed;vec3 p=position;
         float envelope=sin(uv.y*3.14159);
@@ -51,22 +53,28 @@ export function buildVapour(fixture,{plan,origin,mist=false}) {
         p.z+=envelope*cos(time*.17+seed+uv.y*3.)*.14;
         vec4 mv=modelViewMatrix*vec4(p,1.);vFacing=abs(dot(normalize(normalMatrix*normal),normalize(-mv.xyz)));
         gl_Position=projectionMatrix*mv;}`,
-    fragmentShader:`uniform float time; uniform float strength; uniform float opacity; uniform float light; uniform float mist;
+    fragmentShader:`uniform float time; uniform float strength; uniform float opacity; uniform float light; uniform float mist; uniform vec3 glow;
       varying vec2 vUv; varying float vSeed; varying float vFacing;
       float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
       float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1.,0.)),f.x),mix(hash(i+vec2(0.,1.)),hash(i+1.),f.x),f.y);}
       void main(){
-        vec2 uv=vUv;float clock=time*mix(.12,.18,mist);
-        vec2 p=vec2(uv.x*mix(3.4,2.2,mist)+vSeed,uv.y*mix(4.,2.4,mist)-clock);
+        vec2 uv=vUv;float clock=time*mix(.2,.18,mist);
+        // Steam breaks into fine filaments; mist drifts as broad cloud.
+        vec2 p=vec2(uv.x*mix(5.5,2.2,mist)+vSeed,uv.y*mix(6.,2.4,mist)-clock);
         float n=noise(p+vec2(noise(p*.7+clock),0.))*.55+noise(p*2.07-vec2(clock*.3,clock))*.3+noise(p*4.13+clock*.5)*.15;
         float sides=pow(max(0.,sin(uv.x*3.14159)),mix(1.8,1.1,mist));
-        // Steam is densest at the water; mist leaves a nozzle thin and hangs as a cloud below it.
-        // Multisampling reads uv past a wisp's top edge: a negative base there is not a number, and the lamp glow spreads it.
-        float height=mix(smoothstep(0.,.12,uv.y)*pow(max(0.,1.-uv.y),1.35),smoothstep(0.,.3,uv.y)*pow(max(0.,1.-uv.y),.8),mist);
-        float wisps=smoothstep(mix(.25,.08,mist),.74,n);
-        float alpha=sides*height*wisps*mix(.1+.22*strength,.32+.4*strength,mist)*smoothstep(0.,.3,vFacing);
-        vec3 color=mix(vec3(.64,.72,.75),vec3(.88,.93,.94),n);
-        gl_FragColor=vec4(color*light,alpha*opacity);
+        // Steam hugs the water and thins fast as it rises, so most of it lies in the
+        // lowest foot whatever the authored height; mist leaves a nozzle thin and
+        // hangs as a cloud below it. Multisampling reads uv past a wisp's top edge:
+        // a negative base there is not a number, and the lamp glow spreads it.
+        float rise=smoothstep(0.,.04,uv.y)*exp(-uv.y*3.6)*max(0.,1.-uv.y);
+        float height=mix(rise,smoothstep(0.,.3,uv.y)*pow(max(0.,1.-uv.y),.8),mist);
+        float wisps=smoothstep(mix(.42,.08,mist),mix(.86,.74,mist),n);
+        float alpha=sides*height*wisps*mix(.06+.1*strength,.32+.4*strength,mist)*smoothstep(0.,.3,vFacing)*opacity;
+        // Lit by the sky, and from beneath by the water's own lamps when they are on.
+        vec3 color=mix(mix(vec3(.82,.88,.92),vec3(.64,.72,.75),mist),mix(vec3(.97,.99,1.),vec3(.88,.93,.94),mist),n)*light
+          +glow*(1.-uv.y)*(1.-mist);
+        gl_FragColor=vec4(color*alpha,alpha*mix(.5,1.,mist));
       }`});
   const mesh=effectMesh(geometry,material);group.add(mesh);let previous;
   return {group,body,pose(size){

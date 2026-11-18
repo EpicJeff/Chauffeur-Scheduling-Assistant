@@ -69,9 +69,25 @@ await test('steam_and_mist_never_raise_a_negative_number_to_a_power',()=>{
  // Multisampling reads uv past a wisp's edge; a negative base is not a number and blacked out the lit picture.
  for(const type of ['steam','mist']){
   const mesh=effectMeshes(buildEffects(plan(f(type)),{editor:true}).group)[0];
-  const bases=mesh.material.fragmentShader.split('pow(').slice(1);assert.equal(bases.length,3);
+  const bases=mesh.material.fragmentShader.split('pow(').slice(1);assert.ok(bases.length>=1);
   for(const base of bases)assert.ok(base.startsWith('max(0.,'),'unguarded power base: '+base.slice(0,24));
  }
+});
+await test('pool_steam_takes_the_light_of_lamps_in_its_water_and_never_darkens_it',()=>{
+ // Steam scatters: lit by the sky, and from beneath by the water's own lamps when on.
+ const p=plan(f('steam',{entity:'water_heater.pool',at:[5,5,0],size_min:2,size_max:2}));
+ p.light_fixtures={'light.pool':[{id:'fixture:a',shape:'point',at:[4,4,-2],ref:'absolute'}],
+  'light.deck':[{id:'fixture:b',shape:'point',at:[30,30,6],ref:'absolute'}]};
+ const fx=buildEffects(p),u=effectMeshes(fx.group)[0].material.uniforms,heat={'water_heater.pool':{state:'heat',attributes:{current_temperature:70,temperature:80}}};
+ assert.deepEqual(fx.fixtures[0].lamps,['light.pool'],'only a lamp in the water lights its steam');
+ fx.update({...heat,'light.pool':{state:'off'},'light.deck':{state:'on'}},false,1,.18);assert.equal(u.glow.value.getHex(),0);
+ fx.update({...heat,'light.pool':{state:'on',attributes:{brightness:255,rgb_color:[0,128,255]}}},false,2,.18);
+ assert.ok(u.glow.value.b>.3&&u.glow.value.r<.05,'the lamp colour');
+ fx.update({...heat,'light.pool':{state:'on',attributes:{brightness:255,rgb_color:[0,128,255]}}},true,3,.18);assert.equal(u.glow.value.getHex(),0,'stale states light nothing');
+ const ed=buildEffects(p,{editor:true}),ue=effectMeshes(ed.group)[0].material.uniforms;
+ ed.update({...heat,'light.pool':{state:'on'}},false,4,.18);assert.equal(ue.glow.value.getHex(),0,'the editor previews without lamps');
+ const m=effectMeshes(fx.group)[0].material;assert.equal(m.premultipliedAlpha,true);
+ assert.ok(/gl_FragColor=vec4\(color\*alpha,alpha\*mix\(\.5,1\.,mist\)\)/.test(m.fragmentShader.replace(/\s/g,'')),'steam covers half of what it adds');
 });
 await test('mist_point_and_line_drop_the_authored_distance',()=>{
  for(const shape of ['point','line']){

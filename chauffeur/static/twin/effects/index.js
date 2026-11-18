@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { resolveFixture } from '../live/emitters.js';
+import { resolveFixture, emission } from '../live/emitters.js';
+import { inPolygon } from '../twin_ground.js';
 import { effectLanding } from './water_ripples.js';
 import { createEffectDriver, effectTarget } from './driver.js';
 import { buildFountain } from './fountain.js';
@@ -23,6 +24,27 @@ const midpoint=path=>{
 
 function landing(plan, point, normal) {
   return effectLanding(plan, point, undefined, normal).height;
+}
+
+// The light entities with a lamp in this body of water, below or at its surface.
+function waterLamps(plan, body) {
+  if (!body) return [];
+  return Object.entries(plan.light_fixtures || {}).filter(([, rows]) => (Array.isArray(rows) ? rows : []).some(row => {
+    const r = resolveFixture(row, plan), at = r.at || r.path?.[0];
+    return at && inPolygon(body.polygon, at[0], at[1]) && at[2] <= body.height + .5;
+  })).map(([entity]) => entity);
+}
+// Pool steam is lit from beneath by the water's lamps: their colour at their brightness.
+const GLOW = .45;
+function lampGlow(entities, states, stale, target) {
+  target.setRGB(0, 0, 0);
+  for (const entity of entities) {
+    const lamp = emission(stale ? null : states[entity], entity.split('.')[0]);
+    if (!lamp.on) continue;
+    const [r, g, b] = lamp.rgb.map(v => v / 255 * lamp.brightness * GLOW);
+    target.setRGB(Math.max(target.r, r), Math.max(target.g, g), Math.max(target.b, b));
+  }
+  return target;
 }
 
 export function buildEffects(plan, {tier='high',editor=false}={}) {
@@ -54,7 +76,8 @@ export function buildEffects(plan, {tier='high',editor=false}={}) {
     }
     built.group.position.copy(world(origin));group.add(built.group);
     const driver=createEffectDriver(fixture,{low:tier==='low'});
-    fixtures.push({fixture,group:built.group,position:[...position],...(resolved.path?{path:resolved.path.map(p=>[...p])}:{}),driver,built});
+    const lamps=fixture.type==='steam'?waterLamps(plan,built.body):[];
+    fixtures.push({fixture,group:built.group,position:[...position],...(resolved.path?{path:resolved.path.map(p=>[...p])}:{}),driver,built,lamps});
   }
   const update=(states={},stale=false,seconds=0,light=1)=>{
     for(const row of fixtures) {
@@ -69,6 +92,8 @@ export function buildEffects(plan, {tier='high',editor=false}={}) {
         if(u.strength)u.strength.value=pose.t;
         if(u.opacity)u.opacity.value=pose.opacity;
         if(u.light)u.light.value=light;
+        // The editor previews without live states, so its steam takes no lamp light.
+        if(u.glow)lampGlow(editor?[]:row.lamps,states,stale,u.glow.value);
       }
     }
   };
