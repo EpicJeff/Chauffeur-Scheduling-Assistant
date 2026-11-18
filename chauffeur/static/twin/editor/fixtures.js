@@ -373,9 +373,10 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   }
   function refresh() {
     if (mode && !canEdit()) cancel(); refreshCard();
-    const plan = getPlan(), next = JSON.stringify([plan.light_fixtures, plan.effect_fixtures, plan.buildings, plan.site?.terraces]); if (signature === next) { draw(); return; } signature = next;
+    // A household with no house yet has no plan: draw no fixtures rather than stop the editor opening.
+    const plan = getPlan() || {}, next = JSON.stringify([plan.light_fixtures, plan.effect_fixtures, plan.buildings, plan.site?.terraces]); if (signature === next) { draw(); return; } signature = next;
     for (const child of [...root.children]) if (child !== aiming?.preview && child !== shapeTool.preview) { child.geometry?.dispose(); child.material?.dispose(); child.removeFromParent(); }
-    const rows = [...Object.entries(getPlan().light_fixtures || {}).flatMap(([entity_id, fixtures]) => fixtures.map(f => ({ entity_id, f }))),
+    const rows = [...Object.entries(plan.light_fixtures || {}).flatMap(([entity_id, fixtures]) => fixtures.map(f => ({ entity_id, f }))),
       ...(plan.effect_fixtures || []).map(f => ({ entity_id: f.entity, f: effectPlacement(f), effectId: f.id }))];
     for (const { entity_id, f, effectId } of rows) {
       const at = f.at || f.path?.[0]; if (!at) continue;

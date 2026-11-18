@@ -26,6 +26,13 @@ await test('multi_drop_posts_one_op_per_click',async()=>{
  await click(byText(document.getElementById('device-tools'),'Done'));assert.equal(editor.pointerDown(evt(40)),false);
  assert.equal(s.view.controls.enabled,true);s.signal.abort();assert.deepEqual(s.errors,[]);
 });
+await test('refresh_before_any_house_exists',async()=>{
+ // A household that has not built a house yet has no plan; the editor must still open.
+ const {createFixtureEditor}=await modules(),s=setup();let plan=null;
+ const editor=createFixtureEditor({...s,getPlan:()=>plan,signal:s.signal.signal,report:e=>s.errors.push(e)});
+ editor.refresh();plan=s.plan;editor.refresh();
+ assert.ok(s.view.scene.children.length>0);s.signal.abort();assert.deepEqual(s.errors,[]);
+});
 await test('aim_drag_commits_once_with_cone',async()=>{
  const {aimTool}=await import(file('static/twin/editor/aim_tool.js'));const commits=[],s=setup();
  const tool=aimTool({at:fixture.at,aim:fixture.aim,cone_deg:90,onCommit:v=>commits.push(v)});
