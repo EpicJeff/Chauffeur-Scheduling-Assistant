@@ -270,6 +270,46 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const bounds = twin.pieceBounds.get(pieceKey(id, buildingId));
     return bounds ? bounds.box.clone().applyMatrix4(bounds.group.matrixWorld) : null;
   }
+  function pickIntersections(clientX, clientY, { skip = [], water = false } = {}) {
+    if (!twin) return { hits: [], waterHits: [] };
+    const rect = renderer3.domElement.getBoundingClientRect();
+    if (clientX < rect.left || clientX >= rect.right || clientY < rect.top || clientY >= rect.bottom) return { hits: [], waterHits: [] };
+    twin.root.updateMatrixWorld(true); camera.updateMatrixWorld(true);
+    raycaster.setFromCamera(new THREE.Vector2((clientX - rect.left) / rect.width * 2 - 1, 1 - (clientY - rect.top) / rect.height * 2), camera);
+    // The plan camera reaches pieces beneath the roof, as a floor editor
+    // must; perspective views can select the roof itself.
+    const candidates = [...twin.pickObjects.values()].filter(o => {
+      const room = selectionStyle?.room, data = o.userData;
+      if (room && (data.buildingId !== room.building || !room.allowed.includes(data.pieceId))) return false;
+      if (!visible(o) || viewing?.faded(o) || (state.camera === 'top' && o.userData.kind === 'roof')) return false;
+      if (camera.isOrthographicCamera && state.view !== 'ext') {
+        for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === state.view;
+      }
+      return true;
+    });
+    const hits = raycaster.intersectObjects(candidates, false).filter(hit => {
+      const { kind, buildingId, pieceId } = hit.object.userData;
+      if (skip.includes(kind)) return false;
+      if (viewing && hit.point.y > viewing.cutAt(hit.object) + .02) return false;
+      if (kind !== 'room') return true;
+      const room = plan.buildings.find(b => b.id === buildingId)?.rooms?.find(r => r.id === pieceId);
+      if (!room?.polygon?.length) return true;
+      // Room proxies enclose the slab. Reject the empty corners of concave
+      // rooms so a ray cannot select their floor through a neighbour.
+      const point = hit.object.parent.worldToLocal(hit.point.clone()), x = point.x, y = -point.z;
+      return contains(room.polygon, [x, y]);
+    });
+    // Water uses the existing drawn geometry, retained through yard batching.
+    // It has no structural proxy and adds no selection mesh or draw call. Only a
+    // caller that asks gets a water hit, so every other tool still sees open ground.
+    const waterHits = [];
+    if (water && yardGroup && visible(yardGroup)) for (const object of yardGroup.userData.waterSurfaces || []) {
+      object.matrixWorld.multiplyMatrices(yardGroup.matrixWorld, object.matrix);
+      object.raycast(raycaster, waterHits);
+    }
+    waterHits.sort((a, b) => a.distance - b.distance);
+    return { hits, waterHits };
+  }
   function clearSheet() {
     ++sheetRevision;
     if (sheet?.object) { sheet.object.removeFromParent(); disposeObject(sheet.object); }
@@ -516,45 +556,20 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     },
     // `skip` names piece kinds the ray passes through (the opening tools look
     // through a porch's or a room's pick box for the wall behind it).
+    pickAll(clientX, clientY, options = {}) {
+      const { hits, waterHits } = pickIntersections(clientX, clientY, options), seen = new Set();
+      return [...hits, ...waterHits].sort((a, b) => a.distance - b.distance).flatMap(hit => {
+        const { kind, pieceId, buildingId = null, part } = hit.object.userData;
+        const key = JSON.stringify([buildingId, pieceId]); if (seen.has(key)) return [];
+        seen.add(key);
+        let level = null;
+        for (let p = hit.object; p; p = p.parent) if (p.userData.levelKey) { level = p.userData.levelKey.slice(buildingId.length + 1); break; }
+        return [{ kind, id: pieceId, building: buildingId, pieceId, buildingId, level, distance: hit.distance, part, point: hit.point.toArray() }];
+      });
+    },
     pick(clientX, clientY, { skip = [], water = false } = {}) {
-      if (!twin) return null;
-      const rect = renderer3.domElement.getBoundingClientRect();
-      if (clientX < rect.left || clientX >= rect.right || clientY < rect.top || clientY >= rect.bottom) return null;
-      twin.root.updateMatrixWorld(true); camera.updateMatrixWorld(true);
-      raycaster.setFromCamera(new THREE.Vector2((clientX - rect.left) / rect.width * 2 - 1, 1 - (clientY - rect.top) / rect.height * 2), camera);
-      // The plan camera reaches pieces beneath the roof, as a floor editor
-      // must; perspective views can select the roof itself.
-      const candidates = [...twin.pickObjects.values()].filter(o => {
-        const room = selectionStyle?.room, data = o.userData;
-        if (room && (data.buildingId !== room.building || !room.allowed.includes(data.pieceId))) return false;
-        if (!visible(o) || viewing?.faded(o) || (state.camera === 'top' && o.userData.kind === 'roof')) return false;
-        if (camera.isOrthographicCamera && state.view !== 'ext') {
-          for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === state.view;
-        }
-        return true;
-      });
-      const hits = raycaster.intersectObjects(candidates, false).filter(hit => {
-        const { kind, buildingId, pieceId } = hit.object.userData;
-        if (skip.includes(kind)) return false;
-        if (viewing && hit.point.y > viewing.cutAt(hit.object) + .02) return false;
-        if (kind !== 'room') return true;
-        const room = plan.buildings.find(b => b.id === buildingId)?.rooms?.find(r => r.id === pieceId);
-        if (!room?.polygon?.length) return true;
-        // Room proxies enclose the slab. Reject the empty corners of concave
-        // rooms so a ray cannot select their floor through a neighbour.
-        const point = hit.object.parent.worldToLocal(hit.point.clone()), x = point.x, y = -point.z;
-        return contains(room.polygon, [x, y]);
-      });
+      const { hits, waterHits } = pickIntersections(clientX, clientY, { skip, water });
       let hit = state.camera === 'top' ? hits.find(h => h.object.userData.kind === 'wall') || hits[0] : hits[0];
-      // Water uses the existing drawn geometry, retained through yard batching.
-      // It has no structural proxy and adds no selection mesh or draw call. Only a
-      // caller that asks gets a water hit, so every other tool still sees open ground.
-      const waterHits = [];
-      if (water && yardGroup && visible(yardGroup)) for (const object of yardGroup.userData.waterSurfaces || []) {
-        object.matrixWorld.multiplyMatrices(yardGroup.matrixWorld, object.matrix);
-        object.raycast(raycaster, waterHits);
-      }
-      waterHits.sort((a, b) => a.distance - b.distance);
       if (waterHits[0] && (!hit || waterHits[0].distance < hit.distance)) {
         const water = waterHits[0], { kind, pieceId, part } = water.object.userData;
         return { kind, id: pieceId, pieceId, part, point: water.point.toArray() };
