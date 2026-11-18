@@ -34,6 +34,38 @@ def glb():
 
 
 class ObjectTests(unittest.TestCase):
+    def test_mirror_properties_all_placements_and_add_paths(self):
+        fixture = json.loads((Path(__file__).parent / 'fixtures/twin_poolhouse.plan.json').read_text())
+        model = twin_model_bridge.assemble(twin_plan.normalize(fixture)[0])[0]
+        b = model['buildings'][0]
+        host = {'floor': b['rooms'][0]['id'], 'u': .5, 'v': .5}
+        b['items'].append({'id': 'mirror-item', 'asset': 'chair', 'host': host})
+        b['anchors'].extend([{'id': 'mirror-anchor', 'kind': 'switch', 'device': None, 'host': host},
+                             {'id': 'linked-anchor', 'kind': 'switch', 'device': 'device', 'host': host}])
+        model['site'].update(planting=[{'id': 'plant', 'at': [1, 2]}], furniture=[{'id': 'chair', 'at': [3, 4]}])
+        for target, collection, identity in [({'building': b['id'], 'id': 'mirror-item'}, 'items', 'mirror-item'),
+                ({'building': b['id'], 'id': 'mirror-anchor'}, 'anchors', 'mirror-anchor'),
+                ({'list': 'planting', 'index': 0}, 'planting', 'plant'), ({'list': 'furniture', 'index': 0}, 'furniture', 'chair')]:
+            def piece(m):
+                rows = m['site'][collection] if 'list' in target else m['buildings'][0][collection]
+                return next(p for p in rows if p['id'] == identity)
+            op = {'op': 'set_object', **target, 'properties': {'mirror_x': True, 'mirror_y': True}}
+            changed = twin_model_ops.apply(model, op)[0]
+            self.assertTrue(piece(changed)['mirror_x']); self.assertTrue(piece(changed)['mirror_y'])
+            self.assertNotIn('mirror_x', piece(model))
+            cleared = twin_model_ops.apply(changed, {**op, 'properties': {'mirror_x': False}})[0]
+            self.assertNotIn('mirror_x', piece(cleared)); self.assertTrue(piece(cleared)['mirror_y'])
+            for properties in [{'mirror_x': 'yes'}, {'mirror_y': 1}, {'mirror_z': True}, {'scale': -1}, {'scale_axes': [-1, 1, 1]}]:
+                with self.subTest(target=target, properties=properties), self.assertRaises(twin_model_ops.Refused):
+                    twin_model_ops.apply(model, {**op, 'properties': properties})
+        with self.assertRaises(twin_model_ops.Refused):
+            twin_model_ops.apply(model, {'op': 'set_object', 'building': b['id'], 'id': 'linked-anchor', 'properties': {'mirror_x': True}})
+        for op, collection in [('add_item', 'items'), ('add_anchor', 'anchors')]:
+            added = twin_model_ops.apply(model, {'op': op, 'building': b['id'], 'asset': 'chair', 'kind': 'switch',
+                                                'host': host, 'mirror_x': True, 'mirror_y': False})[0]
+            self.assertTrue(added['buildings'][0][collection][-1]['mirror_x'])
+            self.assertNotIn('mirror_y', added['buildings'][0][collection][-1])
+
     def test_defaults_preserve_legacy_and_schema_is_single_source(self):
         before = {'id': 'old', 'kind': 'tree', 'height': 22, 'rotation': 65, 'scale': .7, 'elevation': 3}
         saved = deepcopy(before)
@@ -80,7 +112,7 @@ class ObjectTests(unittest.TestCase):
         self.assertEqual(item['host'], b['items'][-1]['host'])
         self.assertEqual(item['name'], 'Chair')
         with patch.object(twin_store, 'current_model', return_value=changed), patch.object(twin_store, 'current', return_value=twin_model_bridge.flatten(changed)):
-            with patch.object(twin_store, 'update_model', return_value=123) as save:
+            with patch.object(twin_store, 'update_model', return_value=(123, changed)) as save:
                 twin_edit.save({'op': 'set_object', 'building': b['id'], 'id': 'test-chair', 'properties': {'scale': 1.5}}, 'parent')
                 self.assertEqual(save.call_args.args[1], 'edit')
                 saved = save.call_args.args[0](changed)

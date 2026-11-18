@@ -85,6 +85,8 @@ def update(piece, changes, collection=None, *, opening=False):
         if field in ('pitch', 'roll') and candidate.get('host'):
             raise ValueError('Pitch and roll belong to free objects.')
         candidate[field] = validate(field, value, schema[field])
+        if field in ('mirror_x', 'mirror_y') and not value:
+            candidate.pop(field, None)
         if field == 'rotation':
             candidate[field] %= 360
     if opening and isinstance(candidate.get('model'), str) and candidate['model'].startswith('import-'):

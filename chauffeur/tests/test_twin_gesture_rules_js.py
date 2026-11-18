@@ -544,6 +544,17 @@ await test('selected_yard_body_snaps_frees_and_accepts_exact_length',async({view
   fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]+30]);fire('pointermove',p);fire('pointerup',p);await tick();assert.equal(ops.length,3,'return to the press sends no body move');
   fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]+30]);const key=new Event('keydown',{cancelable:true});Object.assign(key,{key:'4'});doc.dispatchEvent(key);escape();fire('pointerup',p);await tick();assert.equal(ops.length,3);assert.equal(view.controls.enabled,true);
 });
+await test('mirrored_yard_object_keeps_picker_outline_and_gizmo',async({view,tools,library,look,pixel})=>{
+  const plant=flat.site.planting[0];tools.select({id:plant.id,kind:'planting'});tools.setTool('move');look([200,200,0]);
+  library.refresh();const outline=view.scene.children.find(o=>o.type==='Box3Helper'),box=outline.box.clone();
+  const handles=structuredClone(tools.handles().filter(h=>h.kind.startsWith('gizmo_')));assert.equal(handles.length,3);
+  try {
+    plant.mirror_x=true;plant.mirror_y=true;tools.refresh();library.refresh();
+    assert.ok(library.siteHits(...pixel([200,200,0])).some(h=>h.id===plant.id));
+    assert.ok(outline.visible);assert.deepEqual(outline.box,box);assert.deepEqual(tools.handles().filter(h=>h.kind.startsWith('gizmo_')),handles);
+    assert.equal(plant.scale,undefined);assert.equal(plant.scale_axes,undefined);
+  } finally {delete plant.mirror_x;delete plant.mirror_y;}
+});
 console.log(`${passed}/${passed+failed} passed`);if(failed)process.exitCode=1;
 """
 

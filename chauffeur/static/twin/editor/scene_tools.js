@@ -24,6 +24,35 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let selection = null, tool = 'select', levelKey = null, sheetOn = false, gesture = null, delegate = null, pointerId = null;
   let ownsGesture = false, handles = null, gizmo = null, controlsBeforePress = null;
   let roofRooms = new Set(), roofRoomBuilding = null;
+  let split = null, splitStatus = '';
+  function cancelSplit(text = splitStatus) {
+    if (!split) return;
+    split = null; el('editor-status').textContent = text; canvas.style.cursor = tool === 'select' ? '' : 'crosshair';
+  }
+  function armSplit({ piece, building }) {
+    if (!canEdit()) return;
+    delegate?.cancel?.(); setTool('select'); splitStatus = el('editor-status').textContent;
+    split = { wall: piece.id, building: building.id }; canvas.style.cursor = 'crosshair';
+    el('editor-status').textContent = 'Click the wall where it should split. Esc cancels.';
+  }
+  function pointerArmedDown(event) {
+    if (!split) return false;
+    const target = split, hit = view.pickAll(event.clientX, event.clientY).find(p => p.kind === 'wall');
+    cancelSplit();
+    if (!canEdit() || hit?.id !== target.wall || hit.building !== target.building) return true;
+    const b = getPlan().buildings.find(b => b.id === target.building), w = b?.walls.find(w => w.id === target.wall);
+    if (!w) return true;
+    // Use the wall hit, not its projection onto the floor at an oblique view.
+    const point = hit.point ? rotatePoint([hit.point[0] / .3048 - (b.position?.[0] || 0),
+      -hit.point[2] / .3048 - (b.position?.[1] || 0)], -(b.rotation || 0))
+      : view.floorAt(event.clientX, event.clientY, `${b.id}:${w.level}`);
+    if (!point) return true;
+    const d = w.to.map((v, i) => v - w.from[i]), length = Math.hypot(...d);
+    let at = point.reduce((n, v, i) => n + (v - w.from[i]) * d[i] / length, 0);
+    if (at < 1 - 1e-9 || length - at < 1 - 1e-9) { el('editor-status').textContent = 'A wall must be at least 1 ft long.'; return true; }
+    at = Math.abs(at - length / 2) <= .5 + 1e-9 ? length / 2 : Math.floor(at * 12 + 1e-9) / 12;
+    cards.queue(() => op({ op: 'split_wall', ...target, at })).catch(report); return true;
+  }
   const pointers = new Set(), cancelledEscapes = new WeakSet();
   const dimensions = createDimensions({ view, onCommit: op, canEdit, signal, getHandles: () => [...(handles?.handles() || []), ...(gizmo?.handles() || [])] });
   function drawDimensions(plan = getPlan(), state = roomSelection.current(), problem = null) {
@@ -46,6 +75,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   } });
   const getLabel = item => getSheets().piece_labels?.find(p => p.piece === item.pieceId && p.building === item.buildingId)?.label || 'this piece';
   const roomSelection = createSelection({ view, getModel, onChange(state) {
+    if (split && (state.id !== split.wall || state.building !== split.building)) cancelSplit();
     if (!state.room || state.building !== roofRoomBuilding || !roofRooms.has(state.room)) {
       roofRooms = new Set(state.room ? [state.room] : []); roofRoomBuilding = state.building;
     }
@@ -62,7 +92,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let linkReadAt = 0;
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
+    op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
     onPreview: drawDimensions, onClick: cards.edge, signal });
   const gizmoLayer = document.createElement('div'); gizmoLayer.className = 'editor-handles'; canvas.parentElement.append(gizmoLayer);
@@ -136,6 +166,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     return null;
   }
   function setTool(name) {
+    cancelSplit();
     if (name !== 'select') haLink.cancelPlacement();
     tool = name; onInteract?.();
     for (const id of ['select', 'move', 'rotate', 'scale', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-stair', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking']) el(`rail-${id}`).setAttribute('aria-pressed', String(id === name));
@@ -445,6 +476,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // Cancel the owner before a card's capture listener can close it or change
   // selection. Idle Escape stays in bubble, after the card's own close action.
   listen(document, 'keydown', event => {
+    if (split && event.key === 'Escape' && !event.defaultPrevented) {
+      cancelSplit(); event.preventDefault(); event.stopImmediatePropagation(); return;
+    }
     if (ownsGesture && pointerId !== null && !event.defaultPrevented && (canEdit() || event.key === 'Escape')) {
       for (const source of new Set([gesture?.source, gizmo, handles, ...(delegate?.handleSources || []), delegate])) {
         const result = source?.key?.(event);
@@ -481,6 +515,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     else view.setCamera(button.dataset.editorCamera);
   }));
   return {
+    pointerArmedDown,
     haLink,
     deleteSelected: () => cards.remove(),
     select, pick, selected: () => selection, selection: roomSelection.current, dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,

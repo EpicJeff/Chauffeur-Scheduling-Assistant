@@ -2,7 +2,7 @@ import { schema, propertyFields, objectOperation } from '../objects.js';
 import { libUrl } from '../twin_library.js';
 import { request } from './api.js';
 
-const labels = { rotation: 'Yaw (degrees)', pitch: 'Pitch (degrees)', roll: 'Roll (degrees)', scale: 'Scale (factor)', scale_axes: 'X, Y, Z scale', casts_shadow: 'Casts shadow', visible_in: 'Visible in', tint: 'Material tint', elevation: 'Height above surface (ft)', emissive: 'Emissive', emissive_color: 'Glow colour', light_entity: 'Linked HA light (optional)', object_kind: 'Object kind' };
+const labels = { rotation: 'Yaw (degrees)', pitch: 'Pitch (degrees)', roll: 'Roll (degrees)', scale: 'Scale (factor)', scale_axes: 'X, Y, Z scale', mirror_x: 'Mirror left-right', mirror_y: 'Mirror front-back', casts_shadow: 'Casts shadow', visible_in: 'Visible in', tint: 'Material tint', elevation: 'Height above surface (ft)', emissive: 'Emissive', emissive_color: 'Glow colour', light_entity: 'Linked HA light (optional)', object_kind: 'Object kind' };
 export const isObject = record => record && (['item', 'planting', 'furniture'].includes(record.kind) || record.kind === 'anchor' && !record.piece.device);
 
 let entityList = 0;

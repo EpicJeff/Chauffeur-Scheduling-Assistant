@@ -86,6 +86,20 @@ assert.throws(()=>applyLocal(transforms,{op:'update_site_shape',list:'beds',inde
 assert.deepEqual(transforms,transformBefore);ok('object_and_shape_transforms_are_pure_and_missing_targets_refused');
 assert.equal(applyLocal(transforms,{op:'move_hosted',building:'b',id:'opening',at:3}),null,'opening slides retain their existing supplied-preview path');
 
+const splitPlan={buildings:[{id:'s',levels:[{id:'L',footprint:['a','b','c'],outline:[[0,0],[10,0],[10,10]]}],
+  joints:[{id:'a',level:'L',at:[0,0]},{id:'b',level:'L',at:[10,0]},{id:'c',level:'L',at:[10,10]}],
+  walls:[{id:'w',level:'L',joints:['a','b'],from:[0,0],to:[10,0],footprint:[[0,.25],[10,.25],[10,-.25],[0,-.25]]}],
+  rooms:[{id:'r',joints:['a','b','c']}],openings:[],items:[{id:'i',host:{wall:'w',at:7,z:2}}],anchors:[]}]};
+const splitSaved=structuredClone(splitPlan),sop={op:'split_wall',building:'s',wall:'w',at:4};
+const sb=applyLocal(splitPlan,sop).plan.buildings[0];assert.deepEqual(sb.items[0].host,{wall:'w~2',at:3,z:2});
+assert.equal(sb.rooms[0].joints.length,4);assert.deepEqual(sb.walls[0].footprint,[[0,.25],[4,.25],[4,-.25],[0,-.25]]);
+assert.deepEqual(sb.walls[1].footprint,[[4,.25],[10,.25],[10,-.25],[4,-.25]]);
+assert.deepEqual(applyLocal(splitPlan,sop).plan.buildings[0],sb,'replay IDs stay stable');
+assert.deepEqual(splitPlan,splitSaved);assert.equal(applyLocal(splitPlan,{...sop,at:.5}),null);
+const sameWall=applyLocal(splitPlan,{op:'move_joint',building:'s',joint:'a',to:[9.5,0]});
+assert.equal(sameWall.plan.buildings[0].joints.length,3,'never weld an incident short wall');
+ok('split_hosts_footprints_rooms_stable_replay_and_neighbour_weld_exclusion');
+
 assert.equal(applyLocal(plan,{op:'add_opening',building:building.id,wall:wall.id}),null);
 for(const op of ['unknown','constructor','toString','__proto__']) assert.equal(applyLocal(plan,{op}),null);
 ok('other_ops_return_null');

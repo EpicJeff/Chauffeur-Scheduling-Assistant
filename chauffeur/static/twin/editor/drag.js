@@ -1,6 +1,6 @@
 import { snapTo, joinTarget } from './snap.js';
 import { hostPoint } from '../twin_hosts.js';
-import { LocalMissing, moveGesture, movePreview, moveProblem } from './local_ops.js';
+import { applyLocal, LocalMissing, moveGesture, movePreview, moveProblem } from './local_ops.js';
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
 const delta = (a, b) => a.map((v, i) => v - b[i]);
@@ -80,7 +80,12 @@ export function createDrag({ view, model, onPreview, onCommit }) {
     const { kind, id, building } = g.selection;
     const operation = kind === 'joint' ? { op: 'move_joint', building, joint: id, to: shifted(g.piece.at, g.by) }
       : { op: kind === 'wall' ? 'move_wall' : 'move_room', building, [kind]: id, by: g.by };
-    try { await onCommit(operation, { local: g.preview }); }
+    // Release the welded graph too: the drag buffers still contain both ends.
+    const released = applyLocal(g.source, operation)?.plan;
+    const welded = released?.buildings.find(b => b.id === building).joints.length < g.building.joints.length;
+    const local = welded ? released : g.preview;
+    if (local !== g.preview) { view.rebuildLevel(building, g.piece.level, local, g.touched); onPreview?.(local, g.selection); }
+    try { await onCommit(operation, { local }); }
     catch (error) {
       if (!error.refused && !error.dropped) {
         view.rebuildLevel(building, g.piece.level, g.source, g.touched); onPreview?.(g.source, g.selection);
