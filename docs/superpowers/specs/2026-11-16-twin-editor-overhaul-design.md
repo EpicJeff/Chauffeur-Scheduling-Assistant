@@ -1,6 +1,6 @@
 # House editor overhaul: speed, picking, layout
 
-Date: 2026-11-16. Status: design, awaiting the owner's approval. Nothing here is built except where "already shipped" says so.
+Date: 2026-11-16. Status: approved by the owner 2026-11-16. Slice 1 (measure and spike) landed in v2.499.926; its numbers are in `docs/superpowers/notes/2026-11-16-editor-slice1-numbers.md`. Nothing else here is built except where "already shipped" says so.
 
 Related: `2026-11-12-twin-editor-scope.md` (the feature scope list), `2026-11-13-material-library-design.md` (material identity and the Library page), `chauffeur/docs/ui_design_guide.md`.
 
