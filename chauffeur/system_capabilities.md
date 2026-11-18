@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.924 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.925 (2026-11-17).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.925 (2026-11-17, NOT device-verified, browser-checked in Chromium on high on the `/house` view page with a household's own house and every water effect running, day and night): spillways stay one continuous sheet, and spa jets drift gently and boil closer to the wall in wider, softer patches.**
+
+- **What was wrong.** On the household's own device, a weak spillway (strength .01) opened in wide gaps, and through them the dark spa tile showed as large black splotches across an otherwise good sheet. Spa jet plumes wobbled too much, reached too far into the spa, and their boils were small.
+- **What changed for a person.** A falling sheet is continuous however weak the flow; its edges still pull in and fray. Each spa jet's plume drifts gently (about a third of the former motion), its boil surfaces two thirds as far out as before and is twice as wide, thinner and softer so the spa carries the same little white. The surface ripples start at the boil.
+- **How.** `static/twin/effects/sheet_material.js` drops the weak-flow gaps (`sheetMask` is the edge fray times the fade). `static/twin/effects/water_ripples.js` adds `SPA_BOIL_REACH = 2/3` and `spaBoil(aim, size)`; `updateRipples` places a spa jet's ripples there, and `static/twin/effects/spa_jet.js` builds its plume to it, with the boil radius twice what the full reach gave (`2 x (.3 + min(reach, 3) x .16)`), drift .08 and swell .025 (were .26 and .07), and the boil at `bubbles x .32 + .06` (was `x .5 + .12`).
+- **Tests.** `tests/test_twin_effect_second_set_js.py` (20: no sheet gaps; the boil two thirds out and twice as wide; gentle drift; spa ripples at the boil), `tests/test_twin_effect_visuals_js.py`, `tests/test_twin_effect_lighting_water_js.py`, `tests/test_twin_water_surface_js.py`, `tests/test_twin_effect_editor_js.py`, `tests/test_twin_import_maps.py`.
 
 **v2.499.924 (2026-11-17, NOT device-verified, browser-checked in Chromium on high on the `/house` view page with a household's own house loaded through the house-file load path and every water effect running through a stand-in Home Assistant, day and night): a bubbler is a clear, lit column of water, and spa jets boil at the surface with loose bubble plumes beneath.**
 

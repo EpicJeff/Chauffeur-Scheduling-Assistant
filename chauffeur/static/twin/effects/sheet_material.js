@@ -30,10 +30,10 @@ float sheetAir = smoothstep(.22, 1., sheetV);
 // where it meets the water.
 float sheetLanding = smoothstep(.93, 1., sheetV) * (.5 + .5 * sheetFine);
 float sheetWhite = clamp(sheetLanding * .7, 0., 1.);
-// A weak flow thins and opens in wide gaps; the edges pull in and fray as it falls.
-float sheetGaps = smoothstep(.2, .42, sheetNoise(vec2(sheetX * 2.5, sheetV * 1.2 - time * 1.1)) + .1 - .12 * sheetV);
+// One continuous sheet, however weak the flow: gaps showed a dark wall behind
+// as black splotches (user, 2026-11-17). The edges pull in and fray as it falls.
 float sheetFray = .05 + .22 * sheetAir * sheetNoise(vec2(sheetX * 3., sheetV * 6. - time * 2.));
-float sheetMask = mix(sheetGaps, 1., smoothstep(.1, .6, strength)) * smoothstep(0., sheetFray + .03, min(sheetX, span - sheetX)) * sheetFade;
+float sheetMask = smoothstep(0., sheetFray + .03, min(sheetX, span - sheetX)) * sheetFade;
 // Metres of ripple, all travelling down: long ridges with the flow (narrow
 // across, long along it), finer chop over them, and broad disturbances that
 // roll down the face. The lighting turns the ridges into the streaks.

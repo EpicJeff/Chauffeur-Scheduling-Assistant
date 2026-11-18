@@ -112,6 +112,7 @@ await test('a_falling_sheet_is_lit_water_whose_ripples_run_down_it',()=>{
  assert.ok(lit.uniforms.time===m.uniforms.time&&lit.uniforms.flow===m.uniforms.flow,'the driver moves the compiled sheet');
  assert.ok(fs.includes('sqrt(max(sheetV,0.))*fall'),'the pattern stretches as the water speeds up');
  assert.ok(/sheetDown\*\.9-time\*2\.6/.test(fs),'ripples travel down the fall');
+ assert.ok(!fs.includes('sheetGaps'),'one continuous sheet: gaps showed the wall behind as black splotches');
  assert.ok(!fs.includes('sheetFroth')&&fs.includes('floatsheetLanding=smoothstep(.93,1.,sheetV)')&&fs.includes('floatsheetWhite=clamp(sheetLanding*.7,0.,1.)'),
   'no painted streaks: white only in a thin band at the water; the ripples and the light make the streaks');
  assert.ok(fs.includes('reflectedLight.indirectSpecular+reflectedLight.directSpecular'),'reflections and highlights arrive whole');
@@ -151,8 +152,14 @@ await test('a_bubbler_is_a_clear_lit_column_and_a_spa_jet_boils_at_the_surface',
  // The plume is a loose, tinted cloud that meanders differently for every jet (user, 2026-11-17).
  const pf=jet.fragmentShader.replace(/\s/g,'');
  assert.ok(pf.includes('alpha=(.03+.22*bubbles)*patches*face*envelope'),'patchy, soft-edged and far less white');
- assert.ok(jet.vertexShader.includes('uniform float time;')&&jet.vertexShader.includes('modelMatrix[3].xyz')&&jet.vertexShader.includes('held'),
-  'meanders per jet, held at both ends');
+ assert.ok(jet.vertexShader.includes('uniform float time;')&&jet.vertexShader.includes('modelMatrix[3].xyz')&&jet.vertexShader.includes('.08*held'),
+  'drifts gently per jet, held at both ends');
+ // The boil surfaces two thirds of the way out, twice as wide as before (user, 2026-11-17).
+ const aim=fx.fixtures[1].built.aim,full=W.waterReach(aim,2),boil=W.spaBoil(aim,2),o=aim.origin;
+ close(boil[0],o[0]+(full[0]-o[0])*2/3);close(boil[1],o[1]+(full[1]-o[1])*2/3);
+ const g=effectMeshes(fx.fixtures[1].group)[0].geometry,pp=g.attributes.position,part=g.attributes.part;const xs=[];
+ for(let i=0;i<pp.count;i++)if(part.getX(i)>.5)xs.push(pp.getX(i));
+ close(Math.max(...xs)-Math.min(...xs),2*2*(.3+Math.min(Math.hypot(full[0]-o[0],full[1]-o[1]),3)*.16));
  assert.ok(fx.fixtures[0].lamps.includes('light.pool'),'the bubbler stands in the lit pool');
  assert.ok(fx.fixtures[1].lamps.includes('light.spa'),'the jet runs in the lit spa');
  fx.update({'light.spa':{state:'on',attributes:{brightness:255,rgb_color:[255,255,255]}},'light.pool':{state:'on',attributes:{brightness:255,rgb_color:[255,255,255]}}},false,1,.18);
@@ -196,7 +203,8 @@ await test('new_wet_effects_register_moving_sources_but_vapour_never_does',async
   for(const value of [0,1]){
    fx.update({'sensor.size':{state:value},'switch.water':{state:'on'}},false,10+value);r.update(fx.fixtures,10+value);
    const line=row.uniforms.rippleLines.value[0];assert.equal(row.uniforms.rippleTime.value,0);assert.ok(row.uniforms.rippleStrength.value[0]>0);
-   if(source.aim){const landing=W.waterReach(source.aim,fx.fixtures[0].size);close(line.x,landing[0]);close(line.y,landing[1]);}
+   // A spa jet's ripples start at its boil, two thirds of the way out.
+   if(source.aim){const landing=(type==='spa_jet'?W.spaBoil:W.waterReach)(source.aim,fx.fixtures[0].size);close(line.x,landing[0]);close(line.y,landing[1]);}
    if(previous)assert.notDeepEqual(line.toArray(),previous);previous=line.toArray();
   }
  }

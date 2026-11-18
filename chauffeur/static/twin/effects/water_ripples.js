@@ -75,6 +75,14 @@ export function waterReach(aim, size) {
   return [p[0]+n[0]*reach,p[1]+n[1]*reach,body?.height ?? 0];
 }
 
+// A spa jet boils up two thirds of the way to where its stream would reach
+// (user, 2026-11-17); its surface ripples start at the same place.
+export const SPA_BOIL_REACH = 2 / 3;
+export function spaBoil(aim, size) {
+  const end = waterReach(aim, size), p = aim.origin;
+  return [p[0] + (end[0] - p[0]) * SPA_BOIL_REACH, p[1] + (end[1] - p[1]) * SPA_BOIL_REACH, end[2]];
+}
+
 function waterLine(body, a, b) {
   const dx=b[0]-a[0],dy=b[1]-a[1],length=dx*dx+dy*dy;
   if(length<1e-8)return inPolygon(body.polygon,...a)?[a,b]:null;
@@ -165,7 +173,7 @@ export function updateRipples(rows, fixtures, seconds, tier) {
       const f = source.fixture, pose = fixtures.find(r => r.fixture.id === f.id) || {...effectTarget(f), opacity: 0};
       uniforms.rippleStrength.value[i] = amplitude(pose);
       if(source.aim) {
-        const p=waterReach(source.aim,pose.size);uniforms.rippleLines.value[i].set(p[0],p[1],p[0],p[1]);return;
+        const p=(f.type==='spa_jet'?spaBoil:waterReach)(source.aim,pose.size);uniforms.rippleLines.value[i].set(p[0],p[1],p[0],p[1]);return;
       }
       const flow = source.normal ? f.type==='sheer' ? pose.size : (.08 + pose.size * .6) * (1 - Math.exp(-6)) : 0;
       const offset = source.normal?.map(v => v * flow) || [0,0];
