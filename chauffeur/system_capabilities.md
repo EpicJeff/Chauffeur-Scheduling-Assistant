@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.929 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.930 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.930 (2026-11-18, NOT device-verified, browser-checked in Chromium on high on the `/house` view page with a household's own house loaded through the house-file load path and every water effect running): a bubbler is a white, aerated column again.**
+
+- **What was wrong.** v2.499.924 made the bubbler a clear, glassy column with a small white crown. The household, with a photo of real ones: "They really are mostly white bubbles."
+- **What changed for a person.** The column is mostly white with air: froth streaks climb it with a little clearer water between them, whitest in the crown and at the foot, still lit like the pool water (and by its lamps at night), and it boils into a foam ring on the water.
+- **How.** `static/twin/effects/sheet_material.js` `COLUMN`: white share `mix(.55, .95, streak) + .3 x crown x fine + .3 x foot` (never under .55), the streak noise climbing at 2.6 per foot and closing around the column; `static/twin/effects/bubbler.js` foam ring `splashRing(4, .18)` (was the faint 4.5).
+- **Tests.** `tests/test_twin_effect_second_set_js.py` (20: mostly white, never under .55; streaks climb and close around), `tests/test_twin_effect_visuals_js.py` (22: the foam ring), `tests/test_twin_effect_lighting_water_js.py`, `tests/test_twin_effect_editor_js.py`, `tests/test_twin_import_maps.py`.
 
 **v2.499.929 (2026-11-18, NOT device-verified; the fault was found from the household's own browser console on device): a household's house with an imported model gets its pool mirror and reflection captures back.**
 

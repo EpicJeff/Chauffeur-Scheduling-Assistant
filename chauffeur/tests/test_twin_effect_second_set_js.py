@@ -132,8 +132,9 @@ await test('a_falling_sheet_is_lit_water_whose_ripples_run_down_it',()=>{
  assert.equal(lit.uniforms.sheetFade,m.uniforms.opacity,'the driver fades the sheet through its own name');
  assert.notEqual(m.userData.unlitHook.key(),m.customProgramCacheKey());
 });
-await test('a_bubbler_is_a_clear_lit_column_and_a_spa_jet_boils_at_the_surface',()=>{
- // Little white (user, 2026-11-17): turbulence climbs a clear column; a small crown breaks.
+await test('a_bubbler_is_a_lit_aerated_column_and_a_spa_jet_boils_at_the_surface',()=>{
+ // Mostly white bubbles (household, 2026-11-18, with a photo; this replaces the
+ // 2026-11-17 clear column): froth streaks climb it, whitest in the crown and foot.
  const p=plan(f('bubbler',{at:[5,8,-.7],size_min:1.5,size_max:1.5}),f('spa_jet',{at:[11.8,15,1],size_min:2,size_max:2}));
  p.light_fixtures={'light.pool':[{id:'fixture:a',shape:'point',at:[4,4,-2],ref:'absolute'}],'light.spa':[{id:'fixture:b',shape:'point',at:[15,15,-1],ref:'absolute'}]};
  const fx=buildEffects(p),column=effectMeshes(fx.fixtures[0].group).find(mesh=>mesh.material.userData.risingWater).material;
@@ -141,7 +142,8 @@ await test('a_bubbler_is_a_clear_lit_column_and_a_spa_jet_boils_at_the_surface',
  column.onBeforeCompile(lit);const fs=lit.fragmentShader.replace(/\s/g,'');
  assert.ok(/sheetUp\*1\.4-time\*3\.2/.test(fs),'turbulence climbs the column');
  assert.ok(fs.includes('sheetNoiseP(vec2(sheetU*10.')&&fs.includes(',10.)'),'ripples close around the column without a seam');
- assert.ok(fs.includes('floatsheetWhite=clamp(sheetCrown*.75+sheetFoot*.45,0.,1.)'),'white only in the crown and at the foot');
+ assert.ok(fs.includes('floatsheetWhite=clamp(mix(.55,.95,sheetStreak)+.3*sheetCrown*sheetFine+.3*sheetFoot,0.,1.)'),'mostly white: never under .55 white anywhere on the column');
+ assert.ok(/sheetStreak=sheetNoiseP\(vec2\(sheetU\*12\.,sheetUp\*2\.6-time\*4\.\),12\.\)/.test(fs),'froth streaks climb the column and close around it');
  const chunks=lit.fragmentShader.replace(/#include <(\w+)>/g,(_,c)=>THREE.ShaderChunk[c]||'');
  const all=[...chunks.matchAll(/\buniform\s+(?:(?:lowp|mediump|highp)\s+)?\w+\s+(\w+)\s*(?:\[[^\]]*\])?\s*;/g)].map(x=>x[1]);
  assert.deepEqual([...new Set(all.filter((n,i)=>all.indexOf(n)!==i&&!/Shadow|Lights$/.test(n)))],[],'no uniform declared twice');
