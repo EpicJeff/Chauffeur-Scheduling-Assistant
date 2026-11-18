@@ -7,6 +7,13 @@ export const effectLabels = Object.fromEntries(Object.entries(EFFECT_TYPES).map(
 // A placed effect keeps its shape, so the card offers only the types that shape can be.
 export const effectShapes = Object.fromEntries(Object.entries(EFFECT_TYPES).map(([type, row]) => [type, row.shapes]));
 
+// Path effects use the same placement schema as lights. Freeing just the
+// dragged point must leave every other mounting anchor intact.
+export function effectPathOperation(fixture, path, index) {
+  return { op: 'update_effect_fixture', id: fixture.id, change: { path,
+    ...(fixture.anchors ? { anchors: fixture.anchors.map((anchor, i) => i === index ? null : anchor) } : {}) } };
+}
+
 export function effectCard({ id, getPlan, canEdit, op, onMove, report, helpers }) {
   const { element, field, actions, button, numeric } = helpers;
   const finite = value => numeric(value, -Number.MAX_VALUE, Number.MAX_VALUE);

@@ -5,7 +5,8 @@ import { createLineFixtureTool, facingOptions, areaOutline, screenRay, fixtureSt
 import { fixtureReference, resolveFixture } from '../live/emitters.js';
 import { facingNormal } from '../live/fixture_glow.js';
 import { report as reportError } from './api.js';
-import { effectCard, effectLabels, effectShapes } from './effects.js';
+import { effectCard, effectLabels, effectShapes, effectPathOperation } from './effects.js';
+import { DRAG_THRESHOLD_PX, HANDLE_HIT_PX } from './picking.js';
 
 const FT = .3048;
 const element = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
@@ -147,7 +148,9 @@ export function cameraView(plan, marker) {
 export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal, prepare = () => {}, report = reportError, getCameraMarker }) {
   const canvas = view.renderer3.domElement, root = new THREE.Group(), el = id => document.getElementById(id);
   const ray = new THREE.Raycaster(); ray.params.Line.threshold = .08; view.scene.add(root); root.name = 'editor-light-fixtures';
+  const handleLayer = element('div'); handleLayer.className = 'editor-handles'; canvas.parentElement.append(handleLayer);
   let mode = null, press = null, aiming = null, slider = null, cardDevice = null, cardEffect = null, cardKey = null, signature = null;
+  let cardLight = null, pointHandles = [];
   const helpers = { element, numeric, field, actions, button };
   const effectPlacement = f => f;
   function effectFields(f) {
@@ -205,8 +208,11 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     if (canvas.hasPointerCapture(press.pointer)) canvas.releasePointerCapture(press.pointer); press = null;
   }
   function cancel() {
+    const point = press?.point;
     release(); aiming?.stop(); aiming = null; shapeTool.stop(); shapeTool.preview.removeFromParent(); slider?.parentElement.remove(); slider = null; mode = null;
     el('device-tools').hidden = true; canvas.style.cursor = ''; el('device-cancel').textContent = 'Cancel placement';
+    if (point) previewPoint(point, point.fixture.path);
+    drawHandles();
   }
   function start(next, text) {
     cancel(); prepare(); tools.setTool('select'); mode = next;
@@ -285,15 +291,17 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     const open = button(host, camera ? 'Fixtures and camera view' : 'Fixtures', () => showDevice(device), false); open.dataset.fixtureBrowse = '';
   }
   function showDevice(device, id = null) {
-    tools.select(null); cardEffect = null; cardDevice = device; cardKey = null; refreshCard();
+    tools.select(null); cardEffect = null; cardDevice = device; cardLight = id ? { entity_id: entities(device).find(entity => getPlan().light_fixtures?.[entity]?.some(f => f.id === id)), id } : null;
+    cardKey = null; refreshCard();
     const row = id && [...el('piece-card').querySelectorAll('[data-fixture-id]')].find(r => r.dataset.fixtureId === id);
     if (row) { row.open = true; row.scrollIntoView({ block: 'nearest' }); }
   }
   function showEffect(id) {
-    tools.select(null); cardDevice = null; cardEffect = id; cardKey = null; refreshCard();
+    tools.select(null); cardDevice = null; cardLight = null; cardEffect = id; cardKey = null; refreshCard();
   }
   function releaseCard() {
-    cardDevice = null; cardEffect = null; cardKey = null; delete el('piece-card').dataset.fixtureCard;
+    cardDevice = null; cardEffect = null; cardLight = null; cardKey = null; delete el('piece-card').dataset.fixtureCard;
+    drawHandles();
   }
   el('piece-card').addEventListener('fixturecardrelease', releaseCard, { signal });
   function refreshCard() {
@@ -309,42 +317,150 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       if (!getPlan().effect_fixtures?.some(f => f.id === cardEffect)) { releaseCard(); host.hidden = true; return; }
       host.append(effectCard({ id: cardEffect, getPlan, canEdit, op, onMove: moveEffect, report, helpers }));
     } else { host.prepend(element('h3', cardDevice.name)); drawFixtures(host, cardDevice); }
-    for (const row of host.querySelectorAll('[data-fixture-id]')) row.open = open.includes(row.dataset.fixtureId);
+    for (const row of host.querySelectorAll('[data-fixture-id]')) {
+      row.open = open.includes(row.dataset.fixtureId);
+      let wasOpen = row.open;
+      row.addEventListener('toggle', () => {
+        // Native toggle events are queued. Restoring open cards during a
+        // refresh (or an event from a replaced row) must not change selection.
+        if (!host.contains(row) || wasOpen === row.open) return;
+        wasOpen = row.open;
+        if (row.open) cardLight = { entity_id: row.closest('[data-fixture-entity]').dataset.fixtureEntity, id: row.dataset.fixtureId };
+        else if (cardLight?.id === row.dataset.fixtureId) cardLight = null;
+        drawHandles();
+      });
+    }
+    drawHandles();
   }
-  function pick(event) {
+  function hits(x, y) {
+    const event = { clientX: x, clientY: y };
+    view.camera.updateMatrixWorld(true);
     screenRay(ray, view, event);
     draw(); root.updateMatrixWorld(true);
-    const hit = ray.intersectObjects(root.children, true).find(h => h.object.visible && h.object.userData.fixtureId);
-    if (!hit) return null;
+    const intersections = ray.intersectObjects(root.children, true).filter(hit => hit.object.visible && hit.object.userData.fixtureId);
+    if (!intersections.length) return [];
     const piece = view.pick(event.clientX, event.clientY);
-    if (piece?.point && ray.ray.origin.distanceTo(new THREE.Vector3(...piece.point)) < hit.distance - .2) return null;
-    return hit.object.userData;
+    const depth = piece?.point ? ray.ray.origin.distanceTo(new THREE.Vector3(...piece.point)) : Infinity, seen = new Set();
+    return intersections.filter(hit => {
+      const data = hit.object.userData;
+      if (depth < hit.distance - .2 || seen.has(data.fixtureId)) return false;
+      seen.add(data.fixtureId); return true;
+    }).map(hit => {
+      const data = hit.object.userData;
+      return { ...data, kind: data.effectId ? 'effect_fixture' : 'light_fixture', id: data.effectId || data.fixtureId,
+        building: data.building || null, pieceId: data.effectId || data.fixtureId, buildingId: data.building || null,
+        distance: hit.distance, point: hit.point.toArray() };
+    });
+  }
+  function selectPick(picked) {
+    if (!['light_fixture', 'effect_fixture'].includes(picked?.kind)) return false;
+    if (picked.effectId) showEffect(picked.effectId);
+    else {
+      const device = tools.haLink.state()?.devices?.find(d => entities(d).includes(picked.entity_id));
+      showDevice(device || { device_id: picked.entity_id, entity_id: picked.entity_id, name: picked.entity_id }, picked.fixtureId);
+    }
+    return true;
+  }
+  function selectedLine() {
+    const f = cardEffect ? getPlan()?.effect_fixtures?.find(f => f.id === cardEffect)
+      : cardLight && getPlan()?.light_fixtures?.[cardLight.entity_id]?.find(f => f.id === cardLight.id);
+    return !mode && canEdit() && f?.path && !f.snap && (f.ref !== 'floor' || view.groups?.levels[`${f.building}:${f.level}`]?.visible !== false) ? f : null;
+  }
+  function drawHandles() {
+    handleLayer.replaceChildren(); pointHandles = [];
+    const fixture = selectedLine(); if (!fixture) return;
+    view.camera.updateMatrixWorld(true);
+    const rect = canvas.getBoundingClientRect(), active = press?.point;
+    const path = resolveFixture(active ? { ...fixture, path: active.path } : fixture, getPlan()).path;
+    path.forEach((at, index) => {
+      const p = new THREE.Vector3(at[0] * FT, at[2] * FT, -at[1] * FT).project(view.camera);
+      if (p.z < -1 || p.z > 1) return;
+      const screen = [rect.left + (p.x + 1) * rect.width / 2, rect.top + (1 - p.y) * rect.height / 2];
+      const node = element('span'); node.className = 'editor-handle editor-lot-handle'; node.dataset.fixturePoint = String(index);
+      node.setAttribute('aria-hidden', 'true'); node.style.left = `${screen[0]}px`; node.style.top = `${screen[1]}px`; handleLayer.append(node);
+      pointHandles.push({ index, at, screen, id: fixture.id });
+    });
+  }
+  function hit(event) {
+    if (event.button !== 0 || !['select', 'move'].some(id => el(`rail-${id}`).getAttribute('aria-pressed') === 'true')) return null;
+    drawHandles();
+    return pointHandles.slice().sort((a, b) => Math.hypot(a.screen[0] - event.clientX, a.screen[1] - event.clientY)
+      - Math.hypot(b.screen[0] - event.clientX, b.screen[1] - event.clientY))
+      .find(h => Math.hypot(h.screen[0] - event.clientX, h.screen[1] - event.clientY) <= HANDLE_HIT_PX) || null;
+  }
+  function onPointPlane(event, z) {
+    view.camera.updateMatrixWorld(true); screenRay(ray, view, event);
+    const point = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -z * FT), new THREE.Vector3());
+    return point && [point.x / FT, -point.z / FT];
+  }
+  function begin(event, handle = hit(event)) {
+    const fixture = selectedLine();
+    if (press || !fixture || !handle || handle.id !== fixture.id || event.button !== 0) return false;
+    const at = resolveFixture(fixture, getPlan()).path[handle.index], start = onPointPlane(event, at[2]); if (!start) return false;
+    press = { pointer: event.pointerId, x: event.clientX, y: event.clientY, enabled: view.controls.enabled,
+      point: { fixture: structuredClone(fixture), index: handle.index, at, start, path: structuredClone(fixture.path),
+        entity_id: cardLight?.entity_id, effect: !!cardEffect }, moved: false };
+    view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); return true;
+  }
+  function previewPoint(point, path) {
+    const mesh = root.children.find(mesh => mesh.userData.fixtureId === point.fixture.id); if (!mesh) return;
+    const stroke = fixtureStroke(resolveFixture({ ...point.fixture, path }, getPlan()).path);
+    mesh.geometry.dispose(); mesh.geometry = stroke.geometry; stroke.material.dispose();
   }
   function pointerDown(event) {
     if (event.button !== 0) return false;
-    const picked = !mode && pick(event);
+    const picked = !mode && hits(event.clientX, event.clientY)[0];
     if (!mode && !picked || mode && !canEdit()) return false;
     if (mode?.kind === 'shape' && !shapeTool.down(event)) return false;
     press = { pointer: event.pointerId, x: event.clientX, y: event.clientY, enabled: view.controls.enabled, picked };
+    // Passive browsing observes the click without capturing navigation. The
+    // editable scene uses hits/selectPick through its shared picker instead.
+    if (picked) return true;
     view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); aiming?.begin(); return true;
   }
   function pointerMove(event) {
     if (mode?.kind === 'shape' && canEdit()) return shapeTool.move(event);
     if (!press || press.pointer !== event.pointerId) return false;
+    press.moved ||= Math.hypot(event.clientX - press.x, event.clientY - press.y) >= DRAG_THRESHOLD_PX;
+    if (press.point) {
+      if (!press.moved || !canEdit()) return true;
+      const g = press.point, p = onPointPlane(event, g.at[2]); if (!p) return true;
+      const old = g.fixture.path[g.index], at = [old[0] + p[0] - g.start[0], old[1] + p[1] - g.start[1], old[2]];
+      // A ground reference may change as the point crosses a slope. Keep the
+      // dragged point on its original world-height plane, including its lift.
+      at[2] += fixtureReference(getPlan(), g.fixture, old) - fixtureReference(getPlan(), g.fixture, at);
+      g.path[g.index] = at; previewPoint(g, g.path); drawHandles(); return true;
+    }
     if (aiming && canEdit()) { const p = surface(event); if (p) aiming.move(p.at); } return true;
   }
   async function finish(event, cancelled) {
+    if (press.point && !cancelled) pointerMove(event);
     const p = press; release();
+    if (p.point) {
+      const g = p.point;
+      try {
+        if (!cancelled && canEdit() && p.moved && JSON.stringify(g.path) !== JSON.stringify(g.fixture.path)) {
+          await op(g.effect ? effectPathOperation(g.fixture, g.path, g.index)
+            : { op: 'update_light_fixture', entity_id: g.entity_id, id: g.fixture.id, change: { path: g.path,
+              ...(g.fixture.anchors ? { anchors: g.fixture.anchors.map((anchor, i) => i === g.index ? null : anchor) } : {}) } });
+        }
+      } finally {
+        const current = g.effect ? getPlan()?.effect_fixtures?.find(f => f.id === g.fixture.id)
+          : getPlan()?.light_fixtures?.[g.entity_id]?.find(f => f.id === g.fixture.id);
+        // A save may answer after another fixture was selected or another
+        // point drag began. Restore only this fixture's own current preview.
+        previewPoint(g, press?.point?.fixture.id === g.fixture.id ? press.point.path : (current || g.fixture).path);
+        drawHandles();
+      }
+      return;
+    }
     if (p.picked) {
-      if (!cancelled && Math.hypot(event.clientX - p.x, event.clientY - p.y) < 3) {
-        if (p.picked.effectId) { showEffect(p.picked.effectId); return; }
-        const device = tools.haLink.state()?.devices?.find(d => entities(d).includes(p.picked.entity_id));
-        showDevice(device || { device_id: p.picked.entity_id, entity_id: p.picked.entity_id, name: p.picked.entity_id }, p.picked.fixtureId);
-      } return;
+      if (!cancelled && !p.moved && Math.hypot(event.clientX - p.x, event.clientY - p.y) < DRAG_THRESHOLD_PX) selectPick(p.picked);
+      return;
     }
     if (mode?.kind === 'shape') { await shapeTool.up(event, cancelled); return; }
     if (aiming) { if (!cancelled && canEdit()) { const hit = surface(event); if (hit) aiming.move(hit.at); } await aiming.end(cancelled || !canEdit()); return; }
-    if (cancelled || !canEdit() || !mode || Math.hypot(event.clientX - p.x, event.clientY - p.y) >= 3) return;
+    if (cancelled || !canEdit() || !mode || Math.hypot(event.clientX - p.x, event.clientY - p.y) >= DRAG_THRESHOLD_PX) return;
     const hit = surface(event, true); if (!hit) return;
     const active = mode, ref = hit.ground ? 'ground' : 'floor', base = ref === 'ground' ? groundAt(getPlan(), ...hit.at) : height({ ref, building: hit.building, level: hit.level }, hit.at);
     if (active.kind === 'move') {
@@ -370,6 +486,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       const { building, level } = mesh.userData;
       mesh.visible = !building || view.groups?.levels[`${building}:${level}`]?.visible !== false;
     }
+    drawHandles();
   }
   function refresh() {
     if (mode && !canEdit()) cancel(); refreshCard();
@@ -411,6 +528,9 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       event.preventDefault(); event.stopImmediatePropagation();
     }
   }, { signal, capture: true });
-  signal.addEventListener('abort', () => { cancel(); if (el('piece-card').dataset.fixtureCard) { releaseCard(); el('piece-card').hidden = true; } root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent(); }, { once: true });
-  return { add, addEffect, showEffect, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, pointerDown, pointerMove, pointerUp, cancel, refresh, draw, active: () => !!mode };
+  view.controls.addEventListener?.('change', drawHandles);
+  signal.addEventListener('abort', () => { cancel(); if (el('piece-card').dataset.fixtureCard) { releaseCard(); el('piece-card').hidden = true; } root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent();
+    view.controls.removeEventListener?.('change', drawHandles); handleLayer.remove(); }, { once: true });
+  return { add, addEffect, showEffect, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, hits, selectPick,
+    hit, begin, handles: () => { drawHandles(); return pointHandles; }, pointerDown, pointerMove, pointerUp, cancel, refresh, draw, active: () => !!mode };
 }

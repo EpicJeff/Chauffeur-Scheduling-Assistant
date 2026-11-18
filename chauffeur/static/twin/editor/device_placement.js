@@ -168,7 +168,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     el('device-tools').hidden = false; document.body.style.cursor = 'grabbing';
   }, { capture: true });
   function pointerDown(event) {
-    if (!armed && fixtures.pointerDown(event)) return true;
+    if (!armed && fixtures.active() && fixtures.pointerDown(event)) return true;
     if (!armed || !canEdit() || event.button !== 0) return false;
     press = { pointer: event.pointerId, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
     view.controls.enabled = false; canvas.setPointerCapture(event.pointerId);
@@ -305,6 +305,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     pointerArmedDown: event => !!(armed || fixtures.active()) && pointerDown(event),
     pointerMove: fixtures.pointerMove, pointerUp, cancel, refresh, draw, stop,
     fixtureHits: (x, y) => fixtures.hits?.(x, y) || [],
+    fixtureHandles: fixtures, selectFixturePick: fixtures.selectPick,
     drawFixtures: fixtures.deviceLink, addEffect: fixtures.addEffect, showEffect: fixtures.showEffect,
     pointerBrowse: event => !armed && !fixtures.active() && fixtures.pointerDown(event) };
   link.setPlacement(controller);

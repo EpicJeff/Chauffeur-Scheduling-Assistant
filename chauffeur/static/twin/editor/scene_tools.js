@@ -252,7 +252,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (event.button !== 0) return;
     controlsBeforePress = view.controls.enabled;
     if (!canEdit()) {
-      if (delegate?.pointerBrowse?.(event)) { pointerId = event.pointerId; ownsGesture = true; event.stopImmediatePropagation(); }
+      if (delegate?.pointerBrowse?.(event)) {
+        pointerId = event.pointerId; ownsGesture = !view.controls.enabled;
+        if (ownsGesture) event.stopImmediatePropagation();
+      }
       return;
     }
     pointerId = event.pointerId;

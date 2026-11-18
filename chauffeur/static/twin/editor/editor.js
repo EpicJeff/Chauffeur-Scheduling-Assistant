@@ -749,8 +749,8 @@ export async function boot() {
       prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });
     view.live = { draw: devices.draw, stop: devices.stop };
     tools.delegate({
-      handleSources: [terrain, lot],
-      selectPick: hit => hit?.kind === 'terraces' && (terrain.choose('terraces', hit.id), true),
+      handleSources: [terrain, lot, devices.fixtureHandles],
+      selectPick: hit => hit?.kind === 'terraces' && (terrain.choose('terraces', hit.id), true) || devices.selectFixturePick(hit),
       selectionChanged: state => { terrain.selectionChanged(state); library.refresh(); },
       pick: flags.pick, pointerBrowse: event => devices.pointerBrowse(event),
       pointerArmedDown: event => terrain.pointerArmedDown(event) || devices.pointerArmedDown(event) || lot.pointerArmedDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event),
