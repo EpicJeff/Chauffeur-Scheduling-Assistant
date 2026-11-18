@@ -544,12 +544,13 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   }
   function pointerDown(event) {
     if (!canEdit() || event.button !== 0 || tools.handleAt?.(event)) return false;
-    // Select-tool bodies belong to the passive click/orbit arbiter. Retain
-    // the explicit Move/Rotate path until their shared body drag owns it.
-    if (!['move', 'rotate'].some(id => el(`rail-${id}`).getAttribute('aria-pressed') === 'true')) return false;
+    // Only Move can drag the already selected yard body. Other presses stay
+    // with the scene arbiter so a click selects and a drag navigates.
+    if (el('rail-move').getAttribute('aria-pressed') !== 'true') return false;
     const picked = pickSite(event.clientX, event.clientY); if (!picked) return false;
-    onInteract?.(); tools.select(picked);
-    refresh();
+    const selected = tools.selection();
+    if (selected.building || selected.kind !== picked.kind || selected.id !== picked.id) return false;
+    onInteract?.();
     const { index, piece } = siteRecord(getPlan(), picked.id);
     const start = ground(event); if (!start) return false;
     siteDrag = { ...picked, index, start, piece, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
@@ -575,6 +576,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   }
   function pointerMove(event) {
     if (!siteDrag) return false;
+    if (Math.hypot(event.clientX - siteDrag.x, event.clientY - siteDrag.y) < DRAG_THRESHOLD_PX) return true;
     const at = ground(event);
     if (at) {
       const piece = structuredClone(siteDrag.piece), by = at.map((v, i) => v - siteDrag.start[i]);

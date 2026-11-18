@@ -263,25 +263,33 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       ownsGesture = true; onInteract?.(); view.controls.enabled = false;
       canvas.setPointerCapture(event.pointerId); event.stopImmediatePropagation(); return;
     }
+    let body = null;
+    if (['move', 'rotate'].includes(tool)) {
+      const current = roomSelection.current();
+      let picked = picker.at(event.clientX, event.clientY)[0];
+      if (picked?.building && view.state.view === 'ext' && current.kind === 'building')
+        picked = { ...picked, id: picked.building, kind: 'building' };
+      // Check the nearest shared pick before a body delegate can claim a
+      // building through a yard item, or select and move in one press.
+      if (!current.id || !picked || picked.id !== current.id || picked.building !== current.building || picked.kind !== current.kind) {
+        gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true }; return;
+      }
+      body = { ...picked, pieceId: picked.id, buildingId: picked.building };
+    }
     if (delegate?.pointerDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
     if (event.shiftKey && tool === 'select') {
       gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true, addRoom: true }; return;
     }
-    if (tool === 'select') {
-      gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true }; return;
-    }
-    let picked = view.pick(event.clientX, event.clientY);
-    if (picked && view.state.view === 'ext' && ['building', null].includes(roomSelection.current().kind))
-      picked = { pieceId: picked.buildingId, buildingId: picked.buildingId, kind: 'building' };
-    if (!picked || !findPiece(getPlan(), picked.pieceId, picked.buildingId)) return;
-    onInteract?.(); select(picked);
-    const anchor = pieceAnchor(picked); if (!anchor) return;
-    if (hasHandles(anchor.record)) {
-      gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true }; return;
-    }
+    // Unselected bodies are passive presses with every scene tool: release
+    // selects, crossing the threshold leaves the gesture to OrbitControls.
+    gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true };
+    if (!body?.building) return;
+    onInteract?.();
+    const anchor = pieceAnchor(body); if (!anchor) return;
+    if (hasHandles(anchor.record)) return;
     const start = view.floorAt(event.clientX, event.clientY, anchor.key); if (!start) return;
     const centre = localCentre(anchor.record.building);
-    gesture = { item: picked, start, key: anchor.key, centre, pointerId, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
+    gesture = { item: body, start, key: anchor.key, centre, pointerId, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
     ownsGesture = true;
     view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); event.stopImmediatePropagation();
   }, { capture: true });
@@ -306,6 +314,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       }
       return;
     }
+    if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < DRAG_THRESHOLD_PX) return;
     const end = view.floorAt(event.clientX, event.clientY, gesture.key); if (!end) return;
     const hint = el('editor-drag-hint'); hint.hidden = false; hint.style.left = `${event.clientX + 18}px`; hint.style.top = `${event.clientY + 18}px`;
     hint.textContent = tool === 'move' ? `${feetInches(Math.hypot(end[0] - gesture.start[0], end[1] - gesture.start[1]))} along the floor` : `${Math.round(turn(gesture, end))}°`;

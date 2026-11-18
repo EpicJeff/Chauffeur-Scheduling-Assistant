@@ -343,10 +343,12 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     const point = ground(event); if (!point) return false;
     const descriptors = handles();
     let hit = handle;
-    if (!hit && descriptors.length && !pauseBuilding()) {
+    const selection = getSelection();
+    if (!hit && descriptors.length && !pauseBuilding() && selection.kind === 'building') {
       const kind = ['move', 'rotate'].find(id => document.getElementById(`rail-${id}`).getAttribute('aria-pressed') === 'true');
       const picked = kind && view.pick(event.clientX, event.clientY);
-      if (picked?.building === current()?.id) hit = descriptors.find(h => h.kind === (kind === 'move' ? 'move' : 'turn'));
+      if (picked?.building === selection.id && picked.building === current()?.id)
+        hit = descriptors.find(h => h.kind === (kind === 'move' ? 'move' : 'turn'));
     }
     if (hit || drawing) {
       const b = hit && structuredClone(current());
