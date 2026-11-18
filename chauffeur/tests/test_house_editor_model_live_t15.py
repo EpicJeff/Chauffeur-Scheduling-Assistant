@@ -645,6 +645,9 @@ def scenario_move_a_yard_tree_and_it_stays_after_rebuild():
 
         end = _screen_lot(page, *TREE_TARGET)
         H._on_canvas(page, *end)
+        # Slice 3a (owner-approved 2026-11-18): a selected yard object's body
+        # moves with the Move tool; a Select-tool drag on it turns the camera.
+        page.click('#rail-move')
         _drag_world(page, start, end)
         after = _until(H.flat, lambda f: not _near(_planting(f, TREE)['at'], tree['at'], 0.5),
                        'the tree move reaches the store')
