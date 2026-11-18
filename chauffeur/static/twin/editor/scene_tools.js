@@ -21,9 +21,9 @@ const rotatePoint = (p, angle) => {
 export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, pickMaterial, api, onDrawFeature }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let selection = null, tool = 'select', levelKey = null, sheetOn = false, gesture = null, delegate = null, pointerId = null;
-  let ownsGesture = false, handles = null;
+  let ownsGesture = false, handles = null, controlsBeforePress = null;
   let roofRooms = new Set(), roofRoomBuilding = null;
-  const pointers = new Set();
+  const pointers = new Set(), cancelledEscapes = new WeakSet();
   const dimensions = createDimensions({ view, onCommit: op, canEdit, signal, getHandles: () => handles?.handles() || [] });
   function drawDimensions(plan = getPlan(), state = roomSelection.current(), problem = null) {
     const building = plan?.buildings.find(b => b.id === state.building);
@@ -250,6 +250,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     }
     if (pointers.size > 1) return;
     if (event.button !== 0) return;
+    controlsBeforePress = view.controls.enabled;
     if (!canEdit()) {
       if (delegate?.pointerBrowse?.(event)) { pointerId = event.pointerId; ownsGesture = true; event.stopImmediatePropagation(); }
       return;
@@ -276,7 +277,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       }
       body = { ...picked, pieceId: picked.id, buildingId: picked.building };
     }
-    if (delegate?.pointerDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
+    if (delegate?.pointerDown?.(event)) {
+      gesture = { delegated: true, enabled: controlsBeforePress };
+      ownsGesture = true; event.stopImmediatePropagation(); return;
+    }
     if (event.shiftKey && tool === 'select') {
       gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true, addRoom: true }; return;
     }
@@ -302,7 +306,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     }
     if (gesture?.dragging && !gesture.started) return;
     if (!gesture?.dragging && delegate?.pointerMove?.(event)) return;
-    if (!gesture) return;
+    if (!gesture || gesture.delegated) return;
     if (gesture.selecting) {
       if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= DRAG_THRESHOLD_PX) gesture.moved = true;
       return;
@@ -340,10 +344,18 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   const finish = (event, cancel = false) => {
     const tracked = pointers.delete(event.pointerId);
     if (event.pointerId !== pointerId) { if (ownsGesture && tracked) event.stopImmediatePropagation(); return; }
-    pointerId = null; ownsGesture = false;
-    if (!gesture?.dragging && delegate?.pointerUp?.(event, cancel)) return;
-    if (!gesture) return;
-    const g = gesture; gesture = null; el('editor-drag-hint').hidden = true;
+    const owned = ownsGesture, g = gesture;
+    pointerId = null; ownsGesture = false; gesture = null;
+    el('editor-drag-hint').hidden = true;
+    el('editor-drag-outline').setAttribute('points', '');
+    if (!g?.dragging) {
+      const handled = delegate?.pointerUp?.(event, cancel);
+      if (owned) {
+        view.controls.enabled = controlsBeforePress;
+        if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      }
+      if (handled || !g || g.delegated) return;
+    }
     if (g.dragging) {
       if (g.source !== handles && g.started) g.source.pointerUp?.(event, cancel);
       view.controls.enabled = g.enabled;
@@ -369,7 +381,6 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       }
       return;
     }
-    el('editor-drag-outline').setAttribute('points', '');
     view.controls.enabled = g.enabled;
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (cancel || Math.hypot(event.clientX - g.x, event.clientY - g.y) < DRAG_THRESHOLD_PX) return;
@@ -409,10 +420,22 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       return op(objectOperation(current, transformObject(current.piece, key === 'r' ? 'rotate' : 'scale', key === 'r' ? event.shiftKey : key === '[')));
     }).catch(report);
   });
+  const canEscape = event => event.key === 'Escape' && !event.defaultPrevented
+    && !event.target.closest?.('input, textarea, select, [contenteditable="true"]')
+    && !document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), dialog[open]');
+  // Cancel the owner before a card's capture listener can close it or change
+  // selection. Idle Escape stays in bubble, after the card's own close action.
   listen(document, 'keydown', event => {
-    if (event.key !== 'Escape' || event.defaultPrevented || event.target.closest?.('input, textarea, select, [contenteditable="true"]')
-      || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), dialog[open]')) return;
-    if (gesture?.dragging) { finish({ pointerId }, true); return; }
+    if (!canEscape(event) || !ownsGesture || pointerId === null) return;
+    const armed = !gesture;
+    finish({ pointerId }, true);
+    // Armed tools still receive Escape to leave their placement/drawing mode.
+    // Their press is already cancelled; this same key must not also go back.
+    if (armed) { cancelledEscapes.add(event); return; }
+    event.preventDefault(); event.stopImmediatePropagation();
+  }, { capture: true });
+  listen(document, 'keydown', event => {
+    if (!canEscape(event) || cancelledEscapes.has(event)) return;
     roomSelection.back();
   });
   signal.addEventListener('abort', () => { if (gesture && !gesture.selecting) view.controls.enabled = gesture.enabled;

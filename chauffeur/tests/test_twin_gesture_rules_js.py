@@ -32,6 +32,27 @@ Element.prototype.releasePointerCapture = function() { this.capture = null; };
 doc.createElement = tag => Object.assign(new Element(),{tag});
 doc.getElementById = id => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
 doc.querySelector = selector => selector==='.editor-shell'?shell:null; doc.querySelectorAll = () => []; globalThis.document = doc;
+// Node's EventTarget uses registration order. Model document capture before
+// bubble so the ground card's capture listener competes with the real arbiter.
+doc.closest = () => null;
+const addDocumentListener=doc.addEventListener.bind(doc), dispatchDocumentEvent=doc.dispatchEvent.bind(doc);
+let keyListeners=[];
+doc.addEventListener=(type,listener,options={})=>{
+  if(type!=='keydown')return addDocumentListener(type,listener,options);
+  keyListeners=keyListeners.filter(row=>!row.signal?.aborted);
+  keyListeners.push({listener,capture:options===true||!!options.capture,signal:options.signal});
+};
+doc.dispatchEvent=event=>{
+  if(event.type!=='keydown')return dispatchDocumentEvent(event);
+  Object.defineProperty(event,'target',{value:doc});
+  let stopped=false;event.stopImmediatePropagation=()=>{stopped=true;};
+  for(const capture of [true,false])for(const row of keyListeners) {
+    if(stopped)return !event.defaultPrevented;
+    if(row.capture===capture&&!row.signal?.aborted)row.listener(event);
+  }
+  return !event.defaultPrevented;
+};
+const escape=()=>{const event=new Event('keydown',{cancelable:true});Object.assign(event,{key:'Escape'});doc.dispatchEvent(event);};
 window.showGlobalAlert = message => { throw Error(message); };
 globalThis.fetch = async () => new Response(JSON.stringify({limit_mb:50,unpacked_limit_mb:200,entries:{},revision:1,materials:[],items:[],imports:[]}));
 globalThis.requestAnimationFrame = () => 1;
@@ -274,6 +295,86 @@ await test('move_tool_selected_building_body_moves',async({view,tools,lot,ops,lo
   assert.equal(ops[0].operation[0].op,'move_building');assert.equal(ops[0].operation[0].building,B);
   assert.notDeepEqual(ops[0].operation[0].to,building.position);
   assert.equal(tools.selection().id,B);assert.equal(view.controls.enabled,true);
+});
+await test('esc_cancels_body_drag',async({view,tools,lot,ops,look,pixel,fire})=>{
+  view.setView('ext');tools.select({kind:'building',id:B,building:B});tools.setTool('move');
+  const point=wall.from.map((v,i)=>v*.8+wall.to[i]*.2);look([...point,0],building,40);
+  const p=pixel([...point,0],building),canvas=view.renderer3.domElement;
+  const groups=()=>[view.groups.roof,view.groups.gableFull,view.groups.gableCut,view.groups.lights,...Object.values(view.groups.levels)]
+    .flatMap(parent=>(parent?.children||[]).filter(g=>g.userData.buildingId===B));
+  const transforms=()=>groups().map(g=>[g.position.toArray(),g.rotation.toArray()]);
+  const before=transforms(),planBefore=JSON.stringify(flat);
+  assert.equal(tools.handleAt({clientX:p[0],clientY:p[1]}),false);
+  fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]]);
+  assert.ok(lot.dragging());assert.notDeepEqual(transforms(),before);
+  assert.ok(doc.getElementById('editor-drag-outline').getAttribute('points'));
+  escape();await tick();
+  assert.equal(lot.dragging(),false);assert.deepEqual(transforms(),before);
+  assert.equal(doc.getElementById('editor-drag-outline').getAttribute('points'),'');
+  assert.equal(doc.getElementById('editor-drag-hint').hidden,true);
+  assert.equal(view.controls.enabled,true);assert.equal(canvas.hasPointerCapture(1),false);
+  assert.equal(tools.selection().id,B,'cancel keeps selection');
+  fire('pointerup',[p[0]+40,p[1]]);await tick();assert.equal(ops.length,0);assert.equal(JSON.stringify(flat),planBefore);
+  fire('pointerdown',p);assert.ok(lot.dragging(),'a fresh press works after cancel');fire('pointercancel',p);
+});
+await test('esc_cancels_yard_object_drag',async({view,tools,ops,look,pixel,fire,click})=>{
+  look([200,200,0]);tools.setTool('move');const p=pixel([200,200,0]);click(p);
+  const outline=view.scene.children.find(o=>o instanceof THREE.Box3Helper),before=outline.box.clone(),planBefore=JSON.stringify(flat);
+  fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]]);assert.equal(outline.box.equals(before),false);
+  escape();await tick();
+  assert.ok(outline.visible);assert.ok(outline.box.equals(before),'yard preview returns to its original location');
+  assert.equal(tools.selection().id,'tree:gesture');assert.equal(view.controls.enabled,true);
+  assert.equal(view.renderer3.domElement.hasPointerCapture(1),false);
+  assert.equal(doc.getElementById('editor-drag-outline').getAttribute('points'),'');
+  assert.equal(doc.getElementById('editor-drag-hint').hidden,true);
+  fire('pointermove',[p[0]+70,p[1]]);fire('pointerup',[p[0]+70,p[1]]);await tick();
+  assert.equal(ops.length,0);assert.equal(JSON.stringify(flat),planBefore);assert.ok(outline.box.equals(before));
+});
+await test('esc_cancels_pad_vertex_drag',async({view,tools,terrain,ops,look,fire})=>{
+  flat.site.terraces=[{id:'pad:gesture',polygon:[[200,200],[220,200],[220,220],[200,220]],height:0,blend:0}];
+  look([200,200,0]);terrain.choose('terraces','pad:gesture');
+  const original=structuredClone(flat.site.terraces[0].polygon),p=terrain.handles()[0].screen;
+  fire('pointerdown',p);fire('pointermove',[p[0]+30,p[1]]);
+  assert.notDeepEqual(terrain.handles().filter(h=>!h.insert).map(h=>h.at),original);
+  escape();await tick();
+  assert.deepEqual(terrain.handles().filter(h=>!h.insert).map(h=>h.at),original,'cancel keeps the pad chosen and restores its preview');
+  assert.deepEqual(flat.site.terraces[0].polygon,original);assert.equal(ops.length,0);
+  assert.equal(view.controls.enabled,true);assert.equal(view.renderer3.domElement.hasPointerCapture(1),false);
+  fire('pointerup',[p[0]+30,p[1]]);await tick();assert.equal(ops.length,0,'no update_pad after Esc');
+  fire('pointerdown',p);assert.equal(view.controls.enabled,false,'arbiter accepts the next press');fire('pointercancel',p);
+  escape();assert.equal(terrain.handles().length,0,'idle Esc still closes the ground card');assert.equal(tools.selection().id,null);
+});
+await test('esc_without_drag_goes_back',async({view,tools,ready})=>{
+  const room=building.rooms.find(r=>r.id==='room:5d7de10ca48340ae85c407d22337c6f7');
+  view.setView(B+':L1');tools.select({kind:'room',id:room.id,building:B});await ready();
+  const boundary=tools.selection().tinted.walls[0];assert.ok(boundary);
+  tools.select({kind:'wall',id:boundary,building:B});assert.equal(tools.selection().room,room.id);
+  escape();assert.equal(tools.selection().id,room.id);assert.equal(tools.selection().room,room.id);
+  escape();assert.equal(tools.selection().id,null);assert.equal(tools.selection().room,null);
+});
+await test('esc_during_armed_pad_press_keeps_the_tools_own_cancel',async({view,terrain,ops,look,pixel,fire})=>{
+  look([200,200,0]);terrain.startDrawing('terraces');const p=pixel([200,200,0]);
+  fire('pointerdown',p);assert.equal(view.controls.enabled,false);escape();
+  assert.equal(view.controls.enabled,true);assert.equal(view.renderer3.domElement.hasPointerCapture(1),false);
+  fire('pointerup',p);assert.equal(ops.length,0);
+  fire('pointerdown',p);assert.equal(view.controls.enabled,true,'Esc exited drawing, so the next press navigates');
+  fire('pointerup',p);
+});
+await test('esc_restores_pre_disabled_controls_for_handles_and_bodies',async({view,tools,terrain,ops,look,pixel,fire,click,ready})=>{
+  look([200,200,0]);tools.setTool('move');const p=pixel([200,200,0]);click(p);
+  view.controls.enabled=false;fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]]);escape();fire('pointerup',[p[0]+40,p[1]]);
+  assert.equal(view.controls.enabled,false);assert.equal(ops.length,0);assert.equal(tools.selection().id,'tree:gesture');
+  view.controls.enabled=true;tools.setTool('select');tools.select(null);
+  flat.site.terraces=[{id:'pad:gesture',polygon:[[200,200],[220,200],[220,220],[200,220]],height:0,blend:0}];
+  terrain.choose('terraces','pad:gesture');const q=terrain.handles()[0].screen;
+  view.controls.enabled=false;fire('pointerdown',q);fire('pointermove',[q[0]+30,q[1]]);escape();fire('pointerup',[q[0]+30,q[1]]);
+  assert.equal(view.controls.enabled,false);assert.equal(ops.length,0);assert.equal(terrain.handles().length,8);
+  terrain.cancel();view.controls.enabled=true;view.setView(B+':L1');tools.select({kind:'wall',id:W,building:B});await ready();
+  const mid=wall.from.map((v,i)=>(v+wall.to[i])/2);look([...mid,0],building);const r=pixel([...mid,0],building);
+  view.controls.enabled=false;fire('pointerdown',r);fire('pointermove',[r[0],r[1]+40]);assert.ok(tools.dragging());
+  escape();fire('pointerup',[r[0],r[1]+40]);await tick();
+  assert.equal(tools.dragging(),false);assert.equal(view.controls.enabled,false);assert.equal(ops.length,0);
+  assert.equal(tools.selection().id,W);assert.equal(view.renderer3.domElement.hasPointerCapture(1),false);
 });
 await test('rotate_tool_needs_selection_first',async({view,tools,ops,controlStates,look,pixel,fire})=>{
   view.setView('ext');tools.setTool('rotate');
