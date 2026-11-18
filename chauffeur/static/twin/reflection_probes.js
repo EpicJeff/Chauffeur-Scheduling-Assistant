@@ -22,6 +22,8 @@ vec3 probeDirection(vec3 direction) { return mix(direction, probeBox(direction, 
 `;
 // Metres from the water to what it mirrors, along the mirrored ray.
 const PLANAR_REACH = 5;
+// Metres above the water where the mirror image starts (see drawMirror).
+export const MIRROR_LIFT = .37;
 const waterDeclarations = `attribute vec3 reflectionBodyCentre; varying vec3 vReflectionBodyCentre;\n`;
 const waterFragment = `varying vec3 vReflectionBodyCentre;
 uniform vec3 waterProbeCentre[4];
@@ -217,8 +219,14 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     virtual.projectionMatrix.copy(camera.projectionMatrix);
     scratch.multiplyMatrices(virtual.projectionMatrix, virtual.matrixWorldInverse);
     // Nothing below the water belongs in the image, and the pool shell would
-    // hide everything: put the near plane on the water (an oblique frustum).
-    plane.set(up.set(0, 1, 0), -height).applyMatrix4(virtual.matrixWorldInverse);
+    // hide everything: put the near plane over the water (an oblique frustum).
+    // It sits MIRROR_LIFT above the water, not on it. Seen from below, the deck,
+    // coping and lawn around a pool are a slab underside that covers the whole
+    // image outside the pool's opening; a wave sends the lookup out there and
+    // the water shows grey blotches. A ray rising from the water never meets
+    // that underside, so the slab is cut away and the lookup finds the house,
+    // trees and sky behind it.
+    plane.set(up.set(0, 1, 0), -(height + MIRROR_LIFT)).applyMatrix4(virtual.matrixWorldInverse);
     clip.set(plane.normal.x, plane.normal.y, plane.normal.z, plane.constant);
     const pm = virtual.projectionMatrix.elements;
     corner.set((Math.sign(clip.x) + pm[8]) / pm[0], (Math.sign(clip.y) + pm[9]) / pm[5], -1, (1 + pm[10]) / pm[14]);

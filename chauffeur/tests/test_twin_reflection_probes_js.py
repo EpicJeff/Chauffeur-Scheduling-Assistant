@@ -233,10 +233,13 @@ for(const failure of [false,true])await test('high_water_mirror_is_the_scene_see
   const below=new THREE.Vector4(pool[0]+x,pool[1]-y,pool[2]+z,1).applyMatrix4(eye);
   near(above.x/above.w,-below.x/below.w);near(above.y/above.w,below.y/below.w);
  }
- // The image is cut at the water: a point on the surface lies on the near
- // plane, one below it (the pool shell) is clipped away.
+ // The image is cut MIRROR_LIFT over the water: the deck and coping around
+ // the pool (their undersides, seen from the mirrored camera) and the pool
+ // shell are clipped away; what stands higher is kept.
  const depth=y=>{const p=new THREE.Vector4(pool[0]+1,pool[1]+y,pool[2]+1,1).applyMatrix4(virtual.matrixWorldInverse).applyMatrix4(virtual.projectionMatrix);return p.z/p.w;};
- assert.ok(Math.abs(depth(0)+1)<1e-4,'water level is the near plane');assert.ok(depth(-.5)<-1,'pool shell is clipped');assert.ok(depth(2)>-1);
+ assert.ok(R.MIRROR_LIFT>.3&&R.MIRROR_LIFT<.5,'about a foot: deck and coping height');
+ assert.ok(Math.abs(depth(R.MIRROR_LIFT)+1)<1e-4,'the cut is the near plane');assert.ok(depth(.15)<-1,'deck underside is clipped');
+ assert.ok(depth(-.5)<-1,'pool shell is clipped');assert.ok(depth(2)>-1);
  // The walk that finds what to hide is not repeated every frame.
  let walks=0;const traverse=c.scene.traverse;c.scene.traverse=function(f){walks++;return traverse.call(this,f);};
  for(let i=0;i<5;i++)c.manager.mirror(camera);assert.equal(walks,0);c.advance(500);c.manager.mirror(camera);assert.equal(walks,1);

@@ -3,6 +3,11 @@ import * as THREE from 'three';
 export const CHOP_WAVE_STRENGTH_GAIN = 2.2;
 export const CHOP_WAVE_SPEED_GAIN = .65;
 export const CHOP_SHIMMER_GAIN = .35;
+// How fast the mirror share falls from grazing to straight down. Schlick's 5
+// leaves a sunlit pool at a standing eye height mirroring about 4 percent,
+// which the lit floor drowns; 3 keeps 2 percent straight down and grazing
+// whole, and mirrors about three times as much in between.
+export const WATER_MIRROR_POWER = 3;
 
 // World positions are metres in the mounted scene; plan geometry and sources are feet.
 export const WATER_VERTEX = `varying vec3 vWaterWorld;
@@ -145,7 +150,7 @@ vec3 waterNormal = inverseTransformDirection(normal, viewMatrix);
 // shows in patches with bare floor between them. The waves still bend the
 // image itself by their full tilt.
 vec3 waterSteady = normalize(mix(vec3(0.0, 1.0, 0.0), waterNormal, .3));
-float waterFresnel = .02 + .98 * pow(1.0 - abs(dot(waterSteady, waterView)), 5.0);
+float waterFresnel = .02 + .98 * pow(1.0 - abs(dot(waterSteady, waterView)), ${WATER_MIRROR_POWER.toFixed(1)});
 ${unlit ? `// Retain map alpha and the native opacity uniform used by viewing/ghost clones.
 diffuseColor.a *= mix(.30, .92, waterFresnel) / waterBaseOpacity;` : ''}`);
     // A water surface is a mirror laid over the body below, not a tinted film.
@@ -158,7 +163,10 @@ float waterFade = clamp(diffuseColor.a / waterBaseOpacity, 0.0, 1.0);
 float waterCover = clamp(max(waterFresnel, waterFoam) * waterFade, .0001, 1.0);
 // The standard material weighs the mirrored scene by the tilted wave. Take the
 // scene again unweighed and give it the same steady share that covers the body.
-#if defined( USE_ENVMAP ) && defined( ENVMAP_TYPE_CUBE_UV )
+// three r187 names its prefiltered maps ENVMAP_TYPE_PMREM (older releases
+// said CUBE_UV). Testing only the old name left this branch out from v2.499.917
+// on, so the mirror took three's own per-wave weighting after all.
+#if defined( USE_ENVMAP ) && ( defined( ENVMAP_TYPE_PMREM ) || defined( ENVMAP_TYPE_CUBE_UV ) )
 vec3 waterMirror = getIBLRadiance(geometryViewDir, geometryNormal, material.roughness) * waterFresnel;
 #else
 vec3 waterMirror = reflectedLight.indirectSpecular;
