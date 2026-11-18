@@ -109,7 +109,7 @@ Five slices, in this order. Each lands on its own with a version bump and makes 
 - **North comes from the map** (owner: "If you can determine the house's north direction from the map, do it"; the stored dial value was recently moved by hand to try lighting, so it is not trusted):
   - The house's real orientation is read from map data at the household's location: the building footprint that contains the geocode, or failing that the bearing of the nearest street. The plan's street edge is matched to it, giving a true bearing for the plan's axes.
   - This becomes the twin's north. The facing dial in the editor stays as an override (nothing a person can do is removed) and shows the map's value as its default, with a way back to it.
-  - The map lookup is a one-time fetch with the slice 5 data (Mapbox, cached); slice 1 needs only the orientation, so it fetches that part early. With no map key or no match, the dial value is used as today.
+  - The map lookup is a one-time fetch with the slice 5 data (Mapbox, kept); slice 1 needs only the orientation, so it fetches that part early. With no map key or no match, the dial value is used as today.
 - **Previews:** Now / Day / Night stay. A time-of-day scrub *(Claude's call)* lets anyone watch a sunset, and returns to Now after the existing 120 s.
 - **Interim overcast** *(Claude's call, from the builder check)*: until slice 2 lands, an overcast or rainy day must not show a clear sky with hard sun. Slice 1 greys the sky, softens the sun and lifts sky light from `cloud_coverage` or the condition, so each slice keeps agreeing with the real weather.
 
@@ -144,7 +144,7 @@ Five slices, in this order. Each lands on its own with a version bump and makes 
 - **Fog:** `fog`, or a low `visibility` value, pulls the haze from slice 1 in toward the house.
 - **Wind:** one global wind (speed and bearing) drives the grass (replacing its hard-coded gust), tree and shrub sway, falling precipitation and cloud drift.
 - **Weather on surfaces** is one weather layer added to every material (wetness, puddles, ripples, snow cover), not per-material edits. It must work with the lightmap and viewing patches and the custom shaders, as cloud shadows do.
-- **Lingering ground state** *(Claude's call, offered twice and not ruled on by the owner; included because grass dormancy in slice 4 needs the same weather record; the owner's rule is that weather reflects the current weather)*:
+- **Lingering ground state** *(owner approved 2026-11-18: "Lingering snow and wetness is fine"; grass dormancy in slice 4 uses the same weather record)*:
   - The add-on keeps a small running model from the weather entity it already sees. Snow builds while it snows and melts above freezing, faster in sun; wet surfaces dry over an hour or two after rain, slower when cold or overcast.
   - It is stored outside the `house_twin` row. The twin shows that state.
   - "Plausible, not exact." If the owner rules it out, surfaces follow the current condition only.
@@ -176,8 +176,8 @@ Five slices, in this order. Each lands on its own with a version bump and makes 
   - Woods become stands of real trees; the owner's view out back is woods.
 - **Data:**
   - Mapbox through the existing `services/house_map.py` fetch and compile.
-  - Fetched once, refreshed about monthly in the background, and fetched again when the home location changes; no rebuild on every view (owner: "We aren't going to constantly pull the map and rebuild everything").
-  - Check Mapbox's current terms on storing their data when this is built; the monthly refresh is meant to keep within them. If the terms forbid it, the slice uses OpenStreetMap or Overture data instead, which allow storage *(Claude's call; asked, not answered)*.
+  - Fetched once and built into the twin's own neighbourhood, which is kept. Fetched again only when the home location changes or a person asks for a refresh; no rebuild on every view (owner: "We aren't going to constantly pull the map and rebuild everything").
+  - Licensing of the kept copy is not a concern for now: the add-on runs only for the owner (owner, 2026-11-18). OpenStreetMap is an acceptable source too ("I don't really care either way"); the builder may use it where Mapbox lacks something (for example woods).
   - **Real positions** *(Claude's call, from the builder check)*: the legacy `compile_layout` is illustrative (it scales the nearest street to a fixed distance, invents a home parcel and packs yards). The twin needs a metric compile instead: map footprints, roads and land cover in true feet, aligned to the drawn lot (the geocode can be tens of feet off), with houses estimated from house numbers only where the map has no footprint, and drawn as such. The fetch and cache are reused; the compile is new.
 - **Rendering:** a new, light renderer in the twin. The legacy one is not reused.
   - Distant trees and houses use cheap stand-ins.
