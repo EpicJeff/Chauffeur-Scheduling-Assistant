@@ -189,6 +189,19 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     (x, y) => fixtureHits?.(x, y) || [],
   ] });
   const pick = (x, y) => picker.peek(x, y);
+  // A locked piece cannot be clicked in the view; when it is the nearest thing under the
+  // pointer, say so instead of silently selecting what lies behind it (owner report 2026-11-19).
+  const LOCKED_WORDS = { roof: 'This roof section', dormer: 'This dormer', wall: 'This wall', room: 'This room', opening: 'This opening',
+    stair: 'This stair', item: 'This item', anchor: 'This anchor', solar_zone: 'This solar zone' };
+  function lockedHint(x, y, picked) {
+    const status = document.getElementById('editor-status');
+    if (!status || !visibility?.isLocked) return;
+    const nearest = (view.pickAll?.(x, y) || []).find(hit => !visibility.isHidden?.(hit.id, hit.kind));
+    if (!nearest || !visibility.isLocked(nearest.id, nearest.kind)) { delete status.dataset.lockedHint; return; }
+    if (picked && picked.id === nearest.id) return;
+    status.textContent = `${LOCKED_WORDS[nearest.kind] || 'This piece'} is locked. Unlock it in Layers or the Scene tree to select it here.`;
+    status.dataset.lockedHint = nearest.id;
+  }
   // Context actions use the same ranked picker, but retain the actual piece
   // under the pointer in the exterior view instead of its navigation parent.
   let contextPicking = false;
@@ -565,6 +578,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
         } else {
           roofRooms.clear();
           const picked = picker.click(event.clientX, event.clientY);
+          lockedHint(event.clientX, event.clientY, picked);
           if (!delegate?.selectPick?.(picked)) roomSelection.select(picked);
           else sceneTree?.reveal(delegate?.visibilitySelection?.()?.id);
         }
