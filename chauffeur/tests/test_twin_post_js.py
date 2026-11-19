@@ -74,7 +74,7 @@ await test('high mounts real render occlusion output chain with half-float four-
   const {view} = await mount();
   try {
     events.length=0; targets.clear(); view.render();
-    assert.deepEqual(view.post.info().passes,['RenderPass','GTAOPass','CloudCompositePass','LightShaftPass','UnrealBloomPass','OutputPass']);
+    assert.deepEqual(view.post.info().passes,['RenderPass','GTAOPass','WetReflectionPass','CloudCompositePass','LightShaftPass','UnrealBloomPass','OutputPass']);
     assert.deepEqual(events,['RenderPass','GTAOPass','UnrealBloomPass','OutputPass']);
     const beautyTargets=[...targets].filter(t=>t.samples===4);
     assert.equal(beautyTargets.length,2);

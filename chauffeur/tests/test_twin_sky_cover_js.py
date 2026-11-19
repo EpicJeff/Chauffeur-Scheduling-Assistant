@@ -201,10 +201,10 @@ await test('falling particles cull below cover on the GPU, with no per-drop CPU 
  assert.ok(tex?.isDataTexture&&tex.image.width>1&&tex.image.height>1,'the cover height field is baked while it rains');
  // The shader's lookup, in JS: the texel under an indoor point holds a height above it.
  const [x,y,z]=world(5,5,1),u=(x-b.x)/(b.z-b.x),v=(z-b.y)/(b.w-b.y);
- const h=tex.image.data[Math.floor(v*tex.image.height)*tex.image.width+Math.floor(u*tex.image.width)];
+ const h=tex.image.data[(Math.floor(v*tex.image.height)*tex.image.width+Math.floor(u*tex.image.width))*2];
  assert.ok(y<h,`indoor drop is below the baked cover (${y} < ${h})`);
  const [ox,oy,oz]=world(-2-1/FT,5,1),ou=(ox-b.x)/(b.z-b.x),ov=(oz-b.y)/(b.w-b.y);
- const outside=ou<0||ov<0||ou>=1||ov>=1?-1e4:tex.image.data[Math.floor(ov*tex.image.height)*tex.image.width+Math.floor(ou*tex.image.width)];
+ const outside=ou<0||ov<0||ou>=1||ov>=1?-1e4:tex.image.data[(Math.floor(ov*tex.image.height)*tex.image.width+Math.floor(ou*tex.image.width))*2];
  assert.ok(oy>outside,'a drop beyond the eave edge stays open');
  const vs=p.objects.rain.material.vertexShader;
  assert.ok(vs.includes('if(precipitationCovered(world))')&&vs.includes('texture2D(precipCover,uv).r'),'the vertex shader culls covered drops');

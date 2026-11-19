@@ -125,8 +125,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const weatherSurface = installWeatherSurface(scene);
   const seasons = installSeasons(scene);
   const precipitation = createPrecipitation(scene,{tier});
+  post?.setWetGround({weatherSurface:weatherSurface.uniforms.weatherSurface,...precipitation.uniforms});
   const seasonTouches = createSeasonTouches(scene,{tier});
-  let precipitationPlan=null,precipitationRoofs=null;
+  let precipitationPlan=null,precipitationRoofs=null,precipitationCover=null;
   let cloudCentre=[0,0];
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
   const stageForPlan = nextPlan => {
@@ -452,9 +453,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     plantWind.update(performance.now()/1000,view.weather,site.front_bearing_deg ?? 180);
     seasons.update(view.season);
     weatherSurface.update(view.weather,performance.now()/1000);
-    if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces){
+    if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces || precipitationCover!==twin?.skyCover){
       seasonTouches.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);
-      precipitation.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;
+      precipitation.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;precipitationCover=twin?.skyCover;
     }
     precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
       level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,colour:timeLook?.skyColor});
