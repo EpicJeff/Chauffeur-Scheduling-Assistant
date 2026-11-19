@@ -546,7 +546,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-scene-row > [data-row-label] { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   text-align: left; padding: 4px; }
 .editor-shell .editor-scene-row button { min-height: 32px; height: 32px; border: 0; background: transparent; border-radius: 8px; }
-.editor-shell .editor-scene-row > :is([data-row-eye], [data-row-lock]) { flex: 0 0 32px; width: 32px; padding: 6px; display: inline-flex; align-items: center; justify-content: center; }
+.editor-shell .editor-scene-row > :is([data-row-eye], [data-row-lock], [data-row-disclosure]) { flex: 0 0 32px; width: 32px; padding: 6px; display: inline-flex; align-items: center; justify-content: center; }
 .editor-scene-row:hover, .editor-scene-row:focus-visible { background: var(--twinHover); }
 .editor-scene-row[aria-selected="true"] { background: var(--twinSelected); color: var(--twinSelectedText); }
 .editor-shell .editor-scene-row[aria-selected="true"] button { color: inherit; }

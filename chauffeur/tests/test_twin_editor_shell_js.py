@@ -366,9 +366,13 @@ await test('Scene tree uses the live visibility store, keeps floor commands and 
  const choose=async id=>press(row(id).querySelector('[data-scene-select]'));
  const menu=()=>el('editor-context-menu').querySelectorAll('button');
  const right=node=>node.dispatchEvent(new MouseEvent('contextmenu',{clientX:300,clientY:200,bubbles:true,cancelable:true}));
- tools.refresh();assert.ok(row('wall'));assert.ok(row('room'));assert.ok(row('pad'));assert.ok(row('spot'));assert.ok(row('effect'));
+ tools.refresh();await press(row('room').querySelector('[data-row-disclosure]'));
+ assert.ok(row('wall'));assert.ok(row('room'));assert.ok(row('pad'));assert.ok(row('spot'));assert.ok(row('effect'));
  await choose('wall');assert.equal(tools.selection().id,'wall');
  assert.equal(row('wall').getAttribute('aria-selected'),'true');
+ await press(row('room').querySelector('[data-row-disclosure]'));tools.refresh();
+ assert.equal(row('wall'),null,'ordinary editor refresh preserves a collapsed selected branch');
+ tools.select({id:'wall',building:'b'});assert.ok(row('wall'),'a view selection opens the branch again');
  await press(row('wall').querySelector('[data-row-lock]'));assert.equal(visibility.isLocked('wall'),true);
  await choose('wall');assert.equal(tools.selection().id,'wall');assert.equal(tools.handles().length,0);
  right(row('wall'));assert.ok(menu().some(b=>b.textContent==='Unlock'));assert.ok(menu().some(b=>b.textContent==='Hide'));
@@ -382,6 +386,7 @@ await test('Scene tree uses the live visibility store, keeps floor commands and 
  await choose('spot');assert.equal(devices.fixtureHandles.visibilitySelection().id,'spot');assert.equal(row('spot').getAttribute('aria-selected'),'true');
  await choose('effect');assert.equal(devices.fixtureHandles.visibilitySelection().id,'effect');assert.equal(row('effect').getAttribute('aria-selected'),'true');
  await choose('surface-device');assert.equal(devices.fixtureHandles.visibilitySelection().id,'surface-device');assert.equal(row('surface-device').getAttribute('aria-selected'),'true');
+ await press(row('pool').querySelector('[data-row-disclosure]'));
  await choose('spa');assert.equal(tools.selection().id,'spa');assert.equal(row('spa').getAttribute('aria-selected'),'true');
  assert.ok(el('piece-card').querySelector('[aria-label="Yard shape properties"]'),'pool child opens the existing feature shelf');
  const floorEye=row('L1').querySelector('[data-floor-visible]');await press(floorEye);

@@ -34,7 +34,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let ownsGesture = false, handles = null, gizmo = null, controlsBeforePress = null;
   let roofRooms = new Set(), roofRoomBuilding = null;
   let split = null, splitStatus = '';
-  let sceneTree = null;
+  let sceneTree = null, refreshingSelection = false;
   function cancelSplit(text = splitStatus) {
     if (!split) return;
     split = null; el('editor-status').textContent = text; canvas.style.cursor = tool === 'select' ? '' : 'crosshair';
@@ -97,6 +97,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     return label || record?.piece.name || `${record?.kind || 'piece'} ${item.pieceId}`;
   };
   const roomSelection = createSelection({ view, getModel, onChange(state) {
+    const changed = (selection?.pieceId ?? null) !== (state.id ?? null) || (selection?.buildingId ?? null) !== (state.building ?? null);
     if (split && (state.id !== split.wall || state.building !== split.building)) cancelSplit();
     if (!state.room || state.building !== roofRoomBuilding || !roofRooms.has(state.room)) {
       roofRooms = new Set(state.room ? [state.room] : []); roofRoomBuilding = state.building;
@@ -108,7 +109,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     handles?.refresh(); gizmo?.draw();
     drawDimensions(getPlan(), state);
     delegate?.selectionChanged?.(state);
-    sceneTree?.reveal(state.id);
+    if (!refreshingSelection || changed) sceneTree?.reveal(state.id);
   } });
   // Area picks and placements wait behind the card's own field saves (cards.queue).
   const haLink = createHaLink({ api, onCommit: operation => cards.queue(() => op(operation)), signal, getPlan, canEdit });
@@ -685,7 +686,14 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     get lastDragFrameMs() { return gizmo.lastDragFrameMs ?? handles.lastDragFrameMs; }, clearDragFrame: () => { handles.clearDragFrame(); gizmo.clearDragFrame(); }, dragging: () => handles.active() || gizmo.active(),
     buildingCentre(id) { const b = getPlan()?.buildings.find(b => b.id === id); return b && rotatePoint(localCentre(b), b.rotation || 0).map((v, i) => v + (b.position?.[i] || 0)); },
     delegate(value) { delegate = value; },
-    refresh() { drawFloors(); if (selection && !findPiece(getPlan(), selection.pieceId, selection.buildingId)) select(null); else roomSelection.refresh(); },
+    refresh() {
+      drawFloors();
+      if (selection && !findPiece(getPlan(), selection.pieceId, selection.buildingId)) select(null);
+      else {
+        refreshingSelection = true;
+        try { roomSelection.refresh(); } finally { refreshingSelection = false; }
+      }
+    },
     refreshCard() { cards.draw(selection); },
     // The card's area section redraws once the link answers; the scene never waits on it.
     // The link is read when the house changed, while a room, building or anchor card

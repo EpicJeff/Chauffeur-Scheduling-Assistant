@@ -30,7 +30,7 @@ export function sceneRows(plan) {
       if (opening) return pieces.get(opening.id)?.parent || building;
       const room = rooms.get(host.floor || host.ceiling || p.room) || rooms.get(wall && wallRoom(wall)?.id);
       if (room) return room;
-      const point = p.position || p.at || p.path?.[0];
+      const point = [p.position, p.at, p.path?.[0]].find(v => Array.isArray(v) && v.length >= 2 && v.every(Number.isFinite));
       const spatial = point && (b.rooms || []).find(r => (!p.level || r.level === p.level) && r.polygon && contains(r.polygon, point));
       return rooms.get(spatial?.id) || levels.get(p.level || wall?.level) || building;
     };
@@ -84,7 +84,16 @@ export function createSceneRow({ name, select, hidden, locked, toggleHidden, tog
 
 export function createSceneTree({ host, getPlan, getSelection, select, visibility, floors, contextMenu }) {
   const life = new AbortController(), signal = life.signal, height = 36;
-  let rows = [], active = null, mounted = new Map();
+  let rows = [], active = null, mounted = new Map(), children = new Map(), lastSelection = null;
+  // Expansion belongs to this editor session, never to the visibility store.
+  const expanded = new Map();
+  const visibleRows = () => {
+    const visible = new Set();
+    return rows.filter(r => {
+      if (r.parent && (!visible.has(r.parent.key) || !expanded.get(r.parent.key))) return false;
+      visible.add(r.key); return true;
+    });
+  };
   host.classList.add('editor-scene-tree'); host.setAttribute('role', 'tree'); host.setAttribute('aria-label', 'Scene');
   const hidden = r => r.kind === 'group'
     ? rows.some(c => c.parent === r) && rows.filter(c => c.parent === r).every(c => visibility?.isHidden(c.id, c.visibilityKind || c.kind))
@@ -100,14 +109,24 @@ export function createSceneTree({ host, getPlan, getSelection, select, visibilit
   const selectedRow = r => r.id === selectedId() && (!selectedBuilding() || r.building === selectedBuilding());
   function paint() {
     const focused = host.contains(document.activeElement) ? { key: document.activeElement.closest('[data-scene-id]')?.dataset.sceneKey,
-      control: document.activeElement.dataset.rowEye !== undefined ? 'row-eye' : document.activeElement.dataset.rowLock !== undefined ? 'row-lock' : null } : null;
-    const virtual = rows.length > 300, start = virtual ? Math.max(0, Math.min(rows.length - 1, Math.floor(host.scrollTop / height) - 4)) : 0;
-    const end = virtual ? Math.min(rows.length, start + Math.ceil((host.clientHeight || 300) / height) + 8) : rows.length;
-    const focusKey = rows.slice(start, end).find(r => active ? r.key === active : selectedRow(r))?.key || rows[start]?.key;
+      control: document.activeElement.dataset.rowEye !== undefined ? 'row-eye' : document.activeElement.dataset.rowLock !== undefined ? 'row-lock'
+        : document.activeElement.dataset.rowDisclosure !== undefined ? 'row-disclosure' : document.activeElement.dataset.sceneSelect !== undefined ? 'scene-select' : null } : null;
+    const visible = visibleRows(), virtual = visible.length > 300;
+    // Clamp before calculating the window when collapsing a long branch.
+    host.scrollTop = Math.min(host.scrollTop, Math.max(0, visible.length * height - host.clientHeight));
+    const start = virtual ? Math.max(0, Math.floor(host.scrollTop / height) - 4) : 0;
+    const end = virtual ? Math.min(visible.length, start + Math.ceil((host.clientHeight || 300) / height) + 8) : visible.length;
+    // Keep floor Choose buttons in the tree's natural order even outside the
+    // virtual window. Existing floor selectors must always find every floor
+    // whose building is expanded. Gaps still occupy their exact row heights.
+    const rendered = visible.map((r, i) => ({ r, i })).filter(({ r, i }) => i >= start && i < end || r.floorKey);
+    const focusKey = rendered.find(({ r }) => active ? r.key === active : selectedRow(r))?.r.key || visible[start]?.key;
     host.replaceChildren(); mounted = new Map();
     const spacer = size => { const n = document.createElement('div'); n.style.height = `${size}px`; n.setAttribute('aria-hidden', 'true'); host.append(n); };
-    if (virtual) spacer(start * height);
-    for (const r of rows.slice(start, end)) {
+    let previous = -1;
+    for (const { r, i } of rendered) {
+      if (i > previous + 1) spacer((i - previous - 1) * height);
+      previous = i;
       const choose = () => { active = r.key; if (r.kind !== 'group') select(r); else paint(); };
       const row = createSceneRow({ name: r.name, select: choose, hidden: () => hidden(r), locked: () => locked(r),
         toggleHidden: () => {
@@ -131,6 +150,20 @@ export function createSceneTree({ host, getPlan, getSelection, select, visibilit
       row.setAttribute('aria-level', String(r.depth + 1)); row.setAttribute('aria-posinset', String(r.position)); row.setAttribute('aria-setsize', String(r.siblings));
       row.setAttribute('aria-selected', String(selectedRow(r))); row.tabIndex = r.key === focusKey ? 0 : -1;
       row.style.paddingLeft = `${r.depth * 12}px`;
+      if (children.has(r.key)) {
+        const open = !!expanded.get(r.key), disclosure = document.createElement('button');
+        row.setAttribute('aria-expanded', String(open));
+        disclosure.type = 'button'; disclosure.dataset.rowDisclosure = '';
+        disclosure.setAttribute('aria-expanded', String(open));
+        disclosure.setAttribute('aria-label', `${open ? 'Collapse' : 'Expand'} ${r.name}`);
+        disclosure.title = `${open ? 'Collapse' : 'Expand'} ${r.name}`;
+        const glyph = icon('chevron'); glyph.style.transform = open ? '' : 'rotate(-90deg)'; disclosure.append(glyph);
+        disclosure.addEventListener('click', event => {
+          event.stopPropagation(); active = r.key; expanded.set(r.key, !open); paint();
+          mounted.get(r.key)?.querySelector('[data-row-disclosure]').focus({ preventScroll: true });
+        });
+        row.prepend(disclosure);
+      }
       if (r.floorKey) {
         const eye = row.querySelector('[data-row-eye]'), title = row.querySelector('[data-scene-select]');
         eye.dataset.floorVisible = r.floorKey; title.dataset.floor = r.floorKey;
@@ -141,27 +174,46 @@ export function createSceneTree({ host, getPlan, getSelection, select, visibilit
       row.addEventListener('contextmenu', e => { e.preventDefault(); contextMenu?.(e, r); });
       row.addEventListener('focus', () => { active = r.key; });
       row.addEventListener('keydown', e => {
-        if (e.target !== row && !e.target.matches('[data-scene-select]')) return;
+        if (e.target !== row && !e.target.matches('[data-scene-select], [data-row-disclosure]')) return;
+        if (e.target.matches('[data-row-disclosure]') && ['Enter', ' '].includes(e.key)) return;
         if (['Enter', ' '].includes(e.key)) { e.preventDefault(); e.stopPropagation(); choose(); return; }
-        const i = rows.indexOf(r), next = e.key === 'ArrowDown' ? rows[i + 1] : e.key === 'ArrowUp' ? rows[i - 1]
-          : e.key === 'Home' ? rows[0] : e.key === 'End' ? rows.at(-1) : e.key === 'ArrowLeft' ? r.parent : e.key === 'ArrowRight' ? rows[i + 1]?.parent === r && rows[i + 1] : null;
-        if (!next) return; e.preventDefault(); e.stopPropagation(); active = next.key; reveal(next.id, next.building); mounted.get(next.key)?.focus();
+        if (e.key === 'ArrowRight' && children.has(r.key) && !expanded.get(r.key)
+          || e.key === 'ArrowLeft' && children.has(r.key) && expanded.get(r.key)) {
+          e.preventDefault(); e.stopPropagation(); active = r.key; expanded.set(r.key, e.key === 'ArrowRight');
+          paint(); mounted.get(r.key)?.focus({ preventScroll: true }); return;
+        }
+        const next = e.key === 'ArrowDown' ? visible[i + 1] : e.key === 'ArrowUp' ? visible[i - 1]
+          : e.key === 'Home' ? visible[0] : e.key === 'End' ? visible.at(-1) : e.key === 'ArrowLeft' ? r.parent
+            : e.key === 'ArrowRight' ? children.get(r.key)?.[0] : null;
+        if (!next) return; e.preventDefault(); e.stopPropagation(); reveal(next.id, next.building); mounted.get(next.key)?.focus({ preventScroll: true });
       });
       mounted.set(r.key, row); host.append(row);
     }
-    if (virtual) spacer((rows.length - end) * height);
+    if (previous < visible.length - 1) spacer((visible.length - previous - 1) * height);
     if (!rows.length) { const p = document.createElement('p'); p.textContent = 'No pieces yet'; host.append(p); }
     if (focused && mounted.has(focused.key)) (focused.control ? mounted.get(focused.key).querySelector(`[data-${focused.control}]`) : mounted.get(focused.key)).focus({ preventScroll: true });
   }
   function reveal(id, building = id === selectedId() ? selectedBuilding() : null) {
-    const i = rows.findIndex(r => r.id === id && (!building || r.building === building)); if (i < 0) { paint(); return; }
-    const key = rows[i].key; active = key;
-    if (rows.length > 300) {
+    lastSelection = rows.find(selectedRow)?.key ?? null;
+    const row = rows.find(r => r.id === id && (!building || r.building === building)); if (!row) { paint(); return; }
+    for (let p = row.parent; p; p = p.parent) expanded.set(p.key, true);
+    const visible = visibleRows(), i = visible.indexOf(row), key = row.key; active = key;
+    if (visible.length > 300) {
       if (i * height < host.scrollTop || (i + 1) * height > host.scrollTop + host.clientHeight) host.scrollTop = Math.max(0, i * height - height);
     }
     paint(); active = key; mounted.get(key)?.scrollIntoView({ block: 'nearest' });
   }
-  function refresh() { rows = sceneRows(getPlan()); reveal(selectedId()); }
+  function refresh() {
+    rows = sceneRows(getPlan()); children = new Map();
+    for (const r of rows) {
+      if (r.parent) { const siblings = children.get(r.parent.key) || []; siblings.push(r); children.set(r.parent.key, siblings); }
+      if (!expanded.has(r.key)) expanded.set(r.key, r.kind === 'building' || r.kind === 'group'
+        || r.kind === 'level' && r.floorKey === floors?.current?.());
+    }
+    const selected = rows.find(selectedRow)?.key ?? null;
+    if (selected !== lastSelection) { lastSelection = selected; reveal(selectedId()); }
+    else paint();
+  }
   host.addEventListener('scroll', paint, { signal });
   const off = visibility?.subscribe(paint); refresh();
   return { refresh, reveal, dispose() { off?.(); life.abort(); host.replaceChildren(); } };
