@@ -1131,6 +1131,45 @@ async def ics_sync_loop():
         await asyncio.sleep(3600)
 
 DELETION_MAINTENANCE_S = 120
+TWIN_WEATHER_TICK_S = 600
+
+
+async def twin_weather_loop():
+    """Ground history runs even with no viewer; reuse the shared HA feed."""
+    import queue
+    from services import ha_events, twin_weather_state
+    loop, ready = asyncio.get_running_loop(), asyncio.Event()
+
+    def wake():
+        try:
+            loop.call_soon_threadsafe(ready.set)
+        except RuntimeError:
+            pass
+
+    changes = ha_events.subscribe(wake=wake)
+    deadline = loop.time()
+    try:
+        while True:
+            ready.clear()
+            changed = False
+            while True:
+                try:
+                    change = changes.get_nowait()
+                except queue.Empty:
+                    break
+                changed |= twin_weather_state.relevant(change['entity_id'])
+            if changed or loop.time() >= deadline:
+                deadline = loop.time() + TWIN_WEATHER_TICK_S
+                try:
+                    await asyncio.to_thread(twin_weather_state.update)
+                except Exception:
+                    logger.exception('Twin weather update failed; will retry')
+            try:
+                await asyncio.wait_for(ready.wait(), max(.001, deadline - loop.time()))
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        ha_events.unsubscribe(changes)
 
 
 async def deletion_maintenance_loop():
@@ -1161,6 +1200,7 @@ async def lifespan(app: FastAPI):
     push_task = asyncio.create_task(push_notification_loop())
     ics_task = asyncio.create_task(ics_sync_loop())
     ingest_task = asyncio.create_task(email_ingest_loop())
+    weather_task = asyncio.create_task(twin_weather_loop())
 
     from services.migrations import run_all_migrations
     migration_task = asyncio.create_task(run_all_migrations())
@@ -1175,6 +1215,11 @@ async def lifespan(app: FastAPI):
         push_task.cancel()
         ics_task.cancel()
         ingest_task.cancel()
+        weather_task.cancel()
+        try:
+            await weather_task
+        except asyncio.CancelledError:
+            pass
         migration_task.cancel()
         await asyncio.to_thread(ha_events.stop)
 
@@ -7584,6 +7629,21 @@ def house_twin_stage():
     return twin_stage.read()
 
 
+@app.get('/api/house/twin/weather-state')
+def house_twin_weather_state():
+    from services import twin_weather_state
+    return twin_weather_state.update()
+
+
+@app.put('/api/house/twin/weather-sources')
+def save_house_twin_weather_sources(body: dict = Body(...)):
+    from services import twin_weather_state
+    try:
+        return twin_weather_state.save_sources(body)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+
+
 @app.put('/api/house/twin/stage')
 def save_house_twin_stage(body: dict = Body(...)):
     from services import twin_stage
@@ -12409,9 +12469,11 @@ def _house_stream_entities(area: str | None = None) -> set:
             # battery). Device markers still use one primary entity.
             ids.update(device.get('entities') or [])
     if area is None:
-        from services import ha_api, twin_energy, twin_glance
+        from services import ha_api, twin_energy, twin_glance, twin_weather_state
         ids.update(twin_energy.entities())
         ids.update(twin_glance.entities())
+        weather_settings = storage.get_settings() or {}
+        ids.update(weather_settings[key] for key in twin_weather_state.SENSOR_SETTINGS.values() if weather_settings.get(key))
         ids.update(p['light_entity'] for b in model.get('buildings', []) for p in b.get('items', []) if p.get('light_entity'))
         ids.update(p['light_entity'] for name in ('planting', 'furniture') for p in model.get('site', {}).get(name, []) if p.get('light_entity'))
         from services import twin_site_shapes

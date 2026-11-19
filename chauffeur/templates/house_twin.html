@@ -327,7 +327,12 @@
     #twin-glance-icons button[aria-pressed=true] { border-color:var(--twinSelected); background:var(--twinSelected); color:var(--twinSelectedText); }
     #twin-glance-settings :focus-visible { outline:2px solid var(--twinText); outline-offset:2px; }
     /* Stage uses the glance drawer's captioned input and 44px buttons. */
-    #twin-stage-settings label { display:block; margin:12px 0; }
+    #twin-stage-settings label, #twin-weather-settings label { display:block; margin:12px 0; }
+    #twin-weather-settings select { display:block; box-sizing:border-box; width:100%; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); color:var(--twinText); }
+    #twin-weather-settings button { min-height:44px; padding:8px 12px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); background:var(--twinHover); }
+    #twin-weather-settings button:disabled { opacity:.4; }
+    #twin-weather-settings p { color:var(--twinTextDim); font-size:12px; overflow-wrap:anywhere; }
+    #twin-weather-settings :focus-visible { outline:2px solid var(--twinText); outline-offset:2px; }
     #twin-stage-settings input { display:block; box-sizing:border-box; width:100%; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); color:var(--twinText); }
     #twin-stage-settings button { min-height:44px; padding:8px 12px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); background:var(--twinHover); }
     #twin-stage-settings button:disabled { opacity:.4; }
@@ -404,6 +409,16 @@
       <p id="twin-stage-default">Automatic is 120 ft beyond the farthest lot corner.</p>
       <button id="twin-stage-save" type="button" disabled>Save stage radius</button>
       <button id="twin-stage-reset" type="button" disabled>Use automatic radius</button>
+    {% endcall %}
+    {% call settings_section('twin-weather-settings', 'Weather sources') %}
+      <label>Weather entity <select id="weather_entity" disabled aria-describedby="twin-weather-report"><option value="">Automatic: first weather entity</option></select></label>
+      <label>Local rain sensor <select id="weather_rain_sensor" disabled><option value="">Use weather entity</option></select></label>
+      <label>Local wind speed sensor <select id="weather_wind_speed_sensor" disabled><option value="">Use weather entity</option></select></label>
+      <label>Local wind direction sensor <select id="weather_wind_direction_sensor" disabled><option value="">Use weather entity</option></select></label>
+      <label>Local outdoor temperature sensor <select id="weather_temperature_sensor" disabled><option value="">Use weather entity</option></select></label>
+      <p>Rain accepts on/off or a rate. Wind direction is degrees clockwise from north. Local sensors override one quantity.</p>
+      <div id="twin-weather-report" role="status" aria-live="polite"><p>Open settings to read the weather sources.</p></div>
+      <button id="twin-weather-save" type="button" disabled>Save weather sources</button>
     {% endcall %}
     {% endif %}
   {% endcall %}

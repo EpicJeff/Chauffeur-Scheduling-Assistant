@@ -402,6 +402,18 @@ ENTRIES: List[dict] = [
        page='work?tab=mind', anchor='heads-ups'),
     _e('weather_entity', 'digests', 'Weather entity',
        'The Home Assistant entity the digests read the forecast from.'),
+    _e('weather_rain_sensor', 'panel', 'Local rain sensor',
+       'Optional on/off rain or precipitation rate sensor; overrides the house weather rain.',
+       page='house/twin', anchor='twin-weather-settings'),
+    _e('weather_wind_speed_sensor', 'panel', 'Local wind speed sensor',
+       'Optional local wind speed instead of the weather entity wind.',
+       page='house/twin', anchor='twin-weather-settings'),
+    _e('weather_wind_direction_sensor', 'panel', 'Local wind direction sensor',
+       'Optional local wind bearing in degrees clockwise from north.',
+       page='house/twin', anchor='twin-weather-settings'),
+    _e('weather_temperature_sensor', 'panel', 'Local outdoor temperature sensor',
+       'Optional local air temperature for snow melting and surface drying.',
+       page='house/twin', anchor='twin-weather-settings'),
 
     # --- intake
     _e('ingest_email_enabled', 'intake', 'Email intake',

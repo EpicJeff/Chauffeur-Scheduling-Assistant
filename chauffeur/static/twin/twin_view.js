@@ -27,6 +27,7 @@ import { installStageHaze } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
 import { mountTimeScrub } from './sky/time_scrub.js';
 import { defaultStage, mountStageSettings } from './stage_settings.js';
+import { mountWeatherSettings } from './weather_settings.js';
 import { overcastFactor, weatherState } from './sky/overcast.js';
 import { createUnlit } from './unlit.js';
 import { createViewing } from './viewing.js';
@@ -1382,7 +1383,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       view.bake?.stop();
       view.live?.stop();
       view.idle?.stop(); view.glance?.stop(); view.glanceSettings?.stop();
-      view.energySettings?.stop(); view.stageSettings?.stop(); view.timeScrub?.stop();
+      view.energySettings?.stop(); view.stageSettings?.stop(); view.weatherSettings?.stop(); view.timeScrub?.stop();
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
@@ -1717,6 +1718,7 @@ async function boot() {
     view.glanceSettings = mountGlanceSettings(view, view.glance, view.idle);
     view.energySettings = mountEnergySettings(view);
     view.stageSettings = mountStageSettings(view);
+    view.weatherSettings = mountWeatherSettings(view);
     view.timeScrub = mountTimeScrub(view, document.getElementById('twin-time-scrub'));
     const keeper = keepLive(view, { api: (path, options) => fetch(base() + path, options) });
     window.addEventListener('pagehide', () => { keeper.stop(); clearInterval(hudTimer); view.dispose(); }, { once: true });
