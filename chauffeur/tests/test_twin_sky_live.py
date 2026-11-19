@@ -15,6 +15,9 @@ OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else None
 TIMES = [('noon', '2026-06-21T12:00:00Z'), ('golden', '2026-06-21T19:05:00Z'), ('dusk', '2026-06-21T19:50:00Z'),
          ('night', '2026-06-22T00:30:00Z')]
 SUN = "(() => { let s = null; window.__twin.scene.traverse(o => { if (o.name === 'real-sun') s = o; }); return s ? s.intensity : null; })()"
+# Sunlight reaching the house: since slice 2 the light keeps its clear intensity and every lit
+# material multiplies it by the cloud transmittance, whose value at the house is cloudShadow.centre().
+SUN_AT_HOUSE = "(" + SUN + " * (window.__twin.cloudShadow?.centre?.() ?? 1))"
 
 
 def setup():
@@ -77,12 +80,12 @@ def scenario_overcast_weather_softens_the_sun():
         clear = page.evaluate(SUN)
         L.FAKE.states['weather.home'] = {'entity_id': 'weather.home', 'state': 'cloudy',
                                          'attributes': {'friendly_name': 'Home', 'cloud_coverage': 100, 'temperature': 60}}
-        page.wait_for_function(f"{SUN} < {clear} * .5", timeout=40000)
+        page.wait_for_function(f"{SUN_AT_HOUSE} < {clear} * .5", timeout=40000)
         pin(page, TIMES[0][1])
         if OUT:
             page.screenshot(path=str(OUT / 'sky_live_overcast.png'))
         del L.FAKE.states['weather.home']
-        page.wait_for_function(f"{SUN} > {clear} * .9", timeout=40000)
+        page.wait_for_function(f"{SUN_AT_HOUSE} > {clear} * .9", timeout=40000)
         L.no_errors(served)
 
 

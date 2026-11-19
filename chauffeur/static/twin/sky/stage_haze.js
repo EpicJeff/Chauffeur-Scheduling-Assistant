@@ -4,6 +4,22 @@ import * as THREE from 'three';
 // USE_FOG set from mount onwards, including Unlit, probes and mirror passes.
 let installed = false;
 const hooks = new WeakMap();
+// One environment wrapper, including on clones. Haze and cloud shadows bind
+// independently, but must not mistake each other's hook for a new base hook.
+export function bindEnvironmentMaterial(material, name, uniforms, patch = null) {
+  const source=hooks.get(material.onBeforeCompile);
+  if(source?.bindings.get(name)?.uniforms===uniforms)return;
+  const compile=source?.compile || material.onBeforeCompile;
+  const key=source?.key ?? (material.customProgramCacheKey===THREE.Material.prototype.customProgramCacheKey
+    ? compile.toString() : material.customProgramCacheKey());
+  const bindings=new Map(source?.bindings);bindings.set(name,{uniforms,patch});
+  material.onBeforeCompile=function(shader,renderer) {
+    compile.call(this,shader,renderer);
+    for(const {uniforms,patch} of bindings.values()) {Object.assign(shader.uniforms,uniforms);patch?.(shader);}
+  };
+  material.customProgramCacheKey=()=>key+[...bindings.keys()].sort().map(name=>'|'+name).join('');
+  hooks.set(material.onBeforeCompile,{compile,key,bindings});
+}
 function installChunks() {
   if (installed) return;
   installed = true;
@@ -106,26 +122,12 @@ export function installStageHaze(scene, sky) {
     }
   }
   refresh();
-  const patched = new WeakMap();
   function prepare(root = scene) {
     root.traverse(object => {
       for (const material of [].concat(object.material || [])) {
         // Effect ShaderMaterials stay inside the lot and deliberately omit fog.
         if (!material.fog || material.isShaderMaterial) continue;
-        if (patched.get(material) === material.onBeforeCompile) continue;
-        // Grass, water and viewing clones may carry the wrapped hook. Unwrap
-        // it so a clone gets the same key and this scene's uniforms exactly once.
-        const source = hooks.get(material.onBeforeCompile);
-        const compile = source?.compile || material.onBeforeCompile, key = source?.key || material.customProgramCacheKey;
-        material.onBeforeCompile = function(shader, renderer) {
-          compile.call(this, shader, renderer);
-          Object.assign(shader.uniforms, uniforms);
-        };
-        material.customProgramCacheKey = function() {
-          return (key === THREE.Material.prototype.customProgramCacheKey ? compile.toString() : key.call(this)) + '|stage-haze-1';
-        };
-        hooks.set(material.onBeforeCompile, {compile, key});
-        patched.set(material, material.onBeforeCompile);
+        bindEnvironmentMaterial(material,'stage-haze-1',uniforms);
       }
     });
   }

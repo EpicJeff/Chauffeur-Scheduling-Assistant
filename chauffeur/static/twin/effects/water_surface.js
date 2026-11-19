@@ -96,7 +96,11 @@ export function keepWaterHook(material, name, uniforms) {
 }
 
 const RIPPLE_GLSL = `
-uniform float rippleTime; uniform vec4 rippleLines[8]; uniform float rippleStrength[8];
+uniform vec4 rippleLines[8]; uniform vec4 waterRippleStrength[2];
+uniform vec2 waterRippleClock;
+#define rippleTime waterRippleClock.x
+#define waterBaseOpacity waterRippleClock.y
+float waterRippleAt(int i) { int block=i/4; return waterRippleStrength[block][i-block*4]; }
 `;
 const RIPPLE_SLOPE = `
 float sourceFoam = 0.0;
@@ -107,9 +111,9 @@ for (int i = 0; i < 8; i++) {
   if (waterAnalytic > .5) {
     float fade = exp(-d * .65) * smoothstep(0.0, .16, d);
     float wave = (sin(phase) + .28 * sin(phase * 1.73 + .8)) * (1.0 - smoothstep(.5, 3.14, fwidth(phase)));
-    rippleSlope += delta / max(d, .01) * wave * fade * rippleStrength[i] * .24;
+    rippleSlope += delta / max(d, .01) * wave * fade * waterRippleAt(i) * .24;
   }
-  sourceFoam += exp(-d*d*10.0) * (.65 + .35*sin(phase*1.7)) * rippleStrength[i];
+  sourceFoam += exp(-d*d*10.0) * (.65 + .35*sin(phase*1.7)) * waterRippleAt(i);
 }
 waterFoam = min(.65, sourceFoam * .5);
 diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.92,.97,.98), waterFoam);
@@ -123,6 +127,15 @@ export function surfaceMaterial(source, body = null, {tier = 'medium', simulatio
     rippleTime: {value: 0}, rippleLines: {value: Array.from({length:8}, () => new THREE.Vector4())},
     rippleStrength: {value: Array(8).fill(0)},
   });
+  if (sourced) {
+    // Scalar arrays occupy one vector per element on the guaranteed WebGL
+    // budget. Keep the driver's public uniforms, but upload eight strengths
+    // in two vectors and the two independent clock/opacity scalars in one.
+    // Haze + clouds + a fully stirred, probe/mirror-lit pool then fits 224.
+    const strengths=new Float32Array(8),clock=new THREE.Vector2();
+    uniforms.waterRippleStrength={get value(){strengths.set(uniforms.rippleStrength.value);return strengths;}};
+    uniforms.waterRippleClock={get value(){return clock.set(uniforms.rippleTime.value,uniforms.waterBaseOpacity.value);}};
+  }
   if (simulation) Object.assign(uniforms, simulation.uniforms);
   // Keep the slot's roughness parameter intact (and editable); the optical
   // water interface uses its own narrow standard specular lobe in the shader.
@@ -132,7 +145,7 @@ export function surfaceMaterial(source, body = null, {tier = 'medium', simulatio
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = WATER_VERTEX + shader.vertexShader;
     waterReplace(shader, 'vertexShader', '#include <project_vertex>', WATER_POSITION + '\n#include <project_vertex>');
-    shader.fragmentShader = WATER_VERTEX + WAVE_GLSL + 'uniform float waterBaseOpacity; uniform vec3 waterMotion;\n' + (sourced ? RIPPLE_GLSL : '') + (simulation ? FIELD_GLSL : '') + shader.fragmentShader;
+    shader.fragmentShader = WATER_VERTEX + WAVE_GLSL + (sourced ? '' : 'uniform float waterBaseOpacity;\n') + 'uniform vec3 waterMotion;\n' + (sourced ? RIPPLE_GLSL : '') + (simulation ? FIELD_GLSL : '') + shader.fragmentShader;
     waterReplace(shader, 'fragmentShader', '#include <color_fragment>', `#include <color_fragment>
 vec2 waterPoint = vec2(vWaterWorld.x, -vWaterWorld.z) / .3048;
 vec2 rippleSlope = waterSlope(waterPoint, waterMotion);
@@ -176,7 +189,7 @@ gl_FragColor = vec4(waterLight / waterCover, waterCover);`);
     if (!unlit) waterReplace(shader, 'fragmentShader', '#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor, .08, .12) / (1.0 + waterMotion.x * ${CHOP_SHIMMER_GAIN.toFixed(2)});`);
   };
   material.onBeforeCompile = (shader, renderer) => compile(shader, renderer);
-  material.customProgramCacheKey = () => key + '|water-surface-5' + (sourced ? '|water-ripples-2' : '') + (simulation ? '|water-field-1' : '');
+  material.customProgramCacheKey = () => key + '|water-surface-5' + (sourced ? '|water-ripples-3' : '') + (simulation ? '|water-field-1' : '');
   Object.defineProperty(material.userData, 'waterUnlit', {value:{
     hook:(shader, renderer) => compile(shader, renderer, true), key:() => material.customProgramCacheKey() + '|matcap',
   }});

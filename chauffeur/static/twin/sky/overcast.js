@@ -1,6 +1,6 @@
-const conditions = {sunny:0, 'clear-night':0, partlycloudy:.4, cloudy:.85, fog:.9,
+export const conditions = Object.freeze({sunny:0, 'clear-night':0, partlycloudy:.4, cloudy:.85, fog:.9,
   rainy:1, pouring:1, snowy:1, 'snowy-rainy':1, lightning:1, 'lightning-rainy':1,
-  hail:1, exceptional:1, windy:.3, 'windy-variant':.3};
+  hail:1, exceptional:1, windy:.3, 'windy-variant':.3});
 
 export function overcastFactor(state) {
   if (!state || state.stale || ['unknown','unavailable',''].includes(state.state)) return 0;

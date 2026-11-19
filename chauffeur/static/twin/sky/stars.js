@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CLOUD_GLSL, createCloudUniforms } from './clouds.js';
 
 const clamp=x=>Math.max(0,Math.min(1,x));
 const smooth=x=>{x=clamp(x);return x*x*(3-2*x);};
@@ -37,11 +38,13 @@ attribute float magnitude;
 uniform float siderealTime, latitudeRad, bearing;
 varying vec2 disc;
 varying vec3 colour;
+varying vec3 cloudRay;
 varying float intensity, altitude, phase;
 void main() {
   float h=siderealTime-equatorial.x, c=cos(equatorial.y), s=sin(equatorial.y);
   vec3 d=vec3(-c*sin(h),s*sin(latitudeRad)+c*cos(h)*cos(latitudeRad),c*cos(h)*sin(latitudeRad)-s*cos(latitudeRad));
   d=vec3(cos(bearing)*d.x-sin(bearing)*d.z,d.y,sin(bearing)*d.x+cos(bearing)*d.z);
+  cloudRay=d;
   vec3 normal=-d, reference=abs(d.y)>0.999 ? vec3(0.0,0.0,1.0) : vec3(0.0,1.0,0.0);
   vec3 right=cross(reference,normal);right/=max(length(right),1e-6);
   vec3 up=cross(normal,right);
@@ -53,15 +56,20 @@ void main() {
   intensity=8.0*pow(max(10.0,1e-6),clamp(-0.4*magnitude,-4.0,2.0));
 }`;
 const fragmentShader=`
+precision highp sampler3D;
+${CLOUD_GLSL}
+uniform float cloudAttenuate;
 uniform float opacity, enabled, twinkleTime;
 varying vec2 disc;
 varying vec3 colour;
+varying vec3 cloudRay;
 varying float intensity, altitude, phase;
 float held(float v) { return v>=0.0 ? min(v,4096.0) : 0.0; }
 void main() {
   float r2=dot(disc,disc);if(r2>=1.0 || altitude<=0.0) discard;
   float twinkle=1.0+0.08*(1.0-smoothstep(0.0,0.34202014,altitude))*sin(twinkleTime*2.1+phase);
   vec3 result=colour*intensity*twinkle*opacity*enabled;
+  if(cloudAttenuate>0.5) result*=cloudTransmittance(vec3(0.0,2.0,0.0),cloudRay,24.0);
   // Additive light with a soft circular footprint, never a square point sprite.
   float edge=pow(max(0.0,1.0-r2),2.0)*smoothstep(0.0,0.02,altitude);
   gl_FragColor=vec4(held(result.r),held(result.g),held(result.b),edge);
@@ -69,8 +77,8 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
-export function createStars(catalogue) {
-  const uniforms={siderealTime:{value:0},latitudeRad:{value:0},bearing:{value:0},opacity:{value:0},enabled:{value:1},twinkleTime:{value:0}};
+export function createStars(catalogue,{cloudUniforms=createCloudUniforms(),cloudAttenuate=false}={}) {
+  const uniforms={...cloudUniforms,cloudAttenuate:{value:cloudAttenuate?1:0},siderealTime:{value:0},latitudeRad:{value:0},bearing:{value:0},opacity:{value:0},enabled:{value:1},twinkleTime:{value:0}};
   const material=new THREE.ShaderMaterial({uniforms,vertexShader,fragmentShader,transparent:true,
     blending:THREE.AdditiveBlending,depthTest:true,depthWrite:false,side:THREE.DoubleSide});
   const object=new THREE.Mesh(geometryFor(catalogue),material);object.name='sky-stars';
@@ -82,6 +90,7 @@ export function createStars(catalogue) {
       uniforms.opacity.value=smooth((-sunAltDeg-4)/8)*(1-.7*clamp(moonFraction))*(1-clamp(overcast));
     },
     frame(seconds) { uniforms.twinkleTime.value=seconds%4096; },
+    setCloudsEnabled(on) { uniforms.cloudAttenuate.value=on?1:0; },
     setCatalogue(next) { const old=object.geometry;object.geometry=geometryFor(next);old.dispose(); },
     setEnabled(on) { uniforms.enabled.value=on?1:0; },
     dispose() { object.geometry.dispose();material.dispose(); }};

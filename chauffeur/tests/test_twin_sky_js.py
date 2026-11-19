@@ -96,10 +96,10 @@ await test('viewer weather updates fixed textures and lights; editor ignores wea
     const clear=sun.intensity,hemisphere=viewer.scene.children.find(o=>o.isHemisphereLight),fill=hemisphere.intensity,environment=viewer.scene.environmentIntensity;
     states['weather.a'].state='cloudy';states['weather.a'].attributes={cloud_coverage:100};viewer.render();editor.render();
     assert.equal(viewer.scene.background,cube);assert.equal(viewer.scene.environment,env);
-    assert.equal(sun.intensity,clear*.25);assert.equal(hemisphere.intensity,fill*1.35);assert.equal(viewer.scene.environmentIntensity,environment*1.35);
+    assert.equal(sun.intensity,clear);assert.equal(viewer.clouds.uniforms.cloudCoverage.value,1,'the cloud grid owns extinction');assert.equal(hemisphere.intensity,fill*1.35);assert.equal(viewer.scene.environmentIntensity,environment*1.35);
     assert.equal(editor.scene.getObjectByName('real-sun').intensity,clear,'editor has no live weather');
     states['weather.b']={state:'sunny'};viewer.setWeatherEntity('weather.b');assert.equal(sun.intensity,clear);
-    viewer.setWeatherEntity(null);assert.equal(sun.intensity,clear*.25);
+    viewer.setWeatherEntity(null);assert.equal(sun.intensity,clear);assert.equal(viewer.clouds.uniforms.cloudCoverage.value,1);
     stale=true;viewer.render();assert.equal(sun.intensity,clear);
     viewer.setTime('night');assert.equal(viewer.scene.background,cube);assert.equal(viewer.scene.environment,env);
     editor.setTime('night');assert.ok(editor.scene.background.isCubeTexture);
@@ -115,7 +115,7 @@ await test('glance preferences deliver the chosen weather entity to the mounted 
   try {
     viewer.live={peek:()=>({'weather.first':{state:'sunny',attributes:{friendly_name:'Alpha'}},'weather.chosen':{state:'cloudy',attributes:{friendly_name:'Zulu'}}}),stale:()=>false,draw(){},stop(){}};
     viewer.setTime('day');await settings.reload();
-    assert.equal(viewer.scene.getObjectByName('real-sun').intensity,3*(1-.75*.85));
+    assert.equal(viewer.scene.getObjectByName('real-sun').intensity,3);assert.equal(viewer.clouds.uniforms.cloudCoverage.value,.85);
     preferences={weather_entity:null,can_edit:false};await settings.reload();
     assert.equal(viewer.scene.getObjectByName('real-sun').intensity,3);
   } finally {settings.stop();viewer.dispose();}

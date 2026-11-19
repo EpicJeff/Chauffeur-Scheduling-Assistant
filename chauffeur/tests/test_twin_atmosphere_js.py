@@ -42,8 +42,7 @@ await test('Rayleigh blue zenith, red sunset and dim nonzero airglow',()=>{
   aces(night,1.2).forEach((v,i)=>assert.ok(Math.abs(v-oldNight[i])<1e-5,'clear night matches the old night background'));
   const oldDay=new THREE.Color().setRGB(.725,.796,.843,THREE.SRGBColorSpace).toArray();
   assert.ok(Math.abs(luminance(aces(sample(0,60)))/luminance(oldDay)-1)<.05,'day horizon holds the old day luminance within 5%');
-  const grey=sample(0,40,1);
-  assert.ok(Math.max(...grey)-Math.min(...grey)<(Math.max(...day)-Math.min(...day))*.3);
+  assert.deepEqual(sample(0,40,1),day,'clouds replace the interim atmospheric greying; clear-air hue is unchanged');
 });
 await test('real cube and fixed PMREM target update contents without changing keys or leaking state',()=>{
   for(const tier of ['low','medium','high','max']) {

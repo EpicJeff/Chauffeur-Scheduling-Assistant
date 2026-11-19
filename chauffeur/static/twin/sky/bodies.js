@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CLOUD_GLSL, createCloudUniforms } from './clouds.js';
 
 const RAD = Math.PI / 180;
 const clamp = x => Math.max(0, Math.min(1, x));
@@ -13,10 +14,12 @@ uniform vec3 direction, right, up;
 uniform float radius, flatten;
 varying vec2 disc;
 varying float altitude;
+varying vec3 cloudRay;
 void main() {
   disc=position.xy;
   vec3 ray=direction+radius*(right*disc.x+up*disc.y*flatten);
   altitude=ray.y;
+  cloudRay=ray;
   // Re-centre for EACH drawing camera, including the oblique mirror and probes.
   vec3 world=cameraPosition+40.0*ray;
   gl_Position=projectionMatrix*viewMatrix*vec4(world,1.0);
@@ -24,11 +27,15 @@ void main() {
   gl_Position.z=gl_Position.w*0.999999;
 }`;
 const fragmentShader = `
+precision highp sampler3D;
+${CLOUD_GLSL}
+uniform float cloudAttenuate;
 uniform sampler2D moonMap;
 uniform vec3 extinction, lightDirection;
 uniform float kind, strength, enabled;
 varying vec2 disc;
 varying float altitude;
+varying vec3 cloudRay;
 float held(float v) { return v>=0.0 ? min(v,4096.0) : 0.0; }
 void main() {
   float r2=dot(disc,disc);
@@ -56,12 +63,13 @@ void main() {
   }
   if(edge<=0.0 || altitude<0.0) discard;
   result*=extinction*strength;
+  if(cloudAttenuate>0.5) result*=cloudTransmittance(vec3(0.0,2.0,0.0),cloudRay,32.0);
   gl_FragColor=vec4(held(result.r),held(result.g),held(result.b),edge*enabled);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
 
-export function createBodies({moonMap} = {}) {
+export function createBodies({moonMap,cloudUniforms=createCloudUniforms(),cloudAttenuate=false} = {}) {
   const fallback = moonMap ? null : new THREE.DataTexture(new Uint8Array([128,128,128,255]),1,1);
   if (fallback) fallback.needsUpdate = true;
   const object = new THREE.Group(); object.name = 'sky-bodies';
@@ -69,7 +77,7 @@ export function createBodies({moonMap} = {}) {
   // including the small lunar disc drawn into the low-tier sky cube.
   const geometry = new THREE.PlaneGeometry(2.5,2.5);
   for (const [i,kind] of ['sun','moon'].entries()) {
-    const uniforms = {direction:{value:new THREE.Vector3(0,1,0)},right:{value:new THREE.Vector3(1,0,0)},
+    const uniforms = {...cloudUniforms,cloudAttenuate:{value:cloudAttenuate?1:0},direction:{value:new THREE.Vector3(0,1,0)},right:{value:new THREE.Vector3(1,0,0)},
       up:{value:new THREE.Vector3(0,0,1)},radius:{value:.02},flatten:{value:1},
       moonMap:{value:moonMap || fallback},extinction:{value:new THREE.Vector3(1,1,1)},
       lightDirection:{value:new THREE.Vector3(0,0,1)},kind:{value:i},strength:{value:0},enabled:{value:1}};
@@ -80,7 +88,7 @@ export function createBodies({moonMap} = {}) {
     object.add(mesh);
   }
   function update({sunDir=[0,1,0],moonDir=[0,-1,0],moonDistanceKm=384400,
-    sunAltDeg,moonAltDeg,transmittance=()=>[1,1,1],overcast=0} = {}) {
+    sunAltDeg,moonAltDeg,transmittance=()=>[1,1,1],cloudTransmittance=()=>1} = {}) {
     const sun = new THREE.Vector3().fromArray(sunDir.isVector3 ? sunDir.toArray() : sunDir).normalize();
     for (const [i,dir] of [sunDir,moonDir].entries()) {
       const u=object.children[i].material.uniforms, d=u.direction.value;
@@ -94,12 +102,13 @@ export function createBodies({moonMap} = {}) {
       // An enlarged disc can still have its upper rim above the horizon after
       // its centre sets. Its visible rim keeps the grazing-path extinction.
       u.extinction.value.fromArray(transmittance([d.x,Math.max(0,d.y),d.z]));
-      u.strength.value=i ? 1-clamp(overcast) : 1-.75*clamp(overcast);
+      u.strength.value=clamp(cloudTransmittance(d.toArray()));
       const light=sun.clone().addScaledVector(d,-moonDistanceKm/149598000).normalize();
       u.lightDirection.value.set(light.dot(u.right.value),light.dot(u.up.value),light.dot(normal));
     }
   }
   return {object,update,
+    setCloudsEnabled(on) { for (const mesh of object.children) mesh.material.uniforms.cloudAttenuate.value=on?1:0; },
     setMap(map) { for (const mesh of object.children) mesh.material.uniforms.moonMap.value=map; },
     setEnabled(on) { for (const mesh of object.children) mesh.material.uniforms.enabled.value=on?1:0; },
     dispose() { geometry.dispose();object.children.forEach(m=>m.material.dispose());fallback?.dispose(); }};
