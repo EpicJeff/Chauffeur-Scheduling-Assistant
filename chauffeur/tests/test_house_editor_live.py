@@ -166,9 +166,16 @@ def _signed_in(page):
         "localStorage.setItem('chauffeur_admin_token_for', 'p1');" % json.dumps(STATE['token']))
 
 
-def _open(page, s, query='tier=high&test=1'):
+def _open(page, s, query='tier=high&test=1', keep_dialog=False):
     page.goto(s.url(f'house/editor?{query}'))
     page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=60000)
+    # Slice 4: a house without built pieces opens Your place (or the front door) as a
+    # centred dialog on its own. Scenarios about other things close it, as a person would.
+    if not keep_dialog:
+        page.wait_for_timeout(300)
+        if page.locator('#editor-dialog').is_visible():
+            page.click('#editor-dialog-close')
+            page.wait_for_selector('#editor-dialog', state='hidden', timeout=10000)
 
 
 def _api(page, method, path, body=None):
@@ -204,7 +211,12 @@ def _paid_confirm(page, timeout=3000):
     if title.startswith('Spent $'):
         return None
     page.click('#cc-confirm-execute-btn')
-    page.wait_for_selector('#cc-confirm-modal', state='hidden', timeout=5000)
+    # Accepting can open the next confirm at once (a spending checkpoint after a paid
+    # build): wait until this confirm is gone or a different one has replaced it.
+    page.wait_for_function("""(title) => { const m = document.getElementById('cc-confirm-modal');
+        const t = document.getElementById('cc-confirm-title');
+        return !m || m.offsetParent === null || getComputedStyle(m).display === 'none' || (t && t.innerText !== title); }""",
+        arg=title, timeout=5000)
     return title
 
 
@@ -562,7 +574,7 @@ def scenario_empty_state_uploads_and_suggests_roles():
     with s.browser(launch_args=GPU_ARGS) as page:
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
-        _open(page, s)
+        _open(page, s, keep_dialog=True)
         from services import twin_build
         for bid in list(getattr(twin_build, '_BUILDS', {}) or {}):
             try:
@@ -574,7 +586,8 @@ def scenario_empty_state_uploads_and_suggests_roles():
         page.reload()
         page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=60000)
         # Piece 4 Task 7: an empty house shows the front door; Add plans and photos opens Your files.
-        page.get_by_text("Let's make your house", exact=True).wait_for(state='visible', timeout=10000)
+        # Slice 4: the front door is a centred dialog whose title repeats its heading.
+        page.locator('#editor-front-door').get_by_text("Let's make your house", exact=True).wait_for(state='visible', timeout=10000)
         page.get_by_role('button', name='Add plans and photos', exact=True).click()
         _open_place(page)
         check(page.locator('#place-build').is_disabled(), 'Build waits for confirmed pages')
@@ -730,10 +743,11 @@ def scenario_cameras_floors_and_sheet():
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
         _open(page, s)
-        page.click('#editor-view-menu > summary')
         for name in ('Top', 'Front', 'Back', 'Orbit'):
+            # The view menu closes after a choice, as menus do; open it for each camera.
+            if not page.locator('#editor-view-menu').evaluate('m => m.open'):
+                page.click('#editor-view-menu > summary')
             page.locator('#editor-view-menu #editor-cameras').get_by_role('button', name=name, exact=True).click()
-        page.click('#editor-view-menu > summary')
         page.click('#dock-tab-scene')
         page.locator('#dock-pane-scene #editor-floors').get_by_role('button', name='Main floor', exact=True).click()
         vis = page.evaluate('window.__twin.levelVisibility()')

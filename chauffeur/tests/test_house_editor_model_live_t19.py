@@ -605,9 +605,13 @@ def scenario_a_carried_row_says_where_to_drop():
         text = ' '.join(page.inner_text('#device-note').split())
         check(text == 'Drop Counter lamp on a wall, the floor, the ceiling or inside a yard room. Escape cancels.', text)
         nb = note.bounding_box()
-        under = page.evaluate("""([x, y]) => document.elementFromPoint(x, y) === window.__twin.renderer3.domElement""",
-                              [nb['x'] + nb['width'] / 2, nb['y'] + nb['height'] / 2])
-        check(under, 'the note lets a drop under it reach the scene')
+        # Slice 4 moved the note into the status line; it must still never block a drop on
+        # the scene: either it lies outside the canvas, or the scene is what sits under it.
+        clear = page.evaluate("""([x, y, w, h]) => { const c = window.__twin.renderer3.domElement.getBoundingClientRect();
+            const outside = x >= c.right || x + w <= c.left || y >= c.bottom || y + h <= c.top;
+            return outside || document.elementFromPoint(x + w / 2, y + h / 2) === window.__twin.renderer3.domElement; }""",
+                              [nb['x'], nb['y'], nb['width'], nb['height']])
+        check(clear, 'the note lets a drop under it reach the scene')
         before = _store()
         H.press(page, 'Escape')
         check(not note.is_visible(), 'Escape puts the row down and hides the note')
@@ -680,7 +684,7 @@ def _touch(client, kind, x, y):
 
 def scenario_touch_scrolls_the_card_over_device_rows():
     # Final review I3: on a touch screen a swipe that starts on a device row scrolls the
-    # card (the rows used to swallow it as a drag); the grip still carries a row by touch.
+    # card (since slice 4, the dock's Properties scroll area that holds it) (the rows used to swallow it as a drag); the grip still carries a row by touch.
     s = _serve()
     if s is None:
         return
@@ -691,26 +695,27 @@ def scenario_touch_scrolls_the_card_over_device_rows():
         posted = _record_ops(page)
         _open(page, s)
         _kitchen(page, 'wall')
-        sizes = page.evaluate("() => { const c = document.getElementById('piece-card'); return [c.scrollHeight, c.clientHeight]; }")
+        sizes = page.evaluate("() => { const c = (document.getElementById('piece-card').closest('#editor-sidebar') || document.getElementById('piece-card')); return [c.scrollHeight, c.clientHeight]; }")
         check(sizes[0] > sizes[1] + 40, ('the Kitchen card scrolls at this size', sizes))
         found = page.evaluate(ROW_JS, ['Ceiling light', 'row'])
         check(found == 1, found)
         # The first row at the top of the card, as a person's thumb finds it.
-        room = page.evaluate("""() => { const c = document.getElementById('piece-card');
+        room = page.evaluate("""() => { const c = (document.getElementById('piece-card').closest('#editor-sidebar') || document.getElementById('piece-card'));
             const r = document.querySelector('[data-t19-row="row"]');
             c.scrollTop += r.getBoundingClientRect().top - c.getBoundingClientRect().top - 8;
             return c.scrollHeight - c.clientHeight - c.scrollTop; }""")
         down = room > 60   # room left below: swipe up to read on; else swipe back down
         row = page.locator('[data-t19-row="row"]')
         box = row.bounding_box()
-        card = page.locator('#piece-card').bounding_box()
+        # Slice 4: the card lives in the dock's Properties, which is what scrolls.
+        card = page.locator('#editor-sidebar').bounding_box()
         check(box['y'] >= card['y'] - 1 and box['y'] + box['height'] <= card['y'] + card['height'] + 1,
               ('the row shows in the card', box, card))
         x, y = box['x'] + box['width'] * 0.35, box['y'] + box['height'] / 2
         check(page.evaluate("([x, y]) => !document.elementFromPoint(x, y).closest('.editor-device-grip, button')", [x, y]),
               "the swipe starts on the row's words")
         client = page.context.new_cdp_session(page)
-        top = page.evaluate("() => document.getElementById('piece-card').scrollTop")
+        top = page.evaluate("() => (document.getElementById('piece-card').closest('#editor-sidebar') || document.getElementById('piece-card')).scrollTop")
         sign = -1 if down else 1
         _touch(client, 'touchStart', x, y)
         for step in range(1, 13):
@@ -718,12 +723,12 @@ def scenario_touch_scrolls_the_card_over_device_rows():
             page.wait_for_timeout(16)
         _touch(client, 'touchEnd', x, y + sign * 144)
         page.wait_for_timeout(600)
-        moved = page.evaluate("() => document.getElementById('piece-card').scrollTop") - top
+        moved = page.evaluate("() => (document.getElementById('piece-card').closest('#editor-sidebar') || document.getElementById('piece-card')).scrollTop") - top
         check(abs(moved) > 40, ('a swipe over the rows scrolls the card', moved, room))
         check(posted == [] and not page.locator('#device-tools').is_visible(), ('the swipe carried nothing', posted))
 
         # The grip still carries a row by touch, onto the wall.
-        page.evaluate("() => { document.getElementById('piece-card').scrollTop = 0; }")
+        page.evaluate("() => { (document.getElementById('piece-card').closest('#editor-sidebar') || document.getElementById('piece-card')).scrollTop = 0; }")
         _row(page, 'Counter lamp')
         grip = page.locator('[data-t19-row="row"] .editor-device-grip')
         check(grip.count() == 1, 'the row has a grip')
