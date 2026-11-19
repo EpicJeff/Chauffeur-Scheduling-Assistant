@@ -498,6 +498,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #dock-pane-library #library-panel { position: static; width: auto; height: auto; max-height: none;
   display: flex; flex-direction: column; align-items: stretch; padding: 0; border: 0; border-radius: 0; background: transparent; backdrop-filter: none; }
 #library-entries { flex: 1 0 auto; overflow: visible; }
+/* The selected-asset bar is sticky at the pane's bottom: scrolling a tile into view
+   (a person's scroll, the swatch's reveal) must stop above it, never under it. */
+#dock-pane-library { scroll-padding-bottom: 72px; }
 #dock-pane-argyle { display: flex; padding: 0 !important; }
 #dock-pane-argyle #editor-agent { position: static; width: 100%; flex: 1; border: 0; border-radius: 0; background: transparent; }
 #dock-splitter { flex: 0 0 10px; cursor: row-resize; touch-action: none; background: var(--twinHover); border-block: 1px solid var(--editor-line); }

@@ -123,6 +123,8 @@ def test_css_contract(p):
     actions = re.findall(r'#library-actions\s*\{([^}]+)\}', css)[-1]
     assert 'position: sticky' in actions and 'bottom: 0' in actions, 'selected asset actions stay in reach above a long catalogue'
     assert 'background: var(--editor-panel)' in actions and 'z-index: 1' in actions
+    pane = re.search(r'#dock-pane-library\s*\{([^}]+)\}', css)
+    assert pane and 'scroll-padding-bottom' in pane[1], 'a tile scrolled into view stops above the sticky asset bar, never under it'
     assert p.inside(p.by_id('library-actions'), 'library-panel')
     assert p.by_id('library-actions')['parent'] == p.by_id('library-entries')['parent']
     print('  ok every pressed icon has contrasting ink/background; canvas reserves exactly dock width')
