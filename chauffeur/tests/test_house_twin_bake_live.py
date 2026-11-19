@@ -941,8 +941,8 @@ def scenario_editor_never_bakes_and_says_when_lights_wait():
         check(seen == [], ('the editor never reads or writes a bake', seen[:6]))
         check(page.evaluate('() => !window.__twin.bake'), 'the editor mounts no bake controller')
         check(page.get_by_role('button', name=BAKE_NOW, exact=True).count() == 0, f'the editor offers no {BAKE_NOW!r}')
-        chip = page.locator('#editor-chip')
-        check('Lights wait to re-bake' in chip.inner_text(), ('the chip says the lights wait', chip.inner_text()))
+        chip = page.locator('#editor-genbar #editor-chip')
+        check('Lights wait to re-bake' in chip.text_content(), ('the chip says the lights wait', chip.text_content()))
         L.no_errors(s)
     clear_bakes()
     with s.browser(launch_args=L.GPU_ARGS) as page:
@@ -955,7 +955,7 @@ def scenario_editor_never_bakes_and_says_when_lights_wait():
         goto_retry(page, s.url('house/editor?tier=high&test=1'))
         page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=90000)
         page.wait_for_timeout(2000)
-        check('re-bake' not in page.locator('#editor-chip').inner_text(), ('nothing to say once baked', page.locator('#editor-chip').inner_text()))
+        check('re-bake' not in page.locator('#editor-genbar #editor-chip').text_content(), ('nothing to say once baked', page.locator('#editor-genbar #editor-chip').text_content()))
         L.no_errors(s)
 
 

@@ -32,7 +32,7 @@ def fixture_glb():
 
 
 def import_model(page, name, kind):
-    if page.locator('#library-panel').is_hidden():
+    if page.locator('#dock-pane-library #library-panel').is_hidden():
         page.click('#rail-library')
     page.locator('#library-import-files').set_input_files({'name': name + '.glb', 'mimeType': 'model/gltf-binary', 'buffer': fixture_glb()})
     dialog = page.locator('.object-import'); dialog.wait_for(state='visible', timeout=30000)
@@ -51,7 +51,7 @@ def scenario_import_place_scale_rotate_undo_reload_and_programs():
         H.open_editor(page, served); H.choose_floor(page, 'pool-house:L1'); H.look_down(page, 'pool-house', 8, 8, height=35)
         asset = import_model(page, 'Imported chair', 'furniture')
         # The same press, nudge, travel and release as the editor's own library drag test (t15).
-        thumb = page.locator(f'#library-panel [data-item="{asset}"]').first
+        thumb = page.locator(f'#dock-pane-library #library-panel [data-item="{asset}"]').first
         thumb.wait_for(state='visible', timeout=10000); thumb.scroll_into_view_if_needed(); start = thumb.bounding_box()
         end = H.screen_of_world(page, 8, 8, 0, 'pool-house'); H._on_canvas(page, *end)
         x, y = start['x'] + start['width'] / 2, start['y'] + start['height'] / 2
@@ -59,7 +59,7 @@ def scenario_import_place_scale_rotate_undo_reload_and_programs():
         page.mouse.move(*end, steps=16); page.mouse.up(); H.settle(page)
         page.wait_for_function('(asset) => window.__twin.plan.buildings.some(b => b.items.some(i => i.asset === asset))', arg=asset)
         item = next(p for b in H.model()['buildings'] for p in b['items'] if p.get('asset') == asset)
-        if page.locator('#library-panel').is_visible(): page.click('#rail-library')
+        if page.locator('#dock-pane-library').is_visible(): page.click('#dock-tab-scene')
         H.click_world(page, 8, 8, 1, 'pool-house')
         page.locator('#piece-card label').filter(has_text='Size').locator('input').fill('150')
         page.locator('#piece-card label').filter(has_text='Size').locator('input').press('Tab')
@@ -130,7 +130,7 @@ def scenario_six_mb_chunk_zip_survives_one_mb_ingress_and_places_heavy_car():
         H.check(entry['triangles'] == triangles and entry['kind'] == 'car', entry)
         H.check(attempts[:3] == [('0', 4194304), ('0', 2097152), ('0', 1048576)], attempts)
         H.check(page.evaluate("window.__uploadProgress.some(text => text.startsWith('Uploading 1 of '))"), 'No byte progress')
-        thumb = page.locator(f'#library-panel [data-item="{entry["id"]}"]').first
+        thumb = page.locator(f'#dock-pane-library #library-panel [data-item="{entry["id"]}"]').first
         thumb.wait_for(state='visible', timeout=10000); thumb.scroll_into_view_if_needed(); start = thumb.bounding_box()
         end = H.screen_of_world(page, 8, 8, 0, 'pool-house'); H._on_canvas(page, *end)
         x, y = start['x'] + start['width'] / 2, start['y'] + start['height'] / 2
@@ -144,8 +144,8 @@ def scenario_assign_window_model_and_fit_persists():
     with served.browser(launch_args=H.GPU_ARGS) as page:
         H.open_editor(page, served)
         asset = import_model(page, 'Imported window', 'window')
-        if page.locator('#library-panel').is_visible():
-            page.click('#rail-library')
+        if page.locator('#dock-pane-library').is_visible():
+            page.click('#dock-tab-scene')
         b = H.building(H.flat(), 'pool-house'); opening = next(o for o in b['openings'] if o['kind'] == 'window' and o.get('wall'))
         H.choose_floor(page, 'pool-house:L1')
         page.evaluate('([id,bid]) => window.__editor.clickPiece(id,bid)', [opening['id'], b['id']])

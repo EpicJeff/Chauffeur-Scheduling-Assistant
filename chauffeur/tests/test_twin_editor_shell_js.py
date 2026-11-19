@@ -365,6 +365,28 @@ await test('terrain drafts, pads, Grade and lot/building entry points use the do
  assert.equal(lot.pointerArmedDown({button:0}),false);assert.equal(el('draw-tools').hidden,true);
  abort.abort();dock.dispose();
 });
+await test('empty-house terrain refresh during Draw it myself tolerates the missing plan',async()=>{
+ const {createDock}=await import(file('static/twin/editor/dock.js')),
+  {createTerrainTools}=await import(file('static/twin/editor/terrain_tools.js')),
+  {createDraw}=await import(file('static/twin/editor/draw.js'));
+ const dock=createDock({host:el('editor-dock')}),abort=new AbortController(),{view,canvas}=dockRig();
+ let plan=null,armed=null;const ops=[];
+ const tools={select(){},setTool:name=>armed=name,selection:()=>({}),
+  floor:()=>plan?.buildings[0]&&({key:'b:L1',building:plan.buildings[0],level:plan.buildings[0].levels[0]})};
+ const terrain=createTerrainTools({dock,view,tools,getPlan:()=>plan,getKit:()=>({}),op:async()=>{},canEdit:()=>true,signal:abort.signal});
+ // A rebuild is emitted while the first plan has not yet been published.
+ // Exercise the real event listener, so a swallowed entry-point error fails.
+ const before=domErrors.length;
+ canvas.parentElement.dispatchEvent(new Event('twinrebuilt'));
+ assert.deepEqual(domErrors.slice(before),[]);assert.match(el('scene-yard').textContent,/No pads yet/);
+ plan=samplePlan();plan.site={};terrain.refresh();
+ const draw=createDraw({dock,view,tools,getPlan:()=>plan,op:async o=>ops.push(o),gesture:fn=>fn(),
+  canEdit:()=>true,signal:abort.signal,panel:{message(){}},cancelOtherDrawing:terrain.cancel});
+ el('rail-draw-wall').disabled=false;await press(el('rail-draw-wall'));
+ assert.equal(armed,'draw-wall');assert.equal(el('rail-draw-wall').getAttribute('aria-pressed'),'true');
+ assert.match(el('draw-note').textContent,/Click wall corners/);assert.equal(el('draw-tools').hidden,false);
+ assert.deepEqual(ops,[]);draw.cancel();abort.abort();dock.dispose();
+});
 await test('draw, stair, roof and device placement options take Properties and cancel cleanly',async()=>{
  const {createDock}=await import(file('static/twin/editor/dock.js')),{createDraw}=await import(file('static/twin/editor/draw.js')),
   {createRoofTools}=await import(file('static/twin/editor/roof_tools.js')),{createDevicePlacement}=await import(file('static/twin/editor/device_placement.js'));

@@ -162,17 +162,24 @@ def _wait_house(page, timeout=60000):
     H.settle(page)
 
 
-def _step(page, name):
-    return page.locator(f'[data-step="{name}"]')
+def _step(page, name, scope='#place-steps'):
+    return page.locator(f'{scope} [data-step="{name}"]')
 
 
 def _step_state(page, name):
-    return _step(page, name).first.get_attribute('data-state')
+    return _step(page, name, '#editor-steps').get_attribute('data-state')
 
 
 def _press_step(page, name):
-    step = _step(page, name)
-    check(step.count() == 1, (f'one {name} step in the strip', step.count()))
+    if page.locator('#editor-dialog #place-view').is_visible():
+        scope = '#place-steps'
+    elif page.locator('#editor-genbar').is_visible():
+        scope = '#editor-steps'
+    else:
+        _show_place(page)
+        scope = '#place-steps'
+    step = _step(page, name, scope)
+    check(step.count() == 1, (f'one {name} step in {scope}', step.count()))
     target = step if step.evaluate("n => n.matches('button')") else step.locator('button').first
     target.click()
 
@@ -226,12 +233,24 @@ def _front_door_shown(page):
     return any(loc.nth(i).is_visible() for i in range(loc.count()))
 
 
-def _strip_ok(page):
-    names = page.locator('[data-step]').evaluate_all('ns => ns.map(n => n.dataset.step)')
+def _show_place(page):
+    if page.locator('#editor-dialog #place-view').is_visible():
+        return
+    if page.locator('#editor-dialog').is_visible():
+        page.click('#editor-dialog-close')
+    page.click('#editor-menu > summary')
+    page.click('#editor-manage-sources')
+    page.locator('#editor-dialog #place-view').wait_for(state='visible')
+
+
+def _strip_ok(page, scope='#place-steps', visible=True):
+    if scope == '#place-steps':
+        _show_place(page)
+    names = page.locator(f'{scope} [data-step]').evaluate_all('ns => ns.map(n => n.dataset.step)')
     check(names == STEPS, ('the strip shows the five steps, in order, with these words', names))
     for name in STEPS:
-        step = _step(page, name).first
-        check(step.is_visible(), f'the {name} step is visible')
+        step = _step(page, name, scope)
+        check(step.is_visible() == visible, f'the {name} step visibility follows its {scope} home')
         check(name in step.inner_text(), (f'the {name} step shows its words', step.inner_text()))
         check(step.get_attribute('data-state') in ('done', 'now', 'not-yet'), (name, step.get_attribute('data-state')))
 
@@ -253,7 +272,8 @@ def scenario_empty_house_shows_the_front_door():
         for words in ('Add plans and photos', 'Draw it myself'):
             button = _button(page, words)
             check(_uncovered(page, button), f'{words} is on top: the front door leads, nothing opens over it')
-        _strip_ok(page)
+        # Slice 4 keeps the generation strip hidden until a build starts.
+        _strip_ok(page, '#editor-steps', visible=False)
         check(_step_state(page, 'Your files') == 'now', ('an empty house starts at Your files', _step_state(page, 'Your files')))
         for name in STEPS[1:]:
             check(_step_state(page, name) == 'not-yet', (f'{name} is not yet', _step_state(page, name)))
@@ -272,6 +292,7 @@ def scenario_add_plans_opens_your_files():
         _button(page, 'Add plans and photos').click()
         panel = page.locator('[data-step-panel="Your files"]')
         panel.wait_for(state='visible', timeout=10000)
+        _strip_ok(page)
         check(_expanded(page, 'Your files'), 'the strip marks Your files open')
         check(panel.locator('[data-place-upload="lot"]').count() == 1, 'Your files offers an upload for the lot')
         check(panel.locator('#place-add-name').is_visible(), 'Your files offers Add building')
@@ -279,6 +300,7 @@ def scenario_add_plans_opens_your_files():
         # Menu > Your place and Menu > Upload more open Your files, from anywhere.
         for item in ('Your place', 'Upload more'):
             _open_step(page, 'Your lot')
+            page.click('#editor-dialog-close')
             page.click('#editor-menu > summary')
             page.get_by_role('button', name=item, exact=True).click()
             panel.wait_for(state='visible', timeout=10000)
@@ -300,7 +322,7 @@ def scenario_draw_it_myself_arms_draw_wall():
         page.wait_for_function("() => document.getElementById('rail-draw-wall').getAttribute('aria-pressed') === 'true'",
                                timeout=10000)
         check(not _front_door_shown(page), 'Draw it myself closes the front door')
-        check(page.locator('#draw-tools').is_visible() and 'Click wall corners' in page.inner_text('#draw-note'),
+        check(page.locator('#editor-statusbar #draw-tools').is_visible() and 'Click wall corners' in page.inner_text('#editor-statusbar #draw-note'),
               ('the Draw wall tool is armed and says how', page.inner_text('#draw-note')))
         # Armed means a person can draw: two clicks on the canvas make a wall.
         box = page.evaluate("() => { const r = window.__twin.renderer3.domElement.getBoundingClientRect();"
@@ -477,7 +499,7 @@ def scenario_checks_come_one_at_a_time():
     with s.browser(launch_args=GPU_ARGS) as page:
         _open(page, s)
         _wait_house(page)
-        check(_step(page, 'Check it').count() == 1, ('one Check it step in the strip', _step(page, 'Check it').count()))
+        check(_step(page, 'Check it').count() == 1, ('one Check it step in Your place', _step(page, 'Check it').count()))
         check(re.search(rf'\b{total}\b', _step(page, 'Check it').first.inner_text()),
               ('the Check it step counts what waits', _step(page, 'Check it').first.inner_text()))
         _open_step(page, 'Check it')
@@ -500,7 +522,7 @@ def scenario_checks_come_one_at_a_time():
         page.wait_for_function("t => !document.getElementById('check-card').innerText.includes(t)", arg=second[2]['text'],
                                timeout=10000)
         _one_check(page)
-        page.wait_for_function("n => new RegExp('\\\\b' + n + '\\\\b').test(document.querySelector('[data-step=\"Check it\"]').innerText)",
+        page.wait_for_function("n => new RegExp('\\\\b' + n + '\\\\b').test(document.querySelector('#place-steps [data-step=\"Check it\"]').innerText)",
                                arg=total - 1, timeout=10000)
         page.screenshot(path=os.path.join(SHOTS, 'house_steps_checks.png'))
     check(not _unexpected(s.errors()), s.errors())
@@ -677,26 +699,36 @@ def scenario_every_tool_is_in_view_at_1280x800():
         _wait_house(page)
         page.set_viewport_size({'width': 1280, 'height': 800})
         H.settle(page, 6)
-        got = page.evaluate("""() => {
-            const rail = document.getElementById('editor-rail'), r = rail.getBoundingClientRect();
-            const header = document.getElementById('editor-top').getBoundingClientRect();
-            return {scroll: rail.scrollHeight, client: rail.clientHeight, top: r.top, bottom: r.bottom,
-                header: header.bottom, height: innerHeight,
-                buttons: [...rail.querySelectorAll('button')].map(b => {
-                    const q = b.getBoundingClientRect();
-                    return {text: b.textContent.trim(), top: q.top, bottom: q.bottom, left: q.left, right: q.right};
-                })};
-        }""")
-        check(got['scroll'] <= got['client'] + 1, ('the rail holds every tool without scrolling', got['scroll'], got['client']))
-        for b in got['buttons']:
-            check(got['top'] - 0.5 <= b['top'] and b['bottom'] <= got['bottom'] + 0.5,
-                  (f"{b['text']} is inside the rail's visible box", b, got['top'], got['bottom']))
-            check(b['top'] >= got['header'] and b['bottom'] <= got['height'] - 24,
-                  (f"{b['text']} sits between the header and the bottom of the scene", b, got['header'], got['height']))
-        for name in ('Delete', 'Undo', 'Redo', 'Sheet'):
-            rail_button = page.locator('#editor-rail button', has_text=name).first
-            check(rail_button.is_visible() and _uncovered(page, rail_button), f'{name} is in view and on top at 1280x800')
-        page.screenshot(path=os.path.join(SHOTS, 'house_steps_rail_1280.png'))
+        if page.locator('#editor-dialog').is_visible():
+            page.click('#editor-dialog-close')
+        # Slice 4 puts the tools in the header; overflow groups open as menus.
+        buttons = page.locator('#editor-toolbar #editor-rail button')
+        expected = {'Select', 'Move', 'Turn', 'Scale', 'Draw room', 'Draw wall', 'Split room',
+                    'Add door', 'Add window', 'Add anchor', 'Add stair', 'Add solar zone',
+                    'Add meter', 'Add electric panel', 'Add charger', 'Add parking spot',
+                    'Roof', 'Add floor', 'Delete', 'Undo', 'Redo', 'Sheet', 'Library',
+                    'Add effect', 'Ground and yard', 'Measure'}
+        names = buttons.evaluate_all('ns => ns.map(n => n.getAttribute("aria-label"))')
+        check(len(names) == len(expected) and set(names) == expected, ('every tool is present exactly once', names))
+        for i in range(buttons.count()):
+            button = buttons.nth(i)
+            name = button.get_attribute('aria-label')
+            menu = button.locator('xpath=ancestor::details[1]')
+            if menu.count():
+                menu.locator('summary').click()
+            check(button.is_visible(), f'{name} is visible at 1280x800')
+            box = button.bounding_box()
+            check(box and box['x'] >= 0 and box['y'] >= 0
+                  and box['x'] + box['width'] <= 1280 and box['y'] + box['height'] <= 800,
+                  (f'{name} fits in the viewport', box))
+            check(_uncovered(page, button), f'{name} is on top at 1280x800')
+            if menu.count():
+                menu.locator('summary').click()
+        select = page.locator('#editor-toolbar #rail-select').bounding_box()
+        header = page.locator('#editor-top').bounding_box()
+        check(header['y'] <= select['y'] and select['y'] + select['height'] <= header['y'] + header['height'],
+              ('Select is in the header toolbar', select, header))
+        page.screenshot(path=os.path.join(SHOTS, 'house_steps_toolbar_1280.png'))
         # I3: a roof check outlines its roof and frames it; its marker stands out.
         _open_step(page, 'Check it')
         card = page.locator('#check-card')

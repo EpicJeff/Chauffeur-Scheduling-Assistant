@@ -47,7 +47,7 @@ def scenario_paver_path_draw_card_and_undo():
         drawn = H.model()['site']['hardscape'][2]
         H.check(drawn.get('pavers') == DEFAULTS, f'A new Paver path did not get the default pavers: {drawn.get("pavers")}')
         page.wait_for_function(IDS + f'.includes({drawn["id"]!r})', timeout=30000)
-        page.locator('#terrain-card').get_by_role('button', name='Path / hardscape 3', exact=True).click()
+        page.locator('#scene-yard').get_by_role('button', name='Path / hardscape 3', exact=True).click()
         card = page.locator('#piece-card')
         H.check(card.get_by_label('Surface', exact=True).input_value() == 'pavers', 'The card does not show Pavers')
         card.get_by_label('Layout', exact=True).select_option('herringbone')
@@ -91,7 +91,7 @@ def scenario_moving_a_path_point_lays_the_pavers_again():
         page.wait_for_function(IDS + ".includes('pv-grid')", timeout=30000)
         before = page.evaluate(PAVER_EXTENT, 'pv-grid')
         page.click('#rail-ground')
-        page.locator('#terrain-card').get_by_role('button', name='Path / hardscape 1', exact=True).click()
+        page.locator('#scene-yard').get_by_role('button', name='Path / hardscape 1', exact=True).click()
         # The owner changed the layout on the card first, then moved a point.
         page.locator('#piece-card').get_by_label('Layout', exact=True).select_option('stepping')
         page.wait_for_function("window.__twin.plan.site.hardscape[0].pavers?.layout==='stepping'", timeout=15000)

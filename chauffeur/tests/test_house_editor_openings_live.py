@@ -158,7 +158,9 @@ def _seen(page, opening, bid, what):
 
 def _front(page, bid, x, y, z, normal, distance=22.0, rise=3.0):
     """Stand `distance` feet out along `normal` from a wall point and look at it."""
-    page.evaluate("() => { document.querySelector('#editor-cameras [data-editor-camera=\"front\"]')?.click(); }")
+    page.click('#editor-view-menu > summary')
+    page.click('#editor-view-menu #editor-cameras [data-editor-camera="front"]')
+    page.click('#editor-view-menu > summary')
     H.settle(page)
     H.look_at(page, bid, [x + normal[0] * distance, y + normal[1] * distance, z + rise], [x, y, z])
 

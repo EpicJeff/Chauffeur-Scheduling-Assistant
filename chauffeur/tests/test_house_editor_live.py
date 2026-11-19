@@ -184,7 +184,12 @@ def _open_place(page, step='Your files'):
     # Build step panels; only the navigation to a control changes.
     panel = page.locator(f'[data-step-panel="{step}"]')
     if not panel.count() or not panel.is_visible():
-        page.locator(f'[data-step="{step}"]').click()
+        if not page.locator('#editor-dialog #place-view').is_visible():
+            if page.locator('#editor-dialog').is_visible():
+                page.click('#editor-dialog-close')
+            page.click('#editor-menu > summary')
+            page.click('#editor-manage-sources')
+        page.locator(f'#place-steps [data-step="{step}"]').click()
     panel.wait_for(state='visible', timeout=10000)
 
 
@@ -270,10 +275,17 @@ def scenario_shell_matches_the_mockup_regions():
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
         _open(page, s)
-        for sel in ('#editor-scene canvas', '#editor-top', '#editor-rail', '#editor-floors', '#editor-agent',
+        if page.locator('#editor-dialog').is_visible():
+            page.click('#editor-dialog-close')
+        page.click('#dock-tab-scene')
+        for sel in ('#editor-scene canvas', '#editor-toolbar', '#editor-toolbar #editor-rail', '#dock-pane-scene #editor-floors',
                     '#editor-history'):
             check(page.locator(sel).first.is_visible(), sel)
-        check('$' in page.inner_text('#editor-top'), 'running cost in the top bar')
+        page.click('#dock-tab-argyle')
+        check(page.locator('#dock-pane-argyle #editor-agent').is_visible(), 'Argyle is reachable in its dock tab')
+        page.click('#dock-tab-scene')
+        check('$' in page.locator('#editor-genbar #editor-chip').text_content(), 'generation cost stays in the generation bar')
+        check(not page.locator('#editor-genbar').is_visible(), 'manual editing hides the generation bar')
         bar = page.get_by_placeholder("Ask Argyle... (e.g. 'What is my driving schedule today?')")
         check(bar.count() == 0 or not bar.first.is_visible(), 'the app-wide command bar is hidden: the editor has its own Argyle panel')
         page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_shell.png'))
@@ -320,7 +332,7 @@ def scenario_build_streams_ghosts_and_log_lines():
             except Exception:
                 raise AssertionError('the first-look ghost reached the build events but the editor drew nothing '
                                      '(previewPlan draws only ghost events that carry an outline)')
-            check(not page.locator('#place-view').is_visible(), 'Your place closes and the editor follows the build')
+            check(not page.locator('#editor-dialog #place-view').is_visible(), 'Your place closes and the editor follows the build')
             check(time.time() - start < 30, 'first ghost within 30 s')
             check(page.locator('[data-place-build="house"]').is_disabled() and page.locator('#place-build').is_disabled(),
                   'Build is off while a build is running')
@@ -364,10 +376,12 @@ def scenario_a_half_storey_has_its_floor_button_and_every_floor_lines_up():
         _open(page, s)
         upper = next(level for level in _house_of(_plan(page))['levels'] if level['id'] == 'L2')
         check(upper.get('half') is True, ('the upper floor stays a half storey', upper))
-        page.wait_for_selector('#editor-floors [data-floor="house:L2"]', state='visible', timeout=20000)
-        label = page.inner_text('#editor-floors [data-floor="house:L2"]').strip()
+        page.click('#dock-tab-scene')
+        page.wait_for_selector('#dock-pane-scene #editor-floors [data-floor="house:L2"]', state='visible', timeout=20000)
+        label = page.inner_text('#dock-pane-scene #editor-floors [data-floor="house:L2"]').strip()
         check(label == upper['name'] and label, ('the half storey has a floor button with its name', label, upper['name']))
-        page.click('#editor-floors [data-floor="house:L2"]')
+        page.click('#dock-tab-scene')
+        page.click('#dock-pane-scene #editor-floors [data-floor="house:L2"]')
         vis = page.evaluate('window.__twin.levelVisibility()')
         check(vis.get('house:L2') and not vis.get('house:L1', False), ('the half storey shows on its own', vis))
         regs = _api(page, 'GET', 'sheets')['body'].get('registrations') or []
@@ -400,7 +414,7 @@ def scenario_a_draft_that_cannot_be_read_pauses_in_plain_words():
             st = _wait_build(page, "b.state === 'paused' && b.pause && b.pause.kind === 'draft'", timeout=30000)
             check(st['pause']['step'] == 'draft' and st['pause']['why'] == FAILED_WHY, st['pause'])
             page.wait_for_selector('#pause-card', state='visible', timeout=10000)
-            check(not page.locator('#place-view').is_visible(), 'Your place yields to the question')
+            check(not page.locator('#editor-dialog #place-view').is_visible(), 'Your place yields to the question')
             reason = page.inner_text('#pause-card .pause-why').strip()
             check(reason.startswith(FAILED_WHY) and reason.endswith('.'),
                   ('the card says what went wrong in a sentence', reason))
@@ -645,7 +659,8 @@ def _visible_wall_for_handle_drag(page):
 
 def _wall_handle_drag_points(page, wall):
     # R44: the current wall handle owns a small outward floor-plane drag.
-    page.click(f'#editor-floors [data-floor="house:{wall["level"]}"]')
+    page.click('#dock-tab-scene')
+    page.click(f'#dock-pane-scene #editor-floors [data-floor="house:{wall["level"]}"]')
     page.evaluate("([p, b]) => window.__editor.clickPiece(p, b)", [wall['id'], 'house'])
     points = page.evaluate("""wall => {
         const view = window.__twin, b = view.plan.buildings.find(b => b.id === 'house');
@@ -714,9 +729,12 @@ def scenario_cameras_floors_and_sheet():
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
         _open(page, s)
+        page.click('#editor-view-menu > summary')
         for name in ('Top', 'Front', 'Back', 'Orbit'):
-            page.get_by_role('button', name=name, exact=True).click()
-        page.locator('#editor-floors').get_by_role('button', name='Main floor', exact=True).click()
+            page.locator('#editor-view-menu #editor-cameras').get_by_role('button', name=name, exact=True).click()
+        page.click('#editor-view-menu > summary')
+        page.click('#dock-tab-scene')
+        page.locator('#dock-pane-scene #editor-floors').get_by_role('button', name='Main floor', exact=True).click()
         vis = page.evaluate('window.__twin.levelVisibility()')
         check(vis.get('house:L1') and not vis.get('house:L2', False), vis)
         page.click('#rail-sheet')
@@ -731,8 +749,11 @@ def scenario_plan_view_is_flat_and_adds_walls_and_windows():
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
         _open(page, s)
-        page.click('#editor-floors [data-floor="house:L1"]')
-        page.click('#editor-cameras [data-editor-camera="top"]')
+        page.click('#dock-tab-scene')
+        page.click('#dock-pane-scene #editor-floors [data-floor="house:L1"]')
+        page.click('#editor-view-menu > summary')
+        page.click('#editor-view-menu #editor-cameras [data-editor-camera="top"]')
+        page.click('#editor-view-menu > summary')
         # Plan mode's flat (orthographic) view is retired with Plan mode (spec
         # section 3 item 9, one 3D view); the Top camera looks straight down.
         top = page.evaluate('() => { const c = window.__twin.camera; c.updateMatrixWorld(true);'
@@ -905,11 +926,12 @@ def scenario_reset_spend_needs_the_word_reset():
         _signed_in(page)
         _open(page, s)
         page.click('#editor-menu')
+        page.click('#menu-settings')
         page.click('#menu-reset-spend')
         box = page.locator('input').last
         box.fill('reset')
         page.get_by_role('button', name='Reset', exact=True).click()
-        page.wait_for_function("() => document.querySelector('#editor-top').innerText.includes('$0.00')", timeout=10000)
+        page.wait_for_function("() => document.querySelector('#editor-genbar #editor-chip').textContent.includes('$0.00')", timeout=10000)
     check(twin_cost.total() == 0, twin_cost.total())
 
 
@@ -1012,7 +1034,7 @@ def scenario_the_sign_out_notice_shows_once():
         page.wait_for_timeout(1500)
         check(page.evaluate('window.__editor.signOutNotices()') == 1, 'shown once, not every poll')
         check(page.evaluate('window.__editor.polling()') is False, 'polling stops until the tab comes back')
-        check('Home Assistant' in page.inner_text('#editor-top'), 'the status says what happened')
+        check('Home Assistant' in page.inner_text('#editor-statusbar'), 'the status says what happened')
 
 
 def scenario_rebuilds_keep_the_parents_view():
@@ -1229,6 +1251,7 @@ def scenario_editor_refusals_are_plain_and_change_nothing():
         page.reload()
         page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=60000)
         page.click('#editor-menu')
+        page.click('#menu-settings')
         page.click('#menu-reset-spend')
         page.locator('input').last.fill('nope')
         page.get_by_role('button', name='Reset', exact=True).click()
@@ -1291,7 +1314,7 @@ def scenario_each_page_belongs_to_a_building_and_build_builds_that_one():
                                                                              headers={'Content-Type': 'application/json'})))
         page.click('#editor-menu')
         page.click('#menu-upload')
-        page.wait_for_selector('#place-view', state='visible', timeout=10000)
+        page.wait_for_selector('#editor-dialog #place-view', state='visible', timeout=10000)
         rows = page.locator('[data-place-page]')
         carded = page.locator('[data-place-building] [data-place-page], #place-lot [data-place-page]')
         check(rows.count() >= 1 and carded.count() == rows.count(), 'every page sits on the card of the part it shows')
@@ -1343,13 +1366,14 @@ def scenario_floor_buttons_name_their_building():
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
         _open(page, s)
-        page.wait_for_function("() => document.querySelectorAll('#editor-floors [data-floor]').length === 3",
+        page.wait_for_function("() => document.querySelectorAll('#dock-pane-scene #editor-floors [data-floor]').length === 3",
                                timeout=20000)
-        labels = page.eval_on_selector_all('#editor-floors [data-floor]', 'nodes => nodes.map(n => n.textContent.trim())')
+        labels = page.eval_on_selector_all('#dock-pane-scene #editor-floors [data-floor]', 'nodes => nodes.map(n => n.textContent.trim())')
         check(sorted(labels) == ['Main house \u00b7 Main floor', 'Main house \u00b7 Second floor',
                                  'Pool house \u00b7 Main floor'],
               ('with two buildings each floor names its building', labels))
-        page.locator('#editor-floors').get_by_role('button', name='Pool house \u00b7 Main floor', exact=True).click()
+        page.click('#dock-tab-scene')
+        page.locator('#dock-pane-scene #editor-floors').get_by_role('button', name='Pool house \u00b7 Main floor', exact=True).click()
         vis = page.evaluate('window.__twin.levelVisibility()')
         check(vis.get('pool-house:L1') and not vis.get('main-house:L1', False), vis)
     check(not _unexpected(s.errors()), s.errors())
@@ -1428,7 +1452,7 @@ def scenario_a_roof_that_needs_a_look_is_marked_and_opens_its_card():
             page.set_viewport_size({'width': 1600, 'height': 900})
             _signed_in(page)
             _open(page, s)
-            if page.locator('#place-view').is_visible():
+            if page.locator('#editor-dialog #place-view').is_visible():
                 page.click('#place-close')
             started = _api(page, 'POST', 'build', {'part': 'house'})
             check(started['status'] == 200 and started['body'].get('id'), ('the build starts', started))
@@ -1465,7 +1489,9 @@ def scenario_a_roof_that_needs_a_look_is_marked_and_opens_its_card():
 
             # Look down at the flagged roof from the front, in perspective (the
             # top camera never picks roofs).
-            page.get_by_role('button', name='Orbit', exact=True).click()
+            page.click('#editor-view-menu > summary')
+            page.locator('#editor-view-menu #editor-cameras').get_by_role('button', name='Orbit', exact=True).click()
+            page.click('#editor-view-menu > summary')
             page.wait_for_function("() => window.__editor.cameraKind() === 'perspective'", timeout=10000)
             box = page.evaluate('([p, b]) => window.__twin.worldBox(p, b)', [roof['id'], 'house'])
             check(box, ('the flagged roof is drawn', roof['id']))

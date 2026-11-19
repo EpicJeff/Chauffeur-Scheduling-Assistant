@@ -102,7 +102,7 @@ def scenario_tier(tier):
         }''' % json.dumps(STATE['token']))
         page.goto(served.url('house/editor?test=1&tier=' + tier))
         page.wait_for_function('() => window.__editor?.ready && window.__twin?.ready', timeout=90000, polling=500)
-        if page.locator('#place-view').is_visible():
+        if page.locator('#editor-dialog #place-view').is_visible():
             page.locator('#place-close').click()
         page.evaluate('''() => {
             const v=window.__twin;v.renderer3.domElement.dataset.waterLive='1'; v.setClock('2026-06-21T16:00:00Z'); v.setTime('day');

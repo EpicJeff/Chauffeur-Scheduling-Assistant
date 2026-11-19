@@ -25,7 +25,7 @@ def scenario_patio_ring_scale_corner_three_undos_pool_and_tree():
         page.evaluate("""()=>{const v=window.__twin;v.bake?.stop();v.setView('ext');
           v.setCameraState({position:[20*.3048,80*.3048,-124.999*.3048],target:[20*.3048,0,-125*.3048]});}""")
         page.click('#rail-ground')
-        page.locator('#terrain-card').get_by_role('button', name='Path / hardscape 1', exact=True).click()
+        page.locator('#scene-yard').get_by_role('button', name='Path / hardscape 1', exact=True).click()
         page.locator('#piece-card').get_by_label('Angle (degrees)', exact=True).wait_for()
         original = copy.deepcopy(H.model()['site']['hardscape'][0])
 
@@ -75,7 +75,7 @@ def scenario_patio_ring_scale_corner_three_undos_pool_and_tree():
             page.wait_for_function('(before)=>JSON.stringify(window.__twin.plan.site.hardscape[0].polygon)!==JSON.stringify(before)', arg=before)
         H.check(H.model()['site']['hardscape'][0] == original, 'Three undos did not restore the original patio')
         page.click('#rail-ground')
-        page.locator('#terrain-card').get_by_role('button', name='Pool 1', exact=True).click()
+        page.locator('#scene-yard').get_by_role('button', name='Pool 1', exact=True).click()
         depth = page.locator('#piece-card').get_by_label('Pool depth (ft)', exact=True)
         depth.fill('6'); depth.press('Tab')
         page.wait_for_function('window.__twin.plan.site.pool.depth===6')

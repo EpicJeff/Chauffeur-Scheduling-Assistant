@@ -31,7 +31,7 @@ Test hooks assumed (under ?test=1):
                                        now, in the order they were drawn
   window.__editor.build(), followBuild(id)  (exist today)
 
-DOM assumed: #editor-chip, the status chip in #editor-top; its visible text
+DOM assumed: #editor-chip, the status chip in #editor-genbar; its text
 says Working or Waiting on you, `$x.xx so far` and, while a build runs,
 `about $x.xx`; the Stop button sits inside it (a button whose text is Stop).
 api/house/editor/state carries cost.total (the ledger, today) and
@@ -407,9 +407,9 @@ def _stop_button(page):
 
 
 def _chip_text(page):
-    chip = page.locator('#editor-chip')
-    check(chip.count() == 1, '#editor-chip, the status chip, is missing from the top bar (Task 6)')
-    return ' '.join(chip.inner_text().split())
+    chip = page.locator('#editor-genbar #editor-chip')
+    check(chip.count() == 1, '#editor-chip, the status chip, is missing from the generation bar')
+    return ' '.join(chip.text_content().split())
 
 
 def _money(text, pattern):
@@ -597,10 +597,11 @@ def scenario_stop_is_visible_while_working():
         with s.browser(launch_args=H.GPU_ARGS) as page:
             H.open_editor(page, s)       # the chip needs no Task 5 hook
             text = _chip_text(page)
-            check(page.locator('#editor-top #editor-chip').is_visible(), 'the chip is always in view in the top bar')
+            check(not page.locator('#editor-genbar').is_visible(), 'manual editing hides the generation bar')
             check('Working' not in text and page.locator('#editor-chip button:text-is("Stop"):visible').count() == 0,
                   ('no build runs yet: no Working, no Stop', text))
             bid = _start(page)
+            check(page.locator('#editor-genbar #editor-chip').is_visible(), 'the running build shows its generation status')
             chip_stop = page.locator('#editor-chip button:text-is("Stop")')
             _wait(page, lambda: 'Working' in _chip_text(page) and chip_stop.first.is_visible(), 5,
                   ('a running build shows Working with Stop inside the chip', _chip_text(page)))

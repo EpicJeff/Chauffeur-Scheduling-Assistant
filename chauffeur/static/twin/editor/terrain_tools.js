@@ -157,7 +157,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   }
   function drawPadList(host = card) {
     host.append(node('h3', 'Pads'));
-    const pads = getPlan().site?.terraces || [];
+    const pads = getPlan()?.site?.terraces || [];
     if (!pads.length) { host.append(node('p', 'No pads yet.')); return; }
     const list = node('div'); list.className = 'editor-pad-list'; list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Pads, topmost first');
     const indicator = node('div'); indicator.className = 'editor-pad-drop'; indicator.hidden = true; indicator.setAttribute('aria-hidden', 'true');

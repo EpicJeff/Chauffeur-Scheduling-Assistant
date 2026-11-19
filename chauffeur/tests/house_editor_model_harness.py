@@ -161,9 +161,9 @@ def open_editor(page, served, query='tier=high&test=1'):
     page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=90000)
     page.wait_for_function("() => window.__twin && window.__twin.plan && (window.__twin.plan.buildings || []).length > 0"
                            " && window.__twin.pieceIds(window.__twin.plan.buildings[0].id).length > 0", timeout=60000)
-    if page.locator('#place-view').is_visible():
+    if page.locator('#editor-dialog #place-view').is_visible():
         page.click('#place-close')
-        page.wait_for_selector('#place-view', state='hidden', timeout=10000)
+        page.wait_for_selector('#editor-dialog #place-view', state='hidden', timeout=10000)
     check(page.evaluate('() => !!window.__twinEditor'),
           'window.__twinEditor is missing: the editor sets it under ?test=1 (Part B test hooks)')
     settle(page)
@@ -201,13 +201,15 @@ def wait_rebuilt(page, before=None, timeout=30.0):
 
 
 def choose_floor(page, key):
-    """Press a floor's button in the Floors aside (key is '{building}:{level}')."""
-    page.click(f'#editor-floors [data-floor="{key}"]')
+    """Press a floor's button in the Scene tab (key is '{building}:{level}')."""
+    page.click('#dock-tab-scene')
+    page.click(f'#dock-pane-scene #editor-floors [data-floor="{key}"]')
     settle(page)
 
 
 def all_floors(page):
-    page.click('#editor-floors button:text-is("All floors")')
+    page.click('#dock-tab-scene')
+    page.click('#dock-pane-scene #editor-floors button:text-is("All floors")')
     settle(page)
 
 

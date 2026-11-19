@@ -122,7 +122,10 @@ def scenario_facing_dial_saves_reloads_and_has_keyboard_path():
         return
     with served.browser(launch_args=L.GPU_ARGS) as page:
         H.open_editor(page, served)
-        page.click('[data-step="Your files"]')
+        if not page.locator('#editor-dialog #place-view').is_visible():
+            page.click('#editor-menu > summary')
+            page.click('#editor-manage-sources')
+        page.click('#place-steps [data-step="Your files"]')
         page.fill('#place-facing-degrees', '90')
         with page.expect_response(lambda r: '/api/house/editor/place/lot/placement' in r.url and r.request.method == 'PUT') as saved:
             page.locator('#place-facing-form button[type="submit"]').click()
@@ -134,7 +137,10 @@ def scenario_facing_dial_saves_reloads_and_has_keyboard_path():
             page.keyboard.press('ArrowRight')
         page.reload()
         page.wait_for_function('() => window.__editor?.ready')
-        page.click('[data-step="Your files"]')
+        if not page.locator('#editor-dialog #place-view').is_visible():
+            page.click('#editor-menu > summary')
+            page.click('#editor-manage-sources')
+        page.click('#place-steps [data-step="Your files"]')
         page.wait_for_function('() => document.getElementById("place-facing-degrees").value === "91"')
         check(dial.get_attribute('aria-valuenow') == '91', 'dial reloads the saved bearing')
         # Pointer dragging uses the same save path. Drag to the north edge.
