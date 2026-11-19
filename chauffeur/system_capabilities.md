@@ -1,6 +1,12 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.937 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.938 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.938 (2026-11-18, NOT device-verified; node-checked through the real bubbler and Unlit swap): the editor's Unlit view works again on a house with bubblers.**
+
+- **What was wrong.** On the owner's house, choosing Unlit stopped the viewport (console: `Cannot read properties of undefined (reading 'fall')` in `bubbler.js`). Since v2.499.930 the bubbler's column is a lit-water standard material that carries its effect driver uniforms on `material.uniforms`; Unlit swaps lit materials for a studio matcap, which had none, so the bubbler's first frame threw and the render loop stopped. Houses without bubblers (or sheet effects) were unaffected, which is why it did not show on the test house.
+- **Fix.** `static/twin/unlit.js` gives the replacement matcap the source's own `uniforms` object, so effect drivers still find their uniforms and their writes reach the shader the Unlit hook compiles.
+- **Tests.** New `tests/test_twin_unlit_effects_js.py` (the real bubbler, swapped by the real Unlit, posed and driven like a frame; failed with the owner's error before the fix). Neighbours: `test_twin_editor_lighting_js.py`, `test_twin_effect_visuals_js.py`, `test_twin_effect_second_set_js.py`, `test_twin_effect_lighting_water_js.py`, `test_twin_yard_grass_js.py`.
 
 **v2.499.937 (2026-11-18, NOT device-verified, browser-checked in Chromium on the viewer, the panel view and the editor): the house twin has a real sky. A physically based atmosphere draws the background and lights the house and its reflections, the sun and moon are drawn the way the eye sees them, real stars come out at night, north comes from the map, the house sits on a circular stage that fades into haze, overcast weather greys the sky, and a time-of-day scrub previews any hour.**
 
