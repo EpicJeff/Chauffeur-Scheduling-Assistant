@@ -1,7 +1,7 @@
 import { drawObjectShelf, isObject } from './object_shelf.js';
 import { solarLayout } from '../twin_solar.js';
 import { contains, allPorches } from '../twin_generator.js';
-import { materialLines, surfaceOperation } from './library.js';
+import { materialLines } from './library.js';
 import { createSlotRow, idleLibrary } from './slot_row.js';
 import { createEquipmentShelf } from './equipment_shelf.js';
 import { foundationShelf } from './foundation_shelf.js';
@@ -185,11 +185,24 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         layout = null; draw();
       }) });
     for (const material of materials) {
+      const save = ref => queue(async () => {
+        if (!canEdit()) return;
+        await op({ op:'set_material', building:building.id, target:material.target, material:ref });
+        material.setRef(ref);
+      });
+      const patch = change => {
+        const next = { ...material.ref, ...change };
+        for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key];
+        return save(Object.keys(next).length ? next : null);
+      };
       const row = createSlotRow({ label: material.label, library, readOnly: () => !canEdit(),
-        current: () => material.current, detail: () => material.text,
+        current: () => material.current, detail: () => material.text, inherited: () => material.inherited,
         accepts: entry => entry.kind === 'material',
-        apply: entry => queue(() => canEdit() && op(surfaceOperation(material.surface, 'face', entry))),
-        clear: material.clear ? () => queue(() => canEdit() && op({ op: 'set_material', building: building.id, target: material.target, material: null })) : null,
+        apply: entry => save({id:entry.id}), clear: () => save(null),
+        tint: { value:() => material.current?.color || '#b8b0a4', hasOverride:() => !!material.ref?.color,
+          set:color => patch({color}), clear:() => patch({color:undefined}) },
+        offset: { value:() => material.ref?.uv, effective:() => material.resolved.uv,
+          set:uv => patch({uv}), clear:() => patch({uv:undefined}) },
         reset: material.reset ? { label: material.reset.label,
           run: () => queue(() => canEdit() && op({ op: 'set_material', building: building.id, target: material.reset.target, material: null })) } : null });
       ownSlot(row); host.append(row.element);
@@ -246,7 +259,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         });
         host.append(button);
       }
-      drawSiteShapeShelf(host, record, { library, ownSlot, canEdit, queue, op, report, getKit, onDrawFeature,
+      drawSiteShapeShelf(host, record, { library, ownSlot, canEdit, queue, op, report, getPlan, getKit, onDrawFeature,
         haAvailable: !!haLink?.state()?.available,
         onMakeRoom: () => {
           const room = getPlan().site?.yard_rooms?.at(-1);

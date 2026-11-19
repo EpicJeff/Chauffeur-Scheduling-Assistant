@@ -100,7 +100,7 @@ await test('foundation_pick_and_tint_keep_atlas_on_every_tier',async()=>{
 });
 await test('shelf_pick_clear_one_op_and_preserves_foundation_fields',async()=>{
  const {host,sent,errors}=shelf(),slot=host.querySelector('[data-material-slot="Slab"]');assert.ok(slot);
- assert.ok(textOf(slot).includes('Default: Concrete'));
+ assert.ok(textOf(slot).includes('House default: Concrete floor 02'));
  assert.equal(sent.length,0);
  await useMaterial(slot,ref.id);assert.equal(sent.length,1);
  assert.deepEqual(sent[0],{op:'set_foundation',building:'b',foundation:{...b.foundation,materials:{slab:{id:ref.id}}}});

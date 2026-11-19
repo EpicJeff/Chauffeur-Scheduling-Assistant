@@ -26,11 +26,11 @@ await test('pick_saves_id_only',async()=>{
 });
 await test('default_label_and_current_name_survive_the_shared_row_adapter',async()=>{
  const node=materialSlot({library,label:'Slab',defaultLabel:'Concrete',loadMaterials:async()=>[entry],onChange:async()=>{}});
- assert.equal(textOf(node.querySelector('[data-slot-name]')),'Default: Concrete');
+ assert.equal(textOf(node.querySelector('[data-slot-name]')),'House default: Concrete');
  await useMaterial(node,entry.id);
  assert.equal(textOf(node.querySelector('[data-slot-name]')),entry.name);
  await click(node.querySelector('[data-slot-clear]'));
- assert.equal(textOf(node.querySelector('[data-slot-name]')),'Default: Concrete');
+ assert.equal(textOf(node.querySelector('[data-slot-name]')),'House default: Concrete');
 });
 await test('override_then_clear',async()=>{
  const {node,calls}=make({id:entry.id});
@@ -150,7 +150,7 @@ const calls=[],errors=[];let locked=false;
 const node=materialSlot({library,label:'Posts',value:null,defaultLabel:'Trim',defaultColor:'#ffffff',quickPicks:[entries[1]],
  readOnly:()=>locked,onChange:async v=>calls.push(v),report:e=>errors.push(e.message)});document.body.append(node);
 const byText=(root,text)=>root.querySelectorAll('button').find(n=>textOf(n)===text);
-assert.ok(textOf(node).includes('Default: Trim'));
+assert.ok(textOf(node).includes('House default: Trim'));
 await new Promise(resolve=>setTimeout(resolve,0));assert.equal(fetches,2);assert.equal(calls.length,0,'metadata load is never a history step');
 assert.equal(node.dataset.librarySlot,'Posts');
 await useMaterial(node,'wood_planks');assert.deepEqual(calls,[{id:'wood_planks'}]);
@@ -160,7 +160,7 @@ await useMaterial(node,'wood_planks');assert.equal(calls.length,1,'reselect is n
 const tint=node.querySelector('input[type="color"]');tint.value='#abcdef';await fire(tint,'change');
 assert.deepEqual(calls.at(-1),{id:'wood_planks',color:'#abcdef'});assert.equal(calls.length,2);
 await click(byText(node,'Clear'));assert.equal(calls.at(-1),null);assert.equal(calls.length,3);
-assert.ok(textOf(node).includes('Default: Trim'));
+assert.ok(textOf(node).includes('House default: Trim'));
 locked=true;assert.equal(node.querySelector('[role="group"]'),null);assert.equal(calls.length,3);
 const readonly=materialSlot({library,label:'Solid',value:{id:'wood_planks'},defaultLabel:'Stone',readOnly:true,onChange:()=>{throw Error('read-only wrote');}});
 assert.equal(readonly.querySelectorAll('button,input').length,0);assert.ok(textOf(readonly).includes('Wood planks'));
@@ -169,7 +169,7 @@ assert.equal(idOnly.querySelector('[data-slot-swatch]').style.backgroundColor,in
 assert.ok(textOf(idOnly).includes('Stacked stone wall'));
 // A failed save is visible, keeps the chosen/default value, and may be retried.
 const failed=materialSlot({library,label:'Skirt',defaultLabel:'Trim',onChange:async()=>{throw Error('save failed');},report:e=>errors.push(e.message)});document.body.append(failed);
-await useMaterial(failed,'wood_planks');assert.ok(textOf(failed).includes('Default: Trim'));assert.deepEqual(errors,['save failed']);
+await useMaterial(failed,'wood_planks');assert.ok(textOf(failed).includes('House default: Trim'));assert.deepEqual(errors,['save failed']);
 console.log('Passed: shared slot catalogue, swatch/name, choose, quick picks, tint, default, duplicate suppression, read-only and error');
 // Yard features (user, 2026-11-13): each part's slot sits in the shared yard shape card.
 {
@@ -263,13 +263,13 @@ for(const [label,value,key]of [['Post width (in)','10','post_in'],['Post shape',
 field('Foundation').value='enclosed';await fire(field('Foundation'),'change');await cards.queue(async()=>{});
 assert.ok(shown(slot('Skirt'))&&shown(slot('Posts and beam'))&&!shown(slot('Solid base')));
 assert.equal(field('Skirt'),undefined);
-assert.ok(textOf(slot('Skirt')).includes('Default: Lattice'));
+assert.ok(textOf(slot('Skirt')).includes('House default: Lattice'));
 let before=ops.length;await useMaterial(slot('Skirt'),'wood_planks');await cards.queue(async()=>{});
 assert.equal(ops.length,before+1);assert.deepEqual(room.foundation.materials.skirt,{id:'wood_planks'});
 assert.equal(ops.at(-1).op,'set_porch_foundation');assert.equal(room.foundation.post_in,10,'material change preserves other fields');
 await click(byText(slot('Skirt'),'Clear'));await cards.queue(async()=>{});
 assert.equal(room.foundation.materials.skirt,null);assert.equal(ops.length,before+2);
-assert.ok(textOf(slot('Skirt')).includes('Default: Lattice'));
+assert.ok(textOf(slot('Skirt')).includes('House default: Lattice'));
 await useMaterial(slot('Skirt'),'lattice');await cards.queue(async()=>{});
 assert.deepEqual(room.foundation.materials.skirt,{id:'lattice'});assert.equal(ops.length,before+3);
 assert.ok(!Object.hasOwn(ops.at(-1).foundation,'skirt'));

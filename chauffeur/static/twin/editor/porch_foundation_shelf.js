@@ -1,5 +1,6 @@
 import { porchFoundation, porchOnGrade } from '../twin_porch_foundation.js';
 import { materialSlot } from './material_slot.js';
+import { surfaceDescription } from './material_catalog.js';
 
 export function porchShelfOnGrade(plan, building, room) {
   const detail = [...(building.porches || []), ...(building.porches_detail || []), building.porch].find(p => p?.id === room.id);
@@ -53,7 +54,8 @@ export function porchFoundationShelf(host, room, building, { getPlan, getKit = (
   function addSlot(key, label, role) {
     const ref = getKit().materials?.[role];
     const node = materialSlot({ library, ownSlot, label, value: value.materials[key], defaultLabel: role === 'base' ? 'Stone' : role[0].toUpperCase() + role.slice(1),
-      defaultColor: ref?.color, kit: getKit(), readOnly: () => !canEdit(), onChange: changed => save(key, changed, true), report });
+      defaultColor: ref?.color, kit: getKit(), resolve: ref => surfaceDescription(getPlan(), {role, building, ref}, getKit()),
+      readOnly: () => !canEdit(), onChange: changed => save(key, changed, true), report });
     section.append(node); slots.set(key, node);
   }
   addSlot('posts', 'Posts and beam', 'trim'); addSlot('skirt', 'Skirt', 'lattice'); addSlot('solid', 'Solid base', 'base');

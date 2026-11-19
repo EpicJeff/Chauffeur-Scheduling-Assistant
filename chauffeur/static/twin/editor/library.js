@@ -6,7 +6,7 @@ import { DRAG_THRESHOLD_PX } from './picking.js';
 import * as THREE from 'three';
 import { svgIcon } from '../live/glance_icons.js';
 import { contains, FT, allPorches } from '../twin_generator.js';
-import { ITEM_PARTS, kindRow, resolveSlot } from '../surface_kinds.js';
+import { ITEM_PARTS, kindRow } from '../surface_kinds.js';
 import { groundAt, buildingGround, inPolygon, edgeDistance } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
 import { rememberImport, forgetImport, libUrl, materialUrl } from '../twin_library.js';
@@ -15,7 +15,9 @@ import { objectShown, siteRecords, siteRecord, sitePoints, siteShapeKinds } from
 import { pathSurfacePolygons } from '../path_shapes.js';
 import { request, report } from './api.js';
 
-import { materialName, describeMaterial, readLibraryCatalog } from './material_catalog.js';
+import { materialName, describeMaterial, readLibraryCatalog, surfaceDescription } from './material_catalog.js';
+import { resolveSurfaceMaterial } from '../surface_material.js';
+import { planes } from '../twin_roof.js';
 export { materialName } from './material_catalog.js';
 export const libraryMaterialHref = id => (window.chfBase ?? '../') + 'house/library?material=' + encodeURIComponent(id);
 
@@ -33,36 +35,43 @@ export function wallFace(building, wall, side) {
 // building's or the floor's own role, cleared from the card (I4); `surface` is
 // the surface assigned by the row (the 3D drop keeps its scope chooser).
 export function materialLines(record, plan, kit) {
-  const { piece, building, kind } = record;
+  const { piece, building } = record;
+  const kind = record.kind === 'roof' && building?.dormers?.some(d => d.id === piece.id) ? 'dormer' : record.kind;
   if (!building) return [];
-  const level = building.levels?.find(l => l.id === piece.level);
-  const line = (label, role, override, target, roomMaterial, surface, inherited = null) => {
-    const ref = override || roomMaterial || level?.materials?.[role] || building.materials?.[role]
-      || plan.materials?.[role] || kit?.materials?.[role] || (target.part ? resolveSlot(role, { building, level }) : null)
-      || (target.part && kindRow(role).fallback.builtin ? { id: kindRow(role).fallback.builtin } : null);
-    if (!ref && role !== 'ceiling' && !inherited) return null;
-    const source = override ? 'set here' : `from the ${roomMaterial ? 'room' : level?.materials?.[role] ? 'level' : 'building'}`;
+  const level = building.levels?.find(l => l.id === piece.level) || (['roof','dormer'].includes(kind)
+    ? [...(building.levels || [])].filter(l => l.elevation + .5 < piece.plate).sort((a,b) => b.elevation-a.elevation)[0] : null);
+  const line = (label, role, override, target, roomMaterial, surface, extra = {}) => {
+    const descriptor = () => ({ role, ref: override, building, level, ...extra,
+      ...(extra.itemColour && !override?.id ? {building:null,level:null} : {}) });
+    const description = () => {
+      const itemColour = extra.itemColour && !override?.id;
+      const result = surfaceDescription(itemColour ? {} : plan, descriptor(), kit);
+      if (itemColour) result.current.id = null; // A raw item colour has no Library tile to reveal.
+      return result;
+    };
     const reset = override || roomMaterial ? null
       : level?.materials?.[role] ? { target: { level: level.id, role }, label: 'Clear for this floor' }
         : building.materials?.[role] ? { target: { building: building.id, role }, label: 'Clear for the building' } : null;
-    const result = { label, get current() { return describeMaterial(ref, kit); }, text: !override && inherited || (ref ? `${materialName(ref.id || ref.asset)}, ${source}` : 'House look'), target, clear: !!override, reset: target.part ? null : reset };
+    const result = { label, get current() { return description().current; }, get text() { return description().text; },
+      get inherited() { return description().inherited; }, get ref() { return override; }, get resolved() { return description().ref; },
+      target, clear: !!override, reset: target.part ? null : reset };
     // Not enumerable: the card compares lines as text, never whole buildings.
-    Object.defineProperty(result, 'surface', { value: { building, piece, kind, role, level: piece.level, ...surface } });
+    Object.defineProperty(result, 'surface', { value: { building, piece, kind, role, level: level?.id || piece.level, ...surface } });
+    Object.defineProperty(result, 'setRef', { value: ref => { override = ref; } });
     return result;
   };
   const itemLine = (part, item = piece, targetKind = kind) => {
     const row = kindRow(part), fallback = row.fallback;
     const itemLevel = building.levels?.find(l => l.id === (item.level || building.walls?.find(w => w.id === item.wall)?.level));
     const colour = part === 'cabinet' ? item.body : part === 'counter' ? item.top : null;
-    const ref = resolveSlot(part, { building, level: itemLevel });
-    const parent = fallback.role && (building.materials?.[fallback.role] || plan.materials?.[fallback.role] || kit?.materials?.[fallback.role]);
-    const inherited = colour ? `Item colour ${colour}` : ref ? `${materialName(ref.id || ref.asset)}, from the ${itemLevel?.materials?.[part] ? 'level' : 'building'}`
-      : parent ? `${materialName(parent.id || parent.asset)}, house look`
-        : fallback.builtin ? `Built-in ${fallback.builtin}` : 'House look';
+    const parent = fallback.role ? resolveSurfaceMaterial(plan, {role:fallback.role, building,
+      level:part === 'garage_door' ? itemLevel : null, kit}) : null;
     const labels = { window_frame: 'Frame', pane: 'Pane', door: 'Door', screen: 'Screen', stair_tread: 'Treads', stair_rail: 'Rail', counter: 'Counter' };
     const target = { [targetKind]: item.id, part };
     return line(labels[part] || row.label, part, item.materials?.[part], target, null,
-      { kind: targetKind, piece: item, target, label: `${item.name || item.kind || targetKind} ${labels[part] || row.label}` }, inherited);
+      { kind: targetKind, piece: item, target, label: `${item.name || item.kind || targetKind} ${labels[part] || row.label}` },
+      { level:itemLevel, itemColour:!!colour, fallback:colour ? {ref:{id:`Item colour ${colour}`,color:colour},source:{kind:'kit',id:`Item colour ${colour}`}} : parent,
+        defaultRef:{id:fallback.builtin || fallback.look || 'ceramic'} });
   };
   if (kind === 'opening') {
     const parts = piece.kind === 'door' ? ['door', 'casing', 'window_frame', ...(piece.glass === 'half' ? ['pane'] : [])]
@@ -83,12 +92,32 @@ export function materialLines(record, plan, kit) {
     // Room scope on an outside face refers to the room behind that wall.
     const room = face.room || wallFace(building, piece, side === 'left' ? 'right' : 'left').room;
     return line(label, face.role, piece.faces?.[side], { wall: piece.id, side }, face.room?.wall_material,
-      { side, room, label: `${label.toLowerCase()} face` });
+      { side, room, label: `${label.toLowerCase()} face` }, { room:face.room, roomRole:'wall' });
   }).filter(Boolean);
   if (kind === 'room') return [line('Floor', 'floor', piece.floor_material, { room: piece.id, surface: 'floor' }, null, { room: piece, surface: 'floor', label: 'floor' }),
     line('Ceiling', piece.kind === 'porch' ? 'porch_ceiling' : 'ceiling', piece.ceiling_material, { room: piece.id, surface: 'ceiling' }, null, { room: piece, surface: 'ceiling', label: 'ceiling' }),
-    piece.wall_material && line('Walls', 'interior_wall', piece.wall_material, { room: piece.id, surface: 'walls' }, null, { room: piece, surface: 'walls', label: 'walls' }), ...porchLines].filter(Boolean);
-  if (kind === 'roof') return [line('Roof', 'roof', piece.material, { roof: piece.roof || piece.id }, null, { label: 'roof' })].filter(Boolean);
+    line('Walls', 'interior_wall', piece.wall_material, { room: piece.id, surface: 'walls' }, null, { room: piece, surface: 'walls', label: 'walls' }), ...porchLines].filter(Boolean);
+  if (kind === 'roof') {
+    const id = piece.roof || piece.id, authored = building.roofs?.find(r => r.id === id);
+    const sections = (building.roof?.sections || []).filter(s => (s.roof || s.id) === id);
+    const roof = authored || piece, planeRows = [], seen = new Set();
+    for (const section of sections.length ? sections : piece.rect ? [piece] : []) for (const plane of planes(section)) {
+      if (plane.edge === null || seen.has(plane.edge)) continue;
+      seen.add(plane.edge);
+      const normals = {x0:[-1,0],x1:[1,0],y0:[0,-1],y1:[0,1]}, normal = normals[plane.side];
+      const angle = (building.rotation || 0) * Math.PI / 180;
+      const x = normal && normal[0]*Math.cos(angle)-normal[1]*Math.sin(angle), y = normal && normal[0]*Math.sin(angle)+normal[1]*Math.cos(angle);
+      const side = Math.abs(x) > .999 ? x > 0 ? 'Right' : 'Left' : Math.abs(y) > .999 ? y > 0 ? 'Back' : 'Front' : null;
+      const label = side ? `${side} slope` : `Slope ${planeRows.length + 1}`;
+      const target = {roof:id,plane:plane.edge};
+      planeRows.push(line(label, 'roof', roof.plane_materials?.[plane.edge], target, null,
+        {target, label:label.toLowerCase()}, {parents:[roof.material, section.materials?.roof], parentLabel:'From the roof'}));
+    }
+    // Concave roofs may have multiple authored edges on the same side.
+    const counts = new Map(); for (const row of planeRows) counts.set(row.label, (counts.get(row.label) || 0) + 1);
+    for (const row of planeRows) if (counts.get(row.label) > 1) row.label += ` ${row.target.plane + 1}`;
+    return [line('Roof', 'roof', roof.material, { roof:id }, null, { label:'roof' }), ...planeRows];
+  }
   if (kind === 'dormer') return [line('Roof', 'roof', piece.material, { dormer: piece.id }, null, { label: 'roof' })].filter(Boolean);
   return [];
 }
@@ -107,7 +136,7 @@ export function surfaceOperation(surface, scope, material) {
   if (role === 'water' && ['pool', 'spa'].includes(kind)) return kind === 'pool'
     ? { op: 'update_site_shape', list: 'pool', ...(piece.id ? { id: piece.id } : { index: 0 }), materials: { water: { id: material.id } } }
     : { op: 'update_pool_feature', id: piece.id, materials: { water: { id: material.id } } };
-  if (surface.target?.part) return { op: 'set_material', building: building.id, target: surface.target, material: { id: material.id } };
+  if (surface.target?.part || scope === 'face' && surface.target?.plane !== undefined) return { op: 'set_material', building: building.id, target: surface.target, material: { id: material.id } };
   let target;
   if (scope === 'building') target = { building: building.id, role };
   else if (scope === 'level') {

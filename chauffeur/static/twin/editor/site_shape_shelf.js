@@ -6,6 +6,9 @@ import { linkEntityPicker } from './object_shelf.js';
 import { pathOutline } from '../path_shapes.js';
 import { PAVER_DEFAULTS, paverSettings } from '../paver_layout.js';
 import { materialSlot } from './material_slot.js';
+import { surfaceDescription } from './material_catalog.js';
+import { resolveSurfaceMaterial } from '../surface_material.js';
+import { porchFoundationRole } from '../twin_porch_foundation.js';
 
 const title = word => word[0].toUpperCase() + word.slice(1);
 const ROLE_WORDS = { patio_concrete: 'Concrete', paving: 'Pavers', base: 'Stone', fence: 'Wood', mulch: 'Mulch', granite: 'Granite', lawn: 'Grass' };
@@ -23,6 +26,7 @@ export function siteMaterialSlots(kind, piece) {
       ? [['joint', 'Joint', paverSettings(piece).joint === 'gravel' ? 'Stone' : 'Sand']] : [])];
   if (kind === 'beds') return [['fill', 'Fill', ROLE_WORDS[role || 'mulch'] || title(role)]];
   if (kind === 'pool') return [['coping', 'Coping', ROLE_WORDS[role || 'paving'] || title(role)], ['interior', 'Interior', 'Pool tile'], ['waterline', 'Waterline tile', 'Blue tile'], ['water', 'Water', 'House water']];
+  if (['ledge', 'steps'].includes(kind)) return [['interior', 'Interior', 'Pool interior'], ['coping', 'Coping', 'Pool liner']];
   // A flush spa's outer wall is under the pool water, so only a raised spa has cladding.
   if (kind === 'spa') return [['coping', 'Coping', 'Pool coping'], ['interior', 'Interior', 'Pool interior'], ['waterline', 'Waterline tile', 'Pool waterline tile'],
     ...((piece.mode ?? 'raised') === 'raised' ? [['wall', 'Cladding', 'Stone']] : []), ['water', 'Water', 'Pool water']];
@@ -30,6 +34,31 @@ export function siteMaterialSlots(kind, piece) {
   if (kind === 'fence') return [['boards', piece.type === 'panel' ? 'Panel' : ['picket', 'metal'].includes(piece.type) ? 'Pickets' : 'Boards', 'Wood'],
     ['posts', 'Posts', 'Wood'], ['rails', piece.type === 'panel' ? 'Top rail' : 'Rails', 'Wood']];
   return [];
+}
+
+export function siteMaterialDescription(plan, kind, piece, part, ref, kit = {}) {
+  const pool = plan.site?.pool || {}, feature = ['ledge','steps','spa'].includes(kind);
+  const material = piece.material === 'concrete' ? 'patio_concrete' : piece.material;
+  let role = kit.materials?.[material] ? material : ({hardscape:'paving',beds:'mulch',edges:'lawn',fence:'fence'}[kind] || 'paving');
+  const descriptor = {ref};
+  if (kind === 'pool' || feature) {
+    role = part === 'water' ? 'water' : part === 'wall' ? 'base' : 'pool_' + part;
+    if (feature && part !== 'wall') descriptor.parents = [pool.materials?.[part]];
+    if (part === 'coping') descriptor.fallback = resolveSurfaceMaterial(plan, {role:kit.materials?.[pool.material] ? pool.material : 'paving', kit});
+  } else if (kind === 'hardscape' && part !== 'surface') role = part === 'edging' ? 'patio_concrete' : paverSettings(piece)?.joint === 'sand' ? 'paver_sand' : 'base';
+  else if (kind === 'fire_pit') role = part === 'body' ? porchFoundationRole(firePitOptions(piece).body)
+    : (piece.top === 'concrete' ? 'patio_concrete' : 'granite');
+  const result = surfaceDescription(plan, {...descriptor, role}, kit);
+  if (feature && part === 'coping' && kind !== 'spa') {
+    const chosen = ref?.id || ref?.color || pool.materials?.coping?.id || pool.materials?.coping?.color
+      || result.ref.color || result.source.kind !== 'kit';
+    if (!chosen) {
+      const liner = siteMaterialDescription(plan, kind, piece, 'interior', piece.materials?.interior, kit);
+      return {...liner, inherited:true, text:`Pool liner: ${liner.current.name}`, ref:{...liner.ref, ...(result.ref.uv ? {uv:result.ref.uv} : {})}};
+    }
+  }
+  if (!ref?.id && descriptor.parents?.some(parent => parent?.id)) result.text = `From the pool: ${result.current.name}`;
+  return result;
 }
 
 // Old rooms kept only the copied outline. New ones retain the source id even
@@ -51,7 +80,7 @@ export function yardRoomFeatures(plan, room) {
 }
 
 // Uses the object shelf's labels, number inputs and Advanced disclosure.
-export function drawSiteShapeShelf(host, record, { library, ownSlot, canEdit, queue, op, report, getRecord = () => record, onSaved = () => {}, haAvailable = false, onMakeRoom = () => {}, getKit = () => ({}), onDrawFeature = () => {} }) {
+export function drawSiteShapeShelf(host, record, { library, ownSlot, canEdit, queue, op, report, getPlan = () => ({}), getRecord = () => record, onSaved = () => {}, haAvailable = false, onMakeRoom = () => {}, getKit = () => ({}), onDrawFeature = () => {} }) {
   const section = document.createElement('section'); section.setAttribute('aria-label', 'Yard shape properties'); host.append(section);
   const advanced = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Advanced'; advanced.append(summary);
   const save = change => queue(async () => {
@@ -113,6 +142,7 @@ export function drawSiteShapeShelf(host, record, { library, ownSlot, canEdit, qu
   // One op per change: { materials: { part: slot or null } } (null is the default look).
   for (const [part, label, defaultLabel] of siteMaterialSlots(kind, piece)) section.append(materialSlot({ library, ownSlot,
     label, value: piece.materials?.[part] || null, defaultLabel, kit: getKit(), readOnly: () => !canEdit(), report,
+    resolve: ref => siteMaterialDescription(getPlan(), kind, getRecord()?.piece || piece, part, ref, getKit()),
     onChange: slot => queue(async () => {
       const current = getRecord(); if (!current) return;
       await op(shapeOperation(current, { materials: { [part]: slot } }));

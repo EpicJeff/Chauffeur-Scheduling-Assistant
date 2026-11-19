@@ -261,19 +261,19 @@ library = createLibrary({view,kit,getPlan:()=>flat,tools,op,canEdit:()=>true,sig
 tools.delegate({pointerDown:library.pointerDown,pointerMove:library.pointerMove,pointerUp:library.pointerUp,selectionChanged:library.refresh});
 let passed=0;const ok = label => {passed++;console.log('  ok '+label);};
 const record = {kind:'wall',piece:front,building:b};
-assert.ok(materialLines(record,flat,kit).some(l=>l.text.endsWith(', from the building')));
+assert.ok(materialLines(record,flat,kit).some(l=>l.text.startsWith('House default: ')));
 front.faces={right:{id:finish.id,color:finish.color}};
 assert.equal(materialLines(record,flat,kit).filter(l=>l.clear).length,1);
 assert.equal(materialLines(record,flat,kit).find(l=>l.clear).text,'Red brick 03, set here');
 tools.select({pieceId:front.id,buildingId:b.id});
-const clear=descendants(doc.getElementById('piece-card')).find(n=>n.textContent==='Clear');clear.dispatchEvent(new Event('click'));
+const clear=descendants(descendants(doc.getElementById('piece-card')).find(n=>n.dataset.librarySlot==='Outside')).find(n=>n.textContent==='Clear');clear.dispatchEvent(new Event('click'));
 await new Promise(r=>setTimeout(r,0));assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{wall:front.id,side:'right'},material:null});
 delete front.faces;
 const level=b.levels.find(l=>l.id===front.level);level.materials={siding:{id:'level_finish',color:'#334455'}};
-assert.ok(materialLines(record,flat,kit).some(l=>l.text==='Level finish, from the level'));delete level.materials;
+assert.ok(materialLines(record,flat,kit).some(l=>l.text==='From this floor: Level finish'));delete level.materials;
 const inside=wallFace(b,front,'left');assert.equal(inside.room.id,room.id);
 room.wall_material={id:'room_finish',color:'#445566'};
-assert.ok(materialLines(record,flat,kit).some(l=>l.text==='Room finish, from the room'));delete room.wall_material;
+assert.ok(materialLines(record,flat,kit).some(l=>l.text==='From the room: Room finish'));delete room.wall_material;
 assert.deepEqual(surfaceOperation({building:b,piece:front,kind:'wall',side:'right',room,role:'siding'},'room',finish).target,{room:room.id,surface:'walls'});
 ok('real card Clear posts once; material source follows face, room, level and building');
 

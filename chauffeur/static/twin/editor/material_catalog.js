@@ -1,4 +1,17 @@
 import { request } from './api.js';
+import { resolveSurfaceMaterial } from '../surface_material.js';
+
+// The renderer owns inheritance; editor owners only describe their receiving slot.
+export function surfaceDescription(plan, surface, kit = {}) {
+  const resolution = resolveSurfaceMaterial(plan, { ...surface, kit });
+  const current = describeMaterial({...resolution.ref, id:resolution.source.id}, kit);
+  // Two kit roles can share a texture asset while keeping different tints.
+  current.color = describeMaterial(resolution.ref, kit)?.color || current.color;
+  const name = materialName(resolution.source.id);
+  const inherited = !surface.ref?.id;
+  const prefix = { level: 'From this floor', room: 'From the room', surface:surface.parentLabel }[resolution.source.kind] || 'House default';
+  return { ...resolution, current, inherited, text: inherited ? `${prefix}: ${name}` : `${name}, set here` };
+}
 // Both the Library and in-place feature slots read this same server catalogue.
 export async function readLibraryCatalog() {
   const [library, materials] = await Promise.all([

@@ -9,6 +9,8 @@ import { createSiteDrawing, snapSitePoint, polygonArea } from './site_drawing.js
 import { pathPresets, pathOutline } from '../path_shapes.js';
 import { placedPit, firePitOutline } from '../fire_pits.js';
 import { materialSlot } from './material_slot.js';
+import { surfaceDescription } from './material_catalog.js';
+import { retainingWallRole } from '../twin_retaining_wall.js';
 import { contains } from '../twin_generator.js';
 import { DRAG_THRESHOLD_PX, HANDLE_HIT_PX } from './picking.js';
 
@@ -342,6 +344,8 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
           const owner = nested ? value.rail : value;
           card.append(materialSlot({ library, ownSlot, label: `Edge ${i + 1} ${title}`, value: owner.materials?.[key] || null,
             defaultLabel: fallback, kit: getKit(), readOnly: () => !canEdit(), report,
+            resolve: ref => surfaceDescription(getPlan(), {ref, role:nested ? 'black_metal'
+              : key === 'face' ? retainingWallRole(value.material) : 'patio_concrete'}, getKit()),
             onChange: ref => {
               const next = latest(), owner = nested ? next.rail : next;
               owner.materials = { ...owner.materials, [key]: ref };
