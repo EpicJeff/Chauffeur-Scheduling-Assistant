@@ -1,3 +1,4 @@
+import { slotDragTarget, sendSlotDrag } from './slot_row.js';
 import { snapValue } from './snap.js';
 import { createTypedValue } from './typed_value.js';
 import { applyLocal } from './local_ops.js';
@@ -210,13 +211,100 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   const raycaster = new THREE.Raycaster(), thumbnails = { current: null };
   let catalog = null, loading = null, tab = 'materials', drag = null, siteDrag = null, chooser = null, picking = null;
   const importNodes = new Map();
-  let browsePending = false;
+  let browsePending = false, selection = null, dragRow = null, suppressClick = false, actionEntry = null;
+  let browsing = null, catalogRevision = 0;
+  const selectionListeners = new Set();
+  const tiles = new Map();
   const hint = 'Drag a thumbnail onto the house or yard.';
   const outline = new THREE.Box3Helper(new THREE.Box3(), '#52ccff'); outline.visible = false; view.scene.add(outline);
   outline.material.fog = false;
   const listen = (node, type, action, options = {}) => node.addEventListener(type, action, { ...options, signal });
   const rowMenu = createMenu?.({ signal, items: target => target.actions.map(node => ({ label: node.textContent,
     disabled: node.disabled, run: () => node.click() })) });
+  const asset = (entry, material = entry.kind === 'material') => ({ ...entry,
+    kind: material ? 'material' : entry.kind || 'furniture',
+    thumb: entry.thumbnail_url || (entry.thumbnail ? libUrl(entry.id, entry.thumbnail) : entry.thumb) || null });
+  function assetActions(entry, material) {
+    const actions = [];
+    if (material) {
+      const edit = document.createElement('a'); edit.textContent = 'Edit in Library'; edit.href = libraryMaterialHref(entry.id);
+      edit.target = '_blank'; edit.rel = 'noopener'; edit.className = 'library-edit-link';
+      edit.setAttribute('aria-label', 'Edit in Library'); actions.push(edit);
+    }
+    if (entry.id.startsWith('import-')) for (const action of ['Rename', 'Delete']) {
+      const control = document.createElement('button'); control.type = 'button'; control.textContent = `${action} ${entry.name}`;
+      control.dataset.libraryAction = action;
+      control.disabled = !canEdit();
+      control.addEventListener('click', async () => {
+        if (!canEdit() || signal.aborted) return;
+        try {
+          if (action === 'Rename') {
+            const name = await window.promptInput('Model name', 'Name this model.', { value: entry.name });
+            if (name?.trim()) await changedImport(await request('imports/' + entry.id, 'PATCH', { name: name.trim() }));
+          } else if (await window.promptConfirm(`Delete ${entry.name}?`, 'Placed models must be removed from the scene first. Earlier timeline placements retain their files.', 'Delete', 'Cancel')) {
+            importsQueue?.cancel(entry.id);
+            await request('imports/' + entry.id, 'DELETE');
+            forgetImport(entry.id);
+            await changedImport(entry, { removed: true });
+          }
+        } catch (error) { report(error); }
+      });
+      actions.push(control);
+    }
+    return actions;
+  }
+  function drawSelection() {
+    for (const { button, entry, material } of tiles.values())
+      button.setAttribute('aria-pressed', String(!!selection && selection.id === entry.id && selection.kind === asset(entry, material).kind));
+    const bar = el('library-actions');
+    if (!bar) return;
+    bar.hidden = !selection;
+    if (!selection) { bar.replaceChildren(); actionEntry = null; return; }
+    if (actionEntry?.id === selection.id && (actionEntry.kind === 'material') === (selection.kind === 'material')) {
+      Object.assign(actionEntry, selection);
+      for (const node of bar.querySelectorAll('button')) if (node.dataset.libraryAction) {
+        node.textContent = `${node.dataset.libraryAction} ${selection.name}`; node.disabled = !canEdit();
+      }
+      return;
+    }
+    actionEntry = { ...selection };
+    bar.replaceChildren(); bar.append(...assetActions(actionEntry, selection.kind === 'material'));
+    const clear = document.createElement('button'); clear.type = 'button'; clear.textContent = 'Clear selection';
+    clear.addEventListener('click', () => select(null)); bar.append(clear);
+  }
+  function select(entry) {
+    selection = entry ? asset(entry) : null;
+    drawSelection();
+    for (const fn of selectionListeners) fn(selection);
+  }
+  function syncSelection() {
+    if (selection && catalog) {
+      const entry = [...catalog.materials.map(e => asset(e, true)), ...catalog.items.map(e => asset(e, false)),
+        ...(catalog.imports || []).filter(e => !e.archived).map(e => asset(e, false))]
+        .find(e => e.id === selection.id);
+      select(entry || null);
+    } else drawSelection();
+  }
+  async function reveal(kind, id) {
+    stopPicking(); tab = kind === 'material' ? 'materials' : 'items';
+    if (el('library-search')) el('library-search').value = '';
+    host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true'); dock?.show('library');
+    await browse();
+    if (signal.aborted) return;
+    const button = tiles.get(id)?.button;
+    if (button) {
+      button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      button.classList.remove('library-revealed');
+      // Restart the reveal ring even when the same swatch is pressed twice.
+      void button.offsetWidth; button.classList.add('library-revealed');
+    }
+  }
+  function updateDragRow(event, entry) {
+    const next = slotDragTarget(document.elementFromPoint(event.clientX, event.clientY));
+    if (next !== dragRow) sendSlotDrag(dragRow, 'leave', entry);
+    dragRow = next; sendSlotDrag(dragRow, 'over', entry);
+    return dragRow;
+  }
   if (dialogs) listen(el('library-import-settings').querySelector('summary'), 'click', event => {
     event.preventDefault();
     dialogs.openDialog('library-import-settings-content', { title: 'Import settings' });
@@ -345,7 +433,20 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     await browse();
     el('library-entries').querySelector('button')?.focus();
   }
-  async function browse() {
+  function browse() {
+    // Opening the dock and revealing a slot can request the same cold browse.
+    // Share its completion so reveal always scrolls/flashes the final nodes.
+    browsing ||= (async () => {
+      let revision;
+      do {
+        revision = catalogRevision;
+        await renderCatalog();
+        if (revision !== catalogRevision) { catalog = null; loading = null; }
+      } while (revision !== catalogRevision && !signal.aborted);
+    })().finally(() => { browsing = null; });
+    return browsing;
+  }
+  async function renderCatalog() {
     if (drag) { browsePending = true; return; }
     if (!catalog) {
       loading ||= readLibraryCatalog().catch(error => { loading = null; throw error; });
@@ -366,7 +467,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     browsePending = false;
     thumbnails.current ||= createThumbnails(kit);
     const grid = el('library-entries'); grid.replaceChildren();
-    importNodes.clear();
+    importNodes.clear(); tiles.clear();
     if(tab==='items')for(const [tool,name,icon] of [['add-meter','Meter','gauge'],['add-electric-panel','Electric panel','utility-pole'],['add-charger','Charger','plug-zap'],['add-parking','Parking spot','car']]){
       const button=document.createElement('button');button.type='button';button.setAttribute('aria-label',name);button.append(svgIcon(icon),document.createTextNode(name));
       button.dataset.equipment=tool;
@@ -377,59 +478,44 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     if (el('library-import-limit')) el('library-import-limit').value = catalog.import_limit_mb || 50;
     const search = el('library-search')?.value?.toLowerCase() || '';
     for (const entry of [...catalog[tab], ...imports].filter(e => e.name.toLowerCase().includes(search))) {
+      const material = tab === 'materials';
       const button = document.createElement('button'); button.type = 'button'; button.dataset[tab === 'materials' ? 'material' : 'item'] = entry.id;
       button.setAttribute('aria-label', entry.name); button.style.touchAction = 'none';
       const image = document.createElement('img'); image.alt = ''; image.draggable = false; image.width = 112; image.height = 96;
       const name = document.createElement('span'); name.textContent = entry.name; button.append(image, name);
-      const rowActions = [];
-      if (tab === 'materials') {
-        const tile = document.createElement('div'); tile.className = 'library-material-tile'; grid.append(tile); tile.append(button);
-        const edit = document.createElement('a'); edit.textContent = 'Edit in Library'; edit.href = libraryMaterialHref(entry.id);
-        edit.target = '_blank'; edit.rel = 'noopener'; edit.className = 'library-edit-link';
-        edit.setAttribute('aria-label', `Edit ${entry.name} in Library`); tile.append(edit);
-        rowActions.push(edit);
-      } else grid.append(button);
+      grid.append(button);
+      tiles.set(entry.id, { button, entry, material });
       if (entry.thumbnail_url) image.src = entry.thumbnail_url;
       else if (entry.thumbnail) image.src = libUrl(entry.id, entry.thumbnail);
-      else thumbnails.current.picture(entry, tab === 'materials').then(url => { if (url && !signal.aborted) image.src = url; }).catch(report);
+      else thumbnails.current.picture(entry, material).then(url => {
+        if (!url || signal.aborted) return;
+        image.src = url; entry.thumb = url;
+        if (selection?.id === entry.id && [...(catalog?.materials || []), ...(catalog?.items || []), ...(catalog?.imports || [])].includes(entry))
+          select(asset(entry, material));
+      }).catch(report);
       if (entry.id.startsWith('import-')) {
-        const controls = [];
         importNodes.set(entry.id, { nodes: [button], update(next) {
           // Handlers and an active drag keep this same entry object and node.
           Object.assign(entry, next); name.textContent = entry.name; button.setAttribute('aria-label', entry.name);
           if (entry.thumbnail) image.src = libUrl(entry.id, entry.thumbnail);
-          controls.forEach((control, i) => { control.textContent = `${i ? 'Delete' : 'Rename'} ${entry.name}`; });
         } });
-        for (const action of ['Rename', 'Delete']) {
-          const control = document.createElement('button'); control.type = 'button'; control.textContent = `${action} ${entry.name}`;
-          controls.push(control); importNodes.get(entry.id).nodes.push(control);
-          listen(control, 'click', async () => {
-            if (!canEdit()) return;
-            try {
-              if (action === 'Rename') {
-                const name = await window.promptInput('Model name', 'Name this model.', { value: entry.name });
-                if (name?.trim()) await changedImport(await request('imports/' + entry.id, 'PATCH', { name: name.trim() }));
-              } else if (await window.promptConfirm(`Delete ${entry.name}?`, 'Placed models must be removed from the scene first. Earlier timeline placements retain their files.', 'Delete', 'Cancel')) {
-                importsQueue?.cancel(entry.id);
-                await request('imports/' + entry.id, 'DELETE');
-                forgetImport(entry.id);
-                await changedImport(entry, { removed: true });
-              }
-            } catch (error) { report(error); }
-          }); grid.append(control);
-          rowActions.push(control);
-        }
       }
       listen(button, 'pointerdown', event => {
         if (event.button !== 0 || !canEdit()) return;
-        onInteract?.(); dismiss(); event.preventDefault(); button.setPointerCapture(event.pointerId);
+        suppressClick = false;
+        onInteract?.(); dismiss(); event.preventDefault(); button.focus(); button.setPointerCapture(event.pointerId);
         drag = { entry, material: tab === 'materials', x: event.clientX, y: event.clientY, pointer: event.pointerId };
       });
       if (rowMenu) listen(button, 'contextmenu', event => {
-        event.preventDefault(); rowMenu.open(event, { actions: rowActions });
+        event.preventDefault(); rowMenu.open(event, { actions: assetActions(entry, tab === 'materials') });
       });
-      listen(button, 'click', () => {
-        if (!picking || tab !== 'materials' || !canEdit()) return;
+      listen(button, 'click', event => {
+        if (suppressClick && event.detail) { suppressClick = false; return; }
+        if (!picking || tab !== 'materials') {
+          const next = asset(entry, tab === 'materials');
+          select(selection?.id === next.id && selection.kind === next.kind ? null : next); return;
+        }
+        if (!canEdit()) return;
         const r = button.getBoundingClientRect?.() || { left: 0, top: 0, width: 0 };
         choose(picking, entry, { clientX: r.left + r.width / 2, clientY: r.top });
       });
@@ -446,6 +532,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
         if (rowMenu) listen(button, 'contextmenu', event => { event.preventDefault(); rowMenu.open(event, { actions: [button] }); });
       }
     }
+    syncSelection();
     host.querySelectorAll('[data-library-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.libraryTab === tab)));
     el('library-status').textContent = picking ? pickingWords() : hint;
   }
@@ -459,15 +546,16 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     const row = importNodes.get(entry.id);
     if (removed) {
       if (drag) browsePending = true;
-      else { row?.nodes.forEach(node => node.remove()); importNodes.delete(entry.id); }
+      else { row?.nodes.forEach(node => node.remove()); importNodes.delete(entry.id); tiles.delete(entry.id); }
     } else row?.update(entry);
+    syncSelection();
     if (added) { tab = 'items'; host.hidden = false; dock?.show('library'); el('rail-library').setAttribute('aria-pressed', 'true'); }
     if (added && !row) await browse();
   }
   const importsQueue = mountImports({ canvas, kit, canEdit, signal, changed: changedImport });
   const invalidateCatalog = () => {
-    catalog = null; loading = null;
-    if (dock ? dock.current() === 'library' : !host.hidden) browse().catch(report);
+    catalogRevision++; catalog = null; loading = null;
+    if (selection || (dock ? dock.current() === 'library' : !host.hidden)) browse().catch(report);
   };
   listen(window, 'focus', invalidateCatalog);
   listen(document, 'chf-materials-changed', invalidateCatalog);
@@ -494,25 +582,36 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   for (const button of host.querySelectorAll('[data-library-tab]')) listen(button, 'click', () => {
     tab = button.dataset.libraryTab; if (tab !== 'materials') stopPicking(); browse().catch(report);
   });
+  listen(document, 'pointermove', event => {
+    if (!drag || drag.pointer !== event.pointerId || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 3) return;
+    updateDragRow(event, asset(drag.entry, drag.material));
+  });
   listen(document, 'pointerup', event => {
     if (!drag || drag.pointer !== event.pointerId) return;
     const moved = drag; drag = null;
+    suppressClick = Math.hypot(event.clientX - moved.x, event.clientY - moved.y) >= 3;
     try {
       if (!canEdit() || Math.hypot(event.clientX - moved.x, event.clientY - moved.y) < 3) return;
+      const row = updateDragRow(event, asset(moved.entry, moved.material));
+      if (row) { sendSlotDrag(row, 'drop', asset(moved.entry, moved.material)); return; }
       if (!canvas.contains(document.elementFromPoint(event.clientX, event.clientY))) return;
       const surface = surfaceAt(event);
       if (moved.material) { if (surface) choose(surface, moved.entry, event); return; }
       const at = ground(event); if (!surface && (!at || !contains(getPlan().site?.lot || [], at))) return;
       try { op(itemOperation(surface, moved.entry, at)).catch(report); } catch (error) { report(error); }
-    } finally { if (browsePending) browse().catch(report); }
+    } finally { sendSlotDrag(dragRow, 'leave', asset(moved.entry, moved.material)); dragRow = null; if (browsePending) browse().catch(report); }
   }, { capture: true });
   listen(document, 'pointercancel', event => {
     if (!drag || drag.pointer !== event.pointerId) return;
-    drag = null; if (browsePending) browse().catch(report);
+    sendSlotDrag(dragRow, 'leave', asset(drag.entry, drag.material)); dragRow = null;
+    drag = null; suppressClick = false; if (browsePending) browse().catch(report);
   });
   listen(document, 'keydown', event => {
-    if (event.key !== 'Escape' || !chooser && !picking) return;
-    if (chooser) dismiss(); else stopPicking();
+    if (event.key !== 'Escape') return;
+    if (chooser) dismiss();
+    else if (picking) stopPicking();
+    else if (selection && host.contains(document.activeElement) && (!dock || dock.current() === 'library')) select(null);
+    else return;
     event.stopImmediatePropagation();
   }, { capture: true });
 
@@ -624,10 +723,12 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   view.controls.addEventListener('change', refresh);
   listen(canvas.parentElement, 'twinrebuilt', refresh);
   signal.addEventListener('abort', () => {
-    typed.hide(); dismiss(); thumbnails.current?.dispose(); if (siteDrag) view.controls.enabled = siteDrag.enabled;
+    typed.hide(); dismiss(); sendSlotDrag(dragRow, 'leave', null); dragRow = null; selectionListeners.clear(); thumbnails.current?.dispose(); if (siteDrag) view.controls.enabled = siteDrag.enabled;
     view.controls.removeEventListener('change', refresh); outline.removeFromParent(); outline.geometry.dispose(); outline.material.dispose();
   }, { once: true });
   return { key: typed.key, typedValue: typed.value, commit: exact => finishBody(false, exact),
     preview(plan) { const selected = tools.selection(), record = !selected.building && siteRecord(plan, selected.id); if (record) outline.box.copy(siteBox(record.piece, record.kind)); },
-    siteHits, pickSite, surfaceAt, ceilingAt, ground, pointerDown, pointerMove, pointerUp, refresh, pick };
+    siteHits, pickSite, surfaceAt, ceilingAt, ground, pointerDown, pointerMove, pointerUp, refresh, pick,
+    selected: () => selection, select, reveal,
+    onSelect(fn) { selectionListeners.add(fn); return () => selectionListeners.delete(fn); } };
 }

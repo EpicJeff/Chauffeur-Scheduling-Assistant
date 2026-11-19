@@ -118,6 +118,11 @@ def test_css_contract(p):
     assert 'width: var(--editor-dock-width)' in css[css.rindex('#editor-dock {'):]
     adopted = css[css.index('#editor-dialog :is(#place-view, #houses-panel, #editor-front-door, #editor-advanced)'):]
     assert 'transform: none' in adopted[:adopted.index('}')], 'adopted Houses must shed its old translate(-50%, -50%)'
+    actions = re.findall(r'#library-actions\s*\{([^}]+)\}', css)[-1]
+    assert 'position: sticky' in actions and 'bottom: 0' in actions, 'selected asset actions stay in reach above a long catalogue'
+    assert 'background: var(--editor-panel)' in actions and 'z-index: 1' in actions
+    assert p.inside(p.by_id('library-actions'), 'library-panel')
+    assert p.by_id('library-actions')['parent'] == p.by_id('library-entries')['parent']
     print('  ok every pressed icon has contrasting ink/background; canvas reserves exactly dock width')
 
 

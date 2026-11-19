@@ -27,6 +27,128 @@ await test('surface_operation_id_only',async()=>{
 finish();
 """
 
+SELECTIONS = PRELUDE + r"""
+const THREE=await import(three),{createLibrary}=await import(file('static/twin/editor/library.js'));
+const {createSlotRow}=await import(file('static/twin/editor/slot_row.js')).catch(()=>({}));
+const panel=document.getElementById('library-panel'),grid=document.getElementById('library-entries'),bar=document.getElementById('library-actions');
+panel.append(grid,bar,document.getElementById('library-search'));
+for(const name of ['materials','items']){const b=document.createElement('button');b.dataset.libraryTab=name;panel.append(b);}
+const canvas=document.createElement('canvas');document.getElementById('editor-scene').append(canvas);
+const view={scene:new THREE.Scene(),renderer3:{domElement:canvas},camera:new THREE.PerspectiveCamera(),controls:new EventTarget(),pick:()=>null};
+let dockTab='scene';const dockListeners=[];const dock={show:tab=>{dockTab=tab;dockListeners.forEach(fn=>fn(tab));},current:()=>dockTab,onShow:fn=>{dockListeners.push(fn);return()=>{};}};
+let catalogue=structuredClone(input.catalogue),materialRows=structuredClone(input.materials),requests=[];
+let detailReads=0,detailGate=null;
+// Thumbnail rendering is external to selection. Keep the real catalogue's ids/names/kinds.
+for(const row of [...catalogue.items,...catalogue.imports,...materialRows])row.thumbnail_url='/fixture.png';
+const imported={id:'import-selection',kind:'door',name:'Front door',thumbnail_url:'/door.png',lods:[{name:'medium.glb'},{name:'low.glb'}]};catalogue.imports.push(imported);
+globalThis.fetch=async(url,options={})=>{
+ requests.push([url,options]);let result;
+ if(url.endsWith('/materials'))result={materials:materialRows};
+ else if(url.endsWith('/materials/material-reveal')){
+  const ordinal=++detailReads;await detailGate;if(ordinal===1)await new Promise(r=>setTimeout(r,50));
+  result={id:'material-reveal',revision:1,params:{},maps:{}};
+ }
+ else if(url.endsWith('/library'))result=catalogue;
+ else if(url.endsWith('/imports'))result=[];
+ else if(url.endsWith('/imports/'+imported.id)){
+  if(options.method==='PATCH')Object.assign(imported,JSON.parse(options.body));
+  if(options.method==='DELETE')catalogue.imports=catalogue.imports.filter(e=>e.id!==imported.id);
+  result=imported;
+ } else if(url.endsWith('/import-settings'))result={limit_mb:50};
+ else throw Error('unexpected '+url);
+ return new Response(JSON.stringify(result));
+};
+const abort=new AbortController(),sceneSelection={kind:'wall',id:'kept'},ops=[],menus=[];
+const library=createLibrary({view,kit:input.kit,getPlan:()=>input.household,tools:{selection:()=>sceneSelection},op:async o=>ops.push(o),canEdit:()=>true,signal:abort.signal,dock,
+ createMenu:options=>({open:(event,target)=>menus.push(options.items(target))})});
+const wait=async()=>{await new Promise(r=>setTimeout(r,25));};
+dock.show('library');await wait();
+const tile=id=>grid.querySelector(`[data-material="${id}"], [data-item="${id}"]`);
+const first=materialRows[0],last=materialRows.at(-1),byText=text=>bar.querySelectorAll('button,a').find(n=>n.textContent===text);
+await test('tile clicks select, toggle and never change the scene or apply',async()=>{
+ assert.equal(typeof library.selected,'function');
+ await fire(tile(first.id),'pointerdown',{button:0,pointerId:1,clientX:10,clientY:10});
+ await fire(document,'pointerup',{pointerId:1,clientX:10,clientY:10});await click(tile(first.id));
+ assert.equal(document.activeElement,tile(first.id),'pointer selection keeps focus in the Library for Esc');
+ assert.equal(library.selected().kind,'material');assert.equal(library.selected().id,first.id);assert.equal(library.selected().thumb,'/fixture.png');
+ assert.equal(tile(first.id).getAttribute('aria-pressed'),'true');assert.equal(ops.length,0);assert.equal(sceneSelection.id,'kept');
+ await click(tile(last.id));assert.equal(tile(first.id).getAttribute('aria-pressed'),'false');
+ await click(tile(last.id));assert.equal(library.selected(),null);
+});
+await test('selection survives subtab, dock, search, real catalogue reread and scene refresh',async()=>{
+ library.select({...first,kind:'material'});const changes=[];const off=library.onSelect(e=>changes.push(e));
+ await click(panel.querySelector('[data-library-tab="items"]'));dock.show('scene');dock.show('library');await wait();assert.equal(library.selected().id,first.id);
+ await click(panel.querySelector('[data-library-tab="materials"]'));
+ document.getElementById('library-search').value='no-match';await fire(document.getElementById('library-search'),'input');
+ assert.equal(library.selected().id,first.id);document.getElementById('library-search').value='';
+ materialRows=materialRows.map(e=>({...e,name:e.id===first.id?'Updated family finish':e.name}));
+ await fire(document,'chf-materials-changed');await wait();library.refresh();
+ assert.equal(library.selected().name,'Updated family finish');assert.equal(tile(first.id).getAttribute('aria-pressed'),'true');
+ assert.ok(changes.some(e=>e?.name==='Updated family finish'));off();
+ dock.show('scene');materialRows=materialRows.filter(e=>e.id!==first.id);await fire(window,'focus');await wait();assert.equal(library.selected(),null);
+ assert.equal(dockTab,'scene','external deletion reconciles selection without opening Library');dock.show('library');await wait();
+});
+await test('action bar and tile context menu keep the material link and import calls',async()=>{
+ const asset=materialRows.at(-1);await click(tile(asset.id));
+ assert.equal(grid.querySelector('a'),null);const edit=byText('Edit in Library');assert.ok(edit.href.endsWith('material='+encodeURIComponent(asset.id)));
+ assert.equal(edit.target,'_blank');assert.equal(edit.rel,'noopener');
+ await fire(tile(asset.id),'contextmenu');assert.deepEqual(menus.at(-1).map(e=>e.label),['Edit in Library']);
+ await click(panel.querySelector('[data-library-tab="items"]'));await click(tile(imported.id));
+ assert.equal(grid.querySelectorAll('button').filter(n=>/^Rename |^Delete /.test(n.textContent)).length,0);
+ const focusedRename=byText('Rename Front door');focusedRename.focus();await fire(window,'focus');await wait();
+ assert.ok(focusedRename.isConnected,'catalogue/background updates keep the action controls attached');
+ assert.equal(document.activeElement,focusedRename);
+ window.promptInput=async()=> 'Renamed door';await click(byText('Rename Front door'));
+ assert.equal(library.selected().name,'Renamed door');assert.ok(byText('Delete Renamed door'));
+ assert.equal(JSON.parse(requests.find(([url,o])=>o.method==='PATCH')[1].body).name,'Renamed door');
+ imported.kind='window';await fire(window,'focus');await wait();
+ assert.equal(library.selected()?.kind,'window','selection follows catalogue metadata by id when an import changes kind');
+ await fire(tile(imported.id),'contextmenu');assert.deepEqual(menus.at(-1).map(e=>e.label),['Rename Renamed door','Delete Renamed door']);
+ let asked=0;window.promptConfirm=async()=>{asked++;return false;};await click(byText('Delete Renamed door'));assert.ok(tile(imported.id));
+ window.promptConfirm=async()=>{asked++;return true;};await click(byText('Delete Renamed door'));
+ assert.equal(asked,2);assert.equal(tile(imported.id),null);assert.equal(library.selected(),null);
+ assert.equal(requests.filter(([url,o])=>o.method==='DELETE').length,1);
+});
+await test('reveal clears search, switches dock and subtab, scrolls and flashes without selecting',async()=>{
+ library.select(null);document.getElementById('library-search').value='no-match';dock.show('scene');
+ let scrolled=[];Element.prototype.scrollIntoView=function(){scrolled.push(this);};
+ await library.reveal('material',last.id);assert.equal(dockTab,'library');assert.ok(scrolled.includes(tile(last.id)));
+ assert.ok(tile(last.id).classList.contains('library-revealed'));assert.equal(library.selected(),null);
+ const revealed=tile(last.id);await wait();assert.equal(tile(last.id),revealed,'late catalogue work does not replace the revealed tile');
+ const item=catalogue.items.at(-1);await library.reveal(item.kind,item.id);assert.ok(scrolled.includes(tile(item.id)));assert.equal(library.selected(),null);
+});
+await test('Esc clears only a focused Library selection; clear action works',async()=>{
+ await library.reveal('material',last.id);await click(tile(last.id));canvas.focus();await fire(document,'keydown',{key:'Escape'});assert.ok(library.selected());
+ tile(last.id).focus();await fire(document,'keydown',{key:'Escape'});assert.equal(library.selected(),null);
+ await click(tile(last.id));await click(byText('Clear selection'));assert.equal(library.selected(),null);
+});
+await test('real tile pointer drags assign slots without changing Library selection',async()=>{
+ assert.equal(typeof createSlotRow,'function');library.select({...materialRows[0],kind:'material'});
+ const before=library.selected().id,applied=[];
+ const row=createSlotRow({label:'Floor',accepts:e=>e.kind==='material',current:()=>null,apply:e=>applied.push(e),clear(){},library});document.body.append(row.element);
+ document.elementFromPoint=()=>row.element.querySelector('[data-slot-use]');
+ await fire(tile(last.id),'pointerdown',{button:0,pointerId:2,clientX:10,clientY:10});
+ await fire(document,'pointermove',{pointerId:2,clientX:200,clientY:200});assert.ok(row.element.classList.contains('editor-slot-dragover'));
+ await fire(document,'pointerup',{pointerId:2,clientX:200,clientY:200});await fire(tile(last.id),'click',{detail:1});
+ assert.equal(applied.at(-1).id,last.id);assert.equal(library.selected().id,before);assert.equal(ops.length,0);
+ await fire(tile(last.id),'pointerdown',{button:0,pointerId:3,clientX:10,clientY:10});
+ await fire(document,'pointermove',{pointerId:3,clientX:200,clientY:200});await fire(document,'pointercancel',{pointerId:3});
+ assert.ok(!row.element.classList.contains('editor-slot-dragover'));row.dispose();
+});
+await test('cold reveal shares the dock catalogue read and flashes the final tile',async()=>{
+ library.select(null);dock.show('scene');
+ materialRows.push({id:'material-reveal',name:'Reveal finish',source:'user',revision:1,thumbnail_url:'/fixture.png'});
+ await fire(document,'chf-materials-changed');
+ let release;detailGate=new Promise(resolve=>release=resolve);
+ const pending=library.reveal('material','material-reveal');
+ for(let i=0;i<30&&!detailReads;i++)await wait();await wait();
+ const reads=detailReads;release();await pending;const revealed=tile('material-reveal');await new Promise(r=>setTimeout(r,80));
+ assert.equal(reads,1,'dock open and reveal share one household detail fetch');
+ assert.equal(tile('material-reveal'),revealed);assert.ok(revealed.classList.contains('library-revealed'));
+});
+abort.abort();finish();
+"""
+
 DRIVER = DRAG_DRIVER.split('const {createDrag, piecesOnMovedJoints}')[0] + r"""
 const THREE = await import(three);
 const {mountTwin} = await import(file('static/twin/twin_view.js'));
@@ -59,7 +181,8 @@ window.innerWidth = 1440; window.innerHeight = 900; window.showGlobalAlert = tex
 window.promptConfirm = async () => true;
 const panel = doc.getElementById('library-panel'); panel.hidden = true;
 for (const name of ['materials','items']) {const tab=doc.createElement('button');tab.dataset.libraryTab=name;panel.append(tab);}
-panel.append(doc.getElementById('library-entries'));
+panel.append(doc.getElementById('library-entries'),doc.getElementById('library-actions'));
+const actionBar=()=>descendants(doc.getElementById('library-actions'));
 const b = flat.buildings.find(b => b.id === 'pool-house'), room = b.rooms.find(r => r.name === 'Pool Lounge');
 const front = b.walls.find(w => w.id === 'wall:44b42dc9c06144adbeaeb88ce33b0430');
 const finish = {id:'red_brick_03',name:'Red brick 03',color:'#ad5946',thumbnail_url:'/ingress/test/stone.png'};
@@ -150,7 +273,10 @@ const materialButtons=()=>descendants(doc.getElementById('library-entries')).fil
 assert.ok(materialButtons().some(n=>n.dataset.material==='lattice'));
 assert.ok(!materialButtons().some(n=>n.dataset.material==='duplicate-preset'));
 assert.equal(materialButtons().find(n=>n.dataset.material===finish.id).children[0].src,finish.thumbnail_url);
-const editLink=descendants(doc.getElementById('library-entries')).find(n=>n.tag==='a'&&n.href.endsWith('material='+finish.id));
+const latticeTile=materialButtons().find(n=>n.dataset.material==='lattice');latticeTile.click();await settle();
+assert.equal(library.selected().thumb,latticeTile.children[0].src,'generated previews reach the slot selection metadata');
+materialButtons().find(n=>n.dataset.material===finish.id).click();
+const editLink=actionBar().find(n=>n.tag==='a'&&n.href.endsWith('material='+finish.id));
 assert.equal(editLink.textContent,'Edit in Library');assert.equal(editLink.target,'_blank');assert.equal(editLink.rel,'noopener');
 assert.ok(previewMaterials.some(m=>m.alphaMap?.isDataTexture&&m.alphaTest===.5&&m.side===THREE.DoubleSide),'Library thumbnail uses procedural lattice definition');
 ok('Lattice appears in the Library and its real thumbnail uses the generated cutout');
@@ -186,9 +312,10 @@ for(let i=0;i<1000&&!originalRequested;i++)await new Promise(r=>setTimeout(r,2))
 assert.ok(originalRequested,'background job loads the existing original');
 const grid=doc.getElementById('library-entries'),dragged=grid.children.find(n=>n.dataset.item===imported.id);
 const unrelated=grid.children.find(n=>n.dataset.item===chair.id);
-grid.children.find(n=>n.textContent==='Delete Delete queued').click();await settle();
+grid.children.find(n=>n.dataset.item===queuedDelete.id).click();
+actionBar().find(n=>n.textContent==='Delete Delete queued').click();await settle();
 assert.equal(deleted,true);assert.ok(!grid.children.some(n=>n.dataset.item===queuedDelete.id));
-dragged.dispatchEvent(event('pointerdown',120,150));
+dragged.click();dragged.dispatchEvent(event('pointerdown',120,150));
 releaseOriginal();
 for(let i=0;i<1000&&derivedCount<2;i++)await new Promise(r=>setTimeout(r,2));
 await settle();assert.equal(derivedCount,2,'real background exporter uploads both versions');
@@ -198,7 +325,7 @@ assert.equal(unrelated.parentElement,grid,'unrelated thumbnails stay attached to
 assert.equal(grid.children.find(n=>n.dataset.item===imported.id),dragged);
 assert.equal(dragged.getAttribute('aria-label'),'Ready chair');
 assert.equal(dragged.children[1].textContent,'Ready chair');
-assert.ok(grid.children.some(n=>n.textContent==='Rename Ready chair'));
+assert.ok(actionBar().some(n=>n.textContent==='Rename Ready chair'));
 doc.getElementById('library-search').value='Lounge';doc.getElementById('library-search').dispatchEvent(new Event('input'));
 await settle();assert.equal(dragged.parentElement,grid,'full browse is deferred during drag');
 const [dropX,dropY]=pixel([8,8,0]);doc.dispatchEvent(event('pointerup',dropX,dropY));await settle();
@@ -208,7 +335,8 @@ assert.equal(dragged.parentElement,null,'deferred search refresh runs after the 
 doc.getElementById('library-search').value='';doc.getElementById('library-search').dispatchEvent(new Event('input'));await settle();
 const renamed=grid.children.find(n=>n.dataset.item===imported.id),kept=grid.children.find(n=>n.dataset.item===chair.id);
 window.promptInput=async()=> 'Renamed chair';
-grid.children.find(n=>n.textContent==='Rename Ready chair').click();await settle();
+if(renamed.getAttribute('aria-pressed')!=='true')renamed.click();
+actionBar().find(n=>n.textContent==='Rename Ready chair').click();await settle();
 assert.equal(renamed.parentElement,grid);assert.equal(renamed.children[1].textContent,'Renamed chair');assert.equal(kept.parentElement,grid);
 renamed.dispatchEvent(event('pointerdown',120,150));
 doc.getElementById('library-search').dispatchEvent(new Event('input'));await settle();
@@ -306,6 +434,19 @@ def run():
         raise SystemExit(code)
     from services import twin_model_bridge, twin_model_ops, twin_library
     fixture = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
+    from services import twin_store, twin_materials, storage
+    from main import house_editor_library
+    from starlette.requests import Request
+    twin_store.push_round(fixture, 'build')
+    storage.add_member({'id': 'library-parent', 'name': 'Pat', 'role': 'parent'})
+    token = storage.create_member_token('library-parent')
+    request = Request({'type': 'http', 'headers': [(b'x-member-token', token.encode())], 'query_string': b''})
+    catalogue = house_editor_library(request)
+    code, output = run_node(SELECTIONS, {'root': ROOT.as_posix(), 'household': twin_store.current(),
+        'catalogue': catalogue, 'materials': twin_materials.catalogue()['materials'], 'kit': twin_library.kit('modern_farmhouse')})
+    print(output)
+    if code:
+        raise SystemExit(code)
     model = twin_model_bridge.assemble(fixture)[0]
     # A library plant must be drawable and survive both normalize and compose.
     from services import twin_compose
