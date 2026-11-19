@@ -37,18 +37,20 @@ await test('world radial haze endpoints, instancing and stable shared uniforms',
  haze.prepare();const key=material.customProgramCacheKey(),version=material.version;
  const shader={vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader,uniforms:{}};
  material.onBeforeCompile(shader);assert.equal(previous,1);assert.equal(shader.uniforms.oldPatch.value,3);
- assert.equal(shader.uniforms.stageSky.value,cube);
+ assert.equal(shader.uniforms.stageRing.value.length,40);assert.ok(!('stageSky' in shader.uniforms),'no sky sampler');
  const radius=shader.uniforms.stageRadius,centre=shader.uniforms.stageCentre;
  for(const r of [30,120,1000]) {haze.set({centre:[r,7],radius:r});haze.prepare();assert.equal(scene.fog,fog);assert.equal(material.customProgramCacheKey(),key);assert.equal(material.version,version);assert.equal(radius.value,r);assert.deepEqual(centre.value.toArray(),[r,7]);}
  const chunk=THREE.ShaderChunk.fog_vertex;
  assert.ok(chunk.includes('transformed')&&chunk.includes('instanceMatrix')&&chunk.includes('batchingMatrix')&&chunk.includes('modelMatrix'));
- assert.ok(THREE.ShaderChunk.fog_fragment.includes('textureCube( stageSky'));
+ assert.ok(THREE.ShaderChunk.fog_fragment.includes('stageSkyColour( stageRay )'));
+ // A sampler here cost every lit material a texture unit past ANGLE's 16 (owner's console, 2026-11-18).
+ assert.ok(!/\bsampler(2D|3D|Cube)\b/.test(THREE.ShaderChunk.fog_pars_fragment+THREE.ShaderChunk.fog_fragment),'haze uses no texture unit');
  assert.ok(THREE.ShaderChunk.fog_fragment.includes('linearToOutputTexel')&&THREE.ShaderChunk.fog_fragment.includes('stageToneMapping'));
  const overlay=new THREE.MeshBasicMaterial({fog:false});scene.add(new THREE.Mesh(new THREE.BoxGeometry(),overlay));
  const original=overlay.onBeforeCompile;haze.prepare();assert.equal(overlay.onBeforeCompile,original);
  const other=new THREE.Scene(),otherCube=new THREE.CubeTexture(),otherHaze=installStageHaze(other,{cube:otherCube});
  const otherMat=new THREE.MeshStandardMaterial();other.add(new THREE.Mesh(new THREE.BoxGeometry(),otherMat));otherHaze.prepare();
- const s={uniforms:{}};otherMat.onBeforeCompile(s);assert.equal(s.uniforms.stageSky.value,otherCube);assert.equal(shader.uniforms.stageSky.value,cube);
+ const s={uniforms:{}};otherMat.onBeforeCompile(s);assert.notEqual(s.uniforms.stageRing,shader.uniforms.stageRing,'each scene binds its own ring');
  otherHaze.dispose();haze.dispose();mesh.geometry.dispose();material.dispose();overlay.dispose();otherMat.dispose();
 });
 await test('every mounted house material keeps its patches and one r187 key across radii',async()=>{
@@ -62,7 +64,7 @@ await test('every mounted house material keeps its patches and one r187 key acro
   const lights=Object.fromEntries(['sun','directional','point','spot','spotLightMap','rectArea','hemi','sunShadowMap','directionalShadowMap','pointShadowMap','spotShadowMap'].map(k=>[k,[]]));lights.numSpotLightShadowsWithMaps=0;lights.numLightProbes=0;
   view.setTime('day');view.setView(view.levelKeys()[0]);view.render();
   let markers=0;view.scene.traverse(o=>{if(o.isSprite){markers++;assert.equal(o.material.fog,false,'screen-space navigation markers are unhazed');}});assert.ok(markers>0);
-  const rows=[];view.scene.traverse(o=>{for(const m of [].concat(o.material||[]))if(m.fog&&!m.isShaderMaterial){const id=m.isMeshPhysicalMaterial?'physical':m.isMeshStandardMaterial?'standard':m.isMeshMatcapMaterial?'matcap':'basic';const lib=THREE.ShaderLib[id];if(!lib)continue;const s={uniforms:THREE.UniformsUtils.clone(lib.uniforms),vertexShader:lib.vertexShader,fragmentShader:lib.fragmentShader};m.onBeforeCompile(s,renderer);assert.equal(s.uniforms.stageSky.value,view.scene.background,m.name);assert.ok(s.vertexShader.includes('#include <fog_vertex>'),m.name);assert.ok(s.fragmentShader.includes('#include <fog_fragment>'),m.name);rows.push([o,m,cache.getProgramCacheKey(cache.getParameters(m,lights,[],view.scene,o,[]))]);}});
+  const rows=[];view.scene.traverse(o=>{for(const m of [].concat(o.material||[]))if(m.fog&&!m.isShaderMaterial){const id=m.isMeshPhysicalMaterial?'physical':m.isMeshStandardMaterial?'standard':m.isMeshMatcapMaterial?'matcap':'basic';const lib=THREE.ShaderLib[id];if(!lib)continue;const s={uniforms:THREE.UniformsUtils.clone(lib.uniforms),vertexShader:lib.vertexShader,fragmentShader:lib.fragmentShader};m.onBeforeCompile(s,renderer);assert.equal(s.uniforms.stageRing.value.length,40,m.name);assert.ok(s.vertexShader.includes('#include <fog_vertex>'),m.name);assert.ok(s.fragmentShader.includes('#include <fog_fragment>'),m.name);rows.push([o,m,cache.getProgramCacheKey(cache.getParameters(m,lights,[],view.scene,o,[]))]);}});
   assert.ok(rows.length>10,'real built house and yard material paths execute');
   for(const radius of [30,120,1000]){await view.setStage({centre:[19,-11],radius,radius_override:radius});view.render();for(const[o,m,key]of rows)assert.equal(cache.getProgramCacheKey(cache.getParameters(m,lights,[],view.scene,o,[])),key,m.name);}
   assert.ok(view.scene.fog,'fog stays mounted');

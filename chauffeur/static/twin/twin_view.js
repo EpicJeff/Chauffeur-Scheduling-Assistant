@@ -1422,6 +1422,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const skyChanged = sky.update({sunDir, moonDir, moonPhase:illumination.phase, moonFraction:illumination.fraction,
       moonDistanceKm:lunar.distance, siderealTime:localSiderealTime(date,located.lon),
       frontBearingDeg:located.front_bearing_deg, overcast, latitude:located.lat, force:moved || forceSky});
+    if (skyChanged) stageHaze.refresh();
     lastOvercast = overcast;
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
       { shadows: settings.shadows, overcast, zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });

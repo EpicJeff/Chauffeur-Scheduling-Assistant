@@ -26,8 +26,26 @@ varying vec3 vStageWorld;
 #ifdef USE_FOG
 uniform vec2 stageCentre;
 uniform float stageRadius, stageEnabled, stageCanvas, stageExposure;
-uniform samplerCube stageSky;
+// The sky's colour on a ring of directions (8 azimuths x 5 depressions), not a
+// cube sampler: a sampler here cost every lit material one texture unit, and
+// water, glass and lamp-shadowed materials ran past the 16 units ANGLE gives
+// (owner's console, 2026-11-18). Haze is a smooth gradient; 40 colours hold it.
+uniform vec3 stageRing[40];
 varying vec3 vStageWorld;
+vec3 stageRingAt( int az, int el ) { return stageRing[ el * 8 + ( az - ( az / 8 ) * 8 ) ]; }
+vec3 stageSkyColour( vec3 ray ) {
+  float az = atan( ray.z, ray.x ) / 6.28318531 * 8.0;
+  az = az < 0.0 ? az + 8.0 : az;
+  float depression = degrees( asin( clamp( -ray.y, -1.0, 1.0 ) ) );
+  // Depression bands at 0, 2, 6, 15 and 40 degrees below the horizon.
+  float el = depression <= 0.0 ? 0.0 : depression < 2.0 ? depression / 2.0 : depression < 6.0 ? 1.0 + ( depression - 2.0 ) / 4.0
+    : depression < 15.0 ? 2.0 + ( depression - 6.0 ) / 9.0 : depression < 40.0 ? 3.0 + ( depression - 15.0 ) / 25.0 : 4.0;
+  int a0 = int( floor( az ) ), e0 = int( floor( el ) ), e1 = min( e0 + 1, 4 );
+  float fa = az - floor( az ), fe = el - floor( el );
+  vec3 lower = mix( stageRingAt( a0, e0 ), stageRingAt( a0 + 1, e0 ), fa );
+  vec3 upper = mix( stageRingAt( a0, e1 ), stageRingAt( a0 + 1, e1 ), fa );
+  return mix( lower, upper, fe );
+}
 // r187 ACESFilmicToneMapping. Haze follows the destination even when its
 // surface is an intentionally untonemapped bulb or luminous line.
 vec3 stageToneMapping( vec3 colour ) {
@@ -46,10 +64,9 @@ vec3 stageToneMapping( vec3 colour ) {
   vec3 stageView = isOrthographic ? -vec3( viewMatrix[0].z, viewMatrix[1].z, viewMatrix[2].z ) : vStageWorld - cameraPosition;
   float stageLength = length( stageView );
   vec3 stageRay = stageLength > 0.0001 ? stageView / max( stageLength, 0.0001 ) : vec3( 0.0, -1.0, 0.0 );
-  // The cube is a render-target cube: r187's flipEnvMap is +1.
   // Preserve depression as well as azimuth, matching the background's ground
   // aerial perspective for raised cameras and the low-tier canvas too.
-  vec3 stageColour = textureCube( stageSky, stageRay ).rgb;
+  vec3 stageColour = stageSkyColour( stageRay );
   stageColour = vec3( stageColour.r >= 0.0 ? min( stageColour.r, 4096.0 ) : 0.0,
     stageColour.g >= 0.0 ? min( stageColour.g, 4096.0 ) : 0.0,
     stageColour.b >= 0.0 ? min( stageColour.b, 4096.0 ) : 0.0 );
@@ -66,11 +83,29 @@ export function stageFade(point, centre, radius) {
   return t*t*(3-2*t);
 }
 
+export const STAGE_RING_DEPRESSIONS = [0, 2, 6, 15, 40];
+// Ring direction for azimuth index a (0..7, from +x toward +z) and depression band e.
+export function stageRingDirection(a, e) {
+  const az = a / 8 * Math.PI * 2, down = STAGE_RING_DEPRESSIONS[e] * Math.PI / 180;
+  return [Math.cos(az) * Math.cos(down), -Math.sin(down), Math.sin(az) * Math.cos(down)];
+}
+
 export function installStageHaze(scene, sky) {
   installChunks();
   scene.fog = new THREE.Fog(0, 0, 1);
+  const ring = Array.from({length: 40}, () => new THREE.Vector3());
   const uniforms = {stageCentre:{value:new THREE.Vector2()}, stageRadius:{value:1},
-    stageSky:{value:sky.cube}, stageEnabled:{value:1}, stageCanvas:{value:0}, stageExposure:{value:1}};
+    stageRing:{value:ring}, stageEnabled:{value:1}, stageCanvas:{value:0}, stageExposure:{value:1}};
+  // The same CPU radiance the cube is drawn from; refreshed whenever the sky changes.
+  const guard = v => Number.isFinite(v) && v > 0 ? Math.min(v, 4096) : 0;
+  function refresh() {
+    if (!sky?.horizon) return;
+    for (let e = 0; e < 5; e++) for (let a = 0; a < 8; a++) {
+      const c = sky.horizon(stageRingDirection(a, e));
+      ring[e * 8 + a].set(guard(c.r), guard(c.g), guard(c.b));
+    }
+  }
+  refresh();
   const patched = new WeakMap();
   function prepare(root = scene) {
     root.traverse(object => {
@@ -102,7 +137,7 @@ export function installStageHaze(scene, sky) {
     uniforms.stageExposure.value = Number.isFinite(renderer.toneMappingExposure) ? renderer.toneMappingExposure : 1;
     prepare();
   };
-  return {prepare,
+  return {prepare, refresh,
     set({centre, radius, enabled} = {}) {
       if (centre?.every(Number.isFinite)) uniforms.stageCentre.value.fromArray(centre);
       if (Number.isFinite(radius) && radius > 0) uniforms.stageRadius.value = radius;

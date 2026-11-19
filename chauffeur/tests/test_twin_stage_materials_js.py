@@ -9,7 +9,7 @@ from twin_editor_dom import run_node
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = PREFIX + r"""
 const THREE=await import('three');
-const {installStageHaze}=await import(file('static/twin/sky/stage_haze.js'));
+const {installStageHaze,STAGE_RING_DEPRESSIONS,stageRingDirection}=await import(file('static/twin/sky/stage_haze.js'));
 const {createSky,sampleRadiance}=await import(file('static/twin/sky/atmosphere.js'));
 const {patchLightmaps,lightmapUniforms,setLightTint}=await import(file('static/twin/bake/lightmap_material.js'));
 const {grassMaterial}=await import(file('static/twin/yard_grass.js'));
@@ -31,14 +31,15 @@ const assemble=(material,renderer)=>{
  material.onBeforeCompile(shader,renderer);return shader;
 };
 const verifyHaze=(shader,cube,label)=>{
- assert.equal(shader.uniforms.stageSky.value,cube,label+' shares this sky');
+ assert.equal(shader.uniforms.stageRing?.value?.length,40,label+' carries this sky ring');assert.ok(!('stageSky' in shader.uniforms),label+' no sky sampler');
  const vertex=expand(shader.vertexShader),fragment=expand(shader.fragmentShader);
  assert.ok(!/#include\s+</.test(vertex+fragment),label+' resolves every include');
  assert.equal((vertex.match(/varying vec3 vStageWorld;/g)||[]).length,1,label+' one vertex varying');
  assert.equal((fragment.match(/uniform float stageRadius\b/g)||[]).length,1,label+' one fragment uniform block');
  assert.ok(vertex.includes('vStageWorld = ( modelMatrix * stageWorld ).xyz;'),label+' world position');
  assert.ok(vertex.includes('stageWorld = instanceMatrix * stageWorld;'),label+' instances included');
- assert.ok(fragment.includes('textureCube( stageSky')&&fragment.includes('gl_FragColor.rgb = mix('),label+' horizon mix');
+ assert.ok(fragment.includes('stageSkyColour( stageRay )')&&fragment.includes('gl_FragColor.rgb = mix('),label+' horizon mix');
+ assert.ok(!/samplerCube stage/.test(fragment),label+' haze adds no texture unit');
  return {vertex,fragment};
 };
 const lights=Object.fromEntries(['sun','directional','point','spot','spotLightMap','rectArea','hemi','sunShadowMap','directionalShadowMap','pointShadowMap','spotShadowMap'].map(k=>[k,[]]));
@@ -131,7 +132,7 @@ await test('clones of already haze-wrapped grass and water keep one key and orig
   const otherScene=new THREE.Scene(),otherCube=new THREE.CubeTexture(),otherHaze=installStageHaze(otherScene,{cube:otherCube});
   const other=new THREE.Mesh(geometry,clone.material.clone());otherScene.add(other);otherHaze.prepare();otherHaze.set({radius:333});
   const otherShader=assemble(other.material,renderer);verifyHaze(otherShader,otherCube,'other scene');
-  assert.equal(otherShader.uniforms.stageRadius.value,333);assert.equal(snapshots[i].shader.uniforms.stageSky.value,cube);
+  assert.equal(otherShader.uniforms.stageRadius.value,333);assert.notEqual(otherShader.uniforms.stageRing,snapshots[i].shader.uniforms.stageRing,'each scene binds its own ring');
   assert.notEqual(otherShader.uniforms.stageRadius,snapshots[i].shader.uniforms.stageRadius,'scene bindings stay independent');
   assert.equal(other.material.customProgramCacheKey(),original.material.customProgramCacheKey());
   other.material.dispose();otherCube.dispose();otherHaze.dispose();clone.material.dispose();
@@ -152,8 +153,16 @@ await test('below-horizon haze samples the background cube view direction on can
  const rayExpr=chunk.match(/vec3 stageRay = ([^;]+);/)[1]
    .replace(/stageView \/ max\( stageLength, (\S+) \)/,'stageView.clone().divideScalar(max(stageLength,$1))');
  const ray=new Function('stageView','stageLength','max','vec3',`return ${rayExpr};`);
- const sampleExpr=chunk.match(/vec3 stageColour = ([^;]+);/)[1].replace(/\.rgb$/,'');
- const sample=new Function('textureCube','stageSky','stageRay',`return ${sampleExpr};`);
+ assert.equal(chunk.match(/vec3 stageColour = ([^;]+);/)[1],'stageSkyColour( stageRay )');
+ // A JS port of the installed stageSkyColour: 8 azimuths x depressions 0, 2, 6, 15, 40 degrees, bilinear.
+ const bands=STAGE_RING_DEPRESSIONS;
+ const ringColour=(ring,r)=>{
+   let az=Math.atan2(r.z,r.x)/(Math.PI*2)*8;if(az<0)az+=8;
+   const dep=Math.asin(Math.max(-1,Math.min(1,-r.y)))*180/Math.PI;
+   let el=4;if(dep<=0)el=0;else for(let i=0;i<4;i++)if(dep<bands[i+1]){el=i+(dep-bands[i])/(bands[i+1]-bands[i]);break;}
+   const a0=Math.floor(az),e0=Math.floor(el),e1=Math.min(e0+1,4),fa=az-a0,fe=el-e0,at=(a,e)=>ring[e*8+(a%8)];
+   const lo=at(a0,e0).clone().lerp(at(a0+1,e0),fa),hi=at(a0,e1).clone().lerp(at(a0+1,e1),fa);return lo.lerp(hi,fe).toArray();
+ };
  const vec3=(...v)=>new THREE.Vector3(...v),camera=vec3(3,80,20);
  for(const active of [null,target])for(const ortho of [false,true])for(const alt of [-1,-5,-20,-70,-90])for(const sunAlt of [60,4,-20]) {
    const a=alt*Math.PI/180,d=vec3(Math.cos(a)*.6,Math.sin(a),Math.cos(a)*.8);
@@ -162,9 +171,12 @@ await test('below-horizon haze samples the background cube view direction on can
    const shader=assemble(material,renderer);assert.equal(shader.uniforms.stageCanvas.value,active?0:1);
    const v=viewRay(ortho,d,camera.clone().addScaledVector(d,100),camera),r=ray(v,v.length(),Math.max,vec3);
    assert.ok(r.distanceTo(d)<1e-12,'actual haze ray preserves downward elevation');
-   const rgb=sample((cube,dir)=>{assert.equal(cube,sky.cube);return sky.horizon(dir).toArray();},shader.uniforms.stageSky.value,r);
-   const background=sampleRadiance(d,state);
-   rgb.forEach((v,i)=>assert.ok(Math.abs(v-background[i])<1e-8,'haze and background have identical linear colour'));
+   haze.refresh();
+   const rgb=ringColour(shader.uniforms.stageRing.value,r),background=sampleRadiance(d,state);
+   // The ring is a gradient fit of the same radiance: close everywhere, exact on its nodes.
+   rgb.forEach((v,i)=>assert.ok(Math.abs(v-background[i])<=Math.max(.03,.25*background[i]),`haze ${v} near background ${background[i]} at ${alt} deg`));
+   for(const [a,e] of [[0,0],[3,2],[5,4]]){const n=new THREE.Vector3(...stageRingDirection(a,e));
+     ringColour(shader.uniforms.stageRing.value,n).forEach((v,i)=>assert.ok(Math.abs(v-sampleRadiance(n.toArray(),state)[i])<1e-6,'ring node equals the sky'));}
  }
  const zero=ray(vec3(0,0,0),0,Math.max,vec3);assert.deepEqual(zero.toArray(),[0,-1,0]);
  target.dispose();mesh.geometry.dispose();material.dispose();haze.dispose();sky.dispose();
