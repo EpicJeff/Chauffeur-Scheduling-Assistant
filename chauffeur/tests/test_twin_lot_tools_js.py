@@ -152,7 +152,8 @@ assert.equal(operations.length,1);assert.equal(operations[0].op,'rotate_building
 outline.forEach((p,i)=>near(at(p),target[i]));near([b.rotation],[184]);
 assert.equal(snapFootprint({...b,position:[b.position[0]+8,b.position[1]]},outline,read.suggestions),null);
 assert.equal(snapFootprint({...b,rotation:200},outline,read.suggestions),null);
-assert.deepEqual(lot.lotSuggestions(),[{id:'suggestion',outline:target,dashed:true}]);
+assert.deepEqual(lot.lotSuggestions(),[],'a suggestion fitted to a built footprint is no longer drawn');
+assert.equal(read.suggestions[0].state,'open','fitting never answers the suggestion');
 console.log('  ok near corners and angle snap together; distant and misaligned drops do not');
 
 look();operations=[];read.suggestions=[];paused=true;before={position:[...b.position],rotation:b.rotation};
@@ -175,15 +176,72 @@ const card=()=>shell.children.find(n=>n.className==='place-card editor-lot-card'
 const descendants=n=>[n,...n.children.flatMap(descendants)];
 const click=async text=>{const control=descendants(card()).find(n=>n.textContent===text);assert.ok(control,text);control.dispatchEvent(new Event('click'));await new Promise(r=>setImmediate(r));};
 const suggest=()=>{read.suggestions=[{id:'s1',name:'Shed',state:'open',outline:[[10,100],[20,100],[20,110],[10,110]],size_ft:[10,10]}];};
-suggest();look();
+suggest();lot.showLot();await click('Close');
+scheduled();
+const labels=()=>canvas.parentElement.children.find(n=>n.className==='editor-dimensions');
+const suggestionLabel=()=>labels().children.find(n=>n.dataset.plotSuggestion==='s1');
+let label=suggestionLabel();assert.ok(label,'an open suggestion has a screen-space label');
+assert.equal(label.hidden,false,'the label is visible in the lot view');
+assert.equal(label.children[0].textContent,'Possible building from your plot');
+assert.equal(label.children[2].textContent,'Accept or Dismiss in Your lot');
+near([parseFloat(label.style.left),parseFloat(label.style.top)],[event([15,105]).clientX,event([15,105]).clientY]);
+assert.equal(card().hidden,true);
+enabled=false;scheduled();assert.equal(label.hidden,false);assert.equal(label.disabled,true);
+label.dispatchEvent(new Event('click'));assert.equal(card().hidden,true,'read-only labels cannot open an editable card');
+enabled=true;scheduled();assert.equal(label.disabled,false);
+label.dispatchEvent(new Event('click'));assert.equal(card().hidden,false);
+assert.ok(descendants(card()).some(n=>n.textContent==="Your plot drawing shows a building here that isn't in your house yet. Accept adds it as a building footprint (or matches it to one you have); Dismiss hides it."));
+assert.equal(calls.length,0,'opening the label never changes the suggestion');
+await click('Close');
 assert.ok(lot.pointerDown(event([10.3,105])));await release([10.3,105]);
 assert.equal(calls.length,0);await click('Accept');
 assert.equal(calls.length,1);assert.equal(calls[0].method,'POST');
 assert.deepEqual(calls[0].body,{action:'accept',read:'r1',name:'Shed',kind:'other'});
 assert.deepEqual(lot.lotSuggestions(),[]);
+assert.equal(suggestionLabel(),undefined,'answering removes the label with its outline');
 suggest();assert.ok(lot.pointerDown(event([10.3,105])));await release([10.3,105]);await click('Dismiss');
 assert.equal(calls.at(-1).body.action,'dismiss');
 console.log('  ok clicking a dashed footprint offers the shared Accept/Dismiss card and sends the read id');
+suggest();look();assert.equal(lot.pointerDown(event([15,105])),false,'the middle of a suggestion leaves the click to the ground and navigation');
+
+// Real intersections in lot coordinates: rotated, concave and opposite-winding
+// footprints must obey a strict majority of the suggestion's own area.
+const savedBuildings=flat.buildings;
+const rectangle=(x,y,w,h)=>[[x,y],[x+w,y],[x+w,y+h],[x,y+h]];
+flat.buildings=[{id:'built',position:[50,50],rotation:90,levels:[{elevation:0,outline:rectangle(0,0,10,20)}]}];
+read.suggestions=[
+  {id:'covered',outline:rectangle(31,51,18,8)},
+  {id:'majority',outline:rectangle(39,52,20,6)},
+  {id:'half',outline:rectangle(40,52,20,6)},
+  {id:'minority',outline:rectangle(41,52,20,6)},
+  {id:'away',outline:rectangle(80,80,10,10)},
+].map(s=>({...s,state:'open'}));
+const suggestionSnapshot=JSON.stringify(read.suggestions), callsBeforeOverlap=calls.length;
+const dashed=()=>view.scene.children.flatMap(g=>g.children||[]).filter(o=>o.material?.isLineDashedMaterial);
+assert.deepEqual(lot.lotSuggestions().map(s=>s.id),['half','minority','away']);scheduled();
+assert.equal(dashed().length,3,'overlapping suggestions have no dashed geometry');
+assert.deepEqual(labels().children.map(n=>n.dataset.plotSuggestion),['half','minority','away']);
+assert.equal(lot.pointerDown(event([31,55])),false,'a suppressed outline cannot take clicks');
+assert.equal(lot.pointerDown(event([39,55])),false,'a majority-overlapping outline cannot take clicks');
+assert.equal(JSON.stringify(read.suggestions),suggestionSnapshot);assert.equal(calls.length,callsBeforeOverlap);
+assert.ok(lot.pointerDown(event([80,85])),'a separate suggestion remains clickable');await release([80,85]);await click('Close');
+flat.buildings[0].position=[-100,-100];scheduled();
+assert.equal(dashed().length,5,'moving a building recomputes suggestion visibility');
+assert.equal(labels().children.length,5);
+// An L-shaped building leaves its notch open, even though its bounding box covers it.
+flat.buildings=[{id:'concave',position:[30,40],rotation:0,levels:[{elevation:0,
+  outline:[[0,0],[20,0],[20,5],[5,5],[5,20],[0,20]].reverse()}]}];
+read.suggestions=[{id:'notch',state:'open',outline:rectangle(36,46,12,12)},
+  {id:'arm',state:'open',outline:rectangle(30,40,4,18).reverse()},
+  {id:'concave-suggestion',state:'open',outline:[[30,40],[50,40],[50,44],[34,44],[34,60],[30,60]]}];
+assert.deepEqual(lot.lotSuggestions().map(s=>s.id),['notch']);scheduled();assert.equal(dashed().length,1);
+// A listed but unbuilt footprint must never suppress a suggestion.
+flat.buildings=[];sheets.place.buildings=[{id:'unbuilt',footprint:rectangle(30,40,20,20)}];
+assert.equal(lot.lotSuggestions().length,3);scheduled();assert.equal(dashed().length,3);
+flat.buildings=savedBuildings;sheets.place.buildings=[];
+console.log('  ok labels open the shared card; only suggestions over half covered by built polygons lose geometry, label and picking');
+read.suggestions=[];look();
+console.log('  ok a plot suggestion takes clicks on its outline only');
 
 const count=calls.length;
 assert.ok(lot.pointerDown(event([150,90])));await release([150,90]);assert.equal(calls.length,count);
@@ -202,7 +260,8 @@ lot.pointerMove(event([31,104]));await release([31,104]);
 assert.equal(calls.at(-1).body.footprint_from,'drawn');
 console.log('  ok an unbuilt footprint can move and be redrawn in the scene');
 
-abort.abort();assert.equal(sheet.parent,null);assert.equal(captures.size,0);view.dispose();
+const labelLayer=labels();abort.abort();assert.equal(sheet.parent,null);assert.equal(captures.size,0);
+assert.ok(!canvas.parentElement.children.includes(labelLayer),'disposal removes the suggestion overlay');view.dispose();
 console.log('  ok cancellation, read-only state and disposal preserve the saved building');
 
 // Final wave M3: the editor's first view comes from the street and no yard plant
