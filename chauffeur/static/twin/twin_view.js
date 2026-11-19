@@ -1594,6 +1594,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       return {tier, instances, draws, regions, animated};
     },
     reflectionInfo: () => reflections.info(),
+    weatherPreviewDeadline: () => weatherPreview.deadline,
     expireTimePreview,
     setClock(isoString) {
       if (isoString !== null && !Number.isFinite(Date.parse(isoString))) throw new Error('Give an ISO clock time or null.');

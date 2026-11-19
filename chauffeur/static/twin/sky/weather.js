@@ -84,15 +84,15 @@ export function previewWeather(name) {
 }
 
 export function createWeatherPreview(onChange,{setTimer=setTimeout,clearTimer=clearTimeout}={}) {
-  let value=null,timer=null;
-  const clear=()=>{clearTimer(timer);timer=null;};
+  let value=null,timer=null,deadline=null;
+  const clear=()=>{clearTimer(timer);timer=null;deadline=null;};
   const set=name=>{
     if (name!==null && !Object.hasOwn(previews,name)) return;
     clear();value=previewWeather(name);
-    if(value)timer=setTimer(()=>set(null),120000);
+    if(value){deadline=Date.now()+120000;timer=setTimer(()=>set(null),120000);}
     onChange();
   };
-  return {set,get:()=>value,stop(){clear();value=null;}};
+  return {set,get:()=>value,get deadline(){return deadline;},stop(){clear();value=null;}};
 }
 
 // One small request, no stream. Mutations and five-minute ticks coalesce; an
