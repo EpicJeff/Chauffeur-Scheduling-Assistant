@@ -11,6 +11,7 @@ import { stairShelf } from './stair_shelf.js';
 import { siteRecord, siteShapeKinds, siteShapeLabels } from '../objects.js';
 import { drawSiteShapeShelf, yardRoomFeatures } from './site_shape_shelf.js';
 import { propertyPath } from './dock.js';
+import { keepPlace } from './keep_place.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -20,7 +21,7 @@ const report = error => {
 // moving the second joint; it is never sent as a legacy set-field edit.
 const fields = {
   wall: ['length', 'height', 'thickness', 'exterior'], opening: ['width', 'sill', 'head', 'kind', 'panels', 'at'],
-  room: ['name', 'floor_offset_ft'], roof: ['kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'],
+  room: ['name', 'kind', 'floor_offset_ft'], roof: ['kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'],
   building: ['name', 'position', 'rotation', 'base'], level: ['name', 'elevation', 'ceiling'],
   // Hosted pieces save through model ops (twin_model_ops: set, move_hosted).
   anchor: ['offset'], item: ['rotation', 'scale', 'offset'],
@@ -116,6 +117,11 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (haSection) haLink.draw(haSection, record);
   }
   function draw(next = selection) {
+    if (next?.pieceId === selection?.pieceId && next?.buildingId === selection?.buildingId)
+      return keepPlace(host, () => drawCard(next));
+    return drawCard(next);
+  }
+  function drawCard(next) {
     if (!next && host.dataset.fixtureCard) return;
     if (next || host.dataset.stairDraft) host.dispatchEvent(new Event('fixturecardrelease'));
     // The two-click add tool temporarily owns the same card surface. Polling
@@ -274,23 +280,24 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       : ['gable', 'hip'].includes(piece.kind) ? [`ends.${piece.ridge}0`, `ends.${piece.ridge}1`] : []);
     for (const field of cardFields) {
       const end = field.startsWith('ends.') ? field.slice(5) : null;
-      const label = document.createElement('label'); label.textContent = end ? endNames[end]
+      const label = document.createElement('label'); label.textContent = kind === 'room' && field === 'kind' ? 'Type' : end ? endNames[end]
         : field === 'base' && kind === 'building' ? 'Fixed base above lot datum'
           : hosted(kind) && hostedLabels[field] || getFieldLabels()[field] || labels[field] || field[0].toUpperCase() + field.slice(1);
       let input;
-      const choices = field === 'kind' ? (['roof', 'dormer'].includes(kind) ? ['hip', 'gable', 'shed', 'flat'] : ['window', 'door', 'slider', 'bifold', 'passage', 'garage'])
+      const choices = field === 'kind' ? (kind === 'room' ? ['room', 'porch'] : ['roof', 'dormer'].includes(kind) ? ['hip', 'gable', 'shed', 'flat'] : ['window', 'door', 'slider', 'bifold', 'passage', 'garage'])
         : end ? ['gable', 'hip', 'clip'] : field === 'ridge' ? ['x', 'y'] : field === 'low_side' ? ['x0', 'x1', 'y0', 'y1'] : null;
       if (choices) {
         input = document.createElement('select');
         choices.forEach(value => {
           const option = document.createElement('option'); option.value = value;
-          option.textContent = ({ x: 'Left to right', y: 'Front to back', x0: 'Left', x1: 'Right', y0: 'Front', y1: 'Back',
+          option.textContent = ({ room: 'Room', porch: 'Porch', x: 'Left to right', y: 'Front to back', x0: 'Left', x1: 'Right', y0: 'Front', y1: 'Back',
             hip: 'Hip', gable: 'Gable', clip: 'Clipped gable', shed: 'One slope', flat: 'Flat', window: 'Window', door: 'Door', slider: 'Sliding door',
             bifold: 'Folding door', passage: 'Open passage', garage: 'Garage door' })[value];
           input.append(option);
         });
       } else { input = document.createElement('input'); input.type = field === 'exterior' ? 'checkbox' : 'text'; }
       const initial = fieldValue(piece, field);
+      if (kind === 'room' && field === 'kind') input.setAttribute('aria-label', 'Type');
       input.value = display(field, initial, hosted(kind) && kind);
       if (field === 'exterior') input.checked = !!initial;
       input.disabled = !canEdit() || field === 'length' && !piece.joints?.[1];
@@ -320,6 +327,9 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
               if (!(length > 0)) throw new Error('The wall needs two different ends.');
               if (Math.abs(length - value) > 1e-8) await op({ op: 'move_joint', building: building.id, joint: current.joints[1],
                 to: current.from.map((v, i) => v + d[i] * value / length) });
+            } else if (current && kind === 'room' && field === 'kind') {
+              if ((current.kind || 'room') !== value)
+                await op({ op: 'set_room_kind', building: building.id, room: piece.id, kind: value });
             } else if (current && hosted(kind)) {
               if (JSON.stringify(current[field] ?? (field === 'scale' ? 1 : 0)) !== JSON.stringify(value))
                 await op(field === 'offset' ? { op: 'move_hosted', building: building.id, id: piece.id, offset: value }
@@ -373,7 +383,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       await pending;
       if (record.poolId) await op({ op: 'delete_pool_feature', id: piece.id });
       else if (!building) await op({ op: 'delete_site_item', list: kind, index: record.index });
-      else if ((kind==='solar_zone' || roof && !piece.rect) && op) await op({ op: 'delete', building: building.id, id: piece.id });
+      else if ((kind==='solar_zone' || kind === 'porch' || kind === 'room' && piece.kind === 'porch' || roof && !piece.rect) && op) await op({ op: 'delete', building: building.id, id: piece.id });
       else await edit({ op: 'delete', building: building.id, piece: piece.id });
       select(null);
 

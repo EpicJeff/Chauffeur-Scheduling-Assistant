@@ -7,6 +7,7 @@ const paths = {
   scale: 'M4 14v6h6m4-16h6v6M4 20l7-7m2-2 7-7',
   'draw-wall': 'M4 4h16v16H4ZM4 12h16M12 4v8M8 12v8m8-8v8',
   'draw-room': 'M4 4h16v16H4ZM4 15h5v5',
+  'add-porch': 'M3 11 12 4l9 7M5 11v9m14-9v9M3 20h18M9 14h6m-3-3v6',
   'split-room': 'M4 4h16v16H4ZM12 4v16',
   'add-door': 'M5 21V4l10-2v19Zm10-17h4v17M11 12h.01',
   'add-window': 'M4 4h16v16H4ZM12 4v16M4 12h16',

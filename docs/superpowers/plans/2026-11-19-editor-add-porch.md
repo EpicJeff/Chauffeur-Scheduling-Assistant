@@ -38,3 +38,13 @@
 ## Task 3: Browser check (Claude)
 
 - [ ] `tests/test_twin_add_porch_live.py`: draw a porch with a shed roof against the household's main house, see it with posts and roof; change its foundation and columns material; undo removes it; draw a room and make it a porch with Type; the editor suites stay green.
+
+## Task 1b: Deleting a porch removes all of it (owner report 2026-11-19)
+
+Owner: "I tried to delete an existing porch and it deletes something, but it leaves the geometry there without all the porch-specific parts and data. The remaining thing is called something like Porch:porch* where * is some long ID. This thing that is left cannot be deleted. You get an error saying the thing doesn't exist."
+
+Cause (Claude): `services/twin_model_ops.py` `_delete` removes a porch room and its exclusive walls but not the building's porch record (`porches_detail`, legacy `porches` / `porch`), which `allPorches` still draws; a selection of that leftover (kind `porch`, id `porch...`) reaches `_delete`, which searches neither collection and refuses "That piece is missing.".
+
+**Rulings:** deleting a porch room also removes its porch record(s) with the same id (every collection `allPorches` reads); deleting a porch record whose room is gone removes the record (so existing leftovers in households can be cleaned up by hand); deleting a porch record whose room exists deletes both; one operation, one undo step, history message "Deleted the porch."; the porch roof stays (it is an ordinary roof the person can delete separately; Claude's call). Load-time repair is NOT added (nothing disappears without the person's action).
+
+**Test:** extend `chauffeur/tests/test_twin_add_porch_ops.py`: delete a build-made porch room (household or poolhouse fixture with a porch) leaves no porch record and nothing porch-specific drawn (generator: no porch slab/posts for that id); delete a leftover porch record (fixture with a record and no room) succeeds; undo restores room and record together; the editor's Delete on a porch selection sends the op that removes both.
