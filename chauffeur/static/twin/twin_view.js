@@ -29,6 +29,7 @@ import { installCloudShadow } from './sky/cloud_shadow.js';
 import { installWeatherSurface } from './sky/weather_surface.js';
 import { seasonState, createSeasonPreview, installSeasons } from './sky/seasons.js';
 import { createPrecipitation } from './sky/precipitation.js';
+import { createSeasonTouches } from './sky/season_touches.js';
 import { mountTimeScrub } from './sky/time_scrub.js';
 import { defaultStage, mountStageSettings } from './stage_settings.js';
 import { mountWeatherSettings } from './weather_settings.js';
@@ -67,7 +68,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const orthographic = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
   let camera = perspective;
   const clouds = createCloudPass(renderer3, {tier});
-  const post = settings.occlusion ? createPost(renderer3, scene, camera, {samples: settings.antialias ? 4 : 0, clouds}) : null;
+  const post = settings.occlusion ? createPost(renderer3, scene, camera, {samples: settings.antialias ? 4 : 0, clouds, tier}) : null;
   clouds.warm(post?.target);
   // three keys every program on where it draws. With the composer on, the
   // picture draws into its half-float target (linear, no tone mapping), so a
@@ -123,6 +124,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const weatherSurface = installWeatherSurface(scene);
   const seasons = installSeasons(scene);
   const precipitation = createPrecipitation(scene,{tier});
+  const seasonTouches = createSeasonTouches(scene,{tier});
   let precipitationPlan=null,precipitationRoofs=null;
   let cloudCentre=[0,0];
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
@@ -136,6 +138,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     stageHaze.set({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
     cloudShadow.set({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
     precipitation.setStage({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
+    seasonTouches.setStage({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
   }
   syncStage(plan);
   scene.add(sky.object);
@@ -184,7 +187,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
   const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
-    extras:() => [sky.object, precipitation.group, sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
+    extras:() => [sky.object, precipitation.group, seasonTouches.group, sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
@@ -447,10 +450,17 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     seasons.update(view.season);
     weatherSurface.update(view.weather,performance.now()/1000);
     if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces){
+      seasonTouches.setPlan(plan);
       precipitation.setPlan(plan,twin?.roofSurfaces);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;
     }
     precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
       unlit:state.unlit,colour:timeLook?.skyColor});
+    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext';
+    const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
+    const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
+    seasonTouches.update(performance.now()/1000,view.season,view.weather,camera,{target:controls.target,plants:yardGroup,
+      date:clockNow(),sunAltDeg,enabled:touchEnabled,lawn:yardGroup?.userData.grass?.growsGrass ?? false,bearing:site.front_bearing_deg ?? 180});
+    post?.setSun({sunDir,sunAltDeg,enabled:touchEnabled,transmittance:1-weatherHaze(view.weather)});
     view.live?.draw();
     twin?.updateGhosts();
     pieceVisibility?.enforce(scene);
@@ -492,7 +502,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
-    ready: false, scene, post, clouds, cloudShadow, weatherSurface, precipitation, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
+    ready: false, scene, post, clouds, cloudShadow, weatherSurface, precipitation, seasonTouches, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
     weather:neutralWeather(), season:seasonState(clockNow(),resolveSite(site,clockNow()).lat,{}, {neutral:editor}), seasons,
     refreshWeather:()=>weatherPoll?.refresh(),
@@ -1454,7 +1464,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       viewing?.dispose(); viewing = null;
       if (twin) { scene.remove(twin.root); release(twin); }
       unlit.dispose();
-      precipitation.dispose(); weatherSurface.dispose(); cloudShadow.dispose(); stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
+      seasonTouches.dispose(); precipitation.dispose(); weatherSurface.dispose(); cloudShadow.dispose(); stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
       post?.dispose();
       clouds.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();
@@ -1670,6 +1680,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // editor has no viewing layer: warm its hidden weather objects explicitly,
     // against the same picture target, before Live weather can reveal them.
     if (editor && compileFor) await renderer3.compileAsync(precipitation.group,camera,scene);
+    // Compile both hidden seasonal programs for the actual picture target in
+    // viewers too: viewing.warm only expands the house's domain objects.
+    if (compileFor) await renderer3.compileAsync(seasonTouches.group,camera,scene);
     view.ready = false;
     if (disposed) return view;
     view.materialWatcher = watchMaterialCatalogue(view);

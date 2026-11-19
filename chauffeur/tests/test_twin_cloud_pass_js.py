@@ -102,7 +102,7 @@ await test('composer composites after beauty/AO and before bloom/output using be
   const noise=createCloudNoise({size:8,detail:4}),cloud=createCloudPass(r,{tier:'high',noise});
   cloud.update({coverage:1,type:'nimbostratus'});cloud.frame(1);
   const post=createPost(r,scene,camera,{clouds:cloud});
-  assert.deepEqual(post.info().passes,['RenderPass','GTAOPass','CloudCompositePass','UnrealBloomPass','OutputPass']);
+  assert.deepEqual(post.info().passes,['RenderPass','GTAOPass','CloudCompositePass','LightShaftPass','UnrealBloomPass','OutputPass']);
   const calls=[],draw=r.render;r.render=function(s,c){calls.push([s.material?.name||s.name,this.target]);draw.call(this,s,c);};
   post.render();assert.ok(calls.some(([name])=>name==='twin-cloud-composite'));
   assert.equal(cloud.depthTexture.type,THREE.FloatType);assert.equal(cloud.depthTexture.format,THREE.RedFormat);
