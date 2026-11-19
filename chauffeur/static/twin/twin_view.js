@@ -18,7 +18,7 @@ import { mountIdle } from './live/idle.js';
 import { mountGlanceSettings } from './live/glance_settings.js';
 import { mountEnergySettings } from './live/energy_settings.js';
 import { mountBake } from './bake/runtime.js';
-import { sunPosition, moonPosition, moonIllumination } from './sky/ephemeris.js';
+import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from './sky/ephemeris.js';
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
 import { createSky } from './sky/atmosphere.js';
 import { overcastFactor, weatherState } from './sky/overcast.js';
@@ -97,6 +97,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   scene.add(sun, sun.target, moon, moon.target, ambient);
   let yardGroup = null;
   const sky = createSky(renderer3, {tier}), environment = sky.environment;
+  scene.add(sky.object);
   let twin = null, disposed = false, revision = 0;
   let rebuildWork = null;
   const materialBindings = new Map();
@@ -1349,6 +1350,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     model.materials.forEach(m => { if (!keepMaterials.has(m)) m.dispose(); });
   }
   function applyTimeLook(moved = false, forceSky = false) {
+    sky.setEnabled(!state.unlit);
     if (state.unlit) {
       timeLook = lookAt(45);
       scene.background = new THREE.Color('#171e27');
@@ -1363,7 +1365,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const sunDir = modelDirection(solar.azimuth, solar.altitude, located.front_bearing_deg);
     const moonDir = modelDirection(lunar.azimuth, lunar.altitude, located.front_bearing_deg);
     const skyChanged = sky.update({sunDir, moonDir, moonPhase:illumination.phase, moonFraction:illumination.fraction,
-      overcast, latitude:located.lat, force:moved || forceSky});
+      moonDistanceKm:lunar.distance, siderealTime:localSiderealTime(date,located.lon),
+      frontBearingDeg:located.front_bearing_deg, overcast, latitude:located.lat, force:moved || forceSky});
     lastOvercast = overcast;
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
       { shadows: settings.shadows, overcast, zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });
@@ -1495,6 +1498,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     view.materialWatcher = watchMaterialCatalogue(view);
     renderer3.setAnimationLoop(() => {
       const now = performance.now(), run = probeRun;
+      sky.frame(now/1000);
       try {
       if (run) {
         const elapsed = now - run.start;
@@ -1546,6 +1550,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (new URLSearchParams(location.search).get('perf') === '1')
       view.meter = mountFrameMeter(el, { renderer3, gpu: view.renderer, tier, pixelRatio: settings.pixelRatio, stats: () => lastStats });
     view.ready = true;
+    // Uniform texture/geometry contents arrive without changing shader programs.
+    sky.loadAssets(() => { if (!disposed) updateTime(false,true); });
     timeTimer = setInterval(() => updateTime(false, true), 60000);
     for (const name of ['pointerdown', 'pointermove', 'keydown', 'input']) document.addEventListener(name, previewActivity);
   } catch (error) { view.dispose(); throw error; }
