@@ -2,7 +2,19 @@
 // Authored geometry also invalidates bakes when render-only objects/terrain
 // change. Device placement belongs to each light's key, never the atlas.
 const renderMetadata = new Set(['tier', 'lod', 'lods', 'src', 'name', 'label', 'notes', 'plane_edges']);
+const finishes = new Set(['materials', 'material', 'plane_materials', 'floor_material', 'ceiling_material', 'wall_material', 'tint']);
+// Keep geometry records intact; only authored finish slots leave the bake domain.
+// In particular an opening's model/asset, a pad's edge kind and every placement
+// remain geometry. Empty material maps and absent maps have the same meaning.
+export function withoutSurfaceMaterials(value) {
+  if (Array.isArray(value)) return value.map(withoutSurfaceMaterials);
+  if (!value || typeof value !== 'object') return value;
+  const wall = value.from !== undefined && value.to !== undefined && value.level !== undefined;
+  return Object.fromEntries(Object.entries(value).filter(([k]) => !finishes.has(k) && !(wall && k === 'faces'))
+    .map(([k, v]) => [k, withoutSurfaceMaterials(v)]));
+}
 export function authoredGeometry(plan) {
+  plan = withoutSurfaceMaterials(plan);
   const canonical = value => {
     if (Array.isArray(value)) return value.map(canonical);
     if (!value || typeof value !== 'object') return value;

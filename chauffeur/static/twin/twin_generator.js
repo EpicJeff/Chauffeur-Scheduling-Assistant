@@ -7,6 +7,8 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, alphaModeOf, copyMaterialParams } from './twin_library.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
+import { withoutSurfaceMaterials } from './bake/geometry_key.js';
+import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry } from './bake/source.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind, planes } from './twin_roof.js';
@@ -94,7 +96,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
     mesh.userData.snapRanges = entries.flatMap(e => {
       const d = e.mesh.userData, count = e.geometry.attributes.position.count;
       const ranges = d.snapRanges?.map(r => ({...r, start: r.start + start}))
-        || [{start, count, kind: d.kind, visibilityKind: d.visibilityKind, pieceId: d.pieceId, parentPieceId: d.parentPieceId, buildingId: d.buildingId, part: d.part, ghost: d.ghost, terrain: d.terrain}];
+        || [{start, count, kind: d.kind, visibilityKind: d.visibilityKind, pieceId: d.pieceId, parentPieceId: d.parentPieceId, buildingId: d.buildingId, part: d.part, bakePart:d.bakePart, ghost: d.ghost, terrain: d.terrain}];
       start += count; return ranges;
     });
     geometry.userData.snapRanges = mesh.userData.snapRanges;
@@ -466,6 +468,12 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
   next.updateGhosts = () => { for (const entry of next.buildings.values()) entry.model.updateGhosts(); };
   next.buildingsReused = reused; next.buildingsRebuilt = rebuilt;
   if (opts.timing) { opts.timing.buildings_reused = reused; opts.timing.buildings_rebuilt = rebuilt; }
+  if (!opts.bakeSource) {
+    const owned=[...root.children,...[...next.buildings.values()].map(entry=>entry.model.root),...Object.values(groups.levels)];
+    registerBakeSource(root, () => !opts.editableLevel && defaultBuildingFinishes(plan,kit) ? cloneBakeGeometry(root,owned)
+      : buildTwin(withoutSurfaceMaterials(plan), {...kit,manifest:{}}, tier,
+        {viewing: !!opts.viewing, bakeSource: true}).root, {children:owned});
+  }
   return next;
 }
 
@@ -725,6 +733,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const object = retained || addMesh(group, geometry, data.ghost ? ghost : material);
       if (retained && data.ghost) object.material = ghost;
       Object.assign(object.userData, data);
+      if(part && !geometry.userData.bakePlaneSurface)object.userData.bakePart=part;
       if (!pieces.has(key)) pieces.set(key, []);
       const objects = pieces.get(key); objects.push(object);
       // Non-enumerable: this back-reference is used only while merging.
@@ -1118,6 +1127,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     }
     const roofGeometry = positions => {
       const geometry = new THREE.BufferGeometry(), mapped = [], uv = [];
+      geometry.userData.bakePlaneSurface=true;
       for (let i = 0; i < positions.length; i += 3) {
         // This is a rotation, with determinant +1: upward winding survives.
         mapped.push(positions[i], positions[i + 2], -positions[i + 1]);

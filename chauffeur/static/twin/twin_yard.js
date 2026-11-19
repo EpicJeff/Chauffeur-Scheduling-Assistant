@@ -18,6 +18,8 @@ export function presetTree(preset, seed) {
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
 import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts } from './twin_library.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
+import { withoutSurfaceMaterials } from './bake/geometry_key.js';
+import { registerBakeSource } from './bake/source.js';
 import { groundAt, poolDatum, POOL_SEAT, buildingBase, buildingFootprint } from './twin_ground.js';
 import { span as editSpan } from './edit_timing.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
@@ -308,7 +310,7 @@ export function yardPartKeys(plan, kit, tier, { viewing = false, stage = default
 // The whole-yard fast path is precisely the union of the part keys.
 export const yardKey = (plan, kit, tier, options) => JSON.stringify(yardPartKeys(plan, kit, tier, options));
 
-export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null, stage = defaultStage(plan) } = {}) {
+export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null, stage = defaultStage(plan), bakeSource = false } = {}) {
   const root = new THREE.Group(); root.name = 'yard';
   Object.defineProperty(root.userData, 'waterSurfaces', { value: [], writable: true });
   const keys = yardPartKeys(plan, kit, tier, { viewing, stage }), reused = new Map();
@@ -341,6 +343,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     else offsetSurfaceUvs(geometry, material, seed);
     const mesh = addMesh(group, geometry, material);
     if (owner) Object.assign(mesh.userData, owner);
+    if (part) mesh.userData.bakePart = part;
     return mesh;
   };
   const seedOf = (piece, ...rest) => piece?.id ? [piece.id, ...rest].join(':') : null;
@@ -774,6 +777,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   // carries userData.yardPart, and root.userData.yardPartKeys records each part's key.
   const previousKeys = previous?.userData.yardPartKeys || {};
   for (const name of YARD_PARTS) {
+    if (bakeSource && ['plants', 'grass', 'furniture'].includes(name)) continue;
     if (previous && previousKeys[name] === keys[name]) {
       reused.set(name, previous.children.filter(o => o.userData.yardPart === name));
       if (name === 'grass') Object.defineProperty(root.userData, 'grass', {value:previous.userData.grass});
@@ -940,5 +944,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   // against a mutable old plan/kit; editor operations can update them in place.
   root.userData.yardKey = yardKey(plan, kit, tier, { viewing, stage });
   root.userData.yardMaterialKey = yardMaterialKey(plan, kit, tier);
+  if (!bakeSource) {
+    const neutral = await buildYard(withoutSurfaceMaterials(plan), {...kit,manifest:{}}, tier, {viewing, stage, bakeSource: true});
+    registerBakeSource(root, () => neutral.group, {extras:false});
+  }
   return { group: root, triangles };
 }

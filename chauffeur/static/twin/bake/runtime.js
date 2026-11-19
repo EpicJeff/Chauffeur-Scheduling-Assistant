@@ -13,6 +13,7 @@ import { workerCodec } from './worker_codec.js';
 import { covered } from './atlas_transport.js';
 import { sameSlots } from './slots.js';
 import { invalidateMaterialReach } from './reach.js';
+import { releaseBakeSource } from './source.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Every tier lays its atlas out at the desk's 8 texels/ft, so a wall that opens before
@@ -108,6 +109,7 @@ export function bakeLights(layout, root, plan = {}) {
 
 export function mountBake(view, root, { host, controls = view.controls, layout: requestedLayout, poll: pollMs = 10000,
   api: request = (path, init) => fetch(base() + path, init) } = {}) {
+  let retained = view.bake?.snapshot?.();
   // A fetch that rejects is the network being away, which the poll rides out in silence.
   const offline = new WeakSet();
   const api = async (path, init) => {
@@ -134,6 +136,10 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     showProgress();
   }
   const pageErrors = new Map(), etags = new Map(), present = new Set(), clones = [], textures = new Set();
+  const preservePages = new Set();
+  let pageManifest = null;
+  const pageSignature = (m,p) => JSON.stringify(Object.entries(m?.lights || {}).filter(([,e])=>(e.pages || [e.page]).includes(p))
+    .map(([id,e])=>[id,e.key,e.location,e.channel,e.scale]).sort((a,b)=>a[0].localeCompare(b[0])));
   const pageReason = () => pageErrors.values().next().value || null;
   const valid = () => !stopped && view.plan === round;
   const paused = () => dragging || performance.now() - stillAt < 2000;
@@ -336,6 +342,15 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     pages.banks.forEach(t => textures.add(t));
     setSources();
     etags.clear(); present.clear(); pageErrors.clear(); manifestText = null; fresh.clear();
+    if(retained?.key===atlas.key && JSON.stringify(retained.layers)===JSON.stringify(layers) &&
+        retained.banks.length===pages.banks.length && retained.banks.every((t,i)=>t.format===pages.banks[i].format &&
+          t.image.width===pages.banks[i].image.width && t.image.depth===pages.banks[i].image.depth)) {
+      retained.banks.forEach((t,i)=>{t.mipmaps.forEach((m,j)=>pages.banks[i].mipmaps[j].data.set(m.data));pages.banks[i].needsUpdate=true;});
+      for(const p of retained.present){present.add(p);preservePages.add(p);}
+      for(const [p,e] of retained.etags)etags.set(p,e);
+      pageManifest=retained.manifest;
+    }
+    retained=null; // The new arrays now own the bytes; release the stopped controller's copy.
     stale = lights.map(l => l.device);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
   }
@@ -396,6 +411,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     const wanted = new Set();
     layers.forEach((list, i) => list.forEach(p => wanted.add(packed.offsets[i] + p)));
     for (const p of [...wanted].sort((a, c) => a - c)) {
+      if(preservePages.has(p) && present.has(p) && pageSignature(pageManifest,p)===pageSignature(m,p))continue;
       const etag = etags.get(p), at = locate(p);
       const r = await api(`api/house/bakes/${atlas.key}/${p}.png`, { headers: etag ? { 'If-None-Match': etag } : {} });
       if (!valid()) return;
@@ -429,6 +445,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
         JSON.stringify(stored.pages) === JSON.stringify(e.pages) && e.pages.every(p => present.has(p))) fresh.add(l.device);
     }
     stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
+    pageManifest=m;
+    if(!stale.length)preservePages.clear();
     setSources(m);fills(m);
     if (present.size) { await patch(); if (!valid()) return; }
     for (const id of previous) if (!fresh.has(id)) light(id, [0, 0, 0], 0);
@@ -507,12 +525,14 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: running && paused(),
       ...progress, baked: [...baked], stale: [...stale], error: errorReason || pageReason() }),
     fresh: () => valid() ? [...fresh] : [], light, idle, refresh,
+    occlusionRoot: () => atlas?.sourceRoot || root,
+    snapshot: () => atlas && pages ? {key:atlas.key,layers,banks:pages.banks,present:[...present],etags:[...etags],manifest:pageManifest} : null,
     refreshMaterials(ids) {
       for (const { original, material } of clones) if (ids.includes(original.userData.materialId)) copyMaterialParams(original, material);
     },
-    materialsChanged(ids) {
+    materialsChanged(ids = null) {
       if (!valid() || !atlas) return false;
-      controller.refreshMaterials(ids);
+      if(ids)controller.refreshMaterials(ids);
       if (!invalidateMaterialReach(atlas.room, ids)) return false;
       ++generation;
       baker?.cancel();
@@ -526,9 +546,11 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
         fresh.delete(id); light(id, [0, 0, 0], 0);
       }
       stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
+      for(const p of present)preservePages.add(p);
       manifestText = null;
       Promise.resolve(view.live?.refresh()).catch(reportError);
       view.render();
+      if(allowed && !running)run();
       return true;
     },
     // The lightmap arrays as held: per array its layer size and layer count, plus what
@@ -550,6 +572,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       stopped = true; baker?.cancel(); halt.abort(); clearTimeout(timer); codec?.stop(); strip?.remove();
       controls.removeEventListener('start', moved); controls.removeEventListener('change', moved); controls.removeEventListener('end', moved);
       unpatch();
+      releaseBakeSource(root);
       for (const t of textures) t.dispose();
       if (uniforms) for (const name of ['lmTints', 'lmRegions']) uniforms[name]?.value.dispose();
     },

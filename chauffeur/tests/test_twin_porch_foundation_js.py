@@ -301,7 +301,7 @@ for(const type of ['posts','enclosed','solid']){
 }
 tp.floor=.7;testPlan.site.terraces=[{polygon:square(-1,-7,1,-5),height:-1,blend:0}];
 assert.ok(!porchOnGrade(testPlan,tb,tp,tp.floor),'one corner beyond nine inches prevents slab-on-grade');
-// Every authored foundation field and slot affects both bake paths, on every tier.
+// Geometry fields invalidate both bake paths; finish slots retain the atlas.
 tp.floor=2;testPlan.site.terraces=[];
 tp.foundation={type:'enclosed',lip_in:1,post_in:6,post_shape:'square',spacing_ft:8,materials:{posts:null,skirt:null,solid:null}};
 const baseScene=build(testPlan);await baseScene.ready;
@@ -310,12 +310,16 @@ for(const [field,value] of Object.entries({type:'posts',lip_in:2,post_in:8,post_
  materials:{posts:{id:'trim',color:'#123456'}},})){
  const p=structuredClone(testPlan);p.buildings[0].porches[0].foundation[field]=value;
  const low=build(p);await low.ready;const hi=build(p,'high');await hi.ready;
- assert.notEqual(atlasJob(low.root,p,options).cacheKey,baseKey,field);
+ if(field==='materials')assert.equal(atlasJob(low.root,p,options).cacheKey,baseKey,field);
+ else assert.notEqual(atlasJob(low.root,p,options).cacheKey,baseKey,field);
  assert.equal(buildAtlas(low.root,p,options).key,buildAtlas(hi.root,p,options).key,`${field}: tiers identical`);
 }
 for(const slot of ['posts','skirt','solid'])for(const ref of [{id:'base'},{id:'base',color:'#abcdef'}]){
  const p=structuredClone(testPlan);p.buildings[0].porches[0].foundation.materials[slot]=ref;
- const scene=build(p);await scene.ready;assert.notEqual(atlasJob(scene.root,p,options).cacheKey,baseKey,slot);
+ const scene=build(p);await scene.ready;
+ // The enclosed skirt defaults to cutout lattice; an opaque base enters the bake set.
+ if(slot==='skirt')assert.notEqual(atlasJob(scene.root,p,options).cacheKey,baseKey,slot);
+ else assert.equal(atlasJob(scene.root,p,options).cacheKey,baseKey,slot);
 }
 // Same reference across slots and rebuilds is the same cached material instance.
 const {materialSlot,kitMaterial}=await import(file('static/twin/twin_library.js'));

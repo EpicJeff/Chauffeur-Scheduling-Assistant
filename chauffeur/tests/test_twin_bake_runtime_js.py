@@ -46,26 +46,30 @@ const until = async (fn, what, timeout = 40000) => {
 };
 const liveLayout = list => ({ markers: list.map(l => ({ ...l, device_id: l.device, placed: true, kind: 'light' })) });
 async function context(tier = 'high', sharedServer = null, placed = null, extra = {}) {
-  const out = gen.buildTwin(job.plan, job.kit, tier); await out.ready;
+  const out = gen.buildTwin(extra.plan || job.plan, job.kit, tier); await out.ready;
   if (extra.materialRole) {
     const {applyMaterialParams}=await import(file('static/twin/twin_library.js'));
     for (const material of out.materials.values()) if (material.name===extra.materialRole)
       applyMaterialParams(material,{household:true,revision:1,params:{tint:'#123456'},maps:{}},{id:'material-baked'},extra.materialRole,tier);
   }
-  let plan = job.plan;
+  let plan = extra.plan || job.plan;
   if (extra.farSurface) {
-    plan=structuredClone(job.plan);
+    plan=structuredClone(plan);
     plan.buildings.push({id:'far',position:[1000,0],levels:[{id:'L1',elevation:0,ceiling:10}],
       rooms:[{id:'far',level:'L1',polygon:[[0,0],[254,0],[254,254],[0,254]]}]});
     const m = new THREE.Mesh(new THREE.PlaneGeometry(254,254).rotateX(-Math.PI/2).translate(127,0,-127),
       new THREE.MeshStandardMaterial({name:'ground'}));
     m.userData={merged:true,buildingId:'far'}; m.scale.setScalar(gen.FT); m.position.x=1000*gen.FT; out.root.add(m);
+    if(extra.farLamp) {
+      m.scale.setScalar(1);m.position.x=1000;
+      plan.buildings.at(-1).rooms.push({id:'far-lamp',level:'L1',polygon:[[0,0],[10,0],[10,10],[0,10]]});
+    }
   }
   const renderer = fakeRenderer(); renderer.domElement = new Node('canvas');
   const scene = new THREE.Scene(); scene.add(out.root); scene.updateMatrixWorld(true);
   const controls = new THREE.EventDispatcher(); controls.target = new THREE.Vector3();
-  const view = { plan, ready: true, scene, tier, renderer3: renderer, controls, render() {},
-    ...(extra.compileBehind ? { compileBehind: () => extra.compileBehind(out.root) } : {}) };
+  const view = Object.assign(extra.view || {}, { plan, ready: true, scene, tier, renderer3: renderer, controls, render() {},
+    ...(extra.compileBehind ? { compileBehind: () => extra.compileBehind(out.root) } : {}) });
   const server = sharedServer || fakeServer(), lights = placed || [k1, k2, h1, c1];
   const defaultApi = (path, init) => path === 'api/house/live' ? Promise.resolve(new Response(JSON.stringify({...liveLayout(lights), ...extra.fixtureLayout}), { status: 200 }))
     : extra.deny && path.endsWith('/lease') ? Promise.resolve(new Response('{"detail":"Requires parent"}', { status: 403 }))
@@ -83,6 +87,35 @@ async function check(name, fn) {
   try { await fn(); passed++; console.log('  ok   ' + name); }
   catch (error) { console.log('  FAIL ' + name + ' ' + error.stack); }
 }
+await check('one_wall_reuses_stored_pages_and_rebakes_only_reaching_lights', async () => {
+  const plan=structuredClone(job.plan),remote=[{device:'remote',building:'far',level:'L1',room:'far-lamp',at:[1005,5,6]}];
+  const list=[k1,k2,h1,c1,...remote];
+  const desk=await context('high',null,list,{plan,poll:0,farSurface:true,farLamp:true});let next;
+  try {
+    await until(()=>desk.controller.fresh().length===list.length&&!desk.controller.state().baking,'initial separated-building bake');
+    const key=desk.controller.state().key,before=structuredClone(desk.server.manifests.get(key)),bytes=new Map(desk.server.pages);
+    const edited=structuredClone(plan),wall=edited.buildings[0].walls[0];
+    wall.faces={left:{color:'#224466'},right:{color:'#224466'}};
+    desk.controller.stop();const since=desk.server.calls.length;
+    next=await context('high',desk.server,list,{plan:edited,view:desk.view,poll:0,farSurface:true,farLamp:true});
+    await until(()=>next.controller.state().key===key&&next.controller.packing(),'same stored atlas opens');
+    const packed=next.controller.packing();
+    const dirty=Object.keys(packed.entries).filter(id=>before.lights[id]?.key!==packed.entries[id].key);
+    assert.ok(dirty.length>0&&dirty.length<list.length,'only physical reach becomes stale: '+JSON.stringify(dirty));
+    assert.ok(remote.every(l=>!dirty.includes(l.device)),'remote lights remain fresh');
+    const changedPages=new Set(dirty.flatMap(id=>packed.entries[id].pages));
+    const untouched=[...new Set(remote.flatMap(l=>before.lights[l.device].pages))].filter(p=>!changedPages.has(p));
+    assert.ok(untouched.length,'fixture has untouched stored pages: '+JSON.stringify({dirty,changedPages:[...changedPages],remote:remote.map(l=>before.lights[l.device]),pages:before.pages}));
+    await until(()=>next.controller.fresh().length===list.length&&!next.controller.state().baking,'local rebake settles');
+    assert.deepEqual([...next.controller.state().baked].sort(),dirty.sort(),'no unrelated light rebakes');
+    for(const page of untouched) {
+      assert.deepEqual(desk.server.pages.get(`${key}/${page}`),bytes.get(`${key}/${page}`),'untouched page bytes');
+      assert.ok(!desk.server.calls.slice(since).some(c=>c.path===`api/house/bakes/${key}/${page}.png`&&c.full),'untouched page is not downloaded');
+      assert.ok(!desk.server.calls.slice(since).some(c=>c.path===`api/house/bakes/${key}/${page}.png`&&c.method==='POST'),'untouched page is not rebaked');
+    }
+    console.log('  counts '+JSON.stringify({lights:list.length,rebaked:dirty.length,pages:before.pages,untouchedPages:untouched.length,dirtyPages:changedPages.size}));
+  } finally {next?.controller.stop();desk.controller.stop();}
+});
 await check('material_revision_invalidates_bake_and_refreshes_affected_clones', async () => {
   const desk = await context('high',null,null,{materialRole:'interior_wall'});
   try {

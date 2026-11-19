@@ -272,7 +272,7 @@ export function copyMaterialParams(source, target) {
     for (const key of ['transparent', 'opacity', 'depthWrite']) target[key] = source[key];
   }
   if (target.userData.styledFade) scaleStyledFadeAlpha(source, target);
-  for (const key of ['materialId', 'materialRevision', 'materialKey', 'materialRef', 'materialRole', 'randomOffset', 'alphaMode'])
+  for (const key of ['materialId', 'materialRevision', 'materialKey', 'materialRef', 'materialRole', 'randomOffset', 'alphaMode', 'bakeMaterialId'])
     target.userData[key] = source.userData[key];
   target.needsUpdate = true;
 }
@@ -397,6 +397,7 @@ export function kitMaterial(role, kit, tier) {
     side: THREE.FrontSide,
   });
   material.userData.alphaMode = alphaModeOf(asset, ref);
+  material.userData.bakeMaterialId = id || role;
   // The kit's maps repeat every 4 ft (8 for lawn); see the repeat set below.
   material.userData.tileFt = role === 'lawn' ? [8, 8] : [4, 4];
   if (ref.pattern === 'lattice') {

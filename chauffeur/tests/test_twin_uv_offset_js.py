@@ -173,8 +173,8 @@ await test('bake_layout_ignores_random_offset',async()=>{
   house.root.add((await buildYard(p,k,'low',{viewing:true})).group);house.root.updateMatrixWorld(true);return house.root;};
  const off=await scene(false),on=await scene(true);
  const jobOff=atlasJob(off,p,options),jobOn=atlasJob(on,p,options);
- assert.notEqual(jobOn.uvKey,jobOff.uvKey,'the cached geometry knows its base uv');
- assert.notEqual(jobOn.cacheKey,jobOff.cacheKey,'and the input cache keeps them apart');
+ assert.equal(jobOn.uvKey,jobOff.uvKey,'neutral cached topology does not own surface base uv');
+ assert.equal(jobOn.cacheKey,jobOff.cacheKey,'random base offsets reuse the neutral atlas cache');
  const a=buildAtlas(await scene(false),p,options),b=buildAtlas(await scene(true),p,options);
  assert.equal(b.key,a.key,'toggling random_offset leaves the bake layout fresh');
  assert.deepEqual(b.room.charts.map(c=>c.key),a.room.charts.map(c=>c.key),'and every chart key');
