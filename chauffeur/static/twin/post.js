@@ -4,6 +4,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 
 // Metres, not feet. Screen-space AO darkens the whole lit picture, not just
 // the sky's share; this is the accepted limit of this contact-darkening pass.
@@ -88,8 +89,9 @@ function linearBackground(color, renderer, result) {
   return result.setRGB(v.x, v.y, v.z);
 }
 
-export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
+export function createPost(renderer, scene, camera, { samples = 0, clouds = null } = {}) {
   const target = new THREE.WebGLRenderTarget(1, 1, {type: THREE.HalfFloatType, samples});
+  if (clouds) target.depthTexture = new THREE.DepthTexture(1,1,THREE.UnsignedIntType);
   const composer = new EffectComposer(renderer, target);
   const beauty = new RenderPass(scene, camera);
   const occlusion = new GTAOPass(scene, camera, 1, 1, undefined, {
@@ -101,6 +103,59 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
   guardSample(output.material, 'gl_FragColor', OUTPUT_CEILING.toFixed(1));
   composer.addPass(beauty);
   composer.addPass(occlusion);
+  // Capture BEAUTY depth, including alpha-tested vegetation and custom effects.
+  // AO's intentionally restricted normal prepass cannot mask a cloud composite.
+  // A separate colour texture also avoids sampling an attached framebuffer's
+  // depth texture when the composer swaps back to the beauty target.
+  const depthCopy = clouds ? new THREE.WebGLRenderTarget(1,1,{format:THREE.RedFormat,type:THREE.FloatType,
+    depthBuffer:false,minFilter:THREE.NearestFilter,magFilter:THREE.NearestFilter}) : null;
+  const depthMaterial = clouds ? new THREE.ShaderMaterial({uniforms:{sourceDepth:{value:null}},depthTest:false,depthWrite:false,toneMapped:false,
+    vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.0,1.0);}',
+    fragmentShader:'uniform sampler2D sourceDepth;varying vec2 vUv;void main(){gl_FragColor=vec4(texture2D(sourceDepth,vUv).r);}'}) : null;
+  const depthQuad = clouds ? new FullScreenQuad(depthMaterial) : null;
+  let depthReady=!renderer.compileAsync,depthError=null;
+  if (depthQuad && renderer.compileAsync) {
+    const saved=[renderer.getRenderTarget(),renderer.getActiveCubeFace(),renderer.getActiveMipmapLevel()];
+    try {
+      renderer.setRenderTarget(target);
+      Promise.resolve(renderer.compileAsync(depthQuad._mesh,new THREE.OrthographicCamera(-1,1,1,-1,0,1)))
+        .then(()=>{depthReady=true;},error=>{depthError=error;});
+    } finally {renderer.setRenderTarget(...saved);}
+  }
+  const cloudsReady=()=>clouds?.active&&depthReady;
+  let deferred = false;
+  const isCelestial = o => o.name?.startsWith('sky-');
+  const transparent = o => !isCelestial(o) && [].concat(o.material || []).some(m=>m.transparent && !(m.userData.viewingOpaque && m.depthWrite));
+  function withGeometry(predicate, draw) {
+    const hidden=[];
+    try {
+      // Layers skip only this draw, preserving the children of a skipped mesh.
+      scene.traverse(o=>{if(o.material&&!predicate(o)){hidden.push([o,o.layers.mask]);o.layers.mask=0;}});
+      return draw();
+    } finally {for(const [o,mask] of hidden)o.layers.mask=mask;}
+  }
+  class CloudCompositePass extends Pass {
+    render(renderer, writeBuffer, readBuffer) {
+      this.needsSwap = !!cloudsReady();
+      if (!this.needsSwap) return;
+      clouds.render(scene, beauty.camera, depthCopy.texture);
+      // This writes the saved depth as well as colour. Transparent geometry
+      // then depth-tests against precisely the opaque beauty that was shown.
+      clouds.composite(readBuffer.texture, this.renderToScreen ? null : writeBuffer, depthCopy.texture);
+      if (deferred) {
+        const background=scene.background,auto=renderer.autoClear,before={...renderer.info.render};
+        try {
+          scene.background=null;renderer.autoClear=false;
+          renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+          withGeometry(transparent,()=>renderer.render(scene,beauty.camera));
+          mainStats.calls+=renderer.info.render.calls-before.calls;mainStats.triangles+=renderer.info.render.triangles-before.triangles;
+        } finally {scene.background=background;renderer.autoClear=auto;}
+      }
+    }
+    setSize(w,h) {depthCopy.setSize(w,h);}
+    dispose() {depthCopy.dispose();depthMaterial.dispose();depthQuad.dispose();}
+  }
+  if (clouds) composer.addPass(new CloudCompositePass());
   const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), BLOOM_STRENGTH, BLOOM_RADIUS, BLOOM_THRESHOLD);
   guardSample(bloom.materialHighPassFilter, 'texel', `luminosityThreshold * ${GLOW_CEILING.toFixed(1)}`);
   if (!bloom.materialHighPassFilter.fragmentShader.includes(HIGH_PASS)) throw new Error('Post shader missing anchor');
@@ -121,8 +176,18 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
     try {
       if (background?.isColor) scene.background = linearBackground(background, renderer, backgroundColor);
       // r187 leaves render targets scene-linear even with ACES set on renderer.
-      drawBeauty(...args);
+      deferred=!!cloudsReady();
+      if (deferred) withGeometry(o=>!transparent(o),()=>drawBeauty(...args));
+      else drawBeauty(...args);
       mainStats = {calls: renderer.info.render.calls - before.calls, triangles: renderer.info.render.triangles - before.triangles};
+      if (deferred) {
+        // RenderPass draws to readBuffer (args[2]), not the composer's target.
+        const source=args[2],saved=[renderer.getRenderTarget(),renderer.getActiveCubeFace(),renderer.getActiveMipmapLevel()],auto=renderer.autoClear;
+        try {
+          depthMaterial.uniforms.sourceDepth.value=source.depthTexture;
+          renderer.setRenderTarget(depthCopy);renderer.autoClear=false;depthQuad.render(renderer);
+        } finally {renderer.setRenderTarget(...saved);renderer.autoClear=auto;}
+      }
     } finally { scene.background = background; }
   };
 
@@ -217,7 +282,7 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
       if (strength !== undefined) occlusion.blendIntensity = strength;
       if (output !== undefined) occlusion.output = output;
     },
-    info() { return {passes: composer.passes.map(p => p.constructor.name), enabled: !disposed, size: {...size}, samples}; },
+    info() { return {passes: composer.passes.map(p => p.constructor.name), enabled: !disposed, size: {...size}, samples, cloudError:depthError}; },
     dispose() {
       if (disposed) return;
       disposed = true;

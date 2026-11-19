@@ -20,7 +20,9 @@ import { mountEnergySettings } from './live/energy_settings.js';
 import { mountBake } from './bake/runtime.js';
 import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from './sky/ephemeris.js';
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
-import { createSky } from './sky/atmosphere.js';
+import { createSky, sampleSkyIrradiance, transmittance } from './sky/atmosphere.js';
+import { createCloudPass } from './sky/cloud_pass.js';
+import { cloudState } from './sky/clouds.js';
 import { installStageHaze } from './sky/stage_haze.js';
 import { mountTimeScrub } from './sky/time_scrub.js';
 import { defaultStage, mountStageSettings } from './stage_settings.js';
@@ -56,7 +58,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const scene = new THREE.Scene(), perspective = new THREE.PerspectiveCamera(38, 1, 0.1, 1000);
   const orthographic = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
   let camera = perspective;
-  const post = settings.occlusion ? createPost(renderer3, scene, camera, {samples: settings.antialias ? 4 : 0}) : null;
+  const clouds = createCloudPass(renderer3, {tier});
+  const post = settings.occlusion ? createPost(renderer3, scene, camera, {samples: settings.antialias ? 4 : 0, clouds}) : null;
+  clouds.warm(post?.target);
   // three keys every program on where it draws. With the composer on, the
   // picture draws into its half-float target (linear, no tone mapping), so a
   // warm-up compiled for the canvas warmed programs nothing draws, and the real
@@ -100,7 +104,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const ambient = new THREE.HemisphereLight('#d9e9ff', '#68764f', 1.8);
   scene.add(sun, sun.target, moon, moon.target, ambient);
   let yardGroup = null;
-  const sky = createSky(renderer3, {tier}), environment = sky.environment;
+  const sky = createSky(renderer3, {tier, clouds}), environment = sky.environment;
   const stageHaze = installStageHaze(scene, sky);
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
   const stageForPlan = nextPlan => {
@@ -117,7 +121,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let rebuildWork = null;
   const materialBindings = new Map();
   scene.environment = environment;
-  scene.background = sky.cube;
+  scene.background = sky.clearCube;
   const state = { view: 'ext', time: editor ? 'day' : 'now', previewHour:null, camera: 'front', unlit: false };
   const unlit = createUnlit();
   let viewing = null;
@@ -125,8 +129,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let clock = null, previewIdle = null, timeTimer = null, timeLook = null, lastShadowUpdate = -Infinity;
   const clockNow = () => clock ? new Date(clock) : new Date();
   let liveLamps = false;
-  let weatherEntity = null, lastOvercast = 0;
-  const currentOvercast = () => editor ? 0 : overcastFactor(weatherState(view.live?.peek?.(), weatherEntity, view.live?.stale?.() ?? true));
+  let weatherEntity = null, lastOvercast = 0, lastCloudWeather = '';
+  const currentWeather = () => editor ? null : weatherState(view.live?.peek?.(), weatherEntity, view.live?.stale?.() ?? true);
+  const currentOvercast = () => overcastFactor(currentWeather());
+  const currentClouds = () => cloudState(currentWeather());
   let bounds = { x: 19, y: 11, span: 38 };
   let framed = false, cameraMoved = false;
   controls.addEventListener('start', () => { cameraMoved = true; });
@@ -134,7 +140,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
   const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
-    extras:() => [sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
+    extras:() => [sky.object, sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
@@ -371,7 +377,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (disposed) return;
     if (compiling && performance.now() - holdSince < HOLD_MS) return;
     // The live keeper can replace its layer. Read its current snapshot, without another stream.
-    if (!state.unlit && currentOvercast() !== lastOvercast) applyTimeLook();
+    if (!state.unlit && (currentOvercast() !== lastOvercast || JSON.stringify(currentClouds()) !== lastCloudWeather)) applyTimeLook();
     viewing?.update(performance.now());
     applyIndoorSky();
     view.levels?.draw();
@@ -393,7 +399,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     }
     renderer3.info.reset();
     // The pool's mirror image belongs to this frame's camera.
-    if (!state.unlit) reflections.mirror(camera);
+    if (!state.unlit) {
+      const background=scene.background;
+      try {scene.background=sky.cube;reflections.mirror(camera);}
+      finally {scene.background=background;}
+    }
     post?.setCamera(camera);
     // Count only the beauty pass: AO depth and fullscreen draws are extra work,
     // not extra house geometry. createPost snapshots the RenderPass counters.
@@ -420,7 +430,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
-    ready: false, scene, post, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
+    ready: false, scene, post, clouds, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
     get stage() { return stageForPlan(plan); },
     get timeHour() {
@@ -1352,6 +1362,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       unlit.dispose();
       stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
       post?.dispose();
+      clouds.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();
       if (window.__twin === view) delete window.__twin;
     },
@@ -1419,13 +1430,20 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const illumination = moonIllumination(date), overcast = currentOvercast();
     const sunDir = modelDirection(solar.azimuth, solar.altitude, located.front_bearing_deg);
     const moonDir = modelDirection(lunar.azimuth, lunar.altitude, located.front_bearing_deg);
+    const cloudWeather=currentClouds(),radianceInput={sunDir,moonDir,moonFraction:illumination.fraction,overcast};
+    const cloudIrradiance=sampleSkyIrradiance(radianceInput);
+    clouds.update(cloudWeather,{sunDir,moonDir,frontBearingDeg:located.front_bearing_deg,
+      sunRadiance:transmittance([sunDir[0],Math.max(0,sunDir[1]),sunDir[2]]).map(v=>v*10),
+      moonRadiance:transmittance(moonDir).map(v=>v*.02*illumination.fraction),
+      ambientTop:cloudIrradiance.top,ambientBottom:cloudIrradiance.bottom});
+    lastCloudWeather=JSON.stringify(cloudWeather);
     const skyChanged = sky.update({sunDir, moonDir, moonPhase:illumination.phase, moonFraction:illumination.fraction,
       moonDistanceKm:lunar.distance, siderealTime:localSiderealTime(date,located.lon),
       frontBearingDeg:located.front_bearing_deg, overcast, latitude:located.lat, force:moved || forceSky});
     lastOvercast = overcast;
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
       { shadows: settings.shadows, overcast, zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });
-    scene.background = sky.cube; scene.backgroundIntensity = 1;
+    scene.background = sky.clearCube; scene.backgroundIntensity = 1;
     scene.environment = environment;
     scene.environmentIntensity = timeLook.environment;
     sun.intensity = timeLook.sun; moon.intensity = timeLook.moon;
@@ -1553,7 +1571,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     view.materialWatcher = watchMaterialCatalogue(view);
     renderer3.setAnimationLoop(() => {
       const now = performance.now(), run = probeRun;
-      sky.frame(now/1000);
+      if(!compiling || now-holdSince>=HOLD_MS) {
+        clouds.frame(now/1000);
+        if(sky.frame(now/1000))reflections.request();
+      }
       try {
       if (run) {
         const elapsed = now - run.start;

@@ -54,10 +54,19 @@ export function createCloudNoise({size=128,detail=32}={}) {
   return {base,detail:erosion,dispose(){if(disposed)return;disposed=true;base.dispose();erosion.dispose();}};
 }
 
+// Uniform objects are shared by a consumer's shaders, never a weather-dependent
+// define. Cube callers snapshot these values for a coherent six-face capture.
+export function createCloudUniforms(noise) {
+  return {cloudBaseNoise:{value:noise?.base || null},cloudDetailNoise:{value:noise?.detail || null},
+    cloudCoverage:{value:0},cloudType:{value:0},cloudFade:{value:0},cloudOffset:{value:new THREE.Vector3()},
+    cloudSunRadiance:{value:new THREE.Vector3()},cloudMoonDir:{value:new THREE.Vector3(0,-1,0)},
+    cloudMoonRadiance:{value:new THREE.Vector3()},cloudAmbientTop:{value:new THREE.Vector3()},cloudAmbientBottom:{value:new THREE.Vector3()}};
+}
+
 // CPU port of cloudDensity, with the same periodic trilinear samples and remaps.
 // p and offset are local metres above ground at the origin, y up. The curved
 // Earth shell makes even a horizontal panel-camera ray reach distant clouds.
-export function sampleCloudDensity(p,{base,detail,coverage=0,type='none',offset=[0,0,0]}={}) {
+export function sampleCloudDensity(p,{base,detail,coverage=0,type='none',offset=[0,0,0],detailWeight=1}={}) {
   const kind=typeof type==='number' ? type : CLOUD_TYPES[type] || 0;
   if (coverage<=0 || kind<.5) return 0;
   const low=kind>2.5 && kind<4.5, bottom=low?500:1500, top=low?1500:4000;
@@ -75,7 +84,7 @@ export function sampleCloudDensity(p,{base,detail,coverage=0,type='none',offset=
   const shape=low ? .6+.4*n[0] : n[0];
   const body=clamp((shape*profile-(1-local))/Math.max(local,1e-4));
   const d=sampleVolume(detail.image,p.map((v,i)=>(v-offset[i]*1.3)/1800));
-  const erosion=(1-(d[1]*.625+d[2]*.25+d[3]*.125))*(low?.12:.28)*(1-body);
+  const erosion=(1-(d[1]*.625+d[2]*.25+d[3]*.125))*(low?.12:.28)*(1-body)*clamp(detailWeight);
   return clamp((body-erosion)/Math.max(1-erosion,1e-4));
 }
 
@@ -83,14 +92,15 @@ export function sampleCloudDensity(p,{base,detail,coverage=0,type='none',offset=
 // All positions/displacements are METRES, not the atmosphere's km or scene feet.
 // cloudType = CLOUD_TYPES[state.type]; all weather/drift/light changes are uniforms.
 // Radiances: scene-linear RGB (sun = atmosphere transmittance * SUN=10; moon =
-// caller's lunar radiance including phase). Ambient colours are sky/ground
-// radiances. marchClouds returns premultiplied radiance RGB and opacity (1-T).
+// caller's lunar radiance including phase). Ambient colours are hemispheric
+// irradiance / pi. marchClouds returns premultiplied radiance RGB and opacity (1-T).
 // maxSteps is bounded to 1..128; jitter is a [0,1] blue-noise start offset.
 export const CLOUD_GLSL = `
 uniform sampler3D cloudBaseNoise;
 uniform sampler3D cloudDetailNoise;
 uniform float cloudCoverage;
 uniform float cloudType;
+uniform float cloudFade;
 uniform vec3 cloudOffset;
 uniform vec3 cloudSunRadiance;
 uniform vec3 cloudMoonDir;
@@ -120,7 +130,7 @@ vec2 cloudSegment(vec3 p,vec3 d) {
   if(ground.x>0.0) end=min(end,ground.x);
   return end>start ? vec2(start,end) : vec2(0.0);
 }
-float cloudDensity(vec3 p) {
+float cloudDensityLOD(vec3 p,float detailWeight) {
   if(cloudCoverage<=0.0 || cloudType<0.5) return 0.0;
   vec2 layer=cloudLayer();
   float h=(cloudHeight(p)-layer.x)/max(layer.y-layer.x,1e-4);
@@ -136,15 +146,19 @@ float cloudDensity(vec3 p) {
   if(cloudType>4.5) profile=smoothstep(0.0,0.1,h)*(1.0-smoothstep(0.82,1.0,h));
   float shape=low ? 0.6+0.4*n.r : n.r;
   float body=clamp((shape*profile-(1.0-local))/max(local,1e-4),0.0,1.0);
-  vec4 detail=texture(cloudDetailNoise,(p-cloudOffset*1.3)/1800.0);
-  float erosion=(1.0-dot(detail.gba,vec3(0.625,0.25,0.125)))*(low ? 0.12 : 0.28)*(1.0-body);
+  float erosion=0.0;
+  if(detailWeight>0.0) {
+    vec4 detail=texture(cloudDetailNoise,(p-cloudOffset*1.3)/1800.0);
+    erosion=(1.0-dot(detail.gba,vec3(0.625,0.25,0.125)))*(low ? 0.12 : 0.28)*(1.0-body)*detailWeight;
+  }
   return clamp((body-erosion)/max(1.0-erosion,1e-4),0.0,1.0);
 }
+float cloudDensity(vec3 p) { return cloudDensityLOD(p,1.0); }
 // Direct Beer-Lambert transmittance towards either luminary. Geometric Earth
 // occlusion permits twilight illumination of cloud tops but no light through soil.
-float cloudLight(vec3 p,vec3 sunDir) {
+float cloudLightDepth(vec3 p,vec3 sunDir) {
   vec3 d=cloudUnit(sunDir);
-  if(cloudSphere(p,d,CLOUD_EARTH).x>0.0) return 0.0;
+  if(cloudSphere(p,d,CLOUD_EARTH).x>0.0) return 1e6;
   vec2 segment=cloudSegment(p,d);
   float depth=0.0;
   for(int j=0;j<6;j++) {
@@ -152,46 +166,82 @@ float cloudLight(vec3 p,vec3 sunDir) {
     float a=mix(segment.x,segment.y,u*u),b=mix(segment.x,segment.y,v*v);
     depth+=cloudDensity(p+d*((a+b)*0.5))*(b-a)*CLOUD_EXTINCTION;
   }
-  return exp(-max(0.0,depth));
+  return max(0.0,depth);
 }
+float cloudLight(vec3 p,vec3 sunDir) { return exp(-cloudLightDepth(p,sunDir)); }
 float cloudHG(float mu,float g) {
   return (1.0-g*g)/max(12.56637061*pow(max(1e-4,1.0+g*g-2.0*g*mu),1.5),1e-6);
 }
-float cloudScatter(float transmission,float mu) {
-  if(transmission<=0.0) return 0.0;
-  float depth=-log(max(transmission,1e-6)), energy=1.0, attenuation=1.0, eccentricity=1.0, result=0.0;
+float cloudScatterDepth(float depth,float mu) {
+  float energy=1.0, attenuation=1.0, eccentricity=1.0, result=0.0;
   // Three Wrenninge-style scattering orders: broader, less extinguished light.
   for(int octave=0;octave<3;octave++) {
     float phase=0.85*cloudHG(mu,0.8*eccentricity)+0.15*cloudHG(mu,-0.3*eccentricity);
-    result+=energy*exp(-depth*attenuation)*phase;
-    energy*=0.5;attenuation*=0.5;eccentricity*=0.5;
+    result+=energy*exp(-max(0.0,depth)*attenuation)*phase;
+    energy*=0.5;attenuation*=0.25;eccentricity*=0.5;
   }
   float powder=1.0-exp(-2.0*depth);
   return result*(0.5+0.5*powder);
 }
+// A cloud underside sees skylight through scattering in the layer, as well as
+// ground bounce. A nadir/zenith point lookup misses the bright twilight horizon.
+float cloudAmbientChannel(float bottom,float top,float h) {
+  return 0.9*mix(max(0.0,bottom),max(0.0,top),0.35+0.3*clamp(h,0.0,1.0));
+}
+// Cheap aerial perspective, with the clear atmosphere in this view direction.
+// 25 km mean free path: contrast is 92.3% at 2 km, only 4.08% at 80 km.
+float cloudAirWeight(float distanceM) {
+  return 1.0-exp(-max(0.0,distanceM)/25000.0);
+}
+float cloudSampleDistance(float start,float end,float t) {
+  return mix(start,end,t*t);
+}
+float cloudDetailWeight(float distanceM,float stepM) {
+  return (1.0-smoothstep(8000.0,32000.0,distanceM))*(1.0-smoothstep(300.0,1200.0,stepM));
+}
+float cloudStepJitter(float jitter,float stepIndex) {
+  return fract(jitter+stepIndex*0.61803398875);
+}
 float cloudHeld(float v) { return v>=0.0 ? min(v,4096.0) : 0.0; }
-vec4 marchClouds(vec3 ro,vec3 rd,float maxSteps,float jitter,vec3 sunDir) {
-  if(cloudCoverage<=0.0 || cloudType<0.5) return vec4(0.0);
+float cloudTransmittance(vec3 ro,vec3 rd,float budget) {
+  if(cloudCoverage<=0.0 || cloudType<0.5 || cloudFade<=0.0) return 1.0;
+  vec3 d=cloudUnit(rd);vec2 segment=cloudSegment(ro,d);
+  float steps=clamp(floor(budget),1.0,64.0),ds=max(0.0,segment.y-segment.x)/max(steps,1.0),depth=0.0;
+  for(int j=0;j<64;j++) {
+    if(float(j)>=steps) break;
+    depth+=cloudDensity(ro+d*(segment.x+(float(j)+0.5)*ds))*ds*CLOUD_EXTINCTION;
+  }
+  return mix(1.0,exp(-max(0.0,depth)),clamp(cloudFade,0.0,1.0));
+}
+vec4 marchClouds(vec3 ro,vec3 rd,float maxSteps,float jitter,vec3 sunDir,vec3 clearSky) {
+  if(cloudCoverage<=0.0 || cloudType<0.5 || cloudFade<=0.0) return vec4(0.0);
   vec3 d=cloudUnit(rd),sun=cloudUnit(sunDir),moon=cloudUnit(cloudMoonDir);
   vec2 segment=cloudSegment(ro,d),layer=cloudLayer();
-  float steps=clamp(floor(maxSteps),1.0,128.0),ds=max(0.0,segment.y-segment.x)/max(steps,1.0);
-  if(ds<=0.0) return vec4(0.0);
+  float steps=clamp(floor(maxSteps),1.0,128.0);
+  if(segment.y<=segment.x) return vec4(0.0);
   vec3 radiance=vec3(0.0);
   float transmission=1.0;
   for(int j=0;j<128;j++) {
     if(float(j)>=steps || transmission<0.005) break;
-    vec3 p=ro+d*(segment.x+(float(j)+clamp(jitter,0.0,1.0))*ds);
-    float density=cloudDensity(p);
+    // Concentrate the fixed budget at the near end; independent, time-stable
+    // offsets per interval avoid coherent grazing-angle stair steps.
+    float a=cloudSampleDistance(segment.x,segment.y,float(j)/max(steps,1.0));
+    float b=cloudSampleDistance(segment.x,segment.y,float(j+1)/max(steps,1.0)),ds=b-a;
+    float distanceM=mix(a,b,cloudStepJitter(clamp(jitter,0.0,1.0),float(j)));
+    vec3 p=ro+d*distanceM;
+    float density=cloudDensityLOD(p,cloudDetailWeight(distanceM,ds));
     if(density<=0.0) continue;
     float stepT=exp(-density*ds*CLOUD_EXTINCTION);
     float h=clamp((cloudHeight(p)-layer.x)/max(layer.y-layer.x,1e-4),0.0,1.0);
-    vec3 light=mix(cloudAmbientBottom,cloudAmbientTop,h)*0.5;
-    if(dot(cloudSunRadiance,cloudSunRadiance)>0.0) light+=cloudSunRadiance*cloudScatter(cloudLight(p,sun),dot(d,sun));
-    if(dot(cloudMoonRadiance,cloudMoonRadiance)>0.0) light+=cloudMoonRadiance*cloudScatter(cloudLight(p,moon),dot(d,moon));
+    vec3 light=vec3(cloudAmbientChannel(cloudAmbientBottom.r,cloudAmbientTop.r,h),
+      cloudAmbientChannel(cloudAmbientBottom.g,cloudAmbientTop.g,h),cloudAmbientChannel(cloudAmbientBottom.b,cloudAmbientTop.b,h));
+    if(dot(cloudSunRadiance,cloudSunRadiance)>0.0) light+=cloudSunRadiance*cloudScatterDepth(cloudLightDepth(p,sun),dot(d,sun));
+    if(dot(cloudMoonRadiance,cloudMoonRadiance)>0.0) light+=cloudMoonRadiance*cloudScatterDepth(cloudLightDepth(p,moon),dot(d,moon));
+    light=mix(light,clearSky,cloudAirWeight(distanceM));
     radiance+=transmission*(1.0-stepT)*light;
     transmission*=stepT;
   }
   float opacity=1.0-transmission;
-  return vec4(cloudHeld(radiance.r),cloudHeld(radiance.g),cloudHeld(radiance.b),opacity>=0.0 ? min(opacity,1.0) : 0.0);
+  return vec4(cloudHeld(radiance.r),cloudHeld(radiance.g),cloudHeld(radiance.b),opacity>=0.0 ? min(opacity,1.0) : 0.0)*clamp(cloudFade,0.0,1.0);
 }
 `;

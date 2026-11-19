@@ -112,7 +112,7 @@ await test('cube draws the same bodies/stars and refreshes on catalogue arrival'
   sky.update({sunDir:[0,-1,0],moonDir:[0,1,0],siderealTime:1,latitude:.7,force:true});
   assert.equal(sky.environment,env);assert.equal(sky.cube,cube);
   assert.equal(sky.update({sunDir:[0,-1,0],moonDir:[0,1,0],siderealTime:1,overcast:.04}),false);
-  assert.equal(sky.object.getObjectByName('sky-sun').material.uniforms.strength.value,.97,'direct uniforms follow sub-threshold weather steps');
+  assert.equal(sky.object.getObjectByName('sky-sun').material.uniforms.strength.value,1,'cloud transmittance replaces the interim scalar disc dimmer');
   sky.setEnabled(false);
   sky.object.traverse(o=>{if(o.isMesh)assert.equal(o.material.uniforms.enabled.value,0);});
   sky.dispose();

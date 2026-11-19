@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createBodies } from './bodies.js';
 import { createStars } from './stars.js';
+import { CLOUD_GLSL, createCloudUniforms } from './clouds.js';
 
 // Earth in km, coefficients in km^-1 (Hillaire 2020, table 1; Bruneton's RGB wavelengths).
 const R = 6360, TOP = 6460, HEIGHT = .002, HR = 8, HM = 1.2, G = .8;
@@ -74,17 +75,35 @@ export function sampleRadiance(dirWorld, {sunDir=[0,1,0],moonDir=[0,-1,0],moonFr
   }
   // Airglow survives astronomical night; detailed bodies are separate meshes.
   for (let i=0;i<3;i++) result[i]+=AIRGLOW[i]*(1+clamp(moonFraction)*Math.max(0,moon[1])*(1-c));
-  const luminance=dot(result,[.2126,.7152,.0722]);
-  // CIE overcast's (1+2 sin altitude)/3 gives a bright zenith and a grey horizon.
-  const grey=luminance*(1+2*Math.max(0,d[1]))/3;
-  const blend=c*(.75+.25*(1-Math.max(0,d[1])));
   const ground=below>0 ? groundRadiance({sunDir,moonDir,moonFraction,overcast}) : [0,0,0];
   const t=clamp((below-GROUND_START)/(GROUND_END-GROUND_START)), groundWeight=t*t*(3-2*t);
-  return result.map((v,i)=>clamp((v*(1-blend)+grey*blend)*(1-groundWeight)+ground[i]*groundWeight,0,4096));
+  return result.map((v,i)=>clamp(v*(1-groundWeight)+ground[i]*groundWeight,0,4096));
+}
+
+// Cosine-weighted quadrature of both hemispheres, in scene-linear irradiance/pi.
+// Four Gauss-Legendre elevation nodes x eight azimuths include the bright low
+// sunset sky (lowest node is 4 degrees) and distant ground. Align one azimuth
+// with the sun; evaluate only on light-state updates, never in a fragment.
+export function sampleSkyIrradiance(state={}) {
+  const top=[0,0,0],bottom=[0,0,0];
+  const nodes=[.0694318442,.3300094782,.6699905218,.9305681558];
+  const weights=[.1739274226,.3260725774,.3260725774,.1739274226];
+  const sun=unit(state.sunDir),bearing=Math.atan2(sun[2],sun[0]);
+  for(let ring=0;ring<4;ring++)for(let azimuth=0;azimuth<8;azimuth++) {
+    const y=nodes[ring],r=Math.sqrt(1-y*y),a=bearing+azimuth*Math.PI/4;
+    for(const [hemisphere,sign] of [[top,1],[bottom,-1]]) {
+      const radiance=sampleRadiance([r*Math.cos(a),sign*y,r*Math.sin(a)],state);
+      for(let i=0;i<3;i++)hemisphere[i]+=radiance[i]*weights[ring]*2*y/8;
+    }
+  }
+  return {top,bottom};
 }
 
 const vec = a => `vec3(${a.map(v=>Number(v).toFixed(8)).join(',')})`;
 const fragmentShader = `
+precision highp sampler3D;
+${CLOUD_GLSL}
+uniform float cloudViewEnabled,cloudCubeSteps;
 uniform vec3 sunDir;
 uniform vec3 moonDir;
 uniform float moonFraction;
@@ -137,41 +156,55 @@ void main() {
     transmission*=stepT;
   }
   result+=${vec(AIRGLOW)}*(1.0+moonFraction*max(0.0,moonDir.y)*(1.0-overcast));
-  float luminance=dot(result,vec3(0.2126,0.7152,0.0722));
-  float grey=luminance*(1.0+2.0*max(0.0,d.y))/3.0;
-  float blend=overcast*(0.75+0.25*(1.0-max(0.0,d.y)));
-  result=mix(result,vec3(grey),blend);
   // Angular aerial-perspective approximation: horizon through 1 degree,
   // smooth transition to lit ground by 15 degrees. Same ramp as CPU sampling.
   float groundWeight=smoothstep(${GROUND_START},${GROUND_END},below);
   result=mix(result,groundColour,groundWeight);
+  if(cloudViewEnabled>0.5) {
+    vec4 cloud=marchClouds(vec3(0.0,${(HEIGHT*1000).toFixed(1)},0.0),cloudUnit(skyDirection),cloudCubeSteps,0.5,sunDir,result);
+    result=cloud.rgb+result*(1.0-cloud.a);
+  }
   // A comparison also catches NaN; protect every consumer, including low without bloom.
   gl_FragColor=vec4(result.r>=0.0 ? min(result.r,4096.0) : 0.0,
     result.g>=0.0 ? min(result.g,4096.0) : 0.0,result.b>=0.0 ? min(result.b,4096.0) : 0.0,1.0);
 }`;
 
-export function createSky(renderer, {tier='low'} = {}) {
+export function createSky(renderer, {tier='low',clouds=null} = {}) {
   const size=['high','max'].includes(tier) ? 512 : 256;
   const target=new THREE.WebGLCubeRenderTarget(size,{type:THREE.HalfFloatType,colorSpace:THREE.LinearSRGBColorSpace,
     depthBuffer:false,generateMipmaps:false,minFilter:THREE.LinearFilter});
   target.texture.name='twin-sky';
-  const uniforms={sunDir:{value:new THREE.Vector3(0,1,0)},moonDir:{value:new THREE.Vector3(0,-1,0)},moonFraction:{value:0},overcast:{value:0},groundColour:{value:new THREE.Vector3()}};
+  const clearTarget=clouds?.screen ? target.clone() : null;
+  if(clearTarget)clearTarget.texture.name='twin-clear-sky';
+  const cloudUniforms=createCloudUniforms();
+  function snapshotClouds() {
+    if(!clouds)return;
+    for(const [key,u] of Object.entries(cloudUniforms)) {
+      const value=clouds.uniforms[key].value;
+      if(u.value?.isVector3)u.value.copy(value);else u.value=value;
+    }
+  }
+  snapshotClouds();
+  const uniforms={...cloudUniforms,cloudViewEnabled:{value:1},cloudCubeSteps:{value:16},sunDir:{value:new THREE.Vector3(0,1,0)},moonDir:{value:new THREE.Vector3(0,-1,0)},moonFraction:{value:0},overcast:{value:0},groundColour:{value:new THREE.Vector3()}};
   const material=new THREE.ShaderMaterial({uniforms,fragmentShader,side:THREE.BackSide,depthTest:false,depthWrite:false,toneMapped:false,
     vertexShader:'varying vec3 skyDirection; void main(){ skyDirection=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }'});
   const mesh=new THREE.Mesh(new THREE.BoxGeometry(2,2,2),material);mesh.frustumCulled=false;
   const scene=new THREE.Scene();scene.name='twin-atmosphere';scene.add(mesh);
-  const bodies=createBodies(), stars=createStars(), cubeBodies=createBodies(), cubeStars=createStars();
+  const directClouds={cloudUniforms:clouds?.uniforms || cloudUniforms,cloudAttenuate:!clouds?.screen};
+  const bodies=createBodies(directClouds), stars=createStars(null,directClouds),
+    cubeBodies=createBodies({cloudUniforms,cloudAttenuate:true}),cubeStars=createStars(null,{cloudUniforms,cloudAttenuate:true});
   const object=new THREE.Group();object.name='twin-celestial';object.add(bodies.object,stars.object);
   scene.add(cubeBodies.object,cubeStars.object);
   // Shells are at 40/60m, inside even the smallest house reflection camera.
   const camera=new THREE.CubeCamera(.1,100,target), pmrem=new THREE.PMREMGenerator(renderer);
   let environmentTarget=null, previous=null, disposed=false;
+  let pendingFace=null,lastCloudRefresh=-Infinity,frameSeconds=0;
   let moonTexture=null, assetPromise=null;
   function update(input={}) {
     if (disposed) return false;
     const next={...input,sunDir:unit(input.sunDir),moonDir:unit(input.moonDir || [0,-1,0]),moonFraction:clamp(input.moonFraction || 0),overcast:clamp(input.overcast || 0)};
     const bodyInput={...next,transmittance};
-    const starInput={...next,latitudeRad:next.latitudeRad ?? (next.latitude || 0)*Math.PI/180,
+    const starInput={...next,overcast:clouds?0:next.overcast,latitudeRad:next.latitudeRad ?? (next.latitude || 0)*Math.PI/180,
       sunAltDeg:Math.asin(clamp(next.sunDir[1],-1,1))*180/Math.PI,
       moonFraction:next.moonFraction*Math.max(0,next.moonDir[1])};
     // Direct-view uniforms follow even steps below the cube's refresh threshold.
@@ -183,16 +216,35 @@ export function createSky(renderer, {tier='low'} = {}) {
     uniforms.moonFraction.value=next.moonFraction;uniforms.overcast.value=next.overcast;
     uniforms.groundColour.value.fromArray(groundRadiance(next));
     cubeBodies.update(bodyInput);cubeStars.update(starInput);
+    snapshotClouds();
     const saved={target:renderer.getRenderTarget(),face:renderer.getActiveCubeFace(),mip:renderer.getActiveMipmapLevel(),
       xr:renderer.xr.enabled,auto:renderer.autoClear,info:{...renderer.info.render},mipmaps:target.texture.mipmapsAutoUpdate};
     try {
       renderer.autoClear=true;
-      camera.update(renderer,scene);
+      if(clearTarget) {
+        uniforms.cloudViewEnabled.value=0;cubeBodies.setCloudsEnabled(false);cubeStars.setCloudsEnabled(false);
+        // The screen's aerial-perspective lookup needs atmosphere alone. Direct
+        // celestial meshes already draw over this background; keep bright discs
+        // out of the in-scattering colour behind an opaque distant cloud.
+        const visible=[cubeBodies.object.visible,cubeStars.object.visible];
+        try {
+          cubeBodies.object.visible=false;cubeStars.object.visible=false;
+          camera.renderTarget=clearTarget;camera.update(renderer,scene);
+        } finally {
+          [cubeBodies.object.visible,cubeStars.object.visible]=visible;camera.renderTarget=target;
+        }
+      }
+      uniforms.cloudViewEnabled.value=1;cubeBodies.setCloudsEnabled(true);cubeStars.setCloudsEnabled(true);
+      // First draw allocates the fixed PMREM while noise is still unavailable.
+      // Later cloudy refreshes submit one face per animation frame.
+      if(previous&&clouds?.active){pendingFace=0;lastCloudRefresh=frameSeconds;}
+      else {pendingFace=null;camera.update(renderer,scene);}
       // r187 keys envMapSize/MaxLod/PMREM: retain this target and its mip layout forever.
-      environmentTarget=pmrem.fromCubemap(target.texture,environmentTarget);
+      if(pendingFace===null)environmentTarget=pmrem.fromCubemap(target.texture,environmentTarget);
       previous=next;
       return true;
     } finally {
+      camera.renderTarget=target;uniforms.cloudViewEnabled.value=1;cubeBodies.setCloudsEnabled(true);cubeStars.setCloudsEnabled(true);
       renderer.setRenderTarget(saved.target,saved.face,saved.mip);renderer.xr.enabled=saved.xr;renderer.autoClear=saved.auto;
       target.texture.mipmapsAutoUpdate=saved.mipmaps;Object.assign(renderer.info.render,saved.info);
     }
@@ -201,7 +253,7 @@ export function createSky(renderer, {tier='low'} = {}) {
   catch (error) { dispose();throw error; }
   function dispose() {
     if (disposed) return;
-    disposed=true;target.dispose();environmentTarget?.dispose();pmrem.dispose();mesh.geometry.dispose();material.dispose();
+    disposed=true;target.dispose();clearTarget?.dispose();environmentTarget?.dispose();pmrem.dispose();mesh.geometry.dispose();material.dispose();
     for (const layer of [bodies,stars,cubeBodies,cubeStars]) layer.dispose();
     moonTexture?.dispose();object.removeFromParent();
   }
@@ -237,8 +289,29 @@ export function createSky(renderer, {tier='low'} = {}) {
     assetPromise=Promise.allSettled([moon,catalogue]);
     return assetPromise;
   }
-  return {cube:target.texture,object,get environment(){return environmentTarget.texture;},update,setAssets,loadAssets,
+  return {cube:target.texture,clearCube:clearTarget?.texture || target.texture,object,get environment(){return environmentTarget.texture;},update,setAssets,loadAssets,
     setEnabled(on) { bodies.setEnabled(on);stars.setEnabled(on); },
-    frame(seconds) { stars.frame(seconds); },
+    frame(seconds) {
+      stars.frame(seconds);
+      if(disposed||!clouds)return false;
+      frameSeconds=seconds;
+      const fadeChanged=Math.abs(clouds.uniforms.cloudFade.value-cloudUniforms.cloudFade.value)>.05;
+      const stateChanged=clouds.uniforms.cloudCoverage.value!==cloudUniforms.cloudCoverage.value||clouds.uniforms.cloudType.value!==cloudUniforms.cloudType.value;
+      if(pendingFace===null&&(stateChanged||fadeChanged||(clouds.active&&seconds-lastCloudRefresh>=4))) {
+        snapshotClouds();pendingFace=0;lastCloudRefresh=seconds;
+      }
+      if(pendingFace===null)return false;
+      const saved=[renderer.getRenderTarget(),renderer.getActiveCubeFace(),renderer.getActiveMipmapLevel()],
+        xr=renderer.xr.enabled,auto=renderer.autoClear,info={...renderer.info.render};
+      try {
+        renderer.xr.enabled=false;renderer.autoClear=true;
+        camera.updateMatrixWorld();renderer.setRenderTarget(target,pendingFace);renderer.render(scene,camera.children[pendingFace]);
+        if(++pendingFace===6) {
+          pendingFace=null;target.texture.needsPMREMUpdate=true;
+          environmentTarget=pmrem.fromCubemap(target.texture,environmentTarget);return true;
+        }
+        return false;
+      } finally {renderer.setRenderTarget(...saved);renderer.xr.enabled=xr;renderer.autoClear=auto;Object.assign(renderer.info.render,info);}
+    },
     horizon:dir=>new THREE.Color().setRGB(...sampleRadiance(dir,previous || {})),dispose};
 }

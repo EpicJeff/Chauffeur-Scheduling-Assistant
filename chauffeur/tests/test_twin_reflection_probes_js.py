@@ -283,9 +283,17 @@ await test('mounted_high_view_draws_the_water_mirror_inside_its_own_frame_and_no
  let view;try{
   view=await mountTwin(new Element(),{plan:fixture(),kit:kit(),tier:'high',bake:false});
   const pool=view.reflectionInfo().probes.find(p=>p.id==='water:pool').centre;
+  const clear=view.scene.background;
+  view.renderer3.inspectMirror=(s,c)=>{
+   if(c===view.camera)return;
+   assert.equal(s.background.name,'twin-sky','the mirror receives the cloudy reflection cube');
+   assert.notEqual(s.background,clear,'screen clouds must not be marched over their own cloudy cube');
+   assert.equal(s.getObjectByName('twin-celestial').visible,false,'the cube already contains cloud-attenuated bodies/stars');
+  };
   view.camera.position.set(pool[0]-9,pool[1]+1.7,pool[2]+2);view.controls.target.set(pool[0],pool[1],pool[2]);view.camera.lookAt(view.controls.target);view.camera.updateMatrixWorld();
   const calls=[];const real=view.renderer3.render;view.renderer3.render=function(s,c){calls.push(this.target?.isWebGLRenderTarget&&!this.target.isWebGLCubeRenderTarget?'mirror':'frame');return real.call(this,s,c);};
   const before=view.reflectionInfo().planar.passes;view.render();assert.equal(view.reflectionInfo().planar.passes,before+1);assert.equal(calls[0],'mirror','the mirror is drawn before the picture that shows it');
+  assert.equal(view.scene.background,clear,'the visible sky is restored after the mirror');
   view.setUnlit(true);view.render();assert.equal(view.reflectionInfo().planar.passes,before+1);
  }finally{view?.dispose();CaptureRenderer.prototype.setAnimationLoop=originalLoop;globalThis.Renderer=rendererClass;}
 });
