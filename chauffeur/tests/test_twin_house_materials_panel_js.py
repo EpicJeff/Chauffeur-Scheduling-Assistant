@@ -1,5 +1,6 @@
 """House defaults through the shared slot widget and real building card."""
 import sys
+import json
 from pathlib import Path
 from twin_editor_dom import PRELUDE, run_node
 
@@ -24,6 +25,25 @@ function make(locked=false){
   op:async o=>sent.push(o),report:e=>errors.push(e.message)});
  return {host,sent,errors,plan,building};
 }
+await test('grass_choice_load_save_refusal_read_only_and_disposal',async()=>{
+ const {plan,building}=make(),host=document.createElement('div'),calls=[],errors=[],owned=[];
+ let fail=false,editable=true;
+ const settingsRequest=async(path,method,body,area)=>{
+  calls.push({path,method,body,area});if(fail)throw Error('Grass refused');
+  return {lawn:{grass_type:'warm'}};
+ };
+ houseMaterialsShelf(host,building,{getPlan:()=>plan,getKit:()=>({}),library,ownSlot:row=>owned.push(row),
+  canEdit:()=>editable,op:()=>{throw Error('grass must not write the house')},report:e=>errors.push(e.message),settingsRequest});
+ const choice=host.querySelector('[name="lawn_grass_type"]');assert.ok(choice);assert.equal(choice.disabled,true);
+ await new Promise(r=>setTimeout(r,0));assert.equal(choice.value,'warm');assert.equal(choice.disabled,false);
+ assert.match(textOf(choice),/Bermuda, zoysia, St. Augustine/);assert.match(textOf(choice),/fescue, bluegrass, rye/);
+ choice.value='cool';await fire(choice,'change');await new Promise(r=>setTimeout(r,0));
+ assert.deepEqual(calls.at(-1),{path:'weather-sources',method:'PUT',body:{lawn_grass_type:'cool'},area:'twin'});
+ fail=true;choice.value='warm';await fire(choice,'change');await new Promise(r=>setTimeout(r,0));
+ assert.equal(choice.value,'cool');assert.deepEqual(errors,['Grass refused']);
+ fail=false;editable=false;const before=calls.length;await fire(choice,'change');assert.equal(calls.length,before);
+ editable=true;owned.forEach(row=>row.dispose());await fire(choice,'change');assert.equal(calls.length,before);
+});
 await test('panel_lists_every_kind_once',()=>{
  const {host}=make(),slots=host.querySelectorAll('[data-material-slot]');
  assert.equal(slots.length,PANEL_ROLES.length+KINDS.length);
@@ -80,10 +100,25 @@ await test('building_card_refreshes_house_and_site_values_and_read_only',async()
  await cards.queue(async()=>{});assert.equal(sent.length,1);assert.equal(sent[0].material,null);
  writable=false;cards.draw();assert.equal(host.querySelector('[data-material-slot="Panes"]').querySelectorAll('button,input').length,0);
 });
+await test('grass_choice_on_every_real_household_building',async()=>{
+ for(const building of input.household.buildings){
+  const host=document.createElement('div'),sent=[];
+  houseMaterialsShelf(host,building,{getPlan:()=>input.household,getKit:()=>({}),library,canEdit:()=>true,
+   op:()=>{throw Error('grass changed the household plan')},settingsRequest:async(path,method,body)=>{
+    if(method==='PUT')sent.push(body);return {lawn:{grass_type:'cool'}};
+   }});
+  await new Promise(r=>setTimeout(r,0));
+  assert.ok(host.querySelector('[data-material-slot="Lawn"]'));
+  const choice=host.querySelector('[name="lawn_grass_type"]');assert.equal(choice.value,'cool');
+  choice.value='warm';await fire(choice,'change');await new Promise(r=>setTimeout(r,0));
+  assert.deepEqual(sent,[{lawn_grass_type:'warm'}]);
+ }
+});
 finish();
 """
 
 if __name__ == '__main__':
-    code, output = run_node(DRIVER, {'root': ROOT.as_posix()})
+    household = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
+    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'household': household})
     print(output)
     sys.exit(code or 0)

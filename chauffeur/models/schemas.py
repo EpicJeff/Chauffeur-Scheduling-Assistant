@@ -1038,6 +1038,7 @@ class Settings(BaseModel):
     weather_wind_speed_sensor: str = ""
     weather_wind_direction_sensor: str = ""
     weather_temperature_sensor: str = ""
+    lawn_grass_type: Literal['cool', 'warm'] = 'cool'
     # Weekly "Family Week in Review" recap Argyle posts into the family chat
     # channel: driving per driver, kid activities, chores/points, rewards,
     # routine completion. Sourced from evening daily_stats snapshots plus the

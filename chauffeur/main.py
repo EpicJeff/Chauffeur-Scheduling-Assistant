@@ -7631,6 +7631,7 @@ def house_twin_stage():
 
 @app.get('/api/house/twin/weather-state')
 def house_twin_weather_state():
+    """Ground, lawn dormancy and temperature history share one bounded record."""
     from services import twin_weather_state
     return twin_weather_state.update()
 

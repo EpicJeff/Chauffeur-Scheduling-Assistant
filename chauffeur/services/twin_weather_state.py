@@ -7,7 +7,7 @@ and unit remain alongside them for the drawer and browser weather mapper.
 import math
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from services import ha_api, storage, twin_site
 
@@ -115,6 +115,117 @@ def advance(record, forcing, now):
 def puddles(record, now):
     recent = record.get('last_rain')
     return max(0., (record['wetness'] - .6) / .4) if recent is not None and 0 <= now - recent <= 10800 else 0.
+
+
+def frost_cycle(now, latitude):
+    """An autumn-to-autumn year, distinct across hemispheres."""
+    date = datetime.fromtimestamp(now, timezone.utc)
+    south = latitude < 0
+    return (date.year - (date.month < (2 if south else 8))) * 2 + int(south)
+
+
+def calendar_target(now, latitude, grass_type):
+    """Coarse average-frost calendar, mirrored six months in the south.
+
+    Tropical <23.5 degrees: frost free; <35: Nov-Feb; <50: Oct-Apr;
+    >=50: Sep-May. January is the northern coldest month.
+    """
+    month = datetime.fromtimestamp(now, timezone.utc).month
+    if latitude < 0:
+        month = (month + 5) % 12 + 1
+    lat = abs(latitude)
+    if lat < 23.5:
+        return 0.
+    if grass_type == 'cool':
+        return .3 if month == 1 else 0.
+    first, last = (11, 2) if lat < 35 else (10, 4) if lat < 50 else (9, 5)
+    return float(month >= first or month <= last)
+
+
+def _valid_season(record, now):
+    if not isinstance(record, dict):
+        return False
+    updated = record.get('season_updated')
+    if type(updated) not in (int, float):
+        return False
+    updated = number(updated)
+    if updated is None or not 0 <= now - updated <= MAX_RECORD_AGE:
+        return False
+    for key in ('lawn_target', 'lawn_dormancy'):
+        value = number(record.get(key))
+        if type(record.get(key)) not in (int, float) or value is None or not 0 <= value <= 1:
+            return False
+    if record.get('frost_cycle') is not None and type(record['frost_cycle']) is not int:
+        return False
+    current = int(now // 3600)
+    for key in ('temperature_hours', 'rain_hours'):
+        rows = record.get(key)
+        if not isinstance(rows, list) or len(rows) > 240:
+            return False
+        hours = []
+        for row in rows:
+            if key == 'temperature_hours':
+                if (not isinstance(row, (list, tuple)) or len(row) != 2
+                        or type(row[1]) not in (int, float) or number(row[1]) is None):
+                    return False
+                hour = row[0]
+            else:
+                hour = row
+            if type(hour) is not int or hour > current:
+                return False
+            hours.append(hour)
+        if hours != sorted(set(hours)):
+            return False
+    return True
+
+
+def season_payload(record, grass_type, usable):
+    rows = record['temperature_hours']
+    history = usable and len(rows) >= 72
+    return ({'dormancy': record['lawn_dormancy'], 'grass_type': grass_type,
+             'source': 'history' if history else 'calendar'},
+            {'avg_temp_c': sum(row[1] for row in rows) / len(rows) if history else None,
+             'history_days': len(rows) / 24})
+
+
+def advance_season(record, forcing, now, grass_type, latitude, usable):
+    """Bounded hourly observations and a rate-limited lawn, in the ground row.
+
+    One last observation per UTC hour (rain is any rain in that hour). Do not
+    invent overnight history or fill outages. Missing/corrupt/old extensions
+    start with the calendar even when the slice 3 ground fields are valid.
+    """
+    valid = _valid_season(record, now)
+    hour = int(now // 3600)
+    temps = {h: t for h, t in record['temperature_hours'] if hour - 239 <= h <= hour} if valid else {}
+    rain = {h for h in record['rain_hours'] if hour - 239 <= h <= hour} if valid else set()
+    temp = number(forcing.get('temperature')) if usable else None
+    if temp is not None:
+        temps[hour] = temp
+    if usable and forcing.get('condition') in ('rainy', 'pouring', 'lightning-rainy', 'snowy-rainy') and forcing.get('rate', 0) > 0:
+        rain.add(hour)
+    cycle = frost_cycle(now, latitude)
+    frost = record.get('frost_cycle') if valid and record.get('frost_cycle') == cycle else None
+    if temp is not None and temp <= 0:
+        frost = cycle
+    target = calendar_target(now, latitude, grass_type)
+    if usable and len(temps) >= 72:
+        avg = sum(temps.values()) / len(temps)
+        if grass_type == 'warm':
+            # Warm grass has a green/dormant latch. A newly selected warm
+            # lawn must not inherit cool grass's .3/.6 stress target.
+            target = 1. if valid and record['lawn_target'] == 1 else 0.
+            if avg > 18.3:
+                target = 0.
+            elif avg < 12.8 and frost == cycle:
+                target = 1.
+        else:
+            target = .6 if avg >= 29.4 and len(rain) < 6 else .3 if avg < 0 else 0.
+    dormancy = record['lawn_dormancy'] if valid else target
+    step = (now - record['season_updated']) / (14 * 86400) if valid else 0.
+    dormancy += max(-step, min(step, target - dormancy))
+    return {'temperature_hours': sorted([h, t] for h, t in temps.items()), 'rain_hours': sorted(rain),
+            'frost_cycle': frost, 'lawn_target': target, 'lawn_dormancy': dormancy, 'season_updated': now}
 
 
 def _temperature(value, unit):
@@ -243,6 +354,15 @@ def update(now=None):
             rows, stale = [], True
         forcing, source, usable = observation(rows, settings, now, stale)
         record = storage.get_app_state(KEY)
+        grass_type = 'warm' if settings.get('lawn_grass_type') == 'warm' else 'cool'
+        site = twin_site.site()
+        latitude = number(site.get('lat'))
+        unknown_latitude = site.get('source') == 'default' or latitude is None or not -90 <= latitude <= 90
+        latitude = 40. if unknown_latitude else latitude
+        season = advance_season(record, forcing, now, grass_type, latitude, usable)
+        lawn, season_report = season_payload(season, grass_type, usable)
+        source['season'] = {'latitude': latitude, 'latitude_source': 'fallback: 40 N' if unknown_latitude else 'site',
+                            'lawn': 'temperature history' if lawn['source'] == 'history' else 'growing-season calendar by latitude'}
         # Integrate the observation that actually occupied the elapsed interval,
         # then latch the new one. A snow->sun event must not retroactively melt
         # the preceding hour, and first rain wets surfaces immediately.
@@ -255,11 +375,11 @@ def update(now=None):
             result = advance(result, forcing, now)
         else:
             result = advance(None, forcing, now)
-        stored = dict(result, forcing=forcing)
+        stored = dict(result, forcing=forcing, **season)
         storage.set_app_state(KEY, stored)
         return {key: result[key] for key in ('snow_cm', 'wetness', 'updated')} | {
             'snow_cm': result['snow_cm'] if result['snow_cm'] >= .2 else 0.,
-            'puddles': puddles(result, now), 'source': source}
+            'puddles': puddles(result, now), 'source': source, 'lawn': lawn, 'season': season_report}
 
 
 def relevant(entity_id):
@@ -270,11 +390,16 @@ def relevant(entity_id):
 
 def save_sources(body):
     """Weather preferences cannot affect schedules or write the house model."""
-    keys = {'weather_entity', *SENSOR_SETTINGS.values()}
+    keys = {'weather_entity', 'lawn_grass_type', *SENSOR_SETTINGS.values()}
     if not isinstance(body, dict) or not body or not set(body) <= keys:
         raise ValueError('Choose only weather sources.')
     cleaned = {}
     for key, value in body.items():
+        if key == 'lawn_grass_type':
+            if value not in ('cool', 'warm'):
+                raise ValueError('Choose cool-season or warm-season grass.')
+            cleaned[key] = value
+            continue
         if not isinstance(value, str):
             raise ValueError('Choose an entity or use the weather default.')
         value = value.strip()

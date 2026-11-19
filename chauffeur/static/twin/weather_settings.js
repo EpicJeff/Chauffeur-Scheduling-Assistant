@@ -28,6 +28,10 @@ export function mountWeatherSettings(view, {api = (path, init) => fetch(base() +
     }
     for (const quantity of source.missing || []) line(`Missing ${quantity.replaceAll('_', ' ')}: ${source.fallbacks?.[quantity] || 'weather fallback'}.`);
     if (!source.missing?.length) line('All weather quantities are available.');
+    if (source.season) {
+      line(`Season latitude: ${source.season.latitude} degrees (${source.season.latitude_source}).`);
+      line(`Lawn: ${source.season.lawn}.`);
+    }
     line(`Ground: ${body.snow_cm.toFixed(1)} cm snow, ${Math.round(body.wetness * 100)}% wet. Plausible, not exact.`);
   }
   function apply(body, choices) {

@@ -141,6 +141,10 @@ ENTRIES: List[dict] = [
     _e('twin_import_limit_mb', 'panel', 'Model import size limit',
        'Maximum uploaded size in MB for one model and its textures (1 to 200, default 50).',
        page='house/editor', anchor='library-import-settings', ui_marker='library-import-limit'),
+    _e('lawn_grass_type', 'panel', 'Lawn grass type',
+       'Cool-season (fescue, bluegrass, rye) or warm-season (Bermuda, zoysia, St. Augustine). '
+       'Choose beside Lawn in House materials, under Yard, to follow seasonal dormancy.',
+       page='house/editor', anchor='menu-house-materials', ui_marker='menu-house-materials'),
     _e('twin_import_unpacked_limit_mb', 'panel', 'Unpacked model size limit',
        'Maximum unpacked size in MB for one model (1 to 1000, default 200).',
        page='house/editor', anchor='library-import-settings', ui_marker='library-import-unpacked-limit'),

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from datetime import datetime, timezone
 
 os.environ['CHAUFFEUR_DATA_DIR'] = tempfile.mkdtemp(prefix='chauffeur_weather_')
 os.environ.pop('HA_BASE_URL', None)
@@ -24,6 +25,123 @@ def sample(condition='sunny', temperature=0, **extra):
 
 
 class ModelTests(unittest.TestCase):
+    def season(self, record, now, temp=20, grass='cool', lat=40, rain=False, usable=True):
+        return weather.advance_season(record, sample('rainy' if rain else 'sunny', temp), now,
+                                      grass, lat, usable)
+
+    def test_hourly_history_average_bounds_missing_and_old_records(self):
+        start = datetime(2026, 6, 1, tzinfo=timezone.utc).timestamp()
+        record = None
+        for hour in range(300):
+            record = self.season(record, start + hour * 3600, hour % 24, rain=True)
+            if hour == 70:
+                self.assertEqual(weather.season_payload(record, 'cool', True)[1]['avg_temp_c'], None)
+            if hour == 71:
+                self.assertEqual(weather.season_payload(record, 'cool', True)[1]['history_days'], 3)
+            self.assertLessEqual(len(record['temperature_hours']), 240)
+            self.assertLessEqual(len(record['rain_hours']), 240)
+        lawn, season = weather.season_payload(record, 'cool', True)
+        self.assertEqual(lawn['source'], 'history')
+        self.assertEqual(season, {'avg_temp_c': 11.5, 'history_days': 10})
+        # Repeated reads/events in one hour do not inflate the average or rain count.
+        again = self.season(record, start + 299 * 3600 + 600, 11)
+        self.assertEqual(len(again['temperature_hours']), 240)
+        self.assertEqual(len(again['rain_hours']), 240)
+        for old in (None, {'snow_cm': 0, 'wetness': 0, 'updated': start},
+                    dict(record, temperature_hours='broken'), dict(record, season_updated=start),
+                    dict(record, lawn_target='0'), dict(record, lawn_dormancy=True),
+                    dict(record, season_updated=str(record['season_updated'])),
+                    dict(record, temperature_hours=[[int((start + 299 * 3600) // 3600), '10']])):
+            fresh = self.season(old, start + 300 * 3600)
+            self.assertEqual(len(fresh['temperature_hours']), 1)
+        missing = self.season(record, start + 300 * 3600, None)
+        self.assertEqual(len(missing['temperature_hours']), 239)
+        unavailable = self.season(record, start + 300 * 3600, usable=False)
+        self.assertEqual(weather.season_payload(unavailable, 'cool', False)[0]['source'], 'calendar')
+
+    def test_calendar_latitude_and_hemisphere(self):
+        for lat, cold, summer in [(40, 1, 7), (-35, 7, 1), (70, 1, 7)]:
+            for grass, target in [('warm', 1), ('cool', .3)]:
+                t = datetime(2026, cold, 15, tzinfo=timezone.utc).timestamp()
+                record = self.season(None, t, None, grass, lat, usable=False)
+                self.assertEqual(record['lawn_target'], target)
+                self.assertEqual(record['lawn_dormancy'], target)
+                self.assertEqual(weather.season_payload(record, grass, False)[0]['source'], 'calendar')
+            t = datetime(2026, summer, 15, tzinfo=timezone.utc).timestamp()
+            self.assertEqual(self.season(None, t, None, 'warm', lat)['lawn_target'], 0)
+        t = datetime(2026, 1, 15, tzinfo=timezone.utc).timestamp()
+        self.assertEqual(self.season(None, t, None, 'warm', 5)['lawn_target'], 0)
+
+    def test_full_year_hourly_targets_rate_limit_and_both_hemispheres(self):
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp()
+        for lat in (40, -35):
+            for grass in ('warm', 'cool'):
+                record = None
+                seen = set()
+                for hour in range(365 * 24):
+                    day = hour / 24
+                    local_day = (day + (182 if lat < 0 else 0)) % 365
+                    # Seasonal sinusoid plus reproducible daily/hourly noise.
+                    temp = 15 + 19 * math.cos(2 * math.pi * (local_day - 200) / 365) + .6 * math.sin(hour * 1.7)
+                    if 190 <= local_day < 215: temp = 34 + .3 * math.sin(hour)
+                    if 275 <= local_day < 278: temp = -4  # autumn cold snap
+                    old = record
+                    record = self.season(record, start + hour * 3600, temp, grass, lat)
+                    if old:
+                        self.assertLessEqual(abs(record['lawn_dormancy'] - old['lawn_dormancy']), 1 / (14 * 24) + 1e-12)
+                    lawn, season = weather.season_payload(record, grass, True)
+                    avg = season['avg_temp_c']
+                    if avg is not None:
+                        if grass == 'cool':
+                            target = .6 if avg >= 29.4 else .3 if avg < 0 else 0
+                            self.assertEqual(record['lawn_target'], target)
+                        elif avg > 18.3:
+                            self.assertEqual(record['lawn_target'], 0)
+                        elif avg < 12.8 and record['frost_cycle'] == weather.frost_cycle(start + hour * 3600, lat):
+                            self.assertEqual(record['lawn_target'], 1)
+                        seen.add(record['lawn_target'])
+                    self.assertLessEqual(len(record['temperature_hours']), 240)
+                self.assertTrue(({0, 1} if grass == 'warm' else {0, .3, .6}) <= seen)
+
+    def test_first_frost_hysteresis_rain_threshold_and_two_week_transition(self):
+        for lat, month in [(40, 8), (-35, 2)]:
+            start = datetime(2026, month, 1, tzinfo=timezone.utc).timestamp()
+            record = None
+            for hour in range(100): record = self.season(record, start + hour * 3600, 10, 'warm', lat)
+            self.assertEqual(record['lawn_target'], 0, 'cool autumn alone is not first frost')
+            record = self.season(record, start + 100 * 3600, 0, 'warm', lat)
+            self.assertEqual(record['lawn_target'], 1)
+            original = record['lawn_dormancy']
+            for hour in range(101, 101 + 14 * 24):
+                record = self.season(record, start + hour * 3600, 10, 'warm', lat)
+            self.assertAlmostEqual(record['lawn_dormancy'], 1)
+            self.assertLess(original, 1)
+            for hour in range(437, 437 + 240): record = self.season(record, start + hour * 3600, 15, 'warm', lat)
+            self.assertEqual(record['lawn_target'], 1, 'hold between thresholds')
+            for hour in range(677, 677 + 240): record = self.season(record, start + hour * 3600, 20, 'warm', lat)
+            self.assertEqual(record['lawn_target'], 0)
+        start = datetime(2026, 7, 1, tzinfo=timezone.utc).timestamp()
+        record = None
+        for hour in range(100): record = self.season(record, start + hour * 3600, 32, rain=hour < 5)
+        self.assertEqual(record['lawn_target'], .6)
+        record = self.season(record, start + 100 * 3600, 32, rain=True)
+        self.assertEqual(record['lawn_target'], 0, 'six rain hours remove heat dormancy')
+        stressed = dict(record, lawn_target=.6, temperature_hours=[[h, 15] for h, _ in record['temperature_hours']])
+        changed = self.season(stressed, start + 100 * 3600, 15, 'warm')
+        self.assertEqual(changed['lawn_target'], 0, 'warm grass does not inherit cool grass stress')
+
+    def test_frost_resets_at_each_hemispheres_autumn_boundary(self):
+        for lat, month in [(40, 8), (-35, 2)]:
+            boundary = datetime(2026, month, 1, tzinfo=timezone.utc).timestamp()
+            record = self.season(None, boundary - 3600, 0, 'warm', lat)
+            self.assertIsNotNone(record['frost_cycle'])
+            record = self.season(record, boundary, 10, 'warm', lat)
+            self.assertIsNone(record['frost_cycle'], 'last autumn frost cannot trigger this autumn')
+            for hour in range(1, 100): record = self.season(record, boundary + hour * 3600, 10, 'warm', lat)
+            self.assertEqual(record['lawn_target'], 0)
+            record = self.season(record, boundary + 100 * 3600, 0, 'warm', lat)
+            self.assertEqual(record['lawn_target'], 1)
+
     def test_snow_mix_melt_threshold_and_drying_rates(self):
         bare = weather.advance(None, sample('snowy'), 10000)
         snow = weather.advance(bare, sample('snowy'), 10000 + 7200)
@@ -82,6 +200,51 @@ class DeliveryTests(unittest.TestCase):
     def entity(self, condition='snowy', **attrs):
         return {'entity_id': 'weather.home', 'state': condition, 'attributes': attrs,
                 'last_updated': '2020-01-01T00:00:00Z'}
+
+    def test_season_delivery_restart_grass_save_and_unknown_latitude(self):
+        start = datetime(2026, 8, 1, tzinfo=timezone.utc).timestamp()
+        self.rows = [self.entity('sunny', temperature=32)]
+        for hour in range(80):
+            body = weather.update(now=start + hour * 3600)
+        self.assertEqual(body['season'], {'avg_temp_c': 32, 'history_days': 80 / 24})
+        self.assertEqual(body['lawn']['source'], 'history')
+        self.assertEqual(storage.get_app_state(weather.KEY)['lawn_target'], .6)
+        before = storage.get_app_state(weather.KEY)
+        importlib.reload(weather)
+        with patch.object(weather.time, 'time', return_value=start + 79 * 3600), patch.object(auth, 'enforcing', return_value=True):
+            body = self.client.get('/api/house/twin/weather-state', headers=self.panel).json()
+            self.assertEqual(body['season']['history_days'], 80 / 24)
+            self.assertAlmostEqual(body['lawn']['dormancy'], before['lawn_dormancy'])
+            with patch.object(storage, 'mark_all_daily_schedules_dirty') as dirty:
+                response = self.client.put('/api/house/twin/weather-sources', headers=self.parent,
+                                           json={'lawn_grass_type': 'warm'})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()['lawn']['grass_type'], 'warm')
+                self.assertEqual(storage.get_settings()['lawn_grass_type'], 'warm')
+                self.assertEqual(storage.get_app_state(weather.KEY)['lawn_target'], 0, 'save re-evaluates now')
+                self.assertEqual(storage.get_app_state(weather.KEY)['temperature_hours'], before['temperature_hours'])
+                dirty.assert_not_called()
+            for value in ('bad', '', None, 1, [], {}):
+                self.assertEqual(self.client.put('/api/house/twin/weather-sources', headers=self.parent,
+                                                json={'lawn_grass_type': value}).status_code, 422)
+            self.assertIn(self.client.put('/api/house/twin/weather-sources', headers=self.panel,
+                                         json={'lawn_grass_type': 'cool'}).status_code, (401, 403))
+            with patch('services.twin_site.site', return_value={}):
+                source = self.client.get('/api/house/twin/weather-state', headers=self.parent).json()['source']
+                self.assertEqual(source['season']['latitude'], 40)
+                self.assertEqual(source['season']['latitude_source'], 'fallback: 40 N')
+            with patch('services.twin_site.site', return_value={'lat': 40, 'source': 'default'}):
+                source = self.client.get('/api/house/twin/weather-state', headers=self.parent).json()['source']
+                self.assertEqual(source['season']['latitude_source'], 'fallback: 40 N', 'site already supplies default latitude')
+            self.rows = []
+            body = self.client.get('/api/house/twin/weather-state', headers=self.parent).json()
+            self.assertEqual(body['lawn']['source'], 'calendar')
+            self.assertIsNone(body['season']['avg_temp_c'])
+            self.assertIn('calendar', body['source']['season']['lawn'])
+        self.assertEqual(len(storage.app_state_table.all()), 1)
+        from models.schemas import Settings
+        self.assertEqual(Settings().lawn_grass_type, 'cool')
+        self.assertEqual(Settings(lawn_grass_type='warm').lawn_grass_type, 'warm')
 
     def test_route_auth_missing_and_source_fallbacks(self):
         url = '/api/house/twin/weather-state'
@@ -217,6 +380,7 @@ const {mountWeatherSettings}=await import(file('static/twin/weather_settings.js'
 const calls=[],statuses=[],selected=[];
 const source={entity:'weather.home',configured_entity:'',missing:['temperature','precipitation'],
  sensors:{rain:{entity:'binary_sensor.saved',state:'off',unit:'',value:0}},
+ season:{latitude:40,latitude_source:'fallback: 40 N',lawn:'growing-season calendar by latitude'},
  fallbacks:{temperature:'no melting',precipitation:'condition intensity'}};
 const body={snow_cm:2,wetness:.8,puddles:.5,updated:10000,source};
 let fail=false,block=false,releases=[];
@@ -233,6 +397,8 @@ await mounted.reload();assert.equal(save.disabled,false);
 const rain=document.getElementById('weather_rain_sensor');assert.equal(rain.value,'binary_sensor.saved');
 assert.ok(rain.children.some(o=>o.value==='binary_sensor.saved'),'unavailable saved source remains selectable');
 assert.match(textOf(document.getElementById('twin-weather-report')),/condition intensity/);
+assert.match(textOf(document.getElementById('twin-weather-report')),/fallback: 40 N/);
+assert.match(textOf(document.getElementById('twin-weather-report')),/growing-season calendar/);
 rain.value='binary_sensor.rain';click(save);await new Promise(r=>setTimeout(r,0));
 const saved=calls.find(([path,init])=>init?.method==='PUT');assert.equal(saved[0],'api/house/twin/weather-sources');
 assert.equal(JSON.parse(saved[1].body).weather_rain_sensor,'binary_sensor.rain');assert.equal(Object.keys(JSON.parse(saved[1].body)).length,5);
@@ -268,6 +434,8 @@ console.log('weather drawer runtime passed');
                     self.assertGreaterEqual(len(calls), 3)
                     self.assertAlmostEqual(storage.get_app_state(weather.KEY)['snow_cm'], 1.25)
                     self.assertEqual(storage.get_app_state(weather.KEY)['wetness'], 1)
+                    self.assertEqual([t for _, t in storage.get_app_state(weather.KEY)['temperature_hours']], [-2, -2])
+                    self.assertEqual(storage.get_app_state(weather.KEY)['lawn_target'], .3)
                 finally:
                     job.cancel()
                     try: await job
