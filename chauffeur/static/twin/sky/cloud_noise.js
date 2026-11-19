@@ -63,14 +63,12 @@ function worleySampler(period,seed) {
 export function perlin3(x,y,z,period=4,seed=17) { return perlinSampler(period,seed)(x,y,z); }
 export function worley3(x,y,z,period=4,seed=29) { return worleySampler(period,seed)(x,y,z); }
 
-export function generateNoiseVolume(size,{detail=false}={}) {
-  if (!Number.isInteger(size) || size<2 || size>128) throw new RangeError('Cloud texture size must be 2..128');
-  const data=new Uint8Array(size**3*4), frequencies=[4,8,16];
+function voxelSampler(detail) {
+  const frequencies=[4,8,16];
   const worley=frequencies.map(f=>worleySampler(f,detail?71:29));
   const perlin=frequencies.map(f=>perlinSampler(f,17));
-  for (let z=0;z<size;z++) for (let y=0;y<size;y++) for (let x=0;x<size;x++) {
-    // Texel centres, matching the GPU's normalized linear sampling convention.
-    const u=(x+.5)/size,v=(y+.5)/size,w=(z+.5)/size, cells=[];
+  return (u,v,w)=>{
+    const cells=[];
     for (let o=0;o<3;o++) {const f=frequencies[o];cells.push(1-worley[o](u*f,v*f,w*f));}
     const cellular=cells[0]*.625+cells[1]*.25+cells[2]*.125;
     let shape=cellular;
@@ -81,15 +79,40 @@ export function generateNoiseVolume(size,{detail=false}={}) {
       // Dilate the smooth gradient field with cellular lobes, preserving wisps.
       shape=clamp((p+1-cellular)/Math.max(2-cellular,1e-6));
     }
-    const i=((z*size+y)*size+x)*4;
-    data[i]=Math.round(shape*255);
-    for (let c=0;c<3;c++) data[i+c+1]=Math.round(cells[c]*255);
+    return [shape,...cells].map(v=>Math.round(v*255));
+  };
+}
+
+export function generateNoiseVolume(size,{detail=false}={}) {
+  if (!Number.isInteger(size) || size<2 || size>128) throw new RangeError('Cloud texture size must be 2..128');
+  const data=new Uint8Array(size**3*4),voxel=voxelSampler(detail);
+  for (let z=0;z<size;z++) for (let y=0;y<size;y++) for (let x=0;x<size;x++) {
+    data.set(voxel((x+.5)/size,(y+.5)/size,(z+.5)/size),((z*size+y)*size+x)*4);
   }
   return data;
 }
 
+// CPU shadows need only a small moving part of the GPU-generated volumes.
+// Generate exact RGBA8 texels on first use, not the entire 128^3 at mount.
+// Fixed storage bounds the cache even after days of drift; no GPU readback.
+export function createNoiseVolumeSampler(size,{detail=false}={}) {
+  if (!Number.isInteger(size) || size<2 || size>128) throw new RangeError('Cloud texture size must be 2..128');
+  const data=new Uint8Array(size**3*4),ready=new Uint8Array(size**3),voxel=voxelSampler(detail);
+  return {image:{sample(uv) {
+    const p=uv.map(v=>mod(v,1)*size-.5),lo=p.map(Math.floor),f=p.map((v,i)=>v-lo[i]),result=[0,0,0,0];
+    for(let z=0;z<2;z++)for(let y=0;y<2;y++)for(let x=0;x<2;x++) {
+      const a=mod(lo[0]+x,size),b=mod(lo[1]+y,size),c=mod(lo[2]+z,size),index=(c*size+b)*size+a;
+      if(!ready[index]) {data.set(voxel((a+.5)/size,(b+.5)/size,(c+.5)/size),index*4);ready[index]=1;}
+      const weight=(x?f[0]:1-f[0])*(y?f[1]:1-f[1])*(z?f[2]:1-f[2]);
+      for(let channel=0;channel<4;channel++)result[channel]+=data[index*4+channel]/255*weight;
+    }
+    return result;
+  }}};
+}
+
 // CPU reference for texture(sampler3D, uv), including periodic edge filtering.
-export function sampleVolume({data,width,height=width,depth=width},uv) {
+export function sampleVolume({data,width,height=width,depth=width,sample},uv) {
+  if(sample)return sample(uv);
   const sizes=[width,height,depth], p=uv.map((v,i)=>mod(v,1)*sizes[i]-.5), lo=p.map(Math.floor), f=p.map((v,i)=>v-lo[i]);
   const result=[0,0,0,0];
   for (let z=0;z<2;z++) for (let y=0;y<2;y++) for (let x=0;x<2;x++) {

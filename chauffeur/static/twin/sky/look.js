@@ -54,7 +54,7 @@ const bands = [
 // day, so shade reads about a stop under sunlit ground. Without sun shadows
 // that balance would only flatten the picture, so those views keep the fill.
 const shadowedBands = new Map([[0, { ambient: .5 }], [6, { ambient: .5, environment: .4 }]]);
-export function lookAt(altitudeDeg, moon = { altitude: 0, fraction: 0 }, { shadows = false, overcast = 0, zenith = null, ground = null } = {}) {
+export function lookAt(altitudeDeg, moon = { altitude: 0, fraction: 0 }, { shadows = false, overcast = 0, sunTransmittance = 1, zenith = null, ground = null } = {}) {
   const band = ([edge, look]) => [edge, shadows ? { ...look, ...shadowedBands.get(edge) } : look];
   let lower = band(bands[0]), upper = band(bands.at(-1));
   for (let i = 1; i < bands.length; i++) if (altitudeDeg <= bands[i][0]) { lower = band(bands[i - 1]); upper = band(bands[i]); break; }
@@ -63,7 +63,10 @@ export function lookAt(altitudeDeg, moon = { altitude: 0, fraction: 0 }, { shado
   const c = clamp(overcast), colour = rgb => { const peak = Math.max(...rgb, 1e-6); return rgb.map(v => v / peak); };
   return { ...look, ambient: look.ambient * (1 + .35 * c), environment: look.environment * (1 + .35 * c),
     skyColor: zenith ? colour(zenith) : null, groundColor: ground ? colour(ground) : null,
-    sun: (shadows ? 7 : 3) * smooth(altitudeDeg / 6) * (1 - .75 * c),
+    // The directional light uses the clear value and is attenuated per fragment.
+    // The house-centre value is also available to scalar daylight consumers.
+    sunClear: (shadows ? 7 : 3) * smooth(altitudeDeg / 6),
+    sun: (shadows ? 7 : 3) * smooth(altitudeDeg / 6) * clamp(sunTransmittance),
     moon: .16 * Math.max(0, Math.sin(moon.altitude)) * clamp(moon.fraction) * (1 - smooth((altitudeDeg + 6) / 6)),
     moonColor: [.60, .72, 1], lamps: altitudeDeg < -3 };
 }

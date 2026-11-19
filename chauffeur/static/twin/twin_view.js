@@ -24,6 +24,7 @@ import { createSky, sampleSkyIrradiance, transmittance } from './sky/atmosphere.
 import { createCloudPass } from './sky/cloud_pass.js';
 import { cloudState } from './sky/clouds.js';
 import { installStageHaze } from './sky/stage_haze.js';
+import { installCloudShadow } from './sky/cloud_shadow.js';
 import { mountTimeScrub } from './sky/time_scrub.js';
 import { defaultStage, mountStageSettings } from './stage_settings.js';
 import { overcastFactor, weatherState } from './sky/overcast.js';
@@ -75,6 +76,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const saved = [renderer3.getRenderTarget(), renderer3.getActiveCubeFace(), renderer3.getActiveMipmapLevel()];
     try {
       stageHaze.prepare(target);
+      cloudShadow.prepare(target);
       // Never undefined: three reads the target's fields when it is not null.
       renderer3.setRenderTarget((!state.unlit && post?.target) || null);
       return compileFor(target, eye, targetScene);
@@ -106,6 +108,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let yardGroup = null;
   const sky = createSky(renderer3, {tier, clouds}), environment = sky.environment;
   const stageHaze = installStageHaze(scene, sky);
+  const cloudShadow = installCloudShadow(scene, clouds);
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
   const stageForPlan = nextPlan => {
     const automatic = defaultStage(nextPlan);
@@ -114,6 +117,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   function syncStage(nextPlan) {
     const value = stageForPlan(nextPlan);
     stageHaze.set({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
+    cloudShadow.set({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
   }
   syncStage(plan);
   scene.add(sky.object);
@@ -378,15 +382,17 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (compiling && performance.now() - holdSince < HOLD_MS) return;
     // The live keeper can replace its layer. Read its current snapshot, without another stream.
     if (!state.unlit && (currentOvercast() !== lastOvercast || JSON.stringify(currentClouds()) !== lastCloudWeather)) applyTimeLook();
+    cloudShadow.frame(performance.now()/1000);
+    if(timeLook)timeLook.sun=timeLook.sunClear*cloudShadow.centre();
     viewing?.update(performance.now());
     applyIndoorSky();
     view.levels?.draw();
     view.cars?.draw();
     // Effect water is unlit: it follows the sun down to a night floor.
     if (twin?.effects) twin.effects.update(view.live?.peek?.() || {}, view.live?.stale?.() ?? true, performance.now() / 1000,
-      .18 + .82 * Math.min(1, (timeLook?.sun ?? 3) / 3));
+      .18 + .82 * Math.min(1, (timeLook?.sunClear ?? 3) / 3));
     yardGroup?.userData.water?.update(twin?.effects?.fixtures || [], performance.now() / 1000, {
-      renderer: renderer3, camera, sun: timeLook?.sun ?? 3,
+      renderer: renderer3, camera, sun: timeLook?.sunClear ?? 3,
       sunDirection: sun.position.clone().sub(sun.target.position).normalize(),
     });
     yardGroup?.userData.grass?.update(performance.now() / 1000);
@@ -430,7 +436,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
-    ready: false, scene, post, clouds, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
+    ready: false, scene, post, clouds, cloudShadow, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
     get stage() { return stageForPlan(plan); },
     get timeHour() {
@@ -1360,7 +1366,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       viewing?.dispose(); viewing = null;
       if (twin) { scene.remove(twin.root); release(twin); }
       unlit.dispose();
-      stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
+      cloudShadow.dispose(); stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
       post?.dispose();
       clouds.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();
@@ -1416,6 +1422,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   function applyTimeLook(moved = false, forceSky = false, cheap = false) {
     stageHaze.set({enabled:!state.unlit});
+    cloudShadow.set({enabled:!state.unlit});
     sky.setEnabled(!state.unlit);
     if (state.unlit) {
       timeLook = lookAt(45);
@@ -1436,6 +1443,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       sunRadiance:transmittance([sunDir[0],Math.max(0,sunDir[1]),sunDir[2]]).map(v=>v*10),
       moonRadiance:transmittance(moonDir).map(v=>v*.02*illumination.fraction),
       ambientTop:cloudIrradiance.top,ambientBottom:cloudIrradiance.bottom});
+    cloudShadow.set({sunDir,moonDir});
+    cloudShadow.frame(performance.now()/1000);
     lastCloudWeather=JSON.stringify(cloudWeather);
     const skyChanged = sky.update({sunDir, moonDir, moonPhase:illumination.phase, moonFraction:illumination.fraction,
       moonDistanceKm:lunar.distance, siderealTime:localSiderealTime(date,located.lon),
@@ -1443,11 +1452,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (skyChanged) stageHaze.refresh();
     lastOvercast = overcast;
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
-      { shadows: settings.shadows, overcast, zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });
+      { shadows: settings.shadows, overcast, sunTransmittance:cloudShadow.centre(), zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });
     scene.background = sky.clearCube; scene.backgroundIntensity = 1;
     scene.environment = environment;
     scene.environmentIntensity = timeLook.environment;
-    sun.intensity = timeLook.sun; moon.intensity = timeLook.moon;
+    sun.intensity = timeLook.sunClear; moon.intensity = timeLook.moon;
     sun.color.setRGB(...timeLook.sunColor, THREE.SRGBColorSpace);
     moon.color.setRGB(...timeLook.moonColor, THREE.SRGBColorSpace);
     ambient.intensity = timeLook.ambient;
