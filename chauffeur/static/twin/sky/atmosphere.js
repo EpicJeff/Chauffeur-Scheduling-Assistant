@@ -8,6 +8,7 @@ const RAYLEIGH = [.005802,.013558,.0331], OZONE = [.000650,.001881,.000085];
 const MIE = .003996, MIE_EXT = MIE / .9, SUN = 10;
 // The night-vision floor must survive the ACES toe at the existing 1.2 night exposure.
 const AIRGLOW = [.008845,.012168,.021506], ALBEDO = [.18,.20,.14];
+const GROUND_START = Math.sin(Math.PI/180), GROUND_END = Math.sin(15*Math.PI/180);
 const VIEW_STEPS = 16, LIGHT_STEPS = 8;
 const clamp = (x,a=0,b=1) => Math.max(a,Math.min(b,x));
 const dot = (a,b) => a.reduce((s,v,i) => s+v*b[i],0);
@@ -36,10 +37,29 @@ function lightTransmission(p,d) {
 }
 export function transmittance(dirWorld) { return lightTransmission(origin,unit(dirWorld)); }
 
+// The existing first-scatter hemisphere estimate: a quarter of the removed
+// vertical beam, fading through civil twilight. Weather uses the light factors
+// from lookAt; the airglow/lunar floor is reflected, never emitted by the soil.
+function groundRadiance({sunDir=[0,1,0],moonDir=[0,-1,0],moonFraction=0,overcast=0} = {}) {
+  const sun=unit(sunDir), moon=unit(moonDir), c=clamp(overcast);
+  const direct=transmittance(sun), vertical=transmittance([0,1,0]);
+  return ALBEDO.map((a,i)=>a*((SUN*direct[i]*Math.max(0,sun[1])*(1-.75*c)+
+    SUN*(1-vertical[i])*.25*clamp(sun[1]+.1)*(1+.35*c))/Math.PI+
+    AIRGLOW[i]*(1+clamp(moonFraction)*Math.max(0,moon[1])*(1-c))));
+}
+
 // CPU quadrature mirrors the shader for the hemisphere/haze consumers and offline safety tests.
 export function sampleRadiance(dirWorld, {sunDir=[0,1,0],moonDir=[0,-1,0],moonFraction=0,overcast=0} = {}) {
-  const d=unit(dirWorld), sun=unit(sunDir), moon=unit(moonDir), c=clamp(overcast);
-  const hit=sphere(origin,d,R)[0], end=hit>0 ? hit : sphere(origin,d,TOP)[1];
+  let d=unit(dirWorld);
+  const below=Math.max(0,-d[1]);
+  // Evaluate the horizon's in-scattering at this azimuth, then blend to soil.
+  // The nadir has no azimuth, so use +z rather than divide by zero.
+  if (d[1]<0) {
+    const horizontal=Math.hypot(d[0],d[2]);
+    d=horizontal>1e-6 ? [d[0]/horizontal,0,d[2]/horizontal] : [0,0,1];
+  }
+  const sun=unit(sunDir), moon=unit(moonDir), c=clamp(overcast);
+  const end=sphere(origin,d,TOP)[1];
   const mu=clamp(dot(d,sun),-1,1), rayPhase=3/(16*Math.PI)*(1+mu*mu);
   const miePhase=3/(8*Math.PI)*(1-G*G)*(1+mu*mu)/Math.max((2+G*G)*Math.pow(Math.max(1e-4,1+G*G-2*G*mu),1.5),1e-6);
   const result=[0,0,0], transmission=[1,1,1];
@@ -52,18 +72,15 @@ export function sampleRadiance(dirWorld, {sunDir=[0,1,0],moonDir=[0,-1,0],moonFr
       transmission[i]*=step;
     }
   }
-  if (hit>0) {
-    const p=along(origin,d,Math.max(0,hit-.001)), normal=unit(p), light=lightTransmission(p,sun), sky=lightTransmission(origin,[0,1,0]);
-    for (let i=0;i<3;i++) result[i]+=transmission[i]*ALBEDO[i]/Math.PI*SUN*
-      (light[i]*Math.max(0,dot(normal,sun))+(1-sky[i])*.25*clamp(sun[1]+.1));
-  }
   // Airglow survives astronomical night; detailed bodies are separate meshes.
   for (let i=0;i<3;i++) result[i]+=AIRGLOW[i]*(1+clamp(moonFraction)*Math.max(0,moon[1])*(1-c));
   const luminance=dot(result,[.2126,.7152,.0722]);
   // CIE overcast's (1+2 sin altitude)/3 gives a bright zenith and a grey horizon.
   const grey=luminance*(1+2*Math.max(0,d[1]))/3;
   const blend=c*(.75+.25*(1-Math.max(0,d[1])));
-  return result.map(v=>clamp(v*(1-blend)+grey*blend,0,4096));
+  const ground=below>0 ? groundRadiance({sunDir,moonDir,moonFraction,overcast}) : [0,0,0];
+  const t=clamp((below-GROUND_START)/(GROUND_END-GROUND_START)), groundWeight=t*t*(3-2*t);
+  return result.map((v,i)=>clamp((v*(1-blend)+grey*blend)*(1-groundWeight)+ground[i]*groundWeight,0,4096));
 }
 
 const vec = a => `vec3(${a.map(v=>Number(v).toFixed(8)).join(',')})`;
@@ -72,6 +89,7 @@ uniform vec3 sunDir;
 uniform vec3 moonDir;
 uniform float moonFraction;
 uniform float overcast;
+uniform vec3 groundColour;
 varying vec3 skyDirection;
 const float R = ${R.toFixed(1)}, TOP = ${TOP.toFixed(1)}, SUN = ${SUN.toFixed(1)};
 const vec3 BETA_R = ${vec(RAYLEIGH)}, BETA_O = ${vec(OZONE)};
@@ -98,7 +116,12 @@ vec3 lightTransmission(vec3 p, vec3 d) {
 }
 void main() {
   vec3 d=skyDirection/max(length(skyDirection),1e-6), origin=vec3(0.0,R+${HEIGHT.toFixed(4)},0.0);
-  float hit=sphere(origin,d,R).x, end=hit>0.0 ? hit : sphere(origin,d,TOP).y;
+  float below=max(0.0,-d.y);
+  if(d.y<0.0) {
+    float horizontal=length(d.xz);
+    d=horizontal>1e-6 ? vec3(d.x,0.0,d.z)/max(horizontal,1e-6) : vec3(0.0,0.0,1.0);
+  }
+  float end=sphere(origin,d,TOP).y;
   float mu=clamp(dot(d,sunDir),-1.0,1.0);
   float rayPhase=3.0/(16.0*3.14159265)*(1.0+mu*mu);
   float miePhase=3.0/(8.0*3.14159265)*(1.0-${G*G})*(1.0+mu*mu)/
@@ -113,17 +136,15 @@ void main() {
       (vec3(1.0)-stepT)/max(ext,vec3(1e-6))*SUN;
     transmission*=stepT;
   }
-  if(hit>0.0) {
-    vec3 p=origin+d*max(0.0,hit-0.001), normal=p/max(length(p),1e-6);
-    vec3 light=lightTransmission(p,sunDir), sky=lightTransmission(origin,vec3(0.0,1.0,0.0));
-    result+=transmission*${vec(ALBEDO)}/3.14159265*SUN*
-      (light*max(0.0,dot(normal,sunDir))+(vec3(1.0)-sky)*0.25*clamp(sunDir.y+0.1,0.0,1.0));
-  }
   result+=${vec(AIRGLOW)}*(1.0+moonFraction*max(0.0,moonDir.y)*(1.0-overcast));
   float luminance=dot(result,vec3(0.2126,0.7152,0.0722));
   float grey=luminance*(1.0+2.0*max(0.0,d.y))/3.0;
   float blend=overcast*(0.75+0.25*(1.0-max(0.0,d.y)));
   result=mix(result,vec3(grey),blend);
+  // Angular aerial-perspective approximation: horizon through 1 degree,
+  // smooth transition to lit ground by 15 degrees. Same ramp as CPU sampling.
+  float groundWeight=smoothstep(${GROUND_START},${GROUND_END},below);
+  result=mix(result,groundColour,groundWeight);
   // A comparison also catches NaN; protect every consumer, including low without bloom.
   gl_FragColor=vec4(result.r>=0.0 ? min(result.r,4096.0) : 0.0,
     result.g>=0.0 ? min(result.g,4096.0) : 0.0,result.b>=0.0 ? min(result.b,4096.0) : 0.0,1.0);
@@ -134,7 +155,7 @@ export function createSky(renderer, {tier='low'} = {}) {
   const target=new THREE.WebGLCubeRenderTarget(size,{type:THREE.HalfFloatType,colorSpace:THREE.LinearSRGBColorSpace,
     depthBuffer:false,generateMipmaps:false,minFilter:THREE.LinearFilter});
   target.texture.name='twin-sky';
-  const uniforms={sunDir:{value:new THREE.Vector3(0,1,0)},moonDir:{value:new THREE.Vector3(0,-1,0)},moonFraction:{value:0},overcast:{value:0}};
+  const uniforms={sunDir:{value:new THREE.Vector3(0,1,0)},moonDir:{value:new THREE.Vector3(0,-1,0)},moonFraction:{value:0},overcast:{value:0},groundColour:{value:new THREE.Vector3()}};
   const material=new THREE.ShaderMaterial({uniforms,fragmentShader,side:THREE.BackSide,depthTest:false,depthWrite:false,toneMapped:false,
     vertexShader:'varying vec3 skyDirection; void main(){ skyDirection=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }'});
   const mesh=new THREE.Mesh(new THREE.BoxGeometry(2,2,2),material);mesh.frustumCulled=false;
@@ -160,6 +181,7 @@ export function createSky(renderer, {tier='low'} = {}) {
         Math.abs(next.overcast-previous.overcast)<=.05 && Math.abs(next.moonFraction-previous.moonFraction)<.001) return false;
     uniforms.sunDir.value.fromArray(next.sunDir);uniforms.moonDir.value.fromArray(next.moonDir);
     uniforms.moonFraction.value=next.moonFraction;uniforms.overcast.value=next.overcast;
+    uniforms.groundColour.value.fromArray(groundRadiance(next));
     cubeBodies.update(bodyInput);cubeStars.update(starInput);
     const saved={target:renderer.getRenderTarget(),face:renderer.getActiveCubeFace(),mip:renderer.getActiveMipmapLevel(),
       xr:renderer.xr.enabled,auto:renderer.autoClear,info:{...renderer.info.render},mipmaps:target.texture.mipmapsAutoUpdate};
@@ -187,6 +209,12 @@ export function createSky(renderer, {tier='low'} = {}) {
     if (disposed) { moonMap?.dispose();return; }
     if (moonMap) {
       if (moonTexture!==moonMap) moonTexture?.dispose();
+      moonMap.colorSpace=THREE.SRGBColorSpace;
+      moonMap.generateMipmaps=true;
+      moonMap.minFilter=THREE.LinearMipmapLinearFilter;moonMap.magFilter=THREE.LinearFilter;
+      // Match the twin's surface textures, bounded by the active renderer.
+      moonMap.anisotropy=Math.min(tier==='low' ? 1 : 4,renderer.capabilities?.getMaxAnisotropy?.() || 1);
+      moonMap.needsUpdate=true;
       moonTexture=moonMap;
       bodies.setMap(moonMap);cubeBodies.setMap(moonMap);
     }
@@ -197,10 +225,12 @@ export function createSky(renderer, {tier='low'} = {}) {
     if (assetPromise) return assetPromise;
     const moonURL=new URL('./assets/moon_lroc_1k.jpg',import.meta.url).href;
     const starsURL=new URL('./assets/stars.json',import.meta.url).href;
-    const moon=new THREE.TextureLoader().loadAsync(moonURL).then(map=>{
-      map.colorSpace=THREE.SRGBColorSpace;setAssets({moonMap:map});if (!disposed) changed();
+    // A loader that throws at once must cost only its asset, never the twin's mount.
+    const start=load=>{ try { return Promise.resolve(load()); } catch (error) { return Promise.reject(error); } };
+    const moon=start(()=>new THREE.TextureLoader().loadAsync(moonURL)).then(map=>{
+      setAssets({moonMap:map});if (!disposed) changed();
     });
-    const catalogue=fetch(starsURL).then(response=>{
+    const catalogue=start(()=>fetch(starsURL)).then(response=>{
       if (!response.ok) throw new Error('Star catalogue '+response.status);
       return response.json();
     }).then(data=>{ if (!disposed) {setAssets({catalogue:data});changed();} });

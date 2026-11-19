@@ -24,7 +24,7 @@ const aces=(rgb,exposure=1)=>{const v=new THREE.Vector3(...rgb).multiplyScalar(e
   return v.set(fit(v.x),fit(v.y),fit(v.z)).applyMatrix3(outputMatrix).toArray().map(n=>Math.max(0,Math.min(1,n)));};
 const luminance=rgb=>rgb.reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
 await test('radiance is finite nonnegative at the sun, horizon, ground and night',()=>{
-  for(const sunAlt of [-30,-20,-12,-6,-2,0,2,6,40,90]) for(const alt of [-90,-20,-.001,0,.001,2,20,60,90,sunAlt]) for(const az of [0,Math.PI/2,Math.PI]) for(const overcast of [0,.4,1]) {
+  for(const sunAlt of [-30,-20,-12,-6,-2,0,2,6,40,90]) for(const alt of [-90,-20,-15,-10,-5,-2,-1,-.001,0,.001,2,20,60,90,sunAlt]) for(const az of [0,Math.PI/2,Math.PI]) for(const overcast of [0,.4,1]) {
     const rgb=sampleRadiance(direction(alt,az),{sunDir:direction(sunAlt),overcast});
     assert.ok(rgb.every(n=>Number.isFinite(n)&&n>=0&&n<4096),JSON.stringify({alt,sunAlt,az,overcast,rgb}));
   }

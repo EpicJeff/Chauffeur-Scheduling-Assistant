@@ -14,7 +14,8 @@ export function resolveSite(site = {}, date = new Date()) {
 
 export function previewDate(now, mode, site) {
   if (mode === 'now') return new Date(now);
-  const hour = mode === 'day' ? 12 : 23;
+  const hour = typeof mode === 'number' ? Math.max(0, Math.min(24, mode)) : mode === 'day' ? 12 : 23;
+  const minutes = Math.round(hour * 60);
   // Household IANA zone gives civil noon/23:00, including DST. When no zone is
   // configured use the site's longitude (mean solar clock), not the viewer's zone.
   try {
@@ -23,7 +24,7 @@ export function previewDate(now, mode, site) {
         year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit',
         minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
       const parts = date => Object.fromEntries(format.formatToParts(date).map(p => [p.type, p.value]));
-      const p = parts(now), desired = Date.UTC(+p.year, +p.month - 1, +p.day, hour);
+      const p = parts(now), desired = Date.UTC(+p.year, +p.month - 1, +p.day, 0, minutes);
       let stamp = desired;
       for (let i = 0; i < 3; i++) {
         const q = parts(new Date(stamp));
@@ -33,7 +34,7 @@ export function previewDate(now, mode, site) {
     }
   } catch { /* An old/invalid household zone still gets a useful preview. */ }
   const offset = site.lon / 15 * 3600000, local = new Date(+now + offset);
-  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), hour) - offset);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 0, minutes) - offset);
 }
 
 export function modelDirection(azimuth, altitude, frontBearing = 180) {

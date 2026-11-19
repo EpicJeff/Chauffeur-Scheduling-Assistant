@@ -7426,10 +7426,12 @@ def house_facade_delete(fid: str):
 
 @app.get("/api/house/twin")
 def house_twin_api():
-    from services import twin_store, twin_site
+    from services import twin_store, twin_site, twin_stage
     twin_site.start_bearing_job()
-    return {'plan': twin_store.current(), 'rounds': twin_store.rounds(),
-            'round': twin_store.current_id(), 'kit_id': 'modern_farmhouse', 'site': twin_site.site()}
+    plan = twin_store.current()
+    return {'plan': plan, 'rounds': twin_store.rounds(),
+            'round': twin_store.current_id(), 'kit_id': 'modern_farmhouse', 'site': twin_site.site(),
+            'stage': twin_stage.read(plan)}
 
 
 def _house_ha_context(settings=None):
@@ -7574,6 +7576,21 @@ def house_twin_glance(request: Request, panel_id: str | None = None):
         result['panels'] = [{'device_id': d['device_id'], 'label': d.get('label') or 'Wall panel'}
                             for d in storage.get_trusted_devices() if d.get('kind') == 'panel']
     return result
+
+
+@app.get('/api/house/twin/stage')
+def house_twin_stage():
+    from services import twin_stage
+    return twin_stage.read()
+
+
+@app.put('/api/house/twin/stage')
+def save_house_twin_stage(body: dict = Body(...)):
+    from services import twin_stage
+    try:
+        return twin_stage.save(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 class TwinGlanceRequest(BaseModel):
@@ -8953,7 +8970,7 @@ def house_editor_record():
 
 @app.get('/api/house/editor/state')
 def house_editor_state(have_round: int | None = None):
-    from services import twin_bakes, twin_build, twin_cost, twin_store, twin_site
+    from services import twin_bakes, twin_build, twin_cost, twin_store, twin_site, twin_stage
     twin_site.start_bearing_job()
     with twin_store.LIFECYCLE:
         latest = twin_build.latest()
@@ -8961,6 +8978,7 @@ def house_editor_state(have_round: int | None = None):
         house = ({'plan': twin_store.current(), 'model': twin_store.current_model()}
                  if have_round is None or have_round != current_round else {})
         return {**house, 'rounds': twin_store.rounds(), 'site': twin_site.site(),
+                'stage': twin_stage.read(house.get('plan')),
                 'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint(),
                          'estimate': twin_build.remaining_estimate(latest) if latest else None},
                 'build': latest,

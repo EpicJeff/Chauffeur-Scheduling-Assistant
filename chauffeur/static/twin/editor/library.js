@@ -211,6 +211,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   let browsePending = false;
   const hint = 'Drag a thumbnail onto the house or yard.';
   const outline = new THREE.Box3Helper(new THREE.Box3(), '#52ccff'); outline.visible = false; view.scene.add(outline);
+  outline.material.fog = false;
   const listen = (node, type, action, options = {}) => node.addEventListener(type, action, { ...options, signal });
   function ray(event) {
     const r = canvas.getBoundingClientRect(); view.camera.updateMatrixWorld(true);

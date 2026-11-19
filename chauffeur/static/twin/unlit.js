@@ -31,7 +31,7 @@ export function createUnlit() {
     let record = cache.get(source);
     if (!record) {
       matcap ||= studioMatcap();
-      const material = new THREE.MeshMatcapMaterial({ matcap });
+      const material = new THREE.MeshMatcapMaterial({ matcap, fog: source.fog });
       // Custom water optics and grass geometry survive the studio view. Their
       // variants omit standard-light/roughness chunks a matcap does not have.
       const hook = source.userData.unlitHook || source.userData.waterUnlit;

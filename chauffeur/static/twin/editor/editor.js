@@ -343,6 +343,7 @@ export async function boot() {
   async function renderScene(timing = null) {
     view?.setSite?.(snapshot.site);
     if (tools?.dragging() || lot?.dragging()) return;
+    await view?.setStage?.(snapshot.stage);
     const plan = timeline?.preview() || previewPlan(), signature = JSON.stringify(plan);
     const changed = signature !== lastScene;
     if (view && changed) {
@@ -687,7 +688,7 @@ export async function boot() {
   try {
     await loadSheets();
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
-    view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true, bake: false });
+    view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true, bake: false, stage:snapshot.stage });
     mountLighting(view, el('editor-lighting'), { signal: lifecycle.signal });
     buildGhosts = createBuildGhosts(view);
     if (new URLSearchParams(location.search).get('test') === '1') hooks.buildGhosts = buildGhosts;

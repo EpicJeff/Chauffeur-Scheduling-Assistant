@@ -67,7 +67,7 @@ export function markerTexture(kind, look, count = null, color = markerOnColor(ki
 }
 
 export function markerSprite(texture) {
-  const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false, toneMapped: false });
+  const material = new THREE.SpriteMaterial({ fog: false, map: texture, depthTest: false, depthWrite: false, toneMapped: false });
   const sprite = new THREE.Sprite(material); sprite.renderOrder = 20;
   return sprite;
 }

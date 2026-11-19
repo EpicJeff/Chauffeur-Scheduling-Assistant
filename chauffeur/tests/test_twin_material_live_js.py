@@ -181,7 +181,10 @@ await test('yard_revision_changes_only_parts_reading_role_or_slot',()=>{
  }
 });
 await test('retired_map_urls_are_evicted_and_live_clones_survive',async()=>{
- const k=kit(),m=lib.kitMaterial('siding',k,'low');await m.userData.ready;const map=m.map,master=loaded.at(-1);
+ const k=kit(),m=lib.kitMaterial('siding',k,'low');await m.userData.ready;const map=m.map;
+ // The surface's own master by image identity: the sky also loads a texture (the moon), so
+ // the last loaded texture is no longer necessarily this material's.
+ const master=loaded.find(texture=>texture.image===map.image);assert.ok(master,'the surface master was loaded');
  let freed=0;master.addEventListener('dispose',()=>freed++);
  k.manifest[id]=entry(record(7,'#123456','cccccccccccc.jpg'));
  assert.equal(typeof lib.refreshMaterials,'function');lib.refreshMaterials([id]);

@@ -26,7 +26,7 @@ export function fixtureStroke(points, color = FIXTURE_COLOR) {
   }
   const geometry = parts.length ? mergeGeometries(parts) : new THREE.BufferGeometry();
   for (const part of parts) part.dispose();
-  return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({color, toneMapped:false}));
+  return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({fog:false, color, toneMapped:false}));
 }
 
 // Same un-offset host edges as twin_fixtures._host_edges; the resolver owns mounting offsets.
@@ -120,7 +120,7 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
       if (pointLock && points.length > draft.current().points.length) points[points.length-1] = pointLock.at;
       line(points);
       if (pointLock) {
-        const marker = new THREE.Mesh(pointLock.vertex ? new THREE.SphereGeometry(.09, 10, 6) : new THREE.BoxGeometry(.14,.14,.14), new THREE.MeshBasicMaterial({color:pointLock.vertex ? '#ffffff' : FIXTURE_COLOR,depthTest:false,toneMapped:false}));
+        const marker = new THREE.Mesh(pointLock.vertex ? new THREE.SphereGeometry(.09, 10, 6) : new THREE.BoxGeometry(.14,.14,.14), new THREE.MeshBasicMaterial({fog:false,color:pointLock.vertex ? '#ffffff' : FIXTURE_COLOR,depthTest:false,toneMapped:false}));
         marker.position.copy(fixturePoint(pointLock.at)); marker.renderOrder = 10; preview.add(marker);
       }
     }
