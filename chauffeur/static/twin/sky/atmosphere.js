@@ -49,8 +49,14 @@ function groundRadiance({sunDir=[0,1,0],moonDir=[0,-1,0],moonFraction=0,overcast
     AIRGLOW[i]*(1+clamp(moonFraction)*Math.max(0,moon[1])*(1-c))));
 }
 
+// Scene-linear fog colour follows daylight, with a dark blue night floor.
+export function fogColour({sunDir=[0,1,0]}={}) {
+  const y=unit(sunDir)[1], brightness=.002+.35*clamp((y+.15)/.25)+.15*Math.max(0,y);
+  return [.85,.9,1].map(v=>v*brightness);
+}
+
 // CPU quadrature mirrors the shader for the hemisphere/haze consumers and offline safety tests.
-export function sampleRadiance(dirWorld, {sunDir=[0,1,0],moonDir=[0,-1,0],moonFraction=0,overcast=0} = {}) {
+export function sampleRadiance(dirWorld, {sunDir=[0,1,0],moonDir=[0,-1,0],moonFraction=0,overcast=0,fog=0} = {}) {
   let d=unit(dirWorld);
   const below=Math.max(0,-d[1]);
   // Evaluate the horizon's in-scattering at this azimuth, then blend to soil.
@@ -77,7 +83,8 @@ export function sampleRadiance(dirWorld, {sunDir=[0,1,0],moonDir=[0,-1,0],moonFr
   for (let i=0;i<3;i++) result[i]+=AIRGLOW[i]*(1+clamp(moonFraction)*Math.max(0,moon[1])*(1-c));
   const ground=below>0 ? groundRadiance({sunDir,moonDir,moonFraction,overcast}) : [0,0,0];
   const t=clamp((below-GROUND_START)/(GROUND_END-GROUND_START)), groundWeight=t*t*(3-2*t);
-  return result.map((v,i)=>clamp(v*(1-groundWeight)+ground[i]*groundWeight,0,4096));
+  const colour=fogColour({sunDir}),weight=clamp(fog)*.9;
+  return result.map((v,i)=>clamp((v*(1-groundWeight)+ground[i]*groundWeight)*(1-weight)+colour[i]*weight,0,4096));
 }
 
 // Cosine-weighted quadrature of both hemispheres, in scene-linear irradiance/pi.
@@ -160,6 +167,7 @@ void main() {
   // smooth transition to lit ground by 15 degrees. Same ramp as CPU sampling.
   float groundWeight=smoothstep(${GROUND_START},${GROUND_END},below);
   result=mix(result,groundColour,groundWeight);
+  result=mix(result,cloudFogColour,cloudFog*.9);
   if(cloudViewEnabled>0.5) {
     vec4 cloud=marchClouds(vec3(0.0,${(HEIGHT*1000).toFixed(1)},0.0),cloudUnit(skyDirection),cloudCubeSteps,0.5,sunDir,result);
     result=cloud.rgb+result*(1.0-cloud.a);
@@ -205,21 +213,23 @@ export function createSky(renderer, {tier='low',clouds=null} = {}) {
   let moonTexture=null, assetPromise=null;
   function update(input={}) {
     if (disposed) return false;
-    const next={...input,sunDir:unit(input.sunDir),moonDir:unit(input.moonDir || [0,-1,0]),moonFraction:clamp(input.moonFraction || 0),overcast:clamp(input.overcast || 0)};
-    const bodyInput={...next,transmittance};
-    const starInput={...next,overcast:clouds?0:next.overcast,latitudeRad:next.latitudeRad ?? (next.latitude || 0)*Math.PI/180,
+    const next={...input,sunDir:unit(input.sunDir),moonDir:unit(input.moonDir || [0,-1,0]),moonFraction:clamp(input.moonFraction || 0),overcast:clamp(input.overcast || 0),fog:clamp(input.fog || 0)};
+    const bodyInput={...next,transmittance,cloudTransmittance:()=>1-next.fog*.95};
+    const starInput={...next,overcast:Math.max(clouds?0:next.overcast,next.fog*.95),latitudeRad:next.latitudeRad ?? (next.latitude || 0)*Math.PI/180,
       sunAltDeg:Math.asin(clamp(next.sunDir[1],-1,1))*180/Math.PI,
       moonFraction:next.moonFraction*Math.max(0,next.moonDir[1])};
     // Direct-view uniforms follow even steps below the cube's refresh threshold.
     bodies.update(bodyInput);stars.update(starInput);
     const moved=(a,b)=>dot(a,b)<Math.cos(.25*Math.PI/180);
     if (previous && !input.force && !moved(next.sunDir,previous.sunDir) && !moved(next.moonDir,previous.moonDir) &&
-        Math.abs(next.overcast-previous.overcast)<=.05 && Math.abs(next.moonFraction-previous.moonFraction)<.001) return false;
+        Math.abs(next.overcast-previous.overcast)<=.05 && next.fog===previous.fog && Math.abs(next.moonFraction-previous.moonFraction)<.001) return false;
     uniforms.sunDir.value.fromArray(next.sunDir);uniforms.moonDir.value.fromArray(next.moonDir);
     uniforms.moonFraction.value=next.moonFraction;uniforms.overcast.value=next.overcast;
     uniforms.groundColour.value.fromArray(groundRadiance(next));
     cubeBodies.update(bodyInput);cubeStars.update(starInput);
     snapshotClouds();
+    // These belong only to sky/cloud programs, never the shared lit chunks.
+    cloudUniforms.cloudFog.value=next.fog;cloudUniforms.cloudFogColour.value.fromArray(fogColour(next));
     const saved={target:renderer.getRenderTarget(),face:renderer.getActiveCubeFace(),mip:renderer.getActiveMipmapLevel(),
       xr:renderer.xr.enabled,auto:renderer.autoClear,info:{...renderer.info.render},mipmaps:target.texture.mipmapsAutoUpdate};
     try {

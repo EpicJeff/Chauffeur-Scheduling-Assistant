@@ -74,7 +74,7 @@ await test('high mounts real render occlusion output chain with half-float four-
   const {view} = await mount();
   try {
     events.length=0; targets.clear(); view.render();
-    assert.deepEqual(view.post.info().passes,['RenderPass','GTAOPass','CloudCompositePass','UnrealBloomPass','OutputPass']);
+    assert.deepEqual(view.post.info().passes,['RenderPass','GTAOPass','CloudCompositePass','LightShaftPass','UnrealBloomPass','OutputPass']);
     assert.deepEqual(events,['RenderPass','GTAOPass','UnrealBloomPass','OutputPass']);
     const beautyTargets=[...targets].filter(t=>t.samples===4);
     assert.equal(beautyTargets.length,2);
@@ -364,7 +364,7 @@ await test('disposal before the first frame releases unrendered targets and mate
   const c=setup(),composer=composers.at(-1),ao=composer.passes[1];
   const resources=[composer.renderTarget1,composer.renderTarget2,ao.normalRenderTarget,ao.gtaoRenderTarget,ao.pdRenderTarget,
     ao.gtaoNoiseTexture,ao.pdNoiseTexture,ao.normalMaterial,ao.gtaoMaterial,ao.pdMaterial,ao.copyMaterial,
-    ao.depthRenderMaterial,ao.blendMaterial,...glowResources(composer.passes[2]),composer.passes[3].material,composer.copyPass.material];
+    ao.depthRenderMaterial,ao.blendMaterial,...glowResources(composer.passes.find(p=>p instanceof UnrealBloomPass)),composer.passes.find(p=>p instanceof OutputPass).material,composer.copyPass.material];
   const freed=new Set();resources.forEach(r=>r.addEventListener('dispose',()=>freed.add(r)));
   c.post.dispose();assert.equal(freed.size,resources.length);
 });

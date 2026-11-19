@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { windVector } from './sky/wind.js';
 import { groundAt, buildingFootprint } from './twin_ground.js';
 import { allPorches } from './twin_generator.js';
 import { pathBoundaries, pathSurfacePolygons } from './path_shapes.js';
@@ -159,7 +160,8 @@ export function grassReplace(shader, stage, anchor, replacement) {
 const VARYING = 'varying vec4 vGrass; varying vec3 vGrassUv;\n';
 export function grassMaterial(source) {
   const material = new THREE.MeshStandardMaterial({name:'yard blades', side:THREE.DoubleSide, roughness:.9});
-  const uniforms = {grassTime:{value:0}, grassTint:{value:source.color}, grassMap:{value:null},
+  material.userData.seasonLawn=true;
+  const uniforms = {grassTime:{value:0}, grassWind:{value:new THREE.Vector2(.18,0)}, grassTint:{value:source.color}, grassMap:{value:null},
     grassHasMap:{value:0}, grassUvMatrix:{value:new THREE.Matrix3()}};
   const sync = () => {
     uniforms.grassMap.value = source.map; uniforms.grassHasMap.value = source.map ? 1 : 0;
@@ -172,7 +174,7 @@ export function grassMaterial(source) {
   material.addEventListener('dispose', () => { disposed = true; source.removeEventListener('materialparamschange', sync); });
   const compile = (shader, unlit = false) => {
     Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = VARYING + 'attribute vec2 grassShape; attribute float grassJoint; uniform float grassTime; uniform mat3 grassUvMatrix;\n' + shader.vertexShader;
+    shader.vertexShader = VARYING + 'attribute vec2 grassShape; attribute float grassJoint; uniform float grassTime; uniform vec2 grassWind; uniform mat3 grassUvMatrix;\n' + shader.vertexShader;
     grassReplace(shader, 'vertexShader', '#include <begin_vertex>', `#include <begin_vertex>
 vec3 grassRoot = instanceMatrix[3].xyz;
 vec3 grassWorld = (modelMatrix * vec4(grassRoot, 1.0)).xyz;
@@ -189,8 +191,8 @@ transformed *= grassScale;
 float gust = sin(grassRoot.x*.11 + grassRoot.z*.07 + grassTime*.8)
   + .4*sin(grassRoot.z*.23 - grassRoot.x*.09 - grassTime*.57);
 // Convert the world-directed wind into the instance's local yaw frame.
-vec2 wind = vec2(.043, .027) * gust * grassShape.x*grassShape.x * grassScale*(1.0-grassJoint);
-transformed.xz += vec2(dot(instanceMatrix[0].xz, wind), dot(instanceMatrix[2].xz, wind)) / dot(instanceMatrix[0].xz, instanceMatrix[0].xz);
+vec2 wind = grassWind * .28 * gust * grassShape.x*grassShape.x * grassScale*(1.0-grassJoint);
+transformed.xz += vec2(dot(instanceMatrix[0].xz, wind), dot(instanceMatrix[2].xz, wind)) / max(dot(instanceMatrix[0].xz, instanceMatrix[0].xz),1e-6);
 vGrass = vec4(grassShape, grassSeed, .5+.5*sin(grassRoot.x*.037+sin(grassRoot.z*.041)*2.0));
 vGrassUv = vec3((grassUvMatrix * vec3(grassRoot.x, grassRoot.z, 1.0)).xy, .8*smoothstep(35.0, 110.0, grassDistance));`);
     shader.fragmentShader = VARYING + 'uniform vec3 grassTint; uniform sampler2D grassMap; uniform float grassHasMap;\n' + shader.fragmentShader;
@@ -284,10 +286,13 @@ export function jointClumps(plan, spread, budget = TIERS.max.lawnBlades, raw = g
 
 export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   const budget = Math.max(0,TIERS[tier].lawnBlades-fringeCount), polygon = plan.site?.lot;
-  let clock;
+  let clock,wind;
   const growsGrass = grassLawn(kit);
   const result = {tier, growsGrass, instances:0, jointInstances:0, draws:0, regions:0, animated:false, mesh:null,
-    update(seconds) { if (this.animated) clock.value = seconds; }};
+    update(seconds,weather,bearing) { if (this.animated) {
+      clock.value = seconds;
+      if(weather)wind.value.set(...windVector(weather,bearing,{grass:true}));
+    } }};
   if (!budget || !growsGrass || !polygon?.length) return result;
   // The field runs to the lot line and a skirt past it, so a fence standing on
   // or just outside the line stands in grass (user, 2026-11-17).
@@ -365,6 +370,7 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   const jointFlags = new Float32Array(count); jointFlags.fill(1,fieldCount);
   geometry.setAttribute('grassJoint',new THREE.InstancedBufferAttribute(jointFlags,1));
   clock = material.userData.grassUniforms.grassTime;
+  wind = material.userData.grassUniforms.grassWind;
   const mesh = new THREE.InstancedMesh(geometry,material,0);
   // Constructor's identity-matrix fill and per-instance Object3D.compose would
   // otherwise double the placement work. Upload the packed buffer directly.

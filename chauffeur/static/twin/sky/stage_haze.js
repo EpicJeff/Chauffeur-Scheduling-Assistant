@@ -112,6 +112,7 @@ export function installStageHaze(scene, sky) {
   const ring = Array.from({length: 40}, () => new THREE.Vector3());
   const uniforms = {stageCentre:{value:new THREE.Vector2()}, stageRadius:{value:1},
     stageRing:{value:ring}, stageEnabled:{value:1}, stageCanvas:{value:0}, stageExposure:{value:1}};
+  let clearRadius=1,fogDensity=0;
   // The same CPU radiance the cube is drawn from; refreshed whenever the sky changes.
   const guard = v => Number.isFinite(v) && v > 0 ? Math.min(v, 4096) : 0;
   function refresh() {
@@ -140,9 +141,11 @@ export function installStageHaze(scene, sky) {
     prepare();
   };
   return {prepare, refresh,
-    set({centre, radius, enabled} = {}) {
+    set({centre, radius, enabled, fog} = {}) {
       if (centre?.every(Number.isFinite)) uniforms.stageCentre.value.fromArray(centre);
-      if (Number.isFinite(radius) && radius > 0) uniforms.stageRadius.value = radius;
+      if (Number.isFinite(radius) && radius > 0) clearRadius = radius;
+      if (Number.isFinite(fog)) fogDensity = Math.max(0,Math.min(1,fog));
+      uniforms.stageRadius.value = clearRadius * (1-.85*fogDensity);
       if (enabled !== undefined) uniforms.stageEnabled.value = enabled ? 1 : 0;
     },
     dispose() { scene.onBeforeRender = previous; },

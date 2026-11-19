@@ -54,7 +54,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
       g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
       const count = g.attributes.position.count;
       if (g.attributes.position.itemSize !== 3 || !count || count % 3) { g.dispose(); return; }
-      for (const key of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'reflectionBodyCentre'].includes(key)) g.deleteAttribute(key);
+      for (const key of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'reflectionBodyCentre', 'seasonLeaf'].includes(key)) g.deleteAttribute(key);
       if (g.attributes.normal?.count !== count || g.attributes.normal.itemSize !== 3) {
         g.deleteAttribute('normal'); g.computeVertexNormals();
       }

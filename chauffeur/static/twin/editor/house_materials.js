@@ -1,9 +1,41 @@
 import { KINDS, PANEL_ROLES } from '../surface_kinds.js';
 import { materialSlot } from './material_slot.js';
+import { request } from './api.js';
+
+function grassChoice(host, { editable, ownSlot, report, settingsRequest }) {
+  const row = document.createElement('label'), select = document.createElement('select');
+  row.textContent = 'Lawn grass type'; select.name = 'lawn_grass_type'; select.setAttribute('name', 'lawn_grass_type');
+  for (const [value, text] of [['cool', 'Cool-season (fescue, bluegrass, rye)'],
+    ['warm', 'Warm-season (Bermuda, zoysia, St. Augustine)']]) {
+    const option = document.createElement('option'); option.value = value; option.textContent = text; select.append(option);
+  }
+  const status = document.createElement('p'); status.setAttribute('role', 'status');
+  row.append(select); host.append(row, status);
+  let disposed = false, ready = false, busy = false, saved = 'cool';
+  const events = new AbortController();
+  const controls = () => { select.disabled = disposed || !ready || busy || !editable(); };
+  ownSlot?.({ dispose() { disposed = true; events.abort(); controls(); } });
+  controls();
+  settingsRequest('weather-state', 'GET', undefined, 'twin').then(body => {
+    if (disposed) return;
+    saved = body.lawn?.grass_type === 'warm' ? 'warm' : 'cool'; select.value = saved; ready = true; controls();
+  }).catch(error => { if (!disposed) { status.textContent = 'Could not load lawn grass type.'; report?.(error); } });
+  select.addEventListener('change', async () => {
+    if (disposed || !ready || busy || !editable()) return;
+    busy = true; controls(); status.textContent = 'Saving…';
+    try {
+      await settingsRequest('weather-sources', 'PUT', { lawn_grass_type: select.value }, 'twin');
+      if (disposed) return;
+      saved = select.value; status.textContent = 'Saved';
+    } catch (error) {
+      if (!disposed) { select.value = saved; status.textContent = 'Could not save lawn grass type.'; report?.(error); }
+    } finally { busy = false; controls(); }
+  }, { signal: events.signal });
+}
 
 // A building's selection card uses the same sections and shared slot control
 // as foundationShelf; material editing remains on the Library page.
-export function houseMaterialsShelf(host, building, { getPlan, getKit = () => ({}), library, ownSlot, canEdit, op, report }) {
+export function houseMaterialsShelf(host, building, { getPlan, getKit = () => ({}), library, ownSlot, canEdit, op, report, settingsRequest = request }) {
   const section = document.createElement('section'), title = document.createElement('h4');
   title.textContent = 'House materials'; section.append(title); host.append(section);
   const editable = () => typeof canEdit === 'function' ? canEdit() : !!canEdit;
@@ -35,6 +67,7 @@ export function houseMaterialsShelf(host, building, { getPlan, getKit = () => ({
           return op({ op: 'set_material', building: building.id,
             target: site ? { site: true, role: kind } : { building: building.id, role: kind }, material: slot });
         } }));
+      if (kind === 'lawn') grassChoice(group, { editable, ownSlot, report, settingsRequest });
     }
   }
 }

@@ -20,14 +20,20 @@ import { mountEnergySettings } from './live/energy_settings.js';
 import { mountBake } from './bake/runtime.js';
 import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from './sky/ephemeris.js';
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
-import { createSky, sampleSkyIrradiance, transmittance } from './sky/atmosphere.js';
+import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/atmosphere.js';
 import { createCloudPass } from './sky/cloud_pass.js';
-import { cloudState } from './sky/clouds.js';
+import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze } from './sky/weather.js';
+import { installPlantWind } from './sky/wind.js';
 import { installStageHaze } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
+import { installWeatherSurface } from './sky/weather_surface.js';
+import { seasonState, createSeasonPreview, installSeasons } from './sky/seasons.js';
+import { createPrecipitation } from './sky/precipitation.js';
+import { createSeasonTouches } from './sky/season_touches.js';
 import { mountTimeScrub } from './sky/time_scrub.js';
 import { defaultStage, mountStageSettings } from './stage_settings.js';
-import { overcastFactor, weatherState } from './sky/overcast.js';
+import { mountWeatherSettings } from './weather_settings.js';
+import { weatherState as pickWeather } from './sky/overcast.js';
 import { createUnlit } from './unlit.js';
 import { createViewing } from './viewing.js';
 import { createLevels } from './levels.js';
@@ -62,7 +68,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const orthographic = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
   let camera = perspective;
   const clouds = createCloudPass(renderer3, {tier});
-  const post = settings.occlusion ? createPost(renderer3, scene, camera, {samples: settings.antialias ? 4 : 0, clouds}) : null;
+  const post = settings.occlusion ? createPost(renderer3, scene, camera, {samples: settings.antialias ? 4 : 0, clouds, tier}) : null;
   clouds.warm(post?.target);
   // three keys every program on where it draws. With the composer on, the
   // picture draws into its half-float target (linear, no tone mapping), so a
@@ -79,6 +85,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     try {
       stageHaze.prepare(target);
       cloudShadow.prepare(target);
+      plantWind.prepare(target);
+      seasons.prepare(target);
+      weatherSurface.prepare(target);
       // Never undefined: three reads the target's fields when it is not null.
       renderer3.setRenderTarget((!state.unlit && post?.target) || null);
       return compileFor(target, eye, targetScene);
@@ -111,6 +120,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const sky = createSky(renderer3, {tier, clouds}), environment = sky.environment;
   const stageHaze = installStageHaze(scene, sky);
   const cloudShadow = installCloudShadow(scene, clouds);
+  const plantWind = installPlantWind(scene,{tier});
+  const weatherSurface = installWeatherSurface(scene);
+  const seasons = installSeasons(scene);
+  const precipitation = createPrecipitation(scene,{tier});
+  const seasonTouches = createSeasonTouches(scene,{tier});
+  let precipitationPlan=null,precipitationRoofs=null;
   let cloudCentre=[0,0];
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
   const stageForPlan = nextPlan => {
@@ -122,6 +137,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     cloudCentre=value.centre.map(v => v*FT);
     stageHaze.set({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
     cloudShadow.set({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
+    precipitation.setStage({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
+    seasonTouches.setStage({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
   }
   syncStage(plan);
   scene.add(sky.object);
@@ -130,17 +147,39 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const materialBindings = new Map();
   scene.environment = environment;
   scene.background = sky.clearCube;
-  const state = { view: 'ext', time: editor ? 'day' : 'now', previewHour:null, camera: 'front', unlit: false };
+  const state = { view: 'ext', time: editor ? 'day' : 'now', previewHour:null, camera: 'front', unlit: false, liveWeather:false, weatherPreview:null, seasonPreview:null };
   const unlit = createUnlit();
   let viewing = null;
   let shadowAutoUpdate;
   let clock = null, previewIdle = null, timeTimer = null, timeLook = null, lastShadowUpdate = -Infinity;
   const clockNow = () => clock ? new Date(clock) : new Date();
   let liveLamps = false;
-  let weatherEntity = null, lastOvercast = 0, lastCloudWeather = '';
-  const currentWeather = () => editor ? null : weatherState(view.live?.peek?.(), weatherEntity, view.live?.stale?.() ?? true);
-  const currentOvercast = () => overcastFactor(currentWeather());
-  const currentClouds = () => cloudState(currentWeather());
+  let weatherEntity = null, lastWeather = '', groundWeather = {}, weatherPoll = null;
+  const weatherPreview=createWeatherPreview(()=>{
+    state.weatherPreview=weatherPreview.get()?.preview || null;
+    updateTime(false,true);
+  });
+  const seasonPreview=createSeasonPreview(()=>{
+    state.seasonPreview=seasonPreview.get();
+    updateTime(false,true);
+  });
+  function currentWeather() {
+    const preview=weatherPreview.get();
+    if(preview)return preview;
+    if(editor && !state.liveWeather)return neutralWeather();
+    const states=view.live?.peek?.(), stale=view.live?.stale?.();
+    const entity=states ? pickWeather(states,weatherEntity,stale ?? true) : sourceEntity(groundWeather);
+    const sensors={...groundWeather.source?.sensors};
+    for(const [role,sensor] of Object.entries(sensors)){
+      if(states && sensor.entity && Object.hasOwn(states,sensor.entity))sensors[role]={...states[sensor.entity],unit:states[sensor.entity]?.attributes?.unit_of_measurement};
+    }
+    // Modern HA forecasts arrive only through the server's hourly service read.
+    // Never reuse one for a different condition after an existing-stream push.
+    const values=groundWeather.source?.values;
+    const observed=entity && values?.condition===entity.state && Number.isFinite(values.precipitation)
+      ? {...entity,normalizedRate:values.precipitation} : entity;
+    return weatherState(observed,groundWeather,sensors);
+  }
   let bounds = { x: 19, y: 11, span: 38 };
   let framed = false, cameraMoved = false;
   controls.addEventListener('start', () => { cameraMoved = true; });
@@ -148,7 +187,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
   const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
-    extras:() => [sky.object, sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
+    extras:() => [sky.object, precipitation.group, seasonTouches.group, sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
@@ -387,8 +426,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (disposed) return;
     if (compiling && performance.now() - holdSince < HOLD_MS) return;
     // The live keeper can replace its layer. Read its current snapshot, without another stream.
-    if (!state.unlit && (currentOvercast() !== lastOvercast || JSON.stringify(currentClouds()) !== lastCloudWeather)) applyTimeLook();
-    const flash=clouds.flash(performance.now()/1000,{enabled:!editor&&!state.unlit,
+    if (JSON.stringify(currentWeather()) !== lastWeather) applyTimeLook();
+    const flash=clouds.flash(performance.now()/1000,{enabled:(!editor||state.liveWeather||!!state.weatherPreview)&&!state.unlit,
       centre:cloudCentre});
     // Reuse the one existing hemisphere light. No lit-material uniform, light
     // count, program key or device/lamp state changes for a flash.
@@ -406,7 +445,22 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       renderer: renderer3, camera, sun: timeLook?.sunClear ?? 3,
       sunDirection: sun.position.clone().sub(sun.target.position).normalize(),
     });
-    yardGroup?.userData.grass?.update(performance.now() / 1000);
+    yardGroup?.userData.grass?.update(performance.now() / 1000,view.weather,site.front_bearing_deg ?? 180);
+    plantWind.update(performance.now()/1000,view.weather,site.front_bearing_deg ?? 180);
+    seasons.update(view.season);
+    weatherSurface.update(view.weather,performance.now()/1000);
+    if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces){
+      seasonTouches.setPlan(plan);
+      precipitation.setPlan(plan,twin?.roofSurfaces);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;
+    }
+    precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
+      unlit:state.unlit,colour:timeLook?.skyColor});
+    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext';
+    const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
+    const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
+    seasonTouches.update(performance.now()/1000,view.season,view.weather,camera,{target:controls.target,plants:yardGroup,
+      date:clockNow(),sunAltDeg,enabled:touchEnabled,lawn:yardGroup?.userData.grass?.growsGrass ?? false,bearing:site.front_bearing_deg ?? 180});
+    post?.setSun({sunDir,sunAltDeg,enabled:touchEnabled,transmittance:1-weatherHaze(view.weather)});
     view.live?.draw();
     twin?.updateGhosts();
     pieceVisibility?.enforce(scene);
@@ -448,8 +502,19 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
-    ready: false, scene, post, clouds, cloudShadow, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
+    ready: false, scene, post, clouds, cloudShadow, weatherSurface, precipitation, seasonTouches, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
+    weather:neutralWeather(), season:seasonState(clockNow(),resolveSite(site,clockNow()).lat,{}, {neutral:editor}), seasons,
+    refreshWeather:()=>weatherPoll?.refresh(),
+    weatherChanged:id=>weatherPoll?.changed(id),
+    setWeatherPreview(name) { weatherPreview.set(name);resetPreviewIdle(); },
+    setSeasonPreview(name) { seasonPreview.set(name);resetPreviewIdle(); },
+    setLiveWeather(on) { state.liveWeather=!!on; updateTime(false,true); },
+    setWeatherEntity(entity) {
+      entity ||= null;
+      if(weatherEntity===entity)return;
+      weatherEntity=entity; weatherPoll?.refresh(); updateTime();
+    },
     get stage() { return stageForPlan(plan); },
     get timeHour() {
       if (state.time === 'scrub') return state.previewHour;
@@ -571,6 +636,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (saved.navigation && view.levels) view.levels.restore(saved.navigation);
       else { view.setView(saved.state.view); view.showLevels(saved.levels, { faint: saved.faint }); }
       Object.assign(state, saved.state); camera.position.copy(saved.position); controls.target.copy(saved.target);
+      state.weatherPreview=weatherPreview.get()?.preview || null;
+      state.seasonPreview=seasonPreview.get();
       // Restoring a camera is a framing change, not an outward zoom gesture.
       viewing?.rebasePin();
       camera.zoom = saved.zoom; controls.update(); camera.quaternion.copy(saved.quaternion); camera.updateProjectionMatrix(); render();
@@ -775,6 +842,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (!['now', 'day', 'night'].includes(time)) return;
       const moved = state.time !== time;
       state.time = time;
+      if(time==='now' && state.weatherPreview)weatherPreview.set(null);
+      if(time==='now' && state.seasonPreview)seasonPreview.set(null);
       state.previewHour = null;
       resetPreviewIdle(); updateTime(moved);
     },
@@ -1378,11 +1447,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       for (const release of [...materialBindings.values()]) release();
       view.levels?.stop();
       clearInterval(timeTimer); clearTimeout(previewIdle);
+      weatherPoll?.stop(); weatherPreview.stop(); plantWind.dispose();
+      seasonPreview.stop(); seasons.dispose();
       for (const name of ['pointerdown', 'pointermove', 'keydown', 'input']) document.removeEventListener(name, previewActivity);
       view.bake?.stop();
       view.live?.stop();
       view.idle?.stop(); view.glance?.stop(); view.glanceSettings?.stop();
-      view.energySettings?.stop(); view.stageSettings?.stop(); view.timeScrub?.stop();
+      view.energySettings?.stop(); view.stageSettings?.stop(); view.weatherSettings?.stop(); view.timeScrub?.stop();
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
@@ -1393,7 +1464,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       viewing?.dispose(); viewing = null;
       if (twin) { scene.remove(twin.root); release(twin); }
       unlit.dispose();
-      cloudShadow.dispose(); stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
+      seasonTouches.dispose(); precipitation.dispose(); weatherSurface.dispose(); cloudShadow.dispose(); stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
       post?.dispose();
       clouds.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();
@@ -1449,7 +1520,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     model.materials.forEach(m => { if (!keepMaterials.has(m)) m.dispose(); });
   }
   function applyTimeLook(moved = false, forceSky = false, cheap = false) {
-    stageHaze.set({enabled:!state.unlit});
+    view.weather=currentWeather();lastWeather=JSON.stringify(view.weather);
+    const seasonNow=clockNow(),seasonSite=resolveSite(site,seasonNow);
+    view.season=seasonState(seasonNow,seasonSite.lat,groundWeather,{neutral:editor&&!state.liveWeather,preview:seasonPreview.get()});
+    seasons.update(view.season);
+    stageHaze.set({enabled:!state.unlit,fog:weatherHaze(view.weather)});
     cloudShadow.set({enabled:!state.unlit});
     sky.setEnabled(!state.unlit);
     if (state.unlit) {
@@ -1462,23 +1537,21 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     }
     const now = clockNow(), located = resolveSite(site, now), date = previewDate(now, state.time === 'scrub' ? state.previewHour : state.time, located);
     const solar = sunPosition(date, located.lat, located.lon), lunar = moonPosition(date, located.lat, located.lon);
-    const illumination = moonIllumination(date), overcast = currentOvercast();
+    const illumination = moonIllumination(date), overcast = view.weather.clouds.coverage;
     const sunDir = modelDirection(solar.azimuth, solar.altitude, located.front_bearing_deg);
     const moonDir = modelDirection(lunar.azimuth, lunar.altitude, located.front_bearing_deg);
-    const cloudWeather=currentClouds(),radianceInput={sunDir,moonDir,moonFraction:illumination.fraction,overcast};
+    const cloudWeather=view.weather.clouds,radianceInput={sunDir,moonDir,moonFraction:illumination.fraction,overcast,fog:view.weather.fog};
     const cloudIrradiance=sampleSkyIrradiance(radianceInput);
     clouds.update(cloudWeather,{sunDir,moonDir,frontBearingDeg:located.front_bearing_deg,
       sunRadiance:transmittance([sunDir[0],Math.max(0,sunDir[1]),sunDir[2]]).map(v=>v*10),
       moonRadiance:transmittance(moonDir).map(v=>v*.02*illumination.fraction),
-      ambientTop:cloudIrradiance.top,ambientBottom:cloudIrradiance.bottom});
+      ambientTop:cloudIrradiance.top,ambientBottom:cloudIrradiance.bottom,fog:view.weather.fog,fogColour:fogColour(radianceInput)});
     cloudShadow.set({sunDir,moonDir});
     cloudShadow.frame(performance.now()/1000);
-    lastCloudWeather=JSON.stringify(cloudWeather);
     const skyChanged = sky.update({sunDir, moonDir, moonPhase:illumination.phase, moonFraction:illumination.fraction,
       moonDistanceKm:lunar.distance, siderealTime:localSiderealTime(date,located.lon),
-      frontBearingDeg:located.front_bearing_deg, overcast, latitude:located.lat, force:moved || forceSky});
+      frontBearingDeg:located.front_bearing_deg, overcast, fog:view.weather.fog, latitude:located.lat, force:moved || forceSky});
     if (skyChanged) stageHaze.refresh();
-    lastOvercast = overcast;
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
       { shadows: settings.shadows, overcast, sunTransmittance:cloudShadow.centre(), zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });
     scene.background = sky.clearCube; scene.backgroundIntensity = 1;
@@ -1546,6 +1619,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       return {tier, instances, draws, regions, animated};
     },
     reflectionInfo: () => reflections.info(),
+    weatherPreviewDeadline: () => weatherPreview.deadline,
+    seasonPreviewDeadline: () => seasonPreview.deadline,
     expireTimePreview,
     setClock(isoString) {
       if (isoString !== null && !Number.isFinite(Date.parse(isoString))) throw new Error('Give an ISO clock time or null.');
@@ -1554,11 +1629,6 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     cameraState() { return { position: camera.position.toArray(), target: controls.target.toArray() }; },
     // Retain the late-sky/test hook; the atmosphere now owns the fixed environment.
     applySky(texture) { texture?.dispose(); updateTime(false, true); },
-    setWeatherEntity(entity) {
-      entity ||= null;
-      if (weatherEntity === entity) return;
-      weatherEntity = entity; updateTime();
-    },
     setCameraState({ position, target }) {
       cameraMoved = true; camera.position.fromArray(position); controls.target.fromArray(target); controls.update(); render();
     },
@@ -1606,6 +1676,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   resize();
   try {
     await view.rebuild(plan);
+    // The viewer warms the whole scene through viewing.warm(). The neutral
+    // editor has no viewing layer: warm its hidden weather objects explicitly,
+    // against the same picture target, before Live weather can reveal them.
+    if (editor && compileFor) await renderer3.compileAsync(precipitation.group,camera,scene);
+    // Compile both hidden seasonal programs for the actual picture target in
+    // viewers too: viewing.warm only expands the house's domain objects.
+    if (compileFor) await renderer3.compileAsync(seasonTouches.group,camera,scene);
     view.ready = false;
     if (disposed) return view;
     view.materialWatcher = watchMaterialCatalogue(view);
@@ -1666,6 +1743,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (new URLSearchParams(location.search).get('perf') === '1')
       view.meter = mountFrameMeter(el, { renderer3, gpu: view.renderer, tier, pixelRatio: settings.pixelRatio, stats: () => lastStats });
     view.ready = true;
+    weatherPoll=mountWeatherState({onChange:ground=>{
+      groundWeather=ground;
+      if(typeof ground.source.configured_entity==='string')weatherEntity=ground.source.configured_entity || null;
+      updateTime(false,true);
+    }});
     // Uniform texture/geometry contents arrive without changing shader programs.
     sky.loadAssets(() => { if (!disposed) updateTime(false,true); });
     timeTimer = setInterval(() => updateTime(false, true), 60000);
@@ -1688,12 +1770,18 @@ async function boot() {
     const kit = await kitResponse.json();
     const view = await mountTwin(host, { plan: snapshot.plan, kit, round: snapshot.round ?? null, site: snapshot.site, stage:snapshot.stage });
     document.getElementById('twin-tier').textContent = view.tier[0].toUpperCase() + view.tier.slice(1);
-    const sync = () => document.querySelectorAll('[data-time]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.time === view.state.time)));
+    const sync = () => {
+      document.querySelectorAll('[data-time]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.time === view.state.time)));
+      document.querySelectorAll('[data-weather-preview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.weatherPreview === view.state.weatherPreview)));
+      document.querySelectorAll('[data-season-preview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.seasonPreview === view.state.seasonPreview)));
+    };
     host.addEventListener('twintimechange', sync);
     host.addEventListener('twinviewchange', sync);
     const click = event => {
       const button = event.target.closest('button'); if (!button) return;
       if (button.dataset.time) view.setTime(button.dataset.time);
+      if (button.dataset.weatherPreview) view.setWeatherPreview(button.dataset.weatherPreview);
+      if (button.dataset.seasonPreview) view.setSeasonPreview(button.dataset.seasonPreview);
       sync();
     };
     document.getElementById('twin-time-preview')?.addEventListener('click', click);
@@ -1717,6 +1805,7 @@ async function boot() {
     view.glanceSettings = mountGlanceSettings(view, view.glance, view.idle);
     view.energySettings = mountEnergySettings(view);
     view.stageSettings = mountStageSettings(view);
+    view.weatherSettings = mountWeatherSettings(view);
     view.timeScrub = mountTimeScrub(view, document.getElementById('twin-time-scrub'));
     const keeper = keepLive(view, { api: (path, options) => fetch(base() + path, options) });
     window.addEventListener('pagehide', () => { keeper.stop(); clearInterval(hudTimer); view.dispose(); }, { once: true });

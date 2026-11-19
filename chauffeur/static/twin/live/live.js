@@ -664,6 +664,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
         if (stopped) return;
         let change;
         try { change = JSON.parse(event.data); } catch { return; }
+        if(typeof change?.entity_id==='string' && Object.hasOwn(change,'state'))view.weatherChanged?.(change.entity_id);
         if (!change || typeof change.entity_id !== 'string' ||
           !(entities.has(change.entity_id) || energyEntities().includes(change.entity_id) ||
           view.plan?.buildings?.some(b=>b.solar_zones?.some(z=>z.state!=='ghost' && z.entity===change.entity_id)) || change.entity_id.startsWith('weather.') || isEnergyEntity(change.entity_id, change.state)) || !Object.hasOwn(change, 'state')) return;

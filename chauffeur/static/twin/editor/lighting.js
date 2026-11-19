@@ -1,5 +1,5 @@
 const KEY = 'chf.editor.lighting';
-const choices = ['day', 'night', 'now', 'unlit'];
+const choices = ['day', 'night', 'now', 'unlit', 'live'];
 
 // Device-only viewport preference; it never changes the household's settings.
 export function mountLighting(view, host, { storage, signal } = {}) {
@@ -12,7 +12,8 @@ export function mountLighting(view, host, { storage, signal } = {}) {
     if (!choices.includes(value)) return;
     choice = value;
     view.setUnlit(value === 'unlit');
-    view.setTime(value === 'unlit' ? 'day' : value);
+    view.setLiveWeather?.(value === 'live');
+    view.setTime(value === 'unlit' ? 'day' : value === 'live' ? 'now' : value);
     try { storage?.setItem(KEY, choice); } catch { /* Still usable without storage. */ }
     host.querySelectorAll('[data-editor-lighting]').forEach(button => {
       button.setAttribute('aria-pressed', String(button.dataset.editorLighting === choice));
