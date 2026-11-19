@@ -28,6 +28,7 @@ import { createDock } from './dock.js';
 import { mountDialogs } from './dialog.js';
 import { createContextMenu } from './context_menu.js';
 import { houseMaterialsShelf } from './house_materials.js';
+import { createVisibility } from './visibility.js';
 
 const el = id => document.getElementById(id);
 const STREAM_ONLY = new Set(['piece', 'stage', 'stream_reset', 'log']);
@@ -45,6 +46,34 @@ export async function boot() {
   let buildGhosts = null, checks = null, houses = null, drawingStarted = false;
   const statusChip = createStatusChip(el('editor-chip')), seenBuildRounds = new Set();
   const lifecycle = new AbortController();
+  let visibilityHouse = 'current', visibilityLoaded = false;
+  try { visibilityHouse = localStorage.getItem('chauffeur.editor.visibility.house') || 'current'; } catch { /* Storage can be unavailable. */ }
+  const visibility = createVisibility({ houseId: visibilityHouse });
+  const existingPieceIds = plan => {
+    const ids = [];
+    function visit(value) {
+      if (!value || typeof value !== 'object') return;
+      if (typeof value.id === 'string') ids.push(value.id);
+      for (const child of Object.values(value)) if (typeof child === 'object') visit(child);
+    }
+    visit(plan); return ids;
+  };
+  function loadVisibility(houseId, plan) {
+    visibilityHouse = houseId || 'current'; visibilityLoaded = true;
+    try { localStorage.setItem('chauffeur.editor.visibility.house', visibilityHouse); } catch { /* Keep in memory. */ }
+    visibility.forHouse(visibilityHouse, existingPieceIds(plan));
+  }
+  const isPickable = candidate => {
+    const id = candidate?.id ?? candidate?.pieceId;
+    const building = candidate?.building ?? candidate?.buildingId;
+    const anchor = shownPlan()?.buildings?.find(b => b.id === building)?.anchors?.find(a => a.id === id);
+    return visibility.isPickable(anchor?.device ? { ...candidate, visibilityKind: 'device' } : candidate);
+  };
+  const unsubscribeVisibility = visibility.subscribe(({ hidden, hiddenKinds }) => {
+    view?.setHiddenPieces?.(hidden, hiddenKinds);
+    tools?.visibilityChanged?.(); devices?.draw(); terrain?.refresh();
+  });
+  lifecycle.signal.addEventListener('abort', unsubscribeVisibility, { once: true });
   const dialogs = mountDialogs({ signal: lifecycle.signal });
   let welcomeShown = false, setupShown = false, materialBuilding = null;
   const dock = createDock({ host: el('editor-dock') });
@@ -470,6 +499,7 @@ export async function boot() {
         await loadSheets();
       }
       snapshot = { ...snapshot, ...state };
+      if (!visibilityLoaded && snapshot.plan) loadVisibility(visibilityHouse, snapshot.plan);
       syncBuildButton();
       // A house with pieces and no drawings to build from is not waiting for drawings.
       const built = (snapshot.model?.buildings || []).some(b => b.walls?.length || b.rooms?.length || b.roofs?.length);
@@ -700,6 +730,7 @@ export async function boot() {
       await history.perform(() => request('start-over', 'POST', {}));
       queue = createEditQueue(queueOptions);
       snapshot = { plan: null, rounds: [], cost: snapshot.cost, build: null };
+      loadVisibility('current', emptyPlan());
       currentBuild = null; ghostBuild = null; ghosts.clear(); prompted.clear();
       panel.reset(); tools?.select(null); pauses?.dismiss(); draw?.cancel(); history?.clear();
       dialogs.closeDialog(); advancedBase = null; welcomeShown = false; setupShown = false;
@@ -761,6 +792,8 @@ export async function boot() {
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
     houseKit = kit;
     view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true, bake: false, stage:snapshot.stage });
+    view.isPiecePickable = isPickable;
+    const hiddenState = visibility.snapshot(); view.setHiddenPieces?.(hiddenState.hidden, hiddenState.hiddenKinds);
     mountLighting(view, el('editor-lighting'), { signal: lifecycle.signal });
     buildGhosts = createBuildGhosts(view);
     if (new URLSearchParams(location.search).get('test') === '1') hooks.buildGhosts = buildGhosts;
@@ -783,9 +816,10 @@ export async function boot() {
         // The write succeeded: preserve its Undo step even if a read or redraw fails.
         if (!snapshot.rounds.some(row => row.id === result.round)) snapshot.rounds.push({ id: result.round, kind: 'load' });
         await polling.refreshState(); await loadSheets(); await renderScene();
+        loadVisibility(result.houseId, snapshot.plan);
       },
     });
-    tools = createSceneTools({ dock, view, openHouseMaterials, getPlan: () => timeline?.preview() || shownPlan(), getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
+    tools = createSceneTools({ dock, view, visibility, isPickable, openHouseMaterials, getPlan: () => timeline?.preview() || shownPlan(), getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
       siteHits: (x, y) => library?.siteHits(x, y) || [],
       padHits: (x, y) => terrain?.padHits?.(x, y) || [], fixtureHits: (x, y) => devices?.fixtureHits?.(x, y) || [],
       pickMaterial: surface => library?.pick(surface), onDrawFeature: kind => terrain?.startDrawing(kind),
@@ -825,6 +859,8 @@ export async function boot() {
       prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });
     view.live = { draw: devices.draw, stop: devices.stop };
     tools.delegate({
+      visibilityChanged: () => library.refresh(),
+      visibilitySelection: () => terrain.visibilitySelection?.() || devices.fixtureHandles.visibilitySelection?.(),
       preview: plan => library.preview(plan), key: event => library.key(event), typedValue: () => library.typedValue(), commit: value => library.commit(value),
       handleSources: [tools.gizmo, terrain, lot, devices.fixtureHandles],
       selectPick: hit => hit?.kind === 'terraces' && (terrain.choose('terraces', hit.id), true) || devices.selectFixturePick(hit),

@@ -233,7 +233,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
           || building.rooms.find(r => r.id === (resolved.floor || resolved.ceiling));
         const room = resolved.floor || resolved.ceiling
           || (resolved.wall && wallFace(building, surface, resolved.side).room?.id);
-        return { building, point, level: surface?.level, room };
+        return { building, point, level: surface?.level, room, pieceId:piece.id };
       } catch { return null; }
     }
     const piece = plan?.site?.devices?.find(d => d.device === device.device_id);
@@ -242,7 +242,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
       if (!room?.polygon?.length) return null;
       const low = [0, 1].map(i => Math.min(...room.polygon.map(p => p[i])));
       const high = [0, 1].map(i => Math.max(...room.polygon.map(p => p[i])));
-      return { building: null, point: [low[0] + (high[0] - low[0]) * piece.host.u,
+      return { building: null, pieceId:piece.id, point: [low[0] + (high[0] - low[0]) * piece.host.u,
         low[1] + (high[1] - low[1]) * piece.host.v, piece.offset || 0], level: null, room: room.id };
     }
     const auto = device.auto, building = plan?.buildings.find(b => b.id === auto?.building);
@@ -256,7 +256,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     const selected = tools.selection(), camera = view.camera, rect = canvas.getBoundingClientRect();
     camera.updateMatrixWorld(true);
     for (const { at, sprite } of sprites.values()) {
-      sprite.visible = !!at && (!at.building || view.groups?.levels[`${at.building.id}:${at.level}`]?.visible !== false);
+      sprite.visible = !view.isPieceHidden?.({pieceId:at?.pieceId || sprite.userData.deviceId,kind:'device'}) && !!at && (!at.building || view.groups?.levels[`${at.building.id}:${at.level}`]?.visible !== false);
       if (!at || !sprite.visible) continue;
       const pixel = camera.isOrthographicCamera ? (camera.top - camera.bottom) / camera.zoom / Math.max(1, rect.height)
         : 2 * Math.max(.1, -sprite.position.clone().applyMatrix4(camera.matrixWorldInverse).z)
@@ -285,9 +285,11 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
         if (!textures.has(device.kind)) textures.set(device.kind, markerTexture(device.kind, 'off'));
         const sprite = markerSprite(textures.get(device.kind)); root.add(sprite);
         sprite.userData.deviceId = device.device_id;
+        Object.assign(sprite.userData, {kind:'device', pieceId:device.device_id});
         row = { sprite }; sprites.set(device.device_id, row);
       }
       row.at = spot(device);
+      row.sprite.userData.pieceId = row.at?.pieceId || device.device_id;
       if (row.at) {
         const { building, point } = row.at;
         if (!building) {

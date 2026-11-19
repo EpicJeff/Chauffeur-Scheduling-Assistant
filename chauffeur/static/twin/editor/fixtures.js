@@ -158,7 +158,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   const options = dock ? el('device-options') : el('device-tools');
   const gizmoLayer = element('div'); gizmoLayer.className = 'editor-handles'; canvas.parentElement.append(gizmoLayer);
   const gizmo = createGizmo({ view, layer: gizmoLayer, getPlan, canEdit: () => canEdit() && !mode,
-    getSelection: () => cardLight ? { kind: 'light_fixture', ...cardLight } : null,
+    getSelection: () => cardLight && view.isPiecePickable?.({kind:'fixture',id:cardLight.id}) !== false ? { kind: 'light_fixture', ...cardLight } : null,
     getTool: () => ['move', 'rotate', 'scale'].find(id => el(`rail-${id}`).getAttribute('aria-pressed') === 'true'), op,
     onPreview(plan) {
       const fixture = cardLight && plan.light_fixtures?.[cardLight.entity_id]?.find(f => f.id === cardLight.id);
@@ -391,7 +391,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     view.camera.updateMatrixWorld(true);
     screenRay(ray, view, event);
     draw(); root.updateMatrixWorld(true);
-    const intersections = ray.intersectObjects(root.children, true).filter(hit => hit.object.visible && hit.object.userData.fixtureId);
+    const intersections = ray.intersectObjects(root.children, true).filter(hit => hit.object.visible && hit.object.userData.fixtureId && view.isPiecePickable?.(hit.object.userData) !== false);
     if (!intersections.length) return [];
     const piece = view.pick(event.clientX, event.clientY);
     const depth = piece?.point ? ray.ray.origin.distanceTo(new THREE.Vector3(...piece.point)) : Infinity, seen = new Set();
@@ -424,6 +424,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     gizmo.draw();
     handleLayer.replaceChildren(); pointHandles = [];
     const fixture = selectedLine(); if (!fixture) return;
+    if (view.isPiecePickable?.({id:fixture.id,kind:cardEffect ? 'effect' : 'fixture'}) === false) return;
     view.camera.updateMatrixWorld(true);
     const rect = canvas.getBoundingClientRect(), active = press?.point;
     const path = resolveFixture(active ? { ...fixture, path: active.path } : fixture, getPlan()).path;
@@ -543,7 +544,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   function draw() {
     for (const mesh of root.children) if (mesh.userData.fixtureId) {
       const { building, level } = mesh.userData;
-      mesh.visible = !building || view.groups?.levels[`${building}:${level}`]?.visible !== false;
+      mesh.visible = !view.isPieceHidden?.(mesh.userData) && (!building || view.groups?.levels[`${building}:${level}`]?.visible !== false);
     }
     drawHandles();
   }
@@ -570,6 +571,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       }
       mesh.renderOrder = 21;
       mesh.userData = { fixtureId: f.id, effectId, entity_id, building: building?.id || (f.ref === 'floor' ? f.building : null), level: piece?.level || f.level }; root.add(mesh);
+      Object.assign(mesh.userData, {pieceId:effectId || f.id,kind:effectId ? 'effect' : 'fixture'});
     }
     draw();
   }
@@ -595,6 +597,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   signal.addEventListener('abort', () => { cancel(); if (el('piece-card').dataset.fixtureCard) { releaseCard(); el('piece-card').hidden = true; } root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent();
     view.controls.removeEventListener?.('change', drawHandles); gizmo.finish(true); gizmoLayer.remove(); handleLayer.remove(); }, { once: true });
   return { add, addEffect, showEffect, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, hits, selectPick, finishPlacement,
+    visibilitySelection: () => cardEffect ? {id:cardEffect,kind:'effect'} : cardLight ? {id:cardLight.id,kind:'fixture'} : null,
     hit, begin, key: gizmo.key, typedValue: gizmo.typedValue, commit: gizmo.commit,
     handles: () => { drawHandles(); return [...gizmo.handles(), ...pointHandles]; }, pointerDown, pointerMove, pointerUp, cancel, refresh, draw, active: () => !!mode };
 }

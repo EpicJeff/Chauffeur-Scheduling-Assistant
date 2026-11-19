@@ -61,7 +61,7 @@ export function mountHouses({ history, afterLoad, capture, canLoad, signal, api 
         await history.perform(async () => {
           if (!canLoad()) throw new Error('Stop the build and use Back to now before loading a house.');
           const result = await api.request(path + '/load', 'POST');
-          await afterLoad(result); notes(result);
+          await afterLoad({ ...result, houseId: save.id }); notes(result);
         });
         close();
       }, actions).dataset.load = 'true';

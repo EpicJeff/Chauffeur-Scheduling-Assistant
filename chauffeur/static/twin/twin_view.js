@@ -31,6 +31,7 @@ import { createLevels } from './levels.js';
 import { mountFrameMeter } from './frame_meter.js';
 import { createPost, EMITTER_GAIN } from './post.js';
 import { createReflectionProbes } from './reflection_probes.js';
+import { createPieceVisibility } from './twin_visibility.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {}, stage = null } = {}) {
   kit = kit || {};
@@ -38,6 +39,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   // Ruling B15: only the 3D house view bakes lights. The editor's scene is the house
   // mid-edit (a focused floor, faded floors, editable geometry), so it never bakes.
   const editor = !!el.closest?.('.editor-shell');
+  const pieceVisibility = editor ? createPieceVisibility() : null;
   const bakes = bake && !editor;
   const probe = document.createElement('canvas').getContext('webgl2');
   if (!probe) throw new Error('This screen needs WebGL 2 to show the house.');
@@ -204,6 +206,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const geometry = new THREE.BufferGeometry().setFromPoints([...yard.polygon, yard.polygon[0]].map(p =>
         new THREE.Vector3(p[0], groundAt(plan, ...p) + .06, -p[1])));
       const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ fog: false, color: accent, transparent: true, opacity: isHover ? .4 : .65, depthTest: false }));
+      Object.assign(line.userData, {pieceId:pick.id,kind:'yard_room'});
       line.userData.isHover = isHover; line.renderOrder = 10; twin.root.add(line); selectionLines.push(line); return;
     }
     const keys = [...twin.pieceBounds].filter(([, { data }]) => data.buildingId === pick.building
@@ -221,6 +224,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       } else geometry = new THREE.EdgesGeometry(proxy.geometry);
       const line = r && pick.kind === 'room' ? new THREE.Line(geometry, material) : new THREE.LineSegments(geometry, material);
       line.userData.selectionKey = key;
+      Object.assign(line.userData, proxy.userData);
       line.userData.isHover = isHover;
       line.userData.roomOutline = !!r && pick.kind === 'room';
       line.renderOrder = isHover ? 11 : 10; proxy.parent.add(line); selectionLines.push(line);
@@ -386,6 +390,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     yardGroup?.userData.grass?.update(performance.now() / 1000);
     view.live?.draw();
     twin?.updateGhosts();
+    pieceVisibility?.enforce(scene);
     if (state.unlit) {
       unlit.apply(twin?.root);
       // Skip the entire shadow pass, including an invalidation from a rebuild.
@@ -521,6 +526,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     get roofSurfaces() { return twin?.roofSurfaces; },
     render,
     reflectionsChanged: () => reflections.request(),
+    setHiddenPieces(ids, kinds) {
+      if (!pieceVisibility) return;
+      pieceVisibility.set(ids, kinds);
+      pieceVisibility.apply(scene);
+      sun.shadow.needsUpdate = true; reflections.request(); render();
+    },
+    isPieceHidden: candidate => pieceVisibility?.hidden(candidate) || false,
     // A warm-up for a change not yet on screen: the picture keeps drawing.
     compileBehind: () => compileFor ? compileBehind(scene, camera) : null,
     prepareViewingMaterial(source, material) { if (material) viewing?.adopt(source, material); else viewing?.refresh(source); },
@@ -884,6 +896,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const key = `${buildingId}:${levelId}`, group = twin?.groups.levels[key];
       const before = plan.buildings.find(b => b.id === buildingId), after = flat.buildings.find(b => b.id === buildingId);
       if (!group || !before || !after) return;
+      pieceVisibility?.restore();
       view.bake?.stop();
       // Focused levels have per-piece meshes (R42); unfocused levels retain
       // material batches. Both update only owned geometry, without changing focus.
@@ -1092,7 +1105,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         line.geometry = room ? new THREE.BufferGeometry().setFromPoints([...room.polygon, room.polygon[0]]
           .map(p => new THREE.Vector3(p[0], z, -p[1]))) : new THREE.EdgesGeometry(proxy.geometry);
       }
-      render();
+      pieceVisibility?.apply(scene);
+      sun.shadow.needsUpdate = true; reflections.request(); render();
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
     },
     async settle(nextPlan, { buildingId = null, levelId = null, touched = null, selection = null } = {}) {
@@ -1155,6 +1169,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         view.rebuildLevel(change.buildingId, change.levelId, nextPlan, hint, { keep: true });
       }
       plan = nextPlan; view.plan = nextPlan; syncStage(plan);
+      pieceVisibility?.apply(scene);
       view.ready = !disposed && !!twin;
       sun.shadow.needsUpdate = true; reflections.request();
       deferYard(nextPlan, version);
@@ -1169,7 +1184,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const stopBake = editSpan(detail, 'bake_stop');
       view.bake?.stop();
       stopBake();
-      const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor, previous: force ? null : twin, timing });
+      pieceVisibility?.restore();
+      let next;
+      try { next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor, previous: force ? null : twin, timing }); }
+      finally { pieceVisibility?.apply(scene); }
       const reuseYard = !!yardGroup && (preserveYard || yardGroup.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan) }));
       if (timing) timing.yard_reused = reuseYard;
       const yardMaterials = reuseYard || yardGroup?.userData.yardMaterialKey === yardMaterialKey(nextPlan, kit, tier)
@@ -1317,6 +1335,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       finally { releaseViewing?.(); }
       if (disposed || version !== revision) return;
       view.ready = true;
+      pieceVisibility?.apply(scene);
       reflections.request();
       startBake();
       if (yardLater && !reuseYard) deferYard(nextPlan, version, timing);
@@ -1327,6 +1346,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       return work.finally(() => { if (rebuildWork === work) rebuildWork = null; });
     },
     dispose() {
+      pieceVisibility?.restore();
       reflections.dispose();
       if (disposed) return;
       disposed = true; ++revision; view.ready = false;
@@ -1392,6 +1412,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           viewing.select(selected || 'ext');
         }
         releaseViewing?.();
+        pieceVisibility?.apply(scene);
         sun.shadow.needsUpdate = true; reflections.request(); render();
         el.dispatchEvent(new CustomEvent('twinyardrebuilt', { detail: view }));
       } catch (error) { el.dispatchEvent(new CustomEvent('twinerror', { detail: error })); }
@@ -1476,7 +1497,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       l.userData.intensity ??= l.intensity;
       const intensity = state.unlit || liveLamps || !night ? 0 : l.userData.intensity;
       l.userData.viewingIntensity = intensity;
-      l.intensity = intensity * (viewing?.levelAlpha(l.userData.level) ?? 1);
+      const shownIntensity = intensity * (viewing?.levelAlpha(l.userData.level) ?? 1);
+      if (pieceVisibility) pieceVisibility.setLightIntensity(l, shownIntensity);
+      else l.intensity = shownIntensity;
       // Live lamps zero the intensity but keep visibility, so the shader's light
       // count never changes and the first tap on Lights recompiles nothing.
       l.visible = !editor || !!twin.groups.levels[l.userData.level]?.visible;

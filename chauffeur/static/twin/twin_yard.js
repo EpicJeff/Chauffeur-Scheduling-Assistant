@@ -339,6 +339,11 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   if (timing) for (const name of ['terrain', 'grass', 'plants', 'fences', 'hardscape', 'pool', 'fire_pits', 'retaining_walls', 'cards', 'batch', 'models', 'furniture', 'materials']) timing['yard_' + name] = 0;
   const pool = site.pool?.polygon;
   const inside = (p, poly) => { let v = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) v = !v; return v; };
+  // Query the owning ground function with a unit-height pad to get its exact
+  // influence, including blend bands and sharp-edge taper, even at height zero.
+  const visibilityPads = viewing ? [] : [...(site.terraces || [])].reverse().map(pad => ({pad,
+    unit: {site:{terraces:[{...pad,height:1}]}}}));
+  const padAt = (x, y) => visibilityPads.find(({unit}) => groundAt(unit, x, y) > 0)?.pad;
   // A spa is a hole in paving only where it reaches into that paving. A spa inside the pool is
   // not: its hole would stand a ring of slab edge on the pool wall, in the same plane as the tile.
   const spasIn = poly => spas.filter(spa => {
@@ -380,6 +385,28 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         // changes the buffer, never a material define or shader program.
         lawn.vertexColors = true; lawn.side = THREE.DoubleSide;
         const mesh = addMesh(terrain, terrainGeometry(plan, rest, tier, { holes: [...(pool ? [pool] : []), ...spas], offset: -.04, skirts: true }), lawn);
+        if (!viewing && site.terraces?.length) {
+          // Pads share the sampled terrain, not independent overlay slabs.
+          // Give each triangle to the last pad influencing its centroid. Separate
+          // vertices let hiding one range leave every neighbouring face intact.
+          // Keep ordinary editor/viewer geometry byte-identical. Expand shared
+          // vertices only while hiding a pad; the view restores the original.
+          mesh.userData.visibilityGeometry = isHidden => {
+          if (!visibilityPads.some(({pad}) => isHidden({pieceId:pad.id,kind:'pad'}))) return null;
+          const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+          const p = geometry.attributes.position, ranges = [];
+          for (let start = 0; start < p.count; start += 3) {
+            const point = [0, 0];
+            for (let j = 0; j < 3; j++) { point[0] += p.getX(start + j) / 3; point[1] -= p.getZ(start + j) / 3; }
+            const pad = padAt(...point);
+            const pieceId = pad?.id, last = ranges.at(-1);
+            if (last && last.pieceId === pieceId) last.count += 3;
+            else ranges.push({ start, count: 3, kind: pad ? 'pad' : undefined, pieceId });
+          }
+          geometry.userData.snapRanges = ranges;
+          return geometry;
+          };
+        }
         mesh.userData.terrain = true;
         // Grade's vertex colours already keep this grid out of static merging.
         // Keep the exclusion explicit if a future merge path accepts colours.
@@ -454,12 +481,12 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       }
       stopHardscape();
       const stopBeds = part('hardscape');
-      for (const bed of site.beds || []) if (bed.polygon?.length >= 3) surfaceMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(kit.materials?.[bed.material] ? bed.material : 'mulch', bed.materials?.fill), seedOf(bed));
+      for (const bed of site.beds || []) if (bed.polygon?.length >= 3) surfaceMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(kit.materials?.[bed.material] ? bed.material : 'mulch', bed.materials?.fill), seedOf(bed), {kind:'bed', pieceId:bed.id});
       for (const edge of site.edges || []) if (edge.polygon?.length >= 3) {
         // Edge planting remains a closed border. Give its ground strip the same
         // authored finish on every tier; High also keeps the existing grass blades.
         for (const poly of pathSurfacePolygons({ points: [...edge.polygon, edge.polygon[0]], width: .5 }))
-          surfaceMesh(group, surface(poly, edge.elevation || 0, .06 + (edge.elevation || 0)), mat(kit.materials?.[edge.material] ? edge.material : 'lawn', edge.materials?.strip), seedOf(edge));
+          surfaceMesh(group, surface(poly, edge.elevation || 0, .06 + (edge.elevation || 0)), mat(kit.materials?.[edge.material] ? edge.material : 'lawn', edge.materials?.strip), seedOf(edge), {kind:'edge', pieceId:edge.id});
       }
       stopBeds();
     },
@@ -516,12 +543,14 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     fire_pits: async group => {
       const stopFirePits = part('fire_pits');
       for (const [index, f] of sitePieces(site.fire_pit).entries()) {
+        const before = new Set(group.children);
         const { outer } = firePitRings(f);
         const centre = outer.reduce((s,p)=>s.map((v,i)=>v+p[i]/outer.length),[0,0]);
         const height = groundAt(plan, ...centre) + (f.elevation || 0);
         const built = buildFirePit(group,f,height,{mat,plain,id:'fire_pit:'+(f.id || index)});
         for (const name of ['body', 'cap']) if (built[name]) offsetSurfaceUvs(built[name].geometry, built[name].material, seedOf(f, name));
         if (roundPit(f)) addMesh(group, drapeGeometry(new THREE.CircleGeometry((f.radius ?? 2) + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plan, f.elevation || 0), plain('gravel', '#a59c8f'));
+        for (const object of group.children) if (!before.has(object)) Object.assign(object.userData, {kind:'fire_pit', pieceId:f.id || 'fire_pit:' + index});
       }
       stopFirePits();
     },
@@ -616,7 +645,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             tree.rotation.y += (p.seed || 0) * 2.39996; group.add(tree);
             if (viewing) { tree.userData.viewingTree = true; tree.name = `tree:${index}`; }
           }
-          Object.assign(object.userData, { plantAppearance: appearance, plantBaseOffset: baseOffset, yardPlantIndex: index });
+          Object.assign(object.userData, { kind:'planting', pieceId:p.id, plantAppearance: appearance, plantBaseOffset: baseOffset, yardPlantIndex: index });
           // Let loading/status controls paint while full presets are generated.
           if (index % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
         }
@@ -645,6 +674,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             }
           }
           model.position.set(f.at[0], elevation + (f.elevation || 0), -f.at[1]);
+          model.traverse(object => Object.assign(object.userData, {pieceId:f.id, kind:(site.planting || []).includes(f) ? 'planting' : 'furniture'}));
           if (late) { model.userData.yardPart = 'furniture'; root.add(model); mergeStatic(model); }
           return model;
         };
@@ -671,7 +701,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           const line = edge.polygon ? [...edge.polygon, edge.polygon[0]] : edge.points || edge.polyline || [];
           for (let i = 0; i < line.length - 1; i++) {
             const a = line[i], b = line[i + 1], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
-            for (let d = 0; d < length; d += 0.18) placements.push([a[0] + (b[0] - a[0]) * d / length + (rng() - 0.5) * 0.4, -a[1] - (b[1] - a[1]) * d / length + (rng() - 0.5) * 0.4, rng()]);
+            for (let d = 0; d < length; d += 0.18) placements.push([a[0] + (b[0] - a[0]) * d / length + (rng() - 0.5) * 0.4, -a[1] - (b[1] - a[1]) * d / length + (rng() - 0.5) * 0.4, rng(), edge.id]);
           }
         }
         if (placements.length) {
@@ -679,12 +709,18 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           geo.setAttribute('position', new THREE.Float32BufferAttribute([-0.035, 0, 0, 0.035, 0, 0, 0.03, 0.45, 0], 3));
           geo.computeVertexNormals();
           const grass = new THREE.InstancedMesh(geo, plain('edge grass', '#56783a', { side: THREE.DoubleSide }), placements.length), dummy = new THREE.Object3D();
+          if (!viewing) grass.userData.instances = placements.map(([, , , pieceId]) => ({kind:'edge', pieceId}));
           placements.forEach(([x, z, n], i) => { dummy.position.set(x, groundAt(plan, x, -z) + 0.12, z); dummy.rotation.y = n * Math.PI * 2; dummy.scale.setScalar(0.6 + n); dummy.updateMatrix(); grass.setMatrixAt(i, dummy.matrix); });
           grass.receiveShadow = true; grass.raycast = () => {}; grass.userData.yardGrass = true; group.add(grass);
           fringeCount = placements.length;
         }
       }
       const field = buildGrass(plan, materialKit, tier, TIERS[tier].lawnBlades && site.lot?.length ? mat('lawn') : null, fringeCount);
+      if (!viewing && field.mesh && site.terraces?.length) field.mesh.userData.instancePiece = index => {
+        const matrix = field.mesh.instanceMatrix.array, x = matrix[index * 16 + 12], y = -matrix[index * 16 + 14];
+        const pad = padAt(x, y);
+        return {kind:pad ? 'pad' : undefined, pieceId:pad?.id};
+      };
       if (field.mesh) { group.add(field.mesh); mats.set('yard-blades:' + field.mesh.material.uuid, field.mesh.material); }
       field.instances += fringeCount; field.draws += fringeCount ? 1 : 0;
       Object.defineProperty(root.userData, 'grass', {value:field});

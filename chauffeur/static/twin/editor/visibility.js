@@ -1,0 +1,54 @@
+import { visibilityKind } from '../twin_visibility.js';
+
+const fields = ['hidden', 'locked', 'hiddenKinds', 'lockedKinds'];
+export function createVisibility({ houseId = 'current', storage } = {}) {
+  if (storage === undefined) { try { storage = globalThis.localStorage; } catch { storage = null; } }
+  let house = houseId || 'current', state;
+  const listeners = new Set(), key = () => `chauffeur.editor.visibility.${house}`;
+  function read() {
+    try { const value = JSON.parse(storage?.getItem(key()) || 'null'); return value && typeof value === 'object' ? value : null; }
+    catch { return null; }
+  }
+  const load = value => Object.fromEntries(fields.map(field => [field,
+    new Set(Array.isArray(value?.[field]) ? value[field].filter(id => typeof id === 'string') : [])]));
+  state = load(read());
+  const snapshot = () => Object.fromEntries(fields.map(field => [field, [...state[field]]]));
+  function changed() {
+    try { storage?.setItem(key(), JSON.stringify(snapshot())); } catch { /* Private mode/quota: keep working in memory. */ }
+    for (const fn of listeners) fn(snapshot());
+  }
+  function toggle(field, id, on) {
+    if (!id) return;
+    if (field.endsWith('Kinds')) id = visibilityKind(id);
+    if (state[field].has(id) === on) return;
+    if (on) state[field].add(id); else state[field].delete(id);
+    changed();
+  }
+  const isHidden = (id, kind) => state.hidden.has(id) || state.hiddenKinds.has(visibilityKind(kind));
+  const isLocked = (id, kind) => state.locked.has(id) || state.lockedKinds.has(visibilityKind(kind));
+  return {
+    hide: id => toggle('hidden', id, true), show: id => toggle('hidden', id, false),
+    lock: id => toggle('locked', id, true), unlock: id => toggle('locked', id, false),
+    hideKind: kind => toggle('hiddenKinds', kind, true), showKind: kind => toggle('hiddenKinds', kind, false),
+    lockKind: kind => toggle('lockedKinds', kind, true), unlockKind: kind => toggle('lockedKinds', kind, false),
+    showAll() { state.hidden.clear(); state.hiddenKinds.clear(); changed(); },
+    isHidden, isLocked,
+    isPickable(candidate) {
+      const id = candidate?.id ?? candidate?.pieceId, kind = candidate?.visibilityKind ?? candidate?.kind;
+      const building = candidate?.building ?? candidate?.buildingId;
+      return !!candidate && !isHidden(id, kind) && !isLocked(id, kind)
+        && !isHidden(building) && !isLocked(building) && !isHidden(candidate.level) && !isLocked(candidate.level);
+    },
+    forHouse(nextHouse, existingIds) {
+      const previous = snapshot();
+      const switched = house !== (nextHouse || 'current'); house = nextHouse || 'current';
+      // A never-opened save inherits matching ids; a previously opened save
+      // restores its own state. Prune only on load, never during a local edit.
+      state = load(switched ? read() || previous : previous);
+      const existing = new Set(existingIds);
+      for (const field of ['hidden', 'locked']) for (const id of state[field]) if (!existing.has(id)) state[field].delete(id);
+      changed();
+    },
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); }, snapshot,
+  };
+}

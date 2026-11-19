@@ -159,6 +159,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
   }
   function handles() {
     const b = current(); if (!available() || !b || !pauseBuilding() && view.state.view !== 'ext') return [];
+    if (view.isPiecePickable?.({id:b.id,kind:'building',building:b.id}) === false) return [];
     const outline = footprint(b); if (!outline.length) return [];
     const mid = boxCentre(outline);
     const front = outline.map((p, i) => [p, outline[(i + 1) % outline.length]])

@@ -22,7 +22,7 @@ const rotatePoint = (p, angle) => {
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
 
-export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, pickMaterial, api, onDrawFeature, dock, openHouseMaterials }) {
+export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, visibility, pickMaterial, api, onDrawFeature, dock, openHouseMaterials }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   const measureLayer = document.createElement('div'); measureLayer.className = 'editor-measure'; canvas.parentElement.append(measureLayer);
   const measure = createMeasure({ view, getPlan, layer: measureLayer });
@@ -69,6 +69,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   const pointers = new Set(), cancelledEscapes = new WeakSet();
   const dimensions = createDimensions({ view, onCommit: op, canEdit, signal, getHandles: () => [...(handles?.handles() || []), ...(gizmo?.handles() || [])] });
   function drawDimensions(plan = getPlan(), state = roomSelection.current(), problem = null) {
+    if (!isPickable(state)) state = {};
     const building = plan?.buildings.find(b => b.id === state.building);
     const room = building?.rooms.find(r => r.id === (state.kind === 'room' ? state.id : state.room));
     const piece = building?.walls.find(w => state.kind === 'wall' && w.id === state.id)
@@ -110,10 +111,11 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
     dock, op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, openHouseMaterials, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
-  handles = createHandles({ view, getPlan, getSelection: roomSelection.current, getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
+  const handleSelection = () => isPickable(roomSelection.current()) ? roomSelection.current() : {};
+  handles = createHandles({ view, getPlan, getSelection: handleSelection, getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
     onPreview: drawDimensions, onClick: cards.showRoofEdge, signal });
   const gizmoLayer = document.createElement('div'); gizmoLayer.className = 'editor-handles'; canvas.parentElement.append(gizmoLayer);
-  gizmo = createGizmo({ view, layer: gizmoLayer, getPlan, getSelection: roomSelection.current, getTool: () => tool, canEdit,
+  gizmo = createGizmo({ view, layer: gizmoLayer, getPlan, getSelection: handleSelection, getTool: () => tool, canEdit,
     onPreview: plan => delegate?.preview?.(plan),
     op: (operation, options) => op(operation, { ...options, selection: selection?.buildingId ? selection : { kind: selection?.kind, id: selection?.pieceId } }) });
   view.controls.addEventListener('change', gizmo.draw);
@@ -174,7 +176,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   }
   const picker = createPicker({ isPickable, sources: [
     (x, y) => { const item = delegate?.pick?.(x, y); return item ? [item] : []; },
-    (x, y) => view.pickAll(x, y).map(sceneCandidate),
+    (x, y) => view.pickAll(x, y).filter(isPickable).map(sceneCandidate),
     (x, y) => siteHits ? siteHits(x, y) : [pickSite?.(x, y)].filter(Boolean),
     (x, y) => padHits?.(x, y) || [],
     (x, y) => fixtureHits?.(x, y) || [],
@@ -544,6 +546,13 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (event.defaultPrevented || !canEdit() || event.ctrlKey || event.metaKey || event.altKey
       || event.target.closest?.('input, textarea, select, [contenteditable="true"]')
       || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), [role="dialog"]:not([hidden])')) return;
+    if (visibility && event.key.toLowerCase() === 'h') {
+      if (ownsGesture || event.target.isContentEditable) return;
+      const selected = delegate?.visibilitySelection?.() || selection;
+      if (event.shiftKey) { event.preventDefault(); visibility.showAll(); }
+      else if (selected) { event.preventDefault(); visibility.hide(selected.pieceId ?? selected.id); }
+      return;
+    }
     const record = selection && findPiece(getPlan(), selection.pieceId, selection.buildingId);
     if (!record || !isObject(record) && record.kind !== 'opening' && record.building) return;
     if (event.key === 'Delete') { event.preventDefault(); cards.remove().catch(report); return; }
@@ -617,6 +626,8 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     else view.setCamera(button.dataset.editorCamera);
   }));
   return {
+    visibility,
+    visibilityChanged() { picker.reset(); handles.refresh(); gizmo.draw(); drawDimensions(); delegate?.visibilityChanged?.(); },
     openContextMenu: (event, target) => contextMenu.open(event, target),
     pointerArmedDown,
     haLink,

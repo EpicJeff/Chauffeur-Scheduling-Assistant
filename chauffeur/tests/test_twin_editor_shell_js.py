@@ -682,7 +682,7 @@ await test('real editor boot shows generation bar only for running, paused or re
   .replace('dismissed:()=>false','dismissed:()=>true')
   .replace('export const createChecks=()=>({sync(){},dismiss(){}});','export const createChecks=()=>({sync(){},dismiss(){},show(){globalThis.checkShown=true;}});')
   .replace("export const createPlace=()=>({sync(){},isOpen:()=>false});","export const createPlace=options=>{const place=globalThis.realCreatePlace(options);return {...place,open(name){globalThis.openedPlaceStep=name;place.open(name);}};};"));
- registerHooks({resolve(spec,ctx,next){if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js','./icons.js','./steps.js','./dock.js','./dialog.js','./context_menu.js','./house_materials.js'].includes(spec))return {url:stubs,shortCircuit:true};return next(spec,ctx);}});
+ registerHooks({resolve(spec,ctx,next){if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js','./icons.js','./steps.js','./dock.js','./dialog.js','./context_menu.js','./house_materials.js','./visibility.js'].includes(spec))return {url:stubs,shortCircuit:true};return next(spec,ctx);}});
  const bootErrors=[];window.showGlobalAlert=value=>bootErrors.push(value);
  const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready,JSON.stringify(bootErrors));
  assert.equal(el('editor-dialog-title').textContent,'Your place');assert.equal(el('place-view').hidden,false);

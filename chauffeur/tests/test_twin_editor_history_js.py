@@ -100,7 +100,7 @@ try {
  }};
  const stubs='data:text/javascript,'+encodeURIComponent(config.stubs.replace('CARDS_URL',file('static/twin/editor/cards.js')));
  registerHooks({resolve(spec,ctx,next){
-  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js','./icons.js','./dock.js','./dialog.js','./context_menu.js','./house_materials.js'].includes(spec))return {url:stubs,shortCircuit:true};
+  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js','./icons.js','./dock.js','./dialog.js','./context_menu.js','./house_materials.js','./visibility.js'].includes(spec))return {url:stubs,shortCircuit:true};
   return next(spec,ctx);
  }});
  const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready, alerts.join('\n'));

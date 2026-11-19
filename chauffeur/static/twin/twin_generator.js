@@ -93,7 +93,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
     mesh.userData.snapRanges = entries.flatMap(e => {
       const d = e.mesh.userData, count = e.geometry.attributes.position.count;
       const ranges = d.snapRanges?.map(r => ({...r, start: r.start + start}))
-        || [{start, count, kind: d.kind, pieceId: d.pieceId, buildingId: d.buildingId, part: d.part, ghost: d.ghost, terrain: d.terrain}];
+        || [{start, count, kind: d.kind, visibilityKind: d.visibilityKind, pieceId: d.pieceId, parentPieceId: d.parentPieceId, buildingId: d.buildingId, part: d.part, ghost: d.ghost, terrain: d.terrain}];
       start += count; return ranges;
     });
     geometry.userData.snapRanges = mesh.userData.snapRanges;
@@ -656,7 +656,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     }));
     let activePiece = null;
     const records = new Map(), wallProfiles = new Map();
-    const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || fallback, kind, buildingId: b.id, ghost: piece.state === 'ghost' }; };
+    const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || fallback, kind, visibilityKind: piece.device ? 'device' : undefined, buildingId: b.id, ghost: piece.state === 'ghost' }; };
     // seed: a random-offset origin shared by several pieces (one per level for floors).
     const mesh = (group, geometry, material, retained = null, seed = null) => {
       const data = activePiece || { pieceId: 'structure', kind: 'building', buildingId: b.id };
@@ -1513,6 +1513,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const light = new THREE.RectAreaLight('#ffc98a', l.kind === 'recessed' ? 9 : 6, size, size);
       light.position.set(l.at[0], y, -l.at[1]); light.lookAt(l.at[0], y - 1, -l.at[1]);
       light.userData.level = levelKey(l.level); light.userData.elevation = base + level.elevation; light.visible = false;
+      Object.assign(light.userData, activePiece);
       local.lights.add(light); roomLights.push(light);
       const geometry = boxRect(-size / 2, -size / 2, size / 2, size / 2, 0, .05);
       const object = applyObject(new THREE.Mesh(geometry, fixture), l, { units: 1, id: `${b.id}:${l.id}` });

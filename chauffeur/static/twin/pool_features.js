@@ -144,7 +144,7 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
   for (const f of pool.features || []) {
     const featureMesh = (geometry, material, waterBody = pool.id || 'pool:0') => {
       const mesh = addMesh(group, geometry, material);
-      Object.assign(mesh.userData, {kind:f.kind, pieceId:f.id, waterBody}); return mesh;
+      Object.assign(mesh.userData, {kind:f.kind, pieceId:f.id, parentPieceId:pool.id || 'pool:0', waterBody}); return mesh;
     };
     const poly = f.polygon;
     if (f.kind === 'ledge') {
@@ -222,7 +222,7 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
       const waterMaterial = spaWater(f);
       const waterMesh = geometry => {
         const object = addMesh(group, geometry, waterMaterial);
-        Object.assign(object.userData, { kind: 'spa', pieceId: f.id, part: 'water' });
+        Object.assign(object.userData, { kind: 'spa', pieceId: f.id, parentPieceId:pool.id || 'pool:0', part: 'water' });
         return object;
       };
       waterMesh(polygon(inner, waterHeight));

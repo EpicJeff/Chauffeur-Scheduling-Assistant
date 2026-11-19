@@ -80,6 +80,7 @@ export function buildEffects(plan, {tier='high',editor=false}={}) {
       const m=midpoint(path),n=normals[Math.floor(normals.length/2)]||[0,0,0];
       wet=[.6,1.2,2].map(d=>[m[0]+n[0]*d,m[1]+n[1]*d]).find(p=>bodyAt(plan,p))||null;
     }
+    built.group.userData.kind='effect';built.group.userData.pieceId=fixture.id;
     built.group.position.copy(world(origin));group.add(built.group);
     const driver=createEffectDriver(fixture,{low:tier==='low'});
     const lamps=!WET.includes(fixture.type)?[]:waterLamps(plan,fixture.type==='steam'?built.body:bodyAt(plan,wet));

@@ -566,7 +566,8 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   function refresh() {
     const selected = tools.selection(), kind = selected.kind;
     const piece = !selected.building && siteRecord(getPlan(), selected.id)?.piece;
-    outline.visible = !!piece && kind !== 'yard_rooms';
+    Object.assign(outline.userData, {pieceId:selected.id,kind});
+    outline.visible = !!piece && kind !== 'yard_rooms' && !view.isPieceHidden?.({id:selected.id,kind});
     if (piece) outline.box.copy(siteBox(piece, kind));
   }
   const typed = createTypedValue(canvas.parentElement);
@@ -576,6 +577,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     // with the scene arbiter so a click selects and a drag navigates.
     if (el('rail-move').getAttribute('aria-pressed') !== 'true') return false;
     const picked = pickSite(event.clientX, event.clientY); if (!picked) return false;
+    if (view.isPiecePickable?.(picked) === false) return false;
     const selected = tools.selection();
     if (selected.building || selected.kind !== picked.kind || selected.id !== picked.id) return false;
     onInteract?.();

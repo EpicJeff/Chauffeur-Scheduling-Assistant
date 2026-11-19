@@ -79,10 +79,11 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     group.visible = view.state.view === 'ext'; if (!group.visible) return;
     const pads = getPlan()?.site?.terraces || [];
     for (const pad of pads) {
+      if (view.isPieceHidden?.({id:pad.id,kind:'pad'})) continue;
       const poly = gesture?.kind === 'vertex' && chosen?.id === pad.id ? gesture.polygon : pad.polygon;
       const centre = mid(poly), height = groundAt(getPlan(), ...centre), shown = Math.round(height * 1000) / 1000;
       line(poly, undefined, true); label(`${shown > 0 ? '+' : ''}${shown} ft`, centre, height);
-      if (chosen?.id === pad.id) vertexHandles(poly).forEach(h => label(h.insert ? '+' : '•', h.at, groundAt(getPlan(), ...h.at), h));
+      if (chosen?.id === pad.id && view.isPiecePickable?.({id:pad.id,kind:'pad'}) !== false) vertexHandles(poly).forEach(h => label(h.insert ? '+' : '•', h.at, groundAt(getPlan(), ...h.at), h));
     }
     if (drawing) {
       const points = draft.preview(), path = drawing.kind === 'path', fence = drawing.kind === 'fence';
@@ -533,5 +534,6 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   listen(canvas.parentElement, 'twinrebuilt', refresh);
   signal.addEventListener('abort', () => { cancelPadDrag(); if (gesture) pointerUp({ pointerId: gesture.pointer }, true); clearStatus(); dock?.properties.clear(card); clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); if (!existingOpen) open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
   return { show, choose, startDrawing, refresh, hit, begin, padHits, pointerArmedDown, pointerDown, pointerMove, pointerUp,
+    visibilitySelection: () => chosen && {id:chosen.id,kind:'pad'},
     selectionChanged(state) { if (state.id && chosen) close(); }, cancel: close, handles: () => handles };
 }
