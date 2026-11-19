@@ -389,22 +389,27 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-gizmo_turn { width: 20px; height: 20px; border-width: 2px; }
 .editor-gizmo-line { position: fixed; z-index: 2; pointer-events: none; border-top: 1px solid var(--twinMarkerRing); transform-origin: left center; }
 
-/* Slice 4 shell. Shared editor glass, selected pills and 44px hit targets. */
+/* Slice 4 shell. Shared editor glass and selected pills; compact toolbar
+   targets stay at least 36px so the complete row fits at 1280px. */
 #editor-top { inset: 0 0 auto; display: block; pointer-events: auto; }
-#editor-toolbar { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; padding: 6px 8px;
+#editor-toolbar { display: flex; flex-wrap: nowrap; align-items: center; gap: 2px; padding: 6px 8px;
   overflow-x: auto; background: var(--editor-panel); border-bottom: 1px solid var(--editor-line); }
 #editor-toolbar > *, #editor-rail > * { flex: 0 0 auto; }
 #editor-toolbar [data-toolbar-group] { display: flex; align-items: center; gap: 2px; }
 #editor-toolbar [data-toolbar-group]:not([data-toolbar-group="menu"]):not([data-toolbar-group="house"]):not([data-toolbar-group="save"]) {
-  border-left: 1px solid var(--editor-line); padding-left: 4px; }
-#editor-toolbar #editor-house-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  border: 0; border-radius: 0; padding: 0 8px; background: transparent; backdrop-filter: none; }
-#editor-toolbar-save-state { color: var(--editor-muted); padding-right: 6px; white-space: nowrap; }
-#editor-rail { position: static; display: flex; flex-direction: row; align-items: center; gap: 4px; padding: 0;
+  border-left: 1px solid var(--editor-line); padding-left: 2px; }
+#editor-toolbar #editor-house-name { display: block; flex: 0 1 120px; min-width: 0; max-width: 120px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border: 0; border-radius: 0; padding: 0 4px; background: transparent; backdrop-filter: none; }
+/* The full save status remains in the status bar. Bound its decorative copy
+   even while a large batch is saving or waiting to be saved. */
+#editor-toolbar #editor-toolbar-save-state { display: block; max-width: 96px; overflow: hidden; text-overflow: ellipsis;
+  color: var(--editor-muted); padding-right: 4px; white-space: nowrap; }
+#editor-rail { position: static; display: flex; flex-direction: row; align-items: center; gap: 2px; padding: 0;
   border: 0; border-radius: 0; max-height: none; overflow: visible; transform: none; background: transparent; backdrop-filter: none; }
 #editor-toolbar button[data-editor-icon], #editor-toolbar summary[data-editor-icon] {
-  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 44px; width: 44px; min-height: 44px;
-  padding: 10px; border: 1px solid transparent; border-radius: 10px; background: transparent; }
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 36px; width: 36px; min-height: 36px;
+  padding: 7px; border: 1px solid transparent; border-radius: 10px; background: transparent; }
 #editor-toolbar svg { flex-shrink: 0; }
 #editor-toolbar .editor-toolbar-menu { display: block; position: static; }
 .editor-toolbar-menu summary { list-style: none; cursor: pointer; }

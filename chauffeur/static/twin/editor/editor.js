@@ -337,6 +337,7 @@ export async function boot() {
     placeSteps.render(stepState());
     el('editor-genbar').hidden = !directing && !['running', 'paused', 'stopped', 'checkpoint'].includes(currentBuild?.state);
     el('editor-house-name').textContent = snapshot.plan?.name || snapshot.plan?.buildings?.[0]?.name || 'House editor';
+    el('editor-house-name').title = el('editor-house-name').textContent;
     const empty = !drawingStarted && !sheets.place?.buildings?.length && !sheets.sources?.length
       && !snapshot.model?.buildings?.length && !sheets.place?.lot?.read && !snapshot.plan?.site?.lot?.length;
     if (hooks.ready && empty && !welcomeShown && !dialogs.current()) {

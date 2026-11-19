@@ -169,6 +169,12 @@ def open_editor(page, served, query='tier=high&test=1'):
     settle(page)
 
 
+def open_argyle(page):
+    """Reveal the editor's conversation before using its input or replies."""
+    page.click('[data-dock-tab="argyle"]')
+    page.locator('#dock-pane-argyle').wait_for(state='visible')
+
+
 def editor_state(page, name, *args):
     """Read window.__twinEditor[name]: called with args when it is a function, else its value."""
     return page.evaluate("""([name, args]) => {

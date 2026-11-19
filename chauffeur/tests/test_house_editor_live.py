@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from live_app import live_app  # noqa: E402
 import test_twin_build as engine_tests  # noqa: E402
 import test_twin_view_live as p0view  # noqa: E402
+from house_editor_model_harness import open_argyle  # noqa: E402
 
 GPU_ARGS = ['--use-angle=gl', '--enable-gpu', '--ignore-gpu-blocklist']
 BANNED = ('mesh', 'extrude', 'gizmo', 'vertex')
@@ -281,7 +282,7 @@ def scenario_shell_matches_the_mockup_regions():
         for sel in ('#editor-scene canvas', '#editor-toolbar', '#editor-toolbar #editor-rail', '#dock-pane-scene #editor-floors',
                     '#editor-history'):
             check(page.locator(sel).first.is_visible(), sel)
-        page.click('#dock-tab-argyle')
+        open_argyle(page)
         check(page.locator('#dock-pane-argyle #editor-agent').is_visible(), 'Argyle is reachable in its dock tab')
         page.click('#dock-tab-scene')
         check('$' in page.locator('#editor-genbar #editor-chip').text_content(), 'generation cost stays in the generation bar')
@@ -981,6 +982,7 @@ def scenario_say_is_never_resent_after_a_checkpoint():
         page.route('**/api/house/editor/say', say)
         page.route('**/api/house/twin/cost/ack', lambda r: r.fulfill(status=200, body='{}',
                                                                      headers={'Content-Type': 'application/json'}))
+        open_argyle(page)
         page.fill('#editor-message', 'shift the upper floor a foot toward the street')
         page.keyboard.press('Enter')
         page.wait_for_function("() => document.body.innerText.includes('Spent $10.20 so far')", timeout=10000)

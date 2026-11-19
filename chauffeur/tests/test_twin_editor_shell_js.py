@@ -121,6 +121,70 @@ def test_css_contract(p):
     print('  ok every pressed icon has contrasting ink/background; canvas reserves exactly dock width')
 
 
+def test_toolbar_width(p):
+    """Bound the rendered row using its CSS sizes, including every divider/gap.
+
+    No font metrics or browser are needed: both text slots have a maximum,
+    icons have fixed border-box sizes, and menu contents are out of flow.
+    Chromium's existing 1280x800 scenario checks actual layout and hit testing.
+    """
+    css = (ROOT / 'static/twin/editor/editor.css').read_text(encoding='utf-8')
+    css = re.sub(r'/\*.*?\*/', '', css, flags=re.S)
+    # This contract measures the desktop shell, before its phone overrides.
+    css = css[:css.index('@media (max-width: 700px)', css.index('#editor-toolbar {'))]
+
+    def rule(selector):
+        for selectors, body in re.findall(r'([^{}]+)\{([^{}]*)\}', css):
+            if selector in [s.strip() for s in selectors.split(',')]:
+                yield dict(re.findall(r'([\w-]+)\s*:\s*([^;]+)', body))
+
+    def style(selector):
+        result = {}
+        for declaration in rule(selector):
+            result.update(declaration)
+        return result
+
+    def px(value):
+        assert re.fullmatch(r'\d+px', value), value
+        return int(value[:-2])
+
+    toolbar = style('#editor-toolbar')
+    rail = style('#editor-rail')
+    group = style('#editor-toolbar [data-toolbar-group]')
+    divider = style('#editor-toolbar [data-toolbar-group]:not([data-toolbar-group="menu"]):not([data-toolbar-group="house"]):not([data-toolbar-group="save"])')
+    icon = style('#editor-toolbar button[data-editor-icon]')
+    target = px(icon['width'])
+    assert target >= 36 and px(icon['min-height']) >= 36
+    assert style('.editor-shell *')['box-sizing'] == 'border-box'
+    text_widths = {}
+    for id in ['editor-house-name', 'editor-toolbar-save-state']:
+        text = style('#editor-toolbar #' + id)
+        assert 'max-width' in text, f'{id} must bound its share of the toolbar'
+        text_widths[id] = px(text['max-width'])
+        assert text['overflow'] == 'hidden' and text['text-overflow'] == 'ellipsis'
+        assert text.get('display') == 'block', 'ellipsis must apply to a text block, not a flex container'
+
+    def width(node):
+        attrs = node['attrs']
+        id = attrs.get('id')
+        if id in text_widths:
+            return text_widths[id]
+        if 'data-editor-icon' in attrs:
+            return target
+        children = [n for n in p.nodes if n['parent'] == p.nodes.index(node)]
+        if node['tag'] == 'details':
+            children = [n for n in children if n['tag'] == 'summary']
+        gap = px((toolbar if id == 'editor-toolbar' else rail if id == 'editor-rail' else group)['gap'])
+        total = sum(width(n) for n in children) + max(0, len(children) - 1) * gap
+        if attrs.get('data-toolbar-group') not in [None, 'menu', 'house', 'save']:
+            total += px(divider['padding-left']) + px(divider['border-left'].split()[0])
+        return total
+
+    row_width = width(p.by_id('editor-toolbar')) + 2 * px(toolbar['padding'].split()[1])
+    assert row_width <= 1280, f'all toolbar controls need {row_width}px at a 1280px viewport'
+    print(f'  ok toolbar needs at most {row_width}px at 1280px, with {target}px targets')
+
+
 DRIVER = r"""
 let passed=0;
 const test=async(name,fn)=>{try{await fn();passed++;console.log('  ok '+name);}catch(e){console.error('  FAIL '+name+'\n'+e.stack);process.exitCode=1;}};
@@ -136,6 +200,39 @@ const nodes=config.nodes.map(n=>document.createElement(n.tag));
 config.nodes.forEach((n,i)=>{for(const [k,v] of Object.entries(n.attrs))nodes[i].setAttribute(k,v??'');
  if(!['script','style'].includes(n.tag))nodes[i].textContent=n.text;
  (n.parent===null?document.body:nodes[n.parent]).append(nodes[i]);});
+await test('new questions, pauses and checkpoints reveal Argyle once; logs and repeated polls preserve the chosen tab',async()=>{
+ const {createDock}=await import(file('static/twin/editor/dock.js')),{createPanel}=await import(file('static/twin/editor/panel.js'));
+ const dock=createDock({host:el('editor-dock')}),panel=createPanel({dock,afterSay:async()=>{}});
+ const build={id:'attention',state:'running',events:[{seq:1,type:'log',text:'Reading drawings'}]};
+ dock.show('library');panel.events(build);assert.equal(dock.current(),'library');
+ build.state='paused';build.pause={kind:'draft',step:'s',why:'Which drawing should I use?'};
+ build.events.push({seq:2,type:'question',step:'s',text:build.pause.why});
+ panel.events(build);assert.equal(dock.current(),'argyle');assert.equal(el('dock-pane-argyle').hidden,false);
+ dock.show('layers');panel.events(build);assert.equal(dock.current(),'layers');
+ build.events.push({seq:3,type:'log',text:'Waiting for you'});panel.events(build);assert.equal(dock.current(),'layers');
+ build.pause.why='Is the outline correct?';panel.events(build);assert.equal(dock.current(),'argyle');
+ dock.show('scene');build.events.push({seq:4,type:'question',step:'s',text:'Which floor?'});
+ panel.events(build);assert.equal(dock.current(),'argyle');
+ build.state='checkpoint';build.checkpoint=10;dock.show('scene');panel.events(build);assert.equal(dock.current(),'argyle');
+ dock.show('library');panel.events(build);assert.equal(dock.current(),'library');
+ build.checkpoint=20;panel.events(build);assert.equal(dock.current(),'argyle');
+ dock.show('scene');build.events.push({seq:5,type:'checkpoint',checkpoint:30});
+ panel.events(build);assert.equal(dock.current(),'argyle');
+ panel.reset();dock.show('scene');panel.events(build);assert.equal(dock.current(),'argyle');
+ dock.show('scene');build.id='another';panel.events(build);assert.equal(dock.current(),'argyle');
+ panel.reset();dock.show('scene');build.state='done';panel.events(build);assert.equal(dock.current(),'scene','historical questions need no answer');
+ panel.dispose();dock.dispose();
+});
+await test('a conversation checkpoint reveals Argyle before asking to continue and never resends the turn',async()=>{
+ const {createDock}=await import(file('static/twin/editor/dock.js')),{createPanel}=await import(file('static/twin/editor/panel.js'));
+ const dock=createDock({host:el('editor-dock')});let calls=0,refreshed=0;
+ const panel=createPanel({dock,afterSay:async()=>{refreshed++;}}),previousFetch=window.fetch,previousPrompt=window.promptConfirm;
+ try {
+  globalThis.fetch=window.fetch=async()=>{calls++;dock.show('library');return {ok:false,status:409,text:async()=>JSON.stringify({detail:{checkpoint:10,total:10.2,summary:['Moved the wall']}})};};
+  window.promptConfirm=async()=>{assert.equal(dock.current(),'argyle');return false;};
+  await panel.say('Move the wall');assert.equal(calls,1);assert.equal(refreshed,1);
+ } finally {panel.dispose();dock.dispose();globalThis.fetch=window.fetch=previousFetch;window.promptConfirm=previousPrompt;}
+});
 await test('one centred dialog adopts existing nodes, replaces its predecessor, traps focus and consumes Esc first',async()=>{
  const {mountDialogs,openDialog,closeDialog}=await import(file('static/twin/editor/dialog.js'));
  const abort=new AbortController();mountDialogs({signal:abort.signal});
@@ -611,6 +708,7 @@ await test('real editor boot shows generation bar only for running, paused or re
   assert.equal(button.querySelector('svg').getAttribute('fill'),'none',button.id);button.setAttribute('aria-pressed',was);
  }
  assert.equal(el('editor-house-name').textContent,'Our house');
+ assert.equal(el('editor-house-name').title,'Our house');
  const {closeDialog}=await import(file('static/twin/editor/dialog.js'));closeDialog();
  const advanced=el('editor-advanced');await press(el('menu-advanced'));
  assert.ok(el('editor-dialog').contains(advanced));assert.match(el('advanced-plan').value,/Our house/);
@@ -643,6 +741,7 @@ if __name__ == '__main__':
         test_homes(p)
         test_dock_homes(p)
         test_css_contract(p)
+        test_toolbar_width(p)
     except AssertionError as e:
         print(f'  FAIL control homes: {e}')
         failed = True

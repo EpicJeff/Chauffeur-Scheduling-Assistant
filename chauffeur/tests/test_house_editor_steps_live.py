@@ -302,7 +302,7 @@ def scenario_add_plans_opens_your_files():
             _open_step(page, 'Your lot')
             page.click('#editor-dialog-close')
             page.click('#editor-menu > summary')
-            page.get_by_role('button', name=item, exact=True).click()
+            page.locator('#editor-menu').get_by_role('button', name=item, exact=True).click()
             panel.wait_for(state='visible', timeout=10000)
             check(_expanded(page, 'Your files') and not _expanded(page, 'Your lot'),
                   f'Menu > {item} opens Your files')
