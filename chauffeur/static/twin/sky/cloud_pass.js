@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { CLOUD_GLSL, CLOUD_TYPES, cloudDrift } from './clouds.js';
+import { CLOUD_GLSL, CLOUD_TYPES, cloudDrift, createLightning, findLightningCell, sampleCloudDensity } from './clouds.js';
+import { createNoiseVolumeSampler } from './cloud_noise.js';
 import { createGPUCloudNoise } from './cloud_noise_gpu.js';
 
 const vertexShader='varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.0,1.0);}';
@@ -30,14 +31,19 @@ function blueNoise() {
   t.minFilter=t.magFilter=THREE.NearestFilter;t.generateMipmaps=false;t.needsUpdate=true;return t;
 }
 
-export function createCloudPass(renderer,{tier='low',noise}={}) {
+export function createCloudPass(renderer,{tier='low',noise,random=Math.random}={}) {
   const ownsNoise=!noise;noise ||= createGPUCloudNoise(renderer);
   const screen=tier!=='low',scale=tier==='medium'?.25:.5,budget={low:16,medium:40,high:64,max:96}[tier]||64;
   const uniforms={cloudBaseNoise:{value:noise.base},cloudDetailNoise:{value:noise.detail},cloudCoverage:{value:0},
     cloudType:{value:0},cloudFade:{value:noise.ready===undefined?1:0},cloudOffset:{value:new THREE.Vector3()},
     cloudSunRadiance:{value:new THREE.Vector3()},cloudMoonDir:{value:new THREE.Vector3(0,-1,0)},
     cloudMoonRadiance:{value:new THREE.Vector3()},cloudAmbientTop:{value:new THREE.Vector3(.1,.2,.4)},
-    cloudAmbientBottom:{value:new THREE.Vector3(.03,.04,.02)}};
+    cloudAmbientBottom:{value:new THREE.Vector3(.03,.04,.02)},cloudLightning:{value:new THREE.Vector4()}};
+  const lightning=createLightning({random});
+  // Read matches on every draw so changing the OS preference cancels a pulse
+  // immediately, without a listener/timer to clean up on dispose.
+  const motion=globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)');
+  let cpuNoise=null;
   const jitter=blueNoise();
   const marchUniforms={...uniforms,blueNoise:{value:jitter},sceneDepth:{value:null},clearSkyCube:{value:null},sunDir:{value:new THREE.Vector3(0,1,0)},
     inverseProjection:{value:new THREE.Matrix4()},cameraWorld:{value:new THREE.Matrix4()},
@@ -126,6 +132,19 @@ export function createCloudPass(renderer,{tier='low',noise}={}) {
       if(light.sunDir?.every(Number.isFinite))marchUniforms.sunDir.value.fromArray(light.sunDir).normalize();
       if(Number.isFinite(light.frontBearingDeg))bearing=light.frontBearingDeg;
     },
+    flash(now,{enabled=true,centre=[0,0]}={}) {
+      const pulse=lightning.frame(now,{enabled:!disposed&&enabled&&!motion?.matches&&state.lightning===true&&
+        uniforms.cloudType.value===CLOUD_TYPES.cumulonimbus&&uniforms.cloudCoverage.value>0&&uniforms.cloudFade.value>=1,
+        locate:()=>{
+          cpuNoise ??= noise.base.image.data ? noise : {base:createNoiseVolumeSampler(noise.base.image.width),
+            detail:createNoiseVolumeSampler(noise.detail.image.width,{detail:true})};
+          const options={...cpuNoise,coverage:uniforms.cloudCoverage.value,type:'cumulonimbus',offset:uniforms.cloudOffset.value.toArray()};
+          return findLightningCell(p=>sampleCloudDensity(p,options),centre,random);
+        }});
+      if(pulse.position)uniforms.cloudLightning.value.set(...pulse.position,pulse.strength);
+      else uniforms.cloudLightning.value.set(0,0,0,0);
+      return pulse.strength;
+    },
     frame(now) {
       if(disposed||!Number.isFinite(now))return;
       noise.step?.(2);
@@ -159,7 +178,7 @@ export function createCloudPass(renderer,{tier='low',noise}={}) {
       compositeUniforms.sceneDepth.value=depthTexture;compositeUniforms.cloudActive.value=api.active?1:0;
       savedDraw(()=>{renderer.setRenderTarget(destination);compositeQuad.render(renderer);});
     },
-    dispose(){if(disposed)return;disposed=true;target.dispose();jitter.dispose();material.dispose();compositeMaterial.dispose();
+    dispose(){if(disposed)return;disposed=true;cpuNoise=null;uniforms.cloudLightning.value.set(0,0,0,0);target.dispose();jitter.dispose();material.dispose();compositeMaterial.dispose();
       marchQuad.dispose();compositeQuad.dispose();if(ownsNoise)noise.dispose();}};
   return api;
 }

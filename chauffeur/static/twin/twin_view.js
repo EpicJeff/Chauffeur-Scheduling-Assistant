@@ -109,6 +109,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const sky = createSky(renderer3, {tier, clouds}), environment = sky.environment;
   const stageHaze = installStageHaze(scene, sky);
   const cloudShadow = installCloudShadow(scene, clouds);
+  let cloudCentre=[0,0];
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
   const stageForPlan = nextPlan => {
     const automatic = defaultStage(nextPlan);
@@ -116,6 +117,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   };
   function syncStage(nextPlan) {
     const value = stageForPlan(nextPlan);
+    cloudCentre=value.centre.map(v => v*FT);
     stageHaze.set({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
     cloudShadow.set({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
   }
@@ -382,6 +384,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (compiling && performance.now() - holdSince < HOLD_MS) return;
     // The live keeper can replace its layer. Read its current snapshot, without another stream.
     if (!state.unlit && (currentOvercast() !== lastOvercast || JSON.stringify(currentClouds()) !== lastCloudWeather)) applyTimeLook();
+    const flash=clouds.flash(performance.now()/1000,{enabled:!editor&&!state.unlit,
+      centre:cloudCentre});
+    // Reuse the one existing hemisphere light. No lit-material uniform, light
+    // count, program key or device/lamp state changes for a flash.
+    ambient.intensity=state.unlit?0:(timeLook?.ambient ?? 1.8)+1.5*flash;
     cloudShadow.frame(performance.now()/1000);
     if(timeLook)timeLook.sun=timeLook.sunClear*cloudShadow.centre();
     viewing?.update(performance.now());

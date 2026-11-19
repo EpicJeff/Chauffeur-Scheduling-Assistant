@@ -38,6 +38,52 @@ export function cloudDrift(state,seconds) {
   return {speedMps,eastM:Math.sin(angle)*speedMps*seconds,northM:Math.cos(angle)*speedMps*seconds};
 }
 
+// A bounded 500 m search grid, ordered by distance from the stage. Choose the
+// nearest *dense* column, then jitter inside it only if the density still holds.
+const lightningColumns=[];
+for(let z=-8;z<=8;z++)for(let x=-8;x<=8;x++)lightningColumns.push([x*500,z*500]);
+lightningColumns.sort((a,b)=>Math.hypot(...a)-Math.hypot(...b));
+export function findLightningCell(density,centre=[0,0],random=Math.random) {
+  for(const [x,z] of lightningColumns)for(const y of [2250,2750,3250]) {
+    const p=[centre[0]+x,y,centre[1]+z];
+    if(!(density(p)>.2))continue;
+    for(let i=0;i<8;i++) {
+      const q=[p[0]+(random()-.5)*500,p[1]+(random()-.5)*300,p[2]+(random()-.5)*500];
+      if(density(q)>.2)return q;
+    }
+    return p;
+  }
+  return null;
+}
+
+// Seconds on the monotonic render clock. No timers survive a hidden/suspended
+// view: a missed group starts now, with no catch-up burst. All fading is numeric.
+export function createLightning({random=Math.random}={}) {
+  let next=null,start=0,pulses=[],position=null,last=-Infinity;
+  const interval=()=>4+14*clamp(random()),duration=()=>.08+.08*clamp(random());
+  return {frame(now,{enabled=false,locate=()=>null}={}) {
+    if(!finite(now))return {strength:0,position:null};
+    if(!enabled||now<last){next=null;pulses=[];position=null;}
+    last=now;
+    if(!enabled)return {strength:0,position:null};
+    if(next===null)next=now+interval();
+    if(now>=next) {
+      start=now;position=locate();pulses=[];
+      if(position) {
+        const first=duration();pulses.push([0,first]);
+        if(random()<.3)pulses.push([first+.06+.06*clamp(random()),duration()]);
+      }
+      next=now+interval();
+    }
+    let strength=0;
+    for(const [offset,length] of pulses) {
+      const t=(now-start-offset)/length;
+      if(t>=0&&t<1)strength=Math.max(strength,Math.sin(Math.PI*t));
+    }
+    return {strength,position};
+  }};
+}
+
 export function createCloudNoise({size=128,detail=32}={}) {
   // Generate before allocating textures, so invalid sizes cannot leak a GPU object.
   const baseData=generateNoiseVolume(size), detailData=generateNoiseVolume(detail,{detail:true});
@@ -60,7 +106,8 @@ export function createCloudUniforms(noise) {
   return {cloudBaseNoise:{value:noise?.base || null},cloudDetailNoise:{value:noise?.detail || null},
     cloudCoverage:{value:0},cloudType:{value:0},cloudFade:{value:0},cloudOffset:{value:new THREE.Vector3()},
     cloudSunRadiance:{value:new THREE.Vector3()},cloudMoonDir:{value:new THREE.Vector3(0,-1,0)},
-    cloudMoonRadiance:{value:new THREE.Vector3()},cloudAmbientTop:{value:new THREE.Vector3()},cloudAmbientBottom:{value:new THREE.Vector3()}};
+    cloudMoonRadiance:{value:new THREE.Vector3()},cloudAmbientTop:{value:new THREE.Vector3()},cloudAmbientBottom:{value:new THREE.Vector3()},
+    cloudLightning:{value:new THREE.Vector4()}};
 }
 
 // CPU port of cloudDensity, with the same periodic trilinear samples and remaps.
@@ -107,6 +154,7 @@ uniform vec3 cloudMoonDir;
 uniform vec3 cloudMoonRadiance;
 uniform vec3 cloudAmbientTop;
 uniform vec3 cloudAmbientBottom;
+uniform vec4 cloudLightning; // local metres xyz, flash envelope w; cloud shaders only
 const float CLOUD_EARTH=6360000.0;
 const float CLOUD_EXTINCTION=0.0025;
 vec3 cloudUnit(vec3 d) { return length(d)>1e-6 ? d/max(length(d),1e-6) : vec3(0.0,1.0,0.0); }
@@ -203,6 +251,11 @@ float cloudStepJitter(float jitter,float stepIndex) {
   return fract(jitter+stepIndex*0.61803398875);
 }
 float cloudHeld(float v) { return v>=0.0 ? min(v,4096.0) : 0.0; }
+float cloudLightningWeight(float distanceM) {
+  // A bright core around the strike plus a deck-wide glow: light scatters through kilometres of storm cloud.
+  float r=max(0.0,distanceM)/1500.0;
+  return 16.0/(1.0+r*r)+0.6;
+}
 float cloudTransmittance(vec3 ro,vec3 rd,float budget) {
   if(cloudCoverage<=0.0 || cloudType<0.5 || cloudFade<=0.0) return 1.0;
   vec3 d=cloudUnit(rd);vec2 segment=cloudSegment(ro,d);
@@ -237,6 +290,7 @@ vec4 marchClouds(vec3 ro,vec3 rd,float maxSteps,float jitter,vec3 sunDir,vec3 cl
       cloudAmbientChannel(cloudAmbientBottom.g,cloudAmbientTop.g,h),cloudAmbientChannel(cloudAmbientBottom.b,cloudAmbientTop.b,h));
     if(dot(cloudSunRadiance,cloudSunRadiance)>0.0) light+=cloudSunRadiance*cloudScatterDepth(cloudLightDepth(p,sun),dot(d,sun));
     if(dot(cloudMoonRadiance,cloudMoonRadiance)>0.0) light+=cloudMoonRadiance*cloudScatterDepth(cloudLightDepth(p,moon),dot(d,moon));
+    if(cloudLightning.w>0.0) light+=vec3(0.7,0.8,1.0)*cloudLightning.w*cloudLightningWeight(length(p-cloudLightning.xyz));
     light=mix(light,clearSky,cloudAirWeight(distanceM));
     radiance+=transmission*(1.0-stepT)*light;
     transmission*=stepT;

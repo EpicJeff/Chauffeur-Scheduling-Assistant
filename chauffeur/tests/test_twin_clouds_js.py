@@ -1,5 +1,6 @@
 """Shared cloud model: real r187 textures and a CPU density reference, offline."""
 from pathlib import Path
+import json
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -119,10 +120,157 @@ await test('one shared shader supplies density, lighting and premultiplied march
   assert.ok(CLOUD_GLSL.includes('sampler3D'));assert.ok(!CLOUD_GLSL.includes('#define'));
   for(const type of ['none','cumulus','stratocumulus','stratus','nimbostratus','cumulonimbus']) assert.ok(Number.isFinite(CLOUD_TYPES[type]));
 });
+await test('lightning intervals, durations and double-flash probability use ruling 8',async()=>{
+  const {createLightning}=await import(file('static/twin/sky/clouds.js'));
+  for(const value of [0,.299,.3,.999999,1]) {
+    const lightning=createLightning({random:()=>value});
+    const options={enabled:true,locate:()=>[0,2500,0]};
+    assert.equal(lightning.frame(0,options).strength,0);
+    const interval=4+14*value,duration=.08+.08*value;
+    assert.equal(lightning.frame(interval-.001,options).strength,0);
+    lightning.frame(interval,options);
+    assert.ok(Math.abs(lightning.frame(interval+duration/4,options).strength-Math.SQRT1_2)<1e-9);
+    assert.ok(lightning.frame(interval+duration/2,options).strength>.99);
+    assert.ok(Math.abs(lightning.frame(interval+duration*3/4,options).strength-Math.SQRT1_2)<1e-9);
+    assert.equal(lightning.frame(interval+duration+.001,options).strength,0);
+    const second=interval+duration+.06+.06*value;
+    assert.equal(lightning.frame(second+duration/2,options).strength>.99,value<.3,'30% double threshold');
+    assert.equal(lightning.frame(interval+2*duration+.13,options).strength,0);
+    assert.equal(lightning.frame(interval*2-.001,options).strength,0);
+    lightning.frame(interval*2,options);
+    assert.ok(lightning.frame(interval*2+duration/2,options).strength>.99);
+  }
+});
+await test('strike positions come from the nearest dense cumulonimbus column and remain inside real density',async()=>{
+  const {findLightningCell}=await import(file('static/twin/sky/clouds.js'));
+  const options={...noise,coverage:1,type:'cumulonimbus',offset:[640,0,-120]};
+  for(const centre of [[0,0],[12000,-8000]]) {
+    const point=findLightningCell(p=>sampleCloudDensity(p,options),centre,()=>.73);
+    assert.ok(point);assert.ok(sampleCloudDensity(point,options)>.2);
+    assert.ok(Math.hypot(point[0]-centre[0],point[2]-centre[1])<=6000);
+  }
+  const calls=[],density=p=>{calls.push(p);return p[0]>=1000&&Math.abs(p[2])<1?1:0;};
+  const p=findLightningCell(density,[0,0],()=>.5);assert.equal(p[0],1000);assert.equal(p[2],0);
+  assert.equal(findLightningCell(()=>0,[0,0]),null,'never flash in empty sky');
+});
+await test('only thunder conditions flash; matchMedia cancels and restarts the clock while clouds remain',async()=>{
+  const {createCloudPass}=await import(file('static/twin/sky/cloud_pass.js'));
+  registerHooks({load(url,ctx,next){
+    if(url.endsWith('three.module.js?lightning-keys'))return {format:'module',shortCircuit:true,
+      source:readFileSync(new URL(url),'utf8')+'\nexport {WebGLPrograms};'};
+    return next(url,ctx);
+  }});
+  const {WebGLPrograms}=await import(file('static/vendor/three-r187/three.module.js')+'?lightning-keys');
+  const renderer=new Renderer(),scene=new THREE.Scene();
+  renderer.state={buffers:{depth:{getReversed:()=>false}}};
+  const programs=WebGLPrograms(renderer,{get:t=>t},{has:()=>false},{precision:'highp',getMaxPrecision:()=> 'highp'},
+    {},{numPlanes:0,numIntersection:0});
+  const lights=Object.fromEntries(['sun','directional','point','spot','spotLightMap','rectArea','hemi',
+    'sunShadowMap','directionalShadowMap','pointShadowMap','spotShadowMap'].map(k=>[k,[]]));
+  lights.hemi=[{}];lights.numSpotLightShadowsWithMaps=0;lights.numLightProbes=0;
+  const actualKey=object=>programs.getProgramCacheKey(programs.getParameters(object.material,lights,[],scene,object,[]));
+  const oldMedia=window.matchMedia,motion={matches:false},queries=[];
+  window.matchMedia=query=>{queries.push(query);return motion;};
+  try {
+    const c=createCloudPass(renderer,{tier:'high',noise,random:()=>.5});
+    try {
+      const u=c.uniforms.cloudLightning,version=c.material.version,key=c.material.customProgramCacheKey(),defines={...c.material.defines};
+      const march=new THREE.Mesh(new THREE.PlaneGeometry(),c.material),lit=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshPhysicalMaterial());
+      const actualKeys=[actualKey(march),actualKey(lit)];
+      for(const condition of Object.keys(conditions)) {
+        c.flash(0,{enabled:false});
+        c.update(cloudState({state:condition,attributes:{cloud_coverage:100}}));
+        c.flash(0);c.flash(11);const peak=c.flash(11.06);
+        assert.equal(peak>.99,['lightning','lightning-rainy'].includes(condition),condition);
+        if(peak)assert.ok(sampleCloudDensity(u.value.toArray().slice(0,3),{...noise,coverage:1,type:'cumulonimbus'})>.2);
+        assert.equal(c.uniforms.cloudLightning,u);assert.equal(c.material.version,version);
+        assert.equal(c.material.customProgramCacheKey(),key);assert.deepEqual(c.material.defines,defines);
+        assert.deepEqual([actualKey(march),actualKey(lit)],actualKeys,'real r187 program keys stay fixed through peak and fade');
+      }
+      c.update(cloudState({state:'lightning'}));c.flash(20,{enabled:false});c.flash(20);c.flash(31);
+      assert.ok(c.flash(31.06)>.99);motion.matches=true;
+      assert.equal(c.flash(31.061),0);assert.equal(u.value.w,0);assert.equal(c.active,true);
+      c.flash(100);motion.matches=false;c.flash(100);assert.equal(c.flash(110.999),0);
+      c.flash(111);assert.ok(c.flash(111.06)>.99);
+      c.flash(112,{enabled:false});c.update({coverage:0});c.flash(200);assert.equal(c.flash(220),0);
+      c.dispose();assert.equal(c.flash(230),0);
+      march.geometry.dispose();lit.geometry.dispose();lit.material.dispose();
+    } finally {c.dispose();}
+    assert.deepEqual(queries,['(prefers-reduced-motion: reduce)']);
+  } finally {window.matchMedia=oldMedia;}
+});
+await test('point-light math is finite at the source and decays; transient flashes never enter or refresh the cube',async()=>{
+  const body=CLOUD_GLSL.match(/float cloudLightningWeight\(float distanceM\) \{([\s\S]*?)\n\}/)[1];
+  const weight=new Function('distanceM','max',body.replace(/\bfloat\s+/g,'let ')).bind(null);
+  assert.equal(weight(0,Math.max),16.6);assert.equal(weight(1500,Math.max),8.6);assert.ok(weight(8000,Math.max)>.6&&weight(8000,Math.max)<1.2);
+  for(const d of [0,1,1000,1000000])assert.ok(Number.isFinite(weight(d,Math.max))&&weight(d,Math.max)>0);
+  assert.ok(CLOUD_GLSL.includes('light+=vec3(0.7,0.8,1.0)*cloudLightning.w*cloudLightningWeight(length(p-cloudLightning.xyz))'));
+  const {createCloudPass}=await import(file('static/twin/sky/cloud_pass.js'));
+  const {createSky}=await import(file('static/twin/sky/atmosphere.js'));
+  for(const tier of ['low','high']) {
+    const r=new Renderer(),c=createCloudPass(r,{tier,noise,random:()=>.5});
+    c.update(cloudState({state:'lightning'}));
+    const sky=createSky(r,{tier,clouds:c});
+    try {
+      // Settle the existing state-triggered six-face refresh before a strike.
+      for(let i=0;i<6;i++)sky.frame(i*.016);
+      let draws=0,cubeUniform=null;const draw=r.render;
+      r.render=function(s,eye){if(s.name==='twin-atmosphere'){draws++;cubeUniform=s.children[0].material.uniforms.cloudLightning.value;}return draw.call(this,s,eye);};
+      c.flash(0);c.flash(11);assert.ok(c.flash(11.06)>.99);
+      sky.frame(.2);assert.equal(draws,0,'flash alone does not invalidate the cube');
+      sky.update({sunDir:[0,1,0],force:true});sky.frame(.3);
+      assert.equal(cubeUniform.w,0,'even an unrelated time/asset capture during a flash stays unflashed');
+    } finally {sky.dispose();c.dispose();}
+  }
+});
+await test('mounted viewer lifts its existing hemisphere only; editor, stale weather, Unlit and reduced motion never flash',async()=>{
+  const {mountTwin}=await import(file('static/twin/twin_view.js'));
+  const oldNow=performance.now,oldRandom=Math.random,oldMedia=window.matchMedia;
+  let now=0;const motion={matches:false};performance.now=()=>now;Math.random=()=>.5;
+  window.matchMedia=()=>motion;
+  try {
+    for(const [tier,editor] of [['low',false],['high',false],['medium',true]]) {
+      now=0;motion.matches=false;const host=new Element();if(editor)host.className='editor-shell';
+      const v=await mountTwin(host,{plan:structuredClone(input.plan),kit:{materials:{}},tier,bake:false});
+      try {
+        v.clouds.uniforms.cloudFade.value=1;
+        let weather={state:'lightning'},stale=false;
+        v.live={peek:()=>({'weather.local':weather}),stale:()=>stale,stop:()=>{},draw:()=>{}};
+        v.render();const hemi=v.scene.children.find(o=>o.isHemisphereLight),baseline=hemi.intensity;
+        const objects=[];v.scene.traverse(o=>objects.push([o,o.visible,o.material,o.isLight]));
+        now=11000;v.render();now=11060;v.render();
+        assert.equal(v.clouds.uniforms.cloudLightning.value.w>.99,!editor);
+        assert.ok(Math.abs(hemi.intensity-baseline-(editor?0:1.5))<1e-6);
+        for(const [o,visible,material,isLight] of objects){assert.equal(o.visible,visible);assert.equal(o.material,material);assert.equal(o.isLight,isLight);}
+        motion.matches=true;v.render();assert.equal(v.clouds.uniforms.cloudLightning.value.w,0);assert.equal(hemi.intensity,baseline);
+        assert.equal(v.clouds.uniforms.cloudCoverage.value,editor?0:1);
+        motion.matches=false;now=12000;v.render();now=23000;v.render();now=23060;v.render();
+        stale=true;v.render();assert.equal(v.clouds.uniforms.cloudLightning.value.w,0);
+        stale=false;v.render();now=34060;v.render();now=34120;v.render();
+        v.state.unlit=true;v.render();assert.equal(v.clouds.uniforms.cloudLightning.value.w,0);assert.equal(hemi.intensity,0);
+      } finally {v.dispose();}
+    }
+  } finally {performance.now=oldNow;Math.random=oldRandom;window.matchMedia=oldMedia;}
+});
+await test('GPU-noise viewer finds a strike with lazy exact texels, without whole-volume generation or readback',async()=>{
+  const {createCloudPass}=await import(file('static/twin/sky/cloud_pass.js'));
+  const gpu={base:new THREE.Data3DTexture(null,128,128,128),detail:new THREE.Data3DTexture(null,32,32,32)};
+  const c=createCloudPass(new Renderer(),{tier:'high',noise:gpu,random:()=>.5});
+  try {
+    c.update(cloudState({state:'lightning'}));c.uniforms.cloudOffset.value.set(1500,0,-500);
+    c.flash(0);const start=performance.now();c.flash(11);
+    console.log('Cold lightning density search, desktop Node: '+(performance.now()-start).toFixed(3)+' ms');
+    assert.ok(c.flash(11.06)>.99);
+    const p=c.uniforms.cloudLightning.value.toArray().slice(0,3);
+    assert.ok(sampleCloudDensity(p,{...noise,coverage:1,type:'cumulonimbus',offset:[1500,0,-500]})>.2);
+    assert.equal(gpu.base.image.data,null);assert.equal(gpu.detail.image.data,null);
+  } finally {c.dispose();gpu.base.dispose();gpu.detail.dispose();}
+});
 noise.dispose();finish();
 """
 
 if __name__ == '__main__':
-    code, out = run_node(DRIVER, {'root': ROOT.as_posix()}, timeout=180)
+    plan = json.loads((ROOT / 'tests/fixtures/twin_poolhouse.plan.json').read_text(encoding='utf-8'))
+    code, out = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan}, timeout=180)
     print(out)
     sys.exit(code if code is not None else 1)

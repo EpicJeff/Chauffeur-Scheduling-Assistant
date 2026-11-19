@@ -180,6 +180,9 @@ export function createSky(renderer, {tier='low',clouds=null} = {}) {
   function snapshotClouds() {
     if(!clouds)return;
     for(const [key,u] of Object.entries(cloudUniforms)) {
+      // A coherent six-frame capture outlasts an 80-160 ms pulse. Never bake a
+      // transient flash into a cube/PMREM that persists for another four seconds.
+      if(key==='cloudLightning'){u.value.set(0,0,0,0);continue;}
       const value=clouds.uniforms[key].value;
       if(u.value?.isVector3)u.value.copy(value);else u.value=value;
     }
