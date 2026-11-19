@@ -25,7 +25,16 @@ def _metadata(piece, excluded):
 
 def from_section(section: dict) -> dict:
     """Convert a rectangular section without changing its drawn roof planes."""
-    roof = _metadata(section, {'rect', 'ends', 'pitches', 'low_side', 'dormer_of'})
+    roof = _metadata(section, {'rect', 'ends', 'pitches', 'low_side', 'dormer_of', 'plane_edges'})
+    if 'plane_edges' in section and 'plane_materials' in roof:
+        # A section becomes a canonical rectangle, whose edge order may differ
+        # from the authored area's (and whose other sections have other edges).
+        refs = roof['plane_materials']
+        roof['plane_materials'] = {str(i): deepcopy(refs[str(section['plane_edges'][side])])
+                                  for i, side in enumerate(_SIDES)
+                                  if str(section['plane_edges'].get(side)) in refs}
+        if not roof['plane_materials']:
+            roof.pop('plane_materials')
     x0, y0, x1, y1 = section['rect']
     roof['area'] = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
     kind = section['kind']
@@ -78,7 +87,8 @@ def _rectangles(area):
     return [[xs[a], ys[b], xs[c], ys[d]] for a, b, c, d in sorted(maximal)]
 
 
-def _rectangle_edges(roof, rect):
+def _rectangle_edge_indices(roof, rect):
+    """Map each section side to its authored area edge, or None for an interior side."""
     x0, y0, x1, y1 = rect
     points = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
     result = {}
@@ -89,11 +99,16 @@ def _rectangle_edges(roof, rect):
             other, value, lo, hi = _edge(p, q)
             overlap = min(end, hi) - max(start, lo)
             if axis == other and abs(value - line) <= _EPS and overlap > _EPS:
-                candidates.append((overlap, -i, roof['edges'][i]))
+                candidates.append((overlap, -i))
         # Extended rectangles normally meet a boundary on all four sides.
-        result[side] = max(candidates, key=lambda row: row[:2])[2] if candidates else {
-            'setting': 'sloped', 'pitch': roof.get('pitch', 8)}
+        result[side] = -max(candidates)[1] if candidates else None
     return result
+
+
+def _rectangle_edges(roof, rect):
+    return {side: roof['edges'][index] if index is not None else {
+        'setting': 'sloped', 'pitch': roof.get('pitch', 8)}
+        for side, index in _rectangle_edge_indices(roof, rect).items()}
 
 
 def _section(roof, rect, edges):
@@ -135,6 +150,7 @@ def to_sections(roof: dict) -> list[dict]:
     sections = []
     for i, rect in enumerate(rectangles):
         section = _section(roof, rect, _rectangle_edges(roof, rect))
+        section['plane_edges'] = _rectangle_edge_indices(roof, rect)
         section['id'] = roof['id'] if len(rectangles) == 1 else f"{roof['id']}~{i + 1}"
         sections.append(section)
     return sections

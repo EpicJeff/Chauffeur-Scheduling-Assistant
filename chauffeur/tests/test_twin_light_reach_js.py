@@ -49,6 +49,35 @@ const blocked = (ctx, from, to) => {
 let passed=0, ran=0;
 async function check(name, fn) { ran++; try { await fn(); passed++; console.log('  ok   '+name); }
   catch(e) {console.log('  FAIL '+name+' '+e.stack);} }
+await check('surface_finish_keeps_untouched_occlusion_and_shadowmask_bytes', async () => {
+  const make=async tint=>{
+    const b={id:'b',levels:[{id:'L1',elevation:0,ceiling:10}],rooms:[{id:'a',level:'L1',polygon:[[0,0],[10,0],[10,10],[0,10]]}],
+      walls:[{id:'w',level:'L1',from:[0,0],to:[10,0],height:10,thickness:.5,faces:tint?{left:{color:tint},right:{color:tint}}:undefined}],
+      openings:[],roof:{sections:[]},items:[]};
+    const other=structuredClone(b);other.id='remote';other.position=[100,0];delete other.walls[0].faces;
+    const plan={buildings:[b,other]},built=gen.buildTwin(plan,job.kit||{materials:{},manifest:{}},'low',{viewing:true});await built.ready;
+    built.root.updateMatrixWorld(true);const atlas=buildAtlas(built.root,plan,options);
+    const view={plan,scene:built.root,bake:{occlusionRoot:()=>atlas.sourceRoot}};
+    const light={...lamp,device:'remote-light',building:'remote',at:[105,5,5]},packed=B.bakeLayout(atlas,options,[light]);
+    const charts=packed.banks.flatMap(bank=>bank.charts).filter(c=>packed.lights[0].receivingCharts.includes(c.id));
+    const blockers=occluders(view);blockers.updateMatrixWorld(true);
+    const geometry=blockers.children.map(m=>[m.matrix.elements,Array.from(m.geometry.attributes.position.array)]);
+    const renderer=fakeRenderer();let depthScene;
+    renderer.render=scene=>{if(!scene.overrideMaterial?.uniforms.depthCube)depthScene=scene;};
+    renderer.readRenderTargetPixelsAsync=async(rt,x,y,w,h,raw)=>{
+      const from=new THREE.Vector3(105,5,-5).multiplyScalar(FT),to=new THREE.Vector3(105,0,-5).multiplyScalar(FT);
+      depthScene.updateMatrixWorld(true);const ray=new THREE.Raycaster(from,to.clone().sub(from).normalize(),.001,from.distanceTo(to)-.025);
+      const visible=ray.intersectObjects(depthScene.children,false).length===0;
+      raw.fill(0);for(let i=0;i<raw.length;i+=4){raw[i]=THREE.DataUtils.toHalfFloat(visible?.3:0);raw[i+3]=THREE.DataUtils.toHalfFloat(1);}
+    };
+    const bytes=await renderPage(view,renderer,charts,options.room.page,light,options,atlas);
+    return {key:atlas.key,entry:packed.entries['remote-light'],geometry:Buffer.from(JSON.stringify(geometry)),bytes};
+  };
+  const before=await make(null),after=await make('#224466');
+  assert.equal(before.key,after.key);assert.deepEqual(before.entry,after.entry,'untouched light remains fresh');
+  assert.deepEqual(before.geometry,after.geometry,'occlusion bytes remain identical');
+  assert.deepEqual(before.bytes,after.bytes,'CPU depth visibility produces byte-identical shadowmasks');
+});
 await check('invisible_separator_reaches_the_neighbour_floor', () => {
   const ctx=house(), l=reached(ctx);
   assert.ok(l.receivers.includes(1));
@@ -589,7 +618,7 @@ def run():
             if result.returncode:
                 print(result.stderr[-4000:], end='')
                 return result.returncode
-            print('21/21 passed (19 reach checks + worker/timing + harness rebake integration)')
+            print('22/22 passed (20 reach checks + worker/timing + harness rebake integration)')
         return 0
 
 

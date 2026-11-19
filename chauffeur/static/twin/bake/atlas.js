@@ -1,7 +1,9 @@
 // Geometry/UV density use plan feet; reach queries use world metres.
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { reachLights } from './reach.js';
-import { fingerprint, authoredGeometry } from './geometry_key.js';
+import { fingerprint, authoredGeometry, withoutSurfaceMaterials } from './geometry_key.js';
+import { bakeSource } from './source.js';
+import { bindReceivers } from './bindings.js';
 export { fingerprint } from './geometry_key.js';
 
 const VERSION = 'reach-atlas-11';
@@ -56,7 +58,7 @@ function convexParts(poly) {
 function roomData(plan) {
   const rooms = [], buildings = new Map();
   for (const b of plan.buildings || []) {
-    const levels = [...(b.levels || [])].sort((a, c) => a.elevation - c.elevation);
+    const levels = (b.levels || []).map(withoutSurfaceMaterials).sort((a, c) => a.elevation - c.elevation);
     const list = [];
     for (const r of b.rooms || []) {
       if (r.polygon?.length < 3 || !r.polygon) continue;
@@ -606,6 +608,12 @@ export function atlasMesh(mesh) {
     mesh.geometry?.attributes.position);
 }
 
+export function prepareReceivers(group, plan) {
+  const data=roomData(plan),meshes=[];
+  group.traverse(mesh=>{if(atlasMesh(mesh)){prepare(mesh,data);meshes.push(mesh);}});
+  return meshes;
+}
+
 export const CHANNEL_FALLBACK = Symbol('channel fallback');
 export const CHART_STATS = Symbol('chart ranking statistics');
 export function assignChannels(rooms, lights, previous = new Map()) {
@@ -747,6 +755,13 @@ export function packBanks(layout, lights, o, assigned) {
 }
 
 export function buildAtlas(group, plan, { room } = {}) {
+  const source = bakeSource(group);
+  if (source !== group) {
+    const atlas = buildAtlas(source, plan, {room});
+    const meshes=prepareReceivers(group,plan);
+    atlas.sourceRoot=source;
+    return bindReceivers(atlas,meshes);
+  }
   const ro = options(room, 'room'), data = roomData(plan);
   const roomCharts = [], hash = fingerprint();
   hash.add(authoredGeometry(plan));

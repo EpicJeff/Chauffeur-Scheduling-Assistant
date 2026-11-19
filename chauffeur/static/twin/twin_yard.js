@@ -61,7 +61,10 @@ export function presetTree(preset, seed) {
   return tree;
 }
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
-import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey, offsetSurfaceUvs } from './twin_library.js';
+import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts } from './twin_library.js';
+import { resolveSurfaceMaterial } from './surface_material.js';
+import { withoutSurfaceMaterials } from './bake/geometry_key.js';
+import { registerBakeSource } from './bake/source.js';
 import { groundAt, poolDatum, POOL_SEAT, buildingBase, buildingFootprint } from './twin_ground.js';
 import { span as editSpan } from './edit_timing.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
@@ -173,9 +176,11 @@ async function bakePreset(preset, seed, renderer) {
 function yardMaterialKit(plan, kit) {
   const materialKit = { ...kit, materials: { ...kit.materials } }, known = manifest(kit);
   for (const [role, ref] of Object.entries(plan.materials || {})) {
-    if (role === 'water') continue; // Code-side look, resolved as a slot below, never a kit role.
+    if (role === 'water' || role.startsWith('pool_')) continue; // Code-side looks, resolved as slots below.
     const source = kit.materials?.[ref.id] || kit.materials?.[role];
     materialKit.materials[role] = { ...source, color: ref.color || (known[ref.id]?.household ? undefined : source?.color), asset: known[ref.id] ? ref.id : source?.asset };
+    if (known[ref.id]?.household) materialKit.materials[role].id = ref.id;
+    else if (known[ref.id]) delete materialKit.materials[role].id;
   }
   return materialKit;
 }
@@ -188,9 +193,10 @@ function yardMaterialInputs(plan, kit) {
   const roles = new Set(), slots = [];
   const use = (fallback, value) => {
     if (value) {
-      const role = refs[value.id] ? value.id : Object.keys(refs).find(k => refs[k].asset === value.id);
+      const resolved = resolveSurfaceMaterial(plan, {role:fallback, ref:value, kit}).ref;
+      const role = refs[resolved.id] ? resolved.id : Object.keys(refs).find(k => refs[k].asset === resolved.id);
       const ref = refs[role];
-      slots.push([value, role, ref, known[ref?.id || ref?.asset || value.id]]);
+      slots.push([value, role, ref, known[ref?.id || ref?.asset || resolved.id]]);
     } else roles.add(fallback);
   };
   const authoredRole = (value, fallback) => kit.materials?.[value] ? value : fallback;
@@ -215,6 +221,8 @@ function yardMaterialInputs(plan, kit) {
     if (h.kind === 'path' && h.edging === 'curb') use('patio_concrete', h.materials?.edging);
   }
   if (site.pool?.polygon?.length >= 3) {
+    for (const part of ['interior','waterline','coping']) if (plan.materials?.['pool_'+part])
+      use('paving', plan.materials['pool_'+part]);
     if (plan.materials?.water) use('water', plan.materials.water);
     if (site.pool.materials?.water) use('water', site.pool.materials.water);
     if (site.pool.materials?.interior) use('paving', site.pool.materials.interior);
@@ -227,6 +235,8 @@ function yardMaterialInputs(plan, kit) {
       if (f.materials?.water) use('water', f.materials.water);
       use('base', f.materials?.wall);
     }
+    for (const f of site.pool.features || []) if (f.kind === 'ledge' || f.kind === 'steps')
+      for (const part of ['interior','coping']) if (f.materials?.[part]) use('paving', f.materials[part]);
   }
   for (const f of sitePieces(site.fire_pit)) {
     const options = firePitOptions(f);
@@ -356,7 +366,7 @@ export function yardPartKeys(plan, kit, tier, { viewing = false, stage = default
 // The whole-yard fast path is precisely the union of the part keys.
 export const yardKey = (plan, kit, tier, options) => JSON.stringify(yardPartKeys(plan, kit, tier, options));
 
-export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null, stage = defaultStage(plan), skyCover = createSkyCover(plan) } = {}) {
+export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null, stage = defaultStage(plan), skyCover = createSkyCover(plan), bakeSource = false } = {}) {
   const root = new THREE.Group(); root.name = 'yard';
   Object.defineProperty(root.userData, 'waterSurfaces', { value: [], writable: true });
   const keys = yardPartKeys(plan, kit, tier, { viewing, stage }), reused = new Map();
@@ -371,8 +381,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     return terrainSlabGeometry(plan, poly, tier, z0, z1, holes);
   };
   const materialKit = yardMaterialKit(plan, kit);
+  const yardRef = (role, ref = null, parents = []) => resolveSurfaceMaterial(plan, {role, ref, parents, kit}).ref;
   const mat = (role, slot = null) => {
-    if (slot) return materialSlot(slot, role, materialKit, tier, mats, mat);
+    if (slot) return materialSlot(yardRef(role, slot), role, materialKit, tier, mats, mat);
     if (role === 'black_metal' && !materialKit.materials[role]) return plain('black_metal', '#1b1c1e', { roughness: .42 });
     const sourceRole = role === 'terrain_lawn' ? 'lawn' : role;
     const key = materialKey(materialKit.materials[sourceRole] || {}, role, tier, manifest(materialKit));
@@ -382,15 +393,38 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   };
   // A random-offset material shifts each surface's base uv by its piece id (server
   // plans give every site piece one); a surface without an id is drawn as made.
-  const surfaceMesh = (group, geometry, material, seed, owner = null) => {
-    const mesh = addMesh(group, offsetSurfaceUvs(geometry, material, seed), material);
+  const uvParts = [];
+  const surfaceMesh = (group, geometry, material, seed, owner = null, ref = null, part = '') => {
+    const offset = (ref || yardRef(material.name)).uv;
+    if (offset) uvParts.push({geometry, material, seed, offset, key:JSON.stringify([owner?.pieceId || seed, part || material.name, offset])});
+    else offsetSurfaceUvs(geometry, material, seed);
+    const mesh = addMesh(group, geometry, material);
     if (owner) Object.assign(mesh.userData, owner);
+    if (part) mesh.userData.bakePart = part;
     return mesh;
   };
   const seedOf = (piece, ...rest) => piece?.id ? [piece.id, ...rest].join(':') : null;
   const plain = (name, color, extra = {}) => {
     if (!mats.has(name)) mats.set(name, extra.fireShader ? fireFlameMaterial() : new THREE.MeshStandardMaterial({ name, color, roughness: 0.85, ...extra }));
     return mats.get(name);
+  };
+  const poolFinish = (part, ref = null, parents = []) => {
+    const role = 'pool_' + part, copingRole = kit.materials?.[site.pool?.material] ? site.pool.material : 'paving';
+    const resolution = resolveSurfaceMaterial(plan, {role, ref, parents, kit,
+      fallback:part === 'coping' ? resolveSurfaceMaterial(plan, {role:copingRole,kit}) : null,
+      defaultRef:{id:role}});
+    const resolved = resolution.ref;
+    let material;
+    if (resolved.id === 'pool_interior' || resolved.id === 'pool_waterline') {
+      const tile = part === 'interior', name = tile ? 'pool tile' : 'waterline tile';
+      const base = plain(name, tile ? '#5fa8c4' : '#2f6f96', {roughness:tile ? .35 : .25});
+      if (resolved.color) {
+        const key = JSON.stringify(['pool-tint',name,resolved.color]);
+        if (!mats.has(key)) { const tinted = base.clone(); tinted.color.set(resolved.color); mats.set(key,tinted); }
+        material = mats.get(key);
+      } else material = base;
+    } else material = mat(part === 'coping' ? copingRole : 'paving', resolved);
+    return {material, ref:resolved, source:resolution.source};
   };
   const part = name => editSpan(timing, 'yard_' + name);
   if (timing) for (const name of ['terrain', 'grass', 'plants', 'fences', 'hardscape', 'pool', 'fire_pits', 'retaining_walls', 'cards', 'batch', 'models', 'furniture', 'materials']) timing['yard_' + name] = 0;
@@ -433,7 +467,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         let rest = disc;
         for (let i = 0; i < 4 && rest.length; i++) {
           const a = terrainOutline[i], b = terrainOutline[(i+1)%4], outside = clipHalf(rest, a, b, -1);
-          if (outside.length) addMesh(group, polygon(outside, -.06, -.06), mat('lawn')).userData.terrain = true;
+          if (outside.length) surfaceMesh(group, polygon(outside, -.06, -.06), mat('lawn'), null, null, yardRef('lawn'), 'lawn').userData.terrain = true;
           rest = clipHalf(rest, a, b, 1);
         }
         const terrain = new THREE.Group(); terrain.userData.viewingWalls = 'terrain'; group.add(terrain);
@@ -441,7 +475,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         // Same kit role, same texture. Vertex colours are always enabled; Grade
         // changes the buffer, never a material define or shader program.
         lawn.vertexColors = true; lawn.side = THREE.DoubleSide;
-        const mesh = addMesh(terrain, terrainGeometry(plan, rest, tier, { holes: [...(pool ? [pool] : []), ...spas], offset: -.04, skirts: true }), lawn);
+        const mesh = surfaceMesh(terrain, terrainGeometry(plan, rest, tier, { holes: [...(pool ? [pool] : []), ...spas], offset: -.04, skirts: true }), lawn, null, null, yardRef('lawn'), 'lawn');
         if (!viewing && site.terraces?.length) {
           // Pads share the sampled terrain, not independent overlay slabs.
           // Give each triangle to the last pad influencing its centroid. Separate
@@ -490,11 +524,12 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         pad.polygon.forEach((_, edge) => {
           if (pad.edges?.[edge]?.edge !== 'sharp') return;
           const wall = pad.edges[edge].wall;
-          if (wall) surfaceMesh(target, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face), seedOf(pad, 'walls'), {kind:'retaining_wall', pieceId:pad.id});
+          if (wall) surfaceMesh(target, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face), seedOf(pad, 'walls'), {kind:'retaining_wall', pieceId:pad.id}, yardRef(retainingWallRole(wall.material), wall.materials?.face), `edge:${edge}:face`);
           buildPadEdge(plan, pad, edge, (geometry, part, role, slot) => surfaceMesh(target, geometry, mat(role, slot),
-            seedOf(pad, 'walls'), {kind:'retaining_wall', pieceId:pad.id}));
+            seedOf(pad, 'walls'), {kind:'retaining_wall', pieceId:pad.id}, yardRef(role, slot), `edge:${edge}:${part}`));
         });
         if (padParts) {
+          offsetSurfaceUvParts(uvParts.splice(0));
           mergeStatic(target);
           for (const child of [...target.children]) { child.userData.padEdgeId = id; group.add(child); }
         }
@@ -512,38 +547,41 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             // The part survives material batching in snapRanges, so the stones stay findable.
             // No random uv offset: each stone carries exactly one tile of its material.
             const stone = mat(role, h.materials?.surface);
-            surfaceMesh(group, paverGeometry(plan, h, layout, stone.userData.tileFt), stone, null, {...owner, part:'pavers'});
+            surfaceMesh(group, paverGeometry(plan, h, layout, stone.userData.tileFt), stone, null, {...owner, part:'pavers'}, yardRef(role,h.materials?.surface), 'surface');
             if (joint === 'gravel' || joint === 'sand') {
               const fill = h.materials?.joint ? mat(joint === 'gravel' ? 'base' : 'paver_sand', h.materials.joint)
                 : joint === 'gravel' ? mat('base') : plain('paver_sand', '#cdb994', {roughness:.95});
-              for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, e, e+.5/12), fill, seedOf(h, 'joint'), owner);
+              for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, e, e+.5/12), fill, seedOf(h, 'joint'), owner, yardRef(joint === 'gravel' ? 'base' : 'paver_sand',h.materials?.joint), 'joint');
             }
           } else {
             // Swept pieces retain user-drawn crossings without even/odd cancellation.
-            for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spasIn(poly)), mat(role, h.materials?.surface), seedOf(h), owner);
+            for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spasIn(poly)), mat(role, h.materials?.surface), seedOf(h), owner, yardRef(role,h.materials?.surface), 'surface');
           }
           if (h.edging === 'curb') {
             const inner = pathBoundaries(h), outer = pathBoundaries(h, (h.width ?? 3) / 2 + .5);
             for (const side of ['left', 'right']) for (let i = 1; i < inner[side].length; i++) {
               const poly = [inner[side][i - 1], inner[side][i], outer[side][i], outer[side][i - 1]];
               // Both offsets have the same mitre/bevel topology.
-              const curb = surfaceMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spasIn(poly)), mat('patio_concrete', h.materials?.edging), seedOf(h, 'curb', side), owner);
+              const curb = surfaceMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spasIn(poly)), mat('patio_concrete', h.materials?.edging), seedOf(h, 'curb', side), owner, yardRef('patio_concrete',h.materials?.edging), 'curb:'+side);
               curb.geometry.userData.pathCurb = true;
             }
           }
           continue;
         }
         const holes = [...(pool && pool.every(p => inside(p, h.polygon)) ? [pool] : []), ...spasIn(h.polygon)];
-        surfaceMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role, h.materials?.surface), seedOf(h), owner);
+        surfaceMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role, h.materials?.surface), seedOf(h), owner, yardRef(role,h.materials?.surface), 'surface');
       }
       stopHardscape();
       const stopBeds = part('hardscape');
-      for (const bed of site.beds || []) if (bed.polygon?.length >= 3) surfaceMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(kit.materials?.[bed.material] ? bed.material : 'mulch', bed.materials?.fill), seedOf(bed), {kind:'bed', pieceId:bed.id});
+      for (const bed of site.beds || []) if (bed.polygon?.length >= 3) {
+        const role = kit.materials?.[bed.material] ? bed.material : 'mulch';
+        surfaceMesh(group, surface(bed.polygon, bed.elevation || 0, .12 + (bed.elevation || 0)), mat(role, bed.materials?.fill), seedOf(bed), {kind:'bed', pieceId:bed.id}, yardRef(role,bed.materials?.fill), 'fill');
+      }
       for (const edge of site.edges || []) if (edge.polygon?.length >= 3) {
         // Edge planting remains a closed border. Give its ground strip the same
         // authored finish on every tier; High also keeps the existing grass blades.
         for (const poly of pathSurfacePolygons({ points: [...edge.polygon, edge.polygon[0]], width: .5 }))
-          surfaceMesh(group, surface(poly, edge.elevation || 0, .06 + (edge.elevation || 0)), mat(kit.materials?.[edge.material] ? edge.material : 'lawn', edge.materials?.strip), seedOf(edge), {kind:'edge', pieceId:edge.id});
+          surfaceMesh(group, surface(poly, edge.elevation || 0, .06 + (edge.elevation || 0)), mat(kit.materials?.[edge.material] ? edge.material : 'lawn', edge.materials?.strip), seedOf(edge), {kind:'edge', pieceId:edge.id}, yardRef(kit.materials?.[edge.material] ? edge.material : 'lawn',edge.materials?.strip), 'strip');
       }
       stopBeds();
     },
@@ -551,14 +589,16 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       const stopPool = part('pool');
       if (pool?.length >= 3) {
         const owner = {kind:'pool', pieceId:site.pool.id || 'pool:0'};
-        const poolMesh = (geometry, material, seed) => surfaceMesh(group, geometry, material, seed, owner);
+        const poolMesh = (geometry, material, seed, ref = null, part = '') => surfaceMesh(group, geometry, material, seed, owner, ref, part);
         const d = site.pool.depth ?? 5, coping = site.pool.coping ?? 1;
         const poolHeight = poolDatum(plan, site.pool);
         const poolSurface = (poly, z0, z1 = z0, holes = []) => spas.length
           ? cutSurface(poly, spas, poolHeight + z0, poolHeight + z1, holes)
           : polygon(poly, poolHeight + z0, poolHeight + z1, holes);
-        const interior = site.pool.materials?.interior;
-        poolMesh(poolSurface(pool, -d - 0.2, -d), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4', { roughness: 0.35 }), seedOf(site.pool, 'floor'));
+        const interior = poolFinish('interior', site.pool.materials?.interior);
+        const cap = poolFinish('coping', site.pool.materials?.coping);
+        const bandFinish = poolFinish('waterline', site.pool.materials?.waterline);
+        poolMesh(poolSurface(pool, -d - 0.2, -d), interior.material, seedOf(site.pool, 'floor'), interior.ref, 'interior');
         // Offset each edge outwards by coping width. This works for the convex pool
         // polygons used by the plan and retains the original water outline.
         const area = pool.reduce((a, p, i) => a + p[0] * pool[(i + 1) % pool.length][1] - pool[(i + 1) % pool.length][0] * p[1], 0);
@@ -567,19 +607,20 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           const a = normal(pool[(i + pool.length - 1) % pool.length], p), b = normal(p, pool[(i + 1) % pool.length]), factor = coping / Math.max(0.1, 1 + a[0] * b[0] + a[1] * b[1]);
           return [p[0] + (a[0] + b[0]) * factor, p[1] + (a[1] + b[1]) * factor];
         });
-        if (coping > 0) poolMesh(poolSurface(outer, 0.3, 0.45, [pool]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
+        if (coping > 0) poolMesh(poolSurface(outer, 0.3, 0.45, [pool]), cap.material, seedOf(site.pool, 'coping'), cap.ref, 'coping');
         // The coping overhangs the wall. Fill under the overhang from the ground up, so a coping
         // over lawn sits on it. Beside paving the fill is inside the slab and never seen.
-        if (coping > 0.25) poolMesh(poolSurface(outer, POOL_SEAT - 0.05, 0.3, [offsetOutline(pool, 0.25)]), mat(kit.materials?.[site.pool.material] ? site.pool.material : 'paving', site.pool.materials?.coping), seedOf(site.pool, 'coping'));
+        if (coping > 0.25) poolMesh(poolSurface(outer, POOL_SEAT - 0.05, 0.3, [offsetOutline(pool, 0.25)]), cap.material, seedOf(site.pool, 'coping'), cap.ref, 'coping');
         for (let i = 0; i < pool.length; i++) {
           const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
           const slab = [a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]];
           // Waterline tile all round: the top of each wall, from just under the water to the coping.
           const band = Math.max(-d, -0.25 - WATERLINE_BELOW);
-          if (band > -d) poolMesh(poolSurface(slab, -d, band), interior ? mat('paving', interior) : plain('pool tile', '#5fa8c4'), seedOf(site.pool, 'walls'));
-          poolMesh(poolSurface(slab, band, 0.3), waterlineMaterial(site.pool.materials?.waterline, { mat, plain }), seedOf(site.pool, 'waterline'));
+          if (band > -d) poolMesh(poolSurface(slab, -d, band), interior.material, seedOf(site.pool, 'walls'), interior.ref, 'interior');
+          poolMesh(poolSurface(slab, band, 0.3), bandFinish.material, seedOf(site.pool, 'waterline'), bandFinish.ref, 'waterline');
         }
         const waterSlot = site.pool.materials?.water || plan.materials?.water;
+        const waterRef = feature => yardRef('water', feature?.materials?.water, [site.pool.materials?.water]);
         // Kit aliases need an isolated receiving role too: water must not
         // borrow and rename a paving/lawn material used elsewhere in the yard.
         const waterCache = { has: key => mats.has('water-slot:' + key), get: key => mats.get('water-slot:' + key),
@@ -587,12 +628,14 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         const resolveWater = slot => slot ? materialSlot(slot, 'water', kit, tier, waterCache, role => {
           const result = kitMaterial(role, kit, tier); result.name = 'water'; return result;
         }) : plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false });
-        const water = resolveWater(waterSlot);
+        const water = resolveWater(waterSlot ? waterRef() : null);
         if (waterSlot) water.name = 'water';
-        const waterMesh = addMesh(group, poolSurface(pool, -0.25), water);
+        const waterGeometry = poolSurface(pool, -0.25);
+        if (waterRef().uv) offsetSurfaceUvs(waterGeometry, water, seedOf(site.pool, 'water'), waterRef().uv);
+        const waterMesh = addMesh(group, waterGeometry, water);
         Object.assign(waterMesh.userData, { kind: 'pool', pieceId: site.pool.id || 'pool:0', part: 'water' });
-        buildPoolFeatures(group, site.pool, poolHeight, { mat, plain, water,
-          spaWater: feature => { const result = feature.materials?.water ? resolveWater(feature.materials.water) : water; result.name = 'water'; return result; },
+        buildPoolFeatures(group, site.pool, poolHeight, { mat, plain, water, finish:poolFinish, surfaceMesh, waterRef,
+          spaWater: feature => { const result = feature.materials?.water ? resolveWater(waterRef(feature)) : water; result.name = 'water'; return result; },
           copingRole: kit.materials?.[site.pool.material] ? site.pool.material : 'paving' });
       }
       stopPool();
@@ -605,7 +648,10 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         const centre = outer.reduce((s,p)=>s.map((v,i)=>v+p[i]/outer.length),[0,0]);
         const height = groundAt(plan, ...centre) + (f.elevation || 0);
         const built = buildFirePit(group,f,height,{mat,plain,id:'fire_pit:'+(f.id || index)});
-        for (const name of ['body', 'cap']) if (built[name]) offsetSurfaceUvs(built[name].geometry, built[name].material, seedOf(f, name));
+        for (const name of ['body', 'cap']) if (built[name]) {
+          const ref = yardRef(built[name].material.name, f.materials?.[name === 'cap' ? 'top' : name]);
+          offsetSurfaceUvs(built[name].geometry, built[name].material, seedOf(f, name), ref.uv);
+        }
         if (roundPit(f)) addMesh(group, drapeGeometry(new THREE.CircleGeometry((f.radius ?? 2) + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plan, f.elevation || 0), plain('gravel', '#a59c8f'));
         for (const object of group.children) if (!before.has(object)) Object.assign(object.userData, {kind:'fire_pit', pieceId:f.id || 'fire_pit:' + index});
       }
@@ -621,7 +667,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             material.userData.surfaceDoubleSide = true; material.side = THREE.DoubleSide;
             material.forceSinglePass = true;
           }
-          return surfaceMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), material, seedOf(f, part, ...seed), {kind:'fence', pieceId:f.id});
+          return surfaceMesh(group, drapeGeometry(geometry, plan, f.elevation || 0), material, seedOf(f, part, ...seed), {kind:'fence', pieceId:f.id}, yardRef('fence',f.materials?.[part]), part);
         };
         if (['picket', 'metal', 'panel'].includes(f.type)) { buildFence(f, fenceMesh); continue; }
         for (let i = 0; i < f.polyline.length - 1; i++) {
@@ -806,6 +852,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   // carries userData.yardPart, and root.userData.yardPartKeys records each part's key.
   const previousKeys = previous?.userData.yardPartKeys || {};
   for (const name of YARD_PARTS) {
+    if (bakeSource && ['plants', 'grass', 'furniture'].includes(name)) continue;
     if (previous && previousKeys[name] === keys[name]) {
       reused.set(name, previous.children.filter(o => o.userData.yardPart === name));
       if (name === 'grass') Object.defineProperty(root.userData, 'grass', {value:previous.userData.grass});
@@ -907,6 +954,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       }
     }
     const stop = part('batch');
+    offsetSurfaceUvParts(uvParts.splice(0));
     // Full trees/cards own their materials and viewing domains. Everything else
     // batches only inside its part, so no later edit can replace a sibling buffer.
     if (name !== 'plants' && name !== 'grass' && !(name === 'retaining_walls' && padParts)) mergeStatic(scratch);
@@ -973,5 +1021,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   root.userData.yardKey = yardKey(plan, kit, tier, { viewing, stage });
   root.userData.yardMaterialKey = yardMaterialKey(plan, kit, tier);
   writeWeatherOpen(root, skyCover, FT);
+  if (!bakeSource) {
+    const neutral = await buildYard(withoutSurfaceMaterials(plan), {...kit,manifest:{}}, tier, {viewing, stage, skyCover, bakeSource: true});
+    registerBakeSource(root, () => neutral.group, {extras:false});
+  }
   return { group: root, triangles };
 }

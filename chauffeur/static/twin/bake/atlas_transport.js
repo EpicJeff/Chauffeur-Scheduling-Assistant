@@ -1,6 +1,8 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
-import { packBanks, fingerprint, atlasMesh, heightfieldExtent } from './atlas.js';
+import { packBanks, fingerprint, atlasMesh, heightfieldExtent, prepareReceivers } from './atlas.js';
 import { authoredGeometry } from './geometry_key.js';
+import { bakeSource } from './source.js';
+import { bindReceivers } from './bindings.js';
 
 export function covered(root) {
   const meshes = [];
@@ -28,6 +30,7 @@ export function buffers(data) {
   visit(data); return list;
 }
 export function atlasJob(root, plan, layout) {
+  const source=bakeSource(root),neutral=source!==root;root=source;
   root.updateMatrixWorld(true);
   const meshes = covered(root).map(m => {
     let buildingId;
@@ -36,8 +39,7 @@ export function atlasJob(root, plan, layout) {
   });
   const hash = fingerprint(), uvs = fingerprint();
   // Geometry and room outlines drive the cache. Device movement does not.
-  hash.add('atlas-worker-reach-11'); hash.add(authoredGeometry(plan)); hash.add(JSON.stringify([layout, plan.generatorVersion, plan.buildings?.map(b => ({
-    id: b.id, rooms: b.rooms, levels: b.levels }))]));
+  hash.add('atlas-worker-reach-12'); hash.add(authoredGeometry(plan)); hash.add(JSON.stringify(layout));
   for (const m of meshes) {
     hash.add(JSON.stringify([m.matrix, m.name, m.buildingId]));
     // Graded terrain's grid is tiered; its shape is authored (lot, terraces): one key per house.
@@ -47,12 +49,13 @@ export function atlasJob(root, plan, layout) {
     if (m.geometry.index) hash.add(m.geometry.index);
     uvs.add(m.geometry.attributes.uv?.array || new Float32Array(0)); uvs.add('|');
   }
-  hash.add('uv:' + uvs.key());
+  if(!neutral)hash.add('uv:' + uvs.key());
   // The layout key ignores base uv, but the cached result carries clipped geometry with
   // it: uvKey says which base uv that geometry holds (see loadAtlas).
-  return { meshes, plan, layout, cacheKey: hash.key(), uvKey: uvs.key() };
+  return { meshes, plan, layout, cacheKey: hash.key(), uvKey: neutral?'neutral-surface-topology':uvs.key() };
 }
 export function packAtlas(atlas, meshes) {
+  if (atlas.sourceRoot) meshes=atlas.transportMeshes || covered(atlas.sourceRoot);
   const charts = list => list.map(c => ({ ...c, mesh: meshes.indexOf(c.mesh),
     ...(c.proxies ? { proxies: c.proxies.map(p => ({ mesh: meshes.indexOf(p.mesh), faces: p.faces })) } : {}) }));
   return { key: atlas.key,
@@ -60,11 +63,13 @@ export function packAtlas(atlas, meshes) {
     geometries: meshes.map(m => geometryData(m.geometry)) };
 }
 export function applyAtlas(data, root, layout) {
-  const meshes = covered(root);
+  const source=bakeSource(root),meshes = covered(source);
   data.geometries.forEach((g, i) => { const old = meshes[i].geometry; meshes[i].geometry = geometryFrom(g); old.dispose(); });
   const charts = list => list.map(c => ({ ...c, mesh: meshes[c.mesh],
     ...(c.proxies ? { proxies: c.proxies.map(p => ({ mesh: meshes[p.mesh], faces: p.faces })) } : {}) }));
   const room = { ...data.room, charts: charts(data.room.charts) };
   room.packBanks = (lights, slots) => packBanks(room, lights, layout.room, slots);
-  return { key: data.key, room };
+  const atlas={key:data.key,room};
+  if(source!==root){atlas.sourceRoot=source;bindReceivers(atlas,prepareReceivers(root,room.plan));}
+  return atlas;
 }

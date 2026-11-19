@@ -11,7 +11,10 @@ FIRE_FIELDS = {'fuel', 'body', 'top', 'height_in', 'glass', 'entity'}
 # a material slot"). A missing part is the feature's own default look.
 SLOTS = {'beds': ('fill',), 'hardscape': ('surface', 'edging', 'joint'), 'fire_pit': ('body', 'top'),
          'fence': ('boards', 'posts', 'rails'), 'pool': ('coping', 'interior', 'waterline', 'water'),
-         'edges': ('strip',), 'spa': ('coping', 'interior', 'waterline', 'wall', 'water')}
+         'edges': ('strip',), 'spa': ('coping', 'interior', 'waterline', 'wall', 'water'),
+         'ledge': ('interior', 'coping'), 'steps': ('interior', 'coping')}
+SITE_ROLES = ('lawn', 'water', 'paving', 'mulch', 'patio_concrete', 'fence',
+              'pool_interior', 'pool_waterline', 'pool_coping')
 
 
 def _segments(poly):
@@ -51,12 +54,16 @@ def pool_feature(pool, value):
         raise ValueError('Choose a tanning ledge, steps or spa.')
     piece = deepcopy(value)
     kind = piece['kind']
-    allowed = {'id', 'kind', 'polygon'} | {'ledge': {'depth_in'}, 'steps': {'treads', 'entry_edge'},
+    allowed = {'id', 'kind', 'polygon', 'materials'} | {'ledge': {'depth_in'}, 'steps': {'treads', 'entry_edge'},
         'spa': {'mode', 'raise_in', 'depth_in', 'bench_in', 'bench_width_in', 'spillover', 'materials'}}[kind]
     if set(piece) - allowed or not isinstance(piece.get('id'), str) or not 1 <= len(piece['id']) <= 100:
         raise ValueError('Use a pool feature id and supported properties.')
     validate('beds', {'polygon': piece.get('polygon')})
     poly, outline = piece['polygon'], pool['polygon']
+    if 'materials' in piece:
+        piece['materials'] = material_slots(kind, piece['materials'])
+        if not piece['materials']:
+            piece.pop('materials')
     if kind != 'spa' and not _contained(outline, poly):
         raise ValueError('Draw the ledge or steps inside the pool.')
     if kind == 'spa':
@@ -70,10 +77,6 @@ def pool_feature(pool, value):
         piece.setdefault('spillover', True)
         if piece['mode'] not in ('raised', 'flush') or type(piece['spillover']) is not bool:
             raise ValueError('Choose raised or flush and a boolean spillover.')
-        if 'materials' in piece:
-            piece['materials'] = material_slots('spa', piece['materials'])
-            if not piece['materials']:
-                piece.pop('materials')
         for field, label, low, high in [('bench_in', 'bench seat depth', 12, 30),
                                         ('bench_width_in', 'bench width', 0, 36)]:
             if field in piece and (not terrain.number(piece[field]) or not low <= piece[field] <= high):

@@ -88,19 +88,19 @@ await test('household_tint_uv_scale_offset_and_live_revision',async()=>{
  p.buildings[0].foundation.materials.slab.color='#abcdef';
  assert.equal(slabs(await build(p,kit))[0].material.color.getHexString(),'abcdef');
 });
-await test('foundation_pick_and_tint_invalidate_bake_on_every_tier',async()=>{
+await test('foundation_pick_and_tint_keep_atlas_on_every_tier',async()=>{
  const options={room:{density:1,page:256,gutter:2}},plain=await build();
  const before=atlasJob(plain.root,plan,options).cacheKey;
  for(const value of [{id:ref.id},ref]){
   const p=structuredClone(plan);p.buildings[0].foundation.materials={slab:value};
   const low=await build(p),high=await build(p,input.kit,'high');
-  assert.notEqual(atlasJob(low.root,p,options).cacheKey,before);
+  assert.equal(atlasJob(low.root,p,options).cacheKey,before,'a slab finish keeps its geometry atlas');
   assert.equal(buildAtlas(low.root,p,options).key,buildAtlas(high.root,p,options).key);
  }
 });
 await test('shelf_pick_clear_one_op_and_preserves_foundation_fields',async()=>{
  const {host,sent,errors}=shelf(),slot=host.querySelector('[data-material-slot="Slab"]');assert.ok(slot);
- assert.ok(textOf(slot).includes('Default: Concrete'));
+ assert.ok(textOf(slot).includes('House default: Concrete floor 02'));
  assert.equal(sent.length,0);
  await useMaterial(slot,ref.id);assert.equal(sent.length,1);
  assert.deepEqual(sent[0],{op:'set_foundation',building:'b',foundation:{...b.foundation,materials:{slab:{id:ref.id}}}});

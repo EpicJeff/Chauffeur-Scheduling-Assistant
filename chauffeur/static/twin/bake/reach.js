@@ -3,6 +3,7 @@ import { FT, CANDELA, lightRange, LAMP_HEIGHT } from '../twin_light_math.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { fingerprint } from './geometry_key.js';
 import { emitterSamples, rectPieces, coneWindow } from './fixture_terms.js';
+import { materialParts, boundMaterials } from './bindings.js';
 
 // Match the live lamp's bulb height and range, including the ceiling inset.
 export function lightSource(plan, light) {
@@ -51,20 +52,55 @@ function fieldClosest(chart, plan, source, out) {
 const reaches = new WeakMap();
 // Geometry is retained for live material edits, but both triangle colour input
 // and per-light physical freshness must be recomputed for the affected layout.
-export function invalidateMaterialReach(layout, ids) {
-  const changed = new Set(ids);
+export function invalidateMaterialReach(layout, ids = null) {
+  const changed = ids && new Set(ids);
   let used = false;
-  for (const chart of layout.charts) if ([chart.mesh, ...(chart.proxies || []).map(p => p.mesh)]
-    .some(mesh => changed.has(mesh.material.userData.materialId))) {
+  for (const chart of layout.charts) if (changed
+    ? materialParts(chart).some(({mesh}) => changed.has(mesh.material.userData.materialId))
+    : cached.get(chart)?.input !== surfaceInput(chart)) {
     cached.delete(chart); used = true;
   }
   if (used) reaches.delete(layout);
   return used;
 }
-const materialInput = mesh => [mesh.material.color?.toArray(), mesh.material.userData.materialId || null,
+const materialInput = mesh => [mesh.material.color?.toArray(), mesh.material.userData.materialId || mesh.material.userData.bakeMaterialId || null,
   mesh.material.userData.materialRevision ?? null];
-const surfaceInput = chart => JSON.stringify([materialInput(chart.mesh), chart.density,
-  ...(chart.proxies || []).map(p => materialInput(p.mesh))]);
+const footprints=new WeakMap();
+function surfaceInput(chart) {
+  if(!boundMaterials(chart))return JSON.stringify([materialInput(chart.mesh),chart.density,
+    ...(chart.proxies||[]).map(p=>materialInput(p.mesh))]);
+  if(chart.heightfield)return JSON.stringify([chart.density,materialInput(materialParts(chart)[0]?.mesh || chart.mesh),chart.field]);
+  const materials=[...new Set(materialParts(chart).map(p=>JSON.stringify(materialInput(p.mesh))))];
+  if(materials.length===1)return JSON.stringify([chart.density,materials[0]]);
+  const inputParts=materialParts(chart);
+  let parts=footprints.get(chart.faces);
+  if(!parts || parts.inputParts!==inputParts) {
+    parts=inputParts.map(({mesh,faces})=>{
+      const bounds=new THREE.Box3(),moment=new THREE.Vector3();let area=0;
+      const p=mesh.geometry.attributes.position;
+      for(const f of faces) {
+        const tri=new THREE.Triangle(...[0,1,2].map(k=>new THREE.Vector3().fromBufferAttribute(p,f*3+k).applyMatrix4(mesh.matrixWorld)));
+        const a=tri.getArea();area+=a;moment.addScaledVector(tri.getMidpoint(new THREE.Vector3()),a);
+        bounds.expandByPoint(tri.a);bounds.expandByPoint(tri.b);bounds.expandByPoint(tri.c);
+      }
+      return {mesh,area,moment,bounds};
+    });
+    parts.inputParts=inputParts;
+    footprints.set(chart.faces,parts);
+  }
+  // Multiple finishes may share one planar chart. Include their covered area
+  // and location, so changing one of several same-colour/ID users is noticed.
+  // Area/moments ignore material-driven retriangulation and base-UV splits.
+  const groups=new Map();
+  for(const p of parts) {
+    const key=JSON.stringify(materialInput(p.mesh));
+    if(!groups.has(key))groups.set(key,{area:0,moment:new THREE.Vector3(),bounds:new THREE.Box3()});
+    const g=groups.get(key);g.area+=p.area;g.moment.add(p.moment);g.bounds.union(p.bounds);
+  }
+  const rounded=v=>Math.round(v*1e4);
+  return JSON.stringify([chart.density,[...groups].sort(([a],[b])=>a.localeCompare(b)).map(([key,g])=>
+    [key,...[g.area,...g.moment.toArray(),...g.bounds.min.toArray(),...g.bounds.max.toArray()].map(rounded)])]);
+}
 function triangles(chart) {
   let data = cached.get(chart);
   if (data) return data;
@@ -77,7 +113,8 @@ function triangles(chart) {
     bounds.expandByPoint(t.a);bounds.expandByPoint(t.b);bounds.expandByPoint(t.c);
     return t;
   });
-  data={faces,bounds,surface:new TextEncoder().encode(surfaceInput(chart))};
+  const input=surfaceInput(chart);
+  data={faces,bounds,input,surface:new TextEncoder().encode(input)};
   cached.set(chart, data); return data;
 }
 
@@ -158,9 +195,10 @@ export function reachLights(layout, lights, outer = true) {
       // A heightfield is lit from above: its bounds give the distance, and its tier-free
       // chart key stands for its triangles (walking a graded grid per light is the cost).
       if (c.heightfield) {
+        const input=surfaceInput(c);cached.set(c,{input});
         const d = fieldClosest(c, layout.plan, source, closest).distanceToSquared(source);
         if (d > limit) continue;
-        receivers.add(c.room); geometry.push(c.key + surfaceInput(c));
+        receivers.add(c.room); geometry.push(c.key + input);
         distances[c.id] = d; receivingCharts.push(c.id); chartKeys[c.id] = c.key;
         const normal=new THREE.Vector3(0,1,0);
         scores[c.id] = physicalScore(closest,normal,d,1);

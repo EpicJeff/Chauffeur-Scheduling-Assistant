@@ -3,6 +3,7 @@ import { lightSource } from './reach.js';
 import { CANDELA } from '../live/real_lights.js';
 import { atlasMesh } from './atlas.js';
 import { bakeSamples, fillStrength } from './fixture_terms.js';
+import { chartReflectance } from './bindings.js';
 
 const worldVertex = `varying vec3 wp;
 void main() { wp = (modelMatrix * vec4(position, 1.0)).xyz;
@@ -85,7 +86,7 @@ function proxies(charts, size, layout) {
 export function occluders(view) {
   const scene = new THREE.Scene();
   view.scene.updateMatrixWorld(true);
-  view.scene.traverse(o => {
+  (view.bake?.occlusionRoot?.() || view.scene).traverse(o => {
     if (!atlasMesh(o) || o.material.name === 'glass') return;
     // Graded ground receives yard light but never blocks it: seen at grazing angles from a
     // lamp above, one cube texel spans more depth than the bias and the lawn shadows itself.
@@ -277,7 +278,7 @@ export function roomFills(pages, size, light = null) {
     const mine = pages.flatMap(p => p.charts.filter(c => c.room === room).map(c => ({ c, bytes: p.bytes })));
     let energy = 0, albedo = 0, count = 0;
     for (const { c, bytes } of mine) {
-      const color = c.mesh.material.color, reflectance = color ? (color.r + color.g + color.b) / 3 : .5;
+      const reflectance = chartReflectance(c);
       for (let y = c.rect.y; y < c.rect.y + c.rect.h; y++) for (let x = c.rect.x; x < c.rect.x + c.rect.w; x++) {
         const p = (y * size + x) * 4;
         if (!bytes[p + 3]) continue;

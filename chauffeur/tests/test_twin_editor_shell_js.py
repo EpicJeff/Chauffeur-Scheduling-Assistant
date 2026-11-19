@@ -287,6 +287,10 @@ await test('House materials keeps dock tabs, tiles, actions and captured row dro
   const row=materials.querySelector('[data-library-slot="Panes"]');assert.ok(row,'dialog contains real domain-owned slot rows');
   await pointerClick(row.querySelector('[data-slot-use]'));assert.equal(ops.length,1);
   assert.deepEqual(ops.at(-1),{op:'set_material',building:'b',target:{building:'b',role:'pane'},material:{id:'live-stone'}});
+  assert.ok(row.querySelectorAll('input').some(input=>input.type==='color'),'live dialog keeps tint available');
+  assert.ok(row.querySelector('[data-slot-u]')&&row.querySelector('[data-slot-v]')&&row.querySelector('[data-slot-rotation]'),'live dialog exposes the shared UV controls');
+  for(const name of ['Paving','Mulch','Patio concrete','Fence','Pool interior','Pool waterline','Pool coping'])
+   assert.ok(materials.querySelector(`[data-library-slot="${name}"]`),'live dialog exposes '+name);
   document.elementFromPoint=()=>row.querySelector('[data-slot-name]');
   const dragged=el('library-entries').querySelector('[data-material="drop-stone"]');
   dragged.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:57,clientX:100,clientY:100,bubbles:true,cancelable:true}));

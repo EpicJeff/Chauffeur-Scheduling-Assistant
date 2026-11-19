@@ -255,7 +255,8 @@ def _wall_view(page, building, wall, room):
                                     middle[1] + normal[1] * 24, z + 2], [*middle, z])
     page.locator('#editor-view-menu > summary').click()
     page.click('[data-editor-lighting="day"]')
-    page.locator('#editor-view-menu > summary').click()
+    # Toolbar actions close their own menu. Reopening it covers the dock tabs.
+    page.locator('#editor-view-menu').evaluate('(n) => { if(n.open) throw Error("View action left its menu open"); }')
     _settled(page)
     points = []
     for height in (.55, .8, .3, .94):

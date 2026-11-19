@@ -84,6 +84,20 @@ await test('swatch reports a rejected catalogue reveal',async()=>{
  await click(failed.element.querySelector('[data-slot-swatch]'));
  assert.deepEqual(errors,['Catalogue unavailable']);failed.dispose();window.showGlobalAlert=previous;
 });
+await test('inherited_styling_only_disables_the_name_and_offsets_obey_readonly_and_disposal',async()=>{
+ const previous=selected,calls=[];let uv=null,locked=false;
+ const slot=createSlotRow({label:'Floor',library,accepts:e=>e.kind==='material',current:()=>stone,apply:e=>calls.push(e),
+  clear:()=>{},inherited:()=>true,readOnly:()=>locked,offset:{value:()=>uv,set:value=>{uv=value;calls.push(value);},clear:()=>{uv=null;calls.push(null);}}});
+ const name=slot.element.querySelector('[data-slot-name]'),u=slot.element.querySelector('[data-slot-u]');
+ assert.equal(name.getAttribute('aria-disabled'),'true');assert.equal(slot.element.getAttribute('aria-disabled'),null);
+ select(stone);assert.equal(slot.element.querySelector('[data-slot-use]').disabled,false);
+ assert.equal(u.getAttribute('aria-label'),'Floor U offset');
+ u.value='-.05';await fire(u,'change');assert.deepEqual(uv,{u:.95,v:0,rot:0});
+ locked=true;slot.refresh();assert.equal(u.disabled,true);u.value='.5';await fire(u,'change');assert.equal(calls.length,1);
+ locked=false;slot.dispose();await fire(u,'change');assert.equal(calls.length,1);
+ const readOnly=createSlotRow({label:'Floor',library,accepts:()=>true,current:()=>stone,readOnly:true,
+  offset:{value:()=>uv,set:()=>{},clear:()=>{}}});assert.equal(readOnly.element.querySelector('[data-slot-u]'),null);readOnly.dispose();select(previous);
+});
 await test('dispose releases selection subscription and controls',async()=>{
  const button=use(),before=calls.length;row.dispose();select(stone);assert.equal(button.disabled,true);assert.equal(subscribers.size,0);
  await click(button);assert.equal(calls.length,before,'disposed row does not assign');

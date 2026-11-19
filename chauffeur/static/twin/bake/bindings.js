@@ -1,0 +1,158 @@
+// Project the stable bake topology onto the drawn material batches. Most faces
+// are exact matches. Coplanar roof finish territories can retriangulate: clip
+// those triangles against the neutral triangles, interpolating only attributes.
+// Thus chart IDs/ownership and the geometry used by the baker never move.
+import * as THREE from '../../vendor/three-r187/three.module.js';
+
+const pointKey = p => p.toArray().map(x => Math.round(x * 1e5)).join(',');
+const faceKey = (role, p) => role + ':' + p.map(pointKey).sort().join('|');
+const cell = 4;
+const bindings = new WeakMap();
+const compound = new WeakSet();
+function domain(mesh, role=true) {
+  const names=[];
+  for(let p=mesh;p;p=p.parent)if(p.name && !p.isScene)names.push(p.name);
+  return JSON.stringify([role?mesh.material.name:'@yard',mesh.userData.yardPart||null,names]);
+}
+function cells(points) {
+  const lo = [0,1,2].map(i => Math.floor((Math.min(...points.map(p => p.getComponent(i))) - 1e-5) / cell));
+  const hi = [0,1,2].map(i => Math.floor((Math.max(...points.map(p => p.getComponent(i))) + 1e-5) / cell));
+  const out=[];
+  for(let x=lo[0];x<=hi[0];x++)for(let y=lo[1];y<=hi[1];y++)for(let z=lo[2];z<=hi[2];z++)out.push(`${x},${y},${z}`);
+  return out;
+}
+function overlap(points, target) {
+  const normal = new THREE.Triangle(...target).getNormal(new THREE.Vector3());
+  const own = new THREE.Triangle(...points).getNormal(new THREE.Vector3());
+  if (normal.dot(own) < .99999 || points.some(p=>Math.abs(p.clone().sub(target[0]).dot(normal))>2e-5)) return [];
+  let polygon=points;
+  for(let e=0;e<3 && polygon.length>=3;e++) {
+    const a=target[e], edge=target[(e+1)%3].clone().sub(a);
+    const distance=p=>edge.clone().cross(p.clone().sub(a)).dot(normal);
+    const next=[];
+    for(let i=0;i<polygon.length;i++) {
+      const p=polygon[i],q=polygon[(i+1)%polygon.length],dp=distance(p),dq=distance(q);
+      if(dp>=-1e-10)next.push(p);
+      if(dp>1e-10 && dq < -1e-10 || dp < -1e-10 && dq>1e-10)next.push(p.clone().lerp(q,dp/(dp-dq)));
+    }
+    polygon=next;
+  }
+  return polygon;
+}
+
+export function bindReceivers(atlas, meshes) {
+  const sourceMeshes=[...new Set(atlas.room.charts.flatMap(c=>[c.mesh,...(c.proxies||[]).map(p=>p.mesh)]))];
+  const sameArray=(a,b)=>a?.length===b?.length && a.every((v,i)=>v===b[i]);
+  const matched=new Map(),unused=new Set(meshes);
+  for(const source of sourceMeshes) {
+    const match=[...unused].find(m=>domain(m)===domain(source) &&
+      sameArray(m.matrixWorld.elements,source.matrixWorld.elements) &&
+      sameArray(m.geometry.attributes.position.array,source.geometry.attributes.position.array) &&
+      sameArray(m.geometry.attributes.normal?.array,source.geometry.attributes.normal?.array));
+    if(!match)break;matched.set(source,match);unused.delete(match);
+  }
+  if(matched.size===sourceMeshes.length && !unused.size) {
+    for(const [source,mesh] of matched)for(const name of ['uv3','lmRoom','lmLightPage']) {
+      const attr=source.geometry.attributes[name];if(attr)mesh.geometry.setAttribute(name,attr.clone());
+    }
+    for(const chart of atlas.room.charts){chart.mesh=matched.get(chart.mesh);
+      if(chart.proxies)chart.proxies=chart.proxies.map(p=>({...p,mesh:matched.get(p.mesh)}));
+      bindings.set(chart.faces,[{mesh:chart.mesh,faces:chart.faces},...(chart.proxies||[]).map(p=>({...p,proxy:true}))]);}
+    atlas.transportMeshes=meshes;
+    return atlas;
+  }
+  const exact=new Map(), grid=new Map(), records=[];
+  for(const chart of atlas.room.charts) {
+    Object.defineProperty(chart,'receivers',{value:[], configurable:true});
+    bindings.set(chart.faces,chart.receivers);
+    compound.add(chart.faces);
+    for(const part of [{mesh:chart.mesh,faces:chart.faces},...(chart.proxies||[])]) {
+      const g=part.mesh.geometry,role=domain(part.mesh);
+      for(const f of part.faces) {
+        const points=[0,1,2].map(k=>new THREE.Vector3().fromBufferAttribute(g.attributes.position,f*3+k).applyMatrix4(part.mesh.matrixWorld));
+        const uv=[0,1,2].map(k=>new THREE.Vector2().fromBufferAttribute(g.attributes.uv3,f*3+k));
+        const record={chart,points,uv,proxy:part.mesh!==chart.mesh || part.faces!==chart.faces,
+          normal:new THREE.Triangle(...points).getNormal(new THREE.Vector3())};
+        records.push(record);
+        const key=faceKey(role,points);
+        if(!exact.has(key))exact.set(key,[]);exact.get(key).push(record);
+        record.role=role;
+        if(part.mesh.userData.yardPart){record.alias=domain(part.mesh,false);const key=faceKey(record.alias,points);
+          if(!exact.has(key))exact.set(key,[]);exact.get(key).push(record);}
+      }
+    }
+  }
+  for(const mesh of meshes) {
+    const old=mesh.geometry,attrs=Object.entries(old.attributes).filter(([k])=>!['uv3','lmRoom','lmLightPage','uv2','lmSkyPage'].includes(k));
+    const output=attrs.map(()=>[]),uv=[],rooms=[],pages=[],byChart=new Map(),inverse=mesh.matrixWorld.clone().invert();
+    const bary=new THREE.Vector3(),world=new THREE.Vector3();let written=0;
+    const emit=(points,record,original,indices)=>{
+      const triangle=new THREE.Triangle(...original),target=record&&new THREE.Triangle(...record.points);
+      for(let i=1;i+1<points.length;i++) {
+        const tri=[points[0],points[i],points[i+1]];
+        if(new THREE.Triangle(...tri).getArea()<1e-12)continue;
+        if(record){if(!byChart.has(record.chart))byChart.set(record.chart,{main:[],proxy:[]});
+          byChart.get(record.chart)[record.proxy?'proxy':'main'].push(written/3);}
+        for(const p of tri) {
+          triangle.getBarycoord(p,bary);
+          const originalIndex=original.indexOf(p);
+          attrs.forEach(([name,a],j)=>{
+            if(originalIndex>=0)for(let k=0;k<a.itemSize;k++)output[j].push(a.getComponent(indices[originalIndex],k));
+            else if(name==='position'){world.copy(p).applyMatrix4(inverse);output[j].push(...world.toArray());}
+            else for(let k=0;k<a.itemSize;k++)output[j].push(bary.x*a.getComponent(indices[0],k)+bary.y*a.getComponent(indices[1],k)+bary.z*a.getComponent(indices[2],k));
+          });
+          if(record){target.getBarycoord(p,bary);uv.push(...new THREE.Vector2().addScaledVector(record.uv[0],bary.x).addScaledVector(record.uv[1],bary.y).addScaledVector(record.uv[2],bary.z).toArray());}
+          else uv.push(0,0);
+          rooms.push(record?.chart.room??-1);pages.push(record?.chart.page??-1);written++;
+        }
+      }
+    };
+    for(let f=0;f<old.attributes.position.count/3;f++) {
+      const indices=[f*3,f*3+1,f*3+2],points=indices.map(i=>new THREE.Vector3().fromBufferAttribute(old.attributes.position,i).applyMatrix4(mesh.matrixWorld));
+      const normal=new THREE.Triangle(...points).getNormal(new THREE.Vector3());
+      const role=domain(mesh),alias=mesh.userData.yardPart&&domain(mesh,false);
+      const direct=(exact.get(faceKey(role,points))||alias&&exact.get(faceKey(alias,points)))?.find(r=>r.normal.dot(normal)>.99999);
+      if(direct){emit(points,direct,points,indices);continue;}
+      if(!grid.size)for(const record of records)for(const c of cells(record.points)) {
+        const key=record.role+':'+c;if(!grid.has(key))grid.set(key,[]);grid.get(key).push(record);
+        if(record.alias){const key=record.alias+':'+c;if(!grid.has(key))grid.set(key,[]);grid.get(key).push(record);}
+      }
+      const candidates=new Set(cells(points).flatMap(c=>grid.get(role+':'+c)||alias&&grid.get(alias+':'+c)||[]));
+      let found=false;
+      for(const record of candidates) {
+        const polygon=overlap(points,record.points);
+        if(polygon.length<3)continue;
+        emit(polygon,record,points,indices);found=true;
+      }
+      if(!found)emit(points,null,points,indices);
+    }
+    const geometry=new THREE.BufferGeometry();
+    attrs.forEach(([name,a],j)=>geometry.setAttribute(name,new THREE.Float32BufferAttribute(output[j],a.itemSize,a.normalized)));
+    geometry.setAttribute('uv3',new THREE.Float32BufferAttribute(uv,2));
+    geometry.setAttribute('lmRoom',new THREE.Float32BufferAttribute(rooms,1));
+    geometry.setAttribute('lmLightPage',new THREE.Float32BufferAttribute(pages,1));
+    geometry.userData={...old.userData};mesh.geometry=geometry;old.dispose();
+    for(const [chart,groups] of byChart)for(const [kind,faces] of Object.entries(groups))if(faces.length)
+      chart.receivers.push({mesh,faces,proxy:kind==='proxy'});
+  }
+  return atlas;
+}
+
+export function materialParts(chart) { return bindings.get(chart.faces) || [{mesh:chart.mesh,faces:chart.faces},...(chart.proxies||[])]; }
+export const boundMaterials = chart => bindings.has(chart.faces);
+export function chartReflectance(chart) {
+  if(!compound.has(chart.faces)) {
+    const c=chart.mesh.material.color;return c?(c.r+c.g+c.b)/3:.5;
+  }
+  let sum=0,area=0;
+  for(const {mesh,faces,proxy} of materialParts(chart)) {
+    if(proxy)continue;
+    const p=mesh.geometry.attributes.position,c=mesh.material.color;
+    const reflectance=c?(c.r+c.g+c.b)/3:.5;
+    for(const f of faces) {
+      const tri=new THREE.Triangle(...[0,1,2].map(k=>new THREE.Vector3().fromBufferAttribute(p,f*3+k).applyMatrix4(mesh.matrixWorld)));
+      const a=tri.getArea();area+=a;sum+=a*reflectance;
+    }
+  }
+  return area?sum/area:.5;
+}

@@ -6,10 +6,13 @@ import { applyObject, bakeMatrix, fitOpening, objectShown, objectMaterialKey } f
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { kitMaterial, materialSlot, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, alphaModeOf, copyMaterialParams } from './twin_library.js';
+import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, alphaModeOf, copyMaterialParams } from './twin_library.js';
+import { resolveSurfaceMaterial } from './surface_material.js';
+import { withoutSurfaceMaterials } from './bake/geometry_key.js';
+import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry } from './bake/source.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
-import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
+import { roofMesh, heightAt, stepFaces, endKind, planes } from './twin_roof.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
 import { PORCH_SLAB_FT, POST_SLAB_FT, porchFoundation, porchOnGrade, porchSupportGeometry, porchPlinthGeometry } from './twin_porch_foundation.js';
@@ -95,7 +98,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
     mesh.userData.snapRanges = entries.flatMap(e => {
       const d = e.mesh.userData, count = e.geometry.attributes.position.count;
       const ranges = d.snapRanges?.map(r => ({...r, start: r.start + start}))
-        || [{start, count, kind: d.kind, visibilityKind: d.visibilityKind, pieceId: d.pieceId, parentPieceId: d.parentPieceId, buildingId: d.buildingId, part: d.part, ghost: d.ghost, terrain: d.terrain}];
+        || [{start, count, kind: d.kind, visibilityKind: d.visibilityKind, pieceId: d.pieceId, parentPieceId: d.parentPieceId, buildingId: d.buildingId, part: d.part, bakePart:d.bakePart, ghost: d.ghost, terrain: d.terrain}];
       start += count; return ranges;
     });
     geometry.userData.snapRanges = mesh.userData.snapRanges;
@@ -292,6 +295,8 @@ function materialKitWithRefs(kit, refs) {
     const source = kit.materials?.[ref.id] || kit.materials?.[role];
     materialKit.materials[role] = { ...source, color: ref.color || (known[ref.id]?.household ? undefined : source?.color),
       asset: known[ref.id] ? ref.id : source?.asset };
+    if (known[ref.id]?.household) materialKit.materials[role].id = ref.id;
+    else if (known[ref.id]) delete materialKit.materials[role].id;
   }
   return materialKit;
 }
@@ -345,6 +350,9 @@ function buildingKeyParts(plan, b, kit, tier, { viewing = false, showAnchors = f
   // Flat sections include dormers and every part of a split model roof.
   // Their Library revisions must invalidate retained materials as room slots do.
   for (const s of b.roof?.sections || []) if (s.material) finishes.push(resolved('roof', s.material));
+  for (const s of b.roof?.sections || []) for (const [edge, ref] of Object.entries(s.plane_materials || {}))
+    finishes.push(['roof-plane', s.id, edge, resolved('roof', resolveSurfaceMaterial(plan,
+      {role:'roof', building:b, level:(b.levels || []).find(l => l.id === s.level), ref, parents:[s.material], kit}).ref)]);
   for (const item of [...(b.openings || []), ...porches, ...(b.stairs || []), ...(b.fixtures || []), ...(b.items || []).filter(i => i.rect)])
     for (const [kind, slot] of Object.entries(item.materials || {}))
       if (slot && kindRow(kind)) finishes.push(['item-surface', item.id, kind, resolved(kind, slot)]);
@@ -466,6 +474,12 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
   next.updateGhosts = () => { for (const entry of next.buildings.values()) entry.model.updateGhosts(); };
   next.buildingsReused = reused; next.buildingsRebuilt = rebuilt;
   if (opts.timing) { opts.timing.buildings_reused = reused; opts.timing.buildings_rebuilt = rebuilt; }
+  if (!opts.bakeSource) {
+    const owned=[...root.children,...[...next.buildings.values()].map(entry=>entry.model.root),...Object.values(groups.levels)];
+    registerBakeSource(root, () => !opts.editableLevel && defaultBuildingFinishes(plan,kit) ? cloneBakeGeometry(root,owned)
+      : buildTwin(withoutSurfaceMaterials(plan), {...kit,manifest:{}}, tier,
+        {viewing: !!opts.viewing, bakeSource: true}).root, {children:owned});
+  }
   return next;
 }
 
@@ -508,30 +522,58 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   for (const b of plan.buildings || []) {
     const buildingStart = timing ? performance.now() : 0;
     const buildingMaterials = detail?.materials || 0, buildingBatch = detail?.batch || 0;
-    const materialKit = material(() => materialKitFor({ ...plan.materials, ...b.materials }));
-    const mat = (role, level = null, override = null) => material(() => {
-      const ref = override || level?.materials?.[role];
-      const look = ref || b.materials?.[role] || plan.materials?.[role];
-      if (look && Object.hasOwn(BUILTIN_LOOKS, look.id))
+    const materialKit = material(() => materialKitFor(Object.fromEntries(
+      [...new Set([...Object.keys(plan.materials || {}), ...Object.keys(b.materials || {})])]
+        .map(role => [role, resolveSurfaceMaterial(plan, {role, building:b, kit}).ref]))));
+    const surfaceRef = (role, level = null, ref = null, extra = {}) =>
+      resolveSurfaceMaterial(plan, { role, building: b, level, ref, kit, ...extra }).ref;
+    const mat = (role, level = null, override = null, extra = {}) => material(() => {
+      const ref = surfaceRef(role, level, override, extra);
+      // UVs belong to the geometry; neither the cache nor a shared material
+      // records the slot that happened to request it.
+      const look = { id: ref.id, ...(ref.color !== undefined ? { color: ref.color } : {}) };
+      if (Object.hasOwn(BUILTIN_LOOKS, look.id))
         return materialSlot(look, role, materialKit, tier, materials, mat);
-      const key = ref ? JSON.stringify([role, ref, materialKit.materials[role]])
-        : Object.hasOwn(b.materials || {}, role) ? JSON.stringify([b.id, role]) : role;
-      if (!materials.has(key)) materials.set(key, kitMaterial(role,
-        ref ? materialKitFor({ ...plan.materials, ...b.materials, [role]: ref }) : materialKit, tier));
+      const resolvedKit = materialKitFor({ [role]: look });
+      const key = materialKey(resolvedKit.materials[role] || {}, role, tier, manifest(kit));
+      // Retain the public role aliases used by view/reuseMaterials callers.
+      // They point into the resolved cache; a slot's authorship is never an
+      // instance key and cannot create another batch.
+      const defaultRequest = !override && !level?.materials?.[role] && !extra.parents;
+      const alias = Object.hasOwn(b.materials || {}, role) ? JSON.stringify([b.id, role]) : role;
+      if (!materials.has(key) && defaultRequest && materials.has(alias)) materials.set(key, materials.get(alias));
+      if (!materials.has(key)) materials.set(key, kitMaterial(role, resolvedKit, tier));
+      if (defaultRequest) materials.set(alias, materials.get(key));
       return materials.get(key);
     });
+    const kindResolution = (kind, item = null) => {
+      const fallback = kindRow(kind).fallback;
+      const level = b.levels.find(l => l.id === (item?.level || b.walls?.find(w => w.id === item?.wall)?.level));
+      return resolveSurfaceMaterial(plan, {role:kind, building:b, level, kit,
+          ref:kind === 'ceiling' ? item?.ceiling_material : item?.materials?.[kind],
+          fallback: fallback.role ? resolveSurfaceMaterial(plan, {role:fallback.role, building:b,
+          level:kind === 'garage_door' ? level : null, kit}) : null,
+          defaultRef:{ id: fallback.builtin || fallback.look || 'ceramic' } });
+    };
+    const kindRef = (kind, item = null) => kindResolution(kind, item).ref;
     const resolveKindMat = (kind, item = null) => material(() => {
       const row = kindRow(kind), fallback = row.fallback;
       const levelId = item?.level || b.walls?.find(w => w.id === item?.wall)?.level;
       const level = b.levels.find(l => l.id === levelId);
       // A person's existing per-fixture colour wins over a house default.
       const own = item?.materials?.[kind];
-      if (!own && kind === 'cabinet' && item?.body) return plain('cabinet', item.body);
-      if (!own && kind === 'counter' && item?.top) return plain('counter', item.top);
+      if (!own?.id && kind === 'cabinet' && item?.body) return plain('cabinet', own?.color || item.body);
+      if (!own?.id && kind === 'counter' && item?.top) return plain('counter', own?.color || item.top);
       // Existing role defaults already resolve through mat. Keep their shared
       // instances (notably roof covering and standing seams) and legacy tint.
       if (!own && (fallback.role === kind || kind === 'counter')) return mat(kind, level);
-      const slot = (kind === 'ceiling' && item?.ceiling_material) || resolveSlot(kind, { item, building: b, level });
+      const chosen = (kind === 'ceiling' && item?.ceiling_material) || resolveSlot(kind, { item, building: b, level }) || plan.materials?.[kind];
+      const resolution = chosen ? kindResolution(kind, item) : null, slot = resolution?.ref;
+      if (slot && resolution.source.kind === 'kit' && !fallback.role && fallback.look && !kit.materials?.[slot.id] && !manifest(kit)[slot.id]
+          && slot.id === fallback.look) {
+        if (kind === 'counter') return mat('counter', level, slot);
+        return plain(kind === 'cabinet' ? 'cabinet' : 'ceramic', slot.color || (kind === 'cabinet' ? '#3a4a52' : '#f4f4f2'));
+      }
       if (!slot) {
         if (fallback.role) return mat(fallback.role, kind === 'garage_door' ? level : null);
         if (fallback.builtin) return fallback.builtin === 'screen' ? screen : glass;
@@ -542,6 +584,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const mode = Object.hasOwn(BUILTIN_LOOKS, slot.id) ? builtinAlphaMode(slot.id) : alphaModeOf(known[slot.id] || known[ref?.id || ref?.asset], ref);
       const name = kind === 'pane' || kind === 'shower_glass' ? (mode === 'opaque' ? 'pane' : 'glass')
         : fallback.role || (kind === 'shower_tile' ? 'ceramic' : kind);
+      if (fallback.role || kind === 'counter') return mat(name, level, slot);
       // materialSlot's legacy alias cache keeps its original role. Namespace
       // this receiving role so a kit alias in a pane cannot rename a wall.
       const prefix = 'surface-kind:' + name + ':';
@@ -611,8 +654,22 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       }
     }
     const sections = b.roof?.sections || [];
-    const envelope = roofMesh(sections);
+    const roofSidePlanes = sections.map(planes);
+    const roofLevel = section => levels[section.level] || [...ordered].reverse().find(l => l.elevation + .5 < section.plate);
+    const roofRef = (section, edge = null) => surfaceRef('roof', roofLevel(section),
+      edge === null || edge < 0 ? null : section.plane_materials?.[String(edge)],
+      { parents: [section.material, section.materials?.roof] });
+    const roofIdentities = new Map();
+    const roofIdentity = face => {
+      const key = `${face.section}:${face.edge}`;
+      if (roofIdentities.has(key)) return roofIdentities.get(key);
+      const section = sections[face.section], ref = roofRef(section, face.edge);
+      const identity = JSON.stringify([mat('roof', roofLevel(section), ref).uuid, ref.uv || null]);
+      roofIdentities.set(key, identity); return identity;
+    };
+    const envelope = roofMesh(sections, { materialKey: roofIdentity });
     const outlines = new Map(ordered.map(l => [l.id, l.outline?.length >= 3 ? [l.outline] : footprints(b.walls.filter(w => w.level === l.id))]));
+    const uvParts = [];
     // This belongs to the lowest floor domain, including its viewing fade and
     // peel. Its finish never inherits siding or room wall materials.
     const foundation = foundationShape(plan, b);
@@ -624,7 +681,12 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const slab = b.foundation?.materials?.slab;
       const finish = material(() => materialSlot(slab, 'patio_concrete', materialKit, tier, materials, mat));
       const add = geometry => {
-        if (slab) offsetSurfaceUvs(geometry, finish, `${b.id}:foundation`);
+        const uv = surfaceRef('patio_concrete', null, slab).uv;
+        if (slab || uv) {
+          const seed = `${b.id}:foundation`;
+          if (uv) uvParts.push({geometry,material:finish,seed,offset:uv,key:seed});
+          else offsetSurfaceUvs(geometry, finish, seed);
+        }
         addMesh(local[first.id], geometry, finish);
       };
       // The slab stops just under the floor finish, like every upper slab, so the two never share a plane.
@@ -653,25 +715,31 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       .flatMap(l => floorCutters.get(l.id)));
     // Retained lower roofs serve walls under overhangs, never upper rooms;
     // the visible envelope remains above occupied attic outlines.
-    const roofLayers = roofMesh(sections, { retainLower: true, exclude });
+    const roofLayers = roofMesh(sections, { retainLower: true, exclude, materialKey: roofIdentity });
     const visibleRoof = envelope;
     const storeyRoofs = new Map(ordered.map(l => {
       const own = sections.filter(s => l.elevation + 0.5 < s.plate && s.plate <= l.elevation + l.ceiling + 2);
       return [l.id, { sections: own,
         positions: new Float32Array([...roofMesh(own).positions, ...envelope.positions]) }];
     }));
-    let activePiece = null;
+    let activePiece = null, activeSurface = null;
     const records = new Map(), wallProfiles = new Map();
-    const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || fallback, kind, visibilityKind: piece.device ? 'device' : piece.object_kind === 'lamp' ? 'fixture' : undefined, buildingId: b.id, ghost: piece.state === 'ghost' }; };
+    const use = (piece, kind, fallback) => { activeSurface = piece; activePiece = { pieceId: piece.id || fallback, kind, visibilityKind: piece.device ? 'device' : piece.object_kind === 'lamp' ? 'fixture' : undefined, buildingId: b.id, ghost: piece.state === 'ghost' }; };
     // seed: a random-offset origin shared by several pieces (one per level for floors).
-    const mesh = (group, geometry, material, retained = null, seed = null) => {
+    const mesh = (group, geometry, material, retained = null, seed = null, ref = null, part = '') => {
       const data = activePiece || { pieceId: 'structure', kind: 'building', buildingId: b.id };
       const key = `${b.id}:${data.pieceId}`;
       // A random-offset material shifts this piece's base uv by its own seed, before batching.
-      if (!retained && !data.ghost && activePiece) offsetSurfaceUvs(geometry, material, seed || key);
+      if ((!retained || ref?.uv) && !data.ghost && activePiece) {
+        const uv = (ref || surfaceRef(material.name, levels[activeSurface?.level])).uv;
+        if (uv) uvParts.push({geometry, material, seed: seed || key, offset: uv,
+          key: JSON.stringify([part.startsWith('roof-plane:') ? b.id : key, part || material.name, uv])});
+        else offsetSurfaceUvs(geometry, material, seed || key);
+      }
       const object = retained || addMesh(group, geometry, data.ghost ? ghost : material);
       if (retained && data.ghost) object.material = ghost;
       Object.assign(object.userData, data);
+      if(part && !geometry.userData.bakePlaneSurface)object.userData.bakePart=part;
       if (!pieces.has(key)) pieces.set(key, []);
       const objects = pieces.get(key); objects.push(object);
       // Non-enumerable: this back-reference is used only while merging.
@@ -751,20 +819,20 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         cuts.push(...crossings); cuts.sort((a, c) => a - c);
       }
       const wallMat = role ? mat(role) : mat(exterior ? 'siding' : 'interior_wall');
-      const panel = (geo, material) => {
-        if (!profile.cutaway) return mesh(group, geo.applyMatrix4(matrix), material);
+      const panel = (geo, material, ref = null, side = '') => {
+        if (!profile.cutaway) return mesh(group, geo.applyMatrix4(matrix), material, null, null, ref, side);
         // Cut variants have plain solid tops, without cladding relief. Batch
         // these triangles into one plan-tone draw per floor at construction.
         const parts = { side: [], top: [] }, normal = geo.attributes.normal;
         for (let i = 0; i < normal.count; i += 3)
           parts[normal.getY(i) > .9 ? 'top' : 'side'].push(i, i + 1, i + 2);
-        for (const [side, indices] of Object.entries(parts)) if (indices.length) {
+        for (const [face, indices] of Object.entries(parts)) if (indices.length) {
           const part = new THREE.BufferGeometry();
           for (const [name, attr] of Object.entries(geo.attributes))
             part.setAttribute(name, new THREE.Float32BufferAttribute(indices.flatMap(i =>
               Array.from({ length: attr.itemSize }, (_, c) => attr.getComponent(i, c))), attr.itemSize));
-          mesh(group, part.applyMatrix4(matrix), side === 'top'
-            ? plain('viewing_wall_top', '#a6a59b') : material);
+          mesh(group, part.applyMatrix4(matrix), face === 'top'
+            ? plain('viewing_wall_top', '#a6a59b') : material, null, null, face === 'top' ? {} : ref, side || face);
         }
         geo.dispose();
       };
@@ -815,7 +883,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           if (profile.footprint && !role) {
             for (const [side, geo] of footprintPanel(profile.footprint, a, c, lo, ta, tc)) {
               separateRoofContact(geo, a, c, top(a, mid), top(c, mid), 0, true);
-              panel(geo, profile.materials[side] || wallMat);
+              panel(geo, profile.materials[side] || wallMat, profile.refs?.[side], side);
             }
             continue;
           }
@@ -835,14 +903,15 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
                 const values = indices.flatMap(i => Array.from({ length: attr.itemSize }, (_, c) => attr.getComponent(i, c)));
                 part.setAttribute(name, new THREE.Float32BufferAttribute(values, attr.itemSize));
               }
-              panel(part, profile.materials[side] || wallMat);
+              panel(part, profile.materials[side] || wallMat, profile.refs?.[side], side);
             }
             geo.dispose();
           } else panel(geo, wallMat);
         }
       }
       const sign = profile.sign || Math.sign(z.dot(new THREE.Vector3((from[0] + to[0]) / 2 - center[0], 0, -(from[1] + to[1]) / 2 + center[1]))) || 1;
-      const localBox = (u, v, w, h, d, material, faceOffset = 0) => mesh(group, boxGeometry(w, h, d).translate(u, v, offset + faceOffset).applyMatrix4(matrix), material);
+      const localBox = (u, v, w, h, d, material, faceOffset = 0, ref = null, part = '') => mesh(group,
+        boxGeometry(w, h, d).translate(u, v, offset + faceOffset).applyMatrix4(matrix), material, null, null, ref, part);
       if (!profile.cutaway && exterior && (profile.sidingAsset || materialKit.materials.siding?.asset) === 'board_and_batten' && !role) {
         for (let u = 0.5; u < length; u += 1) {
           let intervals = [[profile.bottom?.(u) ?? 0, Infinity]];
@@ -858,20 +927,21 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
             const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.09, bevelEnabled: false, steps: 1 });
             separateRoofContact(geo, a, c, top(a, mid), top(c, mid), offset + sign * (thickness / 2 + 0.045) - 0.045);
             geo.translate(0, 0, offset + sign * (thickness / 2 + 0.045) - 0.045).applyMatrix4(matrix);
-            mesh(group, geo, profile.materials?.[sign > 0 ? 'right' : 'left'] || wallMat);
+            const side = sign > 0 ? 'right' : 'left';
+            mesh(group, geo, profile.materials?.[side] || wallMat, null, null, profile.refs?.[side], side);
           }
         }
       }
-      const wallPiece = activePiece;
+      const wallPiece = activePiece, wallSurface = activeSurface;
       for (const h of holes) {
         if (h.kind === 'passage') continue;
         use({ ...h, state: wallPiece.ghost ? 'ghost' : h.state }, 'opening', `opening:${h.wall || h.section}:${h.u0}`);
         const width = h.u1 - h.u0, height = h.v1 - h.v0, cu = (h.u0 + h.u1) / 2, cv = (h.v0 + h.v1) / 2;
         const openingBox = (part, u, v, w, height, depth, faceOffset = 0) =>
-          tagPart(localBox(u, v, w, height, depth, kindMat(part, h), faceOffset), part);
+          tagPart(localBox(u, v, w, height, depth, kindMat(part, h), faceOffset, kindRef(part, h), part), part);
         if (h.model) {
           // The hole above has already been cut using opening dimensions alone.
-          const placeholder = localBox(cu, cv, width, height, Math.min(thickness, .08), kindMat('window_frame', h));
+          const placeholder = localBox(cu, cv, width, height, Math.min(thickness, .08), kindMat('window_frame', h), 0, kindRef('window_frame', h), 'window_frame');
           if (placeholder) placeholder.userData.pendingImport = true;
           const openingData = activePiece;
           pendingModels.push(loadModel(h.model, kit, undefined, { tier, editor: !viewing, onFailure: onAssetFailure }).then(source => {
@@ -927,7 +997,8 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           const doorLevel = h.level || b.walls.find(w => w.id === h.wall)?.level;
           placement.add(door); (local[doorLevel] || group).add(placement);
           door.updateWorldMatrix(true, true);
-          for (const object of door.children) tagPart(mesh(group, object.geometry, object.material, object), object.userData.part);
+          for (const object of door.children) tagPart(mesh(group, object.geometry, object.material, object, null,
+            kindRef(object.userData.part, h), object.userData.part), object.userData.part);
         } else {
           for (let i = 1; i < (h.panels || 1); i++) openingBox('window_frame', h.u0 + width * i / h.panels, cv, fw, height, 0.22);
           if (h.split === 'double_hung') openingBox('window_frame', cu, cv, width, fw, 0.22);
@@ -948,6 +1019,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         localBox(cu, sill + height / 2, width, height, 0.08, ghost, sign * (thickness / 2 + 0.05));
       }
       activePiece = wallPiece;
+      activeSurface = wallSurface;
     }
     const opening = (o, at = o.at) => ({ ...o, u0: at - o.width / 2, u1: at + o.width / 2, v0: o.sill, v1: o.head });
     const ownsGable = (w, section, end) => {
@@ -1012,18 +1084,25 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         slabOutlines: above,
         extendStart: extension(w.from), extendEnd: extension(w.to), faces, limits, positions: storeyRoof.positions,
         edges: above.flatMap(poly => poly.map((p, i) => [p, poly[(i + 1) % poly.length]])), panels: [] };
-      const sideMaterial = side => {
+      const sideRef = side => {
         const direction = side === 'left' ? 1 : -1;
         const mid = [(w.from[0] + w.to[0]) / 2 - direction * dy * (w.thickness / 2 + 0.05),
           (w.from[1] + w.to[1]) / 2 + direction * dx * (w.thickness / 2 + 0.05)];
         const outside = w.exterior && (side === 'right' ? sign > 0 : sign < 0);
         const room = outside ? null : (b.rooms || []).find(r => r.level === w.level && r.state !== 'ghost' && contains(r.polygon, mid));
-        return mat(outside ? 'siding' : 'interior_wall', l, w.faces?.[side] || room?.wall_material);
+        const role = outside ? 'siding' : 'interior_wall';
+        return {role, ref:surfaceRef(role, l, w.faces?.[side], {room, roomRole:'wall'})};
       };
-      if (w.footprint || w.faces || l.materials || (b.rooms || []).some(r => r.level === w.level && r.wall_material))
-        profile.materials = { body: mat(w.exterior ? 'siding' : 'interior_wall', l), left: sideMaterial('left'), right: sideMaterial('right') };
-      const sidingRef = w.faces?.[sign > 0 ? 'right' : 'left'] || l.materials?.siding;
-      if (sidingRef) profile.sidingAsset = materialKitFor({ ...plan.materials, ...b.materials, siding: sidingRef }).materials.siding?.asset;
+      if (w.footprint || w.faces || l.materials || (b.rooms || []).some(r => r.level === w.level && r.wall_material)) {
+        const left = sideRef('left'), right = sideRef('right'), role = w.exterior ? 'siding' : 'interior_wall';
+        profile.materials = { body: mat(role, l), left: mat(left.role, l, left.ref), right: mat(right.role, l, right.ref) };
+        profile.refs = {body:surfaceRef(role, l), left:left.ref, right:right.ref};
+      }
+      // A UV/tint-only face still inherits its asset. Reading the raw partial
+      // ref here would substitute kit siding and add procedural boards to a
+      // wall whose inherited household finish has no board geometry.
+      const sidingRef = sideRef(sign > 0 ? 'right' : 'left').ref;
+      profile.sidingAsset = materialKitFor({siding:sidingRef}).materials.siding?.asset;
       if (w.footprint?.length === 4) profile.footprint = w.footprint.map(p => {
         const x = p[0] - w.from[0], y = p[1] - w.from[1];
         return [x * dx + y * dy, x * dy - y * dx];
@@ -1057,6 +1136,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     }
     const roofGeometry = positions => {
       const geometry = new THREE.BufferGeometry(), mapped = [], uv = [];
+      geometry.userData.bakePlaneSurface=true;
       for (let i = 0; i < positions.length; i += 3) {
         // This is a rotation, with determinant +1: upward winding survives.
         mapped.push(positions[i], positions[i + 2], -positions[i + 1]);
@@ -1067,7 +1147,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       geometry.computeVertexNormals(); return geometry;
     };
     // Retain the actual envelope geometry for diagnostics after it is merged.
-    roofSurfaces.set(b.id, { sections, positions: envelope.positions, section: envelope.section });
+    roofSurfaces.set(b.id, { sections, positions: envelope.positions, section: envelope.section, side: envelope.side, edge: envelope.edge });
     for (const {zone,panels} of solarZones(b,envelope)) {
       const positions=[];
       for(const rect of panels){const corners=solarRect(rect).map(p=>solarPoint(zone.plane,p,.15));
@@ -1082,10 +1162,17 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     for (let index = 0; index < sections.length; index++) {
       const section = sections[index], positions = [];
       use(section, 'roof', `roof:${index}`);
-      const roofMaterial = section.material
-        ? material(() => materialSlot(section.material, 'roof', materialKit, tier, materials, mat)) : kindMat('roof', section);
-      for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) positions.push(...roofLayers.positions.slice(t * 9, t * 9 + 9));
-      if (positions.length) mesh(local.roof, roofGeometry(positions), roofMaterial);
+      const finishes = new Map(), triangleFinishes = [];
+      for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) {
+        const ref = roofRef(section, roofLayers.edge[t]), key = JSON.stringify([ref, ref.uv ? roofLayers.edge[t] : null]);
+        if (!finishes.has(key)) finishes.set(key, { ref, positions: [], stitching: [], edge: roofLayers.edge[t],
+          material: mat('roof', roofLevel(section), ref) });
+        const finish = finishes.get(key), triangle = Array.from(roofLayers.positions.slice(t*9,t*9+9));
+        finish.positions.push(...triangle); positions.push(...triangle); triangleFinishes.push(finish);
+      }
+      const planePart = edge => `roof-plane:${section.roof || section.id || index}:${edge}`;
+      for (const finish of finishes.values()) if (finish.positions.length)
+        mesh(local.roof, roofGeometry(finish.positions), finish.material, null, null, finish.ref, planePart(finish.edge));
       const block = section.block || section.rect;
       // Editor only: the live house view and wall panels never show the check marker (user,
       // 2026-11-14: "no idea why it shows on the panel").
@@ -1102,7 +1189,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         Object.assign(marker.userData, activePiece);
         marker.computeLineDistances(); local.roof.add(marker);
       }
-      const underside = [], edges = new Map(), stitching = [], trim = [];
+      const underside = [], edges = new Map(), trim = [];
       const below = p => [p[0], p[1], p[2] - ROOF_THICKNESS];
       const edgeKey = (a, c) => [a, c].map(p => p.map(v => Math.round(v * 1e6)).join(',')).sort().join(':');
       const band = (a, c, output, depth = ROOF_THICKNESS) => {
@@ -1115,13 +1202,27 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         underside.push(...below(triangle[0]), ...below(triangle[2]), ...below(triangle[1]));
         for (let i = 0; i < 3; i++) {
           const a = triangle[i], c = triangle[(i + 1) % 3], key = edgeKey(a, c);
-          if (edges.has(key)) edges.delete(key); else edges.set(key, [a, c]);
+          if (edges.has(key)) edges.delete(key); else edges.set(key, [a, c, triangleFinishes[t/9], triangle]);
         }
       }
-      for (const [a, c] of edges.values()) band(a, c, stitching);
-      if (underside.length) mesh(local.roof, roofGeometry(underside), kindMat('soffit', section));
+      for (const [a, c, finish, triangle] of edges.values()) {
+        const identity = JSON.stringify([finish.material.uuid,finish.ref.uv || null]);
+        const shared = sections.some((other,j) => j !== index && roofSidePlanes[j].some(plane => {
+          if (roofIdentity({section:j,edge:plane.edge}) === identity
+              || !triangle.every(p => Math.abs(plane[0]*p[0]+plane[1]*p[1]+plane[2]-p[2]) < 1e-5)) return false;
+          const oh = other.overhang || 0, r = other.rect;
+          return [a,c,a.map((v,i)=>(v+c[i])/2)].every(p => p[0] >= r[0]-oh-1e-5 && p[0] <= r[2]+oh+1e-5
+            && p[1] >= r[1]-oh-1e-5 && p[1] <= r[3]+oh+1e-5
+            && Math.abs(Math.min(...roofSidePlanes[j].map(q=>q[0]*p[0]+q[1]*p[1]+q[2]))-p[2]) < 1e-5);
+        }));
+        // A shared coplanar material seam has no exposed thickness. Two bands
+        // here would occupy the same plane (and fight for double-sided looks).
+        if (!shared) band(a, c, finish.stitching);
+      }
+      if (underside.length) mesh(local.roof, roofGeometry(underside), kindMat('soffit', section), null, null, kindRef('soffit', section));
       // These outward-facing shell edges are the visible covering thickness.
-      if (stitching.length) mesh(local.roof, roofGeometry(stitching), roofMaterial);
+      for (const finish of finishes.values()) if (finish.stitching.length)
+        mesh(local.roof, roofGeometry(finish.stitching), finish.material, null, null, finish.ref, planePart(finish.edge));
       // Only exposed section perimeters receive fascia / rake boards. Face
       // intersections and triangulation edges never grow decorative trim.
       const oh = section.overhang || 0, rect = section.rect.map((v, i) => v + (i < 2 ? -oh : oh));
@@ -1144,7 +1245,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           }
         }
       }
-      if (trim.length) mesh(local.roof, roofGeometry(trim), kindMat('fascia', section));
+      if (trim.length) mesh(local.roof, roofGeometry(trim), kindMat('fascia', section), null, null, kindRef('fascia', section));
       const wallCover = (index, axis, sign, end) => supportingWalls.flatMap(({ w, l, outward, dx, dy, panels }) => {
         const s = sections[index], along = 1 - axis;
         if (!(l.elevation + 0.5 < s.plate && s.plate <= l.elevation + l.ceiling + 2) ||
@@ -1162,8 +1263,10 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       // Clip standing seams to each face triangle, running down its gradient.
       // Adjacent triangles meet at the same seam spacing in plan feet.
       if (materialKit.materials.roof?.asset === 'standing_seam') for (let t = 0; t < positions.length; t += 9) {
+        const finish = triangleFinishes[t/9];
         const points = [0, 3, 6].map(i => new THREE.Vector3(...positions.slice(t + i, t + i + 3)));
         const normal = new THREE.Vector3().crossVectors(points[1].clone().sub(points[0]), points[2].clone().sub(points[0]));
+        if (Math.abs(normal.z) < 1e-9) continue;
         const gradient = new THREE.Vector2(-normal.x / normal.z, -normal.y / normal.z);
         if (gradient.lengthSq() < 1e-10) continue;
         const across = new THREE.Vector2(-gradient.y, gradient.x).normalize();
@@ -1183,7 +1286,8 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           if (length < 1e-5) continue;
           const geometry = new THREE.BoxGeometry(0.065, 0.08, length);
           geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), delta.normalize()));
-          geometry.translate(...a.add(c).multiplyScalar(0.5).toArray()); mesh(local.roof, geometry, mat('roof'));
+          geometry.translate(...a.add(c).multiplyScalar(0.5).toArray());
+          mesh(local.roof, geometry, finish.material, null, null, finish.ref, planePart(finish.edge));
         }
       }
     }
@@ -1313,7 +1417,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     }
     const porches = allPorches(b);
     const ceilingSlabs = [];
-    const hasCeilings = (b.rooms || []).some(r => r.ceiling_material || resolveSlot('ceiling', { building: b, level: levels[r.level] }));
+    const hasCeilings = (b.rooms || []).some(r => r.ceiling_material || resolveSlot('ceiling', { building: b, level: levels[r.level] }) || plan.materials?.ceiling);
     const porchRoom = po => (b.rooms || []).find(r => r.kind === 'porch' && r.polygon?.length >= 3
       && (r.level === (po.level || first.id)) && (r.id === po.id
         || r.polygon.every(p => contains(po.polygon, p)) && po.polygon.every(p => contains(r.polygon, p))));
@@ -1342,7 +1446,8 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           const slab = polygon(poly, slabBottom, elevation - FLOOR_GAP_FT, cuts);
           // A porch slab's edges show, so they wear the floor's own finish.
           mesh(local[l.id], slab, porch ? mat('patio_concrete', l, room.floor_material)
-            : mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'), null, floorSeed);
+            : mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'), null, floorSeed,
+            porch ? surfaceRef('patio_concrete', l, room.floor_material) : null);
           // Keep only bottom faces, in plan x/y/z feet, before static merging.
           if (hasCeilings) {
             const g = slab.index ? slab.toNonIndexed() : slab, p = g.attributes.position, n = g.attributes.normal, positions = [];
@@ -1352,7 +1457,9 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
             ceilingSlabs.push({ group: local[l.id], level: l, elevation: slabBottom, positions });
           }
         }
-        mesh(local[l.id], polygon(poly, elevation, elevation, cuts), mat(porch ? 'patio_concrete' : 'floor', l, room.floor_material), null, floorSeed);
+        const role = porch ? 'patio_concrete' : 'floor';
+        mesh(local[l.id], polygon(poly, elevation, elevation, cuts), mat(role, l, room.floor_material), null, floorSeed,
+          surfaceRef(role, l, room.floor_material));
       }
       // Room boundaries stop at the wall lines. Their slab plus these mitred
       // wall footprints fills the level through to its exterior faces.
@@ -1368,7 +1475,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       stopLevel();
     }
     for (const room of b.rooms || []) {
-      const level = levels[room.level], slot = room.ceiling_material || resolveSlot('ceiling', { building: b, level });
+      const level = levels[room.level], slot = room.ceiling_material || resolveSlot('ceiling', { building: b, level }) || plan.materials?.ceiling;
       if (!slot || !level || !(room.polygon?.length >= 3)) continue;
       const supports = ceilingSlabs.filter(s => s.level.elevation > level.elevation && s.elevation > roomFloor(level, room))
         .sort((a, c) => a.elevation - c.elevation);
@@ -1377,7 +1484,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       supports.push({ group: local.roof, positions });
       use(room, 'room', room.id);
       for (const [group, patch] of ceilingPatches(room, supports)) {
-        const ceiling = mesh(group, roofGeometry(patch), kindMat('ceiling', room));
+        const ceiling = mesh(group, roofGeometry(patch), kindMat('ceiling', room), null, null, kindRef('ceiling', room), 'ceiling');
         tagPart(ceiling, 'ceiling');
       }
     }
@@ -1391,11 +1498,14 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       if (!room) mesh(local[first.id], polygon(po.polygon, slabBottom, floor), mat('patio_concrete'));
       if (solid || porchOnGrade(plan, b, po, floor, base)) {
         mesh(local[first.id], porchPlinthGeometry(plan, b, po, slabBottom, base),
-          solid ? slot('solid', 'base') : mat('patio_concrete'));
+          solid ? slot('solid', 'base') : mat('patio_concrete'), null, null,
+          solid ? surfaceRef('base', null, foundation.materials.solid) : null, 'foundation');
       } else {
         const geometry = porchSupportGeometry(plan, b, po, floor, base);
-        if (geometry.supports) mesh(local[first.id], geometry.supports, slot('posts', 'trim'));
-        if (geometry.skirt) mesh(local[first.id], geometry.skirt, slot('skirt', 'lattice'));
+        if (geometry.supports) mesh(local[first.id], geometry.supports, slot('posts', 'trim'), null, null,
+          surfaceRef('trim', null, foundation.materials.posts), 'foundation-posts');
+        if (geometry.skirt) mesh(local[first.id], geometry.skirt, slot('skirt', 'lattice'), null, null,
+          surfaceRef('lattice', null, foundation.materials.skirt), 'foundation-skirt');
       }
       const shed = b.roof?.extensions?.find(e => e.kind === 'shed_continuation');
       const section = sections.find(s => s.id === shed?.section);
@@ -1410,7 +1520,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       for (const c of po.columns || []) {
         const top = topAt(...c.at);
         if (solid && top <= floor) continue;
-        tagPart(mesh(local[first.id], boxRect(c.at[0] - c.size / 2, c.at[1] - c.size / 2, c.at[0] + c.size / 2, c.at[1] + c.size / 2, floor, top), kindMat('column', po)), 'column');
+        tagPart(mesh(local[first.id], boxRect(c.at[0] - c.size / 2, c.at[1] - c.size / 2, c.at[0] + c.size / 2, c.at[1] + c.size / 2, floor, top), kindMat('column', po), null, null, kindRef('column', po), 'column'), 'column');
       }
       const porchWalls = b.walls.filter(w => w.exterior && (levels[w.level]?.elevation ?? 0) <= floor
         && (levels[w.level]?.elevation ?? 0) + w.height > floor);
@@ -1445,7 +1555,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
               shape.lineTo(t, Math.max(0, topAt(c.at[0] + (d.at[0] - c.at[0]) * t / span, c.at[1] + (d.at[1] - c.at[1]) * t / span) - floor));
             }
             shape.closePath();
-            tagPart(mesh(local[first.id], new THREE.ShapeGeometry(shape).applyMatrix4(basis.matrix), kindMat('screen', po)), 'screen');
+            tagPart(mesh(local[first.id], new THREE.ShapeGeometry(shape).applyMatrix4(basis.matrix), kindMat('screen', po), null, null, kindRef('screen', po), 'screen'), 'screen');
           }
         }
       }
@@ -1456,19 +1566,20 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         for (let y = y0; y < y1; y += beadboard ? 0.33 : y1 - y0) {
           const angle = -Math.atan(shed.pitch / 12), len = (x1 - x0) / Math.cos(angle);
           const width = Math.min(beadboard ? 0.31 : y1 - y0, y1 - y);
-          mesh(local.roof, new THREE.BoxGeometry(len, 0.06, width).rotateZ(angle).translate((x0 + x1) / 2, main.plate - ((x0 + x1) / 2 - main.x1) * shed.pitch / 12 - 0.12, -y - width / 2), kindMat('soffit', po));
+          mesh(local.roof, new THREE.BoxGeometry(len, 0.06, width).rotateZ(angle).translate((x0 + x1) / 2, main.plate - ((x0 + x1) / 2 - main.x1) * shed.pitch / 12 - 0.12, -y - width / 2), kindMat('soffit', po), null, null, kindRef('soffit', po), 'soffit');
         }
       }
     }
     for (const [index, s] of (b.stairs || []).entries()) {
       use(s, 'stair', `stair:${index}`);
       const l = levels[s.level] || first;
-      for (const part of stairGeometry(s, l.elevation, boxGeometry)) tagPart(mesh(local[l.id], part.geometry, kindMat(part.kind, s)), part.kind);
+      for (const part of stairGeometry(s, l.elevation, boxGeometry)) tagPart(mesh(local[l.id], part.geometry, kindMat(part.kind, s), null, null, kindRef(part.kind, s), part.kind), part.kind);
     }
     for (const opening of b.openings || []) {
       use(opening, 'opening', `opening:${opening.wall}:${opening.at}`);
       for (const step of doorwaySteps(b, opening)) mesh(local[step.level], polygon(step.polygon, step.bottom, step.top),
-        mat('floor', levels[step.level], step.room.floor_material));
+        mat('floor', levels[step.level], step.room.floor_material), null, null,
+        surfaceRef('floor', levels[step.level], step.room.floor_material));
     }
     const itemIds = new Set((b.items || []).filter(item => item.asset).map(item => item.id));
     const fixtureFallbacks = new Map();
@@ -1486,7 +1597,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         const object = applyObject(new THREE.Mesh(geometry, m), f, { units: 1, id: `${b.id}:${f.id}` });
         object.position.set(origin[0], origin[1] + (f.elevation || 0), origin[2]); object.updateMatrixWorld(true);
         bakeMatrix(geometry, object.matrixWorld);
-        const result = mesh(g, geometry, object.material);
+        const result = mesh(g, geometry, object.material, null, null, part ? kindRef(part, f) : null, part || '');
         return part ? tagPart(result, part) : result;
       };
       if (['counter', 'vanity'].includes(f.kind)) {
@@ -1590,6 +1701,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     // Proxies retain identity after settled render meshes are merged. Their
     // layer is never enabled on a rendering camera (including shadow cameras).
     const registerRecords = () => {
+      offsetSurfaceUvParts(uvParts.splice(0));
       for (const [key, { data, group, box, partObjects }] of records) {
         if (box.isEmpty() || pieceBounds.has(key)) continue;
         pieceBounds.set(key, { box: box.clone(), group, data });

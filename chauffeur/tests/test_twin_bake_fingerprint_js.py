@@ -42,6 +42,29 @@ const plan={generatorVersion:'test',materials:{},buildings:[building],site:{
  furniture:[{id:'car',asset,at:[6,6],scale:1,rotation:0}]}};
 const options={room:{density:1,page:256,gutter:2}};
 const lamp={device:'lamp',building:'house',level:'L1',room:'room',at:[6,6,6]};
+const {authoredGeometry}=await import(file('static/twin/bake/geometry_key.js'));
+const ref={id:'wood_floor',color:'#224466',uv:{u:.25,v:.5,rot:90}};
+for(const edit of [p=>p.materials.wall=ref,p=>p.buildings[0].materials={roof:ref},
+ p=>p.buildings[0].levels[0].materials={floor:ref},p=>p.buildings[0].walls[0].faces={left:ref,right:ref},
+ p=>Object.assign(p.buildings[0].rooms[0],{floor_material:ref,ceiling_material:ref,wall_material:ref}),
+ p=>p.buildings[0].roof.material=ref,p=>p.buildings[0].roof.plane_materials={'0':ref},
+ p=>p.buildings[0].openings.push({id:'o',materials:{door:ref}}),
+ p=>p.buildings[0].items.push({id:'i',materials:{top:ref}}),
+ p=>p.site.hardscape[0].materials={surface:ref,edging:ref,joint:ref},p=>p.site.furniture[0].tint='#224466']) {
+ const original=structuredClone(plan),changed=structuredClone(plan);
+ // Adding an opening/item is geometry; compare the same geometry without its slots.
+ edit(changed);original.buildings[0].openings=changed.buildings[0].openings.map(({materials,...o})=>o);
+ original.buildings[0].items=changed.buildings[0].items.map(({materials,...o})=>o);
+ assert.equal(authoredGeometry(changed),authoredGeometry(original),'every authored finish scope is excluded');
+}
+for(const edit of [p=>p.site.terraces[0].height--,p=>p.site.furniture[0].rotation=90,
+ p=>p.buildings[0].walls[0].to[0]++,p=>p.buildings[0].levels[0].ceiling++,
+ p=>p.buildings[0].foundation.thickness_ft++,p=>p.buildings[0].rooms[0].polygon[1][0]++,
+ p=>p.site.furniture[0].asset='different-model',p=>p.site.hardscape[0].polygon[0][0]--]) {
+ const changed=structuredClone(plan);edit(changed);
+ assert.notEqual(authoredGeometry(changed),authoredGeometry(plan),'authored geometry still invalidates');
+}
+console.log('Passed: finish scope exclusion and geometry-invalidation directions');
 async function scene(tier, source=plan) {
  // Only the viewer bakes (ruling B15): build the scene the way the viewer does. The editor
  // path always loads the full model (car-models LOD rule) and never bakes.
@@ -71,10 +94,6 @@ const mapping=atlas=>({rooms:atlas.room.rooms,charts:atlas.room.charts.map(({mes
 assert.deepEqual(mapping(a),mapping(b),'identical chart IDs, packing and every lightmap UV');
 const groundUV=mesh=>{const p=mesh.geometry.attributes.position,u=mesh.geometry.attributes.uv3,r=mesh.geometry.attributes.lmRoom,m=new Map();
  for(let i=0;i<p.count;i++)if(r.getX(i)>=0)m.set([p.getX(i),p.getY(i),p.getZ(i)].map(v=>v.toFixed(3)).join(),[u.getX(i),u.getY(i)]);return m;};
-const lowUV=groundUV(field(low)),highUV=groundUV(field(high));let shared=0;
-for(const [key,uv] of lowUV) {const other=highUV.get(key);if(!other)continue;shared++;
- assert.ok(Math.abs(uv[0]-other[0])<1e-6&&Math.abs(uv[1]-other[1])<1e-6,`ground point ${key} maps to the same lightmap texel on both tiers`);}
-assert.ok(shared>10,`shared ground points compared: ${shared}`);
 // A heightfield chart's face list indexes its own tier's grid; keys, addresses and ownership do not.
 const layoutData=atlas=>JSON.parse(JSON.stringify(bakeLayout(atlas,options,[lamp]),(key,value)=>key==='mesh'?undefined:
  value&&value.heightfield&&value.faces?{...value,faces:undefined}:value));
@@ -103,10 +122,15 @@ assert.ok(covered(drawnLow).reduce((n,m)=>n+m.geometry.attributes.position.count
 assert.notEqual(buildAtlas(await scene('high',changed),changed,options).key,b.key,'authored wall geometry invalidates');
 assert.notEqual(bakeLayout(b,options,[{...lamp,at:[7,6,6]}]).entries.lamp.key,
  bakeLayout(b,options,[lamp]).entries.lamp.key,'moving the light invalidates its bake');
-for(const mutate of [p=>p.site.terraces[0].height--,p=>p.site.furniture[0].rotation=90,
- p=>p.site.furniture[0].tint='#224466',p=>p.materials.wall={color:'#224466'}]) {
+for(const mutate of [p=>p.site.terraces[0].height--,p=>p.site.furniture[0].rotation=90]) {
  const p=structuredClone(plan);mutate(p);
- assert.notEqual(buildAtlas(await scene('high',p),p,options).key,b.key,'authored terrain, object and material edits invalidate');
+ assert.notEqual(buildAtlas(await scene('high',p),p,options).key,b.key,'authored terrain and object geometry edits invalidate');
+}
+for(const mutate of [p=>p.site.furniture[0].tint='#224466',p=>p.materials.wall={color:'#224466'},
+ p=>p.buildings[0].walls[0].faces={left:{color:'#224466'}},
+ p=>p.buildings[0].rooms[0].floor_material={uv:{u:.25,v:.5,rot:90}}]) {
+ const p=structuredClone(plan);mutate(p);
+ assert.equal(buildAtlas(await scene('high',p),p,options).key,b.key,'finish, tint and UV edits preserve stored atlas');
 }
 const lodPlan=structuredClone(plan);lodPlan.tier='low';lodPlan.site.furniture[0].lod=2;
 assert.equal(atlasJob(await scene('low',lodPlan),lodPlan,options).cacheKey,atlasJob(await scene('high'),plan,options).cacheKey,'LOD choice is render detail');
@@ -176,6 +200,12 @@ const excluded=new THREE.Mesh(new THREE.BoxGeometry(),material);excluded.geometr
 mixed.add(excluded,new THREE.Mesh(new THREE.BoxGeometry(),material));mergeStatic(mixed);mergeStatic(mixed);
 assert.equal(covered(mixed).length,1,'merging cannot mix render-only and baked receivers');
 console.log('Passed: tier fingerprint, key, UVs, slots, cache application, authored invalidation and LOD invariance');
+// Retain this cross-tier ground check verbatim, after the independent contract
+// checks so its known main failure does not hide material/geometry regressions.
+const lowUV=groundUV(field(low)),highUV=groundUV(field(high));let shared=0;
+for(const [key,uv] of lowUV) {const other=highUV.get(key);if(!other)continue;shared++;
+ assert.ok(Math.abs(uv[0]-other[0])<1e-6&&Math.abs(uv[1]-other[1])<1e-6,`ground point ${key} maps to the same lightmap texel on both tiers`);}
+assert.ok(shared>10,`shared ground points compared: ${shared}`);
 """
 
 
