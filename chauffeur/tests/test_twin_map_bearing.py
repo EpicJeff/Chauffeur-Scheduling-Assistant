@@ -162,7 +162,7 @@ class BearingTests(unittest.TestCase):
             self.assertEqual(twin_site.site()['front_bearing_deg'],123)
             self.assertEqual(mock.call_count,2)
 
-    def test_missing_map_and_failure_are_once_only_offline_fallbacks(self):
+    def test_missing_map_and_failure_are_cooled_down_offline_fallbacks(self):
         with Ctx(), tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
             stack.enter_context(patch.object(storage,'DB_PATH',str(Path(directory)/'db.json')))
             stack.enter_context(patch.object(hm.maps,'get_home_location',return_value='Unavailable map'))
@@ -179,6 +179,35 @@ class BearingTests(unittest.TestCase):
             self.assertEqual(fetch.call_count,1)
             self.assertEqual(twin_site.site()['front_bearing_deg'],91)
             self.assertIsNone(json.loads((Path(directory)/'house_map_bearing.json').read_text())['bearing'])
+
+    def test_failed_and_no_match_retry_after_24_hours_in_memory_and_on_restart(self):
+        for failure in (RuntimeError('offline'), {'bearing':None}):
+            for restart in (False, True):
+                with self.subTest(failure=failure,restart=restart), Ctx(), tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+                    path = Path(directory)/'house_map_bearing.json'
+                    stack.enter_context(patch.object(storage,'DB_PATH',str(Path(directory)/'db.json')))
+                    stack.enter_context(patch.object(hm,'lookup_context',return_value=(None,None,'retry-key')))
+                    clock = stack.enter_context(patch('services.twin_site.time.time',return_value=100000.))
+                    fetch = stack.enter_context(patch.object(hm,'neighborhood_layout',side_effect=[failure,{'bearing':{'bearing_deg':210,'source':'street'}}]))
+                    twin_site.start_bearing_job();wait_jobs()
+                    if restart:
+                        stack.enter_context(patch.object(twin_site,'_results',{}))
+                        stack.enter_context(patch.object(twin_site,'_jobs',{}))
+                    clock.return_value += 86400-1
+                    twin_site.start_bearing_job();wait_jobs();self.assertEqual(fetch.call_count,1)
+                    clock.return_value += 1
+                    twin_site.start_bearing_job();wait_jobs();self.assertEqual(fetch.call_count,2)
+                    self.assertEqual(json.loads(path.read_text())['bearing']['bearing_deg'],210)
+                    clock.return_value += 86400*10
+                    twin_site.start_bearing_job();wait_jobs();self.assertEqual(fetch.call_count,2,'successful bearing stays cached')
+
+    def test_legacy_failed_record_without_timestamp_can_retry(self):
+        with Ctx(), tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'house_map_bearing.json'
+            path.write_text(json.dumps({'key':'legacy','bearing':None}))
+            with patch.object(storage,'DB_PATH',str(Path(directory)/'db.json')), patch.object(hm,'lookup_context',return_value=(None,None,'legacy')), \
+                    patch.object(hm,'neighborhood_layout',return_value={'bearing':{'bearing_deg':180,'source':'street'}}) as fetch:
+                twin_site.start_bearing_job();wait_jobs();self.assertEqual(fetch.call_count,1)
 
 
 if __name__ == '__main__':

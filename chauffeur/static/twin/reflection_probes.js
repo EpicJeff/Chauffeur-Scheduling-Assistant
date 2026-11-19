@@ -387,7 +387,9 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       // planes are lifted instead, so the cube still holds the whole house.
       renderer.info.autoReset = false; restoreCut = uncut();
       scene.background = sky() || save.background;
-      scene.backgroundIntensity = scene.environmentIntensity;
+      // The cube already holds this hour's radiance. Environment intensity is
+      // a material fill balance, never a second exposure on the captured sky.
+      scene.backgroundIntensity = save.backgroundIntensity;
       p.camera.update(renderer,scene);
       // three prefilters a render-target cube once and reuses that result until
       // told the cube changed; without this, glass keeps its first capture forever.

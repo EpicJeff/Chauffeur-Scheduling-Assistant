@@ -310,6 +310,7 @@ globalThis.Renderer = class {
     this.pixelRatio = 1; this.size = new RendererTypes.Vector2(1,1); this.target = null;
     this.autoClear = true; this.color = new RendererTypes.Color(); this.alpha = 1;
     this.toneMappingExposure = 1; this.outputColorSpace = RendererTypes.SRGBColorSpace;
+    this.xr = {enabled:false}; this.coordinateSystem = RendererTypes.WebGLCoordinateSystem;
   }
   setPixelRatio(r) { this.pixelRatio = r; this.setSize(this.size.x, this.size.y); }
   getPixelRatio() { return this.pixelRatio; }

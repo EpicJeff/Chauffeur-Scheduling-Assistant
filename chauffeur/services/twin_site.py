@@ -3,6 +3,7 @@ import math
 import json
 from pathlib import Path
 import threading
+import time
 
 from services import house_map, storage, twin_store
 
@@ -12,7 +13,7 @@ _results = {}
 
 
 def start_bearing_job():
-    """Schedule once per map cache key; page/state requests never fetch tiles.
+    """Keep a success per map key; retry failed/no-match attempts after 24h.
 
     A separate small cache retains attempts beyond the scene cache's 12h TTL.
     Only hashes and bearings are persisted, never addresses or credentials.
@@ -24,16 +25,21 @@ def start_bearing_job():
         if key is None:
             twin_store.set_map_bearing(None)
             return
-        if identity in _results:
-            twin_store.set_map_bearing(_results[identity])
+        def reusable(record):
+            stamp = record.get('attempted_at')
+            return record.get('bearing') is not None or (type(stamp) in (int,float) and
+                math.isfinite(stamp) and 0 <= time.time()-stamp < 86400)
+
+        if identity in _results and reusable(_results[identity]):
+            twin_store.set_map_bearing(_results[identity]['bearing'])
             return
         if identity in _jobs:
             return
         try:
             cached = json.loads(path.read_text(encoding='utf-8'))
-            if cached['key'] == key:
+            if cached['key'] == key and reusable(cached):
                 twin_store.set_map_bearing(cached['bearing'])
-                _results[identity] = cached['bearing']
+                _results[identity] = cached
                 return
         except (OSError,ValueError,KeyError,TypeError):
             pass
@@ -46,16 +52,18 @@ def start_bearing_job():
             except Exception:
                 pass  # Provider exceptions may contain credentials.
             with _job_lock:
-                _results[identity] = bearing
+                record = {'key':key,'bearing':bearing,'attempted_at':time.time()}
+                _results[identity] = record
                 # A home changed during the fetch must not inherit old north.
                 if house_map.lookup_context()[2] == key:
                     twin_store.set_map_bearing(bearing)
                     try:
                         temp = path.with_suffix('.tmp')
-                        temp.write_text(json.dumps({'key':key,'bearing':bearing}),encoding='utf-8')
+                        temp.write_text(json.dumps(record),encoding='utf-8')
                         temp.replace(path)
                     except OSError:
                         pass
+                _jobs.pop(identity,None)
 
         job = threading.Thread(target=run,name='twin-map-bearing',daemon=True)
         _jobs[identity] = job

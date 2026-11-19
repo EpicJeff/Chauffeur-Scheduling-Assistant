@@ -60,11 +60,13 @@ async function mount(tier='high',perf=false) {
   const view = await mountTwin(host,{plan:structuredClone(input.plan),kit:{materials:{}},tier,bake:false});
   return {host,view};
 }
-await test('tiers opt in above low; low mounts with no composer or targets and renders plainly',async()=>{
+await test('tiers opt in above low; low mounts with only sky targets and renders plainly',async()=>{
   assert.deepEqual(Object.values(TIERS).map(t=>t.occlusion),[false,true,true,true]);
   const before = composeCount, built = composers.length; targets.clear();
   const {view} = await mount('low');
-  try { assert.equal(view.post,null); view.render(); assert.equal(composeCount,before); assert.equal(composers.length,built); assert.equal(targets.size,0);
+  try { assert.equal(view.post,null); view.render(); assert.equal(composeCount,before); assert.equal(composers.length,built);
+    assert.equal(targets.size,3,'sky cube, PMREM source and fixed PMREM output');
+    assert.ok([...targets].every(t=>t.isWebGLCubeRenderTarget&&t.width===256&&t.texture.type===THREE.HalfFloatType));
     assert.equal(view.stats().drawCalls,37); assert.equal(view.stats().triangles,3700);
   } finally {view.dispose();}
 });
@@ -297,6 +299,19 @@ await test('clear background survives ACES and exposure while fog remains scene-
     }
   } finally {c.post.dispose();}
 });
+await test('texture background stays linear and identical through beauty and is absent only in the prepass',()=>{
+  const c=setup(),sky=new THREE.CubeTexture();c.scene.background=sky;c.scene.backgroundIntensity=.7;
+  try {
+    for(const exposure of [1,1.2]) {
+      c.renderer.toneMappingExposure=exposure;let beauty=0;
+      c.renderer.inspect=({scene,normal})=>{if(scene!==c.scene)return;
+        assert.equal(scene.background,normal?null:sky);assert.equal(scene.backgroundIntensity,.7);if(!normal)beauty++;
+      };
+      c.post.render();assert.equal(beauty,1);assert.equal(c.scene.background,sky);
+      near(passes.OutputPass.uniforms.toneMappingExposure.value,exposure);
+    }
+  } finally {c.post.dispose();sky.dispose();}
+});
 await test('stats and afterNextRender describe only the main scene not normals or fullscreen work',async()=>{
   const {view}=await mount();
   try {
@@ -316,6 +331,7 @@ await test('saved-house thumbnail callback in the real editor boot renders throu
       "export const mountHouses = options => (globalThis.__postHouseOptions=options,{sync(){}});");
   const url=data(source);
   registerHooks({resolve(spec,ctx,next){
+    if(ctx.parentURL===file('static/twin/editor/editor.js')&&['./local_ops.js','./edit_queue.js'].includes(spec))return next(spec,ctx);
     if(ctx.parentURL===file('static/twin/editor/editor.js'))return {url,shortCircuit:true};
     return next(spec,ctx);
   }});

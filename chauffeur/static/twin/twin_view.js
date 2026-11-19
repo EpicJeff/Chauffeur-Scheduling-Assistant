@@ -7,7 +7,7 @@ import { span as editSpan } from './edit_timing.js';
 import { heightAt } from './twin_roof.js';
 import { groundAt, buildingGround } from './twin_ground.js';
 import { buildYard, yardKey, yardMaterialKey, yardPartKeys } from './twin_yard.js';
-import { base, loadSky, disposeObject, manifest, currentMaterial, applyMaterialParams, copyMaterialParams, alphaModeOf, scaleStyledFadeAlpha } from './twin_library.js';
+import { base, disposeObject, manifest, currentMaterial, applyMaterialParams, copyMaterialParams, alphaModeOf, scaleStyledFadeAlpha } from './twin_library.js';
 import { watchMaterialCatalogue } from './material_watch.js';
 import { grassLawn } from './yard_grass.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
@@ -20,6 +20,8 @@ import { mountEnergySettings } from './live/energy_settings.js';
 import { mountBake } from './bake/runtime.js';
 import { sunPosition, moonPosition, moonIllumination } from './sky/ephemeris.js';
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
+import { createSky } from './sky/atmosphere.js';
+import { overcastFactor, weatherState } from './sky/overcast.js';
 import { createUnlit } from './unlit.js';
 import { createViewing } from './viewing.js';
 import { createLevels } from './levels.js';
@@ -94,15 +96,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const ambient = new THREE.HemisphereLight('#d9e9ff', '#68764f', 1.8);
   scene.add(sun, sun.target, moon, moon.target, ambient);
   let yardGroup = null;
-  // Even a missing optional sky has an environment: time changes only its
-  // intensity, never the USE_ENVMAP shader key.
-  const fallbackEnvironment = new THREE.DataTexture(new Uint8Array([185, 203, 215, 255, 185, 203, 215, 255]), 2, 1);
-  fallbackEnvironment.mapping = THREE.EquirectangularReflectionMapping;
-  fallbackEnvironment.needsUpdate = true;
-  let twin = null, disposed = false, revision = 0, sky = null, environment = fallbackEnvironment, environmentTarget = null;
+  const sky = createSky(renderer3, {tier}), environment = sky.environment;
+  let twin = null, disposed = false, revision = 0;
   let rebuildWork = null;
   const materialBindings = new Map();
   scene.environment = environment;
+  scene.background = sky.cube;
   const state = { view: 'ext', time: editor ? 'day' : 'now', camera: 'front', unlit: false };
   const unlit = createUnlit();
   let viewing = null;
@@ -110,6 +109,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let clock = null, previewIdle = null, timeTimer = null, timeLook = null, lastShadowUpdate = -Infinity;
   const clockNow = () => clock ? new Date(clock) : new Date();
   let liveLamps = false;
+  let weatherEntity = null, lastOvercast = 0;
+  const currentOvercast = () => editor ? 0 : overcastFactor(weatherState(view.live?.peek?.(), weatherEntity, view.live?.stale?.() ?? true));
   let bounds = { x: 19, y: 11, span: 38 };
   let framed = false, cameraMoved = false;
   controls.addEventListener('start', () => { cameraMoved = true; });
@@ -117,7 +118,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
   const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
-    extras:() => [sheet?.object, ...selectionLines], sky:() => sky, uncut:() => viewing?.uncut?.()});
+    extras:() => [sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
@@ -353,6 +354,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   function render() {
     if (disposed) return;
     if (compiling && performance.now() - holdSince < HOLD_MS) return;
+    // The live keeper can replace its layer. Read its current snapshot, without another stream.
+    if (!state.unlit && currentOvercast() !== lastOvercast) applyTimeLook();
     viewing?.update(performance.now());
     applyIndoorSky();
     view.levels?.draw();
@@ -1292,7 +1295,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       viewing?.dispose(); viewing = null;
       if (twin) { scene.remove(twin.root); release(twin); }
       unlit.dispose();
-      sky?.dispose(); environmentTarget?.dispose(); fallbackEnvironment.dispose(); sun.shadow.dispose();
+      sky.dispose(); sun.shadow.dispose();
       post?.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();
       if (window.__twin === view) delete window.__twin;
@@ -1345,10 +1348,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // Materials with no geometry (e.g. an empty polygon) still own requests.
     model.materials.forEach(m => { if (!keepMaterials.has(m)) m.dispose(); });
   }
-  function applyTimeLook(moved = false) {
+  function applyTimeLook(moved = false, forceSky = false) {
     if (state.unlit) {
       timeLook = lookAt(45);
-      scene.background = new THREE.Color().setRGB(...timeLook.background, THREE.SRGBColorSpace);
+      scene.background = new THREE.Color('#171e27');
       scene.environment = null; scene.environmentIntensity = 0;
       sun.intensity = moon.intensity = ambient.intensity = 0;
       renderer3.toneMappingExposure = 1;
@@ -1356,14 +1359,22 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     }
     const now = clockNow(), located = resolveSite(site, now), date = previewDate(now, state.time, located);
     const solar = sunPosition(date, located.lat, located.lon), lunar = moonPosition(date, located.lat, located.lon);
-    timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: moonIllumination(date).fraction }, { shadows: settings.shadows });
-    scene.background = new THREE.Color().setRGB(...timeLook.background, THREE.SRGBColorSpace);
+    const illumination = moonIllumination(date), overcast = currentOvercast();
+    const sunDir = modelDirection(solar.azimuth, solar.altitude, located.front_bearing_deg);
+    const moonDir = modelDirection(lunar.azimuth, lunar.altitude, located.front_bearing_deg);
+    const skyChanged = sky.update({sunDir, moonDir, moonPhase:illumination.phase, moonFraction:illumination.fraction,
+      overcast, latitude:located.lat, force:moved || forceSky});
+    lastOvercast = overcast;
+    timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
+      { shadows: settings.shadows, overcast, zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });
+    scene.background = sky.cube; scene.backgroundIntensity = 1;
     scene.environment = environment;
     scene.environmentIntensity = timeLook.environment;
     sun.intensity = timeLook.sun; moon.intensity = timeLook.moon;
     sun.color.setRGB(...timeLook.sunColor, THREE.SRGBColorSpace);
     moon.color.setRGB(...timeLook.moonColor, THREE.SRGBColorSpace);
     ambient.intensity = timeLook.ambient;
+    ambient.color.setRGB(...timeLook.skyColor); ambient.groundColor.setRGB(...timeLook.groundColor);
     renderer3.toneMappingExposure = timeLook.exposure;
     for (const [light, position] of [[sun, solar], [moon, lunar]]) {
       const [x, y, z] = modelDirection(position.azimuth, position.altitude, located.front_bearing_deg);
@@ -1376,12 +1387,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // choosing another time of day sees its shadows at once.
     if (moved || performance.now() - lastShadowUpdate >= 60000) {
       sun.shadow.needsUpdate = true; lastShadowUpdate = performance.now();
-      reflections.request();
     }
+    if (skyChanged || moved) reflections.request();
   }
-  function updateTime(moved = false) {
+  function updateTime(moved = false, forceSky = false) {
     if (disposed) return;
-    applyTimeLook(moved); applyLights(); view.onTimeLook?.(); viewing?.warm(); render();
+    applyTimeLook(moved, forceSky); applyLights(); view.onTimeLook?.(); viewing?.warm(); render();
     el.dispatchEvent(new CustomEvent('twintimechange', { detail: state.time }));
   }
   function resetPreviewIdle() {
@@ -1422,11 +1433,16 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     expireTimePreview,
     setClock(isoString) {
       if (isoString !== null && !Number.isFinite(Date.parse(isoString))) throw new Error('Give an ISO clock time or null.');
-      clock = isoString; updateTime();
+      clock = isoString; updateTime(false, true);
     },
     cameraState() { return { position: camera.position.toArray(), target: controls.target.toArray() }; },
-    // The sky as loadSky's late callback hands it over (it can land after the page is up).
-    applySky(texture) { applySky(texture); },
+    // Retain the late-sky/test hook; the atmosphere now owns the fixed environment.
+    applySky(texture) { texture?.dispose(); updateTime(false, true); },
+    setWeatherEntity(entity) {
+      entity ||= null;
+      if (weatherEntity === entity) return;
+      weatherEntity = entity; updateTime();
+    },
     setCameraState({ position, target }) {
       cameraMoved = true; camera.position.fromArray(position); controls.target.fromArray(target); controls.update(); render();
     },
@@ -1472,26 +1488,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   });
   window.__twin = view;
   resize();
-  const applySky = texture => {
-    if (disposed) { texture.dispose(); return; }
-    sky?.dispose(); environmentTarget?.dispose(); sky = texture;
-    environmentTarget = null; environment = fallbackEnvironment;
-    // An optional sky must not prevent a useful plain-colour preview.
-    let pmrem;
-    try {
-      pmrem = new THREE.PMREMGenerator(renderer3);
-      environmentTarget = pmrem.fromEquirectangular(sky); environment = environmentTarget.texture;
-    } catch { environment = fallbackEnvironment; }
-    finally { pmrem?.dispose(); }
-    reflections.request();
-    updateTime();
-  };
   try {
-    const skyPromise = loadSky(kit, applySky);
     await view.rebuild(plan);
     view.ready = false;
-    const loadedSky = await skyPromise;
-    if (loadedSky) applySky(loadedSky);
     if (disposed) return view;
     view.materialWatcher = watchMaterialCatalogue(view);
     renderer3.setAnimationLoop(() => {
@@ -1547,7 +1546,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (new URLSearchParams(location.search).get('perf') === '1')
       view.meter = mountFrameMeter(el, { renderer3, gpu: view.renderer, tier, pixelRatio: settings.pixelRatio, stats: () => lastStats });
     view.ready = true;
-    timeTimer = setInterval(updateTime, 60000);
+    timeTimer = setInterval(() => updateTime(false, true), 60000);
     for (const name of ['pointerdown', 'pointermove', 'keydown', 'input']) document.addEventListener(name, previewActivity);
   } catch (error) { view.dispose(); throw error; }
   return view;
