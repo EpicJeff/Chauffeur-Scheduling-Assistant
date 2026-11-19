@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { keepPlace } from './keep_place.js';
 import { groundAt, edgeDistance } from '../twin_ground.js';
 import { tintGrade } from '../twin_terrain_mesh.js';
 import { report } from './api.js';
@@ -235,7 +236,14 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     }
     list.append(indicator); host.append(list);
   }
+  // Rebuilding the same yard piece's card (an edge type, a layout, a shape field) keeps the person's place.
+  let cardSubject = null;
   function drawCard() {
+    const subject = JSON.stringify([chosen?.kind ?? null, chosen?.id ?? chosen?.index ?? null, drawing?.kind ?? null]);
+    const same = subject === cardSubject; cardSubject = subject;
+    return same ? keepPlace(card, drawCardNow) : drawCardNow();
+  }
+  function drawCardNow() {
     cancelPadDrag();
     disposeSlots(); card.replaceChildren(); card.hidden = false;
     finishButton?.remove(); finishButton = null;

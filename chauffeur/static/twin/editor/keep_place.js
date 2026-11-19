@@ -35,12 +35,14 @@ export function keepPlace(node, rebuild) {
   const scroller = scrollParent(node);
   const top = scroller ? scroller.scrollTop : null;
   const active = globalThis.document?.activeElement;
-  const key = active && active !== node && node.contains(active) ? focusKey(active, node) : null;
+  const inside = target => !!target && typeof node.contains === 'function' && node.contains(target);
+  const key = active && active !== node && inside(active) && typeof node.querySelectorAll === 'function' ? focusKey(active, node) : null;
   const result = rebuild();
   const restore = () => {
-    if (scroller && top !== null) scroller.scrollTop = Math.max(0, Math.min(top, scroller.scrollHeight - scroller.clientHeight));
+    const room = scroller && scroller.scrollHeight - scroller.clientHeight;
+    if (scroller && Number.isFinite(top)) scroller.scrollTop = Number.isFinite(room) ? Math.max(0, Math.min(top, room)) : top;
     const now = globalThis.document?.activeElement;
-    if (key && !(now && node.contains(now))) findByKey(node, key)?.focus?.({ preventScroll: true });
+    if (key && !inside(now)) findByKey(node, key)?.focus?.({ preventScroll: true });
   };
   restore();
   // Rows that fill in a frame later (slot metadata, late sections) can change the height again.
