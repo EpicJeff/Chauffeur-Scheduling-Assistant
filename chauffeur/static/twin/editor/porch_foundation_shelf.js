@@ -8,7 +8,7 @@ export function porchShelfOnGrade(plan, building, room) {
 }
 
 // Labels/fields and save queue follow foundation_shelf; finishes use the shared slot.
-export function porchFoundationShelf(host, room, building, { getPlan, getKit = () => ({}), canEdit, queue, op, report, onSaved }) {
+export function porchFoundationShelf(host, room, building, { getPlan, getKit = () => ({}), library, ownSlot, canEdit, queue, op, report, onSaved }) {
   const value = porchFoundation(room.foundation), section = document.createElement('section'); host.append(section);
   const controls = new Map(), rows = new Map(), slots = new Map();
   const save = (key, changed, material = false) => queue(async () => {
@@ -52,7 +52,7 @@ export function porchFoundationShelf(host, room, building, { getPlan, getKit = (
   }
   function addSlot(key, label, role) {
     const ref = getKit().materials?.[role];
-    const node = materialSlot({ label, value: value.materials[key], defaultLabel: role === 'base' ? 'Stone' : role[0].toUpperCase() + role.slice(1),
+    const node = materialSlot({ library, ownSlot, label, value: value.materials[key], defaultLabel: role === 'base' ? 'Stone' : role[0].toUpperCase() + role.slice(1),
       defaultColor: ref?.color, kit: getKit(), readOnly: () => !canEdit(), onChange: changed => save(key, changed, true), report });
     section.append(node); slots.set(key, node);
   }

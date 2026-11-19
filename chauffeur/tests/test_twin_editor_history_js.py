@@ -26,7 +26,7 @@ export const createLotTools=()=>({dragging:()=>false,handles:()=>[]});
 export const createTerrainTools=()=>({refresh(){},cancel(){}});
 export const streetView=()=>null,streetSegment=()=>null;
 export const createRoofTools=()=>({cancel(){},addDormer(){}});
-export const createLibrary=()=>({refresh(){}});
+export const createLibrary=()=>({refresh(){},selected:()=>null,onSelect:()=>()=>{},reveal:async()=>{}});
 export const createFlags=()=>({refresh(){}});
 export const createPauses=()=>({sync(){},current:()=>null,dismissed:()=>false,dismiss(){}});
 export const applyRegistration=(_,p)=>p,invertRegistration=(_,p)=>p;

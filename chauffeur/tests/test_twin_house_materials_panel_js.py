@@ -5,6 +5,10 @@ from twin_editor_dom import PRELUDE, run_node
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = PRELUDE + r"""
+const slotListeners=new Set();let selectedMaterial=null;
+const library={selected:()=>selectedMaterial,onSelect:fn=>{slotListeners.add(fn);return()=>slotListeners.delete(fn);},reveal:async()=>{}};
+async function useMaterial(slot,id){selectedMaterial={kind:'material',id,name:id};for(const fn of slotListeners)fn();await click(slot.querySelector('[data-slot-use]'));}
+
 const {houseMaterialsShelf}=await import(file('static/twin/editor/house_materials.js'));
 const {KINDS,PANEL_ROLES}=await import(file('static/twin/surface_kinds.js'));
 const {createCards}=await import(file('static/twin/editor/cards.js'));
@@ -16,7 +20,7 @@ const byText=(root,text)=>root.querySelectorAll('button').find(n=>textOf(n)===te
 function make(locked=false){
  const building={id:'house',name:'House',materials:{},levels:[],rooms:[],walls:[],openings:[],items:[],anchors:[],stairs:[]};
  const plan={materials:{},buildings:[building],site:{terraces:[]}},host=document.createElement('div'),sent=[],errors=[];
- document.body.append(host);houseMaterialsShelf(host,building,{getPlan:()=>plan,getKit:()=>({materials:{}}),canEdit:()=>!locked,
+ document.body.append(host);houseMaterialsShelf(host,building,{getPlan:()=>plan,getKit:()=>({materials:{}}),library,canEdit:()=>!locked,
   op:async o=>sent.push(o),report:e=>errors.push(e.message)});
  return {host,sent,errors,plan,building};
 }
@@ -29,37 +33,50 @@ await test('panel_lists_every_kind_once',()=>{
 });
 await test('choosing_a_material_sends_set_material',async()=>{
  const {host,sent,errors}=make(),slot=host.querySelector('[data-material-slot="Panes"]');
- await click(byText(slot,'Change'));await click(slot.querySelector('[data-material]'));
+ await useMaterial(slot,entry.id);
  assert.deepEqual(sent,[{op:'set_material',building:'house',target:{building:'house',role:'pane'},material:{id:entry.id}}]);
- await click(byText(slot,'Change'));await click(byText(slot,'Use default'));assert.equal(sent.length,2);assert.equal(sent[1].material,null);assert.deepEqual(errors,[]);
+ await click(byText(slot,'Clear'));assert.equal(sent.length,2);assert.equal(sent[1].material,null);assert.deepEqual(errors,[]);
 });
 await test('site_kinds_use_the_site_target',async()=>{
  const {host,sent}=make();for(const role of ['water','lawn']){
   const slot=host.querySelector(`[data-material-slot="${KINDS.find(r=>r.kind===role).label}"]`);
-  await click(byText(slot,'Change'));await click(slot.querySelector('[data-material]'));
+  await useMaterial(slot,entry.id);
   assert.deepEqual(sent.at(-1),{op:'set_material',building:'house',target:{site:true,role},material:{id:entry.id}});
+ }
+});
+await test('every_house_role_preserves_apply_clear_and_tint_payloads',async()=>{
+ const {host,sent}=make();
+ for(const row of [...PANEL_ROLES.map(kind=>({kind,label:{siding:'Siding',interior_wall:'Interior walls',floor:'Floors',porch_ceiling:'Porch ceiling'}[kind]})),...KINDS]){
+  const slot=host.querySelector(`[data-library-slot="${row.label}"]`);assert.ok(slot,row.kind);
+  const target=row.scope==='site'?{site:true,role:row.kind}:{building:'house',role:row.kind};
+  const expected=material=>({op:'set_material',building:'house',target,material});
+  await useMaterial(slot,entry.id);assert.deepEqual(sent.at(-1),expected({id:entry.id}),row.kind+' assignment payload unchanged');
+  const tint=slot.querySelector('input[type="color"]');tint.value='#123456';await fire(tint,'change');
+  assert.deepEqual(sent.at(-1),expected({id:entry.id,color:'#123456'}),row.kind+' tint');
+  await click(byText(slot,'Clear override'));assert.deepEqual(sent.at(-1),expected({id:entry.id}),row.kind+' clear tint');
+  await click(byText(slot,'Clear'));assert.deepEqual(sent.at(-1),expected(null),row.kind+' default payload unchanged');
  }
 });
 await test('tint_is_sent_with_the_slot',async()=>{
  const {host,sent}=make(),slot=host.querySelector('[data-material-slot="Panes"]');
- await click(byText(slot,'Change'));await click(slot.querySelector('[data-material]'));
- await click(byText(slot,'Change'));const tint=slot.querySelector('input[type="color"]');tint.value='#123456';await fire(tint,'change');
+ await useMaterial(slot,entry.id);
+ const tint=slot.querySelector('input[type="color"]');tint.value='#123456';await fire(tint,'change');
  assert.deepEqual(sent.at(-1).material,{id:entry.id,color:'#123456'});
 });
 await test('read_only_shows_no_buttons',()=>{const {host}=make(true);assert.equal(host.querySelectorAll('button,input').length,0);});
 await test('current_values_are_shown',()=>{
  const {host,building,plan}=make();building.materials.pane={id:entry.id};plan.materials.water={id:entry.id};host.replaceChildren();
- houseMaterialsShelf(host,building,{getPlan:()=>plan,getKit:()=>({}),canEdit:()=>false,op:()=>{throw Error('read only wrote');}});
+ houseMaterialsShelf(host,building,{getPlan:()=>plan,getKit:()=>({}),library,canEdit:()=>false,op:()=>{throw Error('read only wrote');}});
  for(const label of ['Panes','Water'])assert.ok(textOf(host.querySelector(`[data-material-slot="${label}"]`)).includes('Family glass'));
 });
 await test('building_card_refreshes_house_and_site_values_and_read_only',async()=>{
  const {plan,building}=make();let writable=true;const sent=[];
- const cards=createCards({getPlan:()=>plan,getKit:()=>({}),getLabel:()=> 'House',canEdit:()=>writable,edit(){},op:async o=>sent.push(o),ask(){}});
+ const cards=createCards({getPlan:()=>plan,getKit:()=>({}),getLabel:()=> 'House',library,canEdit:()=>writable,edit(){},op:async o=>sent.push(o),ask(){}});
  cards.draw({pieceId:'house',buildingId:'house'});const host=document.getElementById('piece-card');
  assert.ok(textOf(host).includes('House materials'));assert.ok(host.querySelector('[data-material-slot="Slab"]'));
  building.materials.pane={id:entry.id};plan.materials.water={id:entry.id};cards.draw();
  for(const label of ['Panes','Water'])assert.ok(textOf(host.querySelector(`[data-material-slot="${label}"]`)).includes('Family glass'));
- const slot=host.querySelector('[data-material-slot="Panes"]');await click(byText(slot,'Change'));await click(byText(slot,'Use default'));
+ const slot=host.querySelector('[data-material-slot="Panes"]');await click(byText(slot,'Clear'));
  await cards.queue(async()=>{});assert.equal(sent.length,1);assert.equal(sent[0].material,null);
  writable=false;cards.draw();assert.equal(host.querySelector('[data-material-slot="Panes"]').querySelectorAll('button,input').length,0);
 });

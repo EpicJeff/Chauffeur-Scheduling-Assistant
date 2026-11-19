@@ -118,6 +118,15 @@ def test_css_contract(p):
     assert 'width: var(--editor-dock-width)' in css[css.rindex('#editor-dock {'):]
     adopted = css[css.index('#editor-dialog :is(#place-view, #houses-panel, #editor-front-door, #editor-advanced)'):]
     assert 'transform: none' in adopted[:adopted.index('}')], 'adopted Houses must shed its old translate(-50%, -50%)'
+    live_dialog = re.search(r'#editor-dialog\[data-dock="live"\]\s*\{([^}]+)\}', css)[1]
+    assert 'right: var(--editor-dock-width)' in live_dialog, 'the live dock stays outside the dialog backdrop and hit area'
+    actions = re.findall(r'#library-actions\s*\{([^}]+)\}', css)[-1]
+    assert 'position: sticky' in actions and 'bottom: 0' in actions, 'selected asset actions stay in reach above a long catalogue'
+    assert 'background: var(--editor-panel)' in actions and 'z-index: 1' in actions
+    pane = re.search(r'#dock-pane-library\s*\{([^}]+)\}', css)
+    assert pane and 'scroll-padding-bottom' in pane[1], 'a tile scrolled into view stops above the sticky asset bar, never under it'
+    assert p.inside(p.by_id('library-actions'), 'library-panel')
+    assert p.by_id('library-actions')['parent'] == p.by_id('library-entries')['parent']
     print('  ok every pressed icon has contrasting ink/background; canvas reserves exactly dock width')
 
 
@@ -253,6 +262,65 @@ await test('one centred dialog adopts existing nodes, replaces its predecessor, 
  assert.equal(document.activeElement,el('editor-dialog-close'));
  el('editor-dialog-close').dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true,cancelable:true}));
  assert.equal(document.activeElement,input);input.remove();closeDialog();abort.abort();
+});
+await test('House materials keeps dock tabs, tiles, actions and captured row drops live; other dialogs block them',async()=>{
+ const {mountDialogs}=await import(file('static/twin/editor/dialog.js')),
+  {createDock}=await import(file('static/twin/editor/dock.js')),
+  {createLibrary}=await import(file('static/twin/editor/library.js')),
+  {houseMaterialsShelf}=await import(file('static/twin/editor/house_materials.js'));
+ const abort=new AbortController(),dialogs=mountDialogs({signal:abort.signal}),dock=createDock({host:el('editor-dock')}),{view,canvas}=dockRig();
+ const plan=samplePlan(),ops=[],owned=[],previousFetch=globalThis.fetch,previousAt=document.elementFromPoint;
+ globalThis.fetch=window.fetch=async url=>({ok:true,status:200,text:async()=>String(url).endsWith('/imports')?'[]':JSON.stringify({materials:[{id:'live-stone',name:'Live stone',thumbnail_url:'/stone.png'},{id:'drop-stone',name:'Drop stone',thumbnail_url:'/stone.png'}],items:[],imports:[]})});
+ const library=createLibrary({dock,dialogs,view,kit:{},getPlan:()=>plan,tools:{selection:()=>({}),select(){}},op:async o=>ops.push(o),canEdit:()=>true,signal:abort.signal});
+ const materials=el('house-materials');materials.replaceChildren();
+ houseMaterialsShelf(materials,plan.buildings[0],{library,ownSlot:r=>owned.push(r),getPlan:()=>plan,getKit:()=>({}),canEdit:()=>true,op:async o=>ops.push(o)});
+ // Native hit testing and inert gate pointer delivery. The CSS contract above
+ // proves the live host excludes the dock; this gate models native inert in Node.
+ const pointerClick=async node=>{assert.ok(!isDisabled(node),'pointer target must be outside inert ancestors');await press(node);};
+ try {
+  dialogs.openDialog('house-materials',{title:'House materials',dock:'live'});
+  assert.equal(el('editor-dialog').getAttribute('aria-modal'),'false');assert.equal(el('editor-dialog').dataset.dock,'live');
+  assert.equal(el('editor-scene').inert,true);assert.ok(!el('editor-dock').inert);
+  await pointerClick(el('dock-tab-library'));assert.equal(dock.current(),'library');
+  const tile=el('library-entries').querySelector('[data-material="live-stone"]');await pointerClick(tile);
+  assert.equal(library.selected().id,'live-stone');assert.ok(!isDisabled(el('library-actions').querySelector('a')));
+  const row=materials.querySelector('[data-library-slot="Panes"]');assert.ok(row,'dialog contains real domain-owned slot rows');
+  await pointerClick(row.querySelector('[data-slot-use]'));assert.equal(ops.length,1);
+  assert.deepEqual(ops.at(-1),{op:'set_material',building:'b',target:{building:'b',role:'pane'},material:{id:'live-stone'}});
+  document.elementFromPoint=()=>row.querySelector('[data-slot-name]');
+  const dragged=el('library-entries').querySelector('[data-material="drop-stone"]');
+  dragged.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:57,clientX:100,clientY:100,bubbles:true,cancelable:true}));
+  assert.ok(dragged.hasPointerCapture(57));
+  dragged.dispatchEvent(new PointerEvent('pointermove',{pointerId:57,clientX:500,clientY:400,bubbles:true}));
+  assert.ok(row.classList.contains('editor-slot-dragover'));
+  dragged.dispatchEvent(new PointerEvent('pointerup',{pointerId:57,clientX:500,clientY:400,bubbles:true}));await wait(30);
+  assert.equal(ops.length,2);assert.deepEqual(ops[1],{...ops[0],material:{id:'drop-stone'}});assert.equal(dialogs.current(),'house-materials');
+  assert.equal(library.selected().id,'live-stone','captured drop keeps the selected tile');
+  const focusables=[el('editor-dock'),el('editor-dialog')].flatMap(host=>[...host.querySelectorAll('button, input, select, textarea, a[href], summary, [tabindex]')])
+   .filter(n=>{const folded=n.closest('details:not([open])');return !n.disabled&&n.tabIndex!==-1&&shown(n)&&(!folded||folded.querySelector('summary')===n);});
+  focusables.at(-1).focus();key(focusables.at(-1),'Tab');assert.equal(document.activeElement,focusables[0],'Tab wraps from the dialog to the live dock');
+  focusables[0].dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true,cancelable:true}));
+  assert.equal(document.activeElement,focusables.at(-1),'Shift Tab wraps from dock to dialog');
+  // Escape in the live dock still closes the dialog before clearing the asset.
+  key(tile,'Escape');assert.equal(dialogs.current(),null);assert.equal(library.selected().id,'live-stone');
+  const {createCards}=await import(file('static/twin/editor/cards.js'));
+  const cards=createCards({dock,library,getPlan:()=>plan,getKit:()=>({materials:{floor:{id:'default-floor'}}}),getLabel:()=>'',canEdit:()=>true,
+   select(){},edit:async()=>{},op:async o=>ops.push(o),haLink:{draw(){},state:()=>({available:false})}});
+  cards.draw({pieceId:'room',buildingId:'b'});
+  const floor=el('piece-card').querySelector('[data-library-slot="Floor"]');assert.ok(floor,'selected room exposes its Floor row in Properties');
+  document.elementFromPoint=()=>floor.querySelector('[data-slot-name]');
+  dragged.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:58,clientX:100,clientY:100,bubbles:true,cancelable:true}));
+  assert.ok(dragged.hasPointerCapture(58));
+  dragged.dispatchEvent(new PointerEvent('pointermove',{pointerId:58,clientX:500,clientY:600,bubbles:true}));
+  assert.ok(floor.classList.contains('editor-slot-dragover'));
+  dragged.dispatchEvent(new PointerEvent('pointerup',{pointerId:58,clientX:500,clientY:600,bubbles:true}));await wait(30);
+  assert.deepEqual(ops.at(-1),{op:'set_material',building:'b',target:{room:'room',surface:'floor'},material:{id:'drop-stone'}});
+  assert.equal(ops.length,3);assert.equal(library.selected().id,'live-stone');assert.equal(el('material-chooser'),null);cards.draw(null);
+  dialogs.openDialog('house-materials',{title:'House materials',dock:'live'});
+  dialogs.openDialog('editor-settings',{title:'Settings'});
+  assert.equal(el('editor-dialog').getAttribute('aria-modal'),'true');assert.ok(isDisabled(el('dock-tab-library')));assert.ok(isDisabled(tile));
+  dialogs.closeDialog();assert.ok(!el('editor-dock').inert);assert.equal(el('editor-dialog').dataset.dock,undefined);
+ } finally {dialogs.closeDialog();owned.forEach(r=>r.dispose());materials.replaceChildren();dock.dispose();abort.abort();canvas.remove();globalThis.fetch=window.fetch=previousFetch;document.elementFromPoint=previousAt;}
 });
 await test('real Houses and Your place entry points share the dialog host; setup retains one accessible tab per step',async()=>{
  const {mountDialogs}=await import(file('static/twin/editor/dialog.js')),{mountHouses}=await import(file('static/twin/editor/houses.js')),
@@ -574,7 +642,7 @@ await test('draw, stair, roof and device placement options take Properties and c
  assert.equal(el('device-options').parentElement.hidden,false);await press(el('device-cancel'));assert.equal(el('device-tools').hidden,true);
  abort.abort();dock.dispose();
 });
-await test('Library opens by tab, rail and material Change without clearing scene selection; Argyle names it',async()=>{
+await test('Library opens by tab, rail and legacy reveal alias without clearing scene selection; Argyle names it',async()=>{
  const {createDock}=await import(file('static/twin/editor/dock.js')),{createLibrary}=await import(file('static/twin/editor/library.js')),
   {createPanel}=await import(file('static/twin/editor/panel.js'));
  const dock=createDock({host:el('editor-dock')}),abort=new AbortController(),{view}=dockRig(),plan=samplePlan();
@@ -785,10 +853,11 @@ await test('real editor boot shows generation bar only for running, paused or re
  assert.ok(el('editor-dialog').contains(advanced));assert.match(el('advanced-plan').value,/Our house/);
  await press(el('advanced-close'));assert.equal(advanced.hidden,true);
  await press(el('properties-house-materials'));assert.equal(el('editor-dialog-title').textContent,'House materials');
+ assert.equal(el('editor-dialog').dataset.dock,'live');assert.ok(!el('editor-dock').inert);
  const expectedMaterials=document.createElement('div');
  (await import(file('static/twin/editor/house_materials.js'))).houseMaterialsShelf(expectedMaterials,plan.buildings[0],{getPlan:()=>plan,canEdit:()=>true,op:async()=>{}});
- assert.deepEqual(el('house-materials').querySelectorAll('[data-material-slot]').map(n=>n.dataset.materialSlot),
-  expectedMaterials.querySelectorAll('[data-material-slot]').map(n=>n.dataset.materialSlot));
+ assert.deepEqual(el('house-materials').querySelectorAll('[data-library-slot]').map(n=>n.dataset.librarySlot),
+  expectedMaterials.querySelectorAll('[data-library-slot]').map(n=>n.dataset.librarySlot));
  await press(el('menu-settings'));assert.equal(el('house-materials').hidden,true);
  assert.ok(el('editor-dialog').contains(el('menu-reset-spend')));closeDialog();
  setupBuildings=[];plan.buildings=[];await globalThis.houseOptions.afterLoad({round:1});

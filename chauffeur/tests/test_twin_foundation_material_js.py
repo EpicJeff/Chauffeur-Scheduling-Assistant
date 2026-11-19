@@ -6,6 +6,10 @@ from twin_editor_dom import PRELUDE, run_node
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = PRELUDE + r"""
+const slotListeners=new Set();let selectedMaterial=null;
+const library={selected:()=>selectedMaterial,onSelect:fn=>{slotListeners.add(fn);return()=>slotListeners.delete(fn);},reveal:async()=>{}};
+async function useMaterial(slot,id){selectedMaterial={kind:'material',id,name:id};for(const fn of slotListeners)fn();await click(slot.querySelector('[data-slot-use]'));}
+
 const THREE=await import(three);
 THREE.TextureLoader.prototype.load=function(url,done){const texture=new THREE.Texture({width:32,height:32});queueMicrotask(()=>done(texture));return texture;};
 const {buildTwin,buildingKey}=await import(file('static/twin/twin_generator.js'));
@@ -38,7 +42,7 @@ globalThis.fetch=async()=>({ok:true,text:async()=>JSON.stringify({materials:[{id
 function shelf({locked=false,foundation=b.foundation}={}){
  const p=structuredClone(plan);p.buildings[0].foundation=structuredClone(foundation);
  const sent=[],errors=[],previews=[],host=document.createElement('div');document.body.append(host);
- foundationShelf(host,p.buildings[0],{getPlan:()=>p,getKit:()=>input.kit,canEdit:()=>!locked,
+ foundationShelf(host,p.buildings[0],{getPlan:()=>p,getKit:()=>input.kit,library,canEdit:()=>!locked,
   queue:work=>Promise.resolve().then(work),op:async o=>{sent.push(o);p.buildings[0].foundation=structuredClone(o.foundation);},
   report:e=>errors.push(e.message),preview:async p=>previews.push(p)});
  return {p,host,sent,errors,previews};
@@ -97,11 +101,15 @@ await test('foundation_pick_and_tint_invalidate_bake_on_every_tier',async()=>{
 await test('shelf_pick_clear_one_op_and_preserves_foundation_fields',async()=>{
  const {host,sent,errors}=shelf(),slot=host.querySelector('[data-material-slot="Slab"]');assert.ok(slot);
  assert.ok(textOf(slot).includes('Default: Concrete'));
- await click(byText(slot,'Change'));assert.equal(sent.length,0);
- await click(slot.querySelector('[data-material]'));assert.equal(sent.length,1);
+ assert.equal(sent.length,0);
+ await useMaterial(slot,ref.id);assert.equal(sent.length,1);
  assert.deepEqual(sent[0],{op:'set_foundation',building:'b',foundation:{...b.foundation,materials:{slab:{id:ref.id}}}});
- await click(byText(slot,'Change'));await click(byText(slot,'Use default'));assert.equal(sent.length,2);
- assert.deepEqual(sent[1].foundation,b.foundation);assert.deepEqual(errors,[]);
+ const tint=slot.querySelector('input[type="color"]');tint.value='#123456';await fire(tint,'change');
+ assert.deepEqual(sent.at(-1),{op:'set_foundation',building:'b',foundation:{...b.foundation,materials:{slab:{id:ref.id,color:'#123456'}}}});
+ await click(byText(slot,'Clear override'));
+ assert.deepEqual(sent.at(-1),sent[0],'clearing tint restores the original selection payload');
+ await click(byText(slot,'Clear'));assert.equal(sent.length,4);
+ assert.deepEqual(sent.at(-1),{op:'set_foundation',building:'b',foundation:b.foundation});assert.deepEqual(errors,[]);
 });
 await test('numeric_commit_and_preview_keep_current_material',async()=>{
  const {host,sent,p,previews}=shelf();
@@ -120,10 +128,10 @@ await test('readonly_slab_has_no_editing_control',async()=>{
 await test('real_building_card_supplies_kit_to_shared_slab_slot',async()=>{
  const p=structuredClone(plan);p.buildings[0].foundation.materials={slab:{id:'patio_concrete'}};
  let writable=true;
- const cards=createCards({getPlan:()=>p,getKit:()=>input.kit,getLabel:()=> 'House',canEdit:()=>writable,edit(){},op:async()=>{},ask(){}});
+ const cards=createCards({getPlan:()=>p,getKit:()=>input.kit,getLabel:()=> 'House',library,canEdit:()=>writable,edit(){},op:async()=>{},ask(){}});
  cards.draw({pieceId:'b',buildingId:'b'});
  const slot=document.getElementById('piece-card').querySelector('[data-material-slot="Slab"]');assert.ok(slot);
- assert.equal(slot.querySelector('i').style.backgroundColor,input.kit.materials.patio_concrete.color);
+ assert.equal(slot.querySelector('[data-slot-swatch]').style.backgroundColor,input.kit.materials.patio_concrete.color);
  writable=false;cards.draw();
  const readonly=document.getElementById('piece-card').querySelector('[data-material-slot="Slab"]');
  assert.equal(readonly.querySelectorAll('button,input').length,0,'history/read-only transition rebuilds the slot');

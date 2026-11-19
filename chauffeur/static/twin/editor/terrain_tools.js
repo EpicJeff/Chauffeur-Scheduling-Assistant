@@ -21,7 +21,7 @@ export function siteRows(plan) {
 export const snapPadPoint = snapSitePoint;
 
 // Separate lot tools keep the object-library/placed-item merge seam small.
-export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, prepare = () => {}, getKit = () => ({}), dock }) {
+export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, prepare = () => {}, getKit = () => ({}), dock, library }) {
   const canvas = view.renderer3.domElement, shell = document.querySelector('.editor-shell');
   const card = document.createElement('aside'); card.className = 'place-card editor-lot-card'; card.id = 'terrain-card'; card.hidden = true; shell.append(card);
   const layer = document.createElement('div'); layer.className = 'editor-handles'; canvas.parentElement.append(layer);
@@ -35,6 +35,9 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   let chosen = null, drawing = null, gesture = null, handles = [], busy = false, grade = false, signature = '', menu = false;
   let padDrag = null;
   let finishButton = null, sceneKey = '';
+  const slotRows = new Set();
+  const ownSlot = row => slotRows.add(row);
+  const disposeSlots = () => { for (const row of slotRows) row.dispose(); slotRows.clear(); };
   const drawingOptions = { height: 0, blend: 6 };
   const draft = createSiteDrawing({ getPlan, commit: save });
   const listen = (node, type, fn, options = {}) => node.addEventListener(type, fn, { ...options, signal });
@@ -100,6 +103,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     view.groups.site?.traverse(o => { if (o.userData.terrain) tintGrade(o.geometry, grade); }); view.render();
   }
   function close() {
+    disposeSlots();
     cancelPadDrag();
     const g = gesture; gesture = null;
     if (g) {
@@ -231,7 +235,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   }
   function drawCard() {
     cancelPadDrag();
-    card.replaceChildren(); card.hidden = false;
+    disposeSlots(); card.replaceChildren(); card.hidden = false;
     finishButton?.remove(); finishButton = null;
     dock?.properties.render(card, { crumbs: ['Yard', drawing ? `Draw ${words[drawing.kind] || drawing.kind}` : chosen ? words[chosen.kind] : 'Ground and yard'],
       tool: !!drawing, back: chosen ? show : close });
@@ -336,7 +340,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
         };
         const slot = (title, key, fallback, nested = false) => {
           const owner = nested ? value.rail : value;
-          card.append(materialSlot({ label: `Edge ${i + 1} ${title}`, value: owner.materials?.[key] || null,
+          card.append(materialSlot({ library, ownSlot, label: `Edge ${i + 1} ${title}`, value: owner.materials?.[key] || null,
             defaultLabel: fallback, kit: getKit(), readOnly: () => !canEdit(), report,
             onChange: ref => {
               const next = latest(), owner = nested ? next.rail : next;
@@ -532,7 +536,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   listen(canvas, 'pointermove', event => { if (drawing && !gesture) pointerMove(event); });
   view.controls.addEventListener('change', graphics);
   listen(canvas.parentElement, 'twinrebuilt', refresh);
-  signal.addEventListener('abort', () => { cancelPadDrag(); if (gesture) pointerUp({ pointerId: gesture.pointer }, true); clearStatus(); dock?.properties.clear(card); clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); if (!existingOpen) open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
+  signal.addEventListener('abort', () => { disposeSlots(); cancelPadDrag(); if (gesture) pointerUp({ pointerId: gesture.pointer }, true); clearStatus(); dock?.properties.clear(card); clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); if (!existingOpen) open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
   return { show, choose, startDrawing, refresh, hit, begin, padHits, pointerArmedDown, pointerDown, pointerMove, pointerUp,
     visibilitySelection: () => chosen && {id:chosen.id,kind:'pad'},
     selectionChanged(state) { if (state.id && chosen) close(); }, cancel: close, handles: () => handles };

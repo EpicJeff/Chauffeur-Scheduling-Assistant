@@ -1,7 +1,8 @@
 import { drawObjectShelf, isObject } from './object_shelf.js';
 import { solarLayout } from '../twin_solar.js';
 import { contains, allPorches } from '../twin_generator.js';
-import { materialLines } from './library.js';
+import { materialLines, surfaceOperation } from './library.js';
+import { createSlotRow, idleLibrary } from './slot_row.js';
 import { createEquipmentShelf } from './equipment_shelf.js';
 import { foundationShelf } from './foundation_shelf.js';
 import { houseMaterialsShelf } from './house_materials.js';
@@ -69,12 +70,15 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials }) {
+export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials }) {
   let namesAsked = false;
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
   let edgeIndex = null;
   let haSection = null;
+  const slots = [];
+  const ownSlot = row => slots.push(row);
+  const disposeSlots = () => { for (const row of slots.splice(0)) row.dispose(); };
   const equipmentShelf = createEquipmentShelf({ canEdit, queue, op, report, parseLength, feetInches, onSaved: () => draw() });
   const endNames = { x0: 'Left end', x1: 'Right end', y0: 'Front end', y1: 'Back end' };
   const fieldValue = (piece, field) => field === 'length' ? Math.hypot(...piece.to.map((v, i) => v - piece.from[i]))
@@ -140,7 +144,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       ? JSON.stringify([record.piece.foundation, porchShelfOnGrade(getPlan(), record.building, record.piece), canEdit()]) : '';
     const garageLayout = record?.kind === 'opening' && record.piece.kind === 'garage'
       ? JSON.stringify([record.building.devices, haLink?.state()?.devices?.map(d => [d.device_id, d.kind, d.entity_id])]) : '';
-    const nextLayout = JSON.stringify([roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, !!pickMaterial, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
+    const nextLayout = JSON.stringify([roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
     // save must not detach Turn while the person is typing the next edit.
@@ -150,7 +154,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       headingNode.textContent = title(record);
       if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
       if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost' && !flags.length;
-      host.querySelectorAll('button').forEach(b => { b.disabled = b.dataset.fixtureLocked !== undefined || !canEdit() && b.dataset.fixtureBrowse === undefined; });
+      host.querySelectorAll('button').forEach(b => { if (b.closest('[data-library-slot]')) return; b.disabled = b.dataset.fixtureLocked !== undefined || !canEdit() && b.dataset.fixtureBrowse === undefined; });
       // A save or poll refreshes clean values without replacing anyone's input.
       for (const [field, state] of inputs) {
         const { input } = state;
@@ -161,11 +165,12 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         }
         input.disabled = !canEdit() || field === 'length' && !record.piece.joints?.[1];
       }
+      slots.forEach(row => row.refresh());
       drawHaSection(record);
       if (kindIsEquipment(record)) equipmentShelf.refresh(record);
       return;
     }
-    selection = next; layout = nextLayout + porchLayout + garageLayout; host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
+    selection = next; layout = nextLayout + porchLayout + garageLayout; disposeSlots(); host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
     haSection = null;
     if (!record) return;
     const { piece, kind, building } = record;
@@ -180,23 +185,14 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         layout = null; draw();
       }) });
     for (const material of materials) {
-      const row = document.createElement('div'); row.className = 'editor-material-line';
-      const words = document.createElement('div'), label = document.createElement('span'), text = document.createElement('p');
-      label.textContent = material.label; text.textContent = material.text; words.append(label, text); row.append(words);
-      const actions = document.createElement('div'); actions.className = 'editor-material-actions';
-      if (canEdit() && pickMaterial && material.surface) {
-        const change = button('Change', () => pickMaterial(material.surface));
-        change.setAttribute('aria-label', `Change the ${material.label.toLowerCase()} material`);
-        actions.append(change);
-      }
-      if (canEdit() && material.clear) actions.append(button('Clear', async () => {
-        if (canEdit()) await op({ op: 'set_material', building: building.id, target: material.target, material: null });
-      }));
-      if (canEdit() && material.reset) actions.append(button(material.reset.label, async () => {
-        if (canEdit()) await op({ op: 'set_material', building: building.id, target: material.reset.target, material: null });
-      }));
-      if (actions.children.length) row.append(actions);
-      host.append(row);
+      const row = createSlotRow({ label: material.label, library, readOnly: () => !canEdit(),
+        current: () => material.current, detail: () => material.text,
+        accepts: entry => entry.kind === 'material',
+        apply: entry => queue(() => canEdit() && op(surfaceOperation(material.surface, 'face', entry))),
+        clear: material.clear ? () => queue(() => canEdit() && op({ op: 'set_material', building: building.id, target: material.target, material: null })) : null,
+        reset: material.reset ? { label: material.reset.label,
+          run: () => queue(() => canEdit() && op({ op: 'set_material', building: building.id, target: material.reset.target, material: null })) } : null });
+      ownSlot(row); host.append(row.element);
     }
     if (kind === 'roof') {
       pitchNote = document.createElement('p'); pitchNote.textContent = 'Estimated from photos';
@@ -232,13 +228,13 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     }
     if (kindIsEquipment(record)) equipmentShelf.draw(host, record);
     if (kind === 'building') {
-      foundationShelf(host, piece, { getPlan, getKit, canEdit, queue, op, report, preview });
+      foundationShelf(host, piece, { library, ownSlot, getPlan, getKit, canEdit, queue, op, report, preview });
       if (openHouseMaterials) host.append(button('House materials', () => openHouseMaterials(piece.id)));
-      else houseMaterialsShelf(host, piece, { getPlan, getKit, canEdit, op: operation => queue(() => canEdit() && op(operation)), report });
+      else houseMaterialsShelf(host, piece, { library, ownSlot, getPlan, getKit, canEdit, op: operation => queue(() => canEdit() && op(operation)), report });
     }
     if (kind === 'room' && piece.kind === 'porch') porchFoundationShelf(host, piece, building,
-      { getPlan, getKit, canEdit, queue, op, report, onSaved: () => draw() });
-    if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { canEdit, queue, op, report,
+      { library, ownSlot, getPlan, getKit, canEdit, queue, op, report, onSaved: () => draw() });
+    if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { library, ownSlot, canEdit, queue, op, report,
       getRecord: () => findPiece(getPlan(), piece.id, building?.id), devices: haLink?.state()?.devices || [] });
     if (siteShapeKinds.includes(kind) || record.poolId) {
       for (const feature of roomFeatures) {
@@ -250,7 +246,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         });
         host.append(button);
       }
-      drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getKit, onDrawFeature,
+      drawSiteShapeShelf(host, record, { library, ownSlot, canEdit, queue, op, report, getKit, onDrawFeature,
         haAvailable: !!haLink?.state()?.available,
         onMakeRoom: () => {
           const room = getPlan().site?.yard_rooms?.at(-1);
@@ -390,7 +386,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     dock?.properties.render(host, { crumbs: [...propertyPath(record, getSelection(), select).crumbs, `Edge ${edgeIndex + 1}`], reveal: layout !== signature,
       back: () => { edgeIndex = null; layout = null; draw(); } });
     if (layout === signature) return;
-    layout = signature; host.replaceChildren(); inputs = new Map();
+    layout = signature; disposeSlots(); host.replaceChildren(); inputs = new Map();
     const heading = document.createElement('h3'); heading.textContent = `Roof edge ${edgeIndex + 1}`;
     host.append(heading, button('Back to roof', () => { edgeIndex = null; layout = null; draw(); }));
     const index = edgeIndex, building = record.building.id;
@@ -437,7 +433,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     pending = run.catch(() => {});
     return run;
   }
-  return { draw, queue, remove, showRoofEdge(handle) {
+  return { draw, queue, remove, dispose: disposeSlots, showRoofEdge(handle) {
     const next = { pieceId: handle.id, buildingId: handle.building };
     selection = next; edgeIndex = handle.edge; layout = null; draw(next);
   } };

@@ -25,7 +25,7 @@ const rotatePoint = (p, angle) => {
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
 
-export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, visibility, pickMaterial, api, onDrawFeature, dock, openHouseMaterials }) {
+export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, visibility, library, api, onDrawFeature, dock, openHouseMaterials }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   const measureLayer = document.createElement('div'); measureLayer.className = 'editor-measure'; canvas.parentElement.append(measureLayer);
   const measure = createMeasure({ view, getPlan, layer: measureLayer });
@@ -116,7 +116,8 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let linkReadAt = 0;
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    dock, op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, openHouseMaterials, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
+    dock, op, addDormer, canEdit, select, library, haLink, onDrawFeature, openHouseMaterials, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
+  signal?.addEventListener('abort', () => cards.dispose(), { once: true });
   const handleSelection = () => isPickable(roomSelection.current()) ? roomSelection.current() : {};
   handles = createHandles({ view, getPlan, getSelection: handleSelection, getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
     onPreview: drawDimensions, onClick: cards.showRoofEdge, signal });

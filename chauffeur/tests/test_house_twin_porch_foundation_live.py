@@ -25,10 +25,10 @@ def scenario_solid_stone_and_undo():
         page.evaluate("()=>{window.__twin.bake?.stop();window.__editor.clickPiece('porch','b');}")
         shelf = page.locator('#piece-card')
         # Finishes are shared material slots now (v2.499.835); Posts hides the solid base slot.
-        H.check(not shelf.locator('[data-material-slot="Solid base"]').is_visible(), 'posts hides solid fields')
+        H.check(not shelf.locator('[data-library-slot="Solid base"]').is_visible(), 'posts hides solid fields')
         shelf.get_by_label('Foundation', exact=True).select_option('solid')
         page.wait_for_function("()=>window.__twin.ready&&window.__twin.plan.buildings[0].porches[0].foundation.type==='solid'")
-        H.check(shelf.locator('[data-material-slot="Solid base"]').is_visible(), 'solid shows its base material slot (default stone)')
+        H.check(shelf.locator('[data-library-slot="Solid base"]').is_visible(), 'solid shows its base material slot (default stone)')
 
         def geometry():
             return page.evaluate("""async()=>{

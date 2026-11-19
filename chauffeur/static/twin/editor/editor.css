@@ -137,9 +137,12 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #library-entries { grid-column: 1 / -1; align-self: stretch; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-content: start; grid-auto-rows: max-content; gap: 6px; }
 #library-entries button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; font-size: 11px; line-height: 1.25; text-align: center; overflow: hidden; }
 #library-entries img { width: 100%; height: 64px; object-fit: contain; pointer-events: none; }
-#library-entries .library-edit-link { font-size: 11px; text-align: center; text-decoration: underline; align-self: end; }
-#library-entries .library-material-tile { display:flex; flex-direction:column; min-width:0; gap:4px; }
-#library-entries .library-material-tile button { width:100%; flex:1; }
+#library-actions { position: sticky; bottom: 0; z-index: 1; background: var(--editor-panel); grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; border-top: 1px solid var(--editor-line); }
+#library-actions .library-edit-link { display: flex; align-items: center; min-height: 44px; font-size: 11px; text-decoration: underline; }
+#library-entries button[aria-pressed="true"] { outline: 2px solid var(--editor-accent); outline-offset: -2px; }
+#library-entries .library-revealed { animation: library-reveal 1.2s ease-out; }
+@keyframes library-reveal { from { box-shadow: inset 0 0 0 3px var(--editor-accent); } to { box-shadow: inset 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { #library-entries .library-revealed { animation: none; outline: 2px solid var(--editor-accent); outline-offset: -2px; } }
 #editor-library-page { background:var(--editor-panel); border:1px solid var(--editor-line); border-radius:10px; padding:8px 10px; min-height:44px; }
 #material-chooser { display: flex; flex-direction: column; gap: 6px; width: 220px; }
 #pause-card h3 { color: var(--editor-accent); font-size: 14px; margin-bottom: 6px; }
@@ -355,6 +358,15 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 
 /* Slots extend the card's material rows and the Library's swatch/button vocabulary. */
 .editor-material-swatch { display: inline-block; flex: 0 0 22px; width: 22px; height: 22px; border: 1px solid var(--editor-muted); border-radius: 6px; }
+.editor-slot-line { flex-wrap: wrap; }
+.editor-slot-line > div:first-of-type { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.editor-slot-line .editor-material-actions { flex: 1 0 100%; max-width: 100%; }
+.editor-slot-swatch { flex-basis: 44px; width: 44px; height: 44px; padding: 2px; overflow: hidden; }
+.editor-slot-swatch img { width: 100%; height: 100%; object-fit: contain; }
+.editor-slot-empty { background: repeating-linear-gradient(135deg, transparent 0 4px, var(--editor-line) 4px 8px); }
+.editor-slot-dragover { outline: 2px solid var(--editor-accent); outline-offset: -2px; border-radius: 6px; }
+.editor-slot-line > label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--editor-muted); }
+.editor-slot-line input[type="color"] { width: 44px !important; min-height: 44px; }
 .editor-material-options { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; padding: 8px; border: 1px solid var(--editor-muted); border-radius: 12px; }
 .editor-material-options button { display: flex; align-items: center; gap: 8px; text-align: left; }
 
@@ -486,6 +498,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #dock-pane-library #library-panel { position: static; width: auto; height: auto; max-height: none;
   display: flex; flex-direction: column; align-items: stretch; padding: 0; border: 0; border-radius: 0; background: transparent; backdrop-filter: none; }
 #library-entries { flex: 1 0 auto; overflow: visible; }
+/* The selected-asset bar is sticky at the pane's bottom: scrolling a tile into view
+   (a person's scroll, the swatch's reveal) must stop above it, never under it. */
+#dock-pane-library { scroll-padding-bottom: 72px; }
 #dock-pane-argyle { display: flex; padding: 0 !important; }
 #dock-pane-argyle #editor-agent { position: static; width: 100%; flex: 1; border: 0; border-radius: 0; background: transparent; }
 #dock-splitter { flex: 0 0 10px; cursor: row-resize; touch-action: none; background: var(--twinHover); border-block: 1px solid var(--editor-line); }
@@ -512,6 +527,10 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
    Only the host positions a dialog; adopted content retains its original nodes. */
 #editor-dialog { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
   padding: 16px; background: var(--twinScrim, rgba(0, 0, 0, .5)); }
+/* Slot dialogs share the scene with the dock, whose controls stay outside the scrim. */
+#editor-dialog[data-dock="live"] { right: var(--editor-dock-width);
+  top: var(--editor-header-bottom, 68px); bottom: var(--editor-status-height, 52px); }
+#editor-dialog[data-dock="live"] .editor-dialog-panel { max-height: 100%; }
 .editor-dialog-panel { display: flex; flex-direction: column; width: min(1100px, 100%); max-height: 90dvh;
   min-height: 0; overflow: hidden; border: 1px solid var(--editor-line); border-radius: 16px;
   background: var(--twinGlassStrong); backdrop-filter: blur(16px); }

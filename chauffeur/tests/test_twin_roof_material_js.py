@@ -182,15 +182,15 @@ await test('roof_and_dormer_card_choose_clear_drop_and_read_only',async()=>{
  };
  const tools={selection:()=>({}),select(){}};
  const library=createLibrary({view,kit:k,getPlan:()=>p,tools,op,canEdit:()=>editable,signal:abort.signal});
- const cards=createCards({getPlan:()=>p,getKit:()=>k,op,edit:op,canEdit:()=>editable,select(){},pickMaterial:s=>library.pick(s)});
+ const cards=createCards({getPlan:()=>p,getKit:()=>k,op,edit:op,canEdit:()=>editable,select(){},library});
  const host=document.getElementById('piece-card'),settle=async()=>{for(let i=0;i<8;i++)await new Promise(r=>setTimeout(r,0));};
- const row=()=>host.querySelector('.editor-material-line');
+ const row=()=>host.querySelector('[data-library-slot="Roof"]');
  for(const [id,target] of [['main',{roof:'main'}],['d1',{dormer:'d1'}]]){
   cards.draw(null);cards.draw({pieceId:id,buildingId:'a'});
   assert.ok(row(),id+' material row');assert.match(textOf(row()),/Roof/);
-  click(row().querySelector('button'));await settle();
+  await library.reveal('material','metal');library.select(null);
   click(document.querySelector('[data-material="metal"]'));await settle();
-  click(document.getElementById('material-chooser').querySelector('button'));await settle();
+  click(row().querySelector('[data-slot-use]'));await settle();
   assert.deepEqual(ops.pop(),{op:'set_material',building:'a',target,material:{id:'metal'}});
   b.roof.sections.find(s=>s.id===id).material={id:'metal'};
   cards.draw({pieceId:id,buildingId:'a'});click([...row().querySelectorAll('button')].find(n=>n.textContent==='Clear'));await settle();

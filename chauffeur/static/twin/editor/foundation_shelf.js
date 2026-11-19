@@ -1,7 +1,7 @@
 import { materialSlot } from './material_slot.js';
 
 // Same labels/fields and card queue as the equipment property shelf.
-export function foundationShelf(host, building, { getPlan, getKit = () => ({}), canEdit, queue, op, report, preview }) {
+export function foundationShelf(host, building, { getPlan, getKit = () => ({}), library, ownSlot, canEdit, queue, op, report, preview }) {
   const section = document.createElement('section'), heading = document.createElement('h4'); heading.textContent = 'Foundation'; section.append(heading); host.append(section);
   const value = { mode: 'fixed', offset_ft: 0, thickness_ft: 1, ...building.foundation };
   const inputs = new Map(); let timer = null;
@@ -36,7 +36,7 @@ export function foundationShelf(host, building, { getPlan, getKit = () => ({}), 
     });
     label.append(input); section.append(label);
   }
-  section.append(materialSlot({ label: 'Slab', value: value.materials?.slab, defaultLabel: 'Concrete',
+  section.append(materialSlot({ library, ownSlot, label: 'Slab', value: value.materials?.slab, defaultLabel: 'Concrete',
     defaultColor: getKit().materials?.patio_concrete?.color, kit: getKit(), readOnly: () => !canEdit(), report,
     onChange: changed => queue(async () => {
       if (!canEdit()) return;

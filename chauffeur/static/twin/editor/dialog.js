@@ -14,6 +14,7 @@ export function closeDialog(id, { restoreFocus = true } = {}) {
   previous.node.hidden = true;
   previous.parent.insertBefore(previous.node, previous.next?.parentElement === previous.parent ? previous.next : null);
   const host = el('editor-dialog'); host.hidden = true; host.removeAttribute('role');
+  delete host.dataset.dock; host.setAttribute('aria-modal', 'true');
   for (const [node, value] of inert) node.inert = value;
   inert = [];
   previous.onClose?.();
@@ -24,7 +25,7 @@ export function closeDialog(id, { restoreFocus = true } = {}) {
   returnFocus = null;
 }
 
-export function openDialog(id, { title, onClose } = {}) {
+export function openDialog(id, { title, onClose, dock = 'blocked' } = {}) {
   const node = el(id), host = el('editor-dialog');
   if (!node || !host) throw new Error(`Missing editor dialog: ${id}`);
   if (current?.node === node) { el('editor-dialog-title').textContent = title || ''; return; }
@@ -32,12 +33,14 @@ export function openDialog(id, { title, onClose } = {}) {
   const focus = current ? returnFocus : document.activeElement;
   closeDialog(undefined, { restoreFocus: false });
   returnFocus = focus;
-  current = { node, parent: node.parentElement, next: node.nextSibling, onClose };
+  current = { node, parent: node.parentElement, next: node.nextSibling, onClose, dock };
   el('editor-dialog-body').append(node); node.hidden = false;
   el('editor-dialog-title').textContent = title || '';
   host.setAttribute('role', 'dialog'); host.dataset.content = id; host.hidden = false;
+  host.dataset.dock = dock; host.setAttribute('aria-modal', String(dock !== 'live'));
   const shell = host.parentElement;
-  inert = [...shell.children].filter(child => child !== host && child.id !== 'editor-context-menu').map(child => [child, child.inert]);
+  inert = [...shell.children].filter(child => child !== host && child.id !== 'editor-context-menu'
+    && !(dock === 'live' && child.id === 'editor-dock')).map(child => [child, child.inert]);
   inert.forEach(([child]) => { child.inert = true; });
   el('editor-dialog-close').focus();
 }
@@ -56,7 +59,8 @@ export function mountDialogs({ signal } = {}) {
       event.preventDefault(); event.stopImmediatePropagation(); closeDialog(); return;
     }
     if (event.key !== 'Tab') return;
-    const buttons = [...el('editor-dialog').querySelectorAll('button, input, select, textarea, a[href], summary, [tabindex]')]
+    const surfaces = [...(current.dock === 'live' ? [el('editor-dock')] : []), el('editor-dialog')];
+    const buttons = surfaces.flatMap(surface => [...surface.querySelectorAll('button, input, select, textarea, a[href], summary, [tabindex]')])
       .filter(node => !node.disabled && node.tabIndex !== -1 && visible(node));
     const first = buttons[0], last = buttons.at(-1);
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }

@@ -1,70 +1,47 @@
-import { materialName, readLibraryCatalog } from './material_catalog.js';
+import { materialName, describeMaterial, readLibraryCatalog } from './material_catalog.js';
 import { report as reportError } from './api.js';
+import { createSlotRow, idleLibrary } from './slot_row.js';
 
-// A DOM component only: the owner supplies one onChange -> one domain op/history step.
+let catalogueRead;
+// Properties can contain many slots; their initial metadata shares one read.
+const loadCatalogue = () => catalogueRead ||= readLibraryCatalog().then(c => c.materials).finally(() => { catalogueRead = null; });
+
+// The owner still supplies one onChange -> one domain op/history step.
 export function materialSlot({ label, value = null, defaultLabel, defaultColor = '#b8b0a4',
   quickPicks = [], kit = {}, onChange, readOnly = false, report = reportError,
-  loadMaterials = async () => (await readLibraryCatalog()).materials }) {
-  const root = document.createElement('section'), row = document.createElement('div');
-  row.className = 'editor-material-line'; root.dataset.materialSlot = label;
-  const words = document.createElement('div'), caption = document.createElement('span'), text = document.createElement('p');
-  const swatch = document.createElement('i'); swatch.className = 'editor-material-swatch'; swatch.setAttribute('aria-hidden', 'true');
-  caption.textContent = label; words.append(caption, text); row.append(swatch, words); root.append(row);
+  library = idleLibrary, ownSlot = () => {}, loadMaterials = loadCatalogue }) {
+  let current = value, entries = [], disposed = false;
   const locked = () => typeof readOnly === 'function' ? readOnly() : readOnly;
-  let current = value, entries = [], chooser = null, busy = false, loading = false;
-  const name = ref => entries.find(e => e.id === ref.id)?.name || materialName(kit.materials?.[ref.id]?.asset || ref.id);
-  const color = ref => ref?.color || entries.find(e => e.id === ref?.id)?.color || kit.materials?.[ref?.id]?.color
+  const metadata = ref => entries.find(entry => entry.id === ref?.id);
+  const name = ref => metadata(ref)?.name || materialName(kit.materials?.[ref.id]?.asset || ref.id);
+  const color = ref => ref?.color || metadata(ref)?.color || describeMaterial(ref, kit)?.color || kit.materials?.[ref?.id]?.color
     || Object.values(kit.materials || {}).find(r => r.asset === ref?.id)?.color || '#b8b0a4';
-  const draw = () => {
-    text.textContent = current ? name(current) : `Default: ${defaultLabel}`;
-    swatch.style.backgroundColor = current ? color(current) : defaultColor;
-  };
   async function save(next) {
-    if (locked() || busy || JSON.stringify(current) === JSON.stringify(next)) return;
-    busy = true;
-    try { await onChange(next); current = next; chooser?.remove(); chooser = null; draw(); }
+    if (disposed || locked() || JSON.stringify(current) === JSON.stringify(next)) return;
+    try { await onChange(next); if (!disposed) { current = next; row.refresh(); } }
     catch (error) { report(error); }
-    finally { busy = false; }
   }
-  if (!locked()) {
-    const actions = document.createElement('div'); actions.className = 'editor-material-actions';
-    const change = document.createElement('button'); change.type = 'button'; change.textContent = 'Change';
-    change.setAttribute('aria-label', `Change the ${label.toLowerCase()} material`); actions.append(change); row.append(actions);
-    change.addEventListener('click', async () => {
-      if (locked() || busy || loading) return;
-      if (chooser) { chooser.remove(); chooser = null; return; }
-      loading = true;
-      try {
-        entries = await loadMaterials();
-        if (locked()) return;
-        draw(); chooser = document.createElement('div'); chooser.className = 'editor-material-options';
-        chooser.setAttribute('role', 'group'); chooser.setAttribute('aria-label', `Choose ${label.toLowerCase()} material`);
-        const button = (title, action) => {
-          const node = document.createElement('button'); node.type = 'button'; node.textContent = title;
-          node.addEventListener('click', action); chooser.append(node); return node;
-        };
-        button('Use default', () => save(null));
-        const ordered = [...quickPicks.map(ref => entries.find(entry => entry.id === ref.id)).filter(Boolean), ...entries]
-          .filter((ref, i, all) => all.findIndex(r => r.id === ref.id) === i);
-        for (const entry of ordered) {
-          const ref = { id: entry.id };
-          const pick = button(entry.name || name(ref), () => save(ref)); pick.dataset.material = entry.id;
-          const chip = document.createElement(entry.thumbnail_url ? 'img' : 'i'); chip.className = 'editor-material-swatch';
-          if (entry.thumbnail_url) { chip.src = entry.thumbnail_url; chip.alt = ''; }
-          chip.style.backgroundColor = color(entry); chip.setAttribute('aria-hidden', 'true'); pick.prepend(chip);
-        }
-        if (current) {
-          const tintLabel = document.createElement('label'); tintLabel.textContent = 'Override tint';
-          const tint = document.createElement('input'); tint.type = 'color'; tint.value = color(current);
-          tint.setAttribute('aria-label', `${label} override tint`); tint.addEventListener('change', () => save({ id: current.id, color: tint.value }));
-          tintLabel.append(tint); chooser.append(tintLabel);
-          if (current.color) button('Clear override', () => save({ id: current.id }));
-        }
-        button('Cancel', () => { chooser.remove(); chooser = null; });
-        root.append(chooser); chooser.querySelector('button')?.focus();
-      } catch (error) { report(error); }
-      finally { loading = false; }
-    });
-  }
-  draw(); return root;
+  const row = createSlotRow({ label, library, readOnly: locked,
+    accepts: entry => !locked() && entry.kind === 'material',
+    current: () => current ? { id: current.id, name: name(current), color: color(current),
+      thumb: metadata(current)?.thumbnail_url || metadata(current)?.thumb || describeMaterial(current, kit)?.thumb }
+      : { name: `Default: ${defaultLabel}`, color: defaultColor },
+    apply: entry => {
+      if (!metadata(entry)) entries.push(entry);
+      return save({ id: entry.id });
+    }, clear: () => save(null),
+    tint: { enabled: () => !!current, hasOverride: () => !!current?.color, value: () => color(current),
+      set: tint => current && save({ id: current.id, color: tint }), clear: () => current && save({ id: current.id }) } });
+  row.element.dataset.materialSlot = label;
+  const update = event => {
+    if (!disposed && event.detail?.materials) { entries = event.detail.materials; row.refresh(); }
+  };
+  if (library !== idleLibrary) document.addEventListener('chf-material-catalogue', update);
+  const dispose = row.dispose;
+  row.dispose = () => { disposed = true; document.removeEventListener('chf-material-catalogue', update); dispose(); };
+  ownSlot(row);
+  if (library !== idleLibrary || loadMaterials !== loadCatalogue) Promise.resolve().then(loadMaterials).then(materials => {
+    if (!disposed) { entries = materials || []; row.refresh(); }
+  }).catch(error => { if (!disposed) report(error); });
+  return row.element;
 }
