@@ -81,23 +81,24 @@ export function weatherHaze(weather={}) {
   return Math.max(clamp(weather.fog),.25*rain);
 }
 const previews={clear:'sunny',rain:'rainy',pouring:'pouring',snow:'snowy',fog:'fog',thunderstorm:'lightning-rainy'};
-export function previewWeather(name) {
+export function previewWeather(name,elapsed=0) {
   if (!Object.hasOwn(previews,name)) return null;
   const wet=['rain','pouring','thunderstorm'].includes(name);
+  const ramp=clamp(elapsed/90);
   return {...weatherState({state:previews[name],attributes:{wind_speed:name==='thunderstorm'?12:3,wind_speed_unit:'m/s',wind_bearing:270}},
-    {wetness:wet?1:0,puddles:wet?1:0,snow_cm:name==='snow'?8:0}),preview:name};
+    {wetness:wet?ramp:0,puddles:wet?ramp:0,snow_cm:name==='snow'?8:0}),preview:name};
 }
 
-export function createWeatherPreview(onChange,{setTimer=setTimeout,clearTimer=clearTimeout}={}) {
-  let value=null,timer=null,deadline=null;
+export function createWeatherPreview(onChange,{setTimer=setTimeout,clearTimer=clearTimeout,now=Date.now}={}) {
+  let value=null,timer=null,deadline=null,started=0;
   const clear=()=>{clearTimer(timer);timer=null;deadline=null;};
   const set=name=>{
     if (name!==null && !Object.hasOwn(previews,name)) return;
     clear();value=previewWeather(name);
-    if(value){deadline=Date.now()+120000;timer=setTimer(()=>set(null),120000);}
+    if(value){started=now();deadline=started+120000;timer=setTimer(()=>set(null),120000);}
     onChange();
   };
-  return {set,get:()=>value,get deadline(){return deadline;},stop(){clear();value=null;}};
+  return {set,get:()=>value?previewWeather(value.preview,Math.max(0,(now()-started)/1000)):null,get deadline(){return deadline;},stop(){clear();value=null;}};
 }
 
 // One small request, no stream. Mutations and five-minute ticks coalesce; an

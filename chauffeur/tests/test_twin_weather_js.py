@@ -77,11 +77,19 @@ await test('delivery uses ingress, five-minute poll, relevant existing-stream ev
  poll.stop();assert.equal(timers.size,0);await poll.refresh();assert.equal(calls,4);
 });
 await test('preview deadline is 120 seconds and independent of live polls',()=>{
- const timers=new Map();let seq=0,changed=0;
- const p=W.createWeatherPreview(()=>changed++,{setTimer:(fn,ms)=>{assert.equal(ms,120000);timers.set(++seq,fn);return seq;},clearTimer:id=>timers.delete(id)});
+ const timers=new Map();let seq=0,changed=0,clock=1000;
+ const p=W.createWeatherPreview(()=>changed++,{now:()=>clock,setTimer:(fn,ms)=>{assert.equal(ms,120000);timers.set(++seq,fn);return seq;},clearTimer:id=>timers.delete(id)});
  for(const name of ['clear','rain','pouring','snow','fog','thunderstorm']){
   p.set(name);const s=p.get();assert.ok(s);assert.equal(timers.size,1);
-  if(['rain','pouring','thunderstorm'].includes(name)){assert.equal(s.wetness,1);assert.equal(s.puddles,1);}
+  if(['rain','pouring','thunderstorm'].includes(name)){
+   assert.equal(s.wetness,0);assert.equal(s.puddles,0);
+   const start=clock;
+   for(const seconds of [9,27,45,63,81,90,119]){
+    clock=start+seconds*1000;const ramp=p.get();
+    assert.equal(ramp.wetness,Math.min(1,seconds/90));assert.equal(ramp.puddles,ramp.wetness);
+    assert.equal(ramp.rate,s.rate);assert.equal(p.deadline,start+120000);
+   }
+  }
   if(name==='snow')assert.equal(s.snow_cm,8);
   if(name==='rain')assert.equal(s.clouds.type,'nimbostratus');
   if(name==='thunderstorm')assert.ok(s.clouds.lightning);
