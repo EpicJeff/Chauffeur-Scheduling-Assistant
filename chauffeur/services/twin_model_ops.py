@@ -1323,6 +1323,17 @@ def solar_clear(building, previous):
             raise Refused('That would move a solar zone off its roof plane. Move or delete the zone before changing the roof.')
 
 
+def material_only(op):
+    """Slot writes cannot change connected room geometry."""
+    if not isinstance(op, dict):
+        return False
+    if op.get('op') == 'set_material':
+        return True
+    keys = {'op', 'id', 'materials'} if op.get('op') == 'update_pool_feature' else (
+        {'op', 'list', 'index', 'materials'} if op.get('op') == 'update_site_shape' else set())
+    return bool(keys) and 'materials' in op and set(op) <= keys
+
+
 def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None) -> tuple[dict, str]:
     from services import twin_fixtures
     result, words = _apply(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized)
@@ -1346,7 +1357,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     op = deepcopy(op)
     # save() also needs the normalized pre-edit model for its fix log. Reuse
     # that exact input's result, but keep our mutable working copy private.
-    model, notes = twin_model.normalize(model) if _normalized is None else deepcopy(_normalized)
+    model, notes = twin_model.normalize(model, preserve_room_polygons=material_only(op)) if _normalized is None else deepcopy(_normalized)
     if kind in twin_effect_fixtures.OPS:
         try:
             return model, twin_effect_fixtures.apply_op(model, op)
@@ -1622,7 +1633,8 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
                   op.get('exterior', False), actor)
         _split_drawing(building, actor)
         hosts.carry_split(building, before)
-    notes.extend(twin_model.derive(building))
+    if kind != 'set_material':
+        notes.extend(twin_model.derive(building))
     if kind == 'draw_room' and op.get('name'):
         old_ids = {r['id'] for r in previous['rooms']}
         candidates = [r for r in building['rooms'] if r['id'] not in old_ids]

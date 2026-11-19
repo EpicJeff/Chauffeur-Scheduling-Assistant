@@ -54,6 +54,12 @@ await test('roof_planes_follow_generated_edges_and_rotation_relative_to_front',(
  assert.deepEqual(rows().map(r=>r.label),['Roof','Left slope','Right slope','Front slope','Back slope']);
  assert.deepEqual(rows().slice(1).map(r=>r.target),[{roof:'roof',plane:3},{roof:'roof',plane:1},{roof:'roof',plane:0},{roof:'roof',plane:2}]);
  roof.kind='gable';assert.deepEqual(rows().map(r=>r.label),['Roof','Front slope','Back slope']);
+ // A dormer's derived section names its host roof, but its edges belong to
+ // the dormer. They must not create phantom slopes on the parent's card.
+ building.roof.sections.push({id:'dormer-section',roof:'roof',dormer_of:'dormer',kind:'hip',ridge:'x',rect:[2,2,4,4],plate:10,pitch:6,overhang:0});
+ assert.deepEqual(rows().map(r=>r.label),['Roof','Front slope','Back slope']);
+ assert.deepEqual(rows().slice(1).map(r=>r.target.plane),[0,2]);
+ building.roof.sections.pop();
  building.rotation=90;assert.deepEqual(rows().map(r=>r.label),['Roof','Right slope','Left slope']);
  building.rotation=45;assert.deepEqual(rows().map(r=>r.label),['Roof','Slope 1','Slope 2']);
  roof.material={id:'oak'};assert.equal(rows()[1].text,'From the roof: Oak');

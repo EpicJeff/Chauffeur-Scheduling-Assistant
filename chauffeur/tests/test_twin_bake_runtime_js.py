@@ -87,6 +87,27 @@ async function check(name, fn) {
   try { await fn(); passed++; console.log('  ok   ' + name); }
   catch (error) { console.log('  FAIL ' + name + ' ' + error.stack); }
 }
+await check('invalid_ownership_rebuilds_instead_of_throwing_or_trusting_old_pages', async () => {
+  const first=await context('high',null,null,{poll:0});let panel,repair;
+  try {
+    await until(()=>first.controller.fresh().length===4&&!first.controller.state().baking,'initial bake');
+    const key=first.controller.state().key,server=first.server;
+    first.controller.stop();
+    const manifest=structuredClone(server.manifests.get(key));
+    manifest.ownership.charts++;
+    server.manifests.set(key,manifest);
+    panel=await context('low',server,null,{poll:0});
+    await until(()=>!!panel.controller.packing(),'reader recovers a layout');
+    await panel.controller.refresh();await panel.controller.refresh();
+    assert.deepEqual(panel.controller.fresh(),[],'even matching old publications are untrusted on repeated polls');
+    panel.controller.stop();
+    repair=await context('high',server,null,{poll:0});
+    await until(()=>repair.controller.fresh().length===4&&!repair.controller.state().baking,'invalid ownership is rebuilt');
+    assert.deepEqual([...repair.controller.state().baked].sort(),['c1','h1','k1','k2']);
+    assert.equal(server.manifests.get(key).ownership.charts,manifest.ownership.charts-1);
+    assert.ok(server.manifests.get(key).complete);
+  } finally {first.controller.stop();panel?.controller.stop();repair?.controller.stop();}
+});
 await check('one_wall_reuses_stored_pages_and_rebakes_only_reaching_lights', async () => {
   const plan=structuredClone(job.plan),remote=[{device:'remote',building:'far',level:'L1',room:'far-lamp',at:[1005,5,6]}];
   const list=[k1,k2,h1,c1,...remote];

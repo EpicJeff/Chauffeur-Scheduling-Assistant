@@ -1092,8 +1092,11 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         profile.materials = { body: mat(role, l), left: mat(left.role, l, left.ref), right: mat(right.role, l, right.ref) };
         profile.refs = {body:surfaceRef(role, l), left:left.ref, right:right.ref};
       }
-      const sidingRef = w.faces?.[sign > 0 ? 'right' : 'left'] || l.materials?.siding;
-      if (sidingRef) profile.sidingAsset = materialKitFor({ ...plan.materials, ...b.materials, siding: sidingRef }).materials.siding?.asset;
+      // A UV/tint-only face still inherits its asset. Reading the raw partial
+      // ref here would substitute kit siding and add procedural boards to a
+      // wall whose inherited household finish has no board geometry.
+      const sidingRef = sideRef(sign > 0 ? 'right' : 'left').ref;
+      profile.sidingAsset = materialKitFor({siding:sidingRef}).materials.siding?.asset;
       if (w.footprint?.length === 4) profile.footprint = w.footprint.map(p => {
         const x = p[0] - w.from[0], y = p[1] - w.from[1];
         return [x * dx + y * dy, x * dy - y * dx];

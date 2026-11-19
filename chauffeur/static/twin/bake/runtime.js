@@ -393,10 +393,10 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       stale = lights.map(l => l.device); view.reflectionsChanged?.(); view.render();
       return;
     }
-    const m = JSON.parse(text);
+    let m = JSON.parse(text);
     // A reopened panel or another desk's publication adopts the persisted
     // channels. Never reset survivors to a fresh assignment on reload/poll.
-    if(text!==manifestText && (m.ownership && !sameSlots(m.ownership,packed.ownership) ||
+    if(text!==manifestText && (packed.ownershipReset || m.ownership && !sameSlots(m.ownership,packed.ownership) ||
       packed.lights.some(l=>l.kind===3 && l.scale!==m.lights[l.device]?.scale))) {
       // Held bytes were encoded with the previous scale. Do not mark them
       // fresh under a new scale if its replacement page is offline or damaged.
@@ -406,6 +406,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       if(!sameSlots(next.ownership,packed.ownership)) prepare(lights,m.ownership,m);
       else packed=next;
     }
+    if(packed.ownershipReset)m={...m,lights:{}};
     let changed = text !== manifestText;
     manifestText = text;
     const wanted = new Set();
@@ -541,6 +542,10 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       // Retain the arrays, shader bindings and unrelated lights' fresh masks.
       const previous = packed;
       packed = bakeLayout(atlas, layout, lights, packed.ownership, packed.entries);
+      if(packed.ownershipReset) {
+        fresh.clear(); present.clear(); etags.clear(); preservePages.clear();
+        prepare(lights, packed.ownership);
+      }
       setSources({lights:packed.entries});
       for (const id of [...fresh]) if (previous.entries[id]?.key !== packed.entries[id]?.key) {
         fresh.delete(id); light(id, [0, 0, 0], 0);

@@ -18,7 +18,10 @@ export function authoredGeometry(plan) {
   const canonical = value => {
     if (Array.isArray(value)) return value.map(canonical);
     if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.keys(value).sort().filter(k => !renderMetadata.has(k))
+    // flatten() mirrors person-owned active roof sections into legacy choices.
+    // Assigning a finish can grow that UI list without changing any surface.
+    return Object.fromEntries(Object.keys(value).sort().filter(k => !renderMetadata.has(k) &&
+      !(k === 'choices' && Array.isArray(value.sections)))
       .map(k => [k, canonical(value[k])]));
   };
   const fields = ['id', 'position', 'rotation', 'base', 'foundation', 'materials', 'levels',

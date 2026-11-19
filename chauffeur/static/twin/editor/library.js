@@ -99,7 +99,7 @@ export function materialLines(record, plan, kit) {
     line('Walls', 'interior_wall', piece.wall_material, { room: piece.id, surface: 'walls' }, null, { room: piece, surface: 'walls', label: 'walls' }), ...porchLines].filter(Boolean);
   if (kind === 'roof') {
     const id = piece.roof || piece.id, authored = building.roofs?.find(r => r.id === id);
-    const sections = (building.roof?.sections || []).filter(s => (s.roof || s.id) === id);
+    const sections = (building.roof?.sections || []).filter(s => !s.dormer_of && (s.roof || s.id) === id);
     const roof = authored || piece, planeRows = [], seen = new Set();
     for (const section of sections.length ? sections : piece.rect ? [piece] : []) for (const plane of planes(section)) {
       if (plane.edge === null || seen.has(plane.edge)) continue;

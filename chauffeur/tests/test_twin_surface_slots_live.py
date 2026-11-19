@@ -72,7 +72,7 @@ def _seed(*, feature=False, many=False):
                 cx = sum(p[0] for p in points) / len(points)
                 cy = sum(p[1] for p in points) / len(points)
                 pool.setdefault('features', []).append({'id': 'slots-test-ledge',
-                    'kind': 'ledge', 'name': 'Surface acceptance ledge', 'depth_in': 12,
+                    'kind': 'ledge', 'depth_in': 12,
                     'polygon': [[cx-2, cy-1], [cx+2, cy-1], [cx+2, cy+1], [cx-2, cy+1]]})
         return plan
 
@@ -281,6 +281,8 @@ ROOF_GROUPS = r'''async bid => {
         if(!domain)return;
         const matrix=domain.matrixWorld.clone().invert().multiply(mesh.matrixWorld),g=mesh.geometry;
         const p=g.attributes.position,mats=Array.isArray(mesh.material)?mesh.material:[mesh.material];
+        const ranges=mesh.userData.snapRanges||g.userData.snapRanges||[
+            {...mesh.userData,start:0,count:g.index?.count||p.count}];
         for(let n=0;n+2<(g.index?.count||p.count);n+=3){
             const group=g.groups.find(x=>n>=x.start&&n<x.start+x.count),m=mats[group?.materialIndex||0];
             if(m?.name!=='roof'||!m.visible)continue;
@@ -289,7 +291,10 @@ ROOF_GROUPS = r'''async bid => {
             const tri=new THREE.Triangle(...points),normal=tri.getNormal(new THREE.Vector3());
             if(normal.z<.1||tri.getArea()<1e-8)continue;
             const centre=tri.getMidpoint(new THREE.Vector3());
-            const hit=triangles.find(t=>t.edge>=0&&t.triangle.closestPointToPoint(centre,new THREE.Vector3()).distanceTo(centre)<1e-4);
+            const owner=ranges.find(r=>n>=r.start&&n<r.start+r.count)?.pieceId;
+            const hit=triangles.find(t=>!t.section.dormer_of&&t.edge>=0&&t.section.id===owner
+                &&t.triangle.getNormal(new THREE.Vector3()).dot(normal)>.99999
+                &&t.triangle.closestPointToPoint(centre,new THREE.Vector3()).distanceTo(centre)<1e-4);
             if(!hit)continue;
             const key=(hit.section.roof||hit.section.id)+':'+hit.edge;
             (out[key]||=[]).push({material:m.userData.materialId||m.userData.bakeMaterialId||null,
@@ -549,25 +554,34 @@ FRAME_SAMPLE = r'''async frames => {
 
 def _bulk_targets(page):
     """40 different slots, spread across walls, floors and authored roof edges."""
-    return page.evaluate('''async () => {
+    # Authored edges can be wholly covered by another roof, and some wall
+    # sides have no exposed face. Measure assignments to actual drawn surfaces.
+    records = _records(page)
+    roofs = {b['id']: page.evaluate(ROOF_GROUPS, b['id']) for b in L._plan(page)['buildings']}
+    return page.evaluate('''async ({records,drawnRoofs}) => {
         const {materialLines}=await import(window.chfBase+'static/twin/editor/library.js');
         const p=window.__twin.plan,walls=[],floors=[],roofs=[],seen=new Set();
         for(const b of p.buildings){
-            for(const w of b.walls.filter(w=>w.state!=='ghost'))walls.push({bid:b.id,wall:w.id,side:'left'});
-            for(const r of b.rooms.filter(r=>r.state!=='ghost'&&r.kind!=='porch'))floors.push({bid:b.id,room:r.id});
+            for(const w of b.walls.filter(w=>w.state!=='ghost')){
+                const side=['left','right'].find(side=>records.some(r=>r.piece===w.id&&r.part===side));
+                if(side)walls.push({bid:b.id,wall:w.id,side});
+            }
+            for(const r of b.rooms.filter(r=>r.state!=='ghost'&&r.kind!=='porch'))
+                if(records.some(x=>x.piece===r.id&&x.role==='floor'))floors.push({bid:b.id,room:r.id});
             for(const s of b.roof?.sections||[])for(const row of materialLines({kind:'roof',piece:s,building:b},p,{})){
                 const t=row.target,key=JSON.stringify([b.id,t]);
-                if(t.plane===undefined||seen.has(key))continue;seen.add(key);roofs.push({bid:b.id,roof:t.roof,plane:t.plane});
+                if(t.plane===undefined||seen.has(key)||!drawnRoofs[b.id][t.roof+':'+t.plane]?.length)continue;
+                seen.add(key);roofs.push({bid:b.id,roof:t.roof,plane:t.plane});
             }
         }
         if(walls.length<20||floors.length<10||roofs.length<10)throw Error('Household needs 20 walls, 10 floors and 10 roof planes');
         return [...walls.slice(0,20),...floors.slice(0,10),...roofs.slice(0,10)];
-    }''')
+    }''', {'records': records, 'drawnRoofs': roofs})
 
 
 def scenario_many_overrides_low_tier_measure():
     with _page(many=True) as (page, assets):
-        from services import twin_store
+        from services import twin_store, twin_edit
 
         page.click('#dock-tab-scene')
         page.get_by_role('button', name='All floors', exact=True).click()
@@ -579,23 +593,14 @@ def scenario_many_overrides_low_tier_measure():
         original = copy.deepcopy(twin_store.current_model())
         baseline = page.evaluate(FRAME_SAMPLE, 90)
 
-        def overrides(plan):
-            for i, target in enumerate(targets):
-                b = next(b for b in plan['buildings'] if b['id'] == target['bid'])
-                ref = {'id': assets[f'cost{i}']['id']}
-                if 'wall' in target:
-                    w = next(w for w in b['walls'] if w['id'] == target['wall'])
-                    w.setdefault('faces', {})[target['side']] = ref
-                elif 'room' in target:
-                    next(r for r in b['rooms'] if r['id'] == target['room'])['floor_material'] = ref
-                else:
-                    roof = next(r for r in b['roofs'] if r['id'] == target['roof'])
-                    roof.setdefault('plane_materials', {})[str(target['plane'])] = ref
-            return plan
-
-        # Roof plane refs belong to the connected model. A flat drawing write
-        # reassembles roofs from roof.sections and can discard a canonical edit.
-        twin_store.update_model(overrides, 'edit')
+        # Use the editor's real save path for the connected roof, wall and room
+        # targets, so this fixture has exactly the same finish semantics.
+        for i, target in enumerate(targets):
+            surface = ({'wall': target['wall'], 'side': target['side']} if 'wall' in target else
+                       {'room': target['room'], 'surface': 'floor'} if 'room' in target else
+                       {'roof': target['roof'], 'plane': target['plane']})
+            twin_edit.save({'op': 'set_material', 'building': target['bid'], 'target': surface,
+                            'material': {'id': assets[f'cost{i}']['id']}}, H.PARENT['id'])
         # _open navigates/signs in and closes the shell dialog, just as on first load.
         _open(page)
         page.click('#dock-tab-scene')
@@ -614,11 +619,15 @@ def scenario_many_overrides_low_tier_measure():
                 ref = next(r for r in b['roofs'] if r['id'] == target['roof'])['plane_materials'][str(target['plane'])]
             assert ref == {'id': assets[f'cost{i}']['id']}
         drawn_ids = page.evaluate('''() => {
-            const ids=new Set();window.__twin.scene.traverse(o=>{
-                for(const m of o.material?[].concat(o.material):[])if(m.userData.materialId)ids.add(m.userData.materialId);
+            const ids=new Set();window.__twin.scene.traverseVisible(o=>{
+                if(!o.isMesh||o.layers.isEnabled(31)||!o.geometry.attributes.position.count)return;
+                const mats=Array.isArray(o.material)?o.geometry.groups.filter(g=>g.count>0).map(g=>o.material[g.materialIndex]):[o.material];
+                for(const m of mats)if(m?.visible&&m.userData.materialId)ids.add(m.userData.materialId);
             });return [...ids];
         }''')
-        assert {assets[f'cost{i}']['id'] for i in range(40)} <= set(drawn_ids), 'An override never reached a render material'
+        assert {assets[f'cost{i}']['id'] for i in range(40)} <= set(drawn_ids), (
+            'An override never reached a render material',
+            [target for i, target in enumerate(targets) if assets[f'cost{i}']['id'] not in drawn_ids])
         measured = page.evaluate(FRAME_SAMPLE, 90)
         assert baseline['tier'] == measured['tier'] == 'low'
         assert len(baseline['times']) == len(measured['times']) == 90
@@ -646,7 +655,9 @@ def scenario_properties_keeps_its_place():
         page.locator('#dock-splitter').press('End')
         scroller = page.locator('#editor-dock #editor-sidebar')
         card = scroller.locator('#piece-card')
-        field = card.get_by_label('Kind', exact=True)
+        # A wrapped select's label text also includes its option captions.
+        # Kind is the first direct form select; end choices are added after it.
+        field = card.locator('form > label > select').first
         assert field.input_value() == 'shed'
         assert card.locator('form > label > select').count() == 1
         assert card.evaluate('(n) => n.scrollHeight') > scroller.evaluate('(n) => n.clientHeight'), (

@@ -167,6 +167,16 @@ const rows=root=>{const result=[];root.traverse(o=>{
    piece:r.pieceId,uv:uv?[uv.getX(j),uv.getY(j)]:null,program:o.material.customProgramCacheKey()});
  }
  });return result.sort((a,b)=>a.key.localeCompare(b.key)||JSON.stringify(a.uv).localeCompare(JSON.stringify(b.uv)));};
+const inheritedWallPlan=structuredClone(input.plan);
+for(const b of inheritedWallPlan.buildings)b.materials={...b.materials,siding:{id:'slope0'}};
+const inheritedWall=await build(inheritedWallPlan,custom),inheritedRows=rows(inheritedWall.root);
+const inheritedUvPlan=structuredClone(inheritedWallPlan);
+inheritedUvPlan.buildings[0].walls.find(w=>w.id===target.id).faces={left:{uv:{u:.25,v:0,rot:90}},right:{uv:{u:.25,v:0,rot:90}}};
+const inheritedUv=await build(inheritedUvPlan,custom),inheritedUvRows=rows(inheritedUv.root);
+assert.deepEqual(inheritedUvRows.map(r=>[r.key,r.program]),inheritedRows.map(r=>[r.key,r.program]),
+ 'an inherited UV-only face cannot switch to kit siding and generate board geometry');
+assert.ok(inheritedUvRows.some((r,i)=>JSON.stringify(r.uv)!==JSON.stringify(inheritedRows[i].uv)),'inherited UV still moves');
+console.log('ok inherited household siding UV retains geometry, neighbours and programs');
 const floors=structuredClone(p);floors.buildings[0].roof.sections=[];
 const a=await build(floors,custom);floors.buildings[0].rooms[0].floor_material={uv:{u:.25,v:.5,rot:90}};
 const shifted=await build(floors,custom),ra=rows(a.root),rb=rows(shifted.root);

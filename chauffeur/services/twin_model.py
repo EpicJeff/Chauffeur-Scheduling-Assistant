@@ -590,7 +590,7 @@ def _ha_display(value, notes):
 
 
 @_edit_timed('normalize')
-def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
+def normalize(model: dict, *, persist_t_splits=True, preserve_room_polygons=False) -> tuple[dict, list[str]]:
     """Validate and derive rooms, optionally retaining whole flat-read walls."""
     model = deepcopy(model)
     if not isinstance(model, dict) or model.get('units') != 'ft':
@@ -623,7 +623,16 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
                              and twin_plan._point(f.get('at'))]
         if len(building['flags']) != len(flags):
             notes.append('Dropped flags with invalid text or position.')
+        # Imported plans may deliberately retain the reader's cached outlines.
+        # A finish edit does not change their graph and must not resize floors
+        # merely by running the editing derivation on those cached outlines.
+        polygons = {r['id']: deepcopy(r['polygon']) for r in building['rooms']
+                    if twin_plan._polygon(r.get('polygon'))} if preserve_room_polygons else {}
         _derive(building, notes, persist_t_splits=persist_t_splits)
+        if polygons:
+            for room in building['rooms']:
+                if room['id'] in polygons:
+                    room['polygon'] = polygons[room['id']]
         from services import twin_floors
         from services import twin_porches
         for room in building['rooms']:
