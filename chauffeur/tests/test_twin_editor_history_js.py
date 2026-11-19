@@ -100,7 +100,7 @@ try {
  }};
  const stubs='data:text/javascript,'+encodeURIComponent(config.stubs.replace('CARDS_URL',file('static/twin/editor/cards.js')));
  registerHooks({resolve(spec,ctx,next){
-  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js'].includes(spec))return {url:stubs,shortCircuit:true};
+  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js','./icons.js'].includes(spec))return {url:stubs,shortCircuit:true};
   return next(spec,ctx);
  }});
  const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready);
@@ -187,5 +187,5 @@ try {
 
 if __name__ == '__main__':
     ids = set(re.findall(r'id="([\w-]+)"', (ROOT / 'templates/house_editor.html').read_text(encoding='utf-8')))
-    ids.update(['piece-card', 'rail-undo', 'rail-redo'])
+    ids.update(['piece-card', 'rail-undo', 'rail-redo', 'rail-add-effect'])
     sys.exit(run(DRIVER, {'stubs': STUBS, 'ids': sorted(ids)}, timeout=45))

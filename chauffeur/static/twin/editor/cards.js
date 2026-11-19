@@ -417,7 +417,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     pending = run.catch(() => {});
     return run;
   }
-  return { draw, queue, remove, edge(handle) {
+  return { draw, queue, remove, showRoofEdge(handle) {
     const next = { pieceId: handle.id, buildingId: handle.building };
     selection = next; edgeIndex = handle.edge; layout = null; draw(next);
   } };

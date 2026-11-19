@@ -20,7 +20,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
   root.name = 'editor-device-markers';
   view.scene.add(root);
   let armed = null, press = null, drag = null, stopped = false;
-  const fixtures = createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal,
+  const fixtures = createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal, bindCancel: false,
     prepare() { cancel(); prepare(); }, getCameraMarker(device) {
       const at = spot(device); if (!at) return null;
       const b = at.building, a = (b?.rotation || 0) * Math.PI / 180, p = b?.position || [0, 0], [x, y, z] = at.point;
@@ -196,7 +196,9 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     if (event.key !== 'Escape' || !armed && !drag) return;
     cancel(); event.preventDefault(); event.stopImmediatePropagation();
   }, { capture: true });
-  listen(el('device-cancel'), 'click', cancel);
+  // The parent owns the shared button. A line fixture's Done must finish its
+  // path before any device cancellation can discard the draft.
+  listen(el('device-cancel'), 'click', () => fixtures.active() ? fixtures.finishPlacement() : cancel());
 
   // Positions come from the link's auto spots and the current saved plan, so
   // a slow HA read never delays a rebuild or a person's saved placement.

@@ -388,3 +388,71 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-gizmo_move_free, .editor-gizmo_scale, .editor-gizmo_scale_x, .editor-gizmo_scale_y { border-radius: 2px; }
 .editor-gizmo_turn { width: 20px; height: 20px; border-width: 2px; }
 .editor-gizmo-line { position: fixed; z-index: 2; pointer-events: none; border-top: 1px solid var(--twinMarkerRing); transform-origin: left center; }
+
+/* Slice 4 shell. Shared editor glass, selected pills and 44px hit targets.
+   The legacy panel/card layout remains until the dock task. */
+#editor-top { inset: 0 0 auto; display: block; pointer-events: auto; }
+#editor-toolbar { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; padding: 6px 8px;
+  overflow-x: auto; background: var(--editor-panel); border-bottom: 1px solid var(--editor-line); }
+#editor-toolbar > *, #editor-rail > * { flex: 0 0 auto; }
+#editor-toolbar [data-toolbar-group] { display: flex; align-items: center; gap: 2px; }
+#editor-toolbar [data-toolbar-group]:not([data-toolbar-group="menu"]):not([data-toolbar-group="house"]):not([data-toolbar-group="save"]) {
+  border-left: 1px solid var(--editor-line); padding-left: 4px; }
+#editor-toolbar #editor-house-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border: 0; border-radius: 0; padding: 0 8px; background: transparent; backdrop-filter: none; }
+#editor-toolbar-save-state { color: var(--editor-muted); padding-right: 6px; white-space: nowrap; }
+#editor-rail { position: static; display: flex; flex-direction: row; align-items: center; gap: 4px; padding: 0;
+  border: 0; border-radius: 0; max-height: none; overflow: visible; transform: none; background: transparent; backdrop-filter: none; }
+#editor-toolbar button[data-editor-icon], #editor-toolbar summary[data-editor-icon] {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 44px; width: 44px; min-height: 44px;
+  padding: 10px; border: 1px solid transparent; border-radius: 10px; background: transparent; }
+#editor-toolbar svg { flex-shrink: 0; }
+#editor-toolbar .editor-toolbar-menu { display: block; position: static; }
+.editor-toolbar-menu summary { list-style: none; cursor: pointer; }
+.editor-toolbar-menu summary::-webkit-details-marker { display: none; }
+.editor-toolbar-menu[open] > summary { background: var(--twinHover) !important; }
+#editor-menu > div, .editor-toolbar-menu > div, #editor-toolbar #editor-cameras {
+  position: fixed; top: var(--editor-toolbar-bottom, 58px); left: 8px; bottom: auto; width: 280px;
+  max-width: calc(100vw - 16px); max-height: calc(100dvh - var(--editor-toolbar-bottom, 58px) - 60px); overflow-y: auto;
+  padding: 8px; background: var(--editor-panel); backdrop-filter: blur(16px); border: 1px solid var(--editor-line); border-radius: 12px;
+  z-index: 92; pointer-events: auto; }
+#editor-toolbar .editor-toolbar-menu > div button[data-editor-icon] { width: 100%; justify-content: flex-start; gap: 10px; }
+#editor-toolbar .editor-toolbar-menu > div .editor-sr-only { position: static; width: auto; height: auto; clip-path: none; }
+#editor-cameras { display: flex; flex-wrap: wrap; gap: 4px; }
+#editor-lighting { flex-basis: 100%; }
+#editor-lighting-help { margin-top: 6px; }
+#editor-floor-picker { display: flex; flex-direction: column; gap: 4px; }
+#editor-floor-picker .editor-floor-row button:first-child { flex: 0 0 44px; }
+#editor-floor-add { width: 100%; margin-top: 6px; }
+#editor-genbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 12px;
+  background: var(--editor-panel); border-bottom: 1px solid var(--editor-line); }
+#editor-genbar #editor-steps { flex-basis: 100%; }
+#place-steps { display: flex; gap: 6px; overflow-x: auto; flex-shrink: 0; padding: 8px 16px; }
+#place-steps button { flex-shrink: 0; }
+#place-steps [data-state="now"], #place-steps [aria-expanded="true"] { border-color: var(--editor-accent); color: var(--editor-accent); }
+#editor-statusbar { position: absolute; inset: auto 0 0; z-index: 5; display: flex; align-items: center; gap: 12px;
+  min-height: 44px; padding: 4px 12px max(4px, env(safe-area-inset-bottom)); background: var(--editor-panel); border-top: 1px solid var(--editor-line); }
+#editor-status { flex: 1; min-width: 0; color: var(--editor-accent); }
+#editor-save-state { flex-shrink: 0; color: var(--editor-muted); }
+#editor-statusbar #editor-flag-count { margin: 0; }
+#editor-statusbar:has(> section:not([hidden])) #editor-status { display: none; }
+#editor-statusbar #draw-tools, #editor-statusbar #device-tools, #editor-statusbar #roof-tools {
+  position: static; display: flex; align-items: center; flex-wrap: wrap; flex: 1; gap: 8px;
+  min-width: 0; border: 0; padding: 0; border-radius: 0; background: transparent; backdrop-filter: none; }
+#editor-statusbar #draw-note, #editor-statusbar #device-note, #editor-statusbar #roof-note { margin: 0; color: var(--editor-accent); }
+#editor-scene { top: var(--editor-header-bottom, 68px); bottom: var(--editor-status-height, 52px); }
+#editor-sidebar { top: var(--editor-header-bottom, 68px); bottom: calc(var(--editor-status-height, 52px) + 8px); }
+#library-panel { top: var(--editor-header-bottom, 68px); }
+#editor-toolbar summary:hover { background: var(--twinHover); }
+.editor-measure { pointer-events: none; }
+.editor-measure-line { position: fixed; inset: 0; width: 100vw; height: 100dvh; overflow: visible; z-index: 3; }
+.editor-measure-line line { stroke: var(--editor-accent); stroke-width: 2; }
+.editor-measure-label { position: fixed; z-index: 3; transform: translate(-50%, -50%); white-space: nowrap;
+  background: var(--editor-panel); color: var(--editor-accent); border: 1px solid var(--editor-accent); border-radius: 10px; padding: 6px 8px; }
+@media (max-width: 700px) {
+  #editor-toolbar #editor-house-name { max-width: 100px; }
+  #editor-scene { bottom: 48%; }
+  #editor-sidebar { top: calc(52% + 8px); bottom: calc(var(--editor-status-height, 52px) + 8px); }
+  #library-panel { top: calc(52% + 8px); }
+  #editor-statusbar { gap: 6px; padding-inline: 8px; font-size: 11px; }
+}

@@ -475,7 +475,12 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     }
     graphics(); return true;
   }
-  const open = button('Ground and yard', show); open.id = 'rail-ground'; document.getElementById('editor-rail').append(open);
+  // The shell supplies its home in the yard group; older embedding harnesses
+  // can still ask this module to supply the button.
+  const existingOpen = document.getElementById('rail-ground');
+  const open = existingOpen || button('Ground and yard', show);
+  if (existingOpen) listen(open, 'click', show);
+  else { open.id = 'rail-ground'; document.getElementById('editor-rail').append(open); }
   listen(document.getElementById('editor-rail'), 'click', event => {
     const b = event.target.closest?.('button');
     if (b && b !== open && !['rail-undo', 'rail-redo'].includes(b.id)) close();
@@ -491,7 +496,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   listen(canvas, 'pointermove', event => { if (drawing && !gesture) pointerMove(event); });
   view.controls.addEventListener('change', graphics);
   listen(canvas.parentElement, 'twinrebuilt', refresh);
-  signal.addEventListener('abort', () => { cancelPadDrag(); if (gesture) pointerUp({ pointerId: gesture.pointer }, true); clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
+  signal.addEventListener('abort', () => { cancelPadDrag(); if (gesture) pointerUp({ pointerId: gesture.pointer }, true); clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); if (!existingOpen) open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
   return { show, choose, startDrawing, refresh, hit, begin, padHits, pointerArmedDown, pointerDown, pointerMove, pointerUp,
     selectionChanged(state) { if (state.id && chosen) close(); }, cancel: close, handles: () => handles };
 }

@@ -23,6 +23,7 @@ import { createSteps } from './steps.js';
 import { createChecks } from './checks.js';
 import { createEditQueue } from './edit_queue.js';
 import { applyLocal, LocalMissing } from './local_ops.js';
+import { mountIcons } from './icons.js';
 
 const el = id => document.getElementById(id);
 const STREAM_ONLY = new Set(['piece', 'stage', 'stream_reset', 'log']);
@@ -40,7 +41,7 @@ export async function boot() {
   let buildGhosts = null, checks = null, houses = null, drawingStarted = false;
   const statusChip = createStatusChip(el('editor-chip')), seenBuildRounds = new Set();
   const lifecycle = new AbortController();
-  const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
+  const listen = (node, type, handler, options = {}) => node.addEventListener(type, handler, { ...options, signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
   const panel = createPanel({ afterSay: async () => { await polling.pollNow(true); },
     acceptPause: async () => {
@@ -54,17 +55,49 @@ export async function boot() {
     if (name === 'Check it') { place?.close(false); checks?.show(); }
     else { checks?.dismiss(false); place?.open(name); }
   } });
-  const header = el('editor-top'), rail = el('editor-rail');
-  if (typeof ResizeObserver !== 'undefined') {
-    // Panels beside the rail start at its right edge: the rail is one column or two (M1).
-    const observer = new ResizeObserver(() => {
-      const style = document.querySelector('.editor-shell').style;
-      style.setProperty('--editor-header-bottom', `${header.getBoundingClientRect().bottom + 8}px`);
-      const right = rail?.getBoundingClientRect?.().right;
-      if (right > 0) style.setProperty('--editor-rail-right', `${Math.round(right + 8)}px`);
+  // The generation strip is absent in manual editing. Keep every setup step
+  // reachable from Your place using the same builder and opening path.
+  const placeSteps = createSteps(el('place-steps'), { state: stepState(), onOpen: name => steps.open(name) });
+  // Keep the panel's check queue and its handler; only its display home moves.
+  const checkCount = el('editor-flag-count');
+  if (checkCount) el('editor-statusbar').append(checkCount);
+  mountIcons(el('editor-toolbar'));
+  const header = el('editor-top'), toolbar = el('editor-toolbar'), statusbar = el('editor-statusbar');
+  function sizeShell() {
+    const style = document.querySelector('.editor-shell').style;
+    style.setProperty('--editor-header-bottom', `${header.getBoundingClientRect().bottom + 8}px`);
+    style.setProperty('--editor-toolbar-bottom', `${toolbar.getBoundingClientRect().bottom}px`);
+    style.setProperty('--editor-status-height', `${statusbar.getBoundingClientRect().height}px`);
+    style.setProperty('--editor-rail-right', '16px');
+  }
+  // Menu panels are fixed so horizontal toolbar scrolling never clips them.
+  for (const menu of document.querySelectorAll('.editor-toolbar-menu')) {
+    listen(menu, 'toggle', () => {
+      if (!menu.open) return;
+      for (const other of document.querySelectorAll('.editor-toolbar-menu')) if (other !== menu) other.open = false;
+      const box = menu.getBoundingClientRect();
+      const panel = menu.querySelector('div, nav');
+      if (panel) panel.style.left = `${Math.max(8, Math.min(box.left, window.innerWidth - 290))}px`;
     });
+    listen(menu, 'click', event => {
+      const action = event.target.closest?.('button, a');
+      if (action && !action.disabled) menu.open = false;
+    });
+  }
+  listen(document, 'pointerdown', event => {
+    for (const menu of document.querySelectorAll('.editor-toolbar-menu')) if (menu.open && !menu.contains(event.target)) menu.open = false;
+  });
+  listen(document, 'keydown', event => {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    const menu = [...document.querySelectorAll('.editor-toolbar-menu')].find(menu => menu.open);
+    if (!menu) return;
+    menu.open = false; menu.querySelector('summary')?.focus(); event.preventDefault(); event.stopImmediatePropagation();
+  }, { capture: true });
+  listen(el('editor-floor-add'), 'click', () => el('rail-add-level').click());
+  if (typeof ResizeObserver !== 'undefined') {
+    const observer = new ResizeObserver(sizeShell);
     observer.observe(header);
-    if (rail) observer.observe(rail);
+    observer.observe(statusbar);
     lifecycle.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
   }
   const currentRound = () => [...snapshot.rounds].reverse().find(row => !row.stale)?.id ?? null;
@@ -127,6 +160,7 @@ export async function boot() {
     const state = queue.state(), count = state.unsaved || state.saving;
     el('editor-save-state').textContent = state.saved ? 'Saved'
       : `${state.unsaved ? '' : 'Saving '}${count} ${count === 1 ? 'change' : 'changes'}${state.unsaved ? ' not saved' : ''}`;
+    el('editor-toolbar-save-state').textContent = el('editor-save-state').textContent;
   }
   async function settleView(plan, info) {
     const selection = info.selection ?? tools?.selected?.() ?? null;
@@ -273,6 +307,9 @@ export async function boot() {
     syncSaveState();
     syncChip();
     steps.render(stepState());
+    placeSteps.render(stepState());
+    el('editor-genbar').hidden = !directing && !['running', 'paused', 'stopped', 'checkpoint'].includes(currentBuild?.state);
+    el('editor-house-name').textContent = snapshot.plan?.name || snapshot.plan?.buildings?.[0]?.name || 'House editor';
     el('editor-front-door').hidden = drawingStarted || !!sheets.place?.buildings?.length || !!sheets.sources?.length
       || !!snapshot.model?.buildings?.length || !!sheets.place?.lot?.read || !!snapshot.plan?.site?.lot?.length;
     history?.sync();

@@ -146,7 +146,7 @@ export function cameraView(plan, marker) {
   return { at, aim: [at[0] + 20 * Math.cos(angle), at[1] + 20 * Math.sin(angle), at[2]], fov_deg: 90 };
 }
 
-export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal, prepare = () => {}, report = reportError, getCameraMarker }) {
+export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal, prepare = () => {}, report = reportError, getCameraMarker, bindCancel = true }) {
   const canvas = view.renderer3.domElement, root = new THREE.Group(), el = id => document.getElementById(id);
   const ray = new THREE.Raycaster(); ray.params.Line.threshold = .08; view.scene.add(root); root.name = 'editor-light-fixtures';
   const handleLayer = element('div'); handleLayer.className = 'editor-handles'; canvas.parentElement.append(handleLayer);
@@ -529,7 +529,11 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     }
     draw();
   }
-  el('device-cancel').addEventListener('click', () => { if (mode?.kind === 'shape') { release(); shapeTool.done().catch(report); } else if (mode) cancel(); }, { signal });
+  function finishPlacement() {
+    if (mode?.kind === 'shape') { release(); shapeTool.done().catch(report); }
+    else if (mode) cancel();
+  }
+  if (bindCancel) el('device-cancel').addEventListener('click', finishPlacement, { signal });
   canvas.addEventListener('pointermove', event => { if (mode?.kind === 'shape' && !press) pointerMove(event); }, {signal});
   document.addEventListener('keydown', event => {
     if (!mode || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), #cc-choice-modal:not(.hidden), #cc-alert-modal:not(.hidden), dialog[open]')) return;
@@ -546,7 +550,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   view.controls.addEventListener?.('change', drawHandles);
   signal.addEventListener('abort', () => { cancel(); if (el('piece-card').dataset.fixtureCard) { releaseCard(); el('piece-card').hidden = true; } root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent();
     view.controls.removeEventListener?.('change', drawHandles); gizmo.finish(true); gizmoLayer.remove(); handleLayer.remove(); }, { once: true });
-  return { add, addEffect, showEffect, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, hits, selectPick,
+  return { add, addEffect, showEffect, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, hits, selectPick, finishPlacement,
     hit, begin, key: gizmo.key, typedValue: gizmo.typedValue, commit: gizmo.commit,
     handles: () => { drawHandles(); return [...gizmo.handles(), ...pointHandles]; }, pointerDown, pointerMove, pointerUp, cancel, refresh, draw, active: () => !!mode };
 }

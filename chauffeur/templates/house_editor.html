@@ -85,19 +85,16 @@
       <button id="editor-draw-myself" type="button">Draw it myself</button>
     </section>
     <aside id="editor-edit-timing" aria-label="Edit timing" hidden></aside>
+    {% macro tool_button(tool, label) -%}
+      <button id="rail-{{ tool }}" type="button" data-editor-icon="{{ tool }}" title="{{ label }}" aria-label="{{ label }}" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool not in ['select', 'library', 'add-effect', 'ground'] %}disabled{% endif %} {% if tool == 'library' %}aria-controls="library-panel"{% endif %}><span class="editor-sr-only">{{ label }}</span></button>
+    {%- endmacro %}
     <header id="editor-top">
-      <h1>House editor</h1>
-      <a id="editor-library-page" href="{{ _up }}house/library" target="_blank" rel="noopener">Library</a>
-      <output id="editor-status" role="status">Opening your house…</output>
-      <output id="editor-save-state" role="status">Saved</output>
-      <div id="editor-chip" aria-label="Build status and spend"></div>
-      <button id="editor-check-step" type="button" hidden>Check this step</button>
-      <button id="editor-resume" type="button" hidden>Resume</button>
-      <button id="editor-stop" type="button" aria-label="Stop build" hidden>Stop</button>
-      <button id="editor-houses" type="button">Houses</button>
-      <details id="editor-menu">
-        <summary aria-label="House menu">Menu</summary>
-        <div><button id="editor-manage-sources" type="button">Your place</button>
+    <div id="editor-toolbar" role="toolbar" aria-label="House editor toolbar">
+      <details id="editor-menu" data-toolbar-group="menu" class="editor-toolbar-menu">
+        <summary aria-label="House menu" title="House menu" data-editor-icon="menu"><span class="editor-sr-only">Menu</span></summary>
+        <div><button id="editor-houses" type="button">Houses</button>
+          <a id="editor-library-page" href="{{ _up }}house/library" target="_blank" rel="noopener">Library</a>
+          <button id="editor-manage-sources" type="button">Your place</button>
           <button id="menu-upload" type="button">Upload more</button>
           <button id="menu-director" type="button" disabled>Art director</button>
           <button id="menu-advanced" type="button" disabled>Advanced: edit the plan file</button>
@@ -108,15 +105,72 @@
           <button id="menu-record" type="button" hidden disabled>Download build record</button>
           <a href="{{ _up }}house/twin">House preview</a></div>
       </details>
-      <nav id="editor-steps" aria-label="Build your house"></nav>
-    </header>
+      <h1 id="editor-house-name" data-toolbar-group="house">House editor</h1>
+      <span id="editor-toolbar-save-state" data-toolbar-group="save" aria-hidden="true">Saved</span>
     <nav id="editor-rail" aria-label="House tools">
-      {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('scale', 'Scale'), ('draw-room', 'Draw room'), ('draw-wall', 'Draw wall'), ('split-room', 'Split room'), ('add-door', 'Add door'), ('add-window', 'Add window'), ('add-anchor', 'Add anchor'), ('add-stair', 'Add stair'), ('add-solar-zone', 'Add solar zone'), ('add-meter', 'Add meter'), ('add-electric-panel', 'Add electric panel'), ('add-charger', 'Add charger'), ('add-parking', 'Add parking spot'), ('roof', 'Roof'), ('add-level', 'Add floor'), ('delete', 'Delete'), ('undo', 'Undo'), ('redo', 'Redo'), ('sheet', 'Sheet')] %}
-      <button id="rail-{{ tool }}" type="button" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool != 'select' %}disabled{% endif %}>{{ label }}</button>
-      {% endfor %}
-      <button id="rail-library" type="button" aria-pressed="false" aria-controls="library-panel">Library</button>
-      <button id="rail-add-effect" type="button">Add effect</button>
+      <div data-toolbar-group="select" role="group" aria-label="Select and transform">
+        {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('scale', 'Scale')] %}{{ tool_button(tool, label) }}{% endfor %}
+      </div>
+      <div data-toolbar-group="structure" role="group" aria-label="Structure">
+        {% for tool, label in [('draw-wall', 'Draw wall'), ('draw-room', 'Draw room'), ('split-room', 'Split room'), ('add-door', 'Add door'), ('add-window', 'Add window'), ('add-stair', 'Add stair'), ('add-level', 'Add floor'), ('roof', 'Roof')] %}{{ tool_button(tool, label) }}{% endfor %}
+        <details class="editor-toolbar-menu" id="editor-roof-menu"><summary aria-label="More roof tools" title="More roof tools" data-editor-icon="chevron"><span class="editor-sr-only">More roof tools</span></summary>
+          <div>{{ tool_button('add-solar-zone', 'Add solar zone') }}</div>
+        </details>
+      </div>
+      <div data-toolbar-group="yard" role="group" aria-label="Yard">{{ tool_button('ground', 'Ground and yard') }}</div>
+      <div data-toolbar-group="fixtures" role="group" aria-label="Fixtures">
+        {{ tool_button('add-effect', 'Add effect') }}{{ tool_button('add-anchor', 'Add anchor') }}
+        <details id="editor-equipment-menu" class="editor-toolbar-menu"><summary aria-label="Equipment" title="Equipment" data-editor-icon="equipment"><span class="editor-sr-only">Equipment</span></summary>
+          <div>{% for tool, label in [('add-meter', 'Add meter'), ('add-electric-panel', 'Add electric panel'), ('add-charger', 'Add charger'), ('add-parking', 'Add parking spot')] %}{{ tool_button(tool, label) }}{% endfor %}</div>
+        </details>
+      </div>
+      <div data-toolbar-group="measure">{{ tool_button('measure', 'Measure') }}</div>
+      <div data-toolbar-group="delete">{{ tool_button('delete', 'Delete') }}</div>
+      <div data-toolbar-group="history" role="group" aria-label="Undo and redo">{{ tool_button('undo', 'Undo') }}{{ tool_button('redo', 'Redo') }}</div>
+      <div data-toolbar-group="sheet" role="group" aria-label="Drawing and Library">{{ tool_button('sheet', 'Sheet') }}{{ tool_button('library', 'Library') }}</div>
     </nav>
+      <details id="editor-floor-menu" data-toolbar-group="floor" class="editor-toolbar-menu"><summary aria-label="Choose floor" title="Choose floor" data-editor-icon="floor"><span class="editor-sr-only">Floors</span></summary>
+        <div><div id="editor-floor-picker" aria-label="Choose a floor"></div><button id="editor-floor-add" type="button">Add floor</button></div>
+      </details>
+      <details id="editor-view-menu" data-toolbar-group="view" class="editor-toolbar-menu"><summary aria-label="Choose view" title="Choose view" data-editor-icon="view"><span class="editor-sr-only">View</span></summary>
+    <nav id="editor-cameras" aria-label="Viewport controls">
+      {% for camera in ['Top', 'Front', 'Back', 'Orbit'] %}
+      <button type="button" data-editor-camera="{{ camera | lower }}">{{ camera }}</button>
+      {% endfor %}
+      <div id="editor-lighting" role="group" aria-label="Lighting" aria-describedby="editor-lighting-help">
+        <span>Lighting</span>
+        <div>{% for mode, label in [('day', 'Day'), ('night', 'Night'), ('now', 'Now'), ('unlit', 'Unlit (fast)')] %}
+          <button type="button" data-editor-lighting="{{ mode }}" aria-pressed="{{ 'true' if mode == 'day' else 'false' }}">{{ label }}</button>
+        {% endfor %}</div>
+        <p id="editor-lighting-help">Day/Night/Now light the house; Unlit is fastest.</p>
+      </div>
+    </nav>
+      </details>
+    </div>
+    <section id="editor-genbar" aria-label="Generation controls" hidden>
+      <div id="editor-chip" aria-label="Build status and spend"></div>
+      <button id="editor-check-step" type="button" hidden>Check this step</button>
+      <button id="editor-resume" type="button" hidden>Resume</button>
+      <button id="editor-stop" type="button" aria-label="Stop build" hidden>Stop</button>
+      <nav id="editor-steps" aria-label="Build your house"></nav>
+    </section>
+    </header>
+    <footer id="editor-statusbar" aria-label="Editor status">
+      <output id="editor-status" role="status">Opening your house…</output>
+      <section id="draw-tools" aria-label="Drawing tools" hidden>
+        <p id="draw-note" role="status"></p>
+        <button id="draw-cancel" type="button">Cancel drawing</button>
+      </section>
+      <section id="device-tools" aria-label="Device placement" hidden>
+        <p id="device-note" role="status"></p>
+        <button id="device-cancel" type="button">Cancel placement</button>
+      </section>
+      <section id="roof-tools" aria-label="Roof tools" hidden>
+        <div id="roof-choices"><button id="roof-over" type="button">Roof over this</button><button id="roof-draw" type="button">Draw roof area</button><button id="roof-dormer" type="button">Add dormer</button></div>
+        <p id="roof-note" role="status"></p><button id="roof-cancel" type="button">Cancel roof editing</button>
+      </section>
+      <output id="editor-save-state" role="status">Saved</output>
+    </footer>
     <aside id="library-panel" aria-label="Library" hidden>
       <h3>Library</h3>
       <div role="tablist" aria-label="Library categories">
@@ -135,31 +189,7 @@
       <p id="library-jobs" role="status" aria-live="polite"></p>
       <div id="library-entries" role="tabpanel"></div>
     </aside>
-    <nav id="editor-cameras" aria-label="Viewport controls">
-      {% for camera in ['Top', 'Front', 'Back', 'Orbit'] %}
-      <button type="button" data-editor-camera="{{ camera | lower }}">{{ camera }}</button>
-      {% endfor %}
-      <div id="editor-lighting" role="group" aria-label="Lighting" aria-describedby="editor-lighting-help">
-        <span>Lighting</span>
-        <div>{% for mode, label in [('day', 'Day'), ('night', 'Night'), ('now', 'Now'), ('unlit', 'Unlit (fast)')] %}
-          <button type="button" data-editor-lighting="{{ mode }}" aria-pressed="{{ 'true' if mode == 'day' else 'false' }}">{{ label }}</button>
-        {% endfor %}</div>
-        <p id="editor-lighting-help">Day/Night/Now light the house; Unlit is fastest.</p>
-      </div>
-    </nav>
-    <section id="draw-tools" aria-label="Drawing tools" hidden>
-      <p id="draw-note" role="status"></p>
-      <button id="draw-cancel" type="button">Cancel drawing</button>
-    </section>
-    <section id="device-tools" aria-label="Device placement" hidden>
-      <p id="device-note" role="status"></p>
-      <button id="device-cancel" type="button">Cancel placement</button>
-    </section>
     <aside id="piece-card" aria-label="Selected piece" hidden></aside>
-    <section id="roof-tools" aria-label="Roof tools" hidden>
-      <div id="roof-choices"><button id="roof-over" type="button">Roof over this</button><button id="roof-draw" type="button">Draw roof area</button><button id="roof-dormer" type="button">Add dormer</button></div>
-      <p id="roof-note" role="status"></p><button id="roof-cancel" type="button">Cancel roof editing</button>
-    </section>
     <aside id="pause-card" aria-label="Check this step" hidden>
       <h3 id="pause-title">Check this outline</h3><p id="pause-reason" class="pause-why"></p>
       <p id="pause-size"></p>
@@ -215,6 +245,7 @@
         <div><h2 id="place-title">Your files</h2><p id="place-about">The lot and every building, with their drawings and photos.</p></div>
         <button id="place-close" type="button">Back to the house</button>
       </header>
+      <nav id="place-steps" aria-label="Build your house"></nav>
       <div class="place-scroll">
         <form id="place-add-form" class="place-add" data-place-step="Your files">
           <label>Building name<input id="place-add-name" type="text" maxlength="100" required placeholder="Detached garage"></label>
