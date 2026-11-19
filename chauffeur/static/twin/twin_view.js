@@ -26,6 +26,7 @@ import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mount
 import { installPlantWind } from './sky/wind.js';
 import { installStageHaze } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
+import { installWeatherSurface } from './sky/weather_surface.js';
 import { mountTimeScrub } from './sky/time_scrub.js';
 import { defaultStage, mountStageSettings } from './stage_settings.js';
 import { mountWeatherSettings } from './weather_settings.js';
@@ -82,6 +83,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       stageHaze.prepare(target);
       cloudShadow.prepare(target);
       plantWind.prepare(target);
+      weatherSurface.prepare(target);
       // Never undefined: three reads the target's fields when it is not null.
       renderer3.setRenderTarget((!state.unlit && post?.target) || null);
       return compileFor(target, eye, targetScene);
@@ -115,6 +117,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const stageHaze = installStageHaze(scene, sky);
   const cloudShadow = installCloudShadow(scene, clouds);
   const plantWind = installPlantWind(scene,{tier});
+  const weatherSurface = installWeatherSurface(scene);
   let cloudCentre=[0,0];
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
   const stageForPlan = nextPlan => {
@@ -430,6 +433,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     });
     yardGroup?.userData.grass?.update(performance.now() / 1000,view.weather,site.front_bearing_deg ?? 180);
     plantWind.update(performance.now()/1000,view.weather,site.front_bearing_deg ?? 180);
+    weatherSurface.update(view.weather,performance.now()/1000);
     view.live?.draw();
     twin?.updateGhosts();
     pieceVisibility?.enforce(scene);
@@ -471,7 +475,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
-    ready: false, scene, post, clouds, cloudShadow, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
+    ready: false, scene, post, clouds, cloudShadow, weatherSurface, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
     weather:neutralWeather(),
     refreshWeather:()=>weatherPoll?.refresh(),
@@ -1429,7 +1433,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       viewing?.dispose(); viewing = null;
       if (twin) { scene.remove(twin.root); release(twin); }
       unlit.dispose();
-      cloudShadow.dispose(); stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
+      weatherSurface.dispose(); cloudShadow.dispose(); stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
       post?.dispose();
       clouds.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();
