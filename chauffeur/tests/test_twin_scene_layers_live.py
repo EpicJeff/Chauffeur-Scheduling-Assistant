@@ -517,7 +517,8 @@ def main():
                  scenario_plants_layer_hides_every_plant,
                  scenario_state_survives_reload,
                  scenario_viewer_draws_everything,
-                 scenario_edit_next_to_hidden_wall_keeps_it_hidden]
+                 scenario_edit_next_to_hidden_wall_keeps_it_hidden,
+                 scenario_locked_roof_click_says_so]
     passed = 0
     failed = 0
     try:
@@ -541,6 +542,35 @@ def main():
         if SERVED is not None:
             SERVED.stop()
 
+
+
+def scenario_locked_roof_click_says_so():
+    """Owner report 2026-11-19: with Roofs locked, a roof click silently deselected or picked a wall."""
+    with _page() as page:
+        hits = page.evaluate("""() => {
+          const v = window.__twin, c = v.renderer3.domElement.getBoundingClientRect();
+          for (let gy = .15; gy < .85; gy += .03) for (let gx = .1; gx < .9; gx += .03) {
+            const x = c.left + gx * c.width, y = c.top + gy * c.height, top = (v.pickAll(x, y) || [])[0];
+            if (top?.kind === 'roof') return {x, y, id: top.id};
+          }
+          return null; }""")
+        assert hits, 'the household shows a roof in the default view'
+        page.click('#dock-tab-layers')
+        page.get_by_role('button', name='Lock Roofs', exact=True).click()
+        H.settle(page, 3)
+        page.keyboard.press('Escape')
+        for _ in range(2):
+            page.mouse.click(hits['x'], hits['y']); H.settle(page, 3)
+        selected = page.evaluate('window.__editor.selected?.()')
+        assert not selected or selected.get('kind') != 'roof', ('a locked roof is never selected from the view', selected)
+        status = page.evaluate("document.getElementById('editor-status')?.textContent || ''")
+        assert 'locked' in status and 'Layers' in status, ('the status line says the roof is locked', status)
+        page.get_by_role('button', name='Unlock Roofs', exact=True).click(); H.settle(page, 3)
+        page.keyboard.press('Escape')
+        for _ in range(2):
+            page.mouse.click(hits['x'], hits['y']); H.settle(page, 3)
+        selected = page.evaluate('window.__editor.selected?.()') or {}
+        assert selected.get('kind') == 'roof', ('unlocked, the roof selects again', selected)
 
 if __name__ == '__main__':
     sys.exit(main())
