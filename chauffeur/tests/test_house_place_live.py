@@ -151,7 +151,12 @@ def _open_place(page, step='Your files'):
     # The former Your place dialog is now three panels; only navigation changes.
     panel = page.locator(f'[data-step-panel="{step}"]')
     if not panel.count() or not panel.is_visible():
-        page.locator(f'[data-step="{step}"]').click()
+        if not page.locator('#editor-dialog #place-view').is_visible():
+            if page.locator('#editor-dialog').is_visible():
+                page.click('#editor-dialog-close')
+            page.click('#editor-menu > summary')
+            page.click('#editor-manage-sources')
+        page.locator(f'#place-steps [data-step="{step}"]').click()
     panel.wait_for(state='visible', timeout=10000)
 
 
@@ -678,7 +683,7 @@ def _drag_fit(s, part, step):
     with s.browser(launch_args=GPU_ARGS) as page:
         _open(page, s)
         page.route('**/api/house/editor/build/b-fit**', route)
-        if page.locator('#place-view').is_visible():
+        if page.locator('#editor-dialog #place-view').is_visible():
             page.click('#place-close')
         page.evaluate("() => window.__editor.followBuild('b-fit')")
         page.wait_for_selector('#pause-card', state='visible', timeout=10000)
@@ -730,7 +735,7 @@ def scenario_lot_plot_pause_offers_looks_right_and_reread():
     with s.browser(launch_args=GPU_ARGS) as page:
         _open(page, s)
         page.route('**/api/house/editor/build/b-lot**', lambda r: _json(r, 200, build if r.request.method == 'GET' else {}))
-        if page.locator('#place-view').is_visible():
+        if page.locator('#editor-dialog #place-view').is_visible():
             page.click('#place-close')
         page.evaluate("() => window.__editor.followBuild('b-lot')")
         page.wait_for_selector('#pause-card', state='visible', timeout=10000)

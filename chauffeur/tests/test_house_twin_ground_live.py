@@ -36,7 +36,7 @@ def scenario_draw_negative_pad_tree_undo_and_program_reuse():
         page.locator('#terrain-card').get_by_label('Blend (ft)', exact=True).fill('6')
         for point in [[12, 117], [28, 117], [28, 133], [12, 133]]:
             page.mouse.click(*lot_pixel(page, point))
-        page.locator('#terrain-card').get_by_role('button', name='Finish pad', exact=True).click()
+        page.locator('#editor-statusbar').get_by_role('button', name='Finish pad', exact=True).click()
         page.wait_for_function('(n)=>window.__twin.ready&&window.__twin.plan.site.terraces.length===n+1', arg=before)
         heights = page.evaluate("""async()=>{const {groundAt}=await import('../static/twin/twin_ground.js');
           return [groundAt(window.__twin.plan,20,125),groundAt(window.__twin.plan,9,125),groundAt(window.__twin.plan,0,125)];}""")
@@ -113,7 +113,7 @@ def scenario_layered_pads_order_and_history():
                 surface = page.evaluate("""async p=>{const {groundAt}=await import('../static/twin/twin_ground.js');
                   return groundAt(window.__twin.plan,...p);}""", point)
                 page.mouse.click(*lot_pixel(page, point, surface))
-            shelf.get_by_role('button', name='Finish pad', exact=True).click()
+            page.locator('#editor-statusbar').get_by_role('button', name='Finish pad', exact=True).click()
             page.wait_for_function('(n)=>window.__twin.ready&&window.__twin.plan.site.terraces.length===n+1', arg=before)
             ids.append(page.evaluate('()=>window.__twin.plan.site.terraces.at(-1).id'))
         heights = page.evaluate("""async()=>{const {groundAt}=await import('../static/twin/twin_ground.js');
@@ -121,7 +121,7 @@ def scenario_layered_pads_order_and_history():
         check(abs(heights[0] + 4) < .01 and abs(heights[-1]) < .01, ('yard to patio heights', heights[0], heights[-1]))
         check(all(-4.001 <= h <= .001 for h in heights), 'band stays between the two pad heights')
         check(all(b >= a-.001 for a, b in zip(heights, heights[1:])), 'patio slopes into yard monotonically without a datum dip')
-        shelf.get_by_role('button', name=f'Pad {ids[1]}: 0 ft', exact=True).click()
+        page.locator('#scene-yard').get_by_role('button', name=f'Pad {ids[1]}: 0 ft', exact=True).click()
         layers = page.evaluate('()=>window.__twin.plan.site.terraces.length')
         check(shelf.get_by_text(f'Layer {layers} of {layers}', exact=True).is_visible(), 'shelf shows stored order')
         shelf.get_by_role('button', name='Send back', exact=True).click()

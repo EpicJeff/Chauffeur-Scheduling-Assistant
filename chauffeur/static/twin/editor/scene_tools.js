@@ -1,4 +1,4 @@
-import { objectOperation, transformObject } from '../objects.js';
+import { objectOperation, transformObject, siteShapeKinds } from '../objects.js';
 import { isObject } from './object_shelf.js';
 import { report, idleInterval } from './api.js';
 import { createCards, findPiece, feetInches } from './cards.js';
@@ -13,14 +13,20 @@ import { createGizmo } from './gizmo.js';
 import { createHandles } from './handles.js';
 import { contains } from '../twin_generator.js';
 import { createPicker, DRAG_THRESHOLD_PX } from './picking.js';
+import { createMeasure } from './measure.js';
+import { createContextMenu } from './context_menu.js';
+import { icon } from './icons.js';
 
 const rotatePoint = (p, angle) => {
   const a = angle * Math.PI / 180;
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
 
-export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, pickMaterial, api, onDrawFeature }) {
+export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, pickMaterial, api, onDrawFeature, dock, openHouseMaterials }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
+  const measureLayer = document.createElement('div'); measureLayer.className = 'editor-measure'; canvas.parentElement.append(measureLayer);
+  const measure = createMeasure({ view, getPlan, layer: measureLayer });
+  signal.addEventListener('abort', () => { measure.disarm(); measureLayer.remove(); }, { once: true });
   let selection = null, tool = 'select', levelKey = null, sheetOn = false, gesture = null, delegate = null, pointerId = null;
   let ownsGesture = false, handles = null, gizmo = null, controlsBeforePress = null;
   let roofRooms = new Set(), roofRoomBuilding = null;
@@ -40,18 +46,25 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     const target = split, hit = view.pickAll(event.clientX, event.clientY).find(p => p.kind === 'wall');
     cancelSplit();
     if (!canEdit() || hit?.id !== target.wall || hit.building !== target.building) return true;
+    splitAt(target, hit, event); return true;
+  }
+  function wallPoint(target, hit, event) {
     const b = getPlan().buildings.find(b => b.id === target.building), w = b?.walls.find(w => w.id === target.wall);
-    if (!w) return true;
-    // Use the wall hit, not its projection onto the floor at an oblique view.
+    if (!w) return null;
     const point = hit.point ? rotatePoint([hit.point[0] / .3048 - (b.position?.[0] || 0),
       -hit.point[2] / .3048 - (b.position?.[1] || 0)], -(b.rotation || 0))
       : view.floorAt(event.clientX, event.clientY, `${b.id}:${w.level}`);
-    if (!point) return true;
+    if (!point) return null;
     const d = w.to.map((v, i) => v - w.from[i]), length = Math.hypot(...d);
-    let at = point.reduce((n, v, i) => n + (v - w.from[i]) * d[i] / length, 0);
+    return { wall: w, length, at: point.reduce((n, v, i) => n + (v - w.from[i]) * d[i] / length, 0) };
+  }
+  function splitAt(target, hit, event) {
+    const spot = wallPoint(target, hit, event);
+    if (!spot || !canEdit()) return;
+    const { length } = spot; let { at } = spot;
     if (at < 1 - 1e-9 || length - at < 1 - 1e-9) { el('editor-status').textContent = 'A wall must be at least 1 ft long.'; return true; }
     at = Math.abs(at - length / 2) <= .5 + 1e-9 ? length / 2 : Math.floor(at * 12 + 1e-9) / 12;
-    cards.queue(() => op({ op: 'split_wall', ...target, at })).catch(report); return true;
+    cards.queue(() => canEdit() && op({ op: 'split_wall', ...target, at })).catch(report);
   }
   const pointers = new Set(), cancelledEscapes = new WeakSet();
   const dimensions = createDimensions({ view, onCommit: op, canEdit, signal, getHandles: () => [...(handles?.handles() || []), ...(gizmo?.handles() || [])] });
@@ -73,7 +86,11 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     }
     return op(operation, { ...options, drag: true, selection });
   } });
-  const getLabel = item => getSheets().piece_labels?.find(p => p.piece === item.pieceId && p.building === item.buildingId)?.label || 'this piece';
+  const getLabel = item => {
+    const label = getSheets().piece_labels?.find(p => p.piece === item.pieceId && p.building === item.buildingId)?.label;
+    const record = findPiece(getPlan(), item.pieceId, item.buildingId);
+    return label || record?.piece.name || `${record?.kind || 'piece'} ${item.pieceId}`;
+  };
   const roomSelection = createSelection({ view, getModel, onChange(state) {
     if (split && (state.id !== split.wall || state.building !== split.building)) cancelSplit();
     if (!state.room || state.building !== roofRoomBuilding || !roofRooms.has(state.room)) {
@@ -92,9 +109,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let linkReadAt = 0;
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
+    dock, op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, openHouseMaterials, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
-    onPreview: drawDimensions, onClick: cards.edge, signal });
+    onPreview: drawDimensions, onClick: cards.showRoofEdge, signal });
   const gizmoLayer = document.createElement('div'); gizmoLayer.className = 'editor-handles'; canvas.parentElement.append(gizmoLayer);
   gizmo = createGizmo({ view, layer: gizmoLayer, getPlan, getSelection: roomSelection.current, getTool: () => tool, canEdit,
     onPreview: plan => delegate?.preview?.(plan),
@@ -102,6 +119,13 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   view.controls.addEventListener('change', gizmo.draw);
   canvas.parentElement.addEventListener('twinrebuilt', gizmo.draw, { signal });
   window.addEventListener('resize', gizmo.draw, { signal });
+  // The shell can resize the canvas without a window resize (generation
+  // and status rows). Reproject every existing controls-change subscriber.
+  if (typeof ResizeObserver !== 'undefined') {
+    const resize = new ResizeObserver(() => view.controls.dispatchEvent({ type: 'change' }));
+    resize.observe(canvas.parentElement);
+    signal.addEventListener('abort', () => resize.disconnect(), { once: true });
+  }
   signal.addEventListener('abort', () => { gizmo.finish(true); gizmoLayer.remove(); view.controls.removeEventListener('change', gizmo.draw); }, { once: true });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'
     && (['wall', 'joint', 'room', 'roof', 'dormer', 'solar_zone', 'stair'].includes(kind)
@@ -128,7 +152,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     }
     const level = record.kind === 'level' ? record.piece.id : record.piece.level
       || record.building.walls.find(w => w.id === (record.piece.wall || record.piece.host?.wall))?.level;
-    if (['roof', 'dormer', 'solar_zone'].includes(record.kind) && roomSelection.current().room) roomSelection.clear();
+    if (['roof', 'dormer', 'solar_zone', 'building', 'level'].includes(record.kind) && roomSelection.current().room) roomSelection.clear();
     roomSelection.select({ kind: record.kind, id: record.piece.id, building: record.building.id, level });
   }
   function sceneCandidate(item) {
@@ -144,7 +168,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       && record.building.roof.flags?.some(flag => flag.block_rect?.length === 4
         && flag.block_rect.every((v, i) => Math.abs(v - record.piece.block[i]) <= 1)));
     // Existing needs-checking markers still open their own correction card.
-    if (item?.building && !['solar_zone','anchor'].includes(item.kind) && !markedRoof && view.state.view === 'ext' && !roomSelection.current().id)
+    if (!contextPicking && item?.building && !['solar_zone','anchor'].includes(item.kind) && !markedRoof && view.state.view === 'ext' && !roomSelection.current().id)
       return { ...item, kind: 'building', id: item.building, pieceId: item.building, level: null };
     return item;
   }
@@ -156,6 +180,60 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     (x, y) => fixtureHits?.(x, y) || [],
   ] });
   const pick = (x, y) => picker.peek(x, y);
+  // Context actions use the same ranked picker, but retain the actual piece
+  // under the pointer in the exterior view instead of its navigation parent.
+  let contextPicking = false;
+  const contextMenu = createContextMenu({ signal, items(target) {
+    if (target.floor) {
+      const row = levels().find(row => row.key === target.floor); if (!row) return [];
+      const visible = () => !!view.groups?.levels[row.key]?.visible;
+      const show = value => { onInteract?.(); select({ id: row.level.id, building: row.building.id });
+        const keys = levels().filter(r => r.key === row.key ? value : !!view.groups?.levels[r.key]?.visible).map(r => r.key); view.showLevels(keys); drawFloors(); };
+      return [{ label: 'Show', run: () => show(true), disabled: visible() }, { label: 'Hide', run: () => show(false), disabled: !visible() },
+        { label: 'Choose', run: () => chooseFloor(row.key) }];
+    }
+    const record = findPiece(getPlan(), target.id, target.building); if (!record) return [];
+    const action = (label, run) => ({ label, disabled: !canEdit(), run: () => {
+      if (!canEdit() || !findPiece(getPlan(), target.id, target.building)) return;
+      delegate?.cancel?.(); setTool('select'); select(target);
+      // Selection inside a different focused room first backs out. An explicit
+      // menu action must still reach the chosen target on this same action.
+      if (roomSelection.current().id !== target.id || roomSelection.current().building !== (target.building ?? null)) {
+        roomSelection.clear(); select(target);
+      }
+      onInteract?.(); return run();
+    } });
+    const result = [action('Select', () => {})];
+    if (record.kind === 'wall') {
+      result.push(action('Split wall here', () => splitAt({ building: target.building, wall: target.id }, target, target)));
+      for (const kind of ['door', 'window']) result.push(action(`Add ${kind} here`, () => {
+        const spot = wallPoint({ building: target.building, wall: target.id }, target, target);
+        if (!spot) return;
+        if (spot.length < 3) { window.showGlobalAlert(`That wall is too short for a 3 foot ${kind}.`); return; }
+        return cards.queue(() => canEdit() && op({ op: 'add_opening', building: target.building, wall: target.id, kind, width: 3,
+          at: spot.length < 4 ? spot.length / 2 : Math.max(2, Math.min(spot.length - 2, spot.at)) }));
+      }));
+    } else if (record.kind === 'room') result.push(action('Split room', () => el('rail-split-room').click()));
+    else if (!record.building && (isObject(record) || siteShapeKinds.includes(record.kind))) {
+      for (const [label, name] of [['Move', 'move'], ['Turn', 'rotate'], ['Scale', 'scale']]) result.push(action(label, () => setTool(name)));
+      // Shapes have no mirror operation. Only objects expose the existing mirror fields.
+      if (isObject(record)) for (const [label, field] of [['Mirror left-right', 'mirror_x'], ['Mirror front-back', 'mirror_y']])
+        result.push(action(label, () => cards.queue(() => {
+          const latest = findPiece(getPlan(), target.id, target.building);
+          return canEdit() && latest && op(objectOperation(latest, { [field]: !latest.piece[field] }));
+        })));
+    }
+    if (['wall', 'room', 'opening', 'item', 'anchor'].includes(record.kind) || !record.building)
+      result.push(action('Delete', () => cards.remove()));
+    return result.length > 1 ? result : [];
+  } });
+  listen(canvas, 'contextmenu', event => {
+    event.preventDefault();
+    if (ownsGesture) return;
+    contextPicking = true;
+    let target; try { target = picker.at(event.clientX, event.clientY)[0]; } finally { contextPicking = false; }
+    if (target) contextMenu.open(event, { ...target, clientX: event.clientX, clientY: event.clientY }); else contextMenu.close(false);
+  });
   // Each source exposes hit(event) and begin(event, handle); its existing
   // pointerMove/pointerUp methods keep ownership through release or cancel.
   function handleHit(event) {
@@ -166,23 +244,27 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     return null;
   }
   function setTool(name) {
+    measure.disarm();
     cancelSplit();
     if (name !== 'select') haLink.cancelPlacement();
     tool = name; onInteract?.();
-    for (const id of ['select', 'move', 'rotate', 'scale', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-stair', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking']) el(`rail-${id}`).setAttribute('aria-pressed', String(id === name));
+    for (const id of ['select', 'move', 'rotate', 'scale', 'measure', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-stair', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking']) el(`rail-${id}`)?.setAttribute('aria-pressed', String(id === name));
     handles.refresh(); gizmo.draw();
     for (const source of delegate?.handleSources || []) source.draw?.();
     canvas.style.cursor = name === 'move' ? 'grab' : name === 'select' ? '' : 'crosshair';
+    if (name === 'measure') measure.arm();
   }
   async function sheet(key = floor()?.key, show = !sheetOn) {
     const target = levels().find(l => l.key === key); if (!target) return;
     sheetOn = show; el('rail-sheet').setAttribute('aria-pressed', String(show));
+    el('layer-sheet')?.setAttribute('aria-pressed', String(show));
     if (!show) { view.setSheet(null); return; }
     const sheets = getSheets();
     const registration = sheets.registrations?.find(row => row.level === target.level.id && sheets.page_roles.some(role =>
       role.source === row.source && role.page === row.page && (role.building || 'house') === target.building.id));
     if (!registration) {
       sheetOn = false; el('rail-sheet').setAttribute('aria-pressed', 'false');
+      el('layer-sheet')?.setAttribute('aria-pressed', 'false');
       panel.message('This floor does not have a lined-up drawing yet. Check its outline with Argyle first.'); return;
     }
     let url = (window.chfBase ?? '../') + `api/house/editor/sheets/${encodeURIComponent(registration.source)}/${registration.page}.png`;
@@ -191,6 +273,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       masterSize: sheetMaster(sheets, registration.source, registration.page) });
   }
   function chooseFloor(key) {
+    measure.disarm();
     levelKey = key; onInteract?.(); view.setView(key); view.showLevels([key]);
     roomSelection.clear();
     const target = levels().find(row => row.key === key);
@@ -198,8 +281,8 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (sheetOn) sheet(key, true).catch(report);
     delegate?.floorChanged?.(); drawFloors();
   }
-  function drawFloors() {
-    const host = el('editor-floors'), focused = document.activeElement?.dataset.floor;
+  function drawFloorList(host) {
+    const focused = document.activeElement?.dataset.floor;
     const signature = JSON.stringify(levels().map(row => [row.key, row.label]));
     if (host.dataset.levels !== signature) {
       host.dataset.levels = signature; host.replaceChildren();
@@ -209,7 +292,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
         const button = document.createElement('button'); button.type = 'button'; button.dataset.floor = row.key;
         button.textContent = row.label; button.addEventListener('click', () => chooseFloor(row.key));
         const toggle = document.createElement('button'); toggle.type = 'button'; toggle.dataset.floorVisible = row.key;
-        toggle.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
+        const eye = icon('eye'); eye.setAttribute('width', '20'); eye.setAttribute('height', '20'); toggle.append(eye);
         toggle.setAttribute('aria-label', `Show ${row.label}`);
         toggle.addEventListener('click', () => {
           onInteract?.();
@@ -218,6 +301,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
           view.showLevels(keys); drawFloors();
         });
         group.append(toggle, button); host.append(group);
+        group.addEventListener('contextmenu', event => { event.preventDefault(); contextMenu.open(event, { floor: row.key }); }, { signal });
         if (focused === row.key) button.focus({ preventScroll: true });
       }
       const all = document.createElement('button'); all.type = 'button'; all.textContent = 'All floors';
@@ -238,6 +322,12 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     }
     host.querySelectorAll('[data-floor]').forEach(node => node.setAttribute('aria-pressed', String(node.dataset.floor === floor()?.key)));
     host.querySelectorAll('[data-floor-visible]').forEach(node => node.setAttribute('aria-pressed', String(!!view.groups?.levels[node.dataset.floorVisible]?.visible)));
+  }
+  function drawFloors() {
+    // The existing floors panel stays put until Task 2. Both entry points
+    // render the same actions, including per-floor visibility.
+    for (const host of [el('editor-floors'), el('editor-floor-picker')].filter(Boolean)) drawFloorList(host);
+    if (el('editor-floor-add')) el('editor-floor-add').disabled = !floor() || !canEdit();
   }
   function pieceAnchor(item) {
     const record = findPiece(getPlan(), item.pieceId, item.buildingId); if (!record) return null;
@@ -301,6 +391,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       return;
     }
     pointerId = event.pointerId;
+    if (measure.active()) {
+      gesture = { measuring: true, selecting: true, x: event.clientX, y: event.clientY, pointerId }; return;
+    }
     if (delegate?.pointerArmedDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
     const hit = handleHit(event);
     if (hit) {
@@ -414,6 +507,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       return;
     }
     if (g.selecting) {
+      if (g.measuring) return;
       if (!cancel && !g.moved && Math.hypot(event.clientX - g.x, event.clientY - g.y) < DRAG_THRESHOLD_PX) {
         onInteract?.();
         if (g.addRoom) {
@@ -449,7 +543,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   listen(document, 'keydown', event => {
     if (event.defaultPrevented || !canEdit() || event.ctrlKey || event.metaKey || event.altKey
       || event.target.closest?.('input, textarea, select, [contenteditable="true"]')
-      || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), [role="dialog"]')) return;
+      || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), [role="dialog"]:not([hidden])')) return;
     const record = selection && findPiece(getPlan(), selection.pieceId, selection.buildingId);
     if (!record || !isObject(record) && record.kind !== 'opening' && record.building) return;
     if (event.key === 'Delete') { event.preventDefault(); cards.remove().catch(report); return; }
@@ -476,6 +570,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // Cancel the owner before a card's capture listener can close it or change
   // selection. Idle Escape stays in bubble, after the card's own close action.
   listen(document, 'keydown', event => {
+    if (document.querySelector('#editor-dialog:not([hidden]), #editor-context-menu:not([hidden])')) return;
+    if (measure.active() && canEscape(event)) {
+      setTool('select'); event.preventDefault(); event.stopImmediatePropagation(); return;
+    }
     if (split && event.key === 'Escape' && !event.defaultPrevented) {
       cancelSplit(); event.preventDefault(); event.stopImmediatePropagation(); return;
     }
@@ -508,6 +606,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   for (const id of ['select', 'move', 'rotate', 'scale']) {
     el(`rail-${id}`).disabled = false; listen(el(`rail-${id}`), 'click', () => { delegate?.cancel?.(); setTool(id); });
   }
+  if (el('rail-measure')) {
+    el('rail-measure').disabled = false;
+    listen(el('rail-measure'), 'click', () => { if (canEdit()) { delegate?.cancel?.(); setTool('measure'); } });
+  }
   el('rail-sheet').disabled = false; listen(el('rail-sheet'), 'click', () => { onInteract?.(); sheet().catch(report); });
   document.querySelectorAll('[data-editor-camera]').forEach(button => listen(button, 'click', () => {
     onInteract?.(); delegate?.cancel?.();
@@ -515,6 +617,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     else view.setCamera(button.dataset.editorCamera);
   }));
   return {
+    openContextMenu: (event, target) => contextMenu.open(event, target),
     pointerArmedDown,
     haLink,
     deleteSelected: () => cards.remove(),

@@ -15,6 +15,15 @@ await test('threshold_constants',()=>{
 await test('nearest_first_across_sources',()=>{
  const p=picker();assert.deepEqual(p.at(20,30),[tree,house]);assert.equal(p.click(20,30),tree);
 });
+await test('proposals_precede_coarse_live_proxies_and_keep_distance_and_cycle_order',()=>{
+ const stair={kind:'stair',id:'proxy',building:'house',distance:1};
+ const near={kind:'proposal',id:'near',building:'house',distance:12},far={...near,id:'far',distance:20};
+ const p=createPicker({sources:[()=>[stair,house],()=>[far,near,tree]]});
+ assert.deepEqual(p.at(20,30),[near,far,stair,tree,house]);
+ for(const hit of [near,far,stair,tree,house,near])assert.equal(p.click(20,30),hit);
+ const filtered=createPicker({sources:[()=>[stair,far,near,tree]],isPickable:c=>c.kind!=='proposal'});
+ assert.deepEqual(filtered.at(20,30),[stair,tree]);
+});
 await test('second_click_cycles',()=>{
  const p=picker();assert.equal(p.click(20,30),tree);assert.equal(p.click(20,30),house);assert.equal(p.click(20,30),tree);
 });

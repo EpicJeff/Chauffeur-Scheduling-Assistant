@@ -26,7 +26,7 @@ function setup(){
  const bar=document.getElementById('device-tools');bar.replaceChildren();const done=document.createElement('button');done.id='device-cancel';bar.append(document.getElementById('device-note'),done);
  const signal=new AbortController();let editable=true;const library={surfaceAt:()=>null,ground:e=>[e.clientX,e.clientY]};
  return {plan,sent,errors,view,library,signal,canEdit:()=>editable,lock:()=>editable=false,getPlan:()=>plan,
-  op:async o=>{sent.push(o);},prepare(){},tools:{setTool(){},select(){},haLink:{state:()=>({devices:[]})}}};
+  op:async o=>{sent.push(o);},prepare(){},tools:{setTool(){},select(){},selection:()=>({}),haLink:{state:()=>({devices:[]})}}};
 }
 async function editor(s){const {createFixtureEditor}=await modules();return createFixtureEditor({...s,signal:s.signal.signal,report:e=>s.errors.push(String(e))});}
 const card=async(s,more={})=>(await modules()).fixtureCard({entity_id:'light.a',getPlan:s.getPlan,canEdit:s.canEdit,op:s.op,...more});

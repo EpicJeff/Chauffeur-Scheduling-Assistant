@@ -44,10 +44,11 @@ class Element extends EventTarget {
   replaceChildren(){for(const n of this.children)n.parentElement=null;this.children=[];}
   remove(){if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(n=>n!==this);}
   closest(){return this;} setAttribute(k,v){this[k]=v;}
+  createElementNS(namespace,tag){return document.createElement(tag);}
   getContext(){return {getExtension:()=>null};}
 }
 globalThis.window = new Element();
-globalThis.document = Object.assign(new EventTarget(),{createElement:()=>new Element(),getElementById:()=>null});
+globalThis.document = Object.assign(new EventTarget(),{createElement:()=>new Element(),createElementNS:Element.prototype.createElementNS,getElementById:()=>null});
 globalThis.location = {search:'?test=1&tier=low'};
 globalThis.getComputedStyle = ()=>({getPropertyValue:()=>''});
 globalThis.CustomEvent = class extends Event {constructor(name,opts){super(name);this.detail=opts.detail;}};

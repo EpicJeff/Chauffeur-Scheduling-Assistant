@@ -26,7 +26,7 @@ def scenario_textured_collada_and_kmz_chunk_import_and_place():
         H.open_editor(page, served)
         H.choose_floor(page, 'pool-house:L1')
         H.look_down(page, 'pool-house', 8, 8, height=35)
-        if page.locator('#library-panel').is_hidden():
+        if page.locator('#dock-pane-library #library-panel').is_hidden():
             page.click('#rail-library')
         files = {'models/scene.dae': dae('../textures/texture.png'), 'textures/texture.png': PNG}
         kmz = packed({**files, 'doc.kml': b'<kml><Placemark><Model><Link><href>models/scene.dae</href></Link></Model></Placemark></kml>'})
@@ -47,7 +47,7 @@ def scenario_textured_collada_and_kmz_chunk_import_and_place():
         H.check(len(entries) == 2 and all(e['triangles'] == 1 for e in entries), entries)
         H.check(len(chunks) >= 2 and len(confirms) == 2 and all(c['triangles'] == 1 for c in confirms), (chunks, confirms))
         asset = next(e['id'] for e in entries if e['name'] == 'Textured KMZ')
-        thumb = page.locator(f'#library-panel [data-item="{asset}"]').first
+        thumb = page.locator(f'#dock-pane-library #library-panel [data-item="{asset}"]').first
         thumb.scroll_into_view_if_needed()
         start = thumb.bounding_box()
         end = H.screen_of_world(page, 8, 8, 0, 'pool-house')

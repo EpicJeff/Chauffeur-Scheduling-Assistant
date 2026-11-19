@@ -205,7 +205,7 @@ function createThumbnails(kit) {
   return { picture, dispose() { disposed = true; renderer.dispose(); renderer.forceContextLoss(); } };
 }
 
-export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, onInteract }) {
+export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, onInteract, dock, dialogs, createMenu }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement, host = el('library-panel');
   const raycaster = new THREE.Raycaster(), thumbnails = { current: null };
   let catalog = null, loading = null, tab = 'materials', drag = null, siteDrag = null, chooser = null, picking = null;
@@ -215,6 +215,12 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   const outline = new THREE.Box3Helper(new THREE.Box3(), '#52ccff'); outline.visible = false; view.scene.add(outline);
   outline.material.fog = false;
   const listen = (node, type, action, options = {}) => node.addEventListener(type, action, { ...options, signal });
+  const rowMenu = createMenu?.({ signal, items: target => target.actions.map(node => ({ label: node.textContent,
+    disabled: node.disabled, run: () => node.click() })) });
+  if (dialogs) listen(el('library-import-settings').querySelector('summary'), 'click', event => {
+    event.preventDefault();
+    dialogs.openDialog('library-import-settings-content', { title: 'Import settings' });
+  });
   function ray(event) {
     const r = canvas.getBoundingClientRect(); view.camera.updateMatrixWorld(true);
     raycaster.setFromCamera(new THREE.Vector2((event.clientX - r.left) / r.width * 2 - 1, 1 - (event.clientY - r.top) / r.height * 2), view.camera);
@@ -333,6 +339,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   async function pick(surface) {
     if (!canEdit()) return;
     dismiss(); picking = surface; tab = 'materials';
+    dock?.show('library');
     if (host.hidden) { host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true'); }
     el('library-status').textContent = pickingWords();
     await browse();
@@ -363,7 +370,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     if(tab==='items')for(const [tool,name,icon] of [['add-meter','Meter','gauge'],['add-electric-panel','Electric panel','utility-pole'],['add-charger','Charger','plug-zap'],['add-parking','Parking spot','car']]){
       const button=document.createElement('button');button.type='button';button.setAttribute('aria-label',name);button.append(svgIcon(icon),document.createTextNode(name));
       button.dataset.equipment=tool;
-      button.addEventListener('click',()=>{if(canEdit()){host.hidden=true;el('rail-'+tool)?.click();}});grid.append(button);
+      button.addEventListener('click',()=>{if(canEdit()){if(!dock)host.hidden=true;el('rail-'+tool)?.click();}});grid.append(button);
     }
     const imports = tab === 'items' ? (catalog.imports || []).filter(e => !e.archived) : [];
     imports.forEach(rememberImport);
@@ -374,11 +381,13 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       button.setAttribute('aria-label', entry.name); button.style.touchAction = 'none';
       const image = document.createElement('img'); image.alt = ''; image.draggable = false; image.width = 112; image.height = 96;
       const name = document.createElement('span'); name.textContent = entry.name; button.append(image, name);
+      const rowActions = [];
       if (tab === 'materials') {
         const tile = document.createElement('div'); tile.className = 'library-material-tile'; grid.append(tile); tile.append(button);
         const edit = document.createElement('a'); edit.textContent = 'Edit in Library'; edit.href = libraryMaterialHref(entry.id);
         edit.target = '_blank'; edit.rel = 'noopener'; edit.className = 'library-edit-link';
         edit.setAttribute('aria-label', `Edit ${entry.name} in Library`); tile.append(edit);
+        rowActions.push(edit);
       } else grid.append(button);
       if (entry.thumbnail_url) image.src = entry.thumbnail_url;
       else if (entry.thumbnail) image.src = libUrl(entry.id, entry.thumbnail);
@@ -408,12 +417,16 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
               }
             } catch (error) { report(error); }
           }); grid.append(control);
+          rowActions.push(control);
         }
       }
       listen(button, 'pointerdown', event => {
         if (event.button !== 0 || !canEdit()) return;
         onInteract?.(); dismiss(); event.preventDefault(); button.setPointerCapture(event.pointerId);
         drag = { entry, material: tab === 'materials', x: event.clientX, y: event.clientY, pointer: event.pointerId };
+      });
+      if (rowMenu) listen(button, 'contextmenu', event => {
+        event.preventDefault(); rowMenu.open(event, { actions: rowActions });
       });
       listen(button, 'click', () => {
         if (!picking || tab !== 'materials' || !canEdit()) return;
@@ -430,6 +443,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       for (const row of hidden) {
         const button = document.createElement('button'); button.type = 'button'; button.textContent = `Select hidden: ${row.piece.name || row.id}`;
         listen(button, 'click', () => tools.select({ pieceId: row.id, buildingId: row.building })); grid.append(button);
+        if (rowMenu) listen(button, 'contextmenu', event => { event.preventDefault(); rowMenu.open(event, { actions: [button] }); });
       }
     }
     host.querySelectorAll('[data-library-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.libraryTab === tab)));
@@ -447,22 +461,32 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       if (drag) browsePending = true;
       else { row?.nodes.forEach(node => node.remove()); importNodes.delete(entry.id); }
     } else row?.update(entry);
-    if (added) { tab = 'items'; host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true'); }
+    if (added) { tab = 'items'; host.hidden = false; dock?.show('library'); el('rail-library').setAttribute('aria-pressed', 'true'); }
     if (added && !row) await browse();
   }
   const importsQueue = mountImports({ canvas, kit, canEdit, signal, changed: changedImport });
   const invalidateCatalog = () => {
     catalog = null; loading = null;
-    if (!host.hidden) browse().catch(report);
+    if (dock ? dock.current() === 'library' : !host.hidden) browse().catch(report);
   };
   listen(window, 'focus', invalidateCatalog);
   listen(document, 'chf-materials-changed', invalidateCatalog);
+  if (dock) {
+    host.hidden = false;
+    const off = dock.onShow(tab => {
+      if (tab === 'library') browse().catch(error => { el('library-status').textContent = 'Could not load the library. Open it again to retry.'; report(error); });
+      else stopPicking();
+    });
+    signal.addEventListener('abort', off, { once: true });
+  }
   if (new URLSearchParams(location.search).get('library') === '1') {
     tab = 'items'; host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true');
+    dock?.show('library');
     browse().catch(report);
   }
   if (el('library-search')) listen(el('library-search'), 'input', () => browse().catch(report));
   listen(el('rail-library'), 'click', () => {
+    if (dock) { dock.show('library'); host.scrollIntoView({ block: 'nearest' }); return; }
     host.hidden = !host.hidden; el('rail-library').setAttribute('aria-pressed', String(!host.hidden));
     if (host.hidden) stopPicking();
     if (!host.hidden) browse().catch(error => { el('library-status').textContent = 'Could not load the library. Open it again to retry.'; report(error); });

@@ -205,7 +205,7 @@ def pad_corner_under_a_tree_moves_the_corner():
         tree = _tree(page)
         pad = next(p for p in _plan(page)['site']['terraces'] if p['polygon'][0] == tree['at'])
         page.get_by_role('button', name='Ground and yard', exact=True).click()
-        page.locator(f'#terrain-card [data-pad-id="{pad["id"]}"]').click()
+        page.locator(f'#scene-yard [data-pad-id="{pad["id"]}"]').click()
         _look(page, tree['at'])
         # The look moved the camera without a controls change event; redraw first.
         handles = page.evaluate('(window.__twinEditor.terrain.refresh(), window.__twinEditor.terrain.handles())')

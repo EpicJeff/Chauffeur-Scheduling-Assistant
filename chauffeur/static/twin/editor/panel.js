@@ -3,7 +3,7 @@ import { pauseWords, sentence } from './words.js';
 
 const FIRST_LOOK = 'First look at the outline while the drawings are read.';
 
-export function createPanel({ afterSay, acceptPause }) {
+export function createPanel({ afterSay, acceptPause, dock }) {
   const log = document.getElementById('editor-log');
   const messages = document.getElementById('editor-messages');
   const scroll = document.getElementById('editor-panel-scroll');
@@ -18,7 +18,7 @@ export function createPanel({ afterSay, acceptPause }) {
   checks.addEventListener('click', walkChecks);
   const history = [];
   const seen = new Set();
-  const reasons = new Map(), pauses = new Set();
+  const reasons = new Map(), pauses = new Set(), checkpoints = new Set();
   const firstLooks = new Map();
   let buildId = null, busy = false, selection = null, readOnly = false;
 
@@ -48,6 +48,7 @@ export function createPanel({ afterSay, acceptPause }) {
         history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
         message(reply);
         try {
+          dock?.show('argyle');
           await checkpoint(error.detail);
           await afterSay(error.detail);
         } catch (failure) { report(failure); }
@@ -83,7 +84,9 @@ export function createPanel({ afterSay, acceptPause }) {
     clearSelection() { selection = null; },
     focusSelection(item, label) {
       selection = item;
+      dock?.show('argyle');
       input.value = `About ${label}: `;
+      input.scrollIntoView({ block: 'nearest' });
       input.focus(); input.setSelectionRange(input.value.length, input.value.length);
     },
     readOnly(value) {
@@ -93,7 +96,7 @@ export function createPanel({ afterSay, acceptPause }) {
     },
     dispose() { form.removeEventListener('submit', submit); checks.removeEventListener('click', walkChecks); checks.remove(); },
     events(build) {
-      if (buildId !== build.id) { seen.clear(); reasons.clear(); firstLooks.clear(); pauses.clear(); log.replaceChildren(); buildId = build.id; }
+      if (buildId !== build.id) { seen.clear(); reasons.clear(); firstLooks.clear(); pauses.clear(); checkpoints.clear(); log.replaceChildren(); buildId = build.id; }
       for (const event of build.events || []) {
         if (seen.has(event.seq)) continue;
         seen.add(event.seq);
@@ -144,6 +147,7 @@ export function createPanel({ afterSay, acceptPause }) {
           if ([...reasons.keys()].some(key => key.startsWith(`${event.step}:`) && key.endsWith(`:${reason}`))) continue;
           const line = document.createElement('li'); line.textContent = plain(event.text); log.append(line);
         } else if (event.type === 'question') {
+          if (['paused', 'checkpoint'].includes(build.state)) dock?.show('argyle');
           if (!(build.pause?.kind === 'draft' && event.step === build.pause.step
             && event.text === build.pause.why)) message(event.text);
         }
@@ -153,10 +157,16 @@ export function createPanel({ afterSay, acceptPause }) {
         for (const line of firstLooks.values()) line.remove();
         firstLooks.clear();
       }
+      if (build.state === 'checkpoint') {
+        const detail = [...(build.events || [])].reverse().find(event => event.type === 'checkpoint');
+        const key = `${build.id}:${detail?.checkpoint ?? build.checkpoint ?? build.total ?? 'checkpoint'}`;
+        if (!checkpoints.has(key)) { checkpoints.add(key); dock?.show('argyle'); }
+      }
       if (build.state === 'paused' && build.pause) {
         const pause = build.pause, key = `${build.id}:${pause.step}:${pause.why}:${pause.confidence}`;
         if (!pauses.has(key)) {
           pauses.add(key);
+          dock?.show('argyle');
           if (pause.kind === 'draft') {
             message(`${sentence(pause.why)} Choose Try again to read the drawings again, or Stop.`);
             replies(['What needs checking?']);
@@ -169,6 +179,6 @@ export function createPanel({ afterSay, acceptPause }) {
         }
       }
     },
-    reset() { seen.clear(); reasons.clear(); firstLooks.clear(); pauses.clear(); log.replaceChildren(); messages.replaceChildren(); history.length = 0; buildId = null; },
+    reset() { seen.clear(); reasons.clear(); firstLooks.clear(); pauses.clear(); checkpoints.clear(); log.replaceChildren(); messages.replaceChildren(); history.length = 0; buildId = null; },
   };
 }

@@ -23,6 +23,11 @@ import { createSteps } from './steps.js';
 import { createChecks } from './checks.js';
 import { createEditQueue } from './edit_queue.js';
 import { applyLocal, LocalMissing } from './local_ops.js';
+import { mountIcons } from './icons.js';
+import { createDock } from './dock.js';
+import { mountDialogs } from './dialog.js';
+import { createContextMenu } from './context_menu.js';
+import { houseMaterialsShelf } from './house_materials.js';
 
 const el = id => document.getElementById(id);
 const STREAM_ONLY = new Set(['piece', 'stage', 'stream_reset', 'log']);
@@ -40,9 +45,13 @@ export async function boot() {
   let buildGhosts = null, checks = null, houses = null, drawingStarted = false;
   const statusChip = createStatusChip(el('editor-chip')), seenBuildRounds = new Set();
   const lifecycle = new AbortController();
-  const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
+  const dialogs = mountDialogs({ signal: lifecycle.signal });
+  let welcomeShown = false, setupShown = false, materialBuilding = null;
+  const dock = createDock({ host: el('editor-dock') });
+  lifecycle.signal.addEventListener('abort', () => dock.dispose(), { once: true });
+  const listen = (node, type, handler, options = {}) => node.addEventListener(type, handler, { ...options, signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
-  const panel = createPanel({ afterSay: async () => { await polling.pollNow(true); },
+  const panel = createPanel({ dock, afterSay: async () => { await polling.pollNow(true); },
     acceptPause: async () => {
       if (currentBuild?.state !== 'paused' || !currentBuild.pause) return false;
       if (currentBuild.pause.kind === 'draft') { pauses?.show(); return true; }
@@ -54,17 +63,68 @@ export async function boot() {
     if (name === 'Check it') { place?.close(false); checks?.show(); }
     else { checks?.dismiss(false); place?.open(name); }
   } });
-  const header = el('editor-top'), rail = el('editor-rail');
-  if (typeof ResizeObserver !== 'undefined') {
-    // Panels beside the rail start at its right edge: the rail is one column or two (M1).
-    const observer = new ResizeObserver(() => {
-      const style = document.querySelector('.editor-shell').style;
-      style.setProperty('--editor-header-bottom', `${header.getBoundingClientRect().bottom + 8}px`);
-      const right = rail?.getBoundingClientRect?.().right;
-      if (right > 0) style.setProperty('--editor-rail-right', `${Math.round(right + 8)}px`);
+  // The generation strip is absent in manual editing. Keep every setup step
+  // reachable from Your place using the same builder and opening path.
+  const placeSteps = createSteps(el('place-steps'), { state: stepState(), tabs: true, onOpen: name => steps.open(name) });
+  // Keep the panel's check queue and its handler; only its display home moves.
+  const checkCount = el('editor-flag-count');
+  if (checkCount) el('editor-statusbar').append(checkCount);
+  mountIcons(el('editor-toolbar'));
+  const header = el('editor-top'), toolbar = el('editor-toolbar'), statusbar = el('editor-statusbar');
+  function sizeShell() {
+    const style = document.querySelector('.editor-shell').style;
+    style.setProperty('--editor-header-bottom', `${header.getBoundingClientRect().bottom + 8}px`);
+    style.setProperty('--editor-toolbar-bottom', `${toolbar.getBoundingClientRect().bottom}px`);
+    style.setProperty('--editor-status-height', `${statusbar.getBoundingClientRect().height}px`);
+    style.setProperty('--editor-rail-right', '16px');
+  }
+  // Menu panels are fixed so horizontal toolbar scrolling never clips them.
+  for (const menu of document.querySelectorAll('.editor-toolbar-menu')) {
+    listen(menu, 'toggle', () => {
+      if (!menu.open) return;
+      for (const other of document.querySelectorAll('.editor-toolbar-menu')) if (other !== menu) other.open = false;
+      const box = menu.getBoundingClientRect();
+      const panel = menu.querySelector('div, nav');
+      if (panel) panel.style.left = `${Math.max(8, Math.min(box.left, window.innerWidth - 290))}px`;
     });
+    listen(menu, 'click', event => {
+      const action = event.target.closest?.('button, a');
+      if (action && !action.disabled) menu.open = false;
+    });
+  }
+  listen(document, 'pointerdown', event => {
+    for (const menu of document.querySelectorAll('.editor-toolbar-menu')) if (menu.open && !menu.contains(event.target)) menu.open = false;
+  });
+  listen(document, 'keydown', event => {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    const menu = [...document.querySelectorAll('.editor-toolbar-menu')].find(menu => menu.open);
+    if (!menu) return;
+    menu.open = false; menu.querySelector('summary')?.focus(); event.preventDefault(); event.stopImmediatePropagation();
+  }, { capture: true });
+  listen(el('editor-floor-add'), 'click', () => el('rail-add-level').click());
+  listen(el('properties-your-place'), 'click', () => steps.open('Your files'));
+  function openHouseMaterials(id) {
+    const building = shownPlan()?.buildings?.find(b => b.id === id) || tools?.floor()?.building || shownPlan()?.buildings?.[0];
+    if (!building) { steps.open('Your files'); return; }
+    const host = el('house-materials');
+    // Reuse the shelf and preserve its inputs for the lifetime of an open dialog.
+    if (dialogs.current() !== 'house-materials' || materialBuilding !== building.id) {
+      host.replaceChildren(); materialBuilding = building.id;
+      houseMaterialsShelf(host, building, { getPlan: shownPlan, getKit: () => houseKit, canEdit,
+        op: applyOp, report });
+    }
+    dialogs.openDialog('house-materials', { title: 'House materials' });
+  }
+  let houseKit = {};
+  for (const id of ['properties-house-materials', 'menu-house-materials']) listen(el(id), 'click', () => openHouseMaterials());
+  listen(el('menu-settings'), 'click', () => { el('editor-menu').open = false; dialogs.openDialog('editor-settings', { title: 'Settings' }); });
+  // Existing controls remain the owners of these two layer actions.
+  listen(el('layer-sheet'), 'click', () => el('rail-sheet').click());
+  dock.onResize(sizeShell);
+  if (typeof ResizeObserver !== 'undefined') {
+    const observer = new ResizeObserver(sizeShell);
     observer.observe(header);
-    if (rail) observer.observe(rail);
+    observer.observe(statusbar);
     lifecycle.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
   }
   const currentRound = () => [...snapshot.rounds].reverse().find(row => !row.stale)?.id ?? null;
@@ -127,6 +187,7 @@ export async function boot() {
     const state = queue.state(), count = state.unsaved || state.saving;
     el('editor-save-state').textContent = state.saved ? 'Saved'
       : `${state.unsaved ? '' : 'Saving '}${count} ${count === 1 ? 'change' : 'changes'}${state.unsaved ? ' not saved' : ''}`;
+    el('editor-toolbar-save-state').textContent = el('editor-save-state').textContent;
   }
   async function settleView(plan, info) {
     const selection = info.selection ?? tools?.selected?.() ?? null;
@@ -273,8 +334,19 @@ export async function boot() {
     syncSaveState();
     syncChip();
     steps.render(stepState());
-    el('editor-front-door').hidden = drawingStarted || !!sheets.place?.buildings?.length || !!sheets.sources?.length
-      || !!snapshot.model?.buildings?.length || !!sheets.place?.lot?.read || !!snapshot.plan?.site?.lot?.length;
+    placeSteps.render(stepState());
+    el('editor-genbar').hidden = !directing && !['running', 'paused', 'stopped', 'checkpoint'].includes(currentBuild?.state);
+    el('editor-house-name').textContent = snapshot.plan?.name || snapshot.plan?.buildings?.[0]?.name || 'House editor';
+    el('editor-house-name').title = el('editor-house-name').textContent;
+    const empty = !drawingStarted && !sheets.place?.buildings?.length && !sheets.sources?.length
+      && !snapshot.model?.buildings?.length && !sheets.place?.lot?.read && !snapshot.plan?.site?.lot?.length;
+    if (hooks.ready && empty && !welcomeShown && !dialogs.current()) {
+      welcomeShown = true; dialogs.openDialog('editor-front-door', { title: "Let's make your house" });
+    } else if (!empty && dialogs.current() === 'editor-front-door') dialogs.closeDialog('editor-front-door');
+    if (hooks.ready && !empty && !setupShown) {
+      setupShown = true;
+      if (!drawingStarted && !dialogs.current() && !snapshot.model?.buildings?.some(b => b.walls?.length || b.rooms?.length || b.roofs?.length)) steps.open('Your files');
+    }
     history?.sync();
     houses?.sync();
     // Reaching ready requires successful parent-only editor API requests.
@@ -472,7 +544,7 @@ export async function boot() {
   place = createPlace({ request, getSheets: () => sheets,
     reload: async () => { await polling.pollNow(true); await loadSheets(); },
     follow: id => polling.follow(id), canEdit: () => canEdit() && !resuming && !stopping, panel, lotTools: () => lot,
-    onClose: () => steps.close(), getLink: () => tools?.haLink, getPlan: shownPlan });
+    onClose: () => { steps.close(); placeSteps.close(); }, getLink: () => tools?.haLink, getPlan: shownPlan, dialogs, steps: placeSteps });
 
   listen(el('editor-resume'), 'click', async () => {
     if (!canEdit() || resuming || !['stopped', 'checkpoint'].includes(currentBuild?.state)) return;
@@ -565,14 +637,13 @@ export async function boot() {
       await polling.pollNow(true);
       el('advanced-plan').value = JSON.stringify(snapshot.plan || emptyPlan(), null, 2);
       el('advanced-reason').value = ''; advancedBase = currentRound();
-      el('editor-advanced').hidden = false;
+      dialogs.openDialog('editor-advanced', { title: 'Advanced: edit the plan file' });
       el('advanced-plan').focus();
     } catch (error) { report(error); }
     finally { menuBusy = false; syncBuildButton(); }
   });
   listen(el('advanced-close'), 'click', () => {
-    el('editor-advanced').hidden = true;
-    el('editor-menu').querySelector('summary').focus();
+    dialogs.closeDialog('editor-advanced');
   });
   listen(el('advanced-form'), 'submit', async event => {
     event.preventDefault();
@@ -631,7 +702,7 @@ export async function boot() {
       snapshot = { plan: null, rounds: [], cost: snapshot.cost, build: null };
       currentBuild = null; ghostBuild = null; ghosts.clear(); prompted.clear();
       panel.reset(); tools?.select(null); pauses?.dismiss(); draw?.cancel(); history?.clear();
-      el('editor-advanced').hidden = true; advancedBase = null;
+      dialogs.closeDialog(); advancedBase = null; welcomeShown = false; setupShown = false;
       await polling.pollNow(true);
       await loadSheets();
       drawingStarted = false; steps.close();
@@ -688,6 +759,7 @@ export async function boot() {
   try {
     await loadSheets();
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
+    houseKit = kit;
     view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true, bake: false, stage:snapshot.stage });
     mountLighting(view, el('editor-lighting'), { signal: lifecycle.signal });
     buildGhosts = createBuildGhosts(view);
@@ -698,7 +770,7 @@ export async function boot() {
       canEdit, signal: lifecycle.signal, latest: () => polling.refreshState(),
       onError: error => setStatus(error.message || 'Could not save this change. Try again.'),
       refresh: async () => { draw?.cancel(); await polling.refreshState(); await loadSheets(); await renderScene(); } });
-    houses = mountHouses({ history, signal: lifecycle.signal,
+    houses = mountHouses({ history, signal: lifecycle.signal, dialogs, createMenu: createContextMenu, onClose: syncBuildButton,
       canLoad: () => canEdit() && !active(currentBuild),
       async capture() {
         view.render();
@@ -713,41 +785,41 @@ export async function boot() {
         await polling.refreshState(); await loadSheets(); await renderScene();
       },
     });
-    tools = createSceneTools({ view, getPlan: () => timeline?.preview() || shownPlan(), getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
+    tools = createSceneTools({ dock, view, openHouseMaterials, getPlan: () => timeline?.preview() || shownPlan(), getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
       siteHits: (x, y) => library?.siteHits(x, y) || [],
       padHits: (x, y) => terrain?.padHits?.(x, y) || [], fixtureHits: (x, y) => devices?.fixtureHits?.(x, y) || [],
       pickMaterial: surface => library?.pick(surface), onDrawFeature: kind => terrain?.startDrawing(kind),
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
-    library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || shownPlan(), tools,
+    library = createLibrary({ dock, dialogs, createMenu: createContextMenu, view, kit, getPlan: () => timeline?.preview() || shownPlan(), tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
     flags = createFlags({ view, getModel: () => snapshot.model, getPlan: shownPlan,
       tools, panel, op: applyOp, canEdit, signal: lifecycle.signal, onInteract, managed: true,
       onReview: item => checks?.show(item) });
-    draw = createDraw({ view, tools, getPlan: shownPlan, op: operation => applyOpNow(operation),
+    draw = createDraw({ dock, cancelOtherDrawing: () => { terrain?.cancel(); lot?.cancel(); }, view, tools, getPlan: shownPlan, op: operation => applyOpNow(operation),
       gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract, surfaceAt: (event, options) => library.surfaceAt(event, options), groundPoint: event => library.ground(event) });
-    roofTools = createRoofTools({ view, tools, getPlan: shownPlan,
+    roofTools = createRoofTools({ dock, view, tools, getPlan: shownPlan,
       op: (operation, options) => history.perform(() => applyOpNow(operation, options)),
       canEdit, panel, signal: lifecycle.signal, onInteract, cancelDrawing: draw.cancel });
-    pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
+    pauses = createPauses({ dock, view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
       getSheets: () => sheets, refresh: () => polling.pollNow(true), preview: () => renderScene().catch(report),
       visibilityChanged: syncBuildButton, canEdit, signal: lifecycle.signal, guided: true });
-    checks = createChecks(view, { api, getBuild: () => currentBuild, getModel: () => snapshot.model,
+    checks = createChecks(view, { dock, api, getBuild: () => currentBuild, getModel: () => snapshot.model,
       getPlan: shownPlan, tools, panel, canEdit, signal: lifecycle.signal, op: applyOp, flags, pauses,
       onClose: () => steps.close() });
-    lot = createLotTools({ view, getPlan: () => timeline?.preview() || shownPlan(), getSheets: () => sheets,
+    lot = createLotTools({ dock, view, getPlan: () => timeline?.preview() || shownPlan(), getSheets: () => sheets,
       getSelection: tools.selection, select: tools.select, pauses, signal: lifecycle.signal,
       canEdit: () => canEdit() && (!active(currentBuild) || !!pauses.lotPlacement()),
       op: operations => history.perform(async () => { for (const operation of operations) await applyOpNow(operation, { settle: false }); }),
       // The lot card frees itself once the place rows are fresh; the scene
       // rebuild (seconds for a refitted house) follows on the poll's tick.
       reload: async () => { await loadSheets(); polling.pollNow(true).catch(report); } });
-    devices = createDevicePlacement({ view, tools, library, getPlan: () => timeline?.preview() || shownPlan(),
+    devices = createDevicePlacement({ dock, view, tools, library, getPlan: () => timeline?.preview() || shownPlan(),
       op: applyOp, canEdit, signal: lifecycle.signal,
       prepare() { onInteract(); roofTools.cancel(); draw.cancel(); } });
     el('rail-add-effect').addEventListener('click', () => {
       if (canEdit()) devices.addEffect().catch(report);
     }, {signal: lifecycle.signal});
-    terrain = createTerrainTools({ view, tools, getPlan: () => timeline?.preview() || shownPlan(),
+    terrain = createTerrainTools({ dock, view, tools, getPlan: () => timeline?.preview() || shownPlan(),
       op: applyOp, canEdit, signal: lifecycle.signal,
       getKit: () => kit,
       prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });
@@ -764,7 +836,7 @@ export async function boot() {
       pointerUp: (event, cancel) => terrain.pointerUp(event, cancel) || devices.pointerUp(event, cancel) || lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
       floorChanged() { terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.floorChanged(); }, cancel() { terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.cancel(); },
     });
-    timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
+    timeline = createTimeline({ dock, getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
       canScrub: () => !menuBusy && !directing,
       log(summary) { const line = document.createElement('li'); line.textContent = summary; el('editor-log').append(line); lastSummary = summary; },
       onPreview(value) {

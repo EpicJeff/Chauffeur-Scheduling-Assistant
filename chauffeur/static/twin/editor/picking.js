@@ -7,7 +7,10 @@ export function createPicker({ sources, isPickable = () => true }) {
   function at(x, y) {
     const seen = new Set();
     return sources.flatMap(source => source(x, y)).filter(isPickable)
-      .sort((a, b) => a.distance - b.distance).filter(candidate => {
+      // Review ghosts must remain reachable over coarse live pick proxies.
+      // Within each group, preserve ordinary nearest-first picking.
+      .sort((a, b) => Number(b.kind === 'proposal') - Number(a.kind === 'proposal')
+        || a.distance - b.distance).filter(candidate => {
         const id = key(candidate); if (seen.has(id)) return false;
         seen.add(id); return true;
       });

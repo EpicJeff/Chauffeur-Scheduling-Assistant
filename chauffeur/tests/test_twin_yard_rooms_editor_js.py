@@ -24,7 +24,7 @@ const {pathOutline} = await import(file('static/twin/path_shapes.js'));
 const rect = [[0,0],[10,0],[10,10],[0,10]];
 const plan = {buildings:[],materials:{},site:{lot:rect,yard_rooms:[{id:'yard',name:'Pool deck',polygon:rect,ha_area:null}],
  devices:[],terraces:[{id:'pad',polygon:rect,height:4,blend:0}]}};
-for (const id of ['piece-card','rail-undo','rail-redo','device-tools','device-note','device-cancel']) ids.set(id,new El('div'));
+for (const id of ['piece-card','rail-undo','rail-redo','rail-move','rail-rotate','rail-scale','device-tools','device-note','device-cancel']) ids.set(id,new El('div'));
 El.prototype.select = function() { this.selectedText = true; };
 El.prototype.setPointerCapture = function(id) {this.pointerCapture=id;};
 El.prototype.hasPointerCapture = function(id) {return this.pointerCapture===id;};
@@ -128,6 +128,7 @@ assert.equal(cardOps.at(-1).list,'yard_rooms');
 console.log('ok connected yard card uses area picker and devices; unlinked area chooser includes yard rooms');
 
 const canvas=new El('canvas'),camera=new THREE.PerspectiveCamera(45,1.25,.01,1000),scene=new THREE.Scene();
+document.body.append(canvas);
 camera.position.set(0,15,15);camera.lookAt(0,0,0);camera.updateMatrixWorld(true);
 let ground=[2,3];
 const placements=[];

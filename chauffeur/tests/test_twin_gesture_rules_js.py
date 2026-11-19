@@ -30,6 +30,7 @@ Element.prototype.setPointerCapture = function(id) { this.capture = id; };
 Element.prototype.hasPointerCapture = function(id) { return this.capture === id; };
 Element.prototype.releasePointerCapture = function() { this.capture = null; };
 doc.createElement = tag => Object.assign(new Element(),{tag});
+doc.createElementNS = (_, tag) => doc.createElement(tag);
 doc.getElementById = id => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
 doc.querySelector = selector => selector==='.editor-shell'?shell:null; doc.querySelectorAll = () => []; globalThis.document = doc;
 // Node's EventTarget uses registration order. Model document capture before
@@ -69,9 +70,15 @@ async function test(name, body) {
   let library, terrain, enabled=true, writable=true, saveGate=null, ordinaryPresses=0;
   Object.defineProperty(view.controls,'enabled',{get:()=>enabled,set:value=>{enabled=value;controlStates.push(value);}});
   const op=async(operation,options)=>{ops.push({operation,options});if(saveGate)await saveGate;};
+  const originalResizeObserver=globalThis.ResizeObserver;let resizeCanvas=null;
+  globalThis.ResizeObserver=class extends originalResizeObserver {
+    constructor(callback){super(callback);this.callback=callback;}
+    observe(node){super.observe(node);if(node===view.renderer3.domElement.parentElement)resizeCanvas=this.callback;}
+  };
   const tools=createSceneTools({view,getPlan:()=>flat,getModel:()=>flat,getKit:()=>kit,getSheets:()=>({}),op,edit:op,
     panel:{clearSelection(){},focusSelection(){}},canEdit:()=>writable,signal:abort.signal,
     siteHits:(x,y)=>library?.siteHits(x,y) || [],pickSite:(x,y)=>library?.pickSite(x,y),padHits:(x,y)=>terrain?.padHits?.(x,y)||[]});
+  globalThis.ResizeObserver=originalResizeObserver;
   library=createLibrary({view,kit,getPlan:()=>flat,tools,op,canEdit:()=>true,signal:abort.signal});
   terrain=createTerrainTools({view,tools,getPlan:()=>flat,op,canEdit:()=>writable,signal:abort.signal,pickObject:library.pickSite});
   doc.getElementById('place-view').hidden=true;
@@ -99,6 +106,7 @@ async function test(name, body) {
   const ready=async()=>{while(!view.ready)await tick();};
   tools.setTool('select');
   try {await body({view,tools,library,terrain,lot,ops,controlStates,look,pixel,fire,click,ready,
+    resizeCanvas:()=>{assert.ok(resizeCanvas);resizeCanvas();},
     ordinaryPresses:()=>ordinaryPresses,setSaveGate:value=>saveGate=value,setWritable:value=>writable=value});passed++;console.log('  ok '+name);}
   catch(error){failed++;console.error('  FAIL '+name+'\n'+error.stack);}
   finally {abort.abort();delete flat.site.terraces;await tick();view.dispose();}
@@ -554,6 +562,40 @@ await test('mirrored_yard_object_keeps_picker_outline_and_gizmo',async({view,too
     assert.ok(outline.visible);assert.deepEqual(outline.box,box);assert.deepEqual(tools.handles().filter(h=>h.kind.startsWith('gizmo_')),handles);
     assert.equal(plant.scale,undefined);assert.equal(plant.scale_axes,undefined);
   } finally {delete plant.mirror_x;delete plant.mirror_y;}
+});
+await test('measure_toolbar_clicks_do_not_pick_or_move_and_escape_keeps_selection',async({view,tools,ops,look,pixel,fire,ready,ordinaryPresses,resizeCanvas})=>{
+  view.setView(B+':L1');tools.select({kind:'wall',id:W,building:B});await ready();
+  const middle=wall.from.map((v,i)=>(v+wall.to[i])/2);look([...middle,0],building);
+  const selected=structuredClone(tools.selection());
+  doc.getElementById('rail-measure').dispatchEvent(new Event('click'));
+  const canvas=view.renderer3.domElement;
+  const measureClick=p=>{fire('pointerdown',p);const event=new Event('pointerup');
+    Object.assign(event,{button:0,pointerId:1,clientX:p[0],clientY:p[1]});canvas.dispatchEvent(event);};
+  measureClick(pixel([...wall.from,0],building));measureClick(pixel([...wall.to,0],building));
+  const labels=()=>descendants(canvas.parentElement).filter(n=>n.className==='editor-measure-label');
+  assert.equal(labels().length,1);assert.ok(labels()[0].textContent.includes("'"));
+  assert.deepEqual(tools.selection(),selected);assert.equal(ops.length,0);assert.equal(ordinaryPresses(),0);
+  assert.equal(view.controls.enabled,true);escape();assert.equal(labels().length,0);
+  assert.deepEqual(tools.selection(),selected);assert.equal(doc.getElementById('rail-select').getAttribute('aria-pressed'),'true');
+  doc.getElementById('rail-measure').dispatchEvent(new Event('click'));
+  measureClick(pixel([...wall.from,0],building));measureClick(pixel([...wall.to,0],building));
+  assert.equal(labels().length,1);const oldLeft=labels()[0].style.left;
+  canvas.getBoundingClientRect=()=>({left:80,top:120,width:1200,height:700,right:1280,bottom:820});
+  view.camera.aspect=1200/700;view.camera.updateProjectionMatrix();resizeCanvas();
+  assert.notEqual(labels()[0].style.left,oldLeft,'canvas resize reprojects through the current rect');
+  tools.setTool('move');assert.equal(labels().length,0);assert.equal(ops.length,0);
+});
+await test('measure_exterior_uses_ground_coordinates_and_survives_camera_change',async({view,tools,ops,look,pixel,fire})=>{
+  view.setView('ext');look([200,200,0]);tools.setTool('measure');
+  const canvas=view.renderer3.domElement;
+  for(const point of [[200,200,0],[203,204,0]]) {
+    const p=pixel(point);fire('pointerdown',p);const event=new Event('pointerup');
+    Object.assign(event,{button:0,pointerId:1,clientX:p[0],clientY:p[1]});canvas.dispatchEvent(event);
+  }
+  const label=()=>descendants(canvas.parentElement).find(n=>n.className==='editor-measure-label');
+  assert.equal(label()?.textContent,`5'-0"`);const left=label().style.left;
+  look([201,201,0]);view.controls.dispatchEvent({type:'change'});assert.notEqual(label().style.left,left);
+  assert.equal(ops.length,0);tools.setTool('select');assert.equal(label(),undefined);
 });
 console.log(`${passed}/${passed+failed} passed`);if(failed)process.exitCode=1;
 """

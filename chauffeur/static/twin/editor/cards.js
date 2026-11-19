@@ -9,20 +9,22 @@ import { porchFoundationShelf, porchShelfOnGrade } from './porch_foundation_shel
 import { stairShelf } from './stair_shelf.js';
 import { siteRecord, siteShapeKinds, siteShapeLabels } from '../objects.js';
 import { drawSiteShapeShelf, yardRoomFeatures } from './site_shape_shelf.js';
+import { propertyPath } from './dock.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
 };
 
-// Keep this list aligned with twin_edit.EDITABLE; the server validates every save.
+// Ordinary fields follow twin_edit.EDITABLE. Length is derived and saves by
+// moving the second joint; it is never sent as a legacy set-field edit.
 const fields = {
-  wall: ['height', 'thickness', 'exterior'], opening: ['width', 'sill', 'head', 'kind', 'panels', 'at'],
+  wall: ['length', 'height', 'thickness', 'exterior'], opening: ['width', 'sill', 'head', 'kind', 'panels', 'at'],
   room: ['name', 'floor_offset_ft'], roof: ['kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'],
   building: ['name', 'position', 'rotation', 'base'], level: ['name', 'elevation', 'ceiling'],
   // Hosted pieces save through model ops (twin_model_ops: set, move_hosted).
   anchor: ['offset'], item: ['rotation', 'scale', 'offset'],
 };
-const lengths = new Set(['height', 'thickness', 'width', 'sill', 'head', 'at', 'plate', 'overhang', 'base', 'elevation', 'ceiling', 'offset', 'floor_offset_ft']);
+const lengths = new Set(['length', 'height', 'thickness', 'width', 'sill', 'head', 'at', 'plate', 'overhang', 'base', 'elevation', 'ceiling', 'offset', 'floor_offset_ft']);
 const labels = { low_side: 'Low side', at: 'Distance along the wall', ridge: 'Ridge',
   sill: 'Height above floor', head: 'Top of opening', plate: 'Wall height under the roof', base: 'Height above ground', elevation: 'Height above ground',
   offset: 'Distance from surface', floor_offset_ft: 'Floor height (relative to this floor)' };
@@ -63,7 +65,7 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null }) {
+export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials }) {
   let namesAsked = false;
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
@@ -71,7 +73,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
   let haSection = null;
   const equipmentShelf = createEquipmentShelf({ canEdit, queue, op, report, parseLength, feetInches, onSaved: () => draw() });
   const endNames = { x0: 'Left end', x1: 'Right end', y0: 'Front end', y1: 'Back end' };
-  const fieldValue = (piece, field) => field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
+  const fieldValue = (piece, field) => field === 'length' ? Math.hypot(...piece.to.map((v, i) => v - piece.from[i]))
+    : field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
   const title = ({ kind, piece, building }) => {
     const name = kind==='solar_zone'?'Solar zone':kind==='anchor' && ['meter','electric_panel','charger','parking'].includes(piece.kind)?(piece.name || ({meter:'Meter',electric_panel:'Electric panel',charger:'Charger',parking:'Parking spot'}[piece.kind])):kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
       : piece.name || piece.preset || siteShapeLabels[kind] || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
@@ -115,7 +118,10 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     }
     if (next?.pieceId !== selection?.pieceId || next?.buildingId !== selection?.buildingId) edgeIndex = null;
     const record = next && findPiece(getPlan(), next.pieceId, next.buildingId);
-    if (record?.kind === 'proposal') { host.hidden = true; return; }
+    if (record?.kind === 'proposal') { host.hidden = true; dock?.properties.clear(host); return; }
+    if (record) dock?.properties.render(host, { ...propertyPath(record, getSelection(), select),
+      reveal: next?.pieceId !== selection?.pieceId || next?.buildingId !== selection?.buildingId });
+    else dock?.properties.clear(host);
     const roof = record?.kind === 'roof' && record.building.roofs?.find(r => r.id === record.piece.id);
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
@@ -149,7 +155,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
           else input.value = display(field, fieldValue(record.piece, field), hosted(record.kind) && record.kind);
           state.baseline = raw(input);
         }
-        input.disabled = !canEdit();
+        input.disabled = !canEdit() || field === 'length' && !record.piece.joints?.[1];
       }
       drawHaSection(record);
       if (kindIsEquipment(record)) equipmentShelf.refresh(record);
@@ -223,7 +229,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (kindIsEquipment(record)) equipmentShelf.draw(host, record);
     if (kind === 'building') {
       foundationShelf(host, piece, { getPlan, getKit, canEdit, queue, op, report, preview });
-      houseMaterialsShelf(host, piece, { getPlan, getKit, canEdit, op: operation => queue(() => canEdit() && op(operation)), report });
+      if (openHouseMaterials) host.append(button('House materials', () => openHouseMaterials(piece.id)));
+      else houseMaterialsShelf(host, piece, { getPlan, getKit, canEdit, op: operation => queue(() => canEdit() && op(operation)), report });
     }
     if (kind === 'room' && piece.kind === 'porch') porchFoundationShelf(host, piece, building,
       { getPlan, getKit, canEdit, queue, op, report, onSaved: () => draw() });
@@ -286,7 +293,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       const initial = fieldValue(piece, field);
       input.value = display(field, initial, hosted(kind) && kind);
       if (field === 'exterior') input.checked = !!initial;
-      input.disabled = !canEdit();
+      input.disabled = !canEdit() || field === 'length' && !piece.joints?.[1];
       const state = { input, baseline: raw(input), queued: 0, lastQueued: undefined };
       inputs.set(field, state);
       const save = () => {
@@ -302,12 +309,18 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
           if (field === 'scale') value /= 100;
           if (field === 'panels' && (!Number.isInteger(value) || value < 1)) throw new Error('Use a whole number of panels, at least 1.');
           if (field === 'position' && value.length !== 2) throw new Error('Use two distances, separated by a comma.');
+          if (field === 'length' && (!(value > 0) || !piece.joints?.[1])) throw new Error('Use a positive length for a wall with two ends.');
           ++state.queued; state.lastQueued = typed;
           pending = pending.then(async () => {
             const current = findPiece(getPlan(), piece.id, building.id)?.piece;
             const savedField = end ? 'ends' : field;
             const savedValue = end ? { ...current?.ends, [end]: value } : value;
-            if (current && hosted(kind)) {
+            if (current && field === 'length') {
+              const d = current.to.map((v, i) => v - current.from[i]), length = Math.hypot(...d);
+              if (!(length > 0)) throw new Error('The wall needs two different ends.');
+              if (Math.abs(length - value) > 1e-8) await op({ op: 'move_joint', building: building.id, joint: current.joints[1],
+                to: current.from.map((v, i) => v + d[i] * value / length) });
+            } else if (current && hosted(kind)) {
               if (JSON.stringify(current[field] ?? (field === 'scale' ? 1 : 0)) !== JSON.stringify(value))
                 await op(field === 'offset' ? { op: 'move_hosted', building: building.id, id: piece.id, offset: value }
                   : { op: 'set', building: building.id, id: piece.id, field, value });
@@ -369,6 +382,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (!edge) { edgeIndex = null; layout = null; draw(next); return; }
     const signature = `edge:${edgeIndex}:${JSON.stringify(edge)}:${canEdit()}`;
     selection = next; host.hidden = false;
+    dock?.properties.render(host, { crumbs: [...propertyPath(record, getSelection(), select).crumbs, `Edge ${edgeIndex + 1}`], reveal: layout !== signature,
+      back: () => { edgeIndex = null; layout = null; draw(); } });
     if (layout === signature) return;
     layout = signature; host.replaceChildren(); inputs = new Map();
     const heading = document.createElement('h3'); heading.textContent = `Roof edge ${edgeIndex + 1}`;
@@ -417,7 +432,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     pending = run.catch(() => {});
     return run;
   }
-  return { draw, queue, remove, edge(handle) {
+  return { draw, queue, remove, showRoofEdge(handle) {
     const next = { pieceId: handle.id, buildingId: handle.building };
     selection = next; edgeIndex = handle.edge; layout = null; draw(next);
   } };

@@ -97,7 +97,7 @@ def setup():
 
 def import_and_judge_versions(page, served):
     H.open_editor(page, served, query='tier=high&test=1&library=1')
-    page.locator('#library-panel').wait_for(state='visible')
+    page.locator('#dock-pane-library #library-panel').wait_for(state='visible')
     binary = heavy_car_glb()
     page.set_input_files('#library-import-files', {'name': 'dense-car.glb', 'mimeType': 'model/gltf-binary', 'buffer': binary})
     dialog = page.get_by_role('dialog', name='Import model', exact=True)

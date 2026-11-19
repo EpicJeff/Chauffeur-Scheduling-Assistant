@@ -3,10 +3,13 @@ import { request, report } from './api.js';
 const LIMIT = 20 * 1024 * 1024;
 const el = id => document.getElementById(id);
 
-export function mountHouses({ history, afterLoad, capture, canLoad, signal, api = { request } }) {
+export function mountHouses({ history, afterLoad, capture, canLoad, signal, api = { request }, dialogs, createMenu, onClose }) {
   const panel = el('houses-panel'), list = el('houses-list'), status = el('houses-status');
   const picker = el('houses-file'), openButton = el('editor-houses');
   let busy = false;
+  const rowMenu = createMenu?.({ signal, items: actions => [...actions.querySelectorAll('button')].map(button => ({
+    label: button.textContent, disabled: button.disabled, run: () => button.click(),
+  })) });
   const listen = (node, type, fn) => node.addEventListener(type, fn, { signal });
   function sync() {
     panel.querySelectorAll('button').forEach(button => {
@@ -73,13 +76,15 @@ export function mountHouses({ history, afterLoad, capture, canLoad, signal, api 
         await api.request(path, 'DELETE'); await refresh();
       }, actions);
       row.append(details); list.append(row);
+      if (rowMenu) listen(row, 'contextmenu', event => { event.preventDefault(); rowMenu.open(event, actions); });
     }
     status.textContent = result.saves.length ? `${result.saves.length} saved house${result.saves.length === 1 ? '' : 's'}` : 'No saved houses yet. Save a house before trying something new.';
     sync();
   }
-  function close() { panel.hidden = true; openButton.focus(); }
+  function close() { if (dialogs) dialogs.closeDialog('houses-panel'); else { panel.hidden = true; openButton.focus(); } onClose?.(); }
   listen(openButton, 'click', () => {
-    panel.hidden = false; el('editor-menu').open = false;
+    if (dialogs) dialogs.openDialog('houses-panel', { title: 'Houses' }); else panel.hidden = false;
+    el('editor-menu').open = false;
     el('houses-close').focus(); run(refresh);
   });
   listen(el('houses-close'), 'click', close);
@@ -102,7 +107,7 @@ export function mountHouses({ history, afterLoad, capture, canLoad, signal, api 
     status.textContent = `Uploaded "${result.save.name}". Choose Load when you are ready.`;
   }));
   listen(document, 'keydown', event => {
-    if (panel.hidden || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden)')) return;
+    if (dialogs || panel.hidden || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden)')) return;
     if (event.key === 'Escape' && !busy) { event.preventDefault(); event.stopPropagation(); close(); }
     if (event.key === 'Tab') {
       const buttons = [...panel.querySelectorAll('button')].filter(b => !b.disabled);

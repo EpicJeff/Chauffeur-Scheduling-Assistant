@@ -1,6 +1,6 @@
 import { request, report, active } from './api.js';
 
-export function createTimeline({ getState, render, onPreview, log, signal, canScrub = () => true }) {
+export function createTimeline({ getState, render, onPreview, log, signal, canScrub = () => true, dock }) {
   const el = id => document.getElementById(id);
   let preview = null, version = 0, busy = false, loading = false, justReturned = false, currentBuild = null, selected = null;
   const rounds = () => (getState().rounds || []).slice(-50).filter(row => row.kind !== 'start_over');
@@ -44,6 +44,7 @@ export function createTimeline({ getState, render, onPreview, log, signal, canSc
     if (!canScrub() || busy) return;
     const ticket = ++version;
     el('editor-history').open = true;
+    el('editor-history').scrollIntoView({ block: 'nearest' });
     // Freeze editing before the historical request can race an edit.
     loading = true; justReturned = false; onPreview(true); sync();
     try {

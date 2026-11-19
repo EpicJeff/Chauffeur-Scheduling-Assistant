@@ -5,7 +5,7 @@ const key = item => !item ? '' : item.kind === 'pause' ? `pause:${item.build}:${
   : item.kind === 'flag' ? `flag:${item.building}:${item.index}:${item.flag.text}` : `proposal:${item.building}:${item.id}`;
 
 export function createChecks(view, { api, getBuild, getModel, getPlan, tools, panel, canEdit,
-  signal, op = api.op, flags, pauses, onClose }) {
+  signal, op = api.op, flags, pauses, onClose, dock }) {
   const card = document.createElement('aside'); card.id = 'check-card';
   card.setAttribute('data-step-panel', 'Check it'); card.setAttribute('aria-label', 'Check it');
   document.getElementById('piece-card').after(card);
@@ -72,7 +72,8 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
     card.replaceChildren(); card.hidden = isHidden();
     card.setAttribute('data-check-kind', selected?.kind || 'empty');
     pauseControls(); reviewing();
-    if (card.hidden) return;
+    if (card.hidden) { dock?.properties.clear(card); return; }
+    dock?.properties.render(card, { crumbs: ['Check it', selected?.stepInfo?.label || (selected?.kind === 'proposal' ? 'Proposal' : selected?.kind === 'flag' ? 'Flagged piece' : 'Review')], back: dismiss });
     const title = document.createElement('h3'); title.textContent = selected?.stepInfo?.label || 'Check this piece';
     const close = button('Close', dismiss, true); close.setAttribute('aria-label', 'Close check');
     if (!selected) {
@@ -149,6 +150,7 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
     const fresh = items(), nextSignature = JSON.stringify(fresh);
     if (signature === nextSignature) {
       card.hidden = isHidden();
+      if (card.hidden) dock?.properties.clear(card);
       pauseControls(); reviewing();
       return;
     }
@@ -181,7 +183,7 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   function tick() {
     const model = getModel(), build = getBuild();
     if (model !== seenModel || build !== seenBuild) { seenModel = model; seenBuild = build; sync(); }
-    else if (card.hidden !== isHidden()) { card.hidden = isHidden(); pauseControls(); reviewing(); }
+    else if (card.hidden !== isHidden()) draw();
     frame = requestAnimationFrame(tick);
   }
   signal.addEventListener('abort', () => {

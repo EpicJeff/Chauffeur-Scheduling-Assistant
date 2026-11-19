@@ -79,62 +79,55 @@
   <div id="editor-chrome">{% include 'nav.html' %}</div>
   <main class="editor-shell" aria-label="House editor">
     <div id="editor-scene" aria-label="Interactive house preview"></div>
-    <section id="editor-front-door" class="place-card" hidden>
-      <h2>Let's make your house</h2>
-      <button id="editor-add-files" type="button">Add plans and photos</button>
-      <button id="editor-draw-myself" type="button">Draw it myself</button>
-    </section>
-    <aside id="editor-edit-timing" aria-label="Edit timing" hidden></aside>
+
+    {% macro tool_button(tool, label) -%}
+      <button id="rail-{{ tool }}" type="button" data-editor-icon="{{ tool }}" title="{{ label }}" aria-label="{{ label }}" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool not in ['select', 'library', 'add-effect', 'ground'] %}disabled{% endif %} {% if tool == 'library' %}aria-controls="library-panel"{% endif %}><span class="editor-sr-only">{{ label }}</span></button>
+    {%- endmacro %}
     <header id="editor-top">
-      <h1>House editor</h1>
-      <a id="editor-library-page" href="{{ _up }}house/library" target="_blank" rel="noopener">Library</a>
-      <output id="editor-status" role="status">Opening your house…</output>
-      <output id="editor-save-state" role="status">Saved</output>
-      <div id="editor-chip" aria-label="Build status and spend"></div>
-      <button id="editor-check-step" type="button" hidden>Check this step</button>
-      <button id="editor-resume" type="button" hidden>Resume</button>
-      <button id="editor-stop" type="button" aria-label="Stop build" hidden>Stop</button>
-      <button id="editor-houses" type="button">Houses</button>
-      <details id="editor-menu">
-        <summary aria-label="House menu">Menu</summary>
-        <div><button id="editor-manage-sources" type="button">Your place</button>
+    <div id="editor-toolbar" role="toolbar" aria-label="House editor toolbar">
+      <details id="editor-menu" data-toolbar-group="menu" class="editor-toolbar-menu">
+        <summary aria-label="House menu" title="House menu" data-editor-icon="menu"><span class="editor-sr-only">Menu</span></summary>
+        <div><button id="editor-houses" type="button">Houses</button>
+          <a id="editor-library-page" href="{{ _up }}house/library" target="_blank" rel="noopener">Library</a>
+          <button id="editor-manage-sources" type="button">Your place</button>
+          <button id="menu-house-materials" type="button">House materials</button>
+          <button id="menu-settings" type="button">Settings</button>
           <button id="menu-upload" type="button">Upload more</button>
           <button id="menu-director" type="button" disabled>Art director</button>
           <button id="menu-advanced" type="button" disabled>Advanced: edit the plan file</button>
           <button id="menu-start-over" type="button" disabled>Start over</button>
-          <button id="menu-reset-spend" type="button" disabled>Reset spend total</button>
-          <button id="menu-edit-timing" type="button" aria-pressed="false">Show edit timing</button>
-          <button id="menu-send-timing" type="button">Send timing report</button>
+
           <button id="menu-record" type="button" hidden disabled>Download build record</button>
           <a href="{{ _up }}house/twin">House preview</a></div>
       </details>
-      <nav id="editor-steps" aria-label="Build your house"></nav>
-    </header>
+      <h1 id="editor-house-name" data-toolbar-group="house">House editor</h1>
+      <span id="editor-toolbar-save-state" data-toolbar-group="save" aria-hidden="true">Saved</span>
     <nav id="editor-rail" aria-label="House tools">
-      {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('scale', 'Scale'), ('draw-room', 'Draw room'), ('draw-wall', 'Draw wall'), ('split-room', 'Split room'), ('add-door', 'Add door'), ('add-window', 'Add window'), ('add-anchor', 'Add anchor'), ('add-stair', 'Add stair'), ('add-solar-zone', 'Add solar zone'), ('add-meter', 'Add meter'), ('add-electric-panel', 'Add electric panel'), ('add-charger', 'Add charger'), ('add-parking', 'Add parking spot'), ('roof', 'Roof'), ('add-level', 'Add floor'), ('delete', 'Delete'), ('undo', 'Undo'), ('redo', 'Redo'), ('sheet', 'Sheet')] %}
-      <button id="rail-{{ tool }}" type="button" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool != 'select' %}disabled{% endif %}>{{ label }}</button>
-      {% endfor %}
-      <button id="rail-library" type="button" aria-pressed="false" aria-controls="library-panel">Library</button>
-      <button id="rail-add-effect" type="button">Add effect</button>
-    </nav>
-    <aside id="library-panel" aria-label="Library" hidden>
-      <h3>Library</h3>
-      <div role="tablist" aria-label="Library categories">
-        <button type="button" role="tab" data-library-tab="materials" aria-selected="true" aria-controls="library-entries">Materials</button>
-        <button type="button" role="tab" data-library-tab="items" aria-selected="false" aria-controls="library-entries">Items</button>
+      <div data-toolbar-group="select" role="group" aria-label="Select and transform">
+        {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('scale', 'Scale')] %}{{ tool_button(tool, label) }}{% endfor %}
       </div>
-      <button id="library-import" type="button">Import model</button>
-      <input id="library-import-files" type="file" accept=".glb,.gltf,.bin,image/*,.tga,.zip,.dae,.kmz" multiple hidden>
-      <label>Search models<input id="library-search" type="search" aria-label="Search models"></label>
-      <p>Import glTF/GLB, Collada (.dae) or KMZ. A zip of a model folder works. SketchUp .skp is not supported; export Collada or glTF from SketchUp.</p>
-      <details id="library-import-settings"><summary>Import settings</summary>
-        <label>Maximum upload size (MB)<input id="library-import-limit" type="number" min="1" max="200" value="50"></label>
-        <label>Maximum unpacked size (MB)<input id="library-import-unpacked-limit" type="number" min="1" max="1000" value="200"></label>
+      <div data-toolbar-group="structure" role="group" aria-label="Structure">
+        {% for tool, label in [('draw-wall', 'Draw wall'), ('draw-room', 'Draw room'), ('split-room', 'Split room'), ('add-door', 'Add door'), ('add-window', 'Add window'), ('add-stair', 'Add stair'), ('add-level', 'Add floor'), ('roof', 'Roof')] %}{{ tool_button(tool, label) }}{% endfor %}
+        <details class="editor-toolbar-menu" id="editor-roof-menu"><summary aria-label="More roof tools" title="More roof tools" data-editor-icon="chevron"><span class="editor-sr-only">More roof tools</span></summary>
+          <div>{{ tool_button('add-solar-zone', 'Add solar zone') }}</div>
+        </details>
+      </div>
+      <div data-toolbar-group="yard" role="group" aria-label="Yard">{{ tool_button('ground', 'Ground and yard') }}</div>
+      <div data-toolbar-group="fixtures" role="group" aria-label="Fixtures">
+        {{ tool_button('add-effect', 'Add effect') }}{{ tool_button('add-anchor', 'Add anchor') }}
+        <details id="editor-equipment-menu" class="editor-toolbar-menu"><summary aria-label="Equipment" title="Equipment" data-editor-icon="equipment"><span class="editor-sr-only">Equipment</span></summary>
+          <div>{% for tool, label in [('add-meter', 'Add meter'), ('add-electric-panel', 'Add electric panel'), ('add-charger', 'Add charger'), ('add-parking', 'Add parking spot')] %}{{ tool_button(tool, label) }}{% endfor %}</div>
+        </details>
+      </div>
+      <div data-toolbar-group="measure">{{ tool_button('measure', 'Measure') }}</div>
+      <div data-toolbar-group="delete">{{ tool_button('delete', 'Delete') }}</div>
+      <div data-toolbar-group="history" role="group" aria-label="Undo and redo">{{ tool_button('undo', 'Undo') }}{{ tool_button('redo', 'Redo') }}</div>
+      <div data-toolbar-group="sheet" role="group" aria-label="Drawing and Library">{{ tool_button('sheet', 'Sheet') }}{{ tool_button('library', 'Library') }}</div>
+    </nav>
+      <details id="editor-floor-menu" data-toolbar-group="floor" class="editor-toolbar-menu"><summary aria-label="Choose floor" title="Choose floor" data-editor-icon="floor"><span class="editor-sr-only">Floors</span></summary>
+        <div><div id="editor-floor-picker" aria-label="Choose a floor"></div><button id="editor-floor-add" type="button">Add floor</button></div>
       </details>
-      <p id="library-status" role="status">Opening the library…</p>
-      <p id="library-jobs" role="status" aria-live="polite"></p>
-      <div id="library-entries" role="tabpanel"></div>
-    </aside>
+      <details id="editor-view-menu" data-toolbar-group="view" class="editor-toolbar-menu"><summary aria-label="Choose view" title="Choose view" data-editor-icon="view"><span class="editor-sr-only">View</span></summary>
     <nav id="editor-cameras" aria-label="Viewport controls">
       {% for camera in ['Top', 'Front', 'Back', 'Orbit'] %}
       <button type="button" data-editor-camera="{{ camera | lower }}">{{ camera }}</button>
@@ -147,143 +140,243 @@
         <p id="editor-lighting-help">Day/Night/Now light the house; Unlit is fastest.</p>
       </div>
     </nav>
-    <section id="draw-tools" aria-label="Drawing tools" hidden>
-      <p id="draw-note" role="status"></p>
-      <button id="draw-cancel" type="button">Cancel drawing</button>
+      </details>
+    </div>
+    <section id="editor-genbar" aria-label="Generation controls" hidden>
+      <div id="editor-chip" aria-label="Build status and spend"></div>
+      <button id="editor-check-step" type="button" hidden>Check this step</button>
+      <button id="editor-resume" type="button" hidden>Resume</button>
+      <button id="editor-stop" type="button" aria-label="Stop build" hidden>Stop</button>
+      <nav id="editor-steps" aria-label="Build your house"></nav>
     </section>
-    <section id="device-tools" aria-label="Device placement" hidden>
-      <p id="device-note" role="status"></p>
-      <button id="device-cancel" type="button">Cancel placement</button>
-    </section>
-    <aside id="piece-card" aria-label="Selected piece" hidden></aside>
-    <section id="roof-tools" aria-label="Roof tools" hidden>
-      <div id="roof-choices"><button id="roof-over" type="button">Roof over this</button><button id="roof-draw" type="button">Draw roof area</button><button id="roof-dormer" type="button">Add dormer</button></div>
-      <p id="roof-note" role="status"></p><button id="roof-cancel" type="button">Cancel roof editing</button>
-    </section>
-    <aside id="pause-card" aria-label="Check this step" hidden>
-      <h3 id="pause-title">Check this outline</h3><p id="pause-reason" class="pause-why"></p>
-      <p id="pause-size"></p>
-      <label id="pause-dimension-label" hidden>Length of the measured line, in feet and inches<input id="pause-dimension" type="text"></label>
-      <div><button id="pause-accept" type="button">Looks right</button><button id="pause-drag" type="button">Drag</button>
-        <button id="pause-pin" type="button">Pin 2 points</button><button id="pause-reread" type="button">Re-read</button></div>
-      <label id="pause-turn-label" hidden>Turn in degrees<input id="pause-turn" type="number" step="1"></label>
-      <p id="pause-instruction" role="status"></p><button id="pause-cancel" type="button">Cancel adjustment</button>
-    </aside>
+    </header>
+    <footer id="editor-statusbar" aria-label="Editor status">
+      <output id="editor-status" role="status">Opening your house…</output>
+      <section id="draw-tools" aria-label="Drawing tools" hidden>
+        <p id="draw-note" role="status"></p>
+        <button id="draw-cancel" type="button">Cancel drawing</button>
+      </section>
+      <section id="device-tools" aria-label="Device placement" hidden>
+        <p id="device-note" role="status"></p>
+        <button id="device-cancel" type="button">Cancel placement</button>
+      </section>
+      <section id="roof-tools" aria-label="Roof tools" hidden>
+
+        <p id="roof-note" role="status"></p><button id="roof-cancel" type="button">Cancel roof editing</button>
+      </section>
+      <output id="time-chip" role="status" hidden></output>
+      <output id="editor-save-state" role="status">Saved</output>
+    </footer>
+
     <output id="editor-drag-hint" hidden></output><div id="editor-pin-marks" aria-hidden="true"></div>
     <svg id="editor-drag-layer" aria-hidden="true"><polygon id="editor-drag-outline" points=""></polygon></svg>
-    <output id="time-chip" role="status" hidden></output>
-    <div id="editor-sidebar">
-    <aside id="editor-floors" aria-label="Floors"><span>Floors</span><p>No floors yet</p></aside>
-    <details id="editor-history">
-      <summary>History</summary>
-      <div id="editor-history-body">
-        <p id="editor-history-note">Your build will appear here, one step at a time.</p>
-        <div id="time-actions" hidden><button id="time-return" type="button">Return to this house</button><button id="time-now" type="button">Return to now</button></div>
-        <ol id="editor-history-list" aria-label="House history"></ol>
-        <progress id="editor-progress" max="1" value="0" aria-label="Build progress"></progress>
-        <output id="editor-step-count">0 steps</output>
-      </div>
-    </details>
-    <aside id="editor-agent" aria-label="Argyle">
-      <header><h2>Argyle</h2><span id="editor-source-count">Drawings and photos</span></header>
-      <div id="editor-panel-scroll">
-        <section id="editor-advanced" aria-labelledby="advanced-title" hidden>
-          <h3 id="advanced-title">Advanced: edit the plan file</h3>
-          <p>Changes need a reason, recorded with each fix.</p>
-          <form id="advanced-form">
-            <label for="advanced-plan">Current plan JSON</label>
-            <textarea id="advanced-plan" spellcheck="false" required></textarea>
-            <label for="advanced-reason">Reason (required)</label>
-            <input id="advanced-reason" type="text" required>
-            <div class="editor-actions"><button id="advanced-save" type="submit">Save plan</button>
-              <button id="advanced-close" type="button">Close plan file</button></div>
-          </form>
-        </section>
-        <ol id="editor-log" aria-label="Build steps" aria-live="polite"></ol>
-        <div id="editor-messages" role="log" aria-label="Conversation" aria-live="polite"></div>
-      </div>
-      <div id="editor-quick-replies" aria-label="Quick replies"></div>
-      <form id="editor-say">
-        <label class="editor-sr-only" for="editor-message">Message Argyle</label>
-        <input id="editor-message" type="text" placeholder="Talk to Argyle" maxlength="4000" autocomplete="off" required>
-        <button type="submit" aria-label="Send to Argyle">Send</button>
-      </form>
-    </aside>
-    </div>
-    <section id="place-view" aria-label="Your files" hidden>
-      <header class="place-header">
-        <div><h2 id="place-title">Your files</h2><p id="place-about">The lot and every building, with their drawings and photos.</p></div>
-        <button id="place-close" type="button">Back to the house</button>
-      </header>
-      <div class="place-scroll">
-        <form id="place-add-form" class="place-add" data-place-step="Your files">
-          <label>Building name<input id="place-add-name" type="text" maxlength="100" required placeholder="Detached garage"></label>
-          <label>Kind<select id="place-add-kind"></select></label>
-          <button id="place-add" type="submit">Add building</button>
-        </form>
-        <div class="place-layout">
-          <div id="place-cards" data-place-step="Your files"></div>
-          <aside class="place-setup" aria-label="Set up the lot">
-          <section class="place-card" data-place-step="Your files">
-            <h3 id="place-facing-label">Which way does the front of the house face?</h3>
-            <form id="place-facing-form">
-              <div class="place-compass">
-                <span class="place-compass-n">N</span><span class="place-compass-e">E</span>
-                <span class="place-compass-s">S</span><span class="place-compass-w">W</span>
-                <button id="place-facing-dial" type="button" role="slider" aria-labelledby="place-facing-label" aria-valuemin="0" aria-valuemax="359" aria-valuenow="180" aria-orientation="horizontal">
-                  <svg id="place-facing-house" viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
-                    <path d="M32 3 L40 13 H24 Z" fill="currentColor"/><path d="M27 19 H16 V50 H48 V19 H37" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><path d="M27 19 V24 M37 19 V24" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-                  </svg>
-                </button>
-              </div>
-              <label>Front bearing in degrees<input id="place-facing-degrees" type="number" min="0" max="359" step="1" required value="180"></label>
-              <p class="place-muted">The arrow and the door gap mark the front. Drag the house or use the arrow keys. 0° is north, 90° east, 180° south, 270° west.</p>
-              <button type="submit">Save facing</button>
-            </form>
-          </section>
-            <section class="place-card" data-place-step="Your lot">
-              <h3>The plot plan</h3>
-              <p>Upload it to the Lot and confirm its page role. Read it to find building footprints, then choose which to keep.</p>
-              <button id="place-read-plot" type="button" disabled>Read the plot plan</button>
-              <div id="place-suggestions"></div>
-            </section>
-            <section id="place-placement" class="place-card" data-place-step="Your lot" hidden>
-              <h3>Place the buildings</h3>
-              <p>Place buildings over the plot plan in the scene. Select a building to move or turn it; tap a footprint or lot edge to use it.</p>
-              <div class="editor-actions">
-                <button id="place-in-scene" type="button">Place in the scene</button>
-                <button id="place-confirm-placement" type="button">These are in the right place</button>
-              </div>
-            </section>
-            <section class="place-card" data-place-step="Your files">
-              <h3>Learn from photos</h3>
-              <p>Suggest which buildings a photo shows and a starting shape for buildings without drawings. You choose what to use.</p>
-              <button id="place-suggest-photos" type="button" disabled>Suggest from photos</button>
-              <div id="place-photo-suggestions"></div>
-            </section>
-          </aside>
+
+    <aside id="editor-dock" aria-label="Editor dock">
+      <div id="dock-top">
+        <div id="dock-tabs" role="tablist" aria-label="Editor panels">
+          {% for tab, label in [('scene', 'Scene'), ('layers', 'Layers'), ('library', 'Library'), ('argyle', 'Argyle')] %}
+          <button id="dock-tab-{{ tab }}" type="button" role="tab" data-dock-tab="{{ tab }}" aria-selected="{{ 'true' if tab == 'scene' else 'false' }}" aria-controls="dock-pane-{{ tab }}">{{ label }}</button>
+          {% endfor %}
         </div>
-        <div id="place-build-cards" data-place-step="Build"></div>
-        <div data-place-step="Link to Home Assistant"><p id="place-ha-note"></p><div id="place-ha-links"></div></div>
+        <section id="dock-pane-scene" role="tabpanel" aria-labelledby="dock-tab-scene">
+          <aside id="editor-floors" aria-label="Floors"><span>Floors</span><p>No floors yet</p></aside>
+          <div id="scene-lot"></div>
+          <div id="scene-yard"></div>
+        </section>
+        <section id="dock-pane-layers" role="tabpanel" aria-labelledby="dock-tab-layers" hidden>
+          <h3>Layers</h3>
+          <button id="layer-sheet" type="button" aria-pressed="false">Sheet underlay</button>
+          <button id="layer-grade" type="button" aria-pressed="false">Grade</button>
+          <p>Grade: blue is lower, orange is higher. Heights are feet from the lot datum.</p>
+        </section>
+        <section id="dock-pane-library" role="tabpanel" aria-labelledby="dock-tab-library" hidden>
+          <aside id="library-panel" aria-label="Library">
+            <h3>Library</h3>
+            <div role="tablist" aria-label="Library categories">
+              <button type="button" role="tab" data-library-tab="materials" aria-selected="true" aria-controls="library-entries">Materials</button>
+              <button type="button" role="tab" data-library-tab="items" aria-selected="false" aria-controls="library-entries">Items</button>
+            </div>
+            <button id="library-import" type="button">Import model</button>
+            <input id="library-import-files" type="file" accept=".glb,.gltf,.bin,image/*,.tga,.zip,.dae,.kmz" multiple hidden>
+            <label>Search models<input id="library-search" type="search" aria-label="Search models"></label>
+            <p>Import glTF/GLB, Collada (.dae) or KMZ. A zip of a model folder works. SketchUp .skp is not supported; export Collada or glTF from SketchUp.</p>
+
+            <details id="library-import-settings"><summary>Import settings</summary></details>
+            <p id="library-status" role="status">Opening the library…</p>
+            <p id="library-jobs" role="status" aria-live="polite"></p>
+            <div id="library-entries" role="tabpanel"></div>
+          </aside>
+          <a href="{{ _up }}house/library" target="_blank" rel="noopener">Material library</a>
+        </section>
+        <section id="dock-pane-argyle" role="tabpanel" aria-labelledby="dock-tab-argyle" hidden>
+          <aside id="editor-agent" aria-label="Argyle">
+            <header><h2>Argyle</h2><span id="editor-source-count">Drawings and photos</span></header>
+            <div id="editor-panel-scroll">
+
+              <ol id="editor-log" aria-label="Build steps" aria-live="polite"></ol>
+              <div id="editor-messages" role="log" aria-label="Conversation" aria-live="polite"></div>
+            </div>
+            <div id="editor-quick-replies" aria-label="Quick replies"></div>
+            <form id="editor-say">
+              <label class="editor-sr-only" for="editor-message">Message Argyle</label>
+              <input id="editor-message" type="text" placeholder="Talk to Argyle" maxlength="4000" autocomplete="off" required>
+              <button type="submit" aria-label="Send to Argyle">Send</button>
+            </form>
+          </aside>
+
+        </section>
       </div>
-      <footer class="place-footer">
-        <p id="place-status" role="status">Add PDF drawings and JPEG or PNG photos to the part they show. Check each page, then confirm.</p>
-        <div class="editor-actions"><button id="place-confirm-pages" data-place-step="Your files" type="button" disabled>Confirm pages</button>
-          <button id="place-build" data-place-step="Build" class="place-primary" type="button" disabled>Build your place</button></div>
-      </footer>
-    </section>
-    <section id="houses-panel" class="houses-panel" role="dialog" aria-modal="true" aria-labelledby="houses-title" hidden>
-      <header class="place-header"><h2 id="houses-title">Houses</h2><button id="houses-close" type="button">Close</button></header>
-      <div class="place-scroll">
-        <div class="editor-actions"><button id="houses-save" type="button">Save current house</button>
-          <button id="houses-download-current" type="button">Download current house</button>
-          <button id="houses-upload" type="button">Upload a house file</button></div>
-        <input id="houses-file" type="file" accept=".chauffeur-house.json,application/json" hidden>
-        <p class="place-muted">House files keep photo and Library references. They do not include those files.</p>
-        <div id="houses-list"></div>
+      <div id="dock-splitter" role="separator" aria-label="Resize Scene and Properties" aria-orientation="horizontal" aria-valuemin="20" aria-valuemax="70" aria-valuenow="42" tabindex="0"></div>
+      <div id="editor-sidebar">
+        <section id="dock-properties" aria-label="Properties">
+          <header id="properties-heading"><button id="properties-back" type="button" aria-label="Back in Properties" title="Back" disabled>←</button><h2 id="properties-crumbs">Properties</h2></header>
+          <div id="properties-empty"><p>Nothing selected</p><button id="properties-house-materials" type="button">House materials</button><button id="properties-your-place" type="button">Your place</button></div>
+          <div id="properties-content">
+            <aside id="piece-card" aria-label="Selected piece" hidden></aside>
+            <aside id="pause-card" aria-label="Check this step" hidden>
+              <h3 id="pause-title">Check this outline</h3><p id="pause-reason" class="pause-why"></p>
+              <p id="pause-size"></p>
+              <label id="pause-dimension-label" hidden>Length of the measured line, in feet and inches<input id="pause-dimension" type="text"></label>
+              <div><button id="pause-accept" type="button">Looks right</button><button id="pause-drag" type="button">Drag</button>
+                <button id="pause-pin" type="button">Pin 2 points</button><button id="pause-reread" type="button">Re-read</button></div>
+              <label id="pause-turn-label" hidden>Turn in degrees<input id="pause-turn" type="number" step="1"></label>
+              <p id="pause-instruction" role="status"></p><button id="pause-cancel" type="button">Cancel adjustment</button>
+            </aside>
+            <section id="draw-options" aria-label="Draw options" hidden><h3 id="draw-options-title">Drawing</h3><p id="draw-options-note"></p></section>
+            <section id="device-options" aria-label="Device options" hidden><h3>Placement options</h3><p id="device-options-note"></p></section>
+            <section id="roof-options" aria-label="Roof options" hidden><h3>Roof</h3><p id="roof-options-note"></p>
+              <div id="roof-choices"><button id="roof-over" type="button">Roof over this</button><button id="roof-draw" type="button">Draw roof area</button><button id="roof-dormer" type="button">Add dormer</button></div>
+            </section>
+          </div>
+        </section>
+        <details id="editor-history">
+          <summary>History</summary>
+          <div id="editor-history-body">
+            <p id="editor-history-note">Your build will appear here, one step at a time.</p>
+            <div id="time-actions" hidden><button id="time-return" type="button">Return to this house</button><button id="time-now" type="button">Return to now</button></div>
+            <ol id="editor-history-list" aria-label="House history"></ol>
+            <progress id="editor-progress" max="1" value="0" aria-label="Build progress"></progress>
+            <output id="editor-step-count">0 steps</output>
+          </div>
+          <section id="editor-timing-section" hidden><h3>Edit timing</h3>
+            <aside id="editor-edit-timing" aria-label="Edit timing" hidden></aside>
+          </section>
+        </details>
+
       </div>
-      <footer class="place-footer"><p id="houses-status" role="status">Opening saved houses…</p></footer>
-    </section>
+    </aside>
+
+    <div id="editor-dialog-sources" hidden>
+      <section id="editor-front-door" class="place-card" hidden>
+        <h2>Let's make your house</h2>
+        <button id="editor-add-files" type="button">Add plans and photos</button>
+        <button id="editor-draw-myself" type="button">Draw it myself</button>
+      </section>
+      <section id="place-view" aria-label="Your files" hidden>
+        <header class="place-header">
+          <div><h2 id="place-title">Your files</h2><p id="place-about">The lot and every building, with their drawings and photos.</p></div>
+          <button id="place-close" type="button">Back to the house</button>
+        </header>
+        <nav id="place-steps" aria-label="Build your house"></nav>
+        <div id="place-step-content" class="place-scroll" role="tabpanel">
+          <form id="place-add-form" class="place-add" data-place-step="Your files">
+            <label>Building name<input id="place-add-name" type="text" maxlength="100" required placeholder="Detached garage"></label>
+            <label>Kind<select id="place-add-kind"></select></label>
+            <button id="place-add" type="submit">Add building</button>
+          </form>
+          <div class="place-layout">
+            <div id="place-cards" data-place-step="Your files"></div>
+            <aside class="place-setup" aria-label="Set up the lot">
+            <section class="place-card" data-place-step="Your files">
+              <h3 id="place-facing-label">Which way does the front of the house face?</h3>
+              <form id="place-facing-form">
+                <div class="place-compass">
+                  <span class="place-compass-n">N</span><span class="place-compass-e">E</span>
+                  <span class="place-compass-s">S</span><span class="place-compass-w">W</span>
+                  <button id="place-facing-dial" type="button" role="slider" aria-labelledby="place-facing-label" aria-valuemin="0" aria-valuemax="359" aria-valuenow="180" aria-orientation="horizontal">
+                    <svg id="place-facing-house" viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
+                      <path d="M32 3 L40 13 H24 Z" fill="currentColor"/><path d="M27 19 H16 V50 H48 V19 H37" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><path d="M27 19 V24 M37 19 V24" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                    </svg>
+                  </button>
+                </div>
+                <label>Front bearing in degrees<input id="place-facing-degrees" type="number" min="0" max="359" step="1" required value="180"></label>
+                <p class="place-muted">The arrow and the door gap mark the front. Drag the house or use the arrow keys. 0° is north, 90° east, 180° south, 270° west.</p>
+                <button type="submit">Save facing</button>
+              </form>
+            </section>
+              <section class="place-card" data-place-step="Your lot">
+                <h3>The plot plan</h3>
+                <p>Upload it to the Lot and confirm its page role. Read it to find building footprints, then choose which to keep.</p>
+                <button id="place-read-plot" type="button" disabled>Read the plot plan</button>
+                <div id="place-suggestions"></div>
+              </section>
+              <section id="place-placement" class="place-card" data-place-step="Your lot" hidden>
+                <h3>Place the buildings</h3>
+                <p>Place buildings over the plot plan in the scene. Select a building to move or turn it; tap a footprint or lot edge to use it.</p>
+                <div class="editor-actions">
+                  <button id="place-in-scene" type="button">Place in the scene</button>
+                  <button id="place-confirm-placement" type="button">These are in the right place</button>
+                </div>
+              </section>
+              <section class="place-card" data-place-step="Your files">
+                <h3>Learn from photos</h3>
+                <p>Suggest which buildings a photo shows and a starting shape for buildings without drawings. You choose what to use.</p>
+                <button id="place-suggest-photos" type="button" disabled>Suggest from photos</button>
+                <div id="place-photo-suggestions"></div>
+              </section>
+            </aside>
+          </div>
+          <div id="place-build-cards" data-place-step="Build"></div>
+          <div data-place-step="Link to Home Assistant"><p id="place-ha-note"></p><div id="place-ha-links"></div></div>
+        </div>
+        <footer class="place-footer">
+          <p id="place-status" role="status">Add PDF drawings and JPEG or PNG photos to the part they show. Check each page, then confirm.</p>
+          <div class="editor-actions"><button id="place-confirm-pages" data-place-step="Your files" type="button" disabled>Confirm pages</button>
+            <button id="place-build" data-place-step="Build" class="place-primary" type="button" disabled>Build your place</button></div>
+        </footer>
+      </section>
+      <section id="houses-panel" class="houses-panel" role="dialog" aria-modal="true" aria-labelledby="houses-title" hidden>
+        <header class="place-header"><h2 id="houses-title">Houses</h2><button id="houses-close" type="button">Close</button></header>
+        <div class="place-scroll">
+          <div class="editor-actions"><button id="houses-save" type="button">Save current house</button>
+            <button id="houses-download-current" type="button">Download current house</button>
+            <button id="houses-upload" type="button">Upload a house file</button></div>
+          <input id="houses-file" type="file" accept=".chauffeur-house.json,application/json" hidden>
+          <p class="place-muted">House files keep photo and Library references. They do not include those files.</p>
+          <div id="houses-list"></div>
+        </div>
+        <footer class="place-footer"><p id="houses-status" role="status">Opening saved houses…</p></footer>
+      </section>
+      <section id="editor-advanced" aria-labelledby="advanced-title" hidden>
+        <h3 id="advanced-title">Advanced: edit the plan file</h3>
+        <p>Changes need a reason, recorded with each fix.</p>
+        <form id="advanced-form">
+          <label for="advanced-plan">Current plan JSON</label>
+          <textarea id="advanced-plan" spellcheck="false" required></textarea>
+          <label for="advanced-reason">Reason (required)</label>
+          <input id="advanced-reason" type="text" required>
+          <div class="editor-actions"><button id="advanced-save" type="submit">Save plan</button>
+            <button id="advanced-close" type="button">Close plan file</button></div>
+        </form>
+      </section>
+      <section id="library-import-settings-content" hidden>
+        <label>Maximum upload size (MB)<input id="library-import-limit" type="number" min="1" max="200" value="50"></label>
+        <label>Maximum unpacked size (MB)<input id="library-import-unpacked-limit" type="number" min="1" max="1000" value="200"></label>
+      </section>
+      <section id="house-materials" hidden></section>
+      <section id="editor-settings" hidden>
+        <button id="menu-reset-spend" type="button" disabled>Reset spend total</button>
+        <button id="menu-edit-timing" type="button" aria-pressed="false">Show edit timing</button>
+        <button id="menu-send-timing" type="button">Send timing report</button>
+      </section>
+    </div>
+    <div id="editor-dialog" aria-modal="true" aria-labelledby="editor-dialog-title" hidden>
+      <section class="editor-dialog-panel">
+        <header class="place-header"><h2 id="editor-dialog-title"></h2><button id="editor-dialog-close" type="button" aria-label="Close dialog">Close</button></header>
+        <div id="editor-dialog-body"></div>
+      </section>
+    </div>
+    <div id="editor-context-menu" role="menu" aria-label="Actions" hidden></div>
   </main>
   {% include 'components/control_center.html' %}
   <script type="module">

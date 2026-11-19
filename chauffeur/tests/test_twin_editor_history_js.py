@@ -35,7 +35,7 @@ export const createPlace=()=>({sync(){},isOpen:()=>false});
 export const createDevicePlacement=()=>({refresh(){},draw(){},stop(){},cancel(){}});
 export const createBuildGhosts=()=>({clear(){},sync(){},settle(){},count:()=>0});
 export const createStatusChip=()=>({update(){}});
-export const createSteps=()=>({render(){}});
+export const createSteps=()=>({render(){},open(){},close(){},activate(){}});
 export const createChecks=()=>({sync(){},dismiss(){}});
 export const mountHouses=options=>(globalThis.houseOptions=options,{sync(){}});
 """
@@ -100,10 +100,10 @@ try {
  }};
  const stubs='data:text/javascript,'+encodeURIComponent(config.stubs.replace('CARDS_URL',file('static/twin/editor/cards.js')));
  registerHooks({resolve(spec,ctx,next){
-  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js'].includes(spec))return {url:stubs,shortCircuit:true};
+  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js','./icons.js','./dock.js','./dialog.js','./context_menu.js','./house_materials.js'].includes(spec))return {url:stubs,shortCircuit:true};
   return next(spec,ctx);
  }});
- const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready);
+ const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready, alerts.join('\n'));
  assert.equal(sessionStarts,1);
  assert.deepEqual(alerts,['Older history was cleared. A copy of the house was saved as Before cleanup 2026-11-16.']);alerts.length=0;
  ok('editor starts one session and reports its saved cleanup copy');
@@ -187,5 +187,5 @@ try {
 
 if __name__ == '__main__':
     ids = set(re.findall(r'id="([\w-]+)"', (ROOT / 'templates/house_editor.html').read_text(encoding='utf-8')))
-    ids.update(['piece-card', 'rail-undo', 'rail-redo'])
+    ids.update(['piece-card', 'rail-undo', 'rail-redo', 'rail-add-effect'])
     sys.exit(run(DRIVER, {'stubs': STUBS, 'ids': sorted(ids)}, timeout=45))

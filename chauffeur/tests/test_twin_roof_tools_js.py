@@ -71,7 +71,7 @@ op=ops.at(-1);near(op.width,5);near(op.at,dormer.at-.5*axis[1]);assert.equal(dor
 ok('dormer middle slides along its own edge; resizing moves its centre and keeps the opposite side fixed');
 enabled=false;assert.deepEqual(handles.handles(),[]);enabled=true;
 const cards=createCards({getPlan:()=>flat,getLabel:()=> 'roof',canEdit:()=>true,edit:()=>{},op:commit,select(){},ask(){}});
-cards.edge({id:roof.id,building:B,edge});
+cards.showRoofEdge({id:roof.id,building:B,edge});
 const card=nodes.get('piece-card');
 const buttons=()=>descendants(card).filter(n=>n.tag==='button');
 assert.deepEqual(buttons().filter(n=>['Sloped','Gable','Clipped'].includes(n.textContent)).map(n=>n.textContent),['Sloped','Gable','Clipped']);

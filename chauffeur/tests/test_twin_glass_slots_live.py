@@ -164,13 +164,13 @@ def scenario_L2_house_materials_panes_and_draw_budget():
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(served.url('house/editor?tier=low&test=1&perf=1'))
         page.wait_for_function('() => window.__editor?.ready && window.__twin?.ready', timeout=90000, polling=500)
-        if page.locator('#place-view').is_visible():
+        if page.locator('#editor-dialog #place-view').is_visible():
             page.locator('#place-close').click()
         # Use the person's navigation path, rather than the selection test hook.
-        floor = page.locator('#editor-floors [data-floor^="pool-house:"]').first
+        floor = page.locator('#dock-pane-scene #editor-floors [data-floor^="pool-house:"]').first
         floor.click()
-        page.locator('#editor-floors').get_by_role('button', name='All floors', exact=True).click()
-        page.locator('#editor-floors').get_by_role('button', name='Change the house', exact=True).click()
+        page.locator('#dock-pane-scene #editor-floors').get_by_role('button', name='All floors', exact=True).click()
+        page.locator('#dock-pane-scene #editor-floors').get_by_role('button', name='Change the house', exact=True).click()
         page.locator('#piece-card').get_by_text('House materials', exact=True).wait_for()
         page.wait_for_function('() => window.__twin?.ready', polling=500)
         page.wait_for_function('() => /\\d+ draws/.test(document.querySelector(".twin-frame-meter")?.textContent || "")', polling=500)
@@ -297,7 +297,7 @@ def _item_editor(page, served):
     } catch (e) {} }''' % json.dumps(STATE['token']))
     page.goto(served.url('house/editor?tier=low&test=1'))
     page.wait_for_function('() => window.__editor?.ready && window.__twin?.ready', timeout=90000, polling=500)
-    if page.locator('#place-view').is_visible():
+    if page.locator('#editor-dialog #place-view').is_visible():
         page.locator('#place-close').click()
 
 
@@ -333,7 +333,7 @@ def scenario_L4_drop_on_one_window_pane_then_frame():
                 walls:JSON.stringify(b.walls.map(w=>w.faces||null)),
                 others:JSON.stringify(b.openings.filter(o=>o.id!==opening.id).map(o=>o.materials||null))};
         }''')
-        page.locator('#rail-library').click()
+        page.locator('#dock-tab-library').click()
         for part, mid in [('pane', STATE['panes']), ('window_frame', STATE['siding'])]:
             # Sample the original part's triangles, then require the real view
             # picker to identify that part before sending the pointer there.
@@ -407,8 +407,8 @@ def scenario_L5_stair_rail_pick_and_clear_returns_house_look():
         page.wait_for_function('''({id,building,mid}) => window.__twin.ready &&
             window.__twin.plan.buildings.find(b=>b.id===building).stairs.find(s=>s.id===id).materials?.stair_rail?.id===mid
         ''', arg={'id': stair['id'], 'building': building['id'], 'mid': STATE['panes']}, timeout=90000, polling=500)
-        if page.locator('#library-panel').is_visible():
-            page.locator('#rail-library').click()
+        if page.locator('#dock-pane-library').is_visible():
+            page.locator('#dock-tab-scene').click()
         row.get_by_role('button', name='Clear', exact=True).click()
         page.wait_for_function('''({id,building,mid}) => {
             const v=window.__twin,b=v.plan.buildings.find(b=>b.id===building);
@@ -440,7 +440,7 @@ def scenario_L_roof_two_materials():
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(served.url('house/editor?tier=high&test=1'))
         page.wait_for_function('() => window.__editor?.ready && window.__twinEditor && window.__twin?.ready', timeout=90000, polling=500)
-        if page.locator('#place-view').is_visible():
+        if page.locator('#editor-dialog #place-view').is_visible():
             page.locator('#place-close').click()
         for key in ['roof_main', 'roof_porch']:
             rid, mid = STATE[key], STATE[key + '_material']
@@ -453,9 +453,9 @@ def scenario_L_roof_two_materials():
                 const b = window.__twin.plan.buildings.find(b => b.id === 'pool-house');
                 return b.roof.sections.some(s => (s.id === rid || s.roof === rid) && s.material?.id === mid);
             }''', arg={'rid': rid, 'mid': mid}, polling=500)
-            # The Library panel stays open after a pick and covers the piece card.
-            if page.locator('#library-panel').is_visible():
-                page.locator('#rail-library').click()
+            # The Library tab stays open after a pick; return to Scene.
+            if page.locator('#dock-pane-library').is_visible():
+                page.locator('#dock-tab-scene').click()
         expected = sorted([STATE['roof_main_material'], STATE['roof_porch_material']])
         page.wait_for_function('''expected => {
             const ids = new Set();

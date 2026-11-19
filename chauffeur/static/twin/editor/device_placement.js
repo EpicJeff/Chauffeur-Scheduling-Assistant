@@ -12,7 +12,7 @@ const FT = .3048, badHost = 'Pick a wall, floor, ceiling or door for it.';
 
 // Device placement uses the library's surface ray and host coordinates. It
 // never controls a device: Blink belongs to the guarded identify route.
-export function createDevicePlacement({ view, tools, library, getPlan, op, canEdit, signal, prepare }) {
+export function createDevicePlacement({ view, tools, library, getPlan, op, canEdit, signal, prepare, dock }) {
   const canvas = view.renderer3.domElement, link = tools.haLink;
   const el = id => document.getElementById(id);
   const listen = (node, type, action, options = {}) => node.addEventListener(type, action, { ...options, signal });
@@ -20,7 +20,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
   root.name = 'editor-device-markers';
   view.scene.add(root);
   let armed = null, press = null, drag = null, stopped = false;
-  const fixtures = createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal,
+  const fixtures = createFixtureEditor({ dock, view, tools, library, getPlan, op, canEdit, signal, bindCancel: false,
     prepare() { cancel(); prepare(); }, getCameraMarker(device) {
       const at = spot(device); if (!at) return null;
       const b = at.building, a = (b?.rotation || 0) * Math.PI / 180, p = b?.position || [0, 0], [x, y, z] = at.point;
@@ -149,6 +149,12 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     armed = { device, kind, room };
     el('device-note').textContent = `Click ${kind === 'yard_room' ? 'inside the yard room' : kind === 'wall' ? 'a wall' : 'the ceiling'} for ${device.name}. Escape cancels.`;
     el('device-tools').hidden = false; canvas.style.cursor = 'crosshair';
+    showOptions(device.name);
+  }
+  function showOptions(name) {
+    if (!dock) return;
+    el('device-options-note').textContent = el('device-note').textContent;
+    dock.properties.render(el('device-options'), { crumbs: [name, 'Place device'], tool: true, back: cancel });
   }
   function startDrag(event, device) {
     if (event.button !== 0 || !canEdit() || event.target.closest('button, input, select, [data-fixture-entity]')) return;
@@ -166,6 +172,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     el('device-note').textContent = `Drop ${drag.device.name} on a wall, the floor, the ceiling or inside a yard room. Escape cancels.`;
     el('device-tools').classList.add('editor-device-dragging');
     el('device-tools').hidden = false; document.body.style.cursor = 'grabbing';
+    showOptions(drag.device.name);
   }, { capture: true });
   function pointerDown(event) {
     if (!armed && fixtures.active() && fixtures.pointerDown(event)) return true;
@@ -196,7 +203,9 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     if (event.key !== 'Escape' || !armed && !drag) return;
     cancel(); event.preventDefault(); event.stopImmediatePropagation();
   }, { capture: true });
-  listen(el('device-cancel'), 'click', cancel);
+  // The parent owns the shared button. A line fixture's Done must finish its
+  // path before any device cancellation can discard the draft.
+  listen(el('device-cancel'), 'click', () => fixtures.active() ? fixtures.finishPlacement() : cancel());
 
   // Positions come from the link's auto spots and the current saved plan, so
   // a slow HA read never delays a rebuild or a person's saved placement.

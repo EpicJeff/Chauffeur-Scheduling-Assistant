@@ -64,7 +64,7 @@ export function createHistory({ getRound, getBuild, canEdit, refresh, latest, si
   el('rail-undo').addEventListener('click', () => later(true), { signal });
   el('rail-redo').addEventListener('click', () => later(false), { signal });
   document.addEventListener('keydown', event => {
-    if (!event.ctrlKey || event.altKey || event.defaultPrevented
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.defaultPrevented
       || event.target.closest?.('input, textarea, select, [contenteditable="true"]')
       || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), #cc-choice-modal:not(.hidden), #houses-panel:not([hidden]), dialog[open]')) return;
     const key = event.key.toLowerCase();

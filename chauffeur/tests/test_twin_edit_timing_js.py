@@ -202,7 +202,7 @@ finish();
 
 
 if __name__ == '__main__':
-    ids = sorted(set(re.findall(r'id="([\w-]+)"', (ROOT / 'templates/house_editor.html').read_text(encoding='utf-8'))) | {'piece-card', 'rail-undo', 'rail-redo'})
+    ids = sorted(set(re.findall(r'id="([\w-]+)"', (ROOT / 'templates/house_editor.html').read_text(encoding='utf-8'))) | {'piece-card', 'rail-undo', 'rail-redo', 'rail-add-effect'})
     failed = 0
     for case in ('drag_frame_is_recorded', 'drag_frame_resets', 'overlay_shows_drag_frame', 'force_shows_overlay'):
         failed += bool(run(DRAG_TIMING, {'stubs': DRAG_STUBS, 'ids': ids, 'timingCase': case}, timeout=45))

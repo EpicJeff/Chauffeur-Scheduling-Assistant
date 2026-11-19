@@ -15,6 +15,7 @@ class El {
   get textContent() { return this._text + this.children.map(n => n.textContent).join(''); }
   set textContent(v) { this._text = String(v); this.children = []; }
   setAttribute(k, v) { this.attributes[k] = v; }
+  scrollIntoView() {}
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
   async click() { if (!this.disabled) for (const fn of this.listeners.click || []) await fn(); }
 }
