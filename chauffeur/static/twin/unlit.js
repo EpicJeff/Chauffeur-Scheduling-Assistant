@@ -39,6 +39,11 @@ export function createUnlit() {
         material.onBeforeCompile = hook.hook;
         material.customProgramCacheKey = hook.key;
       }
+      // Lit-water effects (bubbler, sheets) keep their driver uniforms on
+      // `material.uniforms`; share the same objects so the effect driver still
+      // finds them and its writes reach the hooked shader (owner, 2026-11-18:
+      // Unlit threw on the bubbler's `fall` and stopped the render loop).
+      if (source.uniforms) material.uniforms = source.uniforms;
       const dispose = () => { material.dispose(); source.removeEventListener('dispose', dispose); cache.delete(source); };
       source.addEventListener('dispose', dispose);
       record = { material, dispose }; cache.set(source, record);
