@@ -261,7 +261,7 @@ library = createLibrary({view,kit,getPlan:()=>flat,tools,op,canEdit:()=>true,sig
 tools.delegate({pointerDown:library.pointerDown,pointerMove:library.pointerMove,pointerUp:library.pointerUp,selectionChanged:library.refresh});
 let passed=0;const ok = label => {passed++;console.log('  ok '+label);};
 const record = {kind:'wall',piece:front,building:b};
-assert.ok(materialLines(record,flat,kit).some(l=>l.text.startsWith('House default: ')));
+assert.ok(materialLines(record,flat,kit).some(l=>/^(House default|From the building): /.test(l.text)));
 front.faces={right:{id:finish.id,color:finish.color}};
 assert.equal(materialLines(record,flat,kit).filter(l=>l.clear).length,1);
 assert.equal(materialLines(record,flat,kit).find(l=>l.clear).text,'Red brick 03, set here');

@@ -204,7 +204,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       const row = createSlotRow({ label: material.label, library, readOnly: () => !canEdit(),
         current: () => material.current, detail: () => material.text, inherited: () => material.inherited,
         accepts: entry => entry.kind === 'material',
-        apply: entry => save({id:entry.id}), clear: () => save(null),
+        // Clear only where something is set here; an inherited slot has nothing to clear.
+        apply: entry => save({id:entry.id}), clear: material.clear ? () => save(null) : null,
         tint: { value:() => material.current?.color || '#b8b0a4', hasOverride:() => !!material.ref?.color,
           set:color => patch({color}), clear:() => patch({color:undefined}) },
         offset: { value:() => material.ref?.uv, effective:() => material.resolved.uv,

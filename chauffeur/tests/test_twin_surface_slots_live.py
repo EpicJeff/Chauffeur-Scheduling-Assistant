@@ -220,6 +220,10 @@ def _materials(records):
     return sorted((r['key'], r['material'], r['colour']) for r in records)
 
 
+# An empty slot names where it inherits from (the household's walls inherit their building's siding).
+INHERITED = ('House default: ', 'From the building: ', 'From this floor: ', 'From the room: ')
+
+
 def scenario_wall_face_override_and_clear():
     with _page() as (page, assets):
         b, w, room = L._target(L._plan(page))
@@ -228,7 +232,7 @@ def scenario_wall_face_override_and_clear():
         _select_piece(page, b, w)
         row = L._slot(page, 'Outside')
         name = row.locator('[data-slot-name]')
-        assert name.inner_text().startswith('House default: ')
+        assert name.inner_text().startswith(INHERITED) and 'set here' not in name.inner_text(), name.inner_text()
         assert name.get_attribute('aria-disabled') == 'true'
         inherited_ink = name.evaluate('(n)=>getComputedStyle(n).color')
         page.mouse.move(10, 70)
@@ -251,7 +255,7 @@ def scenario_wall_face_override_and_clear():
         row.locator('[data-slot-clear]').click()
         L._settled(page)
         assert not _wall(page, b['id'], w['id']).get('faces', {}).get(side)
-        assert name.inner_text().startswith('House default: ')
+        assert name.inner_text().startswith(INHERITED) and 'set here' not in name.inner_text(), name.inner_text()
         assert name.get_attribute('aria-disabled') == 'true'
         assert name.evaluate('(n)=>getComputedStyle(n).color') == inherited_ink
         page.mouse.move(10, 70)

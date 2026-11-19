@@ -109,7 +109,10 @@ await test('every_card_slot_preserves_the_old_assignment_clear_and_reset_operati
    const before=operations.length;click(row.querySelector('[data-slot-use]'));await wait();
    assert.equal(operations.length,before+1,covered.at(-1)+' applies once');
    assert.deepEqual(operations.at(-1),L.surfaceOperation(line.surface,'face',material),covered.at(-1)+' old choose payload');
-   click(row.querySelector('[data-slot-clear]'));await wait();
+   // Clear appears exactly where this row is set (roof slope rows inherit the roof's choice).
+   const clearHere=row.querySelector('[data-slot-clear]');assert.equal(!!clearHere,!!line.clear,covered.at(-1)+' Clear only where set');
+   if(!clearHere)continue;
+   click(clearHere);await wait();
    assert.deepEqual(operations.at(-1),{op:'set_material',building:b.id,target:line.target,material:null},covered.at(-1)+' old Clear payload');
   }
  }
@@ -165,7 +168,9 @@ await test('every_card_material_target_supports_inherited_tint_offset_and_indepe
   cards.draw({pieceId:piece.id,buildingId:b.id});await wait();
   for(const line of lines(kind,piece)){
    const row=card.querySelector(`[data-library-slot="${line.label}"]`),expected=material=>({op:'set_material',building:b.id,target:line.target,material});
-   click(row.querySelector('[data-slot-clear]'));await wait();
+   // Start from the inherited state; an inherited row has no Clear (nothing is set there).
+   const clearHere=row.querySelector('[data-slot-clear]');assert.equal(!!clearHere,!!line.clear,kind+' '+line.label+' Clear only where set');
+   if(clearHere){click(clearHere);await wait();}
    const tint=row.querySelector('input[type="color"]'),u=row.querySelector('[data-slot-u]'),rot=row.querySelector('[data-slot-rotation]');
    assert.ok(tint&&u&&rot,kind+' '+line.label+' complete controls');
    tint.value='#123456';tint.dispatchEvent(new Event('change'));await wait();assert.deepEqual(operations.at(-1),expected({color:'#123456'}));

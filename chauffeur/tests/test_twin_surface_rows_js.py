@@ -42,7 +42,7 @@ await test('room_rows_use_each_resolver_source_and_always_offer_walls',()=>{
  const floor=()=>materialLines({kind:'room',piece:room,building},plan,kit)[0];
  assert.equal(floor().text,'House default: Oak');
  plan.materials.floor={id:'house'};assert.equal(floor().text,'House default: House');
- building.materials.floor={id:'building'};assert.equal(floor().text,'House default: Building');
+ building.materials.floor={id:'building'};assert.equal(floor().text,'From the building: Building');
  level.materials.floor={id:'level'};assert.equal(floor().text,'From this floor: Level');
  room.floor_material={uv:{u:0,v:0,rot:0}};assert.equal(floor().text,'From this floor: Level');
  room.floor_material={id:'own'};assert.equal(floor().text,'Own, set here');

@@ -9,7 +9,7 @@ export function surfaceDescription(plan, surface, kit = {}) {
   current.color = describeMaterial(resolution.ref, kit)?.color || current.color;
   const name = materialName(resolution.source.id);
   const inherited = !surface.ref?.id;
-  const prefix = { level: 'From this floor', room: 'From the room', surface:surface.parentLabel }[resolution.source.kind] || 'House default';
+  const prefix = { level: 'From this floor', room: 'From the room', building: 'From the building', surface:surface.parentLabel }[resolution.source.kind] || 'House default';
   return { ...resolution, current, inherited, text: inherited ? `${prefix}: ${name}` : `${name}, set here` };
 }
 // Both the Library and in-place feature slots read this same server catalogue.

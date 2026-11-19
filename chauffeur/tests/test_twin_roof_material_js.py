@@ -163,7 +163,7 @@ await test('roof_and_dormer_lines_inherit_the_building_roof',async()=>{
  b.roof.sections.push({...section('d1',[6,-1,10,7]),roof:'main',dormer_of:[0,0,20,20]});
  for(const id of ['main','d1']){
   const line=materialLines(findPiece(p,id,'a'),p,kit())[0];
-  assert.equal(line.label,'Roof');assert.equal(line.text,'House default: House roof');assert.equal(line.clear,false);
+  assert.equal(line.label,'Roof');assert.equal(line.text,'From the building: House roof');assert.equal(line.clear,false);
  }
 });
 // Actual selection card and Library events, with only camera/pick and HTTP doubled.
