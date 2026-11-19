@@ -3,6 +3,7 @@ import { buildingBase, buildingFootprint, inPolygon, edgeDistance } from '../twi
 import { roofMesh } from '../twin_roof.js';
 
 const FT=.3048, EDGE=.6, EPS=.002;
+export const HEIGHT_NONE=-1e4;
 const owners=new WeakMap();
 const written=new WeakMap();
 // Generated roof snapshots are immutable; slab refresh replaces its array.
@@ -105,8 +106,45 @@ export function createSkyCover(plan={},roofs=new Map()) {
     for(const t of nearby(x,z))if(!t.roof){const h=height(t,x,z);if(h!==null&&y<h-EPS)return 0;}
     return 1;
   }
+  for(const slab of slabs){const xs=slab.polygon.map(p=>p[0]),ys=slab.polygon.map(p=>p[1]);slab.box=[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)];}
+  // Every cover rule is "covered below some height here", so blocked(x,y,z) is
+  // exactly y < coverTop(x,z)-EPS (apart from a point lying exactly on an eave
+  // line). -Infinity: open sky at every height.
+  function coverTop(x,z) {
+    if(!Number.isFinite(x)||!Number.isFinite(z)||x<bounds.x0-EDGE||x>bounds.x1+EDGE||z<bounds.z0-EDGE||z>bounds.z1+EDGE)return -Infinity;
+    let top=-Infinity;
+    for(const b of buildings){
+      if(x<b.x0-1e-6||x>b.x1+1e-6||z<b.z0-1e-6||z>b.z1+1e-6)continue;
+      const p=b.local(x,z);
+      if(!inPolygon(b.footprint,...p)||b.porches.some(poly=>inPolygon(poly,...p)))continue;
+      const roof=roofHeight(x,0,z);
+      top=Math.max(top,Math.min(b.top,minimumRoof),Number.isFinite(roof)?roof:b.top);
+    }
+    for(const slab of slabs){
+      if(slab.height<=top)continue;
+      const [u,v]=slab.local(x,z);
+      if(u>=slab.box[0]&&v>=slab.box[1]&&u<=slab.box[2]&&v<=slab.box[3]&&inPolygon(slab.polygon,u,v))top=slab.height;
+    }
+    for(const t of nearby(x,z)){const h=height(t,x,z);if(h!==null&&h>top)top=h;}
+    return Math.min(top,bounds.top);
+  }
+  // Baked once per cover for GPU lookups (falling rain). Texel centres sample
+  // coverTop; NONE marks open sky. Bounds are [x0,z0,x1,z1] in world metres.
+  let field=null;
+  function heightField(cell=.3) {
+    if(field&&field.cell===cell)return field;
+    if(!Number.isFinite(bounds.x0)){field={cell,width:1,height:1,bounds:[0,0,1,1],data:new Float32Array([HEIGHT_NONE])};return field;}
+    const x0=bounds.x0-EDGE,z0=bounds.z0-EDGE,width=Math.max(1,Math.ceil((bounds.x1+EDGE-x0)/cell)),height=Math.max(1,Math.ceil((bounds.z1+EDGE-z0)/cell));
+    const data=new Float32Array(width*height);
+    for(let j=0;j<height;j++)for(let i=0;i<width;i++){
+      const top=coverTop(x0+(i+.5)*cell,z0+(j+.5)*cell);
+      data[j*width+i]=Number.isFinite(top)?top-EPS:HEIGHT_NONE;
+    }
+    field={cell,width,height,bounds:[x0,z0,x0+width*cell,z0+height*cell],data};
+    return field;
+  }
   const staticKey=JSON.stringify(staticParts),key=staticKey+'|'+JSON.stringify(dynamicParts);
-  return {key,staticKey,open,slabOpen,staticOpen:(x,y,z,roofFace)=>open(x,y,z,roofFace,false),interior,roofHeight,blocked:(x,y,z)=>open(x,y,z)===0};
+  return {key,staticKey,open,slabOpen,staticOpen:(x,y,z,roofFace)=>open(x,y,z,roofFace,false),interior,roofHeight,coverTop,heightField,blocked:(x,y,z)=>open(x,y,z)===0};
 }
 
 // Run only at generation, adoption, late import or editor deformation. Each

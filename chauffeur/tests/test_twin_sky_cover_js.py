@@ -174,16 +174,42 @@ await test('editor rebuildLevel and settle regenerate exposure after a hosted it
  assert.ok(snapshot.some(([o,values])=>values.some((x,i)=>x!==o.geometry.attributes.weatherOpen.getX(i))),'reused yard receives the edited roof cover');
  v.dispose();
 });
-await test('splashes skip covered receivers and falling particles cull below cover',()=>{
+await test('coverTop is exactly where blocked starts, on the real household',()=>{
+ const cover=createSkyCover(input.plan);let covered=0,open=0,checked=0;
+ let seed=7;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+ const f=cover.heightField();const [x0,z0,x1,z1]=f.bounds;
+ for(let i=0;i<4000;i++){
+  const x=x0+rnd()*(x1-x0),z=z0+rnd()*(z1-z0),top=cover.coverTop(x,z);
+  for(const y of [top-.05,top+.05,rnd()*12]){
+   if(!Number.isFinite(y))continue;checked++;
+   const blocked=cover.blocked(x,y,z),expected=Number.isFinite(top)&&y<top-.002;
+   assert.equal(blocked,expected,`blocked(${x},${y},${z}) ${blocked} but coverTop ${top}`);
+   blocked?covered++:open++;
+  }
+ }
+ assert.ok(covered>500&&open>500,`both covered and open points were sampled (${covered}/${open})`);
+ const i=Math.floor(f.width/2),j=Math.floor(f.height/2),cx=x0+(i+.5)*f.cell,cz=z0+(j+.5)*f.cell,t=cover.coverTop(cx,cz);
+ close(f.data[j*f.width+i],Number.isFinite(t)?t-.002:-1e4);
+ console.log(`  coverTop agrees with blocked at ${checked} points; field ${f.width}x${f.height} @ ${f.cell} m`);
+});
+await test('falling particles cull below cover on the GPU, with no per-drop CPU work',()=>{
  const p=createPrecipitation(new THREE.Scene(),{random:()=>.5});p.setPlan(plan);
- assert.ok(p.objects.rain.geometry.attributes.precipOpen?.isInstancedBufferAttribute);
+ assert.equal(p.objects.rain.geometry.attributes.precipOpen,undefined,'no per-drop open attribute is uploaded');
  const camera=new THREE.PerspectiveCamera();camera.position.fromArray(world(5,5,1));
  p.update(0,{precip:'rain',rate:1},camera);
- const target=world(5,5,1),box=p.uniforms.precipBox.value.toArray();
- p.objects.rain.geometry.attributes.precipSeed.setXYZ(0,...target.map((v,i)=>((v/box[i]+.5)%1+1)%1));
- p.update(0,{precip:'rain',rate:1},camera);
- const a=p.objects.rain.geometry.attributes.precipOpen;assert.ok(a.array.some(v=>v===0));
- assert.ok(p.objects.rain.material.vertexShader.includes('if(precipOpen<.5)'));
+ const tex=p.uniforms.precipCover.value,b=p.uniforms.precipCoverBounds.value;
+ assert.ok(tex?.isDataTexture&&tex.image.width>1&&tex.image.height>1,'the cover height field is baked while it rains');
+ // The shader's lookup, in JS: the texel under an indoor point holds a height above it.
+ const [x,y,z]=world(5,5,1),u=(x-b.x)/(b.z-b.x),v=(z-b.y)/(b.w-b.y);
+ const h=tex.image.data[Math.floor(v*tex.image.height)*tex.image.width+Math.floor(u*tex.image.width)];
+ assert.ok(y<h,`indoor drop is below the baked cover (${y} < ${h})`);
+ const [ox,oy,oz]=world(-2-1/FT,5,1),ou=(ox-b.x)/(b.z-b.x),ov=(oz-b.y)/(b.w-b.y);
+ const outside=ou<0||ov<0||ou>=1||ov>=1?-1e4:tex.image.data[Math.floor(ov*tex.image.height)*tex.image.width+Math.floor(ou*tex.image.width)];
+ assert.ok(oy>outside,'a drop beyond the eave edge stays open');
+ const vs=p.objects.rain.material.vertexShader;
+ assert.ok(vs.includes('if(precipitationCovered(world))')&&vs.includes('texture2D(precipCover,uv).r'),'the vertex shader culls covered drops');
+ const before=tex;p.update(1/60,{precip:'rain',rate:1},camera);assert.equal(p.uniforms.precipCover.value,before,'no rebake per frame');
+ p.setPlan(structuredClone(plan));p.update(2/60,{precip:'rain',rate:1},camera);assert.notEqual(p.uniforms.precipCover.value,before,'a new cover rebakes');
  p.dispose();
 });
 finish();

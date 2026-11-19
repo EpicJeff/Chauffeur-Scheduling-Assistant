@@ -90,10 +90,16 @@ export function createSplashSampler(plan={},roofs=new Map(),cover=createSkyCover
 
 const vertexShader=`
 attribute vec3 precipSeed;
-attribute float precipOpen;
 uniform vec3 precipAnchor,precipBox,precipTravel,precipVelocity;
 uniform float precipKind,precipClock,precipRate;
 uniform vec2 precipViewport;
+// Covered height per ground point (sky_cover heightField), nearest texel.
+uniform sampler2D precipCover;uniform vec4 precipCoverBounds;
+bool precipitationCovered(vec3 world) {
+  vec2 uv=(world.xz-precipCoverBounds.xy)/max(precipCoverBounds.zw-precipCoverBounds.xy,vec2(.0001));
+  if(any(lessThan(uv,vec2(0.0)))||any(greaterThanEqual(uv,vec2(1.0))))return false;
+  return world.y<texture2D(precipCover,uv).r;
+}
 varying vec2 particleUv;varying vec3 particleWorld;
 float precipitationWidth(float pixels,float kind) {
   return kind<.5?clamp(pixels,1.25,2.5):pixels;
@@ -105,13 +111,13 @@ bool precipitationVisibleDepth(float depth) {
   return depth>=3.5;
 }
 void main(){
-  if(precipOpen<.5){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
   vec3 box=max(precipBox,vec3(.0001));
   vec3 world=precipAnchor+mod(precipSeed*box+precipTravel-precipAnchor,box)-box*.5;
   if(precipKind>0.5&&precipKind<1.5){
     world.x+=.16*sin(precipClock*1.7+precipSeed.z*30.0);
     world.z+=.12*sin(precipClock*1.3+precipSeed.x*30.0);
   }
+  if(precipitationCovered(world)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
   particleWorld=world;particleUv=uv;
   vec4 eye=viewMatrix*vec4(world,1.0);
   // Never expand a near-camera drop into a large foreground smear.
@@ -221,8 +227,21 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
   const uniforms={precipAnchor:{value:new THREE.Vector3()},precipBox:{value:new THREE.Vector3(36,25,36)},precipColour:{value:new THREE.Vector3(.6,.7,.8)},
     precipViewport:{value:new THREE.Vector2(1,1)},precipRate:{value:0},
     precipCentre:{value:new THREE.Vector2()},precipRadius:{value:100},precipFog:{value:0},
-    precipClock:{value:0},splashTime:{value:0}};
+    precipClock:{value:0},splashTime:{value:0},
+    precipCover:{value:null},precipCoverBounds:{value:new THREE.Vector4(0,0,1,1)}};
+  let coverTexture=null,coverFor=null;
+  // Bake lazily, only while something falls; a plan edit swaps the cover and
+  // the next falling frame rebakes (once per cover, not per frame).
+  function bakeCover(){
+    if(coverFor===cover)return;coverFor=cover;
+    const f=cover.heightField?.()||{width:1,height:1,bounds:[0,0,1,1],data:new Float32Array([-1e4])};
+    coverTexture?.dispose();
+    coverTexture=new THREE.DataTexture(f.data,f.width,f.height,THREE.RedFormat,THREE.FloatType);
+    coverTexture.minFilter=coverTexture.magFilter=THREE.NearestFilter;coverTexture.generateMipmaps=false;coverTexture.needsUpdate=true;
+    uniforms.precipCover.value=coverTexture;uniforms.precipCoverBounds.value.fromArray(f.bounds);
+  }
   const objects={},travels={};let last=null,clock=0,disposed=false,sample=()=>null,plan={},cover=createSkyCover(),credit=0,cursor=0,wasRaining=false;
+  bakeCover();
   const motion=globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)');
   function mesh(name,g,vs,fs,own={}) {
     const material=new THREE.ShaderMaterial({name:'weather-'+name,uniforms:{...uniforms,...own},vertexShader:vs,fragmentShader:fs,
@@ -236,7 +255,6 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
     const count=precipitationCounts(tier,{precip:kind,rate:1})[kind],g=geometry(),seeds=new Float32Array(count*3);
     for(let i=0;i<seeds.length;i++)seeds[i]=clamp(random());
     g.setAttribute('precipSeed',new THREE.InstancedBufferAttribute(seeds,3));
-    g.setAttribute('precipOpen',new THREE.InstancedBufferAttribute(new Float32Array(count).fill(1),1).setUsage(THREE.DynamicDrawUsage));
     travels[kind]=new THREE.Vector3();
     mesh(kind,g,vertexShader,fragmentShader,{precipKind:{value:index},precipTravel:{value:travels[kind]},precipVelocity:{value:new THREE.Vector3()}});
   }
@@ -262,21 +280,13 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
       const down=camera.getWorldDirection(new THREE.Vector3()).y;
       const hidden=unlit||level!=='house'||down < -Math.sin(55*Math.PI/180)-1e-10;
       const counts=precipitationCounts(tier,hidden?{}:weather);
+      if(counts.rain||counts.snow||counts.hail)bakeCover();
       for(const kind of ['rain','snow','hail']){
         const o=objects[kind],velocity=precipitationVelocity(kind,weather,bearing,reduced);
         o.geometry.instanceCount=counts[kind];o.visible=counts[kind]>0;
         o.material.uniforms.precipVelocity.value.fromArray(velocity);
         travels[kind].addScaledVector(o.material.uniforms.precipVelocity.value,dt);
         for(const axis of ['x','y','z']){const size=uniforms.precipBox.value[axis];travels[kind][axis]=((travels[kind][axis]%size)+size)%size;}
-        const seeds=o.geometry.attributes.precipSeed,open=o.geometry.attributes.precipOpen;
-        const box=uniforms.precipBox.value.toArray(),anchor=uniforms.precipAnchor.value.toArray(),travel=travels[kind].toArray();
-        const seed=[0,0,0],world=[0,0,0];
-        for(let i=0;i<counts[kind];i++){
-          seed[0]=seeds.getX(i);seed[1]=seeds.getY(i);seed[2]=seeds.getZ(i);wrappedPosition(seed,travel,anchor,box,world);
-          if(kind==='snow'){world[0]+=.16*Math.sin(clock*1.7+seed[2]*30);world[2]+=.12*Math.sin(clock*1.3+seed[0]*30);}
-          open.setX(i,cover.blocked(world[0],world[1],world[2])?0:1);
-        }
-        if(counts[kind])open.needsUpdate=true;
       }
       const raining=counts.rain>0;
       if(!raining){
@@ -295,7 +305,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
       if(changed)for(const attr of Object.values(sg.attributes))if(attr.isInstancedBufferAttribute)attr.needsUpdate=true;
       objects.splash.visible=born.some(t=>now-t>=0&&now-t<=LIFE);sg.instanceCount=objects.splash.visible?capacity:0;
     },
-    dispose(){if(disposed)return;disposed=true;group.removeFromParent();for(const o of Object.values(objects)){o.geometry.dispose();o.material.dispose();}},
+    dispose(){if(disposed)return;disposed=true;group.removeFromParent();coverTexture?.dispose();for(const o of Object.values(objects)){o.geometry.dispose();o.material.dispose();}},
   };
   return api;
 }
