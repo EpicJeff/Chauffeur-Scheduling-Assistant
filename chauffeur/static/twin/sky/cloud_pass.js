@@ -38,7 +38,7 @@ export function createCloudPass(renderer,{tier='low',noise,random=Math.random}={
     cloudType:{value:0},cloudFade:{value:noise.ready===undefined?1:0},cloudOffset:{value:new THREE.Vector3()},
     cloudSunRadiance:{value:new THREE.Vector3()},cloudMoonDir:{value:new THREE.Vector3(0,-1,0)},
     cloudMoonRadiance:{value:new THREE.Vector3()},cloudAmbientTop:{value:new THREE.Vector3(.1,.2,.4)},
-    cloudAmbientBottom:{value:new THREE.Vector3(.03,.04,.02)},cloudLightning:{value:new THREE.Vector4()}};
+    cloudAmbientBottom:{value:new THREE.Vector3(.03,.04,.02)},cloudLightning:{value:new THREE.Vector4()},cloudFog:{value:0},cloudFogColour:{value:new THREE.Vector3()}};
   const lightning=createLightning({random});
   // Read matches on every draw so changing the OS preference cancels a pulse
   // immediately, without a listener/timer to clean up on dispose.
@@ -129,6 +129,7 @@ export function createCloudPass(renderer,{tier='low',noise,random=Math.random}={
       const set=(name,value)=>{if(value?.isVector3)value=value.toArray();if(value?.every(Number.isFinite))uniforms[name].value.fromArray(value);};
       set('cloudSunRadiance',light.sunRadiance);set('cloudMoonDir',light.moonDir);set('cloudMoonRadiance',light.moonRadiance);
       set('cloudAmbientTop',light.ambientTop);set('cloudAmbientBottom',light.ambientBottom);
+      uniforms.cloudFog.value=clamp(light.fog);set('cloudFogColour',light.fogColour);
       if(light.sunDir?.every(Number.isFinite))marchUniforms.sunDir.value.fromArray(light.sunDir).normalize();
       if(Number.isFinite(light.frontBearingDeg))bearing=light.frontBearingDeg;
     },

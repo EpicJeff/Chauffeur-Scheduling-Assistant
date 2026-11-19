@@ -12,7 +12,24 @@ export function presetTree(preset, seed) {
   const tree = new Tree(), options = EZTree.TreePreset?.[preset];
   if (options && tree.options?.copy) tree.options.copy(structuredClone(options));
   else tree.loadPreset(preset);
-  tree.options.seed = seed; tree.generate();
+  tree.options.seed = seed;
+  // EZ-Tree builds the trunk and branches into one mesh. Record each branch's
+  // attachment weight while generating, so the trunk is EXACTLY still and a
+  // branch starts still at its attachment (bark UVs repeat and cannot encode it).
+  const generateBranch=tree.generateBranch, weights=[];
+  if(generateBranch)tree.generateBranch=function(branch){
+    const start=this.branches.verts.length;
+    generateBranch.call(this,branch);
+    for(let i=start;i<this.branches.verts.length;i+=3){
+      const p=this.branches.verts;
+      weights.push(branch.level===0?0:Math.min(1,Math.hypot(p[i]-branch.origin.x,p[i+1]-branch.origin.y,p[i+2]-branch.origin.z)/Math.max(branch.length,.001)));
+    }
+  };
+  tree.generate();
+  if(generateBranch){
+    tree.generateBranch=generateBranch;
+    tree.branchesMesh.geometry.setAttribute('plantBranch',new THREE.Float32BufferAttribute(weights,1));
+  }
   return tree;
 }
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
@@ -56,6 +73,7 @@ function standardTree(tree, cache = null) {
         side: m.side, roughness: 0.9,
       }));
       if (cache) cache.set(key, converted.get(m));
+      if(['leaves','branches'].includes(m.name))converted.get(m).userData.plantWind=m.name;
       return converted.get(m);
     };
     o.material = Array.isArray(o.material) ? o.material.map(convert) : convert(o.material);

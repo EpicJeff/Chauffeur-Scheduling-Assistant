@@ -107,7 +107,7 @@ export function createCloudUniforms(noise) {
     cloudCoverage:{value:0},cloudType:{value:0},cloudFade:{value:0},cloudOffset:{value:new THREE.Vector3()},
     cloudSunRadiance:{value:new THREE.Vector3()},cloudMoonDir:{value:new THREE.Vector3(0,-1,0)},
     cloudMoonRadiance:{value:new THREE.Vector3()},cloudAmbientTop:{value:new THREE.Vector3()},cloudAmbientBottom:{value:new THREE.Vector3()},
-    cloudLightning:{value:new THREE.Vector4()}};
+    cloudLightning:{value:new THREE.Vector4()},cloudFog:{value:0},cloudFogColour:{value:new THREE.Vector3()}};
 }
 
 // CPU port of cloudDensity, with the same periodic trilinear samples and remaps.
@@ -155,6 +155,8 @@ uniform vec3 cloudMoonRadiance;
 uniform vec3 cloudAmbientTop;
 uniform vec3 cloudAmbientBottom;
 uniform vec4 cloudLightning; // local metres xyz, flash envelope w; cloud shaders only
+uniform float cloudFog;
+uniform vec3 cloudFogColour;
 const float CLOUD_EARTH=6360000.0;
 const float CLOUD_EXTINCTION=0.0025;
 vec3 cloudUnit(vec3 d) { return length(d)>1e-6 ? d/max(length(d),1e-6) : vec3(0.0,1.0,0.0); }
@@ -292,6 +294,7 @@ vec4 marchClouds(vec3 ro,vec3 rd,float maxSteps,float jitter,vec3 sunDir,vec3 cl
     if(dot(cloudMoonRadiance,cloudMoonRadiance)>0.0) light+=cloudMoonRadiance*cloudScatterDepth(cloudLightDepth(p,moon),dot(d,moon));
     if(cloudLightning.w>0.0) light+=vec3(0.7,0.8,1.0)*cloudLightning.w*cloudLightningWeight(length(p-cloudLightning.xyz));
     light=mix(light,clearSky,cloudAirWeight(distanceM));
+    light=mix(light,cloudFogColour,cloudFog*.9);
     radiance+=transmission*(1.0-stepT)*light;
     transmission*=stepT;
   }

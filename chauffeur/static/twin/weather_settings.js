@@ -70,6 +70,7 @@ export function mountWeatherSettings(view, {api = (path, init) => fetch(base() +
       if (!response.ok) throw new Error(body.detail || 'Could not save weather sources.');
       if (stopped) return;
       showReport(body); view.setWeatherEntity?.(body.source.configured_entity || '');
+      view.refreshWeather?.();
       window.chfSettingsSaved?.(true);
     } catch (error) { if (!stopped) window.chfSettingsSaved?.(false, error.message); }
     finally { busy = false; if (!stopped) controls(); }
