@@ -66,8 +66,10 @@ export async function boot() {
   const isPickable = candidate => {
     const id = candidate?.id ?? candidate?.pieceId;
     const building = candidate?.building ?? candidate?.buildingId;
-    const anchor = shownPlan()?.buildings?.find(b => b.id === building)?.anchors?.find(a => a.id === id);
-    return visibility.isPickable(anchor?.device ? { ...candidate, visibilityKind: 'device' } : candidate);
+    const owner = shownPlan()?.buildings?.find(b => b.id === building);
+    const piece = [...(owner?.anchors || []), ...(owner?.items || []), ...(shownPlan()?.site?.furniture || []), ...(shownPlan()?.site?.planting || [])].find(p => p.id === id);
+    return visibility.isPickable(piece?.device ? { ...candidate, visibilityKind: 'device' }
+      : piece?.object_kind === 'lamp' ? { ...candidate, visibilityKind: 'fixture' } : candidate);
   };
   const unsubscribeVisibility = visibility.subscribe(({ hidden, hiddenKinds }) => {
     view?.setHiddenPieces?.(hidden, hiddenKinds);
@@ -864,6 +866,7 @@ export async function boot() {
       preview: plan => library.preview(plan), key: event => library.key(event), typedValue: () => library.typedValue(), commit: value => library.commit(value),
       handleSources: [tools.gizmo, terrain, lot, devices.fixtureHandles],
       selectPick: hit => hit?.kind === 'terraces' && (terrain.choose('terraces', hit.id), true) || devices.selectFixturePick(hit),
+      selectTree: devices.selectScene,
       selectionChanged: state => { terrain.selectionChanged(state); library.refresh(); },
       pick: flags.pick, pointerBrowse: event => devices.pointerBrowse(event),
       pointerArmedDown: event => tools.pointerArmedDown(event) || terrain.pointerArmedDown(event) || devices.pointerArmedDown(event) || lot.pointerArmedDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event),

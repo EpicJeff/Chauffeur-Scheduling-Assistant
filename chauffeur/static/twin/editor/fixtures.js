@@ -330,13 +330,13 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     else devicePath.push(device.name || device.device_id);
     if (!owner && returning) { devicePath = previousPath; deviceReturn = previousReturn; }
     tools.select(null); cardEffect = null; cardDevice = device; cardLight = id ? { entity_id: entities(device).find(entity => getPlan().light_fixtures?.[entity]?.some(f => f.id === id)), id } : null;
-    cardKey = null; refreshCard();
+    cardKey = null; refreshCard(); tools.revealSelection?.();
     const row = id && [...el('piece-card').querySelectorAll('[data-fixture-id]')].find(r => r.dataset.fixtureId === id);
     if (row) { row.open = true; row.scrollIntoView({ block: 'nearest' }); }
   }
   function showEffect(id) {
     deviceReturn = null; deviceParent = false;
-    tools.select(null); cardDevice = null; cardLight = null; cardEffect = id; cardKey = null; refreshCard();
+    tools.select(null); cardDevice = null; cardLight = null; cardEffect = id; cardKey = null; refreshCard(); tools.revealSelection?.();
   }
   function releaseCard() {
     cardDevice = null; cardEffect = null; cardLight = null; cardKey = null; delete el('piece-card').dataset.fixtureCard;
@@ -597,7 +597,13 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   signal.addEventListener('abort', () => { cancel(); if (el('piece-card').dataset.fixtureCard) { releaseCard(); el('piece-card').hidden = true; } root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent();
     view.controls.removeEventListener?.('change', drawHandles); gizmo.finish(true); gizmoLayer.remove(); handleLayer.remove(); }, { once: true });
   return { add, addEffect, showEffect, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, hits, selectPick, finishPlacement,
-    visibilitySelection: () => cardEffect ? {id:cardEffect,kind:'effect'} : cardLight ? {id:cardLight.id,kind:'fixture'} : null,
+    visibilitySelection: () => {
+      if (cardEffect) return { id: cardEffect, kind: 'effect' };
+      if (cardLight) return { id: cardLight.id, kind: 'fixture' };
+      if (!cardDevice) return null;
+      const plan = getPlan(), p = [...(plan?.buildings || []).flatMap(b => [...(b.anchors || []), ...(b.devices || [])]), ...(plan?.site?.devices || [])].find(p => p.device === cardDevice.device_id);
+      return p ? { id: p.id, kind: 'device' } : null;
+    },
     hit, begin, key: gizmo.key, typedValue: gizmo.typedValue, commit: gizmo.commit,
     handles: () => { drawHandles(); return [...gizmo.handles(), ...pointHandles]; }, pointerDown, pointerMove, pointerUp, cancel, refresh, draw, active: () => !!mode };
 }

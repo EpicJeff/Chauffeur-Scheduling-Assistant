@@ -317,6 +317,11 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     pointerMove: fixtures.pointerMove, pointerUp, cancel, refresh, draw, stop,
     fixtureHits: (x, y) => fixtures.hits?.(x, y) || [],
     fixtureHandles: fixtures, selectFixturePick: fixtures.selectPick,
+    selectScene(row) {
+      if (row.kind !== 'device') return false;
+      const id = row.piece?.device, device = tools.haLink.state()?.devices?.find(d => d.device_id === id);
+      fixtures.showDevice(device || { device_id: id, name: row.name, entities: [] }); return true;
+    },
     drawFixtures: fixtures.deviceLink, addEffect: fixtures.addEffect, showEffect: fixtures.showEffect,
     pointerBrowse: event => !armed && !fixtures.active() && fixtures.pointerDown(event) };
   link.setPlacement(controller);

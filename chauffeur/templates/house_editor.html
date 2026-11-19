@@ -179,12 +179,13 @@
           {% endfor %}
         </div>
         <section id="dock-pane-scene" role="tabpanel" aria-labelledby="dock-tab-scene">
-          <aside id="editor-floors" aria-label="Floors"><span>Floors</span><p>No floors yet</p></aside>
+          <aside id="editor-floors" aria-label="Floors"><span>Floors</span><div id="scene-tree"></div><div id="scene-floor-actions"></div></aside>
           <div id="scene-lot"></div>
           <div id="scene-yard"></div>
         </section>
         <section id="dock-pane-layers" role="tabpanel" aria-labelledby="dock-tab-layers" hidden>
           <h3>Layers</h3>
+          <div id="layer-kinds"></div>
           <button id="layer-sheet" type="button" aria-pressed="false">Sheet underlay</button>
           <button id="layer-grade" type="button" aria-pressed="false">Grade</button>
           <p>Grade: blue is lower, orange is higher. Heights are feet from the lot datum.</p>

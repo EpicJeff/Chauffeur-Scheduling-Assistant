@@ -334,6 +334,72 @@ await test('canvas context menu preserves selection until action; wall split use
  assert.equal(cancelled,1);assert.equal(view.controls.enabled,true);assert.equal(tools.selected().pieceId,'L1');
  abort.abort();canvas.remove();
 });
+await test('Scene tree uses the live visibility store, keeps floor commands and Sheet/Grade, and adds context actions',async()=>{
+ // The preceding legacy no-dock rig deliberately renders the old Floors list.
+ for(const id of ['scene-tree','scene-floor-actions'])if(!el(id)){const n=document.createElement('div');n.id=id;el('editor-floors').append(n);}
+ const {createSceneTools}=await import(file('static/twin/editor/scene_tools.js')),
+  {createDock}=await import(file('static/twin/editor/dock.js')),
+  {createVisibility}=await import(file('static/twin/editor/visibility.js')),
+  {createTerrainTools}=await import(file('static/twin/editor/terrain_tools.js')),
+  {createDevicePlacement}=await import(file('static/twin/editor/device_placement.js'));
+ const abort=new AbortController(),dock=createDock({host:el('editor-dock')}),{view,canvas}=dockRig(),plan=samplePlan(),ops=[];
+ plan.buildings[0].devices=[{id:'surface-device',device:'direct',host:{floor:'room',u:.1,v:.1}}];
+ plan.site.pool={id:'pool',polygon:[[20,20],[30,20],[30,30],[20,30]],features:[{id:'spa',kind:'spa',polygon:[[20,20],[22,20],[22,22],[20,22]],depth:3}]};
+ const visibility=createVisibility({storage:null});view.isPiecePickable=visibility.isPickable;
+ // editor.js owns this existing shell bridge to scene_tools.sheet.
+ el('layer-sheet').addEventListener('click',()=>el('rail-sheet').click(),{signal:abort.signal});
+ view.groups.levels={'b:L1':{visible:true},'b:L2':{visible:true}};
+ view.showLevels=keys=>{for(const [key,group] of Object.entries(view.groups.levels))group.visible=!keys||keys.includes(key);};
+ view.setSelection=()=>{};view.setEditableLevel=async()=>{};view.setSheet=value=>{view.sheet=value;};
+ let hits=[];view.pickAll=()=>hits;
+ const tools=createSceneTools({dock,view,visibility,isPickable:visibility.isPickable,getPlan:()=>plan,getModel:()=>plan,
+  getKit:()=>({}),getSheets:()=>({page_roles:[{source:'sheet',page:1,building:'b'}],registrations:[{source:'sheet',page:1,level:'L1',reg:{}}]}),
+  op:async o=>ops.push(o),edit:async()=>{},canEdit:()=>true,signal:abort.signal,panel:{clearSelection(){},message(){}}});
+ const terrain=createTerrainTools({dock,view,tools,getPlan:()=>plan,getKit:()=>({}),op:async o=>ops.push(o),canEdit:()=>true,signal:abort.signal});
+ const devices=createDevicePlacement({dock,view,tools,library:{surfaceAt:()=>null,ground:()=>[0,0]},getPlan:()=>plan,
+  op:async o=>ops.push(o),canEdit:()=>true,signal:abort.signal,prepare(){}});
+ tools.delegate({selectPick:r=>r.kind==='terraces'&&(terrain.choose(r.kind,r.id),true)||devices.selectFixturePick(r),selectTree:devices.selectScene,
+  visibilitySelection:()=>terrain.visibilitySelection()||devices.fixtureHandles.visibilitySelection(),
+  selectionChanged:terrain.selectionChanged});
+ const off=visibility.subscribe(()=>tools.visibilityChanged());
+ const tree=el('scene-tree'),row=id=>tree.querySelector(`[data-scene-id="${id}"]`);
+ const choose=async id=>press(row(id).querySelector('[data-scene-select]'));
+ const menu=()=>el('editor-context-menu').querySelectorAll('button');
+ const right=node=>node.dispatchEvent(new MouseEvent('contextmenu',{clientX:300,clientY:200,bubbles:true,cancelable:true}));
+ tools.refresh();assert.ok(row('wall'));assert.ok(row('room'));assert.ok(row('pad'));assert.ok(row('spot'));assert.ok(row('effect'));
+ await choose('wall');assert.equal(tools.selection().id,'wall');
+ assert.equal(row('wall').getAttribute('aria-selected'),'true');
+ await press(row('wall').querySelector('[data-row-lock]'));assert.equal(visibility.isLocked('wall'),true);
+ await choose('wall');assert.equal(tools.selection().id,'wall');assert.equal(tools.handles().length,0);
+ right(row('wall'));assert.ok(menu().some(b=>b.textContent==='Unlock'));assert.ok(menu().some(b=>b.textContent==='Hide'));
+ await press(menu().find(b=>b.textContent==='Hide'));assert.equal(visibility.isHidden('wall'),true);
+ right(row('wall'));assert.ok(menu().some(b=>b.textContent==='Show'));await press(menu().find(b=>b.textContent==='Show'));
+ assert.equal(visibility.isHidden('wall'),false);
+ visibility.hide('wall');hits=[];right(canvas);assert.deepEqual(menu().map(b=>b.textContent),['Show all hidden']);
+ await press(menu()[0]);assert.equal(visibility.isHidden('wall'),false);assert.equal(visibility.isLocked('wall'),true);
+ tools.select({id:'chair',building:'b'});assert.equal(row('chair').getAttribute('aria-selected'),'true');
+ await choose('pad');assert.equal(terrain.visibilitySelection().id,'pad');assert.equal(row('pad').getAttribute('aria-selected'),'true');terrain.cancel();
+ await choose('spot');assert.equal(devices.fixtureHandles.visibilitySelection().id,'spot');assert.equal(row('spot').getAttribute('aria-selected'),'true');
+ await choose('effect');assert.equal(devices.fixtureHandles.visibilitySelection().id,'effect');assert.equal(row('effect').getAttribute('aria-selected'),'true');
+ await choose('surface-device');assert.equal(devices.fixtureHandles.visibilitySelection().id,'surface-device');assert.equal(row('surface-device').getAttribute('aria-selected'),'true');
+ await choose('spa');assert.equal(tools.selection().id,'spa');assert.equal(row('spa').getAttribute('aria-selected'),'true');
+ assert.ok(el('piece-card').querySelector('[aria-label="Yard shape properties"]'),'pool child opens the existing feature shelf');
+ const floorEye=row('L1').querySelector('[data-floor-visible]');await press(floorEye);
+ assert.equal(view.groups.levels['b:L1'].visible,false);assert.equal(row('wall').style.opacity,'0.5');
+ assert.equal(row('L1').querySelector('[data-row-eye]').getAttribute('aria-label'),'Show Ground floor');
+ await press(row('L1').querySelector('[data-row-eye]'));assert.equal(view.groups.levels['b:L1'].visible,true);
+ right(row('L1'));assert.deepEqual(menu().map(b=>b.textContent),['Show','Hide','Choose','Lock']);await press(menu()[2]);
+ assert.equal(tools.selection().id,'L1');
+ for(const name of ['All floors','Change this floor','Change the house'])assert.ok(el('scene-floor-actions').querySelectorAll('button').some(b=>b.textContent===name));
+ await press(el('layer-sheet'));assert.equal(el('layer-sheet').getAttribute('aria-pressed'),'true');assert.ok(view.sheet);
+ await press(el('layer-sheet'));assert.equal(view.sheet,null);
+ await press(el('layer-grade'));assert.equal(el('layer-grade').getAttribute('aria-pressed'),'true');
+ await press(el('layer-grade'));assert.equal(el('layer-grade').getAttribute('aria-pressed'),'false');
+ const walls=el('layer-kinds').querySelectorAll('.editor-scene-row')[0];await press(walls.querySelector('[data-row-eye]'));
+ assert.equal(visibility.isHidden('wall','wall'),true);await press(walls.querySelector('[data-row-lock]'));assert.equal(visibility.isLocked('any','wall'),true);
+ assert.deepEqual(ops,[],'Scene/Layers state never writes house operations');
+ off();abort.abort();dock.dispose();canvas.remove();
+});
 await test('dock preserves nodes, separates tabs from Properties, gives tool options priority and resizes',async()=>{
  const {createDock}=await import(file('static/twin/editor/dock.js'));
  const dock=createDock({host:el('editor-dock')});

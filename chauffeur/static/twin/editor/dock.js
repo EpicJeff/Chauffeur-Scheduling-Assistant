@@ -1,3 +1,24 @@
+import { createSceneRow } from './scene_tree.js';
+
+export const layerKinds = [
+  ['Walls', ['wall']], ['Rooms (floors and ceilings)', ['room']], ['Openings', ['opening']],
+  ['Roofs', ['roof']], ['Stairs', ['stair']], ['Items and furniture', ['item', 'anchor', 'furniture']],
+  ['Plants', ['planting']], ['Yard surfaces', ['pad', 'hardscape', 'bed', 'edge', 'pool', 'fire_pit', 'fence', 'yard_room']],
+  ['Lights', ['fixture']], ['Effects', ['effect']], ['Devices', ['device']],
+];
+
+export function createLayers({ host, visibility }) {
+  const state = (field, kinds) => kinds.every(kind => visibility.snapshot()[field].includes(kind));
+  const rows = layerKinds.map(([name, kinds]) => createSceneRow({ name,
+    hidden: () => state('hiddenKinds', kinds), locked: () => state('lockedKinds', kinds),
+    toggleHidden: () => { const action = state('hiddenKinds', kinds) ? 'showKind' : 'hideKind'; for (const kind of kinds) visibility[action](kind); },
+    toggleLocked: () => { const action = state('lockedKinds', kinds) ? 'unlockKind' : 'lockKind'; for (const kind of kinds) visibility[action](kind); },
+  }));
+  host.replaceChildren(...rows);
+  const off = visibility.subscribe(() => rows.forEach(row => row.update()));
+  return { dispose() { off(); host.replaceChildren(); } };
+}
+
 // The shell owns presentation only. Cards keep their nodes, field queues and
 // domain actions; a tool temporarily takes Properties without losing selection.
 export function createDock({ host }) {
@@ -116,7 +137,7 @@ export function propertyPath(record, state = {}, select = () => {}) {
   if (!record) return { crumbs: [], back: null };
   const { piece, building, kind } = record;
   const pick = id => () => select(id ? { pieceId: id, buildingId: building?.id ?? null } : null);
-  if (!building) return { crumbs: ['Yard', piece.name || kind.replaceAll('_', ' ')], back: pick(piece.feature?.feature || null) };
+  if (!building) return { crumbs: ['Yard', ...(record.poolId ? ['Pool'] : []), piece.name || kind.replaceAll('_', ' ')], back: pick(record.poolId || piece.feature?.feature || null) };
   if (kind === 'building') return { crumbs: [building.name || building.id], back: pick(null) };
   const wall = kind === 'wall' ? piece : building.walls?.find(w => w.id === (piece.wall || piece.host?.wall));
   const room = building.rooms?.find(r => r.id === (kind === 'room' ? piece.id : state.room || piece.host?.floor || piece.host?.ceiling

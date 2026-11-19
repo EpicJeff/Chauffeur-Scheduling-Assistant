@@ -47,6 +47,10 @@ export function parseLength(text) {
 export function findPiece(plan, pieceId, buildingId) {
   const site = !buildingId && siteRecord(plan, pieceId);
   if (site) return site;
+  if (!buildingId) {
+    const feature = plan?.site?.pool?.features?.find(f => f.id === pieceId);
+    if (feature) return { piece: feature, kind: feature.kind, building: null, poolId: plan.site.pool.id };
+  }
   const building = plan?.buildings.find(b => b.id === buildingId);
   if (!building) return null;
   if (building.id === pieceId) return { piece: building, building, kind: 'building' };
@@ -236,7 +240,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       { getPlan, getKit, canEdit, queue, op, report, onSaved: () => draw() });
     if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { canEdit, queue, op, report,
       getRecord: () => findPiece(getPlan(), piece.id, building?.id), devices: haLink?.state()?.devices || [] });
-    if (siteShapeKinds.includes(kind)) {
+    if (siteShapeKinds.includes(kind) || record.poolId) {
       for (const feature of roomFeatures) {
         const button = document.createElement('button'); button.type = 'button';
         button.disabled = !canEdit();
@@ -371,7 +375,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         ? `${count} device${count === 1 ? '' : 's'} will be unplaced and remain in Home Assistant. Undo restores the room and its placements.`
         : 'Attached doors or windows may also be removed. The timeline keeps the earlier house.', 'Delete', 'Cancel')) return;
       await pending;
-      if (!building) await op({ op: 'delete_site_item', list: kind, index: record.index });
+      if (record.poolId) await op({ op: 'delete_pool_feature', id: piece.id });
+      else if (!building) await op({ op: 'delete_site_item', list: kind, index: record.index });
       else if ((kind==='solar_zone' || roof && !piece.rect) && op) await op({ op: 'delete', building: building.id, id: piece.id });
       else await edit({ op: 'delete', building: building.id, piece: piece.id });
       select(null);

@@ -674,7 +674,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             }
           }
           model.position.set(f.at[0], elevation + (f.elevation || 0), -f.at[1]);
-          model.traverse(object => Object.assign(object.userData, {pieceId:f.id, kind:(site.planting || []).includes(f) ? 'planting' : 'furniture'}));
+          model.traverse(object => Object.assign(object.userData, {pieceId:f.id, kind:(site.planting || []).includes(f) ? 'planting' : 'furniture', visibilityKind: f.object_kind === 'lamp' ? 'fixture' : undefined}));
           if (late) { model.userData.yardPart = 'furniture'; root.add(model); mergeStatic(model); }
           return model;
         };

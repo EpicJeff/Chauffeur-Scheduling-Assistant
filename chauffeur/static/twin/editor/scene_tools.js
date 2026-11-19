@@ -16,6 +16,9 @@ import { createPicker, DRAG_THRESHOLD_PX } from './picking.js';
 import { createMeasure } from './measure.js';
 import { createContextMenu } from './context_menu.js';
 import { icon } from './icons.js';
+import { createSceneTree } from './scene_tree.js';
+import { createLayers } from './dock.js';
+import { shapeOperation, shapeCentre, transformShape } from './site_shapes.js';
 
 const rotatePoint = (p, angle) => {
   const a = angle * Math.PI / 180;
@@ -31,6 +34,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let ownsGesture = false, handles = null, gizmo = null, controlsBeforePress = null;
   let roofRooms = new Set(), roofRoomBuilding = null;
   let split = null, splitStatus = '';
+  let sceneTree = null;
   function cancelSplit(text = splitStatus) {
     if (!split) return;
     split = null; el('editor-status').textContent = text; canvas.style.cursor = tool === 'select' ? '' : 'crosshair';
@@ -104,6 +108,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     handles?.refresh(); gizmo?.draw();
     drawDimensions(getPlan(), state);
     delegate?.selectionChanged?.(state);
+    sceneTree?.reveal(state.id);
   } });
   // Area picks and placements wait behind the card's own field saves (cards.queue).
   const haLink = createHaLink({ api, onCommit: operation => cards.queue(() => op(operation)), signal, getPlan, canEdit });
@@ -186,14 +191,19 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // under the pointer in the exterior view instead of its navigation parent.
   let contextPicking = false;
   const contextMenu = createContextMenu({ signal, items(target) {
+    if (target.empty) return [{ label: 'Show all hidden', run: () => visibility?.showAll() }];
     if (target.floor) {
       const row = levels().find(row => row.key === target.floor); if (!row) return [];
-      const visible = () => !!view.groups?.levels[row.key]?.visible;
+      const visible = () => !!view.groups?.levels[row.key]?.visible && !visibility?.isHidden(row.level.id);
       const show = value => { onInteract?.(); select({ id: row.level.id, building: row.building.id });
+        if (value) visibility?.show(row.level.id);
         const keys = levels().filter(r => r.key === row.key ? value : !!view.groups?.levels[r.key]?.visible).map(r => r.key); view.showLevels(keys); drawFloors(); };
       return [{ label: 'Show', run: () => show(true), disabled: visible() }, { label: 'Hide', run: () => show(false), disabled: !visible() },
-        { label: 'Choose', run: () => chooseFloor(row.key) }];
+        { label: 'Choose', run: () => chooseFloor(row.key) }, ...visibilityActions(row.level.id, 'level').slice(1)];
     }
+    const visibilityActionsForTarget = visibilityActions(target.id, target.visibilityKind || target.kind);
+    if (['light_fixture', 'effect_fixture', 'terraces', 'device'].includes(target.kind)) return [
+      { label: 'Select', run: () => selectTreeRow(target) }, ...visibilityActionsForTarget];
     const record = findPiece(getPlan(), target.id, target.building); if (!record) return [];
     const action = (label, run) => ({ label, disabled: !canEdit(), run: () => {
       if (!canEdit() || !findPiece(getPlan(), target.id, target.building)) return;
@@ -227,14 +237,22 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     }
     if (['wall', 'room', 'opening', 'item', 'anchor'].includes(record.kind) || !record.building)
       result.push(action('Delete', () => cards.remove()));
-    return result.length > 1 ? result : [];
+    return [...result, ...visibilityActions(target.id, record.piece.device ? 'device' : record.piece.object_kind === 'lamp' ? 'fixture' : record.kind)];
   } });
+  function visibilityActions(id, kind) {
+    if (!visibility || !id) return [];
+    return [{ label: visibility.isHidden(id, kind) ? 'Show' : 'Hide', run: () => {
+      if (visibility.isHidden(id, kind)) { visibility.show(id); visibility.showKind(kind); } else visibility.hide(id);
+    } }, { label: visibility.isLocked(id, kind) ? 'Unlock' : 'Lock', run: () => {
+      if (visibility.isLocked(id, kind)) { visibility.unlock(id); visibility.unlockKind(kind); } else visibility.lock(id);
+    } }];
+  }
   listen(canvas, 'contextmenu', event => {
     event.preventDefault();
     if (ownsGesture) return;
     contextPicking = true;
     let target; try { target = picker.at(event.clientX, event.clientY)[0]; } finally { contextPicking = false; }
-    if (target) contextMenu.open(event, { ...target, clientX: event.clientX, clientY: event.clientY }); else contextMenu.close(false);
+    contextMenu.open(event, target ? { ...target, clientX: event.clientX, clientY: event.clientY } : { empty: true });
   });
   // Each source exposes hit(event) and begin(event, handle); its existing
   // pointerMove/pointerUp methods keep ownership through release or cancel.
@@ -283,13 +301,13 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (sheetOn) sheet(key, true).catch(report);
     delegate?.floorChanged?.(); drawFloors();
   }
-  function drawFloorList(host) {
+  function drawFloorList(host, actionsOnly = false) {
     const focused = document.activeElement?.dataset.floor;
     const signature = JSON.stringify(levels().map(row => [row.key, row.label]));
     if (host.dataset.levels !== signature) {
       host.dataset.levels = signature; host.replaceChildren();
       const title = document.createElement('span'); title.textContent = 'Floors'; host.append(title);
-      for (const row of levels().reverse()) {
+      for (const row of actionsOnly ? [] : levels().reverse()) {
         const group = document.createElement('div'); group.className = 'editor-floor-row';
         const button = document.createElement('button'); button.type = 'button'; button.dataset.floor = row.key;
         button.textContent = row.label; button.addEventListener('click', () => chooseFloor(row.key));
@@ -326,10 +344,33 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     host.querySelectorAll('[data-floor-visible]').forEach(node => node.setAttribute('aria-pressed', String(!!view.groups?.levels[node.dataset.floorVisible]?.visible)));
   }
   function drawFloors() {
-    // The existing floors panel stays put until Task 2. Both entry points
-    // render the same actions, including per-floor visibility.
-    for (const host of [el('editor-floors'), el('editor-floor-picker')].filter(Boolean)) drawFloorList(host);
+    if (dock && sceneTree) { drawFloorList(el('scene-floor-actions'), true); sceneTree.refresh(); }
+    else if (el('editor-floors')) drawFloorList(el('editor-floors'));
+    if (el('editor-floor-picker')) drawFloorList(el('editor-floor-picker'));
     if (el('editor-floor-add')) el('editor-floor-add').disabled = !floor() || !canEdit();
+  }
+  function selectTreeRow(row) {
+    onInteract?.(); delegate?.cancel?.(); setTool('select');
+    if (row.floorKey) chooseFloor(row.floorKey);
+    else if (!delegate?.selectTree?.(row) && !delegate?.selectPick?.({ ...row, fixtureId: row.id, entity_id: row.piece?.entity_id, effectId: row.kind === 'effect_fixture' ? row.id : undefined })) {
+      // Explicit tree picks must cross an existing focused-room boundary.
+      roomSelection.clear(); select(row);
+    }
+  }
+  if (dock && visibility) {
+    sceneTree = createSceneTree({ host: el('scene-tree'), getPlan,
+      getSelection: () => selection || delegate?.visibilitySelection?.(), select: selectTreeRow, visibility,
+      floors: { hidden: row => view.groups?.levels[row.floorKey]?.visible === false, current: () => floor()?.key,
+        toggle(row) {
+          const show = view.groups?.levels[row.floorKey]?.visible === false || visibility.isHidden(row.id);
+          if (show) visibility.show(row.id);
+          view.showLevels(levels().filter(r => r.key === row.floorKey ? show : view.groups?.levels[r.key]?.visible !== false).map(r => r.key)); drawFloors();
+        } },
+      contextMenu: (event, row) => contextMenu.open(event, row.floorKey ? { floor: row.floorKey } : row) });
+    const layers = createLayers({ host: el('layer-kinds'), visibility });
+    const offResize = dock.onResize?.(() => sceneTree.refresh());
+    const offShow = dock.onShow?.(tab => { if (tab === 'scene') sceneTree.refresh(); });
+    signal.addEventListener('abort', () => { sceneTree.dispose(); layers.dispose(); offResize?.(); offShow?.(); }, { once: true });
   }
   function pieceAnchor(item) {
     const record = findPiece(getPlan(), item.pieceId, item.buildingId); if (!record) return null;
@@ -523,6 +564,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
           roofRooms.clear();
           const picked = picker.click(event.clientX, event.clientY);
           if (!delegate?.selectPick?.(picked)) roomSelection.select(picked);
+          else sceneTree?.reveal(delegate?.visibilitySelection?.()?.id);
         }
       }
       return;
@@ -559,7 +601,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (!record.building && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
       const by = [{ ArrowLeft: -1, ArrowRight: 1 }[event.key] || 0, { ArrowDown: -1, ArrowUp: 1 }[event.key] || 0];
-      cards.queue(() => canEdit() && op({ op: 'move_site_item', list: record.kind, index: record.index, by })).catch(report); return;
+      cards.queue(() => canEdit() && op(record.poolId
+        ? shapeOperation(record, transformShape(record.piece, { centre: shapeCentre(record.piece).map((v, i) => v + by[i]) }))
+        : { op: 'move_site_item', list: record.kind, index: record.index, by })).catch(report); return;
     }
     if (!isObject(record)) return;
     const key = event.key.toLowerCase();
@@ -628,6 +672,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   return {
     visibility,
     visibilityChanged() { picker.reset(); handles.refresh(); gizmo.draw(); drawDimensions(); delegate?.visibilityChanged?.(); },
+    revealSelection() { sceneTree?.reveal(delegate?.visibilitySelection?.()?.id || selection?.pieceId); },
     openContextMenu: (event, target) => contextMenu.open(event, target),
     pointerArmedDown,
     haLink,

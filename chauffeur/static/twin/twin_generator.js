@@ -656,7 +656,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     }));
     let activePiece = null;
     const records = new Map(), wallProfiles = new Map();
-    const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || fallback, kind, visibilityKind: piece.device ? 'device' : undefined, buildingId: b.id, ghost: piece.state === 'ghost' }; };
+    const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || fallback, kind, visibilityKind: piece.device ? 'device' : piece.object_kind === 'lamp' ? 'fixture' : undefined, buildingId: b.id, ghost: piece.state === 'ghost' }; };
     // seed: a random-offset origin shared by several pieces (one per level for floors).
     const mesh = (group, geometry, material, retained = null, seed = null) => {
       const data = activePiece || { pieceId: 'structure', kind: 'building', buildingId: b.id };

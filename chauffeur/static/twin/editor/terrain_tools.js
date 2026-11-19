@@ -396,7 +396,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   function choose(kind, id) {
     prepare(); tools.setTool('select'); view.setView('ext');
     if (kind !== 'terraces') { close(); tools.select({ kind, id }); return; }
-    tools.select(null); chosen = { kind, id }; menu = false; drawing = null; signature = ''; refresh();
+    tools.select(null); chosen = { kind, id }; menu = false; drawing = null; signature = ''; refresh(); tools.revealSelection?.();
   }
   async function remove() {
     const piece = current(); if (!piece || !canEdit() || busy) return;
