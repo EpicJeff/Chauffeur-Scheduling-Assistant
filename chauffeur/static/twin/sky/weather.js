@@ -75,6 +75,11 @@ export function weatherState(entity, ground={}, sensors={}, now=Date.now()/1000)
 }
 
 export function neutralWeather() { return {...weatherState(null),neutral:true}; }
+// Fog and the rain veil share the stage radius; neither can amplify the other.
+export function weatherHaze(weather={}) {
+  const rain=['rain','mix'].includes(weather.precip)?clamp(weather.rate):0;
+  return Math.max(clamp(weather.fog),.25*rain);
+}
 const previews={clear:'sunny',rain:'rainy',pouring:'pouring',snow:'snowy',fog:'fog',thunderstorm:'lightning-rainy'};
 export function previewWeather(name) {
   if (!Object.hasOwn(previews,name)) return null;

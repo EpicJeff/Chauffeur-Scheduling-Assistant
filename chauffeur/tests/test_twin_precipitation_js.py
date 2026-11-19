@@ -16,7 +16,7 @@ const {createPrecipitation,precipitationCounts,precipitationVelocity,createSplas
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
 const weather=(precip='rain',rate=1)=>({precip,rate,windMps:0,windToDeg:90});
 await test('verbatim tier budgets, intensity, mixed weather, invalid input and neutral',()=>{
- for(const [tier,n] of Object.entries({low:1500,medium:4000,high:8000,max:12000})){
+ for(const [tier,n] of Object.entries({low:3000,medium:4000,high:8000,max:12000})){
   assert.deepEqual(precipitationCounts(tier,weather()),{rain:n,snow:0,hail:0});
   assert.equal(precipitationCounts(tier,weather('snow')).snow,n/2);
   assert.equal(precipitationCounts(tier,weather('hail')).hail,n*.3);
@@ -34,7 +34,75 @@ await test('physical wind toward compass bearing and only precipitation slows fo
  assert.ok(Math.abs(precipitationVelocity('rain',{...w,windToDeg:0},90)[0]-10)<1e-8);
  assert.deepEqual(precipitationVelocity('rain',{windMps:NaN,windToDeg:NaN},NaN),[0,-14,0]);
 });
-await test('camera box wraps in shader coordinates without moving every seed',()=>{
+await test('rain projected width has a 1.25 pixel floor, viewport tracks the target and rate controls opacity',()=>{
+ const scene=new THREE.Scene(),p=createPrecipitation(scene,{tier:'low'}),camera=new THREE.PerspectiveCamera(60,16/9,.05,500);
+ const material=p.objects.rain.material,body=material.vertexShader.match(/float precipitationWidth\(float pixels,float kind\) \{([\s\S]*?)\n\}/)[1];
+ const width=new Function('max',`return (pixels,kind)=>{${body}}`)(Math.max);
+ for(const [w,h] of [[1600,900],[1920,1080],[960,540],[320,240]]){
+  p.objects.rain.onBeforeRender({getDrawingBufferSize:out=>out.set(w,h)});
+  assert.deepEqual(p.uniforms.precipViewport.value.toArray(),[w,h]);
+  for(const depth of [.1,1,5,20,40,64,100,500])for(const angle of [0,.4,1.57]){
+   const side=new THREE.Vector4(Math.cos(angle)*.018,Math.sin(angle)*.018,0,0).applyMatrix4(camera.projectionMatrix);
+   const physical=Math.hypot(side.x*w*.5,side.y*h*.5)/depth;
+   assert.ok(width(physical,0)>=1.25);assert.equal(width(physical,1),physical);assert.equal(width(physical,2),physical);
+  }
+ }
+ assert.ok(material.vertexShader.includes('side*position.x*width)*2.0/viewport*gl_Position.w'),'width expands in clip space independently of length');
+ assert.ok(material.fragmentShader.includes('mix(.35,.85,precipRate)'),'alpha scales with rain rate');
+ p.update(0,{precip:'rain',rate:.45},camera);assert.equal(p.uniforms.precipRate.value,.45);
+ p.update(1,{precip:'rain',rate:1},camera);assert.equal(p.uniforms.precipRate.value,1);
+ assert.deepEqual(p.uniforms.precipColour.value.toArray(),[.6,.7,.8]);
+ assert.ok(material.fragmentShader.includes('precipColour*(precipKind<.5?1.2:1.0)'),'only rain lifts the sky tint');p.dispose();
+});
+await test('rain length floors follow projected fall, with finite independent width and no drops inside 2.5 metres',()=>{
+ const p=createPrecipitation(new THREE.Scene()),m=p.objects.rain.material;
+ const body=m.vertexShader.match(/float precipitationLength\(float pixels,float kind,float rate\) \{([\s\S]*?)\n\}/)[1];
+ const length=new Function('max','mix','clamp',`return (pixels,kind,rate)=>{${body}}`)(Math.max,(a,b,t)=>a+(b-a)*t,(v,a,b)=>Math.max(a,Math.min(b,v)));
+ for(const rate of [.45,1])for(const viewport of [[1920,1080],[960,540],[320,240]])for(const depth of [2.5,3,20,60,100,500])for(const velocity of [[0,-14,0],[5,-14,4],[0,0,0],[0,0,-14]]){
+  const camera=new THREE.PerspectiveCamera(38,viewport[0]/viewport[1],.1,1000),eye=new THREE.Vector4(.1,.2,-depth,1);
+  const fall=new THREE.Vector3(...velocity);if(fall.length()>1e-5)fall.normalize();else fall.set(0,-1,0);
+  const project=v=>v.applyMatrix4(camera.projectionMatrix),clip=project(eye.clone());
+  const head=project(eye.clone().add(new THREE.Vector4(...fall.toArray(),0).multiplyScalar(.35)));
+  const tail=project(eye.clone().sub(new THREE.Vector4(...fall.toArray(),0).multiplyScalar(.35)));
+  const delta=new THREE.Vector2((head.x/Math.max(Math.abs(head.w),.0001)-tail.x/Math.max(Math.abs(tail.w),.0001))*viewport[0]*.5,
+    (head.y/Math.max(Math.abs(head.w),.0001)-tail.y/Math.max(Math.abs(tail.w),.0001))*viewport[1]*.5);
+  const physical=delta.length(),direction=physical>1e-5?delta.clone().divideScalar(Math.max(physical,1e-5)):new THREE.Vector2(0,-1);
+  const pixels=length(physical,0,rate);assert.ok(pixels>=(rate===1?10:6));
+  for(const kind of [1,2])assert.equal(length(physical,kind,rate),physical,'snow/hail keep physical length');
+  const side=new THREE.Vector2(-direction.y,direction.x),corners=[];
+  for(const [x,y] of [[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]]){
+   const offset=direction.clone().multiplyScalar(y*pixels).addScaledVector(side,x*1.25);
+   const c=clip.clone();c.x+=offset.x*2/viewport[0]*clip.w;c.y+=offset.y*2/viewport[1]*clip.w;
+   corners.push(new THREE.Vector2(c.x/c.w*viewport[0]*.5,c.y/c.w*viewport[1]*.5));assert.ok(c.toArray().every(Number.isFinite));
+  }
+  assert.ok(Math.abs(corners[0].distanceTo(corners[1])-1.25)<1e-8,'length floor never stretches width');
+  assert.ok(Math.abs(corners[1].distanceTo(corners[2])-pixels)<1e-8);
+  assert.ok(Math.abs(direction.dot(side))<1e-9);
+ }
+ assert.ok(m.vertexShader.includes('direction*position.y*streakLength'));
+ assert.ok(m.vertexShader.includes('eye.xy+=side*position.x*size.x+direction*position.y*size.y;'),'snow/hail preserve physical billboards, including top view');
+ assert.ok(m.vertexShader.includes('if(distance(world,cameraPosition)<2.5){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}'));
+ assert.ok(m.fragmentShader.includes('if(distance(particleWorld,cameraPosition)<2.5)discard;'));
+ assert.ok(m.fragmentShader.includes('smoothstep(halfExtent*.8,halfExtent,edge)'),'outer fifth of focus box fades');
+ assert.ok(!m.fragmentShader.includes('smoothstep(40.0,64.0'));p.dispose();
+});
+await test('actual fade function scales with box edges and excludes near-camera drops',()=>{
+ const p=createPrecipitation(new THREE.Scene());
+ const body=p.objects.rain.material.fragmentShader.match(/float precipitationFade\(\)\{([\s\S]*?)\n\}/)[1].replace(/\bfloat /g,'const ');
+ const distance=(a,b)=>Math.hypot(...a.map((v,i)=>v-b[i]));
+ const smoothstep=(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/Math.max(b-a,.0001)));return t*t*(3-2*t);};
+ const fade=new Function('particleWorld','cameraPosition','precipRadius','precipFog','precipCentre','precipAnchor','precipBox','distance','smoothstep','max',body);
+ const world=(x,y,z)=>Object.assign([x,y,z],{xz:[x,z]});
+ for(const h of [18,30,64])for(const fog of [0,.25,1]){
+  const evaluate=(x,d=10)=>fade(world(x,5,0),[x,5,d],10000,fog,[0,0],world(0,0,0),{x:2*h},distance,smoothstep,Math.max);
+  assert.equal(evaluate(.8*h),1);assert.ok(Math.abs(evaluate(.9*h)-.5)<1e-9);
+  assert.equal(evaluate(h),0);assert.equal(evaluate(2*h),0);
+  for(const d of [0,1,2.49,2.5])assert.equal(evaluate(0,d),0);
+  assert.equal(evaluate(0,3.5),1);assert.equal(evaluate(0,100),1,'camera distance no longer removes rain at the house');
+ }
+ p.dispose();
+});
+await test('focus box wraps in shader coordinates without moving every seed',()=>{
  const p=wrappedPosition([.1,.2,.3],[4,-5,6],[10,20,30]);
  const moved=wrappedPosition([.1,.2,.3],[4,-5,6],[11,21,31]);
  assert.deepEqual(moved,p,'a small camera move keeps the same world particles');
@@ -42,8 +110,24 @@ await test('camera box wraps in shader coordinates without moving every seed',()
  for(let i=0;i<3;i++)assert.ok(Math.abs(far[i]-[1000,2000,3000][i])<=[64,48,64][i]);
  const scene=new THREE.Scene(),pfx=createPrecipitation(scene,{tier:'low'}),camera=new THREE.PerspectiveCamera();
  const seeds=pfx.objects.rain.geometry.attributes.precipSeed,version=seeds.version,copy=seeds.array.slice();
- pfx.update(0,weather(),camera);camera.position.set(100,80,-50);pfx.update(1,weather(),camera);
- assert.deepEqual(pfx.uniforms.precipAnchor.value.toArray(),[100,80,-50]);assert.equal(seeds.version,version);assert.deepEqual(seeds.array,copy);
+ const target=new THREE.Vector3(10,0,20);
+ pfx.update(0,weather(),camera,{target});camera.position.set(100,80,-50);pfx.update(1,weather(),camera,{target});
+ assert.equal(pfx.uniforms.precipAnchor.value.x,41.5);assert.equal(pfx.uniforms.precipAnchor.value.z,-4.5);
+ assert.deepEqual(pfx.uniforms.precipBox.value.toArray(),[128,88,128]);
+ assert.equal(pfx.uniforms.precipAnchor.value.y,44);assert.equal(seeds.version,version);assert.deepEqual(seeds.array,copy);
+ for(const eye of [[10,1,20],[10,10,60],[10,200,420]]){
+  camera.position.fromArray(eye);pfx.update(2,weather(),camera,{target});
+  const box=pfx.uniforms.precipBox.value,anchor=pfx.uniforms.precipAnchor.value;
+  assert.equal(box.x,2*Math.max(18,Math.min(64,.75*camera.position.distanceTo(target))));
+  assert.equal(box.z,box.x);assert.equal(anchor.y-box.y/2,0);
+  assert.equal(anchor.y+box.y/2,Math.max(25,camera.position.y+8));
+  const world=wrappedPosition([.1,.2,.3],[4,-5,6],anchor.toArray(),box.toArray());
+  world.forEach((v,i)=>assert.ok(Math.abs(v-anchor.getComponent(i))<=box.getComponent(i)/2));
+ }
+ assert.equal(seeds.version,version);assert.deepEqual(seeds.array,copy);
+ pfx.setPlan({site:{terraces:[{polygon:[[0,0],[100,0],[100,100],[0,100]],height:10,blend:0}]}});
+ camera.position.set(10,5,-10);target.set(10,0,-10);pfx.update(3,weather(),camera,{target});
+ assert.ok(Math.abs(pfx.uniforms.precipAnchor.value.y-pfx.uniforms.precipBox.value.y/2-3.048)<1e-9,'bottom follows ground under target');
  assert.ok(pfx.objects.rain.material.vertexShader.includes('mod('));pfx.dispose();
 });
 await test('hard upward splash sampling uses layered ground, path, deck and roof heights; excludes beds, grass, water and interiors',()=>{
@@ -137,7 +221,7 @@ await test('real household mount: previews, editor neutral/Live, Unlit, captures
   v=await mount();e=await mount(true);assert.ok(v.precipitation);assert.ok(e.precipitation);
   const states={'weather.home':{state:'pouring',attributes:{}}};
   for(const x of [v,e])x.live={peek:()=>states,stale:()=>false,draw(){},stop(){},closeRoom(){}};
-  v.setTime('day');e.setTime('day');assert.equal(v.precipitation.objects.rain.geometry.instanceCount,1500);assert.equal(e.precipitation.objects.rain.visible,false);
+  v.setTime('day');e.setTime('day');assert.equal(v.precipitation.objects.rain.geometry.instanceCount,3000);assert.equal(e.precipitation.objects.rain.visible,false);
   const mats=Object.values(v.precipitation.objects).map(o=>o.material.uuid);
   for(const name of ['clear','rain','pouring','snow','fog','thunderstorm']){v.setWeatherPreview(name);assert.equal(v.precipitation.objects.snow.visible,name==='snow');}
   e.setLiveWeather(true);assert.equal(e.precipitation.objects.rain.visible,true);
@@ -149,6 +233,47 @@ await test('real household mount: previews, editor neutral/Live, Unlit, captures
   for(let x=-30;x<180;x+=4)for(let y=-30;y<180;y+=4){const hit=sample(x*.3048,-y*.3048);if(hit){hits++;assert.ok(hit.position.every(Number.isFinite));assert.ok(hit.normal[1]>.55);}}
   assert.ok(hits>0,'actual household has splash receivers');
  }finally{v?.dispose();e?.dispose();}
+});
+await test('1920x1080 household low-tier frustum census uses identical seeds before and after',async()=>{
+ let v,p;try{
+  const el=new Element();el.clientWidth=1920;el.clientHeight=1080;
+  v=await mountTwin(el,{plan:structuredClone(input.plan),kit:{materials:{}},tier:'low',bake:false});
+  v.camera.aspect=1920/1080;v.camera.updateProjectionMatrix();v.levels.go({level:'house'},{immediate:true});
+  let rng=0x12345678;p=createPrecipitation(new THREE.Scene(),{tier:'low',random:()=>{rng=(Math.imul(rng,1664525)+1013904223)>>>0;return rng/4294967296;}});
+  p.setPlan(v.plan,v.roofSurfaces);
+  const seed=p.objects.rain.geometry.attributes.precipSeed,version=seed.version,copy=seed.array.slice();
+  for(const framing of ['house','weather-harness']){
+   if(framing==='weather-harness'){
+    // Exactly horizon_look() in test_twin_weather_live.py, without a browser.
+    const c=v.controls.target.clone(),d=v.camera.position.clone().sub(c);d.y=Math.max(3,d.length()*.08);
+    v.setCameraState({position:c.clone().add(d).toArray(),target:c.toArray()});
+   }
+   v.camera.updateMatrixWorld(true);
+   const eye=v.camera.position,target=v.controls.target,houseDistance=eye.distanceTo(target);
+   const frustum=new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(v.camera.projectionMatrix,v.camera.matrixWorldInverse));
+   for(const rate of [.45,1]){
+    p.update(0,weather('rain',rate),v.camera,{target});
+    const count=p.objects.rain.geometry.instanceCount,box=p.uniforms.precipBox.value.toArray(),anchor=p.uniforms.precipAnchor.value.toArray();
+    const results={};
+    for(const before of [true,false]){
+     let inside=0,nearer=0,nonzeroFade=0;
+     for(let i=0;i<count;i++){
+      const s=Array.from(seed.array.subarray(i*3,i*3+3));
+      const world=new THREE.Vector3(...wrappedPosition(s,[0,0,0],before?eye.toArray():anchor,before?[128,96,128]:box));
+      if(!frustum.containsPoint(world))continue;inside++;
+      const distance=world.distanceTo(eye);if(distance>=houseDistance)continue;nearer++;
+      const radial=Math.hypot(world.x-anchor[0],world.z-anchor[2]);
+      if(distance>(before?.8:2.5)&&(before?distance<64:radial<box[0]/2))nonzeroFade++;
+     }
+     results[before?'before':'after']={inside,nearer,nonzeroFade};
+    }
+    assert.ok(results.after.nearer>results.before.nearer,'density rises in front of the house');
+    assert.ok(results.after.nonzeroFade>results.before.nonzeroFade,'extra instances survive distance and near fades');
+    console.log('FRUSTUM_CENSUS',JSON.stringify({framing,rate,count,eye:eye.toArray(),target:target.toArray(),houseDistance,box,anchor,...results}));
+   }
+  }
+  assert.equal(seed.version,version);assert.deepEqual(seed.array,copy);
+ }finally{p?.dispose();v?.dispose();}
 });
 finish();
 """
@@ -170,6 +295,10 @@ await test('actual r187 source assembly and keys: all kinds warmed at mount, no 
   for(const precip of ['none','rain','snow','mix','hail'])for(const neutral of [true,false]){
    p.update(100,{precip,neutral,rate:1,windMps:20,windToDeg:270,fog:.7},eye,{colour:[.015,.02,.03]});
    for(const o of Object.values(p.objects))assert.equal(programSource(r,cache,scene,o,lights).key,keys.get(o));
+  }
+  for(const position of [[0,0,0],[5,40,10],[200,80,-100]]){
+   eye.position.fromArray(position);p.update(101,{precip:'rain',rate:.45},eye,{target:new THREE.Vector3(10,0,-10)});
+   for(const o of Object.values(p.objects))assert.equal(programSource(r,cache,scene,o,lights).key,keys.get(o),'focus/box changes are uniforms only');
   }
   target?.dispose();
  }

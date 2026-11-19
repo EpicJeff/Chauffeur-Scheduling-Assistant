@@ -22,7 +22,7 @@ import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from '
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
 import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/atmosphere.js';
 import { createCloudPass } from './sky/cloud_pass.js';
-import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState } from './sky/weather.js';
+import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze } from './sky/weather.js';
 import { installPlantWind } from './sky/wind.js';
 import { installStageHaze } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
@@ -441,7 +441,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces){
       precipitation.setPlan(plan,twin?.roofSurfaces);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;
     }
-    precipitation.update(performance.now()/1000,view.weather,camera,{bearing:site.front_bearing_deg ?? 180,
+    precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
       unlit:state.unlit,colour:timeLook?.skyColor});
     view.live?.draw();
     twin?.updateGhosts();
@@ -1499,7 +1499,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   function applyTimeLook(moved = false, forceSky = false, cheap = false) {
     view.weather=currentWeather();lastWeather=JSON.stringify(view.weather);
-    stageHaze.set({enabled:!state.unlit,fog:view.weather.fog});
+    stageHaze.set({enabled:!state.unlit,fog:weatherHaze(view.weather)});
     cloudShadow.set({enabled:!state.unlit});
     sky.setEnabled(!state.unlit);
     if (state.unlit) {

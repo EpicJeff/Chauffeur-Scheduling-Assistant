@@ -15,6 +15,7 @@ const {existsSync}=await import('node:fs');
 const path=file('static/twin/sky/weather_surface.js');
 assert.ok(existsSync(new URL(path)), 'Task 3 weather surface module exists');
 const {installWeatherSurface,WEATHER_GLSL}=await import(path);
+const {kitMaterial}=await import(file('static/twin/twin_library.js'));
 globalThis.__THREE_MESH=THREE.Mesh;globalThis.__THREE_BOX=THREE.BoxGeometry;globalThis.__THREE_STD=THREE.MeshStandardMaterial;
 const dummyShadow=installCloudShadow(new THREE.Scene(),{uniforms:createCloudUniforms()});
 const weatherBefore={...THREE.ShaderChunk};
@@ -68,6 +69,17 @@ await test('built house and household: every lit kind, grass, baked lamps, water
  const haze=installStageHaze(scene,{}),shadow=installCloudShadow(scene,{uniforms:createCloudUniforms()}),layer=installWeatherSurface(scene);
  scene.environment=new THREE.Texture();
  const model=buildTwin(input.plan,{materials:{}},'high',{viewing:true});scene.add(model.root);
+ // Scene-linear diffuse luminance at unit irradiance (Lambert, 1/pi), using
+ // actual fixture material colours; texture modulation/specular are excluded.
+ const luminance=c=>c[0]*.2126+c[1]*.7152+c[2]*.0722;
+ for(const role of ['wall','lawn']){
+  let material;model.root.traverse(o=>{for(const m of [].concat(o.material||[]))if(!material&&m.isMeshStandardMaterial&&(m.name===(role==='wall'?'siding':role)||m.userData.materialRole===role))material=m;});
+  if(role==='lawn')material=kitMaterial('lawn',{materials:{lawn:{...input.kit.materials.lawn,...input.plan.materials?.lawn}}},'high');
+  assert.ok(material,role+' measured material');
+  if(material){const rgb=material.color.toArray(),dry=luminance(rgb)/Math.PI,scale=scalar('weatherWetScale')(luminance(rgb),material.metalness,1);
+   console.log('WEATHER_WET_LUMINANCE',JSON.stringify({fixture:input.label,role,rgb,dry,wet:dry*scale,darkerPercent:(1-scale)*100,roughnessDry:material.roughness,roughnessWet:scalar('weatherRoughness')(material.roughness,1,0,0)}));}
+  if(role==='lawn')material.dispose();
+ }
  const view={plan:input.plan,scene,roomLights:[],camera:new THREE.PerspectiveCamera(),controls:{target:new THREE.Vector3()},renderer3:renderer};view.camera.position.set(0,30,30);
  const viewing=createViewing(view,model,()=>0,()=>{}),rows=[];
  const add=(label,material,instance=false)=>{const o=instance?new THREE.InstancedMesh(new THREE.BoxGeometry(),material,1):new THREE.Mesh(new THREE.BoxGeometry(),material);scene.add(o);rows.push({label,object:o});return material;};
@@ -172,8 +184,9 @@ dummyShadow.dispose();finish();
 TREE_DRIVER = TREE_PREFIX + r"""
 const THREE=await import('three');
 const {buildYard}=await import(file('static/twin/twin_yard.js'));
-const {installWeatherSurface}=await import(file('static/twin/sky/weather_surface.js'));
+const {installWeatherSurface,WEATHER_GLSL}=await import(file('static/twin/sky/weather_surface.js'));
 const {installPlantWind}=await import(file('static/twin/sky/wind.js'));
+const {installStageHaze,stageFade}=await import(file('static/twin/sky/stage_haze.js'));
 await test('actual vendored oak and shrub leaves and branches receive snow after wind, including clones',async()=>{
  const plan={buildings:[],site:{planting:[{id:'tree',preset:'Oak Small',seed:7,height:15,at:[0,0]},{id:'shrub',preset:'Bush 1',height:3,at:[10,0]}]}};
  const {group}=await buildYard(plan,{materials:{}},'high',{viewing:true});
@@ -190,6 +203,45 @@ await test('actual vendored oak and shrub leaves and branches receive snow after
  }
  layer.update({snow_cm:8},12);assert.equal(layer.uniforms.weatherSurface.value.y,1);
  layer.dispose();wind.dispose();group.userData.releasePlants?.();
+});
+await test('actual leaf fragment scalar port: snow cover 1 plus fog 1 is finite on both card faces',async()=>{
+ const plan={buildings:[],site:{planting:[{id:'tree',preset:'Oak Small',seed:7,height:15,at:[0,0]}]}};
+ const {group}=await buildYard(plan,{materials:{}},'high',{viewing:true}),scene=new THREE.Scene();scene.add(group);scene.updateMatrixWorld(true);
+ const haze=installStageHaze(scene,{}),wind=installPlantWind(scene),layer=installWeatherSurface(scene);
+ haze.set({centre:[0,0],radius:100,fog:1});haze.prepare();wind.prepare();layer.prepare();layer.update({snow_cm:8,fog:1},0);
+ const mix=(a,b,t)=>a+(b-a)*t,smoothstep=(a,b,v)=>{const t=Math.max(0,Math.min(1,(v-a)/(b-a)));return t*t*(3-2*t);};
+ const scalar=name=>{const m=WEATHER_GLSL.match(new RegExp('float '+name+'\\(([^)]*)\\) \\{([\\s\\S]*?)\\n\\}'));return new Function('mix','smoothstep',`return (${m[1].replace(/float /g,'')})=>{${m[2].replace(/\bfloat\b/g,'let')}}`)(mix,smoothstep);};
+ const snow=scalar('weatherSnow'),wet=scalar('weatherWetScale'),rough=scalar('weatherRoughness');
+ let samples=0;
+ scene.traverse(o=>{if(o.material?.userData.plantWind!=='leaves')return;
+  const shader={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};o.material.onBeforeCompile(shader,{});
+  assert.equal(shader.uniforms.weatherSurface.value.y,1);assert.ok(Math.abs(shader.uniforms.stageRadius.value-15)<1e-8);
+  const expand=s=>s.replace(/#include\s+<([\w\d_]+)>/g,(_,n)=>expand(THREE.ShaderChunk[n]));
+  const fragment=expand(shader.fragmentShader);
+  assert.ok(fragment.includes('weatherSnow(weatherUp')&&fragment.includes('normal *= faceDirection'));
+  assert.ok(fragment.includes('mix( gl_FragColor.rgb, stageColour, stageFade )'));
+  const normals=o.geometry.attributes.normal,positions=o.geometry.attributes.position,matrix=new THREE.Matrix3().getNormalMatrix(o.matrixWorld);
+  for(let i=0;i<normals.count;i++)for(const face of [-1,1]){
+   const n=new THREE.Vector3().fromBufferAttribute(normals,i).applyMatrix3(matrix).normalize().multiplyScalar(face);
+   const position=new THREE.Vector3().fromBufferAttribute(positions,i).applyMatrix4(o.matrixWorld);
+   for(const edge of [0,.5,1]){
+    const cover=snow(n.y,1,edge),r=rough(.9,0,0,cover);
+    assert.ok(Number.isFinite(r)&&r>=0);
+    // Scalar port of weather albedo -> non-negative diffuse irradiance/PI ->
+    // output conversion -> radial fog mix. Vertex sway only moves positions.
+    const rgb=[.025,.12,.01].map((c,k)=>mix(c*wet(.09,0,0),[.85,.87,.9][k],cover));
+    for(const fade of [stageFade([position.x,position.z],[0,0],15),stageFade([17.625,0],[0,0],15),1])
+    for(const irradiance of [0,.002,.5,2])for(const [k,c] of rgb.entries()){
+     const lit=c*irradiance/Math.PI;
+     const output=lit<=.0031308?lit*12.92:1.055*Math.pow(Math.max(lit,0),1/2.4)-.055;
+     const result=mix(output,[.7,.72,.75][k],fade);
+     assert.ok(Number.isFinite(result)&&result>=0,`${i}/${face}/${cover}/${fade}/${result}`);samples++;
+    }
+   }
+  }
+ });
+ assert.ok(samples>1000);console.log('WEATHER_LEAF_SNOW_FOG_SCALARS',samples);
+ layer.dispose();wind.dispose();haze.dispose();group.userData.releasePlants?.();
 });finish();
 """
 
@@ -199,9 +251,10 @@ if __name__ == '__main__':
     fixture = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
     household = flatten(assemble(fixture)[0])
     poolhouse = json.loads((ROOT / 'tests/fixtures/twin_poolhouse.plan.json').read_text(encoding='utf-8'))
+    kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
     failed = False
     for label, plan in [('poolhouse', poolhouse), ('household', household)]:
-        code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan, 'label': label}, timeout=180)
+        code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan, 'label': label, 'kit': kit}, timeout=180)
         print(output)
         failed |= bool(code)
     code, output = run_node(TREE_DRIVER, {'root': ROOT.as_posix()}, timeout=180)

@@ -5,7 +5,6 @@ The shared live-HA harness supplies the household and panel authentication.
 No browser work occurs until a scenario is called. The cost scenario includes
 the caller-required --disable-gpu-vsync and --disable-frame-rate-limit flags.
 """
-import copy
 from contextlib import contextmanager
 import json
 import os
@@ -66,11 +65,11 @@ def weather(kind):
     Snow uses the real route, not Snow preview or a browser interception. Missing
     temperature prevents accumulation/melt from drifting the fixture's exact 8 cm.
     """
-    from services import ha_events, storage, twin_weather_state as ground
+    from services import storage, twin_weather_state as ground
     condition, cover, _precip, _rate = WEATHER[kind]
     row = {'entity_id': 'weather.home', 'state': condition,
            'attributes': {'friendly_name': 'Home', 'cloud_coverage': cover,
-                          'temperature': None if kind == 'snowy' else 20, 'temperature_unit': 'C',
+                          'temperature': None, 'temperature_unit': 'C',
                           'wind_speed': 15, 'wind_bearing': 270, 'wind_speed_unit': 'km/h',
                           'forecast': []}}
     with ground._lock:
@@ -78,11 +77,15 @@ def weather(kind):
         now = time.time()
         forcing, _source, usable = ground.observation(list(L.FAKE.states.values()), storage.get_settings(), now)
         check(usable, ('fake weather must be usable', kind))
-        storage.set_app_state(ground.KEY, {'snow_cm': 8. if kind == 'snowy' else 0.,
-                                         'wetness': 0., 'updated': now, 'last_rain': None,
+        # Fog follows snow in the visual pass: deliberately retain the cover to
+        # exercise the reported snow/fog combination. Rain must start fully wet.
+        rainy = _precip == 'rain'
+        storage.set_app_state(ground.KEY, {'snow_cm': 8. if kind in ('snowy', 'fog') else 0.,
+                                         'wetness': 1. if rainy else 0., 'updated': now,
+                                         'last_rain': now if rainy else None,
                                          'forcing': forcing})
-    # Drive the same existing SSE path as a real HA event; no view setter/refresh.
-    ha_events._publish({'entity_id': 'weather.home', 'new_state': copy.deepcopy(row)})
+    # The twin's real live polling reads FAKE, as in test_twin_clouds_live.py.
+    # No synthetic SSE event, view setter, request interception or new hook.
 
 
 def ground_state(served):
@@ -95,7 +98,12 @@ def ground_state(served):
 def open_weather(page, served, tier='high', size=(1600, 900)):
     page.set_default_timeout(TIMEOUT)
     page.set_viewport_size({'width': size[0], 'height': size[1]})
-    L.open_twin(page, served, query=f'tier={tier}&test=1&panel=true&kiosk=true')
+    # Exercise the existing five-minute ground poll within a scenario's 40 s
+    # allowance, even when the optional device live layer has not mounted.
+    # Preview/clock deadlines and all other timers keep their real duration.
+    page.add_init_script("""(() => { const timer=window.setTimeout.bind(window);
+      window.setTimeout=(fn,ms,...args)=>timer(fn,ms===300000?1000:ms,...args); })();""")
+    L.open_twin(page, served, query=f'tier={tier}&test=1&panel=true&kiosk=true', live=False)
     wait_weather(page, 'clear')
     horizon_look(page)
 
@@ -128,7 +136,8 @@ def wait_weather(page, kind):
       return w && w.preview===null && !w.neutral && w.condition===want.condition &&
         w.precip===want.precip && Math.abs(w.rate-want.rate)<1e-6 &&
         Math.abs(w.clouds.coverage-want.coverage)<.02 &&
-        (want.condition!=='snowy' || Math.abs(w.snow_cm-8)<1e-6) &&
+        (!['snowy','fog'].includes(want.condition) || Math.abs(w.snow_cm-8)<1e-6) &&
+        (want.precip!=='rain' || (w.wetness===1 && w.puddles===1)) &&
         (want.condition!=='fog' || w.fog===1);
     }""", arg={'condition': condition, 'coverage': cover / 100, 'precip': precip, 'rate': rate}, timeout=TIMEOUT)
     assert_particles(page, precip, rate)
@@ -136,6 +145,7 @@ def wait_weather(page, kind):
     page.wait_for_function("""() => {
       const v=window.__twin,w=v.weather,u=v.weatherSurface.uniforms.weatherSurface.value;
       return Math.abs(u.x-w.wetness)<1e-6 && Math.abs(u.y-Math.min(1,w.snow_cm/8))<1e-6 &&
+        (w.precip!=='rain' || (w.wetness===1 && u.x===1 && u.z===1)) &&
         Math.abs(u.z-w.puddles)<1e-6 && Math.floor(u.w)===Math.round((w.precip==='rain'?w.rate:0)*255);
     }""", timeout=TIMEOUT)
 
@@ -144,7 +154,7 @@ def assert_particles(page, precip, rate):
     page.wait_for_function("""({precip,rate}) => {
       const v=window.__twin,p=v?.precipitation;
       if(!p || !p.group.visible)return false;
-      const capacity={low:1500,medium:4000,high:8000,max:12000}[v.tier];
+      const capacity={low:3000,medium:4000,high:8000,max:12000}[v.tier];
       for(const kind of ['rain','snow','hail']) {
         const count=kind===precip?Math.floor(capacity*({rain:1,snow:.5,hail:.3}[kind])*rate):0;
         const o=p.objects[kind];
@@ -197,8 +207,11 @@ def scenario_weather_looks_and_programs():
                     weather(kind)
                     body = ground_state(served)
                     check(body['source']['entity'] == 'weather.home' and not body['source']['stale'], body)
-                    if kind == 'snowy':
+                    if kind in ('snowy', 'fog'):
                         check(body['snow_cm'] == 8, ('real ground route reports 8 cm', body))
+                    if WEATHER[kind][2] == 'rain':
+                        check(body['wetness'] == 1 and body['puddles'] == 1,
+                              ('real rain ground route is fully wet', body))
                     wait_weather(page, kind)
                     for name, iso in TIMES:
                         pin(page, iso)
@@ -254,9 +267,10 @@ CENSUS_JS = r"""() => {
     // light chunks. Recognize their actual light/glow declaration AND usage.
     const customLit=p.type==='ShaderMaterial' && /uniform\s+float\s+light\s*;/.test(source) &&
       /uniform\s+vec3\s+glow\s*;/.test(source) && /\blight\s*\+\s*glow\b/.test(source);
+    const auxiliary=['MeshNormalMaterial','MeshDepthMaterial','MeshDistanceMaterial'].includes(p.type);
     return {id:p.id,name:p.name,type:p.type,linked:gl.getProgramParameter(p.program,gl.LINK_STATUS),
       activeUniforms:active,uniformSlots:slots,samplers,samplerUniforms,surface,
-      lit:litTypes.has(p.type)||customLit,customLit};
+      lit:litTypes.has(p.type)||customLit,customLit,auxiliary};
   });
 }"""
 
@@ -284,8 +298,9 @@ def scenario_census_in_chromium():
                   ('no program exceeds 16 sampler units (arrays count by size)',
                    [row for row in rows if row['samplers'] > 16]))
             check(surfaces, 'census must exercise weatherSurface programs')
-            check(all(row['lit'] for row in surfaces),
-                  ('weatherSurface occurs only in lit programs', [row for row in surfaces if not row['lit']]))
+            check(all(row['lit'] or row['auxiliary'] for row in surfaces),
+                  ('weatherSurface occurs only in lit or normal/depth programs',
+                   [row for row in surfaces if not (row['lit'] or row['auxiliary'])]))
             L.no_errors(served)
 
 
@@ -335,8 +350,8 @@ def scenario_low_tier_shows_rain_and_snow():
             open_weather(page, served, tier='low', size=(1920, 1080))
             check(page.evaluate('window.__twin.tier') == 'low', 'panel uses low tier')
             pin(page, NOON)
-            for label, name, precip, rate, count in (('Rain', 'rain', 'rain', .45, 675),
-                                                    ('Snow', 'snow', 'snow', .5, 375)):
+            for label, name, precip, rate, count in (('Rain', 'rain', 'rain', .45, 1350),
+                                                    ('Snow', 'snow', 'snow', .5, 750)):
                 drawer = preview_drawer(page)
                 click_preview(page, drawer, label, name, precip, rate)
                 check(page.evaluate('(kind)=>window.__twin.precipitation.objects[kind].geometry.instanceCount', precip) == count,

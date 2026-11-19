@@ -6,9 +6,10 @@ import { allPorches } from '../twin_generator.js';
 import { pathSurfacePolygons } from '../path_shapes.js';
 import { yardPaverLayout } from '../paver_path.js';
 import { paverSettings } from '../paver_layout.js';
+import { weatherHaze } from './weather.js';
 
 const FT=.3048, BOX=[128,96,128], LIFE=.42;
-const RAIN={low:1500,medium:4000,high:8000,max:12000};
+const RAIN={low:3000,medium:4000,high:8000,max:12000};
 const ATTEMPTS={low:24,medium:48,high:72,max:96};
 const clamp=(x,a=0,b=1)=>Number.isFinite(x)?Math.max(a,Math.min(b,x)):a;
 const finite=(x,fallback=0)=>Number.isFinite(x)?x:fallback;
@@ -24,8 +25,8 @@ export function precipitationVelocity(kind,weather={},bearing=180,reduced=false)
   return [speed?x*speed*factor:0,-({rain:14,snow:.9,hail:18}[kind]||14)*factor,speed?z*speed*factor:0];
 }
 // CPU reference for the vertex shader's world-anchored toroidal box.
-export function wrappedPosition(seed,travel,anchor) {
-  return BOX.map((size,i)=>anchor[i]+(((seed[i]*size+travel[i]-anchor[i])%size+size)%size)-size/2);
+export function wrappedPosition(seed,travel,anchor,box=BOX) {
+  return box.map((size,i)=>anchor[i]+(((seed[i]*size+travel[i]-anchor[i])%size+size)%size)-size/2);
 }
 
 // A bounded, analytic downward sample: feet in the plan, metres at the draw.
@@ -86,11 +87,18 @@ export function createSplashSampler(plan={},roofs=new Map()) {
 
 const vertexShader=`
 attribute vec3 precipSeed;
-uniform vec3 precipAnchor,precipTravel,precipVelocity;
-uniform float precipKind,precipClock;
+uniform vec3 precipAnchor,precipBox,precipTravel,precipVelocity;
+uniform float precipKind,precipClock,precipRate;
+uniform vec2 precipViewport;
 varying vec2 particleUv;varying vec3 particleWorld;
+float precipitationWidth(float pixels,float kind) {
+  return kind<.5?max(pixels,1.25):pixels;
+}
+float precipitationLength(float pixels,float kind,float rate) {
+  return kind<.5?max(pixels,mix(6.0,10.0,clamp((rate-.45)/.55,0.0,1.0))):pixels;
+}
 void main(){
-  vec3 box=vec3(128.0,96.0,128.0);
+  vec3 box=max(precipBox,vec3(.0001));
   vec3 world=precipAnchor+mod(precipSeed*box+precipTravel-precipAnchor,box)-box*.5;
   if(precipKind>0.5&&precipKind<1.5){
     world.x+=.16*sin(precipClock*1.7+precipSeed.z*30.0);
@@ -98,34 +106,63 @@ void main(){
   }
   particleWorld=world;particleUv=uv;
   vec4 eye=viewMatrix*vec4(world,1.0);
-  vec2 direction=(mat3(viewMatrix)*precipVelocity).xy;
-  direction=length(direction)>1e-5?direction/max(length(direction),1e-5):vec2(0.0,-1.0);
-  vec2 side=vec2(-direction.y,direction.x);
+  // Never expand a near-camera drop into a large foreground smear.
+  if(distance(world,cameraPosition)<2.5){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
   vec2 size=precipKind<.5?vec2(.018,.7):precipKind<1.5?vec2(.10,.10):vec2(.045,.045);
-  eye.xy+=side*position.x*size.x+direction*position.y*size.y;
+  if(precipKind>=.5){
+    // Snow and hail keep their physical billboard sizes, even looking down
+    // the fall axis. Only rain uses the projected streak and pixel floors.
+    vec2 direction=(mat3(viewMatrix)*precipVelocity).xy;
+    direction=length(direction)>1e-5?direction/max(length(direction),1e-5):vec2(0.0,-1.0);
+    vec2 side=vec2(-direction.y,direction.x);
+    eye.xy+=side*position.x*size.x+direction*position.y*size.y;
+    gl_Position=projectionMatrix*eye;return;
+  }
   gl_Position=projectionMatrix*eye;
+  vec2 viewport=max(precipViewport,vec2(1.0));
+  vec3 fall=mat3(viewMatrix)*precipVelocity;
+  fall=length(fall)>1e-5?fall/max(length(fall),1e-5):vec3(0.0,-1.0,0.0);
+  vec4 head=projectionMatrix*(eye+vec4(fall*size.y*.5,0.0));
+  vec4 tail=projectionMatrix*(eye-vec4(fall*size.y*.5,0.0));
+  vec2 projected=(head.xy/max(abs(head.w),.0001)-tail.xy/max(abs(tail.w),.0001))*viewport*.5;
+  float projectedLength=length(projected);
+  vec2 direction=projectedLength>1e-5?projected/max(projectedLength,1e-5):vec2(0.0,-1.0);
+  vec2 side=vec2(-direction.y,direction.x);
+  float streakLength=precipitationLength(projectedLength,precipKind,precipRate);
+  // Width and length are independent drawing-buffer pixel floors along the
+  // projected fall direction, including perspective and viewport aspect.
+  vec2 pixelSide=(projectionMatrix*vec4(side*size.x,0.0,0.0)).xy*viewport*.5;
+  float sideLength=max(length(pixelSide),.0001);
+  float width=sideLength/max(abs(gl_Position.w),.0001);
+  width=precipitationWidth(width,precipKind);
+  gl_Position.xy+=(direction*position.y*streakLength+side*position.x*width)*2.0/viewport*gl_Position.w;
 }`;
 const fragmentCommon=`
 uniform vec3 precipColour;uniform vec2 precipCentre;
+uniform vec3 precipAnchor,precipBox;
 uniform float precipRadius,precipFog;
 varying vec2 particleUv;varying vec3 particleWorld;
 float precipitationFade(){
   float d=distance(particleWorld,cameraPosition);
   float radius=max(precipRadius*(1.0-.85*precipFog),.0001);
   float haze=smoothstep(radius,radius*1.35,distance(particleWorld.xz,precipCentre));
-  return (1.0-smoothstep(40.0,64.0,d)) * smoothstep(.8,1.8,d)*(1.0-haze);
+  float halfExtent=max(precipBox.x*.5,.0001);
+  float edge=distance(particleWorld.xz,precipAnchor.xz);
+  return (1.0-smoothstep(halfExtent*.8,halfExtent,edge)) * smoothstep(2.5,3.5,d)*(1.0-haze);
 }
 vec3 precipSafe(vec3 c){return vec3(c.r>=0.0?min(c.r,4096.0):0.0,c.g>=0.0?min(c.g,4096.0):0.0,c.b>=0.0?min(c.b,4096.0):0.0);}
 `;
 const fragmentShader=fragmentCommon+`
-uniform float precipKind;
+uniform float precipKind,precipRate;
 void main(){
+  if(distance(particleWorld,cameraPosition)<2.5)discard;
   vec2 p=particleUv*2.0-1.0;
-  float alpha=precipKind<.5?(1.0-smoothstep(.3,1.0,abs(p.x)))*(1.0-abs(p.y))*.5:
+  float alpha=precipKind<.5?(1.0-smoothstep(.3,1.0,abs(p.x)))*(1.0-abs(p.y))*mix(.35,.85,precipRate):
     (1.0-smoothstep(.5,1.0,length(p)))*.8;
   alpha*=precipitationFade();
   if(alpha<.001)discard;
-  gl_FragColor=vec4(precipSafe(precipColour),clamp(alpha,0.0,1.0));
+  // Hemisphere colour has unit peak; lift rain just above the overcast sky.
+  gl_FragColor=vec4(precipSafe(precipColour*(precipKind<.5?1.2:1.0)),clamp(alpha,0.0,1.0));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
@@ -164,15 +201,17 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
   const group=new THREE.Group();group.name='weather-precipitation';scene.add(group);
   // No domain ownership, picking layer or effect fixture: editor hide/lock does
   // not classify these. Extras excludes the whole group from every capture.
-  const uniforms={precipAnchor:{value:new THREE.Vector3()},precipColour:{value:new THREE.Vector3(.6,.7,.8)},
+  const uniforms={precipAnchor:{value:new THREE.Vector3()},precipBox:{value:new THREE.Vector3(36,25,36)},precipColour:{value:new THREE.Vector3(.6,.7,.8)},
+    precipViewport:{value:new THREE.Vector2(1,1)},precipRate:{value:0},
     precipCentre:{value:new THREE.Vector2()},precipRadius:{value:100},precipFog:{value:0},
     precipClock:{value:0},splashTime:{value:0}};
-  const objects={},travels={};let last=null,clock=0,disposed=false,sample=()=>null,credit=0,cursor=0,wasRaining=false;
+  const objects={},travels={};let last=null,clock=0,disposed=false,sample=()=>null,plan={},credit=0,cursor=0,wasRaining=false;
   const motion=globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)');
   function mesh(name,g,vs,fs,own={}) {
     const material=new THREE.ShaderMaterial({name:'weather-'+name,uniforms:{...uniforms,...own},vertexShader:vs,fragmentShader:fs,
       transparent:true,depthWrite:false,depthTest:true,side:THREE.DoubleSide,lights:false,fog:false});
     const o=new THREE.Mesh(g,material);o.name='weather-'+name;o.frustumCulled=false;o.visible=false;
+    o.onBeforeRender=renderer=>renderer.getDrawingBufferSize(uniforms.precipViewport.value);
     o.raycast=()=>{};o.castShadow=o.receiveShadow=false;o.renderOrder=20;
     objects[name]=o;group.add(o);return o;
   }
@@ -190,20 +229,25 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
   mesh('splash',sg,splashVertex,splashFragment);
   const api={group,objects,uniforms,
     setStage({centre,radius}){if(centre?.every(Number.isFinite))uniforms.precipCentre.value.fromArray(centre);if(Number.isFinite(radius)&&radius>0)uniforms.precipRadius.value=radius;},
-    setPlan(plan,roofs){sample=createSplashSampler(plan,roofs);born.fill(-1e6);sg.attributes.splashBorn.needsUpdate=true;credit=0;},
-    update(now,weather,camera,{bearing=180,unlit=false,colour=[.6,.7,.8],reduced=motion?.matches}={}){
+    setPlan(value,roofs){plan=value;sample=createSplashSampler(plan,roofs);born.fill(-1e6);sg.attributes.splashBorn.needsUpdate=true;credit=0;},
+    update(now,weather,camera,{target=camera.position,bearing=180,unlit=false,colour=[.6,.7,.8],reduced=motion?.matches}={}){
       if(disposed)return;
       now=finite(now);const dt=last===null?0:clamp(now-last,0,1);last=now;clock+=dt*(reduced?.35:1);
-      uniforms.precipClock.value=clock;uniforms.splashTime.value=now;uniforms.precipFog.value=clamp(weather?.fog);
+      uniforms.precipClock.value=clock;uniforms.splashTime.value=now;uniforms.precipFog.value=weatherHaze(weather);
+      uniforms.precipRate.value=clamp(weather?.rate);
       if(colour?.every(Number.isFinite))uniforms.precipColour.value.fromArray(colour.map(c=>clamp(c,.015,1)));
-      uniforms.precipAnchor.value.copy(camera.position);
+      const halfExtent=clamp(.75*camera.position.distanceTo(target),18,64);
+      const bottom=finite(groundAt(plan,target.x/FT,-target.z/FT))*FT;
+      const top=Math.max(bottom+.0001,25,camera.position.y+8);
+      uniforms.precipBox.value.set(halfExtent*2,top-bottom,halfExtent*2);
+      uniforms.precipAnchor.value.copy(target).lerp(camera.position,.35);uniforms.precipAnchor.value.y=(bottom+top)*.5;
       const counts=precipitationCounts(tier,unlit?{}:weather);
       for(const kind of ['rain','snow','hail']){
         const o=objects[kind],velocity=precipitationVelocity(kind,weather,bearing,reduced);
         o.geometry.instanceCount=counts[kind];o.visible=counts[kind]>0;
         o.material.uniforms.precipVelocity.value.fromArray(velocity);
         travels[kind].addScaledVector(o.material.uniforms.precipVelocity.value,dt);
-        for(const axis of ['x','y','z']){const size=BOX[{x:0,y:1,z:2}[axis]];travels[kind][axis]=((travels[kind][axis]%size)+size)%size;}
+        for(const axis of ['x','y','z']){const size=uniforms.precipBox.value[axis];travels[kind][axis]=((travels[kind][axis]%size)+size)%size;}
       }
       const raining=counts.rain>0;
       if(!raining){

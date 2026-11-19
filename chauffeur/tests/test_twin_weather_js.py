@@ -17,6 +17,16 @@ const {installPlantWind,windVector}=await import(file('static/twin/sky/wind.js')
 const {installStageHaze}=await import(file('static/twin/sky/stage_haze.js'));
 const now=Date.parse('2026-11-19T14:30:00Z')/1000;
 const entity=(state,attributes={})=>({state,attributes});
+await test('rain veil and fog share their maximum density, not their sum',()=>{
+ for(const precip of ['rain','mix']){
+  assert.equal(W.weatherHaze({precip,rate:1}),.25);
+  assert.equal(W.weatherHaze({precip,rate:.4,fog:.05}),.1);
+  assert.equal(W.weatherHaze({precip,rate:1,fog:.7}),.7);
+  assert.equal(W.weatherHaze({precip,rate:1,fog:1}),1);
+ }
+ for(const precip of ['snow','hail','none'])assert.equal(W.weatherHaze({precip,rate:1,fog:.2}),.2);
+ assert.equal(W.weatherHaze({rate:NaN,fog:Infinity}),0);
+});
 await test('every HA condition and missing/invalid quantities gives a finite defined state',()=>{
  const kinds={rainy:['rain',.45],pouring:['rain',1],'lightning-rainy':['rain',.8],snowy:['snow',.5],'snowy-rainy':['mix',.5],hail:['hail',.7]};
  for(const condition of ['sunny','clear-night','partlycloudy','cloudy','exceptional','fog','lightning','windy','windy-variant',...Object.keys(kinds),'unknown','unavailable','other']){
