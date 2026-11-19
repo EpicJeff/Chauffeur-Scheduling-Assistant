@@ -3,6 +3,7 @@ import { solarLayout } from '../twin_solar.js';
 import { contains, allPorches } from '../twin_generator.js';
 import { materialLines } from './library.js';
 import { createSlotRow, idleLibrary } from './slot_row.js';
+import { keepPlace } from './keep_place.js';
 import { createEquipmentShelf } from './equipment_shelf.js';
 import { foundationShelf } from './foundation_shelf.js';
 import { houseMaterialsShelf } from './house_materials.js';
@@ -115,7 +116,12 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
   function drawHaSection(record) {
     if (haSection) haLink.draw(haSection, record);
   }
+  // A field that shows or hides other fields rebuilds the card: keep the person's place.
   function draw(next = selection) {
+    const same = !!next && !!selection && next.pieceId === selection.pieceId && next.buildingId === selection.buildingId;
+    return same ? keepPlace(host, () => drawCard(next)) : drawCard(next);
+  }
+  function drawCard(next = selection) {
     if (!next && host.dataset.fixtureCard) return;
     if (next || host.dataset.stairDraft) host.dispatchEvent(new Event('fixturecardrelease'));
     // The two-click add tool temporarily owns the same card surface. Polling
