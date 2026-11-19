@@ -252,6 +252,18 @@ WATER_JS = r"""() => {
 }"""
 
 
+# Open patio away from the kitchen lamp, in the owner's eye pose at 1600x900.
+PATIO_BOX = (950, 500, 1500, 570)
+
+
+def patio_luminance(page):
+    import io
+    from PIL import Image, ImageStat
+    image = Image.open(io.BytesIO(page.screenshot(timeout=TIMEOUT))).convert('L')
+    check(image.size == (1600, 900), ('owner screenshot size', image.size))
+    return ImageStat.Stat(image.crop(PATIO_BOX)).mean[0]
+
+
 def scenario_rain_build_up_at_the_pool():
     with fixture() as served:
         if served is None:
@@ -268,7 +280,7 @@ def scenario_rain_build_up_at_the_pool():
                     page.wait_for_timeout(1500)
             warmed = set(page.evaluate(PACKED_JS)['programs'])
             started = choose_preview(page, 'Rain', 'rain')
-            samples = []
+            samples, patio = [], []
             for seconds in (0, 30, 60, 90):
                 page.wait_for_function('stamp => Date.now()>=stamp', arg=started+seconds*1000, timeout=RAMP_TIMEOUT)
                 row = page.evaluate(PACKED_JS)
@@ -277,9 +289,14 @@ def scenario_rain_build_up_at_the_pool():
                 check(abs(row['packed'][0]-min(1, elapsed/90)) < .035, ('packed wetness follows the ramp', elapsed, row))
                 check(set(row['programs']) <= warmed, ('no new program after warm-up', seconds, row))
                 samples.append(row['packed'][0])
+                patio.append(patio_luminance(page))
                 screenshot(page, f'owner_rain_{seconds}.png')
             check(samples[0] < .1 and samples[-1] > .98 and all(a < b for a, b in zip(samples, samples[1:])),
                   ('packed wetness rises from dry to wet', samples))
+            # The pixels, not just the uniform (owner 2026-11-19: 90 minutes looked dry).
+            check(patio[-1] <= .88*patio[0], ('wet patio reads darker than dry on screen', patio))
+            check(all(b <= a*1.02 for a, b in zip(patio, patio[1:])), ('the patio never brightens as it wets', patio))
+            print('OWNER_PATIO_LUMINANCE ' + json.dumps([round(v, 1) for v in patio]))
             choose_preview(page, 'Pouring', 'pouring')
             H.settle(page, 30)
             water = page.evaluate(WATER_JS)

@@ -52,7 +52,7 @@ await test('one packed vector: ground units, bounded rate/phase, neutral and rai
 });
 await test('executed wet and snow/puddle curves preserve identity and slope rules',()=>{
  const wet=scalar('weatherWetScale'),rough=scalar('weatherRoughness');
- close(wet(1,0,1),.65);assert.ok(wet(.01,0,1)>.9);assert.ok(wet(1,1,1)>.9);
+ close(wet(1,0,1),.5);assert.ok(wet(.01,0,1)>.9);assert.ok(wet(1,1,1)>.9);
  close(wet(.3,0,0),1);close(rough(.8,1,0,0),.12);close(rough(.8,1,1,0),.03);
  close(rough(.8,1,1,1),.7);
  const snow=scalar('weatherSnow'),puddle=scalar('weatherPuddle');
@@ -153,7 +153,10 @@ await test('spatial progression: measured paving, coping stone, lawn and vertica
   }
   m.dispose();
  }
- close(wetScale(1,0,.25/.35),.75,'a fresh resolved impact darkens 25 percent');
+ close(wetScale(1,0,.25/.5),.75,'a fresh resolved impact darkens 25 percent');
+ // Wet ground keeps its sky reflection only where the reflected ray rises (owner 2026-11-19).
+ const horizon=scalar('weatherHorizon');close(horizon(0,1),.22);close(horizon(.6,1),1);close(horizon(0,0),1);
+ assert.ok(horizon(.2,1)>horizon(.05,1)&&horizon(.2,1)<1,'damping eases in as the reflection rises');
 });
 await test('built house and household: every lit kind, grass, baked lamps, water, effects and viewing clones',()=>{
  const renderer=new Renderer(),scene=new THREE.Scene();renderer.toneMapping=THREE.ACESFilmicToneMapping;

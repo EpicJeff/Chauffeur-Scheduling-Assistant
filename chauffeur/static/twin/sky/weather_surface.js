@@ -12,6 +12,12 @@ uniform vec4 weatherSurface;
 // Per-invocation temporaries, not uniforms. Derivatives are captured before
 // receiver branches so covered/uncovered lanes never yield undefined slopes.
 vec3 weatherWorldDx,weatherWorldDy;
+// Sky reflection kept on wet ground: 1 dry, lower where the reflected ray runs
+// toward the horizon (house, trees and fences there, not bright sky).
+float weatherHorizonDamp=1.0;
+float weatherHorizon(float reflectedUp, float wet) {
+  return mix(1.0,mix(.22,1.0,smoothstep(.04,.5,reflectedUp)),clamp(wet,0.0,1.0));
+}
 float weatherExposure(float value, float openSky) {
   return value*clamp(openSky,0.0,1.0);
 }
@@ -27,8 +33,8 @@ float weatherEdge(vec2 p) {
   return weatherNoise(p*.35)*.67+weatherNoise(p*.7+vec2(19.1,7.7))*.33;
 }
 float weatherWetScale(float luminance, float metal, float wet) {
-  float identity=smoothstep(.02,.5,luminance)*mix(1.0,.2,metal);
-  return 1.0-.35*wet*identity;
+  float identity=smoothstep(.02,.5,luminance)*mix(1.0,.14,metal);
+  return 1.0-.5*wet*identity;
 }
 float weatherSpot(float wet, float seed, float shape) {
   return smoothstep(seed*.35,seed*.35+.02,wet)*shape;
@@ -54,13 +60,15 @@ float weatherRingSupport(float d, float age) {
 // Three-centimetre impact marks. Integrating unresolved discs avoids glitter
 // at distance, while resolved spots keep their own hashed arrival threshold.
 float weatherDrops(vec2 world, float wet, vec2 dx, vec2 dy) {
-  vec2 p=world/.03,id=floor(p),local=fract(p)-.5;
-  float radius=mix(.28,.48,weatherHash(id+17.3));
+  vec2 p=world/.03,id=floor(p);
+  float radius=mix(.26,.42,weatherHash(id+17.3));
+  vec2 jitter=(vec2(weatherHash(id+3.1),weatherHash(id+41.7))-.5)*2.0*(.5-radius);
+  vec2 local=fract(p)-.5-jitter;
   float d=length(local);vec2 direction=local/max(d,.001);
   float aa=max((abs(dot(direction,dx))+abs(dot(direction,dy)))/.03,.001);
   float disc=1.0-smoothstep(radius-aa,radius+aa,d);
   float footprint=max(abs(dx.x)+abs(dy.x),abs(dx.y)+abs(dy.y))/.03;
-  disc=mix(disc,3.14159*radius*radius,smoothstep(.5,1.5,footprint));
+  disc=mix(disc,3.14159*radius*radius,smoothstep(.25,1.0,footprint));
   return weatherSpot(wet,weatherHash(id),disc);
 }
 float weatherSnow(float up, float cover, float edge) {
@@ -145,6 +153,9 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
     vec2 weatherDx=abs(weatherUp)>.5?weatherWorldDx.xz:(abs(weatherFace.x)>abs(weatherFace.z)?weatherWorldDx.zy:weatherWorldDx.xy);
     vec2 weatherDy=abs(weatherUp)>.5?weatherWorldDy.xz:(abs(weatherFace.x)>abs(weatherFace.z)?weatherWorldDy.zy:weatherWorldDy.xy);
     float weatherDrop=weatherSurface.x>0.0&&weatherSurface.x<.9?weatherDrops(weatherPlane,weatherSurface.x,weatherDx,weatherDy):0.0;
+    #ifdef WEATHER_SURFACE_LAWN
+      weatherDrop=0.0;
+    #endif
     float weatherFilmValue=weatherFilm(weatherSurface.x);
     float weatherGlossValue=weatherExposure(weatherGloss(weatherSurface.x,weatherDrop),vWeatherOpen);
     #ifdef WEATHER_SURFACE_ROOF
@@ -194,6 +205,11 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
   if(weatherRingWeight>0.0)weatherSlope=weatherRipple(vWeatherWorld.xz)*weatherRingWeight;
   vec3 weatherNormal=normal+mat3(viewMatrix)*vec3(weatherSlope.x,0.0,weatherSlope.y);
   normal=weatherNormal/max(length(weatherNormal),.0001);
+  #if !defined(WEATHER_SURFACE_WATER)&&!defined(WEATHER_SURFACE_ROOF)
+    vec3 weatherReflected=inverseTransformDirection(reflect(normalize(vViewPosition),normal),viewMatrix);
+    // Any wet gloss already strengthens grazing reflection; damp it fully from a third on.
+    weatherHorizonDamp=weatherHorizon(weatherReflected.y,smoothstep(0.0,.35,max(weatherGlossValue,weatherP))*(1.0-weatherS));
+  #endif
 }
 #endif
 #endif
@@ -213,6 +229,7 @@ weatherWorld=instanceMatrix*weatherWorld;
 vWeatherWorld=(modelMatrix*weatherWorld).xyz;`;
   THREE.ShaderChunk.lights_pars_begin=WEATHER_GLSL+THREE.ShaderChunk.lights_pars_begin;
   THREE.ShaderChunk.normal_fragment_maps+=APPLY;
+  THREE.ShaderChunk.lights_fragment_maps+='\n#if defined(RE_IndirectSpecular)&&defined(WEATHER_SURFACE_ACTIVE)\nradiance*=weatherHorizonDamp;\n#endif\n';
 }
 
 function patchLit(mode) {
