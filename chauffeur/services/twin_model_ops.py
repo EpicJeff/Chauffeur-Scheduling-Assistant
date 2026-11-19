@@ -859,8 +859,8 @@ def _material(building, op, model=None):
     if not isinstance(target, dict):
         raise Refused('Choose a surface for the material.')
     if 'site' in target:
-        from services.twin_surface_kinds import KINDS
-        allowed = [row['kind'] for row in KINDS if row['scope'] == 'site']
+        from services.twin_site_shapes import SITE_ROLES
+        allowed = SITE_ROLES
         if target.get('site') is not True or target.get('role') not in allowed or model is None:
             raise Refused('Choose a surface for the material.')
     from services.twin_library import normalize_material_slot
@@ -899,7 +899,13 @@ def _material(building, op, model=None):
                'walls': 'wall_material'}[target['surface']]
     elif 'roof' in target:
         owner = _find(building, 'roofs', target['roof'])
-        container, key = owner, 'material'
+        if 'plane' in target:
+            plane = target['plane']
+            if type(plane) is not int or not 0 <= plane < len(owner['edges']):
+                raise Refused('Choose a roof area edge for the plane material.')
+            container, key = owner.setdefault('plane_materials', {}), str(plane)
+        else:
+            container, key = owner, 'material'
     elif 'dormer' in target:
         owner = _find(building, 'dormers', target['dormer'])
         container, key = owner, 'material'
@@ -912,6 +918,8 @@ def _material(building, op, model=None):
         container.pop(key, None)
         if 'part' in target and not container:
             owner.pop('materials', None)
+        if 'plane' in target and not container:
+            owner.pop('plane_materials', None)
     else:
         container[key] = deepcopy(material)
 

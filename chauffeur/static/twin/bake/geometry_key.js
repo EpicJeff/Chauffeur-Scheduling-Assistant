@@ -1,7 +1,7 @@
 // Streaming geometry identity, shared by atlas and local reach keys.
 // Authored geometry also invalidates bakes when render-only objects/terrain
 // change. Device placement belongs to each light's key, never the atlas.
-const renderMetadata = new Set(['tier', 'lod', 'lods', 'src', 'name', 'label', 'notes']);
+const renderMetadata = new Set(['tier', 'lod', 'lods', 'src', 'name', 'label', 'notes', 'plane_edges']);
 export function authoredGeometry(plan) {
   const canonical = value => {
     if (Array.isArray(value)) return value.map(canonical);

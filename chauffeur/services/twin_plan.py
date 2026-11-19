@@ -530,6 +530,64 @@ def _details(building, levels, notes):
         building[name] = valid_items
 
 
+def _surface_slots(building, notes):
+    """Clean overrides only; never materialize defaults on an untouched surface."""
+    from services.twin_library import normalize_material_slot
+    from services.twin_surface_kinds import clean_slots
+
+    def ref(owner, key):
+        if key not in owner:
+            return
+        try:
+            # These fields predate the Library and may name procedural assets.
+            value = normalize_material_slot(owner[key], validate_id=False)
+        except ValueError:
+            value = None
+            notes.append(f'Reset invalid {key} material on {owner.get("id", "surface")}.')
+        if value is None:
+            owner.pop(key)
+        else:
+            owner[key] = value
+
+    for owner in [building, *building.get('levels', [])]:
+        if 'materials' in owner:
+            owner['materials'] = clean_slots(owner['materials'], None, notes, owner.get('id', 'House'), validate_id=False)
+    for wall in building.get('walls', []):
+        if 'faces' in wall:
+            faces = clean_slots(wall['faces'], ('left', 'right'), notes, wall.get('id', 'Wall'), validate_id=False)
+            if faces:
+                wall['faces'] = faces
+            else:
+                wall.pop('faces')
+    for room in building.get('rooms', []):
+        for key in ('floor_material', 'ceiling_material', 'wall_material'):
+            ref(room, key)
+    for roof in [*building.get('roofs', []), *building.get('dormers', []),
+                 *building.get('roof', {}).get('sections', [])]:
+        ref(roof, 'material')
+        if 'plane_materials' not in roof:
+            continue
+        values = roof['plane_materials']
+        # Flat sections retain the whole area's map, including edges belonging
+        # to other sections. Bounds are checked on the authored area model.
+        count = len(roof['edges']) if isinstance(roof.get('edges'), list) else None
+        valid = {}
+        if isinstance(values, dict):
+            for key, value in values.items():
+                if (isinstance(key, str) and key.isascii() and key.isdecimal()
+                        and str(int(key)) == key and (count is None or int(key) < count)):
+                    valid[key] = value
+                else:
+                    notes.append(f'Reset invalid roof plane edge {key}.')
+        else:
+            notes.append('Reset invalid roof plane materials; expected an object.')
+        valid = clean_slots(valid, None, notes, roof.get('id', 'Roof'))
+        if valid:
+            roof['plane_materials'] = valid
+        else:
+            roof.pop('plane_materials')
+
+
 def _site(site, notes):
     from services import twin_terrain
     if site.get('lot') is not None and not _polygon(site['lot']):
@@ -546,7 +604,7 @@ def _site(site, notes):
         # A material the Library no longer has resets that feature to its default look;
         # the feature itself is kept.
         if isinstance(piece, dict) and 'materials' in piece:
-            if name in ('pool', 'spa'):
+            if name in ('pool', 'spa', 'ledge', 'steps'):
                 from services.twin_surface_kinds import clean_slots
                 piece['materials'] = clean_slots(piece['materials'], twin_site_shapes.SLOTS[name], notes,
                                                 f'Reset {name} materials')
@@ -582,8 +640,8 @@ def _site(site, notes):
         for value in values:
             try:
                 # Missing Library assets reset only their slots, like other yard shapes.
-                if isinstance(value, dict) and value.get('kind') == 'spa':
-                    slots('spa', value)
+                if isinstance(value, dict) and value.get('kind') in ('spa', 'ledge', 'steps'):
+                    slots(value['kind'], value)
                 feature = twin_site_shapes.pool_feature(pool, value)
                 if len(kept) >= 12 or feature['id'] in seen:
                     raise ValueError('At most 12 features with unique ids.')
@@ -722,6 +780,7 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         _openings(building, walls, sections, notes)
         _details(building, levels, notes)
         _item_slots(building, notes)
+        _surface_slots(building, notes)
         buildings.append(building)
     site = raw.get('site')
     if 'site' in raw and not isinstance(site, dict):
@@ -738,6 +797,8 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
     if not isinstance(materials, dict):
         notes.append('Coerced invalid materials to an empty object.')
         materials = {}
+    from services.twin_surface_kinds import clean_slots
+    materials = clean_slots(materials, None, notes, 'House', validate_id=False)
     return {'schema': SCHEMA, 'units': 'ft', 'materials': materials,
             'buildings': buildings, 'site': site}, notes
 

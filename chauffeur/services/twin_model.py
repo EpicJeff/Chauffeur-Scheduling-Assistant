@@ -636,6 +636,7 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
             room['floor_offset_ft'] = value
         _pieces(building, notes)
         twin_plan._item_slots(building, notes)
+        twin_plan._surface_slots(building, notes)
         twin_floors.derive_openings(building)
         filter_checked_flags(building)
         buildings.append(building)
@@ -655,6 +656,8 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
     if not isinstance(materials, dict):
         materials = {}
         notes.append('Coerced invalid materials to an empty object.')
+    from services.twin_surface_kinds import clean_slots
+    materials = clean_slots(materials, None, notes, 'House', validate_id=False)
     result = {'schema': SCHEMA, 'units': 'ft', 'materials': materials,
             'buildings': buildings, 'site': site,
             'ha_display': _ha_display(model.get('ha_display'), notes),
