@@ -12,7 +12,7 @@ DRIVER = r"""
 try {
  const nativeFetch=globalThis.fetch,errors=[],alerts=[];
  window.chfBase=config.url;window.showGlobalAlert=message=>alerts.push(message);
- let releaseRedo=null,holdRedo=false;
+ let releaseRedo=null,holdRedo=false,restoreRound=null;
  globalThis.fetch=async(url,init={})=>{
   if(holdRedo && String(url).endsWith('twin/revert')){holdRedo=false;await new Promise(resolve=>{releaseRedo=resolve;});}
   return nativeFetch(url,{...init,headers:{...init.headers,'X-Member-Token':config.token}});
@@ -31,7 +31,8 @@ try {
   await refresh();return result;
  });
  const until=async predicate=>{for(let i=0;i<500&&!predicate();i++)await wait(10);assert.ok(predicate(),'history settles');};
- const idle=()=>!document.getElementById('rail-undo').disabled;
+ // Undo stays enabled while work is queued; wait for its real route and refresh.
+ const idle=()=>current()!==restoreRound&&!document.getElementById('rail-undo').disabled;
  const zone=s=>s.model.buildings.find(b=>b.id===config.create.building).solar_zones[0];
  const created=await apply(config.create),rect=[...zone(state).rect];rect[2]+=4;
  const resize=apply({op:'update_solar_zone',building:config.create.building,id:zone(state).id,rect},true);
@@ -41,10 +42,10 @@ try {
  assert.notEqual(created.round,resized.round);assert.notEqual(resized.round,sourced.round);
  assert.equal(state.model.solar_source_roof,config.create.roof);assert.deepEqual(zone(state).rect,rect);
  console.log('  ok actual add, resize and queued source requests create distinct stored rounds');
- await press(document.getElementById('rail-undo'));await until(idle);await refresh();
+ restoreRound=current();await press(document.getElementById('rail-undo'));await until(idle);await refresh();
  assert.equal(state.model.solar_source_roof,null);assert.deepEqual(zone(state).rect,rect);
  console.log('  ok real history undo removes only the source designation and retains the resize');
- holdRedo=true;await press(document.getElementById('rail-redo'));await until(()=>!!releaseRedo);
+ restoreRound=current();holdRedo=true;await press(document.getElementById('rail-redo'));await until(()=>!!releaseRedo);
  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
  const pending=await read();assert.equal(pending.model.solar_source_roof,null);assert.equal(idle(),false);
  console.log('  ok two animation frames do not complete a pending redo request');

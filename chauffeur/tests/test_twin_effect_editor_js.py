@@ -26,7 +26,7 @@ function setup(fixtures=[]){
  globalThis.fetch=async()=>{throw new Error('HA absent');};
  window.promptChoice=async(...args)=>{prompts.push(args);return choices.shift()??null;};
  window.promptInput=async()=>null;window.promptConfirm=async()=>true;
- const options={view,tools:{setTool(){},select(){},haLink:{state:()=>({devices:[]})}},library:{surfaceAt:()=>null,ground:e=>[e.clientX,e.clientY]},
+ const options={view,tools:{setTool(){},select(){},selection:()=>({}),haLink:{state:()=>({devices:[]})}},library:{surfaceAt:()=>null,ground:e=>[e.clientX,e.clientY]},
   getPlan:()=>plan,op:async o=>sent.push(o),canEdit:()=>editable,signal:signal.signal,report:e=>errors.push(String(e))};
  const editor=createFixtureEditor(options);
  return {plan,sent,errors,choices,prompts,view,editor,signal,library:options.library,lock:()=>{editable=false;},card:()=>document.getElementById('piece-card')};
