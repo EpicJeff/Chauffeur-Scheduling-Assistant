@@ -17,14 +17,17 @@ const {installPlantWind,windVector}=await import(file('static/twin/sky/wind.js')
 const {installStageHaze}=await import(file('static/twin/sky/stage_haze.js'));
 const now=Date.parse('2026-11-19T14:30:00Z')/1000;
 const entity=(state,attributes={})=>({state,attributes});
-await test('rain veil and fog share their maximum density, not their sum',()=>{
+await test('rain veil takes the shorter visibility and fog without visibility defaults to 300m',()=>{
  for(const precip of ['rain','mix']){
-  assert.equal(W.weatherHaze({precip,rate:1}),.25);
-  assert.equal(W.weatherHaze({precip,rate:.4,fog:.05}),.1);
-  assert.equal(W.weatherHaze({precip,rate:1,fog:.7}),.7);
-  assert.equal(W.weatherHaze({precip,rate:1,fog:1}),1);
+  assert.equal(W.weatherExtinction({precip,rate:1}),3.912/3000);
+  assert.equal(W.weatherExtinction({precip,rate:.4}),3.912/(20000-17000*.4));
+  assert.equal(W.weatherExtinction({precip,rate:1,visibilityM:300}),3.912/300);
+  assert.equal(W.weatherExtinction({precip,rate:1,visibilityM:10000}),3.912/3000);
  }
- for(const precip of ['snow','hail','none'])assert.equal(W.weatherHaze({precip,rate:1,fog:.2}),.2);
+ for(const precip of ['snow','hail','none'])assert.equal(W.weatherExtinction({precip,rate:1,visibilityM:300}),3.912/300);
+ assert.equal(W.weatherExtinction(W.weatherState(entity('fog'))),3.912/300);
+ assert.equal(W.weatherExtinction(W.weatherState(entity('fog',{visibility:10}))),3.912/10000);
+ assert.equal(W.weatherExtinction(W.neutralWeather()),0);
  assert.equal(W.weatherHaze({rate:NaN,fog:Infinity}),0);
 });
 await test('every HA condition and missing/invalid quantities gives a finite defined state',()=>{
@@ -117,12 +120,12 @@ await test('grass and plant uniforms change without keys, shaders or samplers ch
  const east=windVector(W.weatherState(entity('sunny',{wind_speed:10,wind_speed_unit:'m/s',wind_bearing:270})),180);assert.ok(east[0]>0&&Math.abs(east[1])<1e-8);
  wind.dispose();still.dispose();geo.dispose();grass.dispose();leaves.dispose();branches.dispose();low.dispose();
 });
-await test('fog scales existing radius to 15 percent with no additional lit uniforms',()=>{
+await test('camera fog preserves stage radius with no additional lit uniforms',()=>{
  const scene=new THREE.Scene(),m=new THREE.MeshStandardMaterial(),geo=new THREE.BoxGeometry();scene.add(new THREE.Mesh(geo,m));
  const haze=installStageHaze(scene,{horizon:()=>new THREE.Color(.3,.4,.5)});haze.set({radius:100});haze.prepare();
  const s={uniforms:{},vertexShader:'',fragmentShader:''};m.onBeforeCompile(s,{});const key=m.customProgramCacheKey(),names=Object.keys(s.uniforms);
- haze.set({fog:1});assert.ok(Math.abs(s.uniforms.stageRadius.value-15)<1e-10);assert.equal(m.customProgramCacheKey(),key);assert.deepEqual(Object.keys(s.uniforms),names);
- haze.set({radius:200});assert.ok(Math.abs(s.uniforms.stageRadius.value-30)<1e-10);haze.set({fog:0});assert.equal(s.uniforms.stageRadius.value,200);haze.dispose();geo.dispose();m.dispose();
+ haze.set({extinction:3.912/300});assert.equal(s.uniforms.stageRadius.value,100);assert.equal(s.uniforms.stageRing.value[0].w,3.912/300);assert.equal(m.customProgramCacheKey(),key);assert.deepEqual(Object.keys(s.uniforms),names);
+ haze.set({radius:200});assert.equal(s.uniforms.stageRadius.value,200);haze.set({extinction:0});assert.equal(s.uniforms.stageRadius.value,200);haze.dispose();geo.dispose();m.dispose();
 });
 await test('real household mount: weather previews, Now, live editor opt-in and neutral restoration',async()=>{
  const mount=async(editor=false)=>{const el=new Element();if(editor){const shell=new Element();shell.className='editor-shell';shell.append(el);}return mountTwin(el,{plan:structuredClone(input.plan),kit:{materials:{}},tier:'low',bake:false});};

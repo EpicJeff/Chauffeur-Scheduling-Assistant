@@ -22,7 +22,7 @@ import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from '
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
 import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/atmosphere.js';
 import { createCloudPass } from './sky/cloud_pass.js';
-import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze } from './sky/weather.js';
+import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction } from './sky/weather.js';
 import { installPlantWind } from './sky/wind.js';
 import { installStageHaze } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
@@ -451,12 +451,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     seasons.update(view.season);
     weatherSurface.update(view.weather,performance.now()/1000);
     if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces){
-      seasonTouches.setPlan(plan);
+      seasonTouches.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);
       precipitation.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;
     }
     precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
-      unlit:state.unlit,colour:timeLook?.skyColor});
-    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext';
+      level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,colour:timeLook?.skyColor});
+    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext'&&(!view.levels||view.levels.snapshot().level==='house');
     const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
     const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
     seasonTouches.update(performance.now()/1000,view.season,view.weather,camera,{target:controls.target,plants:yardGroup,
@@ -1531,7 +1531,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const seasonNow=clockNow(),seasonSite=resolveSite(site,seasonNow);
     view.season=seasonState(seasonNow,seasonSite.lat,groundWeather,{neutral:editor&&!state.liveWeather,preview:seasonPreview.get()});
     seasons.update(view.season);
-    stageHaze.set({enabled:!state.unlit,fog:weatherHaze(view.weather)});
+    stageHaze.set({enabled:!state.unlit,extinction:weatherExtinction(view.weather)});
     cloudShadow.set({enabled:!state.unlit});
     sky.setEnabled(!state.unlit);
     if (state.unlit) {
@@ -1547,17 +1547,18 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const illumination = moonIllumination(date), overcast = view.weather.clouds.coverage;
     const sunDir = modelDirection(solar.azimuth, solar.altitude, located.front_bearing_deg);
     const moonDir = modelDirection(lunar.azimuth, lunar.altitude, located.front_bearing_deg);
-    const cloudWeather=view.weather.clouds,radianceInput={sunDir,moonDir,moonFraction:illumination.fraction,overcast,fog:view.weather.fog};
+    const cloudWeather=view.weather.clouds,extinction=weatherExtinction(view.weather),fog=weatherHaze(view.weather),radianceInput={sunDir,moonDir,moonFraction:illumination.fraction,overcast,fog};
+    stageHaze.set({fogColour:fogColour(radianceInput)});
     const cloudIrradiance=sampleSkyIrradiance(radianceInput);
     clouds.update(cloudWeather,{sunDir,moonDir,frontBearingDeg:located.front_bearing_deg,
       sunRadiance:transmittance([sunDir[0],Math.max(0,sunDir[1]),sunDir[2]]).map(v=>v*10),
       moonRadiance:transmittance(moonDir).map(v=>v*.02*illumination.fraction),
-      ambientTop:cloudIrradiance.top,ambientBottom:cloudIrradiance.bottom,fog:view.weather.fog,fogColour:fogColour(radianceInput)});
+      ambientTop:cloudIrradiance.top,ambientBottom:cloudIrradiance.bottom,extinction,fogColour:fogColour(radianceInput)});
     cloudShadow.set({sunDir,moonDir});
     cloudShadow.frame(performance.now()/1000);
     const skyChanged = sky.update({sunDir, moonDir, moonPhase:illumination.phase, moonFraction:illumination.fraction,
       moonDistanceKm:lunar.distance, siderealTime:localSiderealTime(date,located.lon),
-      frontBearingDeg:located.front_bearing_deg, overcast, fog:view.weather.fog, latitude:located.lat, force:moved || forceSky});
+      frontBearingDeg:located.front_bearing_deg, overcast, fog, extinction, latitude:located.lat, force:moved || forceSky});
     if (skyChanged) stageHaze.refresh();
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
       { shadows: settings.shadows, overcast, sunTransmittance:cloudShadow.centre(), zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });

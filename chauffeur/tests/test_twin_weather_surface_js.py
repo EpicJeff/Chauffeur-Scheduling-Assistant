@@ -286,18 +286,18 @@ await test('actual leaf fragment scalar port: snow cover 1 plus fog 1 is finite 
  const plan={buildings:[],site:{planting:[{id:'tree',preset:'Oak Small',seed:7,height:15,at:[0,0]}]}};
  const {group}=await buildYard(plan,{materials:{}},'high',{viewing:true}),scene=new THREE.Scene();scene.add(group);scene.updateMatrixWorld(true);
  const haze=installStageHaze(scene,{}),wind=installPlantWind(scene),layer=installWeatherSurface(scene);
- haze.set({centre:[0,0],radius:100,fog:1});haze.prepare();wind.prepare();layer.prepare();layer.update({snow_cm:8,fog:1},0);
+ haze.set({centre:[0,0],radius:100,extinction:3.912/300});haze.prepare();wind.prepare();layer.prepare();layer.update({snow_cm:8,fog:1},0);
  const mix=(a,b,t)=>a+(b-a)*t,smoothstep=(a,b,v)=>{const t=Math.max(0,Math.min(1,(v-a)/(b-a)));return t*t*(3-2*t);};
  const scalar=name=>{const m=WEATHER_GLSL.match(new RegExp('float '+name+'\\(([^)]*)\\) \\{([\\s\\S]*?)\\n\\}'));return new Function('mix','smoothstep',`return (${m[1].replace(/float /g,'')})=>{${m[2].replace(/\bfloat\b/g,'let')}}`)(mix,smoothstep);};
  const snow=scalar('weatherSnow'),wet=scalar('weatherWetScale'),rough=scalar('weatherRoughness');
  let samples=0;
  scene.traverse(o=>{if(o.material?.userData.plantWind!=='leaves')return;
   const shader={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};o.material.onBeforeCompile(shader,{});
-  assert.equal(shader.uniforms.weatherSurface.value.y,1);assert.ok(Math.abs(shader.uniforms.stageRadius.value-15)<1e-8);
+  assert.equal(shader.uniforms.weatherSurface.value.y,1);assert.equal(shader.uniforms.stageRadius.value,100);assert.equal(shader.uniforms.stageRing.value[0].w,3.912/300);
   const expand=s=>s.replace(/#include\s+<([\w\d_]+)>/g,(_,n)=>expand(THREE.ShaderChunk[n]));
   const fragment=expand(shader.fragmentShader);
   assert.ok(fragment.includes('weatherSnow(weatherUp')&&fragment.includes('normal *= faceDirection'));
-  assert.ok(fragment.includes('mix( gl_FragColor.rgb, stageColour, stageFade )'));
+  assert.ok(fragment.includes('mix( gl_FragColor.rgb, stageColour, max( stageFade, stageFog ) )'));
   const normals=o.geometry.attributes.normal,positions=o.geometry.attributes.position,matrix=new THREE.Matrix3().getNormalMatrix(o.matrixWorld);
   for(let i=0;i<normals.count;i++)for(const face of [-1,1]){
    const n=new THREE.Vector3().fromBufferAttribute(normals,i).applyMatrix3(matrix).normalize().multiplyScalar(face);

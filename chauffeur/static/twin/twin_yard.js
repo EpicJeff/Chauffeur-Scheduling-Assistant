@@ -20,10 +20,17 @@ export function presetTree(preset, seed) {
   // branch starts still at its attachment (bark UVs repeat and cannot encode it).
   const generateBranch=tree.generateBranch, weights=[];
   const generateLeaf=tree.generateLeaf, leaves=[];
-  let leafIndex=0;
+  let leafIndex=0;const leafPositions=[],leafSizes=[];
   if(generateLeaf)tree.generateLeaf=function(...args){
     const start=this.leaves.verts.length;
     generateLeaf.apply(this,args);
+    // Each generateLeaf call emits one leaf (one or two crossed cards). Keep
+    // its actual first card centre and edge lengths, without consuming RNG.
+    const v=this.leaves.verts,at=new THREE.Vector3();
+    for(let i=start;i<start+12;i+=3)at.add(new THREE.Vector3(v[i],v[i+1],v[i+2]));
+    at.multiplyScalar(.25);leafPositions.push(...at.toArray());
+    leafSizes.push(Math.hypot(v[start+6]-v[start+3],v[start+7]-v[start+4],v[start+8]-v[start+5]),
+      Math.hypot(v[start]-v[start+3],v[start+1]-v[start+4],v[start+2]-v[start+5]));
     // Both crossed planes of one leaf share one threshold. This hash never
     // consumes EZ-Tree's RNG, so the generated geometry stays identical.
     const threshold=seasonHash(seed+':leaf:'+leafIndex++),hue=seasonHash('hue:'+seed);
@@ -43,6 +50,10 @@ export function presetTree(preset, seed) {
     tree.leavesMesh.geometry.setAttribute('seasonLeaf',new THREE.Float32BufferAttribute(leaves,2));
   }
   Object.assign(tree.userData,{seasonKind:plantSeason(preset),seasonPreset:preset});
+  const leafBounds=tree.leavesMesh?.geometry.attributes.position?new THREE.Box3().setFromBufferAttribute(tree.leavesMesh.geometry.attributes.position):new THREE.Box3();
+  const canopy=leafBounds.getSize(new THREE.Vector3());
+  tree.seasonLeaves={positions:new Float32Array(leafPositions),sizes:new Float32Array(leafSizes),
+    count:leafIndex,canopyArea:canopy.x*canopy.z,texture:tree.leavesMesh?.material.map};
   if(generateBranch){
     tree.generateBranch=generateBranch;
     tree.branchesMesh.geometry.setAttribute('plantBranch',new THREE.Float32BufferAttribute(weights,1));
@@ -145,6 +156,15 @@ async function bakePreset(preset, seed, renderer) {
   canvas.getContext('2d').drawImage(renderer.domElement, 0, 0);
   const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
   const material = new THREE.MeshStandardMaterial({ name: 'plant card: ' + preset, map: texture, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 1 });
+  // Low cards keep this baked preset's real canopy, normalized to the holder's
+  // height. It shares EZ-Tree's original leaf map, never the whole-tree card.
+  const leaves=tree.seasonLeaves;
+  if(leaves){
+    const positions=leaves.positions.slice(),sizes=leaves.sizes.slice();
+    for(let i=0;i<positions.length;i+=3){positions[i]/=height;positions[i+1]=(positions[i+1]-bounds.min.y)/height;positions[i+2]/=height;}
+    for(let i=0;i<sizes.length;i++)sizes[i]/=height;
+    material.seasonLeaves={...leaves,positions,sizes,canopyArea:leaves.canopyArea/(height*height)};
+  }
   const result = { material, aspect: width / (height * 1.08), texture };
   releasePlant(tree);
   return result;
@@ -664,6 +684,10 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
               mats.set('plant_card:' + p.preset, card.material); cards.set(p.preset, card);
             }
             const card = cards.get(p.preset), h = p.height * 1.08;
+            if(card.material.seasonLeaves){
+              const data=card.material.seasonLeaves;
+              holder.seasonLeaves={...data,positions:Float32Array.from(data.positions,x=>x*p.height),sizes:Float32Array.from(data.sizes,x=>x*p.height),canopyArea:data.canopyArea*p.height*p.height};
+            }
             // Isolate an evergreen kind using a generic deciduous preset.
             // Colour/tint clones made below retain this explicit tag.
             const cardKey='plant-card-season:'+p.preset+':'+seasonKind+':'+cardSeed;
@@ -695,7 +719,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             tree.rotation.y += (p.seed || 0) * 2.39996; group.add(tree);
             if (viewing) { tree.userData.viewingTree = true; tree.name = `tree:${index}`; }
           }
-          Object.assign(object.userData, { kind:'planting', pieceId:p.id, plantAppearance: appearance, plantBaseOffset: baseOffset, yardPlantIndex: index, seasonKind, seasonPreset:p.preset });
+          Object.assign(object.userData, { kind:'planting', pieceId:p.id, plantAppearance: appearance, plantBaseOffset: baseOffset, yardPlantIndex: index, seasonKind, seasonPreset:p.preset,seasonHue:hue });
           // Let loading/status controls paint while full presets are generated.
           if (index % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
         }

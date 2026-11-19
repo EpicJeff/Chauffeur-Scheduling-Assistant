@@ -18,6 +18,35 @@ const {mountTwin}=await import(file('static/twin/twin_view.js'));
 const day=s=>new Date(s+'T12:00:00Z'),summer=seasonState(day('2026-07-15'),40),autumn=seasonState(day('2026-10-25'),40);
 const warm={temperatureC:18,precip:'none',rate:0,windMps:8,windToDeg:90};
 const conditions={date:day('2026-07-15'),sunAltDeg:-5};
+await test('generated household sources retain actual leaf cards, weights, maps and hues',async()=>{
+ const {buildYard}=await import(file('static/twin/twin_yard.js'));
+ const yard=(await buildYard(input.plan,{materials:{}},'high',{viewing:true})).group;
+ yard.scale.setScalar(.3048);
+ const p=T.createSeasonTouches(new THREE.Scene(),{tier:'high',random:()=>.417});p.setPlan(input.plan);
+ const eye=new THREE.PerspectiveCamera(100,1,.1,2000);eye.position.set(0,100,160);eye.lookAt(0,0,0);eye.updateMatrixWorld();
+ p.update(0,autumn,warm,eye,{plants:yard,target:new THREE.Vector3(),extent:1000});
+ const sources=p.info().sources;assert.ok(sources.length>5);const total=sources.reduce((n,s)=>n+s.area,0);
+ for(const s of sources){
+  assert.ok(s.count>0);assert.equal(s.data.positions.length,s.count*3);assert.ok(s.texture?.isTexture);
+  assert.equal(s.hue,s.object.userData.seasonHue);assert.ok(Math.abs(s.weight-s.area/total)<1e-10);
+ }
+ const shrubs=sources.filter(s=>s.object.userData.pieceId.startsWith('cmp-shrub')),trees=sources.filter(s=>s.object.userData.pieceId.startsWith('cmp-tree'));
+ assert.ok(Math.min(...trees.map(s=>s.weight))>Math.max(...shrubs.map(s=>s.weight))*3,'large trees shed much more than individual small shrubs');
+ const seen=new Set(),spawned=new Map();
+ for(let i=1;i<=200;i++){
+  p.update(i*.1,{...autumn,autumn:1,presence:.5},{...warm,windMps:0},eye,{plants:yard,target:new THREE.Vector3(),extent:1000});
+  for(const leaf of [...p.info().falling,...p.info().resting])if(!seen.has(leaf.id)){
+   seen.add(leaf.id);spawned.set(leaf.source,(spawned.get(leaf.source)||0)+1);
+  }
+ }
+ assert.ok(seen.size>300);
+ for(const source of sources){
+  const observed=(spawned.get(source.object)||0)/seen.size;
+  assert.ok(Math.abs(observed-source.weight)<.065,'observed spawn frequency follows generated canopy area');
+ }
+ console.log('household leaf weights',JSON.stringify(sources.map(s=>({id:s.object.userData.pieceId,preset:s.object.userData.seasonPreset,count:s.count,area:s.area,weight:s.weight,hue:s.hue,texture:s.texture.uuid}))));
+ p.dispose();
+});
 await test('exact tier budgets, phenology, weather and hemispheres; preview is night only',()=>{
  for(const [tier,leaves] of Object.entries({low:150,medium:300,high:500,max:800})){
   assert.equal(T.seasonTouchCounts(tier,autumn,warm,conditions).leaves,leaves);
@@ -38,7 +67,7 @@ await test('exact tier budgets, phenology, weather and hemispheres; preview is n
 });
 const plan={site:{lot:[[-100,-100],[100,-100],[100,100],[-100,100]],beds:[{polygon:[[25,25],[45,25],[45,45],[25,45]]}],
  pool:{polygon:[[-40,20],[-20,20],[-20,40],[-40,40]],features:[{kind:'spa',polygon:[[-20,20],[-10,20],[-10,30],[-20,30]]}]}},
- buildings:[{id:'rotated',position:[8,-4],rotation:35,levels:[{id:'g',z:0,height:10}],rooms:[{id:'r',level:'g',polygon:[[-20,-15],[20,-15],[20,15],[-20,15]]}]}]};
+ buildings:[{id:'rotated',position:[8,-4],rotation:35,levels:[{id:'g',elevation:0,ceiling:10}],rooms:[{id:'r',level:'g',polygon:[[-20,-15],[20,-15],[20,15],[-20,15]]}]}]};
 await test('lawn sampler excludes rotated buildings, pool, spa, beds, edges and missing lawn',()=>{
  const sample=T.createLawnSampler(plan);
  assert.equal(sample(8*.3048,4*.3048),null);assert.equal(sample(30*.3048,-30*.3048),null);
@@ -58,28 +87,112 @@ await test('lawn sampler excludes rotated buildings, pool, spa, beds, edges and 
   assert.ok(accepted>0,'sample actual lawn');p.dispose();
  }
 });
-await test('leaves use deciduous positions in view, follow target box, tumble, settle, fade and obey wind',()=>{
- const scene=new THREE.Scene(),root=new THREE.Group();scene.add(root);
- const tree=new THREE.Group();tree.userData={seasonKind:'deciduous',yardPlantIndex:0};tree.position.set(0,0,0);root.add(tree);
- const pine=tree.clone();pine.userData.seasonKind='evergreen';pine.position.x=100;root.add(pine);
- const p=T.createSeasonTouches(scene,{tier:'low'});p.setPlan({...plan,site:{...plan.site,planting:[{height:25}]}});
- const eye=new THREE.PerspectiveCamera(60,1,.1,1000);eye.position.set(0,15,30);eye.lookAt(0,3,0);eye.updateMatrixWorld();
- const opts={...conditions,target:new THREE.Vector3(),plants:root};let settled=0,faded=0;
- for(let i=0;i<240;i++){
-  p.update(i*.1,autumn,warm,eye,opts);const o=p.objects.leaves,a=o.geometry.attributes.touchPosition,b=o.geometry.attributes.touchShape;
-  assert.equal(o.geometry.instanceCount,150);
-  for(let j=0;j<150;j++){assert.ok(a.getY(j)>=.005);assert.ok(a.getX(j)<40);if(a.getY(j)<.04)settled++;if(b.getZ(j)>0&&b.getZ(j)<.9)faded++;}
+await test('leaf landing accepts lawn, beds, paving and deck heights; rejects water, indoor, covered and roof',async()=>{
+ const {createSkyCover}=await import(file('static/twin/sky/sky_cover.js'));
+ const base=createSkyCover(plan),cover={blocked:(x,y,z)=>x>20||base.blocked(x,y,z)};
+ const sample=T.createLeafLandingSampler(plan,new Map(),cover);
+ assert.equal(sample(-30*.3048,-30*.3048),null);assert.equal(sample(-15*.3048,-25*.3048),null);
+ assert.equal(sample(8*.3048,4*.3048),null);assert.equal(sample(25,0),null);
+ for(const [x,z,height] of [[0,20,0],[30*.3048,-30*.3048,.12*.3048],[18,0,0]]){
+  const hit=sample(x,z);assert.ok(hit);assert.ok(Math.abs(hit[1]-height-.006)<1e-8,'use the visible bed soil top, not buried terrain');
  }
- assert.ok(settled>0);assert.ok(faded>0);assert.ok(p.uniforms.touchWind.value.x>0);
+ const p={site:{hardscape:[{polygon:[[0,0],[10,0],[10,10],[0,10]],elevation:2}]},buildings:[{id:'b',levels:[{id:'l',elevation:0}],porches:[{polygon:[[12,0],[18,0],[18,5],[12,5]],floor:3}]}]};
+ const hit=T.createLeafLandingSampler(p)(5*.3048,-5*.3048);assert.ok(Math.abs(hit[1]-2.3*.3048-.006)<1e-8);
+ const deck=T.createLeafLandingSampler(p)(15*.3048,-2*.3048);assert.ok(Math.abs(deck[1]-3*.3048-.006)<1e-8);
+ const roofs=new Map([['b',{sections:[{kind:'flat',rect:[12,0,18,5],plate:12}]}]]);
+ assert.equal(T.createLeafLandingSampler(p,roofs)(15*.3048,-2*.3048),null);
+});
+await test('real leaf cards spawn inside canopies, scatter uniquely, collect eight minutes and keep fixed keys',async()=>{
+ const {presetTree}=await import(file('static/twin/twin_yard.js'));
+ const scene=new THREE.Scene(),root=new THREE.Group();scene.add(root);
+ const tree=presetTree('Oak Small',1);Object.assign(tree.userData,{seasonKind:'deciduous',yardPlantIndex:0,seasonHue:.2});tree.scale.setScalar(.15);root.add(tree);
+ const pine=presetTree('Pine Small',2);pine.userData.seasonKind='evergreen';root.add(pine);
+ const p=T.createSeasonTouches(scene,{tier:'low',random:()=>.417});p.setPlan({site:{lot:[[-200,-200],[200,-200],[200,200],[-200,200]],planting:[{height:25}]}});
+ const eye=new THREE.PerspectiveCamera(60,1,.1,1000);eye.position.set(0,15,30);eye.lookAt(0,3,0);eye.updateMatrixWorld();
+ const opts={...conditions,target:new THREE.Vector3(),plants:root},drop={...autumn,presence:.5,autumn:1};
+ p.update(0,drop,{...warm,visibilityM:300},eye,opts);assert.equal(p.uniforms.touchExtinction.value,3.912/300,'own leaf program follows the same camera fog');
+ const keys=Object.values(p.objects).map(o=>[o.material.customProgramCacheKey(),o.material.version]);
+ const paths=new Map();let settled=0;
+ for(let i=0;i<800;i++){
+  p.update(i*.1,drop,{...warm,windMps:0},eye,opts);
+  assert.equal(p.uniforms.touchExtinction.value,0);
+  assert.ok(p.info().falling.length<=150);assert.ok(p.info().resting.length<=400);
+  for(const leaf of p.info().falling){
+   const expected=new THREE.Vector3().fromArray(tree.seasonLeaves.positions,leaf.sourceIndex*3).applyMatrix4(tree.matrixWorld);
+   assert.ok(expected.distanceTo(new THREE.Vector3(...leaf.origin))<1e-8,'spawn is an actual generated leaf centre');
+   assert.equal(leaf.batch.texture,tree.seasonLeaves.texture);
+   paths.set(leaf.id,JSON.stringify([leaf.axis,leaf.spin,leaf.phase,leaf.flutter,leaf.drag,leaf.frequency]));
+  }
+  for(const leaf of p.info().resting){assert.equal(leaf.position[1],.006);settled++;}
+ }
+ assert.ok(settled>0);assert.ok(paths.size>50);assert.equal(new Set([...paths.values()].slice(0,50)).size,50);
+ assert.equal(p.info().resting.length,400,'fixed ring overwrites oldest leaves');
+ const oldest=Math.min(...p.info().resting.map(l=>l.born));assert.ok(oldest>0);
  assert.equal(p.uniforms.touchAnchor.value.x,0);assert.ok(p.uniforms.touchExtent.value>=18);
- const material=p.objects.leaves.material,key=material.customProgramCacheKey(),version=material.version;
- p.update(25,summer,warm,eye,opts);assert.equal(p.objects.leaves.visible,false);
- p.update(26,autumn,warm,eye,{...opts,enabled:false});assert.equal(p.objects.leaves.visible,false);
- tree.position.x=500;p.update(27,autumn,warm,eye,opts);assert.equal(p.objects.leaves.visible,false);
- assert.equal(material.version,version);assert.equal(material.customProgramCacheKey(),key);
+ for(let t=80;t<=130;t++)p.update(t,summer,{...warm,windMps:0},eye,opts);
+ assert.equal(p.info().falling.length,0,'drain in-flight leaves before testing resting lifetime');
+ assert.ok(p.info().resting.every(leaf=>leaf.autumn===1),'resting leaves retain their deposited autumn colour after the season changes');
+ const resting=p.info().resting[0],born=resting.born;
+ p.update(born+451,summer,{...warm,windMps:0},eye,opts);assert.ok(p.info().resting.includes(resting));
+ const a=resting.batch.object.geometry.attributes.touchShape;
+ assert.ok(Array.from({length:resting.batch.object.geometry.instanceCount},(_,i)=>a.getZ(i)).some(alpha=>alpha>0&&alpha<1),'last thirty seconds fade');
+ p.update(born+480,summer,{...warm,windMps:0},eye,opts);assert.ok(!p.info().resting.includes(resting));
+ p.update(1000,summer,warm,eye,opts);assert.equal(p.info().resting.length,0);
+ p.update(1001,drop,warm,eye,{...opts,enabled:false});assert.ok(Object.values(p.objects).every(o=>!o.visible));
+ assert.deepEqual(Object.values(p.objects).map(o=>[o.material.customProgramCacheKey(),o.material.version]),keys);
  for(const o of Object.values(p.objects)){assert.equal(o.castShadow,false);assert.equal(o.receiveShadow,false);assert.equal(o.material.isShaderMaterial,true);assert.equal(o.layers.isEnabled(1),false);const hits=[];o.raycast(null,hits);assert.equal(hits.length,0);}
  let freed=0;for(const o of Object.values(p.objects)){o.geometry.addEventListener('dispose',()=>freed++);o.material.addEventListener('dispose',()=>freed++);}
- p.dispose();p.dispose();assert.equal(freed,4);assert.equal(p.group.parent,null);
+ p.dispose();p.dispose();assert.equal(freed,14);assert.equal(p.group.parent,null);
+});
+await test('all resting caps, six texture draws, reduced motion and gust re-tumbling',async()=>{
+ const {presetTree}=await import(file('static/twin/twin_yard.js')),tree=presetTree('Bush 1',3),root=new THREE.Group();
+ const textures=[];
+ for(let i=0;i<7;i++){
+  const source=new THREE.Group(),texture=tree.seasonLeaves.texture.clone();textures.push(texture);
+  source.seasonLeaves={...tree.seasonLeaves,texture};source.scale.setScalar(.025);
+  source.userData={seasonKind:'deciduous',seasonHue:i/7};root.add(source);
+ }
+ const eye=new THREE.PerspectiveCamera(60,1,.1,1000);eye.position.set(0,5,20);eye.lookAt(0,0,0);eye.updateMatrixWorld();
+ const drop={...autumn,autumn:1,presence:.5},opts={plants:root,target:new THREE.Vector3()},calm={...warm,windMps:0};
+ assert.equal(T.leafDropRate(summer),0);assert.equal(T.leafDropRate({...drop,presence:0}),0);
+ assert.ok(T.leafDropRate(autumn)<T.leafDropRate(drop)*.1);
+ for(const [tier,cap] of Object.entries({low:400,medium:900,high:1600,max:2500})){
+  const p=T.createSeasonTouches(new THREE.Scene(),{tier,random:()=>.417});p.setPlan({});
+  for(let t=0;t<=360;t++){
+   p.update(t,drop,calm,eye,opts);assert.ok(p.info().resting.length<=cap);
+   assert.ok(p.info().falling.length<={low:150,medium:300,high:500,max:800}[tier]);
+   assert.ok(Object.values(p.objects).filter(o=>o.name!=='season-fireflies'&&o.visible).length<=6);
+  }
+  assert.equal(p.info().restCapacity,cap);assert.equal(p.info().resting.length,cap);
+  assert.equal(p.info().sources.length,6,'seventh distinct texture waits for a free slot');
+  const old=new Set(p.info().resting.map(l=>l.id));let lifted=false;
+  for(let t=361;t<381;t++){
+   p.update(t,summer,{...warm,windMps:12},eye,opts);
+   lifted||=p.info().falling.some(l=>old.has(l.id));
+  }
+  assert.ok(lifted,'strong wind re-tumbles some resting leaves');
+  const rest=p.info().resting.length;p.update(381,summer,calm,eye,{...opts,reduced:true});assert.ok(p.info().resting.length>=rest);
+  for(let t=382;t<=450;t++)p.update(t,summer,calm,eye,opts);
+  assert.equal(p.info().falling.length,0);
+  p.update(1000,summer,calm,eye,opts);assert.equal(p.info().resting.length,0);p.dispose();
+ }
+ const normal=T.createSeasonTouches(new THREE.Scene(),{tier:'low',random:()=>.417}),slow=T.createSeasonTouches(new THREE.Scene(),{tier:'low',random:()=>.417});
+ for(const p of [normal,slow])p.setPlan({});
+ for(let i=0;i<50;i++){
+  normal.update(i*.1,drop,calm,eye,opts);slow.update(i*.1,drop,calm,eye,{...opts,reduced:true});
+ }
+ assert.ok(slow.info().falling.length+slow.info().resting.length<normal.info().falling.length+normal.info().resting.length);
+ const returning=T.createSeasonTouches(new THREE.Scene(),{tier:'low',random:()=>.417});returning.setPlan({});
+ root.children[6].position.x=100;
+ for(let t=0;t<=30;t++)returning.update(t,drop,calm,eye,opts);
+ const originalTextures=new Set(returning.info().resting.map(p=>p.texture));assert.equal(originalTextures.size,6);
+ const far=new THREE.Vector3(100,0,0);eye.position.x=100;eye.lookAt(far);eye.updateMatrixWorld();
+ for(let t=31;t<=40;t++)returning.update(t,drop,calm,eye,{...opts,target:far});
+ assert.ok(returning.info().falling.some(p=>p.texture===textures[6])||returning.info().resting.some(p=>p.texture===textures[6]));
+ eye.position.x=0;eye.lookAt(0,0,0);eye.updateMatrixWorld();returning.update(41,summer,calm,eye,opts);
+ for(const texture of originalTextures)assert.ok(returning.info().batches.some(b=>b.texture===texture&&b.object.visible),'returning to resting leaves restores their maps without new shedding');
+ returning.dispose();
+ for(const p of [normal,slow])p.dispose();for(const t of textures)t.dispose();
 });
 await test('shaft projection finite behind camera, horizon, half-space, screen edge, altitude and disabled',()=>{
  const eye=new THREE.PerspectiveCamera(60,16/9,.1,1000);eye.lookAt(0,0,-1);eye.updateMatrixWorld();
@@ -164,7 +277,7 @@ await test('actual r187 particle and shaft sources: bounded budgets, no season k
   r.setRenderTarget(target);const keys=new Map();
   for(const object of Object.values(p.objects)){
    const s=programSource(r,cache,scene,object,lights),budget=uniformBudget(s[2]);keys.set(object,s.key);
-   assert.equal(budget.samplers.length,0);assert.ok(budget.vectors<16);assert.ok(!s[2].includes('#include'));
+   assert.equal(budget.samplers.length,object.name==='season-fireflies'?0:1);assert.ok(budget.vectors<16);assert.ok(!s[2].includes('#include'));
    console.log(object.name,'fragment vectors',budget.vectors,'samplers',budget.samplers.length);
   }
   for(const autumn of [0,.5,1])for(const presence of [0,.5,1])for(const neutral of [true,false]){

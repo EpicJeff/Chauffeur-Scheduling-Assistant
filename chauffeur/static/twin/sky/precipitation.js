@@ -6,7 +6,7 @@ import { allPorches } from '../twin_generator.js';
 import { pathSurfacePolygons } from '../path_shapes.js';
 import { yardPaverLayout } from '../paver_path.js';
 import { paverSettings } from '../paver_layout.js';
-import { weatherHaze } from './weather.js';
+import { weatherExtinction } from './weather.js';
 import { createSkyCover } from './sky_cover.js';
 
 const FT=.3048, BOX=[128,96,128], LIFE=.42;
@@ -99,7 +99,7 @@ float precipitationWidth(float pixels,float kind) {
   return kind<.5?max(pixels,1.25):pixels;
 }
 float precipitationLength(float pixels,float kind,float rate) {
-  return kind<.5?max(pixels,mix(6.0,10.0,clamp((rate-.45)/.55,0.0,1.0))):pixels;
+  return kind<.5?mix(max(pixels,1.25),max(pixels,mix(6.0,10.0,clamp((rate-.45)/.55,0.0,1.0))),smoothstep(0.0,4.0,pixels)):pixels;
 }
 void main(){
   if(precipOpen<.5){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
@@ -112,7 +112,7 @@ void main(){
   particleWorld=world;particleUv=uv;
   vec4 eye=viewMatrix*vec4(world,1.0);
   // Never expand a near-camera drop into a large foreground smear.
-  if(distance(world,cameraPosition)<2.5){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
+  if(distance(world,cameraPosition)<3.0){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
   vec2 size=precipKind<.5?vec2(.018,.7):precipKind<1.5?vec2(.10,.10):vec2(.045,.045);
   if(precipKind>=.5){
     // Snow and hail keep their physical billboard sizes, even looking down
@@ -149,18 +149,18 @@ uniform float precipRadius,precipFog;
 varying vec2 particleUv;varying vec3 particleWorld;
 float precipitationFade(){
   float d=distance(particleWorld,cameraPosition);
-  float radius=max(precipRadius*(1.0-.85*precipFog),.0001);
+  float radius=max(precipRadius,.0001);
   float haze=smoothstep(radius,radius*1.35,distance(particleWorld.xz,precipCentre));
   float halfExtent=max(precipBox.x*.5,.0001);
   float edge=distance(particleWorld.xz,precipAnchor.xz);
-  return (1.0-smoothstep(halfExtent*.8,halfExtent,edge)) * smoothstep(2.5,3.5,d)*(1.0-haze);
+  return (1.0-smoothstep(halfExtent*.8,halfExtent,edge)) * smoothstep(3.0,3.5,d)*(1.0-haze)*exp(-max(precipFog,0.0)*d);
 }
 vec3 precipSafe(vec3 c){return vec3(c.r>=0.0?min(c.r,4096.0):0.0,c.g>=0.0?min(c.g,4096.0):0.0,c.b>=0.0?min(c.b,4096.0):0.0);}
 `;
 const fragmentShader=fragmentCommon+`
 uniform float precipKind,precipRate;
 void main(){
-  if(distance(particleWorld,cameraPosition)<2.5)discard;
+  if(distance(particleWorld,cameraPosition)<3.0)discard;
   vec2 p=particleUv*2.0-1.0;
   float alpha=precipKind<.5?(1.0-smoothstep(.3,1.0,abs(p.x)))*(1.0-abs(p.y))*mix(.35,.85,precipRate):
     (1.0-smoothstep(.5,1.0,length(p)))*.8;
@@ -236,10 +236,10 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
   const api={group,objects,uniforms,
     setStage({centre,radius}){if(centre?.every(Number.isFinite))uniforms.precipCentre.value.fromArray(centre);if(Number.isFinite(radius)&&radius>0)uniforms.precipRadius.value=radius;},
     setPlan(value,roofs,skyCover){plan=value;cover=skyCover||createSkyCover(plan,roofs);sample=createSplashSampler(plan,roofs,cover);born.fill(-1e6);sg.attributes.splashBorn.needsUpdate=true;credit=0;},
-    update(now,weather,camera,{target=camera.position,bearing=180,unlit=false,colour=[.6,.7,.8],reduced=motion?.matches}={}){
+    update(now,weather,camera,{target=camera.position,bearing=180,level='house',unlit=false,colour=[.6,.7,.8],reduced=motion?.matches}={}){
       if(disposed)return;
       now=finite(now);const dt=last===null?0:clamp(now-last,0,1);last=now;clock+=dt*(reduced?.35:1);
-      uniforms.precipClock.value=clock;uniforms.splashTime.value=now;uniforms.precipFog.value=weatherHaze(weather);
+      uniforms.precipClock.value=clock;uniforms.splashTime.value=now;uniforms.precipFog.value=weatherExtinction(weather);
       uniforms.precipRate.value=clamp(weather?.rate);
       if(colour?.every(Number.isFinite))uniforms.precipColour.value.fromArray(colour.map(c=>clamp(c,.015,1)));
       const halfExtent=clamp(.75*camera.position.distanceTo(target),18,64);
@@ -247,7 +247,9 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
       const top=Math.max(bottom+.0001,25,camera.position.y+8);
       uniforms.precipBox.value.set(halfExtent*2,top-bottom,halfExtent*2);
       uniforms.precipAnchor.value.copy(target).lerp(camera.position,.35);uniforms.precipAnchor.value.y=(bottom+top)*.5;
-      const counts=precipitationCounts(tier,unlit?{}:weather);
+      const down=camera.getWorldDirection(new THREE.Vector3()).y;
+      const hidden=unlit||level!=='house'||down < -Math.sin(55*Math.PI/180)-1e-10;
+      const counts=precipitationCounts(tier,hidden?{}:weather);
       for(const kind of ['rain','snow','hail']){
         const o=objects[kind],velocity=precipitationVelocity(kind,weather,bearing,reduced);
         o.geometry.instanceCount=counts[kind];o.visible=counts[kind]>0;

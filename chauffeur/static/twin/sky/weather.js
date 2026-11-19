@@ -66,8 +66,10 @@ export function weatherState(entity, ground={}, sensors={}, now=Date.now()/1000)
   // old missing-wind fallback so every consumer shares the calm global wind.
   const clouds=cloudState(valid ? {...entity,state:condition,attributes:{...a,wind_speed:wind ?? 0,wind_speed_unit:'m/s',wind_bearing:bearing}} : null);
   clouds.windMps=valid ? wind ?? 0 : 0;
+  // Retained diagnostic severity; rendering uses visibilityM/extinction below.
   const fog=valid ? Math.max(condition==='fog'?1:0,finite(a.visibility)?clamp((5-a.visibility)/4):0) : 0;
-  return {condition,precip,rate:precip==='none'?0:rate,fog,windMps:clouds.windMps,windToDeg:clouds.windToDeg,
+  const visibilityM=valid&&finite(a.visibility)&&a.visibility>0?a.visibility*1000:condition==='fog'?300:null;
+  return {condition,precip,rate:precip==='none'?0:rate,fog,visibilityM,windMps:clouds.windMps,windToDeg:clouds.windToDeg,
     windMissing:!valid || wind===null,temperatureC:valid?temperatureC:null,
     wetness:valid?clamp(ground.wetness):0,snow_cm:valid&&finite(ground.snow_cm)?Math.max(0,ground.snow_cm):0,
     puddles:valid?clamp(ground.puddles):0,updated:finite(ground.updated)?ground.updated:0,
@@ -75,10 +77,17 @@ export function weatherState(entity, ground={}, sensors={}, now=Date.now()/1000)
 }
 
 export function neutralWeather() { return {...weatherState(null),neutral:true}; }
-// Fog and the rain veil share the stage radius; neither can amplify the other.
-export function weatherHaze(weather={}) {
+// HA visibility is kilometres; extinction is inverse metres. Rain and reported
+// visibility describe the same air: take the shorter, never add densities.
+export function weatherExtinction(weather={}) {
+  if(weather.neutral)return 0;
   const rain=['rain','mix'].includes(weather.precip)?clamp(weather.rate):0;
-  return Math.max(clamp(weather.fog),.25*rain);
+  const visibility=finite(weather.visibilityM)&&weather.visibilityM>0?weather.visibilityM:weather.condition==='fog'?300:Infinity;
+  const shortest=Math.min(visibility,rain>0?20000-17000*rain:Infinity);
+  return Number.isFinite(shortest)?3.912/Math.max(shortest,.001):0;
+}
+export function weatherHaze(weather={},distanceM=10000) {
+  return 1-Math.exp(-weatherExtinction(weather)*Math.max(0,finite(distanceM)?distanceM:0));
 }
 const previews={clear:'sunny',rain:'rainy',pouring:'pouring',snow:'snowy',fog:'fog',thunderstorm:'lightning-rainy'};
 export function previewWeather(name,elapsed=0) {

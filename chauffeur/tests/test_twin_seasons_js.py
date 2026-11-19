@@ -193,6 +193,9 @@ await test('low cards retain one per-card threshold and hue after batching; no w
   const mesh=meshes[0],attr=mesh.geometry.attributes.seasonLeaf;assert.equal(attr.count,mesh.geometry.attributes.position.count);
   assert.equal(new Set(Array.from({length:attr.count},(_,i)=>attr.getX(i))).size,2,'crossed cards have separate thresholds');
   const shader=compile(mesh.material);assert.equal(!!shader.uniforms.seasonFoliage,plant.userData.seasonKind==='deciduous');assert.ok(!shader.uniforms.plantWind);
+  const data=plant.seasonLeaves;assert.ok(data.count>0);assert.equal(data.positions.length,data.count*3);assert.ok(data.canopyArea>0);
+  assert.ok(data.texture?.isTexture);assert.notEqual(data.texture,mesh.material.map,'falling leaf map is the actual preset leaf, not a whole-tree billboard');
+  assert.ok(Number.isFinite(plant.userData.seasonHue));
  }
  dispose(group);seasons.dispose();wind.dispose();
 });

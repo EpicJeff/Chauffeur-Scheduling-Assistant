@@ -129,7 +129,8 @@ export function createCloudPass(renderer,{tier='low',noise,random=Math.random}={
       const set=(name,value)=>{if(value?.isVector3)value=value.toArray();if(value?.every(Number.isFinite))uniforms[name].value.fromArray(value);};
       set('cloudSunRadiance',light.sunRadiance);set('cloudMoonDir',light.moonDir);set('cloudMoonRadiance',light.moonRadiance);
       set('cloudAmbientTop',light.ambientTop);set('cloudAmbientBottom',light.ambientBottom);
-      uniforms.cloudFog.value=clamp(light.fog);set('cloudFogColour',light.fogColour);
+      uniforms.cloudFog.value=Number.isFinite(light.extinction)?Math.max(0,light.extinction):-Math.log(Math.max(1-clamp(light.fog),1e-10))/10000;
+      set('cloudFogColour',light.fogColour);
       if(light.sunDir?.every(Number.isFinite))marchUniforms.sunDir.value.fromArray(light.sunDir).normalize();
       if(Number.isFinite(light.frontBearingDeg))bearing=light.frontBearingDeg;
     },
