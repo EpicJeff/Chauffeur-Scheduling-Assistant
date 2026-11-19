@@ -36,6 +36,8 @@ import { underwaterMaterial } from './effects/underwater.js';
 import { createWaterSimulation } from './effects/water_sim.js';
 import { buildGrass, grassCovers } from './yard_grass.js';
 import { TIERS } from './twin_tiers.js';
+import { defaultStage } from './stage_settings.js';
+import { clipHalf } from './pool_features.js';
 
 function random(seed) {
   let n = seed | 0;
@@ -238,7 +240,7 @@ export function canonicalOutline(points) {
 
 export const YARD_PARTS = ['terrain', 'plants', 'fences', 'hardscape', 'pool', 'fire_pits', 'retaining_walls', 'furniture', 'grass'];
 
-export function yardPartKeys(plan, kit, tier, { viewing = false } = {}) {
+export function yardPartKeys(plan, kit, tier, { viewing = false, stage = defaultStage(plan) } = {}) {
   const site = plan.site || {};
   // groundAt and slab subdivision read ordered pads, not their wall finishes.
   const grade = (site.terraces || []).map(p => [p.polygon, p.height, p.blend, (p.edges || []).map(e => e.edge)]);
@@ -256,7 +258,7 @@ export function yardPartKeys(plan, kit, tier, { viewing = false } = {}) {
     // terrain: tier, lot; ordered grade; sharp-edge wall/stair presence (suppresses
     // earth skirts); pool polygon and spa polygons only; resolved lawn finish.
     // No hardscape/building holes are cut by the current terrain builder.
-    terrain: key(tier, site.lot, grade, (site.terraces || []).map(p => (p.edges || []).map(e => !!(e.wall || e.stair))),
+    terrain: key(tier, site.lot, stage.centre, stage.radius, grade, (site.terraces || []).map(p => (p.edges || []).map(e => !!(e.wall || e.stair))),
       site.pool?.polygon, spaHoles, finishes(['lot'])),
     // plants: tier/viewing; ground grade; planting object fields (see
     // objectFields), including preset/height/seed and applyObject appearance.
@@ -298,10 +300,10 @@ export function yardPartKeys(plan, kit, tier, { viewing = false } = {}) {
 // The whole-yard fast path is precisely the union of the part keys.
 export const yardKey = (plan, kit, tier, options) => JSON.stringify(yardPartKeys(plan, kit, tier, options));
 
-export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null } = {}) {
+export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null, stage = defaultStage(plan) } = {}) {
   const root = new THREE.Group(); root.name = 'yard';
   Object.defineProperty(root.userData, 'waterSurfaces', { value: [], writable: true });
-  const keys = yardPartKeys(plan, kit, tier, { viewing }), reused = new Map();
+  const keys = yardPartKeys(plan, kit, tier, { viewing, stage }), reused = new Map();
   const plantPlacements = [];
   const site = plan.site || {}, mats = materials || new Map(previous?.userData.materials || []);
   const padParts = (site.terraces || []).some(p => p.edges?.some(e => e.stair || e.wall?.cap || e.wall?.rail));
@@ -352,22 +354,32 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       if (site.lot?.length >= 3) {
         // Actual lawn material; no procedural canvas noise or substitute blobs.
         const pool = site.pool?.polygon;
-        const xs = site.lot.map(p => p[0]), ys = site.lot.map(p => p[1]), margin = 150;
-        const x0 = Math.min(...xs) - margin, x1 = Math.max(...xs) + margin;
-        const y0 = Math.min(...ys) - margin, y1 = Math.max(...ys) + margin;
+        const xs = site.lot.map(p => p[0]), ys = site.lot.map(p => p[1]);
         // Continue the terrain below the lot edge without covering the sunken pool.
         // The distant continuation is flat and cheap. The lot and its blend bands
         // are the sampled surface; don't put a flat sheet through descending pads.
         const reach = 50;
-        const terrainOutline = [[x0 + margin - reach, y0 + margin - reach], [x1 - margin + reach, y0 + margin - reach],
-          [x1 - margin + reach, y1 - margin + reach], [x0 + margin - reach, y1 - margin + reach]];
-        addMesh(group, polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], -.06, -.06, [terrainOutline]), mat('lawn')).userData.terrain = true;
+        const terrainOutline = [[Math.min(...xs) - reach, Math.min(...ys) - reach], [Math.max(...xs) + reach, Math.min(...ys) - reach],
+          [Math.max(...xs) + reach, Math.max(...ys) + reach], [Math.min(...xs) - reach, Math.max(...ys) + reach]];
+        const disc = Array.from({length:128}, (_, i) => {
+          const angle = i * Math.PI / 64;
+          return [stage.centre[0] + stage.radius * 1.4 * Math.cos(angle), -stage.centre[1] + stage.radius * 1.4 * Math.sin(angle)];
+        });
+        // Subtract the sampled rectangle as disjoint convex pieces. This also
+        // handles a small user radius crossing it, without invalid shape holes
+        // or a flat sheet covering descending pads and sunken pools.
+        let rest = disc;
+        for (let i = 0; i < 4 && rest.length; i++) {
+          const a = terrainOutline[i], b = terrainOutline[(i+1)%4], outside = clipHalf(rest, a, b, -1);
+          if (outside.length) addMesh(group, polygon(outside, -.06, -.06), mat('lawn')).userData.terrain = true;
+          rest = clipHalf(rest, a, b, 1);
+        }
         const terrain = new THREE.Group(); terrain.userData.viewingWalls = 'terrain'; group.add(terrain);
         const lawn = mat('terrain_lawn');
         // Same kit role, same texture. Vertex colours are always enabled; Grade
         // changes the buffer, never a material define or shader program.
         lawn.vertexColors = true; lawn.side = THREE.DoubleSide;
-        const mesh = addMesh(terrain, terrainGeometry(plan, terrainOutline, tier, { holes: [...(pool ? [pool] : []), ...spas], offset: -.04, skirts: true }), lawn);
+        const mesh = addMesh(terrain, terrainGeometry(plan, rest, tier, { holes: [...(pool ? [pool] : []), ...spas], offset: -.04, skirts: true }), lawn);
         mesh.userData.terrain = true;
         // Grade's vertex colours already keep this grid out of static merging.
         // Keep the exclusion explicit if a future merge path accepts colours.
@@ -797,7 +809,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   }
   // Keys are taken after the builds: furniture's key includes imported-model metadata
   // that its loads resolve. Reused parts keep the key they were built with.
-  const built = yardPartKeys(plan, kit, tier, { viewing });
+  const built = yardPartKeys(plan, kit, tier, { viewing, stage });
   root.userData.yardPartKeys = Object.fromEntries(YARD_PARTS.map(name => [name, reused.has(name) ? previousKeys[name] : built[name]]));
   root.userData.padEdgeKeys = reused.has('retaining_walls') ? previous.userData.padEdgeKeys : padKeys;
   root.userData.yardReusedParts = [...reused.keys()].filter(name => YARD_PARTS.includes(name));
@@ -846,7 +858,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   };
   // Snapshot after loads have resolved imported model metadata. Never compare
   // against a mutable old plan/kit; editor operations can update them in place.
-  root.userData.yardKey = yardKey(plan, kit, tier, { viewing });
+  root.userData.yardKey = yardKey(plan, kit, tier, { viewing, stage });
   root.userData.yardMaterialKey = yardMaterialKey(plan, kit, tier);
   return { group: root, triangles };
 }

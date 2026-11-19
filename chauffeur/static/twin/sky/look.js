@@ -14,7 +14,8 @@ export function resolveSite(site = {}, date = new Date()) {
 
 export function previewDate(now, mode, site) {
   if (mode === 'now') return new Date(now);
-  const hour = mode === 'day' ? 12 : 23;
+  const hour = typeof mode === 'number' ? Math.max(0, Math.min(24, mode)) : mode === 'day' ? 12 : 23;
+  const minutes = Math.round(hour * 60);
   // Household IANA zone gives civil noon/23:00, including DST. When no zone is
   // configured use the site's longitude (mean solar clock), not the viewer's zone.
   try {
@@ -23,7 +24,7 @@ export function previewDate(now, mode, site) {
         year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit',
         minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
       const parts = date => Object.fromEntries(format.formatToParts(date).map(p => [p.type, p.value]));
-      const p = parts(now), desired = Date.UTC(+p.year, +p.month - 1, +p.day, hour);
+      const p = parts(now), desired = Date.UTC(+p.year, +p.month - 1, +p.day, 0, minutes);
       let stamp = desired;
       for (let i = 0; i < 3; i++) {
         const q = parts(new Date(stamp));
@@ -33,16 +34,12 @@ export function previewDate(now, mode, site) {
     }
   } catch { /* An old/invalid household zone still gets a useful preview. */ }
   const offset = site.lon / 15 * 3600000, local = new Date(+now + offset);
-  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), hour) - offset);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 0, minutes) - offset);
 }
 
 export function modelDirection(azimuth, altitude, frontBearing = 180) {
-  // setCamera('front') looks from (-41, +69) in three's x/z plane.
-  // Compass bearings increase clockwise; three's horizontal compass vector is
-  // (sin(b), -cos(b)). Align the configured front bearing to that camera ray.
-  // Thus bearing 180 + a southern noon sun points toward the Front camera.
-  const front = Math.atan2(-41, -69);
-  const angle = azimuth - frontBearing * RAD + front;
+  // The street is plan -y / three +z; compass bearings turn clockwise.
+  const angle = azimuth - frontBearing * RAD + Math.PI;
   const horizontal = Math.cos(altitude);
   return [horizontal * Math.sin(angle), Math.sin(altitude), -horizontal * Math.cos(angle)];
 }
@@ -57,13 +54,16 @@ const bands = [
 // day, so shade reads about a stop under sunlit ground. Without sun shadows
 // that balance would only flatten the picture, so those views keep the fill.
 const shadowedBands = new Map([[0, { ambient: .5 }], [6, { ambient: .5, environment: .4 }]]);
-export function lookAt(altitudeDeg, moon = { altitude: 0, fraction: 0 }, { shadows = false } = {}) {
+export function lookAt(altitudeDeg, moon = { altitude: 0, fraction: 0 }, { shadows = false, overcast = 0, zenith = null, ground = null } = {}) {
   const band = ([edge, look]) => [edge, shadows ? { ...look, ...shadowedBands.get(edge) } : look];
   let lower = band(bands[0]), upper = band(bands.at(-1));
   for (let i = 1; i < bands.length; i++) if (altitudeDeg <= bands[i][0]) { lower = band(bands[i - 1]); upper = band(bands[i]); break; }
   const t = smooth((altitudeDeg - lower[0]) / (upper[0] - lower[0]));
   const look = Object.fromEntries(Object.keys(lower[1]).map(key => [key, mix(lower[1][key], upper[1][key], t)]));
-  return { ...look, sun: (shadows ? 7 : 3) * smooth(altitudeDeg / 6),
+  const c = clamp(overcast), colour = rgb => { const peak = Math.max(...rgb, 1e-6); return rgb.map(v => v / peak); };
+  return { ...look, ambient: look.ambient * (1 + .35 * c), environment: look.environment * (1 + .35 * c),
+    skyColor: zenith ? colour(zenith) : null, groundColor: ground ? colour(ground) : null,
+    sun: (shadows ? 7 : 3) * smooth(altitudeDeg / 6) * (1 - .75 * c),
     moon: .16 * Math.max(0, Math.sin(moon.altitude)) * clamp(moon.fraction) * (1 - smooth((altitudeDeg + 6) / 6)),
     moonColor: [.60, .72, 1], lamps: altitudeDeg < -3 };
 }

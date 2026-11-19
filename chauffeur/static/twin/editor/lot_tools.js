@@ -176,8 +176,8 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
   }
   function line(outline, dashed, color) {
     const geometry = new THREE.BufferGeometry().setFromPoints([...outline, outline[0]].map(p => new THREE.Vector3(p[0] * FT, .025, -p[1] * FT)));
-    const material = dashed ? new THREE.LineDashedMaterial({ color, dashSize: .6, gapSize: .3, depthTest: false })
-      : new THREE.LineBasicMaterial({ color, depthTest: false });
+    const material = dashed ? new THREE.LineDashedMaterial({ fog: false, color, dashSize: .6, gapSize: .3, depthTest: false })
+      : new THREE.LineBasicMaterial({ fog: false, color, depthTest: false });
     const object = new THREE.Line(geometry, material); object.computeLineDistances(); object.renderOrder = 2; graphics.add(object);
     return object;
   }
@@ -215,7 +215,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
       geometry.setAttribute('position', new THREE.Float32BufferAttribute([at(0, 1), at(1, 1), at(1, 0), at(0, 0)].flat(), 3));
       geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
       geometry.setIndex([0, 1, 2, 0, 2, 3]); texture.colorSpace = THREE.SRGBColorSpace;
-      sheet = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide,
+      sheet = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ fog: false, map: texture, side: THREE.DoubleSide,
         transparent: true, opacity: .6, depthWrite: false, toneMapped: false }));
       sheet.renderOrder = 1; view.scene.add(sheet);
       sheet.userData.reflectionExclude = true;

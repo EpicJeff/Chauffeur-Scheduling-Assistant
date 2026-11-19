@@ -69,10 +69,10 @@ export function pieceGhostGeometry(kind, piece, ctx = {}) {
 // The ghost's fill and dashed edge. The group holds both; `mesh` is the fill (it takes picks).
 export function ghostGroup(geometry) {
   const group = new THREE.Group();
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: GHOST_COLOR, transparent: true,
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ fog: false, color: GHOST_COLOR, transparent: true,
     opacity: GHOST_FILL, depthWrite: false, side: THREE.DoubleSide }));
   const edge = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineDashedMaterial({
-    color: GHOST_COLOR, dashSize: .4, gapSize: .25, transparent: true, opacity: GHOST_EDGE, depthWrite: false }));
+    fog: false, color: GHOST_COLOR, dashSize: .4, gapSize: .25, transparent: true, opacity: GHOST_EDGE, depthWrite: false }));
   edge.computeLineDistances(); group.add(mesh, edge);
   return { group, mesh };
 }

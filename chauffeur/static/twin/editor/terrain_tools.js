@@ -26,7 +26,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   const card = document.createElement('aside'); card.className = 'place-card editor-lot-card'; card.id = 'terrain-card'; card.hidden = true; shell.append(card);
   const layer = document.createElement('div'); layer.className = 'editor-handles'; canvas.parentElement.append(layer);
   const group = new THREE.Group(); view.scene.add(group);
-  const material = new THREE.LineBasicMaterial({ color: twinText, depthTest: false });
+  const material = new THREE.LineBasicMaterial({ fog: false, color: twinText, depthTest: false });
   // Keep a drawable (degenerate when idle) preview from mount onwards. The
   // renderer warms its material before the first corner, just like pad lines.
   const previewLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), material);

@@ -71,7 +71,8 @@ const seeThrough = m => m.transparent && m.name !== 'glass' && !(m.userData.view
 
 // A Color background is a clear, so the plain canvas path never tone maps it.
 // Undo ACES for that clear only; OutputPass then returns the original colour.
-// Fog stays in scene-linear space and receives ACES once, as on the plain path.
+// Texture skies already hold linear radiance: leave them for OutputPass, just
+// as the canvas path tone maps them once. Fog stays scene-linear too.
 const inverseInput = new THREE.Matrix3().set(.59719,.35458,.04823, .076,.90834,.01566, .0284,.13383,.83777).invert();
 const inverseOutput = new THREE.Matrix3().set(1.60475,-.53108,-.07367, -.10208,1.10813,-.00605, -.00327,-.07276,1.07602).invert();
 function linearBackground(color, renderer, result) {

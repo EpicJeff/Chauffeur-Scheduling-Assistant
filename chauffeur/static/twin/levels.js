@@ -270,7 +270,7 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; textures.set(kind, t); return t;
   }
   for (const b of buildings()) for (const f of [null, ...floors(b)]) {
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: texture(f ? 'floor' : 'building'), depthTest: false, depthWrite: false, toneMapped: false}));
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({fog: false, map: texture(f ? 'floor' : 'building'), depthTest: false, depthWrite: false, toneMapped: false}));
     sprite.renderOrder = 21; root.add(sprite);
     const button = document.createElement('button'); button.type = 'button'; button.textContent = f?.name || f?.id || b.name || b.id;
     button.dataset.levelBuilding = b.id; if (f) button.dataset.levelFloor = f.id;
@@ -283,7 +283,7 @@ export function createLevels(view, {visibility, host = view.renderer3.domElement
     sprite.position.copy(position); icons.push({b: b.id, f: f?.id, sprite, button});
   }
   for (const room of yardRooms()) {
-    const at = centroid(room.polygon), sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: texture('floor'), depthTest: false, depthWrite: false, toneMapped: false}));
+    const at = centroid(room.polygon), sprite = new THREE.Sprite(new THREE.SpriteMaterial({fog: false, map: texture('floor'), depthTest: false, depthWrite: false, toneMapped: false}));
     sprite.renderOrder = 21; sprite.position.set(at[0] * FT, groundAt(view.plan, ...at) * FT, -at[1] * FT); root.add(sprite);
     const button = document.createElement('button'); button.type = 'button'; button.textContent = room.name || room.id;
     button.dataset.levelRoom = room.id; button.setAttribute('aria-label', `Open ${button.textContent}`);

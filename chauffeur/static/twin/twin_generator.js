@@ -495,9 +495,9 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   const glass = plain('glass', '#b9d7db', { transparent: true, opacity: 0.26, roughness: 0.1, depthWrite: false });
   const screen = plain('screen', '#59615d', { transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide });
   const fixture = plain('fixture', '#fff4e0', { emissive: '#ffd59a', emissiveIntensity: 0 });
-  const ghost = plain('ghost', '#38bdf8', { opacity: 0.35, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-  const ghostEdges = material(() => materials.get('ghostEdges') || new THREE.LineDashedMaterial({ color: '#38bdf8', dashSize: 0.4, gapSize: 0.25, transparent: true, opacity: 0.8, depthWrite: false }));
-  const pickMaterial = material(() => materials.get('pick') || new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  const ghost = plain('ghost', '#38bdf8', { fog: false, opacity: 0.35, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const ghostEdges = material(() => materials.get('ghostEdges') || new THREE.LineDashedMaterial({ fog: false, color: '#38bdf8', dashSize: 0.4, gapSize: 0.25, transparent: true, opacity: 0.8, depthWrite: false }));
+  const pickMaterial = material(() => materials.get('pick') || new THREE.MeshBasicMaterial({ fog: false, side: THREE.DoubleSide }));
   const roomLights = [], levelElevations = {}, notes = [], pendingModels = [];
   for (const b of plan.buildings || []) {
     const buildingStart = timing ? performance.now() : 0;

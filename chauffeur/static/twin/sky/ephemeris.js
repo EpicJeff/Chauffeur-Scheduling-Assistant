@@ -11,6 +11,13 @@ const wrap = value => ((value % TAU) + TAU) % TAU;
 const clamp = value => Math.max(-1, Math.min(1, value));
 const days = date => new Date(date).getTime() / DAY + 2440587.5 - J2000;
 
+// Local mean sidereal time, USNO GMST approximation (UTC stands in for UT1).
+// https://aa.usno.navy.mil/faq/GAST ; longitude is positive east.
+export function localSiderealTime(date, lonDeg) {
+  const d=days(date), midnight=Math.floor(d-.5)+.5, hours=(d-midnight)*24, t=d/36525;
+  return wrap((6.697375+.065709824279*midnight+1.0027379*hours+.0000258*t*t)*15*RAD+lonDeg*RAD);
+}
+
 function equatorial(longitude, latitude = 0) {
   return {
     ra: Math.atan2(Math.sin(longitude) * Math.cos(OBLIQUITY) - Math.tan(latitude) * Math.sin(OBLIQUITY), Math.cos(longitude)),

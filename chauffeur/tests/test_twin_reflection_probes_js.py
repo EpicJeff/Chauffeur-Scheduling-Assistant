@@ -25,6 +25,7 @@ class CaptureRenderer extends Renderer {
  getScissorTest(){return this.scissorTest;} setScissorTest(v){this.scissorTest=v;}
  getDrawingBufferSize(v){return v.set(1920,1081);}
  render(s,c){s.updateMatrixWorld(true);
+  if(s.name==='twin-atmosphere'||s.isMesh)return; // Sky generation/filtering is not a house probe capture.
   if(this.target?.isWebGLRenderTarget&&!this.target.isWebGLCubeRenderTarget){this.mirrors.push(this.target);this.inspectMirror?.(s,c);this.info.render.calls++;this.info.render.triangles+=100;if(this.failMirror)throw Error('mirror failure');return;}
   if(!this.target?.isWebGLCubeRenderTarget)return;this.inspect?.(s,c);this.faces.push([this.target,this.face]);this.info.render.calls++;this.info.render.triangles+=100;
   if(this.fail)throw Error('capture failure');}
@@ -35,10 +36,11 @@ async function setup(tier='medium',p=fixture()){
  const out=G.buildTwin(p,kit(),tier,{viewing:true});await out.ready;
  const yard=(await Y.buildYard(p,kit(),tier)).group;out.groups.site.add(yard);
  const scene=new THREE.Scene();scene.add(out.root);scene.environment=new THREE.Texture();scene.environmentIntensity=.13;
+ const sky=new THREE.CubeTexture();scene.background=sky;scene.backgroundIntensity=.7;
  const renderer=new CaptureRenderer();let time=0;const warnings=[];const extra=[];
  const cut=new THREE.Plane(new THREE.Vector3(0,-1,0),2);
  const uncut=()=>{const v=cut.constant;cut.constant=1e6*.3048;return()=>{cut.constant=v;};};
- const manager=R.createReflectionProbes({scene,renderer,tier,now:()=>time,extras:()=>extra,uncut,warn:e=>warnings.push(e)});
+ const manager=R.createReflectionProbes({scene,renderer,tier,sky:()=>sky,now:()=>time,extras:()=>extra,uncut,warn:e=>warnings.push(e)});
  manager.rebuild(p,out.root);
  return {out,yard,scene,renderer,manager,warnings,extra,p,cut,advance(t){time+=t;},round(){manager.frame();time+=1500;for(let i=0;i<4;i++)manager.frame();}};
 }
@@ -85,7 +87,8 @@ for(const failure of [false,true])await test('capture_restores_hidden_objects_an
   // the cut planes are lifted instead, so the cube holds the whole house.
   assert.equal(c.renderer.localClippingEnabled,saved.local);assert.equal(c.renderer.clippingPlanes,saved.clipping);
   assert.equal(c.cut.constant,1e6*.3048);
-  assert.equal(c.scene.backgroundIntensity,.13);
+  assert.equal(c.scene.background,bg);assert.ok(c.scene.background.isCubeTexture);
+  assert.equal(c.scene.backgroundIntensity,bi,'capture uses the drawn sky radiance, not the material fill scale');
   for(const o of meshes(c.out))if(o.material.userData.reflection)assert.equal(o.visible,false);
  };
  c.round();assert.deepEqual(state(c.renderer),saved);assert.deepEqual(hidden.map(o=>o.visible),savedVis);assert.equal(sheet.visible,true);
@@ -364,7 +367,7 @@ await test('mounted_hook_requests_rebuild_sky_time_and_lit_changes_without_sync_
    const n=view.renderer3.faces.length;trigger();assert.equal(view.renderer3.faces.length,n,'synchronous apply never captures');assert.equal(view.reflectionInfo().pending,true);
    time+=1500;for(let i=0;i<5;i++)view.renderer3.loop();assert.ok(view.reflectionInfo().probes.every(p=>p.fresh));
   }
-  const before=view.reflectionInfo().probes.map(p=>p.captures);view.setClock('2026-06-01T18:00:00Z');assert.equal(view.reflectionInfo().pending,false,'rapid clock update stays within minute gate');
+  const before=view.reflectionInfo().probes.map(p=>p.captures);view.setClock('2026-06-01T18:00:00Z');assert.equal(view.reflectionInfo().pending,true,'changed sky requests a capture even within the shadow minute gate');
   time+=60000;view.setClock('2026-06-01T18:01:00Z');assert.equal(view.reflectionInfo().pending,true);time+=1500;for(let i=0;i<5;i++)view.renderer3.loop();
   view.setUnlit(true);const n=view.renderer3.faces.length;time+=61000;view.renderer3.loop();assert.equal(view.renderer3.faces.length,n);
   await view.rebuild(fixture());assert.equal(view.renderer3.faces.length,n);view.setUnlit(false);view.renderer3.loop();time+=1500;for(let i=0;i<5;i++)view.renderer3.loop();

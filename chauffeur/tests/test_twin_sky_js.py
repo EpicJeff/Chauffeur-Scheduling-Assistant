@@ -11,6 +11,7 @@ DRIVER = PRELUDE + r"""
 const {lookAt, modelDirection, resolveSite, previewDate} = await import(file('static/twin/sky/look.js'));
 const {mountTwin} = await import(file('static/twin/twin_view.js'));
 const {createPlace} = await import(file('static/twin/editor/place.js'));
+const {mountGlanceSettings} = await import(file('static/twin/live/glance_settings.js'));
 await test('continuous colour/intensity at all four band edges', () => {
   for (const edge of [-12,-6,0,6]) {
     const a = lookAt(edge - 1e-6, {altitude:.5,fraction:1}), b = lookAt(edge + 1e-6, {altitude:.5,fraction:1});
@@ -31,10 +32,13 @@ await test('continuous colour/intensity at all four band edges', () => {
   assert.equal(lookAt(-20, {altitude:-.1,fraction:1}).moon, 0);
   assert.equal(lookAt(-20, {altitude:1,fraction:0}).moon, 0);
 });
-await test('front bearing follows the actual Front camera ray', () => {
-  const a = modelDirection(Math.PI, Math.PI/4, 180), length = Math.hypot(41,69);
-  assert.ok(Math.abs(a[0] / Math.cos(Math.PI/4) + 41/length) < 1e-12);
-  assert.ok(Math.abs(a[2] / Math.cos(Math.PI/4) - 69/length) < 1e-12);
+await test('front bearing follows the street normal, plan -y / three +z', () => {
+  const street = modelDirection(Math.PI, 0, 180);
+  street.forEach((v,i) => assert.ok(Math.abs(v-[0,0,1][i]) < 1e-12));
+  // Street south: north is plan +y / three -z, east is plan +x / three +x.
+  const east = modelDirection(Math.PI/2, 0, 180);
+  east.forEach((v,i) => assert.ok(Math.abs(v-[1,0,0][i]) < 1e-12));
+  const a = modelDirection(Math.PI, Math.PI/4, 180);
   const b = modelDirection(Math.PI/2, Math.PI/4, 90);
   assert.deepEqual(a,b);
   const back = modelDirection(0,Math.PI/4,180);
@@ -66,17 +70,55 @@ await test('mounted view keeps every light/environment flag at noon dusk midnigh
   assert.equal(view.state.time,'now');
   let warm = 0; view.onTimeLook = () => warm++;
   view.setClock('2026-06-21T17:00:00Z'); const noon = flags(), env = view.scene.environment;
+  const cube = view.scene.background;
+  assert.ok(cube.isCubeTexture && env.isPMREMTexture,'the viewer draws and lights with the sky');
   const sun = view.scene.getObjectByName('real-sun'), moon = view.scene.getObjectByName('real-moon');
   assert.ok(sun.intensity>0); assert.equal(moon.castShadow,false);
   sun.shadow.needsUpdate = false;
   view.setClock('2026-06-22T00:40:00Z'); assert.deepEqual(flags(),noon);
   view.setClock('2026-06-22T05:00:00Z'); assert.deepEqual(flags(),noon);
   assert.equal(sun.intensity,0); assert.equal(view.scene.environment,env);
+  assert.equal(view.scene.background,cube);
   assert.equal(sun.shadow.needsUpdate,false,'no sun shadow refresh within a minute');
   assert.notEqual(view.renderer3.shadowMap.autoUpdate,false,'HA lamp shadows keep renderer updates');
   assert.ok(warm>=3,'time-look callbacks retained');
   const beforeTick=warm; minuteTick(); assert.equal(warm,beforeTick+1,'registered minute callback exercises the clock path');
   assert.ok(view.roomLights.every(l=>l.intensity>=0));
+});
+await test('viewer weather updates fixed textures and lights; editor ignores weather', async () => {
+  const viewer=await mountTwin(new Element(),{plan:input.plan,kit:{materials:{}},tier:'low',bake:false});
+  const host=new Element();host.className='editor-shell';
+  const editor=await mountTwin(host,{plan:input.plan,kit:{materials:{}},tier:'low',bake:false});
+  let stale=false;const states={'weather.a':{state:'sunny'}};
+  try {
+    for(const v of [viewer,editor]) {v.live={peek:()=>states,stale:()=>stale,draw(){},stop(){}};v.setTime('day');}
+    const cube=viewer.scene.background,env=viewer.scene.environment,sun=viewer.scene.getObjectByName('real-sun');
+    const clear=sun.intensity,hemisphere=viewer.scene.children.find(o=>o.isHemisphereLight),fill=hemisphere.intensity,environment=viewer.scene.environmentIntensity;
+    states['weather.a'].state='cloudy';states['weather.a'].attributes={cloud_coverage:100};viewer.render();editor.render();
+    assert.equal(viewer.scene.background,cube);assert.equal(viewer.scene.environment,env);
+    assert.equal(sun.intensity,clear*.25);assert.equal(hemisphere.intensity,fill*1.35);assert.equal(viewer.scene.environmentIntensity,environment*1.35);
+    assert.equal(editor.scene.getObjectByName('real-sun').intensity,clear,'editor has no live weather');
+    states['weather.b']={state:'sunny'};viewer.setWeatherEntity('weather.b');assert.equal(sun.intensity,clear);
+    viewer.setWeatherEntity(null);assert.equal(sun.intensity,clear*.25);
+    stale=true;viewer.render();assert.equal(sun.intensity,clear);
+    viewer.setTime('night');assert.equal(viewer.scene.background,cube);assert.equal(viewer.scene.environment,env);
+    editor.setTime('night');assert.ok(editor.scene.background.isCubeTexture);
+    editor.setUnlit(true);assert.equal(editor.scene.environment,null);assert.ok(editor.scene.background.isColor);
+    assert.equal(editor.scene.background.getHexString(),'171e27');
+    editor.setUnlit(false);assert.ok(editor.scene.background.isCubeTexture);
+  } finally {viewer.dispose();editor.dispose();}
+});
+await test('glance preferences deliver the chosen weather entity to the mounted viewer', async () => {
+  const viewer=await mountTwin(new Element(),{plan:input.plan,kit:{materials:{}},tier:'low',bake:false});
+  let preferences={weather_entity:'weather.chosen',can_edit:false};
+  const settings=mountGlanceSettings(viewer,{configure(){}},{configure(){}},{api:async()=>({ok:true,json:async()=>preferences})});
+  try {
+    viewer.live={peek:()=>({'weather.first':{state:'sunny',attributes:{friendly_name:'Alpha'}},'weather.chosen':{state:'cloudy',attributes:{friendly_name:'Zulu'}}}),stale:()=>false,draw(){},stop(){}};
+    viewer.setTime('day');await settings.reload();
+    assert.equal(viewer.scene.getObjectByName('real-sun').intensity,3*(1-.75*.85));
+    preferences={weather_entity:null,can_edit:false};await settings.reload();
+    assert.equal(viewer.scene.getObjectByName('real-sun').intensity,3);
+  } finally {settings.stop();viewer.dispose();}
 });
 await test('preview modes, idle return, minute tick, and clock test hook', async () => {
   const oldTimeout = globalThis.setTimeout, oldClear = globalThis.clearTimeout;
@@ -112,6 +154,20 @@ await test('facing dial pointer/keyboard/typed save and reload use the placement
   sheets=structuredClone(sheets); sheets.place.lot.front_bearing_deg=271; place.sync(sheets,{});
   assert.equal(degrees.value,'271'); assert.equal(dial.getAttribute('aria-valuenow'),'271');
   assert.equal(el('place-facing-house').style.transform,'rotate(271deg)');
+  sheets=structuredClone(sheets); Object.assign(sheets.place.lot,{map_bearing_deg:180,map_bearing_source:'footprint'});
+  place.sync(sheets,{site:{front_bearing_deg:180,map_bearing_deg:180,map_bearing_source:'footprint'}});
+  assert.equal(degrees.value,'180','map wins over a legacy dial without an override');
+  assert.ok(el('place-facing-map-note').textContent.includes('180° (building footprint)'));
+  await fire(el('place-facing-map'),'click');
+  assert.deepEqual(requests.at(-1),{path:'place/lot/bearing/map',method:'POST',body:{}});
+  place.sync(sheets,{site:{front_bearing_deg:271,front_bearing_source:'dial',map_bearing_deg:180,map_bearing_source:'street'}});
+  assert.equal(degrees.value,'271','an explicit dial override survives the map');
+  assert.ok(el('place-facing-map-note').textContent.includes('nearest street'));
+  place.sync(sheets,{site:{front_bearing_deg:210,map_bearing_deg:210,map_bearing_source:'street'}});
+  assert.equal(degrees.value,'210','state-only background completion refreshes the dial');
+  place.sync(sheets,{site:{front_bearing_deg:271,front_bearing_source:'dial'}});
+  assert.equal(el('place-facing-map').disabled,true,'a new location cannot use stale map data from sheets');
+  assert.ok(el('place-facing-map-note').textContent.includes('unavailable'));
 });
 await test('high tier throttles only the sun and invalidates its shadow on rebuild', async () => {
   const previousQuery=location.search; location.search='?test=1&tier=high';

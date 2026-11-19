@@ -108,7 +108,7 @@ export function createFlags({ view, getModel, getPlan, tools, panel, op, canEdit
   }
   function dashed(points) {
     const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),
-      new THREE.LineDashedMaterial({ color: '#52ccff', dashSize: .15, gapSize: .08, depthTest: false }));
+      new THREE.LineDashedMaterial({ fog: false, color: '#52ccff', dashSize: .15, gapSize: .08, depthTest: false }));
     line.computeLineDistances(); line.renderOrder = 12; highlight.add(line);
   }
   // The thing in question, outlined: grouped separator walls, or a roof check's roof area at its plate.
@@ -133,7 +133,7 @@ export function createFlags({ view, getModel, getPlan, tools, panel, op, canEdit
       const [x0, y0, x1, y1] = rect, z = flagZ(b, flag) + .06, area = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
       dashed([...area, area[0]].map(p => world(b, [...p, z])));
       // A soft fill over the roof block, so the area reads even where the marker covers its middle.
-      const fill = new THREE.Mesh(polygon(area, z), new THREE.MeshBasicMaterial({ color: '#52ccff', transparent: true,
+      const fill = new THREE.Mesh(polygon(area, z), new THREE.MeshBasicMaterial({ fog: false, color: '#52ccff', transparent: true,
         opacity: .28, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
       fill.scale.setScalar(FT); fill.rotation.y = (b.rotation || 0) * Math.PI / 180;
       fill.position.copy(world(b, [0, 0, 0])); fill.renderOrder = 11; highlight.add(fill);

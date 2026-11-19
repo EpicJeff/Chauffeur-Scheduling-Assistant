@@ -111,6 +111,7 @@ export function mountGlanceSettings(view, glance, idle, {api = (path, init) => f
       const p = await r.json(); if (stopped) return;
       const first = !preferences; preferences = p;
       glance.configure(p.entities); idle.configure(p.idle_enabled, p.weather_entity);
+      view.setWeatherEntity?.(p.weather_entity);
       const gear = document.getElementById('twin-settings-gear'); if (gear) gear.hidden = !p.can_edit;
       if (first && editor && p.can_edit) {
         for (const panel of p.panels || []) { const option = document.createElement('option'); option.value = panel.device_id; option.textContent = panel.label; picker.append(option); }

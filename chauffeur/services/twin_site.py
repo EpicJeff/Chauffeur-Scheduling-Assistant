@@ -1,14 +1,89 @@
 """The twin's site: cached household geocode only, never a network request."""
 import math
+import json
+from pathlib import Path
+import threading
+import time
 
-from services import storage, twin_store
+from services import house_map, storage, twin_store
+
+_job_lock = threading.Lock()
+_jobs = {}
+_results = {}
+
+
+def start_bearing_job():
+    """Keep a success per map key; retry failed/no-match attempts after 24h.
+
+    A separate small cache retains attempts beyond the scene cache's 12h TTL.
+    Only hashes and bearings are persisted, never addresses or credentials.
+    """
+    _, _, key = house_map.lookup_context()
+    path = Path(storage.DB_PATH).with_name('house_map_bearing.json')
+    identity = (str(path),key)
+    with _job_lock:
+        if key is None:
+            twin_store.set_map_bearing(None)
+            return
+        def reusable(record):
+            stamp = record.get('attempted_at')
+            return record.get('bearing') is not None or (type(stamp) in (int,float) and
+                math.isfinite(stamp) and 0 <= time.time()-stamp < 86400)
+
+        if identity in _results and reusable(_results[identity]):
+            twin_store.set_map_bearing(_results[identity]['bearing'])
+            return
+        if identity in _jobs:
+            return
+        try:
+            cached = json.loads(path.read_text(encoding='utf-8'))
+            if cached['key'] == key and reusable(cached):
+                twin_store.set_map_bearing(cached['bearing'])
+                _results[identity] = cached
+                return
+        except (OSError,ValueError,KeyError,TypeError):
+            pass
+        twin_store.set_map_bearing(None)
+
+        def run():
+            bearing = None
+            try:
+                bearing = house_map.neighborhood_layout().get('bearing')
+            except Exception:
+                pass  # Provider exceptions may contain credentials.
+            with _job_lock:
+                record = {'key':key,'bearing':bearing,'attempted_at':time.time()}
+                _results[identity] = record
+                # A home changed during the fetch must not inherit old north.
+                if house_map.lookup_context()[2] == key:
+                    twin_store.set_map_bearing(bearing)
+                    try:
+                        temp = path.with_suffix('.tmp')
+                        temp.write_text(json.dumps(record),encoding='utf-8')
+                        temp.replace(path)
+                    except OSError:
+                        pass
+                _jobs.pop(identity,None)
+
+        job = threading.Thread(target=run,name='twin-map-bearing',daemon=True)
+        _jobs[identity] = job
+        job.start()
 
 
 def site():
     settings = storage.get_settings()
-    bearing = twin_store.place().get('lot', {}).get('front_bearing_deg', 180)
+    lot = twin_store.place().get('lot', {})
+    bearing = lot.get('front_bearing_deg', 180)
+    bearing_source = 'dial' if 'front_bearing_deg' in lot else 'default'
+    mapped = lot.get('map_bearing_deg')
+    if type(mapped) not in (int,float) or not math.isfinite(mapped) or not 0 <= mapped < 360:
+        mapped = None
+    if not lot.get('front_bearing_override') and mapped is not None:
+        bearing, bearing_source = mapped, 'map'
     result = {'lat': 40, 'lon': None, 'front_bearing_deg': bearing, 'source': 'default',
-              'timezone': settings.get('timezone') or None}
+              'front_bearing_source': bearing_source, 'timezone': settings.get('timezone') or None}
+    if mapped is not None:
+        result.update(map_bearing_deg=mapped, map_bearing_source=lot.get('map_bearing_source'))
     # Longitude stays null until the browser supplies its UTC offset. Sending a
     # server offset would put an unconfigured household at the add-on's location.
     address = settings.get('home_location')

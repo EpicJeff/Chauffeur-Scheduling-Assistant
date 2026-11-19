@@ -174,6 +174,55 @@ def closest(point, a, b):
     return math.dist(point, q), q
 
 
+def street_bearing(home_lat, home_lon, data):
+    """True compass north from fetched east/south metres centred on home.
+
+    The footprint's outward edge normal wins over the geocode-to-street ray;
+    an off-centre geocode must not turn a rectangular house toward a corner.
+    """
+    if not data:
+        return None
+    segments = [(a,b) for line in data.get('lines', []) for a,b in zip(line,line[1:]) if math.dist(a,b) > .1]
+    if not segments:
+        return None
+    distance, q = min((closest((0,0),a,b) for a,b in segments),key=lambda p:p[0])
+    if not 3 <= distance <= 100:
+        return None
+    normal, source = (q[0]/distance,q[1]/distance), 'street'
+    from shapely.geometry import Polygon, Point
+    from shapely.ops import unary_union
+    grouped, polygons = {}, []
+    for i,building in enumerate(data.get('buildings', [])):
+        if not isinstance(building,dict):
+            continue
+        try:
+            poly = Polygon(building['outline']).buffer(0)
+            if not poly.is_empty:
+                grouped.setdefault(str(building.get('id') or f'unknown-{i}'),[]).append(poly)
+        except (KeyError,TypeError,ValueError):
+            continue
+    # Tile clipping edges are not house walls.
+    for pieces in grouped.values():
+        merged = unary_union(pieces)
+        for poly in ([merged] if merged.geom_type == 'Polygon' else getattr(merged,'geoms',[])):
+            if poly.geom_type == 'Polygon' and poly.covers(Point(0,0)):
+                polygons.append(poly)
+    if polygons:
+        poly = min(polygons,key=lambda p:p.area)
+        ring, edges = list(poly.exterior.coords), []
+        winding = 1 if poly.exterior.is_ccw else -1
+        for a,b in zip(ring,ring[1:]):
+            length = math.dist(a,b)
+            if length <= .1:
+                continue
+            outward = ((b[1]-a[1])/length*winding,(a[0]-b[0])/length*winding)
+            if outward[0]*normal[0]+outward[1]*normal[1] > 0:
+                edges.append((closest(q,a,b)[0],-length,outward))
+        if edges:
+            normal, source = min(edges)[2], 'footprint'
+    return {'bearing_deg':round(math.degrees(math.atan2(normal[0],-normal[1])),10)%360,'source':source}
+
+
 def parcel(lot):
     size = lot.get('scale', 1)
     c, s = math.cos(lot['rotation'])*size, math.sin(lot['rotation'])*size
@@ -468,11 +517,24 @@ def _fetch(lat, lon, token):
         collect_land(tile,('landcover',),tx,ty,factor)
         land_count += 1
     result = compile_layout(lines, buildings, coverage, addresses, terrain)
+    bearing = street_bearing(lat, lon, {'lines':lines,'buildings':buildings})
+    # North remains useful even when the illustrative scene cannot be packed.
+    if result is None and bearing is not None:
+        result = {'source':'generated'}
     if result is not None:
+        result['bearing'] = bearing
         result['terrainStatus'] = 'available' if land_count==len(land_tiles) else 'partial' if land_count else 'unavailable'
         result['footprintStatus'] = 'available' if len(coverage)==9 else 'partial' if coverage else 'unavailable'
     return result
 
+
+
+def lookup_context():
+    home = maps.get_home_location()
+    token = maps.get_mapbox_api_key() if home else None
+    if not home or not token or maps.get_map_option('disable_mapbox', False):
+        return home, token, None
+    return home, token, hashlib.sha256((home+'|'+token+'|8').encode()).hexdigest()
 
 
 def neighborhood_layout(cached_only=False):
@@ -481,10 +543,9 @@ def neighborhood_layout(cached_only=False):
     A local hashed key invalidates on home/key changes. Cache contains only
     projected geometry, never the address, token or geographic coordinates.
     """
-    home, token = maps.get_home_location(), maps.get_mapbox_api_key()
-    if not home or not token or maps.get_map_option('disable_mapbox', False):
+    home, token, key = lookup_context()
+    if key is None:
         return {'source': 'generated'}
-    key = hashlib.sha256((home+'|'+token+'|7').encode()).hexdigest()
     path = Path(storage.DB_PATH).with_name('house_map.json')
     cached = _cached(path, key)
     if cached is not None or cached_only:

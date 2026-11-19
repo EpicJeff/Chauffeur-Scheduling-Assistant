@@ -162,8 +162,33 @@ def set_front_bearing(value) -> dict:
     with LIFECYCLE, _LOCK:
         row = _place_state()
         row['place']['lot']['front_bearing_deg'] = value
+        row['place']['lot']['front_bearing_override'] = True
         _save(row)
         return deepcopy(row['place']['lot'])
+
+
+def clear_front_bearing_override() -> dict:
+    with LIFECYCLE, _LOCK:
+        row = _place_state()
+        row['place']['lot']['front_bearing_override'] = False
+        _save(row)
+        return deepcopy(row['place']['lot'])
+
+
+def set_map_bearing(value):
+    with LIFECYCLE, _LOCK:
+        row = _place_state()
+        lot, before = row['place']['lot'], deepcopy(row['place']['lot'])
+        if value is None:
+            lot.pop('map_bearing_deg', None)
+            lot.pop('map_bearing_source', None)
+        else:
+            bearing = value['bearing_deg']
+            if type(bearing) not in (int,float) or not math.isfinite(bearing) or not 0 <= bearing < 360 or value.get('source') not in ('footprint','street'):
+                raise ValueError('Invalid map bearing.')
+            lot.update(map_bearing_deg=bearing, map_bearing_source=value['source'])
+        if lot != before:
+            _save(row)
 
 
 def _drawing_parts(row):

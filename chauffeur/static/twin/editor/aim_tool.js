@@ -14,7 +14,7 @@ export function conePreview(at, aim, cone_deg = 90) {
     if (i % 8 === 0) vertices.push(...origin.toArray(), ...ring[i].toArray());
   }
   const line = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)),
-    new THREE.LineBasicMaterial({ color: '#9abfe5', transparent: true, opacity: .65, depthTest: false, toneMapped: false }));
+    new THREE.LineBasicMaterial({ fog: false, color: '#9abfe5', transparent: true, opacity: .65, depthTest: false, toneMapped: false }));
   line.renderOrder = 20; root.add(line); return root;
 }
 const dispose = root => { root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent(); };
@@ -25,7 +25,7 @@ export function aimTool({ at, aim, cone_deg = 90, onCommit }) {
   function draw() {
     for (const child of [...preview.children]) dispose(child);
     preview.add(conePreview(at, current.aim, current.cone_deg));
-    const target = new THREE.Mesh(new THREE.SphereGeometry(.2, 12, 8), new THREE.MeshBasicMaterial({ color: '#9abfe5', depthTest: false, toneMapped: false }));
+    const target = new THREE.Mesh(new THREE.SphereGeometry(.2, 12, 8), new THREE.MeshBasicMaterial({ fog: false, color: '#9abfe5', depthTest: false, toneMapped: false }));
     target.position.copy(point(current.aim)); target.userData.aimHandle = true; target.renderOrder = 21; preview.add(target);
   }
   function restore() { current = structuredClone(saved); draw(); }

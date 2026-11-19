@@ -55,8 +55,15 @@ globalThis.CustomEvent = class extends Event {constructor(name,opts){super(name)
 globalThis.ResizeObserver = class {observe(){} disconnect(){}};
 let renders = 0;
 globalThis.Renderer = class {
-  constructor(){this.domElement=new Element();this.shadowMap={};this.info={render:{calls:0,triangles:0},reset(){}};}
-  setPixelRatio(){} getContext(){return {getExtension:()=>null};} setSize(){} setAnimationLoop(){}
+  constructor(){this.domElement=new Element();this.shadowMap={};this.info={render:{calls:0,triangles:0},reset(){}};
+    // The mounted sky renders its cube and PMREM offscreen at startup.
+    this.target=null;this.face=0;this.mip=0;this.autoClear=true;this.alpha=1;this.toneMappingExposure=1;
+    this.xr={enabled:false};this.coordinateSystem=2000;}
+  setPixelRatio(){} getPixelRatio(){return 1;} getContext(){return {getExtension:()=>null};} setSize(){} setAnimationLoop(){}
+  setRenderTarget(t,face=0,mip=0){this.target=t;this.face=face;this.mip=mip;} getRenderTarget(){return this.target;}
+  getActiveCubeFace(){return this.face;} getActiveMipmapLevel(){return this.mip;}
+  getClearColor(c){return c;} getClearAlpha(){return this.alpha;} setClearColor(){} setClearAlpha(a){this.alpha=a;}
+  clear(){} clearDepth(){}
   render(scene){renders++;scene.updateMatrixWorld(true);} dispose(){} forceContextLoss(){}
 };
 const {createDrag, piecesOnMovedJoints} = await import(file('static/twin/editor/drag.js'));

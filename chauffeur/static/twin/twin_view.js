@@ -7,7 +7,7 @@ import { span as editSpan } from './edit_timing.js';
 import { heightAt } from './twin_roof.js';
 import { groundAt, buildingGround } from './twin_ground.js';
 import { buildYard, yardKey, yardMaterialKey, yardPartKeys } from './twin_yard.js';
-import { base, loadSky, disposeObject, manifest, currentMaterial, applyMaterialParams, copyMaterialParams, alphaModeOf, scaleStyledFadeAlpha } from './twin_library.js';
+import { base, disposeObject, manifest, currentMaterial, applyMaterialParams, copyMaterialParams, alphaModeOf, scaleStyledFadeAlpha } from './twin_library.js';
 import { watchMaterialCatalogue } from './material_watch.js';
 import { grassLawn } from './yard_grass.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
@@ -18,8 +18,13 @@ import { mountIdle } from './live/idle.js';
 import { mountGlanceSettings } from './live/glance_settings.js';
 import { mountEnergySettings } from './live/energy_settings.js';
 import { mountBake } from './bake/runtime.js';
-import { sunPosition, moonPosition, moonIllumination } from './sky/ephemeris.js';
+import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from './sky/ephemeris.js';
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
+import { createSky } from './sky/atmosphere.js';
+import { installStageHaze } from './sky/stage_haze.js';
+import { mountTimeScrub } from './sky/time_scrub.js';
+import { defaultStage, mountStageSettings } from './stage_settings.js';
+import { overcastFactor, weatherState } from './sky/overcast.js';
 import { createUnlit } from './unlit.js';
 import { createViewing } from './viewing.js';
 import { createLevels } from './levels.js';
@@ -27,7 +32,7 @@ import { mountFrameMeter } from './frame_meter.js';
 import { createPost, EMITTER_GAIN } from './post.js';
 import { createReflectionProbes } from './reflection_probes.js';
 
-export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {} } = {}) {
+export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {}, stage = null } = {}) {
   kit = kit || {};
   kit.manifest ||= manifest(kit);
   // Ruling B15: only the 3D house view bakes lights. The editor's scene is the house
@@ -65,6 +70,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const compileBehind = (target, eye, targetScene = null) => {
     const saved = [renderer3.getRenderTarget(), renderer3.getActiveCubeFace(), renderer3.getActiveMipmapLevel()];
     try {
+      stageHaze.prepare(target);
       // Never undefined: three reads the target's fields when it is not null.
       renderer3.setRenderTarget((!state.unlit && post?.target) || null);
       return compileFor(target, eye, targetScene);
@@ -94,22 +100,33 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const ambient = new THREE.HemisphereLight('#d9e9ff', '#68764f', 1.8);
   scene.add(sun, sun.target, moon, moon.target, ambient);
   let yardGroup = null;
-  // Even a missing optional sky has an environment: time changes only its
-  // intensity, never the USE_ENVMAP shader key.
-  const fallbackEnvironment = new THREE.DataTexture(new Uint8Array([185, 203, 215, 255, 185, 203, 215, 255]), 2, 1);
-  fallbackEnvironment.mapping = THREE.EquirectangularReflectionMapping;
-  fallbackEnvironment.needsUpdate = true;
-  let twin = null, disposed = false, revision = 0, sky = null, environment = fallbackEnvironment, environmentTarget = null;
+  const sky = createSky(renderer3, {tier}), environment = sky.environment;
+  const stageHaze = installStageHaze(scene, sky);
+  let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
+  const stageForPlan = nextPlan => {
+    const automatic = defaultStage(nextPlan);
+    return {...automatic, radius:stageOverride ?? automatic.radius, radius_override:stageOverride};
+  };
+  function syncStage(nextPlan) {
+    const value = stageForPlan(nextPlan);
+    stageHaze.set({centre:value.centre.map(v => v*FT), radius:value.radius*FT});
+  }
+  syncStage(plan);
+  scene.add(sky.object);
+  let twin = null, disposed = false, revision = 0;
   let rebuildWork = null;
   const materialBindings = new Map();
   scene.environment = environment;
-  const state = { view: 'ext', time: editor ? 'day' : 'now', camera: 'front', unlit: false };
+  scene.background = sky.cube;
+  const state = { view: 'ext', time: editor ? 'day' : 'now', previewHour:null, camera: 'front', unlit: false };
   const unlit = createUnlit();
   let viewing = null;
   let shadowAutoUpdate;
   let clock = null, previewIdle = null, timeTimer = null, timeLook = null, lastShadowUpdate = -Infinity;
   const clockNow = () => clock ? new Date(clock) : new Date();
   let liveLamps = false;
+  let weatherEntity = null, lastOvercast = 0;
+  const currentOvercast = () => editor ? 0 : overcastFactor(weatherState(view.live?.peek?.(), weatherEntity, view.live?.stale?.() ?? true));
   let bounds = { x: 19, y: 11, span: 38 };
   let framed = false, cameraMoved = false;
   controls.addEventListener('start', () => { cameraMoved = true; });
@@ -117,7 +134,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
   const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
-    extras:() => [sheet?.object, ...selectionLines], sky:() => sky, uncut:() => viewing?.uncut?.()});
+    extras:() => [sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
@@ -186,7 +203,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (yard) {
       const geometry = new THREE.BufferGeometry().setFromPoints([...yard.polygon, yard.polygon[0]].map(p =>
         new THREE.Vector3(p[0], groundAt(plan, ...p) + .06, -p[1])));
-      const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: isHover ? .4 : .65, depthTest: false }));
+      const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ fog: false, color: accent, transparent: true, opacity: isHover ? .4 : .65, depthTest: false }));
       line.userData.isHover = isHover; line.renderOrder = 10; twin.root.add(line); selectionLines.push(line); return;
     }
     const keys = [...twin.pieceBounds].filter(([, { data }]) => data.buildingId === pick.building
@@ -195,7 +212,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         && twin.pickObjects.get(`${data.buildingId}:${data.pieceId}`)?.parent?.userData.levelKey === `${pick.building}:${pick.id}`));
     for (const [key] of keys) {
       const proxy = twin.pickObjects.get(key); if (!proxy) continue;
-      const material = new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: isHover ? .65 : 1, depthTest: false });
+      const material = new THREE.LineBasicMaterial({ fog: false, color: accent, transparent: true, opacity: isHover ? .65 : 1, depthTest: false });
       let geometry;
       const b = plan.buildings.find(b => b.id === pick.building), r = b?.rooms?.find(r => r.id === pick.id);
       if (r && pick.kind === 'room') {
@@ -353,6 +370,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   function render() {
     if (disposed) return;
     if (compiling && performance.now() - holdSince < HOLD_MS) return;
+    // The live keeper can replace its layer. Read its current snapshot, without another stream.
+    if (!state.unlit && currentOvercast() !== lastOvercast) applyTimeLook();
     viewing?.update(performance.now());
     applyIndoorSky();
     view.levels?.draw();
@@ -403,6 +422,22 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const view = {
     ready: false, scene, post, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
+    get stage() { return stageForPlan(plan); },
+    get timeHour() {
+      if (state.time === 'scrub') return state.previewHour;
+      if (state.time === 'day') return 12;
+      if (state.time === 'night') return 23;
+      const now = clockNow(), located = resolveSite(site, now);
+      try {
+        if (located.timezone) {
+          const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {timeZone:located.timezone,
+            hour:'2-digit', minute:'2-digit', hourCycle:'h23'}).formatToParts(now).map(p => [p.type,p.value]));
+          return +parts.hour + +parts.minute/60;
+        }
+      } catch { /* Use the same longitude clock as previewDate. */ }
+      const local = new Date(+now + located.lon/15*3600000);
+      return local.getUTCHours() + local.getUTCMinutes()/60;
+    },
     get effects() { return twin?.effects; },
     viewingState() {
       return viewing?.snapshot() || {selected: state.view, pinned: state.view === 'ext' ? null : state.view, channels: []};
@@ -476,8 +511,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         const parts = JSON.parse(key); parts[2] = material.userData.materialRevision;
         cache.delete(key); cache.set(JSON.stringify(parts), material);
       }
-      if (yardGroup) Object.assign(yardGroup.userData, { yardKey: yardKey(plan, kit, tier, { viewing: !editor }),
-        yardMaterialKey: yardMaterialKey(plan, kit, tier), yardPartKeys: yardPartKeys(plan, kit, tier, { viewing: !editor }) });
+      if (yardGroup) Object.assign(yardGroup.userData, { yardKey: yardKey(plan, kit, tier, { viewing: !editor, stage:stageForPlan(plan) }),
+        yardMaterialKey: yardMaterialKey(plan, kit, tier), yardPartKeys: yardPartKeys(plan, kit, tier, { viewing: !editor, stage:stageForPlan(plan) }) });
       view.bake?.materialsChanged([...new Set(materials.map(m => m.userData.materialId))]);
       await Promise.all(materials.map(m => m.userData.ready));
       materials.forEach(sync);
@@ -653,7 +688,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
         geometry.setIndex([0, 1, 2, 0, 2, 3]); geometry.computeVertexNormals();
         texture.colorSpace = THREE.SRGBColorSpace;
-        const material = new THREE.MeshBasicMaterial({ name: 'sheet', map: texture, transparent: true, opacity: spec.opacity ?? 0.6, depthWrite: false, side: THREE.DoubleSide });
+        const material = new THREE.MeshBasicMaterial({ fog: false, name: 'sheet', map: texture, transparent: true, opacity: spec.opacity ?? 0.6, depthWrite: false, side: THREE.DoubleSide });
         const object = new THREE.Mesh(geometry, material);
         Object.assign(object.userData, { pieceId: `${building.id}:sheet:${level.id}`, kind: 'sheet', noOcclusion: true, buildingId: building.id });
         object.renderOrder = 1;
@@ -700,10 +735,33 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       applyLights(); paintSelection(); render();
     },
     setTime(time) {
+      // Idle restores the saved state before asking to reapply its clock look.
+      if (time === 'scrub' && Number.isFinite(state.previewHour)) return view.scrubTime(state.previewHour, {commit:true});
       if (!['now', 'day', 'night'].includes(time)) return;
       const moved = state.time !== time;
       state.time = time;
+      state.previewHour = null;
       resetPreviewIdle(); updateTime(moved);
+    },
+    scrubTime(hour, {commit = false} = {}) {
+      if (!Number.isFinite(hour)) return;
+      state.time = 'scrub';
+      state.previewHour = Math.round(Math.max(0, Math.min(24, hour)) * 12) / 12;
+      resetPreviewIdle();
+      if (commit) updateTime(true, true);
+      else {
+        applyTimeLook(false, true, true); render();
+        el.dispatchEvent(new CustomEvent('twintimechange', {detail:state.time}));
+      }
+    },
+    async setStage(next) {
+      if (!next || !Number.isFinite(next.radius) || next.radius < 30 || next.radius > 1000) return;
+      const radius = next.radius_override === undefined ? next.radius : next.radius_override;
+      if (radius !== null && (!Number.isFinite(radius) || radius < 30 || radius > 1000)) return;
+      const before = JSON.stringify(stageForPlan(plan));
+      stageOverride = radius;
+      syncStage(plan);
+      if (before !== JSON.stringify(stageForPlan(plan))) await view.rebuild(plan);
     },
     setUnlit(on) {
       on = !!on;
@@ -1096,7 +1154,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
             ...onLevel(after, list, change.levelId).map(p => p.id)])]]));
         view.rebuildLevel(change.buildingId, change.levelId, nextPlan, hint, { keep: true });
       }
-      plan = nextPlan; view.plan = nextPlan;
+      plan = nextPlan; view.plan = nextPlan; syncStage(plan);
       view.ready = !disposed && !!twin;
       sun.shadow.needsUpdate = true; reflections.request();
       deferYard(nextPlan, version);
@@ -1112,7 +1170,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       view.bake?.stop();
       stopBake();
       const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor, previous: force ? null : twin, timing });
-      const reuseYard = !!yardGroup && (preserveYard || yardGroup.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor }));
+      const reuseYard = !!yardGroup && (preserveYard || yardGroup.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan) }));
       if (timing) timing.yard_reused = reuseYard;
       const yardMaterials = reuseYard || yardGroup?.userData.yardMaterialKey === yardMaterialKey(nextPlan, kit, tier)
         ? yardGroup?.userData.materials : new Map(yardGroup?.userData.materials);
@@ -1168,7 +1226,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         stopBatch();
         if (!reuseYard && !yardLater) {
           const stopYard = editSpan(detail, 'yard');
-          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, materials: yardMaterials, timing: detail, previous: yardGroup }); next.groups.site.add(yard.group);
+          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials: yardMaterials, timing: detail, previous: yardGroup }); next.groups.site.add(yard.group);
           stopYard();
           next.yardGroup = yard.group;
         }
@@ -1212,7 +1270,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         const matches = Object.keys(target).filter(id => id.endsWith(':' + key));
         return matches.length === 1 ? target[matches[0]] : undefined;
       } }) };
-      view.roomLights = twin.roomLights; view.plan = plan;
+      view.roomLights = twin.roomLights; view.plan = plan; syncStage(plan);
       // Register originals before unlit/viewing presentation swaps their materials.
       reflections.rebuild(plan, twin.root);
       const points = (plan.buildings || []).flatMap(b => {
@@ -1281,7 +1339,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       view.bake?.stop();
       view.live?.stop();
       view.idle?.stop(); view.glance?.stop(); view.glanceSettings?.stop();
-      view.energySettings?.stop();
+      view.energySettings?.stop(); view.stageSettings?.stop(); view.timeScrub?.stop();
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
@@ -1292,7 +1350,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       viewing?.dispose(); viewing = null;
       if (twin) { scene.remove(twin.root); release(twin); }
       unlit.dispose();
-      sky?.dispose(); environmentTarget?.dispose(); fallbackEnvironment.dispose(); sun.shadow.dispose();
+      stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
       post?.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();
       if (window.__twin === view) delete window.__twin;
@@ -1302,13 +1360,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // A task boundary lets the accepted house paint before synchronous yard
     // builders run. The complete old yard stays attached until adoption.
     setTimeout(async () => {
-      if (disposed || version !== revision || yardGroup?.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor })) return;
+      if (disposed || version !== revision || yardGroup?.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan) })) return;
       const previous = yardGroup, materials = new Map(previous?.userData.materials);
       const retained = () => new Set([...(twin?.materials.values() || []), ...(yardGroup?.userData.materials?.values() || [])]);
       let group;
       try {
         const stop = editSpan(timing?.detail, 'yard');
-        try { ({ group } = await buildYard(nextPlan, kit, tier, { viewing: !editor, materials, timing: timing?.detail, previous })); }
+        try { ({ group } = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials, timing: timing?.detail, previous })); }
         finally { stop(); }
         if (disposed || version !== revision) {
           const keep = retained(); group.userData.releasePlants?.(keep); disposeObject(group, { keepMaterials: keep }); return;
@@ -1345,25 +1403,37 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // Materials with no geometry (e.g. an empty polygon) still own requests.
     model.materials.forEach(m => { if (!keepMaterials.has(m)) m.dispose(); });
   }
-  function applyTimeLook(moved = false) {
+  function applyTimeLook(moved = false, forceSky = false, cheap = false) {
+    stageHaze.set({enabled:!state.unlit});
+    sky.setEnabled(!state.unlit);
     if (state.unlit) {
       timeLook = lookAt(45);
-      scene.background = new THREE.Color().setRGB(...timeLook.background, THREE.SRGBColorSpace);
+      scene.background = new THREE.Color('#171e27');
       scene.environment = null; scene.environmentIntensity = 0;
       sun.intensity = moon.intensity = ambient.intensity = 0;
       renderer3.toneMappingExposure = 1;
       return;
     }
-    const now = clockNow(), located = resolveSite(site, now), date = previewDate(now, state.time, located);
+    const now = clockNow(), located = resolveSite(site, now), date = previewDate(now, state.time === 'scrub' ? state.previewHour : state.time, located);
     const solar = sunPosition(date, located.lat, located.lon), lunar = moonPosition(date, located.lat, located.lon);
-    timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: moonIllumination(date).fraction }, { shadows: settings.shadows });
-    scene.background = new THREE.Color().setRGB(...timeLook.background, THREE.SRGBColorSpace);
+    const illumination = moonIllumination(date), overcast = currentOvercast();
+    const sunDir = modelDirection(solar.azimuth, solar.altitude, located.front_bearing_deg);
+    const moonDir = modelDirection(lunar.azimuth, lunar.altitude, located.front_bearing_deg);
+    const skyChanged = sky.update({sunDir, moonDir, moonPhase:illumination.phase, moonFraction:illumination.fraction,
+      moonDistanceKm:lunar.distance, siderealTime:localSiderealTime(date,located.lon),
+      frontBearingDeg:located.front_bearing_deg, overcast, latitude:located.lat, force:moved || forceSky});
+    if (skyChanged) stageHaze.refresh();
+    lastOvercast = overcast;
+    timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
+      { shadows: settings.shadows, overcast, zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });
+    scene.background = sky.cube; scene.backgroundIntensity = 1;
     scene.environment = environment;
     scene.environmentIntensity = timeLook.environment;
     sun.intensity = timeLook.sun; moon.intensity = timeLook.moon;
     sun.color.setRGB(...timeLook.sunColor, THREE.SRGBColorSpace);
     moon.color.setRGB(...timeLook.moonColor, THREE.SRGBColorSpace);
     ambient.intensity = timeLook.ambient;
+    ambient.color.setRGB(...timeLook.skyColor); ambient.groundColor.setRGB(...timeLook.groundColor);
     renderer3.toneMappingExposure = timeLook.exposure;
     for (const [light, position] of [[sun, solar], [moon, lunar]]) {
       const [x, y, z] = modelDirection(position.azimuth, position.altitude, located.front_bearing_deg);
@@ -1374,14 +1444,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // Rendering and lamp changes do not refresh the sun map. The clock moves
     // it at most once per minute, including rapid test-clock changes. A person
     // choosing another time of day sees its shadows at once.
-    if (moved || performance.now() - lastShadowUpdate >= 60000) {
+    if (!cheap && (moved || performance.now() - lastShadowUpdate >= 60000)) {
       sun.shadow.needsUpdate = true; lastShadowUpdate = performance.now();
-      reflections.request();
     }
+    if (!cheap && (skyChanged || moved)) reflections.request();
   }
-  function updateTime(moved = false) {
+  function updateTime(moved = false, forceSky = false) {
     if (disposed) return;
-    applyTimeLook(moved); applyLights(); view.onTimeLook?.(); viewing?.warm(); render();
+    applyTimeLook(moved, forceSky); applyLights(); view.onTimeLook?.(); viewing?.warm(); render();
     el.dispatchEvent(new CustomEvent('twintimechange', { detail: state.time }));
   }
   function resetPreviewIdle() {
@@ -1422,11 +1492,16 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     expireTimePreview,
     setClock(isoString) {
       if (isoString !== null && !Number.isFinite(Date.parse(isoString))) throw new Error('Give an ISO clock time or null.');
-      clock = isoString; updateTime();
+      clock = isoString; updateTime(false, true);
     },
     cameraState() { return { position: camera.position.toArray(), target: controls.target.toArray() }; },
-    // The sky as loadSky's late callback hands it over (it can land after the page is up).
-    applySky(texture) { applySky(texture); },
+    // Retain the late-sky/test hook; the atmosphere now owns the fixed environment.
+    applySky(texture) { texture?.dispose(); updateTime(false, true); },
+    setWeatherEntity(entity) {
+      entity ||= null;
+      if (weatherEntity === entity) return;
+      weatherEntity = entity; updateTime();
+    },
     setCameraState({ position, target }) {
       cameraMoved = true; camera.position.fromArray(position); controls.target.fromArray(target); controls.update(); render();
     },
@@ -1472,30 +1547,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   });
   window.__twin = view;
   resize();
-  const applySky = texture => {
-    if (disposed) { texture.dispose(); return; }
-    sky?.dispose(); environmentTarget?.dispose(); sky = texture;
-    environmentTarget = null; environment = fallbackEnvironment;
-    // An optional sky must not prevent a useful plain-colour preview.
-    let pmrem;
-    try {
-      pmrem = new THREE.PMREMGenerator(renderer3);
-      environmentTarget = pmrem.fromEquirectangular(sky); environment = environmentTarget.texture;
-    } catch { environment = fallbackEnvironment; }
-    finally { pmrem?.dispose(); }
-    reflections.request();
-    updateTime();
-  };
   try {
-    const skyPromise = loadSky(kit, applySky);
     await view.rebuild(plan);
     view.ready = false;
-    const loadedSky = await skyPromise;
-    if (loadedSky) applySky(loadedSky);
     if (disposed) return view;
     view.materialWatcher = watchMaterialCatalogue(view);
     renderer3.setAnimationLoop(() => {
       const now = performance.now(), run = probeRun;
+      sky.frame(now/1000);
       try {
       if (run) {
         const elapsed = now - run.start;
@@ -1547,7 +1606,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (new URLSearchParams(location.search).get('perf') === '1')
       view.meter = mountFrameMeter(el, { renderer3, gpu: view.renderer, tier, pixelRatio: settings.pixelRatio, stats: () => lastStats });
     view.ready = true;
-    timeTimer = setInterval(updateTime, 60000);
+    // Uniform texture/geometry contents arrive without changing shader programs.
+    sky.loadAssets(() => { if (!disposed) updateTime(false,true); });
+    timeTimer = setInterval(() => updateTime(false, true), 60000);
     for (const name of ['pointerdown', 'pointermove', 'keydown', 'input']) document.addEventListener(name, previewActivity);
   } catch (error) { view.dispose(); throw error; }
   return view;
@@ -1565,7 +1626,7 @@ async function boot() {
     const kitResponse = await fetch(base() + 'api/house/twin/kit/' + encodeURIComponent(snapshot.kit_id));
     if (!kitResponse.ok) throw new Error('Could not load the house style.');
     const kit = await kitResponse.json();
-    const view = await mountTwin(host, { plan: snapshot.plan, kit, round: snapshot.round ?? null, site: snapshot.site });
+    const view = await mountTwin(host, { plan: snapshot.plan, kit, round: snapshot.round ?? null, site: snapshot.site, stage:snapshot.stage });
     document.getElementById('twin-tier').textContent = view.tier[0].toUpperCase() + view.tier.slice(1);
     const sync = () => document.querySelectorAll('[data-time]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.time === view.state.time)));
     host.addEventListener('twintimechange', sync);
@@ -1595,6 +1656,8 @@ async function boot() {
         : idleQuery.has('idle_ms') ? Math.max(50, Number(idleQuery.get('idle_ms')) || 60000) : 2147483647});
     view.glanceSettings = mountGlanceSettings(view, view.glance, view.idle);
     view.energySettings = mountEnergySettings(view);
+    view.stageSettings = mountStageSettings(view);
+    view.timeScrub = mountTimeScrub(view, document.getElementById('twin-time-scrub'));
     const keeper = keepLive(view, { api: (path, options) => fetch(base() + path, options) });
     window.addEventListener('pagehide', () => { keeper.stop(); clearInterval(hudTimer); view.dispose(); }, { once: true });
     const query = new URLSearchParams(location.search);

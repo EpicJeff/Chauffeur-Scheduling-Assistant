@@ -61,12 +61,22 @@ console.log(JSON.stringify({
   morning: sky.sunPosition('2026-03-20T11:30:00Z', 40, -75),
   evening: sky.sunPosition('2026-03-20T22:30:00Z', 40, -75),
   unchanged: original.getTime() === timestamp,
+  // USNO's published GMST algorithm at J2000: 18.697375 hours.
+  // https://aa.usno.navy.mil/faq/GAST ; local longitude is east-positive.
+  sidereal: [0,30,-75,360].map(lon => sky.localSiderealTime('2000-01-01T12:00:00Z',lon)),
   samples,
 }));
 """
 
 
 class EphemerisTests(unittest.TestCase):
+    def test_local_sidereal_time_against_usno(self):
+        for actual, lon in zip(self.data['sidereal'], [0,30,-75,360]):
+            expected = (18.697375 * 15 + lon) % 360
+            self.angle_close(actual, expected, .0001)
+            self.assertGreaterEqual(actual, 0)
+            self.assertLess(actual, math.tau)
+
     @classmethod
     def setUpClass(cls):
         result = subprocess.run(

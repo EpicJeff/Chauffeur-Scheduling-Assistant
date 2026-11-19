@@ -19,7 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # and the retaining wall face moved proud of the pad edge.
 # The yard was captured again when the pool wall split at the waterline tile (v2.499.880),
 # and again once the pool was seated and its coping gained a fill (v2.499.895 to .897).
-GOLDEN = {'building': '82c28968e3bff83ab3108f06e4ac5caa', 'yard': '71f33a77a531f7af4ca8a791ff765863'}
+# Environment slice 1, Task 4 ruling 10: the square distant lawn is now a stage disc.
+GOLDEN = {'building': '82c28968e3bff83ab3108f06e4ac5caa', 'yard': '8dcdde3f7383f397b1b4ffd9dde5cb53'}
 
 DRIVER = PREFIX + r"""
 globalThis.buildCalls=0;

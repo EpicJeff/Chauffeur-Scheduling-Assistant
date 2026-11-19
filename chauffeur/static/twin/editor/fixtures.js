@@ -565,7 +565,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
         const points = f.shape === 'line' ? resolved.path : areaOutline({...f,at:toAbsolute(f.at)});
         mesh = fixtureStroke(points);
       } else {
-        const p = resolved?.at || toAbsolute(at); mesh = new THREE.Mesh(new THREE.SphereGeometry(.12, 10, 6), new THREE.MeshBasicMaterial({ color: FIXTURE_COLOR, toneMapped: false }));
+        const p = resolved?.at || toAbsolute(at); mesh = new THREE.Mesh(new THREE.SphereGeometry(.12, 10, 6), new THREE.MeshBasicMaterial({ fog: false, color: FIXTURE_COLOR, toneMapped: false }));
         mesh.position.set(p[0] * FT, p[2] * FT, -p[1] * FT);
       }
       mesh.renderOrder = 21;
