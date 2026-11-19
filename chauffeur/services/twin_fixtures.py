@@ -18,8 +18,8 @@ MAX_OUTPUT_LM = 1e6
 MAX_SHARE = 1e6
 OPS = ('add_light_fixture', 'update_light_fixture', 'delete_light_fixture', 'set_light_output', 'set_camera_view', 'set_climate_zone')
 _SHAPES = {
-    'point': {'at', 'offset_ft'},
-    'spot': {'at', 'aim', 'cone_deg', 'softness', 'offset_ft'},
+    'point': {'at', 'offset_ft', 'rotation_deg'},
+    'spot': {'at', 'aim', 'cone_deg', 'softness', 'offset_ft', 'rotation_deg'},
     'line': {'path', 'snap', 'anchors', 'facing', 'width_in', 'detached', 'offset_ft'},
     'area': {'at', 'size_ft', 'facing', 'rotation_deg', 'offset_ft'},
 }
@@ -123,6 +123,8 @@ def validate(fixture):
         f['offset_ft'] = _number(f['offset_ft'], 'vertical offset in feet', -50, 50)
     if shape != 'line':
         f['at'] = _vector(f.get('at'), 3, 'Position')
+    if shape in ('point', 'spot') and 'rotation_deg' in f:
+        f['rotation_deg'] = _number(f['rotation_deg'], 'rotation degrees') % 360
     if shape == 'spot':
         f['aim'] = _vector(f.get('aim'), 3, 'Aim')
         if math.dist(f['at'], f['aim']) <= 1e-8:

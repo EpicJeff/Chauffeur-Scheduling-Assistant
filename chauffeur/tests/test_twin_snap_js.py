@@ -213,7 +213,21 @@ def grid_is_one_inch():
     check(close(legacy, [33.5, 33.5]), ('snapPoint stays the wrapper returning a point', legacy))
 
 
+def precision_policy():
+    for kind, value, expected in [('move', 1.26, 1.5), ('angle', 22, 15), ('scale', 1.27, 1.25)]:
+        got = run('snapValue', [kind, value, False], [kind, value, True])
+        check(close(got, [expected, value]), (kind, got))
+    plan = {'buildings': [{'id': 'b', 'walls': [{'joints': ['a', 'neighbour']}], 'joints': [
+        {'id': 'a', 'level': 'L1', 'at': [0, 0]},
+        {'id': 'neighbour', 'level': 'L1', 'at': [3, 0]},
+        {'id': 'other-floor', 'level': 'L2', 'at': [3, 0]},
+        {'id': 'target', 'level': 'L1', 'at': [4, 0]}]}]}
+    got = run('joinTarget', [plan, 'b', 'L1', 'a', [3.1, 0]], [plan, 'b', 'L1', 'a', [2.9, 0]])
+    check(got[0] == {'joint': 'target', 'at': [4, 0]} and got[1] is None, got)
+
+
 SCENARIOS = [
+    precision_policy,
     scenario_points_snap_to_endpoints_then_lines_then_grid,
     scenario_reach_and_grid_are_options,
     scenario_angles_snap_to_right_angles_within_seven_degrees,

@@ -67,6 +67,39 @@ assert.equal(plantAt.building,null); assert.equal(plantAt.level,null);
 assert.deepEqual(plan,before);
 ok('site_item_moves');
 
+const transforms = {buildings:[{id:'b',levels:[{id:'L'}],walls:[],rooms:[],anchors:[],
+  items:[{id:'chair',host:{ground:true,at:[1,2]}}]}],site:{planting:[{id:'tree',at:[0,0]}],
+  pool:{id:'pool',polygon:[[0,0],[4,0],[0,4]]},beds:[{id:'bed',polygon:[[0,0],[2,0],[0,2]]}]}};
+const transformBefore=structuredClone(transforms), properties={rotation:33,scale:2,scale_axes:[2,1,3]};
+for(const target of [{building:'b',id:'chair'},{list:'planting',index:0}]) {
+  const result=applyLocal(transforms,{op:'set_object',...target,properties});
+  const piece=target.building?result.plan.buildings[0].items[0]:result.plan.site.planting[0];
+  for(const [key,value] of Object.entries(properties))assert.deepEqual(piece[key],value);
+}
+for(const target of [{list:'beds',index:0},{list:'pool',index:0}]) {
+  const polygon=[[1,1],[6,1],[1,6]],result=applyLocal(transforms,{op:'update_site_shape',...target,polygon,rotation:15});
+  const piece=target.list==='pool'?result.plan.site.pool:result.plan.site.beds[0];assert.deepEqual(piece.polygon,polygon);assert.equal(piece.rotation,15);
+}
+assert.deepEqual(applyLocal(transforms,{op:'move_hosted',building:'b',id:'chair',host:{ground:true,at:[4,5]}}).plan.buildings[0].items[0].host.at,[4,5]);
+assert.throws(()=>applyLocal(transforms,{op:'set_object',building:'b',id:'gone',properties}),LocalMissing);
+assert.throws(()=>applyLocal(transforms,{op:'update_site_shape',list:'beds',index:5,rotation:15}),LocalMissing);
+assert.deepEqual(transforms,transformBefore);ok('object_and_shape_transforms_are_pure_and_missing_targets_refused');
+assert.equal(applyLocal(transforms,{op:'move_hosted',building:'b',id:'opening',at:3}),null,'opening slides retain their existing supplied-preview path');
+
+const splitPlan={buildings:[{id:'s',levels:[{id:'L',footprint:['a','b','c'],outline:[[0,0],[10,0],[10,10]]}],
+  joints:[{id:'a',level:'L',at:[0,0]},{id:'b',level:'L',at:[10,0]},{id:'c',level:'L',at:[10,10]}],
+  walls:[{id:'w',level:'L',joints:['a','b'],from:[0,0],to:[10,0],footprint:[[0,.25],[10,.25],[10,-.25],[0,-.25]]}],
+  rooms:[{id:'r',joints:['a','b','c']}],openings:[],items:[{id:'i',host:{wall:'w',at:7,z:2}}],anchors:[]}]};
+const splitSaved=structuredClone(splitPlan),sop={op:'split_wall',building:'s',wall:'w',at:4};
+const sb=applyLocal(splitPlan,sop).plan.buildings[0];assert.deepEqual(sb.items[0].host,{wall:'w~2',at:3,z:2});
+assert.equal(sb.rooms[0].joints.length,4);assert.deepEqual(sb.walls[0].footprint,[[0,.25],[4,.25],[4,-.25],[0,-.25]]);
+assert.deepEqual(sb.walls[1].footprint,[[4,.25],[10,.25],[10,-.25],[4,-.25]]);
+assert.deepEqual(applyLocal(splitPlan,sop).plan.buildings[0],sb,'replay IDs stay stable');
+assert.deepEqual(splitPlan,splitSaved);assert.equal(applyLocal(splitPlan,{...sop,at:.5}),null);
+const sameWall=applyLocal(splitPlan,{op:'move_joint',building:'s',joint:'a',to:[9.5,0]});
+assert.equal(sameWall.plan.buildings[0].joints.length,3,'never weld an incident short wall');
+ok('split_hosts_footprints_rooms_stable_replay_and_neighbour_weld_exclusion');
+
 assert.equal(applyLocal(plan,{op:'add_opening',building:building.id,wall:wall.id}),null);
 for(const op of ['unknown','constructor','toString','__proto__']) assert.equal(applyLocal(plan,{op}),null);
 ok('other_ops_return_null');

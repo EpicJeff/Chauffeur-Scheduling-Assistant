@@ -1,3 +1,19 @@
+export const SNAP = { move_ft: .5, angle_deg: 15, scale_step: .05, join_ft: 1 };
+export function snapValue(kind, value, free) {
+  const step = { move: SNAP.move_ft, angle: SNAP.angle_deg, scale: SNAP.scale_step }[kind];
+  return free ? value : Math.round(value / step) * step;
+}
+
+export function joinTarget(plan, buildingId, level, jointId, point) {
+  const b = plan?.buildings.find(b => b.id === buildingId);
+  if (!b) return null;
+  const neighbours = new Set([jointId, ...b.walls.filter(w => w.joints?.includes(jointId)).flatMap(w => w.joints)]);
+  const joint = b.joints.filter(j => j.level === level && !neighbours.has(j.id))
+    .map(j => ({ j, distance: Math.hypot(...j.at.map((v, i) => v - point[i])) }))
+    .filter(row => row.distance <= SNAP.join_ft + 1e-10).sort((a, b) => a.distance - b.distance)[0]?.j;
+  return joint ? { joint: joint.id, at: [...joint.at] } : null;
+}
+
 // Building-local feet. A higher-ranked target wins even if another is nearer.
 export function snapTo(p, { joints = [], walls = [], below = [], anchors = [], from,
   grid = 1 / 12, reach = 1, exclude = [] } = {}) {

@@ -753,11 +753,12 @@ export async function boot() {
       prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });
     view.live = { draw: devices.draw, stop: devices.stop };
     tools.delegate({
-      handleSources: [terrain, lot, devices.fixtureHandles],
+      preview: plan => library.preview(plan), key: event => library.key(event), typedValue: () => library.typedValue(), commit: value => library.commit(value),
+      handleSources: [tools.gizmo, terrain, lot, devices.fixtureHandles],
       selectPick: hit => hit?.kind === 'terraces' && (terrain.choose('terraces', hit.id), true) || devices.selectFixturePick(hit),
       selectionChanged: state => { terrain.selectionChanged(state); library.refresh(); },
       pick: flags.pick, pointerBrowse: event => devices.pointerBrowse(event),
-      pointerArmedDown: event => terrain.pointerArmedDown(event) || devices.pointerArmedDown(event) || lot.pointerArmedDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event),
+      pointerArmedDown: event => tools.pointerArmedDown(event) || terrain.pointerArmedDown(event) || devices.pointerArmedDown(event) || lot.pointerArmedDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event),
       pointerDown: event => devices.pointerDown(event) || lot.pointerDown(event) || library.pointerDown(event),
       pointerMove: event => terrain.pointerMove(event) || devices.pointerMove(event) || lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event) || library.pointerMove(event),
       pointerUp: (event, cancel) => terrain.pointerUp(event, cancel) || devices.pointerUp(event, cancel) || lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
@@ -769,7 +770,7 @@ export async function boot() {
       onPreview(value) {
         previewing = value; terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.cancel(); tools.select(null); pauses.dismiss(); panel.readOnly(value);
         tools.refreshCard(); syncBuildButton();
-        for (const id of ['move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-level', 'delete', 'roof']) el(`rail-${id}`).disabled = value;
+        for (const id of ['move', 'rotate', 'scale', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-level', 'delete', 'roof']) el(`rail-${id}`).disabled = value;
         if (!value) pauses.resume();
       },
     });

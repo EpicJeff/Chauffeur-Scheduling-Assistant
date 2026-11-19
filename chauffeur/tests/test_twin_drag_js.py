@@ -80,18 +80,21 @@ assert.deepEqual(stairHoles(stairs,stairs.levels[0]),[]);
 assert.deepEqual(stairHoles(stairs,stairs.levels[1]),[[[0,2],[0,8],[4,8],[4,2]]]);
 ok('shared containment includes edges and stair holes use the bearing level, including a basement');
 
-let zoom = 20, snapped;
+let zoom = 20, snapped, snapHint;
 const snapModel = {buildings:[{id:'snap',levels:[{id:'L1',elevation:0}],walls:[],rooms:[],anchors:[],items:[],
   joints:[{id:'moving',level:'L1',at:[0,0]},{id:'target',level:'L1',at:[3,0]}]}]};
 const snapDrag = createDrag({model:()=>snapModel,view:{
   screenOfFloor:(x,y)=>[x*zoom,y*zoom],floorAt:(x,y)=>[x/zoom,y/zoom],rebuildLevel:(b,l,p)=>{snapped=p.buildings[0].joints[0].at;}
-},onCommit:()=>{}});
+},onCommit:()=>{},onPreview:(plan,state,problem)=>{snapHint=problem;}});
 const snapSelection={kind:'joint',id:'moving',building:'snap'};
-for(const [scale,x,expected] of [[20,2.5,3],[100,2.5,2.5],[100,2.8,3],[5,1.5,1.5],[5,2.1,3]]) {
+assert.ok(snapDrag.begin(snapSelection,[0,0]));snapDrag.update([2.2,0]);
+assert.deepEqual(snapped,[3,0]);assert.equal(snapHint,'Joins the corner');
+snapDrag.update([2.2,.03],{free:true});assert.deepEqual(snapped,[2.2,.03]);await snapDrag.finish(true);
+for(const [scale,x,expected] of [[20,2.5,3],[100,2.5,3],[100,2.8,3],[5,1.5,1.5],[5,2.1,3]]) {
   zoom=scale;assert.ok(snapDrag.begin(snapSelection,[0,0]));snapDrag.update([x,0]);
   assert.ok(Math.abs(snapped[0]-expected)<1e-6,`${scale}px/ft: ${snapped}`);await snapDrag.finish(true);
 }
-ok('R45 uses 12 screen pixels: a joint half a foot away snaps at 20px/ft, with both reach clamps');
+ok('slice 3b ruling 6: a non-neighbour corner joins within one foot at every zoom; Shift stays raw');
 
 // Live t12: dragging a wall across its neighbour snaps it onto the neighbour's
 // line on the way (the midpoint snaps to wall N), which collapses the attached wall to zero length. That
@@ -112,6 +115,9 @@ assert.ok(collapseDrag.update([6,2.5]));assert.equal(collapseFrames.length,2,'dr
 assert.ok(collapseFrames.flat().every(length=>length>1e-6),`no drawn frame holds a zero-length wall: ${JSON.stringify(collapseFrames)}`);
 await collapseDrag.finish();
 assert.ok(Math.abs(collapseOps[0].by[0]-6)<1e-6&&Math.abs(collapseOps[0].by[1])<1e-6,`release posts the drawn move: ${JSON.stringify(collapseOps)}`);
+assert.ok(collapseDrag.begin({kind:'wall',id:'W',building:'c'},[0,2.5]));collapseDrag.update([2,2.5]);
+await collapseDrag.finish(false,-1.23);
+assert.ok(Math.abs(collapseOps[1].by[0]-1.23)<1e-6&&Math.abs(collapseOps[1].by[1])<1e-6,'typed wall distance uses its signed normal, without rounding');
 ok('a drag frame that snaps a wall onto a corner and collapses its neighbour is skipped, never drawn as NaN');
 
 const pickPlan={buildings:[{id:'pick',position:[0,0],levels:[{id:'L1',elevation:0,ceiling:6},{id:'L2',elevation:6,ceiling:6}],

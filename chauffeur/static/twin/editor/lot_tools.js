@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { contains } from '../twin_generator.js';
 import { groundAt, buildingBase } from '../twin_ground.js';
-import { snapRotation } from './snap.js';
+import { snapRotation, snapValue } from './snap.js';
+import { createTypedValue } from './typed_value.js';
 import { plotSuggestionCard } from './place.js';
 import { request, report } from './api.js';
 import { DRAG_THRESHOLD_PX, HANDLE_HIT_PX } from './picking.js';
@@ -112,6 +113,7 @@ export function snapFootprint(building, outline, suggestions) {
 export function createLotTools({ view, getPlan, getSheets, getSelection, select, pauses, op, reload, canEdit, signal }) {
   const canvas = view.renderer3.domElement, parent = canvas.parentElement;
   const layer = document.createElement('div'); layer.className = 'editor-handles'; parent.append(layer);
+  const typed = createTypedValue(layer);
   const card = document.createElement('aside'); card.className = 'place-card editor-lot-card'; card.hidden = true;
   card.setAttribute('aria-label', 'Lot placement'); document.querySelector('.editor-shell').append(card);
   const graphics = new THREE.Group(); view.scene.add(graphics);
@@ -222,7 +224,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     if (disposed) return;
     syncSheet(); syncGraphics();
     if (gesture?.client && (gesture.hit || gesture.drawing)) update({ pointerId: gesture.pointer,
-      clientX: gesture.client[0], clientY: gesture.client[1] });
+      clientX: gesture.client[0], clientY: gesture.client[1], shiftKey: gesture.free });
     if (openCard?.building && current()?.id !== openCard.building) closeCard();
     const descriptors = handles();
     while (rows.length < descriptors.length) {
@@ -372,9 +374,9 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     gesture = { pointer: event.pointerId, x: event.clientX, y: event.clientY, edge, suggestion, part };
     return true;
   }
-  function update(event) {
+  function update(event, { free = !!event.shiftKey, typed: exact } = {}) {
     if (!gesture || gesture.pointer !== event.pointerId) return false;
-    const g = gesture; g.client = [event.clientX, event.clientY];
+    const g = gesture; g.client = [event.clientX, event.clientY]; g.event = event; g.free = free;
     const point = ground(event); if (!point || !g.hit && !g.drawing) return true;
     g.moved = Math.hypot(event.clientX - g.x, event.clientY - g.y) >= DRAG_THRESHOLD_PX;
     if (g.drawing) {
@@ -382,24 +384,33 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
       g.outline = [[Math.min(x, a), Math.min(y, b)], [Math.max(x, a), Math.min(y, b)], [Math.max(x, a), Math.max(y, b)], [Math.min(x, a), Math.max(y, b)]];
     } else {
       const before = g.b;
-      let position = add(before.position || [0, 0], subtract(point, g.start)), rotation = before.rotation || 0;
+      let by = subtract(point, g.start), rotation = before.rotation || 0;
+      if (Number.isFinite(exact) && g.hit.kind === 'move') {
+        const length = Math.hypot(...by);
+        by = by.map((v, i) => exact * (length ? v / length : i === 0 ? 1 : 0));
+      }
+      let position = add(before.position || [0, 0], by.map(v => snapValue('move', v, free)));
       if (g.hit.kind === 'turn') {
         const a = subtract(g.start, g.about), b = subtract(point, g.about);
         const delta = Math.atan2(a[0] * b[1] - a[1] * b[0], a[0] * b[0] + a[1] * b[1]) * 180 / Math.PI;
-        rotation = degrees(snapRotation(rotation + delta));
+        const angle = rotation + (Number.isFinite(exact) ? exact : delta);
+        rotation = degrees(free ? angle : Math.round(snapRotation(angle)));
         position = add(g.about, rotate(subtract(before.position, g.about), rotation - (before.rotation || 0)));
       }
       let transform = { position, rotation };
-      if (g.moved && g.hit.kind === 'move') transform = snapFootprint(transform, footprint(before), suggestions()) || transform;
+      if (!free && g.moved && g.hit.kind === 'move') transform = snapFootprint(transform, footprint(before), suggestions()) || transform;
       g.preview = { ...before, ...transform }; previewBuilding(g.preview); g.outline = placed(g.preview, footprint(before));
+      typed.show(g.hit.kind === 'turn' ? 'angle' : 'length', g.hit.kind === 'turn'
+        ? (transform.rotation - (before.rotation || 0) + 540) % 360 - 180 : distance(transform.position, before.position), g.client);
     }
     document.getElementById('editor-drag-outline').setAttribute('points', g.outline.map(project).filter(Boolean).map(p => p.join(',')).join(' '));
     return true;
   }
-  function finish(event, cancel) {
+  function finish(event, cancel, exact) {
     if (!gesture || gesture.pointer !== event.pointerId) return false;
-    if (!cancel) update(event);
+    if (!cancel) update(event, { free: Number.isFinite(exact) || !!event.shiftKey, typed: exact });
     const g = gesture; gesture = null;
+    typed.hide();
     if (g.enabled !== undefined) view.controls.enabled = g.enabled;
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     document.getElementById('editor-drag-outline').setAttribute('points', '');
@@ -407,7 +418,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     if (g.drawing) {
       drawing = null; closeCard();
       if (g.moved) mutate(`place/buildings/${encodeURIComponent(g.drawing)}`, 'PATCH', { footprint: g.outline, footprint_from: 'drawn' });
-    } else if (g.preview && g.moved) commit(g.b, g.preview, g.hit.kind, g.about).catch(report);
+    } else if (g.preview && (g.moved || Number.isFinite(exact))) commit(g.b, g.preview, g.hit.kind, g.about).catch(report);
     else if (g.hit) previewBuilding(g.b);
     else if (!g.hit && Math.hypot(event.clientX - g.x, event.clientY - g.y) < DRAG_THRESHOLD_PX) {
       if (g.edge >= 0 && read()) streetCard(g.edge);
@@ -416,6 +427,13 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     }
     return true;
   }
+  document.addEventListener('keydown', event => {
+    if (!enabled() || event.defaultPrevented || !gesture) return;
+    const result = typed.key(event); if (!result) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (result === 'commit') finish(gesture.event, false, typed.value());
+    else if (result === 'cancel') finish({ pointerId: gesture.pointer }, true);
+  }, { signal, capture: true });
   document.addEventListener('keydown', event => {
     if (!enabled() || event.defaultPrevented || event.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
     if (event.key === 'Escape') { if (gesture) finish({ pointerId: gesture.pointer }, true); drawing = null; closeCard(); return; }
@@ -426,10 +444,11 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
   signal.addEventListener('abort', () => {
     disposed = true; cancelAnimationFrame(frame); ++sheetVersion;
     if (gesture) finish({ pointerId: gesture.pointer }, true);
-    disposeSheet(); clearGroup(graphics); graphics.removeFromParent(); layer.remove(); card.remove();
+    typed.hide(); disposeSheet(); clearGroup(graphics); graphics.removeFromParent(); layer.remove(); card.remove();
   }, { once: true });
   refresh();
   const tools = { hit, begin, pointerArmedDown: event => !!drawing && begin(event),
+    key: typed.key, typedValue: typed.value, commit: exact => gesture && finish(gesture.event, false, exact),
     pointerDown: begin, pointerMove: update, pointerUp: finish, focusBuilding, showLot,
     cancel() { if (gesture) finish({ pointerId: gesture.pointer }, true); drawing = null; selected = null; closeCard(); },
     dragging: () => !!gesture?.hit || !!gesture?.drawing,

@@ -1,4 +1,5 @@
 import { hostPoint } from '../twin_hosts.js';
+import { sitePieces } from '../objects.js';
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
 const delta = (a, b) => a.map((v, i) => v - b[i]);
@@ -157,7 +158,104 @@ export function movePreview(plan, gesture, by) {
   return preview;
 }
 
+function weldMove(plan, buildingId, moved) {
+  const b = plan.buildings.find(b => b.id === buildingId), replacements = new Map();
+  for (const joint of b.joints.filter(j => moved.has(j.id))) {
+    const neighbours = new Set(b.walls.filter(w => w.joints.includes(joint.id)).flatMap(w => w.joints));
+    const target = b.joints.filter(j => j.level === joint.level && !moved.has(j.id) && !neighbours.has(j.id)
+      && Math.hypot(...delta(j.at, joint.at)) < 1).sort((a, c) => Math.hypot(...delta(a.at, joint.at)) - Math.hypot(...delta(c.at, joint.at)))[0];
+    if (target) replacements.set(joint.id, target.id);
+  }
+  if (!replacements.size) return;
+  for (const piece of [...b.walls, ...b.rooms]) piece.joints = piece.joints?.map(id => replacements.get(id) || id);
+  b.joints = b.joints.filter(j => !replacements.has(j.id));
+  const positions = new Map(b.joints.map(j => [j.id, j.at]));
+  for (const wall of b.walls) {
+    const [from, to] = wall.joints.map(id => positions.get(id));
+    if (wall.footprint) wall.footprint = wall.footprint.map((p, i) => shifted(p,
+      delta(i === 0 || i === 3 ? from : to, i === 0 || i === 3 ? wall.from : wall.to)));
+    wall.from = [...from]; wall.to = [...to];
+  }
+  for (const room of b.rooms) if (room.joints?.every(id => positions.has(id))) room.polygon = room.joints.map(id => [...positions.get(id)]);
+  for (const level of b.levels) if (level.footprint) {
+    level.footprint = level.footprint.map(id => replacements.get(id) || id);
+    if (level.footprint.every(id => positions.has(id))) level.outline = level.footprint.map(id => [...positions.get(id)]);
+  }
+  for (const piece of [...(b.items || []), ...(b.anchors || [])]) if (piece.host) {
+    try { piece.position = hostPoint(b, piece.host, piece.offset || 0); } catch { /* Server judges missing hosts. */ }
+  }
+}
+
+function splitWall(plan, operation) {
+  const preview = structuredClone(plan), b = preview.buildings.find(b => b.id === operation.building);
+  const wall = b?.walls.find(w => w.id === operation.wall && w.state !== 'ghost');
+  if (!wall) throw new LocalMissing(`Missing wall: ${operation.wall}`);
+  const [a, z] = wall.joints.map(id => b.joints.find(j => j.id === id).at), length = Math.hypot(...delta(z, a)), at = operation.at;
+  if (!Number.isFinite(at) || at < 1 - EPS || length - at < 1 - EPS) return null;
+  // The graph keeps a wall whole at a T inside an opening's span (R55).
+  if (b.openings?.some(o => o.wall === wall.id && Math.abs(o.at - at) < o.width / 2 - EPS)) return null;
+  const point = a.map((v, i) => v + (z[i] - v) * at / length);
+  let joint = b.joints.find(j => j.level === wall.level && Math.hypot(...delta(j.at, point)) < EPS);
+  if (!joint) { joint = { id: `local:split:${wall.id}:${at}`, level: wall.level, at: point }; b.joints.push(joint); }
+  let suffix = 2; while (b.walls.some(w => w.id === `${wall.id}~${suffix}`)) ++suffix;
+  const second = structuredClone(wall), end = wall.joints[1]; second.id = `${wall.id}~${suffix}`;
+  wall.joints[1] = joint.id; wall.to = [...point]; second.joints = [joint.id, end]; second.from = [...point]; second.to = [...z];
+  if (wall.footprint) {
+    const [p, q, r, s] = wall.footprint, half = (wall.thickness ?? .5) / 2;
+    const normal = [-(z[1] - a[1]) / length, (z[0] - a[0]) / length];
+    const left = shifted(point, normal.map(v => v * half)), right = shifted(point, normal.map(v => -v * half));
+    wall.footprint = [p, left, right, s]; second.footprint = [left, q, r, right];
+  }
+  b.walls.splice(b.walls.indexOf(wall) + 1, 0, second);
+  for (const room of b.rooms) if (room.joints) {
+    const ids = room.joints; room.joints = ids.flatMap((id, i) =>
+      [wall.joints[0], end].includes(id) && [wall.joints[0], end].includes(ids[(i + 1) % ids.length]) ? [id, joint.id] : [id]);
+    room.polygon = room.joints.map(id => [...b.joints.find(j => j.id === id).at]);
+  }
+  for (const name of ['openings', 'items', 'anchors', 'devices']) for (const piece of b[name] || []) {
+    const host = name === 'openings' ? piece : piece.host;
+    if (host?.wall === wall.id && host.at > at) { host.wall = second.id; host.at -= at; }
+  }
+  return { plan: preview, building: b.id, level: wall.level, touched: { walls: [wall.id, second.id], rooms: b.rooms.map(r => r.id),
+    openings: (b.openings || []).map(p => p.id), items: (b.items || []).map(p => p.id), anchors: (b.anchors || []).map(p => p.id) } };
+}
+
 export function applyLocal(plan, operation) {
+  if (operation.op === 'split_wall') return splitWall(plan, operation);
+  if (operation.op === 'set_object' || operation.op === 'move_hosted') {
+    // Opening slides use {at}, not a replacement object host.
+    if (operation.op === 'move_hosted' && !operation.host) return null;
+    const properties = operation.op === 'move_hosted' ? { host: operation.host } : operation.properties;
+    if (!properties || Object.keys(properties).some(k => !['rotation', 'scale', 'scale_axes', 'mirror_x', 'mirror_y', 'host'].includes(k))) return null;
+    const preview = structuredClone(plan), building = preview.buildings.find(b => b.id === operation.building);
+    const list = building && ['items', 'anchors', 'openings'].find(name => building[name]?.some(p => p.id === operation.id));
+    const piece = list ? building[list].find(p => p.id === operation.id) : !operation.building && sitePieces(preview.site?.[operation.list])[operation.index];
+    if (!piece || piece.device) throw new LocalMissing(`Missing object: ${operation.id || operation.list}`);
+    Object.assign(piece, structuredClone(properties));
+    for (const key of ['mirror_x', 'mirror_y']) if (properties[key] === false) delete piece[key];
+    if (piece.host && building) {
+      try { piece.position = hostPoint(building, piece.host, piece.offset || 0); } catch { /* Server judges missing hosts. */ }
+    }
+    return { plan: preview, building: building?.id || null, level: building?.walls.find(w => w.id === (piece.wall || piece.host?.wall))?.level
+      || building?.rooms.find(r => r.id === (piece.host?.floor || piece.host?.ceiling))?.level || building?.levels[0]?.id || null,
+      touched: list ? { [list]: [piece.id] } : { site: [operation.list] } };
+  }
+  if (operation.op === 'update_site_shape') {
+    if (Object.keys(operation).some(k => !['op', 'list', 'index', 'id', 'polygon', 'points', 'polyline', 'at', 'radius', 'rotation', 'features'].includes(k))) return null;
+    const preview = structuredClone(plan);
+    const pieces = sitePieces(preview.site?.[operation.list]);
+    const index = operation.id ? pieces.findIndex(p => p.id === operation.id) : operation.index ?? 0, piece = pieces[index];
+    if (!piece) throw new LocalMissing(`Missing site shape: ${operation.id || operation.list}`);
+    for (const [key, value] of Object.entries(operation)) if (!['op', 'list', 'index', 'id'].includes(key)) piece[key] = structuredClone(value);
+    return { plan: preview, building: null, level: null, touched: { site: [operation.list] } };
+  }
+  if (operation.op === 'update_light_fixture') {
+    if (Object.keys(operation.change).some(k => !['at', 'aim', 'rotation_deg'].includes(k))) return null;
+    const preview = structuredClone(plan), piece = preview.light_fixtures?.[operation.entity_id]?.find(f => f.id === operation.id);
+    if (!piece) throw new LocalMissing(`Missing light fixture: ${operation.id}`);
+    Object.assign(piece, structuredClone(operation.change));
+    return { plan: preview, building: null, level: null, touched: { light_fixtures: [operation.id] } };
+  }
   const kind = operation.op === 'move_wall' ? 'wall' : operation.op === 'move_joint' ? 'joint'
     : operation.op === 'move_room' ? 'room' : null;
   if (kind) {
@@ -166,6 +264,7 @@ export function applyLocal(plan, operation) {
     const by = kind === 'joint' ? delta(operation.to, gesture.piece.at)
       : kind === 'wall' && typeof operation.by === 'number' ? gesture.normal.map(v => v * operation.by) : operation.by;
     const preview = movePreview(plan, gesture, by);
+    if (preview) weldMove(preview, gesture.building.id, gesture.moved);
     return preview && { plan: preview, building: gesture.building.id, level: gesture.piece.level, touched: gesture.touched };
   }
   if (operation.op !== 'move_site_item') return null;

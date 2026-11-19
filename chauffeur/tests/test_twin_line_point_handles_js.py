@@ -155,6 +155,18 @@ for(const type of ['sheer','fire','mist']) await scenario(type+'_path_point_has_
  assert.equal(s.sent.length,1);assert.equal(s.sent[0].op,'update_effect_fixture');
  console.log('POINT_OP_CHECK '+JSON.stringify({plan:s.plan,operation:s.sent[0]}));
 },{fixture:{...line(),id:effectId,type},effect:true});
+for(const shape of ['point','spot']) await scenario(shape+'_gizmo_move_and_typed_turn_through_scene_arbiter',async s=>{
+ await s.clickAt(s.project(s.fixture.at));s.tools.setTool('move');
+ let h=s.handles().find(h=>h.kind==='gizmo_move_x');assert.ok(h);let p=s.project(h.at),q=s.project([h.at[0]+3.2,h.at[1]+1,h.at[2]]);
+ await s.send('pointerdown',p);await s.send('pointermove',q);await s.send('pointerup',q);
+ assert.equal(s.sent.length,1);assert.equal(s.sent[0].op,'update_light_fixture');assert.deepEqual(s.sent[0].change.at,[13,10,3]);assert.equal(s.view.controls.enabled,true);
+ s.tools.setTool('rotate');h=s.handles().find(h=>h.kind==='gizmo_turn');assert.ok(h);p=s.project(h.at);
+ await s.send('pointerdown',p);await s.send('pointermove',[p[0]+30,p[1]+40]);
+ for(const key of ['3','3','Enter'])await fire(document,'keydown',{key});await settle();await s.send('pointerup',p);
+ assert.equal(s.sent.length,2);assert.equal(s.sent[1].change.rotation_deg,33);assert.equal(s.view.controls.enabled,true);
+ if(shape==='spot'){near(s.sent[1].change.aim[0],10+10*Math.cos(33*Math.PI/180));near(s.sent[1].change.aim[1],10+10*Math.sin(33*Math.PI/180));}
+ s.tools.setTool('scale');assert.equal(s.handles().length,0);
+},{fixture:{id,shape,ref:'absolute',at:[10,10,3],...(shape==='spot'?{aim:[20,10,0]}:{})}});
 finish();
 """
 

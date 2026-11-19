@@ -77,7 +77,7 @@ async function test(name, body) {
   doc.getElementById('place-view').hidden=true;
   const lot=createLotTools({view,getPlan:()=>flat,getSheets:()=>({}),getSelection:tools.selection,select:tools.select,
     pauses:{lotPlacement:()=>null},op,reload:async()=>{},canEdit:()=>writable,signal:abort.signal});
-  tools.delegate({handleSources:[terrain,lot],pointerArmedDown:event=>terrain.pointerArmedDown?.(event)||lot.pointerArmedDown(event),
+  tools.delegate({preview:library.preview,key:library.key,typedValue:library.typedValue,commit:library.commit,handleSources:[terrain,lot],pointerArmedDown:event=>terrain.pointerArmedDown?.(event)||lot.pointerArmedDown(event),
     selectPick:hit=>hit?.kind==='terraces'&&(terrain.choose('terraces',hit.id),true),
     pointerDown:event=>{ordinaryPresses++;return terrain.pointerDown(event)||lot.pointerDown(event)||library.pointerDown(event);},
     pointerMove:event=>terrain.pointerMove(event)||lot.pointerMove(event)||library.pointerMove(event),
@@ -445,6 +445,116 @@ await test('site_source_keeps_occluded_hits_but_legacy_wrapper_respects_the_hous
     const picked=tools.pick(...p);assert.equal(picked?.building,B);assert.ok(picked.distance<site.distance);
   } finally {flat.site.planting.pop();}
 });
+await test('precision_shift_follows_each_site_rotate_move',async({tools,ops,look,pixel,fire})=>{
+  tools.select({id:'bed:gesture',kind:'beds'});tools.setTool('rotate');look([200,200,0]);
+  const h=tools.handles().find(h=>h.kind==='gizmo_turn');assert.ok(h);
+  const centre=[200,200],a=h.at.slice(0,2).map((v,i)=>v-centre[i]),angle=22*Math.PI/180;
+  const end=[centre[0]+Math.cos(angle)*a[0]-Math.sin(angle)*a[1],centre[1]+Math.sin(angle)*a[0]+Math.cos(angle)*a[1],h.at[2]];
+  const start=pixel(h.at),p=pixel(end);fire('pointerdown',start,0,{shiftKey:true});
+  fire('pointermove',p,0,{shiftKey:false});fire('pointerup',p);await tick();
+  assert.equal(ops.length,1);assert.ok(Math.abs(ops[0].operation.rotation%15)<1e-6);
+  fire('pointerdown',start);fire('pointermove',p,0,{shiftKey:true});fire('pointerup',p,0,{shiftKey:true});await tick();
+  assert.equal(ops.length,2);assert.ok(Math.abs(ops[1].operation.rotation-22)<1e-6);
+});
+await test('precision_escape_inside_typed_input_restores_joint',async({view,tools,ops,look,pixel,fire,ready})=>{
+  view.setView(B+':L1');tools.select({kind:'wall',id:W,building:B});await ready();look([...wall.from,0],building);
+  const h=tools.handles().find(h=>h.kind==='joint'&&h.id===wall.joints[0]),p=pixel(h.at,building);
+  const before=structuredClone(flat);
+  const buffers=()=>{const result=[];view.groups.levels[B+':L1'].traverse(o=>{if(o.geometry?.attributes.position)result.push([...o.geometry.attributes.position.array]);});return result;};
+  const beforeBuffers=buffers(),beforeHandles=tools.handles();
+  fire('pointerdown',p);fire('pointermove',[p[0]-40,p[1]]);
+  assert.notDeepEqual(buffers(),beforeBuffers);
+  const key=new Event('keydown',{cancelable:true});Object.assign(key,{key:'4'});doc.dispatchEvent(key);
+  const input=descendants(view.renderer3.domElement.parentElement).find(n=>n.className==='editor-typed-value'&&!n.hidden);
+  assert.ok(input);assert.equal(input.value,'4');
+  const oldClosest=doc.closest;doc.closest=()=>input;
+  try{escape();}finally{doc.closest=oldClosest;}
+  fire('pointerup',[p[0]-40,p[1]]);await tick();
+  assert.equal(ops.length,0);assert.equal(view.controls.enabled,true);assert.equal(input.hidden,true);assert.deepEqual(flat,before);
+  const restored=buffers();assert.equal(restored.length,beforeBuffers.length);
+  // Inverse deformation rounds through Float32; the model and handles below remain exact.
+  restored.forEach((values,i)=>{assert.equal(values.length,beforeBuffers[i].length);assert.ok(values.every((v,j)=>Math.abs(v-beforeBuffers[i][j])<1e-5));});
+  assert.deepEqual(tools.handles(),beforeHandles);
+});
+const typeValue=text=>{for(const key of [...text,'Enter']){const event=new Event('keydown',{cancelable:true});Object.assign(event,{key});doc.dispatchEvent(event);}};
+await test('precision_typed_joint_length_is_exact_along_press_direction',async({view,tools,ops,look,pixel,fire,ready})=>{
+  view.setView(B+':L1');tools.select({kind:'wall',id:W,building:B});await ready();look([...wall.from,0],building);
+  const h=tools.handles().find(h=>h.kind==='joint'&&h.id===wall.joints[0]),p=pixel(h.at,building);
+  fire('pointerdown',p);fire('pointermove',pixel([h.at[0]-3,h.at[1]-4,h.at[2]],building));
+  typeValue('1.23');await tick();fire('pointerup',p);await tick();
+  assert.equal(ops.length,1);assert.equal(ops[0].operation.op,'move_joint');
+  const to=ops[0].operation.to;
+  assert.ok(Math.abs(to[0]-h.at[0]+1.23*3/5)<1e-5);assert.ok(Math.abs(to[1]-h.at[1]+1.23*4/5)<1e-5);
+  assert.equal(view.controls.enabled,true);assert.equal(view.renderer3.domElement.hasPointerCapture(1),false);
+});
+await test('precision_typed_site_angle_and_factor_apply_from_press',async({tools,ops,look,pixel,fire})=>{
+  tools.select({id:'bed:gesture',kind:'beds'});tools.setTool('rotate');look([200,200,0]);
+  for(const [kind,value] of [['gizmo_turn','22'],['gizmo_scale','1.27']]) {
+    tools.setTool(kind==='gizmo_turn'?'rotate':'scale');const h=tools.handles().find(h=>h.kind===kind),p=pixel(h.at);
+    fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]+30]);typeValue(value);await tick();fire('pointerup',p);
+  }
+  assert.equal(ops.length,2);assert.equal(ops[0].operation.rotation,22);
+  const points=ops[1].operation.polygon;assert.ok(Math.abs(points[1][0]-points[0][0]-20*1.27)<1e-6);
+});
+await test('precision_typed_building_turn_routes_through_arbiter',async({view,tools,lot,ops,look,pixel,fire})=>{
+  view.setView('ext');tools.select({kind:'building',id:B,building:B});tools.setTool('rotate');
+  look([...wall.from,0],building);
+  const h=lot.lotHandles().find(h=>h.kind==='turn');assert.ok(h);
+  fire('pointerdown',h.screen);fire('pointermove',[h.screen[0]+40,h.screen[1]+20]);typeValue('30');await tick();
+  fire('pointerup',h.screen);await tick();
+  assert.equal(ops.length,1);assert.equal(ops[0].operation[0].op,'rotate_building');
+  assert.equal(ops[0].operation[0].rotation,((building.rotation||0)+30)%360);
+  assert.equal(view.controls.enabled,true);assert.equal(lot.dragging(),false);
+});
+await test('precision_free_options_reach_external_handle_source',async({tools,fire})=>{
+  const options=[];tools.delegate({handleSources:[{hit:()=>({}),begin:()=>true,pointerMove:(event,option)=>options.push(option),pointerUp(){}}]});
+  fire('pointerdown',[10,10],0,{shiftKey:true});fire('pointermove',[40,20],0,{shiftKey:false});
+  fire('pointermove',[50,30],0,{shiftKey:true});fire('pointerup',[50,30]);
+  assert.deepEqual(options,[{free:false},{free:true}]);
+});
+await test('gizmo_of_selection_wins_over_unselected_tree',async({tools,library,ops,look,pixel,fire})=>{
+  tools.select({id:'bed:gesture',kind:'beds'});tools.setTool('move');look([200,200,0]);
+  const h=tools.handles().find(h=>h.kind==='gizmo_move_x'),p=pixel(h.at);
+  flat.site.planting.push({id:'tree:over-gizmo',kind:'tree',height:12,at:h.at.slice(0,2)});
+  try {
+    assert.ok(library.siteHits(...p).some(p=>p.id==='tree:over-gizmo'));
+    fire('pointerdown',p);fire('pointermove',pixel([h.at[0]+3.2,h.at[1],h.at[2]]));fire('pointerup',p);await tick();
+    assert.equal(tools.selection().id,'bed:gesture');assert.equal(ops.length,1);assert.equal(ops[0].operation.op,'move_site_item');assert.deepEqual(ops[0].operation.by,[3,0]);
+  } finally {flat.site.planting.pop();}
+});
+await test('gizmo_escape_with_focused_entry_cancels_and_releases',async({view,tools,ops,look,pixel,fire})=>{
+  tools.select({id:'tree:gesture',kind:'planting'});tools.setTool('move');look([200,200,0]);
+  const h=tools.handles().find(h=>h.kind==='gizmo_move_y'),p=pixel(h.at),before=structuredClone(flat);
+  fire('pointerdown',p);fire('pointermove',[p[0]+30,p[1]+30]);
+  const key=new Event('keydown',{cancelable:true});Object.assign(key,{key:'4'});doc.dispatchEvent(key);
+  const input=descendants(view.renderer3.domElement.parentElement).find(n=>n.className==='editor-typed-value'&&!n.hidden);assert.ok(input);
+  const oldClosest=doc.closest;doc.closest=()=>input;try{escape();}finally{doc.closest=oldClosest;}
+  fire('pointerup',p);await tick();assert.equal(ops.length,0);assert.equal(input.hidden,true);assert.equal(view.controls.enabled,true);assert.deepEqual(flat,before);
+});
+await test('selected_yard_body_snaps_frees_and_accepts_exact_length',async({view,tools,ops,look,pixel,fire})=>{
+  tools.select({id:'tree:gesture',kind:'planting'});tools.setTool('move');look([200,200,0],null,40);
+  // Offset from the centre square and arrows, still inside the tree's body.
+  const start=[200.8,200.8,0],p=pixel(start);assert.equal(tools.handleAt({clientX:p[0],clientY:p[1]}),false);
+  for(const free of [false,true]) {
+    const end=pixel([204,200.8,0]);fire('pointerdown',p,0,{shiftKey:!free});fire('pointermove',end,0,{shiftKey:free});fire('pointerup',end,0,{shiftKey:free});await tick();
+    assert.ok(Math.abs(ops.at(-1).operation.at[0]-(free?203.2:203))<1e-6);assert.equal(ops.at(-1).operation.at[1],200);
+  }
+  fire('pointerdown',p);fire('pointermove',pixel([203.8,204.8,0]));typeValue('1.23');await tick();fire('pointerup',p);await tick();
+  const at=ops.at(-1).operation.at;assert.ok(Math.abs(at[0]-200-1.23*3/5)<1e-6);assert.ok(Math.abs(at[1]-200-1.23*4/5)<1e-6);assert.equal(ops.length,3);assert.equal(view.controls.enabled,true);
+  fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]+30]);fire('pointermove',p);fire('pointerup',p);await tick();assert.equal(ops.length,3,'return to the press sends no body move');
+  fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]+30]);const key=new Event('keydown',{cancelable:true});Object.assign(key,{key:'4'});doc.dispatchEvent(key);escape();fire('pointerup',p);await tick();assert.equal(ops.length,3);assert.equal(view.controls.enabled,true);
+});
+await test('mirrored_yard_object_keeps_picker_outline_and_gizmo',async({view,tools,library,look,pixel})=>{
+  const plant=flat.site.planting[0];tools.select({id:plant.id,kind:'planting'});tools.setTool('move');look([200,200,0]);
+  library.refresh();const outline=view.scene.children.find(o=>o.type==='Box3Helper'),box=outline.box.clone();
+  const handles=structuredClone(tools.handles().filter(h=>h.kind.startsWith('gizmo_')));assert.equal(handles.length,3);
+  try {
+    plant.mirror_x=true;plant.mirror_y=true;tools.refresh();library.refresh();
+    assert.ok(library.siteHits(...pixel([200,200,0])).some(h=>h.id===plant.id));
+    assert.ok(outline.visible);assert.deepEqual(outline.box,box);assert.deepEqual(tools.handles().filter(h=>h.kind.startsWith('gizmo_')),handles);
+    assert.equal(plant.scale,undefined);assert.equal(plant.scale_axes,undefined);
+  } finally {delete plant.mirror_x;delete plant.mirror_y;}
+});
 console.log(`${passed}/${passed+failed} passed`);if(failed)process.exitCode=1;
 """
 
@@ -460,7 +570,7 @@ def run():
         driver, data = Path(directory) / 'driver.mjs', Path(directory) / 'input.json'
         driver.write_text(DRIVER, encoding='utf-8')
         data.write_text(json.dumps({'root': ROOT.as_posix(), 'flat': flatten(assemble(fixture)[0]), 'kit': kit}), encoding='utf-8')
-        result = subprocess.run([shutil.which('node'), str(driver), str(data)], capture_output=True, text=True, timeout=60)
+        result = subprocess.run([shutil.which('node'), str(driver), str(data)], capture_output=True, text=True, timeout=180)
         print(result.stdout, end='')
         if result.returncode:
             raise AssertionError(result.stderr)

@@ -7,6 +7,7 @@ import { facingNormal } from '../live/fixture_glow.js';
 import { report as reportError } from './api.js';
 import { effectCard, effectLabels, effectShapes, effectPathOperation } from './effects.js';
 import { DRAG_THRESHOLD_PX, HANDLE_HIT_PX } from './picking.js';
+import { createGizmo } from './gizmo.js';
 
 const FT = .3048;
 const element = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
@@ -151,6 +152,15 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   const handleLayer = element('div'); handleLayer.className = 'editor-handles'; canvas.parentElement.append(handleLayer);
   let mode = null, press = null, aiming = null, slider = null, cardDevice = null, cardEffect = null, cardKey = null, signature = null;
   let cardLight = null, pointHandles = [];
+  const gizmoLayer = element('div'); gizmoLayer.className = 'editor-handles'; canvas.parentElement.append(gizmoLayer);
+  const gizmo = createGizmo({ view, layer: gizmoLayer, getPlan, canEdit: () => canEdit() && !mode,
+    getSelection: () => cardLight ? { kind: 'light_fixture', ...cardLight } : null,
+    getTool: () => ['move', 'rotate', 'scale'].find(id => el(`rail-${id}`).getAttribute('aria-pressed') === 'true'), op,
+    onPreview(plan) {
+      const fixture = cardLight && plan.light_fixtures?.[cardLight.entity_id]?.find(f => f.id === cardLight.id);
+      const mesh = fixture && root.children.find(mesh => mesh.userData.fixtureId === fixture.id);
+      if (mesh && fixture.at) mesh.position.set(fixture.at[0] * FT, (fixture.at[2] + fixtureReference(plan, fixture, fixture.at) + (fixture.offset_ft || 0)) * FT, -fixture.at[1] * FT);
+    } });
   const helpers = { element, numeric, field, actions, button };
   const effectPlacement = f => f;
   function effectFields(f) {
@@ -367,6 +377,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     return !mode && canEdit() && f?.path && !f.snap && (f.ref !== 'floor' || view.groups?.levels[`${f.building}:${f.level}`]?.visible !== false) ? f : null;
   }
   function drawHandles() {
+    gizmo.draw();
     handleLayer.replaceChildren(); pointHandles = [];
     const fixture = selectedLine(); if (!fixture) return;
     view.camera.updateMatrixWorld(true);
@@ -382,6 +393,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     });
   }
   function hit(event) {
+    const transform = gizmo.hit(event); if (transform) return transform;
     if (event.button !== 0 || !['select', 'move'].some(id => el(`rail-${id}`).getAttribute('aria-pressed') === 'true')) return null;
     drawHandles();
     return pointHandles.slice().sort((a, b) => Math.hypot(a.screen[0] - event.clientX, a.screen[1] - event.clientY)
@@ -394,6 +406,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     return point && [point.x / FT, -point.z / FT];
   }
   function begin(event, handle = hit(event)) {
+    if (handle?.kind?.startsWith('gizmo_')) return gizmo.begin(event, handle);
     const fixture = selectedLine();
     if (press || !fixture || !handle || handle.id !== fixture.id || event.button !== 0) return false;
     const at = resolveFixture(fixture, getPlan()).path[handle.index], start = onPointPlane(event, at[2]); if (!start) return false;
@@ -419,6 +432,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); aiming?.begin(); return true;
   }
   function pointerMove(event) {
+    if (gizmo.active()) { gizmo.update(event, { free: !!event.shiftKey }); return true; }
     if (mode?.kind === 'shape' && canEdit()) return shapeTool.move(event);
     if (!press || press.pointer !== event.pointerId) return false;
     press.moved ||= Math.hypot(event.clientX - press.x, event.clientY - press.y) >= DRAG_THRESHOLD_PX;
@@ -478,6 +492,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       : { op: 'add_light_fixture', entity_id: active.entity_id, fixture: f });
   }
   function pointerUp(event, cancelled = false) {
+    if (gizmo.active()) { gizmo.pointerUp(event, cancelled).catch(report); return true; }
     if (!press || press.pointer !== event.pointerId) return false;
     return finish(event, cancelled).catch(report);
   }
@@ -530,7 +545,8 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   }, { signal, capture: true });
   view.controls.addEventListener?.('change', drawHandles);
   signal.addEventListener('abort', () => { cancel(); if (el('piece-card').dataset.fixtureCard) { releaseCard(); el('piece-card').hidden = true; } root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent();
-    view.controls.removeEventListener?.('change', drawHandles); handleLayer.remove(); }, { once: true });
+    view.controls.removeEventListener?.('change', drawHandles); gizmo.finish(true); gizmoLayer.remove(); handleLayer.remove(); }, { once: true });
   return { add, addEffect, showEffect, move, aim, aimCamera, drawFixtures, deviceLink, showDevice, hits, selectPick,
-    hit, begin, handles: () => { drawHandles(); return pointHandles; }, pointerDown, pointerMove, pointerUp, cancel, refresh, draw, active: () => !!mode };
+    hit, begin, key: gizmo.key, typedValue: gizmo.typedValue, commit: gizmo.commit,
+    handles: () => { drawHandles(); return [...gizmo.handles(), ...pointHandles]; }, pointerDown, pointerMove, pointerUp, cancel, refresh, draw, active: () => !!mode };
 }

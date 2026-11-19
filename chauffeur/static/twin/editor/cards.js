@@ -63,7 +63,7 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview, onDrawFeature, loadMaterialNames = null }) {
+export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null }) {
   let namesAsked = false;
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
@@ -162,6 +162,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     const heading = headingNode = document.createElement('h3'); heading.textContent = title(record);
     const close = button('Close', () => select(null)); close.setAttribute('aria-label', 'Close piece card');
     host.append(heading, close);
+    if (kind === 'wall' && piece.state !== 'ghost' && splitWall) host.append(button('Split wall', () => splitWall(record)));
     if (kind === 'stair') stairShelf(host, piece, building, { canEdit, report,
       change: (field, value) => queue(async () => {
         if (!canEdit()) return;

@@ -196,6 +196,28 @@ await test('foreign_missing_unsent_is_dropped_but_in_flight_stays',async()=>{
   assert.equal(h.notices().length,1); assert.deepEqual(h.notices()[0].dropped,['B']);
 });
 
+await test('split_replays_old_wall_and_drops_a_replaced_local_joint_by_name',async()=>{
+  const h=setup(),op={op:'split_wall',building:'house',wall:'W',at:2},first=apply(h.initial,op);
+  const joint=first.buildings[0].joints.find(j=>j.id.startsWith('local:split:'));
+  const a=h.push(op,'Split'),b=h.push({op:'move_joint',building:'house',joint:joint.id,to:[1,2]},'Temporary corner');
+  const c=h.push(move('W',.25),'Original wall');
+  const authoritative=structuredClone(first),building=authoritative.buildings[0];
+  building.joints.find(j=>j.id===joint.id).id='server-joint';
+  building.walls.forEach(w=>w.joints=w.joints.map(id=>id===joint.id?'server-joint':id));
+  const rejected=assert.rejects(b.saved,e=>e.dropped&&e instanceof LocalMissing);
+  h.calls[0].resolve(answer(2,authoritative));await a.saved;await rejected;await flush();
+  assert.equal(h.calls.length,2);assert.equal(h.calls[1].op.op,'move_wall');assert.equal(h.calls[1].op.wall,'W');
+  const final=apply(authoritative,move('W',.25));h.calls[1].resolve(answer(3,final));await c.saved;await flush();
+  assert.equal(h.queue.pending(),0);assert.deepEqual(h.notices().at(-1).dropped,['Temporary corner']);
+});
+await test('foreign_join_drops_a_queued_merged_joint_and_keeps_sending',async()=>{
+  const h=setup(),a=h.push(yard,'Move tree'),b=h.push({op:'move_joint',building:'house',joint:'b',to:[0,6]},'Old corner');
+  const joined=apply(h.initial,{op:'move_joint',building:'house',joint:'b',to:[10,0]});
+  const rejected=assert.rejects(b.saved,e=>e.dropped&&e instanceof LocalMissing);
+  h.queue.base(answer(2,joined));await rejected;
+  h.calls[0].resolve(answer(3,apply(joined,yard)));await a.saved;await flush();
+  assert.equal(h.queue.pending(),0);assert.equal(h.calls.length,1);assert.deepEqual(h.notices().at(-1).dropped,['Old corner']);
+});
 await test('unawaited_rejections_are_handled',async()=>{
   const h=setup(), withWall=house();
   withWall.buildings[0].walls.push({...withWall.buildings[0].walls[0],id:'new-wall'});

@@ -80,6 +80,26 @@ export function singlePassMaterial(material) {
   return out;
 }
 
+// A baked reflection loses Object3D's front-face flip. Keep winding and normals
+// together, including every non-indexed attribute used by the bake atlas.
+export function bakeMatrix(geometry, matrix) {
+  geometry.applyMatrix4(matrix);
+  if (matrix.determinant() >= 0) return geometry;
+  if (geometry.index) {
+    const index = geometry.index;
+    for (let i = 0; i + 2 < index.count; i += 3) {
+      const value = index.getX(i); index.setX(i, index.getX(i + 2)); index.setX(i + 2, value);
+    }
+    index.needsUpdate = true;
+  } else for (const attr of Object.values(geometry.attributes)) {
+    for (let i = 0; i + 2 < attr.count; i += 3) for (let c = 0; c < attr.itemSize; ++c) {
+      const value = attr.getComponent(i, c); attr.setComponent(i, c, attr.getComponent(i + 2, c)); attr.setComponent(i + 2, c, value);
+    }
+    attr.needsUpdate = true;
+  }
+  return geometry;
+}
+
 export function mergeByMaterial(source) {
   source.updateMatrixWorld(true);
   const groups = new Map(), originals = new Set(), meshes = [];
@@ -106,13 +126,7 @@ export function mergeByMaterial(source) {
           for (let i = start; i < end; ++i) for (let c = 0; c < attr.itemSize; ++c) values[(i - start) * attr.itemSize + c] = attr.getComponent(i, c);
           part.setAttribute(key, new THREE.BufferAttribute(values, attr.itemSize));
         }
-        part.applyMatrix4(matrix);
-        // Mirroring changes winding. Restore it after baking the transform.
-        if (matrix.determinant() < 0) for (const attr of Object.values(part.attributes)) {
-          for (let i = 0; i + 2 < attr.count; i += 3) for (let c = 0; c < attr.itemSize; ++c) {
-            const v = attr.getComponent(i, c); attr.setComponent(i, c, attr.getComponent(i + 2, c)); attr.setComponent(i + 2, c, v);
-          }
-        }
+        bakeMatrix(part, matrix);
         if (!groups.has(material)) groups.set(material, []);
         groups.get(material).push(part);
       }
@@ -185,7 +199,8 @@ export function fitOpening(model, width, height, thickness) {
 // instances before multiplying colour: changing one chair never tints another.
 export function applyObject(model, piece, { units = 1 / FT, id = piece.id, rotate = true } = {}) {
   const axes = piece.scale_axes || [1, 1, 1], scale = piece.scale ?? 1;
-  model.scale.multiply(new THREE.Vector3(axes[0] * scale * units, axes[1] * scale * units, axes[2] * scale * units));
+  model.scale.multiply(new THREE.Vector3(axes[0] * scale * units * (piece.mirror_x ? -1 : 1),
+    axes[1] * scale * units, axes[2] * scale * units * (piece.mirror_y ? -1 : 1)));
   if (rotate) model.rotation.set(THREE.MathUtils.degToRad(piece.pitch || 0), THREE.MathUtils.degToRad(piece.rotation || 0), THREE.MathUtils.degToRad(piece.roll || 0), 'YXZ');
   const copies = new Map();
   model.traverse(o => {

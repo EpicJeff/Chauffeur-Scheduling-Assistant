@@ -149,7 +149,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #pause-instruction:empty, #pause-instruction:empty + #pause-cancel { display: none; }
 #pause-card[data-pinning="true"] { top: var(--editor-header-bottom, 130px) !important; left: var(--editor-rail-right, 96px) !important; width: 280px; }
 #pause-card[data-pinning="true"] > div, #pause-card[data-pinning="true"] #pause-reason { display: none; }
-#editor-drag-hint, .editor-pin-dot { position: fixed; z-index: 6; pointer-events: none; background: var(--twinGlassStrong); backdrop-filter: blur(16px); border: 1px solid var(--editor-accent); border-radius: 12px; padding: 8px; }
+#editor-drag-hint, .editor-pin-dot, .editor-shell .editor-typed-value { position: fixed; z-index: 6; pointer-events: none; background: var(--twinGlassStrong); backdrop-filter: blur(16px); border: 1px solid var(--editor-accent); border-radius: 12px; padding: 8px; }
+.editor-shell .editor-typed-value { width: 145px; color: var(--editor-accent); font-size: 12px; }
+.editor-typed-value:not([readonly]) { pointer-events: auto; }
 .editor-dimensions { pointer-events: none; }
 .editor-handles { pointer-events: none; }
 .editor-handle { position: fixed; z-index: 3; width: 10px; height: 10px; transform: translate(-50%, -50%); border: 1px solid var(--editor-accent); border-radius: 50%; background: var(--editor-panel); backdrop-filter: blur(16px); }
@@ -335,9 +337,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .object-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .object-model-grid button { display: flex; flex-direction: column; align-items: center; }
 .object-model-grid img { width: 96px; height: 64px; object-fit: contain; }
-.editor-handle-object_rotate, .editor-handle-site_rotate { width: 24px; height: 24px; border-width: 2px; }
-.editor-handle-object_rotate::after, .editor-handle-site_rotate::after { content: '\21bb'; display: block; text-align: center; line-height: 20px; color: var(--twinText); }
-.editor-handle-object_scale, .editor-handle-site_scale, .editor-handle-site_radius { width: 14px; height: 14px; border-radius: 2px; }
+.editor-handle-site_radius { width: 14px; height: 14px; border-radius: 2px; }
 .editor-handle-site_insert { text-align: center; line-height: 10px; color: var(--twinText); }
 .editor-site-ring { pointer-events: none; }
 .editor-site-ring > span { position: fixed; z-index: 2; border-top: 1px solid var(--twinMarkerRing); transform-origin: left center; }
@@ -381,3 +381,10 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   #editor-sidebar #editor-agent { flex-shrink: 0; }
   #editor-history-body { max-height: 140px; }
 }
+
+/* Gizmos share the selected handle and site ring's fixed glass/line treatment. */
+.editor-gizmo { width: 16px; height: 16px; text-align: center; line-height: 14px; font-size: 10px; color: var(--twinText); }
+.editor-gizmo_move_x, .editor-gizmo_move_y { border-radius: 2px; font-size: 16px; }
+.editor-gizmo_move_free, .editor-gizmo_scale, .editor-gizmo_scale_x, .editor-gizmo_scale_y { border-radius: 2px; }
+.editor-gizmo_turn { width: 20px; height: 20px; border-width: 2px; }
+.editor-gizmo-line { position: fixed; z-index: 2; pointer-events: none; border-top: 1px solid var(--twinMarkerRing); transform-origin: left center; }

@@ -1,6 +1,6 @@
 import { span as editSpan } from './edit_timing.js';
 import { reflectionMaterial } from './reflection_probes.js';
-import { applyObject, fitOpening, objectShown, objectMaterialKey } from './objects.js';
+import { applyObject, bakeMatrix, fitOpening, objectShown, objectMaterialKey } from './objects.js';
 // Plan -> geometry. Plan x/y map to world X/-Z; heights are world Y.
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
@@ -67,7 +67,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
       }
       g.morphTargetsRelative = false;
       g.clearGroups();
-      g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse, o.matrixWorld));
+      bakeMatrix(g, new THREE.Matrix4().multiplyMatrices(inverse, o.matrixWorld));
       // Models can use stand-ins/LODs: never fold their render-only geometry
       // into the same receiver as a house surface with a shared material.
       const key = `${o.material.uuid}:${!!o.geometry.userData.bakeExcluded}:${perPiece ? o.userData.pieceId || '' : ''}`;
@@ -887,7 +887,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
               retainLod(group, transform); activePiece = saved; registerRecords(); return;
             }
             fitted.traverse(object => {
-              if (object.isMesh) mesh(group, object.geometry.clone().applyMatrix4(object.matrixWorld).applyMatrix4(matrix), object.material);
+              if (object.isMesh) mesh(group, bakeMatrix(object.geometry.clone(), matrix.clone().multiply(object.matrixWorld)), object.material);
             });
             activePiece = saved;
             const geometries = new Set(); fitted.traverse(o => { if (o.geometry) geometries.add(o.geometry); }); geometries.forEach(g => g.dispose());
@@ -1479,7 +1479,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         const geometry = boxRect(a, c, d, e, lo, hi).translate(-origin[0], -origin[1], -origin[2]);
         const object = applyObject(new THREE.Mesh(geometry, m), f, { units: 1, id: `${b.id}:${f.id}` });
         object.position.set(origin[0], origin[1] + (f.elevation || 0), origin[2]); object.updateMatrixWorld(true);
-        geometry.applyMatrix4(object.matrixWorld);
+        bakeMatrix(geometry, object.matrixWorld);
         const result = mesh(g, geometry, object.material);
         return part ? tagPart(result, part) : result;
       };
@@ -1517,7 +1517,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const geometry = boxRect(-size / 2, -size / 2, size / 2, size / 2, 0, .05);
       const object = applyObject(new THREE.Mesh(geometry, fixture), l, { units: 1, id: `${b.id}:${l.id}` });
       object.position.set(l.at[0], y + (l.elevation || 0), -l.at[1]); object.updateMatrixWorld(true);
-      geometry.applyMatrix4(object.matrixWorld); mesh(local[level.id], geometry, object.material);
+      bakeMatrix(geometry, object.matrixWorld); mesh(local[level.id], geometry, object.material);
     }
     const hostLevel = host => {
       const surface = 'wall' in host ? b.walls.find(w => w.id === host.wall)
@@ -1567,7 +1567,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       let anchorMaterial = plain(equipment?'equipment':'anchor',equipment?'#8c9399':'#38bdf8');
       if (!anchor.device) {
         const object = applyObject(new THREE.Mesh(geometry, anchorMaterial), anchor, { units: 1, id: `${b.id}:${anchor.id}` });
-        object.updateMatrixWorld(true); geometry.applyMatrix4(object.matrixWorld); anchorMaterial = object.material;
+        object.updateMatrixWorld(true); bakeMatrix(geometry, object.matrixWorld); anchorMaterial = object.material;
       }
       geometry.translate(point[0], point[2] + (anchor.elevation || 0), -point[1]);
       mesh(local[hostLevel(anchor.host).id], geometry, anchorMaterial);
@@ -1659,7 +1659,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
             retainLod(group, model); registerRecords(); return;
           }
           model.traverse(object => {
-            if (object.isMesh) mesh(group, object.geometry.clone().applyMatrix4(object.matrixWorld), object.material);
+            if (object.isMesh) mesh(group, bakeMatrix(object.geometry.clone(), object.matrixWorld), object.material);
           });
           const geometries = new Set(); model.traverse(o => { if (o.geometry) geometries.add(o.geometry); });
           geometries.forEach(g => g.dispose());

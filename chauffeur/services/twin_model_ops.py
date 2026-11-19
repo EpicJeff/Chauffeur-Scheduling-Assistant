@@ -1043,11 +1043,13 @@ def _more(building, op, ha_catalogue=None):
             piece.update(asset=_text(op.get('asset')), rotation=_number(op.get('rotation', 0)) % 360,
                          scale=_item_scale(op.get('scale', 1)))
         from services import twin_objects
-        if kind == 'add_item':
-            extra = {k: op[k] for k in (*twin_objects.fields({**piece, 'object_kind': op.get('object_kind', 'furniture')}), 'object_kind') if k in op}
+        if kind in ('add_item', 'add_anchor'):
+            keys = ((*twin_objects.fields({**piece, 'object_kind': op.get('object_kind', 'furniture')}), 'object_kind')
+                    if kind == 'add_item' else ('mirror_x', 'mirror_y'))
+            extra = {k: op[k] for k in keys if k in op}
             if extra:
                 twin_objects.update(piece, extra)
-            if piece['asset'].startswith('import-'):
+            if kind == 'add_item' and piece['asset'].startswith('import-'):
                 from services import twin_imports
                 if not twin_imports.get(piece['asset']):
                     raise Refused('Choose an imported model from the library.')

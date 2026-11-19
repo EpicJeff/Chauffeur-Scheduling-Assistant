@@ -1,6 +1,6 @@
-import { snapTo } from './snap.js';
+import { snapTo, joinTarget } from './snap.js';
 import { hostPoint } from '../twin_hosts.js';
-import { LocalMissing, moveGesture, movePreview, moveProblem } from './local_ops.js';
+import { applyLocal, LocalMissing, moveGesture, movePreview, moveProblem } from './local_ops.js';
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
 const delta = (a, b) => a.map((v, i) => v - b[i]);
@@ -23,7 +23,7 @@ export function createDrag({ view, model, onPreview, onCommit }) {
     gesture = { source, ...move, selection, start: [...start], by: [0, 0], preview: null };
     return true;
   }
-  function update(point) {
+  function update(point, { free = false } = {}) {
     if (!gesture || !point) return false;
     const started = performance.now(), g = gesture, b = g.building;
     let by = delta(point, g.start);
@@ -37,12 +37,14 @@ export function createDrag({ view, model, onPreview, onCommit }) {
     const origin = g.normal ? g.piece.from.map((v, i) => (v + g.piece.to[i]) / 2)
       : g.piece.at || b.joints.find(j => j.id === g.piece.joints[0]).at;
     if (g.normal) by = g.normal.map(v => v * dot(by, g.normal));
+    g.direction = [...by];
     const destination = shifted(origin, by);
     const key = `${b.id}:${level.id}`;
     const screen = view.screenOfFloor(...destination, key);
     const nearby = screen && view.floorAt(screen[0] + 12, screen[1], key);
     const reach = Math.max(.25, Math.min(1, nearby ? Math.hypot(...delta(nearby, destination)) : 1));
-    const snap = snapTo(destination, { joints, walls, anchors, reach,
+    const join = !free && g.selection.kind === 'joint' && joinTarget(g.source, b.id, level.id, g.piece.id, destination);
+    const snap = free ? { point: destination } : join ? { point: join.at } : snapTo(destination, { joints, walls, anchors, reach,
       below: b.walls.filter(w => w.level === below?.id) });
     // A wall has one degree of freedom. Reject a snap that would pull it along itself.
     const correction = delta(snap.point, destination);
@@ -57,11 +59,16 @@ export function createDrag({ view, model, onPreview, onCommit }) {
     g.by = by; g.preview = preview;
     view.rebuildLevel(b.id, level.id, preview, g.touched);
     // The server stays the judge: a problem is shown, the release still sends.
-    onPreview?.(preview, g.selection, moveProblem(g.source, preview, b.id));
+    onPreview?.(preview, g.selection, moveProblem(g.source, preview, b.id) || (join ? 'Joins the corner' : null));
     lastDragFrameMs = Math.max(.001, performance.now() - started);
     return true;
   }
-  async function finish(cancel = false) {
+  async function finish(cancel = false, typed) {
+    if (!cancel && Number.isFinite(typed) && gesture) {
+      const g = gesture, length = Math.hypot(...(g.direction || [0, 0]));
+      const axis = g.normal || (length ? g.direction.map(v => v / length) : [1, 0]);
+      update(shifted(g.start, axis.map(v => v * typed)), { free: true });
+    }
     const g = gesture; gesture = null;
     if (!g) return;
     // Clear the advisory before the server answers, keeping the released plan.
@@ -73,7 +80,12 @@ export function createDrag({ view, model, onPreview, onCommit }) {
     const { kind, id, building } = g.selection;
     const operation = kind === 'joint' ? { op: 'move_joint', building, joint: id, to: shifted(g.piece.at, g.by) }
       : { op: kind === 'wall' ? 'move_wall' : 'move_room', building, [kind]: id, by: g.by };
-    try { await onCommit(operation, { local: g.preview }); }
+    // Release the welded graph too: the drag buffers still contain both ends.
+    const released = applyLocal(g.source, operation)?.plan;
+    const welded = released?.buildings.find(b => b.id === building).joints.length < g.building.joints.length;
+    const local = welded ? released : g.preview;
+    if (local !== g.preview) { view.rebuildLevel(building, g.piece.level, local, g.touched); onPreview?.(local, g.selection); }
+    try { await onCommit(operation, { local }); }
     catch (error) {
       if (!error.refused && !error.dropped) {
         view.rebuildLevel(building, g.piece.level, g.source, g.touched); onPreview?.(g.source, g.selection);
@@ -81,6 +93,8 @@ export function createDrag({ view, model, onPreview, onCommit }) {
       throw error;
     }
   }
-  return { begin, update, finish, active: () => !!gesture, clearDragFrame() { lastDragFrameMs = null; },
+  return { begin, update, finish, active: () => !!gesture,
+    value: () => gesture ? (gesture.normal ? dot(gesture.by, gesture.normal) : Math.hypot(...gesture.by)) : 0,
+    clearDragFrame() { lastDragFrameMs = null; },
     get lastDragFrameMs() { return lastDragFrameMs; } };
 }
