@@ -120,12 +120,20 @@ def open_owner(page, served, *, size=(1600, 900)):
 
 
 def wait_live_weather(page, condition, *, wind=0, snow_cm=0, visibility=None):
-    page.wait_for_function("""want => {
+    # Poll from Python: page.wait_for_function with this argument never resolved in
+    # Chromium here even while the same predicate evaluated true (Claude, 2026-11-19).
+    want = {'condition': condition, 'wind': wind, 'snow': snow_cm, 'visibility': visibility}
+    predicate = """want => {
       const w=window.__twin?.weather;
-      return w && !w.neutral && w.preview===null && w.condition===want.condition &&
+      return !!(w && !w.neutral && w.preview===null && w.condition===want.condition &&
         Math.abs(w.windMps-want.wind)<1e-6 && Math.abs(w.snow_cm-want.snow)<1e-6 &&
-        (want.visibility===null || Math.abs(w.visibilityM-want.visibility*1000)<1e-6);
-    }""", arg={'condition': condition, 'wind': wind, 'snow': snow_cm, 'visibility': visibility}, timeout=TIMEOUT)
+        (want.visibility===null || Math.abs(w.visibilityM-want.visibility*1000)<1e-6));
+    }"""
+    deadline = time.time() + TIMEOUT / 1000
+    while not page.evaluate(predicate, want):
+        check(time.time() < deadline, ('live weather never matched', want, page.evaluate(
+            '() => { const w = window.__twin?.weather; return w ? {...w, clouds: null} : null; }')))
+        page.wait_for_timeout(250)
     H.settle(page, 10)
 
 
