@@ -1,6 +1,13 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.938 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.939 (2026-11-18).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.939 (2026-11-18, NOT device-verified; Chromium-checked): the stage haze no longer costs every lit material a texture unit.**
+
+- **What was wrong.** On the owner's desktop the console repeated `THREE.WebGLTextures: Trying to use 17 (18, 19) texture units while this GPU supports only 16`. ANGLE on Windows gives a shader 16 texture units; slice 1's stage haze (v2.499.937) sampled the sky cube in every lit material, one more unit each, pushing heavy materials (pool water with four reflection probes and the mirror, baked lightmaps, lamp shadows) past the limit, so some textures stopped binding.
+- **Fix.** `static/twin/sky/stage_haze.js` reads the sky from a 40-colour uniform ring (8 azimuths by depressions 0, 2, 6, 15 and 40 degrees, bilinear) filled from the same CPU sky radiance the cube is drawn from, refreshed whenever the sky changes (`twin_view.js`). No sampler; haze still matches the background exactly on the ring's nodes and closely between them.
+- **Not yet known.** Whether every material on the owner's house is now within 16; their lightmaps and lamp shadows may need their own budget (a measurement was asked of the owner).
+- **Tests.** `tests/test_twin_stage_haze_js.py` and `tests/test_twin_stage_materials_js.py` (no sampler in the fog chunks; each scene binds its own ring; haze within 25% or .03 of the background over the old direction grid and exact on ring nodes); `tests/test_twin_sky_live.py` 4/4 (Chromium). Neighbours: `test_twin_stage_sky_js`, `test_twin_stage_overlays_js`, `test_twin_sky_js`, `test_twin_unlit_effects_js`, `test_twin_editor_lighting_js`, `test_twin_water_surface_js`, `test_twin_yard_grass_js`, `test_twin_viewing_js`; `test_twin_lightmap_material_js` has its one known pre-existing failure.
 
 **v2.499.938 (2026-11-18, NOT device-verified; node-checked through the real bubbler and Unlit swap): the editor's Unlit view works again on a house with bubblers.**
 
