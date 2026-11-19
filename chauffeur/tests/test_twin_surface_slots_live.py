@@ -632,11 +632,51 @@ def scenario_many_overrides_low_tier_measure():
         twin_store.update_model(lambda _: copy.deepcopy(original), 'edit')
 
 
+def scenario_properties_keeps_its_place():
+    with _page() as (page, _):
+        # The household's rectangular shed roof has material rows above Kind.
+        # Hip adds two end controls, exercising the same-subject card rebuild.
+        targets = [(b, roof) for b in L._plan(page)['buildings']
+                   for roof in b.get('roof', {}).get('sections', [])
+                   if roof.get('rect') and roof.get('kind') == 'shed']
+        assert targets, 'Household fixture needs a rectangular shed roof'
+        b, roof = targets[0]
+        _select_piece(page, b, roof)
+        # Use the dock's real resize control to leave a compact Properties box.
+        page.locator('#dock-splitter').press('End')
+        scroller = page.locator('#editor-dock #editor-sidebar')
+        card = scroller.locator('#piece-card')
+        field = card.get_by_label('Kind', exact=True)
+        assert field.input_value() == 'shed'
+        assert card.locator('form > label > select').count() == 1
+        assert card.evaluate('(n) => n.scrollHeight') > scroller.evaluate('(n) => n.clientHeight'), (
+            'Properties card must overflow the real Properties scroll box')
+
+        # Scroll the actual dock, then click the late field before changing it.
+        field.scroll_into_view_if_needed()
+        field.click()
+        old_control = field.element_handle()
+        assert old_control.evaluate('(n) => document.activeElement === n')
+        before = scroller.evaluate('(n) => n.scrollTop')
+        assert before > 80, f'Kind must be reached well below the top: {before}'
+        field.select_option('hip')
+        L._wait(page, 'n => !n.isConnected', old_control)
+        L._settled(page)
+        # Do not refocus or scroll after the rebuild: observe what it preserved.
+        assert field.input_value() == 'hip'
+        assert card.locator('form > label > select').count() == 3, (
+            'Hip must show the two end controls absent on the shed roof')
+        after = scroller.evaluate('(n) => n.scrollTop')
+        assert abs(after - before) <= 40, f'Properties jumped: {before} -> {after}'
+        assert field.evaluate('(n) => document.activeElement === n'), (
+            'The replacement Kind control must retain focus after rebuilding')
+
+
 def main():
     scenarios = [scenario_wall_face_override_and_clear, scenario_roof_plane_override,
                  scenario_ledge_or_steps_override, scenario_uv_offset_moves_one_face,
                  scenario_house_wide_role_recolours_inheritors, scenario_one_wall_rebakes_locally,
-                 scenario_many_overrides_low_tier_measure]
+                 scenario_many_overrides_low_tier_measure, scenario_properties_keeps_its_place]
     passed = failed = 0
     try:
         for scenario in scenarios:
