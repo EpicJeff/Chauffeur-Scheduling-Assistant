@@ -22,7 +22,7 @@ import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from '
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
 import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/atmosphere.js';
 import { createCloudPass } from './sky/cloud_pass.js';
-import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction } from './sky/weather.js';
+import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction, weatherLightingKey } from './sky/weather.js';
 import { installPlantWind } from './sky/wind.js';
 import { installStageHaze } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
@@ -427,7 +427,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (disposed) return;
     if (compiling && performance.now() - holdSince < HOLD_MS) return;
     // The live keeper can replace its layer. Read its current snapshot, without another stream.
-    if (JSON.stringify(currentWeather()) !== lastWeather) applyTimeLook();
+    const weather=currentWeather();
+    if (weatherLightingKey(weather) !== lastWeather) applyTimeLook();
+    else view.weather=weather;
     const flash=clouds.flash(performance.now()/1000,{enabled:(!editor||state.liveWeather||!!state.weatherPreview)&&!state.unlit,
       centre:cloudCentre});
     // Reuse the one existing hemisphere light. No lit-material uniform, light
@@ -1527,7 +1529,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     model.materials.forEach(m => { if (!keepMaterials.has(m)) m.dispose(); });
   }
   function applyTimeLook(moved = false, forceSky = false, cheap = false) {
-    view.weather=currentWeather();lastWeather=JSON.stringify(view.weather);
+    view.weather=currentWeather();lastWeather=weatherLightingKey(view.weather);
     const seasonNow=clockNow(),seasonSite=resolveSite(site,seasonNow);
     view.season=seasonState(seasonNow,seasonSite.lat,groundWeather,{neutral:editor&&!state.liveWeather,preview:seasonPreview.get()});
     seasons.update(view.season);

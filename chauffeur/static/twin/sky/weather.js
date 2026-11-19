@@ -77,6 +77,12 @@ export function weatherState(entity, ground={}, sensors={}, now=Date.now()/1000)
 }
 
 export function neutralWeather() { return {...weatherState(null),neutral:true}; }
+// Accumulation changes the surface uniforms, not the air or sun. In particular
+// a 90-second preview ramp must not repeat sky quadrature on every frame.
+export function weatherLightingKey(weather={}) {
+  const {wetness,snow_cm,puddles,updated,...air}=weather;
+  return JSON.stringify(air);
+}
 // HA visibility is kilometres; extinction is inverse metres. Rain and reported
 // visibility describe the same air: take the shorter, never add densities.
 export function weatherExtinction(weather={}) {

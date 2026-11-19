@@ -96,10 +96,13 @@ uniform float precipKind,precipClock,precipRate;
 uniform vec2 precipViewport;
 varying vec2 particleUv;varying vec3 particleWorld;
 float precipitationWidth(float pixels,float kind) {
-  return kind<.5?max(pixels,1.25):pixels;
+  return kind<.5?clamp(pixels,1.25,2.5):pixels;
 }
 float precipitationLength(float pixels,float kind,float rate) {
-  return kind<.5?mix(max(pixels,1.25),max(pixels,mix(6.0,10.0,clamp((rate-.45)/.55,0.0,1.0))),smoothstep(0.0,4.0,pixels)):pixels;
+  return kind<.5?min(96.0,mix(max(pixels,1.25),max(pixels,mix(6.0,10.0,clamp((rate-.45)/.55,0.0,1.0))),smoothstep(0.0,4.0,pixels))):pixels;
+}
+bool precipitationVisibleDepth(float depth) {
+  return depth>=3.5;
 }
 void main(){
   if(precipOpen<.5){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
@@ -113,6 +116,9 @@ void main(){
   vec4 eye=viewMatrix*vec4(world,1.0);
   // Never expand a near-camera drop into a large foreground smear.
   if(distance(world,cameraPosition)<3.0){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
+  // Radial distance misses drops beside the eye plane. Cull by forward depth
+  // too; .35 m reserves both physical streak endpoints before projection.
+  if(!precipitationVisibleDepth(-eye.z)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
   vec2 size=precipKind<.5?vec2(.018,.7):precipKind<1.5?vec2(.10,.10):vec2(.045,.045);
   if(precipKind>=.5){
     // Snow and hail keep their physical billboard sizes, even looking down
@@ -175,8 +181,14 @@ const splashVertex=`
 attribute vec3 splashPosition,splashNormal;attribute float splashBorn;
 uniform float splashTime;
 varying float splashAge;varying vec2 particleUv;varying vec3 particleWorld;
+bool splashVisible(float age,float depth) {
+  return age>=0.0&&age<=0.42&&depth>=3.5;
+}
 void main(){
   splashAge=splashTime-splashBorn;particleUv=uv;
+  vec4 eye=viewMatrix*vec4(splashPosition,1.0);
+  // Expired slots used to rasterize their entire quad before fragment discard.
+  if(!splashVisible(splashAge,-eye.z)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
   vec3 n=splashNormal;
   vec3 tangent=normalize(cross(n,vec3(0.0,0.0,1.0)));
   vec3 bitangent=cross(n,tangent);

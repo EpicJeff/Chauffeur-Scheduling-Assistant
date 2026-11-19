@@ -237,12 +237,17 @@ PACKED_JS = """() => { const v=window.__twin;return {preview:v.weather.preview,
 
 WATER_JS = r"""() => {
   const v=window.__twin,r=v.renderer3,gl=r.getContext(),rows=[];
-  v.scene.traverse(o=>{if(!o.isMesh || o.userData.part!=='water')return;
+  v.scene.traverse(o=>{if(!o.isMesh || o.layers.isEnabled(31))return;
+    for(let parent=o;parent;parent=parent.parent)if(!parent.visible)return;
     for(const m of [].concat(o.material||[])){
+      // Yard batching replaces the tagged input meshes. The rendered material
+      // retains the actual surface binding; submerged finishes do not have it.
+      if(!m.userData.waterSurface)return;
       const props=r.properties.get(m),program=props.currentProgram;
       const location=program&&gl.getUniformLocation(program.program,'weatherSurface');
       const packed=location===null||location===undefined?null:Array.from(gl.getUniform(program.program,location));
-      rows.push({piece:o.userData.pieceId,material:m.name,water:!!(m.userData.waterSurface||m.userData.litWater),packed});
+      const pieces=(o.userData.snapRanges||[o.userData]).filter(p=>p.part==='water').map(p=>p.pieceId);
+      rows.push({pieces,material:m.name,water:!!m.userData.waterSurface,packed});
     }});return rows;
 }"""
 
@@ -493,6 +498,7 @@ def scenario_owner_fixes_cost():
             print(f'OWNER_FIX_COST clear={clear:.2f} pouring_eye={pouring:.2f} autumn_leaves={autumn:.2f} '
                   f'pouring_delta={pouring-clear:.2f} leaves_delta={autumn-clear:.2f} '
                   'frames=90 size=1920x1080 tier=high')
+            check(pouring-clear <= 3.0, ('pouring eye-level delta is at most 3 ms', clear, pouring, pouring-clear))
             # Total frame costs across looks, not isolated GPU pass timings.
             L.no_errors(served)
 

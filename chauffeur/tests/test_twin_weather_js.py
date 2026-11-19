@@ -17,6 +17,12 @@ const {installPlantWind,windVector}=await import(file('static/twin/sky/wind.js')
 const {installStageHaze}=await import(file('static/twin/sky/stage_haze.js'));
 const now=Date.parse('2026-11-19T14:30:00Z')/1000;
 const entity=(state,attributes={})=>({state,attributes});
+await test('lighting key ignores only surface accumulation and retains every atmospheric input',()=>{
+ const weather=W.previewWeather('pouring'),key=W.weatherLightingKey(weather);
+ for(const surface of [{wetness:.5},{snow_cm:8},{puddles:.3},{updated:100}])assert.equal(W.weatherLightingKey({...weather,...surface}),key);
+ for(const air of [{rate:.4},{precip:'snow'},{visibilityM:300},{fog:1},{windMps:12},{windToDeg:180},{temperatureC:-1},{neutral:true},{preview:null},
+  {clouds:{...weather.clouds,coverage:.5}}])assert.notEqual(W.weatherLightingKey({...weather,...air}),key);
+});
 await test('rain veil takes the shorter visibility and fog without visibility defaults to 300m',()=>{
  for(const precip of ['rain','mix']){
   assert.equal(W.weatherExtinction({precip,rate:1}),3.912/3000);
@@ -126,6 +132,24 @@ await test('camera fog preserves stage radius with no additional lit uniforms',(
  const s={uniforms:{},vertexShader:'',fragmentShader:''};m.onBeforeCompile(s,{});const key=m.customProgramCacheKey(),names=Object.keys(s.uniforms);
  haze.set({extinction:3.912/300});assert.equal(s.uniforms.stageRadius.value,100);assert.equal(s.uniforms.stageRing.value[0].w,3.912/300);assert.equal(m.customProgramCacheKey(),key);assert.deepEqual(Object.keys(s.uniforms),names);
  haze.set({radius:200});assert.equal(s.uniforms.stageRadius.value,200);haze.set({extinction:0});assert.equal(s.uniforms.stageRadius.value,200);haze.dispose();geo.dispose();m.dispose();
+});
+await test('surface-only preview ramp reaches packed uniforms without refreshing the sky each frame',async()=>{
+ const originalNow=Date.now;let stamp=originalNow();Date.now=()=>stamp;let v;
+ try{
+  v=await mountTwin(new Element(),{plan:structuredClone(input.plan),kit:{materials:{}},tier:'low',bake:false});
+  v.setClock('2026-06-21T12:00:00Z');v.setTime('day');
+  let refreshes=0;const update=v.clouds.update;v.clouds.update=(...args)=>{refreshes++;return update(...args);};
+  v.setWeatherPreview('pouring');const warmed=refreshes,start=stamp;
+  for(const seconds of [0,30,60,90,95]){
+   stamp=start+seconds*1000;v.render();
+   assert.equal(v.weather.wetness,Math.min(1,seconds/90));
+   assert.equal(v.weatherSurface.uniforms.weatherSurface.value.x,v.weather.wetness);
+   assert.equal(v.weatherSurface.uniforms.weatherSurface.value.z,v.weather.puddles);
+   assert.equal(refreshes,warmed,'wetness/puddle progression must not rerun the atmospheric quadrature');
+  }
+  v.setWeatherPreview('fog');assert.ok(refreshes>warmed,'a real change in the air still refreshes lighting');
+  assert.equal(v.weather.condition,'fog');
+ }finally{v?.dispose();Date.now=originalNow;}
 });
 await test('real household mount: weather previews, Now, live editor opt-in and neutral restoration',async()=>{
  const mount=async(editor=false)=>{const el=new Element();if(editor){const shell=new Element();shell.className='editor-shell';shell.append(el);}return mountTwin(el,{plan:structuredClone(input.plan),kit:{materials:{}},tier:'low',bake:false});};

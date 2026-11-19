@@ -51,7 +51,7 @@ await test('physical wind toward compass bearing and only precipitation slows fo
 await test('rain projected width has a 1.25 pixel floor, viewport tracks the target and rate controls opacity',()=>{
  const scene=new THREE.Scene(),p=createPrecipitation(scene,{tier:'low'}),camera=new THREE.PerspectiveCamera(60,16/9,.05,500);
  const material=p.objects.rain.material,body=material.vertexShader.match(/float precipitationWidth\(float pixels,float kind\) \{([\s\S]*?)\n\}/)[1];
- const width=new Function('max',`return (pixels,kind)=>{${body}}`)(Math.max);
+ const width=new Function('clamp',`return (pixels,kind)=>{${body}}`)((v,a,b)=>Math.max(a,Math.min(b,v)));
  for(const [w,h] of [[1600,900],[1920,1080],[960,540],[320,240]]){
   p.objects.rain.onBeforeRender({getDrawingBufferSize:out=>out.set(w,h)});
   assert.deepEqual(p.uniforms.precipViewport.value.toArray(),[w,h]);
@@ -72,7 +72,7 @@ await test('rain length floors fade below 4 px to a dot, with independent width 
  const p=createPrecipitation(new THREE.Scene()),m=p.objects.rain.material;
  const body=m.vertexShader.match(/float precipitationLength\(float pixels,float kind,float rate\) \{([\s\S]*?)\n\}/)[1];
  const smoothstep=(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);};
- const length=new Function('max','mix','clamp','smoothstep',`return (pixels,kind,rate)=>{${body}}`)(Math.max,(a,b,t)=>a+(b-a)*t,(v,a,b)=>Math.max(a,Math.min(b,v)),smoothstep);
+ const length=new Function('max','min','mix','clamp','smoothstep',`return (pixels,kind,rate)=>{${body}}`)(Math.max,Math.min,(a,b,t)=>a+(b-a)*t,(v,a,b)=>Math.max(a,Math.min(b,v)),smoothstep);
  assert.equal(length(0,0,1),1.25,'camera-axis streak is a dot');
  for(const pixels of [.01,.1,1,2,3])assert.ok(length(pixels,0,1)<10,'sub-4px streak floor fades out');
  for(const rate of [.45,1])for(const viewport of [[1920,1080],[960,540],[320,240]])for(const depth of [2.5,3,20,60,100,500])for(const velocity of [[0,-14,0],[5,-14,4],[0,0,0],[0,0,-14]]){
@@ -103,6 +103,40 @@ await test('rain length floors fade below 4 px to a dot, with independent width 
  assert.ok(m.fragmentShader.includes('smoothstep(halfExtent*.8,halfExtent,edge)'),'outer fifth of focus box fades');
  assert.ok(!m.fragmentShader.includes('smoothstep(40.0,64.0'));p.dispose();
 });
+await test('off-axis eye-plane drops cannot project huge quads, from any camera orientation',()=>{
+ const p=createPrecipitation(new THREE.Scene()),shader=p.objects.rain.material.vertexShader;
+ const body=name=>shader.match(new RegExp('(?:float|bool) '+name+'\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}'))[1];
+ const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),mix=(a,b,t)=>a+(b-a)*t;
+ const smoothstep=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);};
+ const visible=new Function('depth',body('precipitationVisibleDepth'));
+ const width=new Function('pixels','kind','clamp',body('precipitationWidth'));
+ const length=new Function('pixels','kind','rate','max','min','mix','clamp','smoothstep',body('precipitationLength'));
+ assert.ok(shader.includes('if(!precipitationVisibleDepth(-eye.z))'),'actual vertex path rejects forward depth before projection');
+ const lens=new THREE.PerspectiveCamera(38,16/9,.1,1000),eye=new THREE.Vector4(0,4,-.1,1),fall=new THREE.Vector4(0,-14,4,0).normalize().multiplyScalar(.35);
+ const clip=eye.clone().applyMatrix4(lens.projectionMatrix),head=eye.clone().add(fall).applyMatrix4(lens.projectionMatrix),tail=eye.clone().sub(fall).applyMatrix4(lens.projectionMatrix);
+ const oldLength=Math.abs(head.y/Math.max(Math.abs(head.w),.0001)-tail.y/Math.max(Math.abs(tail.w),.0001))*540;
+ const oldWidth=.018*lens.projectionMatrix.elements[0]*960/.1,centreY=clip.y/clip.w*540;
+ assert.ok(Math.hypot(4,.1)>3&&oldWidth>200&&oldLength/2>Math.abs(centreY)+540,'old radial cull admits a broad vertical quad that actually crosses the entire viewport');
+ assert.equal(visible(.1),false,'forward-depth cull rejects the reproduced full-height smear');
+ console.log('NEAR_PLANE_REGRESSION',JSON.stringify({oldWidth,oldLength,centreY,radial:Math.hypot(4,.1)}));
+ for(const pose of [[0,0,0],[90,55,35],[-10,7,-12]])for(const direction of [[0,0,-1],[1,0,0],[0,1,0],[.2,-.4,.6]]){
+  const camera=new THREE.PerspectiveCamera(38,16/9,.1,1000);camera.position.fromArray(pose);
+  camera.lookAt(camera.position.clone().add(new THREE.Vector3(...direction)));camera.updateMatrixWorld();
+  for(const z of [-.0001,-.01,-1,-2.99,-3,-3.49,-3.5,-4,-12,-100])for(const x of [-100,-4,0,4,100]){
+   const local=new THREE.Vector3(x,.2,z),world=local.clone().applyMatrix4(camera.matrixWorld),eye=world.clone().applyMatrix4(camera.matrixWorldInverse);
+   const accepted=visible(-eye.z);if(-z<3.49)assert.equal(accepted,false,'radially distant but eye-plane drop is culled');
+   if(!accepted)continue;
+   const w=width(.018*camera.projectionMatrix.elements[0]*960/Math.max(-eye.z,.0001),0,clamp);
+   // Eye-plane endpoints used to produce >100,000 px at z=-.01. The actual
+   // shader functions now bound even pathological projection inputs.
+   for(const projected of [0,1,4,10,100,10000,1e8]){
+    const h=length(projected,0,1,Math.max,Math.min,mix,clamp,smoothstep);
+    assert.ok(w>=1.25&&w<=2.5&&h>=1.25&&h<=96&&Number.isFinite(w*h));
+   }
+  }
+ }
+ p.dispose();
+});
 await test('actual fade function scales with box edges and excludes near-camera drops',()=>{
  const p=createPrecipitation(new THREE.Scene());
  const body=p.objects.rain.material.fragmentShader.match(/float precipitationFade\(\)\{([\s\S]*?)\n\}/)[1].replace(/\bfloat /g,'const ');
@@ -119,6 +153,14 @@ await test('actual fade function scales with box edges and excludes near-camera 
  }
  const fogFade=fade(world(0,5,0),[0,5,150],10000,3.912/300,[0,0],world(0,0,0),{x:128},distance,smoothstep,Math.max,Math.exp);
  assert.ok(Math.abs(fogFade-Math.exp(-3.912/2))<1e-10,'particle veil uses camera distance');
+ p.dispose();
+});
+await test('expired and eye-plane splash slots are culled before rasterizing their quad',()=>{
+ const p=createPrecipitation(new THREE.Scene()),shader=p.objects.splash.material.vertexShader;
+ const body=shader.match(/bool splashVisible\(float age,float depth\) \{([\s\S]*?)\n\}/)[1],visible=new Function('age','depth',body);
+ for(const age of [-1000,-.01,0,.1,.419,.42,.421,100])for(const depth of [-10,0,.1,3,3.49,3.5,10,100])
+  assert.equal(visible(age,depth),age>=0&&age<=.42&&depth>=3.5);
+ assert.ok(shader.indexOf('if(!splashVisible(splashAge,-eye.z))')<shader.indexOf('float radius='),'lifetime and signed depth gate the actual vertex path before expansion');
  p.dispose();
 });
 await test('focus box wraps in shader coordinates without moving every seed',()=>{

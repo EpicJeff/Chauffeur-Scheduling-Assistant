@@ -89,11 +89,37 @@ await test('executed drop, film, lawn and rain-density progression',()=>{
    const amp=strength(rate,(i+.5)/1000);active+=amp>0?1/1000:0;
    for(let j=0;j<100;j++){const wave=amp*band(j/100,.6);assert.ok(Number.isFinite(wave));power+=wave*wave/100000;}
   }
-  const density=active*2*1.5/(.6*.6);
+  const density=active*3/(.6*.6);
   assert.ok(density>lastDensity&&power>lastPower);lastDensity=density;lastPower=power;
   if(rate===0){close(density,0);close(power,0);}
-  console.log('WEATHER_RINGS',JSON.stringify({rate,hitsPerM2Second:density,activePerM2:active*2/(.6*.6),rms:Math.sqrt(power)}));
+  console.log('WEATHER_RINGS',JSON.stringify({rate,hitsPerM2Second:density,activePerM2:active/(.6*.6),rms:Math.sqrt(power)}));
  }
+});
+await test('ring work is bounded by distance and skipped before covered, vertical and lawn calls',()=>{
+ const count=scalar('weatherRingCount');
+ const support=scalar('weatherRingSupport');
+ for(const age of [0,.2,.5,1]){close(support(age*.46,age),1);close(support(age*.46+.18,age),0);assert.ok(support(age*.46+.16,age)>0&&support(age*.46+.16,age)<1);}
+ for(const [distance,n]of [[0,9],[8,9],[15,9],[17.99,9],[18,4],[28,4],[35.99,4],[36,0],[100,0]])close(count(distance*distance),n);
+ assert.ok(!WEATHER_GLSL.includes('layer<2'),'one nine-neighbour layer keeps the same 8.33 hits/m2/s at 3 Hz');
+ const ripple=WEATHER_GLSL.split('vec2 weatherRipple(vec2 world) {')[1];
+ assert.ok(ripple.includes('clock*3.0+random.x'),'one layer maintains the original impact arrival rate');
+ assert.ok(ripple.indexOf('if(rate<=0.0)')<ripple.indexOf('weatherRingHash(id)'));
+ assert.ok(ripple.indexOf('if(count==0.0)')<ripple.indexOf('for(int y='));
+ assert.ok(ripple.indexOf('if(count==4.0&&!mid)continue;')<ripple.indexOf('weatherRingHash(id)'));
+ assert.ok(ripple.indexOf('if(visible<=0.0)continue;')<ripple.indexOf('weatherRingBand(d,age)'));
+ assert.ok(ripple.indexOf('if(support<=0.0)continue;')<ripple.indexOf('weatherRingBand(d,age)'));
+ assert.ok(!ripple.includes('weatherHash('),'no sine hashes in the ring loop');
+ assert.ok(!ripple.includes('dFdx(')&&!ripple.includes('dFdy('),'derivatives must be captured before receiver gates');
+ const hash=WEATHER_GLSL.split('vec3 weatherRingHash(vec2 p) {')[1].split('\n}')[0];
+ assert.ok(!hash.includes('sin(')&&hash.includes('fract('),'ring arrival/centre hash has no transcendental');
+ const scene=new THREE.Scene(),layer=installWeatherSurface(scene),material=new THREE.MeshStandardMaterial();scene.add(new THREE.Mesh(new THREE.BoxGeometry(),material));layer.prepare();
+ const shader={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};material.onBeforeCompile(shader,{});
+ const f=expand(shader.fragmentShader);
+ assert.ok(f.indexOf('weatherWorldDx=dFdx(vWeatherWorld)')<f.indexOf('if(vWeatherOpen>0.0&&'),'world derivatives precede divergent exposure/receiving gates');
+ assert.ok(f.includes('if(vWeatherOpen>0.0&&weatherSurface.x+'),'covered faces skip all surface work');
+ assert.ok(f.includes('if(weatherRingWeight>0.0)weatherSlope=weatherRipple(vWeatherWorld.xz)*weatherRingWeight;'),'zero upward/exposure/snow/lawn weight skips the loop');
+ assert.ok(f.indexOf('weatherSurface.x>0.0&&weatherSurface.x<.9?weatherDrops')>0,'full gloss bypasses unused drop hashes');
+ layer.dispose();material.dispose();
 });
 // Spatial scalar port of the GLSL hash/noise, sampled over an 8 m patch.
 // The colour/gloss/coverage curves below execute their actual GLSL bodies.
@@ -190,7 +216,7 @@ await test('built house and household: every lit kind, grass, baked lamps, water
    }
    if(row.label==='grass'){
     assert.ok(f.indexOf('roughnessFactor = mix(.96, .53, vGrass.x)')<f.indexOf('roughnessFactor=weatherRoughness'),'weather follows grass roughness override');
-    assert.ok(f.includes('weatherP*=weatherLawnPuddle(weatherSurface.z)')&&f.includes('weatherSlope*=weatherP'),'blades exclude standing water/rings until the lawn threshold');
+    assert.ok(f.includes('weatherP*=weatherLawnPuddle(weatherSurface.z)')&&f.includes('weatherRingWeight*=weatherP')&&f.includes('if(weatherRingWeight>0.0)weatherSlope=weatherRipple'),'blades exclude standing water/rings until the lawn threshold, before evaluating rings');
     assert.ok(f.includes('mix(roughnessFactor,.42,weatherGlossValue)'),'blades gain modest gloss');
    }
    if(row.label==='baked wall'){

@@ -137,7 +137,8 @@ await test('all weather terms use exposure, fallback is 1, keys and budgets stay
   for(const term of ['weatherWet=weatherExposure(weatherSurface.x,vWeatherOpen)',
     'weatherS=weatherExposure(weatherSnow(weatherUp,weatherSurface.y,weatherEdgeValue),vWeatherOpen)',
     'weatherP=weatherExposure(weatherPuddle(weatherUp,weatherSurface.z,weatherEdgeValue),vWeatherOpen)',
-    'weatherRipple(vWeatherWorld.xz)*smoothstep(.9,.98,weatherUp)*weatherExposure(1.0,vWeatherOpen)'])assert.ok(shader[2].includes(term),term);
+    'weatherRingWeight=smoothstep(.9,.98,weatherUp)*weatherExposure(1.0,vWeatherOpen)',
+    'if(weatherRingWeight>0.0)weatherSlope=weatherRipple(vWeatherWorld.xz)*weatherRingWeight'])assert.ok(shader[2].includes(term),term);
  }
  assert.equal(new Set(keys).size,1);
  o.geometry.setAttribute('weatherOpen',new THREE.Float32BufferAttribute(new Float32Array(o.geometry.attributes.position.count),1));
