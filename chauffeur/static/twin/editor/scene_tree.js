@@ -40,7 +40,8 @@ export function sceneRows(plan) {
         label(p, kind === 'anchor' && p.device ? 'device' : kind), { visibilityKind: p.device ? 'device' : p.object_kind === 'lamp' ? 'fixture' : visibilityKind(kind), piece: p }));
     const roofs = new Map([...(b.roofs || []), ...(b.roof?.sections || [])].map(p => [p.id, p]));
     for (const [collection, kind] of [[b.stairs,'stair'],[[...roofs.values()],'roof'],[b.dormers,'dormer'],[b.solar_zones,'solar_zone'],[b.porches,'porch']])
-      for (const p of collection || []) add(p, kind, levels.get(p.level) || building, b.id);
+      // A porch is also a room of the same id (its floor, walls and openings hang there); list it once.
+      for (const p of collection || []) if (!(kind === 'porch' && rooms.has(p.id))) add(p, kind, levels.get(p.level) || building, b.id);
     for (const p of fixtures.filter(p => p.building === b.id)) {
       assignedFixtures.add(p.id); add(p, p.sceneKind, parentFor(p), b.id, label(p, p.sceneKind === 'effect_fixture' ? 'effect' : 'light'), { piece: p });
     }

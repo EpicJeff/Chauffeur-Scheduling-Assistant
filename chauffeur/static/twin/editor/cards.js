@@ -186,7 +186,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       }) });
     for (const material of materials) {
       const row = createSlotRow({ label: material.label, library, readOnly: () => !canEdit(),
-        current: () => material.current,
+        current: () => material.current, detail: () => material.text,
         accepts: entry => entry.kind === 'material',
         apply: entry => queue(() => canEdit() && op(surfaceOperation(material.surface, 'face', entry))),
         clear: material.clear ? () => queue(() => canEdit() && op({ op: 'set_material', building: building.id, target: material.target, material: null })) : null,

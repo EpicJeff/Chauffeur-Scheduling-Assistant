@@ -24,6 +24,14 @@ await test('pick_saves_id_only',async()=>{
  assert.equal(node.dataset.librarySlot,'Surface');
  await useMaterial(node,entry.id);assert.deepEqual(calls,[{id:entry.id}]);
 });
+await test('default_label_and_current_name_survive_the_shared_row_adapter',async()=>{
+ const node=materialSlot({library,label:'Slab',defaultLabel:'Concrete',loadMaterials:async()=>[entry],onChange:async()=>{}});
+ assert.equal(textOf(node.querySelector('[data-slot-name]')),'Default: Concrete');
+ await useMaterial(node,entry.id);
+ assert.equal(textOf(node.querySelector('[data-slot-name]')),entry.name);
+ await click(node.querySelector('[data-slot-clear]'));
+ assert.equal(textOf(node.querySelector('[data-slot-name]')),'Default: Concrete');
+});
 await test('override_then_clear',async()=>{
  const {node,calls}=make({id:entry.id});
  const tint=node.querySelector('input[type="color"]');assert.equal(textOf(tint.parentElement),'Override tint');

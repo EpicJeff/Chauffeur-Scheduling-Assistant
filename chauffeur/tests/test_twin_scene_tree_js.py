@@ -29,6 +29,9 @@ console.log('  ok building/floor/room descendants and ordered yard/pool hierarch
 const scalarAt={buildings:[{id:'b2',levels:[{id:'L2',elevation:0}],rooms:[{id:'r2',level:'L2',polygon:[[0,0],[10,0],[10,10],[0,10]]}],walls:[{id:'w2',level:'L2'}],items:[{id:'shelf',level:'L2',host:{wall:'w2'},at:11}],anchors:[{id:'switch',level:'L2',at:3}]}],site:{}};
 const scalarRows=sceneRows(scalarAt);assert.equal(scalarRows.find(r=>r.id==='shelf').parent.id,'L2');assert.equal(scalarRows.find(r=>r.id==='switch').parent.id,'L2');
 console.log('  ok a wall-hosted piece whose at is a distance along the wall is not read as a point');
+const porchPlan={buildings:[{id:'b3',levels:[{id:'L3',elevation:0}],rooms:[{id:'porch:p',kind:'porch',level:'L3',polygon:[[0,0],[8,0],[8,6],[0,6]]}],porches:[{id:'porch:p',level:'L3',polygon:[[0,0],[8,0],[8,6],[0,6]]}],walls:[],openings:[]}],site:{}};
+assert.equal(sceneRows(porchPlan).filter(r=>r.id==='porch:p').length,1);
+console.log('  ok a porch that is also a room is listed once');
 const pane=document.createElement('div');pane.id='dock-pane-scene';document.body.append(pane);
 const floorHost=document.createElement('aside');floorHost.id='editor-floors';pane.append(floorHost);
 const host=document.createElement('div');host.clientHeight=160;floorHost.append(host);

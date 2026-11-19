@@ -40,6 +40,17 @@ await test('swatch reveals only on click and refresh draws current asset',async(
  await click(row.element.querySelector('[data-slot-clear]'));assert.equal(calls.at(-1),null);
  current=null;row.refresh();assert.equal(swatch().disabled,true);assert.ok(swatch().classList.contains('editor-slot-empty'));
 });
+await test('optional detail preserves provenance and refresh; absent or empty detail keeps the name',()=>{
+ let detail='Porch roof metal, set here';
+ const described=createSlotRow({label:'Roof',accepts:()=>true,current:()=>stone,detail:()=>detail,apply(){},library});
+ const name=described.element.querySelector('[data-slot-name]');
+ assert.equal(name.textContent,'Porch roof metal, set here');
+ detail='Bake siding, from the building';described.refresh();assert.equal(name.textContent,detail);
+ detail='House look';described.refresh();assert.equal(name.textContent,'House look');
+ detail='';described.refresh();assert.equal(name.textContent,stone.name);
+ assert.equal(row.element.querySelector('[data-slot-name]').textContent,'Default','ordinary empty row retains its fallback');
+ described.dispose();
+});
 await test('accepted pointer payload highlights and applies; other kinds do neither',async()=>{
  const send=(phase,entry)=>fire(row.element,'chf-library-slot-drag',{detail:{phase,entry}});
  await send('over',stone);assert.ok(row.element.classList.contains('editor-slot-dragover'));

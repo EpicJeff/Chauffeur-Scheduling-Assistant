@@ -13,7 +13,7 @@ export function sendSlotDrag(row, phase, entry) {
 }
 
 // A DOM component only. The owner keeps the domain operation and undo step.
-export function createSlotRow({ label, subject = `${label.toLowerCase()} material`, accepts, current, apply, clear, reset, tint, library, readOnly = false }) {
+export function createSlotRow({ label, subject = `${label.toLowerCase()} material`, accepts, current, detail, apply, clear, reset, tint, library, readOnly = false }) {
   const element = document.createElement('section'), row = document.createElement('div');
   element.dataset.librarySlot = label; row.className = 'editor-material-line editor-slot-line'; element.append(row);
   const controller = new AbortController(), { signal } = controller;
@@ -66,7 +66,9 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
   });
   function refresh() {
     const entry = current(), selected = library.selected(), valid = !!selected && accepts(selected);
-    name.textContent = entry?.name || 'Default'; swatch.disabled = busy || !entry?.id;
+    // `detail` keeps what the old material line said about where the material comes from
+    // ("Oak, set here", "Siding, from the building", "House look").
+    name.textContent = detail?.() || entry?.name || 'Default'; swatch.disabled = busy || !entry?.id;
     swatch.classList.toggle('editor-slot-empty', !entry?.id);
     swatch.replaceChildren(); swatch.style.backgroundColor = entry?.color || '';
     if (entry?.thumb) { const image = document.createElement('img'); image.src = entry.thumb; image.alt = ''; swatch.append(image); }

@@ -59,6 +59,20 @@ await test('room_and_roof_lines_still_listed',async()=>{
  assert.deepEqual(lines('room',room).map(l=>l.label),['Floor','Ceiling','Walls']);
  assert.equal(lines('roof',b.roof.sections[0])[0].label,'Roof');
 });
+await test('card_rows_render_each_material_lines_provenance_including_house_look',async()=>{
+ const room=b.rooms[0],roof=b.roof.sections[0];
+ const saved={floor:room.floor_material,ceiling:room.ceiling_material,material:roof.material};
+ try {
+  room.floor_material={id:'choice'};delete room.ceiling_material;roof.material={id:'choice'};
+  for(const [kind,piece] of [['room',room],['roof',roof],['opening',b.openings[0]]]){
+   cards.draw({pieceId:piece.id,buildingId:b.id});await wait();
+   for(const line of lines(kind,piece))assert.equal(card.querySelector(`[data-library-slot="${line.label}"] [data-slot-name]`).textContent,line.text,kind+' '+line.label);
+  }
+  cards.draw({pieceId:room.id,buildingId:b.id});await wait();
+  assert.match(card.querySelector('[data-library-slot="Floor"] [data-slot-name]').textContent,/Family finish, set here/);
+  assert.equal(card.querySelector('[data-library-slot="Ceiling"] [data-slot-name]').textContent,'House look');
+ } finally {room.floor_material=saved.floor;room.ceiling_material=saved.ceiling;roof.material=saved.material;}
+});
 await test('pool_and_spa_cards_list_water',async()=>{
  for(const [kind,piece,opName] of [['pool',p.site.pool,'update_site_shape'],['spa',p.site.pool.features[0],'update_pool_feature']]){
   assert.ok(siteMaterialSlots(kind,piece).some(([part,label])=>part==='water'&&label==='Water'));

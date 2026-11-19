@@ -149,7 +149,7 @@ export async function boot() {
       houseMaterialsShelf(host, building, { library: slotLibrary, ownSlot: row => materialSlots.push(row), getPlan: shownPlan, getKit: () => houseKit, canEdit,
         op: applyOp, report });
     }
-    dialogs.openDialog('house-materials', { title: 'House materials' });
+    dialogs.openDialog('house-materials', { title: 'House materials', dock: 'live' });
   }
   let houseKit = {};
   for (const id of ['properties-house-materials', 'menu-house-materials']) listen(el(id), 'click', () => openHouseMaterials());
