@@ -33,7 +33,13 @@ await test('eye-sized discs, distance and horizon refraction',()=>{
   bodies.dispose();
 });
 await test('lunar surface normal and real sunlight give both quarters and full/new',()=>{
-  const bodies=createBodies({moonMap:new THREE.Texture()}),moon=bodies.object.getObjectByName('sky-moon');
+  { const b=createBodies({moonMap:new THREE.Texture()}),m=b.object.getObjectByName('sky-moon');
+  b.update({sunDir:[0,-.5,.866],moonDir:[0,.5,.866],sunAltDeg:-30,moonAltDeg:30,transmittance:()=>[1,1,1]});const night=m.material.uniforms.strength.value;
+  b.update({sunDir:[0,.7,.714],moonDir:[0,.5,.866],sunAltDeg:45,moonAltDeg:30,transmittance:()=>[1,1,1]});const day=m.material.uniforms.strength.value;
+  assert.ok(Math.abs(night-1)<1e-9,'full moon strength at night');assert.ok(Math.abs(day-.15)<1e-6,'pale moon by day');
+  assert.ok(/result=6\.0\*result\/\(vec3\(6\.0\)\+result\)/.test(m.material.fragmentShader),'moon disc peak is soft-capped');
+  console.log('  ok the moon is pale by day and its disc peak is soft-capped'); }
+const bodies=createBodies({moonMap:new THREE.Texture()}),moon=bodies.object.getObjectByName('sky-moon');
   for(const sunDir of [[1,0,0],[-1,0,0],[0,0,-1],[0,0,1],[.3,.7,-.2]]) {
     bodies.update({sunDir,moonDir:[0,0,1],moonPhase:.25,moonDistanceKm:384400,sunAltDeg:40,moonAltDeg:40,transmittance:()=>[1,1,1]});
     const u=moon.material.uniforms,light=u.lightDirection.value;
