@@ -158,10 +158,34 @@ export function uvOffsetFor(seedId) {
 // Vertical faces (|normal.y| < .5: walls, pool and retaining walls, curb sides) move
 // along u only, so brick and siding courses stay registered across corners and
 // splits; floors, patios, caps and roofs move on both axes.
-export function offsetSurfaceUvs(geometry, material, seedId) {
+export function offsetSurfaceUvs(geometry, material, seedId, offset = null, centre = null) {
   const uv = geometry?.attributes?.uv, normal = geometry?.attributes?.normal;
-  if (!seedId || !uv || Array.isArray(material) || !material?.userData?.randomOffset
-    || geometry.userData.uvOffsetSeed !== undefined) return geometry;
+  if (!uv || Array.isArray(material) || geometry.userData.uvOffsetSeed !== undefined) return geometry;
+  if (offset) {
+    // Base UVs are feet; texture transforms turn them into repeats. Work in
+    // repeat space so a quarter turn also works for a non-square tile. Explicit
+    // zero is intentional: it suppresses random_offset without changing a key.
+    const tile = material?.userData?.tileFt || [4, 4];
+    const sx = Math.max(1e-9, tile[0]), sy = Math.max(1e-9, tile[1]);
+    if (!centre) {
+      let u0 = Infinity, v0 = Infinity, u1 = -Infinity, v1 = -Infinity;
+      for (let i = 0; i < uv.count; i++) {
+        u0 = Math.min(u0, uv.getX(i)); u1 = Math.max(u1, uv.getX(i));
+        v0 = Math.min(v0, uv.getY(i)); v1 = Math.max(v1, uv.getY(i));
+      }
+      centre = uv.count ? [(u0 + u1) / 2, (v0 + v1) / 2] : [0, 0];
+    }
+    const turns = ((offset.rot || 0) / 90) % 4;
+    const cos = [1, 0, -1, 0][turns], sin = [0, 1, 0, -1][turns];
+    for (let i = 0; i < uv.count; i++) {
+      const u = (uv.getX(i) - centre[0]) / sx, v = (uv.getY(i) - centre[1]) / sy;
+      uv.setXY(i, centre[0] + (u * cos - v * sin + offset.u) * sx,
+        centre[1] + (u * sin + v * cos + offset.v) * sy);
+    }
+    uv.needsUpdate = true; geometry.userData.uvOffsetSeed = seedId ?? 'explicit';
+    return geometry;
+  }
+  if (!seedId || !material?.userData?.randomOffset) return geometry;
   const [du, dv] = uvOffsetFor(seedId);
   for (let i = 0; i < uv.count; i++) {
     const vertical = normal && Math.abs(normal.getY(i)) < .5;
@@ -169,6 +193,29 @@ export function offsetSurfaceUvs(geometry, material, seedId) {
   }
   uv.needsUpdate = true; geometry.userData.uvOffsetSeed = seedId;
   return geometry;
+}
+
+// A face can be generated as several pieces around openings or terrain cuts.
+// Rotate all of them around the face's one UV centre, before static batching.
+export function offsetSurfaceUvParts(parts) {
+  const groups = new Map();
+  for (const part of parts) {
+    const key = part.key;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(part);
+  }
+  for (const rows of groups.values()) {
+    let u0 = Infinity, v0 = Infinity, u1 = -Infinity, v1 = -Infinity;
+    for (const { geometry } of rows) {
+      const uv = geometry.attributes.uv;
+      for (let i = 0; i < (uv?.count || 0); i++) {
+        u0 = Math.min(u0, uv.getX(i)); u1 = Math.max(u1, uv.getX(i));
+        v0 = Math.min(v0, uv.getY(i)); v1 = Math.max(v1, uv.getY(i));
+      }
+    }
+    const centre = Number.isFinite(u0) ? [(u0+u1)/2, (v0+v1)/2] : [0, 0];
+    for (const {geometry, material, seed, offset} of rows) offsetSurfaceUvs(geometry, material, seed, offset, centre);
+  }
 }
 
 // Immutable master URLs are decoded once; each tier image is resized once.
@@ -414,6 +461,7 @@ export function kitMaterial(role, kit, tier) {
 // original path and appearance, including the kit's special shader behaviour.
 export function materialSlot(value, defaultRole, kit, tier, cache, roleMaterial) {
   if (!value) return roleMaterial(defaultRole);
+  if (!value.id) value = { id: defaultRole, ...value };
   if (Object.hasOwn(BUILTIN_LOOKS, value.id)) {
     const key = JSON.stringify(['builtin-look', value.id, defaultRole, value.color || null]);
     if (!cache.has(key)) {
@@ -441,7 +489,7 @@ export function materialSlot(value, defaultRole, kit, tier, cache, roleMaterial)
   const ref = named || (role && refs[role]) || { asset: value.id, color: '#b8b0a4' };
   const key = JSON.stringify(['material-slot', value.id, value.color || null, named || null]);
   if (!cache.has(key)) {
-    const material = (!value.color || ref.pattern === 'lattice' && value.color === ref.color) && role ? roleMaterial(role)
+    const material = (!value.color || value.color === ref.color) && role ? roleMaterial(role)
       : kitMaterial(role || 'material', { ...kit, materials: { ...refs,
         [role || 'material']: { ...ref, asset: ref.asset || value.id, color: value.color || ref.color, tint: true } } }, tier);
     cache.set(key, material);
