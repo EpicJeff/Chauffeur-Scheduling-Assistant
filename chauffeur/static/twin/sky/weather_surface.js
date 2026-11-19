@@ -9,6 +9,9 @@ const unit=v=>Number.isFinite(v)?Math.max(0,Math.min(1,v)):0;
 // No sampler and exactly one fragment vector, even on the full pool program.
 export const WEATHER_GLSL=`
 uniform vec4 weatherSurface;
+float weatherExposure(float value, float openSky) {
+  return value*clamp(openSky,0.0,1.0);
+}
 float weatherHash(vec2 p) {
   return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);
 }
@@ -66,14 +69,14 @@ if(weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(weatherSurface.w)>0.
     #ifdef STANDARD
       weatherMetal=metalnessFactor;
     #endif
-    float weatherWet=weatherSurface.x;
+    float weatherWet=weatherExposure(weatherSurface.x,vWeatherOpen);
     float weatherEdgeValue=(weatherSurface.y>0.0||weatherSurface.z>0.0)?weatherEdge(vWeatherWorld.xz):.5;
     #ifdef WEATHER_SURFACE_ROOF
       float weatherP=0.0;
     #else
-      float weatherP=weatherPuddle(weatherUp,weatherSurface.z,weatherEdgeValue);
+      float weatherP=weatherExposure(weatherPuddle(weatherUp,weatherSurface.z,weatherEdgeValue),vWeatherOpen);
     #endif
-    float weatherS=weatherSnow(weatherUp,weatherSurface.y,weatherEdgeValue);
+    float weatherS=weatherExposure(weatherSnow(weatherUp,weatherSurface.y,weatherEdgeValue),vWeatherOpen);
     float weatherLum=dot(diffuseColor.rgb,vec3(.2126,.7152,.0722));
     diffuseColor.rgb *= weatherWetScale(weatherLum,weatherMetal,weatherWet);
     diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.85,.87,.9),weatherS);
@@ -82,7 +85,7 @@ if(weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(weatherSurface.w)>0.
       metalnessFactor=mix(metalnessFactor,0.0,weatherS);
     #endif
   #endif
-  vec2 weatherSlope=weatherRipple(vWeatherWorld.xz)*smoothstep(.9,.98,weatherUp);
+  vec2 weatherSlope=weatherRipple(vWeatherWorld.xz)*smoothstep(.9,.98,weatherUp)*weatherExposure(1.0,vWeatherOpen);
   #ifndef WEATHER_SURFACE_WATER
     weatherSlope*=1.0-weatherS;
   #endif
@@ -95,7 +98,7 @@ if(weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(weatherSurface.w)>0.
 
 function installChunks() {
   if(installed)return;installed=true;
-  THREE.ShaderChunk.common+='\nvarying vec3 vWeatherWorld;\n';
+  THREE.ShaderChunk.common+='\nvarying vec3 vWeatherWorld;\nvarying float vWeatherOpen;\n';
   THREE.ShaderChunk.worldpos_vertex+=`
 vec4 weatherWorld=vec4(transformed,1.0);
 #ifdef USE_BATCHING
@@ -111,6 +114,8 @@ vWeatherWorld=(modelMatrix*weatherWorld).xyz;`;
 
 function patchLit(mode) {
   return shader=>{
+    shader.vertexShader='attribute float weatherOpen;\n'+shader.vertexShader.replace('#include <worldpos_vertex>',
+      '#include <worldpos_vertex>\nvWeatherOpen=weatherOpen;');
     shader.fragmentShader='#define WEATHER_SURFACE_ACTIVE\n'+
       (mode==='water'?'#define WEATHER_SURFACE_WATER\n':mode==='submerged'?'#define WEATHER_SURFACE_SUBMERGED\n':mode==='roof'?'#define WEATHER_SURFACE_ROOF\n':'')+shader.fragmentShader;
   };
@@ -120,9 +125,9 @@ function patchLit(mode) {
 // authored colour, coverage and lamp glow. Rain bends only their exposed normal;
 // vapour has no solid receiving face, so it only carries the shared binding.
 function patchEffect(shader) {
-  shader.vertexShader='varying vec3 vWeatherWorld;\n'+shader.vertexShader.replace(/void main\s*\(\s*\)\s*\{/,
-    'void main() { vWeatherWorld=(modelMatrix*vec4(position,1.0)).xyz;');
-  shader.fragmentShader='varying vec3 vWeatherWorld;\n'+WEATHER_GLSL+shader.fragmentShader;
+  shader.vertexShader='attribute float weatherOpen;\nvarying float vWeatherOpen;\nvarying vec3 vWeatherWorld;\n'+shader.vertexShader.replace(/void main\s*\(\s*\)\s*\{/,
+    'void main() { vWeatherOpen=weatherOpen; vWeatherWorld=(modelMatrix*vec4(position,1.0)).xyz;');
+  shader.fragmentShader='varying float vWeatherOpen;\nvarying vec3 vWeatherWorld;\n'+WEATHER_GLSL+shader.fragmentShader;
   if(!shader.fragmentShader.includes('varying vec3 vNormal;'))return;
   shader.fragmentShader=shader.fragmentShader.replaceAll('normalize(vNormal)',
     '(weatherEffectNormal/max(length(weatherEffectNormal),.0001))');
@@ -130,7 +135,7 @@ function patchEffect(shader) {
     `void main() {
 vec3 weatherFace=vNormal/max(length(vNormal),.0001);
 float weatherUp=(vec4(weatherFace,0.0)*viewMatrix).y;
-vec2 weatherSlope=weatherRipple(vWeatherWorld.xz)*smoothstep(.9,.98,weatherUp);
+vec2 weatherSlope=weatherRipple(vWeatherWorld.xz)*smoothstep(.9,.98,weatherUp)*weatherExposure(1.0,vWeatherOpen);
 vec3 weatherEffectNormal=vNormal+mat3(viewMatrix)*vec3(weatherSlope.x,0.0,weatherSlope.y);`);
 }
 
@@ -144,6 +149,7 @@ export function installWeatherSurface(scene) {
       const lit=material.isMeshStandardMaterial||material.isMeshLambertMaterial||material.isMeshPhongMaterial||material.isMeshToonMaterial;
       const effect=material.isShaderMaterial&&material.uniforms?.light;
       if(!lit&&!effect)continue;
+      if(!material.defaultAttributeValues?.weatherOpen)material.defaultAttributeValues={...material.defaultAttributeValues,weatherOpen:[1]};
       // A shallow roof can pass the .9 face test (4:12 => .949). Its existing
       // receiving role excludes puddles explicitly, including library finishes.
       const mode=effect?'effect':material.userData.underwater?'submerged':material.userData.waterSurface||material.userData.litWater?'water'

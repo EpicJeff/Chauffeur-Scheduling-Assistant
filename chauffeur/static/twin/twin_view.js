@@ -29,6 +29,7 @@ import { installCloudShadow } from './sky/cloud_shadow.js';
 import { installWeatherSurface } from './sky/weather_surface.js';
 import { seasonState, createSeasonPreview, installSeasons } from './sky/seasons.js';
 import { createPrecipitation } from './sky/precipitation.js';
+import { createSkyCover, writeWeatherOpen, refreshSlabCover } from './sky/sky_cover.js';
 import { createSeasonTouches } from './sky/season_touches.js';
 import { mountTimeScrub } from './sky/time_scrub.js';
 import { defaultStage, mountStageSettings } from './stage_settings.js';
@@ -451,7 +452,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     weatherSurface.update(view.weather,performance.now()/1000);
     if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces){
       seasonTouches.setPlan(plan);
-      precipitation.setPlan(plan,twin?.roofSurfaces);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;
+      precipitation.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;
     }
     precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
       unlit:state.unlit,colour:timeLook?.skyColor});
@@ -1183,6 +1184,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
       }
       plan = flat; view.plan = flat;
+      refreshSlabCover(twin.root, flat, twin.roofSurfaces, buildingId);
+      twin.skyCover = createSkyCover(flat, twin.roofSurfaces);
+      writeWeatherOpen(twin.root, twin.skyCover);
       // A gesture deforms retained buffers in place; the next full rebuild
       // must regenerate this building from its final authoritative record.
       if (!keep && twin.buildings?.has(buildingId)) twin.buildings.get(buildingId).model.stale = true;
@@ -1336,7 +1340,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         stopBatch();
         if (!reuseYard && !yardLater) {
           const stopYard = editSpan(detail, 'yard');
-          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials: yardMaterials, timing: detail, previous: yardGroup }); next.groups.site.add(yard.group);
+          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials: yardMaterials, timing: detail, previous: yardGroup, skyCover: next.skyCover }); next.groups.site.add(yard.group);
           stopYard();
           next.yardGroup = yard.group;
         }
@@ -1373,6 +1377,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       stopDispose();
       yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);
+      // A roof edit can reuse the entire yard. Its cover still follows the
+      // accepted building geometry, including furniture and pool features.
+      if (yardGroup) writeWeatherOpen(yardGroup, twin.skyCover);
       // Read-only legacy property access for P0 embeds, never enumerable scene
       // keys and never a resolution when two buildings share the level name.
       view.groups = { ...twin.groups, levels: new Proxy(twin.groups.levels, { get(target, key) {
@@ -1481,7 +1488,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       let group;
       try {
         const stop = editSpan(timing?.detail, 'yard');
-        try { ({ group } = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials, timing: timing?.detail, previous })); }
+        try { ({ group } = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials, timing: timing?.detail, previous, skyCover: twin?.skyCover })); }
         finally { stop(); }
         if (disposed || version !== revision) {
           const keep = retained(); group.userData.releasePlants?.(keep); disposeObject(group, { keepMaterials: keep }); return;

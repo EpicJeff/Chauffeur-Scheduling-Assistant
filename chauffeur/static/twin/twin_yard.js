@@ -1,6 +1,7 @@
 import { applyObject, objectShown, objectMaterialKey, sitePieces } from './objects.js';
 import * as THREE from 'three';
 import { reflectionMaterial } from './reflection_probes.js';
+import { createSkyCover, writeWeatherOpen } from './sky/sky_cover.js';
 import { plantSeason, seasonHash } from './sky/seasons.js';
 import * as EZTree from '@dgreenheck/ez-tree';
 const { Tree } = EZTree;
@@ -335,7 +336,7 @@ export function yardPartKeys(plan, kit, tier, { viewing = false, stage = default
 // The whole-yard fast path is precisely the union of the part keys.
 export const yardKey = (plan, kit, tier, options) => JSON.stringify(yardPartKeys(plan, kit, tier, options));
 
-export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null, stage = defaultStage(plan) } = {}) {
+export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null, stage = defaultStage(plan), skyCover = createSkyCover(plan) } = {}) {
   const root = new THREE.Group(); root.name = 'yard';
   Object.defineProperty(root.userData, 'waterSurfaces', { value: [], writable: true });
   const keys = yardPartKeys(plan, kit, tier, { viewing, stage }), reused = new Map();
@@ -724,7 +725,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           }
           model.position.set(f.at[0], elevation + (f.elevation || 0), -f.at[1]);
           model.traverse(object => Object.assign(object.userData, {pieceId:f.id, kind:(site.planting || []).includes(f) ? 'planting' : 'furniture', visibilityKind: f.object_kind === 'lamp' ? 'fixture' : undefined}));
-          if (late) { model.userData.yardPart = 'furniture'; root.add(model); mergeStatic(model); }
+          if (late) { model.userData.yardPart = 'furniture'; root.add(model); mergeStatic(model); writeWeatherOpen(model, skyCover, root.parent ? 1 : FT); }
           return model;
         };
         if (!models.has(assetId)) {
@@ -926,6 +927,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     const used = new Set();
     root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) used.add(m); });
     for (const [key, material] of [...mats]) if (!used.has(material) && !key.startsWith('tree:') && !key.startsWith('plant_card:')) mats.delete(key);
+    writeWeatherOpen(root, skyCover, root.parent ? 1 : FT);
   };
   const stopMaterials = part('materials');
   await Promise.all([...mats.values()].map(m => m.userData.ready));
@@ -946,5 +948,6 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   // against a mutable old plan/kit; editor operations can update them in place.
   root.userData.yardKey = yardKey(plan, kit, tier, { viewing, stage });
   root.userData.yardMaterialKey = yardMaterialKey(plan, kit, tier);
+  writeWeatherOpen(root, skyCover, FT);
   return { group: root, triangles };
 }

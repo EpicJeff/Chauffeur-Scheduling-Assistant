@@ -60,6 +60,23 @@
 
 - [ ] Failing tests, run, implement, pass.
 
+### Task 3b: Autumn leaves, done properly (owner feedback 2026-11-19)
+
+The owner on his machine: "The trees drop a few leaves constantly, which isn't terrible. The bushes are dropping tons of leaves. And all of the falling leaves look the same. Is there any way to use the tree to get the actual leaf mesh and use it with the correct colors? Also, leaves falling and disappearing is ok, but leaves slowly collecting on the lawn is better. They can just come to rest on the ground and then have a longer lifetime so they collect for a while. The leaves all fall in the same direction too. Leaves generally fall all randomly because they are irregular shaped and the way they blow in the wind is weird. The takeaway is they should be more random in where they fall." His screenshots show leaves landing in tight rings around each shrub, every leaf the same orange blob, shrubs shedding far more than trees.
+
+**Rulings:**
+1. **Spawn weight by canopy:** each deciduous plant's share of the falling budget is proportional to its leaf count (or canopy area) from its generated geometry, so a large oak sheds most and a small shrub a little; the total rate follows the leaf-drop phase (most during drop, a few during late colour, none when bare or in summer).
+2. **Spawn inside the canopy:** start positions are random points on the plant's actual leaf instances (sample the generated leaf positions), not a ring.
+3. **The real leaf:** each falling leaf uses the plant's own leaf card geometry and leaf texture (the EZ-Tree preset's leaf map; shared texture, no new texture per leaf), coloured with that plant's autumn hue from Task 2 of slice 4 plus a small per-leaf variation; plants with different presets give different leaves. One draw per distinct leaf texture in view (cap 6), instanced; its own program (not a lit material).
+4. **Random fall:** each leaf has its own tumble axis and spin rate, flutter (pendulum side-to-side), drag and a per-leaf gust phase on top of the real wind, so paths scatter; nothing moves in lockstep.
+5. **Rest and collect:** on reaching the ground (the existing ground height; lawn, beds, paving, decks; never water, never covered or indoor surfaces from Task 1, never roofs), a leaf lies flat at a random yaw with a slight random tilt and stays 8 minutes, fading over its last 30 seconds; resting leaves are kept in a fixed ring buffer per tier (low 400, medium 900, high 1600, max 2500 resting; falling counts stay as slice 4 ruled) so a scatter builds under the trees during drop; wind above 10 m/s lifts and re-tumbles a few resting leaves.
+6. Editor neutral: none. Reduced motion: falling slows (as slice 3's precipitation), resting still shows.
+
+**Files:** `chauffeur/static/twin/sky/season_touches.js`, `twin_yard.js` (expose leaf geometry, texture and per-plant hue and leaf count), `twin_view.js`
+**Test:** extend `tests/test_twin_season_touches_js.py` (spawn weights proportional to leaf count on the household; spawn points inside canopies; per-preset leaf texture and hue; per-leaf tumble/flutter variety (no two of 50 leaves share a path); landing heights match ground, never on water/covered/roof; resting lifetime and ring buffer caps; program keys stable; draw count capped)
+
+- [ ] Failing tests, run, implement, pass.
+
 ### Task 4: Browser checks (Claude)
 
 - [ ] Extend `tests/test_twin_weather_live.py`: an eye-level camera at the pool (like the owner's screenshot) for rain over the 90-second ramp (screenshots at 0, 30, 60, 90 s), pouring with pool rings, snow; a top-down floor view of the pool house in rain and snow (no precipitation on screen; no snow or wetness indoors); fog at 300 m visibility from the overview and from eye level; no new programs; the census.

@@ -7,6 +7,7 @@ import { pathSurfacePolygons } from '../path_shapes.js';
 import { yardPaverLayout } from '../paver_path.js';
 import { paverSettings } from '../paver_layout.js';
 import { weatherHaze } from './weather.js';
+import { createSkyCover } from './sky_cover.js';
 
 const FT=.3048, BOX=[128,96,128], LIFE=.42;
 const RAIN={low:3000,medium:4000,high:8000,max:12000};
@@ -25,14 +26,15 @@ export function precipitationVelocity(kind,weather={},bearing=180,reduced=false)
   return [speed?x*speed*factor:0,-({rain:14,snow:.9,hail:18}[kind]||14)*factor,speed?z*speed*factor:0];
 }
 // CPU reference for the vertex shader's world-anchored toroidal box.
-export function wrappedPosition(seed,travel,anchor,box=BOX) {
-  return box.map((size,i)=>anchor[i]+(((seed[i]*size+travel[i]-anchor[i])%size+size)%size)-size/2);
+export function wrappedPosition(seed,travel,anchor,box=BOX,out=[]) {
+  for(let i=0;i<3;i++){const size=box[i];out[i]=anchor[i]+(((seed[i]*size+travel[i]-anchor[i])%size+size)%size)-size/2;}
+  return out;
 }
 
 // A bounded, analytic downward sample: feet in the plan, metres at the draw.
 // Terraces shape the ground; they are lawn, not hard receiving slabs. Paving
 // on a pad is represented by hardscape, exactly as it is in buildYard.
-export function createSplashSampler(plan={},roofs=new Map()) {
+export function createSplashSampler(plan={},roofs=new Map(),cover=createSkyCover(plan,roofs)) {
   const site=plan.site||{},hard=[];
   const add=(polygon,elevation,flat=null)=>{
     if(!(polygon?.length>=3))return;
@@ -81,12 +83,14 @@ export function createSplashSampler(plan={},roofs=new Map()) {
         offer(g+h.elevation,'hardscape',new THREE.Vector3(-gx,1,gy).normalize().toArray());
       }
     }
-    return best&&best.height>=roofTop-1e-6?{kind:best.kind,normal:best.normal,position:[worldX,best.height*FT+.006,worldZ]}:null;
+    const hit=best&&best.height>=roofTop-1e-6?{kind:best.kind,normal:best.normal,position:[worldX,best.height*FT+.006,worldZ]}:null;
+    return hit&&!cover.blocked(...hit.position)?hit:null;
   };
 }
 
 const vertexShader=`
 attribute vec3 precipSeed;
+attribute float precipOpen;
 uniform vec3 precipAnchor,precipBox,precipTravel,precipVelocity;
 uniform float precipKind,precipClock,precipRate;
 uniform vec2 precipViewport;
@@ -98,6 +102,7 @@ float precipitationLength(float pixels,float kind,float rate) {
   return kind<.5?max(pixels,mix(6.0,10.0,clamp((rate-.45)/.55,0.0,1.0))):pixels;
 }
 void main(){
+  if(precipOpen<.5){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
   vec3 box=max(precipBox,vec3(.0001));
   vec3 world=precipAnchor+mod(precipSeed*box+precipTravel-precipAnchor,box)-box*.5;
   if(precipKind>0.5&&precipKind<1.5){
@@ -205,7 +210,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
     precipViewport:{value:new THREE.Vector2(1,1)},precipRate:{value:0},
     precipCentre:{value:new THREE.Vector2()},precipRadius:{value:100},precipFog:{value:0},
     precipClock:{value:0},splashTime:{value:0}};
-  const objects={},travels={};let last=null,clock=0,disposed=false,sample=()=>null,plan={},credit=0,cursor=0,wasRaining=false;
+  const objects={},travels={};let last=null,clock=0,disposed=false,sample=()=>null,plan={},cover=createSkyCover(),credit=0,cursor=0,wasRaining=false;
   const motion=globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)');
   function mesh(name,g,vs,fs,own={}) {
     const material=new THREE.ShaderMaterial({name:'weather-'+name,uniforms:{...uniforms,...own},vertexShader:vs,fragmentShader:fs,
@@ -219,6 +224,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
     const count=precipitationCounts(tier,{precip:kind,rate:1})[kind],g=geometry(),seeds=new Float32Array(count*3);
     for(let i=0;i<seeds.length;i++)seeds[i]=clamp(random());
     g.setAttribute('precipSeed',new THREE.InstancedBufferAttribute(seeds,3));
+    g.setAttribute('precipOpen',new THREE.InstancedBufferAttribute(new Float32Array(count).fill(1),1).setUsage(THREE.DynamicDrawUsage));
     travels[kind]=new THREE.Vector3();
     mesh(kind,g,vertexShader,fragmentShader,{precipKind:{value:index},precipTravel:{value:travels[kind]},precipVelocity:{value:new THREE.Vector3()}});
   }
@@ -229,7 +235,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
   mesh('splash',sg,splashVertex,splashFragment);
   const api={group,objects,uniforms,
     setStage({centre,radius}){if(centre?.every(Number.isFinite))uniforms.precipCentre.value.fromArray(centre);if(Number.isFinite(radius)&&radius>0)uniforms.precipRadius.value=radius;},
-    setPlan(value,roofs){plan=value;sample=createSplashSampler(plan,roofs);born.fill(-1e6);sg.attributes.splashBorn.needsUpdate=true;credit=0;},
+    setPlan(value,roofs,skyCover){plan=value;cover=skyCover||createSkyCover(plan,roofs);sample=createSplashSampler(plan,roofs,cover);born.fill(-1e6);sg.attributes.splashBorn.needsUpdate=true;credit=0;},
     update(now,weather,camera,{target=camera.position,bearing=180,unlit=false,colour=[.6,.7,.8],reduced=motion?.matches}={}){
       if(disposed)return;
       now=finite(now);const dt=last===null?0:clamp(now-last,0,1);last=now;clock+=dt*(reduced?.35:1);
@@ -248,6 +254,15 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
         o.material.uniforms.precipVelocity.value.fromArray(velocity);
         travels[kind].addScaledVector(o.material.uniforms.precipVelocity.value,dt);
         for(const axis of ['x','y','z']){const size=uniforms.precipBox.value[axis];travels[kind][axis]=((travels[kind][axis]%size)+size)%size;}
+        const seeds=o.geometry.attributes.precipSeed,open=o.geometry.attributes.precipOpen;
+        const box=uniforms.precipBox.value.toArray(),anchor=uniforms.precipAnchor.value.toArray(),travel=travels[kind].toArray();
+        const seed=[0,0,0],world=[0,0,0];
+        for(let i=0;i<counts[kind];i++){
+          seed[0]=seeds.getX(i);seed[1]=seeds.getY(i);seed[2]=seeds.getZ(i);wrappedPosition(seed,travel,anchor,box,world);
+          if(kind==='snow'){world[0]+=.16*Math.sin(clock*1.7+seed[2]*30);world[2]+=.12*Math.sin(clock*1.3+seed[0]*30);}
+          open.setX(i,cover.blocked(world[0],world[1],world[2])?0:1);
+        }
+        if(counts[kind])open.needsUpdate=true;
       }
       const raining=counts.rain>0;
       if(!raining){

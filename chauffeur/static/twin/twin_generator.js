@@ -1,4 +1,5 @@
 import { span as editSpan } from './edit_timing.js';
+import { createSkyCover, writeWeatherOpen } from './sky/sky_cover.js';
 import { reflectionMaterial } from './reflection_probes.js';
 import { applyObject, bakeMatrix, fitOpening, objectShown, objectMaterialKey } from './objects.js';
 // Plan -> geometry. Plan x/y map to world X/-Z; heights are world Y.
@@ -51,7 +52,8 @@ export function mergeStatic(group, { perPiece = false } = {}) {
       g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
       const count = g.attributes.position.count;
       if (g.attributes.position.itemSize !== 3 || !count || count % 3) { g.dispose(); return; }
-      for (const key of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'reflectionBodyCentre', 'seasonLeaf'].includes(key)) g.deleteAttribute(key);
+      for (const key of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'reflectionBodyCentre', 'seasonLeaf', 'weatherOpen'].includes(key)) g.deleteAttribute(key);
+      if (!g.attributes.weatherOpen) g.setAttribute('weatherOpen', new THREE.Float32BufferAttribute(new Float32Array(count).fill(1), 1));
       if (g.attributes.normal?.count !== count || g.attributes.normal.itemSize !== 3) {
         g.deleteAttribute('normal'); g.computeVertexNormals();
       }
@@ -441,10 +443,13 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
     next.roomLights.push(...entry.model.roomLights); Object.assign(next.levelElevations, entry.model.levelElevations); next.notes.push(...entry.model.notes);
   }
   let adopted = false;
+  next.skyCover = createSkyCover(plan, next.roofSurfaces);
+  writeWeatherOpen(root, next.skyCover);
   // Call after ready and the view's revision check, like yard.adoptParts.
   next.adoptBuildings = () => {
     if (adopted) return;
     for (const id of reused) { const entry = next.buildings.get(id); copy(entry, previous); attach(entry); }
+    writeWeatherOpen(root, next.skyCover);
     adopted = true;
     previous = null; // Do not retain a chain of disposed twins across edits.
   };
@@ -456,6 +461,7 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
       const entry = next.buildings.get(b.id), resolved = buildingKeyParts(plan, b, kit, tier, opts);
       if (resolved.fixed === entry.inputs) entry.key = keyFromParts(resolved);
     }
+    writeWeatherOpen(root, next.skyCover);
   });
   next.updateGhosts = () => { for (const entry of next.buildings.values()) entry.model.updateGhosts(); };
   next.buildingsReused = reused; next.buildingsRebuilt = rebuilt;
@@ -1669,7 +1675,10 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         if (item.state === 'ghost' && pieces.has(key)) {
           ghostUpdate = batchGhost(root, pieces.get(key), ghost, ghostEdges); ghostBatches.push(ghostUpdate);
         }
-        if (late) batch(holder, { perPiece: levelKey(level.id) === editableLevel });
+        if (late) {
+          batch(holder, { perPiece: levelKey(level.id) === editableLevel });
+          writeWeatherOpen(holder, createSkyCover(plan, roofSurfaces));
+        }
       };
       if (point) {
         if (!models.has(asset)) {
@@ -1694,6 +1703,37 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     }
   }
   // Merge within independently switchable domains, never across a floor cut.
+  // Capture the actual roof surfaces, including generated extensions/awnings,
+  // before material batching loses their independent transforms.
+  for (const b of plan.buildings || []) {
+    const domain = groups.roof.children.find(g => g.userData.buildingId === b.id);
+    const positions = [], slabs = [], a = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
+    const capture = (o, target, ceiling = false, space = domain) => {
+      if (!o.isMesh || o.userData.ghost || !o.geometry?.attributes.position) return;
+      const p = o.geometry.attributes.position, index = o.geometry.index;
+      // Stay in building-local feet. Updating parent world matrices here
+      // introduces the root's metre scale before mergeStatic runs, changing
+      // its float roundoff (and the otherwise byte-identical UV golden).
+      const chain = [], matrix = new THREE.Matrix4();
+      for (let parent = o; parent && parent !== space; parent = parent.parent) {
+        if (parent.matrixAutoUpdate) parent.updateMatrix();
+        chain.push(parent.matrix);
+      }
+      for (let i = chain.length - 1; i >= 0; i--) matrix.multiply(chain[i]);
+      for (let i = 0; i < (index?.count ?? p.count); i += 3) {
+        for (const [v, j] of [[a, 0], [c, 1], [d, 2]]) v.fromBufferAttribute(p, index ? index.getX(i+j) : i+j).applyMatrix4(matrix);
+        THREE.Triangle.getNormal(a, c, d, n);
+        if (ceiling ? Math.abs(n.y) <= .001 : n.y <= .001) continue;
+        for (const v of [a, c, d]) target.push(v.x, -v.z, v.y);
+      }
+    };
+    domain?.traverse(o => capture(o, positions));
+    for (const group of Object.values(groups.levels)) if (group.userData.buildingId === b.id)
+      for (const space of group.children) space.traverse(o => {
+        if (o.userData.part === 'ceiling' || ['floor', 'room'].includes(o.userData.kind)) capture(o, slabs, o.userData.part === 'ceiling', space);
+      });
+    if (roofSurfaces.has(b.id)) Object.assign(roofSurfaces.get(b.id), {coverPositions: positions, slabPositions: slabs});
+  }
   for (const g of mergeGroups) batch(g, { perPiece: !!editableLevel && g.userData.levelKey === editableLevel });
   groups.gableCut.visible = false;
   const updateGhosts = () => ghostBatches.forEach(update => update());
