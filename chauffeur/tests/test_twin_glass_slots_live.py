@@ -175,9 +175,10 @@ def scenario_L2_house_materials_panes_and_draw_budget():
         page.wait_for_function('() => window.__twin?.ready', polling=500)
         page.wait_for_function('() => /\\d+ draws/.test(document.querySelector(".twin-frame-meter")?.textContent || "")', polling=500)
         before = page.evaluate('() => window.__twin.stats().drawCalls')
-        slot = page.locator('#piece-card [data-material-slot="Panes"]')
-        slot.get_by_role('button', name='Change the panes material', exact=True).click()
-        slot.locator(f'[data-material="{STATE["panes"]}"]').click()
+        slot = page.locator('#piece-card [data-library-slot="Panes"]')
+        page.locator('#dock-tab-library').click()
+        page.locator(f'#library-entries [data-material="{STATE["panes"]}"]').click()
+        slot.locator('[data-slot-use]').click()
         page.wait_for_function('''mid => {
             const v = window.__twin, b = v.plan.buildings.find(b => b.id === 'pool-house');
             if (b.materials?.pane?.id !== mid || !v.ready) return false;
@@ -401,15 +402,16 @@ def scenario_L5_stair_rail_pick_and_clear_returns_house_look():
         page.evaluate('''({id,building}) => {
             const v=window.__twin;v.setView(building+':L1');v.setCamera('top');window.__editor.clickPiece(id,building);
         }''', {'id': stair['id'], 'building': building['id']})
-        row = page.locator('#piece-card .editor-material-line').filter(has=page.get_by_text('Rail', exact=True))
-        row.get_by_role('button', name='Change the rail material', exact=True).click()
+        row = page.locator('#piece-card [data-library-slot="Rail"]')
+        page.locator('#dock-tab-library').click()
         page.locator(f'#library-entries [data-material="{STATE["panes"]}"]').click()
+        row.locator('[data-slot-use]').click()
         page.wait_for_function('''({id,building,mid}) => window.__twin.ready &&
             window.__twin.plan.buildings.find(b=>b.id===building).stairs.find(s=>s.id===id).materials?.stair_rail?.id===mid
         ''', arg={'id': stair['id'], 'building': building['id'], 'mid': STATE['panes']}, timeout=90000, polling=500)
         if page.locator('#dock-pane-library').is_visible():
             page.locator('#dock-tab-scene').click()
-        row.get_by_role('button', name='Clear', exact=True).click()
+        row.locator('[data-slot-clear]').click()
         page.wait_for_function('''({id,building,mid}) => {
             const v=window.__twin,b=v.plan.buildings.find(b=>b.id===building);
             if(!v.ready||b.stairs.find(s=>s.id===id).materials?.stair_rail)return false;
@@ -445,15 +447,15 @@ def scenario_L_roof_two_materials():
         for key in ['roof_main', 'roof_porch']:
             rid, mid = STATE[key], STATE[key + '_material']
             page.evaluate('(id) => window.__editor.clickPiece(id, "pool-house")', rid)
-            row = page.locator('#piece-card .editor-material-line').filter(has=page.get_by_text('Roof', exact=True))
-            row.get_by_role('button', name='Change the roof material', exact=True).click()
+            row = page.locator('#piece-card [data-library-slot="Roof"]')
+            page.locator('#dock-tab-library').click()
             page.locator(f'#library-entries [data-material="{mid}"]').click()
-            page.locator('#material-chooser').get_by_role('button', name='This roof', exact=True).click()
+            row.locator('[data-slot-use]').click()
             page.wait_for_function('''({rid, mid}) => {
                 const b = window.__twin.plan.buildings.find(b => b.id === 'pool-house');
                 return b.roof.sections.some(s => (s.id === rid || s.roof === rid) && s.material?.id === mid);
             }''', arg={'rid': rid, 'mid': mid}, polling=500)
-            # The Library tab stays open after a pick; return to Scene.
+            # The Library tab stays open after assignment; return to Scene.
             if page.locator('#dock-pane-library').is_visible():
                 page.locator('#dock-tab-scene').click()
         expected = sorted([STATE['roof_main_material'], STATE['roof_porch_material']])

@@ -41,6 +41,8 @@ class Element extends EventTarget {
   getBoundingClientRect(){return {left:0,top:0,right:1440,bottom:900,width:1440,height:900};}
   append(...nodes){this.children.push(...nodes);for(const n of nodes)n.parentElement=this;}
   appendChild(node){this.append(node);}
+  insertBefore(node,before){if(node.parentElement)node.parentElement.children=node.parentElement.children.filter(n=>n!==node);const i=this.children.indexOf(before);this.children.splice(i<0?this.children.length:i,0,node);node.parentElement=this;return node;}
+  get classList(){const self=this;return {add(...names){self.className=[...new Set([...(self.className||'').split(/\s+/).filter(Boolean),...names])].join(' ');},remove(...names){self.className=(self.className||'').split(/\s+/).filter(n=>!names.includes(n)).join(' ');},contains(name){return (self.className||'').split(/\s+/).includes(name);},toggle(name,force){const exists=this.contains(name),next=force===undefined?!exists:!!force;if(next)this.add(name);else this.remove(name);return next;}};}
   replaceChildren(){for(const n of this.children)n.parentElement=null;this.children=[];}
   remove(){if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(n=>n!==this);}
   closest(){return this;} setAttribute(k,v){this[k]=v;}

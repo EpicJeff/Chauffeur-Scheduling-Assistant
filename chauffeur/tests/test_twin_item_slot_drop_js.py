@@ -3,7 +3,8 @@ import sys
 from test_twin_untouched_house_js import COMMON, ROOT, run_node
 
 DRIVER = COMMON + r"""
-const {createLibrary}=await import(file('static/twin/editor/library.js'));
+const {createLibrary,materialLines,surfaceOperation}=await import(file('static/twin/editor/library.js'));
+const {createCards}=await import(file('static/twin/editor/cards.js'));
 const p=fixture(),b=p.buildings[0],k=kit();
 b.items=b.fixtures.map(f=>({...f,host:{floor:'r1',u:.5,v:.5}}));
 const porch={id:'porch',kind:'porch',level:'L1',polygon:b.porches[0].polygon};b.rooms.push(porch);
@@ -55,6 +56,49 @@ await test('no_scope_chooser_for_item_drops',async()=>{
 });
 await test('read_only_editor_ignores_item_drops',async()=>{
  writable=false;const before=operations.length;await drop('opening','window','pane');assert.equal(operations.length,before);writable=true;
+});
+await test('tile_pointer_drops_on_every_card_row_keep_the_old_face_payload_and_selection',async()=>{
+ const cards=createCards({getPlan:()=>p,getKit:()=>k,getLabel:()=>'',canEdit:()=>writable,select(){},op:async operation=>operations.push(operation),edit:async()=>{},library,
+  haLink:{draw(){},state:()=>({available:false})}}),card=document.getElementById('piece-card');
+ b.rooms[0].wall_material={id:'choice'};b.porches[0].screened=true;
+ const dormer={id:'row-dormer',kind:'gable',level:'L2',rect:[1,1,5,7]};b.dormers.push(dormer);
+ const cases=[['wall',b.walls[0]],['room',b.rooms[0]],['roof',b.roof.sections[0]],['dormer',dormer],
+  ...b.openings.map(piece=>['opening',piece]),['stair',b.stairs[0]],['porch',b.porches[0]],...b.fixtures.map(piece=>['fixture',piece])];
+ const selected={kind:'furniture',id:'other-selected',name:'Selected chair'};library.select(selected);
+ for(const [kind,piece] of cases){
+  cards.draw({pieceId:piece.id,buildingId:b.id});await wait();
+  const lines=materialLines({kind,piece,building:b},p,k),rows=card.querySelectorAll('[data-library-slot]').filter(row=>lines.some(line=>line.label===row.dataset.librarySlot));
+  assert.equal(rows.length,lines.length,kind+' '+piece.id);
+  for(const [index,line] of lines.entries()){
+   const row=rows[index],before=operations.length,tile=document.getElementById('library-entries').querySelector('[data-material="choice"]');
+   assert.ok(row.querySelector('[data-slot-use]').disabled,'wrong selected kind stays disabled');
+   document.elementFromPoint=()=>row.querySelector('[data-slot-swatch]');
+   fire(tile,'pointerdown',{button:0,pointerId:31,clientX:100,clientY:100});
+   fire(document,'pointermove',{pointerId:31,clientX:500,clientY:400});
+   assert.ok(row.classList.contains('editor-slot-dragover'),kind+' '+line.label+' accepts material drag');
+   fire(document,'pointerup',{pointerId:31,clientX:500,clientY:400});await wait();
+   assert.equal(operations.length,before+1);assert.deepEqual(operations.at(-1),surfaceOperation(line.surface,'face',{id:'choice'}),kind+' '+line.label);
+   assert.equal(library.selected().id,selected.id,'drag never changes Library selection');
+   assert.equal(document.querySelector('#material-chooser'),null,'row never opens the 3D scope chooser');
+  }
+ }
+ cards.draw(null);
+});
+await test('row_drop_ignores_the_wrong_kind_and_read_only_assignment',async()=>{
+ const {createSlotRow}=await import(file('static/twin/editor/slot_row.js'));
+ const row=createSlotRow({label:'Frame',library,accepts:entry=>entry.kind==='material',current:()=>null,apply:async entry=>operations.push({id:entry.id}),clear:async()=>{}});
+ document.body.append(row.element);const before=operations.length;
+ row.element.dispatchEvent(new CustomEvent('chf-library-slot-drag',{detail:{phase:'over',entry:{kind:'door',id:'import-door'}}}));
+ assert.equal(row.element.classList.contains('editor-slot-dragover'),false);
+ row.element.dispatchEvent(new CustomEvent('chf-library-slot-drag',{detail:{phase:'drop',entry:{kind:'door',id:'import-door'}}}));await wait();
+ assert.equal(operations.length,before);row.dispose();row.element.remove();
+ // Exercise the domain owner's read-only check through the actual card row.
+ const cards=createCards({getPlan:()=>p,getKit:()=>k,getLabel:()=>'',canEdit:()=>writable,select(){},op:async operation=>operations.push(operation),edit:async()=>{},library,
+  haLink:{draw(){},state:()=>({available:false})}});
+ writable=false;cards.draw({pieceId:'window',buildingId:b.id});
+ for(const node of document.getElementById('piece-card').querySelectorAll('[data-library-slot]'))
+  node.dispatchEvent(new CustomEvent('chf-library-slot-drag',{detail:{phase:'drop',entry:{kind:'material',id:'choice'}}}));
+ await wait();assert.equal(operations.length,before);writable=true;cards.draw(null);
 });
 abort.abort();
 const {mountTwin}=await import(file('static/twin/twin_view.js'));

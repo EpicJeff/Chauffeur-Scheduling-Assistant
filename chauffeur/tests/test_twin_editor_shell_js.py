@@ -579,7 +579,7 @@ await test('draw, stair, roof and device placement options take Properties and c
  assert.equal(el('device-options').parentElement.hidden,false);await press(el('device-cancel'));assert.equal(el('device-tools').hidden,true);
  abort.abort();dock.dispose();
 });
-await test('Library opens by tab, rail and material Change without clearing scene selection; Argyle names it',async()=>{
+await test('Library opens by tab, rail and legacy reveal alias without clearing scene selection; Argyle names it',async()=>{
  const {createDock}=await import(file('static/twin/editor/dock.js')),{createLibrary}=await import(file('static/twin/editor/library.js')),
   {createPanel}=await import(file('static/twin/editor/panel.js'));
  const dock=createDock({host:el('editor-dock')}),abort=new AbortController(),{view}=dockRig(),plan=samplePlan();
@@ -792,8 +792,8 @@ await test('real editor boot shows generation bar only for running, paused or re
  await press(el('properties-house-materials'));assert.equal(el('editor-dialog-title').textContent,'House materials');
  const expectedMaterials=document.createElement('div');
  (await import(file('static/twin/editor/house_materials.js'))).houseMaterialsShelf(expectedMaterials,plan.buildings[0],{getPlan:()=>plan,canEdit:()=>true,op:async()=>{}});
- assert.deepEqual(el('house-materials').querySelectorAll('[data-material-slot]').map(n=>n.dataset.materialSlot),
-  expectedMaterials.querySelectorAll('[data-material-slot]').map(n=>n.dataset.materialSlot));
+ assert.deepEqual(el('house-materials').querySelectorAll('[data-library-slot]').map(n=>n.dataset.librarySlot),
+  expectedMaterials.querySelectorAll('[data-library-slot]').map(n=>n.dataset.librarySlot));
  await press(el('menu-settings'));assert.equal(el('house-materials').hidden,true);
  assert.ok(el('editor-dialog').contains(el('menu-reset-spend')));closeDialog();
  setupBuildings=[];plan.buildings=[];await globalThis.houseOptions.afterLoad({round:1});

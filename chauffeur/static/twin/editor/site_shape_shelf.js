@@ -51,7 +51,7 @@ export function yardRoomFeatures(plan, room) {
 }
 
 // Uses the object shelf's labels, number inputs and Advanced disclosure.
-export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, onSaved = () => {}, haAvailable = false, onMakeRoom = () => {}, getKit = () => ({}), onDrawFeature = () => {} }) {
+export function drawSiteShapeShelf(host, record, { library, ownSlot, canEdit, queue, op, report, getRecord = () => record, onSaved = () => {}, haAvailable = false, onMakeRoom = () => {}, getKit = () => ({}), onDrawFeature = () => {} }) {
   const section = document.createElement('section'); section.setAttribute('aria-label', 'Yard shape properties'); host.append(section);
   const advanced = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Advanced'; advanced.append(summary);
   const save = change => queue(async () => {
@@ -111,7 +111,7 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
   if (['beds', 'hardscape', 'edges', 'pool'].includes(kind)) choice('Material', piece.material === 'concrete' ? 'patio_concrete' : piece.material || (kind === 'beds' ? 'mulch' : kind === 'edges' ? 'lawn' : 'paving'),
     [['mulch', 'Mulch'], ['patio_concrete', 'Concrete'], ['paving', 'Pavers'], ['lawn', 'Grass'], ['base', 'Stone'], ['fence', 'Wood']], material => ({ material }));
   // One op per change: { materials: { part: slot or null } } (null is the default look).
-  for (const [part, label, defaultLabel] of siteMaterialSlots(kind, piece)) section.append(materialSlot({
+  for (const [part, label, defaultLabel] of siteMaterialSlots(kind, piece)) section.append(materialSlot({ library, ownSlot,
     label, value: piece.materials?.[part] || null, defaultLabel, kit: getKit(), readOnly: () => !canEdit(), report,
     onChange: slot => queue(async () => {
       const current = getRecord(); if (!current) return;
@@ -180,7 +180,7 @@ export function drawSiteShapeShelf(host, record, { canEdit, queue, op, report, g
       const row = document.createElement('details'), heading = document.createElement('summary');
       heading.textContent = { ledge: 'Tanning ledge', steps: 'Steps', spa: 'Spa' }[f.kind]; row.open = true; row.dataset.poolFeature = f.id;
       row.append(heading); section.append(row);
-      drawSiteShapeShelf(row, { kind: f.kind, piece: f }, { canEdit, queue, op, report, getKit, onSaved, onMakeRoom,
+      drawSiteShapeShelf(row, { kind: f.kind, piece: f }, { library, ownSlot, canEdit, queue, op, report, getKit, onSaved, onMakeRoom,
         getRecord: () => { const p = getRecord()?.piece.features?.find(p => p.id === f.id); return p ? { kind: p.kind, piece: p } : null; } });
       const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Delete'; remove.disabled = !canEdit();
       remove.addEventListener('click', async () => {

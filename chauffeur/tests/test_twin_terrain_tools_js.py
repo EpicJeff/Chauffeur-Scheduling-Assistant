@@ -59,7 +59,9 @@ let library;
 const tools=createSceneTools({view,getPlan:()=>plan,getModel:()=>plan,getKit:()=>kit,getSheets:()=>({}),op,edit:op,
   panel:{clearSelection(){},focusSelection(){}},canEdit:()=>writable,signal:abort.signal,pickSite:(x,y)=>library?.pickSite(x,y),padHits:(x,y)=>terrain.padHits?.(x,y)||[]});
 library=createLibrary({view,kit,getPlan:()=>plan,tools,op,canEdit:()=>writable,signal:abort.signal});
-const terrain=createTerrainTools({view,tools,getPlan:()=>plan,op,canEdit:()=>writable,signal:abort.signal});
+const slotListeners=new Set();let slotSelection=null;
+const slotLibrary={selected:()=>slotSelection,onSelect:fn=>{slotListeners.add(fn);return()=>slotListeners.delete(fn);},reveal:async()=>{}};
+const terrain=createTerrainTools({view,tools,library:slotLibrary,getPlan:()=>plan,op,canEdit:()=>writable,signal:abort.signal});
 terrain.show();const card=descendants(shell).find(n=>n.id==='terrain-card');
 let fieldHost=card;
 const click=text=>{const b=descendants(card).find(n=>n.textContent===text);assert.ok(b,text);b.dispatchEvent(new Event('click'));};
@@ -82,7 +84,7 @@ change('Edge 1 Cap thickness (in)',3);await new Promise(r=>setTimeout(r,0));
 assert.equal(ops.at(-1).edges[0].wall.cap.thickness_in,3);
 await toggle('Edge 1 Wall cap',false);assert.ok(!has('Edge 1 Cap thickness (in)'));
 change('Edge 1 Railing','cable');await new Promise(r=>setTimeout(r,0));
-assert.ok(has('Edge 1 Railing height (in)')&&has('Change the edge 1 railing material material'));
+assert.ok(has('Edge 1 Railing height (in)')&&has('Show the edge 1 railing material material in the Library'));
 change('Edge 1 Railing height (in)',42);await new Promise(r=>setTimeout(r,0));
 assert.deepEqual(ops.at(-1).edges[0].wall.rail,{style:'cable',height_in:42});
 change('Edge 1 Type','stair');await new Promise(r=>setTimeout(r,0));
@@ -90,8 +92,8 @@ assert.deepEqual(ops.at(-1).edges[0],{edge:'sharp',stair:{riser_in:7,tread_in:11
 assert.ok(has('Edge 1 Step height (in)')&&has('Edge 1 Tread depth (in)'));
 assert.ok(descendants(card).some(n=>n.textContent==='Stair'),'stair badge');
 await toggle('Edge 1 Treads',false);assert.equal(ops.at(-1).edges[0].stair.treads,false);
-assert.ok(!has('Change the edge 1 treads material material'));
-await toggle('Edge 1 Treads',true);assert.ok(has('Change the edge 1 treads material material'));
+assert.ok(!has('Show the edge 1 treads material material in the Library'));
+await toggle('Edge 1 Treads',true);assert.ok(has('Show the edge 1 treads material material in the Library'));
 change('Edge 1 Step height (in)',6);await new Promise(r=>setTimeout(r,0));
 change('Edge 1 Tread depth (in)',12);await new Promise(r=>setTimeout(r,0));
 change('Edge 1 Railing','panel');await new Promise(r=>setTimeout(r,0));
@@ -117,17 +119,16 @@ assert.equal(descendants(card).find(n=>n['aria-label']==='Edge 1 Type').value,'w
 assert.equal(descendants(card).find(n=>n['aria-label']==='Edge 1 Above ground (in)').value,9);
 // The wall face takes a Library material through the shared slot: one update_pad per change.
 {
-  const face=()=>descendants(card).find(n=>n['aria-label']==='Change the edge 1 wall face material');
+  const face=()=>descendants(card).find(n=>n.dataset?.librarySlot==='Edge 1 Wall face');
   assert.ok(face(),'a wall face slot under a built wall');
   assert.ok(descendants(card).some(n=>n.textContent==='Default: Timber'),'the default is the wall kind');
-  face().dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
-  const brick=descendants(card).find(n=>n.dataset?.material==='red_brick_03');assert.ok(brick,'the Library material is offered');
+  slotSelection={kind:'material',id:'red_brick_03',name:'Red brick'};for(const fn of slotListeners)fn();
+  const brick=descendants(face()).find(n=>Object.hasOwn(n.dataset,'slotUse'));assert.ok(brick,'the shared row offers Use Red brick');
   brick.dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
   assert.deepEqual(ops.at(-1).edges[0].wall,{...authoredWall,materials:{face:{id:'red_brick_03'}}});
   plan.site.terraces[0].edges[0].wall={...authoredWall,materials:{face:{id:'red_brick_03'}}};terrain.refresh();
-  face().dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
-  descendants(card).find(n=>n.textContent==='Use default').dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
-  assert.deepEqual(ops.at(-1).edges[0].wall,authoredWall,'Use default drops the slot');
+  descendants(face()).find(n=>Object.hasOwn(n.dataset,'slotClear')).dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));
+  assert.deepEqual(ops.at(-1).edges[0].wall,authoredWall,'Clear drops the slot');
   plan.site.terraces[0].edges[0].wall={...authoredWall};terrain.refresh();
 }
 click('Up 0.5 ft');await new Promise(r=>setTimeout(r,0));assert.equal(ops.at(-1).height,-3.5);

@@ -811,34 +811,57 @@ def scenario_library_panel_shows_thumbnails_from_one_renderer():
 
 
 def _outside_row(page):
-    return page.locator('#piece-card .editor-material-line').filter(
-        has=page.locator('span', has_text='Outside')).first
+    return page.locator('#piece-card [data-library-slot="Outside"]')
 
 
 def scenario_pick_a_material_on_the_card_by_keyboard():
-    # Final wave I3 (spec 5.7, pick it on the card) and I4 (This floor; a floor
-    # line clears from the card): every step here is a key press.
+    # Final wave I3: reveal, select and use a material on the card by keyboard.
+    # I4 keeps the real drop chooser's This floor scope and card reset.
     s = _serve()
     if s is None:
         return
-    _facts()
+    model = _facts()
     library = _library(s)
     brick = _material(library, BRICK)
+    outside = _outside_side(model, POOL, FAMILY_ROOM, FRONT_Y0)
     with s.browser(launch_args=H.GPU_ARGS) as page:
         posted = _ops(page)
         _floor_view(page, s)
         _select_front_wall(page)
-        change = _outside_row(page).locator('button:text-is("Change")')
-        check(change.count() == 1, ('the outside line offers Change', _card_text(page)))
-        change.focus()
+        swatch = _outside_row(page).get_by_role('button', name='Show the outside material in the Library', exact=True)
+        check(swatch.count() == 1, ('the outside line offers a Library swatch', _card_text(page)))
+        swatch.focus()
         page.keyboard.press('Enter')
         page.wait_for_selector('#library-panel', state='visible', timeout=10000)
-        page.wait_for_function("() => document.getElementById('library-status').textContent"
-                               " === 'Choose a material for the outside face.'", timeout=10000)
         thumb = page.locator(f'#library-panel [data-material="{BRICK}"]').first
         thumb.wait_for(state='visible', timeout=10000)
         thumb.focus()
         page.keyboard.press('Enter')
+        check(thumb.get_attribute('aria-pressed') == 'true', 'the keyboard selects the Library material')
+        check(not [op for op in posted if op and op.get('op') == 'set_material'], 'selecting does not apply')
+        use = _outside_row(page).locator('[data-slot-use]')
+        signature = H.scene_signature(page)
+        use.focus()
+        page.keyboard.press('Enter')
+        _until(H.model, lambda m: (_faces(m).get((POOL, FRONT_Y0), {}).get(outside) or {}).get('id') == BRICK,
+               'the keyboard assignment reaches the outside face')
+        sets = [op for op in posted if op and op.get('op') == 'set_material']
+        check(len(sets) == 1 and sets[0]['building'] == POOL
+              and sets[0]['target'] == {'wall': FRONT_Y0, 'side': outside}
+              and sets[0]['material'] == {'id': BRICK}, sets)
+        H.wait_rebuilt(page, signature)
+        signature = H.scene_signature(page)
+        _outside_row(page).locator('[data-slot-clear]').press('Enter')
+        _until(H.model, lambda m: (POOL, FRONT_Y0) not in _faces(m), 'the keyboard clears its face override')
+        H.wait_rebuilt(page, signature)
+
+        # A row applies to its own surface. Wider scopes remain a real view drop.
+        _close_library(page)
+        _select_front_wall(page)
+        _open_library(page, 'Materials')
+        posted.clear()
+        sx, sy = H.screen_of_world(page, *FRONT_POINT, POOL)
+        _drag_thumb(page, f'#library-panel [data-material="{BRICK}"]', sx, sy)
         floor = page.locator('#material-chooser button:text-is("This floor")')
         floor.wait_for(state='visible', timeout=5000)
         for scope in SCOPES:

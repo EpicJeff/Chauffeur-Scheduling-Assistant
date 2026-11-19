@@ -7,6 +7,8 @@ from twin_editor_dom import PRELUDE, run_node
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = PRELUDE + r"""
 const THREE=await import(three);
+const slotListeners=new Set();let selectedMaterial=null;
+const library={selected:()=>selectedMaterial,onSelect:fn=>{slotListeners.add(fn);return()=>slotListeners.delete(fn);},reveal:async()=>{}};
 Element.prototype.select=function(){this.selected=true;};
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
 const {createSceneTools}=await import(file('static/twin/editor/scene_tools.js'));
@@ -22,7 +24,7 @@ view.setCameraState({position:[15*.3048,80*.3048,-9.999*.3048],target:[15*.3048,
 const abort=new AbortController(),operations=[],errors=[];let writable=true,confirm=true,confirms=0;
 window.showGlobalAlert=text=>errors.push(text);
 window.promptConfirm=async(...args)=>{confirms++;assert.match(args[0],/Delete (spa|steps|tanning ledge)/);return confirm;};
-globalThis.fetch=async url=>new Response(JSON.stringify({materials:[{id:'red_brick_03',name:'Red brick',color:'#aa3322'}],items:[]}),{status:200,headers:{'Content-Type':'application/json'}});
+globalThis.fetch=async url=>new Response(JSON.stringify({revision:1,entries:{},materials:[{id:'red_brick_03',name:'Red brick',color:'#aa3322'}],items:[]}),{status:200,headers:{'Content-Type':'application/json'}});
 const defaults={ledge:{depth_in:10},steps:{treads:3,entry_edge:0},spa:{mode:'raised',raise_in:12,depth_in:36,spillover:true}};
 const op=async operation=>{
  operations.push(operation);
@@ -33,7 +35,7 @@ const op=async operation=>{
 };
 let terrain;
 const tools=createSceneTools({view,getPlan:()=>plan,getModel:()=>plan,getKit:()=>input.kit,getSheets:()=>({}),edit:op,op,
- panel:{clearSelection(){},focusSelection(){}},canEdit:()=>writable,signal:abort.signal,onDrawFeature:kind=>terrain.startDrawing(kind)});
+ panel:{clearSelection(){},focusSelection(){}},library,canEdit:()=>writable,signal:abort.signal,onDrawFeature:kind=>terrain.startDrawing(kind)});
 terrain=createTerrainTools({view,tools,getPlan:()=>plan,op,canEdit:()=>writable,signal:abort.signal});
 const card=document.getElementById('piece-card'),drawCard=document.getElementById('terrain-card');
 const settle=async()=>{await new Promise(r=>setTimeout(r,10));assert.deepEqual(errors,[]);};
@@ -65,9 +67,9 @@ await test('rows save ledge, steps and spa properties, polygons, Library slots a
  await change(row(spa.id),'Mode','raised');assert.equal(spa.raise_in,18);
  await change(row(ledge.id),'Point 1 X (ft)',2);assert.equal(operations.at(-1).polygon[0][0],2);
  const count=operations.length;
- click(row(spa.id).querySelector('[aria-label="Change the cladding material"]'));await settle();
- click(row(spa.id).querySelector('[data-material="red_brick_03"]'));await settle();
- assert.equal(operations.length,count+1);assert.equal(operations.at(-1).materials.wall.id,'red_brick_03');
+ selectedMaterial={kind:'material',id:'red_brick_03',name:'Red brick'};for(const fn of slotListeners)fn();
+ click(row(spa.id).querySelector('[data-library-slot="Cladding"] [data-slot-use]'));await settle();
+ assert.equal(operations.length,count+1);assert.deepEqual(operations.at(-1),{op:'update_pool_feature',id:spa.id,materials:{wall:{id:'red_brick_03'}}});
  for(const part of ['Coping','Interior','Waterline tile','Cladding'])assert.ok(row(spa.id).querySelector(`[data-material-slot="${part}"]`));
  click(button(row(spa.id),'Make this a room'));await settle();assert.deepEqual(operations.at(-1),{op:'make_yard_room',list:'pool',feature:spa.id});
  assert.equal(plan.site.yard_rooms[0].name,'Spa');

@@ -1,6 +1,7 @@
 import { schema, propertyFields, objectOperation } from '../objects.js';
 import { libUrl } from '../twin_library.js';
 import { request } from './api.js';
+import { createSlotRow, idleLibrary } from './slot_row.js';
 
 const labels = { rotation: 'Yaw (degrees)', pitch: 'Pitch (degrees)', roll: 'Roll (degrees)', scale: 'Scale (factor)', scale_axes: 'X, Y, Z scale', mirror_x: 'Mirror left-right', mirror_y: 'Mirror front-back', casts_shadow: 'Casts shadow', visible_in: 'Visible in', tint: 'Material tint', elevation: 'Height above surface (ft)', emissive: 'Emissive', emissive_color: 'Glow colour', light_entity: 'Linked HA light (optional)', object_kind: 'Object kind' };
 export const isObject = record => record && (['item', 'planting', 'furniture'].includes(record.kind) || record.kind === 'anchor' && !record.piece.device);
@@ -23,7 +24,7 @@ export function linkEntityPicker(input, domains = ['light', 'switch', 'input_boo
   });
 }
 
-export function drawObjectShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, devices = [] }) {
+export function drawObjectShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, devices = [], library = idleLibrary, ownSlot = () => {} }) {
   const { piece, kind } = record;
   const section = document.createElement('section'); section.setAttribute('aria-label', 'Object properties'); host.append(section);
   const advanced = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Advanced'; advanced.append(summary);
@@ -80,20 +81,27 @@ export function drawObjectShelf(host, record, { canEdit, queue, op, report, getR
     && devices.some(device => device.device_id === placed.device && device.kind === 'garage' && device.entity_id?.startsWith('cover.')))) {
     const hint = document.createElement('p'); hint.textContent = 'Opens and closes with the garage door device placed on it.'; section.append(hint);
   }
-  const title = document.createElement('h4'); title.textContent = 'Model'; section.append(title);
-  const grid = document.createElement('div'); grid.className = 'object-model-grid'; section.append(grid);
-  const button = (name, id, entry) => {
-    const node = document.createElement('button'); node.type = 'button'; node.textContent = name; node.disabled = !canEdit();
-    node.setAttribute('aria-pressed', String((piece.model || null) === id));
-    if (entry?.thumbnail) { const image = document.createElement('img'); image.src = libUrl(id, entry.thumbnail); image.alt = ''; node.prepend(image); }
-    node.addEventListener('click', () => save({ model: id })); grid.append(node);
+  const expected = piece.kind === 'window' ? 'window' : 'door';
+  let entries = [], currentId = piece.model || null, disposed = false;
+  const current = () => {
+    if (!currentId) return { name: 'Generated' };
+    const entry = entries.find(entry => entry.id === currentId) || window.twinManifest?.[currentId];
+    return { id: currentId, kind: expected, name: entry?.name || currentId,
+      thumb: entry?.thumb || entry?.thumbnail_url || (entry?.thumbnail ? libUrl(currentId, entry.thumbnail) : null) };
   };
-  button('Generated', null);
-  request('imports', 'GET', undefined, 'twin').then(entries => {
-    if (!section.isConnected) return;
-    const expected = piece.kind === 'window' ? 'window' : 'door';
-    for (const entry of entries.filter(e => !e.archived && e.kind === expected)) button(entry.name, entry.id, entry);
-    for (const [id, entry] of Object.entries(window.twinManifest || {}))
-      if (entry.kind === 'model' && (entry.object_kind === expected || entry.category === expected)) button(entry.name || id, id, entry);
+  const assign = async id => { await queue(() => canEdit() && op(objectOperation(record, { model: id }))); currentId = id; };
+  const row = createSlotRow({ label: 'Model', subject: `${expected} model`, library,
+    readOnly: () => !canEdit(), current,
+    accepts: entry => entry.kind === expected || entry.kind === 'furniture' && (entry.object_kind === expected || entry.category === expected),
+    apply: entry => {
+      const previous = entries.find(row => row.id === entry.id) || window.twinManifest?.[entry.id];
+      entries = [...entries.filter(row => row.id !== entry.id), { ...previous, ...entry }];
+      return assign(entry.id);
+    }, clear: () => assign(null) });
+  section.append(row.element);
+  ownSlot({ ...row, dispose() { disposed = true; row.dispose(); } });
+  request('imports', 'GET', undefined, 'twin').then(imports => {
+    if (disposed) return;
+    entries = [...imports.filter(entry => !entry.archived && !entries.some(row => row.id === entry.id)), ...entries]; row.refresh();
   }).catch(report);
 }

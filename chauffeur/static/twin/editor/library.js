@@ -15,7 +15,7 @@ import { objectShown, siteRecords, siteRecord, sitePoints, siteShapeKinds } from
 import { pathSurfacePolygons } from '../path_shapes.js';
 import { request, report } from './api.js';
 
-import { materialName, readLibraryCatalog } from './material_catalog.js';
+import { materialName, describeMaterial, readLibraryCatalog } from './material_catalog.js';
 export { materialName } from './material_catalog.js';
 export const libraryMaterialHref = id => (window.chfBase ?? '../') + 'house/library?material=' + encodeURIComponent(id);
 
@@ -31,20 +31,21 @@ export function wallFace(building, wall, side) {
 // Each line names its material and where it comes from. `clear` is set when the
 // surface itself holds it (Clear returns it to the inherited one); `reset` is the
 // building's or the floor's own role, cleared from the card (I4); `surface` is
-// what the card's Change applies to, through the same scope chooser as a drop.
+// the surface assigned by the row (the 3D drop keeps its scope chooser).
 export function materialLines(record, plan, kit) {
   const { piece, building, kind } = record;
   if (!building) return [];
   const level = building.levels?.find(l => l.id === piece.level);
   const line = (label, role, override, target, roomMaterial, surface, inherited = null) => {
     const ref = override || roomMaterial || level?.materials?.[role] || building.materials?.[role]
-      || plan.materials?.[role] || kit?.materials?.[role];
+      || plan.materials?.[role] || kit?.materials?.[role] || (target.part ? resolveSlot(role, { building, level }) : null)
+      || (target.part && kindRow(role).fallback.builtin ? { id: kindRow(role).fallback.builtin } : null);
     if (!ref && role !== 'ceiling' && !inherited) return null;
     const source = override ? 'set here' : `from the ${roomMaterial ? 'room' : level?.materials?.[role] ? 'level' : 'building'}`;
     const reset = override || roomMaterial ? null
       : level?.materials?.[role] ? { target: { level: level.id, role }, label: 'Clear for this floor' }
         : building.materials?.[role] ? { target: { building: building.id, role }, label: 'Clear for the building' } : null;
-    const result = { label, text: !override && inherited || (ref ? `${materialName(ref.id || ref.asset)}, ${source}` : 'House look'), target, clear: !!override, reset: target.part ? null : reset };
+    const result = { label, get current() { return describeMaterial(ref, kit); }, text: !override && inherited || (ref ? `${materialName(ref.id || ref.asset)}, ${source}` : 'House look'), target, clear: !!override, reset: target.part ? null : reset };
     // Not enumerable: the card compares lines as text, never whole buildings.
     Object.defineProperty(result, 'surface', { value: { building, piece, kind, role, level: piece.level, ...surface } });
     return result;
@@ -209,7 +210,7 @@ function createThumbnails(kit) {
 export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, onInteract, dock, dialogs, createMenu }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement, host = el('library-panel');
   const raycaster = new THREE.Raycaster(), thumbnails = { current: null };
-  let catalog = null, loading = null, tab = 'materials', drag = null, siteDrag = null, chooser = null, picking = null;
+  let catalog = null, loading = null, tab = 'materials', drag = null, siteDrag = null, chooser = null;
   const importNodes = new Map();
   let browsePending = false, selection = null, dragRow = null, suppressClick = false, actionEntry = null;
   let browsing = null, catalogRevision = 0;
@@ -286,7 +287,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     } else drawSelection();
   }
   async function reveal(kind, id) {
-    stopPicking(); tab = kind === 'material' ? 'materials' : 'items';
+    tab = kind === 'material' ? 'materials' : 'items';
     if (el('library-search')) el('library-search').value = '';
     host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true'); dock?.show('library');
     await browse();
@@ -394,15 +395,10 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     return { building, kind: 'room', piece: room, point: point.toArray(), room, role: room.kind === 'porch' ? 'porch_ceiling' : 'ceiling', surface: 'ceiling', level: room.level };
   }
   function dismiss() { chooser?.remove(); chooser = null; }
-  const pickingWords = () => `Choose a material for the ${picking?.label || 'surface'}.`;
-  function stopPicking() {
-    if (!picking) return;
-    picking = null; el('library-status').textContent = hint;
-  }
   function choose(surface, material, event) {
     if (surface.target?.part) {
       if (!canEdit()) return;
-      dismiss(); stopPicking();
+      dismiss();
       op(surfaceOperation(surface, 'face', material)).then(() => {
         el('library-status').textContent = `Changed the ${surface.label || surface.role} material.`;
       }).catch(report);
@@ -416,22 +412,20 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       listen(button, 'click', () => {
         if (!scope) { dismiss(); return; }
         if (!canEdit()) return;
-        try { const operation = surfaceOperation(surface, scope, material); dismiss(); stopPicking(); op(operation).catch(report); } catch (error) { report(error); }
+        try { const operation = surfaceOperation(surface, scope, material); dismiss(); op(operation).catch(report); } catch (error) { report(error); }
       }); chooser.append(button);
     }
     el('editor-scene').parentElement.append(chooser); chooser.querySelector('button').focus();
   }
-  // The card's Change (spec 5.7, pick it on the card): the same list opens on
-  // its materials, and a thumbnail pressed (mouse, Enter or Space) goes to the
-  // same scope chooser as a drop.
+  // Compatibility for old callers: browsing is never an assignment mode.
   async function pick(surface) {
-    if (!canEdit()) return;
-    dismiss(); picking = surface; tab = 'materials';
-    dock?.show('library');
-    if (host.hidden) { host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true'); }
-    el('library-status').textContent = pickingWords();
-    await browse();
-    el('library-entries').querySelector('button')?.focus();
+    const line = surface?.building && materialLines(surface, getPlan(), kit).find(row =>
+      JSON.stringify(row.target) === JSON.stringify(surface.target) ||
+      (surface.target ? false : row.surface?.side === surface.side && row.surface?.surface === surface.surface));
+    const ref = line?.current || describeMaterial(surface?.piece?.materials?.[surface.role]
+      || surface?.building?.levels?.find(level => level.id === surface?.level)?.materials?.[surface?.role]
+      || surface?.building?.materials?.[surface?.role] || getPlan().materials?.[surface?.role] || kit.materials?.[surface?.role], kit);
+    await reveal('material', ref?.id);
   }
   function browse() {
     // Opening the dock and revealing a slot can request the same cold browse.
@@ -511,13 +505,8 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       });
       listen(button, 'click', event => {
         if (suppressClick && event.detail) { suppressClick = false; return; }
-        if (!picking || tab !== 'materials') {
-          const next = asset(entry, tab === 'materials');
-          select(selection?.id === next.id && selection.kind === next.kind ? null : next); return;
-        }
-        if (!canEdit()) return;
-        const r = button.getBoundingClientRect?.() || { left: 0, top: 0, width: 0 };
-        choose(picking, entry, { clientX: r.left + r.width / 2, clientY: r.top });
+        const next = asset(entry, tab === 'materials');
+        select(selection?.id === next.id && selection.kind === next.kind ? null : next);
       });
     }
     if (tab === 'items') {
@@ -534,7 +523,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     }
     syncSelection();
     host.querySelectorAll('[data-library-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.libraryTab === tab)));
-    el('library-status').textContent = picking ? pickingWords() : hint;
+    el('library-status').textContent = hint;
   }
   async function changedImport(entry, { added = false, removed = false } = {}) {
     if (signal.aborted) return;
@@ -563,7 +552,6 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     host.hidden = false;
     const off = dock.onShow(tab => {
       if (tab === 'library') browse().catch(error => { el('library-status').textContent = 'Could not load the library. Open it again to retry.'; report(error); });
-      else stopPicking();
     });
     signal.addEventListener('abort', off, { once: true });
   }
@@ -576,11 +564,10 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   listen(el('rail-library'), 'click', () => {
     if (dock) { dock.show('library'); host.scrollIntoView({ block: 'nearest' }); return; }
     host.hidden = !host.hidden; el('rail-library').setAttribute('aria-pressed', String(!host.hidden));
-    if (host.hidden) stopPicking();
     if (!host.hidden) browse().catch(error => { el('library-status').textContent = 'Could not load the library. Open it again to retry.'; report(error); });
   });
   for (const button of host.querySelectorAll('[data-library-tab]')) listen(button, 'click', () => {
-    tab = button.dataset.libraryTab; if (tab !== 'materials') stopPicking(); browse().catch(report);
+    tab = button.dataset.libraryTab; browse().catch(report);
   });
   listen(document, 'pointermove', event => {
     if (!drag || drag.pointer !== event.pointerId || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 3) return;
@@ -609,7 +596,6 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   listen(document, 'keydown', event => {
     if (event.key !== 'Escape') return;
     if (chooser) dismiss();
-    else if (picking) stopPicking();
     else if (selection && host.contains(document.activeElement) && (!dock || dock.current() === 'library')) select(null);
     else return;
     event.stopImmediatePropagation();

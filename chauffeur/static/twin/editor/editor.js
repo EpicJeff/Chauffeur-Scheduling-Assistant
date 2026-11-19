@@ -134,14 +134,19 @@ export async function boot() {
   }, { capture: true });
   listen(el('editor-floor-add'), 'click', () => el('rail-add-level').click());
   listen(el('properties-your-place'), 'click', () => steps.open('Your files'));
+  const materialSlots = [];
+  const disposeMaterialSlots = () => { for (const row of materialSlots.splice(0)) row.dispose(); };
+  lifecycle.signal.addEventListener('abort', disposeMaterialSlots, { once: true });
+  const slotLibrary = { selected: () => library?.selected() || null,
+    onSelect: fn => library?.onSelect(fn) || (() => {}), reveal: (...args) => library?.reveal(...args) };
   function openHouseMaterials(id) {
     const building = shownPlan()?.buildings?.find(b => b.id === id) || tools?.floor()?.building || shownPlan()?.buildings?.[0];
     if (!building) { steps.open('Your files'); return; }
     const host = el('house-materials');
     // Reuse the shelf and preserve its inputs for the lifetime of an open dialog.
     if (dialogs.current() !== 'house-materials' || materialBuilding !== building.id) {
-      host.replaceChildren(); materialBuilding = building.id;
-      houseMaterialsShelf(host, building, { getPlan: shownPlan, getKit: () => houseKit, canEdit,
+      disposeMaterialSlots(); host.replaceChildren(); materialBuilding = building.id;
+      houseMaterialsShelf(host, building, { library: slotLibrary, ownSlot: row => materialSlots.push(row), getPlan: shownPlan, getKit: () => houseKit, canEdit,
         op: applyOp, report });
     }
     dialogs.openDialog('house-materials', { title: 'House materials' });
@@ -824,7 +829,7 @@ export async function boot() {
     tools = createSceneTools({ dock, view, visibility, isPickable, openHouseMaterials, getPlan: () => timeline?.preview() || shownPlan(), getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
       siteHits: (x, y) => library?.siteHits(x, y) || [],
       padHits: (x, y) => terrain?.padHits?.(x, y) || [], fixtureHits: (x, y) => devices?.fixtureHits?.(x, y) || [],
-      pickMaterial: surface => library?.pick(surface), onDrawFeature: kind => terrain?.startDrawing(kind),
+      library: slotLibrary, onDrawFeature: kind => terrain?.startDrawing(kind),
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
     library = createLibrary({ dock, dialogs, createMenu: createContextMenu, view, kit, getPlan: () => timeline?.preview() || shownPlan(), tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
@@ -855,7 +860,7 @@ export async function boot() {
     el('rail-add-effect').addEventListener('click', () => {
       if (canEdit()) devices.addEffect().catch(report);
     }, {signal: lifecycle.signal});
-    terrain = createTerrainTools({ dock, view, tools, getPlan: () => timeline?.preview() || shownPlan(),
+    terrain = createTerrainTools({ dock, view, tools, library, getPlan: () => timeline?.preview() || shownPlan(),
       op: applyOp, canEdit, signal: lifecycle.signal,
       getKit: () => kit,
       prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });

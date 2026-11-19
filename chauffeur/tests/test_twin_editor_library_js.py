@@ -41,6 +41,8 @@ let detailReads=0,detailGate=null;
 // Thumbnail rendering is external to selection. Keep the real catalogue's ids/names/kinds.
 for(const row of [...catalogue.items,...catalogue.imports,...materialRows])row.thumbnail_url='/fixture.png';
 const imported={id:'import-selection',kind:'door',name:'Front door',thumbnail_url:'/door.png',lods:[{name:'medium.glb'},{name:'low.glb'}]};catalogue.imports.push(imported);
+catalogue.items.push({id:'manifest-door',kind:'furniture',name:'Manifest door',thumbnail_url:'/door.png'});
+window.twinManifest={'manifest-door':{kind:'model',object_kind:'door'}};
 globalThis.fetch=async(url,options={})=>{
  requests.push([url,options]);let result;
  if(url.endsWith('/materials'))result={materials:materialRows};
@@ -117,6 +119,22 @@ await test('reveal clears search, switches dock and subtab, scrolls and flashes 
  const revealed=tile(last.id);await wait();assert.equal(tile(last.id),revealed,'late catalogue work does not replace the revealed tile');
  const item=catalogue.items.at(-1);await library.reveal(item.kind,item.id);assert.ok(scrolled.includes(tile(item.id)));assert.equal(library.selected(),null);
 });
+await test('pick is reveal only, including the inherited current material',async()=>{
+ const current=materialRows.at(-1);input.household.buildings[0].materials={roof:{id:current.id}};
+ const surface={building:input.household.buildings[0],piece:{id:'pick-roof',level:'ground'},kind:'roof',role:'roof'};
+ library.select(null);dock.show('scene');const before=ops.length;
+ await library.pick(surface);assert.equal(dockTab,'library');
+ assert.ok(tile(current.id).classList.contains('library-revealed'));
+ await click(tile(current.id));assert.equal(library.selected().id,current.id);assert.equal(ops.length,before);
+ assert.equal(document.querySelector('#material-chooser'),null,'pick never arms tile application');
+ library.select(null);
+});
+await test('manifest model classification reaches actual tile selections without changing placement kind',async()=>{
+ await library.reveal('door','manifest-door');await click(tile('manifest-door'));
+ assert.equal(library.selected().kind,'furniture');assert.equal(library.selected().object_kind,'door');
+ const row=createSlotRow({label:'Model',accepts:e=>e.kind==='door'||e.object_kind==='door',current:()=>null,apply(){},clear(){},library});
+ assert.equal(row.element.querySelector('[data-slot-use]').disabled,false);row.dispose();library.select(null);
+});
 await test('Esc clears only a focused Library selection; clear action works',async()=>{
  await library.reveal('material',last.id);await click(tile(last.id));canvas.focus();await fire(document,'keydown',{key:'Escape'});assert.ok(library.selected());
  tile(last.id).focus();await fire(document,'keydown',{key:'Escape'});assert.equal(library.selected(),null);
@@ -163,6 +181,7 @@ Element.prototype.querySelectorAll = function(selector) {
 Element.prototype.querySelector = function(selector) {return this.querySelectorAll(selector)[0] || null;};
 Element.prototype.contains = function(node) {return node === this || descendants(this).includes(node);};
 Element.prototype.focus = function() {};
+Element.prototype.scrollIntoView = function() {};
 Element.prototype.setPointerCapture = function(id) {this.capture = id;};
 Element.prototype.hasPointerCapture = function(id) {return this.capture === id;};
 Element.prototype.releasePointerCapture = function() {this.capture = null;};
@@ -291,6 +310,11 @@ assert.ok(chooser,'real pointer drop opens the chooser');
 assert.deepEqual(chooser.children.map(n=>n.textContent),['This wall face','This room','This floor','The whole building','Cancel']);
 chooser.children[0].dispatchEvent(new Event('click'));await settle();
 assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{wall:front.id,side:'right'},material:{id:finish.id}});
+await drop([16.9,0,5.5]);
+const floorChooser=descendants(doc.getElementById('editor-scene').parentElement).find(n=>n.id==='material-chooser');
+floorChooser.children[2].dispatchEvent(new Event('click'));await settle();
+assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{level:front.level,role:'siding'},material:{id:finish.id}});
+assert.equal(doc.getElementById('library-status').textContent,'Drag a thumbnail onto the house or yard.');
 ok('real thumbnail pointer drop resolves the rotated outside face and chosen material scope');
 await browse('items');look([15.5,9,90],[15.5,9,0]);await drop([8,8,0]);
 const added=ops.pop();assert.equal(added.op,'add_item');assert.equal(added.host.floor,room.id);
@@ -357,35 +381,34 @@ assert.equal(tools.selection().id,tree.id);assert.deepEqual(tree.at,original);as
 const del=descendants(doc.getElementById('piece-card')).find(n=>n.textContent==='Delete');del.dispatchEvent(new Event('click'));await settle();
 assert.deepEqual(ops.pop(),{op:'delete_site_item',list:'planting',index:flat.site.planting.indexOf(tree)});
 ok('canvas click selects a yard tree, Select-tool body drag navigates, and its card Delete uses the site operation');
-// Final wave I3: the card's Change opens the same list on its materials; a
-// thumbnail pressed there (a button, so Enter and Space press it too) opens the
-// same scope chooser, which now offers This floor (I4, R17).
+// A keyboard tile activation selects; only the row applies. The 3D drop
+// chooser above still proves the full scope list and exact operation payload.
 const {createCards} = await import(file('static/twin/editor/cards.js'));
 const cards = createCards({getPlan:()=>flat,getKit:()=>kit,getLabel:()=>'the piece',edit:op,op,canEdit:()=>true,
-  select(){},ask(){},pickMaterial:s=>library.pick(s)});
+  select(){},ask(){},library});
 const card = () => descendants(doc.getElementById('piece-card'));
 const labelled = text => card().find(n=>n.tag==='label'&&n.textContent===text);
 panel.hidden=true;
 cards.draw({pieceId:front.id,buildingId:b.id});
-const changes=card().filter(n=>n.textContent==='Change');
-assert.equal(changes.length,2,'each face line offers Change');
-changes[1].dispatchEvent(new Event('click'));await settle();
-assert.equal(panel.hidden,false,'Change opens the library');
-assert.equal(doc.getElementById('library-status').textContent,'Choose a material for the outside face.');
+await browse('materials');library.select(null);
+const rows=card().filter(n=>n.dataset.librarySlot);
+assert.equal(rows.length,2,'each face has one shared row');
+const outer=rows.find(n=>n.dataset.librarySlot==='Outside');
+panel.hidden=true;descendants(outer).find(n=>n.dataset.slotSwatch!==undefined).dispatchEvent(new Event('click'));await settle();
+assert.equal(panel.hidden,false,'the current swatch reveals the Library');
 const thumb=materialButtons()[0];assert.equal(thumb.tag,'button');
 thumb.dispatchEvent(new Event('click'));await settle();
-const picked=descendants(doc.getElementById('editor-scene').parentElement).find(n=>n.id==='material-chooser');
-assert.deepEqual(picked.children.map(n=>n.textContent),['This wall face','This room','This floor','The whole building','Cancel']);
-picked.children[2].dispatchEvent(new Event('click'));await settle();
-assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{level:front.level,role:'siding'},material:{id:finish.id}});
-assert.equal(doc.getElementById('library-status').textContent,'Drag a thumbnail onto the house or yard.');
-thumb.dispatchEvent(new Event('click'));await settle();assert.equal(ops.length,0,'a thumbnail press outside Change never applies');
-ok('card Change opens the library list; a pressed thumbnail applies at the chosen scope, This floor included');
+assert.equal(ops.length,0,'selecting never applies');
+const use=descendants(outer).find(n=>n.dataset.slotUse!==undefined);
+assert.equal(use.disabled,false);use.dispatchEvent(new Event('click'));await settle();
+assert.deepEqual(ops.pop(),surfaceOperation(materialLines({kind:'wall',piece:front,building:b},flat,kit).find(l=>l.label==='Outside').surface,'face',finish));
+assert.equal(descendants(doc.getElementById('editor-scene').parentElement).find(n=>n.id==='material-chooser'),undefined);
+ok('a keyboard tile selection enables the face row and Use preserves the surface operation');
 
 // Final wave I4: a line from the building or the floor can be cleared there.
 b.materials={...(b.materials||{}),siding:{id:'building_finish',color:'#223344'}};
 cards.draw(null);cards.draw({pieceId:front.id,buildingId:b.id});
-const outside = () => descendants(card().find(n=>n.className==='editor-material-line'&&n.children[0].children[0].textContent==='Outside'));
+const outside = () => descendants(card().find(n=>n.dataset.librarySlot==='Outside'));
 outside().find(n=>n.textContent==='Clear for the building').dispatchEvent(new Event('click'));await settle();
 assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{building:b.id,role:'siding'},material:null});
 const floor=b.levels.find(l=>l.id===front.level);floor.materials={siding:{id:'floor_finish',color:'#556677'}};
