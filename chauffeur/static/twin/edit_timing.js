@@ -48,10 +48,13 @@ export function mountEditTiming({ toggle, overlay, send, signal, post, report, f
   let shown = false, sending = false;
   try { shown = localStorage.getItem(key) === 'true'; } catch { /* Private storage. */ }
   if (force) shown = true;
+  if (force) { const history = document.getElementById('editor-history'); if (history) history.open = true; }
   function draw() {
     toggle?.setAttribute('aria-pressed', String(shown));
     if (!overlay) return;
     overlay.hidden = !shown;
+    const section = document.getElementById('editor-timing-section');
+    if (section) section.hidden = !shown;
     if (!shown) return;
     const last = window.__twinEditTiming.at(-1);
     overlay.replaceChildren();
@@ -75,6 +78,10 @@ export function mountEditTiming({ toggle, overlay, send, signal, post, report, f
     shown = !shown;
     try { if (!force) localStorage.setItem(key, String(shown)); } catch { /* Still usable. */ }
     draw();
+    if (shown) {
+      const history = document.getElementById('editor-history');
+      if (history) { history.open = true; overlay.scrollIntoView({ block: 'nearest' }); }
+    }
   }, { signal });
   send?.addEventListener('click', async () => {
     if (sending) return;

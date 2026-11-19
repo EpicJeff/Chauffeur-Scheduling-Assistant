@@ -3,7 +3,7 @@ import { pauseWords, sentence } from './words.js';
 
 const FIRST_LOOK = 'First look at the outline while the drawings are read.';
 
-export function createPanel({ afterSay, acceptPause }) {
+export function createPanel({ afterSay, acceptPause, dock }) {
   const log = document.getElementById('editor-log');
   const messages = document.getElementById('editor-messages');
   const scroll = document.getElementById('editor-panel-scroll');
@@ -83,7 +83,9 @@ export function createPanel({ afterSay, acceptPause }) {
     clearSelection() { selection = null; },
     focusSelection(item, label) {
       selection = item;
+      dock?.show('argyle');
       input.value = `About ${label}: `;
+      input.scrollIntoView({ block: 'nearest' });
       input.focus(); input.setSelectionRange(input.value.length, input.value.length);
     },
     readOnly(value) {

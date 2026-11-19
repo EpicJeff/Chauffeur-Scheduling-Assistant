@@ -110,7 +110,7 @@ export function snapFootprint(building, outline, suggestions) {
   return best && { position: best.position, rotation: best.rotation };
 }
 
-export function createLotTools({ view, getPlan, getSheets, getSelection, select, pauses, op, reload, canEdit, signal }) {
+export function createLotTools({ view, getPlan, getSheets, getSelection, select, pauses, op, reload, canEdit, signal, dock }) {
   const canvas = view.renderer3.domElement, parent = canvas.parentElement;
   const layer = document.createElement('div'); layer.className = 'editor-handles'; parent.append(layer);
   const typed = createTypedValue(layer);
@@ -121,6 +121,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
   let sheet = null, sheetKey = '', sheetVersion = 0, graphicKey = '', rows = [], gesture = null, selected = null;
   let drawing = null, openCard = null, busy = false, frame = null, disposed = false;
   const drafts = new Map();
+  let sceneKey = '', cancelFootprint = null;
   const place = () => getSheets().place || { buildings: [], lot: {} };
   const read = () => place().lot?.read;
   const suggestions = () => (read()?.suggestions || []).filter(s => s.state === 'open');
@@ -222,6 +223,16 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
   }
   function refresh() {
     if (disposed) return;
+    if (dock) {
+      const key = JSON.stringify([place().buildings, lotOutline(), read()?.id]);
+      if (key !== sceneKey) {
+        sceneKey = key;
+        const host = document.getElementById('scene-lot'); host.replaceChildren();
+        host.append(button('Place on the lot', showLot));
+        for (const part of place().buildings) host.append(button(part.name, () => focusBuilding(part.id)));
+        if (read()) lotOutline().forEach((_, i) => host.append(button(`Lot edge ${i + 1}`, () => streetCard(i))));
+      }
+    }
     syncSheet(); syncGraphics();
     if (gesture?.client && (gesture.hit || gesture.drawing)) update({ pointerId: gesture.pointer,
       clientX: gesture.client[0], clientY: gesture.client[1], shiftKey: gesture.free });
@@ -235,10 +246,23 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
       rows[i].textContent = h.kind === 'move' ? '↔' : '↻'; rows[i].title = h.kind === 'move' ? 'Move building' : 'Turn building';
       rows[i].style.left = `${h.screen[0]}px`; rows[i].style.top = `${h.screen[1]}px`;
     });
+    const wasVisible = !card.hidden;
     card.hidden = !openCard || !available();
+    if (dock && wasVisible !== !card.hidden) {
+      if (card.hidden) dock.properties.clear(card);
+      else renderCard(false);
+    }
     frame = requestAnimationFrame(refresh);
   }
-  function closeCard() { openCard = null; card.hidden = true; card.replaceChildren(); }
+  function closeCard() {
+    openCard = null; card.hidden = true; card.replaceChildren(); dock?.properties.clear(card);
+    cancelFootprint?.remove(); cancelFootprint = null;
+    if (dock && document.getElementById('draw-tools').dataset.lotDraft) {
+      delete document.getElementById('draw-tools').dataset.lotDraft;
+      document.getElementById('draw-tools').hidden = true;
+      document.getElementById('draw-cancel').hidden = false;
+    }
+  }
   function button(text, action) {
     const node = document.createElement('button'); node.type = 'button'; node.textContent = text;
     node.addEventListener('click', action, { signal }); return node;
@@ -252,9 +276,14 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     catch (error) { report(error); }
     finally { busy = false; card.querySelectorAll('button, input, select').forEach(n => { n.disabled = false; }); }
   }
+  function renderCard(reveal = true) {
+    const part = openCard?.building && building(openCard.building);
+    dock?.properties.render(card, { crumbs: ['Lot', part?.name || (openCard?.edge !== undefined ? `Edge ${openCard.edge + 1}` : openCard?.suggestion ? 'Plot suggestion' : openCard?.drawing ? 'Draw footprint' : 'Placement')],
+      tool: !!openCard?.drawing, reveal, back: part || openCard?.lot ? closeCard : showLot });
+  }
   function showCard() {
-    card.hidden = false;
-    card.append(button('Close', closeCard));
+    card.hidden = false; renderCard();
+    card.append(button('Close', () => { drawing = null; closeCard(); }));
   }
   function suggestionCard(suggestion) {
     closeCard(); openCard = { suggestion: suggestion.id };
@@ -297,10 +326,13 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     view.camera.position.set(mid[0] * FT, span * FT * 1.7, -(mid[1] - .01) * FT); view.controls.update();
   }
   function showLot() {
+    dock?.show('scene');
     frameLot(); drawing = null; selected = null; select(null); closeCard(); openCard = { lot: true };
     const title = document.createElement('h3'); title.textContent = 'Place on the lot'; card.append(title);
-    for (const part of place().buildings) card.append(button(part.name, () => focusBuilding(part.id)));
-    if (read()) lotOutline().forEach((_, i) => card.append(button(`Lot edge ${i + 1}`, () => streetCard(i))));
+    if (!dock) {
+      for (const part of place().buildings) card.append(button(part.name, () => focusBuilding(part.id)));
+      if (read()) lotOutline().forEach((_, i) => card.append(button(`Lot edge ${i + 1}`, () => streetCard(i))));
+    }
     showCard();
   }
   function previewBuilding(b) {
@@ -441,9 +473,13 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     const b = current(), about = handles().find(h => h.kind === 'move')?.at;
     if (by && b && about) { event.preventDefault(); commit(b, { position: add(b.position, by), rotation: b.rotation || 0 }, 'move', about).catch(report); }
   }, { signal });
+  if (dock) document.getElementById('editor-rail').addEventListener('click', event => {
+    if (drawing && event.target.closest?.('button')) { drawing = null; closeCard(); }
+  }, { signal, capture: true });
   signal.addEventListener('abort', () => {
     disposed = true; cancelAnimationFrame(frame); ++sheetVersion;
     if (gesture) finish({ pointerId: gesture.pointer }, true);
+    closeCard();
     typed.hide(); disposeSheet(); clearGroup(graphics); graphics.removeFromParent(); layer.remove(); card.remove();
   }, { once: true });
   refresh();
@@ -459,7 +495,13 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     drawFootprint(id) {
       frameLot(); selected = id; select(null); drawing = id; closeCard(); openCard = { drawing: id };
       const note = document.createElement('p'); note.textContent = 'Drag a rectangle on the ground for this building.'; card.append(note);
-      card.append(button('Cancel drawing', () => { drawing = null; closeCard(); })); showCard();
+      cancelFootprint = button('Cancel drawing', () => { drawing = null; closeCard(); });
+      (dock ? document.getElementById('draw-tools') : card).append(cancelFootprint); showCard();
+      if (dock) {
+        const status = document.getElementById('draw-tools'); status.dataset.lotDraft = 'true'; status.hidden = false;
+        document.getElementById('draw-note').textContent = note.textContent;
+        document.getElementById('draw-cancel').hidden = true;
+      }
     },
   };
   return tools;

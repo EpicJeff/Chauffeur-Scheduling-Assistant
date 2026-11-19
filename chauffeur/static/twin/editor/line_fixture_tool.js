@@ -95,7 +95,7 @@ export function areaOutline(f) {
   });
 }
 
-export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit, report, host, onDone, encode = f => f }) {
+export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit, report, host, onDone, encode = f => f, finishHost = null }) {
   const preview = new THREE.Group(), ray = new THREE.Raycaster(), canvas = view.renderer3.domElement;
   const pointSnap = createPointSnap(view, getPlan);
   preview.userData.preview = true;
@@ -154,11 +154,12 @@ export function createLineFixtureTool({ view, getPlan, surface, commit, canEdit,
     snapLabel = node('label', 'Snap points'); snapLabel.className = 'editor-material-line'; const snapInput = node('input'); snapInput.type = 'checkbox'; snapInput.checked = snapPoints; snapInput.setAttribute('aria-label', 'Snap points'); snapInput.title = 'Alt temporarily inverts snapping'; snapLabel.append(snapInput); controls.append(snapLabel);
     snapInput.addEventListener('change', () => { snapPoints = snapInput.checked; pointLock = null; graphics(); });
     finishButton = button('Finish', finish);
+    finishHost?.append(finishButton);
     const label = node('label', 'Facing'); facingSelect = node('select'); facingSelect.setAttribute('aria-label', 'Facing'); label.append(facingSelect); controls.append(label);
     facingSelect.addEventListener('change', () => { if (!canEdit() || busy) return; facing = facingSelect.value; facingChosen = true; if (rectangle) { rectangle.facing = facing === 'surface' ? rectangle.surfaceNormal : facing; graphics(); } });
     choose(value.kind);
   }
-  function stop() { cancelMove(); draft.cancel(); clear(); controls?.remove(); controls = facingSelect = finishButton = snapLabel = null; edgeKey = null; cachedEdges = []; active = gesture = rectangle = selected = anchor = pointLock = null; pointAnchors = []; lockedPoints = []; }
+  function stop() { cancelMove(); draft.cancel(); clear(); finishButton?.remove(); controls?.remove(); controls = facingSelect = finishButton = snapLabel = null; edgeKey = null; cachedEdges = []; active = gesture = rectangle = selected = anchor = pointLock = null; pointAnchors = []; lockedPoints = []; }
   async function save(fixture) {
     if (!active || !canEdit() || busy) return false;
     const current = active; busy = true;

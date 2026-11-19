@@ -8,7 +8,7 @@ import { stairShelf } from './stair_shelf.js';
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const drawingTools = ['draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-stair', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking'];
 
-export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel, surfaceAt, groundPoint }) {
+export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel, surfaceAt, groundPoint, dock, cancelOtherDrawing }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let tool = null, points = [], press = null, anchorKind = 'light';
   let stair = null;
@@ -33,6 +33,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     if (canvas.hasPointerCapture(previous.id)) canvas.releasePointerCapture(previous.id);
   }
   function cancel() {
+    dock?.properties.clear(tool === 'add-stair' ? el('piece-card') : el('draw-options'));
     if (tool === 'add-stair') { delete el('piece-card').dataset.stairDraft; el('piece-card').hidden = true; stair = null; }
     ++run; release(); tool = null; points = []; outline([]); note(''); tools.setTool('select');
     for (const name of drawingTools) el(`rail-${name}`).setAttribute('aria-pressed', 'false');
@@ -125,6 +126,12 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       'split-room': 'Click two walls of this room to draw the split.',
       'add-anchor': 'Click a wall or a room surface. Lights and fans go on its ceiling.' })[name]
       || `Click a wall where the ${name === 'add-door' ? 'door' : 'window'} goes. It starts 3 feet wide.`);
+    if (dock) {
+      el('draw-options-title').textContent = el(`rail-${name}`).getAttribute('aria-label');
+      el('draw-options-note').textContent = el('draw-note').textContent;
+      dock.properties.render(name === 'add-stair' ? el('piece-card') : el('draw-options'), {
+        crumbs: [el('draw-options-title').textContent], tool: true, back: cancel });
+    }
   }
   // A person clicks the wall they see, its face a few feet up, on any floor
   // shown. The 3D hit names that wall's building and floor and a point on its
@@ -203,7 +210,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     el(`rail-${name}`).disabled = false;
     el(`rail-${name}`).addEventListener('click', () => choose(name).catch(report), { signal });
   }
-  el('draw-cancel').addEventListener('click', cancel, { signal });
+  el('draw-cancel').addEventListener('click', () => { cancel(); cancelOtherDrawing?.(); }, { signal });
   el('rail-delete').disabled = false;
   el('rail-delete').addEventListener('click', () => {
     if (!canEdit()) return;

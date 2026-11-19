@@ -8,6 +8,7 @@ import { report as reportError } from './api.js';
 import { effectCard, effectLabels, effectShapes, effectPathOperation } from './effects.js';
 import { DRAG_THRESHOLD_PX, HANDLE_HIT_PX } from './picking.js';
 import { createGizmo } from './gizmo.js';
+import { propertyPath } from './dock.js';
 
 const FT = .3048;
 const element = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
@@ -146,12 +147,15 @@ export function cameraView(plan, marker) {
   return { at, aim: [at[0] + 20 * Math.cos(angle), at[1] + 20 * Math.sin(angle), at[2]], fov_deg: 90 };
 }
 
-export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal, prepare = () => {}, report = reportError, getCameraMarker, bindCancel = true }) {
+export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal, prepare = () => {}, report = reportError, getCameraMarker, bindCancel = true, dock }) {
   const canvas = view.renderer3.domElement, root = new THREE.Group(), el = id => document.getElementById(id);
   const ray = new THREE.Raycaster(); ray.params.Line.threshold = .08; view.scene.add(root); root.name = 'editor-light-fixtures';
   const handleLayer = element('div'); handleLayer.className = 'editor-handles'; canvas.parentElement.append(handleLayer);
   let mode = null, press = null, aiming = null, slider = null, cardDevice = null, cardEffect = null, cardKey = null, signature = null;
   let cardLight = null, pointHandles = [];
+  let devicePath = [], deviceReturn = null;
+  let deviceParent = false, deviceAnchor = false;
+  const options = dock ? el('device-options') : el('device-tools');
   const gizmoLayer = element('div'); gizmoLayer.className = 'editor-handles'; canvas.parentElement.append(gizmoLayer);
   const gizmo = createGizmo({ view, layer: gizmoLayer, getPlan, canEdit: () => canEdit() && !mode,
     getSelection: () => cardLight ? { kind: 'light_fixture', ...cardLight } : null,
@@ -197,7 +201,8 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     }
     const p = library.ground(event); return p && { at: [...p, groundAt(getPlan(), ...p)], ground: true, normal:[0,0,1] };
   }
-  const shapeTool = createLineFixtureTool({ view, getPlan, surface, canEdit, report, host: el('device-tools'), onDone: cancel,
+  const shapeTool = createLineFixtureTool({ view, getPlan, surface, canEdit, report, host: options,
+    finishHost: dock ? el('device-tools') : null, onDone: cancel,
     encode(fixture, hit) {
       if (hit.snapped || fixture.anchors?.some(Boolean)) return {...fixture,ref:'absolute'};
       const context = hit.ground ? {ref:'ground'} : {ref:'floor',building:hit.building,level:hit.level};
@@ -221,12 +226,17 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     const point = press?.point;
     release(); aiming?.stop(); aiming = null; shapeTool.stop(); shapeTool.preview.removeFromParent(); slider?.parentElement.remove(); slider = null; mode = null;
     el('device-tools').hidden = true; canvas.style.cursor = ''; el('device-cancel').textContent = 'Cancel placement';
+    dock?.properties.clear(options);
     if (point) previewPoint(point, point.fixture.path);
     drawHandles();
   }
-  function start(next, text) {
+  function start(next, text, short = text) {
     cancel(); prepare(); tools.setTool('select'); mode = next;
-    el('device-note').textContent = text; el('device-tools').hidden = false; el('device-cancel').textContent = 'Done'; canvas.style.cursor = 'crosshair';
+    el('device-note').textContent = dock ? short : text; el('device-tools').hidden = false; el('device-cancel').textContent = 'Done'; canvas.style.cursor = 'crosshair';
+    if (dock) {
+      el('device-options-note').textContent = text;
+      dock.properties.render(options, { crumbs: [next.kind === 'aim' ? 'Aim' : 'Placement options'], tool: true, back: cancel });
+    }
   }
   function add(entity_id, shape) {
     if (canEdit() && ['point', 'spot'].includes(shape)) start({ kind: 'add', entity_id, shape }, `Click to add ${shape} fixtures. Done ends placement; Escape cancels.`);
@@ -245,7 +255,8 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   }
   function startShape(entity_id, kind, fixture, effectType = null) {
     start({kind:'shape'}, kind === 'area' ? 'Drag a rectangle, choose its facing, then Finish. Escape cancels the rectangle; Done saves a complete rectangle and ends the mode.'
-      : 'Draw points or Snap to edge; drag along an edge for a shorter run. Enter or Finish completes a drawing; Backspace removes a point. Escape cancels the gesture; Done saves a drawing with at least two points and ends the mode.');
+      : 'Draw points or Snap to edge; drag along an edge for a shorter run. Enter or Finish completes a drawing; Backspace removes a point. Escape cancels the gesture; Done saves a drawing with at least two points and ends the mode.',
+      kind === 'area' ? 'Drag a rectangle. Finish saves it; Done ends placement.' : 'Draw points or snap to an edge. Finish saves; Done ends placement.');
     shapeTool.start({entity_id,kind,fixture,effectType});
     root.add(shapeTool.preview);
   }
@@ -263,7 +274,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   function startAim(at, aim, cone, commit, camera = false) {
     start({ kind: 'aim' }, 'Drag to aim on the ground or a wall. Done ends aiming; Escape cancels the current drag.');
     aiming = aimTool({ at, aim, cone_deg: cone, onCommit: async value => { if (canEdit()) await commit(value); } }); root.add(aiming.preview);
-    slider = field(el('device-tools'), camera ? 'Field of view (degrees)' : 'Cone (degrees)', cone, () => {
+    slider = field(options, camera ? 'Field of view (degrees)' : 'Cone (degrees)', cone, () => {
       if (canEdit()) aiming?.commit().catch(report);
     }, { type: 'range', low: 10, high: 160, step: 1 });
     slider.addEventListener('input', () => { if (canEdit()) aiming?.cone(Number(slider.value)); });
@@ -301,32 +312,65 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     const open = button(host, camera ? 'Fixtures and camera view' : 'Fixtures', () => showDevice(device), false); open.dataset.fixtureBrowse = '';
   }
   function showDevice(device, id = null) {
+    const returning = cardDevice?.device_id === device.device_id, previousPath = devicePath, previousReturn = deviceReturn;
+    const state = tools.selection();
+    let owner = null, binding = null;
+    for (const b of getPlan().buildings || []) {
+      const found = [...(b.anchors || []), ...(b.devices || [])].find(p => p.device === device.device_id);
+      if (found) { owner = b; binding = found; break; }
+    }
+    owner ||= getPlan().buildings?.find(b => b.id === state.building);
+    const roomId = state.room || binding?.host?.floor || binding?.host?.ceiling;
+    const room = owner?.rooms?.find(r => r.id === roomId || device.area_id && r.ha_area === device.area_id);
+    deviceAnchor = !!binding && !!owner?.anchors?.includes(binding); deviceParent = false;
+    deviceReturn = binding && owner?.anchors?.includes(binding) ? { pieceId: binding.id, buildingId: owner.id }
+      : room ? { pieceId: room.id, buildingId: owner.id } : tools.selected?.() || null;
+    devicePath = owner ? propertyPath({ kind: 'anchor', piece: binding || { name: device.name, level: room?.level, host: { floor: room?.id } }, building: owner }, state).crumbs : ['Yard'];
+    if (binding || owner) devicePath = [...devicePath.slice(0, -1), device.name || device.device_id];
+    else devicePath.push(device.name || device.device_id);
+    if (!owner && returning) { devicePath = previousPath; deviceReturn = previousReturn; }
     tools.select(null); cardEffect = null; cardDevice = device; cardLight = id ? { entity_id: entities(device).find(entity => getPlan().light_fixtures?.[entity]?.some(f => f.id === id)), id } : null;
     cardKey = null; refreshCard();
     const row = id && [...el('piece-card').querySelectorAll('[data-fixture-id]')].find(r => r.dataset.fixtureId === id);
     if (row) { row.open = true; row.scrollIntoView({ block: 'nearest' }); }
   }
   function showEffect(id) {
+    deviceReturn = null; deviceParent = false;
     tools.select(null); cardDevice = null; cardLight = null; cardEffect = id; cardKey = null; refreshCard();
   }
   function releaseCard() {
     cardDevice = null; cardEffect = null; cardLight = null; cardKey = null; delete el('piece-card').dataset.fixtureCard;
     drawHandles();
   }
+  function backToDevice() {
+    // HA devices placed directly on a surface have no anchor piece to select.
+    // Their existing HA section is the parent page; Back again reaches the room.
+    if (dock && cardDevice && !deviceAnchor && !deviceParent && tools.haLink?.anchorSection) {
+      deviceParent = true; cardKey = null; refreshCard(); return;
+    }
+    const target = deviceReturn;
+    releaseCard(); el('piece-card').hidden = true; dock?.properties.clear(el('piece-card'));
+    tools.select(target);
+  }
   el('piece-card').addEventListener('fixturecardrelease', releaseCard, { signal });
   function refreshCard() {
     if (!cardDevice && !cardEffect) return;
     const host = el('piece-card');
     if (host.dataset.stairDraft || cardKey !== null && !host.dataset.fixtureCard) { releaseCard(); return; }
-    const key = JSON.stringify([cardEffect, getPlan().effect_fixtures, getPlan().light_fixtures, getPlan().light_fixtures_meta, getPlan().camera_views, getPlan().buildings, getPlan().site?.devices, getPlan().site?.terraces, getPlan().site?.pool, canEdit()]);
+    const key = JSON.stringify([cardEffect, deviceParent, getPlan().effect_fixtures, getPlan().light_fixtures, getPlan().light_fixtures_meta, getPlan().camera_views, getPlan().buildings, getPlan().site?.devices, getPlan().site?.terraces, getPlan().site?.pool, canEdit()]);
     if (key === cardKey) return;
     const open = [...host.querySelectorAll('[data-fixture-id]')].filter(r => r.open).map(r => r.dataset.fixtureId);
     cardKey = key; host.replaceChildren(); host.dataset.fixtureCard = cardEffect || cardDevice.device_id; host.hidden = false;
-    button(host, 'Close', () => { releaseCard(); host.hidden = true; }, false);
+    dock?.properties.render(host, { crumbs: cardEffect ? ['Yard', 'Effect'] : [...devicePath, ...(deviceParent ? [] : ['Fixtures'])], back: backToDevice });
+    button(host, 'Close', backToDevice, false);
     if (cardEffect) {
       if (!getPlan().effect_fixtures?.some(f => f.id === cardEffect)) { releaseCard(); host.hidden = true; return; }
       host.append(effectCard({ id: cardEffect, getPlan, canEdit, op, onMove: moveEffect, report, helpers }));
-    } else { host.prepend(element('h3', cardDevice.name)); drawFixtures(host, cardDevice); }
+    } else {
+      host.prepend(element('h3', cardDevice.name));
+      if (deviceParent) host.append(tools.haLink.anchorSection({ device: cardDevice.device_id }));
+      else drawFixtures(host, cardDevice);
+    }
     for (const row of host.querySelectorAll('[data-fixture-id]')) {
       row.open = open.includes(row.dataset.fixtureId);
       let wasOpen = row.open;

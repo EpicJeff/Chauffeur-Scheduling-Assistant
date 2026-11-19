@@ -21,7 +21,7 @@ export function siteRows(plan) {
 export const snapPadPoint = snapSitePoint;
 
 // Separate lot tools keep the object-library/placed-item merge seam small.
-export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, prepare = () => {}, getKit = () => ({}) }) {
+export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, prepare = () => {}, getKit = () => ({}), dock }) {
   const canvas = view.renderer3.domElement, shell = document.querySelector('.editor-shell');
   const card = document.createElement('aside'); card.className = 'place-card editor-lot-card'; card.id = 'terrain-card'; card.hidden = true; shell.append(card);
   const layer = document.createElement('div'); layer.className = 'editor-handles'; canvas.parentElement.append(layer);
@@ -34,11 +34,15 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   const raycaster = new THREE.Raycaster();
   let chosen = null, drawing = null, gesture = null, handles = [], busy = false, grade = false, signature = '', menu = false;
   let padDrag = null;
+  let finishButton = null, sceneKey = '';
   const drawingOptions = { height: 0, blend: 6 };
   const draft = createSiteDrawing({ getPlan, commit: save });
   const listen = (node, type, fn, options = {}) => node.addEventListener(type, fn, { ...options, signal });
   const node = (tag, text) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; return n; };
   const button = (text, fn) => { const b = node('button', text); b.type = 'button'; listen(b, 'click', fn); return b; };
+  if (dock) listen(document.getElementById('layer-grade'), 'click', () => {
+    grade = !grade; document.getElementById('layer-grade').setAttribute('aria-pressed', String(grade)); tint();
+  });
   const current = () => chosen && getPlan().site?.terraces?.find(p => p.id === chosen.id);
   function ray(event) {
     const r = canvas.getBoundingClientRect(); view.camera.updateMatrixWorld(true);
@@ -102,6 +106,14 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       if (canvas.hasPointerCapture(g.pointer)) canvas.releasePointerCapture(g.pointer);
     }
     draft.cancel(); drawing = null; chosen = null; menu = false; card.hidden = true; graphics();
+    clearStatus();
+    dock?.properties.clear(card);
+  }
+  function clearStatus() {
+    finishButton?.remove(); finishButton = null;
+    if (dock && document.getElementById('draw-tools').dataset.terrainDraft) {
+      delete document.getElementById('draw-tools').dataset.terrainDraft; document.getElementById('draw-tools').hidden = true;
+    }
   }
   async function save(operation) {
     if (!canEdit() || busy) return;
@@ -143,10 +155,10 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     await save({ op: 'reorder_pad', id, to });
     if (focus && !card.hidden) focusPadRow(id);
   }
-  function drawPadList() {
-    card.append(node('h3', 'Pads'));
+  function drawPadList(host = card) {
+    host.append(node('h3', 'Pads'));
     const pads = getPlan().site?.terraces || [];
-    if (!pads.length) { card.append(node('p', 'No pads yet.')); return; }
+    if (!pads.length) { host.append(node('p', 'No pads yet.')); return; }
     const list = node('div'); list.className = 'editor-pad-list'; list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Pads, topmost first');
     const indicator = node('div'); indicator.className = 'editor-pad-drop'; indicator.hidden = true; indicator.setAttribute('aria-hidden', 'true');
     const rows = [];
@@ -214,14 +226,21 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       });
       rows.push(row); list.append(row);
     }
-    list.append(indicator); card.append(list);
+    list.append(indicator); host.append(list);
   }
   function drawCard() {
     cancelPadDrag();
     card.replaceChildren(); card.hidden = false;
+    finishButton?.remove(); finishButton = null;
+    dock?.properties.render(card, { crumbs: ['Yard', drawing ? `Draw ${words[drawing.kind] || drawing.kind}` : chosen ? words[chosen.kind] : 'Ground and yard'],
+      tool: !!drawing, back: chosen ? show : close });
     card.append(button('Close', close));
-    drawPadList();
+    if (!dock) drawPadList();
     if (drawing) {
+      if (dock) {
+        const status = document.getElementById('draw-tools'); status.dataset.terrainDraft = 'true'; status.hidden = false;
+        document.getElementById('draw-note').textContent = `Draw ${words[drawing.kind] || drawing.kind}: click the ground; Escape cancels.`;
+      }
       if (drawing.kind === 'fire_pit') {
         field('Shape', drawing.options.shape, shape => startDrawing('fire_pit', shape === 'round' ? { shape, radius: 2 } : shape === 'square' ? { shape, side: 4 } : shape === 'rect' ? { shape, width: 4, depth: 6 } : { shape }),
           [['round', 'Round'], ['square', 'Square'], ['rect', 'Rectangle'], ['outline', 'Drawn outline']]);
@@ -234,7 +253,9 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       }
       const title = drawing.kind === 'terraces' ? 'a terrace pad' : drawing.kind === 'path' ? 'a path' : words[drawing.kind].toLowerCase();
       card.append(node('h3', `Draw ${title}`), node('p', 'Tap corners. Snap to yard edges, outside walls and the lot. Hold Shift for free placement. Enter or Finish completes; Backspace removes a point; Escape cancels.'));
-      card.append(button(drawing.kind === 'terraces' ? 'Finish pad' : 'Finish', finishDrawing));
+      finishButton = button(drawing.kind === 'terraces' ? 'Finish pad' : 'Finish', finishDrawing);
+      (dock ? document.getElementById('draw-tools') : card).append(finishButton);
+      if (dock) { document.getElementById('draw-tools').hidden = false; document.getElementById('draw-note').textContent = `Draw ${title}: tap corners; Enter finishes, Escape cancels.`; }
       if (drawing.kind === 'terraces') {
         field('Pad height (ft)', drawing.options.height, value => { drawing.options.height = value; });
         field('Blend (ft)', drawing.options.blend, value => { drawing.options.blend = value; });
@@ -268,10 +289,12 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
         const typed = sitePieces(getPlan().site?.fence).find(f => f.type);
         startDrawing('fence', { height: 6, ...(existing ? { style: existing.style } : {}), ...(typed ? { type: typed.type } : {}) });
       }));
-      const toggle = button('Grade', () => { grade = !grade; toggle.setAttribute('aria-pressed', String(grade)); tint(); });
-      toggle.setAttribute('aria-pressed', String(grade)); card.append(toggle);
-      card.append(node('p', 'Grade: blue is lower, orange is higher. Heights are feet from the lot datum.'));
-      for (const row of siteRows(getPlan())) card.append(button(`${words[row.kind]} ${row.index + 1}`, () => choose(row.kind, row.piece.id)));
+      if (!dock) {
+        const toggle = button('Grade', () => { grade = !grade; toggle.setAttribute('aria-pressed', String(grade)); tint(); });
+        toggle.setAttribute('aria-pressed', String(grade)); card.append(toggle);
+        card.append(node('p', 'Grade: blue is lower, orange is higher. Heights are feet from the lot datum.'));
+        for (const row of siteRows(getPlan())) card.append(button(`${words[row.kind]} ${row.index + 1}`, () => choose(row.kind, row.piece.id)));
+      }
       return;
     }
     card.append(node('h3', words[chosen.kind]));
@@ -382,6 +405,14 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   }
   function show() { prepare(); view.setView('ext'); tools.select(null); menu = true; chosen = null; drawing = null; signature = ''; refresh(); }
   function refresh() {
+    if (dock) {
+      const key = JSON.stringify(getPlan()?.site);
+      if (key !== sceneKey) {
+        sceneKey = key;
+        const host = document.getElementById('scene-yard'); host.replaceChildren(); drawPadList(host);
+        for (const row of siteRows(getPlan())) host.append(button(`${words[row.kind]} ${row.index + 1}`, () => choose(row.kind, row.piece.id)));
+      }
+    }
     if (chosen && !current()) { chosen = null; menu = true; }
     const key = JSON.stringify([chosen, current(), drawing?.points.length, menu, canEdit(), getPlan()?.site]);
     if ((menu || chosen || drawing) && key !== signature) { signature = key; drawCard(); }
@@ -496,7 +527,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   listen(canvas, 'pointermove', event => { if (drawing && !gesture) pointerMove(event); });
   view.controls.addEventListener('change', graphics);
   listen(canvas.parentElement, 'twinrebuilt', refresh);
-  signal.addEventListener('abort', () => { cancelPadDrag(); if (gesture) pointerUp({ pointerId: gesture.pointer }, true); clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); if (!existingOpen) open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
+  signal.addEventListener('abort', () => { cancelPadDrag(); if (gesture) pointerUp({ pointerId: gesture.pointer }, true); clearStatus(); dock?.properties.clear(card); clearGraphics(); previewLine.geometry.dispose(); group.removeFromParent(); material.dispose(); layer.remove(); card.remove(); if (!existingOpen) open.remove(); view.controls.removeEventListener('change', graphics); }, { once: true });
   return { show, choose, startDrawing, refresh, hit, begin, padHits, pointerArmedDown, pointerDown, pointerMove, pointerUp,
     selectionChanged(state) { if (state.id && chosen) close(); }, cancel: close, handles: () => handles };
 }

@@ -24,6 +24,7 @@ import { createChecks } from './checks.js';
 import { createEditQueue } from './edit_queue.js';
 import { applyLocal, LocalMissing } from './local_ops.js';
 import { mountIcons } from './icons.js';
+import { createDock } from './dock.js';
 
 const el = id => document.getElementById(id);
 const STREAM_ONLY = new Set(['piece', 'stage', 'stream_reset', 'log']);
@@ -41,9 +42,11 @@ export async function boot() {
   let buildGhosts = null, checks = null, houses = null, drawingStarted = false;
   const statusChip = createStatusChip(el('editor-chip')), seenBuildRounds = new Set();
   const lifecycle = new AbortController();
+  const dock = createDock({ host: el('editor-dock') });
+  lifecycle.signal.addEventListener('abort', () => dock.dispose(), { once: true });
   const listen = (node, type, handler, options = {}) => node.addEventListener(type, handler, { ...options, signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
-  const panel = createPanel({ afterSay: async () => { await polling.pollNow(true); },
+  const panel = createPanel({ dock, afterSay: async () => { await polling.pollNow(true); },
     acceptPause: async () => {
       if (currentBuild?.state !== 'paused' || !currentBuild.pause) return false;
       if (currentBuild.pause.kind === 'draft') { pauses?.show(); return true; }
@@ -94,6 +97,15 @@ export async function boot() {
     menu.open = false; menu.querySelector('summary')?.focus(); event.preventDefault(); event.stopImmediatePropagation();
   }, { capture: true });
   listen(el('editor-floor-add'), 'click', () => el('rail-add-level').click());
+  listen(el('properties-your-place'), 'click', () => steps.open('Your files'));
+  listen(el('properties-house-materials'), 'click', () => {
+    const building = tools?.floor()?.building || shownPlan()?.buildings?.[0];
+    if (building) tools.select({ pieceId: building.id, buildingId: building.id });
+    else steps.open('Your files');
+  });
+  // Existing controls remain the owners of these two layer actions.
+  listen(el('layer-sheet'), 'click', () => el('rail-sheet').click());
+  dock.onResize(sizeShell);
   if (typeof ResizeObserver !== 'undefined') {
     const observer = new ResizeObserver(sizeShell);
     observer.observe(header);
@@ -602,6 +614,8 @@ export async function boot() {
       el('advanced-plan').value = JSON.stringify(snapshot.plan || emptyPlan(), null, 2);
       el('advanced-reason').value = ''; advancedBase = currentRound();
       el('editor-advanced').hidden = false;
+      dock.show('argyle');
+      el('editor-advanced').scrollIntoView({ block: 'nearest' });
       el('advanced-plan').focus();
     } catch (error) { report(error); }
     finally { menuBusy = false; syncBuildButton(); }
@@ -749,41 +763,41 @@ export async function boot() {
         await polling.refreshState(); await loadSheets(); await renderScene();
       },
     });
-    tools = createSceneTools({ view, getPlan: () => timeline?.preview() || shownPlan(), getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
+    tools = createSceneTools({ dock, view, getPlan: () => timeline?.preview() || shownPlan(), getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
       siteHits: (x, y) => library?.siteHits(x, y) || [],
       padHits: (x, y) => terrain?.padHits?.(x, y) || [], fixtureHits: (x, y) => devices?.fixtureHits?.(x, y) || [],
       pickMaterial: surface => library?.pick(surface), onDrawFeature: kind => terrain?.startDrawing(kind),
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
-    library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || shownPlan(), tools,
+    library = createLibrary({ dock, view, kit, getPlan: () => timeline?.preview() || shownPlan(), tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
     flags = createFlags({ view, getModel: () => snapshot.model, getPlan: shownPlan,
       tools, panel, op: applyOp, canEdit, signal: lifecycle.signal, onInteract, managed: true,
       onReview: item => checks?.show(item) });
-    draw = createDraw({ view, tools, getPlan: shownPlan, op: operation => applyOpNow(operation),
+    draw = createDraw({ dock, cancelOtherDrawing: () => { terrain?.cancel(); lot?.cancel(); }, view, tools, getPlan: shownPlan, op: operation => applyOpNow(operation),
       gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract, surfaceAt: (event, options) => library.surfaceAt(event, options), groundPoint: event => library.ground(event) });
-    roofTools = createRoofTools({ view, tools, getPlan: shownPlan,
+    roofTools = createRoofTools({ dock, view, tools, getPlan: shownPlan,
       op: (operation, options) => history.perform(() => applyOpNow(operation, options)),
       canEdit, panel, signal: lifecycle.signal, onInteract, cancelDrawing: draw.cancel });
-    pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
+    pauses = createPauses({ dock, view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
       getSheets: () => sheets, refresh: () => polling.pollNow(true), preview: () => renderScene().catch(report),
       visibilityChanged: syncBuildButton, canEdit, signal: lifecycle.signal, guided: true });
-    checks = createChecks(view, { api, getBuild: () => currentBuild, getModel: () => snapshot.model,
+    checks = createChecks(view, { dock, api, getBuild: () => currentBuild, getModel: () => snapshot.model,
       getPlan: shownPlan, tools, panel, canEdit, signal: lifecycle.signal, op: applyOp, flags, pauses,
       onClose: () => steps.close() });
-    lot = createLotTools({ view, getPlan: () => timeline?.preview() || shownPlan(), getSheets: () => sheets,
+    lot = createLotTools({ dock, view, getPlan: () => timeline?.preview() || shownPlan(), getSheets: () => sheets,
       getSelection: tools.selection, select: tools.select, pauses, signal: lifecycle.signal,
       canEdit: () => canEdit() && (!active(currentBuild) || !!pauses.lotPlacement()),
       op: operations => history.perform(async () => { for (const operation of operations) await applyOpNow(operation, { settle: false }); }),
       // The lot card frees itself once the place rows are fresh; the scene
       // rebuild (seconds for a refitted house) follows on the poll's tick.
       reload: async () => { await loadSheets(); polling.pollNow(true).catch(report); } });
-    devices = createDevicePlacement({ view, tools, library, getPlan: () => timeline?.preview() || shownPlan(),
+    devices = createDevicePlacement({ dock, view, tools, library, getPlan: () => timeline?.preview() || shownPlan(),
       op: applyOp, canEdit, signal: lifecycle.signal,
       prepare() { onInteract(); roofTools.cancel(); draw.cancel(); } });
     el('rail-add-effect').addEventListener('click', () => {
       if (canEdit()) devices.addEffect().catch(report);
     }, {signal: lifecycle.signal});
-    terrain = createTerrainTools({ view, tools, getPlan: () => timeline?.preview() || shownPlan(),
+    terrain = createTerrainTools({ dock, view, tools, getPlan: () => timeline?.preview() || shownPlan(),
       op: applyOp, canEdit, signal: lifecycle.signal,
       getKit: () => kit,
       prepare() { onInteract(); devices.cancel(); roofTools.cancel(); draw.cancel(); lot.cancel(); } });
@@ -800,7 +814,7 @@ export async function boot() {
       pointerUp: (event, cancel) => terrain.pointerUp(event, cancel) || devices.pointerUp(event, cancel) || lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
       floorChanged() { terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.floorChanged(); }, cancel() { terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.cancel(); },
     });
-    timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
+    timeline = createTimeline({ dock, getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
       canScrub: () => !menuBusy && !directing,
       log(summary) { const line = document.createElement('li'); line.textContent = summary; el('editor-log').append(line); lastSummary = summary; },
       onPreview(value) {

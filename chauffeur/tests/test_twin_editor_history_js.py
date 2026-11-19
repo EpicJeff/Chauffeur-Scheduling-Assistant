@@ -100,10 +100,10 @@ try {
  }};
  const stubs='data:text/javascript,'+encodeURIComponent(config.stubs.replace('CARDS_URL',file('static/twin/editor/cards.js')));
  registerHooks({resolve(spec,ctx,next){
-  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js','./icons.js'].includes(spec))return {url:stubs,shortCircuit:true};
+  if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js','./icons.js','./dock.js'].includes(spec))return {url:stubs,shortCircuit:true};
   return next(spec,ctx);
  }});
- const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready);
+ const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready, alerts.join('\n'));
  assert.equal(sessionStarts,1);
  assert.deepEqual(alerts,['Older history was cleared. A copy of the house was saved as Before cleanup 2026-11-16.']);alerts.length=0;
  ok('editor starts one session and reports its saved cleanup copy');

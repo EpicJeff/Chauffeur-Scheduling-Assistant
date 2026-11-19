@@ -20,7 +20,7 @@ const rotatePoint = (p, angle) => {
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
 
-export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, pickMaterial, api, onDrawFeature }) {
+export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, pickMaterial, api, onDrawFeature, dock }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   const measureLayer = document.createElement('div'); measureLayer.className = 'editor-measure'; canvas.parentElement.append(measureLayer);
   const measure = createMeasure({ view, getPlan, layer: measureLayer });
@@ -77,7 +77,11 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     }
     return op(operation, { ...options, drag: true, selection });
   } });
-  const getLabel = item => getSheets().piece_labels?.find(p => p.piece === item.pieceId && p.building === item.buildingId)?.label || 'this piece';
+  const getLabel = item => {
+    const label = getSheets().piece_labels?.find(p => p.piece === item.pieceId && p.building === item.buildingId)?.label;
+    const record = findPiece(getPlan(), item.pieceId, item.buildingId);
+    return label || record?.piece.name || `${record?.kind || 'piece'} ${item.pieceId}`;
+  };
   const roomSelection = createSelection({ view, getModel, onChange(state) {
     if (split && (state.id !== split.wall || state.building !== split.building)) cancelSplit();
     if (!state.room || state.building !== roofRoomBuilding || !roofRooms.has(state.room)) {
@@ -96,7 +100,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let linkReadAt = 0;
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
+    dock, op, addDormer, canEdit, select, pickMaterial, haLink, onDrawFeature, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
     onPreview: drawDimensions, onClick: cards.showRoofEdge, signal });
   const gizmoLayer = document.createElement('div'); gizmoLayer.className = 'editor-handles'; canvas.parentElement.append(gizmoLayer);
@@ -139,7 +143,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     }
     const level = record.kind === 'level' ? record.piece.id : record.piece.level
       || record.building.walls.find(w => w.id === (record.piece.wall || record.piece.host?.wall))?.level;
-    if (['roof', 'dormer', 'solar_zone'].includes(record.kind) && roomSelection.current().room) roomSelection.clear();
+    if (['roof', 'dormer', 'solar_zone', 'building', 'level'].includes(record.kind) && roomSelection.current().room) roomSelection.clear();
     roomSelection.select({ kind: record.kind, id: record.piece.id, building: record.building.id, level });
   }
   function sceneCandidate(item) {
@@ -190,12 +194,14 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   async function sheet(key = floor()?.key, show = !sheetOn) {
     const target = levels().find(l => l.key === key); if (!target) return;
     sheetOn = show; el('rail-sheet').setAttribute('aria-pressed', String(show));
+    el('layer-sheet')?.setAttribute('aria-pressed', String(show));
     if (!show) { view.setSheet(null); return; }
     const sheets = getSheets();
     const registration = sheets.registrations?.find(row => row.level === target.level.id && sheets.page_roles.some(role =>
       role.source === row.source && role.page === row.page && (role.building || 'house') === target.building.id));
     if (!registration) {
       sheetOn = false; el('rail-sheet').setAttribute('aria-pressed', 'false');
+      el('layer-sheet')?.setAttribute('aria-pressed', 'false');
       panel.message('This floor does not have a lined-up drawing yet. Check its outline with Argyle first.'); return;
     }
     let url = (window.chfBase ?? '../') + `api/house/editor/sheets/${encodeURIComponent(registration.source)}/${registration.page}.png`;

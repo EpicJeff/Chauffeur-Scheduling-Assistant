@@ -174,7 +174,7 @@ DRIVER = HISTORY_DRIVER.split(' const zoneResize=')[0].replace(
 """
 
 if __name__ == '__main__':
-    ids = sorted(set(re.findall(r'id="([\w-]+)"', (ROOT / 'templates/house_editor.html').read_text(encoding='utf-8'))) | {'piece-card', 'rail-undo', 'rail-redo', 'editor-save-state'})
+    ids = sorted(set(re.findall(r'id="([\w-]+)"', (ROOT / 'templates/house_editor.html').read_text(encoding='utf-8'))) | {'piece-card', 'rail-undo', 'rail-redo', 'rail-add-effect', 'editor-save-state'})
     failed = 0
     for case in ('outline_object_settles', 'server_correction_remaps_selection', 'kept_release_draws_once', 'stale_poll_ignored', 'refusal_notice_and_selection', 'dropped_dependencies_share_one_notice',
                  'undo_waits_for_in_flight_step', 'undo_refuses_over_foreign_round_after_replay',

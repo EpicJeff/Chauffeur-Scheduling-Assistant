@@ -16,7 +16,7 @@ export function roofEdge(roof, edge) {
   return { a, b, length, axis, normal: [sign * axis[1], -sign * axis[0]] };
 }
 
-export function createRoofTools({ view, tools, getPlan, op, canEdit, panel, signal, onInteract, cancelDrawing }) {
+export function createRoofTools({ view, tools, getPlan, op, canEdit, panel, signal, onInteract, cancelDrawing, dock }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let mode = null, points = [], press = null, busy = false;
   const listen = (node, type, fn, options = {}) => node.addEventListener(type, fn, { ...options, signal });
@@ -45,6 +45,7 @@ export function createRoofTools({ view, tools, getPlan, op, canEdit, panel, sign
     const wasActive = !!mode;
     release(); mode = null; points = []; outline([]);
     el('roof-tools').hidden = true; el('rail-roof').setAttribute('aria-pressed', 'false');
+    dock?.properties.clear(el('roof-options'));
     if (wasActive && resetTool) tools.setTool('select');
   }
   function choose(next) {
@@ -53,9 +54,11 @@ export function createRoofTools({ view, tools, getPlan, op, canEdit, panel, sign
     if (!tools.floor()) { panel.message('Add a floor before adding a roof.'); return; }
     mode = next; tools.setTool('roof'); el('rail-roof').setAttribute('aria-pressed', 'true');
     el('roof-tools').hidden = false; el('roof-choices').hidden = next !== 'choices';
+    dock?.properties.render(el('roof-options'), { crumbs: ['Roof', next === 'draw' ? 'Draw roof area' : next === 'dormer' ? 'Add dormer' : 'Roof tools'], tool: true, back: cancel });
     el('roof-note').textContent = next === 'draw' ? 'Click roof corners and close on the first corner.'
       : next === 'dormer' ? 'Click a sloping roof surface to place a dormer.'
         : 'Roof over the selected rooms, or draw a roof area.';
+    if (dock) el('roof-options-note').textContent = el('roof-note').textContent;
   }
   async function save(operation) {
     if (!canEdit() || busy) return;

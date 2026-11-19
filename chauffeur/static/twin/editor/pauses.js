@@ -24,7 +24,7 @@ export function fromTwoPoints(aPx, bPx, aFt, bFt) {
   return { scale: feet / pixels, angle, origin_px: [...aPx], offset: [...aFt] };
 }
 
-export function createPauses({ view, getBuild, getGhost, getSheets, refresh, preview, visibilityChanged, canEdit, signal, guided = false }) {
+export function createPauses({ view, getBuild, getGhost, getSheets, refresh, preview, visibilityChanged, canEdit, signal, guided = false, dock }) {
   const el = id => document.getElementById(id), host = el('pause-card'), canvas = view.renderer3.domElement;
   let key = null, pause = null, step = null, buildId = null, floorKey = null;
   let mode = null, pins = [], drag = null, busy = false, lastAnswer = null, dismissed = false, masterSize = null;
@@ -65,7 +65,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     const payload = { step: pause.step, decision };
     try {
       await request(`build/${encodeURIComponent(buildId)}/answer`, 'POST', payload);
-      lastAnswer = payload; mode = null; pins = []; host.hidden = true; visibilityChanged?.(); await refresh();
+      lastAnswer = payload; mode = null; pins = []; host.hidden = true; dock?.properties.clear(host); visibilityChanged?.(); await refresh();
     } finally { disable(false); }
   }
   async function showSheet() {
@@ -99,7 +99,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
   function sync() {
     const build = getBuild(), next = build?.state === 'paused' && build.pause;
     readCosts(build);
-    if (!next) { stopDrag(); clearPins(); host.hidden = true; pause = null; original = null; key = null; mode = null; visibilityChanged?.(); return; }
+    if (!next) { stopDrag(); clearPins(); host.hidden = true; dock?.properties.clear(host); pause = null; original = null; key = null; mode = null; visibilityChanged?.(); return; }
     // Seq may advance for unrelated events; only a new pause or a re-read reframes.
     const identity = `${build.id}:${next.step}:${JSON.stringify(next.registration || next.transform)}`;
     if (identity !== key) {
@@ -130,9 +130,14 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     el('pause-reread').title = 'Reads this drawing again and adds to the running cost.';
     el('pause-reread').hidden = guided;
     host.hidden = dismissed || !canEdit();
+    if (!guided && dock) {
+      if (host.hidden) dock.properties.clear(host);
+      else dock.properties.render(host, { crumbs: ['Check it', step?.label || 'Check this step'], back: () => { dismissed = true; host.hidden = true; dock.properties.clear(host); } });
+    }
     disable(busy); anchor(); visibilityChanged?.();
   }
   function anchor() {
+    if (dock) return;
     if (host.hidden || !floorKey) return;
     const pointsToAnchor = outline();
     const rect = canvas.getBoundingClientRect();
@@ -208,7 +213,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     disable(true);
     try {
       await request(`build/${encodeURIComponent(buildId)}/reread`, 'POST', { step: pause.step });
-      key = null; host.hidden = true; await refresh();
+      key = null; host.hidden = true; dock?.properties.clear(host); await refresh();
     } catch (error) {
       if (error.status === 409 && error.detail?.checkpoint) await checkpoint(error.detail).catch(report);
       else report(error);
@@ -233,7 +238,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     dismissed: () => dismissed,
     show() { dismissed = false; sync(); },
     resume() { dismissed = false; sync(); },
-    dismiss() { stopDrag(); dismissed = true; host.hidden = true; mode = null; clearPins(); visibilityChanged?.(); },
+    dismiss() { stopDrag(); dismissed = true; host.hidden = true; dock?.properties.clear(host); mode = null; clearPins(); visibilityChanged?.(); },
     dragPauseGhost(dx, dy) {
       if (!pause || busy || !canEdit()) return;
       const p = outline()[0] || [0, 0], screen = view.screenOfFloor(...p, floorKey); if (!screen) return;
