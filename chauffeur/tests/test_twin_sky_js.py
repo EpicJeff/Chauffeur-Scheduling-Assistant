@@ -31,10 +31,13 @@ await test('continuous colour/intensity at all four band edges', () => {
   assert.equal(lookAt(-20, {altitude:-.1,fraction:1}).moon, 0);
   assert.equal(lookAt(-20, {altitude:1,fraction:0}).moon, 0);
 });
-await test('front bearing follows the actual Front camera ray', () => {
-  const a = modelDirection(Math.PI, Math.PI/4, 180), length = Math.hypot(41,69);
-  assert.ok(Math.abs(a[0] / Math.cos(Math.PI/4) + 41/length) < 1e-12);
-  assert.ok(Math.abs(a[2] / Math.cos(Math.PI/4) - 69/length) < 1e-12);
+await test('front bearing follows the street normal, plan -y / three +z', () => {
+  const street = modelDirection(Math.PI, 0, 180);
+  street.forEach((v,i) => assert.ok(Math.abs(v-[0,0,1][i]) < 1e-12));
+  // Street south: north is plan +y / three -z, east is plan +x / three +x.
+  const east = modelDirection(Math.PI/2, 0, 180);
+  east.forEach((v,i) => assert.ok(Math.abs(v-[1,0,0][i]) < 1e-12));
+  const a = modelDirection(Math.PI, Math.PI/4, 180);
   const b = modelDirection(Math.PI/2, Math.PI/4, 90);
   assert.deepEqual(a,b);
   const back = modelDirection(0,Math.PI/4,180);
@@ -112,6 +115,20 @@ await test('facing dial pointer/keyboard/typed save and reload use the placement
   sheets=structuredClone(sheets); sheets.place.lot.front_bearing_deg=271; place.sync(sheets,{});
   assert.equal(degrees.value,'271'); assert.equal(dial.getAttribute('aria-valuenow'),'271');
   assert.equal(el('place-facing-house').style.transform,'rotate(271deg)');
+  sheets=structuredClone(sheets); Object.assign(sheets.place.lot,{map_bearing_deg:180,map_bearing_source:'footprint'});
+  place.sync(sheets,{site:{front_bearing_deg:180,map_bearing_deg:180,map_bearing_source:'footprint'}});
+  assert.equal(degrees.value,'180','map wins over a legacy dial without an override');
+  assert.ok(el('place-facing-map-note').textContent.includes('180° (building footprint)'));
+  await fire(el('place-facing-map'),'click');
+  assert.deepEqual(requests.at(-1),{path:'place/lot/bearing/map',method:'POST',body:{}});
+  place.sync(sheets,{site:{front_bearing_deg:271,front_bearing_source:'dial',map_bearing_deg:180,map_bearing_source:'street'}});
+  assert.equal(degrees.value,'271','an explicit dial override survives the map');
+  assert.ok(el('place-facing-map-note').textContent.includes('nearest street'));
+  place.sync(sheets,{site:{front_bearing_deg:210,map_bearing_deg:210,map_bearing_source:'street'}});
+  assert.equal(degrees.value,'210','state-only background completion refreshes the dial');
+  place.sync(sheets,{site:{front_bearing_deg:271,front_bearing_source:'dial'}});
+  assert.equal(el('place-facing-map').disabled,true,'a new location cannot use stale map data from sheets');
+  assert.ok(el('place-facing-map-note').textContent.includes('unavailable'));
 });
 await test('high tier throttles only the sun and invalidates its shadow on rebuild', async () => {
   const previousQuery=location.search; location.search='?test=1&tier=high';

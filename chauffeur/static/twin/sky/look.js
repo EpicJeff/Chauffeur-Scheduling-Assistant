@@ -37,12 +37,8 @@ export function previewDate(now, mode, site) {
 }
 
 export function modelDirection(azimuth, altitude, frontBearing = 180) {
-  // setCamera('front') looks from (-41, +69) in three's x/z plane.
-  // Compass bearings increase clockwise; three's horizontal compass vector is
-  // (sin(b), -cos(b)). Align the configured front bearing to that camera ray.
-  // Thus bearing 180 + a southern noon sun points toward the Front camera.
-  const front = Math.atan2(-41, -69);
-  const angle = azimuth - frontBearing * RAD + front;
+  // The street is plan -y / three +z; compass bearings turn clockwise.
+  const angle = azimuth - frontBearing * RAD + Math.PI;
   const horizontal = Math.cos(altitude);
   return [horizontal * Math.sin(angle), Math.sin(altitude), -horizontal * Math.cos(angle)];
 }

@@ -91,6 +91,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     host.querySelectorAll('input, select, button').forEach(control => {
       if (control.id !== 'place-close') control.disabled = control.matches('[data-place-upload], [data-place-tag]') ? stopped(true) : blocked;
     });
+    useMap.disabled = blocked || !Number.isFinite(mapBearing());
     host.querySelectorAll('[data-place-build]').forEach(button => {
       button.disabled = blocked || dirty() || !ready(button.dataset.placeBuild);
     });
@@ -132,6 +133,16 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
   const patch = (id, body) => mutate(`place/buildings/${encodeURIComponent(id)}`, 'PATCH', body);
   let facing = 180, facingPointer = null;
   const dial = el('place-facing-dial'), degrees = el('place-facing-degrees');
+  const mapBearing = () => snapshot.site ? snapshot.site.map_bearing_deg : place().lot?.map_bearing_deg;
+  const savedFacing = () => snapshot.site?.front_bearing_deg ?? (place().lot?.front_bearing_override
+    ? place().lot.front_bearing_deg : mapBearing() ?? place().lot?.front_bearing_deg) ?? 180;
+  const mapNote = node('p', undefined, { class: 'place-muted', id: 'place-facing-map-note' });
+  const useMap = node('button', 'Use map direction', { type: 'button', id: 'place-facing-map' });
+  useMap.addEventListener('click', () => work(async () => {
+    await mutate('place/lot/bearing/map', 'POST', {});
+    status('Using map direction.');
+  }));
+  el('place-facing-form').append(mapNote, useMap);
   function showFacing(value) {
     facing = (Math.round(value) % 360 + 360) % 360;
     degrees.value = String(facing);
@@ -160,7 +171,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     if (facingPointer !== event.pointerId) return;
     facingPointer = null; dial.releasePointerCapture?.(event.pointerId); saveFacing();
   });
-  dial.addEventListener('pointercancel', () => { facingPointer = null; showFacing(place().lot?.front_bearing_deg ?? 180); });
+  dial.addEventListener('pointercancel', () => { facingPointer = null; showFacing(savedFacing()); });
   dial.addEventListener('keydown', event => {
     const delta = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[event.key];
     if (delta === undefined || stopped()) return;
@@ -467,7 +478,11 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
   }
   function render() {
     if (facingPointer === null && document.activeElement !== degrees && document.activeElement !== dial)
-      showFacing(place().lot?.front_bearing_deg ?? 180);
+      showFacing(savedFacing());
+    const mapped = mapBearing(), source = snapshot.site?.map_bearing_source ?? place().lot?.map_bearing_source;
+    mapNote.textContent = Number.isFinite(mapped)
+      ? `Map direction: ${Math.round(mapped)}° (${source === 'footprint' ? 'building footprint' : 'nearest street'}).`
+      : 'Map direction is unavailable. Set the facing by hand.';
     const addKind = el('place-add-kind'), chosenKind = addKind.value;
     addKind.replaceChildren(...kinds().map(([value, label]) => node('option', label, { value })));
     if (kinds().some(([id]) => id === chosenKind)) addKind.value = chosenKind;
@@ -480,7 +495,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     showStep(); controls();
   }
   function sync(nextSheets, nextSnapshot) {
-    const nextSignature = JSON.stringify([nextSheets, nextSnapshot.build, nextSnapshot.buildState?.state, canEdit()]);
+    const nextSignature = JSON.stringify([nextSheets, nextSnapshot.site, nextSnapshot.build, nextSnapshot.buildState?.state, canEdit()]);
     snapshot = nextSnapshot;
     if (signature === nextSignature) { controls(); return; }
     signature = nextSignature;

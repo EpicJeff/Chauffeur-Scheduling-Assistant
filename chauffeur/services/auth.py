@@ -524,6 +524,7 @@ RULES = [
     ('POST', '/api/house/editor/houses/{sid}/load', PARENTS, None),
     ('PATCH', '/api/house/editor/houses/{sid}', PARENTS, None),
     ('DELETE', '/api/house/editor/houses/{sid}', PARENTS, None),
+    ('POST', '/api/house/editor/place/lot/bearing/map', PARENTS, None),
     (ANY, '/api/house/editor/*', PARENTS, None),
     # The facade generator (spec 2026-09-15 §3.2): reads are family-safe
     # (a wall builds from the active facade); every write is a parent's.

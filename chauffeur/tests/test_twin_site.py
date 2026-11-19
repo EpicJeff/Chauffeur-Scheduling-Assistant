@@ -9,14 +9,14 @@ os.environ['CHAUFFEUR_DATA_DIR'] = tempfile.mkdtemp(prefix='chauffeur_real_sun_s
 os.environ.pop('HA_BASE_URL', None)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_twin_ha_routes import Ctx, check
-from services import auth, storage, twin_store
+from services import auth, house_map, storage, twin_store
 
 READ = '/api/house/twin'
 SAVE = '/api/house/editor/place/lot/placement'
 
 
 def test_cached_site_payload():
-    with Ctx() as c, patch.object(storage, 'get_cached_geocode', return_value={'lat': '40.1', 'lon': '-75.2'}):
+    with Ctx() as c, patch.object(house_map.maps, 'get_mapbox_api_key', return_value=None), patch.object(storage, 'get_cached_geocode', return_value={'lat': '40.1', 'lon': '-75.2'}):
         c.extra.update(home_location='A home address', timezone='America/New_York')
         response = c.client.get(READ, headers=c.panel)
         check(response.status_code == 200, response.text)
@@ -27,7 +27,7 @@ def test_cached_site_payload():
 
 
 def test_missing_and_failed_geocode():
-    with Ctx() as c:
+    with Ctx() as c, patch.object(house_map.maps, 'get_mapbox_api_key', return_value=None):
         for address, cached in [('', None), ('Unknown home', None), ('Broken cache', {'lat': 'NaN', 'lon': 0})]:
             c.extra['home_location'] = address
             with patch.object(storage, 'get_cached_geocode', return_value=cached):
