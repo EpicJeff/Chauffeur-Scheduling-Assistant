@@ -1,6 +1,7 @@
 import { applyObject, objectShown, objectMaterialKey, sitePieces } from './objects.js';
 import * as THREE from 'three';
 import { reflectionMaterial } from './reflection_probes.js';
+import { plantSeason, seasonHash } from './sky/seasons.js';
 import * as EZTree from '@dgreenheck/ez-tree';
 const { Tree } = EZTree;
 
@@ -17,6 +18,16 @@ export function presetTree(preset, seed) {
   // attachment weight while generating, so the trunk is EXACTLY still and a
   // branch starts still at its attachment (bark UVs repeat and cannot encode it).
   const generateBranch=tree.generateBranch, weights=[];
+  const generateLeaf=tree.generateLeaf, leaves=[];
+  let leafIndex=0;
+  if(generateLeaf)tree.generateLeaf=function(...args){
+    const start=this.leaves.verts.length;
+    generateLeaf.apply(this,args);
+    // Both crossed planes of one leaf share one threshold. This hash never
+    // consumes EZ-Tree's RNG, so the generated geometry stays identical.
+    const threshold=seasonHash(seed+':leaf:'+leafIndex++),hue=seasonHash('hue:'+seed);
+    for(let i=start;i<this.leaves.verts.length;i+=3)leaves.push(threshold,hue);
+  };
   if(generateBranch)tree.generateBranch=function(branch){
     const start=this.branches.verts.length;
     generateBranch.call(this,branch);
@@ -26,6 +37,11 @@ export function presetTree(preset, seed) {
     }
   };
   tree.generate();
+  if(generateLeaf){
+    tree.generateLeaf=generateLeaf;
+    tree.leavesMesh.geometry.setAttribute('seasonLeaf',new THREE.Float32BufferAttribute(leaves,2));
+  }
+  Object.assign(tree.userData,{seasonKind:plantSeason(preset),seasonPreset:preset});
   if(generateBranch){
     tree.generateBranch=generateBranch;
     tree.branchesMesh.geometry.setAttribute('plantBranch',new THREE.Float32BufferAttribute(weights,1));
@@ -51,7 +67,7 @@ import { waterBodies, rippleSources, updateRipples, updateChop } from './effects
 import { surfaceMaterial } from './effects/water_surface.js';
 import { underwaterMaterial } from './effects/underwater.js';
 import { createWaterSimulation } from './effects/water_sim.js';
-import { buildGrass, grassCovers } from './yard_grass.js';
+import { buildGrass, grassCovers, grassLawn } from './yard_grass.js';
 import { TIERS } from './twin_tiers.js';
 import { defaultStage } from './stage_settings.js';
 import { clipHalf } from './pool_features.js';
@@ -61,12 +77,12 @@ function random(seed) {
   return () => { n = n + 0x6d2b79f5 | 0; let t = Math.imul(n ^ n >>> 15, n | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 }
 
-function standardTree(tree, cache = null) {
+function standardTree(tree, cache = null, seasonKind = tree.userData.seasonKind) {
   const converted = new Map();
   tree.traverse(o => {
     if (!o.isMesh) return;
     const convert = m => {
-      const key = 'tree:' + JSON.stringify([m.name, m.map?.uuid, m.normalMap?.uuid, m.alphaMap?.uuid, m.alphaTest, m.side, m.color?.getHex()]);
+      const key = 'tree:' + JSON.stringify([m.name, m.map?.uuid, m.normalMap?.uuid, m.alphaMap?.uuid, m.alphaTest, m.side, m.color?.getHex(), seasonKind]);
       if (!converted.has(m)) converted.set(m, cache?.get(key) || new THREE.MeshStandardMaterial({
         name: m.name, color: m.map ? '#ffffff' : m.color, map: m.map, normalMap: m.normalMap,
         alphaMap: m.alphaMap, alphaTest: m.alphaTest > 0 ? Math.max(0.5, m.alphaTest) : 0,
@@ -74,6 +90,7 @@ function standardTree(tree, cache = null) {
       }));
       if (cache) cache.set(key, converted.get(m));
       if(['leaves','branches'].includes(m.name))converted.get(m).userData.plantWind=m.name;
+      if(m.name==='leaves'&&seasonKind==='deciduous')converted.get(m).userData.seasonFoliage=true;
       return converted.get(m);
     };
     o.material = Array.isArray(o.material) ? o.material.map(convert) : convert(o.material);
@@ -339,6 +356,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     const sourceRole = role === 'terrain_lawn' ? 'lawn' : role;
     const key = materialKey(materialKit.materials[sourceRole] || {}, role, tier, manifest(materialKit));
     if (!mats.has(key)) mats.set(key, kitMaterial(sourceRole, materialKit, tier));
+    if(sourceRole==='lawn'&&grassLawn(materialKit))mats.get(key).userData.seasonLawn=true;
     return mats.get(key);
   };
   // A random-offset material shifts each surface's base uv by its piece id (server
@@ -615,6 +633,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       try {
         for (let index = 0; index < (site.planting || []).length; index++) {
           const p = site.planting[index]; if (!objectShown(p, !viewing)) continue; if (!p.at || !p.preset || !(p.height > 0)) continue;
+          const seasonKind=plantSeason(p.preset,p.kind),hue=seasonHash('hue:'+(p.id||index)+':'+(p.seed??1));
           // Snapshot every authored appearance field. The fallback identity also
           // covers index-dependent lamp material keys; position and grade do not.
           const cardSeed = cardSeeds.get(p.preset);
@@ -644,26 +663,38 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
               mats.set('plant_card:' + p.preset, card.material); cards.set(p.preset, card);
             }
             const card = cards.get(p.preset), h = p.height * 1.08;
+            // Isolate an evergreen kind using a generic deciduous preset.
+            // Colour/tint clones made below retain this explicit tag.
+            const cardKey='plant-card-season:'+p.preset+':'+seasonKind+':'+cardSeed;
+            if(!mats.has(cardKey)){
+              const material=card.material.clone();material.userData.seasonFoliage=seasonKind==='deciduous';
+              mats.set(cardKey,material);
+            }
             for (const angle of [0, Math.PI / 2]) {
               const geometry = new THREE.PlaneGeometry(h * card.aspect, h).translate(0, h / 2, 0).rotateY(angle + (p.seed || 0) * 2.39996);
-              addMesh(holder, geometry, card.material);
+              const attribute=[];
+              for(let i=0;i<geometry.attributes.position.count;i++)attribute.push(seasonHash((p.id||index)+':card:'+angle),hue);
+              geometry.setAttribute('seasonLeaf',new THREE.Float32BufferAttribute(attribute,2));
+              addMesh(holder, geometry, mats.get(cardKey));
             }
             applyObject(holder, p, { units: 1 }); holder.position.set(p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0), -p.at[1]);
-            cacheModelMaterials(holder, 'plant-card:' + p.preset + ':' + cardSeed + ':' + objectMaterialKey(p, p.id || index), mats);
+            cacheModelMaterials(holder, 'plant-card:' + p.preset + ':' + seasonKind + ':' + cardSeed + ':' + objectMaterialKey(p, p.id || index), mats);
             if (viewing) mergeStatic(holder);
           } else {
-            const tree = presetTree(p.preset, p.seed ?? 1); standardTree(tree, mats);
+            const tree = presetTree(p.preset, p.seed ?? 1); standardTree(tree, mats,seasonKind);
+            const attribute=tree.leavesMesh?.geometry.attributes.seasonLeaf;
+            if(attribute)for(let i=0;i<attribute.count;i++)attribute.setY(i,hue);
             object = tree;
             const bounds = new THREE.Box3().setFromObject(tree), h = bounds.max.y - bounds.min.y, scale = p.height / Math.max(0.01, h);
             tree.scale.setScalar(scale);
             applyObject(tree, p, { units: 1 });
-            cacheModelMaterials(tree, 'plant:' + p.preset + ':' + objectMaterialKey(p, p.id || index), mats);
+            cacheModelMaterials(tree, 'plant:' + p.preset + ':' + seasonKind + ':' + objectMaterialKey(p, p.id || index), mats);
             baseOffset = -bounds.min.y * scale * (p.scale ?? 1) * (p.scale_axes?.[1] ?? 1);
             tree.position.set(p.at[0], groundAt(plan, ...p.at) + (p.elevation || 0) + baseOffset, -p.at[1]);
             tree.rotation.y += (p.seed || 0) * 2.39996; group.add(tree);
             if (viewing) { tree.userData.viewingTree = true; tree.name = `tree:${index}`; }
           }
-          Object.assign(object.userData, { kind:'planting', pieceId:p.id, plantAppearance: appearance, plantBaseOffset: baseOffset, yardPlantIndex: index });
+          Object.assign(object.userData, { kind:'planting', pieceId:p.id, plantAppearance: appearance, plantBaseOffset: baseOffset, yardPlantIndex: index, seasonKind, seasonPreset:p.preset });
           // Let loading/status controls paint while full presets are generated.
           if (index % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
         }
@@ -727,6 +758,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           geo.setAttribute('position', new THREE.Float32BufferAttribute([-0.035, 0, 0, 0.035, 0, 0, 0.03, 0.45, 0], 3));
           geo.computeVertexNormals();
           const grass = new THREE.InstancedMesh(geo, plain('edge grass', '#56783a', { side: THREE.DoubleSide }), placements.length), dummy = new THREE.Object3D();
+          grass.material.userData.seasonLawn=true;
           if (!viewing) grass.userData.instances = placements.map(([, , , pieceId]) => ({kind:'edge', pieceId}));
           placements.forEach(([x, z, n], i) => { dummy.position.set(x, groundAt(plan, x, -z) + 0.12, z); dummy.rotation.y = n * Math.PI * 2; dummy.scale.setScalar(0.6 + n); dummy.updateMatrix(); grass.setMatrixAt(i, dummy.matrix); });
           grass.receiveShadow = true; grass.raycast = () => {}; grass.userData.yardGrass = true; group.add(grass);

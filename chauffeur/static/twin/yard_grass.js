@@ -160,6 +160,7 @@ export function grassReplace(shader, stage, anchor, replacement) {
 const VARYING = 'varying vec4 vGrass; varying vec3 vGrassUv;\n';
 export function grassMaterial(source) {
   const material = new THREE.MeshStandardMaterial({name:'yard blades', side:THREE.DoubleSide, roughness:.9});
+  material.userData.seasonLawn=true;
   const uniforms = {grassTime:{value:0}, grassWind:{value:new THREE.Vector2(.18,0)}, grassTint:{value:source.color}, grassMap:{value:null},
     grassHasMap:{value:0}, grassUvMatrix:{value:new THREE.Matrix3()}};
   const sync = () => {

@@ -385,6 +385,9 @@
       {% for mode, label in [('clear', 'Clear'), ('rain', 'Rain'), ('pouring', 'Pouring'), ('snow', 'Snow'), ('fog', 'Fog'), ('thunderstorm', 'Thunderstorm')] %}
       <button type="button" data-weather-preview="{{ mode }}" aria-pressed="false">{{ label }}</button>
       {% endfor %}
+      {% for mode, label in [('spring', 'Spring'), ('summer', 'Summer'), ('autumn', 'Autumn'), ('winter', 'Winter')] %}
+      <button type="button" data-season-preview="{{ mode }}" aria-pressed="false">{{ label }}</button>
+      {% endfor %}
       <label>Time of day <input id="twin-time-scrub" type="range" min="0" max="24" step="0.08333333333333333" value="12" aria-label="Time of day"></label>
       <output id="twin-time-scrub-value" for="twin-time-scrub">12:00</output>
     {% endcall %}
