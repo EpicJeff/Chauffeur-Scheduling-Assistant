@@ -445,6 +445,7 @@ def scenario_house_wide_role_recolours_inheritors():
 # stored publication, or successful browser bake is claimed by this fallback.
 BAKE_PREPARE = r'''async ({kit,bid,wid,side}) => {
     const base=window.chfBase,prefix=base+'static/twin/';
+    const THREE=await import('three'),targetTriangles=[];
     const {buildTwin}=await import(prefix+'twin_generator.js');
     const {buildYard}=await import(prefix+'twin_yard.js');
     const {buildAtlas}=await import(prefix+'bake/atlas.js');
@@ -452,12 +453,29 @@ BAKE_PREPARE = r'''async ({kit,bid,wid,side}) => {
     const {materialParts}=await import(prefix+'bake/bindings.js');
     const {invalidateMaterialReach}=await import(prefix+'bake/reach.js');
     const options={room:{density:1,page:1024,gutter:2}};
-    const build=async plan=>{
+    const build=async (plan,captureTarget=false)=>{
         const h=buildTwin(plan,kit,'low',{viewing:true});await h.ready;
         const y=await buildYard(plan,kit,'low',{viewing:true});h.root.add(y.group);h.root.updateMatrixWorld(true);
+        // snapRanges address generator buffers. Atlas preparation clips and
+        // receiver binding splits those buffers, so their old vertex offsets
+        // cannot identify chart faces afterwards. Freeze the authored target's
+        // world triangles first, independently of its finish or chart IDs.
+        if(captureTarget)h.root.traverse(mesh=>{
+            if(!mesh.isMesh||mesh.isInstancedMesh||mesh.layers.isEnabled(31))return;
+            const g=mesh.geometry,p=g.attributes.position;
+            const ranges=mesh.userData.snapRanges||g.userData.snapRanges||[
+                {...mesh.userData,start:0,count:g.index?.count||p.count}];
+            for(const r of ranges)if(r.buildingId===bid&&r.pieceId===wid&&r.bakePart===side)
+                for(let i=r.start;i<r.start+r.count;i+=3){
+                    const triangle=new THREE.Triangle(...[0,1,2].map(k=>new THREE.Vector3()
+                        .fromBufferAttribute(p,g.index?g.index.getX(i+k):i+k).applyMatrix4(mesh.matrixWorld)));
+                    if(triangle.getArea()>1e-12)targetTriangles.push({triangle,normal:triangle.getNormal(new THREE.Vector3())});
+                }
+        });
         return {h,y,atlas:buildAtlas(h.root,plan,options)};
     };
-    const plan=structuredClone(window.__twin.plan),before=await build(plan);
+    const plan=structuredClone(window.__twin.plan),before=await build(plan,true);
+    if(!targetTriangles.length)throw Error('Selected wall must have authored face triangles');
     // Representative room lights mirror test_twin_reach_surface_slots_js.py;
     // they include remote rooms so an all-lights dirtying regression cannot pass.
     const lights=plan.buildings.flatMap(b=>b.rooms.filter(r=>r.polygon?.length).map(r=>({
@@ -471,11 +489,15 @@ BAKE_PREPARE = r'''async ({kit,bid,wid,side}) => {
     const layout=a=>JSON.stringify({pages:a.room.pages,rooms:a.room.rooms,
         charts:a.room.charts.map(c=>[c.id,c.key,c.page,c.rect,c.room,c.density])});
     const finishes=before.atlas.room.charts.map(finish);
+    const closest=new THREE.Vector3();
     const targetCharts=before.atlas.room.charts.filter(c=>materialParts(c).some(({mesh,faces})=>{
-        const ranges=mesh.userData.snapRanges||mesh.geometry.userData.snapRanges||[
-            {...mesh.userData,start:0,count:mesh.geometry.attributes.position.count}];
-        return ranges.some(r=>r.buildingId===bid&&r.pieceId===wid&&r.bakePart===side
-            &&faces.some(f=>f*3>=r.start&&f*3<r.start+r.count));
+        const p=mesh.geometry.attributes.position;
+        return faces.some(f=>{
+            const points=[0,1,2].map(k=>new THREE.Vector3().fromBufferAttribute(p,f*3+k).applyMatrix4(mesh.matrixWorld));
+            const normal=new THREE.Triangle(...points).getNormal(new THREE.Vector3());
+            return targetTriangles.some(t=>normal.dot(t.normal)>.999999&&points.every(p=>
+                t.triangle.closestPointToPoint(p,closest).distanceToSquared(p)<1e-10));
+        });
     })).map(c=>c.id);
     if(!targetCharts.length)throw Error('Selected wall must own actual bake charts');
     window.__surfaceBake={before,build,lights,packed,options,finish,layout,finishes,targetCharts,
