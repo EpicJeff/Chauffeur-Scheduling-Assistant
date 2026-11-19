@@ -26,7 +26,9 @@ const el = id => { if (!nodes.has(id)) nodes.set(id, new Element()); return node
 Element.prototype.querySelectorAll = function(){return [];};
 Element.prototype.getAttribute = function(key){return this[key];};
 Element.prototype.focus = function(){};
-document.getElementById = el; document.querySelector = () => shell;
+let overlayOpen=false;
+document.getElementById = el; document.querySelector = selector => selector === '.editor-shell' ? shell
+  : overlayOpen && selector.includes('#editor-dialog') ? shell : null;
 const lotKeys=[];document.addEventListener = (type,fn)=>{if(type==='keydown')lotKeys.push(fn);};
 const typeKey=key=>{const e={key,target:{closest:()=>null},preventDefault(){this.defaultPrevented=true;},stopImmediatePropagation(){}};for(const fn of lotKeys)fn(e);};
 el('place-view').hidden = true;
@@ -107,6 +109,7 @@ const precisionBefore=structuredClone(before), precisionPivot=lot.lotHandles().f
 h=press('turn');const precisionArm=h.at.map((v,i)=>v-precisionPivot[i]);
 const precisionEnd=rot(precisionArm,22.4).map((v,i)=>v+precisionPivot[i]);
 lot.pointerMove(event(precisionEnd));
+overlayOpen=true;typeKey('9');typeKey('Enter');assert.equal(operations.length,0,'a dialog must protect the typed building drag');overlayOpen=false;
 typeKey('3');typeKey('0');typeKey('Enter');await new Promise(r=>setImmediate(r));
 assert.equal(operations.length,1);assert.equal(operations[0].rotation,before.rotation+30);
 look();operations=[];before={position:[...b.position],rotation:b.rotation};

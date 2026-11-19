@@ -79,11 +79,6 @@
   <div id="editor-chrome">{% include 'nav.html' %}</div>
   <main class="editor-shell" aria-label="House editor">
     <div id="editor-scene" aria-label="Interactive house preview"></div>
-    <section id="editor-front-door" class="place-card" hidden>
-      <h2>Let's make your house</h2>
-      <button id="editor-add-files" type="button">Add plans and photos</button>
-      <button id="editor-draw-myself" type="button">Draw it myself</button>
-    </section>
 
     {% macro tool_button(tool, label) -%}
       <button id="rail-{{ tool }}" type="button" data-editor-icon="{{ tool }}" title="{{ label }}" aria-label="{{ label }}" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool not in ['select', 'library', 'add-effect', 'ground'] %}disabled{% endif %} {% if tool == 'library' %}aria-controls="library-panel"{% endif %}><span class="editor-sr-only">{{ label }}</span></button>
@@ -95,13 +90,13 @@
         <div><button id="editor-houses" type="button">Houses</button>
           <a id="editor-library-page" href="{{ _up }}house/library" target="_blank" rel="noopener">Library</a>
           <button id="editor-manage-sources" type="button">Your place</button>
+          <button id="menu-house-materials" type="button">House materials</button>
+          <button id="menu-settings" type="button">Settings</button>
           <button id="menu-upload" type="button">Upload more</button>
           <button id="menu-director" type="button" disabled>Art director</button>
           <button id="menu-advanced" type="button" disabled>Advanced: edit the plan file</button>
           <button id="menu-start-over" type="button" disabled>Start over</button>
-          <button id="menu-reset-spend" type="button" disabled>Reset spend total</button>
-          <button id="menu-edit-timing" type="button" aria-pressed="false">Show edit timing</button>
-          <button id="menu-send-timing" type="button">Send timing report</button>
+
           <button id="menu-record" type="button" hidden disabled>Download build record</button>
           <a href="{{ _up }}house/twin">House preview</a></div>
       </details>
@@ -205,10 +200,8 @@
             <input id="library-import-files" type="file" accept=".glb,.gltf,.bin,image/*,.tga,.zip,.dae,.kmz" multiple hidden>
             <label>Search models<input id="library-search" type="search" aria-label="Search models"></label>
             <p>Import glTF/GLB, Collada (.dae) or KMZ. A zip of a model folder works. SketchUp .skp is not supported; export Collada or glTF from SketchUp.</p>
-            <details id="library-import-settings"><summary>Import settings</summary>
-              <label>Maximum upload size (MB)<input id="library-import-limit" type="number" min="1" max="200" value="50"></label>
-              <label>Maximum unpacked size (MB)<input id="library-import-unpacked-limit" type="number" min="1" max="1000" value="200"></label>
-            </details>
+
+            <details id="library-import-settings"><summary>Import settings</summary></details>
             <p id="library-status" role="status">Opening the library…</p>
             <p id="library-jobs" role="status" aria-live="polite"></p>
             <div id="library-entries" role="tabpanel"></div>
@@ -219,18 +212,7 @@
           <aside id="editor-agent" aria-label="Argyle">
             <header><h2>Argyle</h2><span id="editor-source-count">Drawings and photos</span></header>
             <div id="editor-panel-scroll">
-              <section id="editor-advanced" aria-labelledby="advanced-title" hidden>
-                <h3 id="advanced-title">Advanced: edit the plan file</h3>
-                <p>Changes need a reason, recorded with each fix.</p>
-                <form id="advanced-form">
-                  <label for="advanced-plan">Current plan JSON</label>
-                  <textarea id="advanced-plan" spellcheck="false" required></textarea>
-                  <label for="advanced-reason">Reason (required)</label>
-                  <input id="advanced-reason" type="text" required>
-                  <div class="editor-actions"><button id="advanced-save" type="submit">Save plan</button>
-                    <button id="advanced-close" type="button">Close plan file</button></div>
-                </form>
-              </section>
+
               <ol id="editor-log" aria-label="Build steps" aria-live="polite"></ol>
               <div id="editor-messages" role="log" aria-label="Conversation" aria-live="polite"></div>
             </div>
@@ -283,81 +265,118 @@
 
       </div>
     </aside>
-    <section id="place-view" aria-label="Your files" hidden>
-      <header class="place-header">
-        <div><h2 id="place-title">Your files</h2><p id="place-about">The lot and every building, with their drawings and photos.</p></div>
-        <button id="place-close" type="button">Back to the house</button>
-      </header>
-      <nav id="place-steps" aria-label="Build your house"></nav>
-      <div class="place-scroll">
-        <form id="place-add-form" class="place-add" data-place-step="Your files">
-          <label>Building name<input id="place-add-name" type="text" maxlength="100" required placeholder="Detached garage"></label>
-          <label>Kind<select id="place-add-kind"></select></label>
-          <button id="place-add" type="submit">Add building</button>
-        </form>
-        <div class="place-layout">
-          <div id="place-cards" data-place-step="Your files"></div>
-          <aside class="place-setup" aria-label="Set up the lot">
-          <section class="place-card" data-place-step="Your files">
-            <h3 id="place-facing-label">Which way does the front of the house face?</h3>
-            <form id="place-facing-form">
-              <div class="place-compass">
-                <span class="place-compass-n">N</span><span class="place-compass-e">E</span>
-                <span class="place-compass-s">S</span><span class="place-compass-w">W</span>
-                <button id="place-facing-dial" type="button" role="slider" aria-labelledby="place-facing-label" aria-valuemin="0" aria-valuemax="359" aria-valuenow="180" aria-orientation="horizontal">
-                  <svg id="place-facing-house" viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
-                    <path d="M32 3 L40 13 H24 Z" fill="currentColor"/><path d="M27 19 H16 V50 H48 V19 H37" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><path d="M27 19 V24 M37 19 V24" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-                  </svg>
-                </button>
-              </div>
-              <label>Front bearing in degrees<input id="place-facing-degrees" type="number" min="0" max="359" step="1" required value="180"></label>
-              <p class="place-muted">The arrow and the door gap mark the front. Drag the house or use the arrow keys. 0° is north, 90° east, 180° south, 270° west.</p>
-              <button type="submit">Save facing</button>
-            </form>
-          </section>
-            <section class="place-card" data-place-step="Your lot">
-              <h3>The plot plan</h3>
-              <p>Upload it to the Lot and confirm its page role. Read it to find building footprints, then choose which to keep.</p>
-              <button id="place-read-plot" type="button" disabled>Read the plot plan</button>
-              <div id="place-suggestions"></div>
-            </section>
-            <section id="place-placement" class="place-card" data-place-step="Your lot" hidden>
-              <h3>Place the buildings</h3>
-              <p>Place buildings over the plot plan in the scene. Select a building to move or turn it; tap a footprint or lot edge to use it.</p>
-              <div class="editor-actions">
-                <button id="place-in-scene" type="button">Place in the scene</button>
-                <button id="place-confirm-placement" type="button">These are in the right place</button>
-              </div>
-            </section>
+
+    <div id="editor-dialog-sources" hidden>
+      <section id="editor-front-door" class="place-card" hidden>
+        <h2>Let's make your house</h2>
+        <button id="editor-add-files" type="button">Add plans and photos</button>
+        <button id="editor-draw-myself" type="button">Draw it myself</button>
+      </section>
+      <section id="place-view" aria-label="Your files" hidden>
+        <header class="place-header">
+          <div><h2 id="place-title">Your files</h2><p id="place-about">The lot and every building, with their drawings and photos.</p></div>
+          <button id="place-close" type="button">Back to the house</button>
+        </header>
+        <nav id="place-steps" aria-label="Build your house"></nav>
+        <div id="place-step-content" class="place-scroll" role="tabpanel">
+          <form id="place-add-form" class="place-add" data-place-step="Your files">
+            <label>Building name<input id="place-add-name" type="text" maxlength="100" required placeholder="Detached garage"></label>
+            <label>Kind<select id="place-add-kind"></select></label>
+            <button id="place-add" type="submit">Add building</button>
+          </form>
+          <div class="place-layout">
+            <div id="place-cards" data-place-step="Your files"></div>
+            <aside class="place-setup" aria-label="Set up the lot">
             <section class="place-card" data-place-step="Your files">
-              <h3>Learn from photos</h3>
-              <p>Suggest which buildings a photo shows and a starting shape for buildings without drawings. You choose what to use.</p>
-              <button id="place-suggest-photos" type="button" disabled>Suggest from photos</button>
-              <div id="place-photo-suggestions"></div>
+              <h3 id="place-facing-label">Which way does the front of the house face?</h3>
+              <form id="place-facing-form">
+                <div class="place-compass">
+                  <span class="place-compass-n">N</span><span class="place-compass-e">E</span>
+                  <span class="place-compass-s">S</span><span class="place-compass-w">W</span>
+                  <button id="place-facing-dial" type="button" role="slider" aria-labelledby="place-facing-label" aria-valuemin="0" aria-valuemax="359" aria-valuenow="180" aria-orientation="horizontal">
+                    <svg id="place-facing-house" viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
+                      <path d="M32 3 L40 13 H24 Z" fill="currentColor"/><path d="M27 19 H16 V50 H48 V19 H37" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><path d="M27 19 V24 M37 19 V24" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                    </svg>
+                  </button>
+                </div>
+                <label>Front bearing in degrees<input id="place-facing-degrees" type="number" min="0" max="359" step="1" required value="180"></label>
+                <p class="place-muted">The arrow and the door gap mark the front. Drag the house or use the arrow keys. 0° is north, 90° east, 180° south, 270° west.</p>
+                <button type="submit">Save facing</button>
+              </form>
             </section>
-          </aside>
+              <section class="place-card" data-place-step="Your lot">
+                <h3>The plot plan</h3>
+                <p>Upload it to the Lot and confirm its page role. Read it to find building footprints, then choose which to keep.</p>
+                <button id="place-read-plot" type="button" disabled>Read the plot plan</button>
+                <div id="place-suggestions"></div>
+              </section>
+              <section id="place-placement" class="place-card" data-place-step="Your lot" hidden>
+                <h3>Place the buildings</h3>
+                <p>Place buildings over the plot plan in the scene. Select a building to move or turn it; tap a footprint or lot edge to use it.</p>
+                <div class="editor-actions">
+                  <button id="place-in-scene" type="button">Place in the scene</button>
+                  <button id="place-confirm-placement" type="button">These are in the right place</button>
+                </div>
+              </section>
+              <section class="place-card" data-place-step="Your files">
+                <h3>Learn from photos</h3>
+                <p>Suggest which buildings a photo shows and a starting shape for buildings without drawings. You choose what to use.</p>
+                <button id="place-suggest-photos" type="button" disabled>Suggest from photos</button>
+                <div id="place-photo-suggestions"></div>
+              </section>
+            </aside>
+          </div>
+          <div id="place-build-cards" data-place-step="Build"></div>
+          <div data-place-step="Link to Home Assistant"><p id="place-ha-note"></p><div id="place-ha-links"></div></div>
         </div>
-        <div id="place-build-cards" data-place-step="Build"></div>
-        <div data-place-step="Link to Home Assistant"><p id="place-ha-note"></p><div id="place-ha-links"></div></div>
-      </div>
-      <footer class="place-footer">
-        <p id="place-status" role="status">Add PDF drawings and JPEG or PNG photos to the part they show. Check each page, then confirm.</p>
-        <div class="editor-actions"><button id="place-confirm-pages" data-place-step="Your files" type="button" disabled>Confirm pages</button>
-          <button id="place-build" data-place-step="Build" class="place-primary" type="button" disabled>Build your place</button></div>
-      </footer>
-    </section>
-    <section id="houses-panel" class="houses-panel" role="dialog" aria-modal="true" aria-labelledby="houses-title" hidden>
-      <header class="place-header"><h2 id="houses-title">Houses</h2><button id="houses-close" type="button">Close</button></header>
-      <div class="place-scroll">
-        <div class="editor-actions"><button id="houses-save" type="button">Save current house</button>
-          <button id="houses-download-current" type="button">Download current house</button>
-          <button id="houses-upload" type="button">Upload a house file</button></div>
-        <input id="houses-file" type="file" accept=".chauffeur-house.json,application/json" hidden>
-        <p class="place-muted">House files keep photo and Library references. They do not include those files.</p>
-        <div id="houses-list"></div>
-      </div>
-      <footer class="place-footer"><p id="houses-status" role="status">Opening saved houses…</p></footer>
-    </section>
+        <footer class="place-footer">
+          <p id="place-status" role="status">Add PDF drawings and JPEG or PNG photos to the part they show. Check each page, then confirm.</p>
+          <div class="editor-actions"><button id="place-confirm-pages" data-place-step="Your files" type="button" disabled>Confirm pages</button>
+            <button id="place-build" data-place-step="Build" class="place-primary" type="button" disabled>Build your place</button></div>
+        </footer>
+      </section>
+      <section id="houses-panel" class="houses-panel" role="dialog" aria-modal="true" aria-labelledby="houses-title" hidden>
+        <header class="place-header"><h2 id="houses-title">Houses</h2><button id="houses-close" type="button">Close</button></header>
+        <div class="place-scroll">
+          <div class="editor-actions"><button id="houses-save" type="button">Save current house</button>
+            <button id="houses-download-current" type="button">Download current house</button>
+            <button id="houses-upload" type="button">Upload a house file</button></div>
+          <input id="houses-file" type="file" accept=".chauffeur-house.json,application/json" hidden>
+          <p class="place-muted">House files keep photo and Library references. They do not include those files.</p>
+          <div id="houses-list"></div>
+        </div>
+        <footer class="place-footer"><p id="houses-status" role="status">Opening saved houses…</p></footer>
+      </section>
+      <section id="editor-advanced" aria-labelledby="advanced-title" hidden>
+        <h3 id="advanced-title">Advanced: edit the plan file</h3>
+        <p>Changes need a reason, recorded with each fix.</p>
+        <form id="advanced-form">
+          <label for="advanced-plan">Current plan JSON</label>
+          <textarea id="advanced-plan" spellcheck="false" required></textarea>
+          <label for="advanced-reason">Reason (required)</label>
+          <input id="advanced-reason" type="text" required>
+          <div class="editor-actions"><button id="advanced-save" type="submit">Save plan</button>
+            <button id="advanced-close" type="button">Close plan file</button></div>
+        </form>
+      </section>
+      <section id="library-import-settings-content" hidden>
+        <label>Maximum upload size (MB)<input id="library-import-limit" type="number" min="1" max="200" value="50"></label>
+        <label>Maximum unpacked size (MB)<input id="library-import-unpacked-limit" type="number" min="1" max="1000" value="200"></label>
+      </section>
+      <section id="house-materials" hidden></section>
+      <section id="editor-settings" hidden>
+        <button id="menu-reset-spend" type="button" disabled>Reset spend total</button>
+        <button id="menu-edit-timing" type="button" aria-pressed="false">Show edit timing</button>
+        <button id="menu-send-timing" type="button">Send timing report</button>
+      </section>
+    </div>
+    <div id="editor-dialog" aria-modal="true" aria-labelledby="editor-dialog-title" hidden>
+      <section class="editor-dialog-panel">
+        <header class="place-header"><h2 id="editor-dialog-title"></h2><button id="editor-dialog-close" type="button" aria-label="Close dialog">Close</button></header>
+        <div id="editor-dialog-body"></div>
+      </section>
+    </div>
+    <div id="editor-context-menu" role="menu" aria-label="Actions" hidden></div>
   </main>
   {% include 'components/control_center.html' %}
   <script type="module">

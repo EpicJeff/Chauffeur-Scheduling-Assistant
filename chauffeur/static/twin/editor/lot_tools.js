@@ -460,6 +460,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     return true;
   }
   document.addEventListener('keydown', event => {
+    if (document.querySelector('#editor-dialog:not([hidden]), #editor-context-menu:not([hidden])')) return;
     if (!enabled() || event.defaultPrevented || !gesture) return;
     const result = typed.key(event); if (!result) return;
     event.preventDefault(); event.stopImmediatePropagation();

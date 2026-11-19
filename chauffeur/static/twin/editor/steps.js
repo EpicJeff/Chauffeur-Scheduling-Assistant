@@ -1,10 +1,12 @@
 const names = ['Your files', 'Your lot', 'Build', 'Check it', 'Link to Home Assistant'];
 
-export function createSteps(host, { state, onOpen = () => {} }) {
+export function createSteps(host, { state, onOpen = () => {}, tabs = false }) {
   let opened = null, shown = null;
+  if (tabs) host.setAttribute('role', 'tablist');
   const buttons = names.map(name => {
     const button = document.createElement('button'); button.type = 'button';
     button.setAttribute('data-step', name);
+    if (tabs) { button.id = `place-step-${names.indexOf(name)}`; button.setAttribute('role', 'tab'); button.setAttribute('aria-controls', 'place-step-content'); }
     button.addEventListener('click', () => open(name));
     return button;
   });
@@ -31,8 +33,10 @@ export function createSteps(host, { state, onOpen = () => {} }) {
       const status = i === now ? 'now' : done[i] ? 'done' : 'not-yet';
       button.setAttribute('data-state', status);
       button.setAttribute('aria-expanded', String(opened === names[i]));
+      if (tabs) { button.setAttribute('aria-selected', String(opened === names[i])); button.tabIndex = opened === names[i] ? 0 : -1; }
       button.textContent = `${names[i]}${i === 3 && count ? ` (${count})` : ''} · ${status === 'not-yet' ? 'not yet' : status}`;
     });
+    if (tabs && opened) document.getElementById('place-step-content')?.setAttribute('aria-labelledby', buttons[names.indexOf(opened)].id);
     // On a narrow screen the strip scrolls: keep the open step, else the one that is now, in view.
     const lead = buttons[opened ? names.indexOf(opened) : now];
     if (lead && lead !== shown && lead.getBoundingClientRect && host.getBoundingClientRect) {
@@ -46,6 +50,13 @@ export function createSteps(host, { state, onOpen = () => {} }) {
     opened = name; render(); onOpen(name);
   }
   function close() { opened = null; render(); }
+  if (tabs) host.addEventListener('keydown', event => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const at = buttons.indexOf(document.activeElement), index = event.key === 'Home' ? 0 : event.key === 'End' ? names.length - 1
+      : (at + (event.key === 'ArrowRight' ? 1 : -1) + names.length) % names.length;
+    buttons[index].focus(); open(names[index]);
+  });
   render();
-  return { render, open, close };
+  return { render, open, close, activate(name) { opened = name; render(); } };
 }

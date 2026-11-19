@@ -116,6 +116,8 @@ def test_css_contract(p):
     scene = re.findall(r'#editor-scene\s*\{([^}]+)\}', css)[-1]
     assert 'inset: var(--editor-header-bottom, 68px) var(--editor-dock-width) var(--editor-status-height, 52px) 0' in scene
     assert 'width: var(--editor-dock-width)' in css[css.rindex('#editor-dock {'):]
+    adopted = css[css.index('#editor-dialog :is(#place-view, #houses-panel, #editor-front-door, #editor-advanced)'):]
+    assert 'transform: none' in adopted[:adopted.index('}')], 'adopted Houses must shed its old translate(-50%, -50%)'
     print('  ok every pressed icon has contrasting ink/background; canvas reserves exactly dock width')
 
 
@@ -134,6 +136,107 @@ const nodes=config.nodes.map(n=>document.createElement(n.tag));
 config.nodes.forEach((n,i)=>{for(const [k,v] of Object.entries(n.attrs))nodes[i].setAttribute(k,v??'');
  if(!['script','style'].includes(n.tag))nodes[i].textContent=n.text;
  (n.parent===null?document.body:nodes[n.parent]).append(nodes[i]);});
+await test('one centred dialog adopts existing nodes, replaces its predecessor, traps focus and consumes Esc first',async()=>{
+ const {mountDialogs,openDialog,closeDialog}=await import(file('static/twin/editor/dialog.js'));
+ const abort=new AbortController();mountDialogs({signal:abort.signal});
+ const houses=el('houses-panel'),materials=el('house-materials'),parent=houses.parentElement;
+ el('editor-houses').focus();openDialog('houses-panel',{title:'Houses'});
+ assert.equal(houses.hidden,false);assert.ok(el('editor-dialog').contains(houses));
+ openDialog('house-materials',{title:'House materials'});
+ assert.equal(houses.hidden,true);assert.equal(materials.hidden,false);assert.equal(el('editor-dialog').hidden,false);
+ let lower=0;const listener=()=>lower++;document.addEventListener('keydown',listener);
+ el('editor-dialog-close').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ assert.equal(lower,0);assert.equal(el('editor-dialog').hidden,true);assert.equal(materials.hidden,true);
+ assert.equal(document.activeElement,el('editor-menu').querySelector('summary'),'closed menu actions restore focus to its summary');
+ assert.equal(houses.parentElement,parent);assert.equal(el('houses-panel'),houses);
+ document.removeEventListener('keydown',listener);
+ openDialog('houses-panel',{title:'Houses'});
+ const last=el('houses-list'),input=document.createElement('input');last.append(input);input.focus();
+ input.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));
+ assert.equal(document.activeElement,el('editor-dialog-close'));
+ el('editor-dialog-close').dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true,cancelable:true}));
+ assert.equal(document.activeElement,input);input.remove();closeDialog();abort.abort();
+});
+await test('real Houses and Your place entry points share the dialog host; setup retains one accessible tab per step',async()=>{
+ const {mountDialogs}=await import(file('static/twin/editor/dialog.js')),{mountHouses}=await import(file('static/twin/editor/houses.js')),
+  {createPlace}=await import(file('static/twin/editor/place.js')),{createSteps}=await import(file('static/twin/editor/steps.js'));
+ const abort=new AbortController(),dialogs=mountDialogs({signal:abort.signal});
+ mountHouses({dialogs,signal:abort.signal,history:{},canLoad:()=>true,api:{request:async()=>({saves:[]})}});
+ await press(el('editor-houses'));assert.equal(dialogs.current(),'houses-panel');
+ assert.match(el('houses-status').textContent,/No saved houses/);
+ dialogs.openDialog('house-materials',{title:'House materials'});assert.equal(el('houses-panel').hidden,true);
+ const sheets={sources:[],page_roles:[],kinds:[],place:{buildings:[],lot:{}}};let place;
+ const steps=createSteps(el('place-steps'),{state:{model:samplePlan(),sheets},tabs:true,onOpen:name=>place.open(name)});
+ place=createPlace({dialogs,steps,getSheets:()=>sheets,getPlan:samplePlan,getLink:()=>null,canEdit:()=>true,
+  request:async()=>({}),panel:{message(){}},onClose:()=>steps.close()});
+ place.sync(sheets,{});place.open('Your files');assert.equal(dialogs.current(),'place-view');
+ assert.equal(el('house-materials').hidden,true);assert.equal(el('editor-dialog-title').textContent,'Your place');
+ assert.equal(el('place-steps').getAttribute('role'),'tablist');
+ assert.equal(el('place-steps').querySelectorAll('[role="tab"]').length,5);
+ for(const name of ['Your files','Your lot','Build','Link to Home Assistant']) {
+  const tab=el('place-steps').querySelector(`[data-step="${name}"]`);await press(tab);
+  assert.equal(tab.getAttribute('aria-selected'),'true');assert.equal(el('place-view').dataset.stepPanel,name);
+ }
+ place.sync(sheets,{buildState:{state:'running'}});assert.equal(el('place-steps').querySelector('button').disabled,false);
+ const placeNode=el('place-view');el('place-close').click();assert.equal(dialogs.current(),null);assert.equal(el('place-view'),placeNode);
+ abort.abort();
+});
+await test('canvas context menu preserves selection until action; wall split uses hit point; yard object actions reuse transforms',async()=>{
+ const {createSceneTools}=await import(file('static/twin/editor/scene_tools.js'));
+ const {mountDialogs,openDialog}=await import(file('static/twin/editor/dialog.js'));
+ globalThis.ResizeObserver=class {observe(){}disconnect(){}unobserve(){}};
+ const abort=new AbortController();mountDialogs({signal:abort.signal});const {view,canvas}=dockRig(),plan=samplePlan(),ops=[];
+ plan.site.planting=[{id:'tree',kind:'tree',x:15,y:15,scale:1}];
+ let hit={kind:'wall',id:'wall',building:'b',point:[2.58*.3048,8*.3048,-3.44*.3048],distance:1};
+ view.pickAll=()=>[hit];view.setSelection=()=>{};view.setRoom=()=>{};view.setEditableLevel=async()=>{};
+ const tools=createSceneTools({view,getPlan:()=>plan,getModel:()=>plan,getKit:()=>({}),getSheets:()=>({}),
+  op:async operation=>ops.push({operation,selection:tools.selected()}),edit:async()=>{},canEdit:()=>true,signal:abort.signal,panel:{clearSelection(){}}});
+ const right=()=>canvas.dispatchEvent(new MouseEvent('contextmenu',{clientX:333,clientY:222,bubbles:true,cancelable:true}));
+ const labels=()=>el('editor-context-menu').querySelectorAll('button').map(b=>b.textContent);
+ tools.select({pieceId:'chair',buildingId:'b'});right();assert.equal(tools.selected().pieceId,'chair');
+ assert.deepEqual(labels(),['Select','Split wall here','Add door here','Add window here','Delete']);
+ await press(el('editor-context-menu').querySelectorAll('button')[1]);
+ assert.deepEqual(ops[0].operation,{op:'split_wall',building:'b',wall:'wall',at:4.25});
+ assert.equal(ops[0].selection.pieceId,'wall');
+ right();await press(el('editor-context-menu').querySelectorAll('button')[2]);
+ assert.deepEqual({...ops.at(-1).operation,at:4.3},{op:'add_opening',building:'b',wall:'wall',kind:'door',width:3,at:4.3});
+ assert.ok(Math.abs(ops.at(-1).operation.at-4.3)<1e-9);
+ right();await press(el('editor-context-menu').querySelectorAll('button')[3]);assert.equal(ops.at(-1).operation.kind,'window');
+ hit={kind:'planting',id:'tree',distance:1};right();assert.equal(tools.selected().pieceId,'wall');
+ assert.deepEqual(labels(),['Select','Move','Turn','Scale','Mirror left-right','Mirror front-back','Delete']);
+ await press(el('editor-context-menu').querySelectorAll('button')[4]);
+ assert.deepEqual(ops.at(-1).operation,{op:'set_object',list:'planting',index:0,properties:{mirror_x:true}});
+ openDialog('houses-panel',{title:'Houses'});right();
+ document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ assert.equal(el('editor-context-menu').hidden,true);assert.equal(el('editor-dialog').hidden,false);
+ document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ assert.equal(el('editor-dialog').hidden,true);assert.equal(tools.selected().pieceId,'tree');
+ for(const [index,name] of [[1,'move'],[2,'rotate'],[3,'scale']]) {
+  right();await press(el('editor-context-menu').querySelectorAll('button')[index]);
+  assert.equal(el('rail-'+name).getAttribute('aria-pressed'),'true');
+ }
+ // An overlay consumes Escape before the armed split tool or selection can change.
+ hit={kind:'wall',id:'wall',building:'b',distance:1};tools.select(hit);
+ await press(el('piece-card').querySelectorAll('button').find(b=>b.textContent==='Split wall'));
+ openDialog('houses-panel',{title:'Houses'});
+ document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ assert.match(el('editor-status').textContent,/Click the wall where it should split/);assert.equal(tools.selected().pieceId,'wall');
+ document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ assert.equal(tools.selected().pieceId,'wall');assert.doesNotMatch(el('editor-status').textContent,/Click the wall where it should split/);
+ tools.drawFloors();const floor=el('editor-floors').querySelector('[data-floor="b:L1"]');
+ floor.dispatchEvent(new MouseEvent('contextmenu',{clientX:900,clientY:200,bubbles:true,cancelable:true}));
+ assert.deepEqual(labels(),['Show','Hide','Choose']);
+ await press(el('editor-context-menu').querySelectorAll('button')[2]);assert.equal(tools.selected().pieceId,'L1');
+ let cancelled=0,typed=0;tools.delegate({pointerArmedDown(){view.controls.enabled=false;return true;},pointerUp(_event,cancel){if(cancel)cancelled++;return true;},key(event){if(event.key!=='2')return false;typed++;return 'commit';}});
+ canvas.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:92,clientX:20,clientY:20,bubbles:true,cancelable:true}));
+ openDialog('houses-panel',{title:'Houses'});
+ el('editor-dialog-close').dispatchEvent(new KeyboardEvent('keydown',{key:'2',bubbles:true,cancelable:true}));assert.equal(typed,0);
+ document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ assert.equal(cancelled,0);assert.equal(view.controls.enabled,false);assert.equal(tools.selected().pieceId,'L1');
+ document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ assert.equal(cancelled,1);assert.equal(view.controls.enabled,true);assert.equal(tools.selected().pieceId,'L1');
+ abort.abort();canvas.remove();
+});
 await test('dock preserves nodes, separates tabs from Properties, gives tool options priority and resizes',async()=>{
  const {createDock}=await import(file('static/twin/editor/dock.js'));
  const dock=createDock({host:el('editor-dock')});
@@ -302,6 +405,36 @@ await test('Library opens by tab, rail and material Change without clearing scen
  assert.equal(el('editor-message').selectionEnd,el('editor-message').value.length);
  assert.deepEqual(selection,{pieceId:'wall',buildingId:'b'});panel.dispose();abort.abort();dock.dispose();globalThis.fetch=window.fetch=previousFetch;
 });
+await test('material drag still opens its own scope menu at the drop point; Library menus and import settings retain their actions',async()=>{
+ const {createLibrary}=await import(file('static/twin/editor/library.js')),{mountDialogs}=await import(file('static/twin/editor/dialog.js')),
+  {createContextMenu}=await import(file('static/twin/editor/context_menu.js'));
+ const abort=new AbortController(),dialogs=mountDialogs({signal:abort.signal}),{view,canvas}=dockRig(),plan=samplePlan();
+ const previous=window.fetch,elementAt=document.elementFromPoint;const ops=[];
+ globalThis.fetch=window.fetch=async url=>({ok:true,status:200,text:async()=>String(url).endsWith('/imports')?'[]':JSON.stringify({
+  materials:[{id:'stone',name:'Stone',thumbnail_url:'/stone.png'}],items:[],imports:[{id:'import-chair',name:'Chair',thumbnail_url:'/chair.png'}]})});
+ document.elementFromPoint=()=>canvas;view.pick=()=>({kind:'room',id:'room',building:'b',part:'floor'});
+ el('library-panel').hidden=true;
+ const library=createLibrary({dialogs,createMenu:createContextMenu,view,kit:{},getPlan:()=>plan,tools:{selection:()=>({}),handles:()=>[]},
+  op:async operation=>ops.push(operation),canEdit:()=>true,signal:abort.signal});
+ await press(el('rail-library'));const tile=el('library-entries').querySelector('[data-material="stone"]');assert.ok(tile);
+ tile.dispatchEvent(new MouseEvent('contextmenu',{clientX:900,clientY:250,bubbles:true,cancelable:true}));
+ assert.deepEqual(el('editor-context-menu').querySelectorAll('button').map(b=>b.textContent),['Edit in Library']);
+ document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ tile.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:78,clientX:50,clientY:60,bubbles:true,cancelable:true}));
+ document.dispatchEvent(new PointerEvent('pointerup',{pointerId:78,clientX:500,clientY:400,bubbles:true,cancelable:true}));
+ const chooser=el('material-chooser');assert.ok(chooser);assert.equal(chooser.style.left,'500px');assert.equal(chooser.style.top,'400px');
+ assert.equal(chooser.getAttribute('role'),'group');assert.equal(dialogs.current(),null);assert.equal(el('editor-context-menu').hidden,true);
+ assert.ok(chooser.querySelectorAll('button').some(b=>b.textContent==='This room'));
+ await press(chooser.querySelector('button'));assert.equal(ops.length,1);assert.equal(chooser.isConnected,false);
+ const settings=el('library-import-settings');await press(settings.querySelector('summary'));
+ assert.equal(dialogs.current(),'library-import-settings-content');assert.equal(el('library-import-settings'),settings);
+ assert.ok(el('editor-dialog').contains(el('library-import-limit')));dialogs.closeDialog();
+ await press(el('library-panel').querySelector('[data-library-tab="items"]'));
+ const imported=el('library-entries').querySelector('[data-item="import-chair"]');
+ imported.dispatchEvent(new MouseEvent('contextmenu',{clientX:900,clientY:250,bubbles:true,cancelable:true}));
+ assert.deepEqual(el('editor-context-menu').querySelectorAll('button').map(b=>b.textContent),['Rename Chair','Delete Chair']);
+ abort.abort();canvas.remove();globalThis.fetch=window.fetch=previous;document.elementFromPoint=elementAt;
+});
 await test('check queue uses Properties and forced edit timing appears inside folded History',async()=>{
  const {createDock}=await import(file('static/twin/editor/dock.js')),{createChecks}=await import(file('static/twin/editor/checks.js')),
   {mountEditTiming}=await import(file('static/twin/edit_timing.js'));
@@ -408,13 +541,14 @@ await test('one shared cancel handler preserves fixture Done and device cancella
 });
 await test('real editor boot shows generation bar only for running, paused or resumable work',async()=>{
  location.search='?test=1';
- let build=null;const buildWrites=[];
+ let build=null;const buildWrites=[];let setupBuildings=[{id:'b',name:'Our house',kind:'main_house',shell:{storeys:1,roof:'gable'}}];
  const plan={buildings:[{id:'b',name:'Our house',levels:[],walls:[],rooms:[],roofs:[]}],site:{}};
+ globalThis.realCreatePlace=(await import(file('static/twin/editor/place.js'))).createPlace;
  globalThis.editorView={scene:{},state:{},dispose(){},setTime(){},setUnlit(){},rebuild:async()=>{}};
  const response=body=>({ok:true,status:200,text:async()=>JSON.stringify(body)});
  globalThis.fetch=window.fetch=async (url,init={})=>{
   const path=String(url).split('api/house/')[1];
-  if(path==='editor/sheets')return response({sources:[],page_roles:[],place:{buildings:[{id:'b'}]}});
+  if(path==='editor/sheets')return response({sources:[],page_roles:[],kinds:[],place:{buildings:setupBuildings,lot:{}}});
   if(path==='twin/kit/modern_farmhouse')return response({});
   if(path==='editor/state')return response({plan,model:plan,rounds:[],cost:{},build:build?.id??null});
   if(path==='editor/session')return response({});
@@ -425,11 +559,14 @@ await test('real editor boot shows generation bar only for running, paused or re
   throw Error('unexpected request '+path);
  };
  const stubs='data:text/javascript,'+encodeURIComponent(config.stubs.replace('CARDS_URL',file('static/twin/editor/cards.js'))
+  .replace('return {select,selected:', 'return {floor:()=>null,select,selected:')
   .replace('dismissed:()=>false','dismissed:()=>true')
   .replace('export const createChecks=()=>({sync(){},dismiss(){}});','export const createChecks=()=>({sync(){},dismiss(){},show(){globalThis.checkShown=true;}});')
-  .replace("export const createPlace=()=>({sync(){},isOpen:()=>false});","export const createPlace=()=>({sync(){},close(){},isOpen:()=>false,open(name){globalThis.openedPlaceStep=name;}});"));
- registerHooks({resolve(spec,ctx,next){if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js','./icons.js','./steps.js','./dock.js'].includes(spec))return {url:stubs,shortCircuit:true};return next(spec,ctx);}});
- const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready);
+  .replace("export const createPlace=()=>({sync(){},isOpen:()=>false});","export const createPlace=options=>{const place=globalThis.realCreatePlace(options);return {...place,open(name){globalThis.openedPlaceStep=name;place.open(name);}};};"));
+ registerHooks({resolve(spec,ctx,next){if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js','./icons.js','./steps.js','./dock.js','./dialog.js','./context_menu.js','./house_materials.js'].includes(spec))return {url:stubs,shortCircuit:true};return next(spec,ctx);}});
+ const bootErrors=[];window.showGlobalAlert=value=>bootErrors.push(value);
+ const {boot}=await import(file('static/twin/editor/editor.js'));await boot();assert.ok(window.__editor.ready,JSON.stringify(bootErrors));
+ assert.equal(el('editor-dialog-title').textContent,'Your place');assert.equal(el('place-view').hidden,false);
  assert.equal(el('editor-genbar').hidden,true);
  for(const step of ['Your files','Your lot','Build','Link to Home Assistant']) {
   await press(el('place-steps').querySelectorAll('button').find(b=>b.dataset.step===step));assert.equal(globalThis.openedPlaceStep,step);
@@ -452,6 +589,24 @@ await test('real editor boot shows generation bar only for running, paused or re
   assert.equal(button.querySelector('svg').getAttribute('fill'),'none',button.id);button.setAttribute('aria-pressed',was);
  }
  assert.equal(el('editor-house-name').textContent,'Our house');
+ const {closeDialog}=await import(file('static/twin/editor/dialog.js'));closeDialog();
+ const advanced=el('editor-advanced');await press(el('menu-advanced'));
+ assert.ok(el('editor-dialog').contains(advanced));assert.match(el('advanced-plan').value,/Our house/);
+ await press(el('advanced-close'));assert.equal(advanced.hidden,true);
+ await press(el('properties-house-materials'));assert.equal(el('editor-dialog-title').textContent,'House materials');
+ const expectedMaterials=document.createElement('div');
+ (await import(file('static/twin/editor/house_materials.js'))).houseMaterialsShelf(expectedMaterials,plan.buildings[0],{getPlan:()=>plan,canEdit:()=>true,op:async()=>{}});
+ assert.deepEqual(el('house-materials').querySelectorAll('[data-material-slot]').map(n=>n.dataset.materialSlot),
+  expectedMaterials.querySelectorAll('[data-material-slot]').map(n=>n.dataset.materialSlot));
+ await press(el('menu-settings'));assert.equal(el('house-materials').hidden,true);
+ assert.ok(el('editor-dialog').contains(el('menu-reset-spend')));closeDialog();
+ setupBuildings=[];plan.buildings=[];await globalThis.houseOptions.afterLoad({round:1});
+ assert.equal(el('editor-front-door').hidden,false);assert.ok(el('editor-dialog').contains(el('editor-front-door')));
+ assert.ok(el('editor-front-door').contains(el('editor-draw-myself')));
+ document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ await window.__editor.pollNow(true);assert.equal(el('editor-dialog').hidden,true,'poll must not reopen dismissed welcome');
+ await press(el('editor-add-files'));assert.equal(el('editor-dialog-title').textContent,'Your place');
+ assert.equal(el('place-view').hidden,false);
  window.dispatchEvent(new Event('pagehide'));
 });
 assert.deepEqual(domErrors,[]);assert.deepEqual(escaped,[]);

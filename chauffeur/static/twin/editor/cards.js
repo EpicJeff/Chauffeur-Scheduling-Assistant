@@ -65,7 +65,7 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock }) {
+export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials }) {
   let namesAsked = false;
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
@@ -229,7 +229,8 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (kindIsEquipment(record)) equipmentShelf.draw(host, record);
     if (kind === 'building') {
       foundationShelf(host, piece, { getPlan, getKit, canEdit, queue, op, report, preview });
-      houseMaterialsShelf(host, piece, { getPlan, getKit, canEdit, op: operation => queue(() => canEdit() && op(operation)), report });
+      if (openHouseMaterials) host.append(button('House materials', () => openHouseMaterials(piece.id)));
+      else houseMaterialsShelf(host, piece, { getPlan, getKit, canEdit, op: operation => queue(() => canEdit() && op(operation)), report });
     }
     if (kind === 'room' && piece.kind === 'porch') porchFoundationShelf(host, piece, building,
       { getPlan, getKit, canEdit, queue, op, report, onSaved: () => draw() });

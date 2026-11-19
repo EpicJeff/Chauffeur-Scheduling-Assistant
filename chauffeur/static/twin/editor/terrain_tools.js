@@ -410,7 +410,11 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       if (key !== sceneKey) {
         sceneKey = key;
         const host = document.getElementById('scene-yard'); host.replaceChildren(); drawPadList(host);
-        for (const row of siteRows(getPlan())) host.append(button(`${words[row.kind]} ${row.index + 1}`, () => choose(row.kind, row.piece.id)));
+        for (const row of siteRows(getPlan())) {
+          const entry = button(`${words[row.kind]} ${row.index + 1}`, () => choose(row.kind, row.piece.id));
+          listen(entry, 'contextmenu', event => { event.preventDefault(); tools.openContextMenu?.(event, { kind: row.kind, id: row.piece.id }); });
+          host.append(entry);
+        }
       }
     }
     if (chosen && !current()) { chosen = null; menu = true; }
@@ -518,7 +522,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
   }, { capture: true });
   listen(document, 'keydown', event => {
     if (card.hidden || event.target.closest?.('input,textarea,select,[contenteditable="true"]')) return;
-    if (document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), dialog[open]')) return;
+    if (document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), dialog[open], #editor-dialog:not([hidden]), #editor-context-menu:not([hidden])')) return;
     if (event.key === 'Escape') { close(); event.stopImmediatePropagation(); }
     else if (drawing && event.key === 'Enter') { event.preventDefault(); event.stopImmediatePropagation(); finishDrawing(); }
     else if (drawing && event.key === 'Backspace') { event.preventDefault(); event.stopImmediatePropagation(); draft.back(); drawCard(); graphics(); }

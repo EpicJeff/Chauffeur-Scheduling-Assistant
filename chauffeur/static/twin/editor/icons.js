@@ -31,6 +31,7 @@ const paths = {
   library: 'M2 3h5v18H2Zm7 0h5v18H9Zm7 1 4-1 3 17-4 1Z',
   floor: 'm3 7 9-4 9 4-9 4Zm0 5 9 4 9-4M3 17l9 4 9-4',
   view: 'm12 2 9 5v10l-9 5-9-5V7Zm0 10 9-5m-9 5L3 7m9 5v10',
+  eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
 };
 
 export function icon(name) {

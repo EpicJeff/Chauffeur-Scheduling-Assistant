@@ -41,7 +41,7 @@ export function plotSuggestionCard({ read, suggestion, buildings, kinds, draft, 
   return card;
 }
 
-export function createPlace({ request, getSheets, reload, follow, canEdit, panel, lotTools, onClose, getLink, getPlan }) {
+export function createPlace({ request, getSheets, reload, follow, canEdit, panel, lotTools, onClose, getLink, getPlan, dialogs, steps }) {
   const host = el('place-view');
   let sheets = getSheets(), snapshot = {}, rows = [], saved = [], busy = false, working = null, signature = '', returnFocus = null;
   let footprints = new Map();
@@ -89,7 +89,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
   function controls() {
     const blocked = stopped();
     host.querySelectorAll('input, select, button').forEach(control => {
-      if (control.id !== 'place-close') control.disabled = control.matches('[data-place-upload], [data-place-tag]') ? stopped(true) : blocked;
+      if (control.id !== 'place-close' && control.dataset.step === undefined) control.disabled = control.matches('[data-place-upload], [data-place-tag]') ? stopped(true) : blocked;
     });
     host.querySelectorAll('[data-place-build]').forEach(button => {
       button.disabled = blocked || dirty() || !ready(button.dataset.placeBuild);
@@ -191,6 +191,11 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
       : 'This reads your documents and adds to the running cost. Continue?', 'Continue', 'Cancel')) await action();
   }
   function close(notify = true) {
+    if (dialogs) {
+      if (dialogs.current() !== 'place-view') return;
+      const callback = notifyClose; notifyClose = notify !== false;
+      dialogs.closeDialog('place-view'); notifyClose = callback; return;
+    }
     host.hidden = true;
     if (notify !== false) onClose?.();
     if (returnFocus?.isConnected && !returnFocus.closest('[hidden]')) returnFocus.focus();
@@ -199,7 +204,9 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
   function open(name = 'Your files') {
     returnFocus = document.activeElement;
     currentStep = name;
-    host.hidden = false;
+    if (dialogs) dialogs.openDialog('place-view', { title: 'Your place', onClose: () => { if (notifyClose) onClose?.(); } });
+    else host.hidden = false;
+    steps?.activate(name);
     host.setAttribute('data-step-panel', name); host.setAttribute('aria-label', name);
     el('place-title').textContent = name;
     el('place-about').textContent = about[name] || '';
@@ -501,7 +508,9 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     render();
   }
   el('place-close').addEventListener('click', () => close());
+  let notifyClose = true;
   host.addEventListener('keydown', event => {
+    if (dialogs) return;
     if (event.key === 'Escape') { event.preventDefault(); close(); }
   });
   el('place-add-form').addEventListener('submit', event => {

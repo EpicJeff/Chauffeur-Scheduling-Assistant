@@ -205,7 +205,7 @@ function createThumbnails(kit) {
   return { picture, dispose() { disposed = true; renderer.dispose(); renderer.forceContextLoss(); } };
 }
 
-export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, onInteract, dock }) {
+export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, onInteract, dock, dialogs, createMenu }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement, host = el('library-panel');
   const raycaster = new THREE.Raycaster(), thumbnails = { current: null };
   let catalog = null, loading = null, tab = 'materials', drag = null, siteDrag = null, chooser = null, picking = null;
@@ -214,6 +214,12 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   const hint = 'Drag a thumbnail onto the house or yard.';
   const outline = new THREE.Box3Helper(new THREE.Box3(), '#52ccff'); outline.visible = false; view.scene.add(outline);
   const listen = (node, type, action, options = {}) => node.addEventListener(type, action, { ...options, signal });
+  const rowMenu = createMenu?.({ signal, items: target => target.actions.map(node => ({ label: node.textContent,
+    disabled: node.disabled, run: () => node.click() })) });
+  if (dialogs) listen(el('library-import-settings').querySelector('summary'), 'click', event => {
+    event.preventDefault();
+    dialogs.openDialog('library-import-settings-content', { title: 'Import settings' });
+  });
   function ray(event) {
     const r = canvas.getBoundingClientRect(); view.camera.updateMatrixWorld(true);
     raycaster.setFromCamera(new THREE.Vector2((event.clientX - r.left) / r.width * 2 - 1, 1 - (event.clientY - r.top) / r.height * 2), view.camera);
@@ -374,11 +380,13 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       button.setAttribute('aria-label', entry.name); button.style.touchAction = 'none';
       const image = document.createElement('img'); image.alt = ''; image.draggable = false; image.width = 112; image.height = 96;
       const name = document.createElement('span'); name.textContent = entry.name; button.append(image, name);
+      const rowActions = [];
       if (tab === 'materials') {
         const tile = document.createElement('div'); tile.className = 'library-material-tile'; grid.append(tile); tile.append(button);
         const edit = document.createElement('a'); edit.textContent = 'Edit in Library'; edit.href = libraryMaterialHref(entry.id);
         edit.target = '_blank'; edit.rel = 'noopener'; edit.className = 'library-edit-link';
         edit.setAttribute('aria-label', `Edit ${entry.name} in Library`); tile.append(edit);
+        rowActions.push(edit);
       } else grid.append(button);
       if (entry.thumbnail_url) image.src = entry.thumbnail_url;
       else if (entry.thumbnail) image.src = libUrl(entry.id, entry.thumbnail);
@@ -408,12 +416,16 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
               }
             } catch (error) { report(error); }
           }); grid.append(control);
+          rowActions.push(control);
         }
       }
       listen(button, 'pointerdown', event => {
         if (event.button !== 0 || !canEdit()) return;
         onInteract?.(); dismiss(); event.preventDefault(); button.setPointerCapture(event.pointerId);
         drag = { entry, material: tab === 'materials', x: event.clientX, y: event.clientY, pointer: event.pointerId };
+      });
+      if (rowMenu) listen(button, 'contextmenu', event => {
+        event.preventDefault(); rowMenu.open(event, { actions: rowActions });
       });
       listen(button, 'click', () => {
         if (!picking || tab !== 'materials' || !canEdit()) return;
@@ -430,6 +442,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       for (const row of hidden) {
         const button = document.createElement('button'); button.type = 'button'; button.textContent = `Select hidden: ${row.piece.name || row.id}`;
         listen(button, 'click', () => tools.select({ pieceId: row.id, buildingId: row.building })); grid.append(button);
+        if (rowMenu) listen(button, 'contextmenu', event => { event.preventDefault(); rowMenu.open(event, { actions: [button] }); });
       }
     }
     host.querySelectorAll('[data-library-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.libraryTab === tab)));
