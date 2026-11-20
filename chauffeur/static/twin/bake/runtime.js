@@ -3,7 +3,7 @@ import { base, copyMaterialParams } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, patchLightmaps, setLightTint, pickTranscode,
-  setLightSource, setChartFill, setRoomFill, clearFills, roomRegions, patchWindowGlow, needsFixtureShader } from './lightmap_material.js';
+  setLightSource, setChartFill, setRoomFill, clearFills, roomRegions, patchWindowGlow, needsFixtureShader, bankLayerBases } from './lightmap_material.js';
 import { lightSource } from './reach.js';
 import { resolveEmitters, emitterSignature } from '../live/emitters.js';
 import { kindOf, exactRects } from './fixture_terms.js';
@@ -123,7 +123,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   const owner = [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
   let stopped = false, allowed = false, atlas = null, pending = null, layout = requestedLayout || options(8);
   let lights = [], lightsKey = '', packed = null, uniforms = null, pages = null;
-  let layers = [], baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
+  let layers = [], bankBase = [], layerOverflow = false, baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
   let dragging = false, stillAt = performance.now(), generation = 0;
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
   let failure = '', errorReason = null, manifestText = null, initialized = false, mounting = null;
@@ -193,7 +193,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     const width = Math.max(1, packed.banks.length), t = roomRegions(packed.banks.length, atlas.room.rooms.length);
     packed.banks.forEach((bank, b) => bank.rooms.forEach(({ room, sourceRegion, region }) => {
       t.image.data.set([(region.x - sourceRegion.x) / layout.room.page,
-        (region.y - sourceRegion.y) / layout.room.page, Math.max(0, layers[b].indexOf(region.page)), 0], (room * width + b) * 4);
+        (region.y - sourceRegion.y) / layout.room.page, bankBase[b] + Math.max(0, layers[b].indexOf(region.page)), 0], (room * width + b) * 4);
     }));
     t.needsUpdate = true; return t;
   }
@@ -322,26 +322,43 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     for (const t of textures) t.dispose();
     textures.clear();
     if (uniforms) for (const name of ['lmTints', 'lmRegions']) uniforms[name]?.value.dispose();
+    pages = uniforms = null;
+    etags.clear(); present.clear(); pageErrors.clear(); manifestText = null; fresh.clear();
     lights = list; lightsKey = JSON.stringify(list);
     packed = bakeLayout(atlas, layout, lights, history, manifest?.lights);
     if (packed.banks.some(b => b.chartPacking)) applyChartIndices(atlas);
     // A bank page no placed light writes to (bank zero reserves unlit rooms,
-    // Ruling B12) is never fetched or held on the GPU: each bank's array keeps
-    // only its lit pages, and lmRegions maps a page to its layer.
+    // Ruling B12) is never fetched or held on the GPU. All lit pages share one
+    // array, ordered by bank then page; lmRegions carries the merged layer.
     layers = packed.banks.map((b, i) => [...new Set(Object.values(packed.entries).flatMap(e => e.pages || [e.page]).map(p => p - packed.offsets[i])
       .filter(p => p >= 0 && p < b.pages))].sort((a, c) => a - c));
+    bankBase = bankLayerBases(layers);
+    const layerCount = layers.reduce((n, list) => n + list.length, 0);
+    const gl = view.renderer3.getContext?.();
+    const maxLayers = gl?.getParameter?.(gl.MAX_ARRAY_TEXTURE_LAYERS) ?? 256;
+    if (layerOverflow && layerCount <= maxLayers) { failure = ''; errorReason = null; }
+    layerOverflow = layerCount > maxLayers;
+    stale = lights.map(l => l.device);
+    if (layerOverflow) {
+      // Never split into more samplers or draw a partial bake. The live rig
+      // already handles stale lights on every tier, including read-only panels.
+      errorReason = `Baked lighting needs ${layerCount} array layers; this GPU supports ${maxLayers}. Using real-time lighting.`;
+      failure = errorReason; retained = null;
+      Promise.resolve(view.live?.refresh()).catch(reportError);
+      view.reflectionsChanged?.(); view.render(); showProgress();
+      return;
+    }
     uniforms = packed.banks.some(b => b.chartPacking)
       ? chartLightmapUniforms(atlas.room.charts.length, packed, lights, layout.room.page, layers)
       : lightmapUniforms(atlas.room.rooms.length, Math.max(2, packed.banks.length * 2), {fixtures: needsFixtureShader(lights)});
     if (!uniforms.lmRegions) uniforms.lmRegions = { value: regions() };
     const roomFormat = pickTranscode(view.renderer3.extensions, 2);
-    pages = {
-      // A bank with no lit page holds one 4x4 placeholder layer (one compressed block).
-      banks: packed.banks.map((b, i) => layers[i].length ? blankArray(layers[i].length, roomFormat, layout.room.page)
-        : blankArray(1, roomFormat, 4)) };
+    // Keep the texture-list hook shape, now with exactly one physical array.
+    // Empty banks cost no layers; an entirely empty bake needs one tiny placeholder.
+    pages = { banks: [blankArray(layerCount, roomFormat, layerCount ? layout.room.page : 4)],
+      bankBase, bankLayers: layers.map(list => list.length) };
     pages.banks.forEach(t => textures.add(t));
     setSources();
-    etags.clear(); present.clear(); pageErrors.clear(); manifestText = null; fresh.clear();
     if(retained?.key===atlas.key && JSON.stringify(retained.layers)===JSON.stringify(layers) &&
         retained.banks.length===pages.banks.length && retained.banks.every((t,i)=>t.format===pages.banks[i].format &&
           t.image.width===pages.banks[i].image.width && t.image.depth===pages.banks[i].image.depth)) {
@@ -371,7 +388,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   function locate(p) {
     for (let i = 0; i < layers.length; i++) {
       const layer = layers[i].indexOf(p - packed.offsets[i]);
-      if (layer >= 0) return { texture: pages.banks[i], layer };
+      if (layer >= 0) return { texture: pages.banks[0], layer: bankBase[i] + layer };
     }
     return null;
   }
@@ -406,6 +423,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       if(!sameSlots(next.ownership,packed.ownership)) prepare(lights,m.ownership,m);
       else packed=next;
     }
+    if (!pages) return; // A new ownership layout may exceed the GPU's layer limit.
     if(packed.ownershipReset)m={...m,lights:{}};
     let changed = text !== manifestText;
     manifestText = text;
@@ -472,7 +490,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     if (allowed && !running) run();
   }
   async function run(force = false) {
-    if (!allowed || !valid() || !atlas) return;
+    if (!allowed || !valid() || !atlas || layerOverflow) return;
     if (running) { pendingForce ||= force; return; }
     failure = ''; errorReason = null; progress = { done: 0, total: force ? lights.length : stale.length };
     running = true; showProgress();
@@ -482,7 +500,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       const initialStale = await baker.staleLights();
       if (!valid() || mine !== generation || input !== lightsKey) return;
       stale = initialStale; progress = baker.progress(); showProgress();
-      while (valid() && mine === generation && input === lightsKey) {
+      while (valid() && mine === generation && input === lightsKey && !layerOverflow) {
         await idle();
         const id = await baker.bakeNext(); if (!id || !valid() || mine !== generation || input !== lightsKey) break;
         baked.push(id); progress = baker.progress(); stale = await baker.staleLights(); showProgress();
@@ -527,12 +545,12 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       ...progress, baked: [...baked], stale: [...stale], error: errorReason || pageReason() }),
     fresh: () => valid() ? [...fresh] : [], light, idle, refresh,
     occlusionRoot: () => atlas?.sourceRoot || root,
-    snapshot: () => atlas && pages ? {key:atlas.key,layers,banks:pages.banks,present:[...present],etags:[...etags],manifest:pageManifest} : null,
+    snapshot: () => atlas && pages ? {key:atlas.key,layers,bankBase,banks:pages.banks,present:[...present],etags:[...etags],manifest:pageManifest} : null,
     refreshMaterials(ids) {
       for (const { original, material } of clones) if (ids.includes(original.userData.materialId)) copyMaterialParams(original, material);
     },
     materialsChanged(ids = null) {
-      if (!valid() || !atlas) return false;
+      if (!valid() || !atlas || layerOverflow) return false;
       if(ids)controller.refreshMaterials(ids);
       if (!invalidateMaterialReach(atlas.room, ids)) return false;
       ++generation;
@@ -558,16 +576,17 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       if(allowed && !running)run();
       return true;
     },
-    // The lightmap arrays as held: per array its layer size and layer count, plus what
-    // the GPU has been told to upload (test hooks).
+    // Logical banks retain their lit-page metadata; the texture/version/update
+    // lists describe the single physical array and its merged layer indices.
     held: () => pages ? {
-      banks: pages.banks.map((t, i) => ({ size: t.image.width, layers: t.image.depth, pages: packed.banks[i].pages, lit: [...layers[i]] })),
+      banks: packed.banks.map((b, i) => ({ size: pages.banks[0].image.width, layers: layers[i].length, base: bankBase[i], pages: b.pages, lit: [...layers[i]] })),
       versions: { banks: pages.banks.map(t => t.version) },
       ids: { banks: pages.banks.map(t => t.uuid) },
       updates: { banks: pages.banks.map(t => [...t.layerUpdates]) },
       textures: { banks: [...pages.banks] } } : null,
     // Which charts each light was given and where (test hook, as held()).
     packing: () => packed && atlas ? { entries: packed.entries, fallback: packed.fallback || [],
+      offsets: [...packed.offsets],
       slots: Object.fromEntries(Object.entries(packed.slots).map(([id, s]) => [id, (s.assignments || []).map(a => [a.chart, a.bank, a.channel])])),
       charts: atlas.room.charts.map(c => ({ id: c.id, room: c.room, page: c.page, rect: c.rect, heightfield: !!c.heightfield, outdoor: !!c.outdoor })),
       banks: packed.banks.map(b => ({ pages: b.pages, charts: b.charts.map(c => [c.id, c.page, c.rect]) })), layers: layers.map(l => [...l]) } : null,

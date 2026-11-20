@@ -92,7 +92,7 @@ await test('stock, real bake, viewing, grass, water, granite and glass keep patc
  });
  const byName=Object.fromEntries(rows.map(r=>[r.label,r]));
  assert.equal(byName.lightmap.shader.uniforms.lmTints,lm.lmTints);
- assert.equal(byName.lightmap.shader.uniforms.lmBank0.value,page);
+ assert.equal(byName.lightmap.shader.uniforms.lmBanks.value,page);
  assert.ok(byName.lightmap.expanded.fragment.includes('vec3 lmFill = vec3(0.0)')&&byName.lightmap.expanded.vertex.includes('vLmUV = uv3; vLmRoom = lmRoom;'));
  assert.equal(byName.grass.shader.uniforms.grassTime,byName.grass.material.userData.grassUniforms.grassTime);
  assert.ok(byName.grass.expanded.vertex.includes('float grassKeep')&&byName.grass.expanded.fragment.includes('lawnBlade'));
