@@ -111,8 +111,8 @@ export function installCloudShadow(scene,clouds) {
     }});
   }
   const previous=scene.onBeforeRender;
-  const walk=oncePerFrame(()=>prepare());
-  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);walk(renderer);};
+  const walk=oncePerFrame(scene,()=>prepare());
+  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);walk();};
   function sample(x,z) {
     const bounds=uniforms.cloudShadowBounds.value;
     if(bounds.w<.5)return 1;

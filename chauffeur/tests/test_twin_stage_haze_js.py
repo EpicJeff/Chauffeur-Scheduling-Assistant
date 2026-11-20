@@ -11,7 +11,7 @@ const THREE=await import('three');
 // The renderer double otherwise omits the real renderer's scene lifecycle.
 const draw=Renderer.prototype.render;
 Renderer.prototype.render=function(scene,camera){scene.onBeforeRender?.(this,scene,camera);return draw.call(this,scene,camera);};
-const {installStageHaze,stageFade}=await import(file('static/twin/sky/stage_haze.js'));
+const {installStageHaze,stageFade,startEnvironmentFrame}=await import(file('static/twin/sky/stage_haze.js'));
 const {mountTimeScrub}=await import(file('static/twin/sky/time_scrub.js'));
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
 const {buildYard,yardPartKeys}=await import(file('static/twin/twin_yard.js'));
@@ -139,20 +139,27 @@ await test('lawn continuation is a disc to 1.4R; changing radius rebuilds only t
   assert.ok(Math.abs(farthest-stage.radius*1.4)<.001,`disc extent ${farthest} wanted ${stage.radius*1.4}`);
  }
 });
-await test('the scene hook walks once per renderer frame, not once per pass',()=>{
+await test('the scene hook walks once per twin frame, not once per pass',()=>{
  // 2026-11-20 owner profile: three installers walked the whole scene before the
- // mirror, AO, beauty and probe passes of every frame.
+ // mirror, AO, beauty and probe passes of every frame. three r187 bumps
+ // info.render.frame on every render call, so the frame is the twin's own count.
  const scene=new THREE.Scene(),haze=installStageHaze(scene,{horizon:()=>new THREE.Color(.1,.2,.3)});
  const bound=m=>m.customProgramCacheKey().includes('|stage-haze-1');
  const info={render:{frame:7}},renderer={info,getRenderTarget:()=>null,toneMappingExposure:1};
+ const pass=()=>{info.render.frame++;scene.onBeforeRender(renderer,scene,new THREE.PerspectiveCamera());};
+ // Nobody counts this scene's frames yet: every pass walks, as before.
+ const early=new THREE.MeshStandardMaterial();scene.add(new THREE.Mesh(new THREE.BoxGeometry(),early));
+ pass();assert.ok(bound(early),'an uncounted scene walks');
+ startEnvironmentFrame(scene);
  const first=new THREE.MeshStandardMaterial();scene.add(new THREE.Mesh(new THREE.BoxGeometry(),first));
- scene.onBeforeRender(renderer,scene,new THREE.PerspectiveCamera());assert.ok(bound(first),'first pass of a frame binds');
+ pass();assert.ok(bound(first),'first pass of a frame binds');
  const late=new THREE.MeshStandardMaterial();scene.add(new THREE.Mesh(new THREE.BoxGeometry(),late));
- scene.onBeforeRender(renderer,scene,new THREE.PerspectiveCamera());assert.ok(!bound(late),'a later pass of the same frame does not walk');
- info.render.frame++;scene.onBeforeRender(renderer,scene,new THREE.PerspectiveCamera());assert.ok(bound(late),'the next frame walks');
- // A renderer without frame bookkeeping (autoReset counts each render) still walks every time.
- const other=new THREE.MeshStandardMaterial();scene.add(new THREE.Mesh(new THREE.BoxGeometry(),other));
- scene.onBeforeRender({getRenderTarget:()=>null},scene,new THREE.PerspectiveCamera());assert.ok(bound(other));
+ pass();pass();assert.ok(!bound(late),'later passes of the same frame do not walk, though three counted them');
+ startEnvironmentFrame(scene);pass();assert.ok(bound(late),'the next frame walks');
+ // Frames are per scene: another scene's frame does not skip this one's walk.
+ const other=new THREE.Scene();startEnvironmentFrame(other);startEnvironmentFrame(other);
+ const again=new THREE.MeshStandardMaterial();scene.add(new THREE.Mesh(new THREE.BoxGeometry(),again));
+ pass();assert.ok(!bound(again),'still the same frame of this scene');
  haze.dispose();
 });
 finish();
