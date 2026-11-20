@@ -165,6 +165,7 @@ const visible = object => { for (let p = object; p; p = p.parent) if (!p.visible
 export function createReflectionProbes({scene, renderer, tier, extras = () => [], sky = () => null, uncut = () => null, now = () => performance.now(), warn = error => console.warn('House reflection capture failed:', error)}) {
   let probes = [], bindings = new Set(), queue = [], requested = false, quietAt = 0, unlit = false, disposed = false, lightsKey = null, lightsAt = -Infinity;
   let mirrorStillHz = 10, lampPending = false, lampAt = 0, lampRoundAt = -Infinity;
+  let probeCloudSeconds = 30, skyPending = false, skyAt = 0, roundAt = -Infinity;
   const enabled = tier !== 'low';
   // A flat pool mirrors what stands beside it. One cube taken at the pool's
   // centre cannot place a wall ten metres away, so on high quality the largest
@@ -318,6 +319,12 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     if (!enabled || disposed || lampPending) return;
     lampPending=true; lampAt=now();
   }
+  function requestSky() {
+    if (!enabled || disposed || skyPending) return;
+    skyPending=true; skyAt=now();
+    // Cloud drift must not dirty the planar mirror: it already redraws on its
+    // own still-camera interval. Keep the last probe maps displayed as for lamps.
+  }
   function rebuild(plan, root) {
     if (!enabled || disposed) return;
     root.updateMatrixWorld(true);
@@ -429,8 +436,9 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     }
   }
   return {
-    rebuild, request, requestLamp, mirror,
+    rebuild, request, requestLamp, requestSky, mirror,
     setMirrorStillHz(hz) { if ([0,30,15,10,5,2].includes(hz)) { mirrorStillHz=hz; if(planar)planar.dirty=true; } },
+    setProbeCloudSeconds(seconds) { if ([4,10,30,60].includes(seconds)) probeCloudSeconds=seconds; },
     setUnlit(on) { if (unlit===on) return; unlit=on; for (const b of bindings) apply(b); if (!on) request(); },
     frame() {
       if (!enabled || unlit || disposed) return;
@@ -450,14 +458,22 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       }
       // Lamp-only changes coalesce from the FIRST change (never restart quiet),
       // at most one round per 5 s, even while changing continuously. Explicit
-      // rebuild/time/sky/view requests retain their own 1.5 s debounce and priority.
-      if (requested && now()-quietAt>=1500) { queue=[...probes]; requested=false; lampPending=false; }
+      // rebuild/time/weather/view requests retain their 1.5 s debounce and priority.
+      let startRound=false;
+      if (requested && now()-quietAt>=1500) { requested=false; lampPending=false; startRound=true; }
       else if (!requested && !queue.length && lampPending && now()-lampAt>=1500 && now()-lampRoundAt>=5000) {
-        queue=[...probes]; lampPending=false; lampRoundAt=now();
+        lampPending=false; lampRoundAt=now(); startRound=true;
+      } else if (!requested && !queue.length && skyPending && now()-skyAt>=1500 && now()-roundAt>=probeCloudSeconds*1000) {
+        startRound=true;
+      }
+      if (startRound) {
+        queue=[...probes]; skyPending=false; roundAt=now();
+        // Every round includes the current sky, so explicit/lamp rounds also
+        // satisfy pending drift and start its interval. Drift never restarts quiet.
       }
       const p=queue.shift(); if (p) capture(p);
     },
-    info() { return {tier, ...(planar ? {planar:{active:planar.active, passes:planar.passes, size:planar.target ? [planar.target.width, planar.target.height] : null}} : {}), probes:probes.map(p=>({id:p.id,kind:p.kind,captures:p.captures,fresh:p.fresh,centre:p.centre.toArray(),box:{min:p.box.min.toArray(),max:p.box.max.toArray()}})), pending:requested || lampPending || queue.length>0}; },
-    dispose() { disposed=true; queue=[]; requested=false; lampPending=false; const old=probes; probes=[]; for (const b of bindings) { b.probe=null; apply(b); } for (const p of old) p.target.dispose(); planar?.target?.dispose(); bindings.clear(); },
+    info() { return {tier, ...(planar ? {planar:{active:planar.active, passes:planar.passes, size:planar.target ? [planar.target.width, planar.target.height] : null}} : {}), probes:probes.map(p=>({id:p.id,kind:p.kind,captures:p.captures,fresh:p.fresh,centre:p.centre.toArray(),box:{min:p.box.min.toArray(),max:p.box.max.toArray()}})), pending:requested || lampPending || skyPending || queue.length>0}; },
+    dispose() { disposed=true; queue=[]; requested=false; lampPending=false; skyPending=false; const old=probes; probes=[]; for (const b of bindings) { b.probe=null; apply(b); } for (const p of old) p.target.dispose(); planar?.target?.dispose(); bindings.clear(); },
   };
 }

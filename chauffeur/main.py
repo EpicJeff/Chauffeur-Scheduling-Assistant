@@ -7663,6 +7663,15 @@ def save_house_twin_mirror(body: dict = Body(...)):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@app.put('/api/house/twin/probe-cloud')
+def save_house_twin_probe_cloud(body: dict = Body(...)):
+    from services import twin_stage
+    try:
+        return twin_stage.save_probe_cloud(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 class TwinGlanceRequest(BaseModel):
     entities: list[dict] | None = None
     idle_enabled: bool = False

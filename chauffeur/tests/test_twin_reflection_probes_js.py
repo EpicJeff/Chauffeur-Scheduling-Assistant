@@ -425,6 +425,66 @@ await test('continuous_lamp_changes_coalesce_without_starvation_and_explicit_req
  const before=c.manager.info().probes[0].captures;c.manager.request();c.advance(1500);for(let j=0;j<4;j++)c.manager.frame();
  assert.equal(c.manager.info().probes[0].captures,before+1,'explicit scene/time/sky request keeps its original delay');c.manager.dispose();
 });
+await test('cloud_drift_coalesces_from_first_change_without_hiding_maps_or_restarting_explicit_quiet',async()=>{
+ for(const seconds of [4,10,30,60]) {
+  const c=await setup();c.manager.setProbeCloudSeconds(seconds);c.round();
+  const material=meshes(c.out).find(o=>o.material.userData.reflection?.kind==='exterior').material;
+  const map=material.envMap, baseline=c.renderer.faces.length;
+  c.manager.requestSky();c.advance(1499);c.manager.requestSky();c.manager.frame();
+  assert.equal(c.renderer.faces.length,baseline);assert.equal(material.envMap,map);assert.ok(c.manager.info().probes.every(p=>p.fresh));
+  c.advance(seconds*1000-1500);c.manager.requestSky();c.manager.frame();assert.equal(c.renderer.faces.length,baseline);
+  c.advance(1);c.manager.requestSky();for(let i=0;i<4;i++)c.manager.frame();
+  assert.equal(c.renderer.faces.length,baseline+24,'one round exactly at the interval; repeated requests never postpone it');
+  c.manager.requestSky();c.advance(200);c.manager.request();c.advance(1499);c.manager.requestSky();c.manager.frame();
+  assert.equal(c.renderer.faces.length,baseline+24);
+  c.advance(1);for(let i=0;i<4;i++)c.manager.frame();
+  assert.equal(c.renderer.faces.length,baseline+48,'explicit request takes priority before cloud interval');
+  assert.equal(c.manager.info().pending,false,'explicit round consumes earlier sky requests');c.manager.dispose();
+ }
+});
+await test('default_cloud_interval_is_30s_and_live_changes_keep_original_pending_time',async()=>{
+ const c=await setup();c.round();const baseline=c.renderer.faces.length;
+ for(let elapsed=4000;elapsed<=28000;elapsed+=4000){c.advance(4000);c.manager.requestSky();for(let i=0;i<4;i++)c.manager.frame();}
+ assert.equal(c.renderer.faces.length,baseline,'four-second drift no longer recaptures four probes every four seconds');
+ c.advance(2000);for(let i=0;i<4;i++)c.manager.frame();assert.equal(c.renderer.faces.length,baseline+24);
+ c.manager.requestSky();c.advance(10000);c.manager.setProbeCloudSeconds(10);for(let i=0;i<4;i++)c.manager.frame();
+ assert.equal(c.renderer.faces.length,baseline+48,'live interval change applies without resetting pending quiet');
+ c.manager.dispose();c.manager.requestSky();assert.equal(c.manager.info().pending,false);
+ const low=await setup('low');low.manager.requestSky();low.round();assert.equal(low.manager.info().pending,false);assert.equal(low.renderer.faces.length,0);low.manager.dispose();
+});
+await test('sky_only_requests_and_rounds_leave_still_mirror_on_its_own_interval',async()=>{
+ const c=await setup('high');c.round();const {camera}=poolCamera(c);c.manager.setMirrorStillHz(2);c.manager.mirror(camera);
+ c.advance(10);c.manager.requestSky();c.manager.mirror(camera);assert.equal(c.renderer.mirrors.length,1,'sky request never dirties mirror');
+ c.advance(29990);for(let i=0;i<4;i++)c.manager.frame();c.manager.mirror(camera);const count=c.renderer.mirrors.length;
+ c.advance(1);c.manager.requestSky();c.manager.frame();c.manager.mirror(camera);assert.equal(c.renderer.mirrors.length,count);
+ c.manager.request();c.manager.mirror(camera);assert.equal(c.renderer.mirrors.length,count+1,'explicit request still dirties mirror');c.manager.dispose();
+});
+await test('mounted_cloud_drift_uses_payload_and_live_interval_but_weather_and_time_remain_prompt',async()=>{
+ location.search='?test=1';const rendererClass=globalThis.Renderer;globalThis.Renderer=CaptureRenderer;
+ const originalLoop=CaptureRenderer.prototype.setAnimationLoop;CaptureRenderer.prototype.setAnimationLoop=function(fn){this.loop=fn;};
+ const originalNow=performance.now;let time=100000;Object.defineProperty(performance,'now',{configurable:true,value:()=>time});
+ let view;try {
+  view=await mountTwin(new Element(),{plan:fixture(),kit:kit(),tier:'medium',bake:false,stage:{probe_cloud_s:60}});
+  view.setClock('2026-06-01T18:00:00Z');let weather={state:'cloudy'};
+  view.live={peek:()=>({'weather.local':weather}),stale:()=>false,stop:()=>{},draw:()=>{}};
+  // Noise generation/fade has its own tests. Hold fade settled while running
+  // the real sky cube and the twin's real animation/probe entry points.
+  view.clouds.frame=()=>{};view.clouds.uniforms.cloudFade.value=1;view.render();
+  const frames=n=>{for(let i=0;i<n;i++)view.renderer3.loop();};
+  frames(6);time+=1500;frames(4);const baseline=view.renderer3.faces.length;
+  assert.equal(baseline,24);assert.ok(view.clouds.active);
+  for(let i=0;i<8;i++){time+=4000;frames(8);}
+  assert.equal(view.renderer3.faces.length,baseline,'payload 60s interval is used, rather than the 30s default');
+  view.setProbeCloudSeconds(10);frames(4);
+  assert.equal(view.renderer3.faces.length,baseline+24,'drawer live setter applies to pending drift');
+  await view.setStage({probe_cloud_s:4});time+=4000;frames(6);time+=1500;frames(4);
+  assert.equal(view.renderer3.faces.length,baseline+48,'editor stage payload also applies interval live');
+  view.setProbeCloudSeconds(60);weather={state:'partlycloudy'};view.render();frames(6);time+=1500;frames(4);
+  assert.equal(view.renderer3.faces.length,baseline+72,'weather bypasses cloud interval');
+  view.setClock('2026-06-01T20:00:00Z');frames(6);time+=1500;frames(4);
+  assert.equal(view.renderer3.faces.length,baseline+96,'time of day bypasses cloud interval');
+ } finally {view?.dispose();CaptureRenderer.prototype.setAnimationLoop=originalLoop;globalThis.Renderer=rendererClass;Object.defineProperty(performance,'now',{configurable:true,value:originalNow});}
+});
 finish();
 """
 

@@ -191,6 +191,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
     extras:() => [sky.object, precipitation.group, seasonTouches.group, sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
   reflections.setMirrorStillHz(stage?.mirror_still_hz ?? 10);
+  reflections.setProbeCloudSeconds(stage?.probe_cloud_s ?? 30);
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
@@ -874,8 +875,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       }
     },
     setMirrorStillHz(hz) { reflections.setMirrorStillHz(hz); render(); },
+    setProbeCloudSeconds(seconds) { reflections.setProbeCloudSeconds(seconds); },
     async setStage(next) {
       if (next?.mirror_still_hz !== undefined) reflections.setMirrorStillHz(next.mirror_still_hz);
+      if (next?.probe_cloud_s !== undefined) reflections.setProbeCloudSeconds(next.probe_cloud_s);
       if (!next || !Number.isFinite(next.radius) || next.radius < 30 || next.radius > 1000) return;
       const radius = next.radius_override === undefined ? next.radius : next.radius_override;
       if (radius !== null && (!Number.isFinite(radius) || radius < 30 || radius > 1000)) return;
@@ -1714,7 +1717,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const now = performance.now(), run = probeRun;
       if(!compiling || now-holdSince>=HOLD_MS) {
         clouds.frame(now/1000);
-        if(sky.frame(now/1000))reflections.request();
+        const skyRefresh=sky.frame(now/1000);
+        if(skyRefresh==='drift')reflections.requestSky();
+        else if(skyRefresh)reflections.request();
       }
       try {
       if (run) {

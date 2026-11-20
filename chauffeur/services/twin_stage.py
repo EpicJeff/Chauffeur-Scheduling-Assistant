@@ -6,6 +6,8 @@ from services import storage, twin_store
 KEY = 'house_twin_stage_radius_ft'
 MIRROR_KEY = 'house_twin_mirror_still_hz'
 MIRROR_CHOICES = (0, 30, 15, 10, 5, 2)
+PROBE_CLOUD_KEY = 'house_twin_probe_cloud_s'
+PROBE_CLOUD_CHOICES = (4, 10, 30, 60)
 MIN_RADIUS = 30
 MAX_RADIUS = 1000
 LOT_MARGIN = 120
@@ -37,6 +39,8 @@ def read(plan=None):
     result = default_stage(twin_store.current() if plan is None else plan)
     hz = storage.get_app_state(MIRROR_KEY)
     result['mirror_still_hz'] = hz if type(hz) in (int, float) and hz in MIRROR_CHOICES else 10
+    seconds = storage.get_app_state(PROBE_CLOUD_KEY)
+    result['probe_cloud_s'] = seconds if type(seconds) in (int, float) and seconds in PROBE_CLOUD_CHOICES else 30
     radius = storage.get_app_state(KEY)
     if type(radius) in (int, float) and math.isfinite(radius) and MIN_RADIUS <= radius <= MAX_RADIUS:
         result.update(radius=radius, radius_override=radius)
@@ -61,4 +65,14 @@ def save_mirror(body):
     if type(hz) not in (int, float) or hz not in MIRROR_CHOICES:
         raise ValueError('Choose Every frame, 30, 15, 10, 5 or 2 per second.')
     storage.set_app_state(MIRROR_KEY, hz)
+    return read()
+
+
+def save_probe_cloud(body):
+    if not isinstance(body, dict) or set(body) != {'probe_cloud_s'}:
+        raise ValueError('Choose a cloud reflection refresh interval.')
+    seconds = body['probe_cloud_s']
+    if type(seconds) not in (int, float) or seconds not in PROBE_CLOUD_CHOICES:
+        raise ValueError('Choose 4, 10, 30 or 60 seconds.')
+    storage.set_app_state(PROBE_CLOUD_KEY, seconds)
     return read()

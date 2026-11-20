@@ -420,6 +420,11 @@
       </select></label>
       <p id="twin-mirror-help">Moving cameras refresh every frame. Low and Medium have no planar mirror, so this setting has no effect there.</p>
       <button id="twin-mirror-save" type="button" disabled>Save mirror refresh rate</button>
+      <label>Cloud reflection refresh interval <select id="house_twin_probe_cloud_s" aria-describedby="twin-probe-cloud-help" disabled>
+        <option value="4">4 seconds</option><option value="10">10 seconds</option><option value="30" selected>30 seconds</option><option value="60">60 seconds</option>
+      </select></label>
+      <p id="twin-probe-cloud-help">How often drifting clouds refresh what glass, water and shiny surfaces reflect. Time of day, weather and edits always refresh at once. Medium and High have probes; Low has none.</p>
+      <button id="twin-probe-cloud-save" type="button" disabled>Save cloud reflection interval</button>
     {% endcall %}
     {% call settings_section('twin-weather-settings', 'Weather sources') %}
       <label>Weather entity <select id="weather_entity" disabled aria-describedby="twin-weather-report"><option value="">Automatic: first weather entity</option></select></label>
