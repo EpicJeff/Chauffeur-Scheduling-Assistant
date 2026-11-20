@@ -106,8 +106,8 @@ await test('ring work is bounded by distance and skipped before covered, vertica
  assert.ok(ripple.indexOf('if(rate<=0.0)')<ripple.indexOf('weatherRingHash(id)'));
  assert.ok(ripple.indexOf('if(count==0.0)')<ripple.indexOf('for(int y='));
  assert.ok(ripple.indexOf('if(count==4.0&&!mid)continue;')<ripple.indexOf('weatherRingHash(id)'));
- assert.ok(ripple.indexOf('if(visible<=0.0)continue;')<ripple.indexOf('weatherRingBand(d,age)'));
- assert.ok(ripple.indexOf('if(support<=0.0)continue;')<ripple.indexOf('weatherRingBand(d,age)'));
+ assert.ok(ripple.indexOf('if(visible<=0.0)continue;')<ripple.indexOf('weatherRingBand(d/ringScale,age)'));
+ assert.ok(ripple.indexOf('if(support<=0.0)continue;')<ripple.indexOf('weatherRingBand(d/ringScale,age)'));
  assert.ok(!ripple.includes('weatherHash('),'no sine hashes in the ring loop');
  assert.ok(!ripple.includes('dFdx(')&&!ripple.includes('dFdy('),'derivatives must be captured before receiver gates');
  const hash=WEATHER_GLSL.split('vec3 weatherRingHash(vec2 p) {')[1].split('\n}')[0];

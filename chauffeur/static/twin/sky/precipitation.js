@@ -9,9 +9,9 @@ import { paverSettings } from '../paver_layout.js';
 import { weatherExtinction } from './weather.js';
 import { createSkyCover, HEIGHT_NONE } from './sky_cover.js';
 
-const FT=.3048, BOX=[128,96,128], LIFE=.42;
+const FT=.3048, BOX=[128,96,128], LIFE=.3;
 const RAIN={low:3000,medium:4000,high:8000,max:12000};
-const ATTEMPTS={low:24,medium:48,high:72,max:96};
+const ATTEMPTS={low:120,medium:240,high:400,max:560};
 const clamp=(x,a=0,b=1)=>Number.isFinite(x)?Math.max(a,Math.min(b,x)):a;
 const finite=(x,fallback=0)=>Number.isFinite(x)?x:fallback;
 export function precipitationCounts(tier,weather={}) {
@@ -226,26 +226,38 @@ attribute vec3 splashPosition,splashNormal;attribute float splashBorn;
 uniform float splashTime;
 varying float splashAge;varying vec2 particleUv;varying vec3 particleWorld;
 bool splashVisible(float age,float depth) {
-  return age>=0.0&&age<=0.42&&depth>=3.5;
+  return age>=0.0&&age<=0.3&&depth>=1.5;
 }
 void main(){
   splashAge=splashTime-splashBorn;particleUv=uv;
   vec4 eye=viewMatrix*vec4(splashPosition,1.0);
   // Expired slots used to rasterize their entire quad before fragment discard.
   if(!splashVisible(splashAge,-eye.z)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
-  vec3 n=splashNormal;
-  vec3 tangent=normalize(cross(n,vec3(0.0,0.0,1.0)));
-  vec3 bitangent=cross(n,tangent);
-  float radius=.025+.22*clamp(splashAge/0.42,0.0,1.0);
-  particleWorld=splashPosition+(tangent*position.x+bitangent*position.y)*radius*2.0;
-  gl_Position=projectionMatrix*viewMatrix*vec4(particleWorld,1.0);
+  // A splash crown a few centimetres tall, facing the camera (owner reference
+  // photo 2026-11-19), not a flat ring: rings belong to standing water.
+  float grow=smoothstep(0.0,.06,splashAge);
+  vec2 size=vec2(.05+.03*grow,.015+.04*grow);
+  particleWorld=splashPosition+splashNormal*size.y*.5;
+  vec4 centre=viewMatrix*vec4(particleWorld,1.0);
+  centre.xy+=position.xy*size*2.0;
+  gl_Position=projectionMatrix*centre;
 }`;
 const splashFragment=fragmentCommon+`
 varying float splashAge;
+uniform float splashTime;
 void main(){
-  if(splashAge<0.0||splashAge>0.42)discard;
-  float ring=1.0-smoothstep(.05,.18,abs(length(particleUv*2.0-1.0)-.78));
-  float alpha=ring*(1.0-splashAge/0.42)*.45*precipitationFade();
+  float splashBorn=splashTime-splashAge;
+  if(splashAge<0.0||splashAge>0.3)discard;
+  vec2 p=particleUv*2.0-1.0;
+  // Cup wall widening upward, then droplets thrown above the rim.
+  float width=mix(.3,.9,clamp((p.y+1.0)*.5,0.0,1.0));
+  float wall=(1.0-smoothstep(.06,.16,abs(abs(p.x)-width)))*(1.0-smoothstep(.1,.3,p.y));
+  float drops=0.0;
+  for(int i=0;i<5;i++){
+    float x=-.8+.4*float(i),y=.45+.35*fract(sin(float(i)*12.9898+splashBorn*78.233)*43758.5453);
+    drops=max(drops,1.0-smoothstep(.07,.13,length(p-vec2(x,y))));
+  }
+  float alpha=max(wall,drops)*(1.0-smoothstep(.12,.3,splashAge))*.7*precipitationFade();
   if(alpha<.001)discard;
   gl_FragColor=vec4(precipSafe(precipColour),clamp(alpha,0.0,1.0));
   #include <tonemapping_fragment>
@@ -295,7 +307,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
     travels[kind]=new THREE.Vector3();
     mesh(kind,g,vertexShader,fragmentShader,{precipKind:{value:index},precipTravel:{value:travels[kind]},precipVelocity:{value:new THREE.Vector3()}});
   }
-  const capacity=64,sg=geometry(),positions=new Float32Array(capacity*3),normals=new Float32Array(capacity*3),born=new Float32Array(capacity).fill(-1e6);
+  const capacity=192,sg=geometry(),positions=new Float32Array(capacity*3),normals=new Float32Array(capacity*3),born=new Float32Array(capacity).fill(-1e6);
   for(let i=0;i<capacity;i++)normals[i*3+1]=1;
   for(const [name,array,size] of [['splashPosition',positions,3],['splashNormal',normals,3],['splashBorn',born,1]])
     sg.setAttribute(name,new THREE.InstancedBufferAttribute(array,size).setUsage(THREE.DynamicDrawUsage));
@@ -314,8 +326,11 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
       const top=Math.max(bottom+.0001,25,camera.position.y+8);
       uniforms.precipBox.value.set(halfExtent*2,top-bottom,halfExtent*2);
       uniforms.precipAnchor.value.copy(target).lerp(camera.position,.35);uniforms.precipAnchor.value.y=(bottom+top)*.5;
-      const down=camera.getWorldDirection(new THREE.Vector3()).y;
-      const hidden=unlit||level!=='house'||down < -Math.sin(55*Math.PI/180)-1e-10;
+      // Owner 2026-11-19: rain shows whenever the camera is outside, in any orbit
+      // view, room or floor focus included; drops under a roof are culled on the GPU.
+      const indoors=Number.isFinite(cover.coverTop?.(camera.position.x,camera.position.z))
+        &&camera.position.y<cover.coverTop(camera.position.x,camera.position.z);
+      const hidden=unlit||indoors;
       const counts=precipitationCounts(tier,hidden?{}:weather);
       if(counts.rain||counts.snow||counts.hail||(!weather?.neutral&&(weather?.wetness>0||weather?.puddles>0)))bakeCover();
       for(const kind of ['rain','snow','hail']){
@@ -334,7 +349,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
       credit=Math.min(12,credit+dt*(ATTEMPTS[tier]||72)*clamp(weather.rate));
       let changed=false;
       while(credit>=1){
-        credit--;const angle=clamp(random())*Math.PI*2,radius=Math.sqrt(clamp(random()))*48;
+        credit--;const angle=clamp(random())*Math.PI*2,radius=Math.sqrt(clamp(random()))*16;
         const hit=sample(camera.position.x+Math.cos(angle)*radius,camera.position.z+Math.sin(angle)*radius);
         if(!hit)continue;
         positions.set(hit.position,cursor*3);normals.set(hit.normal,cursor*3);born[cursor]=now;cursor=(cursor+1)%capacity;changed=true;

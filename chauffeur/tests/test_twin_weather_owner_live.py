@@ -337,8 +337,16 @@ INDOOR_JS = r"""async () => {
 
 
 def assert_floor(page):
+    # Owner 2026-11-19: the floor view still orbits outside, so rain keeps falling in
+    # the yard; inside, the room under the focus is covered, so its drops are culled.
     page.wait_for_function("""() => {const v=window.__twin,p=v.precipitation;
-      return v.levels.snapshot().level==='floor' && Object.values(p.objects).every(o=>!o.visible&&o.geometry.instanceCount===0);
+      if(v.levels.snapshot().level!=='floor')return false;
+      const tex=p.uniforms.precipCover.value,b=p.uniforms.precipCoverBounds.value,t=v.controls.target;
+      if(!tex?.image?.data||tex.image.width<2)return false;
+      const W=tex.image.width,H=tex.image.height,u=(t.x-b.x)/(b.z-b.x),w=(t.z-b.y)/(b.w-b.y);
+      if(u<0||w<0||u>=1||w>=1)return false;
+      const step=tex.image.data.length/(W*H),covered=tex.image.data[(Math.floor(w*H)*W+Math.floor(u*W))*step];
+      return t.y<covered;
     }""", timeout=TIMEOUT)
     result = page.evaluate(INDOOR_JS)
     check(result['rows'] and not result['bad'] and all(r['min'] == r['max'] == 0 for r in result['rows']),

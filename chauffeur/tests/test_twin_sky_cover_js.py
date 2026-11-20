@@ -195,7 +195,7 @@ await test('coverTop is exactly where blocked starts, on the real household',()=
 await test('falling particles cull below cover on the GPU, with no per-drop CPU work',()=>{
  const p=createPrecipitation(new THREE.Scene(),{random:()=>.5});p.setPlan(plan);
  assert.equal(p.objects.rain.geometry.attributes.precipOpen,undefined,'no per-drop open attribute is uploaded');
- const camera=new THREE.PerspectiveCamera();camera.position.fromArray(world(5,5,1));
+ const camera=new THREE.PerspectiveCamera();camera.position.fromArray(world(-20,5,6));
  p.update(0,{precip:'rain',rate:1},camera);
  const tex=p.uniforms.precipCover.value,b=p.uniforms.precipCoverBounds.value;
  assert.ok(tex?.isDataTexture&&tex.image.width>1&&tex.image.height>1,'the cover height field is baked while it rains');

@@ -104,6 +104,11 @@ vec2 weatherRipple(vec2 world) {
   float farFade=1.0-smoothstep(784.0,1296.0,distanceSq);
   float nearFade=1.0-smoothstep(144.0,324.0,distanceSq);
   float clock=fract(weatherSurface.w)*4.0;
+  // A puddle's rings are a third the size of the pool's, with a finer wave.
+  float ringScale=.35;
+  #ifdef WEATHER_SURFACE_WATER
+    ringScale=1.0;
+  #endif
   #ifdef WEATHER_SURFACE_POOL
     clock=waterTime;
   #endif
@@ -119,13 +124,13 @@ vec2 weatherRipple(vec2 world) {
     vec2 delta=world-centre;float d=length(delta);
     // Outside this annulus the old envelope is below .0065. Fade that tail
     // before the expensive wave, rather than evaluating almost-zero crests.
-    float support=weatherRingSupport(d,age);
+    float support=weatherRingSupport(d/ringScale,age);
     if(support<=0.0)continue;
     vec2 direction=delta/max(d,.001);
-    float footprint=48.0*(abs(dot(direction,dx))+abs(dot(direction,dy)));
+    float footprint=48.0/ringScale*(abs(dot(direction,dx))+abs(dot(direction,dy)));
     float visible=1.0-smoothstep(1.0,3.14,footprint);
     if(visible<=0.0)continue;
-    float band=weatherRingBand(d,age);
+    float band=weatherRingBand(d/ringScale,age);
     float fade=smoothstep(0.0,.06,age)*(1.0-smoothstep(.6,1.0,age));
     // One layer instead of two: sqrt(2) retains their combined slope power.
     slope+=direction*band*fade*visible*strength*1.414214*support*farFade*(mid?1.0:nearFade);
@@ -197,9 +202,8 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
   float weatherRingWeight=smoothstep(.9,.98,weatherUp)*weatherExposure(1.0,vWeatherOpen);
   #ifndef WEATHER_SURFACE_WATER
     weatherRingWeight*=1.0-weatherS;
-    #ifdef WEATHER_SURFACE_LAWN
-      weatherRingWeight*=weatherP;
-    #endif
+    // Rings form on standing water only: puddles here, the pool in its own mode.
+    weatherRingWeight*=weatherP;
   #endif
   vec2 weatherSlope=vec2(0.0);
   if(weatherRingWeight>0.0)weatherSlope=weatherRipple(vWeatherWorld.xz)*weatherRingWeight;
@@ -247,7 +251,7 @@ function patchLit(mode) {
 function patchEffect(shader) {
   shader.vertexShader='attribute float weatherOpen;\nvarying float vWeatherOpen;\nvarying vec3 vWeatherWorld;\n'+shader.vertexShader.replace(/void main\s*\(\s*\)\s*\{/,
     'void main() { vWeatherOpen=weatherOpen; vWeatherWorld=(modelMatrix*vec4(position,1.0)).xyz;');
-  shader.fragmentShader='varying float vWeatherOpen;\nvarying vec3 vWeatherWorld;\n'+WEATHER_GLSL+shader.fragmentShader;
+  shader.fragmentShader='#define WEATHER_SURFACE_WATER\nvarying float vWeatherOpen;\nvarying vec3 vWeatherWorld;\n'+WEATHER_GLSL+shader.fragmentShader;
   if(!shader.fragmentShader.includes('varying vec3 vNormal;'))return;
   shader.fragmentShader=shader.fragmentShader.replaceAll('normalize(vNormal)',
     '(weatherEffectNormal/max(length(weatherEffectNormal),.0001))');

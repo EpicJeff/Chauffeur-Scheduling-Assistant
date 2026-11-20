@@ -15,18 +15,26 @@ assert.ok(existsSync(new URL(file('static/twin/sky/precipitation.js'))),'precipi
 const {createPrecipitation,precipitationCounts,precipitationVelocity,createSplashSampler,wrappedPosition}=await import(file('static/twin/sky/precipitation.js'));
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
 const weather=(precip='rain',rate=1)=>({precip,rate,windMps:0,windToDeg:90});
-await test('floor, room, building and steep camera views hide every precipitation draw',()=>{
+await test('rain shows in every orbit view while the camera is outside, and hides indoors',()=>{
+ // Owner 2026-11-19: rain stopped in room and floor views while still orbiting outside.
  const p=createPrecipitation(new THREE.Scene(),{tier:'low'}),eye=new THREE.PerspectiveCamera();
  const target=new THREE.Vector3();eye.position.set(0,5,20);eye.lookAt(target);eye.updateMatrixWorld();
  for(const level of ['house','floor','room','building'])for(const kind of ['rain','snow','mix','hail']){
   p.update(1,weather(kind),eye,{target,level});
-  assert.equal(p.objects[kind==='mix'?'rain':kind].visible,level==='house');
-  if(level!=='house')assert.ok(Object.values(p.objects).every(o=>!o.visible&&o.geometry.instanceCount===0));
+  assert.equal(p.objects[kind==='mix'?'rain':kind].visible,true,level+' '+kind+' outside shows');
  }
  for(const degrees of [54.9,55,55.1,89.9]){
   eye.position.set(0,30*Math.sin(degrees*Math.PI/180),30*Math.cos(degrees*Math.PI/180));eye.lookAt(target);eye.updateMatrixWorld();
-  p.update(2,weather(),eye,{target,level:'house'});assert.equal(p.objects.rain.visible,degrees<=55);
+  p.update(2,weather(),eye,{target,level:'house'});assert.equal(p.objects.rain.visible,true,'steep orbit '+degrees);
  }
+ const plan={buildings:[{id:'b',position:[0,0],rotation:0,levels:[{id:'L1',elevation:0,ceiling:10,outline:[[0,0],[40,0],[40,40],[0,40]]}],
+  rooms:[],walls:[],roof:{sections:[{id:'r',kind:'gable',rect:[0,0,40,40],plate:10,pitch:4,overhang:1,ridge:'x'}]}}]};
+ p.setPlan(plan);
+ eye.position.set(20*.3048,5*.3048,-20*.3048);eye.updateMatrixWorld();
+ p.update(3,weather(),eye,{target:eye.position.clone(),level:'room'});
+ assert.ok(Object.values(p.objects).every(o=>!o.visible),'a camera under the roof is indoors: nothing falls');
+ eye.position.set(-30*.3048,5*.3048,-20*.3048);eye.updateMatrixWorld();
+ p.update(4,weather(),eye,{target:new THREE.Vector3(),level:'room'});assert.equal(p.objects.rain.visible,true,'outside again');
  p.dispose();
 });
 await test('verbatim tier budgets, intensity, mixed weather, invalid input and neutral',()=>{
@@ -159,8 +167,8 @@ await test('expired and eye-plane splash slots are culled before rasterizing the
  const p=createPrecipitation(new THREE.Scene()),shader=p.objects.splash.material.vertexShader;
  const body=shader.match(/bool splashVisible\(float age,float depth\) \{([\s\S]*?)\n\}/)[1],visible=new Function('age','depth',body);
  for(const age of [-1000,-.01,0,.1,.419,.42,.421,100])for(const depth of [-10,0,.1,3,3.49,3.5,10,100])
-  assert.equal(visible(age,depth),age>=0&&age<=.42&&depth>=3.5);
- assert.ok(shader.indexOf('if(!splashVisible(splashAge,-eye.z))')<shader.indexOf('float radius='),'lifetime and signed depth gate the actual vertex path before expansion');
+  assert.equal(visible(age,depth),age>=0&&age<=.3&&depth>=1.5);
+ assert.ok(shader.indexOf('if(!splashVisible(splashAge,-eye.z))')<shader.indexOf('float grow='),'lifetime and signed depth gate the actual vertex path before expansion');
  p.dispose();
 });
 await test('focus box wraps in shader coordinates without moving every seed',()=>{
@@ -216,7 +224,7 @@ await test('fixed material identities/keys, one draw per kind plus splashes, bou
   assert.equal(entries.filter(o=>o.visible&&o.geometry.instanceCount>0).length,{none:0,rain:2,snow:1,mix:3,hail:1}[kind],kind+' draw submissions');
  }
  assert.ok(randomCalls/2<=6*12,'bounded catch-up after stalls');
- assert.ok(p.objects.splash.geometry.instanceCount<=64);
+ assert.ok(p.objects.splash.geometry.instanceCount<=192);
  assert.deepEqual(entries.map(o=>o.material),materials);assert.deepEqual(materials.map(m=>m.customProgramCacheKey()),keys);assert.deepEqual(materials.map(m=>m.version),versions);
  assert.equal(entries.length,4);
  for(const o of entries){assert.equal(o.castShadow,false);assert.equal(o.receiveShadow,false);assert.equal(o.layers.isEnabled(31),false);assert.equal(o.material.lights,false);assert.equal(o.material.depthWrite,false);assert.equal(o.material.forceSinglePass,true,'flat double-sided particles submit once');assert.deepEqual(o.raycast(),undefined);}
@@ -231,7 +239,7 @@ await test('rain splashes have bounded real-time lifetime/rate and do not multip
  p.setPlan({site:{hardscape:[{polygon:[[-200,-200],[200,-200],[200,200],[-200,200]]}]}});rng=0;
  p.update(0,weather(),camera);
  for(let t=1;t<=100;t++)p.update(t/100,weather(),camera,{reduced:true});
- assert.ok(rng/2>=23&&rng/2<=24,'24 candidate samples per second on low, motion does not slow the weather rate');
+ assert.ok(rng/2>=119&&rng/2<=120,'120 candidate samples per second on low, motion does not slow the weather rate');
  const born=p.objects.splash.geometry.attributes.splashBorn.array;
  assert.ok(born.some(t=>t>=.58&&t<=1));assert.equal(p.objects.splash.visible,true);
  const count=rng;p.update(1000,weather(),camera);assert.ok((rng-count)/2<=12,'bounded catch-up after long sleep');
@@ -287,10 +295,12 @@ await test('real household mount: previews, editor neutral/Live, Unlit, captures
   const building=v.plan.buildings.find(b=>b.rooms?.length),room=building.rooms.find(r=>r.state!=='ghost');
   for(const level of [{building:building.id,floor:room.level},{building:building.id,room:room.id}]){
    v.levels.go(level,{immediate:true});v.render();
-   assert.ok(Object.values(v.precipitation.objects).every(o=>!o.visible&&o.geometry.instanceCount===0),'real floor/room levels suppress precipitation');
+   // Owner 2026-11-19: a floor or room focus still orbits outside, so rain keeps falling
+   // (drops over the rooms are culled by the cover field on the GPU).
+   assert.ok(v.precipitation.objects.rain.visible&&v.precipitation.objects.rain.geometry.instanceCount>0,'real floor/room levels keep the rain while orbiting outside');
   }
   v.levels.go({level:'house'},{immediate:true});v.render();assert.equal(v.precipitation.objects.rain.visible,true);
-  e.setLiveWeather(true);e.setView(e.levelKeys()[0]);e.render();assert.ok(Object.values(e.precipitation.objects).every(o=>!o.visible&&o.geometry.instanceCount===0));e.setView('ext');
+  e.setLiveWeather(true);e.setView(e.levelKeys()[0]);e.render();assert.equal(e.precipitation.objects.rain.visible,true,'an editor floor view orbits outside, so it keeps the rain');e.setView('ext');
   for(const name of ['clear','rain','pouring','snow','fog','thunderstorm']){v.setWeatherPreview(name);assert.equal(v.precipitation.objects.snow.visible,name==='snow');}
   e.setLiveWeather(true);assert.equal(e.precipitation.objects.rain.visible,true);
   v.setUnlit(true);assert.ok(Object.values(v.precipitation.objects).every(o=>!o.visible));v.setUnlit(false);v.setTime('now');
