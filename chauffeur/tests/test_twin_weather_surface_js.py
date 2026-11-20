@@ -104,7 +104,7 @@ await test('ring work is bounded by distance and skipped before covered, vertica
  const ripple=WEATHER_GLSL.split('vec2 weatherRipple(vec2 world) {')[1];
  assert.ok(ripple.includes('clock*3.0+random.x'),'one layer maintains the original impact arrival rate');
  assert.ok(ripple.indexOf('if(rate<=0.0)')<ripple.indexOf('weatherRingHash(id)'));
- assert.ok(ripple.indexOf('if(count==0.0)')<ripple.indexOf('for(int y='));
+ assert.ok(ripple.indexOf('if(count==0.0)')<ripple.indexOf('for(int impact='));
  assert.ok(ripple.indexOf('if(count==4.0&&!mid)continue;')<ripple.indexOf('weatherRingHash(id)'));
  assert.ok(ripple.indexOf('if(visible<=0.0)continue;')<ripple.indexOf('weatherRingBand(d,age)'));
  assert.ok(ripple.indexOf('if(support<=0.0)continue;')<ripple.indexOf('weatherRingBand(d,age)'));
@@ -120,6 +120,25 @@ await test('ring work is bounded by distance and skipped before covered, vertica
  assert.ok(f.includes('if(weatherRingWeight>0.0)weatherSlope=weatherRipple(vWeatherWorld.xz)*weatherRingWeight;'),'zero upward/exposure/snow/lawn weight skips the loop');
  assert.ok(f.indexOf('weatherSurface.x>0.0&&weatherSurface.x<.9?weatherDrops')>0,'full gloss bypasses unused drop hashes');
  layer.dispose();material.dispose();
+});
+await test('runtime ripple loop visits exactly the original cells in the original order',()=>{
+ const loop=WEATHER_GLSL.match(/int impacts=int\(count\);([\s\S]*?)    vec3 random=/)[0].split('    vec3 random=')[0]
+  .replace('int y=impact/width,x=impact-y*width;','let y=Math.trunc(impact/width),x=impact-y*width;')
+  .replace('midCell+vec2(float(x),float(y))','add(midCell,vec2(float(x),float(y)))')
+  .replace('cell+vec2(float(x-1),float(y-1))','add(cell,vec2(float(x-1),float(y-1)))')
+  .replace(/\b(?:int|vec2|bool) (?=\w+=)/g,'let ');
+ const visit=new Function('count','cell','midCell','vec2','add','int','float','const cells=[];'+loop+'cells.push([id.x,id.y]);} return cells;');
+ const vec2=(x,y)=>({x,y}),add=(a,b)=>vec2(a.x+b.x,a.y+b.y);
+ for(const cx of [-100,-2,-1,0,1,2,100])for(const cy of [-2,-1,0,1,2])
+ for(const fx of [0,.000001,.499999,.5,.500001,.999999])for(const fy of [0,.499999,.5,.999999])for(const count of [4,9]){
+  const world=vec2((cx+fx)*.6,(cy+fy)*.6),cell=vec2(Math.floor(world.x/.6),Math.floor(world.y/.6));
+  const mid=vec2(Math.floor(world.x/.6-.5),Math.floor(world.y/.6-.5)),expected=[];
+  for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++){
+   const id=add(cell,vec2(x,y)),middle=id.x>=mid.x&&id.x<=mid.x+1&&id.y>=mid.y&&id.y<=mid.y+1;
+   if(count===4&&!middle)continue;expected.push([id.x,id.y]);
+  }
+  assert.deepEqual(visit(count,cell,mid,vec2,add,Math.trunc,Number),expected);
+ }
 });
 // Spatial scalar port of the GLSL hash/noise, sampled over an 8 m patch.
 // The colour/gloss/coverage curves below execute their actual GLSL bodies.
