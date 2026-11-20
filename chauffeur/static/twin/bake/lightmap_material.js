@@ -15,8 +15,8 @@ const floatTexture = (width, height) => {
 // material lights each pixel as the live PointLight does (three's RE_Direct: falloff, N.L
 // with the shading normal, diffuse and specular by the material's own metalness), times the
 // visibility from the page, coloured by the tint. Two data textures carry everything, so the
-// lightmap holds as many samplers as before the shadowmask (lmTints, lmRegions and a sampler
-// per bank). Fixture materials reuse the live pool's two LTC samplers (at most 16 total).
+// lightmap holds three samplers regardless of bank count (lmTints, lmRegions, lmBanks).
+// Fixture materials reuse the live pool's two LTC samplers.
 //   lmTints   rows [0, R)    live colour x brightness by (slot, row): the switch, never a rebake
 //             rows [R, 2R)   the light's world position (m) and reach (m)
 //             rows [2R, 3R)  kind (0 point, 1 spot, 2 rect, 3 sum), pieces, sum scale, exact rect
@@ -95,6 +95,10 @@ export const roomRegions = (banks, rooms) => floatTexture(Math.max(1, banks), 2 
 // Flat chart addressing stays below WebGL2's minimum texture-size limit even
 // when a detailed house has more charts than texture rows.
 export const chartAddress = (chart, bank, banks) => [((chart * banks + bank) % 1024), Math.floor((chart * banks + bank) / 1024)];
+export function bankLayerBases(layers) {
+  let next = 0;
+  return layers.map(list => { const base = next; next += list.length; return base; });
+}
 export function applyChartIndices(atlas) {
   const arrays = new Map(), ArrayType = atlas.room.charts.length < 32768 ? Int16Array : Float32Array;
   for (const c of atlas.room.charts) {
@@ -115,7 +119,7 @@ export function chartLightmapUniforms(chartCount, packed, lights, pageSize, laye
   const uniforms = lightmapUniforms(1, Math.max(1, lights.length), {fixtures: needsFixtureShader(lights)}), banks = Math.max(1, packed.banks.length);
   // Regions in the first half of the rows, each address's fills in the second (lmFillsAt).
   const texture = floatTexture(1024, 2 * Math.max(1, Math.ceil(chartCount*banks/1024)));
-  const owners = new Map();
+  const owners = new Map(), bankBase = bankLayerBases(layers);
   lights.forEach((l,index) => {
     const slot = packed.slots[l.device]; if (!slot) return;
     for (const a of slot.assignments || (slot.receivingCharts || []).map(chart=>({chart,bank:slot.bank,channel:slot.channel}))) {
@@ -127,7 +131,7 @@ export function chartLightmapUniforms(chartCount, packed, lights, pageSize, laye
   packed.banks.forEach((bank,b) => bank.charts.forEach(c => {
     const [x,y] = chartAddress(c.id,b,banks), owner = owners.get(c.id*banks+b) || [0,0];
     texture.image.data.set([(c.rect.x-c.sourceRegion.x)/pageSize, (c.rect.y-c.sourceRegion.y)/pageSize,
-      Math.max(0,layers[b].indexOf(c.page)), owner[0]+owner[1]*4096], (y*1024+x)*4);
+      bankBase[b] + Math.max(0,layers[b].indexOf(c.page)), owner[0]+owner[1]*4096], (y*1024+x)*4);
   }));
   texture.needsUpdate=true; uniforms.lmRegions={value:texture}; uniforms.lmChartMode={value:1};
   return uniforms;
@@ -258,8 +262,11 @@ export function patchLightmaps(materials, pages, uniforms) {
   // blends a neighbour's light into its border under its own tint. The gradients are
   // taken outside the room branch, where derivatives are defined. A bank no light owns here
   // skips its page fetch and its lights (the per-bank early-out).
-  const bankCode = pages.banks.map((t, b) => {
-    const s = lightSwizzle(t.format);
+  // The texture list holds one physical array; metadata counts the logical banks.
+  const banks = pages.bankBase || pages.banks;
+  const bankCode = banks.map((_, b) => {
+    if (pages.bankLayers?.[b] === 0) return '';
+    const s = lightSwizzle(pages.banks[0].format);
     const address = chartMode ? `lmAddress(${b}, int(vLmRoom + 0.5))` : `ivec2(${b}, lmRow)`;
     const owner = k => chartMode ? [`mod(region${b}.w, 4096.0)`, `floor(region${b}.w / 4096.0)`][k] : null;
     const term = k => chartMode
@@ -270,9 +277,9 @@ export function patchLightmaps(materials, pages, uniforms) {
     return `vec4 region${b} = texelFetch(lmRegions, ${address}, 0);
 if (${live}) {
   vec4 fill${b} = lmFillsAt(${address});
-  float lmSpan${b} = max(length(lmDx), length(lmDy)) * float(textureSize(lmBank${b}, 0).x);
+  float lmSpan${b} = max(length(lmDx), length(lmDy)) * float(textureSize(lmBanks, 0).x);
   float lmClamp${b} = lmSpan${b} > 2.0 ? 2.0 / lmSpan${b} : 1.0;
-  vec4 bank${b} = textureGrad(lmBank${b}, vec3(vLmUV + region${b}.xy, region${b}.z), lmDx * lmClamp${b}, lmDy * lmClamp${b});
+  vec4 bank${b} = textureGrad(lmBanks, vec3(vLmUV + region${b}.xy, region${b}.z), lmDx * lmClamp${b}, lmDy * lmClamp${b});
   ${term(0)}
   ${term(1)}
 }`;
@@ -280,16 +287,16 @@ if (${live}) {
   const declarations = `uniform sampler2D lmTints;
 uniform sampler2D lmRegions;
 varying vec2 vLmUV; varying float vLmRoom;
-${pages.banks.map((t, b) => `uniform highp sampler2DArray lmBank${b};`).join('\n')}
+uniform highp sampler2DArray lmBanks;
 ${fixtures ? `#if NUM_RECT_AREA_LIGHTS == 0
 uniform sampler2D lmLtc1; uniform sampler2D lmLtc2;
 #define ltc_1 lmLtc1
 #define ltc_2 lmLtc2
 #endif` : ''}
 ${shadeGLSL(fixtures)}
-${chartMode ? chartLookupGLSL(pages.banks.length) : ''}`;
+${chartMode ? chartLookupGLSL(banks.length) : ''}`;
   const slots = uniforms.lmTints.value.image.width, rooms = rowsOf(uniforms.lmTints.value);
-  if (!uniforms.lmRegions) uniforms.lmRegions = { value: roomRegions(pages.banks.length, rooms) };
+  if (!uniforms.lmRegions) uniforms.lmRegions = { value: roomRegions(banks.length, rooms) };
   for (const material of new Set(materials)) {
     const before = material.userData.lmBefore || material.onBeforeCompile;
     const originalKey = material.userData.lmKey || material.customProgramCacheKey.bind(material);
@@ -304,7 +311,7 @@ ${chartMode ? chartLookupGLSL(pages.banks.length) : ''}`;
         shader.uniforms.lmLtc1 = {value: THREE.UniformsLib['LTC_' + type + '_1']};
         shader.uniforms.lmLtc2 = {value: THREE.UniformsLib['LTC_' + type + '_2']};
       }
-      pages.banks.forEach((t, b) => { shader.uniforms[`lmBank${b}`] = { value: t }; });
+      shader.uniforms.lmBanks = { value: pages.banks[0] };
       shader.vertexShader = `#ifndef USE_UV3
 attribute vec2 uv3;
 #endif
@@ -329,7 +336,7 @@ ${bankCode}
   RE_IndirectDiffuse(lmFill, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
 }`);
     };
-    material.customProgramCacheKey = () => `${key}|lm-8-shadowmask-direct|${fixtures ? 'fixtures|' : ''}${chartMode ? 'charts-2|' : ''}${slots}|${pages.banks.map(t => lightSwizzle(t.format)).join(',')}`;
+    material.customProgramCacheKey = () => `${key}|lm-9-merged-shadowmask-direct|${fixtures ? 'fixtures|' : ''}${chartMode ? 'charts-2|' : ''}${slots}|${banks.length}|${lightSwizzle(pages.banks[0]?.format)}|${pages.bankLayers?.map(n => +!!n).join('') || ''}`;
     material.needsUpdate = true;
   }
 }
@@ -342,9 +349,10 @@ export function patchWindowGlow(material, pages, uniforms) {
   // the existing low-tier and interior-glass program completely unchanged.
   const before = material.userData.reflection ? material.onBeforeCompile : null;
   const key = before ? material.customProgramCacheKey() + '|' : '';
-  const chartMode = !!uniforms.lmChartMode, banks = pages.banks, fixtures = !!uniforms.lmTints.value.userData.fixtureRows;
-  const sum = banks.map((t, b) => {
-    const s = lightSwizzle(t.format);
+  const chartMode = !!uniforms.lmChartMode, banks = pages.bankBase || pages.banks, fixtures = !!uniforms.lmTints.value.userData.fixtureRows;
+  const sum = banks.map((_, b) => {
+    if (pages.bankLayers?.[b] === 0) return '';
+    const s = lightSwizzle(pages.banks[0].format);
     const address = chartMode ? `lmAddress(${b}, int(vGlowRoom + 0.5))` : `ivec2(${b}, glowRow)`;
     const owner = k => [`mod(region${b}.w, 4096.0)`, `floor(region${b}.w / 4096.0)`][k];
     const term = k => {
@@ -360,20 +368,20 @@ export function patchWindowGlow(material, pages, uniforms) {
     };
     return `vec4 region${b} = texelFetch(lmRegions, ${address}, 0);
 vec4 fill${b} = lmFillsAt(${address});
-vec4 value${b} = textureLod(glowBank${b}, vec3(vGlowUV + region${b}.xy, region${b}.z), 0.0);
+vec4 value${b} = textureLod(lmBanks, vec3(vGlowUV + region${b}.xy, region${b}.z), 0.0);
 ${term(0)}
 ${term(1)}`;
   }).join('\n');
   material.onBeforeCompile = (shader, renderer) => {
     before?.call(material, shader, renderer);
     Object.assign(shader.uniforms, uniforms);
-    banks.forEach((t, b) => { shader.uniforms[`glowBank${b}`] = { value: t }; });
+    shader.uniforms.lmBanks = { value: pages.banks[0] };
     shader.vertexShader = 'attribute float glowRoom; attribute vec2 glowUV; varying float vGlowRoom; varying vec2 vGlowUV;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
 vGlowRoom = glowRoom; vGlowUV = glowUV;`);
     shader.fragmentShader = `uniform sampler2D lmTints; uniform sampler2D lmRegions;
 varying float vGlowRoom; varying vec2 vGlowUV;
-${banks.map((t, b) => `uniform highp sampler2DArray glowBank${b};`).join('\n')}
+uniform highp sampler2DArray lmBanks;
 ${shadeGLSL(fixtures)}
 ${chartMode ? chartLookupGLSL(banks.length) : ''}
 ` + shader.fragmentShader;
@@ -386,7 +394,7 @@ if (vGlowRoom > -0.5) {
   totalEmissiveRadiance += glow * 0.5;
 }`);
   };
-  material.customProgramCacheKey = () => `${key}twin-window-glow-7-shadowmask-${fixtures ? 'fixtures-' : ''}${chartMode ? 'charts-' : ''}${banks.map(t => lightSwizzle(t.format)).join(',')}`;
+  material.customProgramCacheKey = () => `${key}twin-window-glow-8-merged-shadowmask-${fixtures ? 'fixtures-' : ''}${chartMode ? 'charts-' : ''}${banks.length}|${lightSwizzle(pages.banks[0]?.format)}|${pages.bankLayers?.map(n => +!!n).join('') || ''}`;
   material.needsUpdate = true;
 }
 
