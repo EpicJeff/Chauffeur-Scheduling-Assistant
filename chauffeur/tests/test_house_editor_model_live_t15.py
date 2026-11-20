@@ -621,6 +621,43 @@ def scenario_drop_sofa_on_the_family_room_floor():
         _no_errors(s)
 
 
+def scenario_dropped_house_item_deletes_from_its_card():
+    """Owner report 2026-11-19: an item dragged from the Library into the house could
+    not be deleted ('Unknown piece item:1') - the card sent the legacy edit, which only
+    knows the flattened snapshot. It must send the model's delete."""
+    s = _serve()
+    if s is None:
+        return
+    model = _facts()
+    before = {i['id'] for i in H.building(model, POOL).get('items') or []}
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        posted = _ops(page)
+        _floor_view(page, s)
+        _open_library(page, 'Items')
+        H.look_down(page, POOL, FAMILY_FLOOR[0], FAMILY_FLOOR[1], 60.0)
+        sx, sy = H.screen_of_world(page, *FAMILY_FLOOR, POOL)
+        _drag_thumb(page, f'#library-panel [data-item="{SOFA}"]', sx, sy)
+        after = _until(H.model, lambda m: len(H.building(m, POOL).get('items') or []) > len(before), 'the sofa reaches the store')
+        item = next(i for i in H.building(after, POOL)['items'] if i['id'] not in before)
+        # The drop's own settle reselects the floor; select the item once that has run.
+        page.wait_for_function('''([id,b]) => { const s=window.__editor.selected();
+            if(s?.pieceId===id)return true; window.__editor.clickPiece(id,b); return false; }''',
+                               arg=[item['id'], POOL], timeout=30000, polling=750)
+        card = page.locator('#piece-card')
+        page.wait_for_timeout(500)
+        card.get_by_role('button', name='Delete', exact=True).first.click()
+        dialog = page.locator('#cc-confirm-modal')
+        dialog.wait_for(state='visible', timeout=10000)
+        check(item['id'] in dialog.inner_text(), ('the confirm names the dropped item', dialog.inner_text()))
+        dialog.get_by_role('button', name='Delete', exact=True).click()
+        _until(H.model, lambda m: not any(i['id'] == item['id'] for i in H.building(m, POOL).get('items') or []),
+               'the dropped item is deleted')
+        check(not page.locator('#cc-alert-modal').is_visible(), ('no error alert', page.locator('#cc-alert-modal').inner_text()))
+        deletes = [op for op in posted if op and op.get('op') == 'delete']
+        check(deletes and deletes[-1] == {'op': 'delete', 'building': POOL, 'id': item['id']}, ('one model delete', posted))
+        _no_errors(s)
+
+
 def scenario_move_a_yard_tree_and_it_stays_after_rebuild():
     s = _serve()
     if s is None:
@@ -938,7 +975,7 @@ SCENARIOS = [
     scenario_drop_siding_on_one_face_sets_here,
     scenario_whole_building_scope_recolours_all_faces,
     scenario_card_reads_from_the_building,
-    scenario_drop_sofa_on_the_family_room_floor,
+    scenario_drop_sofa_on_the_family_room_floor, scenario_dropped_house_item_deletes_from_its_card,
     scenario_move_a_yard_tree_and_it_stays_after_rebuild,
     scenario_drop_a_planter_on_the_lawn_adds_a_site_item,
     scenario_delete_a_yard_shrub_from_its_card,

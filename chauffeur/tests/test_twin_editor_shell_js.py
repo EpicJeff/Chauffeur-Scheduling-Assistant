@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LABELS = dict(zip(
     'select move rotate scale draw-room draw-wall split-room add-door add-window add-anchor add-stair add-solar-zone add-meter add-electric-panel add-charger add-parking roof add-level delete undo redo sheet library add-effect ground'.split(),
     ['Select', 'Move', 'Turn', 'Scale', 'Draw room', 'Draw wall', 'Split room', 'Add door', 'Add window', 'Add anchor', 'Add stair', 'Add solar zone', 'Add meter', 'Add electric panel', 'Add charger', 'Add parking spot', 'Roof', 'Add floor', 'Delete', 'Undo', 'Redo', 'Sheet', 'Library', 'Add effect', 'Ground and yard']))
+LABELS['add-porch'] = 'Add porch'
 
 
 class Page(HTMLParser):
@@ -68,6 +69,11 @@ def test_homes(p):
         assert node['attrs'].get('title') == name, tool
     groups = [n['attrs']['data-toolbar-group'] for n in p.nodes if 'data-toolbar-group' in n['attrs']]
     assert groups == ['menu', 'house', 'save', 'select', 'structure', 'yard', 'fixtures', 'measure', 'delete', 'history', 'sheet', 'floor', 'view'], groups
+    porch = p.by_id('rail-add-porch')
+    parent = p.nodes[porch['parent']]
+    assert parent['attrs'].get('data-toolbar-group') == 'structure'
+    siblings = [n['attrs'].get('id') for n in p.nodes if n['parent'] == porch['parent'] and n['tag'] == 'button']
+    assert siblings.index('rail-add-porch') == siblings.index('rail-draw-room') + 1
     for tool in ['add-meter', 'add-electric-panel', 'add-charger', 'add-parking']:
         assert p.inside(p.by_id('rail-' + tool), 'editor-equipment-menu')
     for id in ['editor-status', 'editor-save-state']:
