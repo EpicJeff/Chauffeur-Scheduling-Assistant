@@ -632,7 +632,8 @@
                 // needing `member` or `parent` wants somebody to sign in,
                 // which is a different screen and not this one's business.
                 try {
-                    const refusal = res && (res.status === 401 || res.status === 403)
+                    // Optional cache publication may be forbidden on a healthy child/panel session.
+                    const refusal = !init?.chfQuietAuth && res && (res.status === 401 || res.status === 403)
                         ? (res.headers.get('X-Auth-Refusal') || '') : '';
                     const tiers = refusal.split(',');
                     if (tiers.includes('device')
