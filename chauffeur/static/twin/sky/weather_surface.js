@@ -234,6 +234,8 @@ vWeatherWorld=(modelMatrix*weatherWorld).xyz;`;
 
 function patchLit(mode) {
   return shader=>{
+    // Never declare twice, whatever wraps this material (owner console 2026-11-19).
+    if(shader.vertexShader.includes('attribute float weatherOpen;'))return;
     shader.vertexShader='attribute float weatherOpen;\n'+shader.vertexShader.replace('#include <worldpos_vertex>',
       '#include <worldpos_vertex>\nvWeatherOpen=weatherOpen;');
     shader.fragmentShader='#define WEATHER_SURFACE_ACTIVE\n'+
@@ -245,6 +247,7 @@ function patchLit(mode) {
 // authored colour, coverage and lamp glow. Rain bends only their exposed normal;
 // vapour has no solid receiving face, so it only carries the shared binding.
 function patchEffect(shader) {
+  if(shader.vertexShader.includes('attribute float weatherOpen;'))return;
   shader.vertexShader='attribute float weatherOpen;\nvarying float vWeatherOpen;\nvarying vec3 vWeatherWorld;\n'+shader.vertexShader.replace(/void main\s*\(\s*\)\s*\{/,
     'void main() { vWeatherOpen=weatherOpen; vWeatherWorld=(modelMatrix*vec4(position,1.0)).xyz;');
   shader.fragmentShader='varying float vWeatherOpen;\nvarying vec3 vWeatherWorld;\n'+WEATHER_GLSL+shader.fragmentShader;

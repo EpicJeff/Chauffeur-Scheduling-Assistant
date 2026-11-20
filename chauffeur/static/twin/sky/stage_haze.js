@@ -6,6 +6,7 @@ let installed = false;
 const hooks = new WeakMap();
 // One environment wrapper, including on clones. Haze and cloud shadows bind
 // independently, but must not mistake each other's hook for a new base hook.
+const appliedPatches=new WeakMap();
 export function bindEnvironmentMaterial(material, name, uniforms, patch = null) {
   const source=hooks.get(material.onBeforeCompile);
   if(source?.bindings.get(name)?.uniforms===uniforms)return;
@@ -15,7 +16,15 @@ export function bindEnvironmentMaterial(material, name, uniforms, patch = null) 
   const bindings=new Map(source?.bindings);bindings.set(name,{uniforms,patch});
   material.onBeforeCompile=function(shader,renderer) {
     compile.call(this,shader,renderer);
-    for(const {uniforms,patch} of bindings.values()) {Object.assign(shader.uniforms,uniforms);patch?.(shader);}
+    // Another system (lightmaps, water, unlit...) may wrap this hook after binding;
+    // the next bind then wraps that wrapper. Apply each named patch once per compile.
+    let applied=appliedPatches.get(shader);
+    if(!applied)appliedPatches.set(shader,applied=new Set());
+    for(const [name,{uniforms,patch}] of bindings) {
+      Object.assign(shader.uniforms,uniforms);
+      if(applied.has(name))continue;
+      applied.add(name);patch?.(shader);
+    }
   };
   material.customProgramCacheKey=()=>key+[...bindings.keys()].sort().map(name=>'|'+name).join('');
   hooks.set(material.onBeforeCompile,{compile,key,bindings});
