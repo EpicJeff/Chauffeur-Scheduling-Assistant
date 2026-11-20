@@ -107,8 +107,13 @@ vec2 weatherRipple(vec2 world) {
   #ifdef WEATHER_SURFACE_POOL
     clock=waterTime;
   #endif
-  for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++) {
-    vec2 id=cell+vec2(float(x),float(y));
+  // Give FXC a runtime trip count instead of nine explicit impact bodies.
+  // The four-cell stencil visits the same middle cells in y/x order.
+  int impacts=int(count);
+  for(int impact=0;impact<impacts;impact++) {
+    int width=count==4.0?2:3;
+    int y=impact/width,x=impact-y*width;
+    vec2 id=count==4.0?midCell+vec2(float(x),float(y)):cell+vec2(float(x-1),float(y-1));
     bool mid=id.x>=midCell.x&&id.x<=midCell.x+1.0&&id.y>=midCell.y&&id.y<=midCell.y+1.0;
     if(count==4.0&&!mid)continue;
     vec3 random=weatherRingHash(id);
