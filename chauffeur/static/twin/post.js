@@ -8,7 +8,7 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { shadowTransmittance } from './sky/cloud_shadow.js';
 import { createNoiseVolumeSampler } from './sky/cloud_noise.js';
 import { WetReflectionPass } from './wet_reflections.js';
-import { environmentFrame } from './sky/stage_haze.js';
+import { environmentFrame, frameObjects as environmentObjects } from './sky/stage_haze.js';
 
 const finiteClamp=(v,a=0,b=1)=>Number.isFinite(v)?Math.max(a,Math.min(b,v)):a;
 const smooth=(a,b,v)=>{const x=finiteClamp((v-a)/Math.max(b-a,1e-6));return x*x*(3-2*x);};
@@ -239,12 +239,12 @@ export function createPost(renderer, scene, camera, { samples = 0, clouds = null
     objects = {opaque:[], transparent:[], excluded:[], clipped:[]};
     // Classify once before any pass changes masks, visibility or materials.
     // traverse (not traverseVisible) preserves children of hidden parents.
-    scene.traverse(o => {
+    for (const o of environmentObjects(scene)) {
       if (o.material) objects[transparent(o) ? 'transparent' : 'opaque'].push(o);
-      if (!o.visible) return;
-      if (excluded(o)) { objects.excluded.push(o); return; }
+      if (!o.visible) continue;
+      if (excluded(o)) { objects.excluded.push(o); continue; }
       if (o.isMesh && [].concat(o.material).some(m=>m?.clippingPlanes?.length)) objects.clipped.push(o);
-    });
+    }
     return objects;
   }
   function withGeometry(list, draw) {

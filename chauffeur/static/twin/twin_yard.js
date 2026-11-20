@@ -979,6 +979,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     for (const objects of reused.values()) for (const object of objects) root.add(object);
     for (const { object, index, position } of plantPlacements) {
       object.position.set(...position); object.userData.yardPlantIndex = index;
+      // A viewer may have frozen this reused plant's local matrix. Cover
+      // sampling below must see its new placement before the next frame.
+      object.updateMatrix();
       if (viewing) object.name = `tree:${index}`;
     }
     // Stable part order (and stable order within a part) keeps chart packing deterministic.

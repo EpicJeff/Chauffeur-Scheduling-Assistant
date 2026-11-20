@@ -42,6 +42,7 @@ import { mountFrameMeter } from './frame_meter.js';
 import { createPost, EMITTER_GAIN } from './post.js';
 import { createReflectionProbes } from './reflection_probes.js';
 import { createPieceVisibility } from './twin_visibility.js';
+import { freezeViewerMatrices } from './static_matrices.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {}, stage = null } = {}) {
   kit = kit || {};
@@ -452,8 +453,6 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       sunDirection: sun.position.clone().sub(sun.target.position).normalize(),
     });
     yardGroup?.userData.grass?.update(performance.now() / 1000,view.weather,site.front_bearing_deg ?? 180,camera);
-    plantWind.update(performance.now()/1000,view.weather,site.front_bearing_deg ?? 180);
-    seasons.update(view.season);
     weatherSurface.update(view.weather,performance.now()/1000);
     if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces || precipitationCover!==twin?.skyCover){
       seasonTouches.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);
@@ -477,6 +476,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     }
     renderer3.info.reset();
     startEnvironmentFrame(scene);
+    plantWind.update(performance.now()/1000,view.weather,site.front_bearing_deg ?? 180);
+    seasons.update(view.season);
     // three recomputes every object's world matrix at the start of each render
     // call; a frame makes five or more (mirror, AO, beauty, transparent, shadow
     // faces) and nothing moves between them. Owner trace 2026-11-20: 13% of the
@@ -1396,6 +1397,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       stopDispose();
       yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);
+      freezeViewerMatrices(twin, {editor});
       // A roof edit can reuse the entire yard. Its cover still follows the
       // accepted building geometry, including furniture and pool features.
       if (yardGroup) writeWeatherOpen(yardGroup, twin.skyCover);
@@ -1516,6 +1518,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         const releaseViewing = viewing?.dispose({ deferMaterials: true }); viewing = null;
         group.userData.adoptParts?.();
         twin.groups.site.add(group); twin.yardGroup = group; yardGroup = group;
+        freezeViewerMatrices(twin, {editor});
         if (previous) {
           const keep = retained(); previous.removeFromParent();
           previous.userData.releasePlants?.(keep); disposeObject(previous, { keepMaterials: keep });

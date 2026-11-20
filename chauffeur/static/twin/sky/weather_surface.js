@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bindEnvironmentMaterial, oncePerFrame } from './stage_haze.js';
+import { bindEnvironmentMaterial, oncePerFrame, frameObjects } from './stage_haze.js';
 
 let installed=false;
 const unit=v=>Number.isFinite(v)?Math.max(0,Math.min(1,v)):0;
@@ -274,8 +274,8 @@ export function installWeatherSurface(scene) {
   const uniforms={weatherSurface:{value:new THREE.Vector4()}};
   const patches={solid:patchLit('solid'),lawn:patchLit('lawn'),grass:patchLit('lawn',true),roof:patchLit('roof'),water:patchLit('water'),submerged:patchLit('submerged')};
   let disposed=false;
-  function prepare(root=scene) {
-    root.traverse(object=>{for(const material of [].concat(object.material||[])) {
+  function prepare(root) {
+    for(const object of frameObjects(root ?? scene,{fresh:root !== undefined})){for(const material of [].concat(object.material||[])) {
       const lit=material.isMeshStandardMaterial||material.isMeshLambertMaterial||material.isMeshPhongMaterial||material.isMeshToonMaterial;
       const effect=material.isShaderMaterial&&material.uniforms?.light;
       if(!lit&&!effect)continue;
@@ -286,7 +286,7 @@ export function installWeatherSurface(scene) {
         :material.name==='roof'||material.userData.materialRole==='roof'?'roof'
         :material.userData.seasonLawn||material.userData.materialRole==='lawn'||material.name==='lawn'?'lawn':'solid';
       bindEnvironmentMaterial(material,'weather-surface-'+mode+'-1',uniforms,effect?patchEffect:material.userData.grassUniforms?patches.grass:patches[mode]);
-    }});
+    }}
   }
   const previous=scene.onBeforeRender;
   const walk=oncePerFrame(scene,()=>prepare());

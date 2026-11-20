@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { sampleCloudDensity } from './clouds.js';
 import { createNoiseVolumeSampler } from './cloud_noise.js';
-import { bindEnvironmentMaterial, oncePerFrame } from './stage_haze.js';
+import { bindEnvironmentMaterial, oncePerFrame, frameObjects } from './stage_haze.js';
 
 const SIZE=12, EARTH=6360000, INTERVAL=.25;
 const held=v=>Number.isFinite(v)?Math.max(0,Math.min(1,v)):1;
@@ -107,12 +107,12 @@ export function installCloudShadow(scene,clouds) {
     cloudShadowLight:{value:new THREE.Vector3(0,1,0)}};
   let centre=[0,0],radius=1,sun=[0,1,0],moon=[0,-1,0],last=-Infinity,disposed=false,enabled=true,cpuNoise=null;
   const source=clouds.uniforms;
-  function prepare(root=scene) {
-    root.traverse(object=>{for(const material of [].concat(object.material||[])) {
+  function prepare(root) {
+    for(const object of frameObjects(root ?? scene,{fresh:root !== undefined})){for(const material of [].concat(object.material||[])) {
       const lit=material.isMeshStandardMaterial||material.isMeshLambertMaterial||material.isMeshPhongMaterial||material.isMeshToonMaterial;
       const effect=material.isShaderMaterial&&material.uniforms?.light;
       if(lit||effect)bindEnvironmentMaterial(material,'cloud-shadow-1',uniforms,effect?patchEffect:null);
-    }});
+    }}
   }
   const previous=scene.onBeforeRender;
   const walk=oncePerFrame(scene,()=>prepare());

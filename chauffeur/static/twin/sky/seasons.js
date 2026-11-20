@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bindEnvironmentMaterial } from './stage_haze.js';
+import { bindEnvironmentMaterial, frameObjects } from './stage_haze.js';
 
 const finite = v => typeof v === 'number' && Number.isFinite(v);
 const clamp = v => finite(v) ? Math.max(0, Math.min(1, v)) : 0;
@@ -151,8 +151,8 @@ export function installSeasons(scene) {
   const uniforms={seasonFoliage:{value:new THREE.Vector3(1,0,0)},seasonDormancy:{value:0}};
   const foliage={seasonFoliage:uniforms.seasonFoliage},lawn={seasonDormancy:uniforms.seasonDormancy};
   const lawnSurface=lawnPatch(false),lawnBlades=lawnPatch(true);
-  function prepare(root=scene) {
-    root.traverse(object=>{
+  function prepare(root) {
+    for(const object of frameObjects(root ?? scene,{fresh:root !== undefined})){
       for(const material of [].concat(object.material||[])){
         if(material.userData.seasonFoliage){
           bindEnvironmentMaterial(material,'season-foliage-1',foliage,foliagePatch);
@@ -178,7 +178,7 @@ export function installSeasons(scene) {
         }
         if(material.userData.seasonLawn)bindEnvironmentMaterial(material,'season-lawn-1',lawn,material.userData.grassUniforms?lawnBlades:lawnSurface);
       }
-    });
+    }
   }
   return {uniforms,prepare,update(state){
     uniforms.seasonFoliage.value.set(clamp(state.presence),clamp(state.autumn),clamp(state.spring));

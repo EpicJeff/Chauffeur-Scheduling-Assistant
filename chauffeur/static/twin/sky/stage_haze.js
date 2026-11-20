@@ -37,10 +37,22 @@ export function bindEnvironmentMaterial(material, name, uniforms, patch = null) 
 // v2.499.954 gate did and saved nothing on the owner's house). A scene whose
 // frames nobody counts walks every pass, as before.
 const environmentFrames = new WeakMap();
+const environmentObjects = new WeakMap();
 export function startEnvironmentFrame(scene) {
   environmentFrames.set(scene, (environmentFrames.get(scene) || 0) + 1);
+  environmentObjects.set(scene, frameObjects(scene, {fresh:true}));
 }
 export function environmentFrame(scene) { return environmentFrames.get(scene); }
+// Read-only pre-order list, including invisible objects, like Object3D.traverse.
+// Only the counted scene owns a snapshot. Explicit prepare(root) callers use
+// fresh:true, even for that scene (compile warm-ups must see newly added work).
+// Uncounted scenes and subtree roots always walk just the root they were given.
+export function frameObjects(root, {fresh=false} = {}) {
+  if (!fresh && environmentObjects.has(root)) return environmentObjects.get(root);
+  const objects = [];
+  root.traverse(object => objects.push(object));
+  return objects;
+}
 export function oncePerFrame(scene, prepare) {
   let walked = 0;
   return () => {
@@ -165,14 +177,14 @@ export function installStageHaze(scene, sky) {
     }
   }
   refresh();
-  function prepare(root = scene) {
-    root.traverse(object => {
+  function prepare(root) {
+    for (const object of frameObjects(root ?? scene, {fresh:root !== undefined})) {
       for (const material of [].concat(object.material || [])) {
         // Effect ShaderMaterials stay inside the lot and deliberately omit fog.
         if (!material.fog || material.isShaderMaterial) continue;
         bindEnvironmentMaterial(material,'stage-haze-1',uniforms);
       }
-    });
+    }
   }
   const previous = scene.onBeforeRender, walk = oncePerFrame(scene, () => prepare());
   scene.onBeforeRender = function(renderer, ...args) {

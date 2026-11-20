@@ -150,8 +150,8 @@ await test('the scene hook walks once per twin frame, not once per pass',()=>{
  // Nobody counts this scene's frames yet: every pass walks, as before.
  const early=new THREE.MeshStandardMaterial();scene.add(new THREE.Mesh(new THREE.BoxGeometry(),early));
  pass();assert.ok(bound(early),'an uncounted scene walks');
- startEnvironmentFrame(scene);
  const first=new THREE.MeshStandardMaterial();scene.add(new THREE.Mesh(new THREE.BoxGeometry(),first));
+ startEnvironmentFrame(scene);
  pass();assert.ok(bound(first),'first pass of a frame binds');
  const late=new THREE.MeshStandardMaterial();scene.add(new THREE.Mesh(new THREE.BoxGeometry(),late));
  pass();pass();assert.ok(!bound(late),'later passes of the same frame do not walk, though three counted them');
