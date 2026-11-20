@@ -29,16 +29,23 @@ export function bindEnvironmentMaterial(material, name, uniforms, patch = null) 
   material.customProgramCacheKey=()=>key+[...bindings.keys()].sort().map(name=>'|'+name).join('');
   hooks.set(material.onBeforeCompile,{compile,key,bindings});
 }
-// A scene hook runs before every pass (mirror, AO, beauty, probe faces); binding
-// walks the whole scene. Nothing joins the scene between the passes of one frame,
-// so walk once per renderer frame (twin_view resets info once a frame; autoReset
-// renderers count every render, so they still walk every pass).
-export function oncePerFrame(prepare) {
-  let walked = null;
-  return renderer => {
-    const frame = renderer?.info?.render?.frame;
+// A scene hook runs before every pass (mirror, AO, beauty, transparent, probe
+// faces); binding walks the whole scene. Nothing joins the scene between the
+// passes of one frame, so walk once per frame. The frame is the twin's own
+// count (startEnvironmentFrame, called once by twin_view's render): three r187
+// bumps info.render.frame on EVERY render call, so it cannot key this (the
+// v2.499.954 gate did and saved nothing on the owner's house). A scene whose
+// frames nobody counts walks every pass, as before.
+const environmentFrames = new WeakMap();
+export function startEnvironmentFrame(scene) {
+  environmentFrames.set(scene, (environmentFrames.get(scene) || 0) + 1);
+}
+export function oncePerFrame(scene, prepare) {
+  let walked = 0;
+  return () => {
+    const frame = environmentFrames.get(scene);
     if (frame !== undefined && frame === walked) return;
-    walked = frame; prepare();
+    walked = frame ?? 0; prepare();
   };
 }
 function installChunks() {
@@ -163,13 +170,13 @@ export function installStageHaze(scene, sky) {
       }
     });
   }
-  const previous = scene.onBeforeRender, walk = oncePerFrame(() => prepare());
+  const previous = scene.onBeforeRender, walk = oncePerFrame(scene, () => prepare());
   scene.onBeforeRender = function(renderer, ...args) {
     previous.call(this, renderer, ...args);
     const target = renderer.getRenderTarget();
     uniforms.stageCanvas.value = !target || target.isXRRenderTarget ? 1 : 0;
     uniforms.stageExposure.value = Number.isFinite(renderer.toneMappingExposure) ? renderer.toneMappingExposure : 1;
-    walk(renderer);
+    walk();
   };
   return {prepare, refresh,
     set({centre, radius, enabled, extinction, fogColour} = {}) {

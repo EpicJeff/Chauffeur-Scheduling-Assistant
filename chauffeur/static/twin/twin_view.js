@@ -24,7 +24,7 @@ import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/
 import { createCloudPass } from './sky/cloud_pass.js';
 import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction, weatherLightingKey } from './sky/weather.js';
 import { installPlantWind } from './sky/wind.js';
-import { installStageHaze } from './sky/stage_haze.js';
+import { installStageHaze, startEnvironmentFrame } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
 import { installWeatherSurface } from './sky/weather_surface.js';
 import { seasonState, createSeasonPreview, installSeasons } from './sky/seasons.js';
@@ -474,18 +474,28 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       renderer3.shadowMap.needsUpdate = false; sun.shadow.needsUpdate = false;
     }
     renderer3.info.reset();
-    // The pool's mirror image belongs to this frame's camera.
-    if (!state.unlit) {
-      const background=scene.background;
-      try {scene.background=sky.cube;reflections.mirror(camera);}
-      finally {scene.background=background;}
-    }
-    post?.setCamera(camera);
-    // Count only the beauty pass: AO depth and fullscreen draws are extra work,
-    // not extra house geometry. createPost snapshots the RenderPass counters.
+    startEnvironmentFrame(scene);
+    // three recomputes every object's world matrix at the start of each render
+    // call; a frame makes five or more (mirror, AO, beauty, transparent, shadow
+    // faces) and nothing moves between them. Owner trace 2026-11-20: 13% of the
+    // frame. Compute once here; the passes reuse it.
+    scene.updateMatrixWorld();
+    const matrixAuto = scene.matrixWorldAutoUpdate;
+    scene.matrixWorldAutoUpdate = false;
     let picture;
-    if (post && !state.unlit) picture = post.render();
-    else { renderer3.render(scene, camera); picture = renderer3.info.render; }
+    try {
+      // The pool's mirror image belongs to this frame's camera.
+      if (!state.unlit) {
+        const background=scene.background;
+        try {scene.background=sky.cube;reflections.mirror(camera);}
+        finally {scene.background=background;}
+      }
+      post?.setCamera(camera);
+      // Count only the beauty pass: AO depth and fullscreen draws are extra work,
+      // not extra house geometry. createPost snapshots the RenderPass counters.
+      if (post && !state.unlit) picture = post.render();
+      else { renderer3.render(scene, camera); picture = renderer3.info.render; }
+    } finally { scene.matrixWorldAutoUpdate = matrixAuto; }
     lastStats = { drawCalls: picture.calls, triangles: picture.triangles, tier, fps };
     if (editFrames.size) {
       let meshes = 0;

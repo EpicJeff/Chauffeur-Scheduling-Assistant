@@ -284,8 +284,8 @@ export function installWeatherSurface(scene) {
     }});
   }
   const previous=scene.onBeforeRender;
-  const walk=oncePerFrame(()=>prepare());
-  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);walk(renderer);};
+  const walk=oncePerFrame(scene,()=>prepare());
+  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);walk();};
   return {uniforms,prepare,
     update(weather={},seconds=0) {
       const u=uniforms.weatherSurface.value;
