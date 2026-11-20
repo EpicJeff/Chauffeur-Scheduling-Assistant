@@ -190,6 +190,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
   const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
     extras:() => [sky.object, precipitation.group, seasonTouches.group, sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
+  reflections.setMirrorStillHz(stage?.mirror_still_hz ?? 10);
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
@@ -627,7 +628,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     },
     get roofSurfaces() { return twin?.roofSurfaces; },
     render,
-    reflectionsChanged: () => reflections.request(),
+    reflectionsChanged: reason => reason === 'lamp' ? reflections.requestLamp() : reflections.request(),
     setHiddenPieces(ids, kinds) {
       if (!pieceVisibility) return;
       pieceVisibility.set(ids, kinds);
@@ -872,7 +873,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         el.dispatchEvent(new CustomEvent('twintimechange', {detail:state.time}));
       }
     },
+    setMirrorStillHz(hz) { reflections.setMirrorStillHz(hz); render(); },
     async setStage(next) {
+      if (next?.mirror_still_hz !== undefined) reflections.setMirrorStillHz(next.mirror_still_hz);
       if (!next || !Number.isFinite(next.radius) || next.radius < 30 || next.radius > 1000) return;
       const radius = next.radius_override === undefined ? next.radius : next.radius_override;
       if (radius !== null && (!Number.isFinite(radius) || radius < 30 || radius > 1000)) return;

@@ -40,6 +40,7 @@ const environmentFrames = new WeakMap();
 export function startEnvironmentFrame(scene) {
   environmentFrames.set(scene, (environmentFrames.get(scene) || 0) + 1);
 }
+export function environmentFrame(scene) { return environmentFrames.get(scene); }
 export function oncePerFrame(scene, prepare) {
   let walked = 0;
   return () => {

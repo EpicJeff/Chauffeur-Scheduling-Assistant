@@ -375,6 +375,35 @@ await test('mounted view disposal releases its post targets and repeated disposa
   view.dispose();view.dispose();assert.equal(view.post.info().enabled,false);
   resources.forEach(r=>assert.equal(counts.get(r),1));
 });
+
+for(const fail of [false,true])await test('one classification walk per twin frame for beauty transparent and clipped AO '+fail,async()=>{
+ const {startEnvironmentFrame}=await import(file('static/twin/sky/stage_haze.js'));
+ const renderer=new Renderer(),scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera();
+ renderer.setSize(640,400);
+ const opaque=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial({clippingPlanes:[new THREE.Plane(new THREE.Vector3(0,1,0),2)]}));
+ const transparent=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial({transparent:true}));
+ const child=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial());transparent.add(child);
+ opaque.layers.mask=5;transparent.layers.mask=7;child.layers.mask=3;
+ const hidden=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial());hidden.visible=false;
+ scene.add(opaque,transparent,hidden);
+ const material=opaque.material, masks=[opaque,transparent,child].map(o=>o.layers.mask);
+ const clouds={active:true,render(){},composite(){}};
+ const post=createPost(renderer,scene,camera,{clouds});let walks=0,draws=[];
+ const traverse=scene.traverse;scene.traverse=function(fn){walks++;return traverse.call(this,fn);};
+ renderer.inspect=({scene:drawn,normal})=>{if(drawn!==scene)return;
+  if(normal){draws.push('ao');assert.equal(transparent.visible,false);assert.equal(child.visible,true);assert.notEqual(opaque.material,material);if(fail)throw Error('AO failed');}
+  else if(opaque.layers.mask===0){draws.push('transparent');assert.equal(transparent.layers.mask,7);assert.equal(child.layers.mask,0);}
+  else {draws.push('beauty');assert.equal(transparent.layers.mask,0);assert.equal(child.layers.mask,3);}
+ };
+ const restored=()=>{assert.deepEqual([opaque,transparent,child].map(o=>o.layers.mask),masks);assert.equal(opaque.material,material);assert.equal(transparent.visible,true);assert.equal(hidden.visible,false);assert.equal(scene.overrideMaterial,null);};
+ try{
+  startEnvironmentFrame(scene);
+  for(let i=0;i<2;i++){if(fail)assert.throws(()=>post.render(),/AO failed/);else post.render();restored();}
+  assert.equal(walks,1);assert.deepEqual(draws,fail?['beauty','ao','beauty','ao']:['beauty','ao','transparent','beauty','ao','transparent']);
+  renderer.inspect=null;hidden.visible=true;hidden.userData.noOcclusion=true;
+  startEnvironmentFrame(scene);post.render();assert.equal(walks,2);assert.equal(hidden.visible,true);
+ } finally {post.dispose();}
+});
 finish();
 """
 

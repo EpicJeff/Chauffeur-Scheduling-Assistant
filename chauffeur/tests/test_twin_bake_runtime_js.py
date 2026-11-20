@@ -387,7 +387,9 @@ await check('controller_auto_bakes_loads_and_forces_a_second_run', async () => {
     assert.equal(c.controller.state().baked.length, 4);
     assert.equal(c.controller.state().stale.length, 0);
     const key = c.controller.state().key, before = structuredClone(c.server.manifests.get(key));
-    c.controller.light('k1', [255, 0, 0], 1); c.controller.light('k1', [255, 0, 0], 0);
+    const reflectionReasons=[];c.view.reflectionsChanged=reason=>reflectionReasons.push(reason);
+    c.controller.light('k1', [255, 0, 0], 1); c.controller.light('k1', [255, 0, 0], 1); c.controller.light('k1', [255, 0, 0], 0);
+    assert.deepEqual(reflectionReasons,['lamp','lamp'],'changed baked lamp tints use the coalescing path; identical tints do not request');
     assert.ok(covered(c.out.root).some(m => m.material.userData.lmBefore), 'the runtime actually patched materials');
     await c.controller.now();
     assert.equal(c.controller.state().baked.length, 8, 'force bakes all four room lights again');

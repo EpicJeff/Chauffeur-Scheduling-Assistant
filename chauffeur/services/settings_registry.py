@@ -131,6 +131,10 @@ ENTRIES: List[dict] = [
     _e('house_twin_stage_radius_ft', 'panel', 'House stage radius',
        'Fade the scenery into the sky beyond this radius (30 to 1000 feet). Automatic is 120 feet beyond the farthest lot corner.',
        page='house/twin', anchor='twin-stage-settings'),
+    _e('house_twin_mirror_still_hz', 'panel', 'Pool mirror refresh when still',
+       'Refresh every frame or 30, 15, 10 (default), 5 or 2 times per second while the camera is still. '
+       'Moving cameras refresh every frame. No effect on Low or Medium, which have no planar mirror.',
+       page='house/twin', anchor='twin-stage-settings'),
     _e('house_twin_light_looks', 'panel', 'Light colours in the twin',
        'Hold a light marker or expand its room controls to assign effect palettes or a fixed display colour. '
        'This changes only the twin, never the real light.',
@@ -864,7 +868,7 @@ def audit() -> dict:
     # The old schema field remains readable for migration, with no editor.
     # Structured display preferences have a dedicated store and endpoint, like
     # the control rulebook; they never invalidate schedules on a display save.
-    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'twin_import_limit_mb', 'twin_import_unpacked_limit_mb', 'ha_control', 'house_twin_glance', 'house_twin_idle_enabled', 'house_twin_energy', 'house_twin_light_looks', 'house_twin_stage_radius_ft'}
+    model = (set(Settings.model_fields) - {'panel_allow_unsafe_controls'}) | {'twin_import_limit_mb', 'twin_import_unpacked_limit_mb', 'ha_control', 'house_twin_glance', 'house_twin_idle_enabled', 'house_twin_energy', 'house_twin_light_looks', 'house_twin_stage_radius_ft', 'house_twin_mirror_still_hz'}
     listed = set(BY_KEY)
     return {'missing': sorted(model - listed), 'stale': sorted(listed - model)}
 

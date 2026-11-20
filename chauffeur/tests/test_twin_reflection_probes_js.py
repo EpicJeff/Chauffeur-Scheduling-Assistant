@@ -249,6 +249,7 @@ for(const failure of [false,true])await test('high_water_mirror_is_the_scene_see
  assert.ok(depth(-.5)<-1,'pool shell is clipped');assert.ok(depth(2)>-1);
  // The walk that finds what to hide is not repeated every frame.
  let walks=0;const traverse=c.scene.traverse;c.scene.traverse=function(f){walks++;return traverse.call(this,f);};
+ c.manager.setMirrorStillHz(0); // This restoration scenario exercises the original every-frame path.
  for(let i=0;i<5;i++)c.manager.mirror(camera);assert.equal(walks,0);c.advance(500);c.manager.mirror(camera);assert.equal(walks,1);
  c.scene.traverse=traverse;assert.equal(c.manager.info().planar.passes,7);
  c.manager.dispose();
@@ -294,7 +295,11 @@ await test('mounted_high_view_draws_the_water_mirror_inside_its_own_frame_and_no
   const calls=[];const real=view.renderer3.render;view.renderer3.render=function(s,c){calls.push(this.target?.isWebGLRenderTarget&&!this.target.isWebGLCubeRenderTarget?'mirror':'frame');return real.call(this,s,c);};
   const before=view.reflectionInfo().planar.passes;view.render();assert.equal(view.reflectionInfo().planar.passes,before+1);assert.equal(calls[0],'mirror','the mirror is drawn before the picture that shows it');
   assert.equal(view.scene.background,clear,'the visible sky is restored after the mirror');
-  view.setUnlit(true);view.render();assert.equal(view.reflectionInfo().planar.passes,before+1);
+  view.setMirrorStillHz(2);const still=view.reflectionInfo().planar.passes;view.render();assert.equal(view.reflectionInfo().planar.passes,still);
+  view.reflectionsChanged('lamp');view.render();assert.equal(view.reflectionInfo().planar.passes,still,'lamp request obeys the still mirror interval');
+  view.reflectionsChanged();view.render();assert.equal(view.reflectionInfo().planar.passes,still+1,'explicit scene invalidation draws next frame');
+  view.setView('ext');assert.ok(view.reflectionInfo().planar.passes>still+1,'view change forces mirror even at unchanged pose');
+  const lit=view.reflectionInfo().planar.passes;view.setUnlit(true);view.render();assert.equal(view.reflectionInfo().planar.passes,lit);
  }finally{view?.dispose();CaptureRenderer.prototype.setAnimationLoop=originalLoop;globalThis.Renderer=rendererClass;}
 });
 await test('warm_ups_compile_for_the_composer_target_and_frames_hold_until_programs_are_ready',async()=>{
@@ -382,6 +387,43 @@ await test('mounted_hook_requests_rebuild_sky_time_and_lit_changes_without_sync_
   await view.rebuild(fixture());assert.equal(view.renderer3.faces.length,n);view.setUnlit(false);view.renderer3.loop();time+=1500;for(let i=0;i<5;i++)view.renderer3.loop();
   assert.equal(view.reflectionInfo().probes.length,4);assert.ok(view.reflectionInfo().probes.every(p=>p.fresh),'unlit rebuild keeps source bindings');
  }finally{view?.dispose();CaptureRenderer.prototype.setAnimationLoop=originalLoop;globalThis.Renderer=rendererClass;Object.defineProperty(performance,'now',{configurable:true,value:originalNow});}
+});
+
+await test('still_mirror_interval_motion_projection_resize_and_forced_refresh_keep_bindings',async()=>{
+ const c=await setup('high');c.round();const {camera}=poolCamera(c),u=planarUniforms(c);
+ c.manager.mirror(camera);const texture=u.waterPlanar.value, matrix=u.waterPlanarMatrix.value.clone();
+ for(let i=0;i<5;i++)c.manager.mirror(camera);
+ assert.equal(c.renderer.mirrors.length,1);assert.equal(u.waterPlanar.value,texture);assert.ok(u.waterPlanarMatrix.value.equals(matrix));
+ c.advance(99);c.manager.mirror(camera);assert.equal(c.renderer.mirrors.length,1);
+ c.advance(1);c.manager.mirror(camera);assert.equal(c.renderer.mirrors.length,2);
+ for(let i=0;i<3;i++){camera.position.x+=.01;c.manager.mirror(camera);}assert.equal(c.renderer.mirrors.length,5);
+ camera.fov+=1;camera.updateProjectionMatrix();c.manager.mirror(camera);assert.equal(c.renderer.mirrors.length,6);
+ c.manager.setMirrorStillHz(2);c.manager.mirror(camera);const count=c.renderer.mirrors.length;
+ c.advance(499);c.manager.mirror(camera);assert.equal(c.renderer.mirrors.length,count);
+ c.advance(1);c.manager.mirror(camera);assert.equal(c.renderer.mirrors.length,count+1);
+ c.manager.setMirrorStillHz(0);for(let i=0;i<3;i++)c.manager.mirror(camera);assert.equal(c.renderer.mirrors.length,count+4);
+ c.manager.setMirrorStillHz(2);c.manager.mirror(camera);
+ const forced=fn=>{const before=c.renderer.mirrors.length;fn();c.manager.mirror(camera);assert.equal(c.renderer.mirrors.length,before+1);};
+ forced(()=>c.manager.rebuild(c.p,c.out.root));
+ forced(()=>c.manager.request()); // View/level changes take the same explicit invalidation path.
+ forced(()=>{c.renderer.getDrawingBufferSize=v=>v.set(1200,800);});
+ forced(()=>{c.manager.setUnlit(true);c.manager.mirror(camera);c.manager.setUnlit(false);});
+ const away=camera.clone();away.lookAt(camera.position.clone().add(new THREE.Vector3(0,100,0)));c.manager.mirror(away);
+ forced(()=>{}); // Water reappears, even with the same saved pose and no elapsed time.
+ assert.equal(u.waterPlanar.value,texture);assert.equal(u.waterPlanarActive.value,1);c.manager.dispose();
+});
+await test('continuous_lamp_changes_coalesce_without_starvation_and_explicit_requests_bypass_throttle',async()=>{
+ const c=await setup();const lamp=new THREE.PointLight();c.scene.add(lamp);c.round();
+ const rounds=[];let previous=c.manager.info().probes[0].captures;
+ for(let i=0;i<30;i++){
+  c.advance(500);lamp.intensity++;c.manager.requestLamp();c.manager.frame();
+  const current=c.manager.info().probes[0].captures;if(current!==previous){rounds.push(i*500);previous=current;}
+  for(let j=0;j<3;j++)c.manager.frame();
+ }
+ assert.ok(rounds.length>=2,'continuous changes eventually capture');
+ for(let i=1;i<rounds.length;i++)assert.ok(rounds[i]-rounds[i-1]>=5000);
+ const before=c.manager.info().probes[0].captures;c.manager.request();c.advance(1500);for(let j=0;j<4;j++)c.manager.frame();
+ assert.equal(c.manager.info().probes[0].captures,before+1,'explicit scene/time/sky request keeps its original delay');c.manager.dispose();
 });
 finish();
 """

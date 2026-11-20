@@ -179,7 +179,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   }
   function light(device, rgb, intensity) {
     const previous = tints.get(device);
-    if (!previous || previous.intensity !== intensity || previous.rgb.some((v,i) => v !== rgb[i])) view.reflectionsChanged?.();
+    if (!previous || previous.intensity !== intensity || previous.rgb.some((v,i) => v !== rgb[i])) view.reflectionsChanged?.('lamp');
     tints.set(device, { rgb: [...rgb], intensity });
     const s = packed?.slots[device];
     if (s && uniforms) {

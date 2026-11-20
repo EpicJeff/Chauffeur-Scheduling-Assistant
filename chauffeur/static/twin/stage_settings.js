@@ -21,12 +21,15 @@ export function mountStageSettings(view, {api = (path, init) => fetch(base() + p
   const field = document.getElementById('house_twin_stage_radius_ft');
   const save = document.getElementById('twin-stage-save'), reset = document.getElementById('twin-stage-reset');
   const hint = document.getElementById('twin-stage-default');
+  const mirror = document.getElementById('house_twin_mirror_still_hz');
+  const mirrorSave = document.getElementById('twin-mirror-save');
   const events = new AbortController();
   let stopped = false, ready = false, busy = false, revision = 0;
   const listen = (node, type, fn) => node?.addEventListener(type, fn, {signal: events.signal});
-  function controls() { if (field) field.disabled = !ready || busy; if (save) save.disabled = !ready || busy; if (reset) reset.disabled = !ready || busy; }
+  function controls() { for (const node of [field,save,reset,mirror,mirrorSave]) if(node)node.disabled = !ready || busy; }
   function apply(stage) {
     if (field) field.value = String(stage.radius);
+    if (mirror) mirror.value = String(stage.mirror_still_hz ?? 10);
     if (hint) hint.textContent = `Automatic radius: ${Math.round(stage.default_radius)} ft (120 ft beyond the farthest lot corner).`;
   }
   async function reload() {
@@ -58,6 +61,18 @@ export function mountStageSettings(view, {api = (path, init) => fetch(base() + p
     finally { busy = false; if (!stopped) controls(); }
   }
   controls();
+  listen(mirrorSave, 'click', async () => {
+    if (!ready || busy || stopped) return;
+    busy=true; ++revision; controls(); window.chfSettingsSaving?.();
+    try {
+      const response=await api('api/house/twin/mirror', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({mirror_still_hz:Number(mirror.value)})});
+      const stage=await response.json();
+      if(!response.ok)throw new Error(stage.detail || 'Could not save the mirror refresh rate.');
+      if(stopped)return;
+      apply(stage); view.setMirrorStillHz?.(stage.mirror_still_hz); window.chfSettingsSaved?.(true);
+    } catch(error) { if(!stopped)window.chfSettingsSaved?.(false,error.message); }
+    finally {busy=false;if(!stopped)controls();}
+  });
   listen(save, 'click', () => store(field?.value?.trim() ? Number(field.value) : NaN));
   listen(reset, 'click', () => store(null));
   listen(window, 'chf-settings-opened', event => { if (event.detail?.tab === 'twin') reload(); });

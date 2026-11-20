@@ -333,7 +333,7 @@
     #twin-weather-settings button:disabled { opacity:.4; }
     #twin-weather-settings p { color:var(--twinTextDim); font-size:12px; overflow-wrap:anywhere; }
     #twin-weather-settings :focus-visible { outline:2px solid var(--twinText); outline-offset:2px; }
-    #twin-stage-settings input { display:block; box-sizing:border-box; width:100%; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); color:var(--twinText); }
+    #twin-stage-settings input, #twin-stage-settings select { display:block; box-sizing:border-box; width:100%; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); color:var(--twinText); }
     #twin-stage-settings button { min-height:44px; padding:8px 12px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); background:var(--twinHover); }
     #twin-stage-settings button:disabled { opacity:.4; }
     #twin-stage-settings p { color:var(--twinTextDim); font-size:12px; }
@@ -415,6 +415,11 @@
       <p id="twin-stage-default">Automatic is 120 ft beyond the farthest lot corner.</p>
       <button id="twin-stage-save" type="button" disabled>Save stage radius</button>
       <button id="twin-stage-reset" type="button" disabled>Use automatic radius</button>
+      <label>Pool mirror refresh when still <select id="house_twin_mirror_still_hz" aria-describedby="twin-mirror-help" disabled>
+        <option value="0">Every frame</option><option value="30">30 per second</option><option value="15">15 per second</option><option value="10" selected>10 per second</option><option value="5">5 per second</option><option value="2">2 per second</option>
+      </select></label>
+      <p id="twin-mirror-help">Moving cameras refresh every frame. Low and Medium have no planar mirror, so this setting has no effect there.</p>
+      <button id="twin-mirror-save" type="button" disabled>Save mirror refresh rate</button>
     {% endcall %}
     {% call settings_section('twin-weather-settings', 'Weather sources') %}
       <label>Weather entity <select id="weather_entity" disabled aria-describedby="twin-weather-report"><option value="">Automatic: first weather entity</option></select></label>
