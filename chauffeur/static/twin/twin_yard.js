@@ -837,12 +837,12 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         }
       }
       const field = buildGrass(plan, materialKit, tier, TIERS[tier].lawnBlades && site.lot?.length ? mat('lawn') : null, fringeCount);
-      if (!viewing && field.mesh && site.terraces?.length) field.mesh.userData.instancePiece = index => {
-        const matrix = field.mesh.instanceMatrix.array, x = matrix[index * 16 + 12], y = -matrix[index * 16 + 14];
+      if (!viewing && site.terraces?.length) for(const tile of field.tiles) tile.userData.instancePiece = index => {
+        const matrix = tile.instanceMatrix.array, x = matrix[index * 16 + 12], y = -matrix[index * 16 + 14];
         const pad = padAt(x, y);
         return {kind:pad ? 'pad' : undefined, pieceId:pad?.id};
       };
-      if (field.mesh) { group.add(field.mesh); mats.set('yard-blades:' + field.mesh.material.uuid, field.mesh.material); }
+      if (field.mesh) { group.add(field.mesh); const material=field.tiles[0].material; mats.set('yard-blades:' + material.uuid, material); }
       field.instances += fringeCount; field.draws += fringeCount ? 1 : 0;
       Object.defineProperty(root.userData, 'grass', {value:field});
       stopGrass();

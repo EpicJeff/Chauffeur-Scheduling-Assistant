@@ -232,12 +232,12 @@ vWeatherWorld=(modelMatrix*weatherWorld).xyz;`;
   THREE.ShaderChunk.lights_fragment_maps+='\n#if defined(RE_IndirectSpecular)&&defined(WEATHER_SURFACE_ACTIVE)\nradiance*=weatherHorizonDamp;\n#endif\n';
 }
 
-function patchLit(mode) {
+function patchLit(mode,instanceExposure=false) {
   return shader=>{
     // Never declare twice, whatever wraps this material (owner console 2026-11-19).
     if(shader.vertexShader.includes('attribute float weatherOpen;'))return;
     shader.vertexShader='attribute float weatherOpen;\n'+shader.vertexShader.replace('#include <worldpos_vertex>',
-      '#include <worldpos_vertex>\nvWeatherOpen=weatherOpen;');
+      '#include <worldpos_vertex>\nvWeatherOpen='+(instanceExposure?'instanceColor.r':'weatherOpen')+';');
     shader.fragmentShader='#define WEATHER_SURFACE_ACTIVE\n'+
       (mode==='water'?'#define WEATHER_SURFACE_WATER\n':mode==='submerged'?'#define WEATHER_SURFACE_SUBMERGED\n':mode==='roof'?'#define WEATHER_SURFACE_ROOF\n':mode==='lawn'?'#define WEATHER_SURFACE_LAWN\n':'')+shader.fragmentShader;
   };
@@ -267,7 +267,7 @@ vec3 weatherEffectNormal=vNormal+mat3(viewMatrix)*vec3(weatherSlope.x,0.0,weathe
 export function installWeatherSurface(scene) {
   installChunks();
   const uniforms={weatherSurface:{value:new THREE.Vector4()}};
-  const patches={solid:patchLit('solid'),lawn:patchLit('lawn'),roof:patchLit('roof'),water:patchLit('water'),submerged:patchLit('submerged')};
+  const patches={solid:patchLit('solid'),lawn:patchLit('lawn'),grass:patchLit('lawn',true),roof:patchLit('roof'),water:patchLit('water'),submerged:patchLit('submerged')};
   let disposed=false;
   function prepare(root=scene) {
     root.traverse(object=>{for(const material of [].concat(object.material||[])) {
@@ -280,7 +280,7 @@ export function installWeatherSurface(scene) {
       const mode=effect?'effect':material.userData.underwater?'submerged':material.userData.waterSurface||material.userData.litWater?'water'
         :material.name==='roof'||material.userData.materialRole==='roof'?'roof'
         :material.userData.seasonLawn||material.userData.materialRole==='lawn'||material.name==='lawn'?'lawn':'solid';
-      bindEnvironmentMaterial(material,'weather-surface-'+mode+'-1',uniforms,effect?patchEffect:patches[mode]);
+      bindEnvironmentMaterial(material,'weather-surface-'+mode+'-1',uniforms,effect?patchEffect:material.userData.grassUniforms?patches.grass:patches[mode]);
     }});
   }
   const previous=scene.onBeforeRender;

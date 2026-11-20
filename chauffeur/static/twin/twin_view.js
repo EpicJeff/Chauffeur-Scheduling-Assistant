@@ -449,7 +449,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       renderer: renderer3, camera, sun: timeLook?.sunClear ?? 3,
       sunDirection: sun.position.clone().sub(sun.target.position).normalize(),
     });
-    yardGroup?.userData.grass?.update(performance.now() / 1000,view.weather,site.front_bearing_deg ?? 180);
+    yardGroup?.userData.grass?.update(performance.now() / 1000,view.weather,site.front_bearing_deg ?? 180,camera);
     plantWind.update(performance.now()/1000,view.weather,site.front_bearing_deg ?? 180);
     seasons.update(view.season);
     weatherSurface.update(view.weather,performance.now()/1000);

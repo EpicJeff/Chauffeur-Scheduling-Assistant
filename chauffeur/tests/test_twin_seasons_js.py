@@ -214,9 +214,9 @@ await test('paver joint blades and lawn share the dormancy uniform and metre pat
  const {group}=await buildYard(plan,{materials:{}},'high'),scene=new THREE.Scene();group.scale.setScalar(.3048);scene.add(group);
  const seasons=S.installSeasons(scene);seasons.prepare();const grass=group.userData.grass;
  assert.ok(grass.jointInstances>0);assert.ok(grass.instances>grass.jointInstances);
- const flags=grass.mesh.geometry.attributes.grassJoint.array;assert.equal(Array.from(flags).filter(v=>v===1).length,grass.jointInstances);
+ const joints=grass.tiles.reduce((n,t)=>n+Array.from(t.instanceColor.array).filter((v,i)=>i%3===2&&v===0).length,0);assert.equal(joints,grass.jointInstances);
  let lawns=0;group.traverse(o=>{if(!o.material?.userData.seasonLawn)return;const shader=assemble(o.material,new Renderer());assert.equal(shader.uniforms.seasonDormancy,seasons.uniforms.seasonDormancy);assert.ok(shader.fragmentShader.includes(S.LAWN_GLSL));lawns++;});
- assert.ok(lawns>=2);for(const dormancy of [0,.5,1]){seasons.update({presence:1,autumn:0,spring:0,dormancy});assert.equal(assemble(grass.mesh.material,new Renderer()).uniforms.seasonDormancy.value,dormancy);}
+ assert.ok(lawns>=2);for(const dormancy of [0,.5,1]){seasons.update({presence:1,autumn:0,spring:0,dormancy});assert.equal(assemble(grass.tiles[0].material,new Renderer()).uniforms.seasonDormancy.value,dormancy);}
  group.traverse(o=>{o.geometry?.dispose();for(const m of [].concat(o.material||[]))m.dispose();});seasons.dispose();
 });
 await test('actual GLSL dormancy curve and tint: green identity, straw luminance, monotonic patches and blade/lawn agreement',()=>{

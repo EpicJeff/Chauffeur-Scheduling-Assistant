@@ -30,9 +30,22 @@ const make=()=>({units:'ft',buildings:[{id:'b',position:[14,14],rotation:25,base
  features:[{id:'spa',kind:'spa',polygon:square(90,66,8),depth_in:36}]},
  fire_pit:{id:'pit',shape:'round',at:[45,48],radius:3},edges:[],planting:[],furniture:[]}});
 const buildField=(p,t='high',k=kit())=>B.buildGrass(p,k,t,lawn);
-const positions=f=>{const a=f.mesh?.instanceMatrix.array||[],out=[];for(let i=0;i<f.instances;i++)out.push([a[i*16+12],-a[i*16+14],a[i*16+13]]);return out;};
-const rows=f=>{const a=f.mesh?.instanceMatrix.array||[],m=new Map();for(let i=0;i<f.instances;i++)m.set(`${a[i*16+12]}:${a[i*16+14]}`,Array.from(a.subarray(i*16,i*16+16)));return m;};
-const release=f=>{f.mesh?.geometry.dispose();f.mesh?.material.dispose();};
+// Flatten tile buffers only in tests; field first / joints last keeps all
+// placement, paver and slope assertions independent of the runtime partition.
+const buffers=new WeakMap();
+const tileData=f=>{
+ if(!buffers.has(f)){
+  const rows=[];for(const tile of f.tiles)for(let i=0;i<tile.instanceMatrix.count;i++)
+   rows.push({joint:tile.instanceColor.getZ(i)===0,row:tile.instanceMatrix.array.subarray(i*16,i*16+16)});
+  rows.sort((a,b)=>Number(a.joint)-Number(b.joint));
+  const a=new Float32Array(rows.length*16);rows.forEach((r,i)=>a.set(r.row,i*16));buffers.set(f,a);
+ }
+ return buffers.get(f);
+};
+const positions=f=>{const a=tileData(f),out=[];for(let i=0;i<a.length/16;i++)out.push([a[i*16+12],-a[i*16+14],a[i*16+13]]);return out;};
+const rows=f=>{const a=tileData(f),m=new Map();for(let i=0;i<a.length/16;i++)m.set(`${a[i*16+12]}:${a[i*16+14]}`,Array.from(a.subarray(i*16,i*16+16)));return m;};
+const release=f=>{if(f.mesh)disposeObject(f.mesh);};
+const bounds=f=>f.tiles.reduce((b,t)=>b.union(t.boundingBox),new THREE.Box3());
 const compile=(m,kind='standard')=>{const s={uniforms:{},vertexShader:THREE.ShaderLib[kind].vertexShader,
  fragmentShader:THREE.ShaderLib[kind].fragmentShader};m.onBeforeCompile(s,{});return s;};
 const P=await import(file('static/twin/paver_layout.js'));
@@ -52,13 +65,15 @@ await test('paver_covers_follow_joint_fill_and_cap_fallback_warns_once',async()=
   assert.equal(B.jointClumps(p,1).length,0);assert.equal(warnings,1,'yard and lawn share a single refusal');
  }finally{console.warn=warn;}
 });
-await test('paver_field_and_joint_roots_fit_joints_share_one_draw_and_obey_budget',()=>{
+await test('paver_field_and_joint_roots_fit_joints_share_tiles_and_obey_budget',()=>{
  const p=paverPlan(),layout=P.paverLayout(p.site.hardscape[0]);
  for(const tier of ['low','medium','high','max']){
-  const f=buildField(p,tier);assert.ok(f.instances<=T.TIERS[tier].lawnBlades);assert.equal(f.draws,tier==='low'?0:1);
+  const f=buildField(p,tier);assert.ok(f.instances<=T.TIERS[tier].lawnBlades);assert.equal(f.draws,f.tiles.length);
   if(tier==='low'){assert.equal(f.jointInstances,0);continue;}
-  assert.ok(f.jointInstances>0);assert.equal(f.mesh.count,f.instances);
-  const a=f.mesh.instanceMatrix.array,spread=Math.hypot(a[0],a[2]);
+  assert.ok(f.jointInstances>0);assert.equal(f.tiles.reduce((n,t)=>n+t.count,0),f.instances);
+  // The first buffer row now depends on seed order. Use the build's exact
+  // spread for byte-identical joint matrices, without yaw-rounding drift.
+  const a=tileData(f),spread=f.spread;
   for(let i=0;i<f.instances;i++){
    const x=a[i*16+12],y=-a[i*16+14];
     if(i<f.instances-f.jointInstances){
@@ -69,12 +84,13 @@ await test('paver_field_and_joint_roots_fit_joints_share_one_draw_and_obey_budge
     for(const {polygon} of layout.pavers)assert.ok(!inPolygon(polygon,x,y));
    }
   }
-  assert.deepEqual(a.slice(-f.jointInstances*16),B.jointClumps(p,spread).slice(0,f.jointInstances*16));
+  const matrixRows=a=>Array.from({length:a.length/16},(_,i)=>Array.from(a.slice(i*16,i*16+16))).sort((a,b)=>a[12]-b[12]||a[14]-b[14]);
+  assert.deepEqual(matrixRows(a.slice(-f.jointInstances*16)),matrixRows(B.jointClumps(p,spread).slice(0,f.jointInstances*16)));
   if(tier==='high'){
-   const m=new THREE.Matrix4(),v=new THREE.Vector3(),g=f.mesh.geometry;
+   const m=new THREE.Matrix4(),v=new THREE.Vector3(),g=f.tiles[0].geometry;
    for(let i=0;i<f.instances;i++){
     const x=a[i*16+12],y=-a[i*16+14];if(x<4||x>36||y<12||y>18)continue;
-    f.mesh.getMatrixAt(i,m);
+    m.fromArray(tileData(f),i*16);
     for(let j=0;j<g.attributes.position.count;j++){
      v.fromBufferAttribute(g.attributes.position,j).applyMatrix4(m);if(v.y<=1/12)continue;
      // Lawn blades lean over a stone's edge (owner: grass right up to the paver);
@@ -99,20 +115,20 @@ await test('low_has_no_field_no_draw_and_never_touches_a_clock',async()=>{
 });
 await test('tier_caps_cover_density_and_large_lots_are_bounded',()=>{
  for(const tier of ['medium','high','max']){
-  const f=buildField(make(),tier);assert.ok(f.instances>20000);assert.ok(f.instances<=T.TIERS[tier].lawnBlades);assert.equal(f.draws,1);assert.equal(f.regions,1);
+  const f=buildField(make(),tier);assert.ok(f.instances>20000);assert.ok(f.instances<=T.TIERS[tier].lawnBlades);assert.equal(f.draws,f.tiles.length);assert.ok(f.draws<=32);assert.equal(f.regions,1);
   console.log(`GRASS tier=${tier} instances=${f.instances} draws=${f.draws} regions=${f.regions} blades=${f.instances*3}`);release(f);
   const huge={buildings:[],site:{lot:square(-1000,-1000,10000),terraces:[{polygon:square(-900,-900,9000),height:10,blend:8}]}};const g=buildField(huge,tier);
-  assert.ok(g.instances> T.TIERS[tier].lawnBlades*.98);assert.ok(g.instances<=T.TIERS[tier].lawnBlades);assert.equal(g.draws,1);release(g);
+  assert.ok(g.instances> T.TIERS[tier].lawnBlades*.98);assert.ok(g.instances<=T.TIERS[tier].lawnBlades);assert.equal(g.draws,g.tiles.length);assert.ok(g.draws<=32);release(g);
   const narrow=buildField({site:{lot:square(0,0,1000000,2)}},tier);assert.ok(narrow.instances<=T.TIERS[tier].lawnBlades);release(narrow);
  }
 });
 await test('blades_are_broad_enough_to_close_the_canopy_on_high',()=>{
  // Needle blades left the ground showing between them; a lawn's blades overlap
  // (user's comparison with their TwinMotion lawn, 2026-11-17).
- const lot={buildings:[],site:{lot:square(0,0,100)}},f=buildField(lot,'high'),g=f.mesh.geometry;
+ const lot={buildings:[],site:{lot:square(0,0,100)}},f=buildField(lot,'high'),g=f.tiles[0].geometry;
  const p=g.attributes.position,ix=g.index.array,v=i=>new THREE.Vector3().fromBufferAttribute(p,i);let face=0;
  for(let i=0;i<ix.length;i+=3)face+=new THREE.Triangle(v(ix[i]),v(ix[i+1]),v(ix[i+2])).getArea();
- const a=f.mesh.instanceMatrix.array;let scale=0;for(let i=0;i<f.instances;i++)scale+=a[i*16+5];
+ const a=tileData(f);let scale=0;for(let i=0;i<f.instances;i++)scale+=a[i*16+5];
  // Face area grows with height (y scale); blade width does not change with it.
  // The needles came to about .85 ft2 per ft2 of lawn; the ribbons about 1.9.
  const perFoot=face*scale/(100*100);
@@ -131,7 +147,7 @@ await test('pad_stair_treads_walls_and_outdoor_building_stairs_cover_the_lawn',(
 await test('existing_fringe_remains_and_total_hook_counts_both_draws',async()=>{
  const p=make();p.site.edges=[{points:[[1,1],[10,1]]}];
  for(const tier of ['low','medium','high','max']){
-  const y=(await Y.buildYard(p,kit(),tier)).group,f=y.userData.grass,draws=y.children.filter(o=>o.userData.yardPart==='grass');
+  const y=(await Y.buildYard(p,kit(),tier)).group,f=y.userData.grass,draws=[];y.traverse(o=>{if(o.isInstancedMesh&&o.userData.yardGrass)draws.push(o);});
   assert.equal(f.draws,draws.length);assert.equal(f.instances,draws.reduce((n,o)=>n+o.count,0));
   assert.ok(f.instances<=T.TIERS[tier].lawnBlades);
   assert.equal(draws.filter(o=>o.material.name==='edge grass').length,T.TIERS[tier].edgeGrass?1:0);
@@ -142,7 +158,7 @@ await test('every_root_is_in_the_lot_or_its_skirt_and_clear_of_every_cover_with_
  const p=make(),f=buildField(p),covers=B.grassCovers(p);
  assert.equal(covers.length,10,'building, porch, paving, driveway, deck, swept path, bed, pool, spa, pit; pads grow lawn');
  const off=(lot,x,y)=>inPolygon(lot,x,y)?0:Math.min(...lot.map((a,i)=>edgeDistance([x,y],a,lot[(i+1)%lot.length])));
- const a=f.mesh.instanceMatrix.array;let inside=0,skirt=0,rim=0,far=0;
+ const a=tileData(f);let inside=0,skirt=0,rim=0,far=0;
  for(let i=0;i<f.instances;i++){
   const x=a[i*16+12],y=-a[i*16+14],d=off(p.site.lot,x,y);
   // User, 2026-11-17: the lawn reaches the lot line; past it a 4 ft skirt shortens.
@@ -175,7 +191,7 @@ await test('a_fence_on_the_lot_line_stands_in_grass_and_the_budget_is_what_grows
 await test('roots_follow_sampled_slopes_in_feet_and_geometry_is_bent_strips',()=>{
  const p=make(),f=buildField(p);let slopes=0;
  for(const [x,y,z] of positions(f)){const h=groundAt(p,x,y);assert.ok(Math.abs(z-(h-.04))<2e-5);if(h>.05)slopes++;}
- assert.ok(slopes>100);const g=f.mesh.geometry;assert.equal(g.attributes.position.count,25);assert.equal(g.index.count,45);
+ assert.ok(slopes>100);const g=f.tiles[0].geometry;assert.equal(g.attributes.position.count,25);assert.equal(g.index.count,45);
  // Vertex 4 is the shortest blade's tip, vertex 24 the tallest's; a tip leans off its root.
  const a=g.attributes.position;assert.ok(Math.hypot(a.getX(4)-(a.getX(0)+a.getX(1))/2,a.getZ(4)-(a.getZ(0)+a.getZ(1))/2)>.05);assert.ok(g.attributes.normal.getY(0)>.9);
  assert.ok(a.getY(4)*.68*.3048>=.06);assert.ok(a.getY(24)*1.1*.3048<=.121);release(f);
@@ -190,29 +206,29 @@ await test('pad_tops_blends_and_ground_outside_blends_grow_at_their_own_height_a
   p.site.terraces.forEach((pad,i)=>{if(inPolygon(pad.polygon,x,y)){hits[i]++;assert.ok(Math.abs(z-(pad.height-.04))<2e-5);}});
   if(h>0&&!p.site.terraces.some(pad=>inPolygon(pad.polygon,x,y)))slopes++;
   if(y>43&&y<44){assert.equal(h,0);outside++;}
-  const v=new THREE.Vector3(x,z,-y);assert.ok(f.mesh.boundingBox.containsPoint(v));
-  assert.ok(f.mesh.boundingSphere.containsPoint(v.clone().add(new THREE.Vector3(0,.5,0))));
+  const v=new THREE.Vector3(x,z,-y);assert.ok(bounds(f).containsPoint(v));
+  assert.ok(bounds(f).getBoundingSphere(new THREE.Sphere()).containsPoint(v.clone().add(new THREE.Vector3(0,.5,0))));
  }
  assert.ok(hits.every(n=>n>100));assert.ok(slopes>100);assert.ok(outside>100);
- assert.ok(f.mesh.boundingBox.max.y>=10.5);release(f);
+ assert.ok(bounds(f).max.y>=10.5);release(f);
 });
 await test('blades_clear_both_sides_of_pad_wall_caps_and_stairs_even_at_maximum_spread_and_wind',()=>{
  const p={buildings:[],site:{lot:square(0,0,240),terraces:[{id:'pad',polygon:square(80,80,80),height:10,blend:0,
   edges:[{edge:'sharp',stair:{riser_in:7,tread_in:11,treads:true}},
    ...Array.from({length:3},()=>({edge:'sharp',wall:{material:'block',thickness_in:16,cap:{thickness_in:2,overhang_in:4}}}))]}]}};
- const f=buildField(p,'medium'),a=f.mesh.geometry.attributes.position,m=new THREE.Matrix4(),v=new THREE.Vector3();
+ const f=buildField(p,'medium'),a=f.tiles[0].geometry.attributes.position,m=new THREE.Matrix4(),v=new THREE.Vector3();
  const covers=B.grassCovers(p),bounds=covers.map(c=>({x0:Math.min(...c.polygon.map(p=>p[0]))-2,x1:Math.max(...c.polygon.map(p=>p[0]))+2,
   y0:Math.min(...c.polygon.map(p=>p[1]))-2,y1:Math.max(...c.polygon.map(p=>p[1]))+2}));let high=0,low=0;
- assert.ok(Math.abs(Math.hypot(f.mesh.instanceMatrix.array[0],f.mesh.instanceMatrix.array[2])-2)<1e-5,'coarsest spread');
+ assert.ok(Math.abs(Math.hypot(tileData(f)[0],tileData(f)[2])-2)<1e-5,'coarsest spread');
  for(let i=0;i<f.instances;i++){
-  f.mesh.getMatrixAt(i,m);const x=m.elements[12],y=-m.elements[14];
+  m.fromArray(tileData(f),i*16);const x=m.elements[12],y=-m.elements[14];
   if(!bounds.some(b=>x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1))continue;
   if(m.elements[13]>1)high++;else low++;
   for(let j=0;j<a.count;j++){
    // Full gust envelope at the coarsest spread; roots remain fixed. The shader's
    // far-distance widening is left out: it starts 25 m away, where what it adds
    // is under a pixel, and clearing it left a bare foot around every wall.
-   const t=f.mesh.geometry.attributes.grassShape.getX(j);
+   const t=f.tiles[0].geometry.attributes.grassShape.getX(j);
    v.fromBufferAttribute(a,j);v.applyMatrix4(m);
    for(const sx of [-1,1])for(const sy of [-1,1])for(const c of covers)
     assert.ok(!inPolygon(c.polygon,v.x+sx*.043*1.4*t*t,-v.z+sy*.027*1.4*t*t),`blade at ${x},${y} enters pad solid`);
@@ -221,7 +237,7 @@ await test('blades_clear_both_sides_of_pad_wall_caps_and_stairs_even_at_maximum_
  assert.ok(high>100&&low>100);release(f);
 });
 await test('placements_repeat_byte_for_byte_and_moving_one_cover_only_changes_local_cells',()=>{
- const p=make(),a=buildField(p),b=buildField(structuredClone(p));assert.deepEqual(a.mesh.instanceMatrix.array,b.mesh.instanceMatrix.array);
+ const p=make(),a=buildField(p),b=buildField(structuredClone(p));assert.deepEqual(tileData(a),tileData(b));
  const changed=structuredClone(p);changed.site.beds[0].polygon=square(82,8,14,9);const c=buildField(changed);
  const old=rows(a),next=rows(c);let local=0;
  for(const [key,row] of old){if(next.has(key))assert.deepEqual(next.get(key),row);else{assert.ok(row[12]>81&&row[12]<100&&-row[14]>7&&-row[14]<18);local++;}}
@@ -248,7 +264,7 @@ await test('material_identity_allows_lawn_tints_and_known_grass_but_rejects_othe
  const p=make();p.materials.lawn={id:'paving',color:'#00ff00'};const y=await Y.buildYard(p,kit(),'medium');assert.equal(y.group.userData.grass.instances,0);
 });
 await test('opaque_standard_material_patches_real_shaders_throws_and_clones',()=>{
- const f=buildField(make()),m=f.mesh.material;assert.ok(m.isMeshStandardMaterial);assert.equal(m.transparent,false);assert.equal(m.alphaTest,0);assert.equal(m.opacity,1);assert.equal('transmission' in m,false);
+ const f=buildField(make()),m=f.tiles[0].material;assert.ok(m.isMeshStandardMaterial);assert.equal(m.transparent,false);assert.equal(m.alphaTest,0);assert.equal(m.opacity,1);assert.equal('transmission' in m,false);
  const s=compile(m),c=m.clone();assert.equal(c.onBeforeCompile,m.onBeforeCompile);assert.equal(c.customProgramCacheKey(),m.customProgramCacheKey());
  assert.equal(compile(c).uniforms.grassTime,s.uniforms.grassTime);
  for(const [stage,anchor] of [['vertexShader','#include <begin_vertex>'],['fragmentShader','#include <color_fragment>'],['fragmentShader','#include <roughnessmap_fragment>'],['fragmentShader','#include <normal_fragment_begin>']]){
@@ -259,46 +275,46 @@ await test('opaque_standard_material_patches_real_shaders_throws_and_clones',()=
 await test('distance_thinning_is_continuous_per_clump_and_widens_distant_blades',()=>{
  // Execute the shader's exact scalar fade formula at a fixed seed, including its
  // transition interval, rather than merely checking that a distance token exists.
- const f=buildField(make()),s=compile(f.mesh.material).vertexShader;
+ const f=buildField(make()),s=compile(f.tiles[0].material).vertexShader;
  const expression=name=>{const match=s.match(new RegExp('float '+name+' = ([^;]+);'));assert.ok(match);return match[1];};
  const smoothstep=(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);},mix=(a,b,t)=>a+(b-a)*t;
  const keep=new Function('grassDistance','mix','smoothstep','return '+expression('grassKeep'));
  const fade=new Function('grassSeed','grassKeep','smoothstep','return '+expression('grassScale'));
  assert.equal(fade(.5,keep(0,mix,smoothstep),smoothstep),1);assert.equal(fade(.5,keep(100,mix,smoothstep),smoothstep),0);
- // Nothing thins inside 30 m, where the whole house is normally framed.
- for(const seed of [.05,.5,.95])assert.equal(fade(seed,keep(30,mix,smoothstep),smoothstep),1);
+ // Nothing thins inside 12 m: close-up density is never lowered.
+ for(const seed of [.05,.5,.95])assert.equal(fade(seed,keep(12,mix,smoothstep),smoothstep),1);
  let transitions=0;for(let d=0;d<130;d+=.05){const v=fade(.5,keep(d,mix,smoothstep),smoothstep);if(v>0&&v<1)transitions++;}assert.ok(transitions>10);
- assert.ok(s.includes('transformed.xz *= 1.0 + 1.2*'));release(f);
+ assert.ok(s.includes('inversesqrt(grassKeep)'));assert.ok(s.includes('float grassSeed = instanceColor.g;'));release(f);
 });
 await test('unlit_and_viewing_clones_keep_shape_wind_colour_and_opaque_contract',()=>{
- const f=buildField(make()),m=f.mesh.material,unlit=createUnlit(),root=new THREE.Group();root.add(f.mesh);unlit.apply(root);
- assert.ok(f.mesh.material.isMeshMatcapMaterial);const s=compile(f.mesh.material,'matcap');assert.equal(s.uniforms.grassTime,m.userData.grassUniforms.grassTime);
- f.update(123);assert.equal(s.uniforms.grassTime.value,123);unlit.restore();assert.equal(f.mesh.material,m);unlit.dispose();release(f);
+ const f=buildField(make()),m=f.tiles[0].material,unlit=createUnlit(),root=new THREE.Group();root.add(f.mesh);unlit.apply(root);
+ assert.ok(f.tiles[0].material.isMeshMatcapMaterial);const s=compile(f.tiles[0].material,'matcap');assert.equal(s.uniforms.grassTime,m.userData.grassUniforms.grassTime);
+ f.update(123);assert.equal(s.uniforms.grassTime.value,123);unlit.restore();assert.equal(f.tiles[0].material,m);unlit.dispose();release(f);
 });
 await test('field_never_merges_bakes_casts_or_blocks_a_raycast',()=>{
  const f=buildField(make()),root=new THREE.Group();root.add(f.mesh);G.mergeStatic(root);assert.equal(root.children[0],f.mesh);assert.equal(f.mesh.userData.merged,undefined);
- assert.equal(A.atlasMesh(f.mesh),false);assert.equal(occluders({scene:root}).children.length,0);assert.equal(f.mesh.receiveShadow,true);assert.equal(f.mesh.castShadow,false);
+ for(const tile of f.tiles)assert.equal(A.atlasMesh(tile),false);assert.equal(occluders({scene:root}).children.length,0);for(const tile of f.tiles){assert.equal(tile.receiveShadow,true);assert.equal(tile.castShadow,false);}
  root.updateMatrixWorld(true);const r=new THREE.Raycaster(new THREE.Vector3(50,10,-50),new THREE.Vector3(0,-1,0));assert.deepEqual(r.intersectObject(root,true),[]);assert.equal(f.mesh.layers.isEnabled(31),false);release(f);
 });
 await test('point_snap_never_enumerates_blade_instances_or_exposes_a_draggable_host',()=>{
  const f=buildField(make()),root=new THREE.Group();root.add(f.mesh);root.scale.setScalar(.3048);
  const camera=new THREE.PerspectiveCamera(50,4/3,.01,1000);camera.position.set(15,25,-15);camera.lookAt(15,0,-15);
- f.mesh.getMatrixAt=()=>{throw new Error('Grass must never enter per-instance snapping');};
+ for(const tile of f.tiles)tile.getMatrixAt=()=>{throw new Error('Grass must never enter per-instance snapping');};
  let features=0;const snap=createPointSnap({scene:root,camera,renderer3:{domElement:new Element()},pick:()=>null},()=>make(),{onFeatures:()=>features++});
  assert.equal(snap.pick({clientX:400,clientY:300}),null);assert.equal(features,0);assert.equal(f.mesh.userData.pieceId,undefined);release(f);
 });
 await test('mounted_clock_hook_editor_picking_reuse_and_disposal',async()=>{
  location.search='?test=1';const p=make(),v=await mountTwin(new Element(),{plan:p,kit:kit(),tier:'medium',bake:false});
  try{
-  const yard=()=>v.scene.getObjectByName('yard'),f=yard().userData.grass,m=f.mesh;
-  assert.deepEqual(v.grassInfo(),{tier:'medium',instances:f.instances,draws:1,regions:1,animated:true});
+  const yard=()=>v.scene.getObjectByName('yard'),f=yard().userData.grass,m=f.tiles[0];
+  assert.deepEqual(v.grassInfo(),{tier:'medium',instances:f.instances,draws:f.draws,regions:1,animated:true});
   const u=m.material.userData.grassUniforms.grassTime;v.render();assert.ok(u.value>0);
   // A real projected editor pick above open lawn must still reach open ground.
   v.setCameraState({position:[15,25,-15],target:[15,0,-15]});assert.equal(v.pick(400,300),null);
   const next=structuredClone(p);next.buildings[0].materials={siding:{id:'door'}};await v.rebuild(next);assert.equal(yard().userData.grass,f);
   let gd=0,md=0;m.geometry.addEventListener('dispose',()=>gd++);m.material.addEventListener('dispose',()=>md++);
   const dry=structuredClone(next);dry.materials.lawn={id:'paving'};await v.rebuild(dry);assert.equal(v.grassInfo().instances,0);assert.ok(gd>=1);assert.ok(md>=1);
-  await v.rebuild(p);const last=yard().userData.grass.mesh;let disposed=0;last.geometry.addEventListener('dispose',()=>disposed++);last.material.addEventListener('dispose',()=>disposed++);v.dispose();assert.ok(disposed>=2);
+  await v.rebuild(p);const last=yard().userData.grass.tiles[0];let disposed=0;last.geometry.addEventListener('dispose',()=>disposed++);last.material.addEventListener('dispose',()=>disposed++);v.dispose();assert.ok(disposed>=2);
  }finally{v.dispose();}
  const low=await mountTwin(new Element(),{plan:p,kit:kit(),tier:'low',bake:false});try{low.render();assert.deepEqual(low.grassInfo(),{tier:'low',instances:0,draws:0,regions:0,animated:false});}finally{low.dispose();}
 });
