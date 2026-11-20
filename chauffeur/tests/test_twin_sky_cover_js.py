@@ -212,6 +212,37 @@ await test('falling particles cull below cover on the GPU, with no per-drop CPU 
  p.setPlan(structuredClone(plan));p.update(2/60,{precip:'rain',rate:1},camera);assert.notEqual(p.uniforms.precipCover.value,before,'a new cover rebakes');
  p.dispose();
 });
+await test('a part moved under the scaled twin root keeps its samples (adoption does not resample)',()=>{
+ // Owner startup trace 2026-11-20: reused yard parts were resampled vertex by vertex
+ // because the cache compared raw matrices and worldScale, not where vertices land.
+ const cover=createSkyCover(plan);let calls=0;const counted={...cover,staticOpen:(...a)=>{calls++;return cover.staticOpen(...a);}};
+ const yard=new THREE.Group(),inner=new THREE.Group();inner.position.set(3,0,-7);inner.rotation.y=.4;yard.add(inner);
+ const mesh=new THREE.Mesh(new THREE.PlaneGeometry(60,60,8,8).rotateX(-Math.PI/2),new THREE.MeshStandardMaterial());
+ mesh.position.set(-4,0,2);inner.add(mesh);
+ writeWeatherOpen(yard,counted,FT);const first=calls,values=Array.from(mesh.geometry.attributes.weatherOpen.array);
+ assert.ok(first>0,'the build samples every vertex');
+ const twinRoot=new THREE.Group();twinRoot.scale.setScalar(FT);const site=new THREE.Group();twinRoot.add(site);site.add(yard);
+ writeWeatherOpen(yard,counted,1);
+ assert.equal(calls,first,'same world positions: no resample after adoption');
+ assert.deepEqual(Array.from(mesh.geometry.attributes.weatherOpen.array),values,'values kept');
+ // A real move still resamples.
+ mesh.position.x+=5;writeWeatherOpen(yard,counted,1);assert.ok(calls>first,'a moved mesh resamples');
+});
+await test('inPolygon answers exactly as before, on edges, vertices and near misses',async()=>{
+ const {inPolygon,edgeDistance}=await import(file('static/twin/twin_ground.js'));
+ const old=(poly,x,y)=>{let inside=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){const a=poly[j],b=poly[i];
+  if(edgeDistance([x,y],a,b)<1e-9)return true;if((a[1]>y)!==(b[1]>y)&&x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0])inside=!inside;}return inside;};
+ const polys=[[[0,0],[10,0],[10,10],[0,10]],[[0,0],[7,1],[9,6],[4,9],[1,5]],[[0,0],[10,0],[10,4],[4,4],[4,10],[0,10]],[[1e-7,0],[3,1e-8],[2,2]]];
+ let seed=7;const rand=()=>(seed=(seed*16807)%2147483647)/2147483647;
+ let checked=0;
+ for(const poly of polys){
+  const pts=[];for(const [x,y] of poly)pts.push([x,y],[x+1e-10,y],[x+1e-8,y-1e-8]);
+  for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];for(const t of [0,.25,.5,1])pts.push([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]);}
+  for(let k=0;k<400;k++)pts.push([rand()*14-2,rand()*14-2]);
+  for(const [x,y] of pts){assert.equal(inPolygon(poly,x,y),old(poly,x,y),`${JSON.stringify(poly)} ${x},${y}`);checked++;}
+ }
+ assert.ok(checked>1600);
+});
 finish();
 """
 

@@ -8,7 +8,13 @@ export function inPolygon(poly, x, y) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const a = poly[j], b = poly[i];
-    if (edgeDistance([x, y], a, b) < 1e-9) return true;
+    // On-edge test without an array or hypot per edge (this runs for every
+    // vertex of the house and yard at startup): a squared-distance screen far
+    // looser than 1e-9, then the exact original test decides.
+    const dx = b[0] - a[0], dy = b[1] - a[1], d = dx * dx + dy * dy;
+    const t = d ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / d)) : 0;
+    const qx = x - a[0] - t * dx, qy = y - a[1] - t * dy;
+    if (qx * qx + qy * qy < 1e-16 && edgeDistance([x, y], a, b) < 1e-9) return true;
     if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
   }
   return inside;
