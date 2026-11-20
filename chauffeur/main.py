@@ -7960,6 +7960,35 @@ def house_ha_identify(req: HouseHaIdentifyRequest, request: Request):
     return {'ok': True, 'how': 'toggle'}
 
 
+@app.get('/api/house/atlases/{key}')
+def house_atlas_get(key: str):
+    from services import twin_bakes
+    try:
+        data = twin_bakes.read_atlas(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail='No such atlas.') from exc
+    # gzip is part of the container, not HTTP Content-Encoding (fetch must see it).
+    return Response(content=data, media_type='application/octet-stream')
+
+
+@app.put('/api/house/atlases/{key}')
+async def house_atlas_put(key: str, request: Request):
+    from services import twin_bakes
+    try:
+        twin_bakes.check_key(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > twin_bakes.MAX_ATLAS_BYTES:
+            raise HTTPException(status_code=413, detail='Atlas exceeds 64 MiB.')
+        data.extend(chunk)
+    etag = await asyncio.to_thread(twin_bakes.save_atlas, key, bytes(data))
+    return {'etag': etag}
+
+
 @app.post('/api/house/bakes/{key}/{page}.png')
 async def house_bake_page_post(key: str, page: str, request: Request):
     from services import twin_bakes

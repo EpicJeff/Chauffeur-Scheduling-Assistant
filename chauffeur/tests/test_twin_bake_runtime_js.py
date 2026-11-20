@@ -21,6 +21,7 @@ DRIVER += B.DRIVER[B.DRIVER.index('const building ='):B.DRIVER.index('async func
 DRIVER += r"""
 const B = await import(file('static/twin/bake/baker.js'));
 const { mountBake, lightsOf, bakeLights } = await import(file('static/twin/bake/runtime.js'));
+const { ATLAS_TIMEOUT_MS } = await import(file('static/twin/bake/lightmap_material.js'));
 let observeEncode = null;
 class CodecWorker {
   postMessage(job) {
@@ -358,7 +359,8 @@ await check('worker_failures_are_visible_in_state_and_console', async () => {
   try {
     console.error=(...args)=>errors.push(args);
     for (const mode of ['throw','reject','error','unreadable','hang']) {
-      globalThis.setTimeout=(fn,ms,...args)=>timeout(fn,ms===30000&&mode==='hang'?0:ms,...args);
+      // The silent-worker deadline is the module's own (600 s since the atlas left every browser).
+      globalThis.setTimeout=(fn,ms,...args)=>timeout(fn,ms===ATLAS_TIMEOUT_MS&&mode==='hang'?0:ms,...args);
       globalThis.indexedDB=fakeIndexedDB();
       globalThis.Worker=class {
         constructor() { if(mode==='throw') throw new Error('worker module cannot resolve three'); }
