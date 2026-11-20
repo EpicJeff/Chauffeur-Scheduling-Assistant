@@ -129,7 +129,7 @@ export function createSeasonTouches(scene,{tier='high',random=Math.random}={}) {
   const uniforms={touchAnchor:{value:new THREE.Vector3()},touchExtent:{value:18},touchWind:{value:new THREE.Vector3()},
     touchCentre:{value:new THREE.Vector2()},touchRadius:{value:100},touchExtinction:{value:0}};
   const objects={},seeds=[],particles=[],resting=new Array(RESTING_LEAVES[tier]||1600),batches=[];
-  let restCursor=0,serial=0,credit=0,landing=()=>null,autumnTint=0;
+  let restCursor=0,serial=0,credit=0,landing=()=>null,autumnTint=0,lastPreview;
   // All six slots exist before warm-up. Changing texture assignments or the
   // season never creates a material, define or program variant.
   const fallback=new THREE.DataTexture(new Uint8Array([255,255,255,255]),1,1);fallback.needsUpdate=true;
@@ -227,6 +227,11 @@ export function createSeasonTouches(scene,{tier='high',random=Math.random}={}) {
       const counts=seasonTouchCounts(tier,season,weather,{date,sunAltDeg,enabled});
       autumnTint=clamp(season.autumn);
       if(counts.leaves)collect(plants,camera,target,extent);else sources.length=0;
+      // Real time moves through the year gradually and fallen leaves age out on
+      // their own. A season preview jumps months, so its ground starts clear.
+      const preview=season.preview??null;
+      if(lastPreview!==undefined&&preview!==lastPreview){particles.length=0;resting.fill(undefined);restCursor=0;credit=0;}
+      lastPreview=preview;
       bindLeafTextures(target,extent);
       for(const b of batches)b.count=0;
       const show=enabled&&!season.neutral;

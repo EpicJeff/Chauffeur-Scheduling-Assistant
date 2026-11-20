@@ -12,6 +12,7 @@ uniform vec4 wetGroundBounds;
 uniform mat4 ssrProjection,ssrInverseProjection,ssrWorld;
 uniform vec3 ssrCamera;
 vec3 vWeatherWorld;
+#define cameraPosition (ssrWorld[3].xyz)
 ${WEATHER_GLSL}
 float ssrLinearDepth(float depth) {
   return mix(ssrCamera.x*ssrCamera.y/((ssrCamera.x-ssrCamera.y)*depth+ssrCamera.y),
@@ -34,7 +35,9 @@ float ssrMask(float up,float y,float covered,float ground,float wet,float puddle
   float film=weatherFilm(wet);
   return max(film*.45,weatherPuddle(up,puddles,edge)*film)*(1.0-weatherSnow(up,snow,edge));
 }
+float ssrPuddle=0.0;
 float ssrReceiver(vec3 position,vec3 normal) {
+  ssrPuddle=0.0;
   vec3 world=(ssrWorld*vec4(position,1.0)).xyz;
   float up=(mat3(ssrWorld)*normal).y;
   if(up<=.9)return 0.0;
@@ -44,7 +47,16 @@ float ssrReceiver(vec3 position,vec3 normal) {
   if(world.y<heights.r||heights.g<=-9999.0||abs(world.y-heights.g)>=.15)return 0.0;
   // Reject lawn/roof/cover before paying for the procedural puddle edge.
   float edge=weatherSurface.y>0.0||weatherSurface.z>0.0?weatherEdge(world.xz):.5;
+  ssrPuddle=weatherPuddle(up,weatherSurface.z,edge);
   return ssrMask(up,world.y,heights.r,heights.g,weatherSurface.x,weatherSurface.z,weatherSurface.y,edge);
+}
+// Rain rings bend the reflection exactly as they bend the lit surface's normal.
+vec3 ssrRippled(vec3 position,vec3 normal) {
+  // weatherWorldDx/Dy were taken at the top of main, before any branch.
+  vec3 world=(ssrWorld*vec4(position,1.0)).xyz;
+  vWeatherWorld=world;
+  vec2 slope=weatherRipple(world.xz);
+  return normalize(normal+transpose(mat3(ssrWorld))*vec3(slope.x,0.0,slope.y));
 }
 vec3 ssrSafe(vec3 c){return vec3(c.r>=0.0?min(c.r,4096.0):0.0,c.g>=0.0?min(c.g,4096.0):0.0,c.b>=0.0?min(c.b,4096.0):0.0);}
 `;
@@ -107,11 +119,15 @@ export class WetReflectionPass extends Pass {
     const gather=material('wet-reflections-march',common+SSR_MARCH_GLSL+`
 void main(){
   gl_FragColor=vec4(0.0);
-  float depth=texture2D(ssrDepth,vUv).r;if(depth>=1.0||!ssrVisible(vUv,depth))return;
-  vec3 position=ssrPosition(vUv,depth),normal=normalize(texture2D(ssrNormal,vUv).rgb*2.0-1.0);
+  float depth=texture2D(ssrDepth,vUv).r;
+  vec3 position=ssrPosition(vUv,min(depth,.999999));
+  vec3 worldHere=(ssrWorld*vec4(position,1.0)).xyz;
+  weatherWorldDx=dFdx(worldHere);weatherWorldDy=dFdy(worldHere);
+  if(depth>=1.0||!ssrVisible(vUv,depth))return;
+  vec3 normal=normalize(texture2D(ssrNormal,vUv).rgb*2.0-1.0);
   if(ssrReceiver(position,normal)<=0.0)return;
   vec3 incident=mix(vec3(0.0,0.0,-1.0),normalize(position),ssrCamera.z);
-  vec3 direction=reflect(incident,normal);
+  vec3 direction=reflect(incident,ssrRippled(position,normal));
   vec3 hit=ssrMarch(position+normal*.05,direction);
   gl_FragColor=vec4(hit,-position.z);
 }`);
@@ -128,7 +144,15 @@ void main(){
   float strength=ssrReceiver(position,normal);if(strength<=0.0)return;
   vec3 eye=mix(vec3(0.0,0.0,1.0),normalize(-position),ssrCamera.z);
   float fresnel=.02+.98*pow(1.0-clamp(dot(normal,eye),0.0,1.0),5.0);
-  gl_FragColor=vec4(mix(ssrSafe(base.rgb),ssrSafe(texture2D(image,hit.rg).rgb),strength*fresnel*hit.b),base.a);
+  vec2 texel=1.0/vec2(textureSize(image,0));
+  float sharp=clamp(ssrPuddle,0.0,1.0);
+  vec2 radius=max(texel*2.0,vec2(length(hit.rg-vUv)*mix(.08,.012,sharp)));
+  vec3 reflected=ssrSafe(texture2D(image,hit.rg).rgb)*.28;
+  reflected+=ssrSafe(texture2D(image,hit.rg+vec2(radius.x,0.0)).rgb)*.18;
+  reflected+=ssrSafe(texture2D(image,hit.rg-vec2(radius.x,0.0)).rgb)*.18;
+  reflected+=ssrSafe(texture2D(image,hit.rg+vec2(0.0,radius.y*1.6)).rgb)*.18;
+  reflected+=ssrSafe(texture2D(image,hit.rg-vec2(0.0,radius.y*1.6)).rgb)*.18;
+  gl_FragColor=vec4(mix(ssrSafe(base.rgb),reflected,strength*fresnel*hit.b),base.a);
 }`);
     this.materials=[gather,composite];this.gather=new FullScreenQuad(gather);this.composite=new FullScreenQuad(composite);
   }
