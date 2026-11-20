@@ -71,14 +71,17 @@ uniform float stageRadius, stageEnabled, stageCanvas, stageExposure;
 // carry extinction and fog RGB; vector and sampler totals are unchanged.
 uniform vec4 stageRing[40];
 varying vec3 vStageWorld;
-vec3 stageRingAt( int az, int el ) { return stageRing[ el * 8 + ( az - ( az / 8 ) * 8 ) ].xyz; }
+// Callers supply azimuths 0..9 (the interpolated neighbour can cross 8).
+vec3 stageRingAt( int az, int el ) { return stageRing[ el * 8 + ( az >= 8 ? az - 8 : az ) ].xyz; }
 vec3 stageSkyColour( vec3 ray ) {
   float az = atan( ray.z, ray.x ) / 6.28318531 * 8.0;
   az = az < 0.0 ? az + 8.0 : az;
   float depression = degrees( asin( clamp( -ray.y, -1.0, 1.0 ) ) );
   // Depression bands at 0, 2, 6, 15 and 40 degrees below the horizon.
-  float el = depression <= 0.0 ? 0.0 : depression < 2.0 ? depression / 2.0 : depression < 6.0 ? 1.0 + ( depression - 2.0 ) / 4.0
-    : depression < 15.0 ? 2.0 + ( depression - 6.0 ) / 9.0 : depression < 40.0 ? 3.0 + ( depression - 15.0 ) / 25.0 : 4.0;
+  // Sum the four saturated band ramps. This is the same piecewise-linear
+  // coordinate without the nested conditional tree FXC has to optimise.
+  vec4 bands = clamp( ( vec4( depression ) - vec4( 0.0, 2.0, 6.0, 15.0 ) ) / vec4( 2.0, 4.0, 9.0, 25.0 ), 0.0, 1.0 );
+  float el = dot( bands, vec4( 1.0 ) );
   int a0 = int( floor( az ) ), e0 = int( floor( el ) ), e1 = min( e0 + 1, 4 );
   float fa = az - floor( az ), fe = el - floor( el );
   vec3 lower = mix( stageRingAt( a0, e0 ), stageRingAt( a0 + 1, e0 ), fa );

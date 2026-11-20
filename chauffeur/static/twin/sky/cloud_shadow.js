@@ -12,9 +12,10 @@ uniform vec4 cloudShadowGrid[36];
 // lower x/z, reciprocal full width, enabled
 uniform vec4 cloudShadowBounds;
 uniform vec3 cloudShadowLight;
+float cloudShadowValue;
 float cloudShadowCell(ivec2 p) {
   int index=p.y*12+p.x, block=index/4;
-  return cloudShadowGrid[block][index-block*4];
+  return dot(cloudShadowGrid[block],vec4(equal(ivec4(0,1,2,3),ivec4(index-block*4))));
 }
 float cloudShadowAt(vec2 world) {
   if(cloudShadowBounds.w<0.5) return 1.0;
@@ -26,7 +27,7 @@ float cloudShadowAt(vec2 world) {
 }
 float cloudShadowForLight(vec3 direction) {
   vec3 luminary=mat3(viewMatrix)*cloudShadowLight;
-  return dot(luminary,direction)>0.99999 ? cloudShadowAt(vCloudWorld.xz) : 1.0;
+  return dot(luminary,direction)>0.99999 ? cloudShadowValue : 1.0;
 }
 `;
 
@@ -48,6 +49,9 @@ cloudWorld=instanceMatrix*cloudWorld;
 #endif
 vCloudWorld=(modelMatrix*cloudWorld).xyz;`;
   THREE.ShaderChunk.lights_pars_begin=CLOUD_SHADOW_GLSL+THREE.ShaderChunk.lights_pars_begin;
+  // Cache outside three's unrolled light loops: the receiver is identical for
+  // every directional light. This temporary adds no uniform or sampler.
+  THREE.ShaderChunk.lights_fragment_begin='#if NUM_DIR_LIGHTS > 0 || NUM_SUN_LIGHTS > 0\ncloudShadowValue=cloudShadowAt(vCloudWorld.xz);\n#endif\n'+THREE.ShaderChunk.lights_fragment_begin;
   for(const anchor of ['getDirectionalLightInfo( directionalLight, directLight );','getSunLightInfo( sunLight, directLight );']) {
     if(!THREE.ShaderChunk.lights_fragment_begin.includes(anchor))throw new Error('Cloud shadow missing r187 light anchor: '+anchor);
     THREE.ShaderChunk.lights_fragment_begin=THREE.ShaderChunk.lights_fragment_begin.replace(anchor,
