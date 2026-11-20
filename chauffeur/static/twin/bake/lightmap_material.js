@@ -1,5 +1,6 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
-import { atlasJob, buffers, applyAtlas } from './atlas_transport.js';
+import { atlasJob, buffers, applyAtlas, encodeAtlas, decodeAtlas } from './atlas_transport.js';
+import { base } from '../twin_library.js';
 import { CANDELA, FT } from '../twin_light_math.js';
 import { fixturePoint } from '../live/fixture_geometry.js';
 import { rectPieces } from './fixture_terms.js';
@@ -445,26 +446,75 @@ export function versioned(spec, from = import.meta.url) {
   const plain = new URL(spec, from).href;
   try { return import.meta.resolve ? import.meta.resolve(plain) : plain; } catch { return plain; }
 }
+// Large houses take more than 30 seconds on a desk, longer on a wall panel.
+// Still bound a worker that never answers or errors, so the live-light fallback can retry.
+export const ATLAS_TIMEOUT_MS = 10 * 60 * 1000;
+let atlasServerWarning = false;
+function reportAtlasServer(error, signal) {
+  if (signal?.aborted || atlasServerWarning) return;
+  atlasServerWarning = true; console.warn('Atlas server cache unavailable:', error);
+}
+function atlasWait(promise, signal) {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new Error('Atlas cancelled.'));
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
 // apply: false answers {key, apply()} and leaves the meshes alone until apply() (M1).
-export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker, indexedDB = globalThis.indexedDB, signal, apply = true } = {}) {
+export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker, indexedDB = globalThis.indexedDB,
+  fetch = globalThis.fetch, signal, apply = true } = {}) {
   const check = () => { if (signal?.aborted) throw new Error('Atlas cancelled.'); };
   check();
-  const job = atlasJob(root, plan, layout), db = await openCache(indexedDB).catch(() => null);
-  const answer = data => apply ? applyAtlas(data, root, layout) : { key: data.key, apply: () => applyAtlas(data, root, layout) };
+  const job = atlasJob(root, plan, layout);
+  const opening = openCache(indexedDB).catch(() => null);
+  opening.then(db => { if (signal?.aborted) db?.close(); });
+  const db = await atlasWait(opening, signal);
+  const wait = promise => atlasWait(promise, signal);
+  const url = () => base() + 'api/house/atlases/' + job.cacheKey;
+  // Publish local hits too: the baking desk may already have a pre-server-cache atlas.
+  const publish = data => {
+    (async () => {
+      check();
+      const body = await encodeAtlas(data, { signal }); check();
+      const response = await fetch(url(), { method: 'PUT', body, signal, chfQuietAuth: true,
+        headers: { 'Content-Type': 'application/octet-stream' } });
+      if (!response.ok && response.status !== 403) throw new Error(`Atlas upload: HTTP ${response.status}`);
+    })().catch(error => reportAtlasServer(error, signal));
+  };
+  const answer = data => { check(); return apply ? applyAtlas(data, root, layout) :
+    { key: data.key, apply: () => { check(); return applyAtlas(data, root, layout); } }; };
+  const save = async data => {
+    check(); await wait(cached(db, data.key, data).catch(() => null));
+    check(); await wait(cached(db, 'input:' + job.cacheKey, data.key).catch(() => null));
+    check(); await wait(remember(db, data.key, job.cacheKey).catch(() => null));
+  };
   try {
-    const key = await cached(db, 'input:' + job.cacheKey).catch(() => null);
-    const stored = key && await cached(db, key).catch(() => null);
+    const key = await wait(cached(db, 'input:' + job.cacheKey).catch(() => null));
+    const stored = key && await wait(cached(db, key).catch(() => null));
     // One layout key can hold geometry from another base uv (random_offset on/off):
     // that copy is not this scene's, so lay out afresh and replace it.
     const hit = stored?.uvKey === job.uvKey ? stored : null;
     check();
-    if (hit) { await remember(db, hit.key, job.cacheKey).catch(() => null); return answer(hit); }
+    if (hit) { await wait(remember(db, hit.key, job.cacheKey).catch(() => null)); check(); publish(hit); return answer(hit); }
+    try {
+      const response = await wait(fetch(url(), { signal })); check();
+      if (response.ok) {
+        const data = await wait(decodeAtlas(await wait(response.arrayBuffer()), { signal })); check();
+        if (data.uvKey === job.uvKey && data.geometries?.length === job.meshes.length && data.room && typeof data.key === 'string') {
+          await save(data); return answer(data);
+        }
+      } else if (response.status !== 404 && response.status !== 403) throw new Error(`Atlas download: HTTP ${response.status}`);
+    } catch (error) { check(); reportAtlasServer(error, signal); }
+    check();
     const data = await new Promise((resolve, reject) => {
       const w = new Worker(versioned('./atlas_worker.js'), { type: 'module' });
       const cancel = () => { finish(); reject(new Error('Atlas cancelled.')); };
       const finish = () => { clearTimeout(timeout); w.terminate(); signal?.removeEventListener('abort', cancel); };
       // A worker which neither answers nor errors must not leave key:null forever.
-      const timeout=setTimeout(() => { finish(); reject(new Error('Atlas worker timed out after 30 seconds.')); },30000);
+      const timeout=setTimeout(() => { finish(); reject(new Error('Atlas worker timed out after 10 minutes.')); }, ATLAS_TIMEOUT_MS);
       w.onmessage = e => { finish(); e.data.error ? reject(new Error(e.data.error)) : resolve(e.data); };
       w.onerror = e => { finish(); reject(e.error || new Error(e.message || 'Atlas worker failed.')); };
       w.onmessageerror = () => { finish(); reject(new Error('Atlas worker returned an unreadable message.')); };
@@ -473,11 +523,9 @@ export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker
       try { w.postMessage(job, buffers(job.meshes)); }
       catch (error) { finish(); reject(error); }
     });
-    data.uvKey = job.uvKey;
-    await cached(db, data.key, data).catch(() => null);
-    await cached(db, 'input:' + job.cacheKey, data.key).catch(() => null);
-    await remember(db, data.key, job.cacheKey).catch(() => null);
     check();
+    data.uvKey = job.uvKey;
+    await save(data); check(); publish(data);
     return answer(data);
   } finally { db?.close(); }
 }
