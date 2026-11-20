@@ -322,7 +322,7 @@ await test('actual leaf fragment scalar port: snow cover 1 plus fog 1 is finite 
  let samples=0;
  scene.traverse(o=>{if(o.material?.userData.plantWind!=='leaves')return;
   const shader={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};o.material.onBeforeCompile(shader,{});
-  assert.equal(shader.uniforms.weatherSurface.value.y,1);assert.equal(shader.uniforms.stageRadius.value,100);assert.equal(shader.uniforms.stageRing.value[0].w,3.912/300);
+  assert.equal(shader.uniforms.weatherSurface.value.y,1);assert.equal(shader.uniforms.stageRadius.value,100);assert.equal(shader.uniforms.stageRing.value[3],Math.fround(3.912/300));
   const expand=s=>s.replace(/#include\s+<([\w\d_]+)>/g,(_,n)=>expand(THREE.ShaderChunk[n]));
   const fragment=expand(shader.fragmentShader);
   assert.ok(fragment.includes('weatherSnow(weatherUp')&&fragment.includes('normal *= faceDirection'));

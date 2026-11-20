@@ -152,14 +152,15 @@ await test('packed grid is bilinear, bounded, throttled, drifting and selects mo
  const scene=new THREE.Scene(),noise=createCloudNoise({size:16,detail:8}),uniforms=createCloudUniforms(noise),cloud={noise,uniforms};
  const shadow=installCloudShadow(scene,cloud);shadow.set({centre:[40,-20],radius:80});
  uniforms.cloudCoverage.value=.7;uniforms.cloudType.value=1;uniforms.cloudFade.value=1;
- assert.equal(shadow.frame(0),true);const first=shadow.uniforms.cloudShadowGrid.value.flatMap(v=>v.toArray());
+ assert.equal(shadow.frame(0),true);assert.ok(shadow.uniforms.cloudShadowGrid.value instanceof Float32Array,'flat: uniform4fv takes it as it stands');
+ const first=Array.from(shadow.uniforms.cloudShadowGrid.value);
  assert.equal(first.length,144);assert.ok(new Set(first.map(v=>v.toFixed(4))).size>1);
  const b=shadow.uniforms.cloudShadowBounds.value;
  for(let z=0;z<12;z++)for(let x=0;x<12;x++)assert.ok(Math.abs(shadow.sample(b.x+x/11/b.z,b.y+z/11/b.z)-first[z*12+x])<1e-6);
  assert.ok(Math.abs(shadow.centre()-(first[65]+first[66]+first[77]+first[78])/4)<1e-6);
  assert.equal(shadow.sample(-1e9,-1e9),first[0]);assert.equal(shadow.sample(1e9,1e9),first[143]);
  uniforms.cloudOffset.value.x=4000;assert.equal(shadow.frame(.249),false);assert.equal(shadow.frame(.25),true);
- assert.notDeepEqual(shadow.uniforms.cloudShadowGrid.value.flatMap(v=>v.toArray()),first,'wind offset changes the field');
+ assert.notDeepEqual(Array.from(shadow.uniforms.cloudShadowGrid.value),first,'wind offset changes the field');
  shadow.set({sunDir:[0,-1,0],moonDir:[.6,.8,0]});shadow.frame(.5);
  assert.deepEqual(shadow.uniforms.cloudShadowLight.value.toArray(),[.6,.8,0]);
  uniforms.cloudCoverage.value=0;shadow.frame(.51);assert.equal(shadow.centre(),1);assert.equal(b.w,0);

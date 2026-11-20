@@ -130,7 +130,7 @@ await test('camera fog preserves stage radius with no additional lit uniforms',(
  const scene=new THREE.Scene(),m=new THREE.MeshStandardMaterial(),geo=new THREE.BoxGeometry();scene.add(new THREE.Mesh(geo,m));
  const haze=installStageHaze(scene,{horizon:()=>new THREE.Color(.3,.4,.5)});haze.set({radius:100});haze.prepare();
  const s={uniforms:{},vertexShader:'',fragmentShader:''};m.onBeforeCompile(s,{});const key=m.customProgramCacheKey(),names=Object.keys(s.uniforms);
- haze.set({extinction:3.912/300});assert.equal(s.uniforms.stageRadius.value,100);assert.equal(s.uniforms.stageRing.value[0].w,3.912/300);assert.equal(m.customProgramCacheKey(),key);assert.deepEqual(Object.keys(s.uniforms),names);
+ haze.set({extinction:3.912/300});assert.equal(s.uniforms.stageRadius.value,100);assert.equal(s.uniforms.stageRing.value[3],Math.fround(3.912/300));assert.equal(m.customProgramCacheKey(),key);assert.deepEqual(Object.keys(s.uniforms),names);
  haze.set({radius:200});assert.equal(s.uniforms.stageRadius.value,200);haze.set({extinction:0});assert.equal(s.uniforms.stageRadius.value,200);haze.dispose();geo.dispose();m.dispose();
 });
 await test('surface-only preview ramp reaches packed uniforms without refreshing the sky each frame',async()=>{

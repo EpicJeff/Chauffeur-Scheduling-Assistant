@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bindEnvironmentMaterial } from './stage_haze.js';
+import { bindEnvironmentMaterial, oncePerFrame } from './stage_haze.js';
 
 let installed=false;
 const unit=v=>Number.isFinite(v)?Math.max(0,Math.min(1,v)):0;
@@ -284,7 +284,8 @@ export function installWeatherSurface(scene) {
     }});
   }
   const previous=scene.onBeforeRender;
-  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);prepare();};
+  const walk=oncePerFrame(()=>prepare());
+  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);walk(renderer);};
   return {uniforms,prepare,
     update(weather={},seconds=0) {
       const u=uniforms.weatherSurface.value;

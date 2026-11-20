@@ -29,6 +29,18 @@ export function bindEnvironmentMaterial(material, name, uniforms, patch = null) 
   material.customProgramCacheKey=()=>key+[...bindings.keys()].sort().map(name=>'|'+name).join('');
   hooks.set(material.onBeforeCompile,{compile,key,bindings});
 }
+// A scene hook runs before every pass (mirror, AO, beauty, probe faces); binding
+// walks the whole scene. Nothing joins the scene between the passes of one frame,
+// so walk once per renderer frame (twin_view resets info once a frame; autoReset
+// renderers count every render, so they still walk every pass).
+export function oncePerFrame(prepare) {
+  let walked = null;
+  return renderer => {
+    const frame = renderer?.info?.render?.frame;
+    if (frame !== undefined && frame === walked) return;
+    walked = frame; prepare();
+  };
+}
 function installChunks() {
   if (installed) return;
   installed = true;
@@ -126,7 +138,10 @@ export function stageRingDirection(a, e) {
 export function installStageHaze(scene, sky) {
   installChunks();
   scene.fog = new THREE.Fog(0, 0, 1);
-  const ring = Array.from({length: 40}, () => new THREE.Vector4());
+  // 40 vec4s packed flat (rgb = sky radiance, w = the extinction and fog colour
+  // slots below): uniform4fv takes a Float32Array as it stands, where 40 Vector4s
+  // were flattened again on every lit draw of every pass (2026-11-20 profile).
+  const ring = new Float32Array(40 * 4);
   const uniforms = {stageCentre:{value:new THREE.Vector2()}, stageRadius:{value:1},
     stageRing:{value:ring}, stageEnabled:{value:1}, stageCanvas:{value:0}, stageExposure:{value:1}};
   // The same CPU radiance the cube is drawn from; refreshed whenever the sky changes.
@@ -135,7 +150,7 @@ export function installStageHaze(scene, sky) {
     if (!sky?.horizon) return;
     for (let e = 0; e < 5; e++) for (let a = 0; a < 8; a++) {
       const c = sky.horizon(stageRingDirection(a, e));
-      const entry=ring[e*8+a];entry.set(guard(c.r), guard(c.g), guard(c.b),entry.w);
+      const at=(e*8+a)*4;ring[at]=guard(c.r);ring[at+1]=guard(c.g);ring[at+2]=guard(c.b);
     }
   }
   refresh();
@@ -148,20 +163,20 @@ export function installStageHaze(scene, sky) {
       }
     });
   }
-  const previous = scene.onBeforeRender;
+  const previous = scene.onBeforeRender, walk = oncePerFrame(() => prepare());
   scene.onBeforeRender = function(renderer, ...args) {
     previous.call(this, renderer, ...args);
     const target = renderer.getRenderTarget();
     uniforms.stageCanvas.value = !target || target.isXRRenderTarget ? 1 : 0;
     uniforms.stageExposure.value = Number.isFinite(renderer.toneMappingExposure) ? renderer.toneMappingExposure : 1;
-    prepare();
+    walk(renderer);
   };
   return {prepare, refresh,
     set({centre, radius, enabled, extinction, fogColour} = {}) {
       if (centre?.every(Number.isFinite)) uniforms.stageCentre.value.fromArray(centre);
       if (Number.isFinite(radius) && radius > 0) uniforms.stageRadius.value = radius;
-      if (Number.isFinite(extinction)) ring[0].w=Math.max(0,extinction);
-      if (fogColour?.every(Number.isFinite)) for(let i=0;i<3;i++)ring[i+1].w=guard(fogColour[i]);
+      if (Number.isFinite(extinction)) ring[3]=Math.max(0,extinction);
+      if (fogColour?.every(Number.isFinite)) for(let i=0;i<3;i++)ring[(i+1)*4+3]=guard(fogColour[i]);
       if (enabled !== undefined) uniforms.stageEnabled.value = enabled ? 1 : 0;
     },
     dispose() { scene.onBeforeRender = previous; },

@@ -31,7 +31,7 @@ const assemble=(material,renderer)=>{
  material.onBeforeCompile(shader,renderer);return shader;
 };
 const verifyHaze=(shader,cube,label)=>{
- assert.equal(shader.uniforms.stageRing?.value?.length,40,label+' carries this sky ring');assert.ok(!('stageSky' in shader.uniforms),label+' no sky sampler');
+ assert.equal(shader.uniforms.stageRing?.value?.length,40*4,label+' carries this sky ring');assert.ok(!('stageSky' in shader.uniforms),label+' no sky sampler');
  const vertex=expand(shader.vertexShader),fragment=expand(shader.fragmentShader);
  assert.ok(!/#include\s+</.test(vertex+fragment),label+' resolves every include');
  assert.equal((vertex.match(/varying vec3 vStageWorld;/g)||[]).length,1,label+' one vertex varying');
@@ -160,8 +160,9 @@ await test('below-horizon haze samples the background cube view direction on can
    let az=Math.atan2(r.z,r.x)/(Math.PI*2)*8;if(az<0)az+=8;
    const dep=Math.asin(Math.max(-1,Math.min(1,-r.y)))*180/Math.PI;
    let el=4;if(dep<=0)el=0;else for(let i=0;i<4;i++)if(dep<bands[i+1]){el=i+(dep-bands[i])/(bands[i+1]-bands[i]);break;}
-   const a0=Math.floor(az),e0=Math.floor(el),e1=Math.min(e0+1,4),fa=az-a0,fe=el-e0,at=(a,e)=>ring[e*8+(a%8)];
-   const lo=at(a0,e0).clone().lerp(at(a0+1,e0),fa),hi=at(a0,e1).clone().lerp(at(a0+1,e1),fa);return lo.lerp(hi,fe).toArray();
+   const a0=Math.floor(az),e0=Math.floor(el),e1=Math.min(e0+1,4),fa=az-a0,fe=el-e0,at=(a,e)=>new THREE.Vector4().fromArray(ring,(e*8+(a%8))*4);
+   // rgb only: stageSkyColour reads .xyz; w carries the fog slots, not sky.
+   const lo=at(a0,e0).clone().lerp(at(a0+1,e0),fa),hi=at(a0,e1).clone().lerp(at(a0+1,e1),fa);return lo.lerp(hi,fe).toArray().slice(0,3);
  };
  const vec3=(...v)=>new THREE.Vector3(...v),camera=vec3(3,80,20);
  for(const active of [null,target])for(const ortho of [false,true])for(const alt of [-1,-5,-20,-70,-90])for(const sunAlt of [60,4,-20]) {

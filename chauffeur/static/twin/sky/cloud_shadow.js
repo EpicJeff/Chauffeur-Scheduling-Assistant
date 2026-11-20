@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { sampleCloudDensity } from './clouds.js';
 import { createNoiseVolumeSampler } from './cloud_noise.js';
-import { bindEnvironmentMaterial } from './stage_haze.js';
+import { bindEnvironmentMaterial, oncePerFrame } from './stage_haze.js';
 
 const SIZE=12, EARTH=6360000, INTERVAL=.25;
 const held=v=>Number.isFinite(v)?Math.max(0,Math.min(1,v)):1;
@@ -96,9 +96,10 @@ function patchEffect(shader) {
 
 export function installCloudShadow(scene,clouds) {
   installChunks();
+  // The packed grid IS the uniform: a flat Float32Array goes to uniform4fv as it
+  // stands, where 36 Vector4s were flattened again for every lit draw.
   const values=new Float32Array(SIZE*SIZE).fill(1);
-  const grid=Array.from({length:36},()=>new THREE.Vector4(1,1,1,1));
-  const uniforms={cloudShadowGrid:{value:grid},cloudShadowBounds:{value:new THREE.Vector4(-1,-1,.5,0)},
+  const uniforms={cloudShadowGrid:{value:values},cloudShadowBounds:{value:new THREE.Vector4(-1,-1,.5,0)},
     cloudShadowLight:{value:new THREE.Vector3(0,1,0)}};
   let centre=[0,0],radius=1,sun=[0,1,0],moon=[0,-1,0],last=-Infinity,disposed=false,enabled=true,cpuNoise=null;
   const source=clouds.uniforms;
@@ -110,7 +111,8 @@ export function installCloudShadow(scene,clouds) {
     }});
   }
   const previous=scene.onBeforeRender;
-  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);prepare();};
+  const walk=oncePerFrame(()=>prepare());
+  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);walk(renderer);};
   function sample(x,z) {
     const bounds=uniforms.cloudShadowBounds.value;
     if(bounds.w<.5)return 1;
@@ -133,7 +135,7 @@ export function installCloudShadow(scene,clouds) {
       const active=enabled&&coverage>0&&type>.5&&fade>0&&(sun[1]>0||moon[1]>0);
       // Clear/editor/Unlit must stop an old shadow immediately, even between fills.
       uniforms.cloudShadowBounds.value.w=active?1:0;
-      if(!active) {values.fill(1);grid.forEach(v=>v.set(1,1,1,1));return false;}
+      if(!active) {values.fill(1);return false;}
       if(now-last<INTERVAL)return false;
       last=now;
       const dir=sun[1]>0?sun:moon;
@@ -149,7 +151,7 @@ export function installCloudShadow(scene,clouds) {
         const t=shadowTransmittance([centre[0]-span/2+x*span/11,0,centre[1]-span/2+z*span/11],dir,options);
         values[z*SIZE+x]=1+(t-1)*fade;
       }
-      grid.forEach((v,i)=>v.fromArray(values,i*4));return true;
+      return true;
     },
     dispose(){if(disposed)return;disposed=true;scene.onBeforeRender=previous;cpuNoise=null;},
   };
