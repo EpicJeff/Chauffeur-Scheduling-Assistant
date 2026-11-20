@@ -1483,7 +1483,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
-      renderer3.setAnimationLoop(null); observer.disconnect(); controls.dispose();
+      renderer3.setAnimationLoop(null); view.looping = false; observer.disconnect(); controls.dispose();
       clearSheet(); sheetSpec = null;
       restoreSelection();
       restoreFloors();
@@ -1713,6 +1713,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     view.ready = false;
     if (disposed) return view;
     view.materialWatcher = watchMaterialCatalogue(view);
+    // Live pushes draw through this loop instead of rendering a second time.
+    view.looping = true;
     renderer3.setAnimationLoop(() => {
       const now = performance.now(), run = probeRun;
       if(!compiling || now-holdSince>=HOLD_MS) {
