@@ -12,7 +12,6 @@ import { stairShelf } from './stair_shelf.js';
 import { siteRecord, siteShapeKinds, siteShapeLabels } from '../objects.js';
 import { drawSiteShapeShelf, yardRoomFeatures } from './site_shape_shelf.js';
 import { propertyPath } from './dock.js';
-import { keepPlace } from './keep_place.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -72,7 +71,7 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials }) {
+export function createCards({ getPlan, getModel = () => null, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials }) {
   let namesAsked = false;
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
@@ -398,10 +397,17 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       await pending;
       if (record.poolId) await op({ op: 'delete_pool_feature', id: piece.id });
       else if (!building) await op({ op: 'delete_site_item', list: kind, index: record.index });
-      else if ((kind==='solar_zone' || kind === 'porch' || kind === 'room' && piece.kind === 'porch' || roof && !piece.rect) && op) await op({ op: 'delete', building: building.id, id: piece.id });
+      // Anything the model holds is deleted by the model operation; the legacy edit only
+      // knows the flattened snapshot, so a just-placed item there is 'unknown' (owner 2026-11-19).
+      else if ((inModel(building.id, piece.id) || kind==='solar_zone' || kind === 'porch' || kind === 'room' && piece.kind === 'porch' || roof && !piece.rect) && op) await op({ op: 'delete', building: building.id, id: piece.id });
       else await edit({ op: 'delete', building: building.id, piece: piece.id });
       select(null);
 
+  }
+  const MODEL_LISTS = ['walls', 'joints', 'rooms', 'openings', 'anchors', 'items', 'roofs', 'dormers', 'extensions', 'stairs', 'solar_zones'];
+  function inModel(buildingId, id) {
+    const building = getModel?.()?.buildings?.find(b => b.id === buildingId);
+    return !!building && MODEL_LISTS.some(list => (building[list] || []).some(piece => piece.id === id));
   }
   function drawEdge(next, record, roof) {
     const edge = roof.edges[edgeIndex];
