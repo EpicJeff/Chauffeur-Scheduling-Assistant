@@ -3,6 +3,26 @@ const EPS = 1e-9;
 const AREA_EPS = 1e-10;
 const valueAt = (plane, x, y) => plane[0] * x + plane[1] * y + plane[2];
 
+// Port of twin_model_roofs._rectangle_edge_indices: longest positive overlap,
+// with the lower authored edge index breaking ties. Do not infer from winding.
+export function rectangleEdgeIndices(area, rect) {
+  const [x0, y0, x1, y1] = rect, points = [[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
+  const edge = (a, b) => {
+    const axis = Math.abs(a[0] - b[0]) <= 1e-8 ? 0 : 1;
+    return [axis, a[axis], Math.min(a[1-axis], b[1-axis]), Math.max(a[1-axis], b[1-axis])];
+  };
+  return Object.fromEntries(['y0','x1','y1','x0'].map((side, j) => {
+    const [axis, line, start, end] = edge(points[j], points[(j+1)%4]);
+    let best = null, length = 1e-8;
+    area.forEach((p, i) => {
+      const [other, value, lo, hi] = edge(p, area[(i+1)%area.length]);
+      const overlap = Math.min(end, hi) - Math.max(start, lo);
+      if (axis === other && Math.abs(value-line) <= 1e-8 && overlap > length) { best = i; length = overlap; }
+    });
+    return [side, best];
+  }));
+}
+
 function bounds(section) {
   const [x0, y0, x1, y1] = section.rect;
   const overhang = section.overhang ?? 0;
@@ -31,8 +51,11 @@ export function planes(section) {
     y0: () => { const s = side('y0'); return [0, s, plate - s * y0]; },
     y1: () => { const s = side('y1'); return [0, -s, plate + s * y1]; },
   };
-  if (section.kind === 'flat') return [[0, 0, plate]];
-  if (section.kind === 'shed') return [edges[section.low_side]()];
+  const label = (plane, side) => Object.defineProperties(plane, {
+    side:{value:side}, edge:{value:(section.plane_edges || {y0:0,x1:1,y1:2,x0:3})[side] ?? null},
+  });
+  if (section.kind === 'flat') return [label([0, 0, plate], null)];
+  if (section.kind === 'shed') return [label(edges[section.low_side](), section.low_side)];
   let sides = section.kind === 'gable'
     ? (section.ridge === 'y' ? ['x0', 'x1'] : ['y0', 'y1'])
     : ['x0', 'x1', 'y0', 'y1'];
@@ -42,11 +65,11 @@ export function planes(section) {
   const across = section.ridge === 'y' ? ['x0', 'x1'] : ['y0', 'y1'];
   const width = section.ridge === 'y' ? x1 - x0 : y1 - y0;
   const a = side(across[0]), b = side(across[1]);
-  const rise = width * a * b / (a + b);
+  const rise = a + b > EPS ? width * a * b / (a + b) : 0;
   return sides.map(name => {
     const plane = edges[name]();
     if (ends.includes(name) && endKind(section, name) === 'clip') plane[2] += rise * 2 / 3;
-    return plane;
+    return label(plane, name);
   });
 }
 
@@ -147,7 +170,7 @@ function sectionFaces(section, index) {
     if (all.slice(0, i).some(p => samePlane(p, all[i]))) continue;
     let polygon = rectangle(bounds(section));
     for (const plane of all) polygon = clip(polygon, difference(plane, all[i]));
-    if (polygon.length) faces.push({ polygon, plane: all[i], section: index });
+    if (polygon.length) faces.push({ polygon, plane: all[i], section: index, side: all[i].side, edge: all[i].edge });
   }
   return faces;
 }
@@ -298,18 +321,47 @@ export function stepFaces(sections, { section: only = null, exclude = [], wallCo
 
 /** Upper envelope and gable ends; optionally retain lower roofs. Per-section
  * convex exclusions cut only retained pieces below the visible envelope. */
-export function roofMesh(sections, { retainLower = false, exclude = [] } = {}) {
+export function roofMesh(sections, { retainLower = false, exclude = [], materialKey = null } = {}) {
   const faces = sections.flatMap(sectionFaces);
-  const positions = [], labels = [], gables = [];
+  const positions = [], labels = [], sides = [], edges = [], gables = [];
   for (const face of faces) {
+    const partitioned = materialKey && faces.some(other => other.section !== face.section
+      && samePlane(other.plane, face.plane) && materialKey(other) !== materialKey(face));
     let pieces = [face.polygon];
     for (const other of faces) {
       if (other.section === face.section) continue;
       let cutter;
       if (samePlane(other.plane, face.plane)) {
         // Deterministic ownership of coincident surfaces prevents z-fighting.
-        if (other.section > face.section) continue;
-        cutter = other.polygon;
+        if (!partitioned) {
+          if (other.section > face.section) continue;
+          cutter = other.polygon;
+        } else {
+          // Different finishes retain their own section's territory. Partition
+          // a shared plane by section centres, rather than painting all of the
+          // overlap with the lower index. Both owners use the same boundary.
+          const rawCentre = i => { const r = sections[i].rect; return [(r[0]+r[2])/2,(r[1]+r[3])/2]; };
+          const centre = i => {
+            const c = rawCentre(i);
+            const tied = faces.filter(f => samePlane(f.plane,face.plane)
+              && rawCentre(f.section).every((v,k)=>Math.abs(v-c[k])<EPS))
+              .sort((a,b)=>String(sections[a.section].id || a.section).localeCompare(String(sections[b.section].id || b.section)));
+            if (tied.length > 1) {
+              // Coincident footprints still need territory for both finishes.
+              // Stable IDs spread their ownership sites across the common
+              // width, instead of silently giving all of it to index zero.
+              const width = Math.max(EPS,Math.min(...tied.map(f=>sections[f.section].rect[2]-sections[f.section].rect[0])));
+              c[0] += width*.5*((tied.findIndex(f=>f.section===i)+1)/(tied.length+1)-.5);
+            }
+            return c;
+          };
+          const a = centre(face.section), b = centre(other.section);
+          const line = [2*(b[0]-a[0]), 2*(b[1]-a[1]), a[0]*a[0]+a[1]*a[1]-b[0]*b[0]-b[1]*b[1]];
+          if (Math.hypot(line[0], line[1]) < EPS) {
+            if (other.section > face.section) continue;
+            cutter = other.polygon;
+          } else cutter = clip(other.polygon, line);
+        }
       } else {
         if (retainLower) continue;
         cutter = clip(other.polygon, difference(other.plane, face.plane));
@@ -338,7 +390,9 @@ export function roofMesh(sections, { retainLower = false, exclude = [] } = {}) {
       pieces = [...envelopePieces, ...remainder];
     }
     for (const piece of pieces) {
+      const start = labels.length;
       triangulate(piece, ([x, y]) => [x, y, valueAt(face.plane, x, y)], positions, labels, face.section);
+      for (let t = start; t < labels.length; t++) { sides.push(face.side); edges.push(face.edge ?? -1); }
     }
   }
   sections.forEach((section, index) => {
@@ -346,5 +400,6 @@ export function roofMesh(sections, { retainLower = false, exclude = [] } = {}) {
     const ends = gableEnds(sections, index);
     if (ends.length) gables.push({ section: index, positions: new Float32Array(ends) });
   });
-  return { positions: new Float32Array(positions), section: new Int32Array(labels), gables };
+  return { positions: new Float32Array(positions), section: new Int32Array(labels),
+    side: sides, edge: new Int32Array(edges), gables };
 }

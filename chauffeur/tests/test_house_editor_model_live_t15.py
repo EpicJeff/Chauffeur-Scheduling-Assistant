@@ -427,7 +427,7 @@ def scenario_drop_siding_on_one_face_sets_here():
         _floor_view(page, s)
         _select_front_wall(page)
         text = _card_text(page)
-        check(any(f'{n}, from the building' in text for n in _names(library, inherited['id'])),
+        check(any(f'From the building: {n}' in text for n in _names(library, inherited['id'])),
               ('the wall card reads its siding from the building', text, _names(library, inherited['id'])))
         check(_clears(page) == 0, ('nothing is set here, so no Clear', text))
 
@@ -469,7 +469,7 @@ def scenario_drop_siding_on_one_face_sets_here():
         _select_front_wall(page)
         text = _card_text(page)
         check('set here' not in text, ('the card drops "set here"', text))
-        check(any(f'{n}, from the building' in text for n in _names(library, inherited['id'])),
+        check(any(f'From the building: {n}' in text for n in _names(library, inherited['id'])),
               ('cleared, the face inherits again', text))
         check(_clears(page) == 0, text)
         _no_errors(s)
@@ -529,7 +529,7 @@ def scenario_whole_building_scope_recolours_all_faces():
         H.choose_floor(page, FLOOR_KEY)
         _select_west_wall(page)
         text = _card_text(page)
-        check(any(f'{n}, from the building' in text for n in _names(library, chosen['id'])),
+        check(any(f'From the building: {n}' in text for n in _names(library, chosen['id'])),
               ('another wall reads the new siding from the building', text))
         check(_clears(page) == 0, text)
         _no_errors(s)
@@ -548,13 +548,13 @@ def scenario_card_reads_from_the_building():
         _floor_view(page, s)
         _focus_family_room(page)
         text = _card_text(page)
-        check(any(f'{n}, from the building' in text for n in _names(library, floor['id'])),
+        check(any(f'From the building: {n}' in text for n in _names(library, floor['id'])),
               ('the room card reads its floor from the building', text, _names(library, floor['id'])))
         check(_clears(page) == 0, text)
 
         _select_west_wall(page)
         text = _card_text(page)
-        check(any(f'{n}, from the building' in text for n in _names(library, siding['id'])),
+        check(any(f'From the building: {n}' in text for n in _names(library, siding['id'])),
               ('the wall card reads its siding from the building', text, _names(library, siding['id'])))
         check('set here' not in text and _clears(page) == 0, text)
 
@@ -579,7 +579,7 @@ def scenario_card_reads_from_the_building():
             _floor_view(page, s)
             _select_west_wall(page)
             text = _card_text(page)
-            check(any(f'{n}, from the level' in text for n in _names(library, level_siding['id'])),
+            check(any(f'From this floor: {n}' in text for n in _names(library, level_siding['id'])),
                   ('the level outranks the building', text, _names(library, level_siding['id'])))
             check(_clears(page) == 0, text)
             _no_errors(s)
@@ -877,7 +877,7 @@ def scenario_pick_a_material_on_the_card_by_keyboard():
         _close_library(page)
         _select_front_wall(page)
         text = _card_text(page)
-        check(any(f'{n}, from the level' in text for n in _names(library, BRICK)), ('the card reads it from the level', text))
+        check(any(f'From this floor: {n}' in text for n in _names(library, BRICK)), ('the card reads it from the level', text))
         clear = _outside_row(page).locator('button:text-is("Clear for this floor")')
         check(clear.count() == 1, ('the floor line clears there', text))
         clear.press('Enter')

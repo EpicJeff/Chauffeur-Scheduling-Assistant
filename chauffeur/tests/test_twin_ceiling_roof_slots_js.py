@@ -66,7 +66,7 @@ await test('partial_upper_storey_ceiling_patches_share_each_support_visibility',
 await test('ceiling_line_uses_role_ceiling',()=>{
  const p=ceilingPlan(),b=p.buildings[0],piece=b.rooms[0];
  const line=materialLines({kind:'room',piece,building:b},p,kit()).find(l=>l.label==='Ceiling');
- assert.ok(line);assert.equal(line.text,'House look');assert.equal(line.surface.role,'ceiling');
+ assert.ok(line);assert.equal(line.text,'House default: Ceiling');assert.equal(line.surface.role,'ceiling');
  assert.deepEqual(line.target,{room:piece.id,surface:'ceiling'});
  assert.equal(surfaceOperation(line.surface,'building',{id:'choice'}).target.role,'ceiling');
  const porch={...piece,kind:'porch'};

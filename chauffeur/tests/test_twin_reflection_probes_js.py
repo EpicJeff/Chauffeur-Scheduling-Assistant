@@ -302,13 +302,14 @@ await test('warm_ups_compile_for_the_composer_target_and_frames_hold_until_progr
  // half-float target draws with; a frame drawn while one compiles froze the page.
  location.search='?test=1';const rendererClass=globalThis.Renderer;globalThis.Renderer=CaptureRenderer;
  const proto=CaptureRenderer.prototype,originalLoop=proto.setAnimationLoop;proto.setAnimationLoop=function(fn){this.loop=fn;};
- const compiled=[];let manual=null;proto.compileAsync=function(s,c){compiled.push(this.target);
+ const compiled=[],compiledNames=[];let manual=null;proto.compileAsync=function(s,c){compiled.push(this.target);compiledNames.push(s.material?.name);
   return manual?new Promise(resolve=>manual.push(resolve)):Promise.resolve(s);};
  const originalNow=performance.now;let time=100000;Object.defineProperty(performance,'now',{configurable:true,value:()=>time});
  let view;try{
   view=await mountTwin(new Element(),{plan:fixture(),kit:kit(),tier:'high',bake:false});
   assert.ok(view.post?.target?.isWebGLRenderTarget);assert.ok(compiled.length,'the mount warms its programs');
-  assert.ok(compiled.every(t=>t===view.post.target),'every warm-up compiles for the composer target');
+  assert.ok(compiled.every((t,i)=>t===(compiledNames[i]==='wet-reflections-march'?view.post.wetReflections.target:view.post.target)),
+   'every warm-up compiles for its draw destination: SSR march target, otherwise composer target');
   const saved=view.renderer3.getRenderTarget();let draws=0;const real=view.renderer3.render;view.renderer3.render=function(s,c){draws++;return real.call(this,s,c);};
   manual=[];const ready=view.renderer3.compileAsync(view.scene,view.camera);
   assert.equal(view.renderer3.getRenderTarget(),saved,'the renderer target is put back');
@@ -317,7 +318,7 @@ await test('warm_ups_compile_for_the_composer_target_and_frames_hold_until_progr
   draws=0;view.renderer3.compileAsync(view.scene,view.camera);view.render();assert.equal(draws,0);
   time+=15001;view.render();assert.ok(draws>0,'a compile that never settles holds the picture 15 s at most');
   manual.forEach(resolve=>resolve());manual=null;
-  view.setUnlit(true);compiled.length=0;await view.renderer3.compileAsync(view.scene,view.camera);
+  view.setUnlit(true);compiled.length=0;compiledNames.length=0;await view.renderer3.compileAsync(view.scene,view.camera);
   assert.deepEqual(compiled,[null],'the unlit view draws to the canvas and warms for it');
   assert.equal(view.compileBehind()===null,false,'a warm-up for a change not yet shown');
  }finally{view?.dispose();proto.setAnimationLoop=originalLoop;delete proto.compileAsync;globalThis.Renderer=rendererClass;

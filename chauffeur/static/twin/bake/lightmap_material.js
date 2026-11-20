@@ -4,6 +4,7 @@ import { CANDELA, FT } from '../twin_light_math.js';
 import { fixturePoint } from '../live/fixture_geometry.js';
 import { rectPieces } from './fixture_terms.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+import { materialParts } from './bindings.js';
 
 const floatTexture = (width, height) => {
   const t = new THREE.DataTexture(new Float32Array(Math.max(1, width) * Math.max(1, height) * 4),
@@ -98,7 +99,7 @@ export function applyChartIndices(atlas) {
   const arrays = new Map(), ArrayType = atlas.room.charts.length < 32768 ? Int16Array : Float32Array;
   for (const c of atlas.room.charts) {
     // A proxy (a batten face, a trim edge) reads its host chart's texels and lights.
-    for (const part of [{ mesh: c.mesh, faces: c.faces }, ...(c.proxies || [])]) {
+    for (const part of materialParts(c)) {
       const g=part.mesh.geometry;
       if (!arrays.has(g)) arrays.set(g,new ArrayType(g.attributes.position.count).fill(-1));
       for (const f of part.faces) arrays.get(g).fill(c.id,f*3,f*3+3);

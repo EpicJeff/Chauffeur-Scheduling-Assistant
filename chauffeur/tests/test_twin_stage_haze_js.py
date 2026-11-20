@@ -16,6 +16,40 @@ const {mountTimeScrub}=await import(file('static/twin/sky/time_scrub.js'));
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
 const {buildYard,yardPartKeys}=await import(file('static/twin/twin_yard.js'));
 const {previewDate}=await import(file('static/twin/sky/look.js'));
+await test('camera extinction uses padded ring lanes, leaves radial stage unchanged and survives refresh',async()=>{
+ const {cameraFogFactor}=await import(file('static/twin/sky/stage_haze.js'));
+ const {weatherExtinction,weatherState}=await import(file('static/twin/sky/weather.js'));
+ const k=weatherExtinction(weatherState({state:'fog',attributes:{visibility:.3}}));
+ assert.equal(k,3.912/300);
+ const {CLOUD_GLSL}=await import(file('static/twin/sky/clouds.js'));
+ const cloudExpression=CLOUD_GLSL.match(/light=mix\(light,cloudFogColour,(.*)\);/)[1];
+ const cloudFactor=new Function('cloudFog','distanceM','exp','max','return '+cloudExpression);
+ const skySource=readFileSync(new URL(file('static/twin/sky/atmosphere.js')),'utf8');
+ const skyExpression=skySource.match(/result=mix\(result,cloudFogColour,(.*)\);/)[1];
+ const skyFactor=new Function('cloudFog','exp','max','return '+skyExpression);
+ for(const [d,want] of [[50,.4789972713966656],[150,.8585770170239099],[600,.9995999815952341]]){
+  assert.ok(Math.abs(cameraFogFactor(d,k)-want)<1e-7);console.log('300m visibility',d,cameraFogFactor(d,k));
+  assert.ok(Math.abs(cloudFactor(k,d,Math.exp,Math.max)-want)<1e-7,'cloud samples use their actual march distance');
+ }
+ assert.equal(skyFactor(k,Math.exp,Math.max),cameraFogFactor(10000,k));
+ const scene=new THREE.Scene(),m=new THREE.MeshStandardMaterial();scene.add(new THREE.Mesh(new THREE.BoxGeometry(),m));
+ const haze=installStageHaze(scene,{horizon:()=>new THREE.Color(.1,.2,.3)});haze.set({radius:100,extinction:k,fogColour:[.4,.5,.6]});haze.prepare();
+ const s={uniforms:{}};m.onBeforeCompile(s);const names=Object.keys(s.uniforms),key=m.customProgramCacheKey();
+ haze.refresh();assert.equal(s.uniforms.stageRadius.value,100);assert.equal(s.uniforms.stageRing.value[0].w,k);
+ assert.deepEqual(s.uniforms.stageRing.value.slice(1,4).map(v=>v.w),[.4,.5,.6]);
+ haze.set({extinction:0});assert.equal(s.uniforms.stageRadius.value,100);assert.equal(m.customProgramCacheKey(),key);assert.deepEqual(Object.keys(s.uniforms),names);
+ assert.ok(THREE.ShaderChunk.fog_fragment.includes('max( stageFade, stageFog )'));
+ const expression=THREE.ShaderChunk.fog_fragment.match(/float stageFog = ([^;]+);/)[1];
+ const actual=new Function('stageEnabled','stageRing','vStageWorld','cameraPosition','exp','max','distance','return '+expression);
+ for(const d of [0,3,50,150,600,10000])for(const enabled of [0,1]){
+  const result=actual(enabled,s.uniforms.stageRing.value,[d,0,0],[0,0,0],Math.exp,Math.max,(a,b)=>Math.hypot(...a.map((v,i)=>v-b[i])));
+  assert.equal(result,0,'clearing extinction restores clear air');
+  s.uniforms.stageRing.value[0].w=k;
+  assert.ok(Math.abs(actual(enabled,s.uniforms.stageRing.value,[d,0,0],[0,0,0],Math.exp,Math.max,(a,b)=>Math.hypot(...a.map((v,i)=>v-b[i])))-enabled*cameraFogFactor(d,k))<1e-12);
+  s.uniforms.stageRing.value[0].w=0;
+ }
+ haze.dispose();
+});
 await test('scrub dates use today in the household zone, including 24h and DST',()=>{
  const site={lon:-75,timezone:'America/New_York'},now=new Date('2026-06-21T17:00:00Z');
  assert.equal(previewDate(now,6+5/60,site).toISOString(),'2026-06-21T10:05:00.000Z');

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { polygon, addMesh } from './twin_generator.js';
 import { inPolygon, edgeDistance, segmentIntersection } from './twin_ground.js';
+import { offsetSurfaceUvs } from './twin_library.js';
 
 const area = p => p.reduce((s, a, i) => { const b = p[(i + 1) % p.length]; return s + a[0] * b[1] - a[1] * b[0]; }, 0);
 const cross = (a, b, p) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
@@ -134,21 +135,55 @@ export const waterlineMaterial = (slot, { mat, plain }) => slot ? mat('paving', 
 const touches = (a, b) => [[a, b], [b, a]].some(([p, q]) => p.some(v => inPolygon(q, ...v)
   || q.some((c, i) => edgeDistance(v, c, q[(i + 1) % q.length]) < .1)));
 
-export function buildPoolFeatures(group, pool, height, { mat, plain, water, copingRole = 'paving', spaWater = () => water }) {
+export function buildPoolFeatures(group, pool, height, { mat, plain, water, copingRole = 'paving', spaWater = () => water,
+  finish = null, surfaceMesh = null, waterRef = () => null }) {
   const interior = slot => slot ? mat('paving', slot) : plain('pool tile', '#5fa8c4', { roughness: .35 });
-  const tile = interior(pool.materials?.interior), depth = pool.depth ?? 5;
+  const partFinish = (part, slot, parent = pool.materials?.[part]) => finish ? finish(part, slot, [parent])
+    : {material:part === 'interior' ? interior(slot || parent) : mat(copingRole, slot || parent), ref:slot || parent};
+  const poolInterior = partFinish('interior'), tile = poolInterior.material, depth = pool.depth ?? 5;
   const poolWater = height - .25, ledgeTop = f => poolWater - (f.depth_in ?? 10) / 12;
   const ledges = (pool.features || []).filter(f => f.kind === 'ledge');
   const spas = (pool.features || []).filter(f => f.kind === 'spa').map(f => f.polygon);
   const slab = (poly, top) => spas.length ? cutSurface(poly, spas, height - depth, top) : polygon(poly, height - depth, top);
   for (const f of pool.features || []) {
-    const featureMesh = (geometry, material, waterBody = pool.id || 'pool:0') => {
-      const mesh = addMesh(group, geometry, material);
-      Object.assign(mesh.userData, {kind:f.kind, pieceId:f.id, parentPieceId:pool.id || 'pool:0', waterBody}); return mesh;
+    const featureMesh = (geometry, material, waterBody = pool.id || 'pool:0', ref = null, part = '') => {
+      const owner = {kind:f.kind, pieceId:f.id, parentPieceId:pool.id || 'pool:0', waterBody};
+      const seed = f.id ? `${f.id}:${part || 'interior'}` : null;
+      const mesh = surfaceMesh ? surfaceMesh(group, geometry, material, seed, owner, ref, part)
+        : addMesh(group, offsetSurfaceUvs(geometry, material, seed, ref?.uv), material);
+      Object.assign(mesh.userData, owner); return mesh;
+    };
+    const featureSlab = geometry => {
+      const own = partFinish('interior', f.materials?.interior);
+      // Existing features have one continuous liner. A coping choice paints
+      // their horizontal treads; it never adds thickness or coincident faces.
+      const cap = partFinish('coping', f.materials?.coping);
+      const chosen = f.materials?.coping?.id || f.materials?.coping?.color
+        || pool.materials?.coping?.id || pool.materials?.coping?.color || cap.ref?.color
+        || cap.source && cap.source.kind !== 'kit';
+      if (!chosen) {
+        // An offset alone cannot activate a different finish/batch. Keep the
+        // legacy liner, moving only the horizontal part's UVs when requested.
+        cap.material = own.material;
+        cap.ref = {...own.ref, ...(cap.ref?.uv ? {uv:cap.ref.uv} : {})};
+      }
+      if (cap.material === own.material && JSON.stringify(cap.ref?.uv) === JSON.stringify(own.ref?.uv))
+        return featureMesh(geometry, own.material, undefined, own.ref, 'interior');
+      const g = geometry.index ? geometry.toNonIndexed() : geometry;
+      const n = g.attributes.normal, parts = {interior:[],coping:[]};
+      for (let i=0;i<n.count;i+=3) parts[n.getY(i)>.5 ? 'coping' : 'interior'].push(i,i+1,i+2);
+      for (const [part, indices] of Object.entries(parts)) if (indices.length) {
+        const piece = new THREE.BufferGeometry();
+        for (const [name, attr] of Object.entries(g.attributes)) piece.setAttribute(name,
+          new THREE.Float32BufferAttribute(indices.flatMap(i => Array.from({length:attr.itemSize},(_,j)=>attr.getComponent(i,j))),attr.itemSize));
+        const result = part === 'coping' ? cap : own;
+        featureMesh(piece, result.material, undefined, result.ref, part);
+      }
+      if (g !== geometry) g.dispose(); geometry.dispose();
     };
     const poly = f.polygon;
     if (f.kind === 'ledge') {
-      featureMesh(slab(poly, ledgeTop(f)), tile);
+      featureSlab(slab(poly, ledgeTop(f)));
     } else if (f.kind === 'steps') {
       const a = poly[f.entry_edge ?? 0], b = poly[((f.entry_edge ?? 0) + 1) % poly.length];
       const l = Math.hypot(b[0] - a[0], b[1] - a[1]), sign = Math.sign(area(poly));
@@ -172,7 +207,7 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
           if (part.length) slabs.push(slab(part, treadTop(i)));
         }
         const geometry = mergeGeometries(slabs);
-        if (geometry) featureMesh(geometry, tile);
+        if (geometry) featureSlab(geometry);
         slabs.forEach(g => g.dispose());
       }
     } else if (f.kind === 'spa') {
@@ -185,42 +220,46 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
       const shared = poly.map((a, i) => !raised && onEdge(a, poly[(i + 1) % poly.length], pool.polygon || []));
       const floor = waterHeight - (f.depth_in ?? 36) / 12, inner = basinOutline(poly, wallWidth, shared.some(Boolean) ? shared : null);
       const poolFloor = height - depth, wallBottom = Math.min(floor, poolFloor);
-      const spaTile = interior(f.materials?.interior || pool.materials?.interior);
-      featureMesh(polygon(inner, floor > poolFloor ? poolFloor : floor - .2, floor), spaTile, f.id);
+      const spaInterior = partFinish('interior', f.materials?.interior), spaTile = spaInterior.material;
+      featureMesh(polygon(inner, floor > poolFloor ? poolFloor : floor - .2, floor), spaTile, f.id, spaInterior.ref, 'interior');
       const benchWidth = (f.bench_width_in ?? 18) / 12, seatTop = waterHeight - (f.bench_in ?? 18) / 12;
       if (benchWidth > 0 && seatTop > floor) {
         const footwell = basinOutline(inner, benchWidth);
-        featureMesh(polygon(inner, floor, seatTop, [footwell]), spaTile, f.id);
+        featureMesh(polygon(inner, floor, seatTop, [footwell]), spaTile, f.id, spaInterior.ref, 'interior');
       }
       // Separate outer wall and tile liner, so wall slots never paint the basin.
       // Under the pool water the outer wall is the pool's own finish. Above it a raised spa
       // shows its cladding; a flush spa's wall ends at the pool edge, so it carries the
       // pool's waterline tile instead.
-      const band = waterlineMaterial(f.materials?.waterline || pool.materials?.waterline, { mat, plain });
+      const spaBand = finish ? finish('waterline', f.materials?.waterline, [pool.materials?.waterline]) : null;
+      const band = spaBand?.material || waterlineMaterial(f.materials?.waterline || pool.materials?.waterline, { mat, plain });
       const above = raised ? (f.materials?.wall ? mat('base', f.materials.wall) : mat('base'))
-        : waterlineMaterial(pool.materials?.waterline, { mat, plain });
+        : (finish ? finish('waterline', pool.materials?.waterline).material : waterlineMaterial(pool.materials?.waterline, { mat, plain }));
       const split = Math.min(wallTop, Math.max(wallBottom, raised ? poolWater : poolWater - WATERLINE_BELOW));
       const bandLow = Math.min(wallTop, Math.max(floor, waterHeight - WATERLINE_BELOW));
       poly.forEach((a, i) => {
         if (shared[i]) return;
         const j = (i + 1) % poly.length, b = poly[j], c = inner[j], d = inner[i];
         const middleA = a.map((v, k) => (v + d[k]) / 2), middleB = b.map((v, k) => (v + c[k]) / 2);
-        if (split > wallBottom) featureMesh(polygon([a, b, middleB, middleA], wallBottom, split), tile);
-        if (wallTop > split) featureMesh(polygon([a, b, middleB, middleA], split, wallTop), above);
-        if (bandLow > floor) featureMesh(polygon([middleA, middleB, c, d], floor, bandLow), spaTile, f.id);
-        if (wallTop > bandLow) featureMesh(polygon([middleA, middleB, c, d], bandLow, wallTop), band, f.id);
+        if (split > wallBottom) featureMesh(polygon([a, b, middleB, middleA], wallBottom, split), tile, undefined, poolInterior.ref, 'outer-interior');
+        if (wallTop > split) featureMesh(polygon([a, b, middleB, middleA], split, wallTop), above, undefined,
+          raised ? f.materials?.wall : (finish ? finish('waterline', pool.materials?.waterline).ref : pool.materials?.waterline), 'wall');
+        if (bandLow > floor) featureMesh(polygon([middleA, middleB, c, d], floor, bandLow), spaTile, f.id, spaInterior.ref, 'interior');
+        if (wallTop > bandLow) featureMesh(polygon([middleA, middleB, c, d], bandLow, wallTop), band, f.id, spaBand?.ref, 'waterline');
       });
-      const copingSlot = f.materials?.coping || pool.materials?.coping;
-      if (!shared.some(Boolean)) featureMesh(polygon(poly, wallTop, copingTop, [inner]), mat(copingRole, copingSlot));
+      const cap = partFinish('coping', f.materials?.coping);
+      if (!shared.some(Boolean)) featureMesh(polygon(poly, wallTop, copingTop, [inner]), cap.material, undefined, cap.ref, 'coping');
       else if (!shared.every(Boolean)) {
         // One mitred piece per walled edge: a ring whose hole touches its outline cannot be cut.
         const pieces = poly.flatMap((a, i) => shared[i] ? []
           : [polygon([a, poly[(i + 1) % poly.length], inner[(i + 1) % poly.length], inner[i]], wallTop, copingTop)]);
-        featureMesh(mergeGeometries(pieces), mat(copingRole, copingSlot));
+        featureMesh(mergeGeometries(pieces), cap.material, undefined, cap.ref, 'coping');
         pieces.forEach(g => g.dispose());
       }
       const waterMaterial = spaWater(f);
       const waterMesh = geometry => {
+        const ref = waterRef(f);
+        if (ref?.uv) offsetSurfaceUvs(geometry, waterMaterial, f.id, ref.uv);
         const object = addMesh(group, geometry, waterMaterial);
         Object.assign(object.userData, { kind: 'spa', pieceId: f.id, parentPieceId:pool.id || 'pool:0', part: 'water' });
         return object;

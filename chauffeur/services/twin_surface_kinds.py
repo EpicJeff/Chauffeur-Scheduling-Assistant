@@ -50,7 +50,7 @@ def label(kind):
     return next((row['label'] for row in KINDS if row['kind'] == kind), kind.replace('_', ' ').capitalize())
 
 
-def clean_slots(materials, allowed, notes, owner):
+def clean_slots(materials, allowed, notes, owner, *, validate_id=True):
     """Repair each bad reference independently, retaining arbitrary legacy roles."""
     from services.twin_library import normalize_material_slot
     if not isinstance(materials, dict):
@@ -61,7 +61,7 @@ def clean_slots(materials, allowed, notes, owner):
         if allowed is not None and kind not in allowed:
             continue
         try:
-            slot = normalize_material_slot(value)
+            slot = normalize_material_slot(value, validate_id=validate_id)
         except ValueError:
             notes.append(f'{owner}: reset invalid {label(kind).lower()} material.')
         else:

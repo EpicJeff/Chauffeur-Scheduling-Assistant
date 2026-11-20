@@ -560,6 +560,10 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 /* Scene/Layers use the existing dock glass, selected pill and row hover.
    Fixed 36px rows give virtual scrolling the same geometry as real rows. */
 .editor-scene-tree { max-height: 100%; height: 280px; overflow: auto; }
+.editor-shell [data-slot-name][aria-disabled="true"] { color: var(--editor-muted); }
+.editor-slot-offset { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.editor-slot-offset label { flex: 1; min-width: 60px; }
+.editor-slot-offset input, .editor-slot-offset select { width: 100%; min-width: 0; box-sizing: border-box; }
 .editor-scene-row { display: flex; align-items: center; gap: 2px; box-sizing: border-box;
   height: 36px; min-height: 36px; border-radius: 8px; }
 .editor-scene-row > [data-row-label] { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

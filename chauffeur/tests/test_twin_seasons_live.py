@@ -292,7 +292,9 @@ def assert_moving_particles(page, kind):
     after = page.evaluate(PARTICLES_JS, kind)
     check(before['enabled'] and before['visible'] > 0 and after['visible'] > 0,
           ('particles project into the visible frame with nonzero alpha', kind, before['visible'], after['visible']))
-    check(before['count'] == after['count'] and any(abs(a - b) > .0001 for a, b in zip(before['positions'], after['positions'])),
+    # Leaves keep spawning and landing, so compare the particles present in both samples.
+    shared = min(before['count'], after['count']) * 3
+    check(shared > 0 and any(abs(a - b) > .0001 for a, b in zip(before['positions'][:shared], after['positions'][:shared])),
           ('particle positions really move', kind, before['count'], after['count']))
     return after
 

@@ -121,7 +121,7 @@ assert.equal(descendants(card).find(n=>n['aria-label']==='Edge 1 Above ground (i
 {
   const face=()=>descendants(card).find(n=>n.dataset?.librarySlot==='Edge 1 Wall face');
   assert.ok(face(),'a wall face slot under a built wall');
-  assert.ok(descendants(card).some(n=>n.textContent==='Default: Timber'),'the default is the wall kind');
+  assert.ok(descendants(card).some(n=>n.textContent==='House default: Retaining timber'),'the default is the resolved wall kind');
   slotSelection={kind:'material',id:'red_brick_03',name:'Red brick'};for(const fn of slotListeners)fn();
   const brick=descendants(face()).find(n=>Object.hasOwn(n.dataset,'slotUse'));assert.ok(brick,'the shared row offers Use Red brick');
   brick.dispatchEvent(new Event('click'));await new Promise(r=>setTimeout(r,20));

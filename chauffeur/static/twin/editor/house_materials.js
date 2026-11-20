@@ -1,6 +1,13 @@
 import { KINDS, PANEL_ROLES } from '../surface_kinds.js';
 import { materialSlot } from './material_slot.js';
 import { request } from './api.js';
+import { surfaceDescription } from './material_catalog.js';
+import { resolveSurfaceMaterial } from '../surface_material.js';
+
+export const YARD_ROLES = [
+  ['paving', 'Paving'], ['mulch', 'Mulch'], ['patio_concrete', 'Patio concrete'], ['fence', 'Fence'],
+  ['pool_interior', 'Pool interior'], ['pool_waterline', 'Pool waterline'], ['pool_coping', 'Pool coping'],
+].map(([kind, label]) => ({ kind, label, scope:'site', fallback:{role:kind} }));
 
 function grassChoice(host, { editable, ownSlot, report, settingsRequest }) {
   const row = document.createElement('label'), select = document.createElement('select');
@@ -40,7 +47,7 @@ export function houseMaterialsShelf(host, building, { getPlan, getKit = () => ({
   title.textContent = 'House materials'; section.append(title); host.append(section);
   const editable = () => typeof canEdit === 'function' ? canEdit() : !!canEdit;
   const labels = { siding: 'Siding', interior_wall: 'Interior walls', floor: 'Floors', porch_ceiling: 'Porch ceiling' };
-  const rows = [...PANEL_ROLES.map(kind => ({ kind, label: labels[kind], scope: 'building', fallback: { role: kind } })), ...KINDS];
+  const rows = [...PANEL_ROLES.map(kind => ({ kind, label: labels[kind], scope: 'building', fallback: { role: kind } })), ...KINDS, ...YARD_ROLES];
   const groups = [
     ['Walls and floors', [...PANEL_ROLES, 'base']],
     ['Trim', ['trim', 'fascia']],
@@ -48,7 +55,7 @@ export function houseMaterialsShelf(host, building, { getPlan, getKit = () => ({
     ['Porch and stairs', ['column', 'screen', 'stair_tread', 'stair_rail']],
     ['Roof and ceilings', ['soffit', 'ceiling', 'roof']],
     ['Fixtures', ['cabinet', 'counter', 'shower_tile', 'shower_glass']],
-    ['Yard', ['lawn', 'water']],
+    ['Yard', ['lawn', 'water', ...YARD_ROLES.map(row => row.kind)]],
   ];
   const kit = getKit();
   for (const [label, kinds] of groups) {
@@ -62,6 +69,16 @@ export function houseMaterialsShelf(host, building, { getPlan, getKit = () => ({
         : fallback.role && fallback.role !== kind ? `Follows ${parent}` : 'House look';
       group.append(materialSlot({ library, ownSlot, label: row.label, value, defaultLabel, defaultColor: kit.materials?.[fallback.role || kind]?.color,
         kit, readOnly: () => !editable(), report,
+        resolve: ref => {
+          const plan = getPlan(), current = plan.buildings?.find(b => b.id === building.id) || building;
+          // The dialog edits this very role: clearing it must skip its saved value.
+          const owner = site ? null : {...current, materials:{...current.materials, [kind]:null}};
+          const parentPlan = site ? {...plan, materials:{...plan.materials, [kind]:null}} : plan;
+          const parentRole = kind === 'pool_coping' ? 'paving' : fallback.role;
+          return surfaceDescription(parentPlan, {role:kind, ref, building:owner,
+            fallback:parentRole && parentRole !== kind ? resolveSurfaceMaterial(plan, {role:parentRole, building:site ? null : current, kit}) : null,
+            defaultRef:{id:fallback.builtin || fallback.look || kind} }, kit);
+        },
         onChange: slot => {
           if (!editable()) return;
           return op({ op: 'set_material', building: building.id,

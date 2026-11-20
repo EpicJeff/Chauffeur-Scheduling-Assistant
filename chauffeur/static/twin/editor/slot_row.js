@@ -13,7 +13,7 @@ export function sendSlotDrag(row, phase, entry) {
 }
 
 // A DOM component only. The owner keeps the domain operation and undo step.
-export function createSlotRow({ label, subject = `${label.toLowerCase()} material`, accepts, current, detail, apply, clear, reset, tint, library, readOnly = false }) {
+export function createSlotRow({ label, subject = `${label.toLowerCase()} material`, accepts, current, detail, inherited, apply, clear, reset, tint, offset, library, readOnly = false }) {
   const element = document.createElement('section'), row = document.createElement('div');
   element.dataset.librarySlot = label; row.className = 'editor-material-line editor-slot-line'; element.append(row);
   const controller = new AbortController(), { signal } = controller;
@@ -58,6 +58,34 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
     listen(tintInput, 'change', () => { const value = tintInput.value; return run(() => tint.set(value)); });
     if (tint.clear) { tintClear = button('Clear override', actions); listen(tintClear, 'click', () => run(tint.clear)); }
   }
+  let offsetControls, uInput, vInput, rotationInput, offsetReset;
+  if (offset) {
+    offsetControls = document.createElement('div'); offsetControls.className = 'editor-slot-offset';
+    const field = (text, tag, key) => {
+      const labelNode = document.createElement('label'); labelNode.textContent = text;
+      const input = document.createElement(tag); input.dataset[key] = '';
+      input.setAttribute('aria-label', `${label} ${text}`); labelNode.append(input); offsetControls.append(labelNode); return input;
+    };
+    uInput = field('U offset', 'input', 'slotU'); vInput = field('V offset', 'input', 'slotV');
+    for (const input of [uInput, vInput]) { input.type = 'number'; input.step = '.05'; }
+    rotationInput = field('Rotation', 'select', 'slotRotation');
+    for (const value of [0, 90, 180, 270]) {
+      const option = document.createElement('option'); option.value = String(value); option.textContent = `${value}°`; rotationInput.append(option);
+    }
+    const change = () => {
+      const u = Number(uInput.value), v = Number(vInput.value), rot = Number(rotationInput.value);
+      if (!uInput.value.trim() || !vInput.value.trim() || !Number.isFinite(u) || !Number.isFinite(v) || ![0, 90, 180, 270].includes(rot)) {
+        report(new Error('Use finite U and V offsets and a quarter-turn rotation.')); refresh(); return;
+      }
+      // Round floating-point nudge noise; 1 and negative nudges wrap before posting.
+      const wrap = value => Number(((value % 1 + 1) % 1).toFixed(10)) % 1;
+      return run(() => offset.set({ u: wrap(u), v: wrap(v), rot }));
+    };
+    for (const input of [uInput, vInput, rotationInput]) listen(input, 'change', change);
+    offsetReset = button('Reset offset', offsetControls, 'slotOffsetReset');
+    offsetReset.setAttribute('aria-label', `${label} Reset offset`);
+    listen(offsetReset, 'click', () => run(offset.clear)); element.append(offsetControls);
+  }
   listen(element, 'chf-library-slot-drag', event => {
     const { phase, entry } = event.detail;
     const valid = !!entry && accepts(entry) && !busy && !disposed && !locked();
@@ -69,6 +97,7 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
     // `detail` keeps what the old material line said about where the material comes from
     // ("Oak, set here", "Siding, from the building", "House look").
     name.textContent = detail?.() || entry?.name || 'Default'; swatch.disabled = busy || !entry?.id;
+    name.setAttribute('aria-disabled', String(!!inherited?.()));
     swatch.classList.toggle('editor-slot-empty', !entry?.id);
     swatch.replaceChildren(); swatch.style.backgroundColor = entry?.color || '';
     if (entry?.thumb) { const image = document.createElement('img'); image.src = entry.thumb; image.alt = ''; swatch.append(image); }
@@ -85,12 +114,18 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
         tintClear.hidden = tintInput.parentElement.hidden || !!tint.hasOverride && !tint.hasOverride();
       }
     }
+    if (offsetControls) {
+      const value = offset.effective?.() || offset.value() || { u: 0, v: 0, rot: 0 };
+      uInput.value = String(value.u); vInput.value = String(value.v); rotationInput.value = String(value.rot);
+      for (const input of [uInput, vInput, rotationInput]) input.disabled = busy || locked();
+      offsetReset.disabled = busy || locked() || !offset.value();
+    }
   }
   const unsubscribe = library.onSelect(refresh);
   refresh();
   if (locked()) {
     // Read-only Properties retain their swatch and name, without edit controls.
-    actions.remove(); tintInput?.parentElement.remove();
+    actions.remove(); tintInput?.parentElement.remove(); offsetControls?.remove();
   }
   return { element, refresh, dispose() { disposed = true; unsubscribe(); controller.abort(); element.classList.remove('editor-slot-dragover'); } };
 }

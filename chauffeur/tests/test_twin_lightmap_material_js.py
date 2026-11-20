@@ -520,8 +520,8 @@ check('atlas_runs_in_a_worker_and_is_cached', async () => {
 });
 
 check('atlas_cache_never_hands_one_base_uv_to_another', async () => {
-  // random_offset changes base uv but not the layout key; the cached result carries
-  // clipped geometry with base uv, so a scene must never receive another's.
+  // The cached topology is material/UV independent. Binding it must retain each
+  // displayed scene's own base UV, including when the topology is a cache hit.
   need('loadAtlas');
   const kit = on => { const k = structuredClone(job.kit);
     k.manifest = { ...(k.manifest || {}), 'uv-test': { kind: 'material', household: true, revision: 1, maps: {},
@@ -537,10 +537,10 @@ check('atlas_cache_never_hands_one_base_uv_to_another', async () => {
   const offRoot = await build(false), off = await load(offRoot), offUv = uvs(offRoot);
   const onRoot = await build(true), on = await load(onRoot);
   assert.equal(on.atlas.key, off.atlas.key, 'random_offset does not change the layout key');
-  assert.ok(on.jobs >= 1, 'another base uv is laid out afresh');
+  assert.equal(on.jobs, 0, 'another base uv reuses the material-independent topology');
   assert.notDeepEqual(uvs(onRoot), offUv, 'the offset scene keeps its own uv');
   const againRoot = await build(false), again = await load(againRoot);
-  assert.ok(again.jobs >= 1, 'the slot holds the other uv now, so this lays out afresh');
+  assert.equal(again.jobs, 0, 'the unshifted scene reuses that topology too');
   assert.deepEqual(uvs(againRoot), offUv, 'never the offset uv in an unshifted scene');
   const hitRoot = await build(false), hit = await load(hitRoot);
   assert.equal(hit.jobs, 0, 'the same base uv is a cache hit'); assert.deepEqual(uvs(hitRoot), offUv);

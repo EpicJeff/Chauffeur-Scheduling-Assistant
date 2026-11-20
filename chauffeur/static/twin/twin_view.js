@@ -22,13 +22,14 @@ import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from '
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
 import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/atmosphere.js';
 import { createCloudPass } from './sky/cloud_pass.js';
-import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze } from './sky/weather.js';
+import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction, weatherLightingKey } from './sky/weather.js';
 import { installPlantWind } from './sky/wind.js';
 import { installStageHaze } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
 import { installWeatherSurface } from './sky/weather_surface.js';
 import { seasonState, createSeasonPreview, installSeasons } from './sky/seasons.js';
 import { createPrecipitation } from './sky/precipitation.js';
+import { createSkyCover, writeWeatherOpen, refreshSlabCover } from './sky/sky_cover.js';
 import { createSeasonTouches } from './sky/season_touches.js';
 import { mountTimeScrub } from './sky/time_scrub.js';
 import { defaultStage, mountStageSettings } from './stage_settings.js';
@@ -124,8 +125,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const weatherSurface = installWeatherSurface(scene);
   const seasons = installSeasons(scene);
   const precipitation = createPrecipitation(scene,{tier});
+  post?.setWetGround({weatherSurface:weatherSurface.uniforms.weatherSurface,...precipitation.uniforms});
   const seasonTouches = createSeasonTouches(scene,{tier});
-  let precipitationPlan=null,precipitationRoofs=null;
+  let precipitationPlan=null,precipitationRoofs=null,precipitationCover=null;
   let cloudCentre=[0,0];
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
   const stageForPlan = nextPlan => {
@@ -426,7 +428,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (disposed) return;
     if (compiling && performance.now() - holdSince < HOLD_MS) return;
     // The live keeper can replace its layer. Read its current snapshot, without another stream.
-    if (JSON.stringify(currentWeather()) !== lastWeather) applyTimeLook();
+    const weather=currentWeather();
+    if (weatherLightingKey(weather) !== lastWeather) applyTimeLook();
+    else view.weather=weather;
     const flash=clouds.flash(performance.now()/1000,{enabled:(!editor||state.liveWeather||!!state.weatherPreview)&&!state.unlit,
       centre:cloudCentre});
     // Reuse the one existing hemisphere light. No lit-material uniform, light
@@ -449,13 +453,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     plantWind.update(performance.now()/1000,view.weather,site.front_bearing_deg ?? 180);
     seasons.update(view.season);
     weatherSurface.update(view.weather,performance.now()/1000);
-    if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces){
-      seasonTouches.setPlan(plan);
-      precipitation.setPlan(plan,twin?.roofSurfaces);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;
+    if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces || precipitationCover!==twin?.skyCover){
+      seasonTouches.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);
+      precipitation.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;precipitationCover=twin?.skyCover;
     }
     precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
-      unlit:state.unlit,colour:timeLook?.skyColor});
-    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext';
+      level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,colour:timeLook?.skyColor});
+    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext'&&(!view.levels||view.levels.snapshot().level==='house');
     const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
     const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
     seasonTouches.update(performance.now()/1000,view.season,view.weather,camera,{target:controls.target,plants:yardGroup,
@@ -1183,6 +1187,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
       }
       plan = flat; view.plan = flat;
+      refreshSlabCover(twin.root, flat, twin.roofSurfaces, buildingId);
+      twin.skyCover = createSkyCover(flat, twin.roofSurfaces);
+      writeWeatherOpen(twin.root, twin.skyCover);
       // A gesture deforms retained buffers in place; the next full rebuild
       // must regenerate this building from its final authoritative record.
       if (!keep && twin.buildings?.has(buildingId)) twin.buildings.get(buildingId).model.stale = true;
@@ -1336,7 +1343,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         stopBatch();
         if (!reuseYard && !yardLater) {
           const stopYard = editSpan(detail, 'yard');
-          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials: yardMaterials, timing: detail, previous: yardGroup }); next.groups.site.add(yard.group);
+          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials: yardMaterials, timing: detail, previous: yardGroup, skyCover: next.skyCover }); next.groups.site.add(yard.group);
           stopYard();
           next.yardGroup = yard.group;
         }
@@ -1373,6 +1380,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       stopDispose();
       yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);
+      // A roof edit can reuse the entire yard. Its cover still follows the
+      // accepted building geometry, including furniture and pool features.
+      if (yardGroup) writeWeatherOpen(yardGroup, twin.skyCover);
       // Read-only legacy property access for P0 embeds, never enumerable scene
       // keys and never a resolution when two buildings share the level name.
       view.groups = { ...twin.groups, levels: new Proxy(twin.groups.levels, { get(target, key) {
@@ -1481,7 +1491,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       let group;
       try {
         const stop = editSpan(timing?.detail, 'yard');
-        try { ({ group } = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials, timing: timing?.detail, previous })); }
+        try { ({ group } = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials, timing: timing?.detail, previous, skyCover: twin?.skyCover })); }
         finally { stop(); }
         if (disposed || version !== revision) {
           const keep = retained(); group.userData.releasePlants?.(keep); disposeObject(group, { keepMaterials: keep }); return;
@@ -1520,11 +1530,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     model.materials.forEach(m => { if (!keepMaterials.has(m)) m.dispose(); });
   }
   function applyTimeLook(moved = false, forceSky = false, cheap = false) {
-    view.weather=currentWeather();lastWeather=JSON.stringify(view.weather);
+    view.weather=currentWeather();lastWeather=weatherLightingKey(view.weather);
     const seasonNow=clockNow(),seasonSite=resolveSite(site,seasonNow);
     view.season=seasonState(seasonNow,seasonSite.lat,groundWeather,{neutral:editor&&!state.liveWeather,preview:seasonPreview.get()});
     seasons.update(view.season);
-    stageHaze.set({enabled:!state.unlit,fog:weatherHaze(view.weather)});
+    stageHaze.set({enabled:!state.unlit,extinction:weatherExtinction(view.weather)});
     cloudShadow.set({enabled:!state.unlit});
     sky.setEnabled(!state.unlit);
     if (state.unlit) {
@@ -1540,17 +1550,18 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const illumination = moonIllumination(date), overcast = view.weather.clouds.coverage;
     const sunDir = modelDirection(solar.azimuth, solar.altitude, located.front_bearing_deg);
     const moonDir = modelDirection(lunar.azimuth, lunar.altitude, located.front_bearing_deg);
-    const cloudWeather=view.weather.clouds,radianceInput={sunDir,moonDir,moonFraction:illumination.fraction,overcast,fog:view.weather.fog};
+    const cloudWeather=view.weather.clouds,extinction=weatherExtinction(view.weather),fog=weatherHaze(view.weather),radianceInput={sunDir,moonDir,moonFraction:illumination.fraction,overcast,fog};
+    stageHaze.set({fogColour:fogColour(radianceInput)});
     const cloudIrradiance=sampleSkyIrradiance(radianceInput);
     clouds.update(cloudWeather,{sunDir,moonDir,frontBearingDeg:located.front_bearing_deg,
       sunRadiance:transmittance([sunDir[0],Math.max(0,sunDir[1]),sunDir[2]]).map(v=>v*10),
       moonRadiance:transmittance(moonDir).map(v=>v*.02*illumination.fraction),
-      ambientTop:cloudIrradiance.top,ambientBottom:cloudIrradiance.bottom,fog:view.weather.fog,fogColour:fogColour(radianceInput)});
+      ambientTop:cloudIrradiance.top,ambientBottom:cloudIrradiance.bottom,extinction,fogColour:fogColour(radianceInput)});
     cloudShadow.set({sunDir,moonDir});
     cloudShadow.frame(performance.now()/1000);
     const skyChanged = sky.update({sunDir, moonDir, moonPhase:illumination.phase, moonFraction:illumination.fraction,
       moonDistanceKm:lunar.distance, siderealTime:localSiderealTime(date,located.lon),
-      frontBearingDeg:located.front_bearing_deg, overcast, fog:view.weather.fog, latitude:located.lat, force:moved || forceSky});
+      frontBearingDeg:located.front_bearing_deg, overcast, fog, extinction, latitude:located.lat, force:moved || forceSky});
     if (skyChanged) stageHaze.refresh();
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
       { shadows: settings.shadows, overcast, sunTransmittance:cloudShadow.centre(), zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });
