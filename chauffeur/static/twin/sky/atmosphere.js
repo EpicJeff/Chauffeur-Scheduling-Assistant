@@ -83,7 +83,7 @@ export function sampleRadiance(dirWorld, {sunDir=[0,1,0],moonDir=[0,-1,0],moonFr
   for (let i=0;i<3;i++) result[i]+=AIRGLOW[i]*(1+clamp(moonFraction)*Math.max(0,moon[1])*(1-c));
   const ground=below>0 ? groundRadiance({sunDir,moonDir,moonFraction,overcast}) : [0,0,0];
   const t=clamp((below-GROUND_START)/(GROUND_END-GROUND_START)), groundWeight=t*t*(3-2*t);
-  const colour=fogColour({sunDir}),weight=clamp(fog)*.9;
+  const colour=fogColour({sunDir}),weight=clamp(fog);
   return result.map((v,i)=>clamp((v*(1-groundWeight)+ground[i]*groundWeight)*(1-weight)+colour[i]*weight,0,4096));
 }
 
@@ -167,7 +167,7 @@ void main() {
   // smooth transition to lit ground by 15 degrees. Same ramp as CPU sampling.
   float groundWeight=smoothstep(${GROUND_START},${GROUND_END},below);
   result=mix(result,groundColour,groundWeight);
-  result=mix(result,cloudFogColour,cloudFog*.9);
+  result=mix(result,cloudFogColour,1.0-exp(-max(cloudFog,0.0)*10000.0));
   if(cloudViewEnabled>0.5) {
     vec4 cloud=marchClouds(vec3(0.0,${(HEIGHT*1000).toFixed(1)},0.0),cloudUnit(skyDirection),cloudCubeSteps,0.5,sunDir,result);
     result=cloud.rgb+result*(1.0-cloud.a);
@@ -209,7 +209,7 @@ export function createSky(renderer, {tier='low',clouds=null} = {}) {
   // Shells are at 40/60m, inside even the smallest house reflection camera.
   const camera=new THREE.CubeCamera(.1,100,target), pmrem=new THREE.PMREMGenerator(renderer);
   let environmentTarget=null, previous=null, disposed=false;
-  let pendingFace=null,lastCloudRefresh=-Infinity,frameSeconds=0;
+  let pendingFace=null,pendingDrift=false,lastCloudRefresh=-Infinity,frameSeconds=0;
   let moonTexture=null, assetPromise=null;
   function update(input={}) {
     if (disposed) return false;
@@ -222,14 +222,15 @@ export function createSky(renderer, {tier='low',clouds=null} = {}) {
     bodies.update(bodyInput);stars.update(starInput);
     const moved=(a,b)=>dot(a,b)<Math.cos(.25*Math.PI/180);
     if (previous && !input.force && !moved(next.sunDir,previous.sunDir) && !moved(next.moonDir,previous.moonDir) &&
-        Math.abs(next.overcast-previous.overcast)<=.05 && next.fog===previous.fog && Math.abs(next.moonFraction-previous.moonFraction)<.001) return false;
+        Math.abs(next.overcast-previous.overcast)<=.05 && next.fog===previous.fog && next.extinction===previous.extinction && Math.abs(next.moonFraction-previous.moonFraction)<.001) return false;
     uniforms.sunDir.value.fromArray(next.sunDir);uniforms.moonDir.value.fromArray(next.moonDir);
     uniforms.moonFraction.value=next.moonFraction;uniforms.overcast.value=next.overcast;
     uniforms.groundColour.value.fromArray(groundRadiance(next));
     cubeBodies.update(bodyInput);cubeStars.update(starInput);
     snapshotClouds();
     // These belong only to sky/cloud programs, never the shared lit chunks.
-    cloudUniforms.cloudFog.value=next.fog;cloudUniforms.cloudFogColour.value.fromArray(fogColour(next));
+    cloudUniforms.cloudFog.value=Number.isFinite(next.extinction)?Math.max(0,next.extinction):-Math.log(Math.max(1-next.fog,1e-10))/10000;
+    cloudUniforms.cloudFogColour.value.fromArray(fogColour(next));
     const saved={target:renderer.getRenderTarget(),face:renderer.getActiveCubeFace(),mip:renderer.getActiveMipmapLevel(),
       xr:renderer.xr.enabled,auto:renderer.autoClear,info:{...renderer.info.render},mipmaps:target.texture.mipmapsAutoUpdate};
     try {
@@ -250,6 +251,7 @@ export function createSky(renderer, {tier='low',clouds=null} = {}) {
       uniforms.cloudViewEnabled.value=1;cubeBodies.setCloudsEnabled(true);cubeStars.setCloudsEnabled(true);
       // First draw allocates the fixed PMREM while noise is still unavailable.
       // Later cloudy refreshes submit one face per animation frame.
+      pendingDrift=false; // Time, look and asset updates always refresh probes promptly.
       if(previous&&clouds?.active){pendingFace=0;lastCloudRefresh=frameSeconds;}
       else {pendingFace=null;camera.update(renderer,scene);}
       // r187 keys envMapSize/MaxLod/PMREM: retain this target and its mip layout forever.
@@ -310,7 +312,10 @@ export function createSky(renderer, {tier='low',clouds=null} = {}) {
       frameSeconds=seconds;
       const fadeChanged=Math.abs(clouds.uniforms.cloudFade.value-cloudUniforms.cloudFade.value)>.05;
       const stateChanged=clouds.uniforms.cloudCoverage.value!==cloudUniforms.cloudCoverage.value||clouds.uniforms.cloudType.value!==cloudUniforms.cloudType.value;
+      // Weather/fade changes during a drift capture also need prompt probes.
+      if(stateChanged||fadeChanged)pendingDrift=false;
       if(pendingFace===null&&(stateChanged||fadeChanged||(clouds.active&&seconds-lastCloudRefresh>=4))) {
+        pendingDrift=!stateChanged&&!fadeChanged;
         snapshotClouds();pendingFace=0;lastCloudRefresh=seconds;
       }
       if(pendingFace===null)return false;
@@ -321,7 +326,8 @@ export function createSky(renderer, {tier='low',clouds=null} = {}) {
         camera.updateMatrixWorld();renderer.setRenderTarget(target,pendingFace);renderer.render(scene,camera.children[pendingFace]);
         if(++pendingFace===6) {
           pendingFace=null;target.texture.needsPMREMUpdate=true;
-          environmentTarget=pmrem.fromCubemap(target.texture,environmentTarget);return true;
+          // false: unfinished; true: time/weather/fade; 'drift': periodic clouds only.
+          environmentTarget=pmrem.fromCubemap(target.texture,environmentTarget);return pendingDrift ? 'drift' : true;
         }
         return false;
       } finally {renderer.setRenderTarget(...saved);renderer.xr.enabled=xr;renderer.autoClear=auto;Object.assign(renderer.info.render,info);}

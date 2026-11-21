@@ -54,12 +54,16 @@ def pad_error(pad):
     def materials(value, allowed):
         if 'materials' not in value:
             return None
-        from services.twin_library import material_slot_error
+        from services.twin_library import normalize_material_slot
         slots = value['materials']
-        if not isinstance(slots, dict) or set(slots) - allowed or any(material_slot_error(v) for v in slots.values()):
+        if not isinstance(slots, dict) or set(slots) - allowed:
             return 'Choose null or a Library material for each pad edge material slot.'
-        for key in [k for k, v in slots.items() if v is None]:
-            slots.pop(key)
+        try:
+            slots = {key: normalize_material_slot(ref) for key, ref in slots.items()}
+        except ValueError:
+            return 'Choose null or a Library material for each pad edge material slot.'
+        slots = {key: ref for key, ref in slots.items() if ref is not None}
+        value['materials'] = slots
         if not slots:
             value.pop('materials')
 

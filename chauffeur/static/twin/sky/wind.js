@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { modelDirection } from './look.js';
-import { bindEnvironmentMaterial } from './stage_haze.js';
+import { bindEnvironmentMaterial, frameObjects } from './stage_haze.js';
 
 // Model x/z direction and a bounded 0..1 strength. No wind means a small grass
 // breeze only; editor neutral suppresses even that. All consumers use m/s.
@@ -32,14 +32,14 @@ transformed.xz+=vec2(dot(plantX,plantWorldWind)/max(dot(plantX,plantX),1e-6),
  dot(plantZ,plantWorldWind)/max(dot(plantZ,plantZ),1e-6))*plantHeight*length(modelMatrix[1].xyz)*${leaf?'.008':'.0015'}*plantWeight*plantWave;`);
   };
   const leafPatch=patch(true),branchPatch=patch(false);
-  function prepare(root=scene) {
+  function prepare(root) {
     if(tier==='low')return;
-    root.traverse(object=>{
+    for(const object of frameObjects(root ?? scene,{fresh:root !== undefined})){
       for(const material of [].concat(object.material || [])){
         if(!material.userData.plantWind)continue;
         bindEnvironmentMaterial(material,'plant-wind-'+material.userData.plantWind+'-1',uniforms,material.userData.plantWind==='leaves'?leafPatch:branchPatch);
       }
-    });
+    }
   }
   return {prepare,uniforms,update(seconds,weather,bearing){
     const [x,z]=windVector(weather,bearing);uniforms.plantWind.value.set(x,z,Number.isFinite(seconds)?seconds:0);prepare();

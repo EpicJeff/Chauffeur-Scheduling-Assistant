@@ -145,7 +145,7 @@ export function surfaceMaterial(source, body = null, {tier = 'medium', simulatio
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = WATER_VERTEX + shader.vertexShader;
     waterReplace(shader, 'vertexShader', '#include <project_vertex>', WATER_POSITION + '\n#include <project_vertex>');
-    shader.fragmentShader = WATER_VERTEX + WAVE_GLSL + (sourced ? '' : 'uniform float waterBaseOpacity;\n') + 'uniform vec3 waterMotion;\n' + (sourced ? RIPPLE_GLSL : '') + (simulation ? FIELD_GLSL : '') + shader.fragmentShader;
+    shader.fragmentShader = '#define WEATHER_SURFACE_POOL\n' + WATER_VERTEX + WAVE_GLSL + (sourced ? '' : 'uniform float waterBaseOpacity;\n') + 'uniform vec3 waterMotion;\n' + (sourced ? RIPPLE_GLSL : '') + (simulation ? FIELD_GLSL : '') + shader.fragmentShader;
     waterReplace(shader, 'fragmentShader', '#include <color_fragment>', `#include <color_fragment>
 vec2 waterPoint = vec2(vWaterWorld.x, -vWaterWorld.z) / .3048;
 vec2 rippleSlope = waterSlope(waterPoint, waterMotion);
@@ -163,7 +163,7 @@ vec3 waterNormal = inverseTransformDirection(normal, viewMatrix);
 // shows in patches with bare floor between them. The waves still bend the
 // image itself by their full tilt.
 vec3 waterSteady = normalize(mix(vec3(0.0, 1.0, 0.0), waterNormal, .3));
-float waterFresnel = .02 + .98 * pow(1.0 - abs(dot(waterSteady, waterView)), ${WATER_MIRROR_POWER.toFixed(1)});
+float waterFresnel = .02 + .98 * pow(max(0.0, 1.0 - abs(dot(waterSteady, waterView))), ${WATER_MIRROR_POWER.toFixed(1)});
 ${unlit ? `// Retain map alpha and the native opacity uniform used by viewing/ghost clones.
 diffuseColor.a *= mix(.30, .92, waterFresnel) / waterBaseOpacity;` : ''}`);
     // A water surface is a mirror laid over the body below, not a tinted film.

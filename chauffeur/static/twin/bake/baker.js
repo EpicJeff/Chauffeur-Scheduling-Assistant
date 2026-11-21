@@ -23,10 +23,19 @@ export function lightKey(atlas, light, slot, bank) {
 // Scales are rendered output. Layout only adopts a previously published scale;
 // an unbaked sum has none and cannot become fresh.
 export function bakeLayout(atlas, layout, lights, history, published = {}) {
+  let prior, ownershipReset = false;
+  try { prior = decodeSlots(history, atlas.room.charts.length); }
+  catch (error) {
+    if (error.message !== 'Invalid lightmap ownership history.') throw error;
+    // History is an optimization, never a prerequisite for displaying a house.
+    // A different chart set or damaged manifest needs a fresh assignment and
+    // a rebuild of every light; none of its published channels can be trusted.
+    prior = new Map(); ownershipReset = true; published = {};
+  }
   lights = reachLights(atlas.room, lights).map(l => l.kind === 3 ? {...l,
     scale: Number.isFinite(published[l.device]?.scale) && published[l.device].scale > 0
       ? published[l.device].scale : undefined} : l);
-  const slots = assignChannels(atlas.room.rooms, lights, decodeSlots(history,atlas.room.charts.length)), banks = atlas.room.packBanks(lights, slots);
+  const slots = assignChannels(atlas.room.rooms, lights, prior), banks = atlas.room.packBanks(lights, slots);
   let offset = 0;
   // Geometry reserves a fixed address stride, even when its trailing pages are
   // unlit. A lamp reaching a new page must not shift another bank's stored bytes.
@@ -56,7 +65,8 @@ export function bakeLayout(atlas, layout, lights, history, published = {}) {
       location: location.key(),
       key: lightKey(atlas, light, s, banks[s.bank]) };
   }
-  return { lights, slots, banks, offsets, entries, pages: offset, fallback: slots[CHANNEL_FALLBACK],
+  return { lights, slots, banks, offsets, entries, pages: offset,
+    ...(ownershipReset ? {ownershipReset:true} : {}), fallback: slots[CHANNEL_FALLBACK],
     ownership:encodeSlots(slots,atlas.room.charts.length),
     ranking:slots[CHART_STATS] || {worstDroppedFraction:0,worstChart:null,droppedCharts:0},
     densities: { room: layout.room.density } };
@@ -99,8 +109,8 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     packed=bakeLayout(atlas,layout,lights,assignmentHistory,m?.lights);
     lights=packed.lights;
     if(force) for(const l of lights) if(packed.entries[l.device]) redo.add(l.device);
-    manifest = m || { pages: packed.pages, lights: {} };
-    if (m) {
+    manifest = m && !packed.ownershipReset ? m : { pages: packed.pages, lights: {} };
+    if (m && !packed.ownershipReset) {
       const ids = new Set(Object.values(m.lights).flatMap(e => e.pages || [e.page]));
       const missing = new Set();
       for (const p of ids) if (!(await exists(api, `${path}/${p}.png`))) missing.add(p);
@@ -132,7 +142,8 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
       packed=bakeLayout(atlas,layout,lights,assignmentHistory,latest?.lights);
       lights=packed.lights;
     }
-    if (latest) {
+    if (packed.ownershipReset) manifest = { ...manifest, lights: {} };
+    if (latest && !packed.ownershipReset) {
       for (const [id, entry] of Object.entries(packed.entries)) if (lights.find(l => l.device === id)?.kind === 3)
         entry.scale = Number.isFinite(latest.lights[id]?.scale) && latest.lights[id].scale > 0
           ? latest.lights[id].scale : undefined;
@@ -228,7 +239,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     if (!valid()) return null;
     const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
     if (!r.ok) throw new Error('Could not save the bake manifest.');
-    manifest = next; assignmentHistory=packed.ownership; redo.delete(id); done++;
+    manifest = next; assignmentHistory=packed.ownership; packed.ownershipReset=false; redo.delete(id); done++;
     unavailable.delete(id);
     return id;
   }

@@ -3,6 +3,7 @@ import { lightSource } from './reach.js';
 import { CANDELA } from '../live/real_lights.js';
 import { atlasMesh } from './atlas.js';
 import { bakeSamples, fillStrength } from './fixture_terms.js';
+import { chartReflectance } from './bindings.js';
 
 const worldVertex = `varying vec3 wp;
 void main() { wp = (modelMatrix * vec4(position, 1.0)).xyz;
@@ -82,10 +83,69 @@ function proxies(charts, size, layout) {
   return scene;
 }
 
+// The host texels a thin proxy face covers (a batten's footprint, a trim board's), drawn in the
+// host chart's own lightmap coordinates with the face's own position and normal. Those texels
+// lie under the face, 2.7 cm behind it: baked as wall, their lifted sample point ended inside
+// the batten and saw no light, and at 4 texels/ft that black was smeared into a dark strip
+// beside every batten, which the batten then borrowed (owner 2026-11-21, the v2.499.861
+// dark-lines bug again). renderPage bakes them as the face itself instead: the recess under a
+// batten holds what the batten's front sees, and the wall beside it keeps its real shadow.
+export function proxyCovers(charts, size, layout) {
+  const scene = new THREE.Scene(), groups = new Map();
+  for (const c of charts) for (const part of c.proxies || []) {
+    if (!groups.has(part.mesh)) groups.set(part.mesh, []);
+    groups.get(part.mesh).push({ host: c, faces: part.faces });
+  }
+  for (const [mesh, list] of groups) {
+    const src = mesh.geometry;
+    if (!src.attributes.uv3) continue;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(src.attributes.position.array, 3));
+    if (src.attributes.normal) g.setAttribute('normal', new THREE.BufferAttribute(src.attributes.normal.array, 3));
+    const uv = src.attributes.uv3.array.slice(), index = [];
+    for (const { host, faces } of list) {
+      // A proxy carries its host's mapping, so it moves with the host chart's rect.
+      const base = layout.room.charts.find(b => b.mesh === host.mesh && b.faces === host.faces);
+      const du = base ? (host.rect.x - base.rect.x) / size : 0, dv = base ? (host.rect.y - base.rect.y) / size : 0;
+      for (const f of faces) for (let k = 0; k < 3; k++) {
+        const i = f * 3 + k; index.push(i);
+        if (base) { uv[i * 2] += du; uv[i * 2 + 1] += dv; }
+      }
+    }
+    if (!index.length) continue;
+    g.setAttribute('bakeUV', new THREE.BufferAttribute(uv, 2)); g.setIndex(index);
+    const cover = new THREE.Mesh(g); cover.matrixAutoUpdate = false; cover.matrix.copy(mesh.matrixWorld);
+    cover.frustumCulled = false; scene.add(cover);
+  }
+  return scene;
+}
+// Multiplies what is under it by zero, colour and alpha, so the face's own bake can replace it.
+const clearCovered = () => new THREE.ShaderMaterial({
+  vertexShader: 'attribute vec2 bakeUV; void main() { gl_Position = vec4(bakeUV * 2.0 - 1.0, 0.0, 1.0); }',
+  fragmentShader: 'void main() { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); }',
+  depthTest: false, depthWrite: false, transparent: true, side: THREE.DoubleSide,
+  blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+  blendSrc: THREE.ZeroFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+  blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor });
+// Adds one same-size target onto another texel for texel (the faces' bake onto the cleared page).
+function addTarget(renderer, from, to, camera) {
+  const quad = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position',
+    new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3)), new THREE.ShaderMaterial({
+    uniforms: { map: { value: from.texture } },
+    vertexShader: 'varying vec2 vUv; void main() { vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: 'uniform sampler2D map; varying vec2 vUv; void main() { gl_FragColor = texture2D(map, vUv); }',
+    depthTest: false, depthWrite: false, transparent: true, blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor }));
+  quad.frustumCulled = false;
+  const scene = new THREE.Scene(); scene.add(quad);
+  renderer.setRenderTarget(to); renderer.render(scene, camera);
+  quad.geometry.dispose(); quad.material.dispose();
+}
+
 export function occluders(view) {
   const scene = new THREE.Scene();
   view.scene.updateMatrixWorld(true);
-  view.scene.traverse(o => {
+  (view.bake?.occlusionRoot?.() || view.scene).traverse(o => {
     if (!atlasMesh(o) || o.material.name === 'glass') return;
     // Graded ground receives yard light but never blocks it: seen at grazing angles from a
     // lamp above, one cube texel spans more depth than the bias and the lawn shadows itself.
@@ -114,7 +174,7 @@ export async function renderPage(view, renderer, charts, size, light, layout, at
     renderer.toneMapping = THREE.NoToneMapping; renderer.xr.enabled = false;
   };
   const camera = new THREE.Camera();
-  let shadow, material, depth;
+  let shadow, material, depth, covers = null, clear = null, front = null;
   try {
     renderer.toneMapping = THREE.NoToneMapping; renderer.xr.enabled = false;
     renderer.setClearColor(0, 0); renderer.setRenderTarget(target); renderer.clear();
@@ -138,6 +198,13 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
         outer: {value: -1}, inner: {value: -1}, cd: {value: CANDELA}, kind: {value: light.kind || 0},
         visibilityWeight: {value: 1 / 16}, scale: {value: 1}, fillStrength: {value: fillStrength(light)} } });
     scene.overrideMaterial = material;
+    covers = proxyCovers(charts, size, atlas);
+    if (covers.children.length) {
+      covers.overrideMaterial = material;
+      front = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false, type: THREE.HalfFloatType,
+        minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+      renderer.setClearColor(0, 0); renderer.setRenderTarget(front); renderer.clear();
+    }
     for (const sample of samples) {
       await nextFrame();
       const p = sample.source, u = material.uniforms;
@@ -151,6 +218,13 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
       renderer.autoClear = true; renderer.setClearColor(0xffffff, 1); cube.updateMatrixWorld(true);
       for (let face = 0; face < 6; face++) { renderer.setRenderTarget(shadow, face); renderer.render(blockers, cube.children[face]); }
       renderer.autoClear = false; renderer.setRenderTarget(target); renderer.render(scene, camera);
+      if (front) { renderer.setRenderTarget(front); renderer.render(covers, camera); }
+    }
+    if (front) {
+      // The texels under each thin face hold what the face sees, not the buried wall.
+      covers.overrideMaterial = clear = clearCovered();
+      renderer.autoClear = false; renderer.setRenderTarget(target); renderer.render(covers, camera);
+      addTarget(renderer, front, target, camera);
     }
     const raw = new Uint16Array(size * size * 4);
     restore();
@@ -173,7 +247,8 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
   } finally {
     restore();
     for (const o of scene.children) o.geometry.dispose();
-    material?.dispose(); depth?.dispose(); target.dispose(); shadow?.dispose();
+    for (const o of covers?.children || []) o.geometry.dispose();
+    material?.dispose(); depth?.dispose(); clear?.dispose(); front?.dispose(); target.dispose(); shadow?.dispose();
   }
 }
 
@@ -277,7 +352,7 @@ export function roomFills(pages, size, light = null) {
     const mine = pages.flatMap(p => p.charts.filter(c => c.room === room).map(c => ({ c, bytes: p.bytes })));
     let energy = 0, albedo = 0, count = 0;
     for (const { c, bytes } of mine) {
-      const color = c.mesh.material.color, reflectance = color ? (color.r + color.g + color.b) / 3 : .5;
+      const reflectance = chartReflectance(c);
       for (let y = c.rect.y; y < c.rect.y + c.rect.h; y++) for (let x = c.rect.x; x < c.rect.x + c.rect.w; x++) {
         const p = (y * size + x) * 4;
         if (!bytes[p + 3]) continue;

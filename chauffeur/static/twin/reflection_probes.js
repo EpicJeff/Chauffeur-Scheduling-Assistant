@@ -164,13 +164,16 @@ const visible = object => { for (let p = object; p; p = p.parent) if (!p.visible
 
 export function createReflectionProbes({scene, renderer, tier, extras = () => [], sky = () => null, uncut = () => null, now = () => performance.now(), warn = error => console.warn('House reflection capture failed:', error)}) {
   let probes = [], bindings = new Set(), queue = [], requested = false, quietAt = 0, unlit = false, disposed = false, lightsKey = null, lightsAt = -Infinity;
+  let mirrorStillHz = 10, lampPending = false, lampAt = 0, lampRoundAt = -Infinity;
+  let probeCloudSeconds = 30, skyPending = false, skyAt = 0, roundAt = -Infinity;
   const enabled = tier !== 'low';
   // A flat pool mirrors what stands beside it. One cube taken at the pool's
   // centre cannot place a wall ten metres away, so on high quality the largest
   // body's water level gets a true mirror image: the scene drawn once more from
   // the camera's reflection, at half size, only while that water is in view.
   // Bodies at another height, and medium quality, keep the cube.
-  const planar = tier === 'high' ? {target:null, camera:new THREE.PerspectiveCamera(), boxes:[], hidden:[], hiddenAt:-Infinity, passes:0, active:false} : null;
+  const planar = tier === 'high' ? {target:null, camera:new THREE.PerspectiveCamera(), boxes:[], hidden:[], hiddenAt:-Infinity, passes:0, active:false,
+    dirty:true, drawnAt:-Infinity, pose:new THREE.Matrix4(), projection:new THREE.Matrix4(), matrix:new THREE.Matrix4()} : null;
   const frustum = new THREE.Frustum(), scratch = new THREE.Matrix4(), size = new THREE.Vector2();
   const eye = new THREE.Vector3(), aim = new THREE.Vector3(), up = new THREE.Vector3(), plane = new THREE.Plane(), clip = new THREE.Vector4(), corner = new THREE.Vector4();
   // What a reflection must not contain: markers, handles, effects, the water
@@ -197,12 +200,21 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     }
     // A mirror that cannot be drawn is not retried every frame; the cube
     // stands in until the scene is next rebuilt.
-    if (on) try { drawMirror(camera, water.centre.y); } catch (error) { on = false; planar.broken = true; warn(error); }
+    if (on) try {
+      renderer.getDrawingBufferSize(size);
+      const resized = planar.target && (planar.target.width !== Math.max(1,Math.floor(size.x/2)) || planar.target.height !== Math.max(1,Math.floor(size.y/2)));
+      if (planar.dirty || !planar.active || resized || !planar.pose.equals(camera.matrixWorld) || !planar.projection.equals(camera.projectionMatrix) ||
+          mirrorStillHz === 0 || now()-planar.drawnAt >= 1000/mirrorStillHz) {
+        drawMirror(camera, water.centre.y);
+        planar.pose.copy(camera.matrixWorld); planar.projection.copy(camera.projectionMatrix); planar.matrix.copy(scratch);
+        planar.drawnAt = now(); planar.dirty = false;
+      }
+    } catch (error) { on = false; planar.broken = true; warn(error); }
     planar.active = on;
     for (const b of bindings) if (b.kind==='water') {
       b.uniforms.waterPlanarActive.value = on ? 1 : 0;
       b.uniforms.waterPlanar.value = on ? planar.target.texture : null;
-      if (on) { b.uniforms.waterPlanarHeight.value = water.centre.y; b.uniforms.waterPlanarMatrix.value.copy(scratch); }
+      if (on) { b.uniforms.waterPlanarHeight.value = water.centre.y; b.uniforms.waterPlanarMatrix.value.copy(planar.matrix); }
     }
   }
   function drawMirror(camera, height) {
@@ -296,11 +308,22 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     }
   }
   function request() {
+    if (planar) planar.dirty = true;
     if (!enabled || disposed) return;
     requested = true; quietAt = now(); queue = [];
     for (const p of probes) p.fresh = false;
     // Keep the last successful cube displayed while a round is queued. A failed
     // capture explicitly falls back to sky, never to a partially rendered cube.
+  }
+  function requestLamp() {
+    if (!enabled || disposed || lampPending) return;
+    lampPending=true; lampAt=now();
+  }
+  function requestSky() {
+    if (!enabled || disposed || skyPending) return;
+    skyPending=true; skyAt=now();
+    // Cloud drift must not dirty the planar mirror: it already redraws on its
+    // own still-camera interval. Keep the last probe maps displayed as for lamps.
   }
   function rebuild(plan, root) {
     if (!enabled || disposed) return;
@@ -314,7 +337,7 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       }
     });
     const candidates = [];
-    if (planar) { planar.boxes = []; planar.broken = false; }
+    if (planar) { planar.boxes = []; planar.broken = false; planar.hiddenAt = -Infinity; }
     for (const body of waterBodies(plan)) if (waterVisible.has(body.id)) {
       const c = centreOf(body.polygon);
       if (planar) planar.boxes.push(new THREE.Box3().setFromPoints(body.polygon.map(p => new THREE.Vector3(p[0]*FT, body.height*FT, -p[1]*FT))));
@@ -413,24 +436,44 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     }
   }
   return {
-    rebuild, request, mirror,
+    rebuild, request, requestLamp, requestSky, mirror,
+    setMirrorStillHz(hz) { if ([0,30,15,10,5,2].includes(hz)) { mirrorStillHz=hz; if(planar)planar.dirty=true; } },
+    setProbeCloudSeconds(seconds) { if ([4,10,30,60].includes(seconds)) probeCloudSeconds=seconds; },
     setUnlit(on) { if (unlit===on) return; unlit=on; for (const b of bindings) apply(b); if (!on) request(); },
     frame() {
       if (!enabled || unlit || disposed) return;
       // Live light uniforms may change without a model rebuild. Observe their
       // result, excluding sun/moon (the time-look minute gate owns those).
-      // Twice a second is plenty: a capture waits 1.5 seconds of quiet anyway,
+      // Twice a second is plenty: lamp requests wait at least 1.5 seconds,
       // and a whole-scene walk has no place in every frame.
       if (now()-lightsAt>=500) {
         lightsAt=now();
         const lights=[];
         scene.traverse(o=>{if(o.isPointLight || o.isSpotLight || o.isRectAreaLight) lights.push([o.uuid,visible(o),o.intensity,o.color?.getHex(),...o.getWorldPosition(new THREE.Vector3()).toArray(),o.distance,o.width,o.height,o.angle,...(o.target?.getWorldPosition(new THREE.Vector3()).toArray() || [])]);});
-        const key=JSON.stringify(lights); if (lightsKey!==key) { lightsKey=key; request(); }
+        const key=JSON.stringify(lights);
+        if (lightsKey!==key) {
+          if (lightsKey !== null) requestLamp();
+          lightsKey=key;
+        }
       }
-      if (requested && now()-quietAt>=1500) { queue=[...probes]; requested=false; }
+      // Lamp-only changes coalesce from the FIRST change (never restart quiet),
+      // at most one round per 5 s, even while changing continuously. Explicit
+      // rebuild/time/weather/view requests retain their 1.5 s debounce and priority.
+      let startRound=false;
+      if (requested && now()-quietAt>=1500) { requested=false; lampPending=false; startRound=true; }
+      else if (!requested && !queue.length && lampPending && now()-lampAt>=1500 && now()-lampRoundAt>=5000) {
+        lampPending=false; lampRoundAt=now(); startRound=true;
+      } else if (!requested && !queue.length && skyPending && now()-skyAt>=1500 && now()-roundAt>=probeCloudSeconds*1000) {
+        startRound=true;
+      }
+      if (startRound) {
+        queue=[...probes]; skyPending=false; roundAt=now();
+        // Every round includes the current sky, so explicit/lamp rounds also
+        // satisfy pending drift and start its interval. Drift never restarts quiet.
+      }
       const p=queue.shift(); if (p) capture(p);
     },
-    info() { return {tier, ...(planar ? {planar:{active:planar.active, passes:planar.passes, size:planar.target ? [planar.target.width, planar.target.height] : null}} : {}), probes:probes.map(p=>({id:p.id,kind:p.kind,captures:p.captures,fresh:p.fresh,centre:p.centre.toArray(),box:{min:p.box.min.toArray(),max:p.box.max.toArray()}})), pending:requested || queue.length>0}; },
-    dispose() { disposed=true; queue=[]; requested=false; const old=probes; probes=[]; for (const b of bindings) { b.probe=null; apply(b); } for (const p of old) p.target.dispose(); planar?.target?.dispose(); bindings.clear(); },
+    info() { return {tier, ...(planar ? {planar:{active:planar.active, passes:planar.passes, size:planar.target ? [planar.target.width, planar.target.height] : null}} : {}), probes:probes.map(p=>({id:p.id,kind:p.kind,captures:p.captures,fresh:p.fresh,centre:p.centre.toArray(),box:{min:p.box.min.toArray(),max:p.box.max.toArray()}})), pending:requested || lampPending || skyPending || queue.length>0}; },
+    dispose() { disposed=true; queue=[]; requested=false; lampPending=false; skyPending=false; const old=probes; probes=[]; for (const b of bindings) { b.probe=null; apply(b); } for (const p of old) p.target.dispose(); planar?.target?.dispose(); bindings.clear(); },
   };
 }

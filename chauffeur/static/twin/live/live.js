@@ -626,7 +626,11 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     if (stopped) return;
     for (const row of rows) Object.assign(row, stateOf(row));
     try { notify(); } catch (error) { report(error); }
-    try { draw(); view.render(); } catch (error) { report(error); }
+    // The twin's animation loop draws every frame; rendering here as well drew the
+    // whole scene (mirror, AO, beauty, transparent) twice on every push frame
+    // (owner trace 2026-11-20: ~150-200 ms frames on each light change). Render
+    // only when no loop is running (before the loop starts or after it stops).
+    try { draw(); if (!view.looping) view.render(); } catch (error) { report(error); }
   }
   // Load and save take the same local appearance refresh; neither reads HA again.
   function changedLooks() {

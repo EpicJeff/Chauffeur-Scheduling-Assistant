@@ -415,7 +415,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   border: 0; border-radius: 0; padding: 0 4px; background: transparent; backdrop-filter: none; }
 /* The full save status remains in the status bar. Bound its decorative copy
    even while a large batch is saving or waiting to be saved. */
-#editor-toolbar #editor-toolbar-save-state { display: block; max-width: 96px; overflow: hidden; text-overflow: ellipsis;
+#editor-toolbar #editor-toolbar-save-state { display: block; max-width: 80px; overflow: hidden; text-overflow: ellipsis;
   color: var(--editor-muted); padding-right: 4px; white-space: nowrap; }
 #editor-rail { position: static; display: flex; flex-direction: row; align-items: center; gap: 2px; padding: 0;
   border: 0; border-radius: 0; max-height: none; overflow: visible; transform: none; background: transparent; backdrop-filter: none; }
@@ -540,7 +540,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   position: static; inset: auto; width: auto; max-width: none; max-height: none; min-height: 0;
   transform: none; margin: 0; border: 0; border-radius: 0; background: transparent; backdrop-filter: none; }
 #editor-dialog :is(#place-view, #houses-panel) { display: flex; flex-direction: column; overflow: hidden; }
-#editor-dialog #place-view > .place-header h2, #editor-dialog #houses-title { font-size: 16px; }
+#editor-dialog #place-view > .place-header h2 { font-size: 16px; }
+/* The host's header already says Houses and has the Close. */
+#editor-dialog #houses-panel > .place-header { display: none; }
 #editor-dialog :is(#house-materials, #editor-settings, #library-import-settings-content) { padding: 16px 24px; }
 #editor-dialog[data-content="editor-front-door"] .editor-dialog-panel,
 #editor-dialog[data-content="library-import-settings-content"] .editor-dialog-panel,
@@ -560,6 +562,10 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 /* Scene/Layers use the existing dock glass, selected pill and row hover.
    Fixed 36px rows give virtual scrolling the same geometry as real rows. */
 .editor-scene-tree { max-height: 100%; height: 280px; overflow: auto; }
+.editor-shell [data-slot-name][aria-disabled="true"] { color: var(--editor-muted); }
+.editor-slot-offset { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.editor-slot-offset label { flex: 1; min-width: 60px; }
+.editor-slot-offset input, .editor-slot-offset select { width: 100%; min-width: 0; box-sizing: border-box; }
 .editor-scene-row { display: flex; align-items: center; gap: 2px; box-sizing: border-box;
   height: 36px; min-height: 36px; border-radius: 8px; }
 .editor-scene-row > [data-row-label] { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

@@ -114,7 +114,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // Area picks and placements wait behind the card's own field saves (cards.queue).
   const haLink = createHaLink({ api, onCommit: operation => cards.queue(() => op(operation)), signal, getPlan, canEdit });
   let linkReadAt = 0;
-  const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
+  const cards = createCards({ getPlan, getModel, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
     dock, op, addDormer, canEdit, select, library, haLink, onDrawFeature, openHouseMaterials, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   signal?.addEventListener('abort', () => cards.dispose(), { once: true });

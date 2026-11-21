@@ -107,7 +107,7 @@
         {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('scale', 'Scale')] %}{{ tool_button(tool, label) }}{% endfor %}
       </div>
       <div data-toolbar-group="structure" role="group" aria-label="Structure">
-        {% for tool, label in [('draw-wall', 'Draw wall'), ('draw-room', 'Draw room'), ('split-room', 'Split room'), ('add-door', 'Add door'), ('add-window', 'Add window'), ('add-stair', 'Add stair'), ('add-level', 'Add floor'), ('roof', 'Roof')] %}{{ tool_button(tool, label) }}{% endfor %}
+        {% for tool, label in [('draw-wall', 'Draw wall'), ('draw-room', 'Draw room'), ('add-porch', 'Add porch'), ('split-room', 'Split room'), ('add-door', 'Add door'), ('add-window', 'Add window'), ('add-stair', 'Add stair'), ('add-level', 'Add floor'), ('roof', 'Roof')] %}{{ tool_button(tool, label) }}{% endfor %}
         <details class="editor-toolbar-menu" id="editor-roof-menu"><summary aria-label="More roof tools" title="More roof tools" data-editor-icon="chevron"><span class="editor-sr-only">More roof tools</span></summary>
           <div>{{ tool_button('add-solar-zone', 'Add solar zone') }}</div>
         </details>

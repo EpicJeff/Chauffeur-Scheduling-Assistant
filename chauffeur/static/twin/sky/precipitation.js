@@ -6,7 +6,8 @@ import { allPorches } from '../twin_generator.js';
 import { pathSurfacePolygons } from '../path_shapes.js';
 import { yardPaverLayout } from '../paver_path.js';
 import { paverSettings } from '../paver_layout.js';
-import { weatherHaze } from './weather.js';
+import { weatherExtinction } from './weather.js';
+import { createSkyCover, HEIGHT_NONE } from './sky_cover.js';
 
 const FT=.3048, BOX=[128,96,128], LIFE=.42;
 const RAIN={low:3000,medium:4000,high:8000,max:12000};
@@ -25,14 +26,15 @@ export function precipitationVelocity(kind,weather={},bearing=180,reduced=false)
   return [speed?x*speed*factor:0,-({rain:14,snow:.9,hail:18}[kind]||14)*factor,speed?z*speed*factor:0];
 }
 // CPU reference for the vertex shader's world-anchored toroidal box.
-export function wrappedPosition(seed,travel,anchor,box=BOX) {
-  return box.map((size,i)=>anchor[i]+(((seed[i]*size+travel[i]-anchor[i])%size+size)%size)-size/2);
+export function wrappedPosition(seed,travel,anchor,box=BOX,out=[]) {
+  for(let i=0;i<3;i++){const size=box[i];out[i]=anchor[i]+(((seed[i]*size+travel[i]-anchor[i])%size+size)%size)-size/2;}
+  return out;
 }
 
 // A bounded, analytic downward sample: feet in the plan, metres at the draw.
 // Terraces shape the ground; they are lawn, not hard receiving slabs. Paving
 // on a pad is represented by hardscape, exactly as it is in buildYard.
-export function createSplashSampler(plan={},roofs=new Map()) {
+export function collectHardSurfaces(plan={}) {
   const site=plan.site||{},hard=[];
   const add=(polygon,elevation,flat=null)=>{
     if(!(polygon?.length>=3))return;
@@ -46,7 +48,45 @@ export function createSplashSampler(plan={},roofs=new Map()) {
       for(const p of layout.pavers)add(p.polygon,finite(h.elevation)+1/12,level?groundAt(plan,...p.centre):null);
     }else for(const p of h.kind==='path'?pathSurfacePolygons(h):[h.polygon])add(p,finite(h.elevation)+.3);
   }
-  const water=[site.pool?.polygon,...(site.pool?.features||[]).filter(f=>f.kind==='spa').map(f=>f.polygon)].filter(Boolean);
+  return hard;
+}
+
+const waterPolygons=site=>[site.pool?.polygon,...(site.pool?.features||[]).filter(f=>f.kind==='spa').map(f=>f.polygon)].filter(Boolean);
+
+// Keep the cover grid's origin and cell size: expanding it cannot shift the
+// rain's existing nearest-texel eave boundary. R retains the old cover height;
+// G is the highest hardscape top (including the pad/grade underneath), metres.
+export function bakeWetGroundField(plan={},cover=createSkyCover(plan),hard=collectHardSurfaces(plan)) {
+  const f=cover.heightField(),cell=f.cell||.3;
+  let [x0,z0,x1,z1]=f.bounds;
+  for(const h of hard){
+    x0=Math.min(x0,h.bounds[0]*FT);z0=Math.min(z0,-h.bounds[3]*FT);
+    x1=Math.max(x1,h.bounds[2]*FT);z1=Math.max(z1,-h.bounds[1]*FT);
+  }
+  x0=f.bounds[0]+Math.floor((x0-f.bounds[0])/cell)*cell;
+  z0=f.bounds[1]+Math.floor((z0-f.bounds[1])/cell)*cell;
+  const width=Math.max(1,Math.ceil((x1-x0)/cell)),height=Math.max(1,Math.ceil((z1-z0)/cell));
+  const data=new Float32Array(width*height*2).fill(HEIGHT_NONE),site=plan.site||{};
+  const excluded=[...waterPolygons(site),...(site.beds||[]).map(b=>b.polygon).filter(Boolean)];
+  // Copy, rather than resample, the old cover texels bit-for-bit.
+  const ox=Math.round((f.bounds[0]-x0)/cell),oz=Math.round((f.bounds[1]-z0)/cell);
+  for(let j=0;j<f.height;j++)for(let i=0;i<f.width;i++)data[((j+oz)*width+i+ox)*2]=f.data[j*f.width+i];
+  for(const h of hard){
+    const i0=Math.max(0,Math.floor((h.bounds[0]*FT-x0)/cell)),i1=Math.min(width-1,Math.floor((h.bounds[2]*FT-x0)/cell));
+    const j0=Math.max(0,Math.floor((-h.bounds[3]*FT-z0)/cell)),j1=Math.min(height-1,Math.floor((-h.bounds[1]*FT-z0)/cell));
+    for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){
+      const x=(x0+(i+.5)*cell)/FT,y=-(z0+(j+.5)*cell)/FT;
+      if(!inPolygon(h.polygon,x,y)||excluded.some(p=>inPolygon(p,x,y)))continue;
+      const top=((h.flat??groundAt(plan,x,y))+h.elevation)*FT,index=(j*width+i)*2+1;
+      data[index]=Math.max(data[index],top);
+    }
+  }
+  return {cell,width,height,bounds:[x0,z0,x0+width*cell,z0+height*cell],data};
+}
+
+export function createSplashSampler(plan={},roofs=new Map(),cover=createSkyCover(plan,roofs)) {
+  const site=plan.site||{},hard=collectHardSurfaces(plan);
+  const water=waterPolygons(site);
   const beds=(site.beds||[]).map(b=>b.polygon).filter(Boolean);
   const buildings=(plan.buildings||[]).map(b=>{
     const angle=finite(b.rotation)*Math.PI/180,c=Math.cos(angle),s=Math.sin(angle),pos=b.position||[0,0];
@@ -81,7 +121,8 @@ export function createSplashSampler(plan={},roofs=new Map()) {
         offer(g+h.elevation,'hardscape',new THREE.Vector3(-gx,1,gy).normalize().toArray());
       }
     }
-    return best&&best.height>=roofTop-1e-6?{kind:best.kind,normal:best.normal,position:[worldX,best.height*FT+.006,worldZ]}:null;
+    const hit=best&&best.height>=roofTop-1e-6?{kind:best.kind,normal:best.normal,position:[worldX,best.height*FT+.006,worldZ]}:null;
+    return hit&&!cover.blocked(...hit.position)?hit:null;
   };
 }
 
@@ -90,12 +131,22 @@ attribute vec3 precipSeed;
 uniform vec3 precipAnchor,precipBox,precipTravel,precipVelocity;
 uniform float precipKind,precipClock,precipRate;
 uniform vec2 precipViewport;
+// Covered height per ground point (sky_cover heightField), nearest texel.
+uniform sampler2D precipCover;uniform vec4 precipCoverBounds;
+bool precipitationCovered(vec3 world) {
+  vec2 uv=(world.xz-precipCoverBounds.xy)/max(precipCoverBounds.zw-precipCoverBounds.xy,vec2(.0001));
+  if(any(lessThan(uv,vec2(0.0)))||any(greaterThanEqual(uv,vec2(1.0))))return false;
+  return world.y<texture2D(precipCover,uv).r;
+}
 varying vec2 particleUv;varying vec3 particleWorld;
 float precipitationWidth(float pixels,float kind) {
-  return kind<.5?max(pixels,1.25):pixels;
+  return kind<.5?clamp(pixels,1.25,2.5):pixels;
 }
 float precipitationLength(float pixels,float kind,float rate) {
-  return kind<.5?max(pixels,mix(6.0,10.0,clamp((rate-.45)/.55,0.0,1.0))):pixels;
+  return kind<.5?min(96.0,mix(max(pixels,1.25),max(pixels,mix(6.0,10.0,clamp((rate-.45)/.55,0.0,1.0))),smoothstep(0.0,4.0,pixels))):pixels;
+}
+bool precipitationVisibleDepth(float depth) {
+  return depth>=3.5;
 }
 void main(){
   vec3 box=max(precipBox,vec3(.0001));
@@ -104,10 +155,14 @@ void main(){
     world.x+=.16*sin(precipClock*1.7+precipSeed.z*30.0);
     world.z+=.12*sin(precipClock*1.3+precipSeed.x*30.0);
   }
+  if(precipitationCovered(world)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
   particleWorld=world;particleUv=uv;
   vec4 eye=viewMatrix*vec4(world,1.0);
   // Never expand a near-camera drop into a large foreground smear.
-  if(distance(world,cameraPosition)<2.5){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
+  if(distance(world,cameraPosition)<3.0){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
+  // Radial distance misses drops beside the eye plane. Cull by forward depth
+  // too; .35 m reserves both physical streak endpoints before projection.
+  if(!precipitationVisibleDepth(-eye.z)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
   vec2 size=precipKind<.5?vec2(.018,.7):precipKind<1.5?vec2(.10,.10):vec2(.045,.045);
   if(precipKind>=.5){
     // Snow and hail keep their physical billboard sizes, even looking down
@@ -144,18 +199,18 @@ uniform float precipRadius,precipFog;
 varying vec2 particleUv;varying vec3 particleWorld;
 float precipitationFade(){
   float d=distance(particleWorld,cameraPosition);
-  float radius=max(precipRadius*(1.0-.85*precipFog),.0001);
+  float radius=max(precipRadius,.0001);
   float haze=smoothstep(radius,radius*1.35,distance(particleWorld.xz,precipCentre));
   float halfExtent=max(precipBox.x*.5,.0001);
   float edge=distance(particleWorld.xz,precipAnchor.xz);
-  return (1.0-smoothstep(halfExtent*.8,halfExtent,edge)) * smoothstep(2.5,3.5,d)*(1.0-haze);
+  return (1.0-smoothstep(halfExtent*.8,halfExtent,edge)) * smoothstep(3.0,3.5,d)*(1.0-haze)*exp(-max(precipFog,0.0)*d);
 }
 vec3 precipSafe(vec3 c){return vec3(c.r>=0.0?min(c.r,4096.0):0.0,c.g>=0.0?min(c.g,4096.0):0.0,c.b>=0.0?min(c.b,4096.0):0.0);}
 `;
 const fragmentShader=fragmentCommon+`
 uniform float precipKind,precipRate;
 void main(){
-  if(distance(particleWorld,cameraPosition)<2.5)discard;
+  if(distance(particleWorld,cameraPosition)<3.0)discard;
   vec2 p=particleUv*2.0-1.0;
   float alpha=precipKind<.5?(1.0-smoothstep(.3,1.0,abs(p.x)))*(1.0-abs(p.y))*mix(.35,.85,precipRate):
     (1.0-smoothstep(.5,1.0,length(p)))*.8;
@@ -170,8 +225,14 @@ const splashVertex=`
 attribute vec3 splashPosition,splashNormal;attribute float splashBorn;
 uniform float splashTime;
 varying float splashAge;varying vec2 particleUv;varying vec3 particleWorld;
+bool splashVisible(float age,float depth) {
+  return age>=0.0&&age<=0.42&&depth>=3.5;
+}
 void main(){
   splashAge=splashTime-splashBorn;particleUv=uv;
+  vec4 eye=viewMatrix*vec4(splashPosition,1.0);
+  // Expired slots used to rasterize their entire quad before fragment discard.
+  if(!splashVisible(splashAge,-eye.z)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
   vec3 n=splashNormal;
   vec3 tangent=normalize(cross(n,vec3(0.0,0.0,1.0)));
   vec3 bitangent=cross(n,tangent);
@@ -204,8 +265,20 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
   const uniforms={precipAnchor:{value:new THREE.Vector3()},precipBox:{value:new THREE.Vector3(36,25,36)},precipColour:{value:new THREE.Vector3(.6,.7,.8)},
     precipViewport:{value:new THREE.Vector2(1,1)},precipRate:{value:0},
     precipCentre:{value:new THREE.Vector2()},precipRadius:{value:100},precipFog:{value:0},
-    precipClock:{value:0},splashTime:{value:0}};
-  const objects={},travels={};let last=null,clock=0,disposed=false,sample=()=>null,plan={},credit=0,cursor=0,wasRaining=false;
+    precipClock:{value:0},splashTime:{value:0},
+    precipCover:{value:null},precipCoverBounds:{value:new THREE.Vector4(0,0,1,1)}};
+  let coverTexture=null,coverFor=null;
+  // Bake once per plan/cover while falling OR still wet after the rain stops.
+  function bakeCover(){
+    if(coverFor===cover)return;coverFor=cover;
+    const f=bakeWetGroundField(plan,cover);
+    coverTexture?.dispose();
+    coverTexture=new THREE.DataTexture(f.data,f.width,f.height,THREE.RGFormat,THREE.FloatType);
+    coverTexture.minFilter=coverTexture.magFilter=THREE.NearestFilter;coverTexture.generateMipmaps=false;coverTexture.needsUpdate=true;
+    uniforms.precipCover.value=coverTexture;uniforms.precipCoverBounds.value.fromArray(f.bounds);
+  }
+  const objects={},travels={};let last=null,clock=0,disposed=false,sample=()=>null,plan={},cover=createSkyCover(),credit=0,cursor=0,wasRaining=false;
+  bakeCover();
   const motion=globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)');
   function mesh(name,g,vs,fs,own={}) {
     const material=new THREE.ShaderMaterial({name:'weather-'+name,uniforms:{...uniforms,...own},vertexShader:vs,fragmentShader:fs,
@@ -229,11 +302,11 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
   mesh('splash',sg,splashVertex,splashFragment);
   const api={group,objects,uniforms,
     setStage({centre,radius}){if(centre?.every(Number.isFinite))uniforms.precipCentre.value.fromArray(centre);if(Number.isFinite(radius)&&radius>0)uniforms.precipRadius.value=radius;},
-    setPlan(value,roofs){plan=value;sample=createSplashSampler(plan,roofs);born.fill(-1e6);sg.attributes.splashBorn.needsUpdate=true;credit=0;},
-    update(now,weather,camera,{target=camera.position,bearing=180,unlit=false,colour=[.6,.7,.8],reduced=motion?.matches}={}){
+    setPlan(value,roofs,skyCover){plan=value;cover=skyCover||createSkyCover(plan,roofs);coverFor=null;sample=createSplashSampler(plan,roofs,cover);born.fill(-1e6);sg.attributes.splashBorn.needsUpdate=true;credit=0;},
+    update(now,weather,camera,{target=camera.position,bearing=180,level='house',unlit=false,colour=[.6,.7,.8],reduced=motion?.matches}={}){
       if(disposed)return;
       now=finite(now);const dt=last===null?0:clamp(now-last,0,1);last=now;clock+=dt*(reduced?.35:1);
-      uniforms.precipClock.value=clock;uniforms.splashTime.value=now;uniforms.precipFog.value=weatherHaze(weather);
+      uniforms.precipClock.value=clock;uniforms.splashTime.value=now;uniforms.precipFog.value=weatherExtinction(weather);
       uniforms.precipRate.value=clamp(weather?.rate);
       if(colour?.every(Number.isFinite))uniforms.precipColour.value.fromArray(colour.map(c=>clamp(c,.015,1)));
       const halfExtent=clamp(.75*camera.position.distanceTo(target),18,64);
@@ -241,7 +314,10 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
       const top=Math.max(bottom+.0001,25,camera.position.y+8);
       uniforms.precipBox.value.set(halfExtent*2,top-bottom,halfExtent*2);
       uniforms.precipAnchor.value.copy(target).lerp(camera.position,.35);uniforms.precipAnchor.value.y=(bottom+top)*.5;
-      const counts=precipitationCounts(tier,unlit?{}:weather);
+      const down=camera.getWorldDirection(new THREE.Vector3()).y;
+      const hidden=unlit||level!=='house'||down < -Math.sin(55*Math.PI/180)-1e-10;
+      const counts=precipitationCounts(tier,hidden?{}:weather);
+      if(counts.rain||counts.snow||counts.hail||(!weather?.neutral&&(weather?.wetness>0||weather?.puddles>0)))bakeCover();
       for(const kind of ['rain','snow','hail']){
         const o=objects[kind],velocity=precipitationVelocity(kind,weather,bearing,reduced);
         o.geometry.instanceCount=counts[kind];o.visible=counts[kind]>0;
@@ -266,7 +342,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
       if(changed)for(const attr of Object.values(sg.attributes))if(attr.isInstancedBufferAttribute)attr.needsUpdate=true;
       objects.splash.visible=born.some(t=>now-t>=0&&now-t<=LIFE);sg.instanceCount=objects.splash.visible?capacity:0;
     },
-    dispose(){if(disposed)return;disposed=true;group.removeFromParent();for(const o of Object.values(objects)){o.geometry.dispose();o.material.dispose();}},
+    dispose(){if(disposed)return;disposed=true;group.removeFromParent();coverTexture?.dispose();for(const o of Object.values(objects)){o.geometry.dispose();o.material.dispose();}},
   };
   return api;
 }

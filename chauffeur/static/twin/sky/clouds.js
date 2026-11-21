@@ -294,7 +294,7 @@ vec4 marchClouds(vec3 ro,vec3 rd,float maxSteps,float jitter,vec3 sunDir,vec3 cl
     if(dot(cloudMoonRadiance,cloudMoonRadiance)>0.0) light+=cloudMoonRadiance*cloudScatterDepth(cloudLightDepth(p,moon),dot(d,moon));
     if(cloudLightning.w>0.0) light+=vec3(0.7,0.8,1.0)*cloudLightning.w*cloudLightningWeight(length(p-cloudLightning.xyz));
     light=mix(light,clearSky,cloudAirWeight(distanceM));
-    light=mix(light,cloudFogColour,cloudFog*.9);
+    light=mix(light,cloudFogColour,1.0-exp(-max(cloudFog,0.0)*max(distanceM,0.0)));
     radiance+=transmission*(1.0-stepT)*light;
     transmission*=stepT;
   }

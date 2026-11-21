@@ -703,7 +703,7 @@ def scenario_every_tool_is_in_view_at_1280x800():
             page.click('#editor-dialog-close')
         # Slice 4 puts the tools in the header; overflow groups open as menus.
         buttons = page.locator('#editor-toolbar #editor-rail button')
-        expected = {'Select', 'Move', 'Turn', 'Scale', 'Draw room', 'Draw wall', 'Split room',
+        expected = {'Select', 'Move', 'Turn', 'Scale', 'Draw room', 'Draw wall', 'Add porch', 'Split room',
                     'Add door', 'Add window', 'Add anchor', 'Add stair', 'Add solar zone',
                     'Add meter', 'Add electric panel', 'Add charger', 'Add parking spot',
                     'Roof', 'Add floor', 'Delete', 'Undo', 'Redo', 'Sheet', 'Library',

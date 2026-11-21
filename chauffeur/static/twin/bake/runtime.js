@@ -2,10 +2,10 @@ import * as THREE from 'three';
 import { base, copyMaterialParams } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
-import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, patchLightmaps, setLightTint, pickTranscode,
-  setLightSource, setChartFill, setRoomFill, clearFills, roomRegions, patchWindowGlow, needsFixtureShader } from './lightmap_material.js';
+import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, patchLightmaps, setLightTintColor, tintSum, pickTranscode,
+  setLightSource, setChartFill, setRoomFill, clearFills, roomRegions, patchWindowGlow, needsFixtureShader, bankLayerBases } from './lightmap_material.js';
 import { lightSource } from './reach.js';
-import { resolveEmitters, emitterSignature } from '../live/emitters.js';
+import { resolveEmitters, emitterSignature, lightMarkers } from '../live/emitters.js';
 import { kindOf, exactRects } from './fixture_terms.js';
 import { createBaker, bakeLayout } from './baker.js';
 import { mayBake } from './bake_lock.js';
@@ -13,6 +13,7 @@ import { workerCodec } from './worker_codec.js';
 import { covered } from './atlas_transport.js';
 import { sameSlots } from './slots.js';
 import { invalidateMaterialReach } from './reach.js';
+import { releaseBakeSource } from './source.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Every tier lays its atlas out at the desk's 8 texels/ft, so a wall that opens before
@@ -53,11 +54,11 @@ function writeLayer(texture, layer, page) {
   });
   texture.addLayerUpdate(layer); texture.needsUpdate = true;
 }
-// Baked light lands on indoor surfaces only. Yard and fire-pit lights (no building) light the
-// lot through the live pool; baking them never completes and kept the bake from settling.
-// Every placed light bakes (user, 2026-11-13: "It seems silly to have some lights baked and
-// some not"). A yard-room light has no building; its z is height above the ground.
-export const lightsOf = layout => (layout?.markers || []).filter(m => m.kind === 'light' && m.placed && m.at && m.room && (m.building || m.yard))
+// Every placed light bakes, on or off, indoors or in a yard room (user, 2026-11-13: "It seems
+// silly to have some lights baked and some not"), including a light entity on another kind of
+// device, such as a camera's spotlight (lightMarkers, 2026-11-20). A yard-room light has no
+// building; its z is height above the ground.
+export const lightsOf = layout => lightMarkers(layout).filter(m => m.placed && m.at && m.room && (m.building || m.yard))
   .map(m => ({ device: m.device_id, building: m.building || null, level: m.level || null, room: m.room, at: [...m.at],
     ...(m.building ? {} : { yard: true }) }));
 
@@ -65,7 +66,7 @@ export const lightsOf = layout => (layout?.markers || []).filter(m => m.kind ===
 // fire's light point or the lamp's top, 18 ft reach. A light-domain pit also owns its marker's
 // light (modes.js moves that lamp to the fire); a lamp object with a marker is that marker.
 export function objectLightsOf(root, layout) {
-  const markers = (layout?.markers || []).filter(m => m.kind === 'light');
+  const markers = lightMarkers(layout);
   const rows = new Map();
   root.updateMatrixWorld(true);
   root.traverse(mesh => {
@@ -88,7 +89,34 @@ export function objectLightsOf(root, layout) {
   }
   return { lights, replaced };
 }
+// Plain marker lights at one spot (a recessed main and its trim ring, a camera spotlight and a
+// stale twin entity) see exactly the same geometry: a channel stores visibility only, falloff
+// and colour are per pixel. They share one channel and the slot's tint is their sum (owner
+// 2026-11-21), so a trim ring no longer takes channels from its main. A lone light keeps its
+// own id, so a house without co-located lights keeps every manifest entry it has.
+export const SHARED_PREFIX = 'shared:';
+export function shareColocated(lights) {
+  const spot = l => !l.emitters && !l.absolute && Array.isArray(l.at)
+    ? JSON.stringify([l.building, l.level, l.room, !!l.yard, ...l.at.map(v => Math.round(v * 1000))]) : null;
+  const groups = new Map(), out = [];
+  for (const l of lights) {
+    const key = spot(l);
+    if (key === null) { out.push(l); continue; }
+    if (!groups.has(key)) { groups.set(key, []); out.push(key); }
+    groups.get(key).push(l);
+  }
+  return out.map(item => {
+    if (typeof item !== 'string') return item;
+    const list = groups.get(item);
+    if (list.length === 1) return list[0];
+    const members = list.map(l => l.device).sort();
+    return {...list[0], device: SHARED_PREFIX + members.join('+'), members};
+  });
+}
 export function bakeLights(layout, root, plan = {}) {
+  return shareColocated(separateLights(layout, root, plan));
+}
+function separateLights(layout, root, plan = {}) {
   const groups = new Map();
   for (const e of resolveEmitters(layout || {}, {}, plan)) {
     if (e.legacy) continue;
@@ -100,7 +128,7 @@ export function bakeLights(layout, root, plan = {}) {
     kind: kindOf(emitters), signature: emitterSignature(emitters), at: [...(emitters[0].at || emitters[0].path[0])],
     building: emitters[0].building || null, level: emitters[0].level || null, room: emitters[0].room || null}));
   const objects = root ? objectLightsOf(root, layout) : { lights: [], replaced: new Set() };
-  const replaced = new Set((layout?.markers || []).filter(m => groups.has(m.entity_id)).map(m => m.device_id));
+  const replaced = new Set(lightMarkers(layout).filter(m => groups.has(m.entity_id)).map(m => m.device_id));
   const pitIds = new Set([...groups.values()].flat().filter(e => e.fire_pit).map(e => e.device_id));
   return [...lightsOf(layout).filter(l => !objects.replaced.has(l.device) && !replaced.has(l.device)),
     ...objects.lights.filter(l => !pitIds.has(l.device)), ...fixtures];
@@ -108,6 +136,7 @@ export function bakeLights(layout, root, plan = {}) {
 
 export function mountBake(view, root, { host, controls = view.controls, layout: requestedLayout, poll: pollMs = 10000,
   api: request = (path, init) => fetch(base() + path, init) } = {}) {
+  let retained = view.bake?.snapshot?.();
   // A fetch that rejects is the network being away, which the poll rides out in silence.
   const offline = new WeakSet();
   const api = async (path, init) => {
@@ -121,7 +150,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   const owner = [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
   let stopped = false, allowed = false, atlas = null, pending = null, layout = requestedLayout || options(8);
   let lights = [], lightsKey = '', packed = null, uniforms = null, pages = null;
-  let layers = [], baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
+  let layers = [], bankBase = [], layerOverflow = false, baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
   let dragging = false, stillAt = performance.now(), generation = 0;
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
   let failure = '', errorReason = null, manifestText = null, initialized = false, mounting = null;
@@ -134,6 +163,10 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     showProgress();
   }
   const pageErrors = new Map(), etags = new Map(), present = new Set(), clones = [], textures = new Set();
+  const preservePages = new Set();
+  let pageManifest = null;
+  const pageSignature = (m,p) => JSON.stringify(Object.entries(m?.lights || {}).filter(([,e])=>(e.pages || [e.page]).includes(p))
+    .map(([id,e])=>[id,e.key,e.location,e.channel,e.scale]).sort((a,b)=>a[0].localeCompare(b[0])));
   const pageReason = () => pageErrors.values().next().value || null;
   const valid = () => !stopped && view.plan === round;
   const paused = () => dragging || performance.now() - stillAt < 2000;
@@ -171,23 +204,33 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     });
     if (paused()) return idle();
   }
+  // A member of a shared channel (shareColocated) is driven by its own id; its slot is the group's.
+  const groupOf = id => lights.find(l => l.members?.includes(id));
   function light(device, rgb, intensity) {
-    const previous = tints.get(device);
-    if (!previous || previous.intensity !== intensity || previous.rgb.some((v,i) => v !== rgb[i])) view.reflectionsChanged?.();
-    tints.set(device, { rgb: [...rgb], intensity });
-    const s = packed?.slots[device];
-    if (s && uniforms) {
-      if (uniforms.lmChartMode) setLightTint(uniforms, 0, lights.findIndex(l => l.device === device), rgb, fresh.has(device) ? intensity : 0);
-      else for (const room of s.receivers || [s.room])
-        setLightTint(uniforms, room, s.bank * 2 + s.channel, rgb, fresh.has(device) ? intensity : 0);
+    // A shared slot's own id (the runtime clearing or replaying a slot) recomputes from its
+    // members; it never stores a tint that would later overwrite their sum.
+    const own = lights.find(l => l.device === device && l.members);
+    if (!own) {
+      const previous = tints.get(device);
+      if (!previous || previous.intensity !== intensity || previous.rgb.some((v,i) => v !== rgb[i])) view.reflectionsChanged?.('lamp');
+      tints.set(device, { rgb: [...rgb], intensity });
     }
+    const group = own || groupOf(device), slotId = group ? group.device : device;
+    const s = packed?.slots[slotId];
+    if (!s || !uniforms) return;
+    const on = fresh.has(slotId);
+    // The slot carries the sum of its members' linear colours.
+    const tint = group ? tintSum(group.members.map(id => tints.get(id)).filter(Boolean), on)
+      : tintSum([{ rgb, intensity }], on);
+    if (uniforms.lmChartMode) setLightTintColor(uniforms, 0, lights.findIndex(l => l.device === slotId), tint);
+    else for (const room of s.receivers || [s.room]) setLightTintColor(uniforms, room, s.bank * 2 + s.channel, tint);
   }
   function regions() {
     // A column per bank, a row per room; the fills sit below the rooms (lightmap_material.js).
     const width = Math.max(1, packed.banks.length), t = roomRegions(packed.banks.length, atlas.room.rooms.length);
     packed.banks.forEach((bank, b) => bank.rooms.forEach(({ room, sourceRegion, region }) => {
       t.image.data.set([(region.x - sourceRegion.x) / layout.room.page,
-        (region.y - sourceRegion.y) / layout.room.page, Math.max(0, layers[b].indexOf(region.page)), 0], (room * width + b) * 4);
+        (region.y - sourceRegion.y) / layout.room.page, bankBase[b] + Math.max(0, layers[b].indexOf(region.page)), 0], (room * width + b) * 4);
     }));
     t.needsUpdate = true; return t;
   }
@@ -316,26 +359,52 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     for (const t of textures) t.dispose();
     textures.clear();
     if (uniforms) for (const name of ['lmTints', 'lmRegions']) uniforms[name]?.value.dispose();
+    pages = uniforms = null;
+    etags.clear(); present.clear(); pageErrors.clear(); manifestText = null; fresh.clear();
     lights = list; lightsKey = JSON.stringify(list);
     packed = bakeLayout(atlas, layout, lights, history, manifest?.lights);
     if (packed.banks.some(b => b.chartPacking)) applyChartIndices(atlas);
     // A bank page no placed light writes to (bank zero reserves unlit rooms,
-    // Ruling B12) is never fetched or held on the GPU: each bank's array keeps
-    // only its lit pages, and lmRegions maps a page to its layer.
+    // Ruling B12) is never fetched or held on the GPU. All lit pages share one
+    // array, ordered by bank then page; lmRegions carries the merged layer.
     layers = packed.banks.map((b, i) => [...new Set(Object.values(packed.entries).flatMap(e => e.pages || [e.page]).map(p => p - packed.offsets[i])
       .filter(p => p >= 0 && p < b.pages))].sort((a, c) => a - c));
+    bankBase = bankLayerBases(layers);
+    const layerCount = layers.reduce((n, list) => n + list.length, 0);
+    const gl = view.renderer3.getContext?.();
+    const maxLayers = gl?.getParameter?.(gl.MAX_ARRAY_TEXTURE_LAYERS) ?? 256;
+    if (layerOverflow && layerCount <= maxLayers) { failure = ''; errorReason = null; }
+    layerOverflow = layerCount > maxLayers;
+    stale = lights.map(l => l.device);
+    if (layerOverflow) {
+      // Never split into more samplers or draw a partial bake. The live rig
+      // already handles stale lights on every tier, including read-only panels.
+      errorReason = `Baked lighting needs ${layerCount} array layers; this GPU supports ${maxLayers}. Using real-time lighting.`;
+      failure = errorReason; retained = null;
+      Promise.resolve(view.live?.refresh()).catch(reportError);
+      view.reflectionsChanged?.(); view.render(); showProgress();
+      return;
+    }
     uniforms = packed.banks.some(b => b.chartPacking)
       ? chartLightmapUniforms(atlas.room.charts.length, packed, lights, layout.room.page, layers)
       : lightmapUniforms(atlas.room.rooms.length, Math.max(2, packed.banks.length * 2), {fixtures: needsFixtureShader(lights)});
     if (!uniforms.lmRegions) uniforms.lmRegions = { value: regions() };
     const roomFormat = pickTranscode(view.renderer3.extensions, 2);
-    pages = {
-      // A bank with no lit page holds one 4x4 placeholder layer (one compressed block).
-      banks: packed.banks.map((b, i) => layers[i].length ? blankArray(layers[i].length, roomFormat, layout.room.page)
-        : blankArray(1, roomFormat, 4)) };
+    // Keep the texture-list hook shape, now with exactly one physical array.
+    // Empty banks cost no layers; an entirely empty bake needs one tiny placeholder.
+    pages = { banks: [blankArray(layerCount, roomFormat, layerCount ? layout.room.page : 4)],
+      bankBase, bankLayers: layers.map(list => list.length) };
     pages.banks.forEach(t => textures.add(t));
     setSources();
-    etags.clear(); present.clear(); pageErrors.clear(); manifestText = null; fresh.clear();
+    if(retained?.key===atlas.key && JSON.stringify(retained.layers)===JSON.stringify(layers) &&
+        retained.banks.length===pages.banks.length && retained.banks.every((t,i)=>t.format===pages.banks[i].format &&
+          t.image.width===pages.banks[i].image.width && t.image.depth===pages.banks[i].image.depth)) {
+      retained.banks.forEach((t,i)=>{t.mipmaps.forEach((m,j)=>pages.banks[i].mipmaps[j].data.set(m.data));pages.banks[i].needsUpdate=true;});
+      for(const p of retained.present){present.add(p);preservePages.add(p);}
+      for(const [p,e] of retained.etags)etags.set(p,e);
+      pageManifest=retained.manifest;
+    }
+    retained=null; // The new arrays now own the bytes; release the stopped controller's copy.
     stale = lights.map(l => l.device);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
   }
@@ -356,7 +425,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   function locate(p) {
     for (let i = 0; i < layers.length; i++) {
       const layer = layers[i].indexOf(p - packed.offsets[i]);
-      if (layer >= 0) return { texture: pages.banks[i], layer };
+      if (layer >= 0) return { texture: pages.banks[0], layer: bankBase[i] + layer };
     }
     return null;
   }
@@ -378,10 +447,10 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       stale = lights.map(l => l.device); view.reflectionsChanged?.(); view.render();
       return;
     }
-    const m = JSON.parse(text);
+    let m = JSON.parse(text);
     // A reopened panel or another desk's publication adopts the persisted
     // channels. Never reset survivors to a fresh assignment on reload/poll.
-    if(text!==manifestText && (m.ownership && !sameSlots(m.ownership,packed.ownership) ||
+    if(text!==manifestText && (packed.ownershipReset || m.ownership && !sameSlots(m.ownership,packed.ownership) ||
       packed.lights.some(l=>l.kind===3 && l.scale!==m.lights[l.device]?.scale))) {
       // Held bytes were encoded with the previous scale. Do not mark them
       // fresh under a new scale if its replacement page is offline or damaged.
@@ -391,11 +460,14 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       if(!sameSlots(next.ownership,packed.ownership)) prepare(lights,m.ownership,m);
       else packed=next;
     }
+    if (!pages) return; // A new ownership layout may exceed the GPU's layer limit.
+    if(packed.ownershipReset)m={...m,lights:{}};
     let changed = text !== manifestText;
     manifestText = text;
     const wanted = new Set();
     layers.forEach((list, i) => list.forEach(p => wanted.add(packed.offsets[i] + p)));
     for (const p of [...wanted].sort((a, c) => a - c)) {
+      if(preservePages.has(p) && present.has(p) && pageSignature(pageManifest,p)===pageSignature(m,p))continue;
       const etag = etags.get(p), at = locate(p);
       const r = await api(`api/house/bakes/${atlas.key}/${p}.png`, { headers: etag ? { 'If-None-Match': etag } : {} });
       if (!valid()) return;
@@ -429,6 +501,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
         JSON.stringify(stored.pages) === JSON.stringify(e.pages) && e.pages.every(p => present.has(p))) fresh.add(l.device);
     }
     stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
+    pageManifest=m;
+    if(!stale.length)preservePages.clear();
     setSources(m);fills(m);
     if (present.size) { await patch(); if (!valid()) return; }
     for (const id of previous) if (!fresh.has(id)) light(id, [0, 0, 0], 0);
@@ -453,7 +527,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     if (allowed && !running) run();
   }
   async function run(force = false) {
-    if (!allowed || !valid() || !atlas) return;
+    if (!allowed || !valid() || !atlas || layerOverflow) return;
     if (running) { pendingForce ||= force; return; }
     failure = ''; errorReason = null; progress = { done: 0, total: force ? lights.length : stale.length };
     running = true; showProgress();
@@ -463,7 +537,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       const initialStale = await baker.staleLights();
       if (!valid() || mine !== generation || input !== lightsKey) return;
       stale = initialStale; progress = baker.progress(); showProgress();
-      while (valid() && mine === generation && input === lightsKey) {
+      while (valid() && mine === generation && input === lightsKey && !layerOverflow) {
         await idle();
         const id = await baker.bakeNext(); if (!id || !valid() || mine !== generation || input !== lightsKey) break;
         baked.push(id); progress = baker.progress(); stale = await baker.staleLights(); showProgress();
@@ -506,13 +580,16 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   const controller = {
     state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: running && paused(),
       ...progress, baked: [...baked], stale: [...stale], error: errorReason || pageReason() }),
-    fresh: () => valid() ? [...fresh] : [], light, idle, refresh,
+    // Members of a fresh shared channel are fresh: the live layer asks by its own lamp ids.
+    fresh: () => valid() ? [...fresh].flatMap(id => [id, ...(lights.find(l => l.device === id)?.members || [])]) : [], light, idle, refresh,
+    occlusionRoot: () => atlas?.sourceRoot || root,
+    snapshot: () => atlas && pages ? {key:atlas.key,layers,bankBase,banks:pages.banks,present:[...present],etags:[...etags],manifest:pageManifest} : null,
     refreshMaterials(ids) {
       for (const { original, material } of clones) if (ids.includes(original.userData.materialId)) copyMaterialParams(original, material);
     },
-    materialsChanged(ids) {
-      if (!valid() || !atlas) return false;
-      controller.refreshMaterials(ids);
+    materialsChanged(ids = null) {
+      if (!valid() || !atlas || layerOverflow) return false;
+      if(ids)controller.refreshMaterials(ids);
       if (!invalidateMaterialReach(atlas.room, ids)) return false;
       ++generation;
       baker?.cancel();
@@ -521,26 +598,33 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       // Retain the arrays, shader bindings and unrelated lights' fresh masks.
       const previous = packed;
       packed = bakeLayout(atlas, layout, lights, packed.ownership, packed.entries);
+      if(packed.ownershipReset) {
+        fresh.clear(); present.clear(); etags.clear(); preservePages.clear();
+        prepare(lights, packed.ownership);
+      }
       setSources({lights:packed.entries});
       for (const id of [...fresh]) if (previous.entries[id]?.key !== packed.entries[id]?.key) {
         fresh.delete(id); light(id, [0, 0, 0], 0);
       }
       stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
+      for(const p of present)preservePages.add(p);
       manifestText = null;
       Promise.resolve(view.live?.refresh()).catch(reportError);
       view.render();
+      if(allowed && !running)run();
       return true;
     },
-    // The lightmap arrays as held: per array its layer size and layer count, plus what
-    // the GPU has been told to upload (test hooks).
+    // Logical banks retain their lit-page metadata; the texture/version/update
+    // lists describe the single physical array and its merged layer indices.
     held: () => pages ? {
-      banks: pages.banks.map((t, i) => ({ size: t.image.width, layers: t.image.depth, pages: packed.banks[i].pages, lit: [...layers[i]] })),
+      banks: packed.banks.map((b, i) => ({ size: pages.banks[0].image.width, layers: layers[i].length, base: bankBase[i], pages: b.pages, lit: [...layers[i]] })),
       versions: { banks: pages.banks.map(t => t.version) },
       ids: { banks: pages.banks.map(t => t.uuid) },
       updates: { banks: pages.banks.map(t => [...t.layerUpdates]) },
       textures: { banks: [...pages.banks] } } : null,
     // Which charts each light was given and where (test hook, as held()).
     packing: () => packed && atlas ? { entries: packed.entries, fallback: packed.fallback || [],
+      offsets: [...packed.offsets],
       slots: Object.fromEntries(Object.entries(packed.slots).map(([id, s]) => [id, (s.assignments || []).map(a => [a.chart, a.bank, a.channel])])),
       charts: atlas.room.charts.map(c => ({ id: c.id, room: c.room, page: c.page, rect: c.rect, heightfield: !!c.heightfield, outdoor: !!c.outdoor })),
       banks: packed.banks.map(b => ({ pages: b.pages, charts: b.charts.map(c => [c.id, c.page, c.rect]) })), layers: layers.map(l => [...l]) } : null,
@@ -550,6 +634,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       stopped = true; baker?.cancel(); halt.abort(); clearTimeout(timer); codec?.stop(); strip?.remove();
       controls.removeEventListener('start', moved); controls.removeEventListener('change', moved); controls.removeEventListener('end', moved);
       unpatch();
+      releaseBakeSource(root);
       for (const t of textures) t.dispose();
       if (uniforms) for (const name of ['lmTints', 'lmRegions']) uniforms[name]?.value.dispose();
     },
