@@ -25,10 +25,11 @@ await test('generated household sources retain actual leaf cards, weights, maps 
  const p=T.createSeasonTouches(new THREE.Scene(),{tier:'high',random:()=>.417});p.setPlan(input.plan);
  const eye=new THREE.PerspectiveCamera(100,1,.1,2000);eye.position.set(0,100,160);eye.lookAt(0,0,0);eye.updateMatrixWorld();
  p.update(0,autumn,warm,eye,{plants:yard,target:new THREE.Vector3(),extent:1000});
- const sources=p.info().sources;assert.ok(sources.length>5);const total=sources.reduce((n,s)=>n+s.area,0);
+ // Weight follows crown width (sqrt of the footprint), owner 2026-11-19.
+ const sources=p.info().sources;assert.ok(sources.length>5);const total=sources.reduce((n,s)=>n+Math.sqrt(s.area),0);
  for(const s of sources){
   assert.ok(s.count>0);assert.equal(s.data.positions.length,s.count*3);assert.ok(s.texture?.isTexture);
-  assert.equal(s.hue,s.object.userData.seasonHue);assert.ok(Math.abs(s.weight-s.area/total)<1e-10);
+  assert.equal(s.hue,s.object.userData.seasonHue);assert.ok(Math.abs(s.weight-Math.sqrt(s.area)/total)<1e-10);
  }
  const shrubs=sources.filter(s=>s.object.userData.pieceId.startsWith('cmp-shrub')),trees=sources.filter(s=>s.object.userData.pieceId.startsWith('cmp-tree'));
  assert.ok(Math.min(...trees.map(s=>s.weight))>Math.max(...shrubs.map(s=>s.weight))*3,'large trees shed much more than individual small shrubs');
@@ -105,7 +106,9 @@ await test('leaf landing accepts lawn, beds, paving and deck heights; rejects wa
 await test('real leaf cards spawn inside canopies, scatter uniquely, collect eight minutes and keep fixed keys',async()=>{
  const {presetTree}=await import(file('static/twin/twin_yard.js'));
  const scene=new THREE.Scene(),root=new THREE.Group();scene.add(root);
- const tree=presetTree('Oak Small',1);Object.assign(tree.userData,{seasonKind:'deciduous',yardPlantIndex:0,seasonHue:.2});tree.scale.setScalar(.15);root.add(tree);
+ const tree=presetTree('Oak Small',1);Object.assign(tree.userData,{seasonKind:'deciduous',yardPlantIndex:0,seasonHue:.2});
+ // Drop is per crown width now; a crown this wide drops enough to cycle the 200-leaf ring.
+ tree.scale.setScalar(.3);root.add(tree);
  const pine=presetTree('Pine Small',2);pine.userData.seasonKind='evergreen';root.add(pine);
  const p=T.createSeasonTouches(scene,{tier:'low',random:()=>.417});p.setPlan({site:{lot:[[-200,-200],[200,-200],[200,200],[-200,200]],planting:[{height:25}]}});
  const eye=new THREE.PerspectiveCamera(60,1,.1,1000);eye.position.set(0,15,30);eye.lookAt(0,3,0);eye.updateMatrixWorld();
@@ -147,9 +150,14 @@ await test('real leaf cards spawn inside canopies, scatter uniquely, collect eig
 await test('all resting caps, six texture draws, reduced motion and gust re-tumbling',async()=>{
  const {presetTree}=await import(file('static/twin/twin_yard.js')),tree=presetTree('Bush 1',3),root=new THREE.Group();
  const textures=[];
+ // Drop is per crown width now: size each source to a 6 m crown so six of them
+ // drop fast enough to fill even the max tier's resting ring within 600 s.
+ const ps=tree.seasonLeaves.positions;let x0=Infinity,x1=-Infinity;
+ for(let i=0;i<ps.length;i+=3){x0=Math.min(x0,ps[i]);x1=Math.max(x1,ps[i]);}
+ const crown=6/Math.max(x1-x0,1e-6);
  for(let i=0;i<7;i++){
   const source=new THREE.Group(),texture=tree.seasonLeaves.texture.clone();textures.push(texture);
-  source.seasonLeaves={...tree.seasonLeaves,texture};source.scale.setScalar(.025);
+  source.seasonLeaves={...tree.seasonLeaves,texture};source.scale.setScalar(crown);
   source.userData={seasonKind:'deciduous',seasonHue:i/7};root.add(source);
  }
  const eye=new THREE.PerspectiveCamera(60,1,.1,1000);eye.position.set(0,5,20);eye.lookAt(0,0,0);eye.updateMatrixWorld();
