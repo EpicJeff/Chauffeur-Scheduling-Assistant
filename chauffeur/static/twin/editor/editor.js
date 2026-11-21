@@ -902,7 +902,8 @@ export async function boot() {
     });
     if (new URLSearchParams(location.search).get('test') === '1') window.__twinEditor = {
       haLink: tools.haLink,
-      selection: tools.selection, handles: () => [...tools.handles(), ...lot.handles()], op: applyOp,
+      selection: tools.selection, selectionStore: tools.selectionStore, members: tools.selectedMembers,
+      handles: () => [...tools.handles(), ...lot.handles()], op: applyOp,
       terrain,
       underlay: lot.underlay, lotHandles: lot.lotHandles, lotSuggestions: lot.lotSuggestions,
       flags: flags.flags, proposals: flags.proposals,

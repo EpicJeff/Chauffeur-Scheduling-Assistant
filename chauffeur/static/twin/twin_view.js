@@ -12,6 +12,8 @@ import { watchMaterialCatalogue } from './material_watch.js';
 import { grassLawn } from './yard_grass.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 import { hostPoint } from './twin_hosts.js';
+import { siteRecord, siteShapeKinds, sitePoints } from './objects.js';
+import { selectionBoxes, selectionBoxFor, projectSelectionBoxes } from './editor/selection_bounds.js';
 import { keepLive } from './live/live.js';
 import { mountGlance } from './live/glance.js';
 import { mountIdle } from './live/idle.js';
@@ -196,7 +198,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
-  let editableLevel = null, selectionStyle = null;
+  let editableLevel = null, selectionStyle = null, boundsCache = null;
+  const hoverBoxCache = new Map();
+  const invalidateSelectionBounds = () => { boundsCache = null; hoverBoxCache.clear(); };
   const selectedMaterials = new Map(), selectionMaterials = new Set(), selectionLines = [];
   function restoreSelection() {
     unlit.restore();
@@ -213,10 +217,27 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       return;
     }
     const { selected, hover, room } = selectionStyle;
+    const members = Array.isArray(selectionStyle.members) ? selectionStyle.members : selected ? [selected] : [];
     const allowed = new Set(room?.allowed || []), walls = new Set(room?.walls || []);
     const style = getComputedStyle(el.closest('.editor-shell') || el);
     const accent = new THREE.Color(style.getPropertyValue('--editor-accent').trim() || '#52ccff');
     const wallTint = new THREE.Color(style.getPropertyValue('--editor-room-wall').trim() || '#9b7cdb');
+    const matchesMember = (data, objects, m) => {
+      const mid = m.id ?? m.pieceId, mb = m.building ?? m.buildingId ?? null;
+      if (data.buildingId !== mb) return false;
+      if (data.pieceId === mid || m.kind === 'building') return true;
+      if (m.kind === 'roof') {
+        const section = plan.buildings?.find(b => b.id === mb)?.roof?.sections?.find(s => s.id === data.pieceId);
+        if (section?.roof === mid) return true;
+      }
+      if (m.kind === 'level') {
+        return objects.some(o => {
+          for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === `${mb}:${mid}`;
+          return false;
+        });
+      }
+      return false;
+    };
     const styled = new Set();
     for (const [key, objects] of twin.pieces) {
       const data = twin.pieceBounds.get(key)?.data;
@@ -224,11 +245,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const inRoom = room && data.buildingId === room.building && allowed.has(data.pieceId);
       const ghost = room && !inRoom;
       const tint = inRoom ? data.pieceId === room.id ? accent : walls.has(data.pieceId) ? wallTint : null
-        : !room && selected && data.buildingId === selected.building && (data.pieceId === selected.id
-          || selected.kind === 'building' || selected.kind === 'level' && objects.some(o => {
-            for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === `${selected.building}:${selected.id}`;
-            return false;
-          })) ? accent : null;
+        : !room && members.some(m => matchesMember(data, objects, m)) ? accent : null;
       if (!ghost && !tint) continue;
       for (const object of objects) {
         if (styled.has(object) || !object.material) continue;
@@ -251,29 +268,78 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       };
       object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
     });
-    outline(selected, false); outline(hover, true);
+    const single = members.length <= 1;
+    for (const member of members) outline(member, false, { single });
+    outline(hover, true, { single: true });
     render();
   }
-  function outline(pick, isHover) {
+  function currentSelectionBoxes({ fresh = false } = {}) {
+    if (fresh || !boundsCache) {
+      const list = selectionBoxes({ twin, yard: twin?.groups.site || yardGroup, scene, plan, visible });
+      const map = new Map(list.map(e => [JSON.stringify([e.buildingId ?? null, e.pieceId]), e]));
+      boundsCache = { list, map };
+    }
+    return boundsCache;
+  }
+  function lookupSelectionBox(pick, { single = false } = {}) {
+    const id = pick.id ?? pick.pieceId, buildingId = pick.building ?? pick.buildingId ?? null;
+    const key = JSON.stringify([buildingId, id]);
+    if (boundsCache) return boundsCache.map.get(key) || null;
+    if (single) {
+      if (hoverBoxCache.has(key)) return hoverBoxCache.get(key);
+      const entry = selectionBoxFor({ yard: twin?.groups.site || yardGroup, scene, plan, visible, pieceId: id, buildingId, kind: pick.kind });
+      hoverBoxCache.set(key, entry);
+      return entry;
+    }
+    return currentSelectionBoxes().map.get(key) || null;
+  }
+  function fallbackSiteBox(id) {
+    const site = siteRecord(plan, id);
+    if (!site) return null;
+    const box = new THREE.Box3();
+    if (siteShapeKinds.includes(site.kind)) {
+      for (const [x, y] of sitePoints(site.piece)) {
+        const z = groundAt(plan, x, y) + (site.piece.elevation || 0);
+        const rad = site.piece.at ? (site.piece.radius || 2) : 0.3;
+        box.expandByPoint(new THREE.Vector3((x - rad) * FT, z * FT, -(y + rad) * FT));
+        box.expandByPoint(new THREE.Vector3((x + rad) * FT, (z + (site.piece.height || 1)) * FT, -(y - rad) * FT));
+      }
+    } else if (site.piece.at) {
+      const [x, y] = site.piece.at;
+      const h = (site.kind === 'planting' ? site.piece.height || 4 : 3) * (site.piece.scale ?? 1);
+      const rad = site.kind === 'planting' ? Math.max(1, h * 0.18) : 2 * (site.piece.scale ?? 1);
+      const z = groundAt(plan, x, y) + (site.piece.elevation || 0);
+      box.expandByPoint(new THREE.Vector3((x - rad) * FT, z * FT, -(y + rad) * FT));
+      box.expandByPoint(new THREE.Vector3((x + rad) * FT, (z + h) * FT, -(y - rad) * FT));
+    }
+    return box.isEmpty() ? null : { box, kind: site.kind };
+  }
+  function outline(pick, isHover, { single = false } = {}) {
     if (!pick) return;
+    const id = pick.id ?? pick.pieceId;
+    const buildingId = pick.building ?? pick.buildingId ?? null;
+    if (!id) return;
     const accent = new THREE.Color(getComputedStyle(el.closest('.editor-shell') || el).getPropertyValue('--editor-accent').trim() || '#52ccff');
-    const yard = !pick.building && plan.site?.yard_rooms?.find(r => r.id === pick.id);
+    const yard = !buildingId && plan.site?.yard_rooms?.find(r => r.id === id);
     if (yard) {
       const geometry = new THREE.BufferGeometry().setFromPoints([...yard.polygon, yard.polygon[0]].map(p =>
         new THREE.Vector3(p[0], groundAt(plan, ...p) + .06, -p[1])));
       const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ fog: false, color: accent, transparent: true, opacity: isHover ? .4 : .65, depthTest: false }));
-      Object.assign(line.userData, {pieceId:pick.id,kind:'yard_room'});
+      Object.assign(line.userData, { pieceId: id, kind: 'yard_room' });
       line.userData.isHover = isHover; line.renderOrder = 10; twin.root.add(line); selectionLines.push(line); return;
     }
-    const keys = [...twin.pieceBounds].filter(([, { data }]) => data.buildingId === pick.building
-      && (data.pieceId === pick.id || pick.kind === 'building' || pick.kind === 'level'
-        && plan.buildings.find(b => b.id === pick.building)?.levels.some(l => l.id === pick.id)
-        && twin.pickObjects.get(`${data.buildingId}:${data.pieceId}`)?.parent?.userData.levelKey === `${pick.building}:${pick.id}`));
+    const bldg = buildingId ? plan.buildings.find(b => b.id === buildingId) : null;
+    const keys = [...twin.pieceBounds].filter(([, { data }]) => data.buildingId === buildingId
+      && (data.pieceId === id || pick.kind === 'building'
+        || (pick.kind === 'roof' && bldg?.roof?.sections?.find(s => s.id === data.pieceId)?.roof === id)
+        || pick.kind === 'level'
+          && bldg?.levels.some(l => l.id === id)
+          && twin.pickObjects.get(`${data.buildingId}:${data.pieceId}`)?.parent?.userData.levelKey === `${buildingId}:${id}`));
     for (const [key] of keys) {
       const proxy = twin.pickObjects.get(key); if (!proxy) continue;
       const material = new THREE.LineBasicMaterial({ fog: false, color: accent, transparent: true, opacity: isHover ? .65 : 1, depthTest: false });
       let geometry;
-      const b = plan.buildings.find(b => b.id === pick.building), r = b?.rooms?.find(r => r.id === pick.id);
+      const b = bldg, r = b?.rooms?.find(r => r.id === id);
       if (r && pick.kind === 'room') {
         const z = roomFloor(b.levels.find(l => l.id === r.level), r) + .04;
         geometry = new THREE.BufferGeometry().setFromPoints([...r.polygon, r.polygon[0]].map(p => new THREE.Vector3(p[0], z, -p[1])));
@@ -285,6 +351,26 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       line.userData.roomOutline = !!r && pick.kind === 'room';
       line.renderOrder = isHover ? 11 : 10; proxy.parent.add(line); selectionLines.push(line);
     }
+    if (keys.length) return;
+    // Non-building pieces (yard items, instanced plants, fixtures): use the
+    // shared rendered bounds from selection_bounds.js (zero new samplers/uniforms).
+    let entry = lookupSelectionBox(pick, { single });
+    let fallbackBox = false;
+    if (!entry && !isHover && !buildingId && !pieceVisibility?.hidden({ id, kind: pick.kind })) {
+      entry = fallbackSiteBox(id);
+      fallbackBox = !!entry;
+    }
+    if (!entry) return;
+    const helper = new THREE.Box3Helper(entry.box.clone(), accent);
+    helper.material.depthTest = false;
+    helper.material.fog = false;
+    helper.material.transparent = true;
+    helper.material.opacity = isHover ? .65 : 1;
+    helper.renderOrder = isHover ? 11 : 10;
+    helper.userData.selectionKey = `${buildingId ?? ''}:${id}`;
+    Object.assign(helper.userData, { pieceId: id, kind: pick.kind ?? entry.kind ?? null, buildingId, isHover, fallbackBox });
+    scene.add(helper);
+    selectionLines.push(helper);
   }
   function paintHover() {
     for (let i = selectionLines.length - 1; i >= 0; i--) {
@@ -292,7 +378,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (!line.userData.isHover) continue;
       line.removeFromParent(); line.geometry.dispose(); line.material.dispose(); selectionLines.splice(i, 1);
     }
-    if (twin) outline(selectionStyle?.hover, true);
+    if (twin) outline(selectionStyle?.hover, true, { single: true });
     render();
   }
   function restoreFloors() {
@@ -646,6 +732,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (!pieceVisibility) return;
       pieceVisibility.set(ids, kinds);
       pieceVisibility.apply(scene);
+      invalidateSelectionBounds();
       sun.shadow.needsUpdate = true; reflections.request(); render();
     },
     isPieceHidden: candidate => pieceVisibility?.hidden(candidate) || false,
@@ -671,9 +758,38 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       camera.zoom = saved.zoom; controls.update(); camera.quaternion.copy(saved.quaternion); camera.updateProjectionMatrix(); render();
     },
     screenOfFloor: projectFloor,
+    selectionFloor() { const room = selectionStyle?.room; return room ? `${room.building}:${room.level}` : state.view; },
+    selectionBounds() { return projectSelectionBoxes(currentSelectionBoxes({ fresh: true }).list, camera, renderer3.domElement.getBoundingClientRect()); },
+    refreshSelection() {
+      invalidateSelectionBounds();
+      if (selectionStyle) paintSelection();
+    },
+    previewSelectionBox(id, spec = null) {
+      if (!id) {
+        let restored = false;
+        for (const line of selectionLines) {
+          if (line instanceof THREE.Box3Helper && line.userData.baseBox) {
+            line.box.copy(line.userData.baseBox);
+            delete line.userData.baseBox;
+            restored = true;
+          }
+        }
+        if (restored) render();
+        return;
+      }
+      const helper = selectionLines.find(l => l instanceof THREE.Box3Helper && !l.userData.isHover && l.userData.pieceId === id && !l.userData.buildingId);
+      if (!helper) return;
+      helper.userData.baseBox ||= helper.box.clone();
+      if (spec?.delta && !helper.userData.fallbackBox) {
+        helper.box.copy(helper.userData.baseBox).translate(new THREE.Vector3(...spec.delta));
+      } else if (spec?.box) {
+        helper.box.copy(spec.box);
+      }
+      render();
+    },
     setSelection(value) {
-      const sameMaterials = selectionStyle && JSON.stringify([selectionStyle.selected, selectionStyle.room])
-        === JSON.stringify([value.selected, value.room]);
+      const sameMaterials = selectionStyle && JSON.stringify([selectionStyle.selected, selectionStyle.members, selectionStyle.room])
+        === JSON.stringify([value.selected, value.members, value.room]);
       selectionStyle = value;
       const focus = value.room || (value.selected?.kind === 'level' ? { building: value.selected.building, level: value.selected.id } : null);
       const key = focus ? `${focus.building}:${focus.level}` : null;
@@ -790,6 +906,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const buildings = new Set(Object.values(twin.groups.levels).filter(g => g.visible).map(g => g.userData.buildingId));
       for (const domain of ['roof', 'gableFull', 'gableCut']) for (const group of twin.groups[domain].children) group.visible = buildings.has(group.userData.buildingId);
       sun.shadow.needsUpdate = true;
+      invalidateSelectionBounds();
       applyLights(); paintSelection(); render();
     },
     setSheet(spec) {
@@ -862,6 +979,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       for (const level of ids) twin.groups.levels[level].visible = ext || (twin.groups.levels[level].userData.buildingId === buildingId && twin.levelElevations[level] <= twin.levelElevations[id]);
       for (const domain of ['roof', 'gableFull', 'gableCut']) for (const group of twin.groups[domain].children) group.visible = ext || group.userData.buildingId === buildingId;
       sun.shadow.needsUpdate = true;
+      invalidateSelectionBounds();
       applyLights(); paintSelection(); render();
     },
     setTime(time) {
@@ -1233,6 +1351,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           .map(p => new THREE.Vector3(p[0], z, -p[1]))) : new THREE.EdgesGeometry(proxy.geometry);
       }
       pieceVisibility?.apply(scene);
+      invalidateSelectionBounds();
       sun.shadow.needsUpdate = true; reflections.request(); render();
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
     },
@@ -1461,6 +1580,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (points.length) framed = true;
       if (levelsToRestore) view.showLevels(levelsToRestore, { faint: faintToRestore });
       attachSheet();
+      invalidateSelectionBounds();
       paintSelection();
       try { await viewing?.warm(); }
       finally { releaseViewing?.(); }
@@ -1548,7 +1668,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
         releaseViewing?.();
         pieceVisibility?.apply(scene);
-        sun.shadow.needsUpdate = true; reflections.request(); render();
+        invalidateSelectionBounds();
+        sun.shadow.needsUpdate = true; reflections.request();
+        if (selectionStyle) paintSelection(); else render();
         el.dispatchEvent(new CustomEvent('twinyardrebuilt', { detail: view }));
       } catch (error) { el.dispatchEvent(new CustomEvent('twinerror', { detail: error })); }
     }, 0);

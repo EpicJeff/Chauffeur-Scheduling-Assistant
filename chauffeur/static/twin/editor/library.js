@@ -246,8 +246,6 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   const selectionListeners = new Set();
   const tiles = new Map();
   const hint = 'Drag a thumbnail onto the house or yard.';
-  const outline = new THREE.Box3Helper(new THREE.Box3(), '#52ccff'); outline.visible = false; view.scene.add(outline);
-  outline.material.fog = false;
   const listen = (node, type, action, options = {}) => node.addEventListener(type, action, { ...options, signal });
   const rowMenu = createMenu?.({ signal, items: target => target.actions.map(node => ({ label: node.textContent,
     disabled: node.disabled, run: () => node.click() })) });
@@ -678,11 +676,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     return hit && !(view.pickAll(x, y)[0]?.distance < hit.distance) ? hit : null;
   }
   function refresh() {
-    const selected = tools.selection(), kind = selected.kind;
-    const piece = !selected.building && siteRecord(getPlan(), selected.id)?.piece;
-    Object.assign(outline.userData, {pieceId:selected.id,kind});
-    outline.visible = !!piece && kind !== 'yard_rooms' && !view.isPieceHidden?.({id:selected.id,kind});
-    if (piece) outline.box.copy(siteBox(piece, kind));
+    if (!siteDrag) view.previewSelectionBox?.(null);
   }
   const typed = createTypedValue(canvas.parentElement);
   function pointerDown(event) {
@@ -705,7 +699,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     if (!cancel && Number.isFinite(exact)) pointerMove(g.event, exact);
     siteDrag = null; typed.hide(); view.controls.enabled = g.enabled;
     if (canvas.hasPointerCapture(g.pointerId)) canvas.releasePointerCapture(g.pointerId);
-    refresh();
+    view.previewSelectionBox?.(null);
     if (!cancel && canEdit() && g.operation && g.by.some(v => Math.abs(v) > 1e-8))
       return Promise.resolve(op(g.operation, { drag: true, local: applyLocal(getPlan(), g.operation)?.plan, selection: { kind: g.kind, id: g.id },
         label: g.kind === 'planting' ? 'Moving the plant' : 'Moving the item' }));
@@ -731,7 +725,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       typed.show('length', Math.hypot(...by), [event.clientX, event.clientY]);
       for (const key of ['at', 'polygon', 'points', 'polyline']) if (piece[key])
         piece[key] = key === 'at' ? piece[key].map((v, i) => v + by[i]) : piece[key].map(p => p.map((v, i) => v + by[i]));
-      outline.box.copy(siteBox(piece, g.kind));
+      view.previewSelectionBox?.(g.id, { box: siteBox(piece, g.kind), delta: [by[0] * FT, 0, -by[1] * FT] });
     }
     return true;
   }
@@ -739,10 +733,18 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   listen(canvas.parentElement, 'twinrebuilt', refresh);
   signal.addEventListener('abort', () => {
     typed.hide(); dismiss(); sendSlotDrag(dragRow, 'leave', null); dragRow = null; selectionListeners.clear(); thumbnails.current?.dispose(); if (siteDrag) view.controls.enabled = siteDrag.enabled;
-    view.controls.removeEventListener('change', refresh); outline.removeFromParent(); outline.geometry.dispose(); outline.material.dispose();
+    view.controls.removeEventListener('change', refresh); view.previewSelectionBox?.(null);
   }, { once: true });
   return { key: typed.key, typedValue: typed.value, commit: exact => finishBody(false, exact),
-    preview(plan) { const selected = tools.selection(), record = !selected.building && siteRecord(plan, selected.id); if (record) outline.box.copy(siteBox(record.piece, record.kind)); },
+    preview(plan) {
+      const selected = tools.selection(), record = !selected.building && siteRecord(plan, selected.id);
+      if (!record) return;
+      const before = siteRecord(getPlan(), selected.id);
+      const delta = before?.piece?.at && record.piece.at
+        ? [(record.piece.at[0] - before.piece.at[0]) * FT, ((record.piece.elevation || 0) - (before.piece.elevation || 0)) * FT, -(record.piece.at[1] - before.piece.at[1]) * FT]
+        : null;
+      view.previewSelectionBox?.(selected.id, { box: siteBox(record.piece, record.kind), delta });
+    },
     siteHits, pickSite, surfaceAt, ceilingAt, ground, pointerDown, pointerMove, pointerUp, refresh, pick,
     selected: () => selection, select, reveal,
     onSelect(fn) { selectionListeners.add(fn); return () => selectionListeners.delete(fn); } };
