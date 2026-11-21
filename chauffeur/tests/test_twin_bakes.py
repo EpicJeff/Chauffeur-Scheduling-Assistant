@@ -139,15 +139,38 @@ class Ctx:
     def __exit__(self, *exc):
         self.patch.stop()
 
-    def upload(self, key, page, body, who=None, content_type='image/png'):
+    def upload(self, key, page, body, who=None, content_type='image/png', owner='test-desk'):
         return self.client.post(page_url(key, page), content=body,
-                                headers={**(self.mum if who is None else who), 'Content-Type': content_type})
+                                headers={**(self.mum if who is None else who), 'Content-Type': content_type,
+                                         'X-Bake-Owner': owner})
 
-    def put_manifest(self, key, body, who=None):
-        return self.client.put(manifest_url(key), json=body, headers=self.mum if who is None else who)
+    def put_manifest(self, key, body, who=None, owner='test-desk'):
+        return self.client.put(manifest_url(key), json=body,
+                               headers={**(self.mum if who is None else who), 'X-Bake-Owner': owner})
 
 
 # ---------------------------------------------------------------- tests
+
+def test_force_round_tokens_round_trip_and_reject_invalid_values():
+    key = key_of(0xbac)
+    body = manifest()
+    body['forceRound'] = 'desk.123-force'
+    body['complete'] = False
+    body['lights']['dev-k-light']['forceRound'] = 'desk.123-force'
+    with Ctx() as c:
+        r = c.put_manifest(key, body)
+        check(r.status_code == 200, r.text)
+        check(c.client.get(manifest_url(key), headers=c.mum).json() == body, 'force fields round trip')
+        for target in (body, body['lights']['dev-k-light']):
+            before = target['forceRound']
+            for invalid in (None, 1, True, '', 'x' * 65, '../escape', []):
+                target['forceRound'] = invalid
+                check(c.put_manifest(key, body).status_code == 400, f'invalid force token {invalid!r}')
+            target['forceRound'] = before
+        check(c.put_manifest(key, {**body, 'padding': 'x' * (1024 * 1024)}).status_code == 400, 'byte cap retained')
+        check(c.client.get(manifest_url(key), headers=c.mum).json() == body, 'rejected writes preserve saved force')
+        check(c.put_manifest(key, body, who=c.kid).status_code == 403, 'force write stays parents only')
+
 
 def test_routes_have_their_tiers():
     for method, template, tier in (('POST', PAGE_TEMPLATE, auth.PARENTS), ('GET', PAGE_TEMPLATE, auth.WALL_OR_SERVICE),
@@ -455,6 +478,55 @@ def test_lease_serialises_bakes_of_one_key():
         check(r.status_code == 400, ('a bad key is refused', r.status_code))
 
 
+def test_live_other_owner_fences_page_and_manifest_writes():
+    from services import twin_bakes
+    key = key_of(0xf201)
+    clock = [1000.0]
+    with Ctx() as c, patch.object(twin_bakes, '_now', side_effect=lambda: clock[0]):
+        check(c.upload(key, 0, png(seed=1), owner='old').status_code == 200, 'seed page')
+        check(c.put_manifest(key, manifest(), owner='old').status_code == 200, 'seed manifest')
+        clock[0] += 61
+        r = c.client.post(lease_url(key), json={'owner': 'new', 'action': 'acquire'}, headers=c.mum)
+        check(r.status_code == 200, 'new desk takes the expired lease')
+        check(c.upload(key, 0, png(seed=2), owner='old').status_code == 409, 'stale page writer is fenced')
+        check(c.put_manifest(key, {**manifest(), 'complete': True}, owner='old').status_code == 409,
+              'stale manifest writer is fenced')
+        check(c.client.get(page_url(key, 0), headers=c.panel).content == png(seed=1), 'refused page unchanged')
+        check(c.client.get(manifest_url(key), headers=c.panel).json() == manifest(), 'refused manifest unchanged')
+        check(twin_bakes._LEASES[key] == ('new', 1121.0), 'refused writes do not renew or steal the lease')
+
+
+def test_expired_unclaimed_writes_renew_their_owner():
+    from services import twin_bakes
+    clock = [2000.0]
+    with Ctx() as c, patch.object(twin_bakes, '_now', side_effect=lambda: clock[0]):
+        for n, write in enumerate((lambda k: c.upload(k, 0, png(), owner='desk'),
+                                   lambda k: c.put_manifest(k, manifest(), owner='desk'))):
+            key = key_of(0xf210 + n)
+            check(twin_bakes.lease(key, 'desk', 'acquire')[0], 'take lease')
+            clock[0] += 61
+            check(write(key).status_code == 200, 'expired but unclaimed write accepted')
+            check(twin_bakes._LEASES[key] == ('desk', clock[0] + 60), 'write renews for a full minute')
+            clock[0] += 50
+            check(not twin_bakes.lease(key, 'other', 'acquire')[0], 'renewed writer still holds the key')
+
+
+def test_own_live_writes_succeed_and_owner_is_required():
+    from services import twin_bakes
+    key = key_of(0xf220)
+    clock = [3000.0]
+    with Ctx() as c, patch.object(twin_bakes, '_now', side_effect=lambda: clock[0]):
+        check(twin_bakes.lease(key, 'desk', 'acquire')[0], 'take own lease')
+        clock[0] += 10
+        check(c.upload(key, 0, png(), owner='desk').status_code == 200, 'own page accepted')
+        check(c.put_manifest(key, manifest(), owner='desk').status_code == 200, 'own manifest accepted')
+        check(twin_bakes._LEASES[key] == ('desk', 3070.0), 'own live write renews lease')
+        check(c.client.post(page_url(key, 0), content=png(), headers=c.mum).status_code == 400,
+              'missing owner cannot bypass fencing')
+        check(c.client.put(manifest_url(key), json=manifest(), headers=c.mum).status_code == 400,
+              'manifest owner required too')
+
+
 def _age(key, seconds):
     folder = os.path.join(bakes_dir(), key)
     when = os.path.getmtime(folder) - seconds
@@ -574,6 +646,10 @@ def test_room_only_complete_manifest_and_ignored_legacy_sky():
 
 
 TESTS = (
+    test_live_other_owner_fences_page_and_manifest_writes,
+    test_expired_unclaimed_writes_renew_their_owner,
+    test_own_live_writes_succeed_and_owner_is_required,
+    test_force_round_tokens_round_trip_and_reject_invalid_values,
     test_room_only_complete_manifest_and_ignored_legacy_sky,
     test_routes_have_their_tiers,
     test_upload_then_download_with_etag,
