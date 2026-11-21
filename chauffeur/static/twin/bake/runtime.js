@@ -2,10 +2,10 @@ import * as THREE from 'three';
 import { base, copyMaterialParams } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
-import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, patchLightmaps, setLightTint, pickTranscode,
+import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, patchLightmaps, setLightTintColor, tintSum, pickTranscode,
   setLightSource, setChartFill, setRoomFill, clearFills, roomRegions, patchWindowGlow, needsFixtureShader, bankLayerBases } from './lightmap_material.js';
 import { lightSource } from './reach.js';
-import { resolveEmitters, emitterSignature } from '../live/emitters.js';
+import { resolveEmitters, emitterSignature, lightMarkers } from '../live/emitters.js';
 import { kindOf, exactRects } from './fixture_terms.js';
 import { createBaker, bakeLayout } from './baker.js';
 import { mayBake } from './bake_lock.js';
@@ -54,11 +54,11 @@ function writeLayer(texture, layer, page) {
   });
   texture.addLayerUpdate(layer); texture.needsUpdate = true;
 }
-// Baked light lands on indoor surfaces only. Yard and fire-pit lights (no building) light the
-// lot through the live pool; baking them never completes and kept the bake from settling.
-// Every placed light bakes (user, 2026-11-13: "It seems silly to have some lights baked and
-// some not"). A yard-room light has no building; its z is height above the ground.
-export const lightsOf = layout => (layout?.markers || []).filter(m => m.kind === 'light' && m.placed && m.at && m.room && (m.building || m.yard))
+// Every placed light bakes, on or off, indoors or in a yard room (user, 2026-11-13: "It seems
+// silly to have some lights baked and some not"), including a light entity on another kind of
+// device, such as a camera's spotlight (lightMarkers, 2026-11-20). A yard-room light has no
+// building; its z is height above the ground.
+export const lightsOf = layout => lightMarkers(layout).filter(m => m.placed && m.at && m.room && (m.building || m.yard))
   .map(m => ({ device: m.device_id, building: m.building || null, level: m.level || null, room: m.room, at: [...m.at],
     ...(m.building ? {} : { yard: true }) }));
 
@@ -66,7 +66,7 @@ export const lightsOf = layout => (layout?.markers || []).filter(m => m.kind ===
 // fire's light point or the lamp's top, 18 ft reach. A light-domain pit also owns its marker's
 // light (modes.js moves that lamp to the fire); a lamp object with a marker is that marker.
 export function objectLightsOf(root, layout) {
-  const markers = (layout?.markers || []).filter(m => m.kind === 'light');
+  const markers = lightMarkers(layout);
   const rows = new Map();
   root.updateMatrixWorld(true);
   root.traverse(mesh => {
@@ -89,7 +89,34 @@ export function objectLightsOf(root, layout) {
   }
   return { lights, replaced };
 }
+// Plain marker lights at one spot (a recessed main and its trim ring, a camera spotlight and a
+// stale twin entity) see exactly the same geometry: a channel stores visibility only, falloff
+// and colour are per pixel. They share one channel and the slot's tint is their sum (owner
+// 2026-11-21), so a trim ring no longer takes channels from its main. A lone light keeps its
+// own id, so a house without co-located lights keeps every manifest entry it has.
+export const SHARED_PREFIX = 'shared:';
+export function shareColocated(lights) {
+  const spot = l => !l.emitters && !l.absolute && Array.isArray(l.at)
+    ? JSON.stringify([l.building, l.level, l.room, !!l.yard, ...l.at.map(v => Math.round(v * 1000))]) : null;
+  const groups = new Map(), out = [];
+  for (const l of lights) {
+    const key = spot(l);
+    if (key === null) { out.push(l); continue; }
+    if (!groups.has(key)) { groups.set(key, []); out.push(key); }
+    groups.get(key).push(l);
+  }
+  return out.map(item => {
+    if (typeof item !== 'string') return item;
+    const list = groups.get(item);
+    if (list.length === 1) return list[0];
+    const members = list.map(l => l.device).sort();
+    return {...list[0], device: SHARED_PREFIX + members.join('+'), members};
+  });
+}
 export function bakeLights(layout, root, plan = {}) {
+  return shareColocated(separateLights(layout, root, plan));
+}
+function separateLights(layout, root, plan = {}) {
   const groups = new Map();
   for (const e of resolveEmitters(layout || {}, {}, plan)) {
     if (e.legacy) continue;
@@ -101,7 +128,7 @@ export function bakeLights(layout, root, plan = {}) {
     kind: kindOf(emitters), signature: emitterSignature(emitters), at: [...(emitters[0].at || emitters[0].path[0])],
     building: emitters[0].building || null, level: emitters[0].level || null, room: emitters[0].room || null}));
   const objects = root ? objectLightsOf(root, layout) : { lights: [], replaced: new Set() };
-  const replaced = new Set((layout?.markers || []).filter(m => groups.has(m.entity_id)).map(m => m.device_id));
+  const replaced = new Set(lightMarkers(layout).filter(m => groups.has(m.entity_id)).map(m => m.device_id));
   const pitIds = new Set([...groups.values()].flat().filter(e => e.fire_pit).map(e => e.device_id));
   return [...lightsOf(layout).filter(l => !objects.replaced.has(l.device) && !replaced.has(l.device)),
     ...objects.lights.filter(l => !pitIds.has(l.device)), ...fixtures];
@@ -177,16 +204,26 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     });
     if (paused()) return idle();
   }
+  // A member of a shared channel (shareColocated) is driven by its own id; its slot is the group's.
+  const groupOf = id => lights.find(l => l.members?.includes(id));
   function light(device, rgb, intensity) {
-    const previous = tints.get(device);
-    if (!previous || previous.intensity !== intensity || previous.rgb.some((v,i) => v !== rgb[i])) view.reflectionsChanged?.('lamp');
-    tints.set(device, { rgb: [...rgb], intensity });
-    const s = packed?.slots[device];
-    if (s && uniforms) {
-      if (uniforms.lmChartMode) setLightTint(uniforms, 0, lights.findIndex(l => l.device === device), rgb, fresh.has(device) ? intensity : 0);
-      else for (const room of s.receivers || [s.room])
-        setLightTint(uniforms, room, s.bank * 2 + s.channel, rgb, fresh.has(device) ? intensity : 0);
+    // A shared slot's own id (the runtime clearing or replaying a slot) recomputes from its
+    // members; it never stores a tint that would later overwrite their sum.
+    const own = lights.find(l => l.device === device && l.members);
+    if (!own) {
+      const previous = tints.get(device);
+      if (!previous || previous.intensity !== intensity || previous.rgb.some((v,i) => v !== rgb[i])) view.reflectionsChanged?.('lamp');
+      tints.set(device, { rgb: [...rgb], intensity });
     }
+    const group = own || groupOf(device), slotId = group ? group.device : device;
+    const s = packed?.slots[slotId];
+    if (!s || !uniforms) return;
+    const on = fresh.has(slotId);
+    // The slot carries the sum of its members' linear colours.
+    const tint = group ? tintSum(group.members.map(id => tints.get(id)).filter(Boolean), on)
+      : tintSum([{ rgb, intensity }], on);
+    if (uniforms.lmChartMode) setLightTintColor(uniforms, 0, lights.findIndex(l => l.device === slotId), tint);
+    else for (const room of s.receivers || [s.room]) setLightTintColor(uniforms, room, s.bank * 2 + s.channel, tint);
   }
   function regions() {
     // A column per bank, a row per room; the fills sit below the rooms (lightmap_material.js).
@@ -543,7 +580,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   const controller = {
     state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: running && paused(),
       ...progress, baked: [...baked], stale: [...stale], error: errorReason || pageReason() }),
-    fresh: () => valid() ? [...fresh] : [], light, idle, refresh,
+    // Members of a fresh shared channel are fresh: the live layer asks by its own lamp ids.
+    fresh: () => valid() ? [...fresh].flatMap(id => [id, ...(lights.find(l => l.device === id)?.members || [])]) : [], light, idle, refresh,
     occlusionRoot: () => atlas?.sourceRoot || root,
     snapshot: () => atlas && pages ? {key:atlas.key,layers,bankBase,banks:pages.banks,present:[...present],etags:[...etags],manifest:pageManifest} : null,
     refreshMaterials(ids) {

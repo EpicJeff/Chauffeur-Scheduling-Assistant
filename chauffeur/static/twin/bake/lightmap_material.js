@@ -85,9 +85,19 @@ export function clearFills(uniforms) {
   t.image.data.fill(0, rows * t.image.width * 4); t.needsUpdate = true;
 }
 export function setLightTint(uniforms, room, slot, rgb, intensity) {
+  setLightTintColor(uniforms, room, slot, tintSum([{ rgb, intensity }]));
+}
+// A slot's linear tint: the sum of its lights' sRGB colours times intensity. Lights sharing a
+// channel (bake/runtime.js shareColocated) add; `on` false gives black.
+export function tintSum(list, on = true) {
+  const sum = new THREE.Color(0, 0, 0);
+  if (on) for (const { rgb, intensity } of list)
+    sum.add(new THREE.Color().setRGB(...rgb.map(x => x / 255), THREE.SRGBColorSpace).multiplyScalar(intensity));
+  return sum;
+}
+export function setLightTintColor(uniforms, room, slot, c) {
   const t = uniforms.lmTints.value;
   if (room < 0 || room >= rowsOf(t) || slot < 0 || slot >= t.image.width) return;
-  const c = new THREE.Color().setRGB(...rgb.map(x => x / 255), THREE.SRGBColorSpace).multiplyScalar(intensity);
   const i = (room * t.image.width + slot) * 4;
   t.image.data.set([c.r, c.g, c.b, 0], i); t.needsUpdate = true;
 }

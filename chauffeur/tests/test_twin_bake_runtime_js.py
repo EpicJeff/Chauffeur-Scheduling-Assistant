@@ -674,7 +674,10 @@ await check('a_missing_secondary_reach_page_keeps_the_light_real_time', async ()
   } finally { wall.controller.stop(); }
 });
 await check('crowded_charts_keep_all_lights_baked_somewhere', async () => {
-  const placed=Array.from({length:40},(_,i)=>({...k1,device:'cap-'+String(i).padStart(2,'0')}));
+  // Forty separate lights crowding the same charts. Lights at exactly one spot now share one
+  // channel (shareColocated, owner 2026-11-21), so each sits 0.01 ft from the next: still the
+  // same surfaces and the same contention, but forty lights.
+  const placed=Array.from({length:40},(_,i)=>({...k1,device:'cap-'+String(i).padStart(2,'0'),at:[k1.at[0]+i*.01,k1.at[1],k1.at[2]]}));
   const desk=await context('high',null,placed);
   try {
     const expected=B.bakeLayout(buildAtlas(await house(),job.plan,job.layout),job.layout,placed);

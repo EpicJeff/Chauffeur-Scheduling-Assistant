@@ -209,6 +209,26 @@ function legacyEmitter(marker, plan, state) {
     rgb: state.rgb, ...(state.palette ? {palette: state.palette} : {}), brightness: state.brightness, on: state.on};
 }
 
+// Every light the layout holds, as light markers: a light device's marker, and each light
+// entity on any placed device (a camera's spotlight, a recessed fixture's trim ring) as its
+// own light at that device's spot. "A light that is a control of another device is still a
+// light" (owner 2026-11-20): it bakes and switches with its own entity. Its id joins the
+// device and the entity, so it never collides with the device's own marker.
+export function lightMarkers(layout) {
+  const out = [];
+  for (const marker of layout?.markers || []) {
+    if (marker.kind === 'light') out.push(marker);
+    for (const accessory of marker.accessories || []) {
+      if (accessory.kind !== 'light' || !accessory.entity_id || accessory.entity_id === marker.entity_id) continue;
+      out.push({...marker, kind: 'light', device_id: `${marker.device_id}|${accessory.entity_id}`,
+        entity_id: accessory.entity_id, entities: [accessory.entity_id], accessories: [],
+        name: accessory.name ? `${marker.name} ${accessory.name}` : marker.name, accessory_of: marker.device_id,
+        ...(accessory.offered !== undefined ? {offered: accessory.offered} : {})});
+    }
+  }
+  return out;
+}
+
 // firePits: false leaves derived fire-pit emitters out (live keeps pits on its
 // object-lamp path until the bake slice moves them); their entity's markers
 // then resolve through the legacy rules exactly as before fixtures existed.
@@ -240,7 +260,7 @@ export function resolveEmitters(layout, states = {}, plan = {}, {firePits = true
       emitters.push(e);
     });
   }
-  for (const marker of layout.markers || []) if (marker.kind === 'light' && marker.at && !groups.has(marker.entity_id))
+  for (const marker of lightMarkers(layout)) if (marker.at && !groups.has(marker.entity_id))
     emitters.push(legacyEmitter(marker, plan, stateOf(marker.entity_id)));
   emitters.push(...fireEffectEmitters(plan, readings, stale, effectRows));
   return emitters;
