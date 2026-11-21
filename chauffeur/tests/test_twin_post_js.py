@@ -375,6 +375,66 @@ await test('mounted view disposal releases its post targets and repeated disposa
   view.dispose();view.dispose();assert.equal(view.post.info().enabled,false);
   resources.forEach(r=>assert.equal(counts.get(r),1));
 });
+
+for(const fail of [false,true])await test('one classification walk per twin frame for beauty transparent and clipped AO '+fail,async()=>{
+ const {startEnvironmentFrame}=await import(file('static/twin/sky/stage_haze.js'));
+ const renderer=new Renderer(),scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera();
+ renderer.setSize(640,400);
+ const opaque=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial({clippingPlanes:[new THREE.Plane(new THREE.Vector3(0,1,0),2)]}));
+ const transparent=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial({transparent:true}));
+ const child=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial());transparent.add(child);
+ opaque.layers.mask=5;transparent.layers.mask=7;child.layers.mask=3;
+ const hidden=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial());hidden.visible=false;
+ scene.add(opaque,transparent,hidden);
+ const material=opaque.material, masks=[opaque,transparent,child].map(o=>o.layers.mask);
+ const clouds={active:true,render(){},composite(){}};
+ const post=createPost(renderer,scene,camera,{clouds});let walks=0,draws=[];
+ const traverse=scene.traverse;scene.traverse=function(fn){walks++;return traverse.call(this,fn);};
+ renderer.inspect=({scene:drawn,normal})=>{if(drawn!==scene)return;
+  if(normal){draws.push('ao');assert.equal(transparent.visible,false);assert.equal(child.visible,true);assert.notEqual(opaque.material,material);if(fail)throw Error('AO failed');}
+  else if(opaque.layers.mask===0){draws.push('transparent');assert.equal(transparent.layers.mask,7);assert.equal(child.layers.mask,0);}
+  else {draws.push('beauty');assert.equal(transparent.layers.mask,0);assert.equal(child.layers.mask,3);}
+ };
+ const restored=()=>{assert.deepEqual([opaque,transparent,child].map(o=>o.layers.mask),masks);assert.equal(opaque.material,material);assert.equal(transparent.visible,true);assert.equal(hidden.visible,false);assert.equal(scene.overrideMaterial,null);};
+ try{
+  startEnvironmentFrame(scene);
+  for(let i=0;i<2;i++){if(fail)assert.throws(()=>post.render(),/AO failed/);else post.render();restored();}
+  assert.equal(walks,1);assert.deepEqual(draws,fail?['beauty','ao','beauty','ao']:['beauty','ao','transparent','beauty','ao','transparent']);
+  renderer.inspect=null;hidden.visible=true;hidden.userData.noOcclusion=true;
+  startEnvironmentFrame(scene);post.render();assert.equal(walks,2);assert.equal(hidden.visible,true);
+ } finally {post.dispose();}
+});
+await test('shared snapshot and old fresh walks produce identical post hidden/material/layer state with all installers',async()=>{
+ const {startEnvironmentFrame,installStageHaze}=await import(file('static/twin/sky/stage_haze.js'));
+ const {installCloudShadow}=await import(file('static/twin/sky/cloud_shadow.js'));
+ const {installWeatherSurface}=await import(file('static/twin/sky/weather_surface.js'));
+ const {installPlantWind}=await import(file('static/twin/sky/wind.js'));
+ const {installSeasons}=await import(file('static/twin/sky/seasons.js'));
+ const {createCloudUniforms}=await import(file('static/twin/sky/clouds.js'));
+ function run(counted){
+  const renderer=new Renderer(),scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera();renderer.setSize(640,400);
+  const solid=new THREE.MeshStandardMaterial({clippingPlanes:[new THREE.Plane(new THREE.Vector3(0,1,0),2)]});
+  solid.userData={viewingOpaque:true};solid.transparent=true;
+  const glass=new THREE.MeshStandardMaterial({name:'glass',transparent:true}),leaf=new THREE.MeshStandardMaterial({alphaTest:.5});leaf.userData={seasonFoliage:true,plantWind:'leaves'};
+  const objects=[solid,glass,leaf,[new THREE.MeshStandardMaterial(),new THREE.MeshBasicMaterial({transparent:true})],new THREE.ShaderMaterial()].map(m=>new THREE.Mesh(new THREE.BoxGeometry(),m));
+  const hiddenParent=new THREE.Group();hiddenParent.visible=false;hiddenParent.add(objects[2]);scene.add(hiddenParent);
+  objects[2].castShadow=true;objects.forEach((o,i)=>{o.name='fixture-'+i;o.layers.mask=i+1;if(i!==2)scene.add(o);});objects[4].visible=false;
+  objects[3].add(new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial()));
+  const installers=[installStageHaze(scene,{horizon:()=>new THREE.Color(.1,.2,.3)}),installCloudShadow(scene,{uniforms:createCloudUniforms()}),installWeatherSurface(scene),installPlantWind(scene),installSeasons(scene)];
+  const post=createPost(renderer,scene,camera,{clouds:{active:true,render(){},composite(){}}}),states=[];
+  const draw=renderer.render.bind(renderer);renderer.render=(s,c)=>{if(s===scene)s.onBeforeRender(renderer,s,c);return draw(s,c);};
+  renderer.inspect=({scene:s,normal})=>{if(s===scene)states.push([normal,objects.map(o=>[o.visible,o.layers.mask,[].concat(o.material).map(m=>[m.type,!!m.clippingPlanes?.length,m.customProgramCacheKey()])])]);};
+  let walks=0;const traverse=scene.traverse.bind(scene);scene.traverse=cb=>{walks++;return traverse(cb);};
+  try{
+   if(counted)startEnvironmentFrame(scene);
+   installers[3].update(1,{windMps:3},180);installers[4].update({presence:.5,autumn:.5,spring:0,dormancy:1});post.render();
+   const final=objects.map(o=>[o.visible,o.layers.mask,[].concat(o.material).map(m=>m.customProgramCacheKey())]);
+   if(counted)assert.equal(walks,1,'all six consumers share the snapshot');else assert.ok(walks>5,'reference uses the old fresh-walk paths');
+   return {states,final};
+  }finally{post.dispose();installers.reverse().forEach(i=>i.dispose());}
+ }
+ assert.deepEqual(run(true),run(false));
+});
 finish();
 """
 

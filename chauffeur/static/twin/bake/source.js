@@ -3,7 +3,12 @@
 // never join the drawn scene or add a draw call/material program.
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { filterAlphaSource } from './alpha_source.js';
-const providers = new WeakMap(), sources = new WeakMap();
+const providers = new WeakMap(), sources = new WeakMap(), madeRoots = new WeakSet();
+// A drawn provider root and the neutral root it made are the same place. Receiver
+// matching names meshes relative to it (bindings.js domain), never by the drawn
+// parents above it: the yard is drawn under the twin's 'site' group, while its
+// neutral copy sits directly in the bake source.
+export const isBakeRoot = node => providers.has(node) || madeRoots.has(node);
 // Default kit finishes already have the neutral topology. Reuse their buffers
 // through detached clones instead of generating a second house on a cold bake.
 export function defaultBuildingFinishes(plan,kit) {
@@ -16,10 +21,17 @@ export function defaultBuildingFinishes(plan,kit) {
     const {materials,...geometry}=b;return sameDefaults(materials)&&!hasSlots(geometry);
   });
 }
+// Another provider inside the clone (the yard under the house's 'site' group) is
+// left out: it brings its own neutral copy, and a second copy of its drawn meshes
+// would chart the same surfaces twice.
+function cloneWithoutProviders(node) {
+  const copy=node.clone(false);if(copy.geometry)copy.geometry=copy.geometry.clone();
+  for(const child of node.children)if(!providers.has(child))copy.add(cloneWithoutProviders(child));
+  return copy;
+}
 export function cloneBakeGeometry(root,children=root.children) {
   const group=new THREE.Group();
-  for(const child of new Set(children))if(child.parent===root){const copy=child.clone(true);
-    copy.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();});group.add(copy);}
+  for(const child of new Set(children))if(child.parent===root && !providers.has(child))group.add(cloneWithoutProviders(child));
   return group;
 }
 export function registerBakeSource(root, make, {extras=true,children=root.children}={}) { providers.set(root, {make,extras,children:new Set(children)}); }
@@ -35,7 +47,7 @@ export function bakeSource(root) {
   for (const node of entries) {
     const provider=providers.get(node),geometry = provider.make();
     geometry.matrixAutoUpdate = false; geometry.matrix.copy(node.matrixWorld);
-    source.add(geometry);
+    madeRoots.add(geometry); source.add(geometry);
     // Optional receiver meshes added by a caller after generation are part of
     // the bake too (for example a separately generated structural extension).
     for(const child of node.children) if(provider.extras && !provider.children.has(child) && !providers.has(child)) {

@@ -81,11 +81,13 @@ export function mountHouses({ history, afterLoad, capture, canLoad, signal, api 
     status.textContent = result.saves.length ? `${result.saves.length} saved house${result.saves.length === 1 ? '' : 's'}` : 'No saved houses yet. Save a house before trying something new.';
     sync();
   }
-  function close() { if (dialogs) dialogs.closeDialog('houses-panel'); else { panel.hidden = true; openButton.focus(); } onClose?.(); }
+  // Hosted, the dialog's own header and Close stand in for the panel's; its
+  // Close runs onClose through closeDialog, so it is not called twice here.
+  function close() { if (dialogs) dialogs.closeDialog('houses-panel'); else { panel.hidden = true; openButton.focus(); onClose?.(); } }
   listen(openButton, 'click', () => {
-    if (dialogs) dialogs.openDialog('houses-panel', { title: 'Houses' }); else panel.hidden = false;
+    if (dialogs) dialogs.openDialog('houses-panel', { title: 'Houses', onClose }); else { panel.hidden = false; el('houses-close').focus(); }
     el('editor-menu').open = false;
-    el('houses-close').focus(); run(refresh);
+    run(refresh);
   });
   listen(el('houses-close'), 'click', close);
   listen(el('houses-save'), 'click', () => run(async () => {

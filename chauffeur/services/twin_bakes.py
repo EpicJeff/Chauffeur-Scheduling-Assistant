@@ -13,6 +13,8 @@ import time
 from services import twin_store
 
 MAX_PAGE_BYTES = 16 * 1024 * 1024
+MAX_ATLAS_BYTES = 64 * 1024 * 1024
+KEEP_ATLASES = 2
 MAX_PAGES = 64                      # page index 0..63 (M7)
 MAX_MANIFEST_BYTES = 1024 * 1024    # 1 MiB (M7)
 LEASE_SECONDS = 60                  # Ruling B17
@@ -86,6 +88,35 @@ def read_page(key, page):
     return data, _etag(data)
 
 
+def save_atlas(key, data):
+    """Opaque binary transport, addressed by the worker INPUT fingerprint."""
+    path = Path(twin_store.DATA_DIR) / 'atlases' / check_key(key)
+    if len(data) > MAX_ATLAS_BYTES:
+        raise ValueError('Atlas exceeds 64 MiB.')
+    with _LOCK:
+        _write(path, data)
+        _prune_atlases(current=key)
+    return _etag(data)
+
+
+def read_atlas(key):
+    path = Path(twin_store.DATA_DIR) / 'atlases' / check_key(key)
+    with _LOCK:
+        return path.read_bytes()
+
+
+def _prune_atlases(current=None):
+    # Input keys differ from bake output keys; retain by upload time, not live_keys.
+    root = Path(twin_store.DATA_DIR) / 'atlases'
+    if not root.is_dir():
+        return
+    paths = [p for p in root.iterdir() if _KEY.fullmatch(p.name) and p.is_file() and not p.is_symlink()]
+    # Keep the just-written input even if the system clock moved backwards.
+    paths.sort(key=lambda p: (p.name == current, p.stat().st_mtime_ns), reverse=True)
+    for path in paths[KEEP_ATLASES:]:
+        path.unlink()
+
+
 def _check_manifest(body):
     if not isinstance(body, dict):
         raise ValueError('Bake manifest must be an object.')
@@ -156,6 +187,7 @@ def _touched(path):
 def _prune_older(current):
     """Keep the key just saved and the most recent other one (I3). A key written in
     the last few minutes is a bake in progress on some desk and is kept too."""
+    _prune_atlases()
     root = Path(twin_store.DATA_DIR) / 'bakes'
     others = []
     for path in root.iterdir():
@@ -236,6 +268,7 @@ def read_manifest(key):
 def prune(live_keys):
     live_keys = set(live_keys)
     with _LOCK:
+        _prune_atlases()
         root = Path(twin_store.DATA_DIR) / 'bakes'
         if not root.is_dir():
             return

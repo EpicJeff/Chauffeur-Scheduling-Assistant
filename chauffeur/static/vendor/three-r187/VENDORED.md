@@ -42,4 +42,18 @@ Added 2026-11-17 for screen-space sky occlusion and bloom (same tarball, sha512 
 | addons/shaders/LuminosityHighPassShader.js | 5044f780b6e6cf86 |
 | addons/math/SimplexNoise.js | 4b1455617135e6b4 |
 
+## Local patch to `three.module.js` (2026-11-20)
+
+`three.module.js` is no longer byte-identical to the tarball. One change, in
+`WebGLRenderer.render`, where a finished render pops its render state: the
+texture-unit counter handed back to the caller is the one the popped (nested)
+render saved at its own start. r187 handed back the count the outer render had
+at its start. A render nested inside `setProgram` (three regenerating a
+reflection probe's PMREM for the material being set up) therefore restarted
+that material's samplers after the previous frame's last material: on the
+owner's 16-unit GPU (ANGLE D3D11) the pool water asked for units 17 to 21 and
+those textures never bound. Search for `Chauffeur patch` to find it.
+Guarded by `tests/test_twin_texture_units_live.py`. Reapply on any three upgrade
+unless upstream has fixed it.
+
 License: MIT (see LICENSE). fflate is MIT.

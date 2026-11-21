@@ -73,3 +73,100 @@ export function applyAtlas(data, root, layout) {
   if(source!==root){atlas.sourceRoot=source;bindReceivers(atlas,prepareReceivers(root,room.plan));}
   return atlas;
 }
+
+// ATL1: magic (4 bytes), little-endian JSON byte length (4), UTF-8 header,
+// padding to 8 bytes, then one buffer. Paths in a separate descriptor table
+// preserve arbitrary userData objects, even ones resembling array descriptors.
+const arrayTypes = Object.fromEntries([Int8Array, Uint8Array, Uint8ClampedArray,
+  Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array]
+  .map(Type => [Type.name, Type]));
+const aligned = n => Math.ceil(n / 8) * 8;
+export const MAX_ATLAS_BYTES = 64 * 1024 * 1024;
+// Bound inflation separately: the owner's 7 MiB upload expands to about 60 MiB.
+const MAX_EXPANDED_BYTES = 256 * 1024 * 1024;
+const cancelled = signal => { if (signal?.aborted) throw new Error('Atlas cancelled.'); };
+
+async function streamBytes(stream, signal, limit = MAX_EXPANDED_BYTES) {
+  const reader = stream.getReader(), parts = [];
+  let length = 0;
+  const abort = () => { reader.cancel().catch(() => {}); };
+  signal?.addEventListener('abort', abort, { once: true });
+  try {
+    cancelled(signal);
+    while (true) {
+      const { value, done } = await reader.read();
+      cancelled(signal);
+      if (done) break;
+      length += value.byteLength;
+      if (length > limit) throw new Error('Atlas container exceeds its size limit.');
+      parts.push(value);
+    }
+    const bytes = new Uint8Array(length); let offset = 0;
+    for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
+    return bytes;
+  } finally { abort(); signal?.removeEventListener('abort', abort); }
+}
+
+export async function encodeAtlas(data, { signal, compress = true } = {}) {
+  cancelled(signal);
+  const arrays = [], chunks = []; let size = 0;
+  const visit = (value, path = []) => {
+    if (ArrayBuffer.isView(value)) {
+      if (!Object.hasOwn(arrayTypes, value.constructor.name)) throw new Error('Unsupported atlas array.');
+      size = aligned(size);
+      arrays.push({ path, type: value.constructor.name, offset: size, length: value.length });
+      chunks.push({ offset: size, bytes: new Uint8Array(value.buffer, value.byteOffset, value.byteLength) });
+      size += value.byteLength;
+      return null;
+    }
+    if (Array.isArray(value)) return value.map((v, i) => visit(v, [...path, i]));
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, visit(v, [...path, k])]));
+    return value;
+  };
+  const header = new TextEncoder().encode(JSON.stringify({ data: visit(data), arrays }));
+  const start = aligned(8 + header.length);
+  if (start + size > MAX_EXPANDED_BYTES) throw new Error('Expanded atlas exceeds 256 MiB.');
+  const bytes = new Uint8Array(start + size);
+  bytes.set([65, 84, 76, 49]); new DataView(bytes.buffer).setUint32(4, header.length, true);
+  bytes.set(header, 8);
+  for (const chunk of chunks) bytes.set(chunk.bytes, start + chunk.offset);
+  cancelled(signal);
+  if (compress && globalThis.CompressionStream) {
+    return streamBytes(new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip')), signal, MAX_ATLAS_BYTES);
+  }
+  if (bytes.length > MAX_ATLAS_BYTES) throw new Error('Atlas exceeds 64 MiB without compression.');
+  return bytes;
+}
+
+export async function decodeAtlas(input, { signal } = {}) {
+  cancelled(signal);
+  let bytes = new Uint8Array(input);
+  if (bytes.length > MAX_ATLAS_BYTES) throw new Error('Atlas exceeds 64 MiB.');
+  if (bytes[0] === 31 && bytes[1] === 139) {
+    bytes = await streamBytes(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip')), signal);
+  }
+  if (bytes.length < 8 || bytes.length > MAX_EXPANDED_BYTES ||
+      bytes[0] !== 65 || bytes[1] !== 84 || bytes[2] !== 76 || bytes[3] !== 49) throw new Error('Invalid atlas container.');
+  const length = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(4, true);
+  const start = aligned(8 + length);
+  if (start > bytes.length) throw new Error('Truncated atlas header.');
+  const { data, arrays } = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + length)));
+  for (const { path, type, offset, length: count } of arrays) {
+    const Type = Object.hasOwn(arrayTypes, type) && arrayTypes[type];
+    if (!Type || !Number.isSafeInteger(offset) || offset < 0 || offset % 8 ||
+        !Number.isSafeInteger(count) || count < 0 || start + offset + count * Type.BYTES_PER_ELEMENT > bytes.length ||
+        !Array.isArray(path) || !path.length) throw new Error('Invalid atlas array.');
+    let parent = data;
+    for (const key of path.slice(0, -1)) {
+      if (!parent || !Object.hasOwn(parent, key)) throw new Error('Invalid atlas array path.');
+      parent = parent[key];
+    }
+    const key = path.at(-1);
+    if (!parent || !Object.hasOwn(parent, key) || parent[key] !== null) throw new Error('Invalid atlas array path.');
+    // Own each array independently, as the worker transport/IndexedDB do today.
+    Object.defineProperty(parent, key, { value: new Type(bytes.buffer.slice(bytes.byteOffset + start + offset,
+      bytes.byteOffset + start + offset + count * Type.BYTES_PER_ELEMENT)), enumerable: true, writable: true, configurable: true });
+  }
+  cancelled(signal);
+  return data;
+}

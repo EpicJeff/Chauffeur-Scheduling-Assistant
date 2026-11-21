@@ -127,7 +127,10 @@ await test('execute the shader lookup and light multiplier beneath and outside a
  const body=name=>CLOUD_SHADOW_GLSL.match(new RegExp('float '+name+'\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}'))[1];
  const grid=Array.from({length:36},(_,i)=>Array.from({length:4},(_,c)=>(i*4+c)%12<6?.2:1));
  const bounds={x:-60,y:-60,z:1/120,w:1};
- const cell=new Function('p','cloudShadowGrid',body('cloudShadowCell').replace('int index=p.y*12+p.x, block=index/4;','const index=p.y*12+p.x, block=Math.trunc(index/4);'));
+ const cellBody=body('cloudShadowCell').replace('int index=p.y*12+p.x, block=index/4;','const index=p.y*12+p.x, block=Math.trunc(index/4);');
+ const dot=(a,b)=>a.reduce((sum,v,i)=>sum+v*b[i],0);
+ const cell=new Function('p','cloudShadowGrid','dot','vec4','equal','ivec4',cellBody);
+ const readCell=p=>cell(p,grid,dot,v=>v.map(Number),(a,b)=>a.map((v,i)=>v===b[i]),(...v)=>v.length===1?Array(4).fill(v[0]):v);
  const atBody=body('cloudShadowAt')
   .replace('vec2 p=clamp((world-cloudShadowBounds.xy)*cloudShadowBounds.z,0.0,1.0)*11.0;',
    'const p={x:clamp((world.x-cloudShadowBounds.x)*cloudShadowBounds.z)*11,y:clamp((world.y-cloudShadowBounds.y)*cloudShadowBounds.z)*11};')
@@ -135,16 +138,24 @@ await test('execute the shader lookup and light multiplier beneath and outside a
    'const a={x:Math.floor(p.x),y:Math.floor(p.y)},b={x:Math.min(a.x+1,11),y:Math.min(a.y+1,11)},f={x:p.x-a.x,y:p.y-a.y};')
   .replace('float t=','const t=');
  const lookup=new Function('world','cloudShadowBounds','cloudShadowCell','ivec2','mix','min','clamp',atBody);
- const sample=world=>lookup(world,bounds,p=>cell(p,grid),(x,y)=>({x,y}),(a,b,t)=>a*(1-t)+b*t,Math.min,v=>Math.max(0,Math.min(1,v)));
- const forLight=new Function('direction','cloudShadowLight','vCloudWorld','dot','cloudShadowAt',body('cloudShadowForLight')
+ const sample=world=>lookup(world,bounds,readCell,(x,y)=>({x,y}),(a,b,t)=>a*(1-t)+b*t,Math.min,v=>Math.max(0,Math.min(1,v)));
+ const forLight=new Function('direction','cloudShadowLight','cloudShadowValue','dot',body('cloudShadowForLight')
   .replace('vec3 luminary=mat3(viewMatrix)*cloudShadowLight;','const luminary=cloudShadowLight;'));
- const dot=(a,b)=>a.reduce((sum,v,i)=>sum+v*b[i],0),sun=[0,1,0];
+ const sun=[0,1,0];
+ // Execute the installed pre-loop assignment, then reuse it for every light.
+ const cacheStatement=THREE.ShaderChunk.lights_fragment_begin.match(/cloudShadowValue=cloudShadowAt\(vCloudWorld.xz\);/)[0];
+ const cached=new Function('cloudShadowAt','vCloudWorld','let cloudShadowValue;'+cacheStatement+'return cloudShadowValue;');
+ assert.equal((THREE.ShaderChunk.lights_fragment_begin.match(/cloudShadowAt\(/g)||[]).length,1);
+ assert.ok(!body('cloudShadowForLight').includes('cloudShadowAt('));
+ for(let y=0;y<12;y++)for(let x=0;x<12;x++)assert.equal(readCell({x,y}),grid[Math.trunc((y*12+x)/4)][(y*12+x)%4]);
  const statement=THREE.ShaderChunk.lights_fragment_begin.match(/directLight.color \*= cloudShadowForLight\(directLight.direction\);/)[0];
  const shade=new Function('directLight','cloudShadowForLight',statement+'return directLight.color;');
  for(const [x,expected]of [[-40,.2],[40,1],[0,.6],[-1e5,.2],[1e5,1]]) {
   assert.ok(Math.abs(sample({x,y:0})-expected)<1e-12,'packed bilinear lookup');
-  assert.ok(Math.abs(shade({direction:sun,color:7},d=>forLight(d,sun,{xz:{x,y:0}},dot,sample))-7*expected)<1e-12,'sun term scaled once');
-  assert.equal(shade({direction:[1,0,0],color:3},d=>forLight(d,sun,{xz:{x,y:0}},dot,sample)),3,'other directional light unchanged');
+  let calls=0;const value=cached(world=>{calls++;return sample(world);},{xz:{x,y:0}});
+  assert.ok(Math.abs(shade({direction:sun,color:7},d=>forLight(d,sun,value,dot))-7*expected)<1e-12,'sun term scaled once');
+  assert.equal(shade({direction:[1,0,0],color:3},d=>forLight(d,sun,value,dot)),3,'other directional light unchanged');
+  assert.equal(calls,1,'one lookup shared by both directional lights');
  }
  bounds.w=0;assert.equal(sample({x:-40,y:0}),1,'clear uniform bypass');shadow.dispose();
 });
@@ -152,14 +163,15 @@ await test('packed grid is bilinear, bounded, throttled, drifting and selects mo
  const scene=new THREE.Scene(),noise=createCloudNoise({size:16,detail:8}),uniforms=createCloudUniforms(noise),cloud={noise,uniforms};
  const shadow=installCloudShadow(scene,cloud);shadow.set({centre:[40,-20],radius:80});
  uniforms.cloudCoverage.value=.7;uniforms.cloudType.value=1;uniforms.cloudFade.value=1;
- assert.equal(shadow.frame(0),true);const first=shadow.uniforms.cloudShadowGrid.value.flatMap(v=>v.toArray());
+ assert.equal(shadow.frame(0),true);assert.ok(shadow.uniforms.cloudShadowGrid.value instanceof Float32Array,'flat: uniform4fv takes it as it stands');
+ const first=Array.from(shadow.uniforms.cloudShadowGrid.value);
  assert.equal(first.length,144);assert.ok(new Set(first.map(v=>v.toFixed(4))).size>1);
  const b=shadow.uniforms.cloudShadowBounds.value;
  for(let z=0;z<12;z++)for(let x=0;x<12;x++)assert.ok(Math.abs(shadow.sample(b.x+x/11/b.z,b.y+z/11/b.z)-first[z*12+x])<1e-6);
  assert.ok(Math.abs(shadow.centre()-(first[65]+first[66]+first[77]+first[78])/4)<1e-6);
  assert.equal(shadow.sample(-1e9,-1e9),first[0]);assert.equal(shadow.sample(1e9,1e9),first[143]);
  uniforms.cloudOffset.value.x=4000;assert.equal(shadow.frame(.249),false);assert.equal(shadow.frame(.25),true);
- assert.notDeepEqual(shadow.uniforms.cloudShadowGrid.value.flatMap(v=>v.toArray()),first,'wind offset changes the field');
+ assert.notDeepEqual(Array.from(shadow.uniforms.cloudShadowGrid.value),first,'wind offset changes the field');
  shadow.set({sunDir:[0,-1,0],moonDir:[.6,.8,0]});shadow.frame(.5);
  assert.deepEqual(shadow.uniforms.cloudShadowLight.value.toArray(),[.6,.8,0]);
  uniforms.cloudCoverage.value=0;shadow.frame(.51);assert.equal(shadow.centre(),1);assert.equal(b.w,0);

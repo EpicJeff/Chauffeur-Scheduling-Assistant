@@ -78,7 +78,9 @@ export function animateCamera(view, target, distance, zoom = view.camera.zoom, d
     const t = Math.min(1, (performance.now() - started) / LEVEL_TUNING.easeMs), ease = t * t * (3 - 2 * t);
     camera.position.lerpVectors(from, to, ease); controls.target.lerpVectors(start, target, ease);
     camera.zoom = startZoom + (zoom - startZoom) * ease; camera.updateProjectionMatrix(); camera.lookAt(controls.target);
-    view.render();
+    // The twin's animation loop draws this pose; rendering here too drew every
+    // transition frame twice (owner trace 2026-11-20). Render only without a loop.
+    if (!view.looping) view.render();
     if (t < 1) requestAnimationFrame(step);
     else { view.cameraTransition = false; controls.update?.(); done(); }
   };

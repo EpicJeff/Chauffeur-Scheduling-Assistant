@@ -24,6 +24,19 @@ async function mounted(list=[building('main'),building('annex',[50,0],false)]){
  return mountTwin(host,{plan:{buildings:list,site:{},materials:{}},kit:{materials:{}},tier:'low',bake:false});
 }
 const pose=v=>({position:v.camera.position.toArray(),target:v.controls.target.toArray(),state:v.levels.snapshot()});
+await test('a camera transition draws through the running loop, not a second render per step',async()=>{
+ // Owner trace 2026-11-20: animateCamera rendered every eased step while the twin's own
+ // loop rendered the same frame (levels.js step ~10% of the frame while moving).
+ const {animateCamera}=await import(file('static/twin/levels.js'));
+ const camera=new T.PerspectiveCamera(),controls={target:new T.Vector3()};camera.position.set(10,10,10);
+ for(const looping of [true,false]){
+  let renders=0,done=0;const view={camera,controls,looping,render(){renders++;}};
+  animateCamera(view,new T.Vector3(1,0,1),5,1,()=>{done++;});
+  for(let i=0;i<4;i++){clock+=C.easeMs/3;tick();}
+  assert.equal(done,1,'the ease lands');assert.equal(view.cameraTransition,false);
+  if(looping)assert.equal(renders,0,'the loop draws each step');else assert.ok(renders>=2,'without a loop each step renders, as before: '+renders);
+ }
+});
 await test('mounted transitions both directions and top-down blends inside the ease',async()=>{
  const v=await mounted();try{
   const l=v.levels;assert.equal(l.snapshot().level,'house');assert.equal(v.controls.enablePan,false);

@@ -290,10 +290,12 @@ def _roof(building, notes):
         section = _lookup(sections, extension.get('section')) if isinstance(extension, dict) else None
         if (isinstance(extension, dict) and section is None and extension.get('state') == 'ghost'
                 and extension.get('why') and _point(extension.get('position'))
-                and extension.get('kind') == 'awning'
-                and all(_number(extension.get(k)) for k in ('x0', 'x1', 'depth', 'pitch', 'eave'))
-                and extension['x0'] < extension['x1'] and extension['depth'] > 0
-                and 0 < extension['pitch'] <= 24):
+                and _number(extension.get('pitch')) and 0 < extension['pitch'] <= 24
+                and (extension.get('kind') == 'awning'
+                     and all(_number(extension.get(k)) for k in ('x0', 'x1', 'depth', 'eave'))
+                     and extension['x0'] < extension['x1'] and extension['depth'] > 0
+                     or extension.get('kind') == 'shed_continuation' and _number(extension.get('to_x'))
+                     and _numeric_fields(extension, ('overhang',)))):
             extensions.append(extension)
             continue
         valid = section is not None

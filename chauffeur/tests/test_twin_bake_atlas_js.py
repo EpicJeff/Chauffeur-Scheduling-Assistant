@@ -539,7 +539,7 @@ def scenario_texel_density_matches_world_size():
     check(3.0 < high['room']['interiorRectArea'] / d['room']['interiorRectArea'] < 4.6,
           'interior density 8 uses about four times the texels of density 4')
     check(high['room']['outdoorRectArea'] == d['room']['outdoorRectArea'],
-          'outdoor density does not follow the room density (building outside up to 2/ft, yard 1/ft)')
+          'outdoor density does not follow the room density (building outside and yard surfaces up to 4/ft, ground 1/ft)')
 
 
 def scenario_every_interior_face_has_uv3():
@@ -691,9 +691,9 @@ def scenario_memory_stays_bounded():
     banks = 1 + max(x['bank'] for x in placed.values())
     check(banks == 3, ('six kitchen lights take three two-channel banks; no room needs a fourth', banks))
     pages = s['room']['pages']
-    # Building outsides bake above the yard's 1/ft since 2026-11-14 (2/ft as a shadowmask; 4/ft
-    # in v2.499.861): with their thin-chart seeds this house takes two pages, not one, so the
-    # bound rose from four RG pages to six (2048 BC5 with mips, about 5.3 MB a page).
+    # Building outsides bake above the ground's 1/ft since 2026-11-14 (4/ft again since
+    # v2.499.964, with the yard's hard surfaces): with their thin-chart seeds this house takes
+    # two pages, not one, so the bound is six RG pages (2048 BC5 with mips, about 5.3 MB a page).
     check(pages * banks <= 6, ('room-light pages x banks stays within six 2048 RG pages', pages, banks))
     check(s['key'] == main_run()[DEFAULT]['key'] and layout(s) == layout(main_run()[DEFAULT]),
           'forty light fixtures change no atlas')

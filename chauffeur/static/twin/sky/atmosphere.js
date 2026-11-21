@@ -209,7 +209,7 @@ export function createSky(renderer, {tier='low',clouds=null} = {}) {
   // Shells are at 40/60m, inside even the smallest house reflection camera.
   const camera=new THREE.CubeCamera(.1,100,target), pmrem=new THREE.PMREMGenerator(renderer);
   let environmentTarget=null, previous=null, disposed=false;
-  let pendingFace=null,lastCloudRefresh=-Infinity,frameSeconds=0;
+  let pendingFace=null,pendingDrift=false,lastCloudRefresh=-Infinity,frameSeconds=0;
   let moonTexture=null, assetPromise=null;
   function update(input={}) {
     if (disposed) return false;
@@ -251,6 +251,7 @@ export function createSky(renderer, {tier='low',clouds=null} = {}) {
       uniforms.cloudViewEnabled.value=1;cubeBodies.setCloudsEnabled(true);cubeStars.setCloudsEnabled(true);
       // First draw allocates the fixed PMREM while noise is still unavailable.
       // Later cloudy refreshes submit one face per animation frame.
+      pendingDrift=false; // Time, look and asset updates always refresh probes promptly.
       if(previous&&clouds?.active){pendingFace=0;lastCloudRefresh=frameSeconds;}
       else {pendingFace=null;camera.update(renderer,scene);}
       // r187 keys envMapSize/MaxLod/PMREM: retain this target and its mip layout forever.
@@ -311,7 +312,10 @@ export function createSky(renderer, {tier='low',clouds=null} = {}) {
       frameSeconds=seconds;
       const fadeChanged=Math.abs(clouds.uniforms.cloudFade.value-cloudUniforms.cloudFade.value)>.05;
       const stateChanged=clouds.uniforms.cloudCoverage.value!==cloudUniforms.cloudCoverage.value||clouds.uniforms.cloudType.value!==cloudUniforms.cloudType.value;
+      // Weather/fade changes during a drift capture also need prompt probes.
+      if(stateChanged||fadeChanged)pendingDrift=false;
       if(pendingFace===null&&(stateChanged||fadeChanged||(clouds.active&&seconds-lastCloudRefresh>=4))) {
+        pendingDrift=!stateChanged&&!fadeChanged;
         snapshotClouds();pendingFace=0;lastCloudRefresh=seconds;
       }
       if(pendingFace===null)return false;
@@ -322,7 +326,8 @@ export function createSky(renderer, {tier='low',clouds=null} = {}) {
         camera.updateMatrixWorld();renderer.setRenderTarget(target,pendingFace);renderer.render(scene,camera.children[pendingFace]);
         if(++pendingFace===6) {
           pendingFace=null;target.texture.needsPMREMUpdate=true;
-          environmentTarget=pmrem.fromCubemap(target.texture,environmentTarget);return true;
+          // false: unfinished; true: time/weather/fade; 'drift': periodic clouds only.
+          environmentTarget=pmrem.fromCubemap(target.texture,environmentTarget);return pendingDrift ? 'drift' : true;
         }
         return false;
       } finally {renderer.setRenderTarget(...saved);renderer.xr.enabled=xr;renderer.autoClear=auto;Object.assign(renderer.info.render,info);}

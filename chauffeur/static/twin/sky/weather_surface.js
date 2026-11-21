@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bindEnvironmentMaterial } from './stage_haze.js';
+import { bindEnvironmentMaterial, oncePerFrame, frameObjects } from './stage_haze.js';
 
 let installed=false;
 const unit=v=>Number.isFinite(v)?Math.max(0,Math.min(1,v)):0;
@@ -112,8 +112,13 @@ vec2 weatherRipple(vec2 world) {
   #ifdef WEATHER_SURFACE_POOL
     clock=waterTime;
   #endif
-  for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++) {
-    vec2 id=cell+vec2(float(x),float(y));
+  // Give FXC a runtime trip count instead of nine explicit impact bodies.
+  // The four-cell stencil visits the same middle cells in y/x order.
+  int impacts=int(count);
+  for(int impact=0;impact<impacts;impact++) {
+    int width=count==4.0?2:3;
+    int y=impact/width,x=impact-y*width;
+    vec2 id=count==4.0?midCell+vec2(float(x),float(y)):cell+vec2(float(x-1),float(y-1));
     bool mid=id.x>=midCell.x&&id.x<=midCell.x+1.0&&id.y>=midCell.y&&id.y<=midCell.y+1.0;
     if(count==4.0&&!mid)continue;
     vec3 random=weatherRingHash(id);
@@ -236,12 +241,12 @@ vWeatherWorld=(modelMatrix*weatherWorld).xyz;`;
   THREE.ShaderChunk.lights_fragment_maps+='\n#if defined(RE_IndirectSpecular)&&defined(WEATHER_SURFACE_ACTIVE)\nradiance*=weatherHorizonDamp;\n#endif\n';
 }
 
-function patchLit(mode) {
+function patchLit(mode,instanceExposure=false) {
   return shader=>{
     // Never declare twice, whatever wraps this material (owner console 2026-11-19).
     if(shader.vertexShader.includes('attribute float weatherOpen;'))return;
     shader.vertexShader='attribute float weatherOpen;\n'+shader.vertexShader.replace('#include <worldpos_vertex>',
-      '#include <worldpos_vertex>\nvWeatherOpen=weatherOpen;');
+      '#include <worldpos_vertex>\nvWeatherOpen='+(instanceExposure?'instanceColor.r':'weatherOpen')+';');
     shader.fragmentShader='#define WEATHER_SURFACE_ACTIVE\n'+
       (mode==='water'?'#define WEATHER_SURFACE_WATER\n':mode==='submerged'?'#define WEATHER_SURFACE_SUBMERGED\n':mode==='roof'?'#define WEATHER_SURFACE_ROOF\n':mode==='lawn'?'#define WEATHER_SURFACE_LAWN\n':'')+shader.fragmentShader;
   };
@@ -271,10 +276,10 @@ vec3 weatherEffectNormal=vNormal+mat3(viewMatrix)*vec3(weatherSlope.x,0.0,weathe
 export function installWeatherSurface(scene) {
   installChunks();
   const uniforms={weatherSurface:{value:new THREE.Vector4()}};
-  const patches={solid:patchLit('solid'),lawn:patchLit('lawn'),roof:patchLit('roof'),water:patchLit('water'),submerged:patchLit('submerged')};
+  const patches={solid:patchLit('solid'),lawn:patchLit('lawn'),grass:patchLit('lawn',true),roof:patchLit('roof'),water:patchLit('water'),submerged:patchLit('submerged')};
   let disposed=false;
-  function prepare(root=scene) {
-    root.traverse(object=>{for(const material of [].concat(object.material||[])) {
+  function prepare(root) {
+    for(const object of frameObjects(root ?? scene,{fresh:root !== undefined})){for(const material of [].concat(object.material||[])) {
       const lit=material.isMeshStandardMaterial||material.isMeshLambertMaterial||material.isMeshPhongMaterial||material.isMeshToonMaterial;
       const effect=material.isShaderMaterial&&material.uniforms?.light;
       if(!lit&&!effect)continue;
@@ -284,11 +289,12 @@ export function installWeatherSurface(scene) {
       const mode=effect?'effect':material.userData.underwater?'submerged':material.userData.waterSurface||material.userData.litWater?'water'
         :material.name==='roof'||material.userData.materialRole==='roof'?'roof'
         :material.userData.seasonLawn||material.userData.materialRole==='lawn'||material.name==='lawn'?'lawn':'solid';
-      bindEnvironmentMaterial(material,'weather-surface-'+mode+'-1',uniforms,effect?patchEffect:patches[mode]);
-    }});
+      bindEnvironmentMaterial(material,'weather-surface-'+mode+'-1',uniforms,effect?patchEffect:material.userData.grassUniforms?patches.grass:patches[mode]);
+    }}
   }
   const previous=scene.onBeforeRender;
-  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);prepare();};
+  const walk=oncePerFrame(scene,()=>prepare());
+  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);walk();};
   return {uniforms,prepare,
     update(weather={},seconds=0) {
       const u=uniforms.weatherSurface.value;

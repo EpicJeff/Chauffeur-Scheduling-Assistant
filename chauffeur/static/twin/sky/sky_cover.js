@@ -151,18 +151,31 @@ export function createSkyCover(plan={},roofs=new Map()) {
 // instance has its own exposure; regular batches retain one float per vertex.
 export function writeWeatherOpen(root,cover,worldScale=1) {
   root.updateWorldMatrix(true,true);
-  const p=new THREE.Vector3(),n=new THREE.Vector3(),matrix=new THREE.Matrix4(),normal=new THREE.Matrix3();
+  const p=new THREE.Vector3(),n=new THREE.Vector3(),matrix=new THREE.Matrix4(),normal=new THREE.Matrix3(),effective=new THREE.Matrix4();
   root.traverse(o=>{
     if(!o.isMesh||!o.geometry?.attributes.position||o.layers.isEnabled(31))return;
     let g=o.geometry;
-    const transform=[o.instanceMatrix?.version,worldScale,...o.matrixWorld.elements].join(',');
+    const instanceExposure=o.userData.weatherInstanceColor?o.instanceColor:null;
+    // Key on where the vertices actually land: a yard built unparented with
+    // worldScale FT and then adopted under the twin root (scale FT, worldScale 1)
+    // has the same effective transform, so adoption reuses the build's samples
+    // instead of resampling every vertex (owner startup trace 2026-11-20). The
+    // samples themselves are computed exactly as before.
+    effective.makeScale(worldScale,worldScale,worldScale).multiply(o.matrixWorld);
+    // Deeper children multiply in a different order before and after adoption;
+    // ten significant digits absorb that last-bit difference (a miss resamples).
+    const transform=[o.instanceMatrix?.version,...effective.elements.map(v=>+v.toPrecision(10))].join(',');
     const stamp=g.attributes.position.version+':'+transform;
     const previous=written.get(o);
-    if(previous?.geometry===g&&previous.attribute===g.attributes.weatherOpen&&previous.stamp===stamp&&previous.coverKey===cover.key)return;
-    if(owners.has(g)&&owners.get(g)!==o.uuid)g=o.geometry=g.clone();
-    owners.set(g,o.uuid);
-    const count=o.isInstancedMesh?o.count:g.attributes.position.count;
-    let attribute=g.attributes.weatherOpen;
+    if(previous?.geometry===g&&previous.attribute===(instanceExposure||g.attributes.weatherOpen)&&previous.stamp===stamp&&previous.coverKey===cover.key)return;
+    if(!instanceExposure){
+      if(owners.has(g)&&owners.get(g)!==o.uuid)g=o.geometry=g.clone();
+      owners.set(g,o.uuid);
+    }
+    // Grass has a camera-dependent count. Sample its full capacity so moving
+    // closer never exposes an unsampled clump, without cloning blade geometry.
+    const count=instanceExposure?o.instanceMatrix.count:o.isInstancedMesh?o.count:g.attributes.position.count;
+    let attribute=instanceExposure||g.attributes.weatherOpen;
     if(!attribute||attribute.count!==count||!!attribute.isInstancedBufferAttribute!==!!o.isInstancedMesh) {
       attribute=new (o.isInstancedMesh?THREE.InstancedBufferAttribute:THREE.BufferAttribute)(new Float32Array(count),1);
       g.setAttribute('weatherOpen',attribute);

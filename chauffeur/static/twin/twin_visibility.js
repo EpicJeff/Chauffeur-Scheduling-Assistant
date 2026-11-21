@@ -73,7 +73,10 @@ export function createPieceVisibility() {
       }
       if (object.isInstancedMesh && (data.instances || data.instancePiece)) {
         const rows = [];
-        for (let index = 0; index < object.count; index++) {
+        // Grass count grows as the camera approaches. Hide its entire buffer
+        // once so newly submitted clumps retain the editor's pad visibility.
+        const count=data.yardGrass?object.instanceMatrix.count:object.count;
+        for (let index = 0; index < count; index++) {
           const piece = data.instances?.[index] ?? data.instancePiece?.(index);
           if (!piece || !hidden(piece)) continue;
           const matrix = new Matrix4(); object.getMatrixAt(index, matrix); rows.push([index, matrix]);

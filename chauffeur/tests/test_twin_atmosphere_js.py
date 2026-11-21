@@ -92,6 +92,23 @@ await test('real cube and fixed PMREM target update contents without changing ke
     finally {THREE.WebGLCubeRenderTarget.prototype.dispose=release;target.dispose();litMesh.geometry.dispose();litMesh.material.dispose();}
   }
 });
+await test('only_periodic_cloud_refresh_reports_drift_time_weather_and_fade_stay_prompt',async()=>{
+ const {createCloudUniforms}=await import(file('static/twin/sky/clouds.js'));
+ const clouds={active:true,uniforms:createCloudUniforms()},r=new Renderer();
+ clouds.uniforms.cloudCoverage.value=.5;clouds.uniforms.cloudFade.value=1;
+ const sky=createSky(r,{clouds});
+ const complete=seconds=>Array.from({length:6},(_,i)=>sky.frame(seconds+i*.016));
+ try {
+  assert.deepEqual(complete(0),[false,false,false,false,false,'drift']);
+  assert.equal(sky.frame(3.99),false);assert.deepEqual(complete(4),[false,false,false,false,false,'drift']);
+  sky.update({sunDir:[1,1,0],force:true});assert.deepEqual(complete(4.2),[false,false,false,false,false,true],'time-of-day update never counts as drift');
+  clouds.uniforms.cloudCoverage.value=.8;assert.deepEqual(complete(4.4),[false,false,false,false,false,true]);
+  clouds.uniforms.cloudFade.value=.5;assert.deepEqual(complete(4.6),[false,false,false,false,false,true]);
+  assert.equal(sky.frame(8.6),false);clouds.uniforms.cloudType.value=2;
+  assert.deepEqual(Array.from({length:5},(_,i)=>sky.frame(8.62+i*.016)),[false,false,false,false,true],
+    'weather arriving during drift capture promotes completion to immediate');
+ } finally {sky.dispose();}
+});
 finish();
 """
 

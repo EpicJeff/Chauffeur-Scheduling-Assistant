@@ -94,6 +94,16 @@ canLoad = false; ui.sync(); assert.equal(action('Load').disabled, true); count++
 let resolve; window.promptInput = () => new Promise(r => {resolve = r;});
 const first = node('houses-save').click(); await flush(); await node('houses-save').click(); resolve(null); await first; await flush();
 assert.equal(calls.filter(c => c.method === 'POST' && c.path === 'editor/houses').length, 1); count++;
+// Hosted in the editor dialog: the host's Close (closeDialog) must run onClose, once.
+let opened = null, closes = 0, hostCloses = 0;
+const dialogs = {openDialog: (id, options) => { opened = {id, ...options}; }, closeDialog: id => { hostCloses++; opened?.onClose?.(); opened = null; }};
+const onClose = () => closes++;
+mountHouses({history, afterLoad: async () => {}, capture: async () => null, canLoad: () => true, dialogs, onClose, signal: new AbortController().signal});
+await press('editor-houses');
+assert.equal(opened.id, 'houses-panel'); assert.equal(opened.title, 'Houses'); assert.equal(opened.onClose, onClose);
+dialogs.closeDialog(); assert.equal(closes, 1, 'the host Close runs onClose'); count++;
+await press('editor-houses'); await press('houses-close');
+assert.equal(closes, 2, 'the panel Close runs onClose exactly once'); assert.equal(opened, null); count++;
 console.log(`${count}/${count} passed (real Houses panel, API, and Undo)`);
 '''
 

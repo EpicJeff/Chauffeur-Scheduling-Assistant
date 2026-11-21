@@ -24,7 +24,7 @@ import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/
 import { createCloudPass } from './sky/cloud_pass.js';
 import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction, weatherLightingKey } from './sky/weather.js';
 import { installPlantWind } from './sky/wind.js';
-import { installStageHaze } from './sky/stage_haze.js';
+import { installStageHaze, startEnvironmentFrame } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
 import { installWeatherSurface } from './sky/weather_surface.js';
 import { seasonState, createSeasonPreview, installSeasons } from './sky/seasons.js';
@@ -42,6 +42,7 @@ import { mountFrameMeter } from './frame_meter.js';
 import { createPost, EMITTER_GAIN } from './post.js';
 import { createReflectionProbes } from './reflection_probes.js';
 import { createPieceVisibility } from './twin_visibility.js';
+import { freezeViewerMatrices } from './static_matrices.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {}, stage = null } = {}) {
   kit = kit || {};
@@ -190,6 +191,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
   const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
     extras:() => [sky.object, precipitation.group, seasonTouches.group, sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
+  reflections.setMirrorStillHz(stage?.mirror_still_hz ?? 10);
+  reflections.setProbeCloudSeconds(stage?.probe_cloud_s ?? 30);
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
@@ -449,9 +452,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       renderer: renderer3, camera, sun: timeLook?.sunClear ?? 3,
       sunDirection: sun.position.clone().sub(sun.target.position).normalize(),
     });
-    yardGroup?.userData.grass?.update(performance.now() / 1000,view.weather,site.front_bearing_deg ?? 180);
-    plantWind.update(performance.now()/1000,view.weather,site.front_bearing_deg ?? 180);
-    seasons.update(view.season);
+    yardGroup?.userData.grass?.update(performance.now() / 1000,view.weather,site.front_bearing_deg ?? 180,camera);
     weatherSurface.update(view.weather,performance.now()/1000);
     if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces || precipitationCover!==twin?.skyCover){
       seasonTouches.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);
@@ -475,18 +476,30 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       renderer3.shadowMap.needsUpdate = false; sun.shadow.needsUpdate = false;
     }
     renderer3.info.reset();
-    // The pool's mirror image belongs to this frame's camera.
-    if (!state.unlit) {
-      const background=scene.background;
-      try {scene.background=sky.cube;reflections.mirror(camera);}
-      finally {scene.background=background;}
-    }
-    post?.setCamera(camera);
-    // Count only the beauty pass: AO depth and fullscreen draws are extra work,
-    // not extra house geometry. createPost snapshots the RenderPass counters.
+    startEnvironmentFrame(scene);
+    plantWind.update(performance.now()/1000,view.weather,site.front_bearing_deg ?? 180);
+    seasons.update(view.season);
+    // three recomputes every object's world matrix at the start of each render
+    // call; a frame makes five or more (mirror, AO, beauty, transparent, shadow
+    // faces) and nothing moves between them. Owner trace 2026-11-20: 13% of the
+    // frame. Compute once here; the passes reuse it.
+    scene.updateMatrixWorld();
+    const matrixAuto = scene.matrixWorldAutoUpdate;
+    scene.matrixWorldAutoUpdate = false;
     let picture;
-    if (post && !state.unlit) picture = post.render();
-    else { renderer3.render(scene, camera); picture = renderer3.info.render; }
+    try {
+      // The pool's mirror image belongs to this frame's camera.
+      if (!state.unlit) {
+        const background=scene.background;
+        try {scene.background=sky.cube;reflections.mirror(camera);}
+        finally {scene.background=background;}
+      }
+      post?.setCamera(camera);
+      // Count only the beauty pass: AO depth and fullscreen draws are extra work,
+      // not extra house geometry. createPost snapshots the RenderPass counters.
+      if (post && !state.unlit) picture = post.render();
+      else { renderer3.render(scene, camera); picture = renderer3.info.render; }
+    } finally { scene.matrixWorldAutoUpdate = matrixAuto; }
     lastStats = { drawCalls: picture.calls, triangles: picture.triangles, tier, fps };
     if (editFrames.size) {
       let meshes = 0;
@@ -628,7 +641,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     },
     get roofSurfaces() { return twin?.roofSurfaces; },
     render,
-    reflectionsChanged: () => reflections.request(),
+    reflectionsChanged: reason => reason === 'lamp' ? reflections.requestLamp() : reflections.request(),
     setHiddenPieces(ids, kinds) {
       if (!pieceVisibility) return;
       pieceVisibility.set(ids, kinds);
@@ -873,7 +886,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         el.dispatchEvent(new CustomEvent('twintimechange', {detail:state.time}));
       }
     },
+    setMirrorStillHz(hz) { reflections.setMirrorStillHz(hz); render(); },
+    setProbeCloudSeconds(seconds) { reflections.setProbeCloudSeconds(seconds); },
     async setStage(next) {
+      if (next?.mirror_still_hz !== undefined) reflections.setMirrorStillHz(next.mirror_still_hz);
+      if (next?.probe_cloud_s !== undefined) reflections.setProbeCloudSeconds(next.probe_cloud_s);
       if (!next || !Number.isFinite(next.radius) || next.radius < 30 || next.radius > 1000) return;
       const radius = next.radius_override === undefined ? next.radius : next.radius_override;
       if (radius !== null && (!Number.isFinite(radius) || radius < 30 || radius > 1000)) return;
@@ -1391,6 +1408,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       stopDispose();
       yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);
+      freezeViewerMatrices(twin, {editor});
       // A roof edit can reuse the entire yard. Its cover still follows the
       // accepted building geometry, including furniture and pool features.
       if (yardGroup) writeWeatherOpen(yardGroup, twin.skyCover);
@@ -1478,7 +1496,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
-      renderer3.setAnimationLoop(null); observer.disconnect(); controls.dispose();
+      renderer3.setAnimationLoop(null); view.looping = false; observer.disconnect(); controls.dispose();
       clearSheet(); sheetSpec = null;
       restoreSelection();
       restoreFloors();
@@ -1511,6 +1529,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         const releaseViewing = viewing?.dispose({ deferMaterials: true }); viewing = null;
         group.userData.adoptParts?.();
         twin.groups.site.add(group); twin.yardGroup = group; yardGroup = group;
+        freezeViewerMatrices(twin, {editor});
         if (previous) {
           const keep = retained(); previous.removeFromParent();
           previous.userData.releasePlants?.(keep); disposeObject(previous, { keepMaterials: keep });
@@ -1708,11 +1727,15 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     view.ready = false;
     if (disposed) return view;
     view.materialWatcher = watchMaterialCatalogue(view);
+    // Live pushes draw through this loop instead of rendering a second time.
+    view.looping = true;
     renderer3.setAnimationLoop(() => {
       const now = performance.now(), run = probeRun;
       if(!compiling || now-holdSince>=HOLD_MS) {
         clouds.frame(now/1000);
-        if(sky.frame(now/1000))reflections.request();
+        const skyRefresh=sky.frame(now/1000);
+        if(skyRefresh==='drift')reflections.requestSky();
+        else if(skyRefresh)reflections.request();
       }
       try {
       if (run) {

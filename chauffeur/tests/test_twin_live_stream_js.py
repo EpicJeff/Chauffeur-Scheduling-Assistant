@@ -295,6 +295,30 @@ check('pushes_in_one_frame_are_one_update', async () => {
   } finally { t.cleanup(); }
 });
 
+check('a_push_frame_draws_through_the_running_loop_without_a_second_render', async () => {
+  // Owner trace 2026-11-20: each light change rendered the whole scene twice in one
+  // frame (the push flush and the twin's own animation loop).
+  const t = await mount();
+  try {
+    const es = sources.at(-1);
+    let renders = 0;
+    const render = t.view.render.bind(t.view);
+    t.view.render = () => { renders++; render(); };
+    t.view.looping = true;
+    es.emit({entity_id: 'light.counter_lamp', state: {entity_id: 'light.counter_lamp', state: 'on', attributes: {brightness: 90}}});
+    es.emit({entity_id: 'lock.back_door', state: {entity_id: 'lock.back_door', state: 'unlocked', attributes: {}}});
+    await wait(80);
+    assert.equal(renders, 0, `the running loop draws the frame: ${renders} extra renders`);
+    assert.equal(look(t, 'lamp'), 'on', 'the live layer still shows the pushed state');
+    assert.equal(look(t, 'lock'), 'attention', 'for every device pushed in the frame');
+    t.view.looping = false;
+    es.emit({entity_id: 'light.counter_lamp', state: {entity_id: 'light.counter_lamp', state: 'off', attributes: {}}});
+    await wait(80);
+    assert.equal(renders, 1, 'with no loop running the flush renders, as before');
+    assert.deepEqual(escaped, [], 'nothing threw');
+  } finally { t.cleanup(); }
+});
+
 check('a_refused_stream_is_said_once', async () => {
   const warned = [], warn = console.warn;
   console.warn = (...args) => warned.push(args.join(' '));

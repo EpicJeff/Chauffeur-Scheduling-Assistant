@@ -392,7 +392,7 @@ FOG_JS = r"""() => {
       // warm-up variants whose GL uniforms have never been uploaded.
       const props=v.renderer3.properties.get(m),u=props.uniforms;
       if(!props.currentProgram||!u?.stageRing||!u.stageRadius)continue;
-      rows.push({material:m.name,k:u.stageRing.value[0].w,radius:u.stageRadius.value});
+      rows.push({material:m.name,k:u.stageRing.value[3],radius:u.stageRadius.value});
     }
   });return rows;
 }"""

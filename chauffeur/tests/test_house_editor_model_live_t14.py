@@ -266,7 +266,11 @@ def _is(kind, pid):
 
 def _exterior(page):
     """All floors, in a perspective camera that picks roofs."""
-    page.click('[data-editor-camera="orbit"]')
+    # The camera buttons live in the View menu since the editor UI overhaul.
+    if not page.locator('#editor-view-menu').evaluate('m => m.open'):
+        page.click('#editor-view-menu > summary')
+    page.locator('#editor-view-menu #editor-cameras').get_by_role('button', name='Orbit', exact=True).click()
+    page.click('#editor-view-menu > summary')
     H.settle(page)
     H.all_floors(page)
 
