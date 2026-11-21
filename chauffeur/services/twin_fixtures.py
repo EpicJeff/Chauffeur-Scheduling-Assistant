@@ -862,9 +862,16 @@ def _anchor_reference(model, fixture, point):
     return reference
 
 
-def _follow_roof_anchor(before, after, fixture, anchor, index, old_frame, new_frame):
+def _follow_roof_anchor(before, after, fixture, anchor, index, old_frame, new_frame, cache=None):
     """Project roof/zone path points onto their changed plane in the same edit."""
     from services import twin_solar, twin_model_roofs
+    cache = {} if cache is None else cache
+    def faces_of(side, b, geometry):
+        # One face list per building and side per edit, not per anchor point.
+        key = ('roof-faces', side, b['id'])
+        if key not in cache:
+            cache[key] = twin_solar.faces(geometry)
+        return cache[key]
     host = anchor['host']
     kind = host['kind']
     if kind not in ('roof', 'solar_zone') or old_frame is None or new_frame is None:
@@ -891,7 +898,7 @@ def _follow_roof_anchor(before, after, fixture, anchor, index, old_frame, new_fr
     # For a roof/zone the anchor's local point is in building coordinates.
     point = anchor['local']
     rid = old_piece['roof'] if kind == 'solar_zone' else old_piece['id']
-    candidates = [f for f in twin_solar.faces(old_geometry) if f['roof'] == rid
+    candidates = [f for f in faces_of('old', old_b, old_geometry) if f['roof'] == rid
                   and (kind != 'solar_zone' or all(abs(a-b) < twin_solar.EPS
                        for a, b in zip(f['plane'], old_piece['plane'])))]
     if not candidates:
@@ -914,7 +921,7 @@ def _follow_roof_anchor(before, after, fixture, anchor, index, old_frame, new_fr
     uv = twin_solar.project(old_face['plane'], point[:2])
     zone = dict(roof=rid, plane=old_face['plane'], rect=[uv[0]-.5, uv[1]-.5, uv[0]+.5, uv[1]+.5])
     new_face = twin_solar.matching_face(old_face, zone,
-        [f for f in twin_solar.faces(new_geometry) if contains(f, target)])
+        [f for f in faces_of('new', new_b, new_geometry) if contains(f, target)])
     if new_face is None:
         raise ValueError('That moves a roof attachment off its roof plane; move or delete it first.')
     clearance = point[2]-(old_face['plane'][0]*point[0]+old_face['plane'][1]*point[1]+old_face['plane'][2])
@@ -935,7 +942,7 @@ def _follow_anchors(before, after, fixture, cache):
         if key not in cache:
             cache[key] = _anchor_frame(before, host), _anchor_frame(after, host)
         old, new = cache[key]
-        if _follow_roof_anchor(before, after, fixture, anchor, i, old, new):
+        if _follow_roof_anchor(before, after, fixture, anchor, i, old, new, cache):
             continue
         if old is None or new is None or old[0] != new[0]:
             fixture['anchors'][i] = None

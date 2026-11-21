@@ -774,15 +774,6 @@ def _follow_dormers(building, before):
         edge = edge_of(roof, dormer.get('edge'))
         if edge is not None:
             length = math.dist(roof['area'][edge], roof['area'][(edge + 1) % len(roof['area'])])
-            old = before['roofs'].get(dormer.get('roof'))
-            if old and dormer.get('state') != 'ghost' and edge_of(old, edge) is not None:
-                old_length = math.dist(old['area'][edge], old['area'][(edge+1) % len(old['area'])])
-                if abs(length-old_length) > _EPS:
-                    width = dormer['width']+length-old_length
-                    if width <= _EPS:
-                        raise Refused('That leaves the dormer too small; resize or delete it first.')
-                    dormer['at'] += (length-old_length)/2
-                    dormer['width'] = width
             dormer['at'] = max(0, min(length, dormer['at']))
             continue
         old = before['roofs'].get(dormer.get('roof'))
@@ -1439,6 +1430,8 @@ def _follow_roof_points(building, previous):
             a, b = roofs._segments(old['area'])[edge]
             c, d = roofs._segments(new['area'])[edge]
             length, old_length = math.dist(c, d), math.dist(a, b)
+            if length <= _EPS or old_length <= _EPS:
+                raise Refused(f'That collapses the roof edge under {old_piece.get("name") or old_piece["id"]}; move or delete it first.')
             at = host['at']
             if math.dist([c[i]-a[i] for i in (0, 1)], [d[i]-b[i] for i in (0, 1)]) > _EPS:
                 point = [a[i]+(b[i]-a[i])*at/old_length for i in (0, 1)]
@@ -1449,6 +1442,17 @@ def _follow_roof_points(building, previous):
                 hosts._clear_flags(building, piece)
                 hosts._clear_ghost(piece)
             piece['host']['at'] = at
+
+
+def _roof_words(roof, building):
+    """'the South roof', or 'the main floor roof' for the usual unnamed section."""
+    if not roof:
+        return 'its roof'
+    if roof.get('name'):
+        return f'the {roof["name"]}'
+    from services.twin_edit import _floor_name
+    level = next((l for l in building.get('levels', []) if l['id'] == roof.get('level')), None)
+    return f'the {_floor_name(level, building)} roof' if level else 'its roof'
 
 
 def solar_clear(building, previous):
@@ -1463,8 +1467,8 @@ def solar_clear(building, previous):
         current = next((z for z in building.get('solar_zones', []) if z['id'] == zone['id']), None)
         if not current or zone.get('state') == 'ghost':
             continue
-        roof = next((r for r in previous['roofs'] if r['id'] == zone['roof']), {})
-        name = roof.get('name') or roof.get('label') or zone['roof']
+        roof = next((r for r in previous['roofs'] if r['id'] == zone['roof']), None)
+        name = _roof_words(roof, previous)
         too_small = f'That leaves the solar zone on {name} too small; resize or delete it first.'
         source = [f for f in old_faces if f['roof'] == zone['roof'] and
                   all(abs(a-b) < twin_solar.EPS for a, b in zip(f['plane'], zone['plane']))]
@@ -1498,7 +1502,11 @@ def solar_clear(building, previous):
                     ((i, (rect[i]+rect[i+2]) >= (r[i]+r[i+2])) for i in (0, 1)),
                     key=lambda v: min(rect[v[0]+2], r[v[0]+2])-max(rect[v[0]], r[v[0]]))
                 rect[axis if after else axis+2] = r[axis+2 if after else axis]
+        # Refuse only a zone this edit shrinks below one panel; a zone that was
+        # already narrower than a panel may keep (or grow from) its size.
         w, h = twin_solar.dimensions(current)
+        old = zone['rect']
+        w, h = min(w, old[2]-old[0]), min(h, old[3]-old[1])
         if rect[2]-rect[0] < w-twin_solar.EPS or rect[3]-rect[1] < h-twin_solar.EPS:
             raise Refused(too_small)
         if twin_solar.error(building, current, fitted):

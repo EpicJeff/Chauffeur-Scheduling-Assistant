@@ -104,7 +104,7 @@ class RoofAttachments(unittest.TestCase):
                           panel_width=8, panel_height=4)
             current = self.store.current_id()
             result = self.post(dict(op='move_roof_edge', building='b', roof='r', edge=1, by=-34), 400)
-            self.assertIn('That leaves the solar zone on South roof too small; resize or delete it first.', result['error'])
+            self.assertIn('That leaves the solar zone on the South roof too small; resize or delete it first.', result['error'])
             self.assertEqual(self.store.current_id(), current)
             self.assertEqual(self.store.current_model(), m)
         m = self.seed()
@@ -132,10 +132,12 @@ class RoofAttachments(unittest.TestCase):
         self.assertAlmostEqual(a['rect'][2], 22)
         self.assertAlmostEqual(b['rect'][0], 22)
         self.assertValid(m)
-        # A later zone with a large minimum cannot be squeezed into the remainder.
-        m['buildings'][0]['solar_zones'][1].update(panel_width=32, panel_height=10, orientation='landscape')
+        # A later zone that holds one 20 ft panel (26 ft wide now) refuses an
+        # edit that would leave it 18 ft wide. A zone already narrower than its
+        # panel is not refused for edits that keep its size (separate test).
+        m['buildings'][0]['solar_zones'][1].update(panel_width=20, panel_height=10, orientation='landscape')
         self.load(m); saved = self.store.current_model()
-        result = self.post(dict(op='move_roof_edge', building='b', roof='r', edge=1, by=4), 400)
+        result = self.post(dict(op='move_roof_edge', building='b', roof='r', edge=1, by=-10), 400)
         self.assertIn('too small', result['error'])
         self.assertEqual(self.store.current_model(), saved)
 
@@ -252,13 +254,44 @@ class RoofAttachments(unittest.TestCase):
             if status == 400: self.assertIn('too small',result['error'])
             else: self.assertValid(result['model'])
 
-    def test_dormer_width_docks_to_eave_ends(self):
+    def test_dormer_keeps_its_size_when_the_eave_grows(self):
+        # Dormers already followed roof edits before this work; their width is
+        # the person's, not the roof's (review 2026-11-21: no unasked change).
         self.load(house())
         self.post(dict(op='add_dormer', building='b', roof='r', edge=0, at=20, width=8, pitch=6))
-        result = self.post(dict(op='move_roof_edge', building='b', roof='r', edge=1, by=3))
+        result = self.post(dict(op='move_roof_edge', building='b', roof='r', edge=1, by=20))
         d = result['model']['buildings'][0]['dormers'][0]
-        self.assertAlmostEqual(d['width'], 11)
-        self.assertAlmostEqual(d['at'], 21.5)
+        self.assertAlmostEqual(d['width'], 8)
+        self.assertAlmostEqual(d['at'], 20)
+
+    def test_growing_a_roof_never_refuses_an_existing_sub_panel_zone(self):
+        # A zone already narrower than one panel (add_solar_zone allows it) must
+        # not block an edit that does not shrink it.
+        for rect in ([2, 2, 22, 6], [2, 2, 3, 3]):
+            self.seed(house('flat', 0), rect=rect)
+            m = self.post(dict(op='move_roof_edge', building='b', roof='r', edge=1, by=3))['model']
+            self.assertValid(m)
+            m = self.post(dict(op='set', building='b', id='r', field='overhang', value=1))['model']
+            self.assertValid(m)
+            self.assertEqual(len(m['buildings'][0]['solar_zones']), 1)
+
+    def test_unnamed_roof_refusal_names_the_floor_not_the_id(self):
+        m = house('flat', 0)
+        m['buildings'][0]['roofs'][0].pop('name', None)
+        self.seed(m, orientation='portrait', panel_width=8, panel_height=4)
+        result = self.post(dict(op='move_roof_edge', building='b', roof='r', edge=1, by=-34), 400)
+        self.assertIn('too small', result['error'])
+        self.assertNotIn(' r ', result['error'])
+        self.assertRegex(result['error'], r'on the .+ roof too small')
+
+    def test_new_dormer_under_a_zone_keeps_the_widest_strip(self):
+        m = self.seed()
+        z0 = m['buildings'][0]['solar_zones'][0]['rect']
+        m = self.post(dict(op='add_dormer', building='b', roof='r', edge=0, at=10, width=6, pitch=6))['model']
+        z = m['buildings'][0]['solar_zones'][0]['rect']
+        # A full-width strip past the dormer beats the half of the roof beside it.
+        self.assertAlmostEqual(z[2]-z[0], z0[2]-z0[0], places=5)
+        self.assertValid(m)
 
     def test_roof_and_solar_path_anchors_project_and_refuse_off_plane(self):
         from services import twin_fixtures as fixtures

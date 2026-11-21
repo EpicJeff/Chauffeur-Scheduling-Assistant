@@ -272,8 +272,13 @@ def fit_inside(face, rect, zone):
         # a hull candidate over a real notch, hole or a higher roof.
         candidates = [fit_inside({'polygon':p},rect,zone) for p in [face['polygon'],*face['polygons']]]
         candidates = [r for r in candidates if r is not None and covered(r)]
+        # A strip across seams (beside a new dormer, say) can hold more panels
+        # than any single convex piece, so it always competes.
+        union = _fit_union(face,rect,zone,covered)
+        if union is not None:
+            candidates.append(union)
         return (max(candidates,key=lambda r:(capacity({**zone,'rect':r}),(r[2]-r[0])*(r[3]-r[1])))
-                if candidates else _fit_union(face,rect,zone,covered))
+                if candidates else None)
     lines = list(_boundaries(face))
     if all(sum(n[i]*p[i] for i in (0, 1)) <= c+EPS
            for n, c, _, _ in lines for p in rectangle(rect)):
