@@ -24,15 +24,15 @@ Hooks the page must give under ?test=1 (beyond the real-lights ones):
       baking  true while a bake run has work left (also while paused);
       paused  true while that work waits for the person to stop (pointer down or
               camera moving, then 2 s still);
-      done, total  this run's lights baked and to bake (0, 0 when idle);
+      done, total  completed lights and all lights for the atlas, retained when idle;
       baked   every id this page has baked since it opened, in order: device ids,
       stale   device ids whose bake is missing or out of date for `key`.
   window.__twin.bake.fresh() -> device ids drawn from a loaded bake right now.
   window.__twin.live.lights() rows carry baked: true for a light drawn from its
       bake (it is then real: false and holds no pool PointLight).
-The twin's own controls on the desk: a button named 'Bake lighting now', and
-while a run works, visible text 'Baking lights {n} of {m}' (m = total, n the
-light at work). The wall shows neither.
+The twin's own controls on the desk: a button named 'Re-bake all lighting', and
+while a run works, visible text 'Baking lights {n} of {m}' (m = all lights, n
+the completed lights, including those saved before this run). The wall shows neither.
 
 Where bakes live: services.twin_bakes under twin_store.DATA_DIR/bakes/<key>/:
 numbered page files (KTX2 bytes, Ruling B4; the file name's stem is the page
@@ -70,7 +70,7 @@ BAKE_S = 900.0
 KEY_RE = re.compile(r'^[0-9a-f]{16,64}$')
 KTX2_MAGIC = bytes([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a])
 PROGRESS = re.compile(r'Baking lights (\d+) of (\d+)')
-BAKE_NOW = 'Bake lighting now'
+BAKE_NOW = 'Re-bake all lighting'
 
 NEAR_LAMP = [(13.4, 6.2), (11.2, 6.3)]           # about 1.5 ft from the Counter lamp, clear of its bulb
 WINDOW = (0.0, 9.5, 4.75)                         # the Kitchen's west window (x 0, y 3.5-14.17, sill 1.5, head 8)
@@ -576,7 +576,8 @@ def scenario_pi_tier_draws_baked_lights():
     from services import twin_bakes
     m = stored_manifest(key)
     m['lights'].pop('dev-changing-light', None)
-    twin_bakes.save_manifest(key, m)
+    twin_bakes.save_manifest(key, m, 'live-test')
+    twin_bakes.lease(key, 'live-test', 'release')
     try:
         with s.browser(launch_args=L.GPU_ARGS) as page:
             seen = bake_requests(page)
@@ -703,7 +704,8 @@ def scenario_bake_now_rebakes_everything():
         check(button.count() == 1, (f'one visible {BAKE_NOW!r} button on the desk', button.count()))
         button.first.click()
         wait_until(page, lambda: state(page)['baking'], 30, ('the button starts a run', state(page)))
-        check(state(page)['total'] >= len(BAKED), ('the run counts every light', state(page)))
+        # Progress reads 0 of 0 until the baker has read the manifest (bake-resume fix 1).
+        wait_until(page, lambda: state(page)['total'] >= len(BAKED), 30, ('the run counts every light', state(page)))
         st = wait_baked(page)
         again = st['baked'][already:]
         check(set(BAKED) == set(again), ('every room light bakes again', again))
@@ -731,15 +733,15 @@ def scenario_progress_words():
         for _ in range(20):
             if not state(page)['baking']:
                 break
+            st_before = state(page)
             texts = [t for t in words.all_inner_texts() if PROGRESS.search(t)]
             if not texts:
                 break
-            st_before = state(page)
             n, total = map(int, PROGRESS.search(texts[0]).groups())
             st_after = state(page)
             check(total in (st_before['total'], st_after['total']), ('m is the run\'s total', texts[0], st_before, st_after))
-            check(1 <= n <= total, ('1 <= n <= m', texts[0]))
-            check(st_before['done'] <= n <= st_after['done'] + 1, ('n is the light at work', texts[0], st_before, st_after))
+            check(0 <= n <= total, ('completed count is within the whole house total', texts[0]))
+            check(st_before['done'] <= n <= st_after['done'], ('n is the completed light count', texts[0], st_before, st_after))
             seen.add(n)
             page.wait_for_timeout(1500)
         wait_baked(page)
@@ -930,7 +932,8 @@ def scenario_editor_never_bakes_and_says_when_lights_wait():
     clear_bakes()
     behind = 'ab' * 20
     twin_bakes.save_manifest(behind, {'pages': 1, 'lights': {},
-                                      'round': (twin_store.current_id() or 0) + 1000, 'complete': True})
+                                      'round': (twin_store.current_id() or 0) + 1000, 'complete': True}, 'live-test')
+    twin_bakes.lease(behind, 'live-test', 'release')
     with s.browser(launch_args=L.GPU_ARGS) as page:
         seen = bake_requests(page)
         H.signed_in(page)

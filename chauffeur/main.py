@@ -8021,7 +8021,9 @@ async def house_bake_page_post(key: str, page: str, request: Request):
             raise HTTPException(status_code=413, detail='Bake page exceeds 16 MiB.')
         data.extend(chunk)
     try:
-        etag = await asyncio.to_thread(twin_bakes.save_page, key, page, bytes(data))
+        etag = await asyncio.to_thread(twin_bakes.save_page, key, page, bytes(data), request.headers.get('X-Bake-Owner'))
+    except twin_bakes.BakeLeaseConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {'etag': etag}
@@ -8069,10 +8071,12 @@ def house_bake_manifest_get(key: str):
 
 
 @app.put('/api/house/bakes/{key}')
-def house_bake_manifest_put(key: str, body: dict = Body(...)):
+def house_bake_manifest_put(key: str, request: Request, body: dict = Body(...)):
     from services import twin_bakes
     try:
-        return twin_bakes.save_manifest(key, body)
+        return twin_bakes.save_manifest(key, body, request.headers.get('X-Bake-Owner'))
+    except twin_bakes.BakeLeaseConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

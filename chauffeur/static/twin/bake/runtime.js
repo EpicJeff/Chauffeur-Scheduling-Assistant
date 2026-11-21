@@ -8,7 +8,7 @@ import { lightSource } from './reach.js';
 import { resolveEmitters, emitterSignature, lightMarkers } from '../live/emitters.js';
 import { kindOf, exactRects } from './fixture_terms.js';
 import { createBaker, bakeLayout } from './baker.js';
-import { mayBake } from './bake_lock.js';
+import { mayBake, bakeHTTPError } from './bake_lock.js';
 import { workerCodec } from './worker_codec.js';
 import { covered } from './atlas_transport.js';
 import { sameSlots } from './slots.js';
@@ -140,7 +140,11 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   // A fetch that rejects is the network being away, which the poll rides out in silence.
   const offline = new WeakSet();
   const api = async (path, init) => {
-    try { return await request(path, init); }
+    try {
+      const r = await request(path, init);
+      if (r.status === 401) throw bakeHTTPError('Could not access the bake', 401);
+      return r;
+    }
     catch (error) { if (error instanceof TypeError) offline.add(error); throw error; }
   };
   const round = view.plan, halt = new AbortController(), baked = [], fresh = new Set(), tints = new Map();
@@ -148,20 +152,62 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   // Only a parent's High or Max desk bakes (the lease is PARENTS: a child is refused, M4).
   const canBake = ['high', 'max'].includes(view.tier) && !query.has('panel') && !query.has('kiosk');
   const owner = [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
-  let stopped = false, allowed = false, atlas = null, pending = null, layout = requestedLayout || options(8);
+  let stopped = false, allowed = false, permissionChecked = false, atlas = null, pending = null, layout = requestedLayout || options(8);
   let lights = [], lightsKey = '', packed = null, uniforms = null, pages = null;
   let layers = [], bankBase = [], layerOverflow = false, baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
   let dragging = false, stillAt = performance.now(), generation = 0;
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
-  let failure = '', errorReason = null, manifestText = null, initialized = false, mounting = null;
-  function reportError(error) {
-    if (!valid()) return;
-    errorReason=error?.message || String(error);
-    // Say why, so a failure can be reported and fixed (user, 2026-11-13).
-    failure=`Could not bake lighting (${errorReason}). Try Bake lighting now.`;
-    console.error('House lighting bake failed:', error);
+  let failure = '', failureSource = null, errorReason = null, manifestText = null, initialized = false, mounting = null;
+  let authPaused = false, manualWait = false, retryAt = null, retryTimer = null, retryAttempts = 0;
+  let hiddenSince = document.hidden ? Date.now() : null, forceIntent = null;
+  const signOutMessage = 'Home Assistant signed this tab out. Open Chauffeur in Home Assistant (or use your usual app address), then press Resume.';
+  const needsResume = () => allowed || canBake && !permissionChecked;
+  function clearRetry() { clearTimeout(retryTimer); retryTimer = null; retryAt = null; }
+  function clearFailure(source = null) {
+    if (authPaused || layerOverflow || source && failureSource !== source) return;
+    failure = ''; failureSource = null; errorReason = null;
+    if (!allowed) { clearRetry(); retryAttempts = 0; manualWait = false; }
     showProgress();
   }
+  function retryTick() {
+    if (!valid()) { clearRetry(); return; }
+    if (hiddenSince !== null && Date.now() - hiddenSince >= 60000) {
+      clearRetry(); manualWait = true; showProgress(); return;
+    }
+    if (Date.now() >= retryAt && !document.hidden) {
+      clearRetry();
+      (allowed ? run(false) : refresh()).catch(reportError);
+      return;
+    }
+    showProgress(); retryTimer = setTimeout(retryTick, 1000);
+  }
+  function reportError(error, source = 'refresh') {
+    if (!valid()) return;
+    // A poll must not replace a failed step's reason or restart its backoff.
+    if (source === 'refresh' && failureSource === 'bake' && error?.status !== 401) return;
+    failureSource = source;
+    errorReason = error?.message || String(error);
+    authPaused ||= needsResume() && error?.status === 401;
+    clearRetry();
+    failure = authPaused ? signOutMessage : !needsResume()
+      ? `Could not read baked lighting (${errorReason}).` : `Could not bake lighting (${errorReason}).`;
+    if (authPaused) { manualWait = true; baker?.cancel(); pendingForce = pendingRun = false; }
+    else if (!needsResume()) { manualWait = false; }
+    else if (!manualWait && retryAttempts < 8) {
+      const delay = [5000, 15000, 60000][retryAttempts] || 120000;
+      retryAttempts++; retryAt = Date.now() + delay;
+      retryTimer = setTimeout(retryTick, 1000);
+    } else manualWait = true;
+    console.error('House lighting bake failed:', error);
+    showControls(); showProgress();
+  }
+  document.addEventListener?.('visibilitychange', () => {
+    if (hiddenSince !== null && Date.now() - hiddenSince >= 60000 && retryAt !== null) {
+      clearRetry(); manualWait = true; showProgress();
+    }
+    hiddenSince = document.hidden ? Date.now() : null;
+    if (retryAt !== null) { clearTimeout(retryTimer); retryTick(); }
+  }, { signal: halt.signal });
   const pageErrors = new Map(), etags = new Map(), present = new Set(), clones = [], textures = new Set();
   const preservePages = new Set();
   let pageManifest = null;
@@ -178,22 +224,39 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   window.addEventListener('pointerup', up, { signal: halt.signal });
   window.addEventListener('pointercancel', up, { signal: halt.signal });
   controls.addEventListener('start', moved); controls.addEventListener('change', moved); controls.addEventListener('end', moved);
-  let strip = null, status = null, button = null;
+  let strip = null, status = null, button = null, resumeButton = null, legend = null;
   function showControls() {
-    if (!allowed || !host || strip) return;
-    strip = document.createElement('fieldset'); strip.id = 'twin-bake-controls';
-    const legend = document.createElement('legend'); legend.textContent = 'Lighting';
-    button = document.createElement('button'); button.type = 'button'; button.textContent = 'Bake lighting now';
+    const actions = allowed || canBake && !permissionChecked && authPaused;
+    if (!host || !canBake || permissionChecked && !allowed || !actions && !failure) {
+      strip?.remove(); strip = status = button = resumeButton = legend = null;
+      return;
+    }
+    if (!strip) {
+      strip = document.createElement('fieldset'); strip.id = 'twin-bake-controls';
+      legend = document.createElement('legend'); legend.textContent = 'Lighting';
+      status = document.createElement('output'); status.setAttribute('role', 'status'); status.hidden = true;
+      strip.append(legend, status); host.append(strip);
+    }
+    if (!actions) {
+      button?.remove(); resumeButton?.remove(); button = resumeButton = null;
+      return;
+    }
+    if (button) return;
+    button = document.createElement('button'); button.type = 'button'; button.textContent = 'Re-bake all lighting';
     button.disabled = true; button.addEventListener('click', () => controller.now());
-    status = document.createElement('output'); status.setAttribute('role', 'status'); status.hidden = true;
-    strip.append(legend, button, status); host.append(strip);
+    resumeButton = document.createElement('button'); resumeButton.type = 'button'; resumeButton.textContent = 'Resume';
+    resumeButton.id = 'twin-bake-resume'; resumeButton.addEventListener('click', () => controller.resume());
+    strip.replaceChildren(legend, button, resumeButton, status);
   }
   function showProgress() {
+    showControls();
     if (!status) return;
     const message = failure || (pageReason() ? `Could not read baked lighting (${pageReason()}).` : '');
     status.hidden = !(running && progress.total) && !message;
-    status.textContent = message || (running && progress.total ? `Baking lights ${Math.min(progress.total, progress.done + 1)} of ${progress.total}` : '');
-    button.disabled = !atlas || running;
+    status.textContent = message ? message + (retryAt !== null ? ` Retrying in ${Math.max(0, Math.ceil((retryAt - Date.now()) / 1000))} s` : (!authPaused && manualWait ? ' Press Resume to continue.' : ''))
+      : (running && progress.total ? `Baking lights ${progress.done} of ${progress.total}` : '');
+    if (button) button.disabled = !allowed || !atlas || running || authPaused;
+    if (resumeButton) { resumeButton.hidden = !failure || layerOverflow; resumeButton.disabled = running; }
   }
   async function idle() {
     while (valid() && (paused() || !view.ready)) await wait(50);
@@ -527,28 +590,38 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     if (allowed && !running) run();
   }
   async function run(force = false) {
-    if (!allowed || !valid() || !atlas || layerOverflow) return;
+    if (!allowed || !valid() || !atlas || layerOverflow || authPaused || manualWait) return;
     if (running) { pendingForce ||= force; return; }
-    failure = ''; errorReason = null; progress = { done: 0, total: force ? lights.length : stale.length };
+    clearRetry();
+    if (force) forceIntent = [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
+    failure = ''; failureSource = null; errorReason = null; progress = { done: 0, total: 0 };
     running = true; showProgress();
     const mine = generation, input = lightsKey;
     try {
-      baker = createBaker(view, { renderer: view.renderer3, atlas, layout, lights, api, codec, force, owner });
+      baker = createBaker(view, { renderer: view.renderer3, atlas, layout, lights, api, codec, forceRound: forceIntent, owner });
       const initialStale = await baker.staleLights();
+      if (!baker.forcePending()) forceIntent = null;
       if (!valid() || mine !== generation || input !== lightsKey) return;
       stale = initialStale; progress = baker.progress(); showProgress();
       while (valid() && mine === generation && input === lightsKey && !layerOverflow) {
         await idle();
-        const id = await baker.bakeNext(); if (!id || !valid() || mine !== generation || input !== lightsKey) break;
+        const id = await baker.bakeNext();
+        if (!baker.forcePending()) forceIntent = null;
+        if (!id || !valid() || mine !== generation || input !== lightsKey) break;
         baked.push(id); progress = baker.progress(); stale = await baker.staleLights(); showProgress();
         await loadPages();
       }
       // Tell the editor's chip this round's lights are whole (Ruling B15).
-      if (valid() && mine === generation && input === lightsKey && !(await baker.staleLights()).length) await baker.settle();
+      if (valid() && mine === generation && input === lightsKey && !(await baker.staleLights()).length) {
+        await baker.settle(); forceIntent = null; retryAttempts = 0;
+        if (!authPaused) { clearRetry(); manualWait = false; clearFailure(); }
+      }
     } catch (error) {
-      reportError(error);
+      if (baker && !baker.forcePending()) forceIntent = null;
+      if (baker) progress = baker.progress();
+      reportError(error, 'bake');
     } finally {
-      running = false; progress = { done: 0, total: 0 }; showProgress();
+      running = false; showProgress();
       if (valid() && (pendingForce || pendingRun)) { const f = pendingForce; pendingForce = pendingRun = false; run(f); }
     }
   }
@@ -565,20 +638,21 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     initialized = true;
   }
   async function refresh() {
-    if (!valid()) return;
-    if (!initialized) { await initialize(); return; }
+    if (!valid() || needsResume() && (authPaused || manualWait)) return;
+    if (!initialized) { await initialize(); clearFailure('refresh'); return; }
     if (pending) {
       // A wall that opened before any bake applies the atlas when one lands (I1, M1).
       const text = await readManifest(pending.key);
-      if (typeof text === 'string' && valid() && pending) await begin(text);
+      if (typeof text === 'string' && valid() && pending) { await begin(text); clearFailure('refresh'); }
       return;
     }
-    if (!atlas) return;
+    if (!atlas) { clearFailure('refresh'); return; }
     await relight();
     if (!running) await loadPages();
+    clearFailure('refresh');
   }
   const controller = {
-    state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: running && paused(),
+    state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: authPaused || manualWait || running && paused(), retryAt, retryAttempts,
       ...progress, baked: [...baked], stale: [...stale], error: errorReason || pageReason() }),
     // Members of a fresh shared channel are fresh: the live layer asks by its own lamp ids.
     fresh: () => valid() ? [...fresh].flatMap(id => [id, ...(lights.find(l => l.device === id)?.members || [])]) : [], light, idle, refresh,
@@ -628,10 +702,15 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       slots: Object.fromEntries(Object.entries(packed.slots).map(([id, s]) => [id, (s.assignments || []).map(a => [a.chart, a.bank, a.channel])])),
       charts: atlas.room.charts.map(c => ({ id: c.id, room: c.room, page: c.page, rect: c.rect, heightfield: !!c.heightfield, outdoor: !!c.outdoor })),
       banks: packed.banks.map(b => ({ pages: b.pages, charts: b.charts.map(c => [c.id, c.page, c.rect]) })), layers: layers.map(l => [...l]) } : null,
-    now: () => run(true),
+    now: () => { manualWait = false; retryAttempts = 0; return run(true); },
+    resume: async () => {
+      clearRetry(); authPaused = manualWait = false; retryAttempts = 0;
+      try { if (!allowed) await refresh(); else await run(false); }
+      catch (error) { reportError(error); }
+    },
     stop() {
       if (stopped) return;
-      stopped = true; baker?.cancel(); halt.abort(); clearTimeout(timer); codec?.stop(); strip?.remove();
+      stopped = true; clearRetry(); baker?.cancel(); halt.abort(); clearTimeout(timer); codec?.stop(); strip?.remove();
       controls.removeEventListener('start', moved); controls.removeEventListener('change', moved); controls.removeEventListener('end', moved);
       unpatch();
       releaseBakeSource(root);
@@ -660,6 +739,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
         text = await readManifest(pending.key);
       }
       allowed = canBake && await mayBake(api, `api/house/bakes/${pending?.key || atlas.key}`, owner);
+      permissionChecked = true;
       if (!valid()) return;
       showControls();
       failure = ''; errorReason = null;
@@ -673,7 +753,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   const tick = async () => {
     if (!valid()) return;
     // Offline: keep the last complete page and say nothing; the next poll tries again.
-    try { await refresh(); } catch (error) { if (!offline.has(error)) reportError(error); }
+    try { if (!needsResume() || !(authPaused || manualWait)) await refresh(); }
+    catch (error) { if (!offline.has(error)) reportError(error); }
     finally { if (valid() && pollMs > 0) timer = setTimeout(tick, pollMs); }
   };
   (async () => {
