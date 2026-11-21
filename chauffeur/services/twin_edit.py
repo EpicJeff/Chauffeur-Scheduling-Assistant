@@ -655,7 +655,9 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
         if op == 'delete' and kind in ('wall', 'room', 'opening', 'roof'):
             # The legacy delete explicitly removes its dependants. New model
             # deletes retain lost hosts as ghosts, preserving the new UI's path.
-            result, _ = ops.apply(model, translated, _normalized=_normalized)
+            result, words = ops.apply(model, translated, _normalized=_normalized)
+            if kind == 'roof' and words.startswith('Deleted the roof and its solar zones.'):
+                summary = words
             building = next(b for b in result['buildings'] if b['id'] == bid)
             removed = {p['id'] for _, p, b in _removed(flat, legacy) if b['id'] == bid}
             for anchor in building.get('anchors', []):
@@ -753,7 +755,11 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
                 _mark(piece)
         ops._follow_dormers(building, before)
         prior = next(b for b in model['buildings'] if b['id'] == building['id'])
+        ops._follow_roof_points(building, prior)
+        ops._follow_roof_extensions(building, prior)
         ops.solar_clear(building, prior)
+    from services import twin_fixtures
+    twin_fixtures.follow_host_moves(model, result)
     return result, summary
 
 

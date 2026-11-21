@@ -458,14 +458,14 @@ def _delete(building, pid, before):
     for name in ('openings', 'anchors', 'items', 'roofs', 'dormers', 'extensions', 'stairs', 'solar_zones'):
         piece = next((p for p in building.get(name, []) if p['id'] == pid), None)
         if piece is not None:
-            if name == 'roofs' and any(z.get('roof') == pid for z in building.get('solar_zones', [])):
-                raise Refused('Delete the solar zones on this roof before deleting the roof.')
+            deleted_solar = name == 'roofs' and any(z.get('roof') == pid for z in building.get('solar_zones', []))
             if name == 'anchors':
                 release_anchor_device(building, piece, before)
             building[name].remove(piece)
             if name == 'roofs':
+                building['solar_zones'] = [z for z in building.get('solar_zones', []) if z.get('roof') != pid]
                 _follow_dormers(building, before)
-            return
+            return 'Deleted the roof and its solar zones.' if deleted_solar else None
     raise Refused('That piece is missing.')
 
 
@@ -756,6 +756,15 @@ def _follow_dormers(building, before):
         edge = edge_of(roof, dormer.get('edge'))
         if edge is not None:
             length = math.dist(roof['area'][edge], roof['area'][(edge + 1) % len(roof['area'])])
+            old = before['roofs'].get(dormer.get('roof'))
+            if old and dormer.get('state') != 'ghost' and edge_of(old, edge) is not None:
+                old_length = math.dist(old['area'][edge], old['area'][(edge+1) % len(old['area'])])
+                if abs(length-old_length) > _EPS:
+                    width = dormer['width']+length-old_length
+                    if width <= _EPS:
+                        raise Refused('That leaves the dormer too small; resize or delete it first.')
+                    dormer['at'] += (length-old_length)/2
+                    dormer['width'] = width
             dormer['at'] = max(0, min(length, dormer['at']))
             continue
         old = before['roofs'].get(dormer.get('roof'))
@@ -1303,21 +1312,125 @@ def _site_op(model, op, actor):
     return twin_plan.record_compose_overrides(before, model), words
 
 
+def _follow_roof_extensions(building, previous):
+    """A legacy shed continuation keeps its depth from the parent's x1 edge.
+
+    Awnings are wall-hosted; their section link is only a grouping/discovery
+    hint. Their own eave, span and slope stay with the wall, as rendered.
+    """
+    if not building.get('extensions') or building.get('roofs') == previous.get('roofs'):
+        return
+    def sections(b):
+        return {s['id']: s for r in b.get('roofs', []) for s in roofs.to_sections(r)}
+    old, new = sections(previous), sections(building)
+    for extension in building.get('extensions', []):
+        sid = extension.get('section')
+        if sid in old and sid not in new and extension.get('state') != 'ghost':
+            text = 'This roof extension lost its roof; place it again.'
+            r = old[sid]['rect']
+            at = [(r[0]+r[2])/2,(r[1]+r[3])/2]
+            extension.update(state='ghost',why=text,position=at)
+            building['flags'].append(dict(piece=extension['id'],text=text,at=at,level=old[sid].get('level')))
+        if extension.get('kind') == 'shed_continuation' and sid in old and sid in new:
+            extension['to_x'] += new[sid]['rect'][2]-old[sid]['rect'][2]
+
+
+def _follow_roof_points(building, previous):
+    """Roof-edge point hosts follow without silently clamping an off-roof point."""
+    if building.get('roofs') == previous.get('roofs'):
+        return
+    for collection in ('anchors', 'items', 'devices'):
+        for old_piece in previous.get(collection, []):
+            host = old_piece.get('host', {})
+            if 'roof' not in host or old_piece.get('state') == 'ghost':
+                continue
+            old = next((r for r in previous['roofs'] if r['id'] == host['roof']), None)
+            new = next((r for r in building['roofs'] if r['id'] == host['roof']), None)
+            piece = next((p for p in building.get(collection, []) if p['id'] == old_piece['id']), None)
+            if not old or not new or old['area'] == new['area'] or not piece:
+                continue
+            edge = host.get('edge')
+            if type(edge) is not int or not 0 <= edge < min(len(old['area']), len(new['area'])):
+                continue
+            a, b = roofs._segments(old['area'])[edge]
+            c, d = roofs._segments(new['area'])[edge]
+            length, old_length = math.dist(c, d), math.dist(a, b)
+            at = host['at']
+            if math.dist([c[i]-a[i] for i in (0, 1)], [d[i]-b[i] for i in (0, 1)]) > _EPS:
+                point = [a[i]+(b[i]-a[i])*at/old_length for i in (0, 1)]
+                at = sum((point[i]-c[i])*(d[i]-c[i])/length for i in (0, 1))
+            if at < -_EPS or at > length+_EPS:
+                raise Refused(f'That moves {old_piece.get("name") or old_piece["id"]} off its roof; move or delete it first.')
+            if piece.get('state') == 'ghost':
+                hosts._clear_flags(building, piece)
+                hosts._clear_ghost(piece)
+            piece['host']['at'] = at
+
+
 def solar_clear(building, previous):
-    # A structural edit must never silently strand a person's roof objects.
-    if all(building.get(key, []) == previous.get(key, [])
-           for key in ('roofs', 'dormers', 'solar_zones')):
+    # Work on the pre-edit copy; the complete refit is saved with the roof op.
+    if not previous.get('solar_zones') or all(building.get(key, []) == previous.get(key, [])
+           for key in ('roofs', 'dormers')):
         return
     from services import twin_solar
+    old_faces, new_faces = twin_solar.docking_faces(previous), twin_solar.docking_faces(building)
+    fitted = []
     for zone in previous.get('solar_zones', []):
         current = next((z for z in building.get('solar_zones', []) if z['id'] == zone['id']), None)
-        if current and zone.get('state') != 'ghost' and twin_solar.error(building, current, building.get('solar_zones', [])):
-            raise Refused('That would move a solar zone off its roof plane. Move or delete the zone before changing the roof.')
+        if not current or zone.get('state') == 'ghost':
+            continue
+        roof = next((r for r in previous['roofs'] if r['id'] == zone['roof']), {})
+        name = roof.get('name') or roof.get('label') or zone['roof']
+        too_small = f'That leaves the solar zone on {name} too small; resize or delete it first.'
+        source = [f for f in old_faces if f['roof'] == zone['roof'] and
+                  all(abs(a-b) < twin_solar.EPS for a, b in zip(f['plane'], zone['plane']))]
+        source = max(source, key=lambda f: twin_model._overlap(twin_solar.rectangle(zone['rect']), f['polygon'])) if source else None
+        face = twin_solar.matching_face(source, zone, new_faces) if source else None
+        if face is None:
+            raise Refused(f'That leaves the solar zone on {name} without a roof; its roof plane would be gone; resize or delete it first.')
+        if (face['plane'] == source['plane'] and face['polygon'] == source['polygon']
+                and twin_solar.error(building, current, fitted) is None):
+            fitted.append(current)
+            continue
+        try:
+            rect = twin_solar.refit(face, twin_solar.dock_offsets(source, zone['rect']))
+            rect = twin_solar.fit_inside(face, rect, current)
+        except ValueError as exc:
+            raise Refused(too_small) from exc
+        if rect is None:
+            raise Refused(too_small)
+        current.update(plane=list(face['plane']), rect=rect)
+        # Preserve earlier zones; the later zone's facing edge touches them.
+        for other in fitted:
+            if other['roof'] != current['roof'] or other['plane'] != current['plane']:
+                continue
+            r = other['rect']
+            if all(min(rect[i+2], r[i+2])-max(rect[i], r[i]) > twin_solar.EPS for i in (0, 1)):
+                old_other = next(z for z in previous['solar_zones'] if z['id'] == other['id'])['rect']
+                separations = [(i, zone['rect'][i] >= old_other[i+2]-twin_solar.EPS,
+                                zone['rect'][i+2] <= old_other[i]+twin_solar.EPS) for i in (0, 1)]
+                choices = [(i, after) for i, after, before in separations if after or before]
+                axis, after = choices[0] if choices else min(
+                    ((i, (rect[i]+rect[i+2]) >= (r[i]+r[i+2])) for i in (0, 1)),
+                    key=lambda v: min(rect[v[0]+2], r[v[0]+2])-max(rect[v[0]], r[v[0]]))
+                rect[axis if after else axis+2] = r[axis+2 if after else axis]
+        w, h = twin_solar.dimensions(current)
+        if rect[2]-rect[0] < w-twin_solar.EPS or rect[3]-rect[1] < h-twin_solar.EPS:
+            raise Refused(too_small)
+        if twin_solar.error(building, current, fitted):
+            raise Refused(too_small)
+        fitted.append(current)
 
 
 def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None) -> tuple[dict, str]:
     from services import twin_fixtures
     result, words = _apply(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized)
+    # A source is scoped to its building, even if another roof shares its id.
+    source = result.get('solar_source_roof')
+    owner = result.get('solar_source_building')
+    if source and not any(r['id'] == source for b in result['buildings']
+                          if owner is None or b['id'] == owner for r in b.get('roofs', [])):
+        result['solar_source_roof'] = result['solar_source_building'] = None
     if result.get('light_fixtures') or result.get('effect_fixtures'):
         twin_fixtures.follow_host_moves(_normalized[0] if _normalized is not None else model, result)
         twin_fixtures.normalize(result, [])
@@ -1623,6 +1736,8 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     building['roofs'] = [roofs.follow_walls(r, building['walls'], building['joints'])
                          for r in building.get('roofs', [])]
     notes.extend(hosts.follow(building, before))
+    _follow_roof_points(building, previous)
+    _follow_roof_extensions(building, previous)
     _follow_dormers(building, before)
     solar_clear(building, previous)
     from services import twin_terrain

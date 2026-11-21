@@ -104,11 +104,11 @@ def test_solar_clear_skips_unchanged_roofs():
         assert counts['solar_error'] == 0, counts
 
 
-def test_roof_edit_still_strands_zone():
-    refusal = 'That would move a solar zone off its roof plane. Move or delete the zone before changing the roof.'
+def test_roof_edit_refuses_sub_panel_zone_with_warm_or_cold_cache():
     with house():
         building = add_first_roof_zone()
         roof = building['roofs'][0]
+        refusal = f'That leaves the solar zone on {roof["id"]} too small; resize or delete it first.'
         original = ts.current_model()
         before = ts.current_id()
         for warm in (False, True):

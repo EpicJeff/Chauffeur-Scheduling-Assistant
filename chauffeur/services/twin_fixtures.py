@@ -862,6 +862,70 @@ def _anchor_reference(model, fixture, point):
     return reference
 
 
+def _follow_roof_anchor(before, after, fixture, anchor, index, old_frame, new_frame):
+    """Project roof/zone path points onto their changed plane in the same edit."""
+    from services import twin_solar, twin_model_roofs
+    host = anchor['host']
+    kind = host['kind']
+    if kind not in ('roof', 'solar_zone') or old_frame is None or new_frame is None:
+        return False
+    def owner(model):
+        collection = 'solar_zones' if kind == 'solar_zone' else 'roofs'
+        matches = [(b, p) for b in model['buildings']
+                   if not host.get('building') or b['id'] == host['building']
+                   for p in (b.get('roof', {}).get('sections', b.get('roofs', [])) if kind == 'roof'
+                             else b.get(collection, []))
+                   if p['id'] == host['id']]
+        return matches[0] if len(matches) == 1 else (None, None)
+    old_b, old_piece = owner(before)
+    new_b, new_piece = owner(after)
+    if old_b is None or new_b is None:
+        return False
+    if old_piece == new_piece:
+        return False  # The ordinary rigid-frame path already carries buildings.
+    def roof_building(b):
+        if 'roof' not in b and 'roofs' in b:
+            return b
+        return {**b, 'roofs': [twin_model_roofs.from_section(s) for s in b.get('roof', {}).get('sections', [])]}
+    old_geometry, new_geometry = roof_building(old_b), roof_building(new_b)
+    # For a roof/zone the anchor's local point is in building coordinates.
+    point = anchor['local']
+    rid = old_piece['roof'] if kind == 'solar_zone' else old_piece['id']
+    candidates = [f for f in twin_solar.faces(old_geometry) if f['roof'] == rid
+                  and (kind != 'solar_zone' or all(abs(a-b) < twin_solar.EPS
+                       for a, b in zip(f['plane'], old_piece['plane'])))]
+    if not candidates:
+        return False
+    def contains(face, p):
+        uv = twin_solar.project(face['plane'], p[:2])
+        return all(sum(n[i]*uv[i] for i in (0, 1)) <= c+twin_solar.EPS
+                   for n, c, _, _ in twin_solar._boundaries(face))
+    candidates = [f for f in candidates if contains(f, point)]
+    if not candidates:
+        return False
+    old_face = min(candidates, key=lambda f: abs(point[2]-sum(f['plane'][i]*point[i] for i in (0, 1))-f['plane'][2]))
+    target = list(point)
+    old_roof = next((r for r in old_geometry['roofs'] if r['id']==rid), None)
+    new_roof = next((r for r in new_geometry['roofs'] if r['id']==rid), None)
+    if old_roof and new_roof and len(old_roof['area'])==len(new_roof['area']):
+        deltas = [[b[i]-a[i] for i in (0,1)] for a,b in zip(old_roof['area'],new_roof['area'])]
+        if deltas and all(math.dist(delta,deltas[0]) < twin_solar.EPS for delta in deltas):
+            target[:2] = [point[i]+deltas[0][i] for i in (0,1)]
+    uv = twin_solar.project(old_face['plane'], point[:2])
+    zone = dict(roof=rid, plane=old_face['plane'], rect=[uv[0]-.5, uv[1]-.5, uv[0]+.5, uv[1]+.5])
+    new_face = twin_solar.matching_face(old_face, zone,
+        [f for f in twin_solar.faces(new_geometry) if contains(f, target)])
+    if new_face is None:
+        raise ValueError('That moves a roof attachment off its roof plane; move or delete it first.')
+    clearance = point[2]-(old_face['plane'][0]*point[0]+old_face['plane'][1]*point[1]+old_face['plane'][2])
+    p = new_face['plane']
+    local = [*target[:2], p[0]*target[0]+p[1]*target[1]+p[2]+clearance]
+    anchor['local'] = local
+    world = _anchor_transform(local, new_frame[1])
+    fixture['path'][index] = [*world[:2], world[2]-_anchor_reference(after, fixture, world)]
+    return True
+
+
 def _follow_anchors(before, after, fixture, cache):
     for i, anchor in enumerate(fixture.get('anchors', [])):
         if anchor is None:
@@ -871,6 +935,8 @@ def _follow_anchors(before, after, fixture, cache):
         if key not in cache:
             cache[key] = _anchor_frame(before, host), _anchor_frame(after, host)
         old, new = cache[key]
+        if _follow_roof_anchor(before, after, fixture, anchor, i, old, new):
+            continue
         if old is None or new is None or old[0] != new[0]:
             fixture['anchors'][i] = None
             # A ground/floor reference can move even when its host is removed
