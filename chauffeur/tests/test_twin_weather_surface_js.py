@@ -48,14 +48,15 @@ const dropCell=new Function('id','cellSize','up','weatherRingHash','weatherDropR
  .replace('vec2 centre=vec2(radius)+random.xy*(1.0-2.0*radius);','let centre={x:radius+random.x*(1-2*radius),y:radius+random.y*(1-2*radius)};')
  .replace('float arrival=','let arrival=')
  .replace('vec4(centre,radius,fract(random.y*19.19)>weatherDropDensity(up)?2.0:arrival)','({x:centre.x,y:centre.y,z:radius,w:fract(random.y*19.19)>weatherDropDensity(up)?2.0:arrival})'));
-const cell=(id,size=.047,up=1)=>dropCell(id,size,up,hash,radius,scalar('weatherDropDensity'),fract);
+const density=scalar('weatherDropDensity'),spotCoverage=scalar('weatherSpot'),dropTone=scalar('weatherDropTone');
+const cell=(id,size=.047,up=1)=>dropCell(id,size,up,hash,radius,density,fract);
 const layerBody=vecBody('weatherDropLayer','float')
  .replace('vec2 p=world/cellSize,id=floor(p);','let p=div(world,cellSize),id=v2(Math.floor(p.x),Math.floor(p.y));')
  .replace('vec2 local=fract(p)-spot.xy;','let local=sub(v2(fract(p.x),fract(p.y)),spot);')
  .replace('vec2 direction=local/max(d,.001);','let direction=div(local,max(d,.001));')
  .replace(/\b(?:float|vec4) (?=\w+=)/g,'let ');
 const layerFn=new Function('world','wet','dx','dy','cellSize','up','weatherDropCell','weatherSpot','weatherDropTone','div','sub','v2','fract','length','dot','max','abs','smoothstep','mix',layerBody);
-const layer=(world,wet,dx,dy,size,up)=>layerFn(world,wet,dx,dy,size,up,cell,scalar('weatherSpot'),scalar('weatherDropTone'),div,sub,v2,fract,p=>Math.hypot(p.x,p.y),dot,Math.max,Math.abs,smoothstep,mix);
+const layer=(world,wet,dx,dy,size,up)=>layerFn(world,wet,dx,dy,size,up,cell,spotCoverage,dropTone,div,sub,v2,fract,p=>Math.hypot(p.x,p.y),dot,Math.max,Math.abs,smoothstep,mix);
 const dropsFn=new Function('world','wet','dx','dy','up','smoothstep','abs','v2','weatherDropLayer',vecBody('weatherDrops','float')
  .replace('vec2 stretch=vec2(1.0,1.0-.35*vertical);','let stretch=v2(1,1-.35*vertical);')
  .replace('world*=stretch;dx*=stretch;dy*=stretch;','world=v2(world.x*stretch.x,world.y*stretch.y);dx=v2(dx.x*stretch.x,dx.y*stretch.y);dy=v2(dy.x*stretch.x,dy.y*stretch.y);')
@@ -104,6 +105,81 @@ await test('production drop centres lose the lattice, physical radii and sparse 
  }
 
  console.log('DROP_DISTRIBUTION',JSON.stringify({bins,radiusRatio:Math.max(...radii)/Math.min(...radii),empty:empty/14400,inRange:radii.filter(r=>r>=.0025&&r<=.0075).length/radii.length,minRadius:Math.min(...radii),maxRadius:Math.max(...radii)}));
+});
+await test('overcast owner-eye patio luminance never increases through the complete wetness ramp',async()=>{
+ // Execute the installed material block, including its exposure, colour,
+ // gloss, puddle and horizon wiring; use the production drops above.
+ const installed=installWeatherSurface(new THREE.Scene());installed.dispose();
+ const apply=preprocess('#define STANDARD\n#define WEATHER_SURFACE_ACTIVE\n'+THREE.ShaderChunk.normal_fragment_maps);
+ let body=apply.slice(apply.indexOf('float weatherFilmValue='),apply.indexOf('metalnessFactor=mix('))
+  .replace(/\b(?:float|bool) (?=\w+=)/g,'let ')
+  .replace('dot(diffuseColor.rgb,vec3(.2126,.7152,.0722))','diffuseColor.rgb')
+  .replace('vec3(.85,.87,.9)','.87').replace('weatherPlane*vec2(12.0,.7)','weatherPlane');
+ const names=[...WEATHER_GLSL.matchAll(/float (weather\w+)\(([^)]*)\) \{/g)]
+  .filter(m=>!m[2].includes('vec')).map(m=>m[1]);
+ const functions=names.map(scalar);
+ const surface=new Function('wet','drop','edge','albedo','original','open',...names,'mix','abs','weatherEdge',
+  `const weatherSurface={x:wet,y:0,z:wet},vWeatherOpen=open,weatherUp=1,weatherMetal=0,weatherDrop=drop,weatherPlane=0,vWeatherWorld={xz:0};
+   let weatherWet=wet*open,roughnessFactor=original;const diffuseColor={rgb:albedo};
+   ${body}\nreturn {albedo:diffuseColor.rgb,roughness:roughnessFactor,gloss:weatherGlossValue,puddle:weatherP,snow:weatherS,wet:weatherWet};`);
+ // r187 uses a 16x16 half-float DFG LUT, not the old analytic approximation.
+ // Sample its actual data with WebGL's linear/clamp rules.
+ const source=readFileSync(new URL(file('static/vendor/three-r187/three.module.js')),'utf8');
+ const data=Function('return ['+source.match(/const DATA = new Uint16Array\( \[([\s\S]*?)\] \);/)[1]+']')().map(x=>THREE.DataUtils.fromHalfFloat(x));
+ assert.equal(data.length,16*16*2);
+ const dfg=(rough,nv)=>{const x=rough*16-.5,y=nv*16-.5,ix=Math.floor(x),iy=Math.floor(y);
+  const at=(x,y,c)=>data[(clamp(y,0,15)*16+clamp(x,0,15))*2+c];
+  return Object.fromEntries(['x','y'].map((key,c)=>[key,mix(mix(at(ix,iy,c),at(ix+1,iy,c),x-ix),mix(at(ix,iy+1,c),at(ix+1,iy+1,c),x-ix),y-iy)]));};
+ const physical=preprocess(THREE.ShaderChunk.lights_physical_pars_fragment);
+ const scatterBody=physical.match(/void computeMultiscattering\([^)]*\) \{([\s\S]*?)\n\}/)[1]
+  .replace(/\b(?:vec3|float) /g,'let ');
+ const scatter=new Function('fab','specularColor','specularF90',`let singleScatter=0,multiScatter=0;${scatterBody};return {single:singleScatter,multi:multiScatter};`);
+ // Execute r187's indirect-light combination, scalarized for a neutral sky.
+ const indirectBody=physical.slice(physical.indexOf('vec3 diffuse = material.diffuseContribution'),physical.indexOf('reflectedLight.indirectSpecular += indirectSpecular;'))
+  .replace(/\b(?:vec3|float) /g,'let ');
+ const indirect=new Function('material','totalScatteringDielectric','radiance','singleScattering','multiScattering','irradiance','RECIPROCAL_PI',indirectBody+'\nreturn indirectSpecular+indirectDiffuse;');
+ const horizon=scalar('weatherHorizon');
+ const damping=new Function('nv','weatherWet','weatherGlossValue','weatherP','weatherS','weatherHorizon','smoothstep',
+  'return '+apply.match(/weatherHorizonDamp=([^;]+);/)[1].replace('weatherReflected.y','nv').replace(/\bmax\(/g,'Math.max('));
+ const light=(s,nv,diffuseSky)=>{const f=scatter(dfg(Math.max(.0525,s.roughness),nv),.04,1),damp=damping(nv,s.wet,s.gloss,s.puddle,s.snow,horizon,smoothstep);
+  return indirect({diffuseContribution:s.albedo},f.single+f.multi,.6*damp,f.single,f.multi,.6*Math.PI*diffuseSky,1/Math.PI);};
+ const {buildingFootprint,groundAt}=await import(file('static/twin/twin_ground.js'));
+ const b=input.plan.buildings.find(b=>['pool-house','pool_house'].includes(b.id)),ft=.3048,a=(b.rotation||0)*Math.PI/180;
+ const world=([x,y])=>[(b.position?.[0]||0)+x*Math.cos(a)-y*Math.sin(a),(b.position?.[1]||0)+x*Math.sin(a)+y*Math.cos(a)];
+ const bounds=points=>{const lo=[0,1].map(i=>Math.min(...points.map(p=>p[i]))),hi=[0,1].map(i=>Math.max(...points.map(p=>p[i])));return {lo,hi,centre:lo.map((x,i)=>(x+hi[i])/2)};};
+ const house=bounds(buildingFootprint(b).map(world)),pool=bounds(input.plan.site.pool.polygon);
+ const d=pool.centre.map((x,i)=>x-house.centre[i]),length=Math.hypot(...d);d.forEach((x,i)=>d[i]=x/length);
+ const edge=Math.min(...d.map((x,i)=>Math.abs(x)>1e-9?(house.hi[i]-house.lo[i])/2/Math.abs(x):Infinity));
+ const eye=house.centre.map((x,i)=>x+d[i]*(edge+12.5/ft)),ground=groundAt(input.plan,...eye)*ft;
+ const camera=new THREE.PerspectiveCamera(38,1600/900,.1,1000);camera.position.set(eye[0]*ft,ground+1.6,-eye[1]*ft);
+ camera.lookAt(house.centre[0]*ft,ground,-house.centre[1]*ft);camera.updateMatrixWorld(true);
+ const plane=new THREE.Plane(new THREE.Vector3(0,1,0),-ground),ray=new THREE.Raycaster();
+ const hit=(x,y)=>{ray.setFromCamera(new THREE.Vector2(x/800-1,1-y/450),camera);return ray.ray.intersectPlane(plane,new THREE.Vector3());};
+ const samples=[];
+ for(let y=502;y<570;y+=4)for(let x=952;x<1500;x+=8){
+  const p=hit(x,y),px=hit(x+1,y),py=hit(x,y+1),nv=camera.position.clone().sub(p).normalize().y;
+  samples.push({world:v2(p.x,p.z),dx:v2(px.x-p.x,px.z-p.z),dy:v2(py.x-p.x,py.z-p.z),nv});
+ }
+ const m=kitMaterial('paving',{materials:{...input.kit.materials,...input.plan.materials}},'high');
+ const albedo=m.color.r*.2126+m.color.g*.7152+m.color.b*.0722;assert.equal(m.metalness,0);
+ for(const open of [1,.5])for(const diffuseSky of [1,.5]){
+  const rows=[];
+  for(let step=0;step<=10;step++){
+   const wet=step/10;let total=0;
+   for(const p of samples){
+    const drop=dropsFn(p.world,wet,p.dx,p.dy,1,smoothstep,Math.abs,v2,layer);
+    const edgeNoise=(()=>{const h=(x,y)=>fract(Math.sin(x*127.1+y*311.7)*43758.5453);
+     const noise=(x,y)=>{const ix=Math.floor(x),iy=Math.floor(y),fx=fract(x),fy=fract(y),u=fx*fx*(3-2*fx),v=fy*fy*(3-2*fy);return mix(mix(h(ix,iy),h(ix+1,iy),u),mix(h(ix,iy+1),h(ix+1,iy+1),u),v);};
+     return noise(p.world.x*.35,p.world.y*.35)*.67+noise(p.world.x*.7+19.1,p.world.y*.7+7.7)*.33;})();
+    total+=light(surface(wet,drop,edgeNoise,albedo,m.roughness,open,...functions,mix,Math.abs,()=>edgeNoise),p.nv,diffuseSky);
+   }
+   rows.push(total/samples.length);
+  }
+  console.log('OWNER_OVERCAST_LUMINANCE',JSON.stringify({fixture:input.label,open,diffuseSky,albedo,roughness:m.roughness,nv:[Math.min(...samples.map(p=>p.nv)),Math.max(...samples.map(p=>p.nv))],rows}));
+  rows.slice(1).forEach((v,i)=>assert.ok(v<=rows[i]+1e-6,`wetness ${i/10}->${(i+1)/10}: ${rows[i]} -> ${v}`));
+  assert.ok(rows.at(-1)<rows[0]*.88,'saturated patio clearly darker than dry');
+ }
+ m.dispose();
 });
 await test('CPU splash standing-water eligibility matches the installed GLSL puddle/film mask',()=>{
  const hashBody=vecBody('weatherHash','float').replace('dot(p,vec2(127.1,311.7))','(p.x*127.1+p.y*311.7)');
@@ -287,10 +363,10 @@ await test('spatial progression: measured paving, coping stone, lawn and vertica
     const x=i*.0831+.0137,y=j*.0837+.0071,ix=Math.floor(x/.03),iy=Math.floor(y/.03);
     const radius=mix(.28,.48,hash(ix+17.3,iy+17.3)),disc=Math.hypot(fract(x/.03)-.5,fract(y/.03)-.5)<radius?1:0;
     const drop=spot(wet,hash(ix,iy),disc),f=film(wet);
-    const g=gloss(wet,drop)*(vertical?mix(.45,1,noise(x*12,y*.7)):1);
+    const coverage=gloss(wet,drop),g=coverage*(vertical?mix(.45,1,noise(x*12,y*.7)):1);
     const edge=noise(x*.35,y*.35)*.67+noise(x*.7+19.1,y*.7+7.7)*.33;
     const p=puddle(vertical?0:1,wet,edge)*f*(isLawn?lawnPuddle(wet):1);
-    meanLum+=dry*(wetScale(isLawn?Math.max(lum,.35):lum,m.metalness,f)-.25*drop*(1-f))/9216;
+    meanLum+=dry*(wetScale(isLawn?Math.max(lum,.35):lum,m.metalness,coverage))/9216;
     meanRough+=(isLawn?rough(mix(m.roughness,.42,g),0,p,0):rough(m.roughness,g,p,0))/9216;
     meanPuddle+=p/9216;
    }

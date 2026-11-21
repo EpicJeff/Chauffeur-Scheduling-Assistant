@@ -57,7 +57,9 @@ float weatherFilm(float wet) {
   return smoothstep(.35,.7,wet);
 }
 float weatherGloss(float wet, float spot) {
-  return mix(spot*.75,1.0,smoothstep(.35,.9,wet));
+  // One coverage for absorption and gloss. The broad, gradual film darkens
+  // between arrivals and keeps darkening while puddle reflections strengthen.
+  return mix(spot*.5,1.0,wet);
 }
 float weatherLawnPuddle(float amount) {
   return smoothstep(.8,1.0,amount)*.35;
@@ -214,13 +216,13 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
       weatherDrop=0.0;
     #endif
     float weatherFilmValue=weatherFilm(weatherSurface.x);
-    float weatherGlossValue=weatherExposure(weatherGloss(weatherSurface.x,weatherDrop),vWeatherOpen);
+    weatherWet=weatherExposure(weatherGloss(weatherSurface.x,weatherDrop),vWeatherOpen);
+    float weatherGlossValue=weatherWet;
     #ifdef WEATHER_SURFACE_ROOF
       weatherGlossValue*=mix(.65,1.0,weatherNoise(weatherPlane*vec2(12.0,.7)));
     #else
       if(abs(weatherUp)<.5)weatherGlossValue*=mix(.45,1.0,weatherNoise(weatherPlane*vec2(12.0,.7)));
     #endif
-    weatherWet=weatherExposure(weatherFilmValue,vWeatherOpen);
     bool weatherNeedsEdge=weatherSurface.y>0.0&&weatherUp>.55;
     #ifndef WEATHER_SURFACE_ROOF
       weatherNeedsEdge=weatherNeedsEdge||(weatherSurface.z>0.0&&weatherUp>.9&&weatherFilmValue>0.0);
@@ -240,7 +242,7 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
     #ifdef WEATHER_SURFACE_LAWN
       weatherLum=max(weatherLum,.35);
     #endif
-    diffuseColor.rgb *= weatherWetScale(weatherLum,weatherMetal,weatherWet)-weatherExposure(.25*weatherDrop*(1.0-weatherFilmValue),vWeatherOpen);
+    diffuseColor.rgb *= weatherWetScale(weatherLum,weatherMetal,weatherWet);
     diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.85,.87,.9),weatherS);
     #ifdef STANDARD
       #ifdef WEATHER_SURFACE_LAWN
@@ -263,8 +265,10 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
   normal=weatherNormal/max(length(weatherNormal),.0001);
   #if !defined(WEATHER_SURFACE_WATER)&&!defined(WEATHER_SURFACE_ROOF)
     vec3 weatherReflected=inverseTransformDirection(reflect(normalize(vViewPosition),normal),viewMatrix);
-    // Any wet gloss already strengthens grazing reflection; damp it fully from a third on.
-    weatherHorizonDamp=weatherHorizon(weatherReflected.y,smoothstep(0.0,.35,max(weatherGlossValue,weatherP))*(1.0-weatherS));
+    // Wet surroundings occlude the grazing sky. Keep attenuating with the
+    // shared coverage after the horizon mask fills, so late Fresnel gains
+    // cannot outrun absorption on partially exposed ground.
+    weatherHorizonDamp=weatherHorizon(weatherReflected.y,smoothstep(0.0,.35,max(weatherGlossValue,weatherP))*(1.0-weatherS))*(1.0-.25*weatherWet*(1.0-weatherS));
   #endif
 }
 #endif
