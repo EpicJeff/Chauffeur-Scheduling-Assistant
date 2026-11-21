@@ -7,9 +7,12 @@ import { createSkyCover } from './sky_cover.js';
 import { seasonHash } from './seasons.js';
 import { weatherExtinction } from './weather.js';
 
-const FT=.3048, LEAVES={low:150,medium:300,high:500,max:800};
-export const RESTING_LEAVES=Object.freeze({low:400,medium:900,high:1600,max:2500});
+const FT=.3048, LEAVES={low:60,medium:100,high:150,max:240};
+// About 80% of the steady state at the peak drop rate (rate x 480 s), so the oldest are overwritten.
+export const RESTING_LEAVES=Object.freeze({low:200,medium:320,high:480,max:760});
 export const LEAF_REST_SECONDS=480,LEAF_FADE_SECONDS=30;
+// Leaves per second per metre of crown width at the peak of leaf drop.
+export const LEAF_RATE=.07;
 const finite=(v,fallback=0)=>Number.isFinite(v)?v:fallback;
 const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,finite(v,a)));
 export function seasonTouchCounts(tier,season={},weather={}, {date=new Date(),sunAltDeg=90,enabled=true}={}) {
@@ -23,7 +26,8 @@ export function seasonTouchCounts(tier,season={},weather={}, {date=new Date(),su
 
 export function leafDropRate(season={}) {
   if(season.neutral||!(season.presence>0))return 0;
-  return season.presence<1?1:clamp((season.autumn-.5)*2)*.08;
+  // Peak drop is a steady few leaves a second across the yard, not a blizzard.
+  return season.presence<1?.15:clamp((season.autumn-.5)*2)*.012;
 }
 
 // Ground receivers include beds and paving, unlike the firefly lawn sampler.
@@ -109,12 +113,14 @@ void main(){
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
-const leafFragment='uniform sampler2D touchMap;\n'+fragmentShader
+const leafFragment='uniform sampler2D touchMap;\nuniform vec3 touchLight;\n'+fragmentShader
   .replace('float shape=touchKind<.5?1.0-smoothstep(.7,1.0,abs(p.x)+abs(p.y)*.55):exp(-dot(p,p)*4.0);',
     `vec4 texel=texture2D(touchMap,touchUv);
   float shape=texel.a;
   float luminance=max(dot(texel.rgb,vec3(.2126,.7152,.0722)),0.0);
-  vec3 leafColour=mix(texel.rgb,touchTint*luminance,touchAutumn);`)
+  // Lit like the scene's own Lambert materials: albedo/pi times the irradiance the view
+  // passes in (owner 2026-11-19: leaves glowed at night).
+  vec3 leafColour=mix(texel.rgb,touchTint*luminance,touchAutumn)*touchLight;`)
   .replace('safeRGB(touchTint)','safeRGB(leafColour)');
 function geometry(count) {
   const g=new THREE.InstancedBufferGeometry();
@@ -127,7 +133,8 @@ function geometry(count) {
 export function createSeasonTouches(scene,{tier='high',random=Math.random}={}) {
   const group=new THREE.Group();group.name='season-touches';scene.add(group);
   const uniforms={touchAnchor:{value:new THREE.Vector3()},touchExtent:{value:18},touchWind:{value:new THREE.Vector3()},
-    touchCentre:{value:new THREE.Vector2()},touchRadius:{value:100},touchExtinction:{value:0}};
+    touchCentre:{value:new THREE.Vector2()},touchRadius:{value:100},touchExtinction:{value:0},
+    touchLight:{value:new THREE.Vector3(1,1,1)}};
   const objects={},seeds=[],particles=[],resting=new Array(RESTING_LEAVES[tier]||1600),batches=[];
   let restCursor=0,serial=0,credit=0,landing=()=>null,autumnTint=0,lastPreview;
   // All six slots exist before warm-up. Changing texture assignments or the
@@ -146,6 +153,13 @@ export function createSeasonTouches(scene,{tier='high',random=Math.random}={}) {
   const frustum=new THREE.Frustum(),matrix=new THREE.Matrix4(),sources=[];
   const motion=globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)');
   function dirty(o,n){o.geometry.instanceCount=n;o.visible=n>0;for(const a of Object.values(o.geometry.attributes))if(a.isInstancedBufferAttribute)a.needsUpdate=true;}
+  const footprints=new WeakMap();
+  function leafFootprint(data){
+    let box=footprints.get(data);if(box)return box;
+    let x0=Infinity,x1=-Infinity,z0=Infinity,z1=-Infinity;const ps=data.positions||[];
+    for(let i=0;i<ps.length;i+=3){x0=Math.min(x0,ps[i]);x1=Math.max(x1,ps[i]);z0=Math.min(z0,ps[i+2]);z1=Math.max(z1,ps[i+2]);}
+    box=Number.isFinite(x0)?[x1-x0,z1-z0]:[1,1];footprints.set(data,box);return box;
+  }
   function collect(root,camera,target,extent){
     sources.length=0;if(!root)return;
     root.updateWorldMatrix(true,true);camera.updateMatrixWorld();
@@ -156,7 +170,11 @@ export function createSeasonTouches(scene,{tier='high',random=Math.random}={}) {
       const at=o.getWorldPosition(new THREE.Vector3()),p=plan.site?.planting?.[o.userData.yardPlantIndex];
       const height=Math.max(.5,finite(p?.height,15)*FT*finite(p?.scale,1)*finite(p?.scale_axes?.[1],1));
       const centre=at.clone();centre.y+=height*.6;
-      const scale=o.getWorldScale(new THREE.Vector3()),area=Math.max(1e-6,finite(data.canopyArea,1)*Math.abs(scale.x*scale.z));
+      // One measure for every plant: the world footprint of its own leaf positions. The
+      // stored canopyArea differed by build path (owner 2026-11-19: three agent-built
+      // trees took 92% of all leaves while his own trees barely dropped any).
+      const scale=o.getWorldScale(new THREE.Vector3()),box=leafFootprint(data);
+      const area=Math.max(1e-6,box[0]*Math.abs(scale.x)*box[1]*Math.abs(scale.z));
       if(Math.hypot(at.x-target.x,at.z-target.z)<extent&&frustum.intersectsSphere(new THREE.Sphere(centre,height*.6)))
         sources.push({at,height,object:o,data,count:data.count,area,texture:data.texture,hue:finite(o.userData.seasonHue)});
     });
@@ -173,7 +191,7 @@ export function createSeasonTouches(scene,{tier='high',random=Math.random}={}) {
       const free=batches.find(b=>!b.texture);if(!free)break;free.texture=texture;free.object.material.uniforms.touchMap.value=texture;
     }
     for(let i=sources.length-1;i>=0;i--){const s=sources[i];s.batch=batches.find(b=>b.texture===s.texture);if(!s.batch)sources.splice(i,1);}
-    const total=sources.reduce((n,s)=>n+s.area,0);for(const s of sources)s.weight=s.area/Math.max(total,1e-6);
+    const total=sources.reduce((n,s)=>n+Math.sqrt(s.area),0);for(const s of sources)s.weight=Math.sqrt(s.area)/Math.max(total,1e-6);
   }
   const rotation=new THREE.Quaternion(),axis=new THREE.Vector3(),tilt=new THREE.Quaternion();
   function spawn(){
@@ -217,7 +235,8 @@ export function createSeasonTouches(scene,{tier='high',random=Math.random}={}) {
       houseCentre=points.length?[(Math.min(...points.map(p=>p[0]))+Math.max(...points.map(p=>p[0])))*.5,
         (Math.min(...points.map(p=>p[1]))+Math.max(...points.map(p=>p[1])))*.5]:null;
     },
-    update(now,season,weather,camera,{target=camera.position,plants=null,date=new Date(),sunAltDeg=90,enabled=true,lawn=true,bearing=180,reduced=motion?.matches,extent:extentOverride}={}){
+    update(now,season,weather,camera,{target=camera.position,plants=null,date=new Date(),sunAltDeg=90,enabled=true,lawn=true,bearing=180,reduced=motion?.matches,extent:extentOverride,light=null}={}){
+      if(light?.every?.(Number.isFinite))uniforms.touchLight.value.fromArray(light);
       if(disposed)return;
       const dt=last===null?0:clamp(finite(now)-last,0,1)*(reduced?.35:1);last=finite(now);clock+=dt;
       now=finite(now);const extent=finite(extentOverride,clamp(.75*camera.position.distanceTo(target),18,64));
@@ -236,7 +255,11 @@ export function createSeasonTouches(scene,{tier='high',random=Math.random}={}) {
       for(const b of batches)b.count=0;
       const show=enabled&&!season.neutral;
       if(!show){particles.length=0;credit=0;}
-      credit=Math.min(12,credit+dt*counts.leaves/18*leafDropRate(season));
+      // Each visible plant drops at its own rate, growing with its crown's width
+      // (sqrt of footprint): a 3.5 m crown about one leaf per 4 s at the peak, a 20 m
+      // crown about 1.4 a second. The tier count only caps leaves in the air.
+      const perSecond=LEAF_RATE*sources.reduce((n,s)=>n+Math.sqrt(s.area),0)*leafDropRate(season)/.15;
+      credit=Math.min(12,credit+dt*perSecond);
       while(credit>=1&&particles.length<counts.leaves){credit--;const p=spawn();if(p)particles.push(p);else break;}
       for(let i=particles.length-1;i>=0;i--){
         const p=particles[i];p.age+=dt;const t=p.age,w=uniforms.touchWind.value;
@@ -255,7 +278,7 @@ export function createSeasonTouches(scene,{tier='high',random=Math.random}={}) {
       for(let i=0;i<resting.length;i++){
         const p=resting[i];if(!p)continue;const age=now-p.born;
         if(now>=p.born+LEAF_REST_SECONDS){resting[i]=undefined;continue;}
-        if(show&&weather.windMps>10&&particles.length<(LEAVES[tier]||500)&&dt>0&&seasonHash(p.id+':lift:'+Math.floor(now))<dt*.012){
+        if(show&&weather.windMps>10&&particles.length<(LEAVES[tier]||500)&&dt>0&&seasonHash(p.id+':lift:'+Math.floor(now))<dt*.002){
           resting[i]=undefined;p.position[1]+=.25;p.age=0;particles.push(p);continue;
         }
         if(show)writeLeaf(p,1-clamp((age-(LEAF_REST_SECONDS-LEAF_FADE_SECONDS))/LEAF_FADE_SECONDS),true);

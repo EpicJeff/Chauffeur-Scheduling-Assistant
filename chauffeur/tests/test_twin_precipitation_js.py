@@ -22,6 +22,7 @@ await test('rain shows in every orbit view while the camera is outside, and hide
  for(const level of ['house','floor','room','building'])for(const kind of ['rain','snow','mix','hail']){
   p.update(1,weather(kind),eye,{target,level});
   assert.equal(p.objects[kind==='mix'?'rain':kind].visible,true,level+' '+kind+' outside shows');
+  assert.equal(p.uniforms.precipCutaway.value,level==='house'?0:1,'a cutaway also clears rain above the hidden roof');
  }
  for(const degrees of [54.9,55,55.1,89.9]){
   eye.position.set(0,30*Math.sin(degrees*Math.PI/180),30*Math.cos(degrees*Math.PI/180));eye.lookAt(target);eye.updateMatrixWorld();

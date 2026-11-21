@@ -132,11 +132,13 @@ uniform vec3 precipAnchor,precipBox,precipTravel,precipVelocity;
 uniform float precipKind,precipClock,precipRate;
 uniform vec2 precipViewport;
 // Covered height per ground point (sky_cover heightField), nearest texel.
-uniform sampler2D precipCover;uniform vec4 precipCoverBounds;
+uniform sampler2D precipCover;uniform vec4 precipCoverBounds;uniform float precipCutaway;
 bool precipitationCovered(vec3 world) {
   vec2 uv=(world.xz-precipCoverBounds.xy)/max(precipCoverBounds.zw-precipCoverBounds.xy,vec2(.0001));
   if(any(lessThan(uv,vec2(0.0)))||any(greaterThanEqual(uv,vec2(1.0))))return false;
-  return world.y<texture2D(precipCover,uv).r;
+  float top=texture2D(precipCover,uv).r;
+  // A floor or room cutaway hides the roof: rain above it would read as rain indoors.
+  return world.y<top||precipCutaway>.5&&top>-9999.0;
 }
 varying vec2 particleUv;varying vec3 particleWorld;
 float precipitationWidth(float pixels,float kind) {
@@ -223,6 +225,14 @@ void main(){
 }`;
 const splashVertex=`
 attribute vec3 splashPosition,splashNormal;attribute float splashBorn;
+uniform sampler2D precipCover;uniform vec4 precipCoverBounds;uniform float precipCutaway;
+bool precipitationCovered(vec3 world) {
+  vec2 uv=(world.xz-precipCoverBounds.xy)/max(precipCoverBounds.zw-precipCoverBounds.xy,vec2(.0001));
+  if(any(lessThan(uv,vec2(0.0)))||any(greaterThanEqual(uv,vec2(1.0))))return false;
+  float top=texture2D(precipCover,uv).r;
+  // A floor or room cutaway hides the roof: rain above it would read as rain indoors.
+  return world.y<top||precipCutaway>.5&&top>-9999.0;
+}
 uniform float splashTime;
 varying float splashAge;varying vec2 particleUv;varying vec3 particleWorld;
 bool splashVisible(float age,float depth) {
@@ -232,7 +242,7 @@ void main(){
   splashAge=splashTime-splashBorn;particleUv=uv;
   vec4 eye=viewMatrix*vec4(splashPosition,1.0);
   // Expired slots used to rasterize their entire quad before fragment discard.
-  if(!splashVisible(splashAge,-eye.z)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
+  if(!splashVisible(splashAge,-eye.z)||precipCutaway>.5&&precipitationCovered(splashPosition+vec3(0.0,1e4,0.0))){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
   // A splash crown a few centimetres tall, facing the camera (owner reference
   // photo 2026-11-19), not a flat ring: rings belong to standing water.
   float grow=smoothstep(0.0,.06,splashAge);
@@ -278,7 +288,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
     precipViewport:{value:new THREE.Vector2(1,1)},precipRate:{value:0},
     precipCentre:{value:new THREE.Vector2()},precipRadius:{value:100},precipFog:{value:0},
     precipClock:{value:0},splashTime:{value:0},
-    precipCover:{value:null},precipCoverBounds:{value:new THREE.Vector4(0,0,1,1)}};
+    precipCover:{value:null},precipCoverBounds:{value:new THREE.Vector4(0,0,1,1)},precipCutaway:{value:0}};
   let coverTexture=null,coverFor=null;
   // Bake once per plan/cover while falling OR still wet after the rain stops.
   function bakeCover(){
@@ -331,6 +341,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random}={}) {
       const indoors=Number.isFinite(cover.coverTop?.(camera.position.x,camera.position.z))
         &&camera.position.y<cover.coverTop(camera.position.x,camera.position.z);
       const hidden=unlit||indoors;
+      uniforms.precipCutaway.value=level==='house'?0:1;
       const counts=precipitationCounts(tier,hidden?{}:weather);
       if(counts.rain||counts.snow||counts.hail||(!weather?.neutral&&(weather?.wetness>0||weather?.puddles>0)))bakeCover();
       for(const kind of ['rain','snow','hail']){

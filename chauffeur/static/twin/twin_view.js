@@ -463,7 +463,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
     const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
     seasonTouches.update(performance.now()/1000,view.season,view.weather,camera,{target:controls.target,plants:yardGroup,
-      date:clockNow(),sunAltDeg,enabled:touchEnabled,lawn:yardGroup?.userData.grass?.growsGrass ?? false,bearing:site.front_bearing_deg ?? 180});
+      date:clockNow(),sunAltDeg,enabled:touchEnabled,lawn:yardGroup?.userData.grass?.growsGrass ?? false,bearing:site.front_bearing_deg ?? 180,
+      light:leafLight()});
     post?.setSun({sunDir,sunAltDeg,enabled:touchEnabled,transmittance:1-weatherHaze(view.weather)});
     view.live?.draw();
     twin?.updateGhosts();
@@ -494,6 +495,16 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const waiting = [...editFrames]; editFrames.clear();
       requestAnimationFrame(() => waiting.forEach(resolve => resolve(stats)));
     }
+  }
+  // Irradiance on a leaf card, scene-linear: hemisphere sky plus a little over half of
+  // the sun and moon (a tumbling card faces them at random), over pi as for Lambert.
+  const leafScratch = new THREE.Color();
+  function leafLight() {
+    leafScratch.copy(ambient.color).multiplyScalar(ambient.intensity);
+    leafScratch.r += (sun.color.r * sun.intensity + moon.color.r * moon.intensity) * .6;
+    leafScratch.g += (sun.color.g * sun.intensity + moon.color.g * moon.intensity) * .6;
+    leafScratch.b += (sun.color.b * sun.intensity + moon.color.b * moon.intensity) * .6;
+    return [leafScratch.r / Math.PI, leafScratch.g / Math.PI, leafScratch.b / Math.PI];
   }
   function resize() {
     const width = Math.max(1, el.clientWidth), height = Math.max(1, el.clientHeight);

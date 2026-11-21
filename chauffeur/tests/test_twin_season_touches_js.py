@@ -33,8 +33,8 @@ await test('generated household sources retain actual leaf cards, weights, maps 
  const shrubs=sources.filter(s=>s.object.userData.pieceId.startsWith('cmp-shrub')),trees=sources.filter(s=>s.object.userData.pieceId.startsWith('cmp-tree'));
  assert.ok(Math.min(...trees.map(s=>s.weight))>Math.max(...shrubs.map(s=>s.weight))*3,'large trees shed much more than individual small shrubs');
  const seen=new Set(),spawned=new Map();
- for(let i=1;i<=200;i++){
-  p.update(i*.1,{...autumn,autumn:1,presence:.5},{...warm,windMps:0},eye,{plants:yard,target:new THREE.Vector3(),extent:1000});
+ for(let i=1;i<=400;i++){
+  p.update(i,{...autumn,autumn:1,presence:.5},{...warm,windMps:0},eye,{plants:yard,target:new THREE.Vector3(),extent:1000});
   for(const leaf of [...p.info().falling,...p.info().resting])if(!seen.has(leaf.id)){
    seen.add(leaf.id);spawned.set(leaf.source,(spawned.get(leaf.source)||0)+1);
   }
@@ -48,7 +48,7 @@ await test('generated household sources retain actual leaf cards, weights, maps 
  p.dispose();
 });
 await test('exact tier budgets, phenology, weather and hemispheres; preview is night only',()=>{
- for(const [tier,leaves] of Object.entries({low:150,medium:300,high:500,max:800})){
+ for(const [tier,leaves] of Object.entries({low:60,medium:100,high:150,max:240})){
   assert.equal(T.seasonTouchCounts(tier,autumn,warm,conditions).leaves,leaves);
   assert.equal(T.seasonTouchCounts(tier,summer,warm,conditions).fireflies,tier==='low'?25:60);
  }
@@ -113,10 +113,10 @@ await test('real leaf cards spawn inside canopies, scatter uniquely, collect eig
  p.update(0,drop,{...warm,visibilityM:300},eye,opts);assert.equal(p.uniforms.touchExtinction.value,3.912/300,'own leaf program follows the same camera fog');
  const keys=Object.values(p.objects).map(o=>[o.material.customProgramCacheKey(),o.material.version]);
  const paths=new Map();let settled=0;
- for(let i=0;i<800;i++){
-  p.update(i*.1,drop,{...warm,windMps:0},eye,opts);
+ for(let i=0;i<1000;i++){
+  p.update(i,drop,{...warm,windMps:0},eye,opts);
   assert.equal(p.uniforms.touchExtinction.value,0);
-  assert.ok(p.info().falling.length<=150);assert.ok(p.info().resting.length<=400);
+  assert.ok(p.info().falling.length<=60);assert.ok(p.info().resting.length<=200);
   for(const leaf of p.info().falling){
    const expected=new THREE.Vector3().fromArray(tree.seasonLeaves.positions,leaf.sourceIndex*3).applyMatrix4(tree.matrixWorld);
    assert.ok(expected.distanceTo(new THREE.Vector3(...leaf.origin))<1e-8,'spawn is an actual generated leaf centre');
@@ -126,10 +126,10 @@ await test('real leaf cards spawn inside canopies, scatter uniquely, collect eig
   for(const leaf of p.info().resting){assert.equal(leaf.position[1],.006);settled++;}
  }
  assert.ok(settled>0);assert.ok(paths.size>50);assert.equal(new Set([...paths.values()].slice(0,50)).size,50);
- assert.equal(p.info().resting.length,400,'fixed ring overwrites oldest leaves');
+ assert.equal(p.info().resting.length,200,'fixed ring overwrites oldest leaves');
  const oldest=Math.min(...p.info().resting.map(l=>l.born));assert.ok(oldest>0);
  assert.equal(p.uniforms.touchAnchor.value.x,0);assert.ok(p.uniforms.touchExtent.value>=18);
- for(let t=80;t<=130;t++)p.update(t,summer,{...warm,windMps:0},eye,opts);
+ for(let t=1080;t<=1130;t++)p.update(t,summer,{...warm,windMps:0},eye,opts);
  assert.equal(p.info().falling.length,0,'drain in-flight leaves before testing resting lifetime');
  assert.ok(p.info().resting.every(leaf=>leaf.autumn===1),'resting leaves retain their deposited autumn colour after the season changes');
  const resting=p.info().resting[0],born=resting.born;
@@ -137,8 +137,8 @@ await test('real leaf cards spawn inside canopies, scatter uniquely, collect eig
  const a=resting.batch.object.geometry.attributes.touchShape;
  assert.ok(Array.from({length:resting.batch.object.geometry.instanceCount},(_,i)=>a.getZ(i)).some(alpha=>alpha>0&&alpha<1),'last thirty seconds fade');
  p.update(born+480,summer,{...warm,windMps:0},eye,opts);assert.ok(!p.info().resting.includes(resting));
- p.update(1000,summer,warm,eye,opts);assert.equal(p.info().resting.length,0);
- p.update(1001,drop,warm,eye,{...opts,enabled:false});assert.ok(Object.values(p.objects).every(o=>!o.visible));
+ p.update(2000,summer,warm,eye,opts);assert.equal(p.info().resting.length,0);
+ p.update(2001,drop,warm,eye,{...opts,enabled:false});assert.ok(Object.values(p.objects).every(o=>!o.visible));
  assert.deepEqual(Object.values(p.objects).map(o=>[o.material.customProgramCacheKey(),o.material.version]),keys);
  for(const o of Object.values(p.objects)){assert.equal(o.castShadow,false);assert.equal(o.receiveShadow,false);assert.equal(o.material.isShaderMaterial,true);assert.equal(o.layers.isEnabled(1),false);const hits=[];o.raycast(null,hits);assert.equal(hits.length,0);}
  let freed=0;for(const o of Object.values(p.objects)){o.geometry.addEventListener('dispose',()=>freed++);o.material.addEventListener('dispose',()=>freed++);}
@@ -156,25 +156,25 @@ await test('all resting caps, six texture draws, reduced motion and gust re-tumb
  const drop={...autumn,autumn:1,presence:.5},opts={plants:root,target:new THREE.Vector3()},calm={...warm,windMps:0};
  assert.equal(T.leafDropRate(summer),0);assert.equal(T.leafDropRate({...drop,presence:0}),0);
  assert.ok(T.leafDropRate(autumn)<T.leafDropRate(drop)*.1);
- for(const [tier,cap] of Object.entries({low:400,medium:900,high:1600,max:2500})){
+ for(const [tier,cap] of Object.entries({low:200,medium:320,high:480,max:760})){
   const p=T.createSeasonTouches(new THREE.Scene(),{tier,random:()=>.417});p.setPlan({});
-  for(let t=0;t<=360;t++){
+  for(let t=0;t<=600;t++){
    p.update(t,drop,calm,eye,opts);assert.ok(p.info().resting.length<=cap);
-   assert.ok(p.info().falling.length<={low:150,medium:300,high:500,max:800}[tier]);
+   assert.ok(p.info().falling.length<={low:60,medium:100,high:150,max:240}[tier]);
    assert.ok(Object.values(p.objects).filter(o=>o.name!=='season-fireflies'&&o.visible).length<=6);
   }
   assert.equal(p.info().restCapacity,cap);assert.equal(p.info().resting.length,cap);
   assert.equal(p.info().sources.length,6,'seventh distinct texture waits for a free slot');
   const old=new Set(p.info().resting.map(l=>l.id));let lifted=false;
-  for(let t=361;t<381;t++){
+  for(let t=601;t<661;t++){
    p.update(t,summer,{...warm,windMps:12},eye,opts);
    lifted||=p.info().falling.some(l=>old.has(l.id));
   }
   assert.ok(lifted,'strong wind re-tumbles some resting leaves');
-  const rest=p.info().resting.length;p.update(381,summer,calm,eye,{...opts,reduced:true});assert.ok(p.info().resting.length>=rest);
-  for(let t=382;t<=450;t++)p.update(t,summer,calm,eye,opts);
+  const rest=p.info().resting.length;p.update(661,summer,calm,eye,{...opts,reduced:true});assert.ok(p.info().resting.length>=rest);
+  for(let t=662;t<=730;t++)p.update(t,summer,calm,eye,opts);
   assert.equal(p.info().falling.length,0);
-  p.update(1000,summer,calm,eye,opts);assert.equal(p.info().resting.length,0);p.dispose();
+  p.update(1300,summer,calm,eye,opts);assert.equal(p.info().resting.length,0);p.dispose();
  }
  const normal=T.createSeasonTouches(new THREE.Scene(),{tier:'low',random:()=>.417}),slow=T.createSeasonTouches(new THREE.Scene(),{tier:'low',random:()=>.417});
  for(const p of [normal,slow])p.setPlan({});
@@ -343,7 +343,7 @@ if __name__ == '__main__':
     plan = flatten(assemble(fixture)[0])
     failed = False
     for driver in [DRIVER, SOURCE_DRIVER, CAPTURE_DRIVER]:
-        code, output = run_node(driver, {'root': ROOT.as_posix(), 'plan': plan}, timeout=180)
+        code, output = run_node(driver, {'root': ROOT.as_posix(), 'plan': plan}, timeout=600)
         print(output)
         failed |= bool(code)
     sys.exit(1 if failed else 0)
