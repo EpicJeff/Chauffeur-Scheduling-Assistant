@@ -21,6 +21,7 @@ DRIVER += B.DRIVER[B.DRIVER.index('const building ='):B.DRIVER.index('async func
 DRIVER += r"""
 const B = await import(file('static/twin/bake/baker.js'));
 const { mountBake, lightsOf, bakeLights } = await import(file('static/twin/bake/runtime.js'));
+const { ATLAS_TIMEOUT_MS } = await import(file('static/twin/bake/lightmap_material.js'));
 let observeEncode = null;
 class CodecWorker {
   postMessage(job) {
@@ -46,26 +47,32 @@ const until = async (fn, what, timeout = 40000) => {
 };
 const liveLayout = list => ({ markers: list.map(l => ({ ...l, device_id: l.device, placed: true, kind: 'light' })) });
 async function context(tier = 'high', sharedServer = null, placed = null, extra = {}) {
-  const out = gen.buildTwin(job.plan, job.kit, tier); await out.ready;
+  const out = gen.buildTwin(extra.plan || job.plan, job.kit, tier); await out.ready;
   if (extra.materialRole) {
     const {applyMaterialParams}=await import(file('static/twin/twin_library.js'));
     for (const material of out.materials.values()) if (material.name===extra.materialRole)
       applyMaterialParams(material,{household:true,revision:1,params:{tint:'#123456'},maps:{}},{id:'material-baked'},extra.materialRole,tier);
   }
-  let plan = job.plan;
+  let plan = extra.plan || job.plan;
   if (extra.farSurface) {
-    plan=structuredClone(job.plan);
+    plan=structuredClone(plan);
     plan.buildings.push({id:'far',position:[1000,0],levels:[{id:'L1',elevation:0,ceiling:10}],
       rooms:[{id:'far',level:'L1',polygon:[[0,0],[254,0],[254,254],[0,254]]}]});
     const m = new THREE.Mesh(new THREE.PlaneGeometry(254,254).rotateX(-Math.PI/2).translate(127,0,-127),
       new THREE.MeshStandardMaterial({name:'ground'}));
     m.userData={merged:true,buildingId:'far'}; m.scale.setScalar(gen.FT); m.position.x=1000*gen.FT; out.root.add(m);
+    if(extra.farLamp) {
+      m.scale.setScalar(1);m.position.x=1000;
+      plan.buildings.at(-1).rooms.push({id:'far-lamp',level:'L1',polygon:[[0,0],[10,0],[10,10],[0,10]]});
+    }
   }
   const renderer = fakeRenderer(); renderer.domElement = new Node('canvas');
+  if (extra.maxArrayLayers !== undefined) renderer.getContext = () => ({MAX_ARRAY_TEXTURE_LAYERS: 0x88ff,
+    getParameter: name => {assert.equal(name, 0x88ff); return extra.maxArrayLayers;}});
   const scene = new THREE.Scene(); scene.add(out.root); scene.updateMatrixWorld(true);
   const controls = new THREE.EventDispatcher(); controls.target = new THREE.Vector3();
-  const view = { plan, ready: true, scene, tier, renderer3: renderer, controls, render() {},
-    ...(extra.compileBehind ? { compileBehind: () => extra.compileBehind(out.root) } : {}) };
+  const view = Object.assign(extra.view || {}, { plan, ready: true, scene, tier, renderer3: renderer, controls, render() {},
+    ...(extra.compileBehind ? { compileBehind: () => extra.compileBehind(out.root) } : {}) });
   const server = sharedServer || fakeServer(), lights = placed || [k1, k2, h1, c1];
   const defaultApi = (path, init) => path === 'api/house/live' ? Promise.resolve(new Response(JSON.stringify({...liveLayout(lights), ...extra.fixtureLayout}), { status: 200 }))
     : extra.deny && path.endsWith('/lease') ? Promise.resolve(new Response('{"detail":"Requires parent"}', { status: 403 }))
@@ -83,6 +90,80 @@ async function check(name, fn) {
   try { await fn(); passed++; console.log('  ok   ' + name); }
   catch (error) { console.log('  FAIL ' + name + ' ' + error.stack); }
 }
+await check('merged_array_layer_limit_keeps_lights_real_time_and_accepts_the_boundary', async () => {
+  const limited = await context('high',null,null,{maxArrayLayers:1,poll:0});
+  let count;
+  try {
+    await until(()=>!!limited.controller.state().error,'layer overflow is observable');
+    count=limited.controller.packing().layers.reduce((n,l)=>n+l.length,0);
+    assert.ok(count>1);
+    assert.match(limited.controller.state().error,/this GPU supports 1.*Using real-time lighting/);
+    assert.equal(limited.controller.held(),null,'no oversized array allocated');
+    assert.equal(limited.controller.materialsChanged(),false,'material edits can rebuild safely without baked uniforms');
+    assert.deepEqual(limited.controller.fresh(),[],'no light loses its live fallback');
+    assert.deepEqual(limited.controller.state().stale.sort(),['c1','h1','k1','k2']);
+    await limited.controller.now();
+    assert.equal(limited.renderer.log.renders,0,'no pointless bake starts');
+    assert.equal(limited.controller.state().baking,false);
+    assert.ok(!limited.server.calls.some(c=>c.path.endsWith('.png')),'no page fetched or published');
+  } finally {limited.controller.stop();}
+  const fits=await context('high',null,null,{maxArrayLayers:count,poll:0});
+  try {
+    await until(()=>!fits.controller.state().baking&&fits.controller.fresh().length===4,'exact layer limit fits');
+    assert.equal(fits.controller.held().textures.banks[0].image.depth,count);
+    assert.equal(fits.controller.state().error,null);
+  } finally {fits.controller.stop();}
+});
+await check('invalid_ownership_rebuilds_instead_of_throwing_or_trusting_old_pages', async () => {
+  const first=await context('high',null,null,{poll:0});let panel,repair;
+  try {
+    await until(()=>first.controller.fresh().length===4&&!first.controller.state().baking,'initial bake');
+    const key=first.controller.state().key,server=first.server;
+    first.controller.stop();
+    const manifest=structuredClone(server.manifests.get(key));
+    manifest.ownership.charts++;
+    server.manifests.set(key,manifest);
+    panel=await context('low',server,null,{poll:0});
+    await until(()=>!!panel.controller.packing(),'reader recovers a layout');
+    await panel.controller.refresh();await panel.controller.refresh();
+    assert.deepEqual(panel.controller.fresh(),[],'even matching old publications are untrusted on repeated polls');
+    panel.controller.stop();
+    repair=await context('high',server,null,{poll:0});
+    await until(()=>repair.controller.fresh().length===4&&!repair.controller.state().baking,'invalid ownership is rebuilt');
+    assert.deepEqual([...repair.controller.state().baked].sort(),['c1','h1','k1','k2']);
+    assert.equal(server.manifests.get(key).ownership.charts,manifest.ownership.charts-1);
+    assert.ok(server.manifests.get(key).complete);
+  } finally {first.controller.stop();panel?.controller.stop();repair?.controller.stop();}
+});
+await check('one_wall_reuses_stored_pages_and_rebakes_only_reaching_lights', async () => {
+  const plan=structuredClone(job.plan),remote=[{device:'remote',building:'far',level:'L1',room:'far-lamp',at:[1005,5,6]}];
+  const list=[k1,k2,h1,c1,...remote];
+  const desk=await context('high',null,list,{plan,poll:0,farSurface:true,farLamp:true});let next;
+  try {
+    await until(()=>desk.controller.fresh().length===list.length&&!desk.controller.state().baking,'initial separated-building bake');
+    const key=desk.controller.state().key,before=structuredClone(desk.server.manifests.get(key)),bytes=new Map(desk.server.pages);
+    const edited=structuredClone(plan),wall=edited.buildings[0].walls[0];
+    wall.faces={left:{color:'#224466'},right:{color:'#224466'}};
+    desk.controller.stop();const since=desk.server.calls.length;
+    next=await context('high',desk.server,list,{plan:edited,view:desk.view,poll:0,farSurface:true,farLamp:true});
+    await until(()=>next.controller.state().key===key&&next.controller.packing(),'same stored atlas opens');
+    const packed=next.controller.packing();
+    const dirty=Object.keys(packed.entries).filter(id=>before.lights[id]?.key!==packed.entries[id].key);
+    assert.ok(dirty.length>0&&dirty.length<list.length,'only physical reach becomes stale: '+JSON.stringify(dirty));
+    assert.ok(remote.every(l=>!dirty.includes(l.device)),'remote lights remain fresh');
+    const changedPages=new Set(dirty.flatMap(id=>packed.entries[id].pages));
+    const untouched=[...new Set(remote.flatMap(l=>before.lights[l.device].pages))].filter(p=>!changedPages.has(p));
+    assert.ok(untouched.length,'fixture has untouched stored pages: '+JSON.stringify({dirty,changedPages:[...changedPages],remote:remote.map(l=>before.lights[l.device]),pages:before.pages}));
+    await until(()=>next.controller.fresh().length===list.length&&!next.controller.state().baking,'local rebake settles');
+    assert.deepEqual([...next.controller.state().baked].sort(),dirty.sort(),'no unrelated light rebakes');
+    for(const page of untouched) {
+      assert.deepEqual(desk.server.pages.get(`${key}/${page}`),bytes.get(`${key}/${page}`),'untouched page bytes');
+      assert.ok(!desk.server.calls.slice(since).some(c=>c.path===`api/house/bakes/${key}/${page}.png`&&c.full),'untouched page is not downloaded');
+      assert.ok(!desk.server.calls.slice(since).some(c=>c.path===`api/house/bakes/${key}/${page}.png`&&c.method==='POST'),'untouched page is not rebaked');
+    }
+    console.log('  counts '+JSON.stringify({lights:list.length,rebaked:dirty.length,pages:before.pages,untouchedPages:untouched.length,dirtyPages:changedPages.size}));
+  } finally {next?.controller.stop();desk.controller.stop();}
+});
 await check('material_revision_invalidates_bake_and_refreshes_affected_clones', async () => {
   const desk = await context('high',null,null,{materialRole:'interior_wall'});
   try {
@@ -278,7 +359,8 @@ await check('worker_failures_are_visible_in_state_and_console', async () => {
   try {
     console.error=(...args)=>errors.push(args);
     for (const mode of ['throw','reject','error','unreadable','hang']) {
-      globalThis.setTimeout=(fn,ms,...args)=>timeout(fn,ms===30000&&mode==='hang'?0:ms,...args);
+      // The silent-worker deadline is the module's own (600 s since the atlas left every browser).
+      globalThis.setTimeout=(fn,ms,...args)=>timeout(fn,ms===ATLAS_TIMEOUT_MS&&mode==='hang'?0:ms,...args);
       globalThis.indexedDB=fakeIndexedDB();
       globalThis.Worker=class {
         constructor() { if(mode==='throw') throw new Error('worker module cannot resolve three'); }
@@ -307,7 +389,9 @@ await check('controller_auto_bakes_loads_and_forces_a_second_run', async () => {
     assert.equal(c.controller.state().baked.length, 4);
     assert.equal(c.controller.state().stale.length, 0);
     const key = c.controller.state().key, before = structuredClone(c.server.manifests.get(key));
-    c.controller.light('k1', [255, 0, 0], 1); c.controller.light('k1', [255, 0, 0], 0);
+    const reflectionReasons=[];c.view.reflectionsChanged=reason=>reflectionReasons.push(reason);
+    c.controller.light('k1', [255, 0, 0], 1); c.controller.light('k1', [255, 0, 0], 1); c.controller.light('k1', [255, 0, 0], 0);
+    assert.deepEqual(reflectionReasons,['lamp','lamp'],'changed baked lamp tints use the coalescing path; identical tints do not request');
     assert.ok(covered(c.out.root).some(m => m.material.userData.lmBefore), 'the runtime actually patched materials');
     await c.controller.now();
     assert.equal(c.controller.state().baked.length, 8, 'force bakes all four room lights again');
@@ -406,7 +490,9 @@ await check('a_bank_page_with_no_light_is_never_held', async () => {
     await until(() => c.controller.fresh().length === 1, 'a panel draws the Changing room bake');
     const held = c.controller.held(), bank = held.banks[0];
     assert.equal(held.banks.length, 3);
-    assert.ok(held.banks.slice(1).every(b=>b.lit.length===0&&b.size===4&&b.layers===1),'unoccupied banks hold only a compressed placeholder');
+    assert.ok(held.banks.slice(1).every(b=>b.lit.length===0&&b.layers===0),'unoccupied banks allocate no layers');
+    assert.equal(held.textures.banks.length,1,'all logical banks use one physical texture');
+    assert.equal(held.textures.banks[0].image.depth,held.banks.reduce((n,b)=>n+b.layers,0));
     assert.ok(bank.pages >= bank.lit.length, 'sparse banks reserve no extra GPU layers: ' + JSON.stringify(bank));
     assert.ok(bank.lit.length >= 1, 'the Kitchen lights hold all their reach pages: ' + JSON.stringify(bank));
     assert.equal(bank.layers, bank.lit.length, 'only lit pages are layers on the GPU: ' + JSON.stringify(bank));
@@ -480,7 +566,7 @@ await check('a_poll_with_nothing_new_rebuilds_nothing', async () => {
     const changed = wall.controller.held();
     assert.deepEqual(changed.ids, before.ids, 'a changed page keeps its array texture');
     assert.ok(changed.versions.banks[0] > before.versions.banks[0], 'the bank array is flagged');
-    assert.deepEqual(changed.updates.banks[0], [changed.banks[0].lit.indexOf(page)], 'only the changed page\'s layer uploads');
+    assert.deepEqual(changed.updates.banks[0], [changed.banks[0].base + changed.banks[0].lit.indexOf(page)], 'only the changed page\'s merged layer uploads');
     assert.deepEqual([...wall.controller.fresh()].sort(), ['c1', 'h1', 'k1', 'k2']);
   } finally { wall.controller.stop(); }
 });
@@ -588,7 +674,10 @@ await check('a_missing_secondary_reach_page_keeps_the_light_real_time', async ()
   } finally { wall.controller.stop(); }
 });
 await check('crowded_charts_keep_all_lights_baked_somewhere', async () => {
-  const placed=Array.from({length:40},(_,i)=>({...k1,device:'cap-'+String(i).padStart(2,'0')}));
+  // Forty separate lights crowding the same charts. Lights at exactly one spot now share one
+  // channel (shareColocated, owner 2026-11-21), so each sits 0.01 ft from the next: still the
+  // same surfaces and the same contention, but forty lights.
+  const placed=Array.from({length:40},(_,i)=>({...k1,device:'cap-'+String(i).padStart(2,'0'),at:[k1.at[0]+i*.01,k1.at[1],k1.at[2]]}));
   const desk=await context('high',null,placed);
   try {
     const expected=B.bakeLayout(buildAtlas(await house(),job.plan,job.layout),job.layout,placed);
@@ -602,12 +691,54 @@ await check('crowded_charts_keep_all_lights_baked_somewhere', async () => {
     assert.deepEqual([...fresh].sort(),placed.map(l=>l.device));
     const mesh=covered(desk.out.root)[0],shader={uniforms:{},vertexShader:'#include <begin_vertex>',fragmentShader:'#include <lights_fragment_end>'};
     mesh.material.onBeforeCompile(shader,desk.renderer);
+    const held = desk.controller.held(), packing = desk.controller.packing(), texture = held.textures.banks[0];
+    assert.equal(held.textures.banks.length,1,'three logical banks share one physical texture');
+    assert.equal(shader.uniforms.lmBanks.value,texture);
+    assert.equal(texture.image.depth,packing.layers.reduce((n,l)=>n+l.length,0));
+    assert.equal((shader.fragmentShader.match(/uniform\s+highp\s+sampler2DArray\s+/g)||[]).length,1);
+    for (let b=0;b<packing.banks.length;b++) {
+      for (const [chart,page] of packing.banks[b].charts) {
+        const [x,y]=M.chartAddress(chart,b,packing.banks.length);
+        assert.equal(shader.uniforms.lmRegions.value.image.data[(y*1024+x)*4+2],
+          held.banks[b].base+Math.max(0,packing.layers[b].indexOf(page)),'chart regions use merged layers');
+      }
+      for (let layer=0;layer<packing.layers[b].length;layer++) {
+        const offset=packing.offsets[b]; // Server page addresses do not change.
+        const bytes=desk.server.pages.get(`${desk.controller.state().key}/${offset+packing.layers[b][layer]}`);
+        const decoded=await M.transcodePage(T,bytes,texture.format);
+        for(let mip=0;mip<texture.mipmaps.length;mip++) {
+          const per=decoded.mipmaps[mip].data.length,start=(held.banks[b].base+layer)*per;
+          assert.deepEqual(texture.mipmaps[mip].data.slice(start,start+per),decoded.mipmaps[mip].data,
+            `bank ${b} layer ${layer}, mip ${mip}: unchanged page bytes at the merged layer`);
+        }
+      }
+    }
     const owners=shader.uniforms.lmRegions.value.image.data;
     const indices=new Set();
     for(let i=3;i<owners.length;i+=4) {indices.add(owners[i]%4096);indices.add(Math.floor(owners[i]/4096));}
     indices.delete(0);assert.equal(indices.size,40,'every light owns chart texels, beyond the six-light local cap');
     assert.ok(mesh.geometry.attributes.lmRoom.array instanceof Int16Array,'compact chart indices are used when they fit');
     assert.equal(mesh.geometry.attributes.lmLightPage,undefined,'the unused base page attribute is released');
+    const b=held.banks.findLastIndex(bank=>bank.layers>0), layer=held.banks[b].layers-1;
+    assert.ok(b>0,'update exercises a later bank');
+    const page=packing.offsets[b]+packing.layers[b][layer],key=desk.controller.state().key,version=texture.version;
+    texture.clearLayerUpdates();
+    await desk.server.api(`api/house/bakes/${key}/${page}.png`,{method:'POST',body:desk.server.pages.get(`${key}/${page}`)});
+    await desk.controller.refresh();
+    assert.ok(texture.version>version);
+    assert.deepEqual([...texture.layerUpdates],[held.banks[b].base+layer],'later-bank ETag update uploads only its merged layer');
+    const snapshot=desk.controller.snapshot(),since=desk.server.calls.length;
+    desk.controller.stop();
+    const panel=await context('low',desk.server,placed,{view:{bake:{snapshot:()=>snapshot}},poll:0});
+    try {
+      await until(()=>panel.controller.fresh().length===40,'retained multi-bank pages stay fresh');
+      const copy=panel.controller.held().textures.banks[0];
+      assert.notEqual(copy.uuid,texture.uuid);
+      assert.deepEqual(copy.mipmaps,texture.mipmaps,'every retained merged layer and mip is copied');
+      assert.deepEqual(panel.controller.snapshot().bankBase,snapshot.bankBase);
+      assert.ok(!desk.server.calls.slice(since).some(c=>c.method==='GET'&&c.path.endsWith('.png')),
+        'retained pages with unchanged signatures need no page fetch');
+    } finally {panel.controller.stop();}
   } finally {desk.controller.stop();}
 });
 

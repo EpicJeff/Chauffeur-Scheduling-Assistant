@@ -432,6 +432,19 @@ def _bounds_wall(room, wall, positions):
                for c, d in zip(polygon, polygon[1:] + polygon[:1]))
 
 
+def _drop_porch_records(building, pid):
+    found = False
+    for name in ('porches_detail', 'porches'):
+        if name in building:
+            kept = [p for p in building[name] if p.get('id') != pid]
+            found |= len(kept) != len(building[name])
+            building[name] = kept
+    if isinstance(building.get('porch'), dict) and building['porch'].get('id') == pid:
+        building.pop('porch')
+        found = True
+    return found
+
+
 def _delete(building, pid, before):
     wall = next((w for w in building['walls'] if w['id'] == pid), None)
     if wall is not None:
@@ -454,18 +467,23 @@ def _delete(building, pid, before):
             raise Refused('This room shares every wall; delete a wall to merge it.')
         building['walls'] = [w for w in building['walls'] if w not in exclusive]
         building['rooms'].remove(room)
+        was_porch = _drop_porch_records(building, pid)
+        if room.get('kind') == 'porch' or was_porch:
+            return 'Deleted the porch.'
         return f"Deleted the {room['name']}."
+    if _drop_porch_records(building, pid):
+        return 'Deleted the porch.'
     for name in ('openings', 'anchors', 'items', 'roofs', 'dormers', 'extensions', 'stairs', 'solar_zones'):
         piece = next((p for p in building.get(name, []) if p['id'] == pid), None)
         if piece is not None:
-            if name == 'roofs' and any(z.get('roof') == pid for z in building.get('solar_zones', [])):
-                raise Refused('Delete the solar zones on this roof before deleting the roof.')
+            deleted_solar = name == 'roofs' and any(z.get('roof') == pid for z in building.get('solar_zones', []))
             if name == 'anchors':
                 release_anchor_device(building, piece, before)
             building[name].remove(piece)
             if name == 'roofs':
+                building['solar_zones'] = [z for z in building.get('solar_zones', []) if z.get('roof') != pid]
                 _follow_dormers(building, before)
-            return
+            return 'Deleted the roof and its solar zones.' if deleted_solar else None
     raise Refused('That piece is missing.')
 
 
@@ -487,7 +505,7 @@ def _mark_touched(building, previous, op):
                 _person(piece)
 
 
-MORE_OPS = ('add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
+MORE_OPS = ('add_porch', 'set_room_kind', 'add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
@@ -859,8 +877,8 @@ def _material(building, op, model=None):
     if not isinstance(target, dict):
         raise Refused('Choose a surface for the material.')
     if 'site' in target:
-        from services.twin_surface_kinds import KINDS
-        allowed = [row['kind'] for row in KINDS if row['scope'] == 'site']
+        from services.twin_site_shapes import SITE_ROLES
+        allowed = SITE_ROLES
         if target.get('site') is not True or target.get('role') not in allowed or model is None:
             raise Refused('Choose a surface for the material.')
     from services.twin_library import normalize_material_slot
@@ -899,7 +917,13 @@ def _material(building, op, model=None):
                'walls': 'wall_material'}[target['surface']]
     elif 'roof' in target:
         owner = _find(building, 'roofs', target['roof'])
-        container, key = owner, 'material'
+        if 'plane' in target:
+            plane = target['plane']
+            if type(plane) is not int or not 0 <= plane < len(owner['edges']):
+                raise Refused('Choose a roof area edge for the plane material.')
+            container, key = owner.setdefault('plane_materials', {}), str(plane)
+        else:
+            container, key = owner, 'material'
     elif 'dormer' in target:
         owner = _find(building, 'dormers', target['dormer'])
         container, key = owner, 'material'
@@ -912,6 +936,8 @@ def _material(building, op, model=None):
         container.pop(key, None)
         if 'part' in target and not container:
             owner.pop('materials', None)
+        if 'plane' in target and not container:
+            owner.pop('plane_materials', None)
     else:
         container[key] = deepcopy(material)
 
@@ -1193,6 +1219,64 @@ def _more(building, op, ha_catalogue=None):
             'dismiss_proposal': 'Dismissed the proposal.'}[kind]
 
 
+def _porch_detail(building, room):
+    """The room owns its floor; the build's detail owns columns and screen."""
+    from services import twin_porches
+    room.setdefault('foundation', deepcopy(twin_porches.DEFAULT))
+    details = building.setdefault('porches_detail', [])
+    if not any(p['id'] == room['id'] for p in details):
+        level = _find(building, 'levels', room['level'])
+        details.append({'id': room['id'], 'name': room['name'], 'level': room['level'],
+                        'polygon': deepcopy(room['polygon']), 'floor': level['elevation'],
+                        'state': room.get('state', 'settled'), 'screened': False,
+                        'columns': [{'at': list(p), 'size': .5, 'shape': 'square'}
+                                    for p in room['polygon']]})
+    if room.get('porch_materials'):
+        detail = _find(building, 'porches_detail', room['id'])
+        detail.setdefault('materials', {}).update(room.pop('porch_materials'))
+
+
+def _porch_outline(building, op):
+    level = _find(building, 'levels', op.get('level'))
+    polygon = op.get('polygon')
+    if not isinstance(polygon, list) or len(polygon) < 3:
+        raise Refused('Draw a closed porch with at least three corners.')
+    polygon = [_point(p) for p in polygon]
+    if polygon[0] == polygon[-1]:
+        polygon.pop()
+    segments = roofs._segments(polygon)
+    if (len(polygon) < 3 or twin_model._area(polygon) <= _EPS
+            or len({tuple(p) for p in polygon}) != len(polygon)
+            or any(_intersection(a, b, c, d) is not None
+                   or _collinear_overlap(a, b, c, d) is not None
+                   for i, (a, b) in enumerate(segments)
+                   for j, (c, d) in enumerate(segments) if j > i + 1 and (i, j) != (0, len(segments) - 1))):
+        raise Refused('Draw a closed porch without crossing its edges.')
+    if op['roof'] != 'none':
+        polygon = _roof_area(polygon)
+    positions = _positions(building, level['id'])
+    candidates = []
+    for wall in building['walls']:
+        if (wall['level'] != level['id'] or not wall.get('exterior')
+                or wall.get('kind') == 'separator' or wall.get('state') == 'ghost'
+                or op.get('host_wall') is not None and wall['id'] != op['host_wall']):
+            continue
+        a, b = (positions[j] for j in wall['joints'])
+        for c, d in roofs._segments(polygon):
+            overlap = _collinear_overlap(a, b, c, d)
+            if overlap:
+                candidates.append((overlap[1] - overlap[0], wall))
+    if not candidates:
+        raise Refused('Draw the porch against an outside wall.')
+    bounds = twin_model._bounds(polygon)
+    if min(bounds[2] - bounds[0], bounds[3] - bounds[1]) < 4 - _EPS:
+        raise Refused('A porch needs at least 4 by 4 feet.')
+    if any(r['level'] == level['id'] and r.get('state') not in ('ghost', 'proposal')
+           and twin_model._overlap(polygon, r['polygon']) > _EPS for r in building['rooms']):
+        raise Refused('That overlaps a room on this floor.')
+    return polygon, max(candidates, key=lambda row: row[0])[1]
+
+
 def _site_op(model, op, actor):
     from services import twin_plan
     before = deepcopy(model)
@@ -1303,21 +1387,153 @@ def _site_op(model, op, actor):
     return twin_plan.record_compose_overrides(before, model), words
 
 
+def _follow_roof_extensions(building, previous):
+    """A legacy shed continuation keeps its depth from the parent's x1 edge.
+
+    Awnings are wall-hosted; their section link is only a grouping/discovery
+    hint. Their own eave, span and slope stay with the wall, as rendered.
+    """
+    if not building.get('extensions') or building.get('roofs') == previous.get('roofs'):
+        return
+    def sections(b):
+        return {s['id']: s for r in b.get('roofs', []) for s in roofs.to_sections(r)}
+    old, new = sections(previous), sections(building)
+    for extension in building.get('extensions', []):
+        sid = extension.get('section')
+        if sid in old and sid not in new and extension.get('state') != 'ghost':
+            text = 'This roof extension lost its roof; place it again.'
+            r = old[sid]['rect']
+            at = [(r[0]+r[2])/2,(r[1]+r[3])/2]
+            extension.update(state='ghost',why=text,position=at)
+            building['flags'].append(dict(piece=extension['id'],text=text,at=at,level=old[sid].get('level')))
+        if extension.get('kind') == 'shed_continuation' and sid in old and sid in new:
+            extension['to_x'] += new[sid]['rect'][2]-old[sid]['rect'][2]
+
+
+def _follow_roof_points(building, previous):
+    """Roof-edge point hosts follow without silently clamping an off-roof point."""
+    if building.get('roofs') == previous.get('roofs'):
+        return
+    for collection in ('anchors', 'items', 'devices'):
+        for old_piece in previous.get(collection, []):
+            host = old_piece.get('host', {})
+            if 'roof' not in host or old_piece.get('state') == 'ghost':
+                continue
+            old = next((r for r in previous['roofs'] if r['id'] == host['roof']), None)
+            new = next((r for r in building['roofs'] if r['id'] == host['roof']), None)
+            piece = next((p for p in building.get(collection, []) if p['id'] == old_piece['id']), None)
+            if not old or not new or old['area'] == new['area'] or not piece:
+                continue
+            edge = host.get('edge')
+            if type(edge) is not int or not 0 <= edge < min(len(old['area']), len(new['area'])):
+                continue
+            a, b = roofs._segments(old['area'])[edge]
+            c, d = roofs._segments(new['area'])[edge]
+            length, old_length = math.dist(c, d), math.dist(a, b)
+            if length <= _EPS or old_length <= _EPS:
+                raise Refused(f'That collapses the roof edge under {old_piece.get("name") or old_piece["id"]}; move or delete it first.')
+            at = host['at']
+            if math.dist([c[i]-a[i] for i in (0, 1)], [d[i]-b[i] for i in (0, 1)]) > _EPS:
+                point = [a[i]+(b[i]-a[i])*at/old_length for i in (0, 1)]
+                at = sum((point[i]-c[i])*(d[i]-c[i])/length for i in (0, 1))
+            if at < -_EPS or at > length+_EPS:
+                raise Refused(f'That moves {old_piece.get("name") or old_piece["id"]} off its roof; move or delete it first.')
+            if piece.get('state') == 'ghost':
+                hosts._clear_flags(building, piece)
+                hosts._clear_ghost(piece)
+            piece['host']['at'] = at
+
+
+def _roof_words(roof, building):
+    """'the South roof', or 'the main floor roof' for the usual unnamed section."""
+    if not roof:
+        return 'its roof'
+    if roof.get('name'):
+        return f'the {roof["name"]}'
+    from services.twin_edit import _floor_name
+    level = next((l for l in building.get('levels', []) if l['id'] == roof.get('level')), None)
+    return f'the {_floor_name(level, building)} roof' if level else 'its roof'
+
+
 def solar_clear(building, previous):
-    # A structural edit must never silently strand a person's roof objects.
-    if all(building.get(key, []) == previous.get(key, [])
-           for key in ('roofs', 'dormers', 'solar_zones')):
+    # Work on the pre-edit copy; the complete refit is saved with the roof op.
+    if not previous.get('solar_zones') or all(building.get(key, []) == previous.get(key, [])
+           for key in ('roofs', 'dormers')):
         return
     from services import twin_solar
+    old_faces, new_faces = twin_solar.docking_faces(previous), twin_solar.docking_faces(building)
+    fitted = []
     for zone in previous.get('solar_zones', []):
         current = next((z for z in building.get('solar_zones', []) if z['id'] == zone['id']), None)
-        if current and zone.get('state') != 'ghost' and twin_solar.error(building, current, building.get('solar_zones', [])):
-            raise Refused('That would move a solar zone off its roof plane. Move or delete the zone before changing the roof.')
+        if not current or zone.get('state') == 'ghost':
+            continue
+        roof = next((r for r in previous['roofs'] if r['id'] == zone['roof']), None)
+        name = _roof_words(roof, previous)
+        too_small = f'That leaves the solar zone on {name} too small; resize or delete it first.'
+        source = [f for f in old_faces if f['roof'] == zone['roof'] and
+                  all(abs(a-b) < twin_solar.EPS for a, b in zip(f['plane'], zone['plane']))]
+        source = max(source, key=lambda f: twin_model._overlap(twin_solar.rectangle(zone['rect']), f['polygon'])) if source else None
+        face = twin_solar.matching_face(source, zone, new_faces) if source else None
+        if face is None:
+            raise Refused(f'That leaves the solar zone on {name} without a roof; its roof plane would be gone; resize or delete it first.')
+        if (face['plane'] == source['plane'] and face['polygon'] == source['polygon']
+                and twin_solar.error(building, current, fitted) is None):
+            fitted.append(current)
+            continue
+        try:
+            rect = twin_solar.refit(face, twin_solar.dock_offsets(source, zone['rect']))
+            rect = twin_solar.fit_inside(face, rect, current)
+        except ValueError as exc:
+            raise Refused(too_small) from exc
+        if rect is None:
+            raise Refused(too_small)
+        current.update(plane=list(face['plane']), rect=rect)
+        # Preserve earlier zones; the later zone's facing edge touches them.
+        for other in fitted:
+            if other['roof'] != current['roof'] or other['plane'] != current['plane']:
+                continue
+            r = other['rect']
+            if all(min(rect[i+2], r[i+2])-max(rect[i], r[i]) > twin_solar.EPS for i in (0, 1)):
+                old_other = next(z for z in previous['solar_zones'] if z['id'] == other['id'])['rect']
+                separations = [(i, zone['rect'][i] >= old_other[i+2]-twin_solar.EPS,
+                                zone['rect'][i+2] <= old_other[i]+twin_solar.EPS) for i in (0, 1)]
+                choices = [(i, after) for i, after, before in separations if after or before]
+                axis, after = choices[0] if choices else min(
+                    ((i, (rect[i]+rect[i+2]) >= (r[i]+r[i+2])) for i in (0, 1)),
+                    key=lambda v: min(rect[v[0]+2], r[v[0]+2])-max(rect[v[0]], r[v[0]]))
+                rect[axis if after else axis+2] = r[axis+2 if after else axis]
+        # Refuse only a zone this edit shrinks below one panel; a zone that was
+        # already narrower than a panel may keep (or grow from) its size.
+        w, h = twin_solar.dimensions(current)
+        old = zone['rect']
+        w, h = min(w, old[2]-old[0]), min(h, old[3]-old[1])
+        if rect[2]-rect[0] < w-twin_solar.EPS or rect[3]-rect[1] < h-twin_solar.EPS:
+            raise Refused(too_small)
+        if twin_solar.error(building, current, fitted):
+            raise Refused(too_small)
+        fitted.append(current)
+
+
+def material_only(op):
+    """Slot writes cannot change connected room geometry."""
+    if not isinstance(op, dict):
+        return False
+    if op.get('op') == 'set_material':
+        return True
+    keys = {'op', 'id', 'materials'} if op.get('op') == 'update_pool_feature' else (
+        {'op', 'list', 'index', 'materials'} if op.get('op') == 'update_site_shape' else set())
+    return bool(keys) and 'materials' in op and set(op) <= keys
 
 
 def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None) -> tuple[dict, str]:
     from services import twin_fixtures
     result, words = _apply(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized)
+    # A source is scoped to its building, even if another roof shares its id.
+    source = result.get('solar_source_roof')
+    owner = result.get('solar_source_building')
+    if source and not any(r['id'] == source for b in result['buildings']
+                          if owner is None or b['id'] == owner for r in b.get('roofs', [])):
+        result['solar_source_roof'] = result['solar_source_building'] = None
     if result.get('light_fixtures') or result.get('effect_fixtures'):
         twin_fixtures.follow_host_moves(_normalized[0] if _normalized is not None else model, result)
         twin_fixtures.normalize(result, [])
@@ -1338,7 +1554,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     op = deepcopy(op)
     # save() also needs the normalized pre-edit model for its fix log. Reuse
     # that exact input's result, but keep our mutable working copy private.
-    model, notes = twin_model.normalize(model) if _normalized is None else deepcopy(_normalized)
+    model, notes = twin_model.normalize(model, preserve_room_polygons=material_only(op)) if _normalized is None else deepcopy(_normalized)
     if kind in twin_effect_fixtures.OPS:
         try:
             return model, twin_effect_fixtures.apply_op(model, op)
@@ -1570,7 +1786,35 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     if kind == 'set' and op.get('field') == 'ha_area' and ha_catalogue is None:
         from services import twin_ha
         ha_catalogue = twin_ha.safe_catalogue()
-    if kind in MORE_OPS:
+    if kind == 'set_room_kind':
+        room = _find(building, 'rooms', op.get('room'))
+        if op.get('kind') not in ('room', 'porch'):
+            raise Refused('Choose Room or Porch.')
+        room['kind'] = op['kind']
+        if room['kind'] == 'porch':
+            _porch_detail(building, room)
+            deleted_words = 'Made this room a porch.'
+        else:
+            room.pop('foundation', None)
+            detail = next((p for p in building.get('porches_detail', []) if p['id'] == room['id']), None)
+            if detail and detail.get('materials'):
+                room['porch_materials'] = deepcopy(detail['materials'])
+            building['porches_detail'] = [p for p in building.get('porches_detail', []) if p['id'] != room['id']]
+            deleted_words = 'Made this porch a room.'
+    elif kind == 'add_porch':
+        if op.get('roof') not in ('shed', 'gable', 'none'):
+            raise Refused('Choose Shed, Gable or None for the porch roof.')
+        polygon, porch_host = _porch_outline(building, op)
+        porch_id = _id(building, 'porch')
+        room = {'id': porch_id, 'name': 'Porch', 'kind': 'porch', 'level': op['level'],
+                'polygon': deepcopy(polygon), 'state': 'settled'}
+        building['rooms'].append(room)
+        for a, b in roofs._segments(polygon):
+            _draw(building, op['level'], a, b, 'separator', False, actor)
+        _split_drawing(building, actor)
+        hosts.carry_split(building, before)
+        deleted_words = 'Added the porch.'
+    elif kind in MORE_OPS:
         try:
             deleted_words = _more(building, op, ha_catalogue)
         except ValueError as exc:
@@ -1614,7 +1858,46 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
                   op.get('exterior', False), actor)
         _split_drawing(building, actor)
         hosts.carry_split(building, before)
-    notes.extend(twin_model.derive(building))
+    if kind != 'set_material':
+        notes.extend(twin_model.derive(building))
+    if kind == 'add_porch':
+        room = _find(building, 'rooms', porch_id)
+        if not twin_model._same_outline(room['polygon'], polygon):
+            raise Refused('That overlaps a room on this floor.')
+        _porch_detail(building, room)
+        if op['roof'] != 'none':
+            pitch = 3 if op['roof'] == 'shed' else 6
+            _more(building, {'op': 'roof_over', 'rooms': [porch_id], 'pitch': pitch, 'overhang': 1}, ha_catalogue)
+            roof = building['roofs'][-1]
+            a, b = (before['walls'][porch_host['id']][key] for key in ('a', 'b'))
+            # A shed falls away from the host; a gable's ridge runs out from it.
+            axis = 0 if abs(a[0] - b[0]) < _EPS else 1
+            segments = roofs._segments(roof['area'])
+            farthest = max(range(len(segments)), key=lambda i:
+                           abs((segments[i][0][axis] + segments[i][1][axis]) / 2 - a[axis]))
+            away = 1 if segments[farthest][0][axis] > a[axis] else -1
+            winding = 1 if sum(graph._cross(c, d) for c, d in segments) > 0 else -1
+            for i, (edge, (c, d)) in enumerate(zip(roof['edges'], segments)):
+                normal = [winding * (d[1] - c[1]), winding * (c[0] - d[0])]
+                sloped = normal[axis] * away > _EPS if op['roof'] == 'shed' else abs(c[axis] - d[axis]) > _EPS
+                edge['setting'] = 'sloped' if sloped else 'gable'
+            sections = roofs.to_sections(roof)
+            if op['roof'] == 'shed' and len(sections) > 1:
+                # Native roofs partition concave areas into rectangles. Their
+                # eaves need different heights to share one shed plane.
+                low = segments[farthest][0][axis]
+                building['roofs'].remove(roof)
+                for section in sections:
+                    rect = section['rect']
+                    edge_at = rect[axis + (2 if away > 0 else 0)]
+                    plate = roof['plate'] + away * (low - edge_at) * pitch / 12
+                    _more(building, {'op': 'draw_roof', 'level': roof['level'], 'plate': plate,
+                                    'area': [[rect[0], rect[1]], [rect[2], rect[1]],
+                                             [rect[2], rect[3]], [rect[0], rect[3]]],
+                                    'pitch': pitch, 'overhang': roof['overhang']}, ha_catalogue)
+                    part = building['roofs'][-1]
+                    part['edges'] = roofs.from_section(section)['edges']
+                    building['roofs'][-1] = roofs.attach_edges(part, building['walls'], building['joints'])
     if kind == 'draw_room' and op.get('name'):
         old_ids = {r['id'] for r in previous['rooms']}
         candidates = [r for r in building['rooms'] if r['id'] not in old_ids]
@@ -1623,6 +1906,8 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     building['roofs'] = [roofs.follow_walls(r, building['walls'], building['joints'])
                          for r in building.get('roofs', [])]
     notes.extend(hosts.follow(building, before))
+    _follow_roof_points(building, previous)
+    _follow_roof_extensions(building, previous)
     _follow_dormers(building, before)
     solar_clear(building, previous)
     from services import twin_terrain

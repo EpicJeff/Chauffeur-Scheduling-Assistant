@@ -298,9 +298,11 @@ def scenario_census_in_chromium():
                   ('no program exceeds 16 sampler units (arrays count by size)',
                    [row for row in rows if row['samplers'] > 16]))
             check(surfaces, 'census must exercise weatherSurface programs')
-            check(all(row['lit'] or row['auxiliary'] for row in surfaces),
-                  ('weatherSurface occurs only in lit or normal/depth programs',
-                   [row for row in surfaces if not (row['lit'] or row['auxiliary'])]))
+            # The high-tier wet reflection pass (post, owner 2026-11-19) reads the same uniform.
+            ssr = lambda row: str(row.get('name', '')).startswith('wet-reflections-')
+            check(all(row['lit'] or row['auxiliary'] or ssr(row) for row in surfaces),
+                  ('weatherSurface occurs only in lit, normal/depth or wet reflection programs',
+                   [row for row in surfaces if not (row['lit'] or row['auxiliary'] or ssr(row))]))
             L.no_errors(served)
 
 

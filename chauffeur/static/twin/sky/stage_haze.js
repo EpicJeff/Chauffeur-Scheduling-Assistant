@@ -6,6 +6,7 @@ let installed = false;
 const hooks = new WeakMap();
 // One environment wrapper, including on clones. Haze and cloud shadows bind
 // independently, but must not mistake each other's hook for a new base hook.
+const appliedPatches=new WeakMap();
 export function bindEnvironmentMaterial(material, name, uniforms, patch = null) {
   const source=hooks.get(material.onBeforeCompile);
   if(source?.bindings.get(name)?.uniforms===uniforms)return;
@@ -15,10 +16,50 @@ export function bindEnvironmentMaterial(material, name, uniforms, patch = null) 
   const bindings=new Map(source?.bindings);bindings.set(name,{uniforms,patch});
   material.onBeforeCompile=function(shader,renderer) {
     compile.call(this,shader,renderer);
-    for(const {uniforms,patch} of bindings.values()) {Object.assign(shader.uniforms,uniforms);patch?.(shader);}
+    // Another system (lightmaps, water, unlit...) may wrap this hook after binding;
+    // the next bind then wraps that wrapper. Apply each named patch once per compile.
+    let applied=appliedPatches.get(shader);
+    if(!applied)appliedPatches.set(shader,applied=new Set());
+    for(const [name,{uniforms,patch}] of bindings) {
+      Object.assign(shader.uniforms,uniforms);
+      if(applied.has(name))continue;
+      applied.add(name);patch?.(shader);
+    }
   };
   material.customProgramCacheKey=()=>key+[...bindings.keys()].sort().map(name=>'|'+name).join('');
   hooks.set(material.onBeforeCompile,{compile,key,bindings});
+}
+// A scene hook runs before every pass (mirror, AO, beauty, transparent, probe
+// faces); binding walks the whole scene. Nothing joins the scene between the
+// passes of one frame, so walk once per frame. The frame is the twin's own
+// count (startEnvironmentFrame, called once by twin_view's render): three r187
+// bumps info.render.frame on EVERY render call, so it cannot key this (the
+// v2.499.954 gate did and saved nothing on the owner's house). A scene whose
+// frames nobody counts walks every pass, as before.
+const environmentFrames = new WeakMap();
+const environmentObjects = new WeakMap();
+export function startEnvironmentFrame(scene) {
+  environmentFrames.set(scene, (environmentFrames.get(scene) || 0) + 1);
+  environmentObjects.set(scene, frameObjects(scene, {fresh:true}));
+}
+export function environmentFrame(scene) { return environmentFrames.get(scene); }
+// Read-only pre-order list, including invisible objects, like Object3D.traverse.
+// Only the counted scene owns a snapshot. Explicit prepare(root) callers use
+// fresh:true, even for that scene (compile warm-ups must see newly added work).
+// Uncounted scenes and subtree roots always walk just the root they were given.
+export function frameObjects(root, {fresh=false} = {}) {
+  if (!fresh && environmentObjects.has(root)) return environmentObjects.get(root);
+  const objects = [];
+  root.traverse(object => objects.push(object));
+  return objects;
+}
+export function oncePerFrame(scene, prepare) {
+  let walked = 0;
+  return () => {
+    const frame = environmentFrames.get(scene);
+    if (frame !== undefined && frame === walked) return;
+    walked = frame ?? 0; prepare();
+  };
 }
 function installChunks() {
   if (installed) return;
@@ -46,16 +87,21 @@ uniform float stageRadius, stageEnabled, stageCanvas, stageExposure;
 // cube sampler: a sampler here cost every lit material one texture unit, and
 // water, glass and lamp-shadowed materials ran past the 16 units ANGLE gives
 // (owner's console, 2026-11-18). Haze is a smooth gradient; 40 colours hold it.
-uniform vec3 stageRing[40];
+// vec3 array entries already cost one vector each. Their padded w lanes now
+// carry extinction and fog RGB; vector and sampler totals are unchanged.
+uniform vec4 stageRing[40];
 varying vec3 vStageWorld;
-vec3 stageRingAt( int az, int el ) { return stageRing[ el * 8 + ( az - ( az / 8 ) * 8 ) ]; }
+// Callers supply azimuths 0..9 (the interpolated neighbour can cross 8).
+vec3 stageRingAt( int az, int el ) { return stageRing[ el * 8 + ( az >= 8 ? az - 8 : az ) ].xyz; }
 vec3 stageSkyColour( vec3 ray ) {
   float az = atan( ray.z, ray.x ) / 6.28318531 * 8.0;
   az = az < 0.0 ? az + 8.0 : az;
   float depression = degrees( asin( clamp( -ray.y, -1.0, 1.0 ) ) );
   // Depression bands at 0, 2, 6, 15 and 40 degrees below the horizon.
-  float el = depression <= 0.0 ? 0.0 : depression < 2.0 ? depression / 2.0 : depression < 6.0 ? 1.0 + ( depression - 2.0 ) / 4.0
-    : depression < 15.0 ? 2.0 + ( depression - 6.0 ) / 9.0 : depression < 40.0 ? 3.0 + ( depression - 15.0 ) / 25.0 : 4.0;
+  // Sum the four saturated band ramps. This is the same piecewise-linear
+  // coordinate without the nested conditional tree FXC has to optimise.
+  vec4 bands = clamp( ( vec4( depression ) - vec4( 0.0, 2.0, 6.0, 15.0 ) ) / vec4( 2.0, 4.0, 9.0, 25.0 ), 0.0, 1.0 );
+  float el = dot( bands, vec4( 1.0 ) );
   int a0 = int( floor( az ) ), e0 = int( floor( el ) ), e1 = min( e0 + 1, 4 );
   float fa = az - floor( az ), fe = el - floor( el );
   vec3 lower = mix( stageRingAt( a0, e0 ), stageRingAt( a0 + 1, e0 ), fa );
@@ -83,6 +129,9 @@ vec3 stageToneMapping( vec3 colour ) {
   // Preserve depression as well as azimuth, matching the background's ground
   // aerial perspective for raised cameras and the low-tier canvas too.
   vec3 stageColour = stageSkyColour( stageRay );
+  float stageFog = stageEnabled * ( 1.0 - exp( -max( stageRing[0].w, 0.0 ) * distance( vStageWorld, cameraPosition ) ) );
+  vec3 stageFogColour = vec3( stageRing[1].w, stageRing[2].w, stageRing[3].w );
+  stageColour = mix( stageColour, stageFogColour, stageFog / max( max( stageFade, stageFog ), 0.0001 ) );
   stageColour = vec3( stageColour.r >= 0.0 ? min( stageColour.r, 4096.0 ) : 0.0,
     stageColour.g >= 0.0 ? min( stageColour.g, 4096.0 ) : 0.0,
     stageColour.b >= 0.0 ? min( stageColour.b, 4096.0 ) : 0.0 );
@@ -90,13 +139,16 @@ vec3 stageToneMapping( vec3 colour ) {
   // the low-tier canvas and the composer's linear half-float target.
   if ( stageCanvas > 0.5 ) stageColour = stageToneMapping( stageColour );
   stageColour = linearToOutputTexel( vec4( stageColour, 1.0 ) ).rgb;
-  gl_FragColor.rgb = mix( gl_FragColor.rgb, stageColour, stageFade );
+  gl_FragColor.rgb = mix( gl_FragColor.rgb, stageColour, max( stageFade, stageFog ) );
 #endif`;
 }
 
 export function stageFade(point, centre, radius) {
   const r = Math.max(radius, .0001), t = Math.max(0, Math.min(1, (Math.hypot(point[0]-centre[0], point[1]-centre[1])-r)/(r*.35)));
   return t*t*(3-2*t);
+}
+export function cameraFogFactor(distanceM,extinction) {
+  return 1-Math.exp(-Math.max(0,Number.isFinite(extinction)?extinction:0)*Math.max(0,Number.isFinite(distanceM)?distanceM:0));
 }
 
 export const STAGE_RING_DEPRESSIONS = [0, 2, 6, 15, 40];
@@ -109,43 +161,45 @@ export function stageRingDirection(a, e) {
 export function installStageHaze(scene, sky) {
   installChunks();
   scene.fog = new THREE.Fog(0, 0, 1);
-  const ring = Array.from({length: 40}, () => new THREE.Vector3());
+  // 40 vec4s packed flat (rgb = sky radiance, w = the extinction and fog colour
+  // slots below): uniform4fv takes a Float32Array as it stands, where 40 Vector4s
+  // were flattened again on every lit draw of every pass (2026-11-20 profile).
+  const ring = new Float32Array(40 * 4);
   const uniforms = {stageCentre:{value:new THREE.Vector2()}, stageRadius:{value:1},
     stageRing:{value:ring}, stageEnabled:{value:1}, stageCanvas:{value:0}, stageExposure:{value:1}};
-  let clearRadius=1,fogDensity=0;
   // The same CPU radiance the cube is drawn from; refreshed whenever the sky changes.
   const guard = v => Number.isFinite(v) && v > 0 ? Math.min(v, 4096) : 0;
   function refresh() {
     if (!sky?.horizon) return;
     for (let e = 0; e < 5; e++) for (let a = 0; a < 8; a++) {
       const c = sky.horizon(stageRingDirection(a, e));
-      ring[e * 8 + a].set(guard(c.r), guard(c.g), guard(c.b));
+      const at=(e*8+a)*4;ring[at]=guard(c.r);ring[at+1]=guard(c.g);ring[at+2]=guard(c.b);
     }
   }
   refresh();
-  function prepare(root = scene) {
-    root.traverse(object => {
+  function prepare(root) {
+    for (const object of frameObjects(root ?? scene, {fresh:root !== undefined})) {
       for (const material of [].concat(object.material || [])) {
         // Effect ShaderMaterials stay inside the lot and deliberately omit fog.
         if (!material.fog || material.isShaderMaterial) continue;
         bindEnvironmentMaterial(material,'stage-haze-1',uniforms);
       }
-    });
+    }
   }
-  const previous = scene.onBeforeRender;
+  const previous = scene.onBeforeRender, walk = oncePerFrame(scene, () => prepare());
   scene.onBeforeRender = function(renderer, ...args) {
     previous.call(this, renderer, ...args);
     const target = renderer.getRenderTarget();
     uniforms.stageCanvas.value = !target || target.isXRRenderTarget ? 1 : 0;
     uniforms.stageExposure.value = Number.isFinite(renderer.toneMappingExposure) ? renderer.toneMappingExposure : 1;
-    prepare();
+    walk();
   };
   return {prepare, refresh,
-    set({centre, radius, enabled, fog} = {}) {
+    set({centre, radius, enabled, extinction, fogColour} = {}) {
       if (centre?.every(Number.isFinite)) uniforms.stageCentre.value.fromArray(centre);
-      if (Number.isFinite(radius) && radius > 0) clearRadius = radius;
-      if (Number.isFinite(fog)) fogDensity = Math.max(0,Math.min(1,fog));
-      uniforms.stageRadius.value = clearRadius * (1-.85*fogDensity);
+      if (Number.isFinite(radius) && radius > 0) uniforms.stageRadius.value = radius;
+      if (Number.isFinite(extinction)) ring[3]=Math.max(0,extinction);
+      if (fogColour?.every(Number.isFinite)) for(let i=0;i<3;i++)ring[(i+1)*4+3]=guard(fogColour[i]);
       if (enabled !== undefined) uniforms.stageEnabled.value = enabled ? 1 : 0;
     },
     dispose() { scene.onBeforeRender = previous; },

@@ -169,6 +169,32 @@ check('equipment shelf values reconcile with saved chargers and new objects rema
  const bad={'sensor.wall_connector_total':{state:'2',attributes:{device_class:'power',unit_of_measurement:'kWh'}}};assert.equal(guessEnergy(bad).chargers.length,0);
  const legacy=migrateEnergy({cars:[{id:'ev',name:'x'.repeat(100),charge_power:'sensor.ev'}]});assert.equal(legacy.chargers[0].name.length,100);
 });
+
+check('guess cache keys only inference attributes and isolates returned mappings',()=>{
+ const states={'sensor.cache_solar_power':power(), 'sensor.cache_ev_battery_level':{...level,attributes:{...level.attributes,friendly_name:'Tesla'}}};
+ const saved={},fleet=[],plan={buildings:[]};const expected=guessEnergy(states,saved,fleet,plan);
+ let regex=0,splits=0;const test=RegExp.prototype.test,split=String.prototype.split;
+ RegExp.prototype.test=function(...args){regex++;return test.apply(this,args);};String.prototype.split=function(...args){splits++;return split.apply(this,args);};
+ let unchanged,changed;
+ try{
+  states['sensor.cache_solar_power'].state='222';states['sensor.cache_solar_power'].attributes.extra='irrelevant';
+  unchanged=guessEnergy(structuredClone(states),{...saved},[...fleet],structuredClone(plan));
+  assert.equal(regex,0);assert.equal(splits,0);
+  unchanged.cars[0].name='mutated by caller';
+  assert.deepEqual(guessEnergy(states,saved,fleet,plan),expected);
+  states['sensor.cache_solar_power'].attributes.friendly_name='Changed';changed=guessEnergy(states,saved,fleet,plan);
+  assert.ok(regex>0);assert.equal(splits,1,'only the changed entity recomputes its stem and classification');
+ }finally{RegExp.prototype.test=test;String.prototype.split=split;}
+ assert.equal(changed.solar_power,expected.solar_power);
+ states['sensor.cache_solar_power'].attributes.unit_of_measurement='kWh';assert.equal(guessEnergy(states).solar_power,null);
+ states['sensor.cache_solar_power'].attributes.unit_of_measurement='W';assert.equal(guessEnergy(states).solar_power,'sensor.cache_solar_power');
+ delete states['sensor.cache_solar_power'];assert.equal(guessEnergy(states).solar_power,null);
+ states['sensor.cache_powerwall']={attributes:{device_class:'battery'}};assert.equal(guessEnergy(states).battery_level,'sensor.cache_powerwall');
+ states['sensor.cache_powerwall'].attributes.device_class='power';assert.equal(guessEnergy(states).battery_level,null);
+ saved.solar_power='sensor.chosen';assert.equal(guessEnergy(states,saved).solar_power,'sensor.chosen');
+ fleet.push({id:'new',name:'Family car'});assert.ok(guessEnergy(states,saved,fleet).cars.some(c=>c.id==='new'));
+ plan.buildings.push({id:'b',anchors:[{id:'charger',kind:'charger',power:'sensor.new'}]});assert.equal(guessEnergy(states,saved,fleet,plan).chargers.length,1);
+});
 let failed=0; for(const [n,f] of checks)try{await f(); console.log('  ok '+n);}catch(e){failed++;console.log('  FAIL '+n+' '+e.stack);}
 console.log(`${checks.length-failed}/${checks.length} energy mapping checks passed`);process.exit(failed?1:0);
 """

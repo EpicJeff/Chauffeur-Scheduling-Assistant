@@ -421,7 +421,7 @@ def scenario_L5_stair_rail_pick_and_clear_returns_house_look():
             const rails=proxy?.userData.partObjects?.filter(p=>p.object.userData.part==='stair_rail')||[];
             return rails.length>0&&rails.every(p=>p.object.material.userData.materialId===mid);
         }''', arg={'id': stair['id'], 'building': building['id'], 'mid': STATE['siding']}, timeout=90000, polling=500)
-        row.get_by_text('Bake siding, from the building', exact=True).wait_for()
+        row.get_by_text('From the building: Bake siding', exact=True).wait_for()
         page.screenshot(path=str(OUTPUT / 'L5-stair-rail-cleared-dark-wall.png'), full_page=True)
         assert not _unexpected(errors), _unexpected(errors)
         assert not _unexpected(served.errors()), _unexpected(served.errors())

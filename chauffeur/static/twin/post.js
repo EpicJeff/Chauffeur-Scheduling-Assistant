@@ -7,6 +7,8 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { shadowTransmittance } from './sky/cloud_shadow.js';
 import { createNoiseVolumeSampler } from './sky/cloud_noise.js';
+import { WetReflectionPass } from './wet_reflections.js';
+import { environmentFrame, frameObjects as environmentObjects } from './sky/stage_haze.js';
 
 const finiteClamp=(v,a=0,b=1)=>Number.isFinite(v)?Math.max(a,Math.min(b,v)):a;
 const smooth=(a,b,v)=>{const x=finiteClamp((v-a)/Math.max(b-a,1e-6));return x*x*(3-2*x);};
@@ -178,6 +180,8 @@ export function createPost(renderer, scene, camera, { samples = 0, clouds = null
   guardSample(output.material, 'gl_FragColor', OUTPUT_CEILING.toFixed(1));
   composer.addPass(beauty);
   composer.addPass(occlusion);
+  const wetReflections=['high','max'].includes(tier)?new WetReflectionPass(camera,occlusion):null;
+  if(wetReflections){composer.addPass(wetReflections);wetReflections.warm(renderer,target);}
   // Capture BEAUTY depth, including alpha-tested vegetation and custom effects.
   // AO's intentionally restricted normal prepass cannot mask a cloud composite.
   // A separate colour texture also avoids sampling an attached framebuffer's
@@ -227,11 +231,27 @@ export function createPost(renderer, scene, camera, { samples = 0, clouds = null
   let deferred = false;
   const isCelestial = o => o.name?.startsWith('sky-');
   const transparent = o => !isCelestial(o) && [].concat(o.material || []).some(m=>m.transparent && !(m.userData.viewingOpaque && m.depthWrite));
-  function withGeometry(predicate, draw) {
+  let objectFrame, objects;
+  function frameObjects() {
+    const frame = environmentFrame(scene);
+    if (objects && frame !== undefined && objectFrame === frame) return objects;
+    objectFrame = frame;
+    objects = {opaque:[], transparent:[], excluded:[], clipped:[]};
+    // Classify once before any pass changes masks, visibility or materials.
+    // traverse (not traverseVisible) preserves children of hidden parents.
+    for (const o of environmentObjects(scene)) {
+      if (o.material) objects[transparent(o) ? 'transparent' : 'opaque'].push(o);
+      if (!o.visible) continue;
+      if (excluded(o)) { objects.excluded.push(o); continue; }
+      if (o.isMesh && [].concat(o.material).some(m=>m?.clippingPlanes?.length)) objects.clipped.push(o);
+    }
+    return objects;
+  }
+  function withGeometry(list, draw) {
     const hidden=[];
     try {
       // Layers skip only this draw, preserving the children of a skipped mesh.
-      scene.traverse(o=>{if(o.material&&!predicate(o)){hidden.push([o,o.layers.mask]);o.layers.mask=0;}});
+      for (const o of list) { hidden.push([o,o.layers.mask]); o.layers.mask=0; }
       return draw();
     } finally {for(const [o,mask] of hidden)o.layers.mask=mask;}
   }
@@ -248,7 +268,7 @@ export function createPost(renderer, scene, camera, { samples = 0, clouds = null
         try {
           scene.background=null;renderer.autoClear=false;
           renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
-          withGeometry(transparent,()=>renderer.render(scene,beauty.camera));
+          withGeometry(objects.opaque,()=>renderer.render(scene,beauty.camera));
           mainStats.calls+=renderer.info.render.calls-before.calls;mainStats.triangles+=renderer.info.render.triangles-before.triangles;
         } finally {scene.background=background;renderer.autoClear=auto;}
       }
@@ -279,7 +299,7 @@ export function createPost(renderer, scene, camera, { samples = 0, clouds = null
       if (background?.isColor) scene.background = linearBackground(background, renderer, backgroundColor);
       // r187 leaves render targets scene-linear even with ACES set on renderer.
       deferred=!!cloudsReady();
-      if (deferred) withGeometry(o=>!transparent(o),()=>drawBeauty(...args));
+      if (deferred) withGeometry(objects.transparent,()=>drawBeauty(...args));
       else drawBeauty(...args);
       mainStats = {calls: renderer.info.render.calls - before.calls, triangles: renderer.info.render.triangles - before.triangles};
       if (depthReady&&(deferred||shafts?.strength>0)) {
@@ -316,15 +336,14 @@ export function createPost(renderer, scene, camera, { samples = 0, clouds = null
     const hidden = [], swapped = [], used = new Set(), background = scene.background, override = scene.overrideMaterial;
     const shadows = renderer.shadowMap.enabled;
     try {
-      scene.traverse(o => {
-        if (!o.visible) return;
-        if (excluded(o)) { hidden.push(o); o.visible = false; return; }
+      for (const o of objects.excluded) if (o.visible) { hidden.push(o); o.visible = false; }
+      for (const o of objects.clipped) {
+        if (!o.visible) continue;
         const m = o.material;
-        if (!o.isMesh || ![].concat(m).some(x => x?.clippingPlanes?.length)) return;
         swapped.push([o, m]);
         const normal = x => x.clippingPlanes?.length ? clippedNormal(x, used) : occlusion.normalMaterial;
         o.material = Array.isArray(m) ? m.map(normal) : normal(m);
-      });
+      }
       scene.background = null;
       renderer.shadowMap.enabled = false;
       drawOverride(...args);
@@ -345,6 +364,7 @@ export function createPost(renderer, scene, camera, { samples = 0, clouds = null
   }
   function setCamera(next) {
     beauty.camera = occlusion.camera = next;
+    if(wetReflections)wetReflections.camera=next;
     const perspective = next.isPerspectiveCamera ? 1 : 0;
     for (const m of [occlusion.gtaoMaterial, occlusion.depthRenderMaterial]) {
       if (m.defines.PERSPECTIVE_CAMERA !== perspective) {
@@ -353,11 +373,13 @@ export function createPost(renderer, scene, camera, { samples = 0, clouds = null
     }
   }
   return {
-    setCamera, setSize, setSun, shafts,
+    setCamera, setSize, setSun, shafts, wetReflections,
+    setWetGround(bindings){wetReflections?.bind(bindings);},
     // Where the scene's materials draw: their programs are keyed on this target.
     get target() { return disposed ? null : target; },
     render() {
       if (disposed) return mainStats;
+      frameObjects();
       const dimensions = renderer.getSize(new THREE.Vector2());
       setSize(dimensions.x, dimensions.y, renderer.getPixelRatio());
       const saved = {target: renderer.getRenderTarget(), face: renderer.getActiveCubeFace(), mip: renderer.getActiveMipmapLevel(),
@@ -366,6 +388,7 @@ export function createPost(renderer, scene, camera, { samples = 0, clouds = null
       try {
         renderer.info.autoReset = false;
         updateShafts();
+        wetReflections?.update();
         composer.render();
         return {...mainStats};
       } finally {
@@ -386,7 +409,8 @@ export function createPost(renderer, scene, camera, { samples = 0, clouds = null
       if (output !== undefined) occlusion.output = output;
     },
     info() { return {passes: composer.passes.map(p => p.constructor.name), enabled: !disposed, size: {...size}, samples, cloudError:depthError,
-      shafts:shafts?{samples:shafts.samples,scale:shafts.scale,strength:shafts.strength,error:shafts.error}:null}; },
+      shafts:shafts?{samples:shafts.samples,scale:shafts.scale,strength:shafts.strength,error:shafts.error}:null,
+      wetReflections:wetReflections?{enabled:wetReflections.enabled,ready:wetReflections.ready,error:wetReflections.error}:null}; },
     dispose() {
       if (disposed) return;
       disposed = true;

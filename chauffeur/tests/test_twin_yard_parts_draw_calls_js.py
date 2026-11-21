@@ -19,7 +19,11 @@ for(const viewing of [false,true]) {
  const yard=await buildYard(input.plan,input.kit,'high',{viewing});
  const count=calls(yard.group),structure=calls(house.root);
  console.log(JSON.stringify({viewing,yard:count,structure,total:count+structure}));
- if(input.expected)assert.ok(count<=input.expected[String(viewing)]+15,`part batching adds at most 15 calls (${count})`);
+ // Retain the surrounding yard budget; charge tile draws separately from the
+ // old single-field submission, with an explicit spatial-partition budget.
+ const grass=yard.group.userData.grass,tiles=grass.tiles.length;
+ assert.ok(tiles<=32,`grass tile budget (${tiles})`);
+ if(input.expected)assert.ok(count-Math.max(0,tiles-1)<=input.expected[String(viewing)]+15,`part batching adds at most 15 non-tile calls (${count}, ${tiles} grass tiles)`);
 }
 """
 

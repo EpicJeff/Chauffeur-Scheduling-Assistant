@@ -25,6 +25,43 @@ def sample(condition='sunny', temperature=0, **extra):
 
 
 class ModelTests(unittest.TestCase):
+    def test_rain_builds_and_puddles_follow_duration_not_instant_wetness(self):
+        for condition, rate, factor in [('pouring', 1, 1), ('rainy', .45, 1), ('snowy-rainy', .5, .5)]:
+            forcing = dict(sample(condition), rate=rate)
+            start = weather.advance(None, forcing, 10000)
+            self.assertEqual(start['wetness'], 0)
+            self.assertEqual(weather.puddles(start, 10000), 0)
+            for minutes in (10, 18, 20, 40, 60, 90):
+                result = weather.advance(start, forcing, 10000 + minutes * 60)
+                self.assertAlmostEqual(result['wetness'], min(1, minutes * rate * factor / 40))
+                expected = max(0, min(1, (minutes * rate * factor - 18) / 42))
+                self.assertAlmostEqual(weather.puddles(result, result['updated']), expected)
+            ticks = start
+            for minutes in range(10, 61, 10):
+                ticks = weather.advance(ticks, forcing, 10000 + minutes * 60)
+            single = weather.advance(start, forcing, 13600)
+            self.assertAlmostEqual(ticks['wetness'], single['wetness'])
+            self.assertAlmostEqual(weather.puddles(ticks, 13600), weather.puddles(single, 13600))
+            self.assertEqual(weather.advance(ticks, forcing, 13600), ticks, 'zero elapsed never wets')
+
+    def test_melting_duration_and_puddle_record_are_bounded(self):
+        bare = weather.advance(None, sample(), 10000)
+        snowy = dict(bare, snow_cm=.5)
+        melted = weather.advance(snowy, sample(temperature=5), 13600)
+        self.assertAlmostEqual(melted['wetness'], .75 * .25, msg='snow melts for only 15 of the 60 minutes')
+        self.assertEqual(weather.puddles(melted, 13600), 0, 'melt alone never creates rain puddles')
+        rain = dict(sample('pouring'), rate=1)
+        flooded = weather.advance(bare, rain, 13600)
+        dry = weather.advance(flooded, sample(temperature=20), 17200)
+        self.assertAlmostEqual(dry['wetness'], math.exp(-1))
+        self.assertEqual(weather.puddles(dry, 17200), 0, 'puddles vanish below the wetness threshold')
+        for amount in (float('nan'), float('inf'), 'bad', True, -1, 2):
+            result = weather.advance(dict(flooded, puddle_amount=amount), sample(), 14200)
+            self.assertEqual(result['wetness'], 0)
+        legacy = {'snow_cm': 0, 'wetness': 1, 'last_rain': 10000, 'updated': 10000}
+        self.assertEqual(weather.puddles(legacy, 10000), 1)
+        self.assertEqual(weather.advance(legacy, rain, 10000)['puddle_amount'], 1)
+
     def season(self, record, now, temp=20, grass='cool', lat=40, rain=False, usable=True):
         return weather.advance_season(record, sample('rainy' if rain else 'sunny', temp), now,
                                       grass, lat, usable)
@@ -148,11 +185,11 @@ class ModelTests(unittest.TestCase):
         self.assertAlmostEqual(snow['snow_cm'], 2.5)
         mix = weather.advance(bare, sample('snowy-rainy'), 10000 + 7200)
         self.assertAlmostEqual(mix['snow_cm'], 1)
-        self.assertEqual(mix['wetness'], 1)
+        self.assertEqual(mix['wetness'], .75)
         warm = sample(temperature=5)
         melted = weather.advance(snow, warm, snow['updated'] + 3600)
         self.assertAlmostEqual(melted['snow_cm'], .5)
-        self.assertEqual(melted['wetness'], 1)
+        self.assertEqual(melted['wetness'], .75)
         self.assertEqual(weather.advance(melted, warm, melted['updated'] + 600)['snow_cm'], 0)
         sun = dict(warm, sun_altitude=.5, cloud_cover=.25)
         self.assertAlmostEqual(weather.advance(snow, sun, snow['updated'] + 1800)['snow_cm'], 1.2)
@@ -174,9 +211,11 @@ class ModelTests(unittest.TestCase):
             record = weather.advance(corrupt, sample(), 1000000)
             self.assertEqual((record['snow_cm'], record['wetness']), (0, 0))
         record = weather.advance(None, sample('rainy'), 10000)
-        self.assertGreater(weather.puddles(record, 10000), 0)
-        self.assertEqual(weather.puddles(record, 10000 + 10801), 0)
-        self.assertEqual(weather.puddles(dict(record, wetness=.6), 10000), 0)
+        self.assertEqual(weather.puddles(record, 10000), 0)
+        record = weather.advance(record, sample('rainy'), 10000 + 3600)
+        self.assertGreater(weather.puddles(record, 13600), 0)
+        self.assertEqual(weather.puddles(record, 13600 + 10801), 0)
+        self.assertEqual(weather.puddles(dict(record, wetness=.45), 13600), 0)
 
 
 class DeliveryTests(unittest.TestCase):
@@ -200,6 +239,22 @@ class DeliveryTests(unittest.TestCase):
     def entity(self, condition='snowy', **attrs):
         return {'entity_id': 'weather.home', 'state': condition, 'attributes': attrs,
                 'last_updated': '2020-01-01T00:00:00Z'}
+
+    def test_live_rain_ramp_survives_reloads_and_transition_uses_previous_interval(self):
+        self.rows = [self.entity('pouring')]
+        self.assertEqual(weather.update(now=10000)['wetness'], 0)
+        self.assertEqual(weather.update(now=11200)['wetness'], .5)
+        importlib.reload(weather)
+        body = weather.update(now=12400)
+        self.assertEqual(body['wetness'], 1)
+        self.assertAlmostEqual(body['puddles'], 22 / 42)
+        self.rows = [self.entity('sunny', temperature=20)]
+        body = weather.update(now=13600)
+        self.assertEqual(body['wetness'], 1)
+        self.assertEqual(body['puddles'], 1)
+        body = weather.update(now=14200)
+        self.assertLess(body['wetness'], 1)
+        self.assertLess(body['puddles'], 1)
 
     def test_season_delivery_restart_grass_save_and_unknown_latitude(self):
         start = datetime(2026, 8, 1, tzinfo=timezone.utc).timestamp()
@@ -433,7 +488,8 @@ console.log('weather drawer runtime passed');
                     await asyncio.wait_for(done.wait(), 2)
                     self.assertGreaterEqual(len(calls), 3)
                     self.assertAlmostEqual(storage.get_app_state(weather.KEY)['snow_cm'], 1.25)
-                    self.assertEqual(storage.get_app_state(weather.KEY)['wetness'], 1)
+                    self.assertEqual(storage.get_app_state(weather.KEY)['wetness'], 0,
+                                     'snow interval followed by rain at the same time cannot jump wetness')
                     self.assertEqual([t for _, t in storage.get_app_state(weather.KEY)['temperature_hours']], [-2, -2])
                     self.assertEqual(storage.get_app_state(weather.KEY)['lawn_target'], .3)
                 finally:

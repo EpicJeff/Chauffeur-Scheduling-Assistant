@@ -6,12 +6,13 @@ import { contains } from '../twin_generator.js';
 import { stairShelf } from './stair_shelf.js';
 
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-const drawingTools = ['draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-stair', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking'];
+const drawingTools = ['draw-room', 'add-porch', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-stair', 'add-solar-zone', 'add-meter', 'add-electric-panel', 'add-charger', 'add-parking'];
 
 export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel, surfaceAt, groundPoint, dock, cancelOtherDrawing }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let tool = null, points = [], press = null, anchorKind = 'light';
   let stair = null;
+  let porchRoof = 'shed', porchOptions = null;
   let saving = Promise.resolve(), inbox = Promise.resolve(), run = 0;
   // A click that places something on a wall or a room waits until the changes
   // before it are saved, so it sees the walls they made and is never dropped.
@@ -33,6 +34,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     if (canvas.hasPointerCapture(previous.id)) canvas.releasePointerCapture(previous.id);
   }
   function cancel() {
+    porchOptions?.remove(); porchOptions = null;
     dock?.properties.clear(tool === 'add-stair' ? el('piece-card') : el('draw-options'));
     if (tool === 'add-stair') { delete el('piece-card').dataset.stairDraft; el('piece-card').hidden = true; stair = null; }
     ++run; release(); tool = null; points = []; outline([]); note(''); tools.setTool('select');
@@ -42,6 +44,15 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
   const done = () => { const at = run; return () => { if (run === at) cancel(); }; };
   function snap(p, from) {
     const { building, level } = tools.floor();
+    if (tool === 'add-porch') {
+      const host = wallAt(p, building.walls.filter(w => w.level === level.id && w.exterior && w.kind !== 'separator' && w.state !== 'ghost'));
+      if (host) {
+        const axis = Math.abs(host.wall.to[0] - host.wall.from[0]) < 1e-8 ? 1
+          : Math.abs(host.wall.to[1] - host.wall.from[1]) < 1e-8 ? 0 : null;
+        if (axis !== null) host.point[axis] = Math.round(host.point[axis] * 12) / 12;
+        return host.point;
+      }
+    }
     const below = building.levels.filter(l => l.elevation < level.elevation).sort((a, b) => b.elevation - a.elevation)[0];
     const anchors = (building.anchors || []).flatMap(a => {
       try { return [hostPoint(building, a.host).slice(0, 2)]; } catch { return []; }
@@ -77,12 +88,17 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     }).filter(row => row.distance <= 1).sort((a, b) => a.distance - b.distance)[0];
   }
   function save(operation, nameRoom = false) {
+    const at = run;
     // Keep every corner even when the person clicks faster than a round saves.
     const result = saving.then(() => gesture(async () => {
       const before = getPlan().buildings.find(b => b.id === operation.building).rooms;
       const old = new Set(before.map(r => r.id));
       await op(operation);
       const added = getPlan().buildings.find(b => b.id === operation.building).rooms.filter(r => !old.has(r.id));
+      const porch = operation.op === 'add_porch' && added.find(room => room.kind === 'porch');
+      if (porch && run === at) {
+        cancel(); tools.select({ pieceId: porch.id, buildingId: operation.building });
+      }
       if (nameRoom) for (const room of added.slice(0, 1)) {
         const answer = window.promptInput('Name the new room', 'What is the new room called? Skip keeps Room.', { value: '', placeholder: 'Room' });
         const button = el('cc-input-cancel-btn'), label = button.textContent;
@@ -94,6 +110,27 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     }));
     saving = result.catch(() => {});
     return result;
+  }
+  function savePorch(polygon) {
+    const { building, level } = tools.floor();
+    const hosts = building.walls.filter(w => w.level === level.id && w.exterior && w.kind !== 'separator' && w.state !== 'ghost');
+    const shared = hosts.flatMap(wall => {
+      const [a, b] = [wall.from, wall.to], length = distance(a, b);
+      if (!length) return [];
+      const d = b.map((v, i) => (v - a[i]) / length);
+      const overlaps = polygon.map((c, i) => {
+        const e = polygon[(i + 1) % polygon.length];
+        const onLine = p => Math.abs(d[0] * (p[1] - a[1]) - d[1] * (p[0] - a[0])) < 1e-6;
+        if (!onLine(c) || !onLine(e)) return 0;
+        const ends = [c, e].map(p => d.reduce((n, v, i) => n + (p[i] - a[i]) * v, 0)).sort((a, b) => a - b);
+        return Math.max(0, Math.min(length, ends[1]) - Math.max(0, ends[0]));
+      });
+      return [{ wall, overlap: Math.max(...overlaps) }];
+    }).filter(row => row.overlap > 1e-6).sort((a, b) => b.overlap - a.overlap);
+    if (!shared.length) { note('Draw the porch against an outside wall.'); return; }
+    const spans = [0, 1].map(i => Math.max(...polygon.map(p => p[i])) - Math.min(...polygon.map(p => p[i])));
+    if (Math.min(...spans) < 4) { note('A porch needs at least 4 by 4 feet.'); return; }
+    return save({ op: 'add_porch', building: building.id, level: level.id, polygon, roof: porchRoof, host_wall: shared[0].wall.id }).catch(report);
   }
   async function choose(name) {
     if (!canEdit()) return;
@@ -121,11 +158,22 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       if(view.state?.camera==='top')view.setCamera?.('front');
     }
     ++run; tool = name; tools.setTool(name); el(`rail-${name}`).setAttribute('aria-pressed', 'true');
+    if (name === 'add-porch') {
+      porchRoof = 'shed';
+      porchOptions = document.createElement('label'); porchOptions.textContent = 'Roof';
+      const input = document.createElement('select'); input.setAttribute('aria-label', 'Roof');
+      for (const value of ['shed', 'gable', 'none']) {
+        const option = document.createElement('option'); option.value = value; option.textContent = value[0].toUpperCase() + value.slice(1); input.append(option);
+      }
+      input.value = porchRoof; input.addEventListener('change', () => { porchRoof = input.value; });
+      porchOptions.append(input); el('draw-options').append(porchOptions);
+    }
     note(({ 'add-stair': 'Click the start of the stair on this floor.', 'add-charger':'Click the wall face where the charger goes.', 'add-parking':'Click a floor or the ground to place a 9 × 18 ft parking spot.', 'add-solar-zone':'Click a clear roof plane to place a solar zone.', 'add-meter':'Click the wall face where the meter goes.', 'add-electric-panel':'Click the wall face where the electric panel goes.', 'draw-room': 'Drag a rectangle, or click corners and close on the first corner.',
       'draw-wall': 'Click wall corners. Escape or a double click ends the chain.',
       'split-room': 'Click two walls of this room to draw the split.',
       'add-anchor': 'Click a wall or a room surface. Lights and fans go on its ceiling.' })[name]
       || `Click a wall where the ${name === 'add-door' ? 'door' : 'window'} goes. It starts 3 feet wide.`);
+    if (name === 'add-porch') note('Drag out from an outside wall.');
     if (dock) {
       el('draw-options-title').textContent = el(`rail-${name}`).getAttribute('aria-label');
       el('draw-options-note').textContent = el('draw-note').textContent;
@@ -161,10 +209,11 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       save({ op: 'add_stair', building: building.id, ...stair, from: points[0], to: point }).then(done()).catch(report);
       return;
     }
-    if (tool === 'draw-room') {
+    if (tool === 'draw-room' || tool === 'add-porch') {
       if (points.length >= 3 && distance(p, points[0]) <= 1) {
         const polygon = points; points = []; outline([]);
-        save({ op: 'draw_room', building: building.id, level: level.id, polygon }).catch(report);
+        if (tool === 'add-porch') savePorch(polygon);
+        else save({ op: 'draw_room', building: building.id, level: level.id, polygon }).catch(report);
       } else { points.push(snap(p, points.at(-1))); outline(points); }
     } else if (tool === 'draw-wall' || tool === 'split-room') {
       const point = tool === 'split-room' ? splitPoint(p) : snap(p, points.at(-1));
@@ -259,7 +308,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     pointerMove(event) {
       if (!tool) return false;
       const p = view.floorAt(event.clientX, event.clientY, tools.floor().key); if (!p) return true;
-      if (tool === 'draw-room' && press && !points.length && Math.hypot(event.clientX - press.x, event.clientY - press.y) >= 3) {
+      if (['draw-room', 'add-porch'].includes(tool) && press && !points.length && Math.hypot(event.clientX - press.x, event.clientY - press.y) >= 3) {
         const a = snap(press.p), b = snap(p);
         outline([a, [b[0], a[1]], b, [a[0], b[1]]]);
       } else if (points.length) outline([...points, snap(p, points.at(-1))]);
@@ -270,12 +319,13 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       if (!press) return true;
       const start = press, p = view.floorAt(event.clientX, event.clientY, tools.floor().key); release();
       if (cancelled || !p) return true;
-      if (tool === 'draw-room' && !points.length && Math.hypot(event.clientX - start.x, event.clientY - start.y) >= 3) {
+      if (['draw-room', 'add-porch'].includes(tool) && !points.length && Math.hypot(event.clientX - start.x, event.clientY - start.y) >= 3) {
         const a = snap(start.p), b = snap(p), { building, level } = tools.floor(); outline([]);
-        if (Math.abs(a[0] - b[0]) >= 1 && Math.abs(a[1] - b[1]) >= 1)
+        if (tool === 'add-porch') savePorch([a, [b[0], a[1]], b, [a[0], b[1]]]);
+        else if (Math.abs(a[0] - b[0]) >= 1 && Math.abs(a[1] - b[1]) >= 1)
           save({ op: 'draw_room', building: building.id, level: level.id,
             polygon: [a, [b[0], a[1]], b, [a[0], b[1]]] }).catch(report);
-      } else if (['draw-room', 'draw-wall'].includes(tool)) click(p);
+      } else if (['draw-room', 'add-porch', 'draw-wall'].includes(tool)) click(p);
       else {
         if(['add-solar-zone','add-meter','add-electric-panel','add-charger','add-parking'].includes(tool)){
           if(tool==='add-parking'){

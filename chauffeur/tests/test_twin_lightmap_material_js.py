@@ -352,6 +352,49 @@ function tintAt(uniforms, slots, room, slot) {
 const checks = [];
 const check = (name, fn) => checks.push([name, fn]);
 
+check('one_array_sampler_for_every_bank_count_and_merged_chart_layers', () => {
+  for (const count of [3, 1, 8]) {
+    const layers = Array.from({length: count}, (_, b) => Array.from({length: b % 3 + 1}, (_, i) => i + 4));
+    let depth = 0;
+    const bankBase = layers.map(list => { const base = depth; depth += list.length; return base; });
+    const texture = arrayPage(THREE.RG11_EAC_Format, depth);
+    const pages = {banks: [texture], bankBase, bankLayers: layers.map(l => l.length)};
+    const rect = {x: 0, y: 0}, packed = {banks: layers.map(list => ({charts: list.map((page, id) =>
+      ({id, page, rect, sourceRegion: rect}))})), slots: {}};
+    const uniforms = M.chartLightmapUniforms(3, packed, [], 4, layers);
+    const material = new THREE.MeshStandardMaterial();
+    M.patchLightmaps([material], pages, uniforms);
+    const shader = compile(material);
+    assert.equal((shader.fragmentShader.match(/uniform\s+highp\s+sampler2DArray\s+/g) || []).length, 1,
+      `${count} banks declare exactly one array sampler`);
+    assert.equal(shader.uniforms.lmBanks?.value, texture);
+    for (let b = 0; b < count; b++) for (let layer = 0; layer < layers[b].length; layer++) {
+      const [x, y] = M.chartAddress(layer, b, count);
+      assert.equal(uniforms.lmRegions.value.image.data[(y * 1024 + x) * 4 + 2], bankBase[b] + layer,
+        `bank ${b}, layer ${layer} addresses its merged layer`);
+      assert.ok(shader.fragmentShader.includes(`textureGrad(lmBanks, vec3(vLmUV + region${b}.xy, region${b}.z)`));
+    }
+    const pane = new THREE.MeshStandardMaterial();
+    M.patchWindowGlow(pane, pages, uniforms);
+    const glow = compile(pane);
+    assert.equal((glow.fragmentShader.match(/uniform\s+highp\s+sampler2DArray\s+/g) || []).length, 1);
+    assert.equal(glow.uniforms.lmBanks.value, texture);
+    for (let b = 0; b < count; b++)
+      assert.ok(glow.fragmentShader.includes(`textureLod(lmBanks, vec3(vGlowUV + region${b}.xy, region${b}.z)`));
+    const roomUniforms = M.lightmapUniforms(1, 2 * count), roomMaterial = new THREE.MeshStandardMaterial();
+    M.patchLightmaps([roomMaterial], pages, roomUniforms);
+    const roomShader = compile(roomMaterial);
+    assert.equal((roomShader.fragmentShader.match(/uniform\s+highp\s+sampler2DArray\s+/g) || []).length, 1,
+      `${count} room-mode banks also declare one array sampler`);
+    assert.equal(roomShader.uniforms.lmBanks.value, texture);
+    // Empty logical banks never sample another bank's merged layers.
+    const empty = new THREE.MeshStandardMaterial(), bankLayers = pages.bankLayers.map((n, b) => b === 0 ? 0 : n);
+    M.patchLightmaps([empty], {...pages, bankLayers}, uniforms);
+    assert.ok(!compile(empty).fragmentShader.includes('vec4 bank0 = textureGrad'));
+    assert.notEqual(empty.customProgramCacheKey(), material.customProgramCacheKey());
+  }
+});
+
 
 check('material_leaves_ambient_alone_without_sky_uniforms', async () => {
   const uniforms = M.lightmapUniforms(3, 2);
@@ -362,7 +405,7 @@ check('material_leaves_ambient_alone_without_sky_uniforms', async () => {
   assert.ok(!Object.hasOwn(shader.uniforms, 'lmSky'), 'no lmSky sampler');
   assert.ok(!/skyTint|lmSky|uv2/.test(shader.vertexShader + shader.fragmentShader), 'no sky shader terms');
   assert.ok(!/irradiance\s*\*=|iblIrradiance\s*\*=/.test(shader.fragmentShader), 'three ambient is unmodified');
-  assert.ok(material.customProgramCacheKey().includes('|lm-8-shadowmask-direct|'), 'new shader program cache key (pages are a shadowmask, lit through RE_Direct)');
+  assert.ok(material.customProgramCacheKey().includes('|lm-9-merged-shadowmask-direct|'), 'merged-array shader program cache key (pages are a shadowmask, lit through RE_Direct)');
   assert.ok(shader.fragmentShader.includes('texelFetch(lmTints') && !shader.fragmentShader.includes('light.room'),
     'group tints can represent any light reaching that group, including neighbours and outdoor tiles');
 });
@@ -376,7 +419,7 @@ check('fixed_uniforms_never_recompile', async () => {
   // Rows per room for the tint, then the same rows again for each light's source and shape.
   assert.equal(tints.image.height, 3 * rooms, 'one tint row per room, then source and shape rows');
   const materials = [new THREE.MeshStandardMaterial({ name: 'floor' }), new THREE.MeshStandardMaterial({ name: 'interior_wall' })];
-  const pages = { banks: [arrayPage(THREE.RG11_EAC_Format, 1), arrayPage(THREE.RG11_EAC_Format, 1)] };
+  const pages = { banks: [arrayPage(THREE.RG11_EAC_Format, 2)], bankBase: [0, 1], bankLayers: [1, 1] };
   M.patchLightmaps(materials, pages, uniforms);
   const first = materials.map(compile), keys = materials.map(m => m.customProgramCacheKey()), versions = materials.map(m => m.version);
   first.forEach((shader, i) => {
@@ -520,8 +563,8 @@ check('atlas_runs_in_a_worker_and_is_cached', async () => {
 });
 
 check('atlas_cache_never_hands_one_base_uv_to_another', async () => {
-  // random_offset changes base uv but not the layout key; the cached result carries
-  // clipped geometry with base uv, so a scene must never receive another's.
+  // The cached topology is material/UV independent. Binding it must retain each
+  // displayed scene's own base UV, including when the topology is a cache hit.
   need('loadAtlas');
   const kit = on => { const k = structuredClone(job.kit);
     k.manifest = { ...(k.manifest || {}), 'uv-test': { kind: 'material', household: true, revision: 1, maps: {},
@@ -537,10 +580,10 @@ check('atlas_cache_never_hands_one_base_uv_to_another', async () => {
   const offRoot = await build(false), off = await load(offRoot), offUv = uvs(offRoot);
   const onRoot = await build(true), on = await load(onRoot);
   assert.equal(on.atlas.key, off.atlas.key, 'random_offset does not change the layout key');
-  assert.ok(on.jobs >= 1, 'another base uv is laid out afresh');
+  assert.equal(on.jobs, 0, 'another base uv reuses the material-independent topology');
   assert.notDeepEqual(uvs(onRoot), offUv, 'the offset scene keeps its own uv');
   const againRoot = await build(false), again = await load(againRoot);
-  assert.ok(again.jobs >= 1, 'the slot holds the other uv now, so this lays out afresh');
+  assert.equal(again.jobs, 0, 'the unshifted scene reuses that topology too');
   assert.deepEqual(uvs(againRoot), offUv, 'never the offset uv in an unshifted scene');
   const hitRoot = await build(false), hit = await load(hitRoot);
   assert.equal(hit.jobs, 0, 'the same base uv is a cache hit'); assert.deepEqual(uvs(hitRoot), offUv);

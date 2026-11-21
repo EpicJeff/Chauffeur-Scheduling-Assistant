@@ -110,7 +110,13 @@ await test('different_walls_different_offsets_same_material_instance',async()=>{
  assert.equal(seedsOf(list,[0,1,2,3].map(i=>'a:w'+i)).size,4,'each wall has its own uv origin');
  for(const [a,m] of list)assert.deepEqual([...m.geometry.attributes.position.array],[...a.geometry.attributes.position.array]);
  // Only the base channel moves: no lightmap channel exists or is written here.
- for(const m of b)for(const name of Object.keys(m.geometry.attributes))assert.ok(['position','normal','uv'].includes(name),name);
+ for(const m of b)for(const name of Object.keys(m.geometry.attributes))assert.ok(['position','normal','uv','weatherOpen'].includes(name),name);
+ // Weather exposure is geometry data, independent of the material's UV origin.
+ // The UV toggle must retain it exactly and cannot introduce a lightmap channel.
+ for(const [a,m] of list){
+  assert.deepEqual(m.geometry.attributes.weatherOpen.array,a.geometry.attributes.weatherOpen.array);
+  assert.ok(m.geometry.attributes.weatherOpen.array.every(v=>Number.isFinite(v)&&v>=0&&v<=1));
+ }
 });
 await test('brick_wall_pair_at_a_corner_keeps_v',async()=>{
  const p=plan({roof:false,openings:false}),plainRoles=ROLES.filter(r=>r!=='siding');
@@ -173,8 +179,8 @@ await test('bake_layout_ignores_random_offset',async()=>{
   house.root.add((await buildYard(p,k,'low',{viewing:true})).group);house.root.updateMatrixWorld(true);return house.root;};
  const off=await scene(false),on=await scene(true);
  const jobOff=atlasJob(off,p,options),jobOn=atlasJob(on,p,options);
- assert.notEqual(jobOn.uvKey,jobOff.uvKey,'the cached geometry knows its base uv');
- assert.notEqual(jobOn.cacheKey,jobOff.cacheKey,'and the input cache keeps them apart');
+ assert.equal(jobOn.uvKey,jobOff.uvKey,'neutral cached topology does not own surface base uv');
+ assert.equal(jobOn.cacheKey,jobOff.cacheKey,'random base offsets reuse the neutral atlas cache');
  const a=buildAtlas(await scene(false),p,options),b=buildAtlas(await scene(true),p,options);
  assert.equal(b.key,a.key,'toggling random_offset leaves the bake layout fresh');
  assert.deepEqual(b.room.charts.map(c=>c.key),a.room.charts.map(c=>c.key),'and every chart key');

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bindEnvironmentMaterial } from './stage_haze.js';
+import { bindEnvironmentMaterial, frameObjects } from './stage_haze.js';
 
 const finite = v => typeof v === 'number' && Number.isFinite(v);
 const clamp = v => finite(v) ? Math.max(0, Math.min(1, v)) : 0;
@@ -95,22 +95,28 @@ export function seasonHash(value) {
 export const LAWN_GLSL=`
 uniform float seasonDormancy;
 varying vec2 vSeasonWorld;
-float seasonPatch(vec2 world) {
+float seasonPatch(vec2 world, int firstCorner) {
   vec2 point=world/1.8,cell=floor(point),blend=fract(point);
   blend=blend*blend*(3.0-2.0*blend);
-  vec4 noise=fract(sin(vec4(dot(cell,vec2(12.9898,78.233)),
-    dot(cell+vec2(1.0,0.0),vec2(12.9898,78.233)),
-    dot(cell+vec2(0.0,1.0),vec2(12.9898,78.233)),
-    dot(cell+vec2(1.0),vec2(12.9898,78.233))))*43758.5453);
+  // The caller guarantees firstCorner == 0, through its dormancy range gates.
+  // Give FXC a runtime loop start instead of four explicit sine hashes.
+  vec4 noise=vec4(0.0);
+  for(int corner=firstCorner;corner<4;corner++) {
+    vec2 offset=vec2(float(corner-(corner/2)*2),float(corner/2));
+    float value=fract(sin(dot(cell+offset,vec2(12.9898,78.233)))*43758.5453);
+    noise+=vec4(equal(ivec4(0,1,2,3),ivec4(corner)))*value;
+  }
   return mix(mix(noise.x,noise.y,blend.x),mix(noise.z,noise.w,blend.x),blend.y);
 }
 float seasonDry(float dormancy, float threshold) {
   return smoothstep(threshold*.84,threshold*.84+.16,clamp(dormancy,0.0,1.0));
 }
 vec3 seasonLawn(vec3 green) {
+  if(seasonDormancy<=0.0) return green;
   float luminance=max(dot(green,vec3(.2126,.7152,.0722)),0.0);
   vec3 straw=vec3(.42,.34,.2)*(luminance/.3469);
-  return mix(green,straw,seasonDry(seasonDormancy,seasonPatch(vSeasonWorld)));
+  if(seasonDormancy>=1.0) return straw;
+  return mix(green,straw,seasonDry(seasonDormancy,seasonPatch(vSeasonWorld,int(seasonDormancy))));
 }
 `;
 const foliagePatch=shader=>{
@@ -145,8 +151,8 @@ export function installSeasons(scene) {
   const uniforms={seasonFoliage:{value:new THREE.Vector3(1,0,0)},seasonDormancy:{value:0}};
   const foliage={seasonFoliage:uniforms.seasonFoliage},lawn={seasonDormancy:uniforms.seasonDormancy};
   const lawnSurface=lawnPatch(false),lawnBlades=lawnPatch(true);
-  function prepare(root=scene) {
-    root.traverse(object=>{
+  function prepare(root) {
+    for(const object of frameObjects(root ?? scene,{fresh:root !== undefined})){
       for(const material of [].concat(object.material||[])){
         if(material.userData.seasonFoliage){
           bindEnvironmentMaterial(material,'season-foliage-1',foliage,foliagePatch);
@@ -172,7 +178,7 @@ export function installSeasons(scene) {
         }
         if(material.userData.seasonLawn)bindEnvironmentMaterial(material,'season-lawn-1',lawn,material.userData.grassUniforms?lawnBlades:lawnSurface);
       }
-    });
+    }
   }
   return {uniforms,prepare,update(state){
     uniforms.seasonFoliage.value.set(clamp(state.presence),clamp(state.autumn),clamp(state.spring));

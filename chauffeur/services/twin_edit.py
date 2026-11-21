@@ -655,7 +655,9 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
         if op == 'delete' and kind in ('wall', 'room', 'opening', 'roof'):
             # The legacy delete explicitly removes its dependants. New model
             # deletes retain lost hosts as ghosts, preserving the new UI's path.
-            result, _ = ops.apply(model, translated, _normalized=_normalized)
+            result, words = ops.apply(model, translated, _normalized=_normalized)
+            if kind == 'roof' and words.startswith('Deleted the roof and its solar zones.'):
+                summary = words
             building = next(b for b in result['buildings'] if b['id'] == bid)
             removed = {p['id'] for _, p, b in _removed(flat, legacy) if b['id'] == bid}
             for anchor in building.get('anchors', []):
@@ -753,7 +755,11 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
                 _mark(piece)
         ops._follow_dormers(building, before)
         prior = next(b for b in model['buildings'] if b['id'] == building['id'])
+        ops._follow_roof_points(building, prior)
+        ops._follow_roof_extensions(building, prior)
         ops.solar_clear(building, prior)
+    from services import twin_fixtures
+    twin_fixtures.follow_host_moves(model, result)
     return result, summary
 
 
@@ -892,7 +898,7 @@ def save(edit, actor_id, reason=''):
     # Same lock order as update_current/start_over. Keep the snapshot, new round,
     # fixes and ancillary metadata together against other readers and writers.
     with twin_store.LIFECYCLE, twin_store._LOCK:
-        from services import twin_model, twin_model_bridge
+        from services import twin_model, twin_model_bridge, twin_model_ops
         current = twin_store.current_model()
         if current is None:
             raise ValueError('Build a house before editing it.')
@@ -904,8 +910,9 @@ def save(edit, actor_id, reason=''):
             edit['reg'] = _registration(edit.get('reg'))
             twin_store._source_page(twin_store._state(), edit.get('source'), edit.get('page'))
         # A model update_model just published is already normalized: skip the second pass.
+        finish_only = twin_model_ops.material_only(edit)
         normalized = ((deepcopy(current), []) if twin_store.current_is_normalized()
-                      else twin_model.normalize(current))
+                      else twin_model.normalize(current, preserve_room_polygons=finish_only))
         model, summary = apply_model(current, edit, ha_catalogue=ha_catalogue, _normalized=normalized)
         after = twin_model_bridge.flatten(model)
         # The fix log compares against the house as every op sees it (normalized),
@@ -940,7 +947,7 @@ def save(edit, actor_id, reason=''):
                 row['sources'] = place_row['sources']
         round_id, written_model = twin_store.update_model(
             lambda current: model, 'edit', note=summary, changes=changes, state_mutator=metadata,
-            return_model=True)
+            return_model=True, preserve_room_polygons=finish_only)
         for tombstone in tombstones:
             twin_store.add_tombstone({**tombstone, 'round': round_id})
         if edit.get('op') == 'registration':

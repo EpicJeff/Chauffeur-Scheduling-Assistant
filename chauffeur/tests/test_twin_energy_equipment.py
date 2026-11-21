@@ -66,15 +66,18 @@ class EquipmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ops.Refused,'already'):
             edit(m,'update_solar_zone',id=zid,rect=[19,0,39,10])
 
-    def test_roof_edits_cannot_silently_strand_a_zone(self):
+    def test_roof_edits_follow_and_delete_zones_atomically(self):
         m=zone(house()); saved=copy.deepcopy(m)
-        for operation in [dict(op='set',id='r',field='plate',value=12),dict(op='delete',id='r')]:
-            with self.assertRaisesRegex(ops.Refused,'solar zone'):
-                ops.apply(m,dict(building='b',**operation))
-            self.assertEqual(m,saved)
+        changed=edit(m,'set',id='r',field='plate',value=12)
+        self.assertEqual(changed['buildings'][0]['solar_zones'][0]['plane'],[0,0,12])
+        self.assertIsNone(twin_solar.error(changed['buildings'][0],changed['buildings'][0]['solar_zones'][0]))
+        deleted=edit(m,'delete',id='r')
+        self.assertEqual(deleted['buildings'][0]['solar_zones'],[])
+        self.assertEqual(deleted['buildings'][0]['roofs'],[])
+        self.assertEqual(m,saved)
         from services import twin_edit
-        with self.assertRaisesRegex(ops.Refused,'solar zone'):
-            twin_edit.apply_model(m,dict(op='set',building='b',piece='r',field='plate',value=12))
+        changed,_=twin_edit.apply_model(m,dict(op='set',building='b',piece='r',field='plate',value=12))
+        self.assertEqual(changed['buildings'][0]['solar_zones'][0]['plane'],[0,0,12])
         self.assertEqual(m,saved)
 
     def test_roof_union_occlusion_and_sloped_plane(self):

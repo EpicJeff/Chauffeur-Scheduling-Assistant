@@ -10,7 +10,7 @@ const slotListeners=new Set();let selectedMaterial=null;
 const library={selected:()=>selectedMaterial,onSelect:fn=>{slotListeners.add(fn);return()=>slotListeners.delete(fn);},reveal:async()=>{}};
 async function useMaterial(slot,id){selectedMaterial={kind:'material',id,name:id};for(const fn of slotListeners)fn();await click(slot.querySelector('[data-slot-use]'));}
 
-const {houseMaterialsShelf}=await import(file('static/twin/editor/house_materials.js'));
+const {houseMaterialsShelf,YARD_ROLES}=await import(file('static/twin/editor/house_materials.js'));
 const {KINDS,PANEL_ROLES}=await import(file('static/twin/surface_kinds.js'));
 const {createCards}=await import(file('static/twin/editor/cards.js'));
 const {readLibraryCatalog}=await import(file('static/twin/editor/material_catalog.js'));
@@ -46,10 +46,11 @@ await test('grass_choice_load_save_refusal_read_only_and_disposal',async()=>{
 });
 await test('panel_lists_every_kind_once',()=>{
  const {host}=make(),slots=host.querySelectorAll('[data-material-slot]');
- assert.equal(slots.length,PANEL_ROLES.length+KINDS.length);
- assert.deepEqual(slots.map(n=>n.dataset.materialSlot).sort(),['Siding','Interior walls','Floors',...KINDS.map(r=>r.label)].sort());
+ assert.equal(slots.length,PANEL_ROLES.length+KINDS.length+7);
+ assert.deepEqual(slots.map(n=>n.dataset.materialSlot).sort(),['Siding','Interior walls','Floors',...KINDS.map(r=>r.label),
+  'Paving','Mulch','Patio concrete','Fence','Pool interior','Pool waterline','Pool coping'].sort());
  assert.deepEqual(host.querySelectorAll('h4').map(textOf),['House materials','Walls and floors','Trim','Openings','Porch and stairs','Roof and ceilings','Fixtures','Yard']);
- assert.ok(textOf(host).includes('Default: Follows Trim'));assert.ok(textOf(host).includes('Default: Built-in glass'));assert.ok(textOf(host).includes('Default: House look'));
+ assert.ok(textOf(host).includes('House default: Trim'));assert.ok(textOf(host).includes('House default: Glass'));assert.ok(textOf(host).includes('House default: Siding'));
 });
 await test('choosing_a_material_sends_set_material',async()=>{
  const {host,sent,errors}=make(),slot=host.querySelector('[data-material-slot="Panes"]');
@@ -58,15 +59,15 @@ await test('choosing_a_material_sends_set_material',async()=>{
  await click(byText(slot,'Clear'));assert.equal(sent.length,2);assert.equal(sent[1].material,null);assert.deepEqual(errors,[]);
 });
 await test('site_kinds_use_the_site_target',async()=>{
- const {host,sent}=make();for(const role of ['water','lawn']){
-  const slot=host.querySelector(`[data-material-slot="${KINDS.find(r=>r.kind===role).label}"]`);
+ const {host,sent}=make();for(const role of ['water','lawn','paving','mulch','patio_concrete','fence','pool_interior','pool_waterline','pool_coping']){
+  const slot=host.querySelector(`[data-material-slot="${[...KINDS,...YARD_ROLES].find(r=>r.kind===role).label}"]`);
   await useMaterial(slot,entry.id);
   assert.deepEqual(sent.at(-1),{op:'set_material',building:'house',target:{site:true,role},material:{id:entry.id}});
  }
 });
 await test('every_house_role_preserves_apply_clear_and_tint_payloads',async()=>{
  const {host,sent}=make();
- for(const row of [...PANEL_ROLES.map(kind=>({kind,label:{siding:'Siding',interior_wall:'Interior walls',floor:'Floors',porch_ceiling:'Porch ceiling'}[kind]})),...KINDS]){
+ for(const row of [...PANEL_ROLES.map(kind=>({kind,label:{siding:'Siding',interior_wall:'Interior walls',floor:'Floors',porch_ceiling:'Porch ceiling'}[kind]})),...KINDS,...YARD_ROLES]){
   const slot=host.querySelector(`[data-library-slot="${row.label}"]`);assert.ok(slot,row.kind);
   const target=row.scope==='site'?{site:true,role:row.kind}:{building:'house',role:row.kind};
   const expected=material=>({op:'set_material',building:'house',target,material});
@@ -82,6 +83,18 @@ await test('tint_is_sent_with_the_slot',async()=>{
  await useMaterial(slot,entry.id);
  const tint=slot.querySelector('input[type="color"]');tint.value='#123456';await fire(tint,'change');
  assert.deepEqual(sent.at(-1).material,{id:entry.id,color:'#123456'});
+});
+await test('every_house_role_supports_inherited_offsets_without_losing_tint',async()=>{
+ const {host,sent}=make();
+ for(const node of host.querySelectorAll('[data-library-slot]')){
+  const tint=node.querySelector('input[type="color"]'),u=node.querySelector('[data-slot-u]'),reset=node.querySelector('[data-slot-offset-reset]');
+  assert.ok(tint&&u&&reset,node.dataset.librarySlot);
+  tint.value='#123456';await fire(tint,'change');
+  const target=sent.at(-1).target;assert.deepEqual(sent.at(-1).material,{color:'#123456'});
+  u.value='1.1';await fire(u,'change');assert.deepEqual(sent.at(-1).material,{color:'#123456',uv:{u:.1,v:0,rot:0}});
+  assert.deepEqual(sent.at(-1).target,target);
+  await click(reset);assert.deepEqual(sent.at(-1).material,{color:'#123456'});
+ }
 });
 await test('read_only_shows_no_buttons',()=>{const {host}=make(true);assert.equal(host.querySelectorAll('button,input').length,0);});
 await test('current_values_are_shown',()=>{

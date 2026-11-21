@@ -104,26 +104,26 @@ def test_solar_clear_skips_unchanged_roofs():
         assert counts['solar_error'] == 0, counts
 
 
-def test_roof_edit_still_strands_zone():
-    refusal = 'That would move a solar zone off its roof plane. Move or delete the zone before changing the roof.'
+def test_roof_edit_carries_sub_panel_zone_with_warm_or_cold_cache():
+    # A zone smaller than one panel rides a plate change instead of blocking it.
     with house():
         building = add_first_roof_zone()
         roof = building['roofs'][0]
-        original = ts.current_model()
-        before = ts.current_id()
+        results = []
         for warm in (False, True):
             clear_solar_cache()
             if warm:
                 twin_solar.faces(building)
-            try:
-                twin_edit.save(dict(op='set', building=building['id'], id=roof['id'],
-                                    field='plate', value=roof['plate']+2), 'mum')
-            except ops.Refused as exc:
-                assert str(exc) == refusal, str(exc)
-            else:
-                raise AssertionError('A roof edit stranded its solar zone.')
-            assert ts.current_id() == before
-            assert ts.current_model() == original
+            before = ts.current_model()
+            plate = next(r for r in before['buildings'][0]['roofs'] if r['id'] == roof['id'])['plate']
+            twin_edit.save(dict(op='set', building=building['id'], id=roof['id'],
+                                field='plate', value=plate+2), 'mum')
+            after = ts.current_model()['buildings'][0]
+            assert len(after['solar_zones']) == 1
+            assert twin_solar.error(after, after['solar_zones'][0], after['solar_zones']) is None
+            results.append(after['solar_zones'][0]['rect'])
+        # Each plate step keeps the along-slope offsets, cache warm or cold.
+        assert all(abs(a-b) < 1e-9 for a, b in zip(*results)), results
 
 
 def test_roof_faces_cache_by_value_and_returned_copies():

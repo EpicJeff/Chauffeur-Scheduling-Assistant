@@ -122,6 +122,78 @@ const JOINT_REACH = .36;
 export const PAVER_ROOT_MARGIN = .04;
 // Feet of shortening lawn past the lot line, and the open-share sample per side.
 const SKIRT = 4, SAMPLES = 96;
+// Performance budget (owner house, High, default zoomed-out orbit): <1M main
+// pass lawn triangles (was 2.73M), full density within 30 m, <=32 tile draws.
+// Live owner-house measurement remains the landing gate; never lower near density.
+export const GRASS_TILE_TARGET = 32, GRASS_TILE_MIN_METRES = 8;
+export const GRASS_MAIN_TRIANGLE_BUDGET = 1_000_000, GRASS_TRIANGLES_PER_CLUMP = 15;
+export const GRASS_FADE_MARGIN = .045, GRASS_SEED_MARGIN = .002;
+// Density by distance. A High clump sits about 6 cm from its neighbours, under two
+// pixels at 50 m on a 1440p screen: full density there buys nothing. Clumps stay
+// complete to 12 m, thin to 15% by 60 m, and the survivors widen by 1/sqrt(keep) so
+// the cover holds. The shader reads the same constants (grassMaterial).
+export const GRASS_FULL_METRES = 12, GRASS_THIN_METRES = 60, GRASS_FAR_KEEP = .15, GRASS_MAX_WIDEN = 2.6;
+const FT = .3048;
+
+// Match the shader's local-root hash with float32 intermediates. The extra
+// seed margin keeps the CPU prefix conservative across small sin differences.
+export function grassSeed(x,z) {
+  const f=Math.fround;
+  const n=f(f(Math.sin(f(f(f(x)*f(12.9898))+f(f(z)*f(78.233)))))*f(43758.5453));
+  return n-Math.floor(n);
+}
+export function grassKeep(distance) {
+  const t=Math.max(0,Math.min(1,(distance-GRASS_FULL_METRES)/(GRASS_THIN_METRES-GRASS_FULL_METRES)));
+  return 1+(GRASS_FAR_KEEP-1)*t*t*(3-2*t);
+}
+export function grassCountForDistance(seeds,distance) {
+  const limit=grassKeep(distance)+GRASS_FADE_MARGIN+GRASS_SEED_MARGIN;
+  let lo=0,hi=seeds.length;
+  while(lo<hi){const mid=(lo+hi)>>>1;if(seeds[mid]<limit)lo=mid+1;else hi=mid;}
+  return lo;
+}
+// Input and tile size are in plan feet. Keep local roots unchanged: their hash,
+// wind, texture mapping and seasonal patches must survive repartitioning.
+export function splitGrassTiles(matrices,lotArea) {
+  const count=matrices.length/16;
+  if(!count)return [];
+  let x0=Infinity,x1=-Infinity,z0=Infinity,z1=-Infinity;
+  const seeds=new Float32Array(count);
+  for(let i=0;i<count;i++){
+    const x=matrices[i*16+12],z=matrices[i*16+14];
+    x0=Math.min(x0,x);x1=Math.max(x1,x);z0=Math.min(z0,z);z1=Math.max(z1,z);
+    seeds[i]=grassSeed(x,z);
+  }
+  let size=Math.max(GRASS_TILE_MIN_METRES/FT,Math.sqrt(lotArea/GRASS_TILE_TARGET));
+  // Include the skirt and narrow/rotated lots in the draw budget too.
+  while((Math.floor((x1-x0)/size)+1)*(Math.floor((z1-z0)/size)+1)>GRASS_TILE_TARGET)size*=1.05;
+  // Positive float32 bit order equals numeric order. Two radix passes avoid
+  // O(n log n) comparator sorting on a 200k-clump High-tier build.
+  const bits=new Uint32Array(seeds.buffer),buckets=new Uint32Array(65536);
+  let order=new Uint32Array(count),scratch=new Uint32Array(count);
+  for(let i=0;i<count;i++)order[i]=i;
+  for(const shift of [0,16]){
+    buckets.fill(0);
+    for(let i=0;i<count;i++)buckets[(bits[order[i]]>>>shift)&65535]++;
+    let offset=0;for(let i=0;i<buckets.length;i++){const n=buckets[i];buckets[i]=offset;offset+=n;}
+    for(let i=0;i<count;i++){const index=order[i];scratch[buckets[(bits[index]>>>shift)&65535]++]=index;}
+    [order,scratch]=[scratch,order];
+  }
+  const nz=Math.floor((z1-z0)/size)+1,nx=Math.floor((x1-x0)/size)+1;
+  const ids=new Uint16Array(count),sizes=new Uint32Array(nx*nz);
+  for(let i=0;i<count;i++){
+    const key=Math.floor((matrices[i*16+12]-x0)/size)*nz+Math.floor((matrices[i*16+14]-z0)/size);
+    ids[i]=key;sizes[key]++;
+  }
+  const bins=Array.from(sizes,n=>new Uint32Array(n));sizes.fill(0);
+  for(let j=0;j<count;j++){const i=order[j],key=ids[i];bins[key][sizes[key]++]=i;}
+  return bins.filter(indices=>indices.length).map(indices=>{
+    const values=new Float32Array(indices.length);
+    for(let i=0;i<indices.length;i++)values[i]=seeds[indices[i]];
+    return {indices,seeds:values};
+  });
+}
+
 function bladeGeometry() {
   const positions = [], normals = [], shape = [], indices = [];
   // Five bent, two-segment blades per clump, 25 vertices / 15 triangles. The
@@ -153,6 +225,13 @@ function bladeGeometry() {
   return g;
 }
 
+// three multiplies vColor by instanceColor; the grass tiles use that attribute as data
+// (exposure, seed, joint), never as a tint. Fail loudly if three renames the line.
+function withoutInstanceColor() {
+  const line = 'vColor.rgb *= instanceColor.rgb;';
+  if (!THREE.ShaderChunk.color_vertex.includes(line)) throw new Error('Grass shader anchor missing: ' + line);
+  return THREE.ShaderChunk.color_vertex.replace(line, '');
+}
 export function grassReplace(shader, stage, anchor, replacement) {
   if (!shader[stage].includes(anchor)) throw new Error('Grass shader missing anchor: ' + anchor);
   shader[stage] = shader[stage].replace(anchor, replacement);
@@ -174,18 +253,24 @@ export function grassMaterial(source) {
   material.addEventListener('dispose', () => { disposed = true; source.removeEventListener('materialparamschange', sync); });
   const compile = (shader, unlit = false) => {
     Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = VARYING + 'attribute vec2 grassShape; attribute float grassJoint; uniform float grassTime; uniform vec2 grassWind; uniform mat3 grassUvMatrix;\n' + shader.vertexShader;
+    shader.vertexShader = VARYING + 'attribute vec2 grassShape; uniform float grassTime; uniform vec2 grassWind; uniform mat3 grassUvMatrix;\n' + shader.vertexShader;
+    // InstancedMesh owns instanceColor, unlike geometry attributes. Use its blue
+    // channel for the joint flag so every tile shares the SAME blade geometry.
+    grassReplace(shader,'vertexShader','#include <color_vertex>',
+      withoutInstanceColor());
     grassReplace(shader, 'vertexShader', '#include <begin_vertex>', `#include <begin_vertex>
+float grassJoint = 1.0-instanceColor.b;
 vec3 grassRoot = instanceMatrix[3].xyz;
 vec3 grassWorld = (modelMatrix * vec4(grassRoot, 1.0)).xyz;
 float grassDistance = distance(cameraPosition, grassWorld);
-float grassSeed = fract(sin(dot(grassRoot.xz, vec2(12.9898,78.233))) * 43758.5453);
+// The CPU's seed (instanceColor.g), so the tile counts and the shader agree exactly.
+float grassSeed = instanceColor.g;
 // The whole house is usually on screen from 30 m or more, so the field stays
 // complete that far; beyond it clumps thin out, grow to hold the cover, and
 // their colour settles onto the lawn's own so sub-pixel blades do not sparkle.
-float grassKeep = mix(1.0, .2, smoothstep(30.0, 120.0, grassDistance));
+float grassKeep = mix(1.0, ${GRASS_FAR_KEEP.toFixed(3)}, smoothstep(${GRASS_FULL_METRES.toFixed(1)}, ${GRASS_THIN_METRES.toFixed(1)}, grassDistance));
 float grassScale = smoothstep(grassSeed-.045, grassSeed+.045, grassKeep);
-transformed.xz *= 1.0 + 1.2*smoothstep(25.0, 110.0, grassDistance)*(1.0-grassJoint);
+transformed.xz *= 1.0 + (min(${GRASS_MAX_WIDEN.toFixed(1)}, inversesqrt(grassKeep)) - 1.0)*(1.0-grassJoint);
 // A fixed seed threshold shrinks each clump over its own distance interval.
 transformed *= grassScale;
 float gust = sin(grassRoot.x*.11 + grassRoot.z*.07 + grassTime*.8)
@@ -194,7 +279,7 @@ float gust = sin(grassRoot.x*.11 + grassRoot.z*.07 + grassTime*.8)
 vec2 wind = grassWind * .28 * gust * grassShape.x*grassShape.x * grassScale*(1.0-grassJoint);
 transformed.xz += vec2(dot(instanceMatrix[0].xz, wind), dot(instanceMatrix[2].xz, wind)) / max(dot(instanceMatrix[0].xz, instanceMatrix[0].xz),1e-6);
 vGrass = vec4(grassShape, grassSeed, .5+.5*sin(grassRoot.x*.037+sin(grassRoot.z*.041)*2.0));
-vGrassUv = vec3((grassUvMatrix * vec3(grassRoot.x, grassRoot.z, 1.0)).xy, .8*smoothstep(35.0, 110.0, grassDistance));`);
+vGrassUv = vec3((grassUvMatrix * vec3(grassRoot.x, grassRoot.z, 1.0)).xy, .8*smoothstep(${GRASS_FULL_METRES.toFixed(1)}, ${GRASS_THIN_METRES.toFixed(1)}, grassDistance));`);
     shader.fragmentShader = VARYING + 'uniform vec3 grassTint; uniform sampler2D grassMap; uniform float grassHasMap;\n' + shader.fragmentShader;
     grassReplace(shader, 'fragmentShader', '#include <color_fragment>', `#include <color_fragment>
 vec3 lawn = grassTint;
@@ -214,8 +299,8 @@ diffuseColor.rgb *= lawn * mix(lawnPatch * lawnBlade * lawnTip, vec3(1.0), vGras
       '#include <roughnessmap_fragment>\nroughnessFactor = mix(.96, .53, vGrass.x);');
   };
   material.onBeforeCompile = shader => compile(shader);
-  material.customProgramCacheKey = () => 'yard-grass-2';
-  const unlitHook = {hook:shader => compile(shader,true), key:() => 'yard-grass-2|matcap'};
+  material.customProgramCacheKey = () => 'yard-grass-tiles-4';
+  const unlitHook = {hook:shader => compile(shader,true), key:() => 'yard-grass-tiles-4|matcap'};
   const attach = target => {
     Object.defineProperty(target.userData,'grassUniforms',{value:uniforms});
     Object.defineProperty(target.userData,'unlitHook',{value:unlitHook});
@@ -288,10 +373,19 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   const budget = Math.max(0,TIERS[tier].lawnBlades-fringeCount), polygon = plan.site?.lot;
   let clock,wind;
   const growsGrass = grassLawn(kit);
-  const result = {tier, growsGrass, instances:0, jointInstances:0, draws:0, regions:0, animated:false, mesh:null,
-    update(seconds,weather,bearing) { if (this.animated) {
+  const worldBox=new THREE.Box3(),cameraPosition=new THREE.Vector3();
+  const result = {tier, growsGrass, instances:0, jointInstances:0, draws:0, regions:0, animated:false, mesh:null,tiles:[],
+    update(seconds,weather,bearing,camera) { if (this.animated) {
       clock.value = seconds;
       if(weather)wind.value.set(...windVector(weather,bearing,{grass:true}));
+      if(camera){
+        camera.getWorldPosition(cameraPosition);
+        this.mesh.updateWorldMatrix(true,true);
+        for(const tile of this.tiles){
+          worldBox.copy(tile.boundingBox).applyMatrix4(tile.matrixWorld);
+          tile.count=grassCountForDistance(tile.userData.grassSeeds,worldBox.distanceToPoint(cameraPosition));
+        }
+      }
     } }};
   if (!budget || !growsGrass || !polygon?.length) return result;
   // The field runs to the lot line and a skirt past it, so a fence standing on
@@ -349,7 +443,7 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   let seed = 0;
   for (const p of polygon) for (const n of p) seed = (Math.imul(seed,31)+Math.round(n*100))|0;
   const matrices = new Float32Array((Math.min(nx*ny,fieldBudget)+jointCount)*16), pads = (plan.site.terraces || []).map(p => prepared(p.polygon,p.blend ?? 6));
-  let count = 0, low = 0, high = 0;
+  let count = 0;
   for (let ix = 0; ix < nx && count < fieldBudget; ix++) for (let iy = 0; iy < ny && count < fieldBudget; iy++) {
     const id = (Math.imul(ix,73856093)^Math.imul(iy,19349663)^seed)|0;
     const r = hash(id), s = hash(id+1);
@@ -360,26 +454,40 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
     const a = r*Math.PI*2, c = Math.cos(a)*spread, sn = Math.sin(a)*spread, scale = (.68+.42*s)*short, k = count++*16;
     matrices[k]=c; matrices[k+2]=-sn; matrices[k+5]=scale; matrices[k+8]=sn; matrices[k+10]=c;
     matrices[k+12]=x; matrices[k+13]=height-.04; matrices[k+14]=-y; matrices[k+15]=1;
-    low=Math.min(low,height); high=Math.max(high,height);
   }
   const fieldCount = count;
   matrices.set(joints,count*16); count += jointCount;
-  for (let i=0;i<jointCount;i++) { low=Math.min(low,joints[i*16+13]); high=Math.max(high,joints[i*16+13]); }
   if (!count) return result;
   const geometry = bladeGeometry(), material = grassMaterial(source);
-  const jointFlags = new Float32Array(count); jointFlags.fill(1,fieldCount);
-  geometry.setAttribute('grassJoint',new THREE.InstancedBufferAttribute(jointFlags,1));
   clock = material.userData.grassUniforms.grassTime;
   wind = material.userData.grassUniforms.grassWind;
-  const mesh = new THREE.InstancedMesh(geometry,material,0);
-  // Constructor's identity-matrix fill and per-instance Object3D.compose would
-  // otherwise double the placement work. Upload the packed buffer directly.
-  mesh.instanceMatrix = new THREE.InstancedBufferAttribute(matrices.subarray(0,count*16),16); mesh.count=count;
-  mesh.receiveShadow=true; mesh.castShadow=false; mesh.raycast=()=>{};
-  // At a cube's 256 px a blade is far below a texel; the lawn under it already
-  // carries the colour, so a capture skips the field's millions of triangles.
-  mesh.userData.noOcclusion=true; mesh.userData.yardGrass=true; mesh.userData.reflectionExclude=true;
-  mesh.boundingBox=new THREE.Box3(new THREE.Vector3(lot.x0-.3,low-.1,-lot.y1-.3),new THREE.Vector3(lot.x1+.3,high+.7,-lot.y0+.3));
-  mesh.boundingSphere=mesh.boundingBox.getBoundingSphere(new THREE.Sphere());
-  return Object.assign(result,{instances:count,jointInstances:jointCount,draws:1,regions:1,animated:true,mesh});
+  const mesh = new THREE.Group();mesh.name='lawn tiles';mesh.userData.yardGrass=true;
+  mesh.userData.noOcclusion=true;mesh.userData.reflectionExclude=true;
+  const tiles=splitGrassTiles(matrices.subarray(0,count*16),w*h).map(({indices,seeds})=>{
+    const tile=new THREE.InstancedMesh(geometry,material,0),packed=new Float32Array(indices.length*16),flags=new Float32Array(indices.length*3);
+    let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity,z0=Infinity,z1=-Infinity;
+    for(let j=0;j<indices.length;j++){
+      const i=indices[j];for(let k=0;k<16;k++)packed[j*16+k]=matrices[i*16+k];
+      flags[j*3]=1;flags[j*3+1]=seeds[j];flags[j*3+2]=i<fieldCount?1:0;
+      const x=matrices[i*16+12],y=matrices[i*16+13],z=matrices[i*16+14];
+      x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y);z0=Math.min(z0,z);z1=Math.max(z1,z);
+    }
+    tile.instanceMatrix=new THREE.InstancedBufferAttribute(packed,16);tile.count=indices.length;
+    tile.instanceColor=new THREE.InstancedBufferAttribute(flags,3);
+    tile.receiveShadow=true;tile.castShadow=false;tile.raycast=()=>{};tile.frustumCulled=true;
+    // Keep blades out of probe/mirror captures and the AO normal prepass.
+    tile.userData.noOcclusion=true;tile.userData.yardGrass=true;tile.userData.reflectionExclude=true;
+    // Red stores sky exposure, green the seed, blue 1-joint. Both belong to the mesh,
+    // allowing all tiles to keep a single geometry even after weather sampling.
+    tile.userData.weatherInstanceColor=true;
+    tile.userData.grassSeeds=seeds;
+    // Compute once over ALL roots while packing, never over the current count.
+    // Unlike still-geometry bounds this includes the shader envelope: <=.31 ft
+    // blade reach * 2 spread * 2.6 widening + .28 * 1.4 gust < 2.2 ft;
+    // blade height <=.36 * 1.1 < .4 ft (use .7 for a conservative headroom).
+    tile.boundingBox=new THREE.Box3(new THREE.Vector3(x0-2.2,y0-.1,z0-2.2),new THREE.Vector3(x1+2.2,y1+.7,z1+2.2));
+    tile.boundingSphere=tile.boundingBox.getBoundingSphere(new THREE.Sphere());
+    mesh.add(tile);return tile;
+  });
+  return Object.assign(result,{instances:count,jointInstances:jointCount,draws:tiles.length,regions:1,animated:true,mesh,tiles,spread});
 }

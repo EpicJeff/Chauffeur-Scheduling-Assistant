@@ -17657,13 +17657,16 @@ class WebGLRenderer {
 			_currentMaterialId = -1;
 			_currentCamera = null;
 
-			renderStateStack.pop();
+			// Chauffeur patch (VENDORED.md): give the caller back the texture units it had when
+			// this render began. r187 restored the count the OUTER render had at its start, so a
+			// render nested inside setProgram (PMREM) moved the material's samplers past 16.
+			const textureUnitsAtStart = renderStateStack.pop().state.textureUnits;
 
 			if ( renderStateStack.length > 0 ) {
 
 				currentRenderState = renderStateStack[ renderStateStack.length - 1 ];
 
-				textures.setTextureUnits( currentRenderState.state.textureUnits );
+				textures.setTextureUnits( textureUnitsAtStart );
 
 				if ( _clippingEnabled === true ) clipping.setGlobalState( _this.clippingPlanes, currentRenderState.state.camera );
 
