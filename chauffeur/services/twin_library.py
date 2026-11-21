@@ -42,16 +42,27 @@ def material_choices(kit_id='modern_farmhouse'):
     return rows
 
 
-def material_slot_error(value):
-    """A feature default (None), kit role, or vetted library material with optional tint."""
+def material_slot_error(value, *, validate_id=True):
+    """A vetted material or inherited material, with optional surface tint and UVs."""
     if value is None:
         return None
-    if not isinstance(value, dict) or not isinstance(value.get('id'), str) or not value['id']:
+    if not isinstance(value, dict) or ('id' in value and (
+            not isinstance(value['id'], str) or not value['id'])):
         return 'Choose a material with an id.'
-    if set(value) - {'id', 'color'}:
-        return 'A material slot accepts only id and optional color.'
+    if set(value) - {'id', 'color', 'uv'}:
+        return 'A material slot accepts only id, color and uv.'
     if 'color' in value and (not isinstance(value['color'], str) or not value['color'].strip()):
         return 'Choose a material with a non-empty color.'
+    if 'uv' in value:
+        import math
+        uv = value['uv']
+        if (not isinstance(uv, dict) or set(uv) != {'u', 'v', 'rot'}
+                or any(type(uv[k]) not in (int, float) or not math.isfinite(uv[k])
+                       or not 0 <= uv[k] <= 1 for k in ('u', 'v'))
+                or type(uv['rot']) not in (int, float) or uv['rot'] not in (0, 90, 180, 270)):
+            return 'Choose UV offsets from 0 to 1 and rotation 0, 90, 180 or 270.'
+    if 'id' not in value or not validate_id:
+        return None
     from services.twin_surface_kinds import BUILTIN_LOOKS
     if value['id'] not in kit('modern_farmhouse')['materials'] and value['id'] not in BUILTIN_LOOKS:
         from services import twin_materials
@@ -62,11 +73,17 @@ def material_slot_error(value):
     return None
 
 
-def normalize_material_slot(value):
+def normalize_material_slot(value, *, validate_id=True):
     """Return a detached canonical reference; reject unknown ids rather than guessing."""
-    if error := material_slot_error(value):
+    if error := material_slot_error(value, validate_id=validate_id):
         raise ValueError(error)
-    return None if value is None else {key: value[key] for key in ('id', 'color') if key in value}
+    if not value:
+        return None
+    result = {key: value[key] for key in ('id', 'color') if key in value}
+    if 'uv' in value:
+        result['uv'] = {key: value['uv'][key] % 1 for key in ('u', 'v')}
+        result['uv']['rot'] = int(value['uv']['rot'])
+    return result
 
 
 def ensure(asset_id: str) -> str:

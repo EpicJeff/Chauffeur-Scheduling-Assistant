@@ -193,6 +193,9 @@ await test('low cards retain one per-card threshold and hue after batching; no w
   const mesh=meshes[0],attr=mesh.geometry.attributes.seasonLeaf;assert.equal(attr.count,mesh.geometry.attributes.position.count);
   assert.equal(new Set(Array.from({length:attr.count},(_,i)=>attr.getX(i))).size,2,'crossed cards have separate thresholds');
   const shader=compile(mesh.material);assert.equal(!!shader.uniforms.seasonFoliage,plant.userData.seasonKind==='deciduous');assert.ok(!shader.uniforms.plantWind);
+  const data=plant.seasonLeaves;assert.ok(data.count>0);assert.equal(data.positions.length,data.count*3);assert.ok(data.canopyArea>0);
+  assert.ok(data.texture?.isTexture);assert.notEqual(data.texture,mesh.material.map,'falling leaf map is the actual preset leaf, not a whole-tree billboard');
+  assert.ok(Number.isFinite(plant.userData.seasonHue));
  }
  dispose(group);seasons.dispose();wind.dispose();
 });
@@ -211,9 +214,9 @@ await test('paver joint blades and lawn share the dormancy uniform and metre pat
  const {group}=await buildYard(plan,{materials:{}},'high'),scene=new THREE.Scene();group.scale.setScalar(.3048);scene.add(group);
  const seasons=S.installSeasons(scene);seasons.prepare();const grass=group.userData.grass;
  assert.ok(grass.jointInstances>0);assert.ok(grass.instances>grass.jointInstances);
- const flags=grass.mesh.geometry.attributes.grassJoint.array;assert.equal(Array.from(flags).filter(v=>v===1).length,grass.jointInstances);
+ const joints=grass.tiles.reduce((n,t)=>n+Array.from(t.instanceColor.array).filter((v,i)=>i%3===2&&v===0).length,0);assert.equal(joints,grass.jointInstances);
  let lawns=0;group.traverse(o=>{if(!o.material?.userData.seasonLawn)return;const shader=assemble(o.material,new Renderer());assert.equal(shader.uniforms.seasonDormancy,seasons.uniforms.seasonDormancy);assert.ok(shader.fragmentShader.includes(S.LAWN_GLSL));lawns++;});
- assert.ok(lawns>=2);for(const dormancy of [0,.5,1]){seasons.update({presence:1,autumn:0,spring:0,dormancy});assert.equal(assemble(grass.mesh.material,new Renderer()).uniforms.seasonDormancy.value,dormancy);}
+ assert.ok(lawns>=2);for(const dormancy of [0,.5,1]){seasons.update({presence:1,autumn:0,spring:0,dormancy});assert.equal(assemble(grass.tiles[0].material,new Renderer()).uniforms.seasonDormancy.value,dormancy);}
  group.traverse(o=>{o.geometry?.dispose();for(const m of [].concat(o.material||[]))m.dispose();});seasons.dispose();
 });
 await test('actual GLSL dormancy curve and tint: green identity, straw luminance, monotonic patches and blade/lawn agreement',()=>{
@@ -221,6 +224,35 @@ await test('actual GLSL dormancy curve and tint: green identity, straw luminance
  const smoothstep=(a,b,v)=>{const t=clamp((v-a)/(b-a),0,1);return t*t*(3-2*t);};
  const fn=S.LAWN_GLSL.match(/float seasonDry\(([^)]*)\) \{([\s\S]*?)\n\}/);
  const dry=new Function('smoothstep','clamp',`return (${fn[1].replace(/float /g,'')})=>{${fn[2]}}`)(smoothstep,clamp);
+ const body=name=>S.LAWN_GLSL.match(new RegExp('(?:float|vec3) '+name+'\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}'))[1];
+ const fract=v=>v-Math.floor(v),dot=(a,b)=>a.reduce((sum,v,i)=>sum+v*b[i],0);
+ const vector=(...v)=>v.length===1?Array(4).fill(v[0]):v,add=(a,b)=>a.map((v,i)=>v+b[i]);
+ const patchBody=body('seasonPatch')
+  .replace('vec2 point=world/1.8,cell=floor(point),blend=fract(point);','let point=world.map(v=>v/1.8),cell=point.map(Math.floor),blend=point.map(fract);')
+  .replace('blend=blend*blend*(3.0-2.0*blend);','blend=blend.map(v=>v*v*(3.0-2.0*v));')
+  .replaceAll('corner/2','Math.trunc(corner/2)').replace('dot(cell+offset,','dot(add(cell,offset),')
+  .replace('noise+=vec4(equal(ivec4(0,1,2,3),ivec4(corner)))*value;','noise=noise.map((v,i)=>v+Number(i===corner)*value);')
+  .replace(/\b(vec2|vec4|float|int) (?=\w+=)/g,'let ')
+  .replace(/\b(noise|blend)\.([xyzw])/g,(_,v,c)=>v+'['+'xyzw'.indexOf(c)+']');
+ const patch=new Function('world','firstCorner','fract','dot','vec2','vec4','sin','float','add','mix',patchBody);
+ const sample=world=>patch(world,0,fract,dot,vector,vector,Math.sin,Number,add,mix);
+ const lawnBody=body('seasonLawn').replace('vec3(.42,.34,.2)*(luminance/.3469)','vec3(.42,.34,.2).map(v=>v*(luminance/.3469))')
+  .replace(/\b(float|vec3) (?=\w+=)/g,'let ');
+ const lawnFn=new Function('green','seasonDormancy','vSeasonWorld','dot','max','vec3','mix','seasonDry','seasonPatch','int',lawnBody);
+ const tint=(green,d,world)=>lawnFn(green,d,world,dot,Math.max,vector,(a,b,t)=>a.map((v,i)=>mix(v,b[i],t)),dry,
+  (p,first)=>{assert.equal(first,0,'range-gated runtime loop starts at zero');return sample(p);},Math.trunc);
+ // Original four-corner hash and bilinear mix: keep the actual hash dot order,
+ // since reassociating before sin/fract would change the patch pattern.
+ for(let i=-80;i<=80;i++)for(let j=-8;j<=8;j++){
+  const world=[i*.1731,j*.317],point=world.map(v=>v/1.8),cell=point.map(Math.floor),blend=point.map(v=>{v=fract(v);return v*v*(3-2*v);});
+  const hash=(x,y)=>fract(Math.sin(dot(add(cell,[x,y]),[12.9898,78.233]))*43758.5453);
+  const expected=mix(mix(hash(0,0),hash(1,0),blend[0]),mix(hash(0,1),hash(1,1),blend[0]),blend[1]);
+  assert.equal(sample(world),expected,'unchanged four corner hashes and interpolation');
+  for(const d of [-.1,0,.01,.3,.8,.999,1,1.1]){
+   const green=[.025,.12,.01],luminance=dot(green,[.2126,.7152,.0722]),straw=[.42,.34,.2].map(v=>v*(luminance/.3469));
+   tint(green,d,world).forEach((v,k)=>assert.ok(Math.abs(v-mix(green[k],straw[k],dry(d,expected)))<1e-15));
+  }
+ }
  for(let threshold=0;threshold<=1;threshold+=.01){
   assert.equal(dry(0,threshold),0);assert.equal(dry(1,threshold),1);
   let previous=0;for(let d=0;d<=1;d+=.01){const amount=dry(d,threshold);assert.ok(Number.isFinite(amount)&&amount>=previous&&amount<=1);previous=amount;}

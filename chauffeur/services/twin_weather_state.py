@@ -61,6 +61,8 @@ def valid_record(record, now):
         if type(record.get(key)) not in (int, float) or number(record[key]) is None:
             return False
     return (0 <= record['snow_cm'] <= 10000 and 0 <= record['wetness'] <= 1
+            and (record.get('puddle_amount') is None or type(record['puddle_amount']) in (int, float)
+                 and number(record['puddle_amount']) is not None and 0 <= record['puddle_amount'] <= 1)
             and 0 <= now - record['updated'] <= MAX_RECORD_AGE
             and (record.get('last_rain') is None or type(record['last_rain']) in (int, float)
                  and number(record['last_rain']) is not None and record['last_rain'] <= now))
@@ -83,6 +85,13 @@ def advance(record, forcing, now):
         record = {'snow_cm': 0., 'wetness': 0., 'updated': now, 'last_rain': None}
     hours = (now - record['updated']) / 3600
     snow, wet = record['snow_cm'], record['wetness']
+    # Existing persisted records predate the duration accumulator. Retain their
+    # known puddles once; every newly integrated record writes the new field.
+    puddle = record.get('puddle_amount')
+    if puddle is None:
+        puddle = max(0., (wet - .6) / .4)
+    if record.get('last_rain') is None or now - record['last_rain'] > 10800:
+        puddle = 0.
     condition, rate = forcing.get('condition'), forcing.get('rate', 0)
     temperature = forcing.get('temperature')
     cover = forcing.get('cloud_cover', 0)
@@ -91,30 +100,46 @@ def advance(record, forcing, now):
     if growing:
         snow += rate * (1 if condition == 'snowy-rainy' else 2.5) * hours
     melt = 0
+    melt_hours = 0
     if temperature is not None and temperature > 0:
-        melt = min(snow, (temperature * .4 + (.8 * (1 - cover) if sun else 0)) * hours)
+        melt_rate = temperature * .4 + (.8 * (1 - cover) if sun else 0)
+        melt = min(snow, melt_rate * hours)
+        melt_hours = melt / max(melt_rate, 1e-9)
         snow -= melt
     # Keep sub-threshold snowfall between ticks, otherwise light mix can never
     # reach .2 cm. The final melting remnant is cleared, as specified.
     if snow < .2 and not growing:
         snow = 0
     raining = condition in ('rainy', 'pouring', 'lightning-rainy', 'snowy-rainy') and rate > 0
+    rain_rate = rate * (.5 if condition == 'snowy-rainy' else 1) if raining else 0.
     if raining or melt > 0:
-        wet = 1.
+        # Forty minutes of full rain, or eighty minutes of continuous melt.
+        rise = rain_rate * 1.5 + (.75 if melt > 0 else 0.)
+        if raining:
+            # Only the interval above .45 counts: 18 + 42 = 60 pouring minutes.
+            eligible = max(0., hours - max(0., .45 - wet) / max(rise, 1e-9))
+            puddle += rain_rate * eligible / .7
+        wet += rain_rate * 1.5 * hours + .75 * melt_hours
     else:
         tau = 180 - 6 * max(0, min(20, temperature if temperature is not None else 0))
         if sun:
             tau /= 2
         if (forcing.get('humidity') or 0) > 90:
             tau *= 2
-        wet *= math.exp(-hours * 60 / tau)
+        drying = math.exp(-hours * 60 / tau)
+        wet *= drying
+        puddle *= drying
     return {'snow_cm': min(10000, max(0, snow)), 'wetness': max(0, min(1, wet)), 'updated': now,
+            'puddle_amount': max(0, min(1, puddle)),
             'last_rain': now if raining else record.get('last_rain')}
 
 
 def puddles(record, now):
     recent = record.get('last_rain')
-    return max(0., (record['wetness'] - .6) / .4) if recent is not None and 0 <= now - recent <= 10800 else 0.
+    amount = record.get('puddle_amount')
+    if amount is None:
+        amount = max(0., (record['wetness'] - .6) / .4)
+    return min(amount, max(0., (record['wetness'] - .45) / .55)) if recent is not None and 0 <= now - recent <= 10800 else 0.
 
 
 def frost_cycle(now, latitude):
@@ -365,7 +390,7 @@ def update(now=None):
                             'lawn': 'temperature history' if lawn['source'] == 'history' else 'growing-season calendar by latitude'}
         # Integrate the observation that actually occupied the elapsed interval,
         # then latch the new one. A snow->sun event must not retroactively melt
-        # the preceding hour, and first rain wets surfaces immediately.
+        # the preceding hour. A new rain observation starts building next tick.
         previous = record.get('forcing') if isinstance(record, dict) else None
         if not usable or not _valid_forcing(previous):
             record = None

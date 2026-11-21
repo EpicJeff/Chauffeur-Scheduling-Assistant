@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { sampleCloudDensity } from './clouds.js';
 import { createNoiseVolumeSampler } from './cloud_noise.js';
-import { bindEnvironmentMaterial } from './stage_haze.js';
+import { bindEnvironmentMaterial, oncePerFrame, frameObjects } from './stage_haze.js';
 
 const SIZE=12, EARTH=6360000, INTERVAL=.25;
 const held=v=>Number.isFinite(v)?Math.max(0,Math.min(1,v)):1;
@@ -12,9 +12,10 @@ uniform vec4 cloudShadowGrid[36];
 // lower x/z, reciprocal full width, enabled
 uniform vec4 cloudShadowBounds;
 uniform vec3 cloudShadowLight;
+float cloudShadowValue;
 float cloudShadowCell(ivec2 p) {
   int index=p.y*12+p.x, block=index/4;
-  return cloudShadowGrid[block][index-block*4];
+  return dot(cloudShadowGrid[block],vec4(equal(ivec4(0,1,2,3),ivec4(index-block*4))));
 }
 float cloudShadowAt(vec2 world) {
   if(cloudShadowBounds.w<0.5) return 1.0;
@@ -26,7 +27,7 @@ float cloudShadowAt(vec2 world) {
 }
 float cloudShadowForLight(vec3 direction) {
   vec3 luminary=mat3(viewMatrix)*cloudShadowLight;
-  return dot(luminary,direction)>0.99999 ? cloudShadowAt(vCloudWorld.xz) : 1.0;
+  return dot(luminary,direction)>0.99999 ? cloudShadowValue : 1.0;
 }
 `;
 
@@ -48,6 +49,9 @@ cloudWorld=instanceMatrix*cloudWorld;
 #endif
 vCloudWorld=(modelMatrix*cloudWorld).xyz;`;
   THREE.ShaderChunk.lights_pars_begin=CLOUD_SHADOW_GLSL+THREE.ShaderChunk.lights_pars_begin;
+  // Cache outside three's unrolled light loops: the receiver is identical for
+  // every directional light. This temporary adds no uniform or sampler.
+  THREE.ShaderChunk.lights_fragment_begin='#if NUM_DIR_LIGHTS > 0 || NUM_SUN_LIGHTS > 0\ncloudShadowValue=cloudShadowAt(vCloudWorld.xz);\n#endif\n'+THREE.ShaderChunk.lights_fragment_begin;
   for(const anchor of ['getDirectionalLightInfo( directionalLight, directLight );','getSunLightInfo( sunLight, directLight );']) {
     if(!THREE.ShaderChunk.lights_fragment_begin.includes(anchor))throw new Error('Cloud shadow missing r187 light anchor: '+anchor);
     THREE.ShaderChunk.lights_fragment_begin=THREE.ShaderChunk.lights_fragment_begin.replace(anchor,
@@ -96,21 +100,23 @@ function patchEffect(shader) {
 
 export function installCloudShadow(scene,clouds) {
   installChunks();
+  // The packed grid IS the uniform: a flat Float32Array goes to uniform4fv as it
+  // stands, where 36 Vector4s were flattened again for every lit draw.
   const values=new Float32Array(SIZE*SIZE).fill(1);
-  const grid=Array.from({length:36},()=>new THREE.Vector4(1,1,1,1));
-  const uniforms={cloudShadowGrid:{value:grid},cloudShadowBounds:{value:new THREE.Vector4(-1,-1,.5,0)},
+  const uniforms={cloudShadowGrid:{value:values},cloudShadowBounds:{value:new THREE.Vector4(-1,-1,.5,0)},
     cloudShadowLight:{value:new THREE.Vector3(0,1,0)}};
   let centre=[0,0],radius=1,sun=[0,1,0],moon=[0,-1,0],last=-Infinity,disposed=false,enabled=true,cpuNoise=null;
   const source=clouds.uniforms;
-  function prepare(root=scene) {
-    root.traverse(object=>{for(const material of [].concat(object.material||[])) {
+  function prepare(root) {
+    for(const object of frameObjects(root ?? scene,{fresh:root !== undefined})){for(const material of [].concat(object.material||[])) {
       const lit=material.isMeshStandardMaterial||material.isMeshLambertMaterial||material.isMeshPhongMaterial||material.isMeshToonMaterial;
       const effect=material.isShaderMaterial&&material.uniforms?.light;
       if(lit||effect)bindEnvironmentMaterial(material,'cloud-shadow-1',uniforms,effect?patchEffect:null);
-    }});
+    }}
   }
   const previous=scene.onBeforeRender;
-  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);prepare();};
+  const walk=oncePerFrame(scene,()=>prepare());
+  scene.onBeforeRender=function(renderer,...args){previous.call(this,renderer,...args);walk();};
   function sample(x,z) {
     const bounds=uniforms.cloudShadowBounds.value;
     if(bounds.w<.5)return 1;
@@ -133,7 +139,7 @@ export function installCloudShadow(scene,clouds) {
       const active=enabled&&coverage>0&&type>.5&&fade>0&&(sun[1]>0||moon[1]>0);
       // Clear/editor/Unlit must stop an old shadow immediately, even between fills.
       uniforms.cloudShadowBounds.value.w=active?1:0;
-      if(!active) {values.fill(1);grid.forEach(v=>v.set(1,1,1,1));return false;}
+      if(!active) {values.fill(1);return false;}
       if(now-last<INTERVAL)return false;
       last=now;
       const dir=sun[1]>0?sun:moon;
@@ -149,7 +155,7 @@ export function installCloudShadow(scene,clouds) {
         const t=shadowTransmittance([centre[0]-span/2+x*span/11,0,centre[1]-span/2+z*span/11],dir,options);
         values[z*SIZE+x]=1+(t-1)*fade;
       }
-      grid.forEach((v,i)=>v.fromArray(values,i*4));return true;
+      return true;
     },
     dispose(){if(disposed)return;disposed=true;scene.onBeforeRender=previous;cpuNoise=null;},
   };

@@ -41,6 +41,8 @@ await test('slow orbit emits no human camera change and retains live sun',()=>{
   let controlsCalls=0;const original=view.controls.update;
   view.controls.update=()=>{controlsCalls++;original.call(view.controls);};
   current=10000;wallNow+=1000;view.renderer3.loop(current);assert.ok(before.distanceTo(view.camera.position)>0);
+  assert.equal(view.camera.matrixAutoUpdate,true,'the viewer freeze leaves the idle camera automatic');
+  assert.deepEqual(view.camera.matrix.elements.slice(12,15),view.camera.position.toArray(),'idle orbit recomposes the camera local matrix');
   assert.equal(controlsCalls,0,'idle animation never runs OrbitControls.update, so it cannot starve the baker');
   view.controls.update=original;
   assert.equal(updates,0);assert.equal(view.scene.getObjectByName('real-sun'),sun);

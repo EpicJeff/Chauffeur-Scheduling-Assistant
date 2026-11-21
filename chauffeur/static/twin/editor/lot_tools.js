@@ -6,6 +6,8 @@ import { createTypedValue } from './typed_value.js';
 import { plotSuggestionCard } from './place.js';
 import { request, report } from './api.js';
 import { DRAG_THRESHOLD_PX, HANDLE_HIT_PX } from './picking.js';
+import { clipHalf } from '../pool_features.js';
+import { polygonArea } from './site_drawing.js';
 
 const FT = .3048;
 const rotate = (p, degrees) => {
@@ -28,6 +30,30 @@ function footprint(building) {
   const [x0, y0] = [0, 1].map(i => Math.min(...points.map(p => p[i])));
   const [x1, y1] = [0, 1].map(i => Math.max(...points.map(p => p[i])));
   return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+}
+
+const triangles = outline => THREE.ShapeUtils.triangulateShape(outline.map(p => new THREE.Vector2(...p)), [])
+  .map(ids => ids.map(i => outline[i]));
+// Triangulate both rings so concave footprints and either winding use their
+// actual covered area, rather than their bounding boxes or corner counts.
+function overlapsBuilding(outline, buildings) {
+  const area = polygonArea(outline);
+  if (!area) return false;
+  const parts = triangles(outline);
+  return buildings.some(building => {
+    let overlap = 0;
+    for (const cutter of building) for (const part of parts) {
+      let clipped = part;
+      const sign = THREE.ShapeUtils.area(cutter.map(p => new THREE.Vector2(...p))) < 0 ? -1 : 1;
+      for (let i = 0; i < 3; i++) clipped = clipHalf(clipped, cutter[i], cutter[(i + 1) % 3], sign);
+      overlap += polygonArea(clipped);
+    }
+    return overlap > area / 2 + 1e-8;
+  });
+}
+function polygonCentre(outline) {
+  const parts = triangles(outline), area = polygonArea(outline);
+  return area ? [0, 1].map(i => parts.reduce((sum, part) => sum + centre(part)[i] * polygonArea(part), 0) / area) : centre(outline);
 }
 
 // The street edge as a segment in lot feet, from the plot read or the confirmed
@@ -113,6 +139,8 @@ export function snapFootprint(building, outline, suggestions) {
 export function createLotTools({ view, getPlan, getSheets, getSelection, select, pauses, op, reload, canEdit, signal, dock }) {
   const canvas = view.renderer3.domElement, parent = canvas.parentElement;
   const layer = document.createElement('div'); layer.className = 'editor-handles'; parent.append(layer);
+  const labels = document.createElement('div'); labels.className = 'editor-dimensions'; parent.append(labels);
+  const suggestionLabels = new Map();
   const typed = createTypedValue(layer);
   const card = document.createElement('aside'); card.className = 'place-card editor-lot-card'; card.hidden = true;
   card.setAttribute('aria-label', 'Lot placement'); document.querySelector('.editor-shell').append(card);
@@ -125,6 +153,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
   const place = () => getSheets().place || { buildings: [], lot: {} };
   const read = () => place().lot?.read;
   const suggestions = () => (read()?.suggestions || []).filter(s => s.state === 'open');
+  let drawnSuggestions = [];
   const lotOutline = () => read()?.lot || place().lot?.placement?.outline || getPlan()?.site?.lot || [];
   // Handles and the card stay shown while a change saves (no blink after each
   // drop); only new gestures and actions wait for it.
@@ -184,16 +213,40 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
   }
   function syncGraphics() {
     const unbuilt = place().buildings.filter(b => b.footprint?.length && !view.plan?.buildings.some(p => p.id === b.id));
-    const key = JSON.stringify([lotOutline(), read()?.street_edge, suggestions(), unbuilt]);
+    const built = (getPlan()?.buildings || []).map(b => placed(b, footprint(b)));
+    const key = JSON.stringify([lotOutline(), read()?.street_edge, suggestions(), unbuilt, built]);
     if (key === graphicKey) return;
     graphicKey = key; clearGroup(graphics);
+    const buildings = built.map(triangles);
+    // Only the scene is filtered. The open suggestions still drive the shared
+    // Your lot cards and footprint snapping until a person answers them.
+    drawnSuggestions = suggestions().filter(s => !overlapsBuilding(s.outline, buildings));
+    for (const [id, label] of suggestionLabels) if (!drawnSuggestions.some(s => s.id === id)) {
+      label.remove(); suggestionLabels.delete(id);
+    }
     const outline = lotOutline();
     if (outline.length) {
       line(outline, false, '#a0afc1');
       const edge = read()?.street_edge || place().lot?.placement?.street_edge;
       if (edge?.length === 2 && edge.every(i => outline[i])) line(edge.map(i => outline[i]), false, '#52ccff');
     }
-    suggestions().forEach(s => line(s.outline, true, '#52ccff'));
+    drawnSuggestions.forEach(s => {
+      line(s.outline, true, '#52ccff');
+      if (!suggestionLabels.has(s.id)) {
+        const label = button('', () => {
+          if (!enabled()) return;
+          syncGraphics();
+          const current = drawnSuggestions.find(row => row.id === s.id);
+          if (current) suggestionCard(current);
+        });
+        label.hidden = true;
+        label.dataset.plotSuggestion = s.id;
+        const title = document.createElement('span'); title.textContent = 'Possible building from your plot';
+        const hint = document.createElement('span'); hint.textContent = 'Accept or Dismiss in Your lot';
+        label.append(title, document.createElement('br'), hint);
+        labels.append(label); suggestionLabels.set(s.id, label);
+      }
+    });
     unbuilt.forEach(b => line(b.footprint, false, '#52ccff'));
     if (openCard?.suggestion && !suggestions().some(s => s.id === openCard.suggestion)) closeCard();
   }
@@ -235,6 +288,13 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
       }
     }
     syncSheet(); syncGraphics();
+    for (const s of drawnSuggestions) {
+      const label = suggestionLabels.get(s.id), screen = project(polygonCentre(s.outline)), rect = canvas.getBoundingClientRect();
+      label.hidden = !screen
+        || screen[0] < rect.left || screen[0] > rect.right || screen[1] < rect.top || screen[1] > rect.bottom;
+      label.disabled = !enabled();
+      if (screen) { label.style.left = `${screen[0]}px`; label.style.top = `${screen[1]}px`; }
+    }
     if (gesture?.client && (gesture.hit || gesture.drawing)) update({ pointerId: gesture.pointer,
       clientX: gesture.client[0], clientY: gesture.client[1], shiftKey: gesture.free });
     if (openCard?.building && current()?.id !== openCard.building) closeCard();
@@ -395,13 +455,18 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     // Only outlines on open ground take precedence over the normal piece picker.
     if (view.pick(event.clientX, event.clientY)) return false;
     const outline = lotOutline();
-    const edge = outline.findIndex((p, i) => {
-      const a = project(p), b = project(outline[(i + 1) % outline.length]); if (!a || !b) return false;
+    // Within 10 px of a drawn outline on screen.
+    const nearOutline = ring => ring.findIndex((p, i) => {
+      const a = project(p), b = project(ring[(i + 1) % ring.length]); if (!a || !b) return false;
       const d = subtract(b, a), q = subtract([event.clientX, event.clientY], a), n = d[0] ** 2 + d[1] ** 2;
       const t = n ? Math.max(0, Math.min(1, (q[0] * d[0] + q[1] * d[1]) / n)) : 0;
       return distance([event.clientX, event.clientY], add(a, d.map(v => v * t))) <= 10;
     });
-    const suggestion = suggestions().find(s => contains(s.outline, point));
+    const edge = nearOutline(outline);
+    // A plot suggestion takes clicks on its dashed outline only, so the ground, yard pieces and
+    // navigation inside it keep working (owner report 2026-11-19: clicks inside it were eaten).
+    syncGraphics();
+    const suggestion = drawnSuggestions.find(s => nearOutline(s.outline) >= 0);
     const part = place().buildings.find(b => b.footprint?.length && !getPlan()?.buildings.some(p => p.id === b.id) && contains(b.footprint, point));
     if (edge < 0 && !suggestion && !part) { if (selected) selected = null; closeCard(); return false; }
     gesture = { pointer: event.pointerId, x: event.clientX, y: event.clientY, edge, suggestion, part };
@@ -482,7 +547,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     disposed = true; cancelAnimationFrame(frame); ++sheetVersion;
     if (gesture) finish({ pointerId: gesture.pointer }, true);
     closeCard();
-    typed.hide(); disposeSheet(); clearGroup(graphics); graphics.removeFromParent(); layer.remove(); card.remove();
+    typed.hide(); disposeSheet(); clearGroup(graphics); graphics.removeFromParent(); layer.remove(); labels.remove(); card.remove();
   }, { once: true });
   refresh();
   const tools = { hit, begin, pointerArmedDown: event => !!drawing && begin(event),
@@ -493,7 +558,7 @@ export function createLotTools({ view, getPlan, getSheets, getSelection, select,
     lotHandles: handles,
     handles: () => handles().map(h => ({ kind: `building_${h.kind}`, id: h.building, at: [...h.at, 0] })),
     underlay: () => read() && sheet ? { source: read().source, page: read().page, opacity: .6, visible: sheet.visible && !!sheet.parent } : null,
-    lotSuggestions: () => suggestions().map(s => ({ id: s.id, outline: s.outline, dashed: true })),
+    lotSuggestions: () => { syncGraphics(); return drawnSuggestions.map(s => ({ id: s.id, outline: s.outline, dashed: true })); },
     drawFootprint(id) {
       frameLot(); selected = id; select(null); drawing = id; closeCard(); openCard = { drawing: id };
       const note = document.createElement('p'); note.textContent = 'Drag a rectangle on the ground for this building.'; card.append(note);

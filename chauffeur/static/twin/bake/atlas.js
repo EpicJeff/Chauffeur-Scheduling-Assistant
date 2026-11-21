@@ -1,10 +1,12 @@
 // Geometry/UV density use plan feet; reach queries use world metres.
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { reachLights } from './reach.js';
-import { fingerprint, authoredGeometry } from './geometry_key.js';
+import { fingerprint, authoredGeometry, withoutSurfaceMaterials } from './geometry_key.js';
+import { bakeSource } from './source.js';
+import { bindReceivers } from './bindings.js';
 export { fingerprint } from './geometry_key.js';
 
-const VERSION = 'reach-atlas-11';
+const VERSION = 'reach-atlas-12'; // 12: outdoor surfaces at 4/ft (v2.499.964)
 const EPS = 1e-6;
 const prepared = new WeakMap();
 const bankPacking = new WeakMap();
@@ -56,7 +58,7 @@ function convexParts(poly) {
 function roomData(plan) {
   const rooms = [], buildings = new Map();
   for (const b of plan.buildings || []) {
-    const levels = [...(b.levels || [])].sort((a, c) => a.elevation - c.elevation);
+    const levels = (b.levels || []).map(withoutSurfaceMaterials).sort((a, c) => a.elevation - c.elevation);
     const list = [];
     for (const r of b.rooms || []) {
       if (r.polygon?.length < 3 || !r.polygon) continue;
@@ -408,16 +410,19 @@ function shelves(items, width, height, gutter, ordered = null) {
 }
 
 // Texels per foot by surface: rooms at the layout density; a building's outside (siding,
-// battens, trim, roofs) at up to 2/ft; yard and ground at 1/ft. Every chart fits one page.
-// The pages hold visibility only (a shadowmask): falloff and shading are per pixel, so 2/ft
-// outside looks as 4/ft did on the pool house gable and holds one page fewer a bank
-// (2026-11-14; 4/ft was v2.499.861's answer to the dark batten lines under irradiance).
-export const BUILDING_OUTDOOR_DENSITY = 2, YARD_DENSITY = 1;
+// battens, trim, roofs) and the yard's hard surfaces (paving, the pool deck and shell, walls,
+// fire pits) at up to 4/ft; graded ground at 1/ft. Every chart fits one page. The pages hold
+// visibility only (a shadowmask): falloff and shading are per pixel, but a shadow edge is as
+// sharp as the texel, and at 1-2/ft a door frame's shadow on the deck read as soft 1 ft
+// blocks (owner 2026-11-20: 4/ft for the deck and the siding; on the owner's house one more
+// 2048 layer a bank, against five more at the rooms' 8/ft).
+export const BUILDING_OUTDOOR_DENSITY = 4, YARD_SURFACE_DENSITY = 4, YARD_DENSITY = 1;
 // The share of a page one outdoor room may claim before its tile continues in another room.
 const OUTDOOR_FILL = .45;
 function baseDensity(c, o) {
   if (!c.outdoor) return o.density;
-  return Math.min(o.density, c.building && !c.heightfield ? BUILDING_OUTDOOR_DENSITY : YARD_DENSITY);
+  if (c.heightfield) return Math.min(o.density, YARD_DENSITY);
+  return Math.min(o.density, c.building ? BUILDING_OUTDOOR_DENSITY : YARD_SURFACE_DENSITY);
 }
 function scaled(charts, o) {
   return charts.map((c, id) => {
@@ -606,6 +611,12 @@ export function atlasMesh(mesh) {
     mesh.geometry?.attributes.position);
 }
 
+export function prepareReceivers(group, plan) {
+  const data=roomData(plan),meshes=[];
+  group.traverse(mesh=>{if(atlasMesh(mesh)){prepare(mesh,data);meshes.push(mesh);}});
+  return meshes;
+}
+
 export const CHANNEL_FALLBACK = Symbol('channel fallback');
 export const CHART_STATS = Symbol('chart ranking statistics');
 export function assignChannels(rooms, lights, previous = new Map()) {
@@ -747,6 +758,13 @@ export function packBanks(layout, lights, o, assigned) {
 }
 
 export function buildAtlas(group, plan, { room } = {}) {
+  const source = bakeSource(group);
+  if (source !== group) {
+    const atlas = buildAtlas(source, plan, {room});
+    const meshes=prepareReceivers(group,plan);
+    atlas.sourceRoot=source;
+    return bindReceivers(atlas,meshes);
+  }
   const ro = options(room, 'room'), data = roomData(plan);
   const roomCharts = [], hash = fingerprint();
   hash.add(authoredGeometry(plan));

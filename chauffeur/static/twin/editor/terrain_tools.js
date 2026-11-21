@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { keepPlace } from './keep_place.js';
 import { groundAt, edgeDistance } from '../twin_ground.js';
 import { tintGrade } from '../twin_terrain_mesh.js';
 import { report } from './api.js';
@@ -9,6 +10,8 @@ import { createSiteDrawing, snapSitePoint, polygonArea } from './site_drawing.js
 import { pathPresets, pathOutline } from '../path_shapes.js';
 import { placedPit, firePitOutline } from '../fire_pits.js';
 import { materialSlot } from './material_slot.js';
+import { surfaceDescription } from './material_catalog.js';
+import { retainingWallRole } from '../twin_retaining_wall.js';
 import { contains } from '../twin_generator.js';
 import { DRAG_THRESHOLD_PX, HANDLE_HIT_PX } from './picking.js';
 
@@ -233,7 +236,14 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     }
     list.append(indicator); host.append(list);
   }
+  // Rebuilding the same yard piece's card (an edge type, a layout, a shape field) keeps the person's place.
+  let cardSubject = null;
   function drawCard() {
+    const subject = JSON.stringify([chosen?.kind ?? null, chosen?.id ?? chosen?.index ?? null, drawing?.kind ?? null]);
+    const same = subject === cardSubject; cardSubject = subject;
+    return same ? keepPlace(card, drawCardNow) : drawCardNow();
+  }
+  function drawCardNow() {
     cancelPadDrag();
     disposeSlots(); card.replaceChildren(); card.hidden = false;
     finishButton?.remove(); finishButton = null;
@@ -342,6 +352,8 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
           const owner = nested ? value.rail : value;
           card.append(materialSlot({ library, ownSlot, label: `Edge ${i + 1} ${title}`, value: owner.materials?.[key] || null,
             defaultLabel: fallback, kit: getKit(), readOnly: () => !canEdit(), report,
+            resolve: ref => surfaceDescription(getPlan(), {ref, role:nested ? 'black_metal'
+              : key === 'face' ? retainingWallRole(value.material) : 'patio_concrete'}, getKit()),
             onChange: ref => {
               const next = latest(), owner = nested ? next.rail : next;
               owner.materials = { ...owner.materials, [key]: ref };

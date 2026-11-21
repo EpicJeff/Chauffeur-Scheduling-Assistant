@@ -22,13 +22,14 @@ import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from '
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
 import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/atmosphere.js';
 import { createCloudPass } from './sky/cloud_pass.js';
-import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze } from './sky/weather.js';
+import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction, weatherLightingKey } from './sky/weather.js';
 import { installPlantWind } from './sky/wind.js';
-import { installStageHaze } from './sky/stage_haze.js';
+import { installStageHaze, startEnvironmentFrame } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
 import { installWeatherSurface } from './sky/weather_surface.js';
 import { seasonState, createSeasonPreview, installSeasons } from './sky/seasons.js';
 import { createPrecipitation } from './sky/precipitation.js';
+import { createSkyCover, writeWeatherOpen, refreshSlabCover } from './sky/sky_cover.js';
 import { createSeasonTouches } from './sky/season_touches.js';
 import { mountTimeScrub } from './sky/time_scrub.js';
 import { defaultStage, mountStageSettings } from './stage_settings.js';
@@ -41,6 +42,7 @@ import { mountFrameMeter } from './frame_meter.js';
 import { createPost, EMITTER_GAIN } from './post.js';
 import { createReflectionProbes } from './reflection_probes.js';
 import { createPieceVisibility } from './twin_visibility.js';
+import { freezeViewerMatrices } from './static_matrices.js';
 
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {}, stage = null } = {}) {
   kit = kit || {};
@@ -124,8 +126,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const weatherSurface = installWeatherSurface(scene);
   const seasons = installSeasons(scene);
   const precipitation = createPrecipitation(scene,{tier});
+  post?.setWetGround({weatherSurface:weatherSurface.uniforms.weatherSurface,...precipitation.uniforms});
   const seasonTouches = createSeasonTouches(scene,{tier});
-  let precipitationPlan=null,precipitationRoofs=null;
+  let precipitationPlan=null,precipitationRoofs=null,precipitationCover=null;
   let cloudCentre=[0,0];
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
   const stageForPlan = nextPlan => {
@@ -188,6 +191,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
   const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
     extras:() => [sky.object, precipitation.group, seasonTouches.group, sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
+  reflections.setMirrorStillHz(stage?.mirror_still_hz ?? 10);
+  reflections.setProbeCloudSeconds(stage?.probe_cloud_s ?? 30);
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
@@ -426,7 +431,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     if (disposed) return;
     if (compiling && performance.now() - holdSince < HOLD_MS) return;
     // The live keeper can replace its layer. Read its current snapshot, without another stream.
-    if (JSON.stringify(currentWeather()) !== lastWeather) applyTimeLook();
+    const weather=currentWeather();
+    if (weatherLightingKey(weather) !== lastWeather) applyTimeLook();
+    else view.weather=weather;
     const flash=clouds.flash(performance.now()/1000,{enabled:(!editor||state.liveWeather||!!state.weatherPreview)&&!state.unlit,
       centre:cloudCentre});
     // Reuse the one existing hemisphere light. No lit-material uniform, light
@@ -445,21 +452,20 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       renderer: renderer3, camera, sun: timeLook?.sunClear ?? 3,
       sunDirection: sun.position.clone().sub(sun.target.position).normalize(),
     });
-    yardGroup?.userData.grass?.update(performance.now() / 1000,view.weather,site.front_bearing_deg ?? 180);
-    plantWind.update(performance.now()/1000,view.weather,site.front_bearing_deg ?? 180);
-    seasons.update(view.season);
+    yardGroup?.userData.grass?.update(performance.now() / 1000,view.weather,site.front_bearing_deg ?? 180,camera);
     weatherSurface.update(view.weather,performance.now()/1000);
-    if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces){
-      seasonTouches.setPlan(plan);
-      precipitation.setPlan(plan,twin?.roofSurfaces);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;
+    if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces || precipitationCover!==twin?.skyCover){
+      seasonTouches.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);
+      precipitation.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;precipitationCover=twin?.skyCover;
     }
     precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
-      unlit:state.unlit,colour:timeLook?.skyColor});
-    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext';
+      level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,colour:timeLook?.skyColor});
+    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext'&&(!view.levels||view.levels.snapshot().level==='house');
     const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
     const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
     seasonTouches.update(performance.now()/1000,view.season,view.weather,camera,{target:controls.target,plants:yardGroup,
-      date:clockNow(),sunAltDeg,enabled:touchEnabled,lawn:yardGroup?.userData.grass?.growsGrass ?? false,bearing:site.front_bearing_deg ?? 180});
+      date:clockNow(),sunAltDeg,enabled:touchEnabled,lawn:yardGroup?.userData.grass?.growsGrass ?? false,bearing:site.front_bearing_deg ?? 180,
+      light:leafLight()});
     post?.setSun({sunDir,sunAltDeg,enabled:touchEnabled,transmittance:1-weatherHaze(view.weather)});
     view.live?.draw();
     twin?.updateGhosts();
@@ -470,18 +476,30 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       renderer3.shadowMap.needsUpdate = false; sun.shadow.needsUpdate = false;
     }
     renderer3.info.reset();
-    // The pool's mirror image belongs to this frame's camera.
-    if (!state.unlit) {
-      const background=scene.background;
-      try {scene.background=sky.cube;reflections.mirror(camera);}
-      finally {scene.background=background;}
-    }
-    post?.setCamera(camera);
-    // Count only the beauty pass: AO depth and fullscreen draws are extra work,
-    // not extra house geometry. createPost snapshots the RenderPass counters.
+    startEnvironmentFrame(scene);
+    plantWind.update(performance.now()/1000,view.weather,site.front_bearing_deg ?? 180);
+    seasons.update(view.season);
+    // three recomputes every object's world matrix at the start of each render
+    // call; a frame makes five or more (mirror, AO, beauty, transparent, shadow
+    // faces) and nothing moves between them. Owner trace 2026-11-20: 13% of the
+    // frame. Compute once here; the passes reuse it.
+    scene.updateMatrixWorld();
+    const matrixAuto = scene.matrixWorldAutoUpdate;
+    scene.matrixWorldAutoUpdate = false;
     let picture;
-    if (post && !state.unlit) picture = post.render();
-    else { renderer3.render(scene, camera); picture = renderer3.info.render; }
+    try {
+      // The pool's mirror image belongs to this frame's camera.
+      if (!state.unlit) {
+        const background=scene.background;
+        try {scene.background=sky.cube;reflections.mirror(camera);}
+        finally {scene.background=background;}
+      }
+      post?.setCamera(camera);
+      // Count only the beauty pass: AO depth and fullscreen draws are extra work,
+      // not extra house geometry. createPost snapshots the RenderPass counters.
+      if (post && !state.unlit) picture = post.render();
+      else { renderer3.render(scene, camera); picture = renderer3.info.render; }
+    } finally { scene.matrixWorldAutoUpdate = matrixAuto; }
     lastStats = { drawCalls: picture.calls, triangles: picture.triangles, tier, fps };
     if (editFrames.size) {
       let meshes = 0;
@@ -490,6 +508,16 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const waiting = [...editFrames]; editFrames.clear();
       requestAnimationFrame(() => waiting.forEach(resolve => resolve(stats)));
     }
+  }
+  // Irradiance on a leaf card, scene-linear: hemisphere sky plus a little over half of
+  // the sun and moon (a tumbling card faces them at random), over pi as for Lambert.
+  const leafScratch = new THREE.Color();
+  function leafLight() {
+    leafScratch.copy(ambient.color).multiplyScalar(ambient.intensity);
+    leafScratch.r += (sun.color.r * sun.intensity + moon.color.r * moon.intensity) * .6;
+    leafScratch.g += (sun.color.g * sun.intensity + moon.color.g * moon.intensity) * .6;
+    leafScratch.b += (sun.color.b * sun.intensity + moon.color.b * moon.intensity) * .6;
+    return [leafScratch.r / Math.PI, leafScratch.g / Math.PI, leafScratch.b / Math.PI];
   }
   function resize() {
     const width = Math.max(1, el.clientWidth), height = Math.max(1, el.clientHeight);
@@ -613,7 +641,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     },
     get roofSurfaces() { return twin?.roofSurfaces; },
     render,
-    reflectionsChanged: () => reflections.request(),
+    reflectionsChanged: reason => reason === 'lamp' ? reflections.requestLamp() : reflections.request(),
     setHiddenPieces(ids, kinds) {
       if (!pieceVisibility) return;
       pieceVisibility.set(ids, kinds);
@@ -858,7 +886,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         el.dispatchEvent(new CustomEvent('twintimechange', {detail:state.time}));
       }
     },
+    setMirrorStillHz(hz) { reflections.setMirrorStillHz(hz); render(); },
+    setProbeCloudSeconds(seconds) { reflections.setProbeCloudSeconds(seconds); },
     async setStage(next) {
+      if (next?.mirror_still_hz !== undefined) reflections.setMirrorStillHz(next.mirror_still_hz);
+      if (next?.probe_cloud_s !== undefined) reflections.setProbeCloudSeconds(next.probe_cloud_s);
       if (!next || !Number.isFinite(next.radius) || next.radius < 30 || next.radius > 1000) return;
       const radius = next.radius_override === undefined ? next.radius : next.radius_override;
       if (radius !== null && (!Number.isFinite(radius) || radius < 30 || radius > 1000)) return;
@@ -1183,6 +1215,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
       }
       plan = flat; view.plan = flat;
+      refreshSlabCover(twin.root, flat, twin.roofSurfaces, buildingId);
+      twin.skyCover = createSkyCover(flat, twin.roofSurfaces);
+      writeWeatherOpen(twin.root, twin.skyCover);
       // A gesture deforms retained buffers in place; the next full rebuild
       // must regenerate this building from its final authoritative record.
       if (!keep && twin.buildings?.has(buildingId)) twin.buildings.get(buildingId).model.stale = true;
@@ -1336,7 +1371,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         stopBatch();
         if (!reuseYard && !yardLater) {
           const stopYard = editSpan(detail, 'yard');
-          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials: yardMaterials, timing: detail, previous: yardGroup }); next.groups.site.add(yard.group);
+          const yard = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials: yardMaterials, timing: detail, previous: yardGroup, skyCover: next.skyCover }); next.groups.site.add(yard.group);
           stopYard();
           next.yardGroup = yard.group;
         }
@@ -1373,6 +1408,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       stopDispose();
       yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);
+      freezeViewerMatrices(twin, {editor});
+      // A roof edit can reuse the entire yard. Its cover still follows the
+      // accepted building geometry, including furniture and pool features.
+      if (yardGroup) writeWeatherOpen(yardGroup, twin.skyCover);
       // Read-only legacy property access for P0 embeds, never enumerable scene
       // keys and never a resolution when two buildings share the level name.
       view.groups = { ...twin.groups, levels: new Proxy(twin.groups.levels, { get(target, key) {
@@ -1457,7 +1496,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
-      renderer3.setAnimationLoop(null); observer.disconnect(); controls.dispose();
+      renderer3.setAnimationLoop(null); view.looping = false; observer.disconnect(); controls.dispose();
       clearSheet(); sheetSpec = null;
       restoreSelection();
       restoreFloors();
@@ -1481,7 +1520,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       let group;
       try {
         const stop = editSpan(timing?.detail, 'yard');
-        try { ({ group } = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials, timing: timing?.detail, previous })); }
+        try { ({ group } = await buildYard(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan), materials, timing: timing?.detail, previous, skyCover: twin?.skyCover })); }
         finally { stop(); }
         if (disposed || version !== revision) {
           const keep = retained(); group.userData.releasePlants?.(keep); disposeObject(group, { keepMaterials: keep }); return;
@@ -1490,6 +1529,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         const releaseViewing = viewing?.dispose({ deferMaterials: true }); viewing = null;
         group.userData.adoptParts?.();
         twin.groups.site.add(group); twin.yardGroup = group; yardGroup = group;
+        freezeViewerMatrices(twin, {editor});
         if (previous) {
           const keep = retained(); previous.removeFromParent();
           previous.userData.releasePlants?.(keep); disposeObject(previous, { keepMaterials: keep });
@@ -1520,11 +1560,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     model.materials.forEach(m => { if (!keepMaterials.has(m)) m.dispose(); });
   }
   function applyTimeLook(moved = false, forceSky = false, cheap = false) {
-    view.weather=currentWeather();lastWeather=JSON.stringify(view.weather);
+    view.weather=currentWeather();lastWeather=weatherLightingKey(view.weather);
     const seasonNow=clockNow(),seasonSite=resolveSite(site,seasonNow);
     view.season=seasonState(seasonNow,seasonSite.lat,groundWeather,{neutral:editor&&!state.liveWeather,preview:seasonPreview.get()});
     seasons.update(view.season);
-    stageHaze.set({enabled:!state.unlit,fog:weatherHaze(view.weather)});
+    stageHaze.set({enabled:!state.unlit,extinction:weatherExtinction(view.weather)});
     cloudShadow.set({enabled:!state.unlit});
     sky.setEnabled(!state.unlit);
     if (state.unlit) {
@@ -1540,17 +1580,18 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const illumination = moonIllumination(date), overcast = view.weather.clouds.coverage;
     const sunDir = modelDirection(solar.azimuth, solar.altitude, located.front_bearing_deg);
     const moonDir = modelDirection(lunar.azimuth, lunar.altitude, located.front_bearing_deg);
-    const cloudWeather=view.weather.clouds,radianceInput={sunDir,moonDir,moonFraction:illumination.fraction,overcast,fog:view.weather.fog};
+    const cloudWeather=view.weather.clouds,extinction=weatherExtinction(view.weather),fog=weatherHaze(view.weather),radianceInput={sunDir,moonDir,moonFraction:illumination.fraction,overcast,fog};
+    stageHaze.set({fogColour:fogColour(radianceInput)});
     const cloudIrradiance=sampleSkyIrradiance(radianceInput);
     clouds.update(cloudWeather,{sunDir,moonDir,frontBearingDeg:located.front_bearing_deg,
       sunRadiance:transmittance([sunDir[0],Math.max(0,sunDir[1]),sunDir[2]]).map(v=>v*10),
       moonRadiance:transmittance(moonDir).map(v=>v*.02*illumination.fraction),
-      ambientTop:cloudIrradiance.top,ambientBottom:cloudIrradiance.bottom,fog:view.weather.fog,fogColour:fogColour(radianceInput)});
+      ambientTop:cloudIrradiance.top,ambientBottom:cloudIrradiance.bottom,extinction,fogColour:fogColour(radianceInput)});
     cloudShadow.set({sunDir,moonDir});
     cloudShadow.frame(performance.now()/1000);
     const skyChanged = sky.update({sunDir, moonDir, moonPhase:illumination.phase, moonFraction:illumination.fraction,
       moonDistanceKm:lunar.distance, siderealTime:localSiderealTime(date,located.lon),
-      frontBearingDeg:located.front_bearing_deg, overcast, fog:view.weather.fog, latitude:located.lat, force:moved || forceSky});
+      frontBearingDeg:located.front_bearing_deg, overcast, fog, extinction, latitude:located.lat, force:moved || forceSky});
     if (skyChanged) stageHaze.refresh();
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
       { shadows: settings.shadows, overcast, sunTransmittance:cloudShadow.centre(), zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });
@@ -1686,11 +1727,15 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     view.ready = false;
     if (disposed) return view;
     view.materialWatcher = watchMaterialCatalogue(view);
+    // Live pushes draw through this loop instead of rendering a second time.
+    view.looping = true;
     renderer3.setAnimationLoop(() => {
       const now = performance.now(), run = probeRun;
       if(!compiling || now-holdSince>=HOLD_MS) {
         clouds.frame(now/1000);
-        if(sky.frame(now/1000))reflections.request();
+        const skyRefresh=sky.frame(now/1000);
+        if(skyRefresh==='drift')reflections.requestSky();
+        else if(skyRefresh)reflections.request();
       }
       try {
       if (run) {

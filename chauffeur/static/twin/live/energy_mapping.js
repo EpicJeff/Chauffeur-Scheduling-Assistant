@@ -29,46 +29,96 @@ export function carPower(car) {
   const electric = !!(car.battery_level || car.charging || car.charge_power);
   return electric ? car.fuel_level ? 'hybrid' : 'electric' : 'fuel';
 }
+// Only these three attributes affect inference. Reading values, timestamps and
+// unrelated attributes must not repeat regex/stem work on every live push.
+const entityGuesses = new Map();
+const rolePatterns = {
+  solar_power:[/solar|(?:^|[_. ])pv(?:[_. ]|$)/], battery_power:[/battery/],
+  grid_power:[/grid|site/], house_power:[/load/,/home|house/]
+};
+const roleExcludes = {grid_power:/battery|solar|(?:^|[_. ])pv(?:[_. ]|$)/,
+  house_power:/battery|grid|site|solar|(?:^|[_. ])pv(?:[_. ]|$)|charg/};
+let lastGuess = null;
+const sameGuess = (a,b) => Object.is(a,b) || !!(a && b && typeof a==='object' && typeof b==='object' &&
+  Array.isArray(a)===Array.isArray(b) && Object.keys(a).length===Object.keys(b).length &&
+  Object.keys(a).every(k=>Object.hasOwn(b,k) && sameGuess(a[k],b[k])));
+const copyGuess = value => Array.isArray(value) ? value.map(copyGuess)
+  : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k,v])=>[k,copyGuess(v)])) : value;
+function guessEntity(id, row) {
+  const a=row?.attributes, name=a?.friendly_name, device=a?.device_class, unit=a?.unit_of_measurement;
+  let cached=entityGuesses.get(id);
+  if (cached && cached.name===name && cached.device===device && cached.unit===unit) return cached;
+  cached={name,device,unit,row:{attributes:{friendly_name:name,device_class:device,unit_of_measurement:unit}},
+    stem:(id || '').split('.').pop().replace(/_(?:(?:charger|charging|charge)_power|charging_state|battery_level|fuel_level|device_tracker|charging|power|battery|fuel|charge|location|presence|range)$/, '')};
+  const r=cached.row, label=text(id,r), lower=id.toLowerCase();
+  Object.assign(r,{
+    power:power(r), fuel:fuel(id,r), battery:battery(id,r),
+    candidate:power(r) && /^(w|kw|mw)$/i.test(unit || 'W') &&
+      (!/charger|wallbox|tesla|vehicle|car[_. ]/.test(label) || /powerwall/.test(label)),
+    specific:/load|home|house|battery|grid|site|solar|(?:^|[_. ])pv(?:[_. ]|$)|charg/.test(id),
+    roleMatches:Object.fromEntries(Object.entries(rolePatterns).map(([key,patterns])=>[key,patterns.map(pattern=>
+      [lower,label].map(value=>pattern.test(value) && !(roleExcludes[key]?.test(value))))])),
+    batteryHome:battery(id,r) && /powerwall|battery/.test(label) &&
+      (!/tesla|car[_. ]|vehicle/.test(label) || /powerwall/.test(label)),
+    carSeed:(battery(id,r) || fuel(id,r) || /^(device_tracker|person)\./.test(id)) &&
+      /tesla|vehicle|car[_. ]|ev[_. ]|_ev_/.test(label) && !/powerwall/.test(id),
+    powerwall:/powerwall/.test(label), carName:/tesla|vehicle|car[_. ]/.test(label),
+    charger:power(r) && /^(w|kw|mw)$/i.test(unit || 'W') && /wall.?connector|wallbox|charger|evse/.test(label) && !/battery/.test(label),
+    charging:/^binary_sensor\..*charging/.test(id) || /^sensor\..*charging_state/.test(id),
+    location:/^(device_tracker|person)\./.test(id) || device==='presence'
+  });
+  entityGuesses.set(id,cached);return cached;
+}
 export function guessEnergy(states = {}, saved = {}, fleet = [], plan = {}) {
+  const ids=Object.keys(states).sort(), entities=ids.map(id=>guessEntity(id,states[id]));
+  // Retain the current entity set, not every house ever opened. Leave room for
+  // fleet bindings whose entities are unavailable; a large live house never
+  // thrashes a fixed-size LRU on every push.
+  if(entityGuesses.size>ids.length+64){
+    const present=new Set(ids);for(const id of entityGuesses.keys())if(!present.has(id))entityGuesses.delete(id);
+  }
+  const context=[saved,fleet,(plan.buildings || []).map(b=>[b.id,(b.anchors || []).filter(p=>p.kind==='charger' && p.state!=='ghost')])];
+  if(lastGuess && sameGuess(context,lastGuess.context) && ids.length===lastGuess.ids.length &&
+      ids.every((id,i)=>id===lastGuess.ids[i] && entities[i]===lastGuess.entities[i])) return copyGuess(lastGuess.result);
+  const metadata=Object.fromEntries(ids.map((id,i)=>[id,entities[i].row]));
+  const stems=new Map(ids.map((id,i)=>[id,entities[i].stem]));
+  const result=inferEnergy(metadata,saved,fleet,plan,id=>stems.get(id) ?? guessEntity(id,null).stem);
+  lastGuess={context:copyGuess(context),ids,entities,result:copyGuess(result)};
+  return result;
+}
+function inferEnergy(states, saved, fleet, plan, telemetryStem) {
   saved = migrateEnergy(saved);
   const ids = Object.keys(states).sort();
   // Saved choices win, including None, and cannot be borrowed by an automatic role.
   const used = new Set(ROLES.map(key => saved[key]).filter(Boolean));
-  const specific = /load|home|house|battery|grid|site|solar|(?:^|[_. ])pv(?:[_. ]|$)|charg/;
-  const candidates = ids.filter(id => power(states[id]) &&
-    /^(w|kw|mw)$/i.test(states[id].attributes?.unit_of_measurement || 'W') &&
-    (!/charger|wallbox|tesla|vehicle|car[_. ]/.test(text(id, states[id])) || /powerwall/.test(text(id, states[id]))));
-  const pick = (key, patterns, exclude = /$^/) => {
+  const candidates = ids.filter(id => states[id].candidate);
+  const pick = key => {
     if (Object.hasOwn(saved, key)) return saved[key];
     // A specific id describes the reading; a shared device name such as
     // "Home Energy Gateway" must not relabel battery or site power as home.
-    for (const pattern of patterns) for (const byId of [true, false]) {
+    for (let pattern=0;pattern<rolePatterns[key].length;pattern++) for (const byId of [true, false]) {
       const id = candidates.find(id => {
-        if (used.has(id) || !byId && specific.test(id)) return false;
-        const name = byId ? id.toLowerCase() : text(id, states[id]);
-        return pattern.test(name) && !exclude.test(name);
+        if (used.has(id) || !byId && states[id].specific) return false;
+        return states[id].roleMatches[key][pattern][byId ? 0 : 1];
       });
       if (id) {used.add(id); return id;}
     }
     return null;
   };
   const guessed = {
-    solar_power: pick('solar_power', [/solar|(?:^|[_. ])pv(?:[_. ]|$)/]),
-    battery_power: pick('battery_power', [/battery/]),
-    battery_level: ids.find(id => battery(id, states[id]) && /powerwall|battery/.test(text(id, states[id])) &&
-      (!/tesla|car[_. ]|vehicle/.test(text(id, states[id])) || /powerwall/.test(text(id, states[id])))) || null,
-    grid_power: pick('grid_power', [/grid|site/], /battery|solar|(?:^|[_. ])pv(?:[_. ]|$)/),
-    house_power: pick('house_power', [/load/, /home|house/], /battery|grid|site|solar|(?:^|[_. ])pv(?:[_. ]|$)|charg/),
+    solar_power: pick('solar_power'),
+    battery_power: pick('battery_power'),
+    battery_level: ids.find(id => states[id].batteryHome) || null,
+    grid_power: pick('grid_power'),
+    house_power: pick('house_power'),
     // HA Powerwall: positive battery = discharge; positive site = import.
     battery_positive: 'discharge', grid_positive: 'import', home_includes_chargers: true,
     panels: {visible: true, plane: null}, cars: [], chargers: []
   };
   const groups = new Map();
-  const telemetryStem = id => (id || '').split('.').pop().replace(/_(?:(?:charger|charging|charge)_power|charging_state|battery_level|fuel_level|device_tracker|charging|power|battery|fuel|charge|location|presence|range)$/, '');
   for (const c of fleet) groups.set(String(c.id), {...c, charge_power: null});
   // Battery/fuel/tracker stems identify a car before generic charger names do.
-  for (const id of ids) if ((battery(id,states[id]) || fuel(id,states[id]) || /^(device_tracker|person)\./.test(id)) &&
-      /tesla|vehicle|car[_. ]|ev[_. ]|_ev_/.test(text(id,states[id])) && !/powerwall/.test(id)) {
+  for (const id of ids) if (states[id].carSeed) {
     const stem = telemetryStem(id);
     if (![...groups.values()].some(c=>[c.battery_level,c.fuel_level,c.location].some(e=>e && telemetryStem(e)===stem)))
       groups.set(stem,{id:stem,name:stem.replaceAll('_',' ')});
@@ -76,20 +126,20 @@ export function guessEnergy(states = {}, saved = {}, fleet = [], plan = {}) {
   // Match fleet telemetry stems before making inferred cars, so Tesla telemetry
   // and the household's named car are one vehicle.
   for (const id of ids) {
-    const row = states[id], name = text(id, row);
-    if (/powerwall/.test(name)) continue;
+    const row = states[id];
+    if (row.powerwall) continue;
     const stem = telemetryStem(id);
     let car = [...groups.values()].find(c => [c.battery_level, c.fuel_level, c.location].some(e => e && telemetryStem(e)===stem) || c.id===stem);
-    if (!car && power(row) && /^(w|kw|mw)$/i.test(row.attributes?.unit_of_measurement || 'W') && /wall.?connector|wallbox|charger|evse/.test(name) && !/battery/.test(name)) {
+    if (!car && row.charger) {
       guessed.chargers.push({id:'charger-'+stem,name:row.attributes?.friendly_name || stem.replaceAll('_',' '),power:id}); continue;
     }
-    if (!car && !/tesla|vehicle|car[_. ]/.test(name)) continue;
+    if (!car && !row.carName) continue;
     if (!car) { if (!groups.has(stem)) groups.set(stem, {id: stem, name: stem.replaceAll('_', ' ')}); car = groups.get(stem); }
-    if (power(row)) car.charge_power ||= id;
-    if (battery(id, row)) car.battery_level ||= id;
-    if (fuel(id, row)) car.fuel_level ||= id;
-    if (/^binary_sensor\..*charging/.test(id) || /^sensor\..*charging_state/.test(id)) car.charging ||= id;
-    if (/^(device_tracker|person)\./.test(id) || row.attributes?.device_class === 'presence') car.location ||= id;
+    if (row.power) car.charge_power ||= id;
+    if (row.battery) car.battery_level ||= id;
+    if (row.fuel) car.fuel_level ||= id;
+    if (row.charging) car.charging ||= id;
+    if (row.location) car.location ||= id;
   }
   guessed.cars = [...groups.values()].filter(c => c.charge_power || c.battery_level || c.fuel_level || c.location || fleet.some(f => String(f.id) === String(c.id))).slice(0, 12);
   guessed.chargers = guessed.chargers.slice(0,8);

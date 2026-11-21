@@ -58,6 +58,37 @@ function stored(old,storedLayout=layout){
   return new Response('{}',{status:404});
  }};
 }
+await test('opaque_to_opaque_material_pick_keeps_the_atlas_key',async()=>{
+ const old=await scene('opaque'),p=structuredClone(plan),k=kit('opaque');
+ k.manifest['other-opaque']={...k.manifest[id],params:{alpha_mode:'opaque',tint:'#224466'}};
+ p.buildings[0].walls[0].faces={left:{id:'other-opaque'},right:{id:'other-opaque'}};
+ const out=buildTwin(p,k,'low');
+ assert.equal(buildAtlas(out.root,p,layout).key,old.atlas.key,'opaque finish selection is local');
+ disposeObject(old.out.root);disposeObject(out.root);
+});
+await test('one_face_opaque_to_cutout_and_back_changes_geometry_class',async()=>{
+ const k=kit('opaque'),p=structuredClone(plan),before=await scene('opaque');
+ k.manifest['face-cutout']={...k.manifest[id],params:{alpha_mode:'cutout'}};
+ p.buildings[0].walls[0].faces={left:{id:'face-cutout'}};
+ const cut=buildTwin(p,k,'low'),atlas=buildAtlas(cut.root,p,layout);
+ assert.notEqual(atlas.key,before.atlas.key,'one face leaves the opaque set');
+ assert.ok(atlas.room.charts.reduce((n,c)=>n+c.faces.length,0)<before.atlas.room.charts.reduce((n,c)=>n+c.faces.length,0),'that face loses its charts');
+ delete p.buildings[0].walls[0].faces;
+ const restored=buildTwin(p,k,'low'),again=buildAtlas(restored.root,p,layout);
+ assert.notEqual(again.key,atlas.key,'the face returns to the opaque set');
+ assert.equal(again.key,before.atlas.key,'restores the original opaque topology');
+ disposeObject(before.out.root);disposeObject(cut.root);disposeObject(restored.root);
+});
+await test('cutout_material_pick_keeps_the_same_opaque_set_key',async()=>{
+ const p=structuredClone(plan),k=kit('cutout');
+ k.materials.siding={asset:id,color:'#ffffff'};
+ k.manifest['other-cutout']={...k.manifest[id],params:{alpha_mode:'cutout',tint:'#224466'}};
+ const before=buildTwin(p,k,'low'),key=buildAtlas(before.root,p,layout).key;
+ p.buildings[0].materials.siding={id:'other-cutout'};
+ const after=buildTwin(p,k,'low');
+ assert.equal(buildAtlas(after.root,p,layout).key,key,'a different cutout keeps the opaque receiving set');
+ disposeObject(before.root);disposeObject(after.root);
+});
 await test('flipping_alpha_mode_changes_the_atlas_key_and_drops_the_stored_bake',async()=>{
  for(const mode of ['cutout','blend'])for(const reverse of [false,true]){
   const old=await scene(reverse?mode:'opaque'),next=await scene(reverse?'opaque':mode);

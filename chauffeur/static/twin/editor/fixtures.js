@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { keepPlace } from './keep_place.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { aimTool } from './aim_tool.js';
 import { createLineFixtureTool, facingOptions, areaOutline, screenRay, fixtureStroke, FIXTURE_COLOR } from './line_fixture_tool.js';
@@ -354,6 +355,10 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
   }
   el('piece-card').addEventListener('fixturecardrelease', releaseCard, { signal });
   function refreshCard() {
+    // Same card, new data: rebuild in place without losing the scroll offset or focus.
+    return keepPlace(el('piece-card'), refreshCardNow);
+  }
+  function refreshCardNow() {
     if (!cardDevice && !cardEffect) return;
     const host = el('piece-card');
     if (host.dataset.stairDraft || cardKey !== null && !host.dataset.fixtureCard) { releaseCard(); return; }

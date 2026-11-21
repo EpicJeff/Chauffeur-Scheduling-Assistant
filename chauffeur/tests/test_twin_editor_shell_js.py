@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LABELS = dict(zip(
     'select move rotate scale draw-room draw-wall split-room add-door add-window add-anchor add-stair add-solar-zone add-meter add-electric-panel add-charger add-parking roof add-level delete undo redo sheet library add-effect ground'.split(),
     ['Select', 'Move', 'Turn', 'Scale', 'Draw room', 'Draw wall', 'Split room', 'Add door', 'Add window', 'Add anchor', 'Add stair', 'Add solar zone', 'Add meter', 'Add electric panel', 'Add charger', 'Add parking spot', 'Roof', 'Add floor', 'Delete', 'Undo', 'Redo', 'Sheet', 'Library', 'Add effect', 'Ground and yard']))
+LABELS['add-porch'] = 'Add porch'
 
 
 class Page(HTMLParser):
@@ -68,6 +69,11 @@ def test_homes(p):
         assert node['attrs'].get('title') == name, tool
     groups = [n['attrs']['data-toolbar-group'] for n in p.nodes if 'data-toolbar-group' in n['attrs']]
     assert groups == ['menu', 'house', 'save', 'select', 'structure', 'yard', 'fixtures', 'measure', 'delete', 'history', 'sheet', 'floor', 'view'], groups
+    porch = p.by_id('rail-add-porch')
+    parent = p.nodes[porch['parent']]
+    assert parent['attrs'].get('data-toolbar-group') == 'structure'
+    siblings = [n['attrs'].get('id') for n in p.nodes if n['parent'] == porch['parent'] and n['tag'] == 'button']
+    assert siblings.index('rail-add-porch') == siblings.index('rail-draw-room') + 1
     for tool in ['add-meter', 'add-electric-panel', 'add-charger', 'add-parking']:
         assert p.inside(p.by_id('rail-' + tool), 'editor-equipment-menu')
     for id in ['editor-status', 'editor-save-state']:
@@ -287,6 +293,10 @@ await test('House materials keeps dock tabs, tiles, actions and captured row dro
   const row=materials.querySelector('[data-library-slot="Panes"]');assert.ok(row,'dialog contains real domain-owned slot rows');
   await pointerClick(row.querySelector('[data-slot-use]'));assert.equal(ops.length,1);
   assert.deepEqual(ops.at(-1),{op:'set_material',building:'b',target:{building:'b',role:'pane'},material:{id:'live-stone'}});
+  assert.ok(row.querySelectorAll('input').some(input=>input.type==='color'),'live dialog keeps tint available');
+  assert.ok(row.querySelector('[data-slot-u]')&&row.querySelector('[data-slot-v]')&&row.querySelector('[data-slot-rotation]'),'live dialog exposes the shared UV controls');
+  for(const name of ['Paving','Mulch','Patio concrete','Fence','Pool interior','Pool waterline','Pool coping'])
+   assert.ok(materials.querySelector(`[data-library-slot="${name}"]`),'live dialog exposes '+name);
   document.elementFromPoint=()=>row.querySelector('[data-slot-name]');
   const dragged=el('library-entries').querySelector('[data-material="drop-stone"]');
   dragged.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:57,clientX:100,clientY:100,bubbles:true,cancelable:true}));
@@ -330,9 +340,13 @@ await test('real Houses and Your place entry points share the dialog host; setup
  await press(el('editor-houses'));assert.equal(dialogs.current(),'houses-panel');
  assert.match(el('houses-status').textContent,/No saved houses/);
  dialogs.openDialog('house-materials',{title:'House materials'});assert.equal(el('houses-panel').hidden,true);
- const sheets={sources:[],page_roles:[],kinds:[],place:{buildings:[],lot:{}}};let place;
+ const suggestedOutline=[[0,0],[10,0],[10,10],[0,10]];
+ const plan=samplePlan();plan.buildings[0].levels[0].outline=suggestedOutline;
+ const sheets={sources:[],page_roles:[],kinds:[{id:'other',label:'Other'}],place:{buildings:[{id:'b',name:'Our house',kind:'other',shell:{},footprint:suggestedOutline}],lot:{
+  read:{id:'read1',suggestions:[{id:'overlapping',name:'Possible house',state:'open',outline:suggestedOutline}]}
+ }}};let place;
  const steps=createSteps(el('place-steps'),{state:{model:samplePlan(),sheets},tabs:true,onOpen:name=>place.open(name)});
- place=createPlace({dialogs,steps,getSheets:()=>sheets,getPlan:samplePlan,getLink:()=>null,canEdit:()=>true,
+ place=createPlace({dialogs,steps,getSheets:()=>sheets,getPlan:()=>plan,getLink:()=>null,canEdit:()=>true,
   request:async()=>({}),panel:{message(){}},onClose:()=>steps.close()});
  place.sync(sheets,{});place.open('Your files');assert.equal(dialogs.current(),'place-view');
  assert.equal(el('house-materials').hidden,true);assert.equal(el('editor-dialog-title').textContent,'Your place');
@@ -342,9 +356,20 @@ await test('real Houses and Your place entry points share the dialog host; setup
   const tab=el('place-steps').querySelector(`[data-step="${name}"]`);await press(tab);
   assert.equal(tab.getAttribute('aria-selected'),'true');assert.equal(el('place-view').dataset.stepPanel,name);
  }
+ const suggestion=el('place-suggestions').querySelector('[data-place-suggestion="overlapping"]');assert.ok(suggestion,'Your lot keeps overlapping open suggestions');
+ assert.equal(suggestion.querySelector('h3').textContent,'Possible house');
+ assert.equal(suggestion.querySelector('p').textContent,"Your plot drawing shows a building here that isn't in your house yet. Accept adds it as a building footprint (or matches it to one you have); Dismiss hides it.");
+ for(const attr of ['name','kind','match','accept','dismiss'])assert.ok(suggestion.querySelector(`[data-suggestion-${attr}]`),attr);
+ assert.equal(sheets.place.lot.read.suggestions[0].state,'open');
+ const {createLotTools}=await import(file('static/twin/editor/lot_tools.js')),{view,canvas}=dockRig();view.plan=plan;
+ const lot=createLotTools({view,getPlan:()=>plan,getSheets:()=>sheets,getSelection:()=>({}),select(){},canEdit:()=>true,
+  pauses:{lotPlacement:()=>null},signal:abort.signal});
+ assert.deepEqual(lot.lotSuggestions(),[],'the same suggestion listed in Your lot is suppressed in the scene');
+ assert.equal(view.scene.children.flatMap(g=>g.children||[]).filter(o=>o.material?.isLineDashedMaterial).length,0);
+ assert.equal(canvas.parentElement.querySelectorAll('[data-plot-suggestion]').length,0);
  place.sync(sheets,{buildState:{state:'running'}});assert.equal(el('place-steps').querySelector('button').disabled,false);
  const placeNode=el('place-view');el('place-close').click();assert.equal(dialogs.current(),null);assert.equal(el('place-view'),placeNode);
- abort.abort();
+ abort.abort();canvas.remove();
 });
 await test('canvas context menu preserves selection until action; wall split uses hit point; yard object actions reuse transforms',async()=>{
  const {createSceneTools}=await import(file('static/twin/editor/scene_tools.js'));

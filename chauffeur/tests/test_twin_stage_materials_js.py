@@ -31,7 +31,7 @@ const assemble=(material,renderer)=>{
  material.onBeforeCompile(shader,renderer);return shader;
 };
 const verifyHaze=(shader,cube,label)=>{
- assert.equal(shader.uniforms.stageRing?.value?.length,40,label+' carries this sky ring');assert.ok(!('stageSky' in shader.uniforms),label+' no sky sampler');
+ assert.equal(shader.uniforms.stageRing?.value?.length,40*4,label+' carries this sky ring');assert.ok(!('stageSky' in shader.uniforms),label+' no sky sampler');
  const vertex=expand(shader.vertexShader),fragment=expand(shader.fragmentShader);
  assert.ok(!/#include\s+</.test(vertex+fragment),label+' resolves every include');
  assert.equal((vertex.match(/varying vec3 vStageWorld;/g)||[]).length,1,label+' one vertex varying');
@@ -92,7 +92,7 @@ await test('stock, real bake, viewing, grass, water, granite and glass keep patc
  });
  const byName=Object.fromEntries(rows.map(r=>[r.label,r]));
  assert.equal(byName.lightmap.shader.uniforms.lmTints,lm.lmTints);
- assert.equal(byName.lightmap.shader.uniforms.lmBank0.value,page);
+ assert.equal(byName.lightmap.shader.uniforms.lmBanks.value,page);
  assert.ok(byName.lightmap.expanded.fragment.includes('vec3 lmFill = vec3(0.0)')&&byName.lightmap.expanded.vertex.includes('vLmUV = uv3; vLmRoom = lmRoom;'));
  assert.equal(byName.grass.shader.uniforms.grassTime,byName.grass.material.userData.grassUniforms.grassTime);
  assert.ok(byName.grass.expanded.vertex.includes('float grassKeep')&&byName.grass.expanded.fragment.includes('lawnBlade'));
@@ -154,15 +154,38 @@ await test('below-horizon haze samples the background cube view direction on can
    .replace(/stageView \/ max\( stageLength, (\S+) \)/,'stageView.clone().divideScalar(max(stageLength,$1))');
  const ray=new Function('stageView','stageLength','max','vec3',`return ${rayExpr};`);
  assert.equal(chunk.match(/vec3 stageColour = ([^;]+);/)[1],'stageSkyColour( stageRay )');
- // A JS port of the installed stageSkyColour: 8 azimuths x depressions 0, 2, 6, 15, 40 degrees, bilinear.
- const bands=STAGE_RING_DEPRESSIONS;
+ // Execute the installed GLSL, including its branchless band coordinate and
+ // azimuth wrap, rather than a second implementation of those expressions.
+ const pars=THREE.ShaderChunk.fog_pars_fragment;
+ const atBody=pars.match(/vec3 stageRingAt\([^)]*\) \{([^}]+)\}/)[1].replace('stageRing[','ring[').replace('].xyz','].slice(0,3)');
+ const at=new Function('ring','az','el',atBody);
+ const skyBody=pars.match(/vec3 stageSkyColour\([^)]*\) \{([\s\S]*?)\n\}/)[1]
+  .replace('( vec4( depression ) - vec4( 0.0, 2.0, 6.0, 15.0 ) ) / vec4( 2.0, 4.0, 9.0, 25.0 )','[0,2,6,15].map((edge,i)=>(depression-edge)/[2,4,9,25][i])')
+  .replace(/\b(float|int|vec3|vec4) (?=\w+\s*=)/g,'let ');
+ const skyColour=new Function('ray','stageRingAt','atan','degrees','asin','clamp','vec4','dot','int','floor','min','mix',skyBody);
  const ringColour=(ring,r)=>{
-   let az=Math.atan2(r.z,r.x)/(Math.PI*2)*8;if(az<0)az+=8;
-   const dep=Math.asin(Math.max(-1,Math.min(1,-r.y)))*180/Math.PI;
-   let el=4;if(dep<=0)el=0;else for(let i=0;i<4;i++)if(dep<bands[i+1]){el=i+(dep-bands[i])/(bands[i+1]-bands[i]);break;}
-   const a0=Math.floor(az),e0=Math.floor(el),e1=Math.min(e0+1,4),fa=az-a0,fe=el-e0,at=(a,e)=>ring[e*8+(a%8)];
-   const lo=at(a0,e0).clone().lerp(at(a0+1,e0),fa),hi=at(a0,e1).clone().lerp(at(a0+1,e1),fa);return lo.lerp(hi,fe).toArray();
+   const rows=Array.from({length:40},(_,i)=>Array.from(ring.slice(i*4,i*4+4)));
+   const clamp=(v,a,b)=>Array.isArray(v)?v.map(x=>clamp(x,a,b)):Math.max(a,Math.min(b,v));
+   return skyColour(r,(a,e)=>at(rows,a,e),Math.atan2,v=>v*180/Math.PI,Math.asin,clamp,
+    (...v)=>v.length===1?Array(4).fill(v[0]):v,(a,b)=>a.reduce((sum,v,i)=>sum+v*b[i],0),Math.trunc,Math.floor,Math.min,
+    (a,b,t)=>a.map((v,i)=>v*(1-t)+b[i]*t));
  };
+ const referenceColour=(ring,r)=>{
+  let az=Math.atan2(r.z,r.x)/6.28318531*8;az=az<0?az+8:az;
+  const dep=Math.asin(Math.max(-1,Math.min(1,-r.y)))*180/Math.PI;
+  const el=dep<=0?0:dep<2?dep/2:dep<6?1+(dep-2)/4:dep<15?2+(dep-6)/9:dep<40?3+(dep-15)/25:4;
+  const a0=Math.floor(az),e0=Math.floor(el),e1=Math.min(e0+1,4),fa=az-a0,fe=el-e0;
+  const cell=(a,e)=>Array.from(ring.slice((e*8+(a-Math.trunc(a/8)*8))*4,(e*8+(a-Math.trunc(a/8)*8))*4+3));
+  const mix=(a,b,t)=>a.map((v,i)=>v*(1-t)+b[i]*t);
+  return mix(mix(cell(a0,e0),cell(a0+1,e0),fa),mix(cell(a0,e1),cell(a0+1,e1),fa),fe);
+ };
+ const sampleRing=Float32Array.from({length:160},(_,i)=>(i*37%113)/113*4096);
+ for(const dep of [-90,-40,-1,0,1,2-1e-9,2,2+1e-9,6-1e-9,6,6+1e-9,15-1e-9,15,15+1e-9,40-1e-9,40,40+1e-9,70,90])
+ for(let i=-64;i<=64;i++){
+  const az=i*Math.PI/32,down=dep*Math.PI/180,r={x:Math.cos(az)*Math.cos(down),y:-Math.sin(down),z:Math.sin(az)*Math.cos(down)};
+  const expected=referenceColour(sampleRing,r);
+  ringColour(sampleRing,r).forEach((v,k)=>assert.ok(Math.abs(v-expected[k])<1e-10,'original ring interpolation at bands and azimuth seams'));
+ }
  const vec3=(...v)=>new THREE.Vector3(...v),camera=vec3(3,80,20);
  for(const active of [null,target])for(const ortho of [false,true])for(const alt of [-1,-5,-20,-70,-90])for(const sunAlt of [60,4,-20]) {
    const a=alt*Math.PI/180,d=vec3(Math.cos(a)*.6,Math.sin(a),Math.cos(a)*.8);

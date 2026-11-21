@@ -1,4 +1,4 @@
-import { materialName, describeMaterial, readLibraryCatalog } from './material_catalog.js';
+import { materialName, describeMaterial, readLibraryCatalog, surfaceDescription } from './material_catalog.js';
 import { report as reportError } from './api.js';
 import { createSlotRow, idleLibrary } from './slot_row.js';
 
@@ -9,7 +9,7 @@ const loadCatalogue = () => catalogueRead ||= readLibraryCatalog().then(c => c.m
 // The owner still supplies one onChange -> one domain op/history step.
 export function materialSlot({ label, value = null, defaultLabel, defaultColor = '#b8b0a4',
   quickPicks = [], kit = {}, onChange, readOnly = false, report = reportError,
-  library = idleLibrary, ownSlot = () => {}, loadMaterials = loadCatalogue }) {
+  library = idleLibrary, ownSlot = () => {}, loadMaterials = loadCatalogue, resolve = null }) {
   let current = value, entries = [], disposed = false;
   const locked = () => typeof readOnly === 'function' ? readOnly() : readOnly;
   const metadata = ref => entries.find(entry => entry.id === ref?.id);
@@ -17,21 +17,28 @@ export function materialSlot({ label, value = null, defaultLabel, defaultColor =
   const color = ref => ref?.color || metadata(ref)?.color || describeMaterial(ref, kit)?.color || kit.materials?.[ref?.id]?.color
     || Object.values(kit.materials || {}).find(r => r.asset === ref?.id)?.color || '#b8b0a4';
   async function save(next) {
+    if (next && !Object.keys(next).length) next = null;
     if (disposed || locked() || JSON.stringify(current) === JSON.stringify(next)) return;
     try { await onChange(next); if (!disposed) { current = next; row.refresh(); } }
     catch (error) { report(error); }
   }
+  const description = () => resolve ? resolve(current) : current?.id
+    ? { current: { ...describeMaterial(current, kit), name: name(current), color: color(current),
+      thumb: metadata(current)?.thumbnail_url || metadata(current)?.thumb || describeMaterial(current, kit)?.thumb }, text: name(current), inherited: false }
+    : { ...surfaceDescription({}, { ref: current, role: defaultLabel, defaultRef: { id: defaultLabel } }, kit),
+      current: { name: defaultLabel, color: current?.color || defaultColor }, text: `House default: ${defaultLabel}` };
+  const patch = change => { const next = { ...current, ...change }; for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key]; return save(next); };
   const row = createSlotRow({ label, library, readOnly: locked,
     accepts: entry => !locked() && entry.kind === 'material',
-    current: () => current ? { id: current.id, name: name(current), color: color(current),
-      thumb: metadata(current)?.thumbnail_url || metadata(current)?.thumb || describeMaterial(current, kit)?.thumb }
-      : { name: `Default: ${defaultLabel}`, color: defaultColor },
+    current: () => description().current, detail: () => description().text, inherited: () => description().inherited,
     apply: entry => {
       if (!metadata(entry)) entries.push(entry);
       return save({ id: entry.id });
     }, clear: () => save(null),
-    tint: { enabled: () => !!current, hasOverride: () => !!current?.color, value: () => color(current),
-      set: tint => current && save({ id: current.id, color: tint }), clear: () => current && save({ id: current.id }) } });
+    tint: { hasOverride: () => !!current?.color, value: () => current?.color || description().current?.color || defaultColor,
+      set: color => patch({ color }), clear: () => patch({ color: undefined }) },
+    offset: { value: () => current?.uv, effective: () => description().ref?.uv,
+      set: uv => patch({ uv }), clear: () => patch({ uv: undefined }) } });
   row.element.dataset.materialSlot = label;
   const update = event => {
     if (!disposed && event.detail?.materials) { entries = event.detail.materials; row.refresh(); }

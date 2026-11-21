@@ -291,11 +291,12 @@ def test_site_polygon_and_polyline_translation_preserves_free_point():
             assert row['anchors'] == rows(before)[0]['anchors'], kind
 
 
-def test_rendered_roof_sections_follow_building_and_detach_on_reshape():
+def test_rendered_roof_sections_follow_building_and_project_on_reshape():
     before = model_with_anchors({'kind': 'roof', 'hid': 'roof', 'building': 'B1'},
                                [[12, 22, 11], [16, 22, 11]])
     building = before['buildings'][0]
-    building['roof'] = {'sections': [{'id': 'roof', 'kind': 'shed', 'rect': [0, 0, 10, 10], 'plate': 9, 'pitch': 2}]}
+    building['roof'] = {'sections': [{'id': 'roof', 'kind': 'shed', 'low_side': 'y0',
+                                    'rect': [0, 0, 10, 10], 'plate': 9, 'pitch': 2}]}
     set_anchor_locals(before)
     after = copy.deepcopy(before)
     after['buildings'][0]['position'] = [15, 17]
@@ -307,8 +308,8 @@ def test_rendered_roof_sections_follow_building_and_detach_on_reshape():
     after['buildings'][0]['roof']['sections'][0]['pitch'] = 4
     lights.follow_host_moves(before, after)
     for row in rows(after):
-        assert row['path'] == rows(before)[0]['path']
-        assert row['anchors'] == [None, None]
+        assert_path(row['path'], [[12, 22, 11+1/3], [16, 22, 11+1/3]])
+        assert all(row['anchors'])
 
 
 def test_deleted_and_reshaped_hosts_freeze_and_clear_both_kinds():

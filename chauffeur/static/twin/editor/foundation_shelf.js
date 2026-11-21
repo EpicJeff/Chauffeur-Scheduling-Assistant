@@ -1,4 +1,5 @@
 import { materialSlot } from './material_slot.js';
+import { surfaceDescription } from './material_catalog.js';
 
 // Same labels/fields and card queue as the equipment property shelf.
 export function foundationShelf(host, building, { getPlan, getKit = () => ({}), library, ownSlot, canEdit, queue, op, report, preview }) {
@@ -38,6 +39,7 @@ export function foundationShelf(host, building, { getPlan, getKit = () => ({}), 
   }
   section.append(materialSlot({ library, ownSlot, label: 'Slab', value: value.materials?.slab, defaultLabel: 'Concrete',
     defaultColor: getKit().materials?.patio_concrete?.color, kit: getKit(), readOnly: () => !canEdit(), report,
+    resolve: ref => surfaceDescription(getPlan(), {role:'patio_concrete', building, ref}, getKit()),
     onChange: changed => queue(async () => {
       if (!canEdit()) return;
       const foundation = current();

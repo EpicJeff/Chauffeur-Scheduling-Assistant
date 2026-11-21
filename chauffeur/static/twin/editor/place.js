@@ -27,7 +27,9 @@ const cleanRow = row => Object.fromEntries(['source', 'page', 'role', 'level', '
 // Both the scene and Your place use the same suggestion controls and payload.
 export function plotSuggestionCard({ read, suggestion, buildings, kinds, draft, answer }) {
   const card = node('section', undefined, { class: 'editor-page', 'data-place-suggestion': suggestion.id });
-  card.append(node('h3', suggestion.name || 'Building footprint'), node('p', `${(suggestion.size_ft || []).map(n => Number(n).toFixed(1)).join(' by ')} feet · ${suggestion.where || ''}`));
+  card.append(node('h3', suggestion.name || 'Building footprint'),
+    node('p', "Your plot drawing shows a building here that isn't in your house yet. Accept adds it as a building footprint (or matches it to one you have); Dismiss hides it."),
+    node('p', `${(suggestion.size_ft || []).map(n => Number(n).toFixed(1)).join(' by ')} feet · ${suggestion.where || ''}`));
   const name = node('input', undefined, { type: 'text', maxlength: '100', 'data-suggestion-name': '' }); name.value = draft.name;
   name.addEventListener('input', () => { draft.name = name.value; });
   const kind = select(kinds, draft.kind, { 'data-suggestion-kind': '' }); kind.addEventListener('change', () => { draft.kind = kind.value; });

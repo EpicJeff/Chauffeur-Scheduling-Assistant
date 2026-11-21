@@ -60,6 +60,9 @@ void main() {
     // gain of 3 left it a faint smudge on the panel (Claude, Chromium check).
     // 48 reads as a bright, still-textured disc at the night exposure.
     result=albedo*48.0*(0.025+0.975*lit);
+    // Soft peak near 6: still white after tone mapping, but an antialiased leaf edge or bloom in
+    // front of the disc no longer averages in a 48x value and glows (owner report 2026-11-19).
+    result=6.0*result/(vec3(6.0)+result);
   }
   if(edge<=0.0 || altitude<0.0) discard;
   result*=extinction*strength;
@@ -102,7 +105,10 @@ export function createBodies({moonMap,cloudUniforms=createCloudUniforms(),cloudA
       // An enlarged disc can still have its upper rim above the horizon after
       // its centre sets. Its visible rim keeps the grazing-path extinction.
       u.extinction.value.fromArray(transmittance([d.x,Math.max(0,d.y),d.z]));
-      u.strength.value=clamp(cloudTransmittance(d.toArray()));
+      // By day the moon is a pale disc: fade it as the sun rises (sun altitude -6 to +10 degrees).
+      const sunAlt = sunAltDeg ?? Math.asin(Math.max(-1, Math.min(1, sun.y))) / RAD;
+      const day = i ? 1 - .85 * smooth((sunAlt + 6) / 16) : 1;
+      u.strength.value=clamp(cloudTransmittance(d.toArray())) * day;
       const light=sun.clone().addScaledVector(d,-moonDistanceKm/149598000).normalize();
       u.lightDirection.value.set(light.dot(u.right.value),light.dot(u.up.value),light.dot(normal));
     }

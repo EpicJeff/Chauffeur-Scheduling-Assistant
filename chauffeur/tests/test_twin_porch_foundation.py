@@ -89,8 +89,10 @@ def run():
     for ref in ({'id': 'trim'}, {'id': 'painted_trim'}, {'id': 'wood_planks', 'color': '#123abc'}, {'id': 'trim', 'color': 'white'}, {'id': 'trim', 'color': '#abc'}):
         assert twin_library.material_slot_error(ref) is None
         assert twin_library.normalize_material_slot(ref) == ref
-    for ref in ({'id': 'not-a-material'}, {'id': 'modern_farmhouse'}, {'id': 'trim', 'color': ''}, {'id': 'trim', 'color': None}, {}, [], 'trim'):
+    for ref in ({'id': 'not-a-material'}, {'id': 'modern_farmhouse'}, {'id': 'trim', 'color': ''}, {'id': 'trim', 'color': None}, [], 'trim'):
         assert twin_library.material_slot_error(ref), ref
+    # Slice 7 slot contract: an empty ref means no override (clear), not an error.
+    assert twin_library.material_slot_error({}) is None and twin_library.normalize_material_slot({}) is None
     for entry in twin_library.material_choices():
         assert twin_library.material_slot_error({'id': entry['id'], 'color': entry['color']}) is None
     assert 'Unknown material id' in twin_library.material_slot_error({'id': 'not-a-material'})

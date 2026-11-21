@@ -18,6 +18,7 @@ export function builtinMaterial(id, name = id) {
     name, roughness: 0.8, ...params, side: doubleSide ? THREE.DoubleSide : THREE.FrontSide,
   });
   material.userData.alphaMode = builtinAlphaMode(id);
+  material.userData.bakeMaterialId = id;
   if (id === 'chain_link') {
     const size = 128, pixels = new Uint8Array(size * size * 4);
     for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {

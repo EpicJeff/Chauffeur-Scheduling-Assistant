@@ -28,6 +28,14 @@ const M = await import(file('static/twin/bake/lightmap_material.js'));
 const RT = await import(file('static/twin/bake/runtime.js'));
 let F; try { F = await import(file('static/twin/bake/fixture_terms.js')); } catch {}
 const needFixtures = () => assert.ok(F,'fixture bake transport module loads');
+// Ignore only the intentional sampler consolidation when comparing the legacy
+// shader with the historical implementation. All shading tokens still match.
+function legacySamplerNames(source, banks=1) {
+  return source.replace('uniform highp sampler2DArray lmBanks;',
+      Array.from({length:banks},(_,b)=>`uniform highp sampler2DArray lmBank${b};`).join('\n'))
+    .replace(/float lmSpan(\d+)([^;]*?)textureSize\(lmBanks/g,(_,b,body)=>`float lmSpan${b}${body}textureSize(lmBank${b}`)
+    .replace(/vec4 bank(\d+) = textureGrad\(lmBanks/g,(_,b)=>`vec4 bank${b} = textureGrad(lmBank${b}`);
+}
 const plan={buildings:[],site:{}};
 const fixture=(id,shape,extra={})=>({id:'fixture:'+id,shape,ref:'absolute',at:[0,0,4],...extra});
 const fixtureLayout=rows=>({markers:[],light_fixtures:{'light.test':rows}});
@@ -163,7 +171,7 @@ check('legacy_key_pages_and_shader_equal_main',async()=>{
     const u=module.lightmapUniforms(1,1);module.setLightSource(u,0,0,V(0,1,0),6);
     const m=new THREE.MeshStandardMaterial();module.patchLightmaps([m],{banks:[new THREE.DataArrayTexture()]},u);
     const s={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};m.onBeforeCompile(s,{});
-    return {data:u.lmTints.value.image.data,glsl:(s.vertexShader+s.fragmentShader).replace(/\s/g,'')};
+    return {data:u.lmTints.value.image.data,glsl:(s.vertexShader+legacySamplerNames(s.fragmentShader)).replace(/\s/g,'')};
   };
   assert.deepEqual(compile(M),compile(mainM),'legacy shader reads the same bytes as main');
 });
@@ -456,14 +464,14 @@ check('fixture_material_initialises_ltc_once_without_house_view',async()=>{
 });
 check('worst_case_sampler_count_and_legacy_shader_work',()=>{
   needFixtures();const u=M.lightmapUniforms(1,1,{fixtures:true});M.setLightSource(u,0,0,V(0,1,0),6,2,group([panel()]),true);
-  const m=new THREE.MeshStandardMaterial(),pages={banks:Array.from({length:3},()=>new THREE.DataArrayTexture())};
+  const m=new THREE.MeshStandardMaterial(),pages={banks:[new THREE.DataArrayTexture()],bankBase:[0,1,2],bankLayers:[1,1,1]};
   M.patchLightmaps([m],pages,u);const shader={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};
   m.onBeforeCompile(shader,{extensions:{has:()=>true}});
   assert.equal(shader.uniforms.lmLtc1.value,THREE.UniformsLib.LTC_FLOAT_1);
   assert.equal(shader.uniforms.lmLtc2.value,THREE.UniformsLib.LTC_FLOAT_2);
-  const textures=new Set(Object.values(shader.uniforms).map(v=>v.value).filter(v=>v?.isTexture));assert.equal(textures.size,7);
+  const textures=new Set(Object.values(shader.uniforms).map(v=>v.value).filter(v=>v?.isTexture));assert.equal(textures.size,5);
   const maps=5,environment=1,dfg=1,sun=1,lamp=1;
-  assert.equal(textures.size+maps+environment+dfg+sun+lamp,16);
+  assert.equal(textures.size+maps+environment+dfg+sun+lamp,14);
   for(const areas of [0,8])for(const clearcoat of [false,true]) {
     const budget=samplerBudget(shader.fragmentShader,areas,clearcoat);
     assert.ok(budget.count<=16,JSON.stringify(budget));
@@ -477,7 +485,7 @@ check('worst_case_sampler_count_and_legacy_shader_work',()=>{
   assert.equal(s.uniforms.lmLtc1,undefined);assert.notEqual(old.customProgramCacheKey(),m.customProgramCacheKey());
   // Captured by executing the v2.499.871 material: identical GLSL tokens prove
   // legacy-only Low does not acquire a branch, fetch or rectangle operation.
-  assert.equal(createHash('sha256').update((s.vertexShader+s.fragmentShader).replace(/\s/g,'')).digest('hex'),
+  assert.equal(createHash('sha256').update((s.vertexShader+legacySamplerNames(s.fragmentShader,3)).replace(/\s/g,'')).digest('hex'),
     '462fecdf60ddd67aa7874af6ddce6ff6ed863638effb2fe9d1e3182ccbc55bf7');
   const half={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};
   m.onBeforeCompile(half,{extensions:{has:()=>false}});assert.equal(half.uniforms.lmLtc1.value,THREE.UniformsLib.LTC_HALF_1);

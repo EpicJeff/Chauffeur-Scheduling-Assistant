@@ -100,7 +100,9 @@ let prior=await buildYard(yardPlan,input.kit,'low');
 let key=atlasJob(prior.group,yardPlan,options).cacheKey;assert.notEqual(key,emptyKey);
 for(const [property,value] of [['thickness_in',12],['above_in',6],['material','brick']]){
  wp.edges[0].wall[property]=value;const next=await buildYard(yardPlan,input.kit,'low',{materials:prior.group.userData.materials});
- const nextKey=atlasJob(next.group,yardPlan,options).cacheKey;assert.notEqual(key,nextKey);key=nextKey;prior=next;
+ const nextKey=atlasJob(next.group,yardPlan,options).cacheKey;
+ if(property==='material')assert.equal(key,nextKey,'an opaque wall finish retains its atlas');else assert.notEqual(key,nextKey);
+ key=nextKey;prior=next;
 }
 for(const material of ['stone','block','concrete','brick','timber','stone']){
  wp.edges[0].wall.material=material;

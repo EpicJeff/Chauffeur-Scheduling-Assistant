@@ -35,7 +35,7 @@ await test('lines_per_item_type',async()=>{
 await test('inherited_label_names_the_source',async()=>{
  const {readMaterialNames}=await import(file('static/twin/editor/material_catalog.js'));await readMaterialNames();
  b.materials.pane={id:'choice'};assert.match(lines('opening',b.openings[0]).find(l=>l.label==='Pane').text,/Family finish/);
- delete b.materials.pane;assert.match(lines('opening',b.openings[0]).find(l=>l.label==='Pane').text,/Built-in glass/);
+ delete b.materials.pane;assert.equal(lines('opening',b.openings[0]).find(l=>l.label==='Pane').text,'House default: Glass');
 });
 const host=document.createElement('div');document.body.append(host);const canvas=document.createElement('canvas');host.append(canvas);
 const view={scene:new THREE.Scene(),camera:new THREE.PerspectiveCamera(),renderer3:{domElement:canvas},controls:new THREE.EventDispatcher(),pick:()=>null};
@@ -70,7 +70,7 @@ await test('card_rows_render_each_material_lines_provenance_including_house_look
   }
   cards.draw({pieceId:room.id,buildingId:b.id});await wait();
   assert.match(card.querySelector('[data-library-slot="Floor"] [data-slot-name]').textContent,/Family finish, set here/);
-  assert.equal(card.querySelector('[data-library-slot="Ceiling"] [data-slot-name]').textContent,'House look');
+  assert.equal(card.querySelector('[data-library-slot="Ceiling"] [data-slot-name]').textContent,'House default: Ceiling');
  } finally {room.floor_material=saved.floor;room.ceiling_material=saved.ceiling;roof.material=saved.material;}
 });
 await test('pool_and_spa_cards_list_water',async()=>{
@@ -109,7 +109,10 @@ await test('every_card_slot_preserves_the_old_assignment_clear_and_reset_operati
    const before=operations.length;click(row.querySelector('[data-slot-use]'));await wait();
    assert.equal(operations.length,before+1,covered.at(-1)+' applies once');
    assert.deepEqual(operations.at(-1),L.surfaceOperation(line.surface,'face',material),covered.at(-1)+' old choose payload');
-   click(row.querySelector('[data-slot-clear]'));await wait();
+   // Clear appears exactly where this row is set (roof slope rows inherit the roof's choice).
+   const clearHere=row.querySelector('[data-slot-clear]');assert.equal(!!clearHere,!!line.clear,covered.at(-1)+' Clear only where set');
+   if(!clearHere)continue;
+   click(clearHere);await wait();
    assert.deepEqual(operations.at(-1),{op:'set_material',building:b.id,target:line.target,material:null},covered.at(-1)+' old Clear payload');
   }
  }
@@ -158,6 +161,27 @@ await test('model_rows_accept_only_the_matching_import_or_manifest_kind_and_clea
   slots.forEach(slot=>slot.dispose());parent.remove();
  }
 });
+await test('every_card_material_target_supports_inherited_tint_offset_and_independent_resets',async()=>{
+ const cases=[['wall',b.walls[0]],['room',b.rooms[0]],['roof',b.roof.sections[0]],['dormer',b.dormers.at(-1)],
+  ...b.openings.map(p=>['opening',p]),['stair',b.stairs[0]],['porch',b.porches[0]],...b.fixtures.map(p=>['fixture',p])];
+ for(const [kind,piece] of cases){
+  cards.draw({pieceId:piece.id,buildingId:b.id});await wait();
+  for(const line of lines(kind,piece)){
+   const row=card.querySelector(`[data-library-slot="${line.label}"]`),expected=material=>({op:'set_material',building:b.id,target:line.target,material});
+   // Start from the inherited state; an inherited row has no Clear (nothing is set there).
+   const clearHere=row.querySelector('[data-slot-clear]');assert.equal(!!clearHere,!!line.clear,kind+' '+line.label+' Clear only where set');
+   if(clearHere){click(clearHere);await wait();}
+   const tint=row.querySelector('input[type="color"]'),u=row.querySelector('[data-slot-u]'),rot=row.querySelector('[data-slot-rotation]');
+   assert.ok(tint&&u&&rot,kind+' '+line.label+' complete controls');
+   tint.value='#123456';tint.dispatchEvent(new Event('change'));await wait();assert.deepEqual(operations.at(-1),expected({color:'#123456'}));
+   u.value='-.05';u.dispatchEvent(new Event('change'));await wait();
+   rot.value='90';rot.dispatchEvent(new Event('change'));await wait();
+   const uv={u:.95,v:0,rot:90};assert.deepEqual(operations.at(-1),expected({color:'#123456',uv}));
+   click(row.querySelectorAll('button').find(n=>n.textContent==='Clear override'));await wait();assert.deepEqual(operations.at(-1),expected({uv}));
+   click(row.querySelector('[data-slot-offset-reset]'));await wait();assert.deepEqual(operations.at(-1),expected(null));
+  }
+ }
+});
 await test('read_only_card_has_no_buttons',async()=>{
  writable=false;cards.draw({pieceId:'window',buildingId:'a'});
  assert.equal(card.querySelectorAll('.editor-material-actions button').length,0);
@@ -184,7 +208,12 @@ await test('every_real_household_property_card_renders_its_material_rows',async(
    ['fixture',building.fixtures],['porch',building.porches]])for(const piece of pieces||[]){
     cards.draw({pieceId:piece.id,buildingId:building.id});
     const expected=materialLines({kind,piece,building},input.household,input.houseKit);
-    for(const line of expected)assert.ok(card.querySelector(`[data-library-slot="${line.label}"]`),kind+' '+piece.id+' '+line.label);
+    for(const line of expected){
+     const row=card.querySelector(`[data-library-slot="${line.label}"]`);assert.ok(row,kind+' '+piece.id+' '+line.label);
+     assert.equal(row.querySelector('[data-slot-name]').textContent,line.text);
+     assert.equal(row.querySelector('[data-slot-name]').getAttribute('aria-disabled'),String(line.inherited));
+     assert.ok(row.querySelector('input[type="color"]')&&row.querySelector('[data-slot-u]')&&row.querySelector('[data-slot-v]')&&row.querySelector('[data-slot-rotation]'));
+    }
     rows+=expected.length;if(kind in census)census[kind]++;
    }
  }

@@ -733,7 +733,7 @@ def update_current(mutator, kind, note='', step=None, cost=None, generation=None
 
 
 def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, state_mutator=None,
-                 return_model=False) -> int | tuple[int, dict]:
+                 return_model=False, preserve_room_polygons=False) -> int | tuple[int, dict]:
     """Publish an edit; optionally return its exact serialized model with the id."""
     with LIFECYCLE, _LOCK:
         row = _state()
@@ -745,7 +745,7 @@ def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, 
             raise ValueError('There is no house yet.')
         before = (deepcopy(_READ_MODEL) if _READ_MODEL is not None and _READ_KEY == _read_key(row)
                   else _read_round(row, row['current']))
-        model, _ = twin_model.normalize(mutator(before))
+        model, _ = twin_model.normalize(mutator(before), preserve_room_polygons=preserve_room_polygons)
         if state_mutator is not None:
             state_mutator(row)
         _follow_place(row, model)

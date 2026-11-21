@@ -35,7 +35,7 @@ def test_mirror_share_uses_the_tuned_power():
     water = WATER.read_text(encoding='utf-8')
     power = float(re.search(r'export const WATER_MIRROR_POWER = ([\d.]+);', water).group(1))
     assert 2 <= power < 5, power
-    assert 'pow(1.0 - abs(dot(waterSteady, waterView)), ${WATER_MIRROR_POWER.toFixed(1)})' in water
+    assert 'pow(max(0.0, 1.0 - abs(dot(waterSteady, waterView))), ${WATER_MIRROR_POWER.toFixed(1)})' in water
     # Head-on the water still mirrors only two percent; at a standing eye
     # height over a pool (about 60 degrees off the normal) it mirrors much more
     # than Schlick's five gives.

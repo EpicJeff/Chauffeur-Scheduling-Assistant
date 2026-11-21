@@ -135,19 +135,19 @@ await test('roof_and_dormer_material_revision_changes_only_its_building_key',asy
   assert.notEqual(after[0],before[0]);assert.equal(after[1],before[1]);
  }
 });
-await test('roof_material_changes_the_atlas_key',async()=>{
+await test('roof_material_keeps_the_atlas_key',async()=>{
  const p=fixture(),k=kit(),layout={room:{density:1,page:256,gutter:2}};
  const plain=await build(p,k),oldKey=buildAtlas(plain.root,p,layout).key;
- setBoth(p);const out=await build(p,k),key=buildAtlas(out.root,p,layout).key;assert.notEqual(key,oldKey);
+ setBoth(p);const out=await build(p,k),key=buildAtlas(out.root,p,layout).key;assert.equal(key,oldKey);
  const covering=roofMeshes(out).filter(o=>o.material.userData.materialId);assert.equal(covering.length,2);assert.ok(covering.every(atlasMesh),'opaque overrides receive the ordinary roof bake');
- p.buildings[0].roof.sections[1].material={id:'shingles'};const changed=await build(p,k);assert.notEqual(buildAtlas(changed.root,p,layout).key,key);
+ p.buildings[0].roof.sections[1].material={id:'shingles'};const changed=await build(p,k);assert.equal(buildAtlas(changed.root,p,layout).key,key);
 });
-await test('dormer_material_changes_the_atlas_key',async()=>{
+await test('dormer_material_keeps_the_atlas_key',async()=>{
  const p=fixture(),b=p.buildings[0],k=kit(),layout={room:{density:1,page:256,gutter:2}};
  b.dormers=[{id:'d1',roof:'main'}];b.roof.sections.push({...section('d1',[6,-1,10,7]),roof:'main',dormer_of:[0,0,20,20]});
  const first=await build(p,k),before=buildAtlas(first.root,p,layout).key;
  b.dormers[0].material={id:'metal'};b.roof.sections.at(-1).material={id:'metal'};
- const next=await build(p,k);assert.notEqual(buildAtlas(next.root,p,layout).key,before);
+ const next=await build(p,k);assert.equal(buildAtlas(next.root,p,layout).key,before);
  assert.ok(next.pieces.get('a:d1').some(o=>o.material?.userData.materialId==='metal'&&atlasMesh(o)));
 });
 await test('dormer_takes_its_own_material',async()=>{
@@ -163,7 +163,7 @@ await test('roof_and_dormer_lines_inherit_the_building_roof',async()=>{
  b.roof.sections.push({...section('d1',[6,-1,10,7]),roof:'main',dormer_of:[0,0,20,20]});
  for(const id of ['main','d1']){
   const line=materialLines(findPiece(p,id,'a'),p,kit())[0];
-  assert.equal(line.label,'Roof');assert.equal(line.text,'House roof, from the building');assert.equal(line.clear,false);
+  assert.equal(line.label,'Roof');assert.equal(line.text,'From the building: House roof');assert.equal(line.clear,false);
  }
 });
 // Actual selection card and Library events, with only camera/pick and HTTP doubled.
