@@ -3,6 +3,7 @@
 // those triangles against the neutral triangles, interpolating only attributes.
 // Thus chart IDs/ownership and the geometry used by the baker never move.
 import * as THREE from '../../vendor/three-r187/three.module.js';
+import { isBakeRoot } from './source.js';
 
 const pointKey = p => p.toArray().map(x => Math.round(x * 1e5)).join(',');
 const faceKey = (role, p) => role + ':' + p.map(pointKey).sort().join('|');
@@ -11,7 +12,9 @@ const bindings = new WeakMap();
 const compound = new WeakSet();
 function domain(mesh, role=true) {
   const names=[];
-  for(let p=mesh;p;p=p.parent)if(p.name && !p.isScene)names.push(p.name);
+  // Names up to (not including) the bake root: the drawn yard sits under the twin's
+  // 'site' group and its neutral copy does not (v2.499.948-.962 lost every yard bake).
+  for(let p=mesh;p && !p.isScene && !isBakeRoot(p);p=p.parent)if(p.name)names.push(p.name);
   return JSON.stringify([role?mesh.material.name:'@yard',mesh.userData.yardPart||null,names]);
 }
 function cells(points) {
@@ -49,12 +52,15 @@ export function bindReceivers(atlas, meshes) {
       sameArray(m.matrixWorld.elements,source.matrixWorld.elements) &&
       sameArray(m.geometry.attributes.position.array,source.geometry.attributes.position.array) &&
       sameArray(m.geometry.attributes.normal?.array,source.geometry.attributes.normal?.array));
-    if(!match)break;matched.set(source,match);unused.delete(match);
+    if(match){matched.set(source,match);unused.delete(match);}
+  }
+  // A drawn mesh identical to its source takes the source's attributes as they are,
+  // even when others differ (a finished wall, or the yard beside a default house);
+  // only the differing meshes are projected below.
+  for(const [source,mesh] of matched)for(const name of ['uv3','lmRoom','lmLightPage']) {
+    const attr=source.geometry.attributes[name];if(attr)mesh.geometry.setAttribute(name,attr.clone());
   }
   if(matched.size===sourceMeshes.length && !unused.size) {
-    for(const [source,mesh] of matched)for(const name of ['uv3','lmRoom','lmLightPage']) {
-      const attr=source.geometry.attributes[name];if(attr)mesh.geometry.setAttribute(name,attr.clone());
-    }
     for(const chart of atlas.room.charts){chart.mesh=matched.get(chart.mesh);
       if(chart.proxies)chart.proxies=chart.proxies.map(p=>({...p,mesh:matched.get(p.mesh)}));
       bindings.set(chart.faces,[{mesh:chart.mesh,faces:chart.faces},...(chart.proxies||[]).map(p=>({...p,proxy:true}))]);}
@@ -67,11 +73,13 @@ export function bindReceivers(atlas, meshes) {
     bindings.set(chart.faces,chart.receivers);
     compound.add(chart.faces);
     for(const part of [{mesh:chart.mesh,faces:chart.faces},...(chart.proxies||[])]) {
+      const proxy=part.mesh!==chart.mesh || part.faces!==chart.faces, drawn=matched.get(part.mesh);
+      if(drawn){chart.receivers.push({mesh:drawn,faces:part.faces,proxy});continue;}
       const g=part.mesh.geometry,role=domain(part.mesh);
       for(const f of part.faces) {
         const points=[0,1,2].map(k=>new THREE.Vector3().fromBufferAttribute(g.attributes.position,f*3+k).applyMatrix4(part.mesh.matrixWorld));
         const uv=[0,1,2].map(k=>new THREE.Vector2().fromBufferAttribute(g.attributes.uv3,f*3+k));
-        const record={chart,points,uv,proxy:part.mesh!==chart.mesh || part.faces!==chart.faces,
+        const record={chart,points,uv,proxy,
           normal:new THREE.Triangle(...points).getNormal(new THREE.Vector3())};
         records.push(record);
         const key=faceKey(role,points);
@@ -82,7 +90,7 @@ export function bindReceivers(atlas, meshes) {
       }
     }
   }
-  for(const mesh of meshes) {
+  for(const mesh of unused) {
     const old=mesh.geometry,attrs=Object.entries(old.attributes).filter(([k])=>!['uv3','lmRoom','lmLightPage','uv2','lmSkyPage'].includes(k));
     const output=attrs.map(()=>[]),uv=[],rooms=[],pages=[],byChart=new Map(),inverse=mesh.matrixWorld.clone().invert();
     const bary=new THREE.Vector3(),world=new THREE.Vector3();let written=0;
