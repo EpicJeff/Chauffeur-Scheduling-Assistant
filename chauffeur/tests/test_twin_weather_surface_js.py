@@ -14,7 +14,7 @@ DRIVER = PREFIX + r"""
 const {existsSync}=await import('node:fs');
 const path=file('static/twin/sky/weather_surface.js');
 assert.ok(existsSync(new URL(path)), 'Task 3 weather surface module exists');
-const {installWeatherSurface,WEATHER_GLSL}=await import(path);
+const {installWeatherSurface,WEATHER_GLSL,standingWaterAt}=await import(path);
 const {kitMaterial}=await import(file('static/twin/twin_library.js'));
 globalThis.__THREE_MESH=THREE.Mesh;globalThis.__THREE_BOX=THREE.BoxGeometry;globalThis.__THREE_STD=THREE.MeshStandardMaterial;
 const dummyShadow=installCloudShadow(new THREE.Scene(),{uniforms:createCloudUniforms()});
@@ -26,8 +26,136 @@ const smoothstep=(a,b,v)=>{const t=clamp((v-a)/(b-a),0,1);return t*t*(3-2*t);};
 const scalar=name=>{
  const m=WEATHER_GLSL.match(new RegExp('float '+name+'\\(([^)]*)\\) \\{([\\s\\S]*?)\\n\\}'));
  assert.ok(m,name+' GLSL function');
- return new Function('mix','clamp','smoothstep','max','exp','abs','sin',`return (${m[1].replace(/float /g,'')})=>{${m[2].replace(/\bfloat\b/g,'let')}}`)(mix,clamp,smoothstep,Math.max,Math.exp,Math.abs,Math.sin);
+ return new Function('mix','clamp','smoothstep','max','exp','abs','sin','step',`return (${m[1].replace(/float /g,'')})=>{${m[2].replace(/\bfloat\b/g,'let')}}`)(mix,clamp,smoothstep,Math.max,Math.exp,Math.abs,Math.sin,(a,v)=>v<a?0:1);
 };
+{
+// Execute the installed vector functions with only GLSL's vector arithmetic
+// translated. All constants, gates, radii, waves and AA come from production.
+const v2=(x,y=x)=>({x,y}),fract=x=>x-Math.floor(x),dot=(a,b)=>a.x*b.x+a.y*b.y;
+const sub=(a,b)=>v2(a.x-b.x,a.y-b.y),div=(a,b)=>v2(a.x/b,a.y/b);
+const vecBody=(name,type='vec2')=>{
+ const m=WEATHER_GLSL.match(new RegExp(type+' '+name+'\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}'));
+ assert.ok(m,name);return m[1];
+};
+const ringHash=new Function('p','fract',vecBody('weatherRingHash','vec3')
+ .replace('vec3 q=fract(vec3(p.x,p.y,p.x)*vec3(.1031,.1030,.0973));','let q={x:fract(p.x*.1031),y:fract(p.y*.1030),z:fract(p.x*.0973)};')
+ .replace('q+=dot(q,q.yxz+33.33);','const d=q.x*(q.y+33.33)+q.y*(q.x+33.33)+q.z*(q.z+33.33);q={x:q.x+d,y:q.y+d,z:q.z+d};')
+ .replace('return fract((q.xxy+q.yzz)*q.zyx);','return {x:fract((q.x+q.y)*q.z),y:fract((q.x+q.z)*q.y),z:fract((q.y+q.z)*q.x)};'));
+const hash=p=>ringHash(p,fract);
+const radius=scalar('weatherDropRadius');
+const dropCell=new Function('id','cellSize','up','weatherRingHash','weatherDropRadius','weatherDropDensity','fract',vecBody('weatherDropCell','vec4')
+ .replace('vec3 random=','let random=').replace('float radius=','let radius=')
+ .replace('vec2 centre=vec2(radius)+random.xy*(1.0-2.0*radius);','let centre={x:radius+random.x*(1-2*radius),y:radius+random.y*(1-2*radius)};')
+ .replace('float arrival=','let arrival=')
+ .replace('vec4(centre,radius,fract(random.y*19.19)>weatherDropDensity(up)?2.0:arrival)','({x:centre.x,y:centre.y,z:radius,w:fract(random.y*19.19)>weatherDropDensity(up)?2.0:arrival})'));
+const cell=(id,size=.047,up=1)=>dropCell(id,size,up,hash,radius,scalar('weatherDropDensity'),fract);
+const layerBody=vecBody('weatherDropLayer','float')
+ .replace('vec2 p=world/cellSize,id=floor(p);','let p=div(world,cellSize),id=v2(Math.floor(p.x),Math.floor(p.y));')
+ .replace('vec2 local=fract(p)-spot.xy;','let local=sub(v2(fract(p.x),fract(p.y)),spot);')
+ .replace('vec2 direction=local/max(d,.001);','let direction=div(local,max(d,.001));')
+ .replace(/\b(?:float|vec4) (?=\w+=)/g,'let ');
+const layerFn=new Function('world','wet','dx','dy','cellSize','up','weatherDropCell','weatherSpot','weatherDropTone','div','sub','v2','fract','length','dot','max','abs','smoothstep','mix',layerBody);
+const layer=(world,wet,dx,dy,size,up)=>layerFn(world,wet,dx,dy,size,up,cell,scalar('weatherSpot'),scalar('weatherDropTone'),div,sub,v2,fract,p=>Math.hypot(p.x,p.y),dot,Math.max,Math.abs,smoothstep,mix);
+const dropsFn=new Function('world','wet','dx','dy','up','smoothstep','abs','v2','weatherDropLayer',vecBody('weatherDrops','float')
+ .replace('vec2 stretch=vec2(1.0,1.0-.35*vertical);','let stretch=v2(1,1-.35*vertical);')
+ .replace('world*=stretch;dx*=stretch;dy*=stretch;','world=v2(world.x*stretch.x,world.y*stretch.y);dx=v2(dx.x*stretch.x,dx.y*stretch.y);dy=v2(dy.x*stretch.x,dy.y*stretch.y);')
+ .replace('mat2 rotation=mat2(.8,.6,-.6,.8);','const rotation=p=>({x:.8*p.x-.6*p.y,y:.6*p.x+.8*p.y});')
+ .replace('rotation*world+vec2(1.731,4.913)','({x:rotation(world).x+1.731,y:rotation(world).y+4.913})')
+ .replaceAll('rotation*dx','rotation(dx)').replaceAll('rotation*dy','rotation(dy)').replace(/\bfloat (?=\w+=)/g,'let '));
+await test('production drop centres lose the lattice, physical radii and sparse vertical stains, empty cells and derivative integration survive',()=>{
+ const bins=Array(10).fill(0),radii=[];let empty=0,samples=0;
+ for(let x=-60;x<60;x++)for(let y=-60;y<60;y++){
+  const c=cell(v2(x,y));if(c.w>1){empty++;continue;}
+  assert.ok(c.x>=c.z&&c.y>=c.z&&c.x<=1-c.z&&c.y<=1-c.z,'complete discs within cells');
+  // The second layer's inverse rotation/offset is the actual world centre.
+  const rx=(x+c.x)*.047-1.731,ry=(y+c.y)*.047-4.913;
+  const worldX=.8*rx+.6*ry;
+  bins[Math.floor(fract(worldX/.03)*10)]++;radii.push(c.z*.047);samples++;
+ }
+ const mean=samples/10;
+ assert.ok(bins.every(n=>Math.abs(n-mean)<mean*.08),'centres modulo the former 3cm lattice approach uniform');
+ assert.ok(Math.max(...radii)/Math.min(...radii)>3);
+ assert.ok(empty/14400>.17&&empty/14400<.23);
+ assert.ok(radii.filter(r=>r>=.0025&&r<=.0075).length/radii.length>=.9);
+ let horizontal=0,vertical=0;
+ for(let x=-60;x<60;x++)for(let y=-60;y<60;y++){
+  horizontal+=cell(v2(x,y),.031,1).w<=1?1:0;vertical+=cell(v2(x,y),.031,0).w<=1?1:0;
+ }
+ assert.ok(vertical/horizontal<=1/3);console.log('VERTICAL_SPOT_DENSITY',vertical/horizontal);
+ for(const wet of [0,.1,.3,.6,1]){
+  let total=0;
+  for(let i=0;i<300;i++){
+   const world=v2(i*.0137,i*.0311),value=dropsFn(world,wet,v2(.0001,0),v2(0,.0001),1,smoothstep,Math.abs,v2,layer);
+   assert.ok(Number.isFinite(value)&&value>=0&&value<=1);total+=value;
+  }
+  if(wet===0||wet===1)assert.equal(total,0);else assert.ok(total>0);
+ }
+ const tone=scalar('weatherDropTone');
+ assert.ok(tone(.1,.2,.8)>tone(.3,.2,.8));assert.equal(tone(1,.2,.8),0);
+ let coarse=0;
+ for(let i=0;i<100;i++)coarse+=dropsFn(v2(i*.0317,i*.019),.2,v2(1,0),v2(0,1),1,smoothstep,Math.abs,v2,layer);
+ assert.ok(coarse>0&&coarse/100<.3,'distant stains integrate to nonzero bounded area');
+ let cx=2,c=cell(v2(cx,3),.047,1);while(c.w>1){cx++;c=cell(v2(cx,3),.047,1);}
+ const wet=Math.min(.65,c.w*.35+.03),r=c.z*.047;
+ const centre=v2((cx+c.x)*.047,(3+c.y)*.047),dx=v2(.000001,0),dy=v2(0,.000001);
+ {
+  const middle=layer(centre,wet,dx,dy,.047,1),edge=layer(v2(centre.x+r,centre.y),wet,dx,dy,.047,1);
+  assert.ok(middle>edge&&edge>0,'soft half-strength stain boundary');
+ }
+
+ console.log('DROP_DISTRIBUTION',JSON.stringify({bins,radiusRatio:Math.max(...radii)/Math.min(...radii),empty:empty/14400,inRange:radii.filter(r=>r>=.0025&&r<=.0075).length/radii.length,minRadius:Math.min(...radii),maxRadius:Math.max(...radii)}));
+});
+await test('CPU splash standing-water eligibility matches the installed GLSL puddle/film mask',()=>{
+ const hashBody=vecBody('weatherHash','float').replace('dot(p,vec2(127.1,311.7))','(p.x*127.1+p.y*311.7)');
+ const shaderHash=new Function('p','fract','sin',hashBody);
+ const noiseBody=vecBody('weatherNoise','float')
+  .replace('vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);','let i=v2(Math.floor(p.x),Math.floor(p.y)),f=v2(fract(p.x),fract(p.y));f=v2(f.x*f.x*(3-2*f.x),f.y*f.y*(3-2*f.y));')
+  .replace('i+vec2(1.0,0.0)','v2(i.x+1,i.y)').replace('i+vec2(1.0)','v2(i.x+1,i.y+1)').replace('i+vec2(0.0,1.0)','v2(i.x,i.y+1)');
+ const shaderNoise=new Function('p','weatherHash','v2','fract','mix',noiseBody);
+ const noise=p=>shaderNoise(p,p=>shaderHash(p,fract,Math.sin),v2,fract,mix);
+ const edgeBody=vecBody('weatherEdge','float').replace('p*.35','v2(p.x*.35,p.y*.35)').replace('p*.7+vec2(19.1,7.7)','v2(p.x*.7+19.1,p.y*.7+7.7)');
+ const edgeFn=new Function('p','weatherNoise','v2',edgeBody);
+ for(let i=0;i<500;i++)for(const amount of [0,.25,.7,1]){
+  const x=i*.037-10,z=i*.093-20,wet=.2+(i%10)*.1,up=i%5?1:.8;
+  const edge=edgeFn(v2(x,z),noise,v2);
+  const expected=scalar('weatherPuddle')(up,amount,edge)*scalar('weatherFilm')(wet);
+  close(standingWaterAt(x,z,up,{wetness:wet,puddles:amount}),expected);
+ }
+ close(standingWaterAt(1,2,1,{neutral:true,wetness:1,puddles:1}),0);
+});
+function ripple(water,rate,clock,world,footprint){
+ let body=preprocess((water?'#define WEATHER_SURFACE_WATER\n':'')+WEATHER_GLSL);
+ body=body.match(/vec2 weatherRipple\(vec2 world\) \{([\s\S]*?)\n\}/)[1]
+  .replace('vec3 fromEye=vWeatherWorld-cameraPosition;','let fromEye={x:0,y:0,z:8};')
+  .replace('vec2 cell=floor(world/.6),slope=vec2(0.0);','let cell=v2(Math.floor(world.x/.6),Math.floor(world.y/.6)),slope=v2(0);')
+  .replace('vec2 midCell=floor(world/.6-.5);','let midCell=v2(Math.floor(world.x/.6-.5),Math.floor(world.y/.6-.5));')
+  .replace('vec2 dx=weatherWorldDx.xz,dy=weatherWorldDy.xz;','let dx=v2(footprint,0),dy=v2(0,footprint);')
+  .replace('int y=impact/width,x=impact-y*width;','let y=Math.trunc(impact/width),x=impact-y*width;')
+  .replace('midCell+vec2(float(x),float(y))','v2(midCell.x+x,midCell.y+y)')
+  .replace('cell+vec2(float(x-1),float(y-1))','v2(cell.x+x-1,cell.y+y-1)')
+  .replace('vec2 centre=(id+random.yz)*.6;','let centre=v2((id.x+random.y)*.6,(id.y+random.z)*.6);')
+  .replace('vec2 delta=world-centre;','let delta=sub(world,centre);')
+  .replace('vec2 direction=delta/max(d,.001);','let direction=div(delta,max(d,.001));')
+  .replace('slope+=direction*band*fade*visible*strength*1.414214*support*farFade*(mid?1.0:nearFade);','let amp=band*fade*visible*strength*1.414214*support*farFade*(mid?1:nearFade);slope.x+=direction.x*amp;slope.y+=direction.y*amp;')
+  .replaceAll('vec2(0.0)','v2(0)').replace(/\b(?:float|vec2|vec3|int|bool) (?=\w+=)/g,'let ');
+ const fn=new Function('world','weatherSurface','footprint','v2','sub','div','dot','floor','fract','int','length','abs','max','smoothstep','weatherRingCount','weatherRingHash','weatherRingStrength','weatherRingSupport','weatherRingBand',body);
+ return point=>fn(point,{w:Math.round(rate*255)+clock/4},footprint,v2,sub,div,(a,b)=>dot(a,b)+(a.z??0)*(b.z??0),Math.floor,fract,Math.trunc,p=>Math.hypot(p.x,p.y),Math.abs,Math.max,smoothstep,scalar('weatherRingCount'),hash,scalar('weatherRingStrength'),scalar('weatherRingSupport'),scalar('weatherRingBand'));
+}
+await test('executed puddle and pool rain slopes match at equal rates and screen footprints',()=>{
+ for(const rate of [.1,.45,1])for(const footprint of [.001,.01,.03]){
+  let puddlePower=0,poolPower=0;
+  for(const clock of [.07,.23,.51,.89]){
+   const a=ripple(false,rate,clock,null,footprint),b=ripple(true,rate,clock,null,footprint);
+   for(let i=0;i<1200;i++){
+    const point=v2((i%40)*.037,Math.floor(i/40)*.043),p=a(point),q=b(point);
+    puddlePower+=dot(p,p);poolPower+=dot(q,q);
+   }
+  }
+  assert.ok(poolPower>0);const ratio=Math.sqrt(puddlePower/poolPower);
+  assert.ok(ratio>=1/1.5&&ratio<=1.5);console.log('PUDDLE_POOL_SLOPE',JSON.stringify({rate,footprint,ratio}));
+ }
+});
+}
 await test('one packed vector: ground units, bounded rate/phase, neutral and rain-only ripples',()=>{
  const layer=installWeatherSurface(new THREE.Scene());
  assert.deepEqual(Object.keys(layer.uniforms),['weatherSurface']);
@@ -310,7 +438,7 @@ dummyShadow.dispose();finish();
 TREE_DRIVER = TREE_PREFIX + r"""
 const THREE=await import('three');
 const {buildYard}=await import(file('static/twin/twin_yard.js'));
-const {installWeatherSurface,WEATHER_GLSL}=await import(file('static/twin/sky/weather_surface.js'));
+const {installWeatherSurface,WEATHER_GLSL,standingWaterAt}=await import(file('static/twin/sky/weather_surface.js'));
 const {installPlantWind}=await import(file('static/twin/sky/wind.js'));
 const {installStageHaze,stageFade}=await import(file('static/twin/sky/stage_haze.js'));
 await test('actual vendored oak and shrub leaves and branches receive snow after wind, including clones',async()=>{
