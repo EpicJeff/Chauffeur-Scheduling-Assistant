@@ -54,7 +54,7 @@ const bounded = (input, min = -1e5, max = 1e5) => {
 };
 const choice = values => values.map(value => Array.isArray(value) ? { value: value[0], label: value[1] } : { value, label: choiceNames[value] || title(String(value)) });
 
-function recordFor(plan, ref) {
+function recordFor(plan, ref, lookup) {
   const id = ref.pieceId ?? ref.id, bid = ref.buildingId ?? ref.building;
   if (['light_fixture', 'effect_fixture'].includes(ref.kind)) {
     const effect = ref.kind === 'effect_fixture';
@@ -66,14 +66,14 @@ function recordFor(plan, ref) {
     const index = sitePieces(plan.site?.terraces).findIndex(piece => piece.id === id);
     return index >= 0 ? { kind: 'terraces', index, piece: sitePieces(plan.site.terraces)[index] } : null;
   }
-  return findPiece(plan, id, bid);
+  return lookup ? lookup(id, bid) : findPiece(plan, id, bid);
 }
 
 // Returns data and existing per-piece operations; the card submits this entire
 // array to applyBatch once. No selected member or plan record is mutated here.
-export function selectionFields(plan, refs, { getModel = () => null, getFieldLabels = () => ({}) } = {}) {
+export function selectionFields(plan, refs, { getModel = () => null, getFieldLabels = () => ({}), lookup } = {}) {
   if (!refs?.length || new Set(refs.map(ref => ref.kind)).size !== 1) return [];
-  const records = refs.map(ref => recordFor(plan, ref));
+  const records = refs.map(ref => recordFor(plan, ref, lookup));
   if (records.some(record => !record) || new Set(records.map(record => record.kind)).size !== 1) return [];
   const rows = records.map(record => fieldsFor(record));
   const result = [];

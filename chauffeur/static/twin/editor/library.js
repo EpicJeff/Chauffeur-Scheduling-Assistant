@@ -475,7 +475,17 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     }
     return point && { building, kind, piece, point: point.toArray(), side, room, role, surface, level: piece.level };
   }
+  let contextMaterialWarning = false;
   function contextSurfaceAt(event, target = null) {
+    try { return readContextSurface(event, target); }
+    catch (error) {
+      if (!contextMaterialWarning) { console.warn('Could not look up the context material.', error); contextMaterialWarning = true; }
+      // Distinguish a failed lookup from an ordinary miss: the menu must not
+      // guess a piece-level material after a failed surface lookup.
+      return false;
+    }
+  }
+  function readContextSurface(event, target = null) {
     const matchesTarget = surface => {
       if (!target) return true;
       const id = target.id || target.pieceId, bid = target.building || target.buildingId;

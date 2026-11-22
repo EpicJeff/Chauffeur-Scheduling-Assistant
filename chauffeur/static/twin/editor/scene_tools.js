@@ -392,13 +392,23 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   }
   // Context actions use the same ranked picker, but retain the actual piece
   // under the pointer in the exterior view instead of its navigation parent.
+  let contextMaterialWarning = false;
+  function materialWarning(error) {
+    if (!contextMaterialWarning) { console.warn('Could not look up the context material.', error); contextMaterialWarning = true; }
+  }
+  function contextMaterialActions(target) {
+    try {
+      if (target.materialSurface === false) return [];
+      const surface = target.materialSurface;
+      const fallbackRef = toSelectionRef(target);
+      const slots = !surface && fallbackRef ? pieceMaterialSlots(getPlan(), fallbackRef, getKit()) : [];
+      const id = surface ? materialIdForSurface(getPlan(), surface, getKit()) : (slots.find(slot => slot.key === target.part) || (slots.length === 1 ? slots[0] : null))?.current?.id;
+      const material = id && (typeof id === 'string' ? { id, name: materialName(id) } : id);
+      return material ? materialSelectionActions({ material, refs: selectionStore.members().length ? selectionStore.members() : [fallbackRef].filter(Boolean), selectionStore, getPlan, getKit, view, visibility }) : [];
+    } catch (error) { materialWarning(error); return []; }
+  }
   const contextMenu = createContextMenu({ signal, items(target) {
-    const surface = target.materialSurface;
-    const fallbackRef = toSelectionRef(target);
-    const slots = !surface && fallbackRef ? pieceMaterialSlots(getPlan(), fallbackRef, getKit()) : [];
-    const id = surface ? materialIdForSurface(getPlan(), surface, getKit()) : (slots.find(slot => slot.key === target.part) || (slots.length === 1 ? slots[0] : null))?.current?.id;
-    const material = id && (typeof id === 'string' ? { id, name: materialName(id) } : id);
-    const materialActions = material ? materialSelectionActions({ material, refs: selectionStore.members().length ? selectionStore.members() : [fallbackRef].filter(Boolean), selectionStore, getPlan, getKit, view, visibility }) : [];
+    const materialActions = contextMaterialActions(target);
     if (target.empty) return [{ label: 'Show all hidden', run: () => visibility?.showAll() }];
     const members = selectionStore.members();
     if (members.length > 1 && members.some(ref => ref.pieceId === target.id && (ref.buildingId ?? null) === (target.building ?? null))) {
@@ -479,7 +489,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (ownsGesture) return;
     contextPicking = true;
     let target; try { target = picker.at(event.clientX, event.clientY)[0]; } finally { contextPicking = false; }
-    contextMenu.open(event, target ? { ...target, materialSurface: surfaceAt?.(event, target), clientX: event.clientX, clientY: event.clientY } : { empty: true });
+    let materialSurface = null;
+    try { materialSurface = target && surfaceAt?.(event, target); } catch (error) { materialWarning(error); materialSurface = false; }
+    contextMenu.open(event, target ? { ...target, materialSurface, clientX: event.clientX, clientY: event.clientY } : { empty: true });
   });
   // Each source exposes hit(event) and begin(event, handle); its existing
   // pointerMove/pointerUp methods keep ownership through release or cancel.

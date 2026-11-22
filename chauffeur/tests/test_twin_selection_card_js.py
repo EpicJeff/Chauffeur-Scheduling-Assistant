@@ -21,7 +21,9 @@ const {createCards}=await import(file('static/twin/editor/cards.js'));
 const {createSelection}=await import(file('static/twin/editor/selection.js'));
 const {selectionFields}=await import(file('static/twin/editor/selection_fields.js'));
 const {selectionSummary,materialSelectionActions}=await import(file('static/twin/editor/selection_card.js'));
-const {pieceMaterialSlots,materialsInSelection,replacementOperations,selectUsingMaterial,materialIdForSurface}=await import(file('static/twin/editor/selection_materials.js'));
+const {pieceMaterialSlots,sharedMaterialRows,materialsInSelection,replacementOperations,selectUsingMaterial,materialIdForSurface}=await import(file('static/twin/editor/selection_materials.js'));
+const {groupRecord,canTransform}=await import(file('static/twin/editor/group_transform.js'));
+const {sceneRows}=await import(file('static/twin/editor/scene_tree.js'));
 const {createVisibility}=await import(file('static/twin/editor/visibility.js'));
 const {materialLines,contextSurfaceForHit}=await import(file('static/twin/editor/library.js'));
 const plan=structuredClone(input.plan),b=plan.buildings[0],bid=b.id,kit=input.kit;
@@ -171,7 +173,124 @@ await test('porch_foundation_fixture_and_equipment_fields_keep_member_settings',
   p.buildings[0].anchors=[{id:'shared:parking1',kind:'parking',width:9,depth:18,host:{floor:b.rooms[0].id,u:.2,v:.2}},{id:'shared:parking2',kind:'parking',width:10,depth:20,host:{floor:b.rooms[0].id,u:.4,v:.4}}];
   rows=selectionFields(p,[ref('anchor','shared:parking1',bid),ref('anchor','shared:parking2',bid)]);assert.deepEqual(rows.find(field=>field.key==='width').operations(11).map(op=>op.value),[11,11]);
 });
-cards.dispose();console.log('PAYLOADS '+JSON.stringify(payloads));finish();
+cards.dispose();
+// Each fix runs the production builder with a replaceable immutable plan.
+function cardRig(source=plan, save=async()=>{}) {
+  let current=source, card;
+  const store=createSelection({onChange:()=>card?.draw(store.primary())});
+  card=createCards({getPlan:()=>current,getModel:()=>input.model,getKit:()=>kit,getLabel:()=>'',selectionStore:store,
+    canEdit:()=>true,select:r=>store.set(r?[r]:[]),library,visibility,applyBatch:save,op:async()=>{},edit:async()=>{},
+    removeSelection:async()=>{},haLink:{draw(){},state:()=>({available:false})}});
+  return {store,card,replace:p=>{current=p;card.draw(store.primary());},draw:()=>card.draw(store.primary())};
+}
+await test('fix1_saved_plan_refresh_preserves_focused_dirty_and_unfocused_dirty_fields',async()=>{
+  let release, sent;
+  const rig=cardRig(structuredClone(plan),async ops=>{sent=ops;await new Promise(r=>release=r);});
+  try {
+    rig.store.set(walls.slice(0,2));
+    const height=host.querySelector('[data-field="height"]'),thickness=host.querySelector('[data-field="thickness"]');
+    height.value='11';await fire(height,'change');await new Promise(r=>setTimeout(r,0));assert.ok(release);
+    thickness.focus();thickness.value='0.77';
+    const changed=structuredClone(plan);for(const op of sent)changed.buildings[0].walls.find(w=>w.id===op.id).height=11;
+    rig.replace(changed);release();await rig.card.queue(async()=>{});await new Promise(r=>setTimeout(r,0));
+    assert.equal(host.querySelector('[data-field="thickness"]'),thickness);assert.equal(thickness.value,'0.77');assert.equal(document.activeElement,thickness);
+    assert.equal(host.querySelector('[data-field="height"]'),height);assert.equal(height.value,"11'-0\"");
+    height.value='13';thickness.focus();const again=structuredClone(changed);again.buildings[0].walls[0].height=12;rig.replace(again);
+    assert.equal(height.value,'13','unfocused dirty input is protected too');
+  } finally {rig.card.dispose();}
+});
+await test('fix2_empty_material_scopes_keep_selection_and_name_scope_on_status',async()=>{
+  const store=createSelection();store.set(walls.slice(0,2));
+  const before=store.members(),actions=materialSelectionActions({material:{id:'absent:standing-seam',name:'Standing seam'},refs:before,selectionStore:store,getPlan:()=>plan,getKit:()=>kit});
+  for(const [index,scope] of [[0,'in the house or yard'],[1,'in these buildings'],[2,'in the yard']]) {
+    actions[index].run();assert.deepEqual(store.members(),before);assert.equal(document.getElementById('editor-status').textContent,`Nothing ${scope} uses Standing seam`);
+  }
+});
+await test('fix3_wall_rows_use_room_roles_on_reversed_exterior_and_partition',async()=>{
+  const p=structuredClone(plan),pb=p.buildings[0],level=pb.levels[0].id;
+  pb.rooms=[{id:'role:room',name:'Living',kind:'room',level,polygon:[[0,0],[10,0],[10,10],[0,10]]},
+    {id:'role:other',name:'Kitchen',kind:'room',level,polygon:[[10,0],[20,0],[20,10],[10,10]]}];
+  // Hand-drawn exterior has the opposite winding to its neighbour. The
+  // partition's right face is Kitchen, never an Outside receiving slot.
+  pb.walls=[{id:'role:outside',from:[0,10],to:[0,0],level,exterior:true,thickness:.5},
+    {id:'role:reversed',from:[10,0],to:[0,0],level,exterior:true,thickness:.5},
+    {id:'role:partition',from:[10,0],to:[10,10],level,exterior:false,thickness:.5},
+    {id:'role:unknown',from:[30,0],to:[30,10],level,exterior:true,thickness:.5}];
+  const owners=pb.walls.map(w=>ref('wall',w.id,pb.id)),rows=sharedMaterialRows(p,owners,kit);
+  const outside=rows.find(row=>row.key==='wall:outside');assert.equal(outside.label,'Outside (2 of 4 walls)');
+  assert.deepEqual(outside.matches.map(m=>[m.owner.pieceId,m.slot.key]),[['role:outside','right'],['role:reversed','left']]);
+  const living=rows.find(row=>row.label.startsWith('Living'));assert.equal(living.matches.length,3);
+  assert.ok(!outside.matches.some(m=>m.owner.pieceId==='role:partition'||m.owner.pieceId==='role:unknown'));
+  let batch;const rig=cardRig(p,async ops=>batch=ops);
+  try {rig.store.set(owners);setLibrary({kind:'material',id:'wood_floor',name:'Oak'});
+    await click(host.querySelector('[data-library-slot="Outside (2 of 4 walls)"]').querySelector('[data-slot-use]'));await rig.card.queue(async()=>{});
+    assert.equal(batch.length,2);assert.deepEqual(batch.map(op=>[op.target.wall,op.target.side]),[['role:outside','right'],['role:reversed','left']]);
+  } finally {rig.card.dispose();}
+});
+await test('fix4_summary_mobility_matches_transform_kind_table',async()=>{
+  const p=structuredClone(plan),pb=p.buildings[0];
+  pb.anchors=[{id:'move:anchor',host:{floor:pb.rooms[0].id}},{id:'move:device-anchor',device:'device:test',host:{floor:pb.rooms[0].id}}];
+  p.site.pool.features=['ledge','steps','spa'].map(kind=>({id:`move:${kind}`,kind,at:[0,0]}));
+  p.light_fixtures={'light.test':[{id:'move:light',at:[0,0,1]}]};p.effect_fixtures=[{id:'move:effect',at:[0,0,0]}];
+  const table=[...walls,...trees,doorRef,ref('room',pb.rooms[0].id,pb.id),ref('anchor','move:anchor',pb.id),ref('anchor','move:device-anchor',pb.id),
+    ...['ledge','steps','spa'].map(k=>ref(k,`move:${k}`)),ref('stair',pb.stairs?.[0]?.id||'missing',pb.id),
+    ref('solar_zone',pb.solar_zones?.[0]?.id||'missing',pb.id),ref('porch',pb.rooms.find(r=>r.kind==='porch')?.id,pb.id),
+    ref('light_fixture','move:light'),ref('effect_fixture','move:effect'),ref('device','missing',pb.id)];
+  const householdKinds=new Map(sceneRows(p).filter(row=>row.kind!=='group').map(row=>[row.kind,ref(row.kind,row.id,row.building)]));
+  for(const owner of [...table,...householdKinds.values()])assert.equal(selectionSummary(p,[owner])[0].fixed,!canTransform(groupRecord(p,owner),'move'),JSON.stringify(owner));
+  for(const k of ['ledge','steps','spa'])assert.equal(selectionSummary(p,[ref(k,`move:${k}`)])[0].fixed,false);
+});
+await test('fix5_cached_200_plant_poll_and_changed_plan_redraw_budget',async()=>{
+  let p=structuredClone(input.plan),source=p.site.planting[0];
+  p.site.planting=Array.from({length:200},(_,i)=>({...structuredClone(source),id:`budget:plant:${i}`,at:[source.at[0]+i%20,source.at[1]+Math.floor(i/20)]}));
+  const owners=p.site.planting.map(p=>ref('planting',p.id)),rig=cardRig(p);
+  try {
+    rig.store.set(owners);rig.draw();const times=[];
+    for(let i=0;i<10;i++){const start=performance.now();rig.draw();times.push(performance.now()-start);}
+    const unchanged=Math.max(...times);assert.ok(unchanged<5,`unchanged 200 plants ${unchanged.toFixed(3)}ms <5ms`);
+    p=structuredClone(p);p.site.planting[0].height+=1;const start=performance.now();rig.replace(p);const changed=performance.now()-start;
+    assert.ok(changed<40,`changed 200 plants ${changed.toFixed(3)}ms <40ms`);
+    console.log(`COST set Properties 200 plants unchanged=${unchanged.toFixed(3)}ms changed=${changed.toFixed(3)}ms`);
+  }finally{rig.card.dispose();}
+});
+await test('fix7_room_walls_parent_is_not_a_surface_or_replacement_target',async()=>{
+  const p=structuredClone(plan),pb=p.buildings[0],room=pb.rooms[0];room.wall_material={id:'shared:room-wall'};
+  for(const wall of pb.walls) {delete wall.faces;}
+  pb.materials={...pb.materials,interior_wall:{id:'shared:room-wall'}};
+  const owners=[ref('room',room.id,pb.id),...walls];
+  const counted=materialsInSelection(p,owners,kit).find(m=>m.id==='shared:room-wall');
+  const faces=walls.flatMap(r=>pieceMaterialSlots(p,r,kit)).filter(s=>s.current.id==='shared:room-wall');
+  assert.ok(faces.length);assert.equal(counted.count,faces.length);
+  const before=JSON.stringify(room),ops=replacementOperations(p,owners,'shared:room-wall',{id:'wood_floor'},kit);
+  assert.equal(ops.length,faces.length);assert.ok(ops.every(op=>op.target.wall&&walls.some(r=>r.pieceId===op.target.wall)));assert.equal(JSON.stringify(room),before);
+});
+await test('fix8_single_piece_is_new_subject_but_same_kind_set_keeps_place',async()=>{
+  const rig=cardRig();
+  try {
+    rig.store.set([walls[0]]);const first=[...host.querySelectorAll('input')].find(n=>n.closest('label')?.textContent==='Height');first.focus();scroll.scrollTop=178;
+    rig.store.set([walls[1]]);assert.ok(!host.contains(document.activeElement),'plain single-to-single does not restore focus into new subject');
+    const second=[...host.querySelectorAll('input')].find(n=>n.closest('label')?.textContent==='Height');second.focus();scroll.scrollTop=245;
+    rig.store.add(walls[0]);assert.equal(scroll.scrollTop,245);assert.equal(document.activeElement.getAttribute('aria-label'),'Height');assert.ok(host.contains(document.activeElement));
+  }finally{rig.card.dispose();}
+});
+await test('fix9_readable_summary_unknown_kinds_and_keyboard_menu_anchor',async()=>{
+  const p=structuredClone(plan),pb=p.buildings[0];
+  for(const kind of ['garage','slider'])for(let i=0;i<2;i++)pb.openings.push({...pb.openings[0],id:`noun:${kind}${i||''}`,kind});
+  assert.equal(selectionSummary(p,[ref('opening','noun:garage',pb.id),ref('opening','noun:slider',pb.id)])[0].text,'1 garage door');
+  assert.equal(selectionSummary(p,[ref('opening','noun:slider',pb.id)])[0].label,'slider');
+  assert.equal(selectionSummary(p,[ref('opening','noun:garage',pb.id),ref('opening','noun:garage1',pb.id)])[0].label,'garage doors');
+  assert.equal(selectionSummary(p,[ref('opening','noun:slider',pb.id),ref('opening','noun:slider1',pb.id)])[0].label,'sliders');
+  for(const row of sceneRows(p).filter(row=>row.kind!=='group'))assert.doesNotMatch(selectionSummary(p,[ref(row.kind,row.id,row.building)])[0].label,/_|undefined|null/);
+  assert.equal(selectionSummary(p,[ref('item','absent',pb.id)])[0].label,'item');assert.equal(selectionSummary(p,[ref('anchor','absent',pb.id)])[0].label,'anchor');
+  assert.doesNotThrow(()=>selectionSummary(p,[ref(null,'absent'),ref('unknown_kind','absent2')]));
+  const rig=cardRig(p);
+  try {assert.doesNotThrow(()=>rig.store.set([ref(null,'absent'),ref('unknown_kind','absent2')]));
+    rig.store.set(walls);const list=host.querySelector('[aria-label="Materials in selection"]'),opener=[...list.querySelectorAll('button')].find(n=>n.textContent==='Select all using it');
+    opener.getBoundingClientRect=()=>({left:140,bottom:240});const menu=document.getElementById('editor-context-menu');menu.getBoundingClientRect=()=>({width:120,height:100});
+    await fire(opener,'click',{clientX:0,clientY:0,detail:0});assert.equal(menu.style.left,'140px');assert.equal(menu.style.top,'240px');
+  }finally{rig.card.dispose();}
+});
+console.log('PAYLOADS '+JSON.stringify(payloads));finish();
 """
 
 INTEGRATION = r"""
@@ -197,6 +316,33 @@ await test('rendered_surface_context_entrypoint_selects_slot_owners_without_edit
   const choose=[...menu.querySelectorAll('button')].find(n=>n.textContent.startsWith('Select all using '));assert.ok(choose,menu.textContent);
   await click(choose);assert.ok(ed.tools.selectionStore.members().length);assert.ok(ed.tools.selectionStore.members().every(r=>r.slots?.length));assert.equal(ed.ops.length,0);
  }finally{ed.dispose();}
+});
+await test('fix6_material_lookup_failures_keep_existing_context_menu_and_log_once',async()=>{
+ const ed=await mountEditor(makeHousehold()),warn=console.warn;let warnings=[];console.warn=(...args)=>warnings.push(args);
+ try{
+  const b=ed.plan.buildings[0],wall=b.walls.find(w=>w.exterior&&w.state!=='ghost'),target={kind:'wall',id:wall.id,building:b.id};
+  const update=ed.view.scene.updateMatrixWorld;ed.view.scene.updateMatrixWorld=()=>{throw new Error('injected material ray failure');};
+  assert.equal(ed.library.contextSurfaceAt({clientX:20,clientY:20},target),false);
+  assert.equal(ed.library.contextSurfaceAt({clientX:20,clientY:20},target),false);assert.equal(warnings.length,1);
+  ed.view.scene.updateMatrixWorld=update;
+  // A failure inside items() is independent of the guarded surface ray path.
+  const materials=ed.plan.materials;Object.defineProperty(ed.plan,'materials',{configurable:true,get(){throw new Error('injected resolver failure');}});
+  for(let i=0;i<2;i++){
+    ed.tools.openContextMenu({clientX:80,clientY:90},{...target,materialSurface:{kind:'wall',building:b,piece:wall,side:'left'}});
+    const menu=document.getElementById('editor-context-menu'),labels=[...menu.querySelectorAll('button')].map(n=>n.textContent);
+    assert.equal(menu.hidden,false);assert.ok(labels.includes('Select'));assert.ok(labels.includes('Split wall here'));assert.ok(labels.includes('Add door here'));assert.ok(labels.includes('Hide'));
+    assert.ok(!labels.some(label=>label.startsWith('Select all using')));
+  }
+  Object.defineProperty(ed.plan,'materials',{configurable:true,writable:true,value:materials});assert.equal(warnings.length,2);assert.equal(ed.ops.length,0);
+  const point=wall.from.map((v,i)=>(v+wall.to[i])/2);ed.tools.chooseFloor(`${b.id}:${wall.level}`);ed.look([...point,5],b);
+  const [clientX,clientY]=ed.pixel([...point,5],b),surfaceAt=ed.library.contextSurfaceAt;
+  ed.library.contextSurfaceAt=()=>{throw new Error('injected callback failure');};
+  await fire(ed.canvas,'contextmenu',{clientX,clientY});
+  const labels=[...document.getElementById('editor-context-menu').querySelectorAll('button')].map(n=>n.textContent);
+  assert.ok(labels.includes('Select'));assert.ok(labels.includes('Split wall here'));assert.ok(labels.includes('Add door here'));assert.ok(labels.includes('Hide'));
+  assert.ok(!labels.some(label=>label.startsWith('Select all using')));assert.equal(warnings.length,2,'scene logs once across resolver and callback failures');
+  ed.library.contextSurfaceAt=surfaceAt;
+ }finally{console.warn=warn;ed.dispose();}
 });
 finish();
 """

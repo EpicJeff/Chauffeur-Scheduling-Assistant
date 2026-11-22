@@ -6,7 +6,7 @@ import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
 import { createSlotRow, idleLibrary } from './slot_row.js';
 import { keepPlace } from './keep_place.js';
-import { drawSelectionCard, drawMaterialsList, selectionSubject, selectionCardLayout } from './selection_card.js';
+import { drawSelectionCard, drawMaterialsList, sameSelectionSubject, selectionCardLayout } from './selection_card.js';
 import { feetInches, parseLength } from './selection_fields.js';
 export { feetInches, parseLength } from './selection_fields.js';
 import { createEquipmentShelf } from './equipment_shelf.js';
@@ -49,7 +49,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
   }
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
-  let edgeIndex = null, cardSubject = null;
+  let edgeIndex = null, cardMembers = [], setCard = null, setCache = null;
   let haSection = null;
   const slots = [];
   const ownSlot = row => slots.push(row);
@@ -93,24 +93,31 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
   // A field that shows or hides other fields rebuilds the card: keep the person's place.
   function draw(next = selection) {
     const members = selectionStore?.members() || (next ? [next] : []);
-    const subject = selectionSubject(members.map(ref => ref.kind ? ref : { ...ref, kind: findPiece(getPlan(), ref.pieceId, ref.buildingId)?.kind }));
-    const same = !!subject && subject === cardSubject;
-    cardSubject = subject;
+    const resolved = members.map(ref => ref.kind ? ref : { ...ref, kind: findPiece(getPlan(), ref.pieceId, ref.buildingId)?.kind });
+    const same = sameSelectionSubject(cardMembers, resolved);
+    cardMembers = resolved;
     return same ? keepPlace(host, () => drawCard(next)) : drawCard(next);
   }
   function drawCard(next = selection) {
     const members = selectionStore?.members() || (next ? [next] : []);
-    const materialOptions = refs => ({ refs, getPlan, getModel, getKit, getFieldLabels, selectionStore, applyBatch, canEdit, library, ownSlot, queue, report, view, visibility, loadNames, onSaved: () => { layout = null; draw(); } });
+    const materialOptions = refs => ({ refs, getPlan, getModel, getKit, getFieldLabels, selectionStore, applyBatch, canEdit, library, ownSlot, queue, report, view, visibility, loadNames, onSaved: () => { if (refs.length === 1) layout = null; draw(); }, onNamesChanged: () => { setCache = null; if (refs.length === 1) layout = null; draw(); } });
     if (members.length > 1) {
-      const signature = 'set:' + selectionCardLayout(getPlan(), members, { getModel, getFieldLabels, getKit, canEdit });
-      if (layout === signature) { selection = next; slots.forEach(row => row.refresh()); return; }
+      // Polls reuse the prepared rows. Values changing in a new plan do not
+      // change the field structure or replace inputs with unsaved text.
+      const plan = getPlan(), key = JSON.stringify(members), editable = canEdit();
+      if (setCache?.plan === plan && setCache.key === key && setCache.editable === editable) { selection = next; setCard?.refresh(); return; }
+      const prepared = selectionCardLayout(plan, members, { getModel, getFieldLabels, getKit, canEdit });
+      setCache = { plan, key, editable };
+      selection = next;
+      if (setCard && setCard.structure === prepared.structure) { setCard.update(prepared, members); return; }
       host.dispatchEvent(new Event('fixturecardrelease'));
-      selection = next; layout = signature; edgeIndex = null; disposeSlots(); host.replaceChildren(); inputs = new Map(); haSection = null;
+      layout = prepared.structure; edgeIndex = null; disposeSlots(); host.replaceChildren(); inputs = new Map(); haSection = null;
       host.hidden = false;
       dock?.properties.render(host, { crumbs: ['Selected pieces'], reveal: false });
-      drawSelectionCard(host, { ...materialOptions(members), removeSelection });
+      setCard = drawSelectionCard(host, { ...materialOptions(members), prepared, removeSelection });
       return;
     }
+    setCard = null; setCache = null;
     if (!next && host.dataset.fixtureCard) return;
     if (next || host.dataset.stairDraft) host.dispatchEvent(new Event('fixturecardrelease'));
     // The two-click add tool temporarily owns the same card surface. Polling

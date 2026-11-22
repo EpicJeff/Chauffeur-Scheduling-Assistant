@@ -653,7 +653,7 @@ await test('real_household_yard_marquee_bounds_grass_ghosts_exclusions_and_cache
     await ed.clickAt(pEffect, { ctrlKey: true });
     assert.deepEqual(ed.tools.selectionStore.members().map(r => r.pieceId), ['fix:yard-1', 'eff:yard-1'], 'view-level Ctrl-click adds both light and effect fixtures');
     assert.equal(ed.dom.pieceCard.hidden, false, 'effect fixture card is visible');
-    assert.equal(ed.dom.pieceCard.dataset.fixtureCard, 'eff:yard-1', 'effect fixture card shows as primary');
+    assert.ok(ed.dom.pieceCard.querySelector('[data-selection-summary]'), 'multiple fixtures show the set card');
     assert.ok(ed.outlinesFor().has('fix:yard-1') && ed.outlinesFor().has('eff:yard-1'), 'both fixtures have visible outlines');
 
     // Moving a selected fixture + devices.refresh() updates its outline box (no stale box)
@@ -836,7 +836,7 @@ await test('scene_tree_ctrl_shift_locked_and_ctrl_toggled_pad_and_fixture_cards'
     assert.ok(rangeIds.includes(r0.id) && rangeIds.includes(r2.id) && !rangeIds.includes(r1.id));
     ed.visibility.showAll();
 
-    // Ctrl-toggled PAD (terraces) as primary shows its terrain card in Properties (not blank!)
+    // A mixed set containing a pad shows its set card; narrowing reaches terrain.
     const padId = ed.plan.site.terraces[0].id;
     assert.ok(rowOf(padId), 'pad row is present in Scene tree under Yard');
     await fire(labelOf(r0.id), 'click');
@@ -844,29 +844,44 @@ await test('scene_tree_ctrl_shift_locked_and_ctrl_toggled_pad_and_fixture_cards'
     assert.deepEqual(ed.tools.selectionStore.members().map(r => r.pieceId), [r0.id, padId], 'multi-selection retains wall and pad');
     assert.equal(ed.tools.selectionStore.primary().pieceId, padId, 'pad is primary');
     const terrainCard = document.getElementById('terrain-card');
-    assert.ok(terrainCard && !terrainCard.hidden, 'Ctrl-toggled pad shows #terrain-card in Properties');
+    const narrowSummary = async text => {
+      const summary = ed.dom.pieceCard.querySelector('[data-selection-summary]'); assert.ok(summary);
+      const entry = [...summary.querySelectorAll('button')].find(b => b.textContent === text); assert.ok(entry, text); await fire(entry, 'click');
+    };
+    assert.equal(terrainCard.hidden, true, 'multiple pieces show the set card');
+    await narrowSummary('1 pad');
+    assert.deepEqual(ed.tools.selectionStore.members().map(r => r.pieceId), [padId], 'summary narrows to pad');
+    assert.ok(!terrainCard.hidden, 'narrowing opens #terrain-card');
     assert.match(terrainCard.textContent, /Delete|Height|Ground and yard/, 'terrain card renders pad controls');
 
-    // Ctrl-toggled LIGHT FIXTURE as primary shows its fixture card in Properties
+    // Restore the mixed set using the Scene tree, then narrow to the light.
+    await fire(labelOf(r0.id), 'click'); await fire(labelOf(padId), 'click', { ctrlKey: true });
     await fire(labelOf('fix:yard-1'), 'click', { ctrlKey: true });
     assert.deepEqual(ed.tools.selectionStore.members().map(r => r.pieceId), [r0.id, padId, 'fix:yard-1']);
     assert.equal(ed.tools.selectionStore.primary().pieceId, 'fix:yard-1');
     assert.equal(ed.dom.pieceCard.hidden, false, 'Ctrl-toggled light fixture shows #piece-card');
-    assert.ok(ed.dom.pieceCard.dataset.fixtureCard, 'fixture card metadata is active');
+    assert.ok(ed.dom.pieceCard.querySelector('[data-selection-summary]'), 'mixed set card is active');
+    await narrowSummary('1 light');
+    assert.deepEqual(ed.tools.selectionStore.members().map(r => r.pieceId), ['fix:yard-1']);
+    assert.ok(ed.dom.pieceCard.dataset.fixtureCard, 'narrowing opens the fixture card');
     assert.match(ed.dom.pieceCard.textContent, /Fixtures|light\.yard/, 'fixture card renders fixture controls');
     assert.equal(terrainCard.hidden, true, 'previous terrain card closes when fixture becomes primary');
 
-    // Ctrl-toggled EFFECT FIXTURE as primary shows its effect card in Properties
+    await fire(labelOf(r0.id), 'click'); await fire(labelOf(padId), 'click', { ctrlKey: true });
+    await fire(labelOf('fix:yard-1'), 'click', { ctrlKey: true });
+    // Ctrl-toggled EFFECT FIXTURE retains the set card.
     await fire(labelOf('eff:yard-1'), 'click', { ctrlKey: true });
     assert.equal(ed.tools.selectionStore.primary().pieceId, 'eff:yard-1');
     assert.equal(ed.dom.pieceCard.hidden, false, 'Ctrl-toggled effect fixture shows #piece-card');
-    assert.equal(ed.dom.pieceCard.dataset.fixtureCard, 'eff:yard-1');
+    assert.ok(ed.dom.pieceCard.querySelector('[data-selection-summary]'));
 
-    // Ctrl-toggling effect & light fixtures OFF restores pad as primary and re-shows its terrain card!
+    // Removing fixtures leaves the wall/pad set; narrowing still reaches terrain.
     await fire(labelOf('eff:yard-1'), 'click', { ctrlKey: true });
     await fire(labelOf('fix:yard-1'), 'click', { ctrlKey: true });
     assert.equal(ed.tools.selectionStore.primary().pieceId, padId);
-    assert.equal(terrainCard.hidden, false, 'removing fixtures restores pad card when pad becomes primary again');
+    assert.ok(ed.dom.pieceCard.querySelector('[data-selection-summary]'), 'wall and pad still show a set');
+    await narrowSummary('1 pad');
+    assert.equal(terrainCard.hidden, false, 'summary still reaches the pad card after removing fixtures');
 
     // Ctrl-click on building row and floor/level row never adds building or level refs to the store
     await fire(labelOf(r0.id), 'click');

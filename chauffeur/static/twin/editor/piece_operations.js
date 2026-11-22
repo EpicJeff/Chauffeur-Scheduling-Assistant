@@ -1,5 +1,18 @@
 import { allPorches } from '../twin_generator.js';
-import { siteRecord } from '../objects.js';
+import { siteRecord, siteRecords } from '../objects.js';
+
+// A set resolves many owners against one immutable plan. Build the yard index
+// once; retain findPiece's precedence and fallback for all building records.
+export function createPieceLookup(plan) {
+  const yard = new Map();
+  for (const record of siteRecords(plan)) if (!yard.has(record.piece.id)) yard.set(record.piece.id, record);
+  const cache = new Map();
+  return (pieceId, buildingId) => {
+    const key = JSON.stringify([buildingId || null, pieceId]);
+    if (!cache.has(key)) cache.set(key, !buildingId && yard.get(pieceId) || findPiece(plan, pieceId, buildingId));
+    return cache.get(key);
+  };
+}
 
 export function findPiece(plan, pieceId, buildingId) {
   const site = !buildingId && siteRecord(plan, pieceId);

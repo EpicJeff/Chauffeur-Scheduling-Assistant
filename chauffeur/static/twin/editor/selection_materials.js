@@ -1,5 +1,5 @@
 import { findPiece } from './piece_operations.js';
-import { materialLines } from './library.js';
+import { materialLines, wallFace } from './library.js';
 import { siteMaterialSlots, siteMaterialDescription } from './site_shape_shelf.js';
 import { shapeOperation } from './site_shapes.js';
 import { sceneRows } from './scene_tree.js';
@@ -27,9 +27,9 @@ function descriptor(key, label, local, description, operation, extra = {}) {
 // Enumerate the same receiving slots as the ordinary Properties shelves. Slot
 // inheritance remains entirely in materialLines/siteMaterialDescription and the
 // surface resolver used by those builders. No building/house role is a target.
-export function pieceMaterialSlots(plan, owner, kit = {}) {
+export function pieceMaterialSlots(plan, owner, kit = {}, lookup = (id, bid) => findPiece(plan, id, bid)) {
   const id = pieceId(owner), bid = buildingId(owner);
-  const record = findPiece(plan, id, bid);
+  const record = lookup(id, bid);
   if (owner.kind === 'terraces' || !record && !bid && plan.site?.terraces?.some(p => p.id === id)) {
     const pad = plan.site?.terraces?.find(p => p.id === id);
     if (!pad) return [];
@@ -75,7 +75,8 @@ export function pieceMaterialSlots(plan, owner, kit = {}) {
     const key = target.side || target.part || target.surface || (target.plane !== undefined ? `plane:${target.plane}` : 'roof');
     return descriptor(key, line.label, line.ref, { ref: line.resolved, current: line.current, inherited: line.inherited, text: line.text },
       next => ({ op: 'set_material', building: building.id, target: { ...target }, material: copy(next) }),
-      { target: { ...target }, surface: line.surface, aggregate: kind === 'roof' && target.plane === undefined });
+      { target: { ...target }, surface: line.surface,
+        aggregate: kind === 'room' && target.surface === 'walls' ? 'room' : kind === 'roof' && target.plane === undefined ? 'roof' : null });
   });
   if (kind === 'building') {
     const local = building.foundation?.materials?.slab;
@@ -104,16 +105,43 @@ export function pieceMaterialSlots(plan, owner, kit = {}) {
   return slots;
 }
 
-function countedSlots(plan, owner, kit) {
-  const slots = pieceMaterialSlots(plan, owner, kit);
-  // The whole-roof row is an inheritance parent, not one more rendered slope.
-  return allowedSlots(owner, slots.filter(slot => !slot.aggregate || !slots.some(row => row.key.startsWith('plane:'))));
+// A wall's left/right is winding-dependent. Set rows speak for the actual
+// outside or facing room, exactly as the ordinary card does. Unknown faces
+// stay out instead of borrowing the first wall's side.
+export function sharedMaterialRows(plan, refs, kit = {}, allSlots = refs.map(ref => pieceMaterialSlots(plan, ref, kit)), lookup = (id, bid) => findPiece(plan, id, bid)) {
+  if (refs.every(ref => ref.kind === 'wall')) {
+    const rows = new Map();
+    refs.forEach((owner, index) => {
+      const record = lookup(owner.pieceId, owner.buildingId);
+      if (!record?.building) return;
+      for (const slot of allSlots[index]) {
+        const face = wallFace(record.building, record.piece, slot.key);
+        const other = wallFace(record.building, record.piece, slot.key === 'left' ? 'right' : 'left');
+        const key = face.room ? `room:${record.building.id}:${face.room.id}` : face.role === 'siding' && other.room ? 'outside' : null;
+        if (!key) continue;
+        if (!rows.has(key)) rows.set(key, { key: `wall:${key}`, label: face.room ? face.room.name || 'Room' : 'Outside', matches: [] });
+        rows.get(key).matches.push({ owner, slot });
+      }
+    });
+    return [...rows.values()].map(row => ({ ...row, label: `${row.label} (${new Set(row.matches.map(match => ownerKey(match.owner))).size} of ${refs.length} walls)` }));
+  }
+  return (allSlots[0] || []).flatMap(slot => {
+    const matches = allSlots.map((slots, index) => ({ owner: refs[index], slot: slots.find(candidate => candidate.key === slot.key) }));
+    return matches.every(match => match.slot) ? [{ key: slot.key, label: slot.label, matches }] : [];
+  });
 }
 
-export function materialsInSelection(plan, refs, kit = {}) {
+function countedSlots(plan, owner, kit, provided) {
+  const slots = provided || pieceMaterialSlots(plan, owner, kit);
+  // The whole-roof row is an inheritance parent, not one more rendered slope.
+  return allowedSlots(owner, slots.filter(slot => slot.aggregate !== 'room'
+    && (slot.aggregate !== 'roof' || !slots.some(row => row.key.startsWith('plane:')))));
+}
+
+export function materialsInSelection(plan, refs, kit = {}, slotsByOwner = null) {
   const groups = new Map(), seen = new Set();
-  for (const owner of refs || []) {
-    for (const slot of countedSlots(plan, owner, kit)) {
+  for (const [index, owner] of (refs || []).entries()) {
+    for (const slot of countedSlots(plan, owner, kit, slotsByOwner?.[index])) {
       const key = JSON.stringify([ownerKey(canonicalOwner(plan, owner)), slot.key]);
       if (seen.has(key)) continue;
       seen.add(key);

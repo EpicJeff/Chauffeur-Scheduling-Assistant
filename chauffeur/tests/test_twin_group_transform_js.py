@@ -160,12 +160,13 @@ await test('group_scene_actions_and_outlines', async()=>{
     ed.visibility.setMembers(refs,{locked:false});window.promptConfirm=async()=>true;
     await ed.tools.deleteSelected();assert.equal(ed.ops.length,2);assert.equal(ed.ops[1].operation.op,'batch');assert.equal(ed.ops[1].operation.ops.length,2);
     assert.equal(ed.tools.selectionStore.members().length,0);
-    // Delegated primary cards must route Delete through the same set action.
+    // Every mixed set card must route Delete through the same batch action.
     const extra=[{kind:'terraces',pieceId:ed.plan.site.terraces[0].id},{kind:'light_fixture',pieceId:'fix:yard-1',entity_id:'light.yard'},{kind:'effect_fixture',pieceId:'eff:yard-1'}];
     ed.tools.setTool('select');
     for(const r of extra) {
       ed.tools.selectionStore.set([refs[0],r]);
-      const card=r.kind==='terraces'?document.getElementById('terrain-card'):ed.dom.pieceCard;
+      const card=ed.dom.pieceCard;
+      assert.ok(card.querySelector('[data-selection-summary]'),`${r.kind} set card mounted`);
       assert.equal(card.hidden,false,`${r.kind} card visible`);
       const count=ed.ops.length,del=[...card.querySelectorAll('button')].find(b=>b.textContent==='Delete');assert.ok(del,`${r.kind} Delete card mounted`);
       await fire(del,'click');await new Promise(r=>setTimeout(r,10));
