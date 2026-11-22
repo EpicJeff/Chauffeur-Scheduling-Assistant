@@ -539,8 +539,11 @@ def scenario_one_wall_rebakes_locally():
         side, _ = L._wall_view(page, b, w, room)
         _choose(page, assets['selected'])
         _select_piece(page, b, w)
-        # The harness opens the editor, which never mounts a bake controller.
-        assert page.evaluate('!window.__twin.bake'), 'Revisit fallback if editor baking is introduced'
+        # Since v2.499.974 the editor mounts a bake controller, but it bakes
+        # only on a Bake lighting press. Nothing has been baked here, so the
+        # detached reach simulation below stays the measure of local rebake.
+        assert page.evaluate('!!window.__twin.bake && !window.__twin.bake.state().baking'), \
+            'the editor bake controller must stay idle until Bake lighting is pressed'
         kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
         kit['manifest'] = page.evaluate('window.twinManifest || {}')
         page.set_default_timeout(600000)  # Real household atlas/packing can take minutes.

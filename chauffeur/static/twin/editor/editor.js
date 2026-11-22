@@ -41,7 +41,7 @@ export async function boot() {
   let sheets = { sources: [], page_roles: [] };
   let currentBuild = null, ghostBuild = null, renderedGhosts = 0, lastScene = '';
   let resuming = false, stopping = false;
-  let menuBusy = false, directing = false, downloading = false, advancedBase = null;
+  let menuBusy = false, directing = false, downloading = false, advancedBase = null, lastStepKey = '';
   let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, library = null, previewing = false, lastSummary = '';
   let roofTools = null, lot = null, flags = null, devices = null, terrain = null, aimed = false;
   let buildGhosts = null, checks = null, houses = null, drawingStarted = false;
@@ -528,6 +528,13 @@ export async function boot() {
         : built ? 'House ready' : drawingStarted ? 'Drawing by hand' : 'Add drawings to begin');
     },
     async onBuild(build) {
+      // Build polls read only build/{id}; the remaining estimate lives in /state
+      // and moves when a step starts, finishes or prices its read. Re-read /state
+      // when the steps change, so the chip's `about $x.xx` stays current between
+      // cost events (a handful of reads per build, never one per streamed batch).
+      const stepKey = `${build.id}|${JSON.stringify((build.steps || []).map(s => [s.id, s.status, s.estimate ?? null]))}`;
+      const stepsMoved = stepKey !== lastStepKey;
+      lastStepKey = stepKey;
       if (ghostBuild !== build.id) {
         ghosts.clear(); buildGhosts?.clear(); ghostBuild = build.id;
         seenBuildRounds.clear();
@@ -565,6 +572,8 @@ export async function boot() {
       if ((build.events || []).some(event => !STREAM_ONLY.has(event.type))) {
         await polling.refreshState();
         await loadSheets();
+      } else if (stepsMoved && build.state === 'running') {
+        await polling.refreshState();
       }
       if (build.state === 'checkpoint') {
         const detail = [...(build.events || [])].reverse().find(event => event.type === 'checkpoint')
