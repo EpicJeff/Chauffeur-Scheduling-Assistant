@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main_weather_source():
     try:
         return subprocess.check_output(
-            ['git', 'show', 'main:chauffeur/static/twin/sky/weather_surface.js'],
+            ['git', 'show', '7a23b5f1:chauffeur/static/twin/sky/weather_surface.js'],
             cwd=ROOT, encoding='utf-8', stderr=subprocess.DEVNULL,
         )
     except Exception:
