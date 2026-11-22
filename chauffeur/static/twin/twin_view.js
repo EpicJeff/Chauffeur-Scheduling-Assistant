@@ -202,9 +202,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
-  let editableLevel = null, selectionStyle = null, boundsCache = null;
+  let editableLevel = null, selectionStyle = null, boundsCache = null, selectionBoundsRevision = 0;
   const hoverBoxCache = new Map();
-  const invalidateSelectionBounds = () => { boundsCache = null; hoverBoxCache.clear(); };
+  const invalidateSelectionBounds = () => { boundsCache = null; hoverBoxCache.clear(); ++selectionBoundsRevision; };
+  // Deferred yard adoption changes the rendered bounds without a camera move.
+  // Existing handles and overlays already share this projection redraw hook.
+  const redrawAfterYard = () => controls.dispatchEvent({ type: 'change' });
+  el.addEventListener('twinyardrebuilt', redrawAfterYard);
   const selectedMaterials = new Map(), selectionMaterials = new Set(), selectionLines = [];
   function restoreSelection() {
     unlit.restore();
@@ -771,6 +775,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     selectionFloor() { const room = selectionStyle?.room; return room ? `${room.building}:${room.level}` : state.view; },
     selectionBounds() { return projectSelectionBoxes(currentSelectionBoxes({ fresh: true }).list, camera, renderer3.domElement.getBoundingClientRect()); },
     selectionWorldBounds() { return currentSelectionBoxes().list.map(row => ({ ...row, box: row.box.clone() })); },
+    get selectionBoundsRevision() { return selectionBoundsRevision; },
     refreshSelection() {
       invalidateSelectionBounds();
       if (selectionStyle) paintSelection();
@@ -1456,6 +1461,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       }
       plan = nextPlan; view.plan = nextPlan; syncStage(plan);
       pieceVisibility?.apply(scene);
+      invalidateSelectionBounds();
       view.ready = !disposed && !!twin;
       sun.shadow.needsUpdate = true; reflections.request();
       deferYard(nextPlan, version);
@@ -1643,6 +1649,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       reflections.dispose();
       if (disposed) return;
       disposed = true; ++revision; view.ready = false;
+      el.removeEventListener('twinyardrebuilt', redrawAfterYard);
       view.meter?.stop();
       view.materialWatcher?.stop();
       for (const release of [...materialBindings.values()]) release();

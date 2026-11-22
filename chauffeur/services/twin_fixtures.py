@@ -969,6 +969,7 @@ def remember_batch_references(model, op, references):
         building = next((b for b in model['buildings'] if host and any(p['id'] == host['id']
                         for p in b.get('walls' if host['kind'] == 'wall' else 'stairs', []))), None)
         saved['snap'] = (_host_edges(model, host), {k: deepcopy(building[k]) for k in ('id', 'position', 'rotation')} if building else None) if host else (None, None)
+    return fixture['id']
 
 
 def _follow_anchors(before, after, fixture, cache, references=None):

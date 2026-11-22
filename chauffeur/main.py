@@ -8971,6 +8971,9 @@ def house_editor_op(request: Request, body: dict = Body(default={})):
             if isinstance(exc, BatchRefused):
                 error.update(member=exc.member, reason=exc.reason)
             return twin_timing.response(error, timing, status_code=400)
+        except Exception:
+            logger.exception('House editor operation failed')
+            raise
         with twin_timing.span('read'):
             model = result['model']
             plan = twin_model_bridge.flatten(model)

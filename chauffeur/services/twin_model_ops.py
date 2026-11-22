@@ -56,11 +56,11 @@ def _batch_preflight(model, members):
         if not isinstance(value, dict):
             return
         scope = value.get('building')
-        if scope is not None and scope not in buildings:
+        if scope is not None and (not isinstance(scope, str) or scope not in buildings):
             raise Refused('Choose an existing fixture building and level.')
         if value.get('level') is not None and not present(value['level'], scope):
             raise Refused('Choose an existing fixture building and level.')
-        anchors = value.get('anchors') or []
+        anchors = value.get('anchors') if isinstance(value.get('anchors'), list) else []
         attachments = [a.get('host') for a in anchors if isinstance(a, dict)]
         if isinstance(value.get('snap'), dict):
             attachments.append(value['snap'].get('host'))
@@ -92,10 +92,12 @@ def _batch_preflight(model, members):
             kind, scope = member.get('op'), member.get('building')
             if not isinstance(kind, str):
                 raise Refused('Choose an operation.')
-            if scope is not None and scope not in buildings:
+            if scope is not None and (not isinstance(scope, str) or scope not in buildings):
                 raise Refused('That building is missing.')
             name = member.get('list')
             if name is not None and kind in (*_SITE_OPS, 'set_object', 'make_yard_room'):
+                if not isinstance(name, str):
+                    raise Refused('Choose a site list.')
                 if kind not in ('add_site_item', 'add_site_shape'):
                     value = model['site'].get(name, [])
                     rows = value if isinstance(value, list) else [value] if isinstance(value, dict) else []
@@ -105,6 +107,8 @@ def _batch_preflight(model, members):
                         raise Refused('That site item is missing.')
                 continue
             if kind in ('update_light_fixture', 'delete_light_fixture'):
+                if not isinstance(member.get('entity_id'), str):
+                    raise Refused('Choose a light entity.')
                 if not any(f['id'] == member.get('id') for f in model.get('light_fixtures', {}).get(member.get('entity_id'), [])):
                     raise Refused('That light fixture is missing.')
                 fixture_targets(member.get('change'))
@@ -135,11 +139,14 @@ def _batch_preflight(model, members):
                        if member.get(k) is not None]
             if 'id' in member and not kind.startswith(('add_', 'draw_')):
                 targets.append(member['id'])
-            targets.extend(member.get('pieces') or [])
-            if kind == 'roof_over':
-                targets.extend(member.get('rooms') or [])
-            if kind == 'move_joints':
-                targets.extend(j.get('joint') for j in member.get('joints', []) if isinstance(j, dict))
+            # Malformed containers belong to their per-piece validators. Do
+            # not iterate them here or disguise a programming error as input.
+            if isinstance(member.get('pieces'), list):
+                targets.extend(member['pieces'])
+            if kind == 'roof_over' and isinstance(member.get('rooms'), list):
+                targets.extend(member['rooms'])
+            if kind == 'move_joints' and isinstance(member.get('joints'), list):
+                targets.extend(j.get('joint') for j in member['joints'] if isinstance(j, dict))
             for source in (member.get('host'), member.get('target')):
                 if isinstance(source, dict):
                     targets.extend(source[k] for k in ('wall', 'roof', 'floor', 'ceiling', 'room', 'porch', 'stair', 'item', 'opening', 'level', 'dormer', 'building') if isinstance(source.get(k), str))
@@ -149,7 +156,7 @@ def _batch_preflight(model, members):
             for pid in targets:
                 if not present(pid, scope):
                     raise Refused(f'That piece is missing: {pid}.')
-        except (ValueError, TypeError, KeyError) as exc:
+        except ValueError as exc:
             raise BatchRefused(index, member, exc) from exc
 
 
@@ -176,7 +183,7 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
                 raise Refused('Choose a single operation; batches cannot be nested.')
             return apply_member(value, member, ha_catalogue=ha_catalogue, _normalized=normalized,
                                 _batch_inplace=inplace)
-        except (ValueError, TypeError, KeyError) as exc:
+        except ValueError as exc:
             raise BatchRefused(index, member, exc) from exc
 
     # Preserve exactly the single operation's result, words and no-op refusal.
@@ -184,7 +191,7 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
         return checked(model, members[0], 0, original)
     _batch_preflight(original[0], members)
 
-    references = {}
+    references, fixture_authors = {}, {}
 
     def compose(inplace):
         from services import twin_fixtures
@@ -199,7 +206,9 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
                     continue
             work, _ = checked(work, member, index, (work, []), inplace)
             if inplace:
-                twin_fixtures.remember_batch_references(work, member, references)
+                fixture_id = twin_fixtures.remember_batch_references(work, member, references)
+                if fixture_id is not None:
+                    fixture_authors[fixture_id] = index
             deleted |= member.get('op') == 'delete'
         return work
 
@@ -209,19 +218,33 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
         twin_plan.record_compose_overrides(original[0], work, _inplace=True)
         _finish_model(original[0], work, _references=references)
         from services import twin_fixtures, twin_effect_fixtures
-        edited = {m.get('id') for m in members if m.get('op') in ('update_light_fixture', 'update_effect_fixture')}
         for rows in [*work.get('light_fixtures', {}).values(), work.get('effect_fixtures', [])]:
             for fixture in rows:
-                if fixture['id'] in edited:
+                author = fixture_authors.get(fixture['id'])
+                if author is None:
+                    continue
+                if fixture['ref'] == 'floor':
+                    building = next((b for b in work['buildings'] if b['id'] == fixture['building']), None)
+                    if building is None or not any(l['id'] == fixture['level'] for l in building['levels']):
+                        # A later deletion may deliberately orphan a previously
+                        # valid placement, just as sequential edits do.
+                        continue
+                try:
                     twin_fixtures._in_lot(work, twin_effect_fixtures.placement(fixture) if fixture['id'].startswith('effect:') else fixture)
+                except ValueError as exc:
+                    raise BatchRefused(author, members[author], exc) from exc
         error = twin_terrain.crossing_error(work)
         if error:
             raise Refused(error)
-    except ValueError as exc:
+    except BatchRefused:
+        raise
+    except ValueError:
         # The normal path does no repeated whole-house checks. On refusal only,
         # replay the old validator path to name the first offending member.
-        compose(False)
-        raise BatchRefused(len(members) - 1, members[-1], exc) from exc
+        # Its validators name the failing member. If they all accept (for
+        # example an unrelated pre-existing terrain crossing), keep their
+        # result rather than inventing a refusal against the last member.
+        work = compose(False)
     return work, 'Applied the changes.'
 
 
@@ -480,7 +503,7 @@ def _weld_move(building, moved):
         building['joints'] = [j for j in building['joints'] if j['id'] not in replacements]
 
 
-def _promote_crossings(building, op, actor):
+def _promote_crossings(building, op, actor, *, _replacements=None):
     kind = op['op']
     if kind == 'move_joints':
         moves = op.get('joints')
@@ -491,7 +514,12 @@ def _promote_crossings(building, op, actor):
         for move in moves:
             if not isinstance(move, dict):
                 raise Refused('Choose a corner and its destination.')
-            targets[move.get('joint')] = _point(move.get('to'))
+            if not isinstance(move.get('joint'), str):
+                raise Refused('Choose a corner id.')
+            target = _point(move.get('to'))
+            if move['joint'] in targets and targets[move['joint']] != target:
+                raise Refused('A shared corner must have one destination.')
+            targets[move['joint']] = target
         # Read walls can still be whole at a derived crossing. Every selected
         # wall has both endpoints in this set; its new crossing must undergo
         # the same transform, rather than staying behind when we split it.
@@ -499,8 +527,13 @@ def _promote_crossings(building, op, actor):
                  and all(joint in targets for joint in wall['joints'])]
         for move in moves:
             single = {'op': 'move_joint', 'joint': move.get('joint')}
-            _promote_crossings(building, single, actor)
+            replacements = {}
+            _promote_crossings(building, single, actor, _replacements=replacements)
             move['joint'] = single['joint']
+            # A promotion can prune a different selected read overshoot. Keep
+            # every queued destination attached to its surviving corner.
+            for pending in moves:
+                pending['joint'] = replacements.get(pending['joint'], pending['joint'])
         for joint in building['joints']:
             if joint['id'] in positions:
                 continue
@@ -562,15 +595,23 @@ def _promote_crossings(building, op, actor):
         op['joint'] = replacements.get(op['joint'], op['joint'])
     _split_drawing(building, actor)
     referenced = {j for wall in building['walls'] for j in wall['joints']}
-    if kind == 'move_joint' and op['joint'] not in referenced and op['joint'] in positions:
-        # The dragged corner was a read overshoot's free end, pruned with its
-        # short tail (R15): the drag moves the crossing that now ends the wall.
-        start = positions[op['joint']]
-        survivors = [j for j in set(replacements.values()) if j in referenced]
-        nearest = min(survivors, key=lambda j: math.dist(_positions(building, level)[j], start),
+    # Any selected corner can be the free end of a read overshoot pruned by
+    # this promotion, including a later destination in move_joints (R15).
+    survivors = [j for j in set(replacements.values()) if j in referenced]
+    current_positions = _positions(building, level)
+    pruned = {}
+    for jid, start in positions.items():
+        if jid in referenced:
+            continue
+        nearest = min(survivors, key=lambda j: math.dist(current_positions[j], start),
                       default=None)
-        if nearest is not None and math.dist(_positions(building, level)[nearest], start) < 1.0 + _EPS:
-            op['joint'] = nearest
+        if nearest is not None and math.dist(current_positions[nearest], start) < 1.0 + _EPS:
+            pruned[jid] = nearest
+    if kind == 'move_joint':
+        op['joint'] = pruned.get(op['joint'], op['joint'])
+    if _replacements is not None:
+        _replacements.update(replacements)
+        _replacements.update(pruned)
     building['joints'] = [j for j in building['joints'] if j['id'] in referenced]
     # A perpendicular wall drag carries every promoted point on that wall,
     # including the shared endpoint of a discarded read overshoot (R15/R38).

@@ -25,9 +25,10 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
     const plan = getPlan(), members = getMembers();
     if (members.length > 1) {
       const keys = JSON.stringify(members.map(r => [r.kind, r.buildingId ?? r.building ?? null, r.pieceId ?? r.id, r.entity_id ?? null, !!isPickable(r)]));
-      if (!groupCache || groupCache.plan !== plan || groupCache.keys !== keys || groupCache.tool !== tool) {
+      const boundsRevision = view.selectionBoundsRevision;
+      if (!groupCache || groupCache.plan !== plan || groupCache.keys !== keys || groupCache.tool !== tool || groupCache.boundsRevision !== boundsRevision) {
         const group = groupTransform(plan, members, tool, { boxes: view.selectionWorldBounds?.() || [], isPickable });
-        groupCache = { plan, keys, tool, record: group && { group, piece: { id: '__selection__' } } };
+        groupCache = { plan, keys, tool, boundsRevision, record: group && { group, piece: { id: '__selection__' } } };
       }
       return groupCache.record;
     }
