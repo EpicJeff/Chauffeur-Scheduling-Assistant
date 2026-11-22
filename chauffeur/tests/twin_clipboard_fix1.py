@@ -106,18 +106,23 @@ await test('round2_n2_cut_window_undo_paste_uses_clear_spot_in_one_batch',async(
  const op=r.posts[1].ops[0];assert.notEqual(op.id,p.id);assert.ok(Math.abs(op.at-p.at)>=p.width);
  assert.equal(op.wall,p.wall);assert.equal(r.posts.length,2);assert.match(r.status(),/1 piece received a new identity/);
 });
-await test('round2_n7_only_visible_focused_panel_text_defers_native_copy_cut',async()=>{
- const panel=document.createElement('div');panel.id='editor-dock';const area=document.createElement('div'),text=document.createElement('p'),scene=document.createElement('div');
- area.tabIndex=0;scene.tabIndex=0;area.append(text);panel.append(area);document.body.append(panel,scene);
+await test('round2_n7_visible_panel_text_defers_native_copy_cut_whatever_has_focus',async()=>{
+ const panel=document.createElement('div');panel.id='editor-dock';const text=document.createElement('p'),scene=document.createElement('div'),sceneText=document.createElement('p');
+ const bar=document.createElement('div');bar.id='editor-statusbar';const status=document.createElement('span');bar.append(status);
+ scene.tabIndex=0;scene.append(sceneText);panel.append(text);document.body.append(panel,scene,bar);
  const old=globalThis.getSelection;let called=[];const c={copy:()=>called.push('copy'),cut:()=>called.push('cut')};
- globalThis.getSelection=()=>({isCollapsed:false,anchorNode:text,focusNode:text});
+ const select=(a,f=a)=>{globalThis.getSelection=()=>({isCollapsed:false,anchorNode:a,focusNode:f});};
  const press=key=>{let prevented=false;clipboardKey({key,ctrlKey:true,preventDefault(){prevented=true;}},c);return prevented;};
  try{
-  area.focus();for(const key of ['c','x'])assert.equal(press(key),false);assert.deepEqual(called,[]);
-  scene.focus();for(const key of ['c','x'])assert.equal(press(key),true);assert.deepEqual(called,['copy','cut']);
-  area.focus();panel.hidden=true;assert.equal(press('c'),true);assert.deepEqual(called,['copy','cut','copy']);
+  // Properties text is not focusable: a mouse selection leaves focus on the scene or body.
+  scene.focus();select(text);for(const key of ['c','x'])assert.equal(press(key),false);assert.deepEqual(called,[]);
+  select(status);assert.equal(press('c'),false,'status line text copies natively');assert.deepEqual(called,[]);
+  select(sceneText);for(const key of ['c','x'])assert.equal(press(key),true);assert.deepEqual(called,['copy','cut']);
+  select(text,sceneText);assert.equal(press('c'),true,'a selection leaving the panels copies pieces');
+  select(text);panel.hidden=true;assert.equal(press('c'),true,'hidden panel text is stale');
   panel.hidden=false;globalThis.getSelection=()=>({isCollapsed:false});assert.equal(press('c'),true,'stale range with no live node');
- }finally{globalThis.getSelection=old;panel.remove();scene.remove();area.blur();}
+  assert.deepEqual(called,['copy','cut','copy','copy','copy']);
+ }finally{globalThis.getSelection=old;panel.remove();scene.remove();bar.remove();scene.blur();}
 });
 await test('round2_n3_n4_n5_shared_cards_hide_ineffective_fields',async()=>{
  window.twinObjectSchema=input.objectSchema;

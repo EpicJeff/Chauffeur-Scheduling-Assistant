@@ -510,12 +510,19 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
     } };
 }
 
+// Text a person selected with the mouse in the editor's panels is copied as
+// text. Properties text is not focusable, so focus is not required; a stale or
+// invisible selection still lets Ctrl+C copy the selected pieces.
+const TEXT_PANELS = '#editor-dock, #editor-dialog, #editor-statusbar';
+function visibleTextNode(node) {
+  const element = node?.nodeType === 3 ? node.parentElement : node;
+  return !!(element?.closest?.(TEXT_PANELS) && !element.closest('[hidden], .hidden, [inert]')
+    && element.getClientRects?.().length);
+}
 function focusedTextSelection() {
-  const selected = globalThis.getSelection?.(), focused = document.activeElement;
-  if (!selected || selected.isCollapsed || !focused?.closest?.('#editor-dock, #editor-dialog')) return false;
-  const node = selected.anchorNode?.nodeType === 3 ? selected.anchorNode.parentElement : selected.anchorNode;
-  return !!(node && focused.contains(node) && focused.contains(selected.focusNode)
-    && !node.closest?.('[hidden], .hidden, [inert]') && node.getClientRects?.().length);
+  const selected = globalThis.getSelection?.();
+  if (!selected || selected.isCollapsed) return false;
+  return visibleTextNode(selected.anchorNode) && visibleTextNode(selected.focusNode);
 }
 
 export function clipboardKey(event, clipboard, { dialogOpen = false, canEdit = true } = {}) {
