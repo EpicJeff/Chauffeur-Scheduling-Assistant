@@ -308,7 +308,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
         : disabledReason ? disabledReason
         : !permissionChecked ? 'Checking baked lighting…' : !allowed ? 'Only a parent can bake lighting'
         : !manifestRead ? 'Checking baked lighting…' : !lights.length ? 'Lighting is up to date'
-        : stale.length || inspectOnly && editorManifest?.complete !== true ? editedRound ? 'Lighting out of date since your edits' : `Lighting out of date: ${stale.length} lights` : 'Lighting is up to date';
+        : stale.length || inspectOnly && editorManifest?.complete !== true ? editedRound ? 'Lighting out of date since your edits' : `Lighting out of date: ${stale.length} light${stale.length === 1 ? '' : 's'}` : 'Lighting is up to date';
       if (blockReason) status.textContent = blockReason;
       meter.hidden = !running || !progress.total; meter.max = progress.total || 1; meter.value = progress.done;
       startButton.hidden = !allowed || !(stale.length || inspectOnly && lights.length && editorManifest?.complete !== true) || running || !!failure || resumePending;

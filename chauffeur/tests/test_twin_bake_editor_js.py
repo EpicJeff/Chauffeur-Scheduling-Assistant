@@ -65,7 +65,7 @@ await check('manual_light_edit_stales_only_that_light_without_restart',async()=>
   desk.view.live={layout:()=>liveLayout([k1,k2,h1,{...c1,at:[c1.at[0]+1,c1.at[1],c1.at[2]]}])};
   await desk.controller.refresh();await sleep(100);
   assert.equal(desk.controller.state().key,key);assert.deepEqual(desk.controller.state().stale,['c1']);
-  assert.equal(outputOf(desk).textContent,'Lighting out of date: 1 lights');
+  assert.equal(outputOf(desk).textContent,'Lighting out of date: 1 light');
   assert.equal(desk.server.writes(since).length,0);
   await desk.controller.start();assert.deepEqual(desk.controller.state().baked.slice(4),['c1']);
  }finally{desk.controller.stop();}

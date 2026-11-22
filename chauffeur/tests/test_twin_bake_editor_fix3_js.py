@@ -40,7 +40,7 @@ await check('ha_move_at_same_round_stales_one_and_press_bakes_exact_key_changes'
   const key=d.controller.state().key,before=structuredClone(d.server.manifests.get(key));
   const moved=[k1,k2,h1,{...c1,at:[c1.at[0]+1,...c1.at.slice(1)]}];
   d.view.live={layout:()=>liveLayout(moved)};await d.controller.refresh();
-  assert.deepEqual(d.controller.state().stale,['c1']);assert.equal(output(d).textContent,'Lighting out of date: 1 lights');
+  assert.deepEqual(d.controller.state().stale,['c1']);assert.equal(output(d).textContent,'Lighting out of date: 1 light');
   const since=d.server.calls.length;await d.controller.start();
   const expected=Object.entries(d.controller.packing().entries).filter(([id,e])=>!((e.key===before.lights[id]?.key)&&(e.location===before.lights[id]?.location)&&(e.channel===before.lights[id]?.channel))).map(([id])=>id);
   assert.deepEqual(d.controller.state().baked.slice(4),expected);assert.deepEqual(expected,['c1']);assert.equal(output(d).textContent,'Lighting is up to date');
