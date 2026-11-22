@@ -31,7 +31,7 @@ Test hooks assumed (under ?test=1):
                                        now, in the order they were drawn
   window.__editor.build(), followBuild(id)  (exist today)
 
-DOM assumed: #editor-chip, the status chip in #editor-genbar; its text
+DOM assumed: #editor-chip, the status chip in #editor-top (since v2.499.974); its text
 says Working or Waiting on you, `$x.xx so far` and, while a build runs,
 `about $x.xx`; the Stop button sits inside it (a button whose text is Stop).
 api/house/editor/state carries cost.total (the ledger, today) and
@@ -264,8 +264,13 @@ def _quiet_engine():
 
 def _fresh(**reader_options):
     """A pool house with no pieces again and a fresh stub; returns the stub."""
-    from services import twin_store as ts
+    from services import twin_store as ts, twin_build as tb
     _quiet_engine()
+    # A stopped build from an earlier scenario is still the latest of this
+    # generation, and the editor rightly shows the generation bar for it.
+    # A fresh scenario starts with no build to follow.
+    with tb._LOCK:
+        tb._BUILDS.clear()
     ts.push_round(_strip_pool_house(H.household_plan()), 'build')
     return _install(LiveStreamReader(**reader_options))
 
@@ -407,8 +412,8 @@ def _stop_button(page):
 
 
 def _chip_text(page):
-    chip = page.locator('#editor-genbar #editor-chip')
-    check(chip.count() == 1, '#editor-chip, the status chip, is missing from the generation bar')
+    chip = page.locator('#editor-top #editor-chip')
+    check(chip.count() == 1, '#editor-chip, the status chip, is missing from the top bar')
     return ' '.join(chip.text_content().split())
 
 
@@ -601,7 +606,8 @@ def scenario_stop_is_visible_while_working():
             check('Working' not in text and page.locator('#editor-chip button:text-is("Stop"):visible').count() == 0,
                   ('no build runs yet: no Working, no Stop', text))
             bid = _start(page)
-            check(page.locator('#editor-genbar #editor-chip').is_visible(), 'the running build shows its generation status')
+            _wait(page, lambda: page.locator('#editor-genbar').is_visible() and page.locator('#editor-top #editor-chip').is_visible(),
+                  5, 'the running build shows the generation bar and its status chip')
             chip_stop = page.locator('#editor-chip button:text-is("Stop")')
             _wait(page, lambda: 'Working' in _chip_text(page) and chip_stop.first.is_visible(), 5,
                   ('a running build shows Working with Stop inside the chip', _chip_text(page)))

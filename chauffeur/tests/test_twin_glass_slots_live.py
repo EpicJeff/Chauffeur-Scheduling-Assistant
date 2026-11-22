@@ -234,16 +234,23 @@ def scenario_L3_siding_mode_flip_drops_and_restores_finished_bake():
         twin.route('**/api/house/live', lambda route: route.fulfill(json=live))
         errors = []
         twin.on('pageerror', lambda error: errors.append(str(error)))
-        twin.goto(served.url('house/twin?tier=high&test=1'))
-        twin.wait_for_function('() => window.__twin?.ready && window.__twin.bake', timeout=90000, polling=500)
+        # Since v2.499.974 lighting bakes from the editor, by button only; the
+        # viewer shows bake status and never bakes.
+        twin.goto(served.url('house/editor?tier=high&test=1'))
+        twin.wait_for_function('() => window.__editor?.ready && window.__twin?.ready && window.__twin.bake',
+                               timeout=90000, polling=500)
+        if twin.locator('#editor-dialog #place-view').is_visible():
+            twin.locator('#place-close').click()
+        twin.get_by_role('button', name='Bake lighting', exact=True).click(timeout=90000)
+        # The editor uploads the bake; the viewer below is what holds its pages.
         twin.wait_for_function('''() => {
             const b = window.__twin.bake;
-            return !b.state().baking && !b.state().error && b.fresh().includes('slot-bake-light') && !!b.held();
+            return !b.state().baking && !b.state().error && b.fresh().includes('slot-bake-light');
         }''', timeout=900000, polling=500)
         old_key = twin.evaluate('() => window.__twin.bake.state().key')
-        # Low downloads only, so the changed mode cannot race an automatic rebake.
         twin.goto(served.url('house/twin?tier=low&test=1'))
-        twin.wait_for_function('() => window.__twin?.ready && window.__twin.bake?.fresh().includes("slot-bake-light")', timeout=90000, polling=500)
+        twin.wait_for_function('() => window.__twin?.ready && window.__twin.bake?.fresh().includes("slot-bake-light") && !!window.__twin.bake.held()',
+                               timeout=90000, polling=500)
         assert twin.evaluate('() => window.__twin.bake.state().key') == old_key
         twin.screenshot(path=str(OUTPUT / 'L3-finished-bake-dark-wall.png'), full_page=True)
         # The rig's page owns its context, so the Library opens in a second one.

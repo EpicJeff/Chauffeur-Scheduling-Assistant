@@ -297,7 +297,8 @@ def scenario_shell_matches_the_mockup_regions():
         open_argyle(page)
         check(page.locator('#dock-pane-argyle #editor-agent').is_visible(), 'Argyle is reachable in its dock tab')
         page.click('#dock-tab-scene')
-        check('$' in page.locator('#editor-genbar #editor-chip').text_content(), 'generation cost stays in the generation bar')
+        # v2.499.974 moved the status chip to the top bar so lighting stays reachable without a build.
+        check('$' in page.locator('#editor-top #editor-chip').text_content(), 'generation cost stays in the status chip')
         check(not page.locator('#editor-genbar').is_visible(), 'manual editing hides the generation bar')
         bar = page.get_by_placeholder("Ask Argyle... (e.g. 'What is my driving schedule today?')")
         check(bar.count() == 0 or not bar.first.is_visible(), 'the app-wide command bar is hidden: the editor has its own Argyle panel')
@@ -946,7 +947,7 @@ def scenario_reset_spend_needs_the_word_reset():
         box = page.locator('input').last
         box.fill('reset')
         page.get_by_role('button', name='Reset', exact=True).click()
-        page.wait_for_function("() => document.querySelector('#editor-genbar #editor-chip').textContent.includes('$0.00')", timeout=10000)
+        page.wait_for_function("() => document.querySelector('#editor-top #editor-chip').textContent.includes('$0.00')", timeout=10000)
     check(twin_cost.total() == 0, twin_cost.total())
 
 
