@@ -195,19 +195,18 @@ if (which === 'chip_words_follow_state') {
     assert.match(text, /\$1\.50 so far/, 'the spend stays in view with no build: ' + text);
   }
   console.log('  ok chip_words_follow_state');
-} else if (which === 'chip_says_when_lights_wait_to_rebake') {
-  // Ruling B15: the editor never bakes; the desk's 3D house does. The chip says when the
-  // lights wait for it (the editor state's bake: {waiting}).
-  let text = await say({state: null, pause: null, cost: 0, estimate: null, bake: {waiting: true}});
-  assert.match(text, /Lights wait to re-bake/, 'the chip says the lights wait: ' + text);
-  text = await say({state: 'running', pause: null, cost: 1, estimate: 2, bake: {waiting: true}});
-  assert.match(text, /\bWorking\b/, 'alongside a running build: ' + text);
-  assert.match(text, /Lights wait to re-bake/, text);
-  for (const bake of [{waiting: false}, null, undefined]) {
-    text = await say({state: null, pause: null, cost: 0, estimate: null, bake});
-    assert.doesNotMatch(text, /re-bake/, 'nothing to say when the bake is current or never ran: ' + JSON.stringify(bake) + ' ' + text);
-  }
-  console.log('  ok chip_says_when_lights_wait_to_rebake');
+ } else if (which === 'chip_preserves_manual_bake_controls') {
+  assert.ok(chip.bakeHost && host.children.includes(chip.bakeHost), 'the bake runtime mounts inside the status chip');
+  chip.bakeHost.textContent = 'Lighting out of date: 4 lights';
+  let text = await say({state: null, cost: 0, bake: {waiting: false}});
+  assert.match(text, /Lighting out of date: 4 lights/);
+  chip.bakeHost.textContent = 'Baking lights 3 of 17';
+  text = await say({state: 'running', cost: 1, estimate: 2, bake: {waiting: true}});
+  assert.match(text, /Working/);assert.match(text, /Baking lights 3 of 17/);
+  chip.bakeHost.textContent = 'Lighting is up to date';
+  text = await say({state: 'done', cost: 1, estimate: null});
+  assert.match(text, /Lighting is up to date/);
+  console.log('  ok chip_preserves_manual_bake_controls');
 } else {
   let text = await say({state: 'running', pause: null, cost: 1.234, estimate: 0.5});
   assert.match(text, /\$1\.23 so far/, 'spend shows as $x.xx so far: ' + text);
@@ -229,7 +228,7 @@ if (which === 'chip_words_follow_state') {
 process.exit(0);
 """
 
-TESTS = ['chip_words_follow_state', 'spend_and_estimate_format', 'chip_says_when_lights_wait_to_rebake']
+TESTS = ['chip_words_follow_state', 'spend_and_estimate_format', 'chip_preserves_manual_bake_controls']
 
 
 def run():

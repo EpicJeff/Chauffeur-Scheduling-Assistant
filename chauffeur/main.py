@@ -2071,10 +2071,11 @@ def kitchen_page(request: Request):
 @app.get("/house/twin")
 def house_twin_page(request: Request):
     """Hidden plan-driven preview; the existing House remains the front door."""
-    from services import twin_materials, twin_objects, twin_site
+    from services import auth, twin_materials, twin_objects, twin_site
     twin_site.start_bearing_job()
     return templates.TemplateResponse(request=request, name="house_twin.html",
-                                      context={"twin_manifest": twin_materials.page_manifest(), "twin_object_schema": twin_objects.SCHEMA})
+                                      context={"twin_manifest": twin_materials.page_manifest(), "twin_object_schema": twin_objects.SCHEMA,
+                                               "twin_bake_parent": auth.identify(request.headers, request.query_params)['tier'] == auth.PARENT})
 
 
 @app.get("/house/editor")

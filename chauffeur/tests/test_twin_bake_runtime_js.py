@@ -79,7 +79,8 @@ async function context(tier = 'high', sharedServer = null, placed = null, extra 
     : server.api(path, init);
   const api = extra.api ? (path,init)=>extra.api(path,init,defaultApi) : defaultApi;
   const host = extra.host || document.getElementById('twin-controls');
-  const controller = mountBake(view, out.root, { host, layout: job.layout, api, ...(extra.poll !== undefined ? { poll: extra.poll } : {}) });
+  const controller = mountBake(view, out.root, { host, mode: extra.mode || 'auto', parent: extra.parent || false,
+    disabledReason: extra.disabledReason || '', layout: job.layout, api, ...(extra.poll !== undefined ? { poll: extra.poll } : {}) });
   return { view, controller, server, out, renderer, host };
 }
 let passed = 0, ran = 0, published = null;

@@ -1,7 +1,7 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { packBanks, fingerprint, atlasMesh, heightfieldExtent, prepareReceivers } from './atlas.js';
 import { authoredGeometry } from './geometry_key.js';
-import { bakeSource } from './source.js';
+import { bakeSource, bakeReceiverRoots } from './source.js';
 import { bindReceivers } from './bindings.js';
 
 export function covered(root) {
@@ -70,7 +70,7 @@ export function applyAtlas(data, root, layout) {
   const room = { ...data.room, charts: charts(data.room.charts) };
   room.packBanks = (lights, slots) => packBanks(room, lights, layout.room, slots);
   const atlas={key:data.key,room};
-  if(source!==root){atlas.sourceRoot=source;bindReceivers(atlas,prepareReceivers(root,room.plan));}
+  if(source!==root){atlas.sourceRoot=source;bindReceivers(atlas,bakeReceiverRoots(root).flatMap(node=>prepareReceivers(node,room.plan)));}
   return atlas;
 }
 

@@ -83,7 +83,8 @@ async function exists(api, url) {
 
 export function createBaker(view, { renderer, atlas, layout, lights, api: request, codec, force = false, forceRound = null,
   round = view.round ?? null, owner = null }) {
-  const plan = view.plan, enabled = ['high', 'max'].includes(view.tier);
+  const plan = view.bakePlan || view.plan, enabled = ['high', 'max'].includes(view.tier);
+  const bakeView = Object.create(view); bakeView.plan = plan;
   let packed, assignmentHistory;
   const path = `api/house/bakes/${atlas.key}`;
   const who = owner || [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
@@ -107,7 +108,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
   // (same key) until its new bake lands, so panels never drop to real-time mid-run (M6).
   let activeForce = forceRound || (force ? [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('') : null);
   let forcePending = !!activeForce;
-  const valid = () => !cancelled && view.plan === plan;
+  const valid = () => !cancelled && (view.bakePlan || view.plan) === plan;
   const readManifest = async () => {
     const response = await api(path);
     if (response.status === 404) return null;
@@ -193,7 +194,11 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
     for (const p of pages) {
       const page = p;
       const mine = charts.filter(c => c.page === p);
-      const pixels = await renderPage(view, renderer, mine, size, light, layout, atlas, {deferBounce:true, deferSumEncoding:true, checkpoint});
+      // A live/manifest read can span the start of an editor gesture. Check
+      // again before even clearing a render target, as well as between samples.
+      await view.bake?.idle?.();
+      if (!valid()) return null;
+      const pixels = await renderPage(bakeView, renderer, mine, size, light, layout, atlas, {deferBounce:true, deferSumEncoding:true, checkpoint});
       await checkpoint();
       if (!valid()) return null;
       rendered.push({page, charts:mine, ...(light.kind === 3 ? pixels : {bytes:pixels})});
@@ -254,7 +259,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
     }
     delete next.sky; // Ignore legacy sky metadata when publishing room lights.
     next.lights[id] = { ...packed.entries[id], fill, ...(activeForce ? { forceRound: activeForce } : {}) };
-    // Which round this desk baked and whether it is whole (Ruling B15: the editor's chip).
+    // Which house round was baked and whether it is whole.
     next.round = round;
     next.complete = lights.every(l => !packed.entries[l.device] ||
       next.lights[l.device]?.key === packed.entries[l.device].key &&

@@ -2,7 +2,7 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { reachLights } from './reach.js';
 import { fingerprint, authoredGeometry, withoutSurfaceMaterials } from './geometry_key.js';
-import { bakeSource } from './source.js';
+import { bakeSource, bakeReceiverRoots } from './source.js';
 import { bindReceivers } from './bindings.js';
 export { fingerprint } from './geometry_key.js';
 
@@ -761,7 +761,7 @@ export function buildAtlas(group, plan, { room } = {}) {
   const source = bakeSource(group);
   if (source !== group) {
     const atlas = buildAtlas(source, plan, {room});
-    const meshes=prepareReceivers(group,plan);
+    const meshes=bakeReceiverRoots(group).flatMap(root=>prepareReceivers(root,plan));
     atlas.sourceRoot=source;
     return bindReceivers(atlas,meshes);
   }

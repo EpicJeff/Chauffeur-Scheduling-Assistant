@@ -9,6 +9,15 @@ const providers = new WeakMap(), sources = new WeakMap(), madeRoots = new WeakSe
 // parents above it: the yard is drawn under the twin's 'site' group, while its
 // neutral copy sits directly in the bake source.
 export const isBakeRoot = node => providers.has(node) || madeRoots.has(node);
+// The editor binds physical finishes against a detached, viewer-shaped house.
+// Its focused/cut/selected scene is presentation, not a physical material input.
+export function bakeReceiverRoots(root) {
+  const receiverRoots = providers.get(root)?.receiverRoots;
+  if (!receiverRoots) return [root];
+  const roots = receiverRoots();
+  for (const node of roots) { if (node !== root) madeRoots.add(node); node.updateMatrixWorld(true); }
+  return roots;
+}
 // Default kit finishes already have the neutral topology. Reuse their buffers
 // through detached clones instead of generating a second house on a cold bake.
 export function defaultBuildingFinishes(plan,kit) {
@@ -34,7 +43,7 @@ export function cloneBakeGeometry(root,children=root.children) {
   for(const child of new Set(children))if(child.parent===root && !providers.has(child))group.add(cloneWithoutProviders(child));
   return group;
 }
-export function registerBakeSource(root, make, {extras=true,children=root.children}={}) { providers.set(root, {make,extras,children:new Set(children)}); }
+export function registerBakeSource(root, make, {extras=true,children=root.children,receiverRoots=null,dispose=null}={}) { providers.set(root, {make,extras,receiverRoots,dispose,children:new Set(children)}); }
 export function bakeSource(root) {
   const entries = [];
   root.updateMatrixWorld(true);
@@ -55,12 +64,15 @@ export function bakeSource(root) {
       copy.matrixAutoUpdate=false;copy.matrix.copy(child.matrixWorld);source.add(copy);
     }
   }
-  source.updateMatrixWorld(true);filterAlphaSource(source,root);sources.set(root, {source,signature});
+  source.updateMatrixWorld(true);
+  for (const receivers of bakeReceiverRoots(root)) filterAlphaSource(source,receivers);
+  sources.set(root, {source,signature});
   return source;
 }
 
 export function releaseBakeSource(root) {
-  const saved=sources.get(root);if(!saved)return;
+  const saved=sources.get(root);
+  if(!saved) { providers.get(root)?.dispose?.(); return; }
   sources.delete(root);
   const retained=new Set();root.traverse(o=>{for(const m of o.material?[].concat(o.material):[])retained.add(m);});
   const materials=new Set(),geometries=new Set();
@@ -69,4 +81,5 @@ export function releaseBakeSource(root) {
     for(const m of o.material?[].concat(o.material):[])if(!retained.has(m))materials.add(m);
   });
   geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());
+  providers.get(root)?.dispose?.();
 }

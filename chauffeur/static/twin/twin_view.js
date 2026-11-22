@@ -21,6 +21,9 @@ import { mountIdle } from './live/idle.js';
 import { mountGlanceSettings } from './live/glance_settings.js';
 import { mountEnergySettings } from './live/energy_settings.js';
 import { mountBake } from './bake/runtime.js';
+import { registerBakeSource } from './bake/source.js';
+import { withoutSurfaceMaterials } from './bake/geometry_key.js';
+import { atlasMesh } from './bake/atlas.js';
 import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from './sky/ephemeris.js';
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
 import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/atmosphere.js';
@@ -50,11 +53,11 @@ import { freezeViewerMatrices } from './static_matrices.js';
 export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, round = null, bake = true, site = {}, stage = null } = {}) {
   kit = kit || {};
   kit.manifest ||= manifest(kit);
-  // Ruling B15: only the 3D house view bakes lights. The editor's scene is the house
-  // mid-edit (a focused floor, faded floors, editable geometry), so it never bakes.
+  // Owner decision 2026-11-21 supersedes B15: the editor bakes on request;
+  // the viewer only draws stored lighting. Both use the neutral bake source.
   const editor = !!el.closest?.('.editor-shell');
   const pieceVisibility = editor ? createPieceVisibility() : null;
-  const bakes = bake && !editor;
+  const bakes = bake !== false;
   const probe = document.createElement('canvas').getContext('webgl2');
   if (!probe) throw new Error('This screen needs WebGL 2 to show the house.');
   tier = new URLSearchParams(location.search).get('tier') || tier;
@@ -148,7 +151,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   syncStage(plan);
   scene.add(sky.object);
-  let twin = null, disposed = false, revision = 0;
+  let twin = null, disposed = false, revision = 0, bakeSignature = null;
   let rebuildWork = null;
   const materialBindings = new Map();
   scene.environment = environment;
@@ -1039,7 +1042,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         sun.shadow.needsUpdate = true;
       }
       updateTime();
-      if (!on && twin) startBake();
+      if ((!on || editor) && twin) startBake();
     },
     setSite(next) {
       if (JSON.stringify(site) === JSON.stringify(next || {})) return;
@@ -1146,7 +1149,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const before = plan.buildings.find(b => b.id === buildingId), after = flat.buildings.find(b => b.id === buildingId);
       if (!group || !before || !after) return;
       pieceVisibility?.restore();
-      view.bake?.stop();
+      // A drag preview is reversible. Its detached bake keeps the authored plan
+      // and waits on the gesture; committing it calls syncBake below.
+      if (!editor || keep) view.bake?.stop();
       // Focused levels have per-piece meshes (R42); unfocused levels retain
       // material batches. Both update only owned geometry, without changing focus.
       // Keep selection materials alive throughout a gesture. Replacing every
@@ -1429,6 +1434,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       startBake();
       return { path: 'deform', selection };
     },
+    syncBake() { if (bakeSignature !== JSON.stringify(plan) || !view.bake?.active?.()) startBake(); },
     rebuild(nextPlan, { preserveYard = false, timing = null, yardLater = false, force = false } = {}) {
       const work = (async () => {
       const version = ++revision; view.ready = false;
@@ -1763,8 +1769,53 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   function startBake() {
     view.bake?.stop();
-    if (!bakes || state.unlit) return;
-    mountBake(view, twin.root, { host: document.getElementById('twin-controls') });
+    if (!bakes || state.unlit && !editor) return;
+    view.bakePlan = plan;
+    bakeSignature = JSON.stringify(plan);
+    if (editor) {
+      // Re-read the final plan after in-place deforms. Never clone the edited
+      // scene: it contains sheets, handles and temporarily ghosted finishes.
+      // The viewer's full-wall topology preserves its existing atlas keys.
+      const bakePlan = plan;
+      let physical = null, physicalYard = null;
+      const yardMaterials = new Set();
+      const copyReceivers = node => {
+        const original = selectedMaterials.get(node) || faded.get(node) || node.material;
+        const shown = node.material;
+        node.material = original;
+        const receives = atlasMesh(node);
+        node.material = shown;
+        const children = node.children.map(copyReceivers).filter(Boolean);
+        if (!receives && !children.length) return null;
+        // Skip trees, grass instances, props and editor layers entirely. Only
+        // receiving buffers are copied; authored materials remain shared.
+        const copy = receives ? node.clone(false) : new THREE.Group();
+        copy.name = node.name; copy.userData = { ...node.userData };
+        copy.position.copy(node.position); copy.quaternion.copy(node.quaternion); copy.scale.copy(node.scale);
+        if (receives) { copy.geometry = node.geometry.clone(); copy.material = original; yardMaterials.add(original); }
+        if (children.length) copy.add(...children);
+        return copy;
+      };
+      registerBakeSource(twin.root, () => buildTwin(withoutSurfaceMaterials(bakePlan), { ...kit, manifest: {} }, tier,
+        { viewing: true, bakeSource: true }).root, { extras: false,
+          receiverRoots: () => {
+            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true });
+            if (!physicalYard && yardGroup) {
+              physicalYard = copyReceivers(yardGroup) || new THREE.Group();
+              physicalYard.matrixAutoUpdate = false; physicalYard.matrix.copy(yardGroup.matrixWorld);
+            }
+            return [physical.root, ...(physicalYard ? [physicalYard] : [])];
+          },
+          dispose: () => {
+            if (physical) release(physical);
+            if (physicalYard) disposeObject(physicalYard, { keepMaterials: yardMaterials });
+            physical = physicalYard = null; yardMaterials.clear();
+          } });
+    }
+    const host = document.getElementById('twin-controls');
+    mountBake(view, twin.root, { ...(typeof bake === 'object' ? bake : {}),
+      host: editor ? bake.host : host, mode: editor ? 'manual' : 'readonly', display: !editor,
+      disabledReason: editor && state.unlit ? 'Switch from Unlit to bake lighting' : '', parent: host?.dataset.bakeParent === 'true' });
   }
   function applyLights() {
     if (!twin) return;

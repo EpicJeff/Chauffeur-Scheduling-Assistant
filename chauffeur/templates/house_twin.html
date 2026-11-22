@@ -89,12 +89,11 @@
     #twin-controls button[aria-pressed="true"] { background:var(--twinSelected); color:var(--twinSelectedText); border-color:var(--twinBorder); }
     #twin-controls button:hover, #twin-controls button:focus-visible { background:var(--twinHover); outline:2px solid var(--twinSelected); outline-offset:2px; }
     #twin-controls button[aria-pressed="true"]:is(:hover, :focus-visible) { background:var(--twinSelected); color:var(--twinSelectedText); }
-    #twin-bake-controls { max-width:100%; box-sizing:border-box; }
-    #twin-bake-controls output { align-self:center; padding:0 10px 0 4px; font-weight:500; white-space:normal; overflow-wrap:anywhere; min-width:0; }
+    #twin-bake-status { pointer-events:auto; flex-basis:100%; max-width:fit-content; font-weight:400; white-space:normal; overflow-wrap:anywhere; }
     /* A floor holding something that wants attention (an unlocked lock, an open door) wears the
        marker's attention colour, so it shows whichever floor is on screen. */
     #twin-views button[data-attention]::after { content:''; display:inline-block; width:9px; height:9px; margin-left:6px; border-radius:50%; background:var(--twinAttention); box-shadow:0 0 0 2px var(--twinAttentionRing); vertical-align:middle; }
-    #twin-tier, #twin-status, #twin-hud { padding:8px 12px; border:1px solid var(--twinBorder); border-radius:8px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:13px/1.4 system-ui; }
+    #twin-tier, #twin-status, #twin-hud, #twin-bake-status { padding:8px 12px; border:1px solid var(--twinBorder); border-radius:8px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:13px/1.4 system-ui; }
     #twin-hud { position:fixed; right:16px; bottom:calc(var(--panel-shelf-h, 0px) + 64px); z-index:46; pointer-events:none; }
     #twin-tier { position:fixed; right:16px; bottom:calc(var(--panel-shelf-h, 0px) + 16px); z-index:46; }
     #twin-status { position:fixed; left:16px; bottom:calc(var(--panel-shelf-h, 0px) + 16px); z-index:46; max-width:calc(100vw - 120px); }
@@ -366,7 +365,7 @@
   {% include 'nav.html' %}
   {% include 'components/control_center.html' %}
   <main id="twin-canvas" aria-label="Interactive house preview"></main>
-  <div id="twin-controls" aria-label="House preview controls">
+  <div id="twin-controls" aria-label="House preview controls" data-bake-parent="{{ 'true' if twin_bake_parent else 'false' }}">
     {% if request.query_params.get('panel') != 'true' and request.query_params.get('kiosk') != 'true' %}
     <a id="twin-edit" href="{{ _up }}house/editor">Edit the house</a>
     <fieldset><legend>House settings</legend><button id="twin-settings-gear" type="button" hidden aria-label="House settings">⚙ Settings</button></fieldset>

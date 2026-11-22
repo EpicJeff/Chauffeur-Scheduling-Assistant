@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { base, copyMaterialParams } from '../twin_library.js';
+import { base, copyMaterialParams, currentMaterial, applyMaterialParams } from '../twin_library.js';
 import { contains, FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, patchLightmaps, setLightTintColor, tintSum, pickTranscode,
@@ -13,7 +13,7 @@ import { workerCodec } from './worker_codec.js';
 import { covered } from './atlas_transport.js';
 import { sameSlots } from './slots.js';
 import { invalidateMaterialReach } from './reach.js';
-import { releaseBakeSource } from './source.js';
+import { releaseBakeSource, bakeReceiverRoots } from './source.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Every tier lays its atlas out at the desk's 8 texels/ft, so a wall that opens before
@@ -134,7 +134,7 @@ function separateLights(layout, root, plan = {}) {
     ...objects.lights.filter(l => !pitIds.has(l.device)), ...fixtures];
 }
 
-export function mountBake(view, root, { host, controls = view.controls, layout: requestedLayout, poll: pollMs = 10000,
+export function mountBake(view, root, { host, mode = 'manual', parent = false, display = true, disabledReason = '', controls = view.controls, layout: requestedLayout, poll: pollMs = 10000,
   api: request = (path, init) => fetch(base() + path, init) } = {}) {
   let retained = view.bake?.snapshot?.();
   // A fetch that rejects is the network being away, which the poll rides out in silence.
@@ -147,10 +147,13 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     }
     catch (error) { if (error instanceof TypeError) offline.add(error); throw error; }
   };
-  const round = view.plan, halt = new AbortController(), baked = [], fresh = new Set(), tints = new Map();
+  const round = view.bakePlan || view.plan, halt = new AbortController(), baked = [], fresh = new Set(), tints = new Map();
   const query = new URLSearchParams(location.search);
   // Only a parent's High or Max desk bakes (the lease is PARENTS: a child is refused, M4).
-  const canBake = ['high', 'max'].includes(view.tier) && !query.has('panel') && !query.has('kiosk');
+  const interactive = !query.has('panel') && !query.has('kiosk');
+  const canBake = mode !== 'readonly' && !disabledReason && ['high', 'max'].includes(view.tier) && interactive;
+  const automatic = mode === 'auto'; // Explicit legacy harness mode; neither mounted page uses it.
+  let requested = automatic;
   const owner = [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
   let stopped = false, allowed = false, permissionChecked = false, atlas = null, pending = null, layout = requestedLayout || options(8);
   let lights = [], lightsKey = '', packed = null, uniforms = null, pages = null;
@@ -159,7 +162,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
   let failure = '', failureSource = null, errorReason = null, manifestText = null, initialized = false, mounting = null;
   let authPaused = false, manualWait = false, retryAt = null, retryTimer = null, retryAttempts = 0;
-  let hiddenSince = document.hidden ? Date.now() : null, forceIntent = null;
+  let hiddenSince = document.hidden ? Date.now() : null, forceIntent = null, resumePending = false;
   const signOutMessage = 'Home Assistant signed this tab out. Open Chauffeur in Home Assistant (or use your usual app address), then press Resume.';
   const needsResume = () => allowed || canBake && !permissionChecked;
   function clearRetry() { clearTimeout(retryTimer); retryTimer = null; retryAt = null; }
@@ -176,7 +179,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     }
     if (Date.now() >= retryAt && !document.hidden) {
       clearRetry();
-      (allowed ? run(false) : refresh()).catch(reportError);
+      (allowed && requested ? run(false) : refresh()).catch(reportError);
       return;
     }
     showProgress(); retryTimer = setTimeout(retryTick, 1000);
@@ -214,18 +217,46 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   const pageSignature = (m,p) => JSON.stringify(Object.entries(m?.lights || {}).filter(([,e])=>(e.pages || [e.page]).includes(p))
     .map(([id,e])=>[id,e.key,e.location,e.channel,e.scale]).sort((a,b)=>a[0].localeCompare(b[0])));
   const pageReason = () => pageErrors.values().next().value || null;
-  const valid = () => !stopped && view.plan === round;
+  const valid = () => !stopped && (view.bakePlan || view.plan) === round;
   const paused = () => dragging || performance.now() - stillAt < 2000;
   const moved = () => { stillAt = performance.now(); };
   const pointers = new Set();
   const down = event => { pointers.add(event.pointerId); dragging = true; moved(); };
   const up = event => { pointers.delete(event.pointerId); dragging = pointers.size > 0; moved(); };
-  view.renderer3.domElement.addEventListener('pointerdown', down, { signal: halt.signal });
-  window.addEventListener('pointerup', up, { signal: halt.signal });
-  window.addEventListener('pointercancel', up, { signal: halt.signal });
+  // Capture sees gestures even when a handle/marquee owns and stops the event.
+  view.renderer3.domElement.addEventListener('pointerdown', down, { signal: halt.signal, capture: true });
+  window.addEventListener('pointerup', up, { signal: halt.signal, capture: true });
+  window.addEventListener('pointercancel', up, { signal: halt.signal, capture: true });
+  window.addEventListener('blur', () => { pointers.clear(); dragging = false; moved(); }, { signal: halt.signal });
   controls.addEventListener('start', moved); controls.addEventListener('change', moved); controls.addEventListener('end', moved);
-  let strip = null, status = null, button = null, resumeButton = null, legend = null;
+  let strip = null, status = null, button = null, resumeButton = null, legend = null, startButton = null, meter = null;
   function showControls() {
+    if (mode === 'readonly') {
+      if (!host || !parent || !interactive || !stale.length) { strip?.remove(); strip = null; return; }
+      if (!strip) {
+        strip = document.createElement('a'); strip.id = 'twin-bake-status';
+        strip.href = base() + 'house/editor';
+        strip.textContent = 'Lighting is out of date. Bake it in the house editor.';
+        host.append(strip);
+      }
+      return;
+    }
+    if (mode === 'manual') {
+      if (!host || !interactive) return;
+      if (!strip) {
+        strip = document.createElement('span'); strip.id = 'twin-bake-controls';
+        status = document.createElement('output'); status.setAttribute('role', 'status');
+        meter = document.createElement('progress'); meter.setAttribute('aria-label', 'Baking lights');
+        startButton = document.createElement('button'); startButton.type = 'button'; startButton.textContent = 'Bake lighting';
+        startButton.addEventListener('click', () => controller.start());
+        resumeButton = document.createElement('button'); resumeButton.type = 'button'; resumeButton.textContent = 'Resume';
+        resumeButton.id = 'twin-bake-resume'; resumeButton.addEventListener('click', () => controller.resume());
+        button = document.createElement('button'); button.type = 'button'; button.textContent = 'Re-bake all lighting';
+        button.addEventListener('click', () => controller.now());
+        strip.append(status, meter, startButton, resumeButton, button); host.append(strip);
+      }
+      return;
+    }
     const actions = allowed || canBake && !permissionChecked && authPaused;
     if (!host || !canBake || permissionChecked && !allowed || !actions && !failure) {
       strip?.remove(); strip = status = button = resumeButton = legend = null;
@@ -252,11 +283,21 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     showControls();
     if (!status) return;
     const message = failure || (pageReason() ? `Could not read baked lighting (${pageReason()}).` : '');
-    status.hidden = !(running && progress.total) && !message;
+    status.hidden = mode !== 'manual' && !(running && progress.total) && !message;
     status.textContent = message ? message + (retryAt !== null ? ` Retrying in ${Math.max(0, Math.ceil((retryAt - Date.now()) / 1000))} s` : (!authPaused && manualWait ? ' Press Resume to continue.' : ''))
       : (running && progress.total ? `Baking lights ${progress.done} of ${progress.total}` : '');
+    if (mode === 'manual') {
+      if (!message && !running) status.textContent = !['high', 'max'].includes(view.tier) ? 'Baking needs High or Max quality'
+        : disabledReason ? disabledReason
+        : !permissionChecked ? 'Checking baked lighting…' : !lights.length ? 'Lighting is up to date' : !allowed ? 'Only a parent can bake lighting'
+        : stale.length ? `Lighting out of date: ${stale.length} lights` : 'Lighting is up to date';
+      meter.hidden = !running || !progress.total; meter.max = progress.total || 1; meter.value = progress.done;
+      startButton.hidden = !allowed || !stale.length || running || !!failure || resumePending;
+      startButton.disabled = !atlas || authPaused || layerOverflow;
+      button.hidden = !allowed;
+    }
     if (button) button.disabled = !allowed || !atlas || running || authPaused;
-    if (resumeButton) { resumeButton.hidden = !failure || layerOverflow; resumeButton.disabled = running; }
+    if (resumeButton) { resumeButton.hidden = !failure && !resumePending || layerOverflow; resumeButton.disabled = running; }
   }
   async function idle() {
     while (valid() && (paused() || !view.ready)) await wait(50);
@@ -265,6 +306,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       if (globalThis.requestIdleCallback) requestIdleCallback(resolve, { timeout: 100 });
       else requestAnimationFrame(resolve);
     });
+    if (!valid()) throw new Error('The bake round changed.');
     if (paused()) return idle();
   }
   // A member of a shared channel (shareColocated) is driven by its own id; its slot is the group's.
@@ -299,6 +341,9 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   }
   let patchRound = 0;
   async function patch() {
+    // The editor keeps its own Day/Night/Now/Unlit and selection materials.
+    // Its bake publishes to viewers without replacing those edit-time materials.
+    if (!display) return;
     if (patched) return;
     patched = true;
     const mine = ++patchRound, materials = new Set();
@@ -506,7 +551,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       if (manifestText === null && !present.size && !fresh.size) return;
       for (const id of fresh) light(id, [0, 0, 0], 0);
       for (const p of present) { const at = locate(p); if (at) writeLayer(at.texture, at.layer, null); }
-      fresh.clear(); present.clear(); etags.clear(); manifestText = null;
+      fresh.clear(); present.clear(); etags.clear(); manifestText = null; resumePending = false;
       stale = lights.map(l => l.device); view.reflectionsChanged?.(); view.render();
       return;
     }
@@ -563,7 +608,9 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       if (e && (l.kind !== 3 || e.scale > 0) && stored?.key === e.key && stored.scale === e.scale && stored.location === e.location && stored.channel === e.channel &&
         JSON.stringify(stored.pages) === JSON.stringify(e.pages) && e.pages.every(p => present.has(p))) fresh.add(l.device);
     }
-    stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
+    resumePending = !!m.forceRound;
+    stale = lights.filter(l => !fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound).map(l => l.device);
+    if (mode === 'manual' && !running) progress = { done: lights.length - stale.length, total: lights.length };
     pageManifest=m;
     if(!stale.length)preservePages.clear();
     setSources(m);fills(m);
@@ -572,25 +619,29 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
 
     // Refresh the pool selection as soon as a light becomes fresh.
-    if (view.live) await view.live.refresh();
+    await view.live?.refresh?.();
     view.reflectionsChanged?.();
     view.render();
   }
   // M3: a light placed or moved while the view is open follows the live layer's layout.
   async function relight() {
-    const layoutNow = view.live?.layout?.();
+    if (mode === 'manual' && paused()) return;
+    const layoutNow = view.live?.layout?.() || (mode === 'manual' ? await (await api('api/house/live')).json() : null);
     if (!layoutNow || !atlas) return;
-    const next = bakeLights(layoutNow, root, view.plan);
+    const next = bakeLights(layoutNow, root, round);
     if (JSON.stringify(next) === lightsKey) return;
-    if (running) { pendingRun = true; baker?.cancel(); }
+    ++generation;
+    if (running) { pendingRun = automatic; baker?.cancel(); }
+    if (!automatic) { requested = false; clearRetry(); }
     const text=await readManifest(atlas.key);if(!valid())return;
     const manifest=typeof text==='string'?JSON.parse(text):null;
     prepare(next,manifest?.ownership || packed?.ownership,manifest);
     await loadPages();
-    if (allowed && !running) run();
+    showProgress();
+    if (automatic && allowed && !running) run();
   }
   async function run(force = false) {
-    if (!allowed || !valid() || !atlas || layerOverflow || authPaused || manualWait) return;
+    if (!allowed || !valid() || !atlas || layerOverflow || authPaused || manualWait || !requested) return;
     if (running) { pendingForce ||= force; return; }
     clearRetry();
     if (force) forceIntent = [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
@@ -611,7 +662,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
         baked.push(id); progress = baker.progress(); stale = await baker.staleLights(); showProgress();
         await loadPages();
       }
-      // Tell the editor's chip this round's lights are whole (Ruling B15).
+      // Publish completion for the current house round.
       if (valid() && mine === generation && input === lightsKey && !(await baker.staleLights()).length) {
         await baker.settle(); forceIntent = null; retryAttempts = 0;
         if (!authPaused) { clearRetry(); manualWait = false; clearFailure(); }
@@ -619,7 +670,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     } catch (error) {
       if (baker && !baker.forcePending()) forceIntent = null;
       if (baker) progress = baker.progress();
-      reportError(error, 'bake');
+      if (valid() && mine === generation && input === lightsKey) reportError(error, 'bake');
     } finally {
       running = false; showProgress();
       if (valid() && (pendingForce || pendingRun)) { const f = pendingForce; pendingForce = pendingRun = false; run(f); }
@@ -634,7 +685,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     prepare(lights,manifest?.ownership,manifest);
     await loadPages(); if (!valid()) return;
     showProgress();
-    if (allowed) run();
+    if (automatic && allowed) run();
     initialized = true;
   }
   async function refresh() {
@@ -652,6 +703,7 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     clearFailure('refresh');
   }
   const controller = {
+    active: valid,
     state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: authPaused || manualWait || running && paused(), retryAt, retryAttempts,
       ...progress, baked: [...baked], stale: [...stale], error: errorReason || pageReason() }),
     // Members of a fresh shared channel are fresh: the live layer asks by its own lamp ids.
@@ -659,6 +711,14 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
     occlusionRoot: () => atlas?.sourceRoot || root,
     snapshot: () => atlas && pages ? {key:atlas.key,layers,bankBase,banks:pages.banks,present:[...present],etags:[...etags],manifest:pageManifest} : null,
     refreshMaterials(ids) {
+      const known = view.materialManifest;
+      if (known) for (const receivers of bakeReceiverRoots(root)) if (receivers !== root) receivers.traverse(mesh => {
+        for (const material of [].concat(mesh.material || [])) {
+          const id = material.userData.materialId;
+          if (ids.includes(id) && known[id] && !currentMaterial(material, known))
+            applyMaterialParams(material, known[id], material.userData.materialRef, material.userData.materialRole || material.name, view.tier);
+        }
+      });
       for (const { original, material } of clones) if (ids.includes(original.userData.materialId)) copyMaterialParams(original, material);
     },
     materialsChanged(ids = null) {
@@ -667,7 +727,8 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       if (!invalidateMaterialReach(atlas.room, ids)) return false;
       ++generation;
       baker?.cancel();
-      pendingRun ||= running;
+      pendingRun ||= automatic && running;
+      if (!automatic) { requested = false; clearRetry(); }
       // Material edits do not move charts or change their channel assignment.
       // Retain the arrays, shader bindings and unrelated lights' fresh masks.
       const previous = packed;
@@ -683,9 +744,10 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
       for(const p of present)preservePages.add(p);
       manifestText = null;
-      Promise.resolve(view.live?.refresh()).catch(reportError);
+      Promise.resolve(view.live?.refresh?.()).catch(reportError);
       view.render();
-      if(allowed && !running)run();
+      showProgress();
+      if(automatic && allowed && !running)run();
       return true;
     },
     // Logical banks retain their lit-page metadata; the texture/version/update
@@ -702,10 +764,12 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
       slots: Object.fromEntries(Object.entries(packed.slots).map(([id, s]) => [id, (s.assignments || []).map(a => [a.chart, a.bank, a.channel])])),
       charts: atlas.room.charts.map(c => ({ id: c.id, room: c.room, page: c.page, rect: c.rect, heightfield: !!c.heightfield, outdoor: !!c.outdoor })),
       banks: packed.banks.map(b => ({ pages: b.pages, charts: b.charts.map(c => [c.id, c.page, c.rect]) })), layers: layers.map(l => [...l]) } : null,
-    now: () => { manualWait = false; retryAttempts = 0; return run(true); },
+    start: () => { requested = true; manualWait = false; retryAttempts = 0; return run(false); },
+    now: () => { requested = true; manualWait = false; retryAttempts = 0; return run(true); },
     resume: async () => {
       clearRetry(); authPaused = manualWait = false; retryAttempts = 0;
-      try { if (!allowed) await refresh(); else await run(false); }
+      requested = true;
+      try { if (!initialized || !allowed) await refresh(); await run(false); }
       catch (error) { reportError(error); }
     },
     stop() {
@@ -722,10 +786,11 @@ export function mountBake(view, root, { host, controls = view.controls, layout: 
   function initialize() {
     if (mounting) return mounting;
     mounting = (async () => {
-      if (!covered(root).length) return;
+      if (disabledReason || !covered(root).length) { initialized = permissionChecked = true; showProgress(); return; }
       const response = await api('api/house/live'); const liveLayout = response.ok ? await response.json() : null;
       if (!valid()) return;
-      lights = bakeLights(liveLayout, root, view.plan);
+      lights = bakeLights(liveLayout, root, round);
+      stale = lights.map(l => l.device);
       // The worker lays the atlas out; it is applied to the meshes only once a bake
       // exists or this desk will make one (M1).
       if (!atlas && !pending) pending = await loadAtlas(root, round, layout, { signal: halt.signal, apply: false });

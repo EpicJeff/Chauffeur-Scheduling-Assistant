@@ -645,7 +645,17 @@ def test_room_only_complete_manifest_and_ignored_legacy_sky():
         check(c.client.get(manifest_url(key), headers=c.panel).json()['lights'] == body['lights'], 'legacy metadata preserves room lights')
 
 
+def test_viewer_bake_status_parent_flag_uses_authenticated_identity():
+    with Ctx() as c:
+        for headers, expected in ((c.mum, 'true'), (c.kid, 'false'), (c.panel, 'false')):
+            response = c.client.get('/house/twin', headers=headers)
+            check(response.status_code == 200, response.status_code)
+            check(f'data-bake-parent="{expected}"' in response.text,
+                  ('only a parent sees the editor lighting link', expected))
+
+
 TESTS = (
+    test_viewer_bake_status_parent_flag_uses_authenticated_identity,
     test_live_other_owner_fences_page_and_manifest_writes,
     test_expired_unclaimed_writes_renew_their_owner,
     test_own_live_writes_succeed_and_owner_is_required,

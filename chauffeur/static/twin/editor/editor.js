@@ -306,6 +306,7 @@ export async function boot() {
       // this settle an equal answer never redrew it (owner, 2026-11-18: pavers
       // stayed put after moving a path point).
       if (!kept || ['move_site_item', 'update_site_shape'].includes(operation.op)) await settleView(queue.shown(), { selection });
+      view?.syncBake?.();
       lastScene = JSON.stringify(queue.shown());
       frame = api.observeEditFrame(view, timing);
       frame.catch(report);
@@ -449,6 +450,7 @@ export async function boot() {
     return plan;
   }
   async function renderScene(timing = null) {
+    if (view) view.round = currentRound();
     view?.setSite?.(snapshot.site);
     if (tools?.dragging() || lot?.dragging()) return;
     await view?.setStage?.(snapshot.stage);
@@ -462,6 +464,7 @@ export async function boot() {
       const eye = !aimed && streetView(plan, streetSegment(sheets.place, plan));
       if (eye) { aimed = true; view.aim(eye.position, eye.target); }
     }
+    view?.syncBake?.();
     renderedGhosts = countGhosts(plan);
     buildGhosts?.sync();
     for (const round of snapshot.rounds || []) {
@@ -798,7 +801,8 @@ export async function boot() {
     await loadSheets();
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
     houseKit = kit;
-    view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true, bake: false, stage:snapshot.stage });
+    view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true,
+      bake: { host: statusChip.bakeHost }, stage:snapshot.stage });
     view.isPiecePickable = isPickable;
     const hiddenState = visibility.snapshot(); view.setHiddenPieces?.(hiddenState.hidden, hiddenState.hiddenKinds);
     mountLighting(view, el('editor-lighting'), { signal: lifecycle.signal });

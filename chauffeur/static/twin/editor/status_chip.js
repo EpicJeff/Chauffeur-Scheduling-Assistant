@@ -1,6 +1,7 @@
 export function createStatusChip(host) {
   const state = document.createElement('span'), spend = document.createElement('span'), estimate = document.createElement('span');
-  // Ruling B15: the editor never bakes lights; the 3D house on a High desk does.
+  // B15 superseded by the owner, 2026-11-21: this chip hosts the manual bake
+  // control. The runtime owns lighting state; build polling must not overwrite it.
   const relight = document.createElement('span');
   const stop = document.getElementById('editor-stop');
   state.setAttribute('role', 'status');
@@ -13,12 +14,9 @@ export function createStatusChip(host) {
     spend.textContent = `$${Number(value.cost || 0).toFixed(2)} so far`;
     estimate.hidden = value.estimate == null;
     estimate.textContent = value.estimate == null ? '' : `about $${Number(value.estimate).toFixed(2)}`;
-    relight.hidden = value.bake?.waiting !== true;
-    relight.textContent = relight.hidden ? '' : 'Lights wait to re-bake';
-    relight.title = relight.hidden ? '' : 'The 3D house re-bakes them on a High screen.';
     // Stop ends any build still in flight: running, or waiting at a pause or checkpoint.
     if (stop) stop.hidden = !['running', 'paused', 'checkpoint'].includes(value.state);
   }
   update({ state: null, cost: 0, estimate: null });
-  return { update };
+  return { update, bakeHost: relight };
 }

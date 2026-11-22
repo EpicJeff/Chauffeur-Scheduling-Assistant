@@ -13,8 +13,8 @@ Hall light (off) stand on their rooms' floors. aim_kitchen() looks straight down
 on the pool house's ground floor from 50 ft.
 
 Two kinds of page:
-  - the desk: /house/twin?tier=high&test=1 signed in as the parent (H.signed_in),
-    the page that bakes (High tier, a parent may upload);
+  - the editor: /house/editor?tier=high&test=1, parent, button-only baking;
+  - the desk viewer: /house/twin?tier=high&test=1, stored lighting and status only;
   - the wall: L.open_twin's /house/twin?tier=low&test=1&panel=true as the panel,
     the Pi's tier, which never bakes and only downloads.
 
@@ -27,17 +27,17 @@ Hooks the page must give under ?test=1 (beyond the real-lights ones):
       done, total  completed lights and all lights for the atlas, retained when idle;
       baked   every id this page has baked since it opened, in order: device ids,
       stale   device ids whose bake is missing or out of date for `key`.
-  window.__twin.bake.fresh() -> device ids drawn from a loaded bake right now.
+  window.__twin.bake.fresh() -> device ids validated from stored pages; the viewer draws them.
   window.__twin.live.lights() rows carry baked: true for a light drawn from its
       bake (it is then real: false and holds no pool PointLight).
-The twin's own controls on the desk: a button named 'Re-bake all lighting', and
+The editor chip's controls: a button named 'Re-bake all lighting', and
 while a run works, visible text 'Baking lights {n} of {m}' (m = all lights, n
 the completed lights, including those saved before this run). The wall shows neither.
 
 Where bakes live: services.twin_bakes under twin_store.DATA_DIR/bakes/<key>/:
 numbered page files (KTX2 bytes, Ruling B4; the file name's stem is the page
 number) and manifest.json ({pages, lights: {device: {page, channel, key}}}).
-The lights a desk bakes are the placed light markers; whether the unplaced
+The lights an editor bakes are the placed light markers; whether the unplaced
 Pendant is baked is not pinned.
 
 A full bake of the household takes minutes on the desktop GPU (Basis UASTC
@@ -103,13 +103,37 @@ def wait_bake_hook(page):
 
 
 def open_desk(page, served, query='tier=high&test=1'):
-    """The desk: /house/twin on the High tier, signed in as the parent."""
+    """The status-only desk viewer, signed in as the parent."""
     H.signed_in(page)
     goto_retry(page, served.url(f'house/twin?{query}'))
     page.wait_for_function('() => window.__twin && window.__twin.ready === true', timeout=90000)
     H.settle(page)
     wait_live(page)
     wait_bake_hook(page)
+
+
+def open_editor(page, served):
+    H.signed_in(page)
+    goto_retry(page, served.url('house/editor?tier=high&test=1'))
+    page.wait_for_function('() => window.__editor && window.__editor.ready === true', timeout=90000)
+    page.wait_for_function('() => window.__twin && window.__twin.ready === true', timeout=90000)
+    wait_bake_hook(page)
+    page.wait_for_function('() => !!window.__twin.bake.state().key', timeout=90000)
+
+
+def start_editor_bake(page):
+    page.get_by_role('button', name='Bake lighting', exact=True).click(timeout=90000)
+
+
+def bake_elsewhere(page, served):
+    context, editor = other_page(page)
+    try:
+        open_editor(editor, served)
+        if state(editor)['stale']:
+            start_editor_bake(editor)
+        return wait_baked(editor)
+    finally:
+        context.close()
 
 
 def open_wall(page, served):
@@ -300,7 +324,8 @@ def mean(values):
 
 
 def desk_baked(served, page):
-    """Open the desk and wait until its bake has landed (at once when bakes are stored)."""
+    """Publish from the editor, then verify the viewer draws that stored bake."""
+    bake_elsewhere(page, served)
     open_desk(page, served)
     return wait_baked(page)
 
@@ -323,7 +348,7 @@ def kitchen_rise(page, points=None):
 
 # --- scenarios -----------------------------------------------------------------------------
 
-def scenario_bake_runs_on_idle_and_lands():
+def scenario_editor_button_bake_lands():
     s = L.serve()
     if s is None:
         return
@@ -332,9 +357,10 @@ def scenario_bake_runs_on_idle_and_lands():
     clear_bakes()
     with s.browser(launch_args=L.GPU_ARGS) as page:
         seen = bake_requests(page)
-        open_desk(page, s)
-        wait_until(page, lambda: state(page).get('baking') or set(BAKED) <= fresh(page), 60,
-                   ('a bake starts by itself on an open desk', state(page)))
+        open_editor(page, s)
+        page.wait_for_timeout(8000)
+        check(not state(page)['baking'] and writes(seen) == [], 'editor waits for Bake lighting')
+        start_editor_bake(page)
         st = wait_baked(page)
         check(KEY_RE.match(st['key'] or ''), ('the atlas key', st))
         check(set(BAKED) <= set(st['baked']), ('this page baked every placed light', st))
@@ -357,7 +383,7 @@ def scenario_bake_runs_on_idle_and_lands():
 
         # A new page finds the bake: nothing stale, nothing uploaded, every light drawn baked.
         before = len(seen)
-        reopen(page)
+        open_desk(page, s)
         wait_until(page, lambda: set(BAKED) <= fresh(page), 120, ('a reopened desk draws the stored bake', sorted(fresh(page))))
         page.wait_for_timeout(6000)
         st = state(page)
@@ -413,9 +439,9 @@ def scenario_moving_a_light_rebakes_only_it():
             move_hall_light()
             before = len(seen)
             reopen(page)
-            wait_until(page, lambda: 'dev-hall-light' in state(page)['baked'] and not state(page)['baking'], BAKE_S,
-                       ('the moved Hall light re-bakes', state(page)))
-            st = state(page)
+            wait_until(page, lambda: page.locator('#twin-bake-status').count() == 1, 90, 'viewer links to the editor for stale lighting')
+            check(writes(seen, before) == [], 'viewer never repairs the moved light itself')
+            st = bake_elsewhere(page, s)
             check(st['key'] == key, ('moving a light changes no geometry: the same atlas key', key, st['key']))
             check(st['baked'] == ['dev-hall-light'], ('only the moved light re-bakes (Review Focus 4)', st['baked']))
             m_after = stored_manifest(key)
@@ -431,6 +457,8 @@ def scenario_moving_a_light_rebakes_only_it():
                   ("only the Hall light's pages are rewritten", changed, hall))
             check(all(m_ in ('POST', 'PUT') for m_, _ in writes(seen, before)), writes(seen, before))
 
+            open_desk(page, s)
+            wait_baked(page)
             # The Kitchen's channels on that page keep their light.
             L.aim_kitchen(page)
             only_on(page, 'light.ceiling_light', brightness=255)
@@ -659,13 +687,14 @@ def scenario_bake_pauses_while_dragging():
     L.facts()
     clear_bakes()
     with s.browser(launch_args=L.GPU_ARGS) as page:
-        open_desk(page, s)
+        open_editor(page, s)
+        start_editor_bake(page)
         wait_until(page, lambda: state(page).get('baking') and not state(page).get('paused') and state(page).get('total', 0) >= 2, 120,
-                   ('a bake starts by itself', state(page)))
-        box = page.locator('#twin-canvas canvas').bounding_box()
+                   ('the button starts a bake', state(page)))
+        box = page.locator('#editor-scene canvas').bounding_box()
         cx, cy = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
         page.mouse.move(cx, cy)
-        page.mouse.down()
+        page.mouse.down(button='right')
         try:
             page.mouse.move(cx + 30, cy + 10, steps=4)
             page.wait_for_timeout(500)
@@ -680,7 +709,7 @@ def scenario_bake_pauses_while_dragging():
             check(marks[-1]['done'] - first['done'] <= 1, ('no new light is baked while dragging (one in flight may land)',
                                                            first['done'], marks[-1]['done']))
         finally:
-            page.mouse.up()
+            page.mouse.up(button='right')
         page.wait_for_timeout(1000)
         check(state(page)['paused'], ('still paused a second after letting go (2 s still)', state(page)))
         held = state(page)['done']
@@ -697,11 +726,13 @@ def scenario_bake_now_rebakes_everything():
     L.facts()
     with s.browser(launch_args=L.GPU_ARGS) as page:
         seen = bake_requests(page)
-        st = desk_baked(s, page)
+        bake_elsewhere(page, s)
+        open_editor(page, s)
+        st = wait_baked(page)
         key, m = st['key'], stored_manifest(st['key'])
         already, before = len(st['baked']), len(seen)
         button = page.get_by_role('button', name=BAKE_NOW, exact=True).locator('visible=true')
-        check(button.count() == 1, (f'one visible {BAKE_NOW!r} button on the desk', button.count()))
+        check(button.count() == 1, (f'one visible {BAKE_NOW!r} button in the editor', button.count()))
         button.first.click()
         wait_until(page, lambda: state(page)['baking'], 30, ('the button starts a run', state(page)))
         # Progress reads 0 of 0 until the baker has read the manifest (bake-resume fix 1).
@@ -725,8 +756,9 @@ def scenario_progress_words():
     L.facts()
     clear_bakes()
     with s.browser(launch_args=L.GPU_ARGS) as page:
-        open_desk(page, s)
-        wait_until(page, lambda: state(page)['baking'], 120, ('a bake starts by itself', state(page)))
+        open_editor(page, s)
+        start_editor_bake(page)
+        wait_until(page, lambda: state(page)['baking'], 120, ('the button starts a bake', state(page)))
         words = page.get_by_text(PROGRESS).locator('visible=true')
         wait_until(page, lambda: words.count() >= 1, 20, ('the desk shows "Baking lights {n} of {m}" while it works', state(page)))
         seen = set()
@@ -748,7 +780,7 @@ def scenario_progress_words():
         H.settle(page, 3)
         check(page.get_by_text(re.compile(r'Baking lights')).locator('visible=true').count() == 0, 'the words go once the bake is done')
         button = page.get_by_role('button', name=BAKE_NOW, exact=True).locator('visible=true')
-        check(button.count() == 1 and button.first.is_enabled(), (f'{BAKE_NOW!r} is offered on the desk', button.count()))
+        check(button.count() == 1 and button.first.is_enabled(), (f'{BAKE_NOW!r} is offered in the editor', button.count()))
         L.no_errors(s)
     with s.browser(launch_args=L.GPU_ARGS) as page:
         open_wall(page, s)
@@ -767,17 +799,19 @@ def scenario_two_tabs_bake_without_tearing():
     L.facts()
     clear_bakes()
     with s.browser(launch_args=L.GPU_ARGS) as page:
-        open_desk(page, s)
+        open_editor(page, s)
         # A second tab of the same browser (same localStorage and IndexedDB, as real tabs share).
         with page.expect_popup() as popup:
-            page.evaluate('(url) => { window.open(url, "_blank"); }', s.url('house/twin?tier=high&test=1'))
+            page.evaluate('(url) => { window.open(url, "_blank"); }', s.url('house/editor?tier=high&test=1'))
         other = popup.value
         other.set_viewport_size({'width': 1400, 'height': 1000})
         other_errors = track_errors(other)
         other.wait_for_function('() => window.__twin && window.__twin.ready === true', timeout=90000)
         H.settle(other)
-        wait_live(other)
+        other.wait_for_function('() => window.__editor && window.__editor.ready === true', timeout=90000)
         wait_bake_hook(other)
+        start_editor_bake(page)
+        start_editor_bake(other)
         first, second = wait_baked(page), wait_baked(other)
         check(first['key'] == second['key'], ('both tabs end on the same key (Review Focus 2)', first['key'], second['key']))
         key = first['key']
@@ -790,7 +824,7 @@ def scenario_two_tabs_bake_without_tearing():
             check(entry['page'] in files, ('every page the manifest names exists', entry, sorted(files)))
 
         # Neither tab's write lost the other's channel: each Kitchen light lights the floor on its own.
-        reopen(other)
+        open_desk(other, s)
         wait_until(other, lambda: set(BAKED) <= fresh(other), 120, ('the reopened tab draws the bake', sorted(fresh(other))))
         L.aim_kitchen(other)
         only_on(other, None)
@@ -832,7 +866,8 @@ def scenario_wall_opened_before_the_bake_picks_it_up():
         context, desk = other_page(wall)
         try:
             desk_errors = track_errors(desk)
-            open_desk(desk, s)
+            open_editor(desk, s)
+            start_editor_bake(desk)
             st = wait_baked(desk)
             check(st['key'] == wall_key, ('the wall polls the very key the desk bakes', wall_key, st['key']))
             check(not H.unexpected(desk_errors), H.unexpected(desk_errors))
@@ -904,7 +939,8 @@ def scenario_terraces_foundation_and_heavy_import_share_the_wall_bake():
                 desk_models = []
                 desk.on('request', lambda request: desk_models.append(request.url)
                         if f"/{imported['id']}/model.gltf" in request.url else None)
-                open_desk(desk, s)
+                open_editor(desk, s)
+                start_editor_bake(desk)
                 check(wait_baked(desk)['key'] == wall_key, 'authored terrain/import key is shared')
                 check(desk_models and not wall_models, 'High fetches the model; Low keeps its stand-in')
                 terrain_count = """() => {let n=0; window.__twin.groups.site.traverse(m=>{
@@ -921,44 +957,50 @@ def scenario_terraces_foundation_and_heavy_import_share_the_wall_bake():
         twin_imports.delete(imported['id'])
 
 
-def scenario_editor_never_bakes_and_says_when_lights_wait():
-    """Ruling B15: the editor never bakes; its chip says when the lights wait to re-bake."""
-    from services import twin_bakes, twin_store
+def scenario_editor_bakes_and_viewer_is_status_only():
+    """Owner 2026-11-21: explicit editor start, chip progress, viewer consumes it."""
     s = L.serve()
     if s is None:
         return
     L.reset()
     L.facts()
     clear_bakes()
-    behind = 'ab' * 20
-    twin_bakes.save_manifest(behind, {'pages': 1, 'lights': {},
-                                      'round': (twin_store.current_id() or 0) + 1000, 'complete': True}, 'live-test')
-    twin_bakes.lease(behind, 'live-test', 'release')
     with s.browser(launch_args=L.GPU_ARGS) as page:
         seen = bake_requests(page)
-        H.signed_in(page)
-        goto_retry(page, s.url('house/editor?tier=high&test=1'))
-        page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=90000)
-        page.wait_for_function('() => window.__twin && window.__twin.ready === true', timeout=90000)
+        open_desk(page, s)
+        wait_until(page, lambda: page.locator('#twin-bake-status').count() == 1, 120, 'parent gets stale lighting link')
+        link = page.locator('#twin-bake-status')
+        check(link.text_content() == 'Lighting is out of date. Bake it in the house editor.', link.text_content())
+        check(not link.get_attribute('href').startswith('/'), 'editor link is ingress safe')
+        page.wait_for_timeout(12000)
+        check(not any(p.endswith('/lease') for _, p in seen), ('viewer never checks or takes a lease', seen))
+        check(page.get_by_role('button', name=BAKE_NOW, exact=True).count() == 0, 'no viewer bake actions')
+        open_editor(page, s)
+        chip = page.locator('#editor-chip')
+        wait_until(page, lambda: 'Lighting out of date:' in chip.text_content(), 120, 'editor shows stale count')
         page.wait_for_timeout(8000)
-        check(seen == [], ('the editor never reads or writes a bake', seen[:6]))
-        check(page.evaluate('() => !window.__twin.bake'), 'the editor mounts no bake controller')
-        check(page.get_by_role('button', name=BAKE_NOW, exact=True).count() == 0, f'the editor offers no {BAKE_NOW!r}')
-        chip = page.locator('#editor-genbar #editor-chip')
-        check('Lights wait to re-bake' in chip.text_content(), ('the chip says the lights wait', chip.text_content()))
-        L.no_errors(s)
-    clear_bakes()
-    with s.browser(launch_args=L.GPU_ARGS) as page:
+        check(not state(page)['baking'] and writes(seen) == [], 'editor never starts by itself')
+        start_editor_bake(page)
+        wait_until(page, lambda: bool(PROGRESS.search(chip.text_content())), 120, 'chip counts the whole house')
+        box = page.locator('#editor-scene canvas').bounding_box()
+        page.mouse.move(box['x'] + box['width']/2, box['y'] + box['height']/2)
+        page.mouse.down(button='right')
+        try:
+            page.wait_for_timeout(500)
+            check(state(page)['paused'], 'editor camera gesture pauses bake')
+        finally:
+            page.mouse.up(button='right')
+        wait_baked(page)
+        check('Lighting is up to date' in chip.text_content(), chip.text_content())
         open_desk(page, s)
         wait_baked(page)
-    check(twin_bakes.status(twin_store.current_id()) == {'waiting': False},
-          ('a desk bake of the current round clears the wait', twin_bakes.status(twin_store.current_id())))
-    with s.browser(launch_args=L.GPU_ARGS) as page:
-        H.signed_in(page)
-        goto_retry(page, s.url('house/editor?tier=high&test=1'))
-        page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=90000)
-        page.wait_for_timeout(2000)
-        check('re-bake' not in page.locator('#editor-genbar #editor-chip').text_content(), ('nothing to say once baked', page.locator('#editor-genbar #editor-chip').text_content()))
+        check(state(page)['baked'] == [], 'viewer only loads the editor bake')
+        check(page.locator('#twin-bake-status').count() == 0, 'stale line goes away')
+        L.aim_kitchen(page)
+        only_on(page, 'light.ceiling_light', brightness=255)
+        page.evaluate("() => window.__twin.setTime('night')")
+        RL.lights_mode(page)
+        check(is_baked(baked_row(page, 'dev-k-ceiling')), 'viewer draws editor-published lighting')
         L.no_errors(s)
 
 
@@ -971,16 +1013,7 @@ def scenario_day_ground_is_even_after_the_bake():
     L.reset()
     L.facts()
     clear_bakes()
-    # Hold uploads until the initial samples exist; then resume the real baker.
     with s.browser(launch_args=L.GPU_ARGS) as page:
-        gate = {'hold': True}
-        held = []
-        def hold_upload(route):
-            if gate['hold'] and route.request.method == 'POST' and route.request.url.endswith('.png'):
-                held.append(route)
-            else:
-                route.continue_()
-        page.route('**/api/house/bakes/**', hold_upload)
         open_desk(page, s)
         page.evaluate("() => { window.__twin.setTime('day'); window.__twin.levels.go({level:'house'},{immediate:true}); }")
         H.settle(page, 4)
@@ -1005,10 +1038,7 @@ def scenario_day_ground_is_even_after_the_bake():
         check(not fresh(page), 'before sample precedes publication of any room bake')
         before = [lum(pixel) for pixel in RL.screen_pixels(page, points)]
         spread_before = pstdev(before)
-        gate['hold'] = False
-        page.unroute('**/api/house/bakes/**', hold_upload)
-        for route in held:
-            route.continue_()
+        bake_elsewhere(page, s)
         wait_baked(page)
         H.settle(page, 4)
         after = [lum(pixel) for pixel in RL.screen_pixels(page, points)]
@@ -1098,7 +1128,7 @@ def scenario_light_spills_through_a_window():
 SCENARIOS = [
     scenario_open_plan_light_crosses_the_invisible_wall,
     scenario_light_spills_through_a_window,
-    scenario_bake_runs_on_idle_and_lands,
+    scenario_editor_button_bake_lands,
     scenario_baked_light_does_not_cross_a_wall,
     scenario_moving_a_light_rebakes_only_it,
     scenario_baked_kitchen_lights_like_the_real_one,
@@ -1113,7 +1143,7 @@ SCENARIOS = [
     scenario_two_tabs_bake_without_tearing,
     scenario_wall_opened_before_the_bake_picks_it_up,
     scenario_terraces_foundation_and_heavy_import_share_the_wall_bake,
-    scenario_editor_never_bakes_and_says_when_lights_wait,
+    scenario_editor_bakes_and_viewer_is_status_only,
     scenario_day_ground_is_even_after_the_bake,
 ]
 

@@ -67,7 +67,7 @@ const building=flat.buildings.find(b=>b.id===B), wall=building.walls.find(w=>w.i
 let passed=0, failed=0;
 const tick=()=>new Promise(r=>setTimeout(r,0));
 async function test(name, body) {
-  const view=await mountTwin(new Element(),{plan:flat,kit,tier:'low',preserveCamera:true});
+  const view=await mountTwin(new Element(),{plan:flat,kit,tier:'low',preserveCamera:true,bake:false});
   const abort=new AbortController(), ops=[], controlStates=[];
   let library, terrain, enabled=true, writable=true, saveGate=null, ordinaryPresses=0;
   Object.defineProperty(view.controls,'enabled',{get:()=>enabled,set:value=>{enabled=value;controlStates.push(value);}});

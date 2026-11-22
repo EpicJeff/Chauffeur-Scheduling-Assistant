@@ -78,7 +78,9 @@ def test_homes(p):
         assert p.inside(p.by_id('rail-' + tool), 'editor-equipment-menu')
     for id in ['editor-status', 'editor-save-state']:
         assert p.inside(p.by_id(id), 'editor-statusbar'), id
-    for id in ['editor-chip', 'editor-check-step', 'editor-resume', 'editor-stop', 'editor-steps']:
+    assert p.inside(p.by_id('editor-chip'), 'editor-top')
+    assert not p.inside(p.by_id('editor-chip'), 'editor-genbar'), 'lighting stays reachable without a build'
+    for id in ['editor-check-step', 'editor-resume', 'editor-stop', 'editor-steps']:
         assert p.inside(p.by_id(id), 'editor-genbar'), id
     assert 'hidden' in p.by_id('editor-genbar')['attrs']
     assert p.inside(p.by_id('editor-cameras'), 'editor-view-menu')

@@ -184,8 +184,8 @@ await check('fix5_force_reload_first_progress_is_manifest_progress_and_copy_wrap
    await until(()=>reopened.controller.state().done===4&&!reopened.controller.state().baking,'reload continues');
    assert.equal(messages[0],'Baking lights 2 of 4','no misleading 4 of 4 before manifest is read');
    assert.deepEqual(reopened.controller.state().baked,['h1','c1']);
-   const template=readFileSync(job.root+'/templates/house_twin.html','utf8');
-   const rule=template.match(/#twin-bake-controls output\s*\{([^}]+)\}/)[1];
+   const template=readFileSync(job.root+'/static/twin/editor/editor.css','utf8');
+   const rule=template.match(/#twin-bake-controls\s*\{([^}]+)\}/)[1];
    assert.match(rule,/white-space:normal/);assert.match(rule,/overflow-wrap:anywhere/);assert.match(rule,/min-width:0/);
    const live=readFileSync(job.root+'/tests/test_house_twin_bake_live.py','utf8');
    assert.ok(!live.includes('0, 0 when idle'));assert.ok(live.includes('retained when idle'));
