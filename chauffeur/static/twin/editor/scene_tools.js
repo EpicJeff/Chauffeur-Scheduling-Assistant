@@ -23,13 +23,14 @@ import { createSceneTree } from './scene_tree.js';
 import { createLayers } from './dock.js';
 import { shapeOperation, shapeCentre, transformShape } from './site_shapes.js';
 import { deleteOperations, groupTransform, transformOperations } from './group_transform.js';
+import { createClipboard, clipboardKey } from './clipboard.js';
 
 const rotatePoint = (p, angle) => {
   const a = angle * Math.PI / 180;
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
 
-export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, applyBatch = (ops, options) => op({ op: 'batch', ops }, options), panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, visibility, library, api, onDrawFeature, dock, openHouseMaterials, surfaceAt }) {
+export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, applyBatch = (ops, options) => op({ op: 'batch', ops }, options), panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, visibility, library, api, onDrawFeature, dock, openHouseMaterials, surfaceAt, groundPoint }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   const measureLayer = document.createElement('div'); measureLayer.className = 'editor-measure'; canvas.parentElement.append(measureLayer);
   const measure = createMeasure({ view, getPlan, layer: measureLayer });
@@ -219,6 +220,17 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     },
     onChange: state => applySelectionState(state),
   });
+  function refreshClipboardButtons() {
+    for (const [name, state] of [['copy', clipboard.canCopy()], ['paste', clipboard.canPaste()]]) {
+      const button = el(`rail-${name}`);
+      if (button) { button.disabled = !state.ok; button.title = state.ok ? name === 'copy' ? 'Copy (Ctrl/Cmd+C)' : 'Paste (Ctrl/Cmd+V)' : state.reason; }
+    }
+  }
+  const clipboard = createClipboard({ getPlan, getModel, getKit, selection: selectionStore, applyBatch, canEdit, view, visibility,
+    setStatus: text => { el('editor-status').textContent = text; }, onChange: refreshClipboardButtons });
+  selectionStore.subscribe(refreshClipboardButtons);
+  refreshClipboardButtons();
+  if (library) library.materialMenu = (event, surface) => contextMenu.open(event, { slotSurface: surface });
   function toSelectionRef(picked) {
     if (!picked) return null;
     const id = picked.pieceId ?? picked.id;
@@ -407,7 +419,8 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       return material ? materialSelectionActions({ material, refs: selectionStore.members().length ? selectionStore.members() : [fallbackRef].filter(Boolean), selectionStore, getPlan, getKit, view, visibility }) : [];
     } catch (error) { materialWarning(error); return []; }
   }
-  const contextMenu = createContextMenu({ signal, items(target) {
+  function sceneContextItems(target) {
+    if (target.slotSurface) return [];
     const materialActions = contextMaterialActions(target);
     if (target.empty) return [{ label: 'Show all hidden', run: () => visibility?.showAll() }];
     const members = selectionStore.members();
@@ -461,7 +474,30 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (['wall', 'room', 'opening', 'item', 'anchor'].includes(record.kind) || !record.building)
       result.push(action('Delete', () => cards.remove()));
     return [...result, ...visibilityActions(target.id, record.piece.device ? 'device' : record.piece.object_kind === 'lamp' ? 'fixture' : record.kind)];
-  } });
+  }
+  function clipboardActions(target) {
+    if (target.floor) return [];
+    const members = selectionStore.members(), ref = toSelectionRef(target);
+    const refs = ref && !members.some(r => r.pieceId === ref.pieceId && r.buildingId === ref.buildingId) ? [ref] : members;
+    const surface = target.slotSurface || target.materialSurface || target;
+    let slot = null;
+    try { slot = clipboard.slotFor(surface); } catch (error) { materialWarning(error); }
+    if (target.slotSurface) return [
+      { label: 'Copy material', disabled: !slot, run: () => clipboard.copyMaterial(surface) },
+      { label: 'Paste material', disabled: !slot || !clipboard.hasMaterial() || !canEdit(), reason: 'Copy a material first.', run: () => clipboard.pasteMaterial(surface) }];
+    const eligible = clipboard.canCopy(refs), landing = { ...target, ...(target.materialSurface || {}) };
+    const readiness = clipboard.canPaste(target.empty ? { kind: 'ground' } : landing);
+    return [
+      { label: 'Copy', disabled: !eligible.ok, reason: eligible.reason, run: () => clipboard.copy(refs) },
+      { label: 'Cut', disabled: !eligible.ok || !canEdit(), reason: eligible.reason, run: () => clipboard.cut(refs) },
+      { label: 'Paste', disabled: !readiness.ok, reason: readiness.reason, run: () => clipboard.paste(target.empty
+        ? { mode: 1, target: { kind: 'ground' }, point: groundPoint?.(target) }
+        : { mode: target.clientX === undefined ? 2 : 1, target: landing, point: target.materialSurface?.point }) },
+      { label: 'Duplicate', disabled: !eligible.ok || !canEdit(), reason: eligible.reason, run: () => clipboard.duplicate(refs) },
+      ...(slot ? [{ label: 'Copy material', run: () => clipboard.copyMaterial(surface) },
+        { label: 'Paste material', disabled: !clipboard.hasMaterial() || !canEdit(), reason: 'Copy a material first.', run: () => clipboard.pasteMaterial(surface) }] : [])];
+  }
+  const contextMenu = createContextMenu({ signal, items: target => [...clipboardActions(target), ...sceneContextItems(target)] });
   function visibilityActions(id, kind) {
     if (!visibility || !id) return [];
     const refs = selectionStore.members(), members = refs.length > 1 && refs.some(r => r.pieceId === id) ? refs : null;
@@ -491,7 +527,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     let target; try { target = picker.at(event.clientX, event.clientY)[0]; } finally { contextPicking = false; }
     let materialSurface = null;
     try { materialSurface = target && surfaceAt?.(event, target); } catch (error) { materialWarning(error); materialSurface = false; }
-    contextMenu.open(event, target ? { ...target, materialSurface, clientX: event.clientX, clientY: event.clientY } : { empty: true });
+    contextMenu.open(event, target ? { ...target, materialSurface, clientX: event.clientX, clientY: event.clientY } : { empty: true, clientX: event.clientX, clientY: event.clientY });
   });
   // Each source exposes hit(event) and begin(event, handle); its existing
   // pointerMove/pointerUp methods keep ownership through release or cancel.
@@ -935,6 +971,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   listen(canvas, 'pointerleave', () => { if (!pointers.size) roomSelection.hover(null); });
   listen(canvas.parentElement, 'twinerror', event => report(event.detail));
   listen(document, 'keydown', event => {
+    clipboardKey(event, clipboard, { canEdit: canEdit(), dialogOpen: ownsGesture || !!document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), #cc-choice-modal:not(.hidden), dialog[open], [role="dialog"]:not([hidden])') });
+  });
+  listen(document, 'keydown', event => {
     if (event.defaultPrevented || !canEdit() || event.ctrlKey || event.metaKey || event.altKey
       || event.target.closest?.('input, textarea, select, [contenteditable="true"]')
       || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), [role="dialog"]:not([hidden])')) return;
@@ -1034,6 +1073,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   for (const id of ['select', 'move', 'rotate', 'scale']) {
     el(`rail-${id}`).disabled = false; listen(el(`rail-${id}`), 'click', () => { delegate?.cancel?.(); setTool(id); });
   }
+  for (const name of ['copy', 'paste']) if (el(`rail-${name}`)) listen(el(`rail-${name}`), 'click', () => clipboard[name]());
   if (el('rail-measure')) {
     el('rail-measure').disabled = false;
     listen(el('rail-measure'), 'click', () => { if (canEdit()) { delegate?.cancel?.(); setTool('measure'); } });
@@ -1045,6 +1085,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     else view.setCamera(button.dataset.editorCamera);
   }));
   return {
+    clipboard,
     visibility,
     visibilityChanged() { picker.reset(); handles.refresh(); gizmo.draw(); drawDimensions(); delegate?.visibilityChanged?.(); },
     revealSelection() { sceneTree?.reveal(delegate?.visibilitySelection?.()?.id || selection?.pieceId); },
@@ -1065,6 +1106,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     buildingCentre(id) { const b = getPlan()?.buildings.find(b => b.id === id); return b && rotatePoint(localCentre(b), b.rotation || 0).map((v, i) => v + (b.position?.[i] || 0)); },
     delegate(value) { delegate = value; },
     refresh() {
+      refreshClipboardButtons();
       drawFloors();
       const plan = getPlan();
       const currentMembers = selectionStore.members();

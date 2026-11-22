@@ -54,6 +54,7 @@ export function porchFoundationShelf(host, room, building, { getPlan, getKit = (
   function addSlot(key, label, role) {
     const ref = getKit().materials?.[role];
     const node = materialSlot({ library, ownSlot, label, value: value.materials[key], defaultLabel: role === 'base' ? 'Stone' : role[0].toUpperCase() + role.slice(1),
+      materialSurface: () => ({ kind: 'room', pieceId: room.id, buildingId: building.id, slot: `foundation:${key}` }),
       defaultColor: ref?.color, kit: getKit(), resolve: ref => surfaceDescription(getPlan(), {role, building, ref}, getKit()),
       readOnly: () => !canEdit(), onChange: changed => save(key, changed, true), report });
     section.append(node); slots.set(key, node);

@@ -13,13 +13,17 @@ export function sendSlotDrag(row, phase, entry) {
 }
 
 // A DOM component only. The owner keeps the domain operation and undo step.
-export function createSlotRow({ label, subject = `${label.toLowerCase()} material`, accepts, current, detail, inherited, apply, clear, reset, tint, offset, library, readOnly = false }) {
+export function createSlotRow({ label, subject = `${label.toLowerCase()} material`, accepts, current, detail, inherited, apply, clear, reset, tint, offset, library, materialSurface, readOnly = false }) {
   const element = document.createElement('section'), row = document.createElement('div');
   element.dataset.librarySlot = label; row.className = 'editor-material-line editor-slot-line'; element.append(row);
   const controller = new AbortController(), { signal } = controller;
   let busy = false, disposed = false;
   const locked = () => typeof readOnly === 'function' ? readOnly() : readOnly;
   const listen = (node, type, fn) => node.addEventListener(type, fn, { signal });
+  if (materialSurface) listen(element, 'contextmenu', event => {
+    if (!library.materialMenu) return;
+    event.preventDefault(); event.stopPropagation(); library.materialMenu(event, materialSurface());
+  });
   const button = (text, host, key) => {
     const node = document.createElement('button'); node.type = 'button'; node.textContent = text;
     if (key) node.dataset[key] = ''; host.append(node); return node;

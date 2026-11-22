@@ -634,6 +634,10 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
         kind, piece, flat_building, _ = _find(flat, pid, scope)
         bid = flat_building['id']
         translated = {**checked, 'building': bid, 'id': pid}
+        if op == 'add_opening':
+            # pid is the legacy host wall, not the new opening's identity.
+            # Explicit create ids already take the direct op path above.
+            translated.pop('id', None)
         if op == 'move' and kind in ('wall', 'room', 'building', 'opening'):
             by = _point(edit.get('by'), 'by')
             if kind == 'building':

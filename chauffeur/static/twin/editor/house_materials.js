@@ -68,6 +68,8 @@ export function houseMaterialsShelf(host, building, { getPlan, getKit = () => ({
       const defaultLabel = fallback.builtin ? `Built-in ${fallback.builtin}`
         : fallback.role && fallback.role !== kind ? `Follows ${parent}` : 'House look';
       group.append(materialSlot({ library, ownSlot, label: row.label, value, defaultLabel, defaultColor: kit.materials?.[fallback.role || kind]?.color,
+        materialOperation: material => ({ op: 'set_material', building: building.id,
+          target: site ? { site: true, role: kind } : { building: building.id, role: kind }, material }),
         kit, readOnly: () => !editable(), report,
         resolve: ref => {
           const plan = getPlan(), current = plan.buildings?.find(b => b.id === building.id) || building;

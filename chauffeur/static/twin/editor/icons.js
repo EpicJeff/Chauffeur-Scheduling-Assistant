@@ -26,6 +26,8 @@ const paths = {
   'add-parking': 'M5 3h14v18H5Zm5 14V7h3a3 3 0 0 1 0 6h-3',
   measure: 'm3 16 13-13 5 5L8 21Zm4-4 3 3m1-7 3 3m1-7 3 3',
   delete: 'M3 6h18M8 6V3h8v3M5 6l1 15h12l1-15M10 10v7m4-7v7',
+  copy: 'M9 9h12v12H9ZM15 9V3H3v12h6',
+  paste: 'M9 4H5v18h14V4h-4M9 2h6v5H9Z',
   undo: 'M3 10h11a6 6 0 0 1 0 12M3 10l6-6m-6 6 6 6',
   redo: 'M21 10H10a6 6 0 0 0 0 12m11-12-6-6m6 6-6 6',
   sheet: 'M5 2h10l4 4v16H5Zm10 0v5h4M8 11h8m-8 4h8m-8 4h5',

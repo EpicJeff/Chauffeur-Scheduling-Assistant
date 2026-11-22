@@ -141,6 +141,7 @@ export function drawSiteShapeShelf(host, record, { library, ownSlot, canEdit, qu
     [['mulch', 'Mulch'], ['patio_concrete', 'Concrete'], ['paving', 'Pavers'], ['lawn', 'Grass'], ['base', 'Stone'], ['fence', 'Wood']], material => ({ material }));
   // One op per change: { materials: { part: slot or null } } (null is the default look).
   for (const [part, label, defaultLabel] of siteMaterialSlots(kind, piece)) section.append(materialSlot({ library, ownSlot,
+    materialSurface: () => ({ kind, pieceId: piece.id, slot: part }),
     label, value: piece.materials?.[part] || null, defaultLabel, kit: getKit(), readOnly: () => !canEdit(), report,
     resolve: ref => siteMaterialDescription(getPlan(), kind, getRecord()?.piece || piece, part, ref, getKit()),
     onChange: slot => queue(async () => {

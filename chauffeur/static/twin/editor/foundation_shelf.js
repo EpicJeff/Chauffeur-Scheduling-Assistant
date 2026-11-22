@@ -38,6 +38,7 @@ export function foundationShelf(host, building, { getPlan, getKit = () => ({}), 
     label.append(input); section.append(label);
   }
   section.append(materialSlot({ library, ownSlot, label: 'Slab', value: value.materials?.slab, defaultLabel: 'Concrete',
+    materialSurface: () => ({ kind: 'building', pieceId: building.id, buildingId: building.id, slot: 'foundation:slab' }),
     defaultColor: getKit().materials?.patio_concrete?.color, kit: getKit(), readOnly: () => !canEdit(), report,
     resolve: ref => surfaceDescription(getPlan(), {role:'patio_concrete', building, ref}, getKit()),
     onChange: changed => queue(async () => {

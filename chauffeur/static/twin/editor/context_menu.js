@@ -13,7 +13,12 @@ export function createContextMenu({ items, signal }) {
   if (!active) host.hidden = true;
   const lifecycle = new AbortController();
   const listen = (node, type, fn, options = {}) => node.addEventListener(type, fn, { ...options, signal: lifecycle.signal });
-  listen(host, 'keydown', event => event.stopPropagation());
+  listen(host, 'keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && ['c', 'x', 'v', 'd'].includes(event.key.toLowerCase())) {
+      close(false); return; // The editor's shared shortcut handler owns these.
+    }
+    event.stopPropagation();
+  });
   function close(restoreFocus = true) {
     if (active !== menu) return;
     host.hidden = true; host.replaceChildren(); active = null;
@@ -27,6 +32,7 @@ export function createContextMenu({ items, signal }) {
     for (const action of actions) {
       const button = document.createElement('button'); button.type = 'button'; button.textContent = action.label;
       button.setAttribute('role', 'menuitem'); button.disabled = !!action.disabled;
+      if (action.reason) button.title = action.reason;
       button.addEventListener('click', () => {
         close(false);
         try { Promise.resolve(action.run(target)).catch(report); } catch (error) { report(error); }

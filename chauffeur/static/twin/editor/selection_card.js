@@ -225,6 +225,7 @@ export function drawSelectionCard(host, options) {
         return Object.keys(ref).length ? ref : null;
       });
       const row = createSlotRow({ label: shared.label, library, readOnly: () => !canEdit(),
+        materialSurface: () => ({ ...shared.matches[0].owner, slot: shared.matches[0].slot.key }),
         current: () => mixed ? { name: 'Mixed' } : slot.current, detail: () => mixed ? 'Mixed' : slot.current.name,
         accepts: entry => entry.kind === 'material', apply: entry => save(() => ({ id: entry.id })),
         clear: { enabled: () => members.some(member => !!member.ref), run: () => save(() => null) },

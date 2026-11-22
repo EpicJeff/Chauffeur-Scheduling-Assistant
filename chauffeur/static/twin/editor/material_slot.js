@@ -9,7 +9,7 @@ const loadCatalogue = () => catalogueRead ||= readLibraryCatalog().then(c => c.m
 // The owner still supplies one onChange -> one domain op/history step.
 export function materialSlot({ label, value = null, defaultLabel, defaultColor = '#b8b0a4',
   quickPicks = [], kit = {}, onChange, readOnly = false, report = reportError,
-  library = idleLibrary, ownSlot = () => {}, loadMaterials = loadCatalogue, resolve = null }) {
+  library = idleLibrary, ownSlot = () => {}, loadMaterials = loadCatalogue, resolve = null, materialSurface, materialOperation }) {
   let current = value, entries = [], disposed = false;
   const locked = () => typeof readOnly === 'function' ? readOnly() : readOnly;
   const metadata = ref => entries.find(entry => entry.id === ref?.id);
@@ -28,7 +28,11 @@ export function materialSlot({ label, value = null, defaultLabel, defaultColor =
     : { ...surfaceDescription({}, { ref: current, role: defaultLabel, defaultRef: { id: defaultLabel } }, kit),
       current: { name: defaultLabel, color: current?.color || defaultColor }, text: `House default: ${defaultLabel}` };
   const patch = change => { const next = { ...current, ...change }; for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key]; return save(next); };
-  const row = createSlotRow({ label, library, readOnly: locked,
+  const row = createSlotRow({ label, library, readOnly: locked, materialSurface: materialSurface || (materialOperation && (() => {
+    const operation = materialOperation(null);
+    return { kind: 'building', pieceId: operation.building, buildingId: operation.building,
+      slotDescriptor: { key: `role:${label}`, resolved: description().ref, operation: materialOperation } };
+  })),
     accepts: entry => !locked() && entry.kind === 'material',
     current: () => description().current, detail: () => description().text, inherited: () => description().inherited,
     apply: entry => {

@@ -68,7 +68,7 @@ def test_homes(p):
         assert node['attrs'].get('aria-label', node['text'].strip()) == name, tool
         assert node['attrs'].get('title') == name, tool
     groups = [n['attrs']['data-toolbar-group'] for n in p.nodes if 'data-toolbar-group' in n['attrs']]
-    assert groups == ['menu', 'house', 'save', 'select', 'structure', 'yard', 'fixtures', 'measure', 'delete', 'history', 'sheet', 'floor', 'view'], groups
+    assert groups == ['menu', 'house', 'save', 'select', 'structure', 'yard', 'fixtures', 'measure', 'delete', 'clipboard', 'history', 'sheet', 'floor', 'view'], groups
     porch = p.by_id('rail-add-porch')
     parent = p.nodes[porch['parent']]
     assert parent['attrs'].get('data-toolbar-group') == 'structure'
@@ -386,25 +386,25 @@ await test('canvas context menu preserves selection until action; wall split use
  const right=()=>canvas.dispatchEvent(new MouseEvent('contextmenu',{clientX:333,clientY:222,bubbles:true,cancelable:true}));
  const labels=()=>el('editor-context-menu').querySelectorAll('button').map(b=>b.textContent);
  tools.select({pieceId:'chair',buildingId:'b'});right();assert.equal(tools.selected().pieceId,'chair');
- assert.deepEqual(labels(),['Select','Split wall here','Add door here','Add window here','Delete']);
- await press(el('editor-context-menu').querySelectorAll('button')[1]);
+ assert.deepEqual(labels(),['Copy','Cut','Paste','Duplicate','Select','Split wall here','Add door here','Add window here','Delete']);
+ await press(el('editor-context-menu').querySelectorAll('button').find(b=>b.textContent==='Split wall here'));
  assert.deepEqual(ops[0].operation,{op:'split_wall',building:'b',wall:'wall',at:4.25});
  assert.equal(ops[0].selection.pieceId,'wall');
- right();await press(el('editor-context-menu').querySelectorAll('button')[2]);
+ right();await press(el('editor-context-menu').querySelectorAll('button').find(b=>b.textContent==='Add door here'));
  assert.deepEqual({...ops.at(-1).operation,at:4.3},{op:'add_opening',building:'b',wall:'wall',kind:'door',width:3,at:4.3});
  assert.ok(Math.abs(ops.at(-1).operation.at-4.3)<1e-9);
- right();await press(el('editor-context-menu').querySelectorAll('button')[3]);assert.equal(ops.at(-1).operation.kind,'window');
+ right();await press(el('editor-context-menu').querySelectorAll('button').find(b=>b.textContent==='Add window here'));assert.equal(ops.at(-1).operation.kind,'window');
  hit={kind:'planting',id:'tree',distance:1};right();assert.equal(tools.selected().pieceId,'wall');
- assert.deepEqual(labels(),['Select','Move','Turn','Scale','Mirror left-right','Mirror front-back','Delete']);
- await press(el('editor-context-menu').querySelectorAll('button')[4]);
+ assert.deepEqual(labels(),['Copy','Cut','Paste','Duplicate','Select','Move','Turn','Scale','Mirror left-right','Mirror front-back','Delete']);
+ await press(el('editor-context-menu').querySelectorAll('button').find(b=>b.textContent==='Mirror left-right'));
  assert.deepEqual(ops.at(-1).operation,{op:'set_object',list:'planting',index:0,properties:{mirror_x:true}});
  openDialog('houses-panel',{title:'Houses'});right();
  document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
  assert.equal(el('editor-context-menu').hidden,true);assert.equal(el('editor-dialog').hidden,false);
  document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
  assert.equal(el('editor-dialog').hidden,true);assert.equal(tools.selected().pieceId,'tree');
- for(const [index,name] of [[1,'move'],[2,'rotate'],[3,'scale']]) {
-  right();await press(el('editor-context-menu').querySelectorAll('button')[index]);
+ for(const [label,name] of [['Move','move'],['Turn','rotate'],['Scale','scale']]) {
+  right();await press(el('editor-context-menu').querySelectorAll('button').find(b=>b.textContent===label));
   assert.equal(el('rail-'+name).getAttribute('aria-pressed'),'true');
  }
  // An overlay consumes Escape before the armed split tool or selection can change.
@@ -474,8 +474,8 @@ await test('Scene tree uses the live visibility store, keeps floor commands and 
  await press(menu().find(b=>b.textContent==='Hide'));assert.equal(visibility.isHidden('wall'),true);
  right(row('wall'));assert.ok(menu().some(b=>b.textContent==='Show'));await press(menu().find(b=>b.textContent==='Show'));
  assert.equal(visibility.isHidden('wall'),false);
- visibility.hide('wall');hits=[];right(canvas);assert.deepEqual(menu().map(b=>b.textContent),['Show all hidden']);
- await press(menu()[0]);assert.equal(visibility.isHidden('wall'),false);assert.equal(visibility.isLocked('wall'),true);
+ visibility.hide('wall');hits=[];right(canvas);assert.deepEqual(menu().map(b=>b.textContent),['Copy','Cut','Paste','Duplicate','Show all hidden']);
+ await press(menu().find(b=>b.textContent==='Show all hidden'));assert.equal(visibility.isHidden('wall'),false);assert.equal(visibility.isLocked('wall'),true);
  tools.select({id:'chair',building:'b'});assert.equal(row('chair').getAttribute('aria-selected'),'true');
  await choose('pad');assert.equal(terrain.visibilitySelection().id,'pad');assert.equal(row('pad').getAttribute('aria-selected'),'true');terrain.cancel();
  await choose('spot');assert.equal(devices.fixtureHandles.visibilitySelection().id,'spot');assert.equal(row('spot').getAttribute('aria-selected'),'true');

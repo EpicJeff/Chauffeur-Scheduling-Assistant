@@ -278,6 +278,29 @@ def _id(building, prefix):
     return f'{prefix}:{index}'
 
 
+def _create_id(owner, prefix, op):
+    """Optional caller identity for clipboard moves; ordinary adds stay unchanged."""
+    if 'id' not in op:
+        return _id({**owner, '_legacy_singletons': [v for v in owner.values() if isinstance(v, dict)]}, prefix)
+    value = op['id']
+    if not isinstance(value, str) or not 1 <= len(value) <= 100:
+        raise Refused('Choose a piece id of 1 to 100 characters.')
+
+    # Material refs and proposal snapshots also contain `id`. Only authored
+    # owners reserve identities; references must not prevent restoring a cut.
+    used = {owner.get('id')}
+    for name, rows in owner.items():
+        if isinstance(rows, list):
+            used.update(p.get('id') for p in rows if isinstance(p, dict))
+        elif name in ('pool', 'fire_pit', 'fence') and isinstance(rows, dict):
+            used.add(rows.get('id'))
+            if name == 'pool':
+                used.update(p.get('id') for p in rows.get('features', []) if isinstance(p, dict))
+    if value in used:
+        raise Refused(f'That piece id already exists: {value}. Undo the cut or choose a new copy.')
+    return value
+
+
 def _positions(building, level=None):
     return {j['id']: j['at'] for j in building['joints']
             if level is None or j['level'] == level}
@@ -857,6 +880,24 @@ def _device_id(value):
     return value
 
 
+def _placement_device(model, op, ha_catalogue=None):
+    """The same catalogue check for placement and a restored cut anchor."""
+    device = _device_id(op.get('device'))
+    if ha_catalogue is None:
+        from services import twin_ha
+        ha_catalogue = twin_ha.safe_catalogue()
+    from services import twin_display
+    listed = twin_display.catalogue(model, ha_catalogue, include_hidden=True)
+    if ha_catalogue.get('available') and not any(
+            d.get('device_id') == device for d in listed.get('devices', [])):
+        raise Refused('Choose a device.')
+    return device
+
+
+def _placement_angles(op):
+    return {key: _number(op[key]) for key in ('facing_deg', 'orientation', 'rotation') if key in op}
+
+
 def _unplace_device(model, device, actor):
     changed = False
     yard = model.get('site', {}).get('devices', [])
@@ -882,7 +923,7 @@ def _place_device(model, op, actor):
     device = _device_id(op.get('device'))
     if isinstance(op.get('host'), dict) and 'yard_room' in op['host']:
         from services import twin_site_shapes
-        piece = {'id': f'device:{device}', 'device': device, 'host': deepcopy(op['host']), 'offset': op.get('offset', 0)}
+        piece = {'id': f'device:{device}', 'device': device, 'host': deepcopy(op['host']), 'offset': op.get('offset', 0), **_placement_angles(op)}
         try:
             twin_site_shapes.yard_device_point(model['site'], piece)
         except ValueError as exc:
@@ -921,7 +962,7 @@ def _place_device(model, op, actor):
     _unplace_device(model, device, actor)
     src = {'auto': True} if actor == 'auto' else {'person': True} if actor == 'person' else {}
     building['devices'].append({'id': f'device:{device}', 'device': device,
-                                'host': host, 'offset': offset, 'src': src})
+                                'host': host, 'offset': offset, 'src': src, **_placement_angles(op)})
 
 
 def _piece(building, pid):
@@ -1260,7 +1301,7 @@ def _proposal(building, op):
     building['proposals'].remove(proposal)
 
 
-def _more(building, op, ha_catalogue=None):
+def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
     kind = op['op']
     if kind in ('add_stair', 'update_stair'):
         adding = kind == 'add_stair'
@@ -1320,8 +1361,9 @@ def _more(building, op, ha_catalogue=None):
         host = op.get('host')
         if op['kind'] != 'parking' and (not isinstance(host, dict) or 'wall' not in host):
             raise Refused('Choose a wall for the equipment.')
-        piece = {'id': _id(building, 'anchor'), 'kind': op['kind'], 'offset': 0,
+        piece = {'id': _create_id(building, 'anchor', op), 'kind': op['kind'], 'offset': 0,
                  'state': 'settled', 'device': None}
+        piece.update(_placement_angles(op))
         for field in (('name', 'power', 'car') if op['kind'] == 'charger' else ('name', 'car', 'rotation', 'width', 'depth') if op['kind'] == 'parking' else ()):
             if field in op:
                 piece[field] = deepcopy(op[field])
@@ -1331,6 +1373,10 @@ def _more(building, op, ha_catalogue=None):
             raise Refused(reason)
         building['anchors'].append(piece)
         _rehost(building, piece, host)
+        if op.get('device'):
+            _placement_device(model, op, ha_catalogue)
+            _place_device(model,
+                          {'device': op['device'], 'building': building['id'], 'anchor': piece['id']}, actor)
         return 'Added the ' + op['kind'].replace('_', ' ') + '.'
     elif kind == 'add_opening':
         from services.twin_edit import _OPENING_KINDS
@@ -1338,7 +1384,7 @@ def _more(building, op, ha_catalogue=None):
         if op.get('kind') not in _OPENING_KINDS or wall.get('kind') == 'separator':
             raise Refused('Choose an opening kind and a solid wall.')
         height = wall.get('height', _find(building, 'levels', wall['level'])['ceiling'])
-        piece = {'id': _id(building, 'opening'), 'wall': wall['id'], 'kind': op['kind'],
+        piece = {'id': _create_id(building, 'opening', op), 'wall': wall['id'], 'kind': op['kind'],
                  'at': _number(op.get('at')), 'width': _positive(op.get('width', 3)),
                  'sill': _number(op.get('sill', min(2, height / 3) if op['kind'] == 'window' else 0)),
                  'head': _positive(op.get('head', min(7, height))), 'state': 'settled'}
@@ -1346,6 +1392,16 @@ def _more(building, op, ha_catalogue=None):
         extra = {k: op[k] for k in twin_objects.SCHEMA['opening'] if k in op}
         if extra:
             twin_objects.update(piece, extra, opening=True)
+        if 'panels' in op:
+            from services.twin_edit import _number as opening_number
+            opening_number(op['panels'], 'panels', positive=True)
+            if type(op['panels']) is not int:
+                raise Refused('panels must be a positive integer.')
+            piece['panels'] = op['panels']
+        if 'glass' in op:
+            if op['glass'] not in ('none', 'half'):
+                raise Refused('Choose none or half door glass.')
+            piece['glass'] = op['glass']
         building['openings'].append(piece)
         noun = {'slider': 'sliding door', 'bifold': 'folding door', 'garage': 'garage door',
                 'passage': 'passage'}.get(op['kind'], op['kind'])
@@ -1356,13 +1412,22 @@ def _more(building, op, ha_catalogue=None):
                 raise Refused(f'The {noun} does not fit on that wall there. Pick a longer stretch of wall.') from exc
             raise
         _opening_clear(building, piece, noun)
+        if not isinstance(op.get('materials', {}), dict):
+            raise Refused('Choose opening material slots.')
+        for part, material in op.get('materials', {}).items():
+            _material(building, {'target': {'opening': piece['id'], 'part': part}, 'material': material})
     elif kind in ('add_anchor', 'add_item'):
         collection = 'anchors' if kind == 'add_anchor' else 'items'
-        piece = {'id': _id(building, collection[:-1]), 'state': 'settled'}
+        piece = {'id': _create_id(building, collection[:-1], op), 'state': 'settled'}
         if kind == 'add_anchor':
             if op.get('kind') not in ('light', 'switch', 'outlet', 'fan', 'camera', 'sensor'):
                 raise Refused('Choose an anchor kind.')
             piece.update(kind=op['kind'], offset=0, device=None)
+            piece.update(_placement_angles(op))
+            if 'offset' in op:
+                piece['offset'] = _number(op['offset'])
+            if 'name' in op:
+                piece['name'] = _text(op['name'])
         else:
             piece.update(asset=_text(op.get('asset')), rotation=_number(op.get('rotation', 0)) % 360,
                          scale=_item_scale(op.get('scale', 1)))
@@ -1379,6 +1444,12 @@ def _more(building, op, ha_catalogue=None):
                     raise Refused('Choose an imported model from the library.')
         building[collection].append(piece)
         _rehost(building, piece, op.get('host'))
+        if kind == 'add_anchor' and op.get('device'):
+            # A cut anchor is restored at its original identity. Use the same
+            # binding validator and uniqueness path as the existing hand action.
+            _placement_device(model, op, ha_catalogue)
+            _place_device(model,
+                          {'device': op['device'], 'building': building['id'], 'anchor': piece['id']}, actor)
     elif kind in ('move_hosted', 'resize_opening'):
         piece_kind, piece = _piece(building, op.get('id'))
         if piece_kind not in ('opening', 'anchor', 'item') or (kind == 'resize_opening' and piece_kind != 'opening'):
@@ -1591,10 +1662,20 @@ def _site_op(model, op, actor, *, _batch_inplace=False):
         if name == 'pool' and pieces:
             raise Refused('A pool already exists. Edit or delete it before drawing another.')
         try:
-            piece, words = twin_site_shapes.create(name, {k: v for k, v in op.items() if k not in ('op', 'list')}, model['site'].get('lot'))
+            piece, words = twin_site_shapes.create(name, {k: v for k, v in op.items() if k not in ('op', 'list', 'id', 'materials', 'rotation', 'elevation')}, model['site'].get('lot'))
+            if 'materials' in op:
+                twin_site_shapes.update(name, piece, {'materials': op['materials']}, model['site'].get('lot'))
+            if 'rotation' in op:
+                geometry = next((k for k in ('polygon', 'points', 'polyline') if k in piece), None)
+                # The clipboard already translated the authored footprint. The
+                # existing updater validates its dial without rotating it twice.
+                twin_site_shapes.update(name, piece, {'rotation': op['rotation'],
+                    **({geometry: piece[geometry]} if geometry else {})}, model['site'].get('lot'))
+            if 'elevation' in op:
+                piece['elevation'] = _number(op['elevation'])
         except ValueError as exc:
             raise Refused(str(exc)) from exc
-        piece['id'] = _id({**model['site'], '_legacy_singletons': [p for p in model['site'].values() if isinstance(p, dict)]}, name)
+        piece['id'] = _create_id(model['site'], name, op)
         if actor == 'person':
             piece['src'] = {'person': True}
         if singleton and pieces:
@@ -1607,7 +1688,7 @@ def _site_op(model, op, actor, *, _batch_inplace=False):
         if name not in ('planting', 'furniture'):
             raise Refused('Add plants and furniture through the library.')
         asset = _text(op.get('asset'))
-        piece = {'id': _id(model['site'], name), 'asset': asset, 'at': _point(op.get('at'))}
+        piece = {'id': _create_id(model['site'], name, op), 'asset': asset, 'at': _point(op.get('at'))}
         if name == 'planting' and not asset.startswith('import-'):
             from services import twin_library
             kit = twin_library.kit('modern_farmhouse')
@@ -1625,6 +1706,15 @@ def _site_op(model, op, actor, *, _batch_inplace=False):
         extra = {k: op[k] for k in (*twin_objects.fields({**piece, 'object_kind': op.get('object_kind', 'plant' if name == 'planting' else 'furniture')}, name), 'object_kind') if k in op}
         if extra:
             twin_objects.update(piece, extra, name)
+        if name == 'planting':
+            for field in ('height', 'seed'):
+                if field in op:
+                    if field == 'height':
+                        piece[field] = _positive(op[field])
+                    else:
+                        if type(op[field]) not in (int, float) or not math.isfinite(op[field]):
+                            raise Refused('Choose a finite plant seed.')
+                        piece[field] = op[field]
         pieces.append(piece)
     else:
         index = next((i for i, p in enumerate(pieces) if p.get('id') == op['id']), -1) if op.get('id') else op.get('index', 0 if singleton else None)
@@ -1952,7 +2042,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
             if kind == 'add_pad':
                 if len(pads) >= 40:
                     raise Refused('A lot can have at most 40 pads.')
-                pad = {'id': _id(model['site'], 'pad'), 'polygon': op.get('polygon'), 'height': op.get('height', 0)}
+                pad = {'id': _create_id(model['site'], 'pad', op), 'polygon': op.get('polygon'), 'height': op.get('height', 0)}
                 pads.append(pad)
             else:
                 pad = _find(model['site'], 'terraces', op.get('id'))
@@ -2030,17 +2120,10 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     if kind in ('place_device', 'unplace_device'):
         device = _device_id(op.get('device'))
         if kind == 'place_device':
-            if ha_catalogue is None:
-                from services import twin_ha
-                ha_catalogue = twin_ha.safe_catalogue()
             # A guessed id would be stored and never drawn; with no Home Assistant
             # the id cannot be checked, so it is kept.
             # Entity items (a device shown as separate entities) are placeable too.
-            from services import twin_display
-            listed = twin_display.catalogue(model, ha_catalogue, include_hidden=True)
-            if ha_catalogue.get('available') and not any(
-                    d.get('device_id') == device for d in listed.get('devices', [])):
-                raise Refused('Choose a device.')
+            _placement_device(model, op, ha_catalogue)
             _place_device(model, op, actor)
         else:
             if not _unplace_device(model, device, actor):
@@ -2054,11 +2137,11 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
         features = pool.setdefault('features', [])
         try:
             if kind == 'add_pool_feature':
-                if set(op) - {'op', 'kind', 'polygon', 'depth_in', 'bench_in', 'bench_width_in', 'treads', 'entry_edge', 'mode', 'raise_in', 'spillover', 'materials'}:
+                if set(op) - {'op', 'id', 'kind', 'polygon', 'depth_in', 'bench_in', 'bench_width_in', 'treads', 'entry_edge', 'mode', 'raise_in', 'spillover', 'materials'}:
                     raise ValueError('Choose supported pool feature properties.')
                 value = {k: v for k, v in op.items() if k != 'op'}
                 from uuid import uuid4
-                value['id'] = 'pool_feature:' + uuid4().hex
+                value['id'] = _create_id(model['site'], 'pool_feature', op) if 'id' in op else 'pool_feature:' + uuid4().hex
                 features.append(shapes.pool_feature(pool, value))
             else:
                 piece = next((p for p in features if p['id'] == op.get('id')), None)
@@ -2140,7 +2223,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
         deleted_words = 'Added the porch.'
     elif kind in MORE_OPS:
         try:
-            deleted_words = _more(building, op, ha_catalogue)
+            deleted_words = _more(building, op, ha_catalogue, model=model, actor=actor)
         except ValueError as exc:
             raise Refused(str(exc)) from exc
     elif kind in ('move_joint', 'move_joints', 'move_wall', 'move_room'):

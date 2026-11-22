@@ -198,6 +198,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
         return save(Object.keys(next).length ? next : null);
       };
       const row = createSlotRow({ label: material.label, library, readOnly: () => !canEdit(),
+        materialSurface: () => ({ ...material.surface, target: material.target }),
         current: () => material.current, detail: () => material.text, inherited: () => material.inherited,
         accepts: entry => entry.kind === 'material',
         // Clear only where something is set here; an inherited slot has nothing to clear.

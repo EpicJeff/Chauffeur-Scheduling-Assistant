@@ -352,6 +352,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
         const slot = (title, key, fallback, nested = false) => {
           const owner = nested ? value.rail : value;
           card.append(materialSlot({ library, ownSlot, label: `Edge ${i + 1} ${title}`, value: owner.materials?.[key] || null,
+            materialSurface: () => ({ kind: 'terraces', pieceId: current().id, slot: `edge:${i}:${kind}:${nested ? 'rail:' : ''}${key}` }),
             defaultLabel: fallback, kit: getKit(), readOnly: () => !canEdit(), report,
             resolve: ref => surfaceDescription(getPlan(), {ref, role:nested ? 'black_metal'
               : key === 'face' ? retainingWallRole(value.material) : 'patio_concrete'}, getKit()),

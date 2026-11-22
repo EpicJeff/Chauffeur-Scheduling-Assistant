@@ -851,6 +851,7 @@ export async function boot() {
         return canvas.toDataURL('image/png');
       },
       async afterLoad(result) {
+        tools?.clipboard?.clear();
         tools?.select(null); draw?.cancel(); pauses?.dismiss();
         // The write succeeded: preserve its Undo step even if a read or redraw fails.
         if (!snapshot.rounds.some(row => row.id === result.round)) snapshot.rounds.push({ id: result.round, kind: 'load' });
@@ -860,6 +861,7 @@ export async function boot() {
     });
     tools = createSceneTools({ dock, view, visibility, isPickable, openHouseMaterials, getPlan: () => timeline?.preview() || shownPlan(), getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
       surfaceAt: (event, target) => library?.contextSurfaceAt(event, target),
+      groundPoint: event => library?.ground(event),
       siteHits: (x, y) => library?.siteHits(x, y) || [],
       padHits: (x, y) => terrain?.padHits?.(x, y) || [], fixtureHits: (x, y) => devices?.fixtureHits?.(x, y) || [],
       library: slotLibrary, onDrawFeature: kind => terrain?.startDrawing(kind),
