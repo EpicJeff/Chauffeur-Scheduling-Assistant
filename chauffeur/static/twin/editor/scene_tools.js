@@ -6,7 +6,8 @@ import { createHaLink } from './ha_link.js';
 import { readMaterialNames } from './material_catalog.js';
 import { snapPoint, snapRotation } from './snap.js';
 import { sheetMaster, localCentre } from './words.js';
-import { createSelection } from './selection.js';
+import { createSelection, createRoomSelection } from './selection.js';
+import { createMarquee } from './marquee.js';
 import { createDrag } from './drag.js';
 import { createDimensions } from './dimensions.js';
 import { createGizmo } from './gizmo.js';
@@ -34,7 +35,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let ownsGesture = false, handles = null, gizmo = null, controlsBeforePress = null;
   let roofRooms = new Set(), roofRoomBuilding = null;
   let split = null, splitStatus = '';
-  let sceneTree = null, refreshingSelection = false;
+  let sceneTree = null, refreshingSelection = false, syncingStore = false, seedingDelegate = false, prevPrimaryKind = null;
   function cancelSplit(text = splitStatus) {
     if (!split) return;
     split = null; el('editor-status').textContent = text; canvas.style.cursor = tool === 'select' ? '' : 'crosshair';
@@ -96,8 +97,49 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     const record = findPiece(getPlan(), item.pieceId, item.buildingId);
     return label || record?.piece.name || `${record?.kind || 'piece'} ${item.pieceId}`;
   };
-  const roomSelection = createSelection({ view, getModel, onChange(state) {
+  const isDelegateKind = kind => ['terraces', 'light_fixture', 'effect_fixture', 'device'].includes(kind);
+  const isExcludedSetKind = kind => ['building', 'level', 'group', 'floor'].includes(kind);
+  const stepBackOrClear = () => {
+    if (selectionStore.members().length > 1) selectionStore.clear();
+    else roomSelection.back();
+  };
+  function delegatePickFor(ref) {
+    if (!ref) return null;
+    const plan = getPlan();
+    if (ref.kind === 'terraces') return { kind: 'terraces', id: ref.pieceId, pieceId: ref.pieceId, building: null };
+    if (ref.kind === 'effect_fixture') return { kind: 'effect_fixture', id: ref.pieceId, pieceId: ref.pieceId, effectId: ref.pieceId, fixtureId: ref.pieceId, building: ref.buildingId ?? null };
+    if (ref.kind === 'light_fixture') {
+      let entity_id = ref.entity_id;
+      if (!entity_id) {
+        for (const [eid, fs] of Object.entries(plan?.light_fixtures || {})) {
+          if ((fs || []).some(f => f.id === ref.pieceId)) { entity_id = eid; break; }
+        }
+      }
+      return { kind: 'light_fixture', id: ref.pieceId, pieceId: ref.pieceId, fixtureId: ref.pieceId, entity_id, building: ref.buildingId ?? null };
+    }
+    if (ref.kind === 'device') {
+      const piece = (ref.buildingId
+        ? plan?.buildings?.find(b => b.id === ref.buildingId)?.devices
+        : plan?.site?.devices)?.find(d => d.id === ref.pieceId);
+      return { kind: 'device', id: ref.pieceId, pieceId: ref.pieceId, building: ref.buildingId ?? null, name: piece?.name || ref.pieceId, piece };
+    }
+    return null;
+  }
+  function openDelegateCard(ref) {
+    if (!ref || !isDelegateKind(ref.kind)) return false;
+    const target = delegatePickFor(ref);
+    if (!target) return false;
+    seedingDelegate = true;
+    try {
+      return !!(delegate?.selectTree?.(target) || delegate?.selectPick?.(target));
+    } finally {
+      seedingDelegate = false;
+    }
+  }
+  function applySelectionState(state, primaryRef = selectionStore.primary()) {
     const changed = (selection?.pieceId ?? null) !== (state.id ?? null) || (selection?.buildingId ?? null) !== (state.building ?? null);
+    const previousKind = prevPrimaryKind;
+    prevPrimaryKind = primaryRef?.kind ?? state.kind ?? null;
     if (split && (state.id !== split.wall || state.building !== split.building)) cancelSplit();
     if (!state.room || state.building !== roofRoomBuilding || !roofRooms.has(state.room)) {
       roofRooms = new Set(state.room ? [state.room] : []); roofRoomBuilding = state.building;
@@ -105,12 +147,135 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     selection = state.id ? { pieceId: state.id, buildingId: state.building, kind: state.kind, room: state.room } : null;
     if (!selection) panel.clearSelection();
     if (state.level) levelKey = `${state.building}:${state.level}`;
-    cards.draw(selection);
+    if (primaryRef && isDelegateKind(primaryRef.kind)) {
+      if (primaryRef.kind === 'terraces') {
+        const cardEl = el('piece-card');
+        if (cardEl?.dataset.fixtureCard) {
+          cardEl.dispatchEvent(new Event('fixturecardrelease'));
+          cardEl.hidden = true;
+        }
+        cards.draw(null);
+        const cur = delegate?.visibilitySelection?.();
+        if (cur?.id !== primaryRef.pieceId || document.getElementById('terrain-card')?.hidden) {
+          openDelegateCard(primaryRef);
+        }
+      } else {
+        delegate?.selectionChanged?.(state);
+        const cur = delegate?.visibilitySelection?.();
+        const cardEl = el('piece-card');
+        if (!cardEl?.dataset.fixtureCard || cur?.id !== primaryRef.pieceId) {
+          openDelegateCard(primaryRef);
+        }
+      }
+    } else {
+      if (changed && !selection) {
+        const cardEl = el('piece-card');
+        if (cardEl?.dataset.fixtureCard && !seedingDelegate) {
+          cardEl.dispatchEvent(new Event('fixturecardrelease'));
+          cardEl.hidden = true;
+          dock?.properties.clear(cardEl);
+        }
+        if (previousKind === 'terraces') {
+          delegate?.selectionChanged?.({ ...state, id: '__cleared__' });
+        }
+      }
+      cards.draw(selection);
+      delegate?.selectionChanged?.(state);
+    }
     handles?.refresh(); gizmo?.draw();
     drawDimensions(getPlan(), state);
-    delegate?.selectionChanged?.(state);
-    if (!refreshingSelection || changed) sceneTree?.reveal(state.id);
-  } });
+    if (!refreshingSelection || changed) sceneTree?.reveal(state.id, state.building);
+  }
+  const selectionStore = createSelection({
+    onChange(members) {
+      if (syncingStore) return;
+      const primaryRef = members.length ? members[members.length - 1] : null;
+      // Clear room focus here (caller), not inside the pure member store (Ruling 1).
+      if (roomSelection.current().room && (!members.length || members.length > 1 || !roomSelection.inside(primaryRef))) {
+        roomSelection.clearRoom();
+      }
+      const state = roomSelection.sync(primaryRef);
+      applySelectionState(state, primaryRef);
+    },
+  });
+  const roomSelection = createRoomSelection({
+    view,
+    getModel,
+    getMembers: () => selectionStore.members(),
+    onSync(state) {
+      syncingStore = true;
+      try {
+        const ref = state.id ? toSelectionRef(state) : null;
+        selectionStore.set(ref ? [ref] : []);
+      } finally {
+        syncingStore = false;
+      }
+    },
+    onChange: state => applySelectionState(state),
+  });
+  function toSelectionRef(picked) {
+    if (!picked) return null;
+    const id = picked.pieceId ?? picked.id;
+    if (!id) return null;
+    const building = picked.buildingId ?? picked.building ?? null;
+    const record = findPiece(getPlan(), id, building);
+    if (record) {
+      const ref = { kind: record.kind, pieceId: record.piece.id };
+      if (record.building) {
+        ref.buildingId = record.building.id;
+        const level = record.kind === 'level' ? record.piece.id
+          : record.piece.level
+            || record.building.walls?.find(w => w.id === (record.piece.wall || record.piece.host?.wall))?.level
+            || record.building.rooms?.find(r => r.id === (record.piece.host?.floor || record.piece.host?.ceiling))?.level
+            || picked.level || null;
+        if (level != null) ref.level = level;
+      }
+      if (record.poolId !== undefined) ref.poolId = record.poolId;
+      return ref;
+    }
+    const plan = getPlan();
+    let kind = picked.kind ?? null;
+    let entity_id = picked.entity_id ?? picked.piece?.entity_id;
+    if (kind === 'pad') kind = 'terraces';
+    else if (kind === 'effect') kind = 'effect_fixture';
+    else if (kind === 'fixture' && !building) {
+      for (const [eid, fs] of Object.entries(plan?.light_fixtures || {})) {
+        if ((fs || []).some(f => f.id === id)) { kind = 'light_fixture'; entity_id ||= eid; break; }
+      }
+    } else if (kind === 'light_fixture' && !entity_id) {
+      for (const [eid, fs] of Object.entries(plan?.light_fixtures || {})) {
+        if ((fs || []).some(f => f.id === id)) { entity_id = eid; break; }
+      }
+    }
+    const ref = { kind, pieceId: id };
+    if (building != null) ref.buildingId = building;
+    if (picked.level != null) ref.level = picked.level;
+    if (entity_id !== undefined) ref.entity_id = entity_id;
+    if (picked.poolId !== undefined) ref.poolId = picked.poolId;
+    return ref;
+  }
+  function pieceExists(plan, ref) {
+    if (!plan || !ref) return false;
+    const id = ref.pieceId ?? ref.id;
+    if (!id) return false;
+    const buildingId = ref.buildingId ?? ref.building ?? null;
+    if (findPiece(plan, id, buildingId)) return true;
+    if (ref.kind === 'terraces') return (plan.site?.terraces || []).some((p, i) => (p.id || `terraces:${i}`) === id);
+    if (ref.kind === 'light_fixture') return Object.values(plan.light_fixtures || {}).some(fs => (fs || []).some(f => f.id === id));
+    if (ref.kind === 'effect_fixture') return (plan.effect_fixtures || []).some(f => f.id === id);
+    if (ref.kind === 'device') {
+      if (buildingId) return (plan.buildings?.find(b => b.id === buildingId)?.devices || []).some(d => d.id === id);
+      return (plan.site?.devices || []).some(d => d.id === id);
+    }
+    return false;
+  }
+  function seedDelegateSelection() {
+    if (selectionStore.members().length) return;
+    const active = delegate?.visibilitySelection?.();
+    if (!active?.id) return;
+    const ref = toSelectionRef(active);
+    if (ref) selectionStore.add(ref);
+  }
   // Area picks and placements wait behind the card's own field saves (cards.queue).
   const haLink = createHaLink({ api, onCommit: operation => cards.queue(() => op(operation)), signal, getPlan, canEdit });
   let linkReadAt = 0;
@@ -153,7 +318,11 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   }
   function select(item) {
     if (!canEdit() && item) return;
-    if (!item) { roomSelection.clear(); return; }
+    if (!item) {
+      if (seedingDelegate) return;
+      roomSelection.clear();
+      return;
+    }
     const record = findPiece(getPlan(), item.id ?? item.pieceId, item.building ?? item.buildingId);
     if (!record) return;
     if (!record.building) {
@@ -164,6 +333,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (['roof', 'dormer', 'solar_zone', 'building', 'level'].includes(record.kind) && roomSelection.current().room) roomSelection.clear();
     roomSelection.select({ kind: record.kind, id: record.piece.id, building: record.building.id, level });
   }
+  let contextPicking = false;
   function sceneCandidate(item) {
     if (item?.kind === 'roof') {
       const building = getPlan()?.buildings.find(b => b.id === item.building);
@@ -189,6 +359,18 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     (x, y) => fixtureHits?.(x, y) || [],
   ] });
   const pick = (x, y) => picker.peek(x, y);
+  const marquee = createMarquee({
+    view,
+    selection: selectionStore,
+    visibility,
+    getPlan,
+    isEmpty: event => {
+      contextPicking = true;
+      try { return picker.at(event.clientX, event.clientY).length === 0; }
+      finally { contextPicking = false; }
+    },
+  });
+  signal.addEventListener('abort', () => marquee.dispose(), { once: true });
   // A locked piece cannot be clicked in the view; when it is the nearest thing under the
   // pointer, say so instead of silently selecting what lies behind it (owner report 2026-11-19).
   const LOCKED_WORDS = { roof: 'This roof section', dormer: 'This dormer', wall: 'This wall', room: 'This room', opening: 'This opening',
@@ -204,7 +386,6 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   }
   // Context actions use the same ranked picker, but retain the actual piece
   // under the pointer in the exterior view instead of its navigation parent.
-  let contextPicking = false;
   const contextMenu = createContextMenu({ signal, items(target) {
     if (target.empty) return [{ label: 'Show all hidden', run: () => visibility?.showAll() }];
     if (target.floor) {
@@ -364,8 +545,35 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (el('editor-floor-picker')) drawFloorList(el('editor-floor-picker'));
     if (el('editor-floor-add')) el('editor-floor-add').disabled = !floor() || !canEdit();
   }
-  function selectTreeRow(row) {
-    onInteract?.(); delegate?.cancel?.(); setTool('select');
+  function selectTreeRow(row, options = null) {
+    onInteract?.();
+    if (options?.mode === 'toggle') {
+      if (row.floorKey || isExcludedSetKind(row.kind) || isExcludedSetKind(options.ref?.kind)) return;
+      setTool('select');
+      const ref = toSelectionRef(options.ref || row);
+      if (ref && !isExcludedSetKind(ref.kind)) {
+        seedDelegateSelection();
+        selectionStore.toggle(ref);
+      }
+      return;
+    }
+    if (options?.mode === 'range') {
+      const refs = (options.refs || [])
+        .filter(r => !r?.floorKey && !isExcludedSetKind(r?.kind))
+        .map(r => toSelectionRef(r) || r)
+        .filter(ref => ref && !isExcludedSetKind(ref.kind));
+      if (!refs.length) return;
+      setTool('select');
+      if (options.additive) {
+        seedDelegateSelection();
+        selectionStore.set([...selectionStore.members(), ...refs]);
+      } else {
+        delegate?.cancel?.();
+        selectionStore.set(refs);
+      }
+      return;
+    }
+    delegate?.cancel?.(); setTool('select');
     if (row.floorKey) chooseFloor(row.floorKey);
     else if (!delegate?.selectTree?.(row) && !delegate?.selectPick?.({ ...row, fixtureId: row.id, entity_id: row.piece?.entity_id, effectId: row.kind === 'effect_fixture' ? row.id : undefined })) {
       // Explicit tree picks must cross an existing focused-room boundary.
@@ -374,7 +582,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   }
   if (dock && visibility) {
     sceneTree = createSceneTree({ host: el('scene-tree'), getPlan,
-      getSelection: () => selection || delegate?.visibilitySelection?.(), select: selectTreeRow, visibility,
+      getSelection: () => selection || delegate?.visibilitySelection?.(), selection: selectionStore, select: selectTreeRow, visibility,
       floors: { hidden: row => view.groups?.levels[row.floorKey]?.visible === false, current: () => floor()?.key,
         toggle(row) {
           const show = view.groups?.levels[row.floorKey]?.visible === false || visibility.isHidden(row.id);
@@ -453,7 +661,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       gesture = { measuring: true, selecting: true, x: event.clientX, y: event.clientY, pointerId }; return;
     }
     if (delegate?.pointerArmedDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
-    const hit = handleHit(event);
+    const hit = (event.ctrlKey || event.metaKey) ? null : handleHit(event);
     if (hit) {
       const enabled = view.controls.enabled, started = hit.source.begin(event, hit.handle);
       gesture = { x: event.clientX, y: event.clientY, pointerId, dragging: true, source: hit.source, started, enabled };
@@ -480,9 +688,13 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (event.shiftKey && tool === 'select') {
       gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true, addRoom: true }; return;
     }
-    // Unselected bodies are passive presses with every scene tool: release
-    // selects, crossing the threshold leaves the gesture to OrbitControls.
-    gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true };
+    if (tool === 'select' && !body && event.pointerType !== 'touch' && marquee.pointerDown(event)) {
+      gesture = { x: event.clientX, y: event.clientY, pointerId, marquee: true, enabled: controlsBeforePress };
+      ownsGesture = true; event.stopImmediatePropagation(); return;
+    }
+    // A passive piece press still clicks/selects. In the editor a mouse drag
+    // starts a marquee at the threshold point; touch keeps its camera path.
+    gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true, enabled: controlsBeforePress };
     if (!body?.building) return;
     onInteract?.();
     const anchor = pieceAnchor(body); if (!anchor) return;
@@ -496,6 +708,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   listen(canvas, 'pointermove', event => {
     if (!pointers.size && !event.buttons && tool === 'select' && canEdit()) roomSelection.hover(pick(event.clientX, event.clientY));
     if (event.pointerId !== pointerId) return;
+    if (gesture?.marquee) { marquee.pointerMove(event); return; }
     if (gesture?.dragging && gesture.source !== handles) {
       if (gesture.started) gesture.source.pointerMove?.(event, { free: !!event.shiftKey });
       return;
@@ -504,7 +717,14 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (!gesture?.dragging && delegate?.pointerMove?.(event)) return;
     if (!gesture || gesture.delegated) return;
     if (gesture.selecting) {
-      if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= DRAG_THRESHOLD_PX) gesture.moved = true;
+      if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= DRAG_THRESHOLD_PX) {
+        gesture.moved = true;
+        if (view.editorCamera && event.pointerType !== 'touch' && !gesture.measuring && !gesture.addRoom
+          && marquee.pointerDown(event, { fromPiece: true })) {
+          gesture.enabled = controlsBeforePress;
+          gesture.marquee = true; ownsGesture = true; event.stopImmediatePropagation();
+        }
+      }
       return;
     }
     if (gesture.dragging) {
@@ -549,6 +769,23 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
       Promise.resolve(typedOwner.commit(typedOwner.typedValue())).catch(report); return;
     }
+    if (g?.marquee) {
+      if (cancel) marquee.cancel();
+      else {
+        const dragged = marquee.pointerUp(event);
+        if (dragged) onInteract?.();
+        else if (!(event.ctrlKey || event.metaKey || event.altKey)) {
+          onInteract?.();
+          roofRooms.clear();
+          lockedHint(event.clientX, event.clientY, null);
+          if (!delegate?.selectPick?.(null)) stepBackOrClear();
+          else sceneTree?.reveal(delegate?.visibilitySelection?.()?.id);
+        }
+      }
+      view.controls.enabled = g.enabled;
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      return;
+    }
     if (!g?.dragging) {
       const handled = delegate?.pointerUp?.(event, cancel);
       if (owned) {
@@ -575,11 +812,27 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
             if (roofRoomBuilding !== target.building.id || !roofRooms.size) roomSelection.focusRoom(room.id, target.building.id);
             roofRooms.add(room.id); roofRoomBuilding = target.building.id;
           }
+        } else if (event.ctrlKey || event.metaKey) {
+          roofRooms.clear();
+          contextPicking = true;
+          let picked;
+          try { picked = picker.at(event.clientX, event.clientY)[0] || null; }
+          finally { contextPicking = false; }
+          picker.reset();
+          lockedHint(event.clientX, event.clientY, picked);
+          if (picked) {
+            seedDelegateSelection();
+            const ref = toSelectionRef(picked);
+            if (ref && !isExcludedSetKind(ref.kind)) selectionStore.toggle(ref);
+          }
         } else {
           roofRooms.clear();
           const picked = picker.click(event.clientX, event.clientY);
           lockedHint(event.clientX, event.clientY, picked);
-          if (!delegate?.selectPick?.(picked)) roomSelection.select(picked);
+          if (!picked) {
+            if (!delegate?.selectPick?.(null)) stepBackOrClear();
+            else sceneTree?.reveal(delegate?.visibilitySelection?.()?.id);
+          } else if (!delegate?.selectPick?.(picked)) roomSelection.select(picked);
           else sceneTree?.reveal(delegate?.visibilitySelection?.()?.id);
         }
       }
@@ -646,6 +899,14 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (split && event.key === 'Escape' && !event.defaultPrevented) {
       cancelSplit(); event.preventDefault(); event.stopImmediatePropagation(); return;
     }
+    if ((marquee.active() || gesture?.marquee) && canEscape(event)) {
+      const g = gesture, pid = pointerId;
+      marquee.cancel();
+      gesture = null; pointerId = null; ownsGesture = false;
+      if (g) view.controls.enabled = g.enabled;
+      if (pid !== null && canvas.hasPointerCapture(pid)) canvas.releasePointerCapture(pid);
+      event.preventDefault(); event.stopImmediatePropagation(); return;
+    }
     if (ownsGesture && pointerId !== null && !event.defaultPrevented && (canEdit() || event.key === 'Escape')) {
       for (const source of new Set([gesture?.source, gizmo, handles, ...(delegate?.handleSources || []), delegate])) {
         const result = source?.key?.(event);
@@ -666,7 +927,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   }, { capture: true });
   listen(document, 'keydown', event => {
     if (!canEscape(event) || cancelledEscapes.has(event)) return;
-    roomSelection.back();
+    stepBackOrClear();
   });
   signal.addEventListener('abort', () => { if (gesture && !gesture.selecting) view.controls.enabled = gesture.enabled;
     if (gesture?.dragging && gesture.source !== handles && gesture.started) gesture.source.pointerUp?.({ pointerId }, true);
@@ -693,7 +954,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     pointerArmedDown,
     haLink,
     deleteSelected: () => cards.remove(),
-    select, pick, selected: () => selection, selection: roomSelection.current, dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,
+    select, pick, selected: () => selection, selection: roomSelection.current,
+    selectionStore, selectedMembers: () => selectionStore.members(),
+    dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,
     gizmo, handles: () => [...handles.handles(), ...gizmo.handles()],
     selectedRooms: () => roofRooms.size ? [...roofRooms] : null,
     // A press on the selected piece's handle belongs to the handle, never to a yard item behind it.
@@ -703,8 +966,16 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     delegate(value) { delegate = value; },
     refresh() {
       drawFloors();
-      if (selection && !findPiece(getPlan(), selection.pieceId, selection.buildingId)) select(null);
-      else {
+      const plan = getPlan();
+      const currentMembers = selectionStore.members();
+      const surviving = currentMembers.filter(ref => pieceExists(plan, ref));
+      if (surviving.length !== currentMembers.length) {
+        if (!surviving.length) select(null);
+        else {
+          refreshingSelection = true;
+          try { selectionStore.set(surviving); } finally { refreshingSelection = false; }
+        }
+      } else {
         refreshingSelection = true;
         try { roomSelection.refresh(); } finally { refreshingSelection = false; }
       }

@@ -164,7 +164,10 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     onPreview(plan) {
       const fixture = cardLight && plan.light_fixtures?.[cardLight.entity_id]?.find(f => f.id === cardLight.id);
       const mesh = fixture && root.children.find(mesh => mesh.userData.fixtureId === fixture.id);
-      if (mesh && fixture.at) mesh.position.set(fixture.at[0] * FT, (fixture.at[2] + fixtureReference(plan, fixture, fixture.at) + (fixture.offset_ft || 0)) * FT, -fixture.at[1] * FT);
+      if (mesh && fixture.at) {
+        mesh.position.set(fixture.at[0] * FT, (fixture.at[2] + fixtureReference(plan, fixture, fixture.at) + (fixture.offset_ft || 0)) * FT, -fixture.at[1] * FT);
+        view.refreshSelection?.();
+      }
     } });
   const helpers = { element, numeric, field, actions, button };
   const effectPlacement = f => f;
@@ -469,6 +472,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     const mesh = root.children.find(mesh => mesh.userData.fixtureId === point.fixture.id); if (!mesh) return;
     const stroke = fixtureStroke(resolveFixture({ ...point.fixture, path }, getPlan()).path);
     mesh.geometry.dispose(); mesh.geometry = stroke.geometry; stroke.material.dispose();
+    view.refreshSelection?.();
   }
   function pointerDown(event) {
     if (event.button !== 0) return false;
@@ -579,6 +583,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       Object.assign(mesh.userData, {pieceId:effectId || f.id,kind:effectId ? 'effect' : 'fixture'});
     }
     draw();
+    view.refreshSelection?.();
   }
   function finishPlacement() {
     if (mode?.kind === 'shape') { release(); shapeTool.done().catch(report); }

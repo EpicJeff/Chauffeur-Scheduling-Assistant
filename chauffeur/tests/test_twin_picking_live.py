@@ -179,12 +179,27 @@ def _saved_drag(page, start, end, posted, expected_op):
     return posted[0]
 
 
+def _right_drag(page, start, end):
+    for point in (start, end):
+        H._on_canvas(page, *point)
+    assert math.dist(start, end) >= 4, 'Orbit must exceed the context-menu click threshold'
+    page.mouse.move(*start)
+    page.mouse.down(button='right')
+    try:
+        page.mouse.move(*end, steps=10)
+        H.settle(page)
+    finally:
+        page.mouse.up(button='right')
+    H.settle(page)
+    assert page.locator('#editor-context-menu').is_hidden(), 'Right-drag opened the context menu'
+
+
 def _navigate_over_tree(page, tree, posted):
     _look(page, tree['at'], orbit=True)
     start = _pixel(page, tree['at'])
     before = _plan(page)
     camera = page.evaluate('window.__twin.camera.position.toArray()')
-    M._mouse_release(page, start, [start[0] + 120, start[1]])
+    _right_drag(page, start, [start[0] + 120, start[1]])
     _quiet(page)
     after_camera = page.evaluate('window.__twin.camera.position.toArray()')
     assert math.dist(camera, after_camera) > .1, (camera, after_camera)
@@ -194,10 +209,24 @@ def _navigate_over_tree(page, tree, posted):
     assert page.evaluate('window.__twin.controls.enabled')
 
 
-def drag_over_a_tree_only_turns_the_camera():
+def right_drag_over_a_tree_only_turns_the_camera():
     with _page() as page:
         tree = _tree(page)
-        _navigate_over_tree(page, tree, _posted(page))
+        posted = _posted(page)
+        _navigate_over_tree(page, tree, posted)
+        # The same body gesture with the left button draws a marquee instead.
+        _look(page, tree['at'], orbit=True)
+        start = _pixel(page, tree['at'])
+        before = _plan(page)
+        camera = page.evaluate('window.__twin.camera.position.toArray()')
+        M._mouse_release(page, start, [start[0] + 120, start[1]])
+        _quiet(page)
+        after_camera = page.evaluate('window.__twin.camera.position.toArray()')
+        assert math.dist(camera, after_camera) < 1e-8, (camera, after_camera)
+        assert _plan(page) == before, 'Left-drag changed the house plan'
+        assert _item(page, 'planting', tree['id'])['at'] == tree['at'], 'Left-drag moved the tree'
+        assert posted == [], posted
+        assert H.editor_state(page, 'selection')['id'] is None
 
 
 def pad_corner_under_a_tree_moves_the_corner():
@@ -319,10 +348,11 @@ def esc_mid_drag_restores():
         assert posted == [], posted
         # Also prove a subsequent unowned mouse drag can navigate again.
         camera = page.evaluate('window.__twin.camera.position.toArray()')
-        M._mouse_release(page, [start[0] + 160, start[1]], [start[0] + 220, start[1] - 50])
+        _right_drag(page, [start[0] + 160, start[1]], [start[0] + 220, start[1] - 50])
         _quiet(page)
         assert math.dist(camera, page.evaluate('window.__twin.camera.position.toArray()')) > .1
         assert _plan(page) == before and posted == [], posted
+        _selected(page, 'planting', tree['id'])
 
 
 def line_light_point_drag():
@@ -356,7 +386,7 @@ def line_light_point_drag():
 
 
 def main():
-    scenarios = [drag_over_a_tree_only_turns_the_camera, pad_corner_under_a_tree_moves_the_corner,
+    scenarios = [right_drag_over_a_tree_only_turns_the_camera, pad_corner_under_a_tree_moves_the_corner,
                  click_twice_reaches_the_thing_beneath, move_tool_never_selects_and_moves,
                  esc_mid_drag_restores, line_light_point_drag]
     passed = 0

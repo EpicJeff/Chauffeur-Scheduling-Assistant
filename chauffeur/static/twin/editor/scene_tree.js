@@ -83,9 +83,9 @@ export function createSceneRow({ name, select, hidden, locked, toggleHidden, tog
   row.update(); return row;
 }
 
-export function createSceneTree({ host, getPlan, getSelection, select, visibility, floors, contextMenu }) {
+export function createSceneTree({ host, getPlan, getSelection, selection = null, select, visibility, floors, contextMenu }) {
   const life = new AbortController(), signal = life.signal, height = 36;
-  let rows = [], active = null, mounted = new Map(), children = new Map(), lastSelection = null;
+  let rows = [], active = null, anchorKey = null, mounted = new Map(), children = new Map(), lastSelection = null;
   // Expansion belongs to this editor session, never to the visibility store.
   const expanded = new Map();
   const visibleRows = () => {
@@ -96,6 +96,7 @@ export function createSceneTree({ host, getPlan, getSelection, select, visibilit
     });
   };
   host.classList.add('editor-scene-tree'); host.setAttribute('role', 'tree'); host.setAttribute('aria-label', 'Scene');
+  host.setAttribute('aria-multiselectable', 'true');
   const hidden = r => r.kind === 'group'
     ? rows.some(c => c.parent === r) && rows.filter(c => c.parent === r).every(c => visibility?.isHidden(c.id, c.visibilityKind || c.kind))
     : !!(r.kind === 'level' && floors?.hidden(r) || visibility?.isHidden(r.id, r.visibilityKind || r.kind) || r.parent && hidden(r.parent));
@@ -105,13 +106,54 @@ export function createSceneTree({ host, getPlan, getSelection, select, visibilit
     for (let p = r.parent; p; p = p.parent) if (['building', 'level', 'group'].includes(p.kind) && visibility?.isLocked(p.id)) return true;
     return false;
   };
-  const selectedId = () => getSelection()?.id ?? getSelection()?.pieceId;
-  const selectedBuilding = () => getSelection()?.building ?? getSelection()?.buildingId;
-  const selectedRow = r => r.id === selectedId() && (!selectedBuilding() || r.building === selectedBuilding());
+  const rowToRef = r => {
+    const ref = { kind: r.kind, pieceId: r.id };
+    if (r.building != null) ref.buildingId = r.building;
+    const level = r.kind === 'level' ? r.id : r.piece?.level;
+    if (level != null) ref.level = level;
+    if (r.piece?.entity_id !== undefined) ref.entity_id = r.piece.entity_id;
+    if (r.poolId !== undefined) ref.poolId = r.poolId;
+    return ref;
+  };
+  const primarySelection = () => selection?.primary?.() || getSelection?.() || null;
+  const selectedId = () => primarySelection()?.pieceId ?? primarySelection()?.id ?? null;
+  const selectedBuilding = () => primarySelection()?.buildingId ?? primarySelection()?.building ?? null;
+  const primaryRowKey = () => {
+    const id = selectedId();
+    if (!id) return null;
+    const building = selectedBuilding();
+    return rows.find(r => r.id === id && (!building || r.building === building))?.key ?? null;
+  };
+  function buildSelectedKeys() {
+    const exact = new Set(), anyBuilding = new Set();
+    const mems = selection?.members?.();
+    if (mems?.length) {
+      for (const m of mems) exact.add(JSON.stringify([m.buildingId ?? m.building ?? null, m.pieceId ?? m.id]));
+      return { exact, anyBuilding };
+    }
+    const cur = getSelection?.();
+    if (Array.isArray(cur?.members) && cur.members.length) {
+      for (const m of cur.members) {
+        const id = m.pieceId ?? m.id; if (!id) continue;
+        const b = m.buildingId ?? m.building ?? null;
+        exact.add(JSON.stringify([b, id]));
+        if (!b) anyBuilding.add(id);
+      }
+      return { exact, anyBuilding };
+    }
+    const id = selectedId(), building = selectedBuilding();
+    if (id) {
+      exact.add(JSON.stringify([building ?? null, id]));
+      if (!building) anyBuilding.add(id);
+    }
+    return { exact, anyBuilding };
+  }
   function paint() {
     const focused = host.contains(document.activeElement) ? { key: document.activeElement.closest('[data-scene-id]')?.dataset.sceneKey,
       control: document.activeElement.dataset.rowEye !== undefined ? 'row-eye' : document.activeElement.dataset.rowLock !== undefined ? 'row-lock'
         : document.activeElement.dataset.rowDisclosure !== undefined ? 'row-disclosure' : document.activeElement.dataset.sceneSelect !== undefined ? 'scene-select' : null } : null;
+    const { exact: selectedKeys, anyBuilding: selectedAnyBuilding } = buildSelectedKeys();
+    const isRowSelected = r => selectedKeys.has(r.key) || selectedAnyBuilding.has(r.id);
     const visible = visibleRows(), virtual = visible.length > 300;
     // Clamp before calculating the window when collapsing a long branch.
     host.scrollTop = Math.min(host.scrollTop, Math.max(0, visible.length * height - host.clientHeight));
@@ -121,14 +163,47 @@ export function createSceneTree({ host, getPlan, getSelection, select, visibilit
     // virtual window. Existing floor selectors must always find every floor
     // whose building is expanded. Gaps still occupy their exact row heights.
     const rendered = visible.map((r, i) => ({ r, i })).filter(({ r, i }) => i >= start && i < end || r.floorKey);
-    const focusKey = rendered.find(({ r }) => active ? r.key === active : selectedRow(r))?.r.key || visible[start]?.key;
+    const focusKey = rendered.find(({ r }) => active ? r.key === active : isRowSelected(r))?.r.key || visible[start]?.key;
     host.replaceChildren(); mounted = new Map();
     const spacer = size => { const n = document.createElement('div'); n.style.height = `${size}px`; n.setAttribute('aria-hidden', 'true'); host.append(n); };
     let previous = -1;
     for (const { r, i } of rendered) {
       if (i > previous + 1) spacer((i - previous - 1) * height);
       previous = i;
-      const choose = () => { active = r.key; if (r.kind !== 'group') select(r); else paint(); };
+      const isSetMemberRow = item => !item.floorKey && !['group', 'building', 'level'].includes(item.kind);
+      const choose = event => {
+        active = r.key;
+        if (r.kind === 'group') { paint(); return; }
+        if (event?.shiftKey) {
+          const curVisible = visibleRows();
+          const fallbackKey = primaryRowKey();
+          const aIdx = curVisible.findIndex(item => item.key === (anchorKey || fallbackKey));
+          const bIdx = curVisible.findIndex(item => item.key === r.key);
+          const startIdx = aIdx === -1 ? bIdx : Math.min(aIdx, bIdx);
+          const endIdx = aIdx === -1 ? bIdx : Math.max(aIdx, bIdx);
+          const slice = curVisible.slice(startIdx, endIdx + 1);
+          if (aIdx !== -1 && bIdx < aIdx) slice.reverse();
+          const refs = slice.filter(item => isSetMemberRow(item) && !hidden(item)).map(rowToRef);
+          if (!anchorKey) anchorKey = curVisible[aIdx !== -1 ? aIdx : bIdx]?.key ?? r.key;
+          if (!refs.length) return;
+          if (select) select(r, { mode: 'range', refs, additive: !!(event.ctrlKey || event.metaKey), event });
+          else if (selection) {
+            if (event.ctrlKey || event.metaKey) selection.set([...selection.members(), ...refs]);
+            else selection.set(refs);
+          }
+          return;
+        }
+        anchorKey = r.key;
+        if (event?.ctrlKey || event?.metaKey) {
+          if (!isSetMemberRow(r)) return;
+          const ref = rowToRef(r);
+          if (select) select(r, { mode: 'toggle', ref, event });
+          else selection?.toggle(ref);
+          return;
+        }
+        if (select) select(r, { mode: 'replace', ref: rowToRef(r), event });
+        else selection?.set([rowToRef(r)]);
+      };
       const row = createSceneRow({ name: r.name, select: choose, hidden: () => hidden(r), locked: () => locked(r),
         toggleHidden: () => {
           if (r.kind === 'level' && floors) {
@@ -149,7 +224,7 @@ export function createSceneTree({ host, getPlan, getSelection, select, visibilit
         } });
       row.dataset.sceneId = r.id; row.dataset.sceneKey = r.key; row.setAttribute('role', 'treeitem'); row.setAttribute('aria-label', r.name);
       row.setAttribute('aria-level', String(r.depth + 1)); row.setAttribute('aria-posinset', String(r.position)); row.setAttribute('aria-setsize', String(r.siblings));
-      row.setAttribute('aria-selected', String(selectedRow(r))); row.tabIndex = r.key === focusKey ? 0 : -1;
+      row.setAttribute('aria-selected', String(isRowSelected(r))); row.tabIndex = r.key === focusKey ? 0 : -1;
       row.style.paddingLeft = `${r.depth * 12}px`;
       if (children.has(r.key)) {
         const open = !!expanded.get(r.key), disclosure = document.createElement('button');
@@ -171,13 +246,13 @@ export function createSceneTree({ host, getPlan, getSelection, select, visibilit
         title.setAttribute('aria-pressed', String(floors?.current?.() === r.floorKey));
         // Per-floor Choose survives as the floor row's primary action.
       }
-      row.addEventListener('click', e => { if (e.target === row) choose(); });
+      row.addEventListener('click', e => { if (e.target === row) choose(e); });
       row.addEventListener('contextmenu', e => { e.preventDefault(); contextMenu?.(e, r); });
       row.addEventListener('focus', () => { active = r.key; });
       row.addEventListener('keydown', e => {
         if (e.target !== row && !e.target.matches('[data-scene-select], [data-row-disclosure]')) return;
         if (e.target.matches('[data-row-disclosure]') && ['Enter', ' '].includes(e.key)) return;
-        if (['Enter', ' '].includes(e.key)) { e.preventDefault(); e.stopPropagation(); choose(); return; }
+        if (['Enter', ' '].includes(e.key)) { e.preventDefault(); e.stopPropagation(); choose(e); return; }
         if (e.key === 'ArrowRight' && children.has(r.key) && !expanded.get(r.key)
           || e.key === 'ArrowLeft' && children.has(r.key) && expanded.get(r.key)) {
           e.preventDefault(); e.stopPropagation(); active = r.key; expanded.set(r.key, e.key === 'ArrowRight');
@@ -195,7 +270,7 @@ export function createSceneTree({ host, getPlan, getSelection, select, visibilit
     if (focused && mounted.has(focused.key)) (focused.control ? mounted.get(focused.key).querySelector(`[data-${focused.control}]`) : mounted.get(focused.key)).focus({ preventScroll: true });
   }
   function reveal(id, building = id === selectedId() ? selectedBuilding() : null) {
-    lastSelection = rows.find(selectedRow)?.key ?? null;
+    lastSelection = primaryRowKey();
     const row = rows.find(r => r.id === id && (!building || r.building === building)); if (!row) { paint(); return; }
     for (let p = row.parent; p; p = p.parent) expanded.set(p.key, true);
     const visible = visibleRows(), i = visible.indexOf(row), key = row.key; active = key;
@@ -211,11 +286,13 @@ export function createSceneTree({ host, getPlan, getSelection, select, visibilit
       if (!expanded.has(r.key)) expanded.set(r.key, r.kind === 'building' || r.kind === 'group'
         || r.kind === 'level' && r.floorKey === floors?.current?.());
     }
-    const selected = rows.find(selectedRow)?.key ?? null;
-    if (selected !== lastSelection) { lastSelection = selected; reveal(selectedId()); }
+    const selected = primaryRowKey();
+    if (selected !== lastSelection) { lastSelection = selected; reveal(selectedId(), selectedBuilding()); }
     else paint();
   }
   host.addEventListener('scroll', paint, { signal });
-  const off = visibility?.subscribe(paint); refresh();
-  return { refresh, reveal, dispose() { off?.(); life.abort(); host.replaceChildren(); } };
+  const off = visibility?.subscribe(paint);
+  const offSelection = selection?.subscribe?.(() => paint());
+  refresh();
+  return { refresh, reveal, dispose() { off?.(); offSelection?.(); life.abort(); host.replaceChildren(); } };
 }
