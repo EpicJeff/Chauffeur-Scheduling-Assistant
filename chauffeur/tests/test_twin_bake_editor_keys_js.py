@@ -59,19 +59,6 @@ try{
    assert.equal(buildAtlas(root,editor.plan,layout).key,baseline,state);
   }
  });
- await test('8_high_parent_committed_edit_idle_source_cost',async()=>{
-  const samples=[];
-  for(let i=0;i<3;i++){
-   const next=structuredClone(input.plan);next.buildings[0].walls[0].to[0]+=.01*(i+1);
-   await editor.settle(next,{});await editor.bake.idle();
-   globalThis.__bakeCosts=[];const t=performance.now();bakeSource(editor.scene.children.find(isBakeRoot));
-   samples.push({total:performance.now()-t,builds:globalThis.__bakeCosts});
-   assert.equal(globalThis.__bakeCosts.length,2,'one neutral and one authored receiver generation per committed edit');
-   assert.ok(globalThis.__bakeCosts.every(x=>Number.isFinite(x.ms)));
-  }
-  assert.ok(parentChecks>=3,'committed edits ran on an authorized High parent desk');
-  console.log('COSTS '+JSON.stringify(samples));
- });
 }finally{editor.dispose();viewer.dispose();}
 finish();
 """
@@ -81,9 +68,6 @@ if __name__ == '__main__':
     plan=B.twin_store.current()
     kit=json.loads((S.ROOT/'twin_kits/modern_farmhouse.json').read_text(encoding='utf8'));kit['manifest']={}
     data={'root':S.ROOT.as_posix(),'plan':plan,'kit':kit}
-    if '--cost-only' in sys.argv:
-        code,out=run_node(EDITOR[:EDITOR.index(" await test('5_")] + EDITOR[EDITOR.index(" await test('8_"):],data,timeout=240)
-        print(out);sys.exit(code or 0)
     results=[]
     for root in [S.ROOT,Path('E:/repositories/Chauffeur/chauffeur')]:
         code,out=run_node(VIEWER,{**data,'root':root.as_posix()},timeout=480)

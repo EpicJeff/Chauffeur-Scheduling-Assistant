@@ -171,6 +171,10 @@ function fakeServer({ leaseRequired = false } = {}) {
     calls.push(call);
     const injected = fail?.(method, p);
     if (injected) return answer(injected, '{"detail":"injected"}', 'application/json');
+    if (p === 'api/house/bakes' && method === 'GET') {
+      const latest = [...manifests].at(-1);
+      return answer(200, JSON.stringify(latest ? {key: latest[0], manifest: latest[1]} : null), 'application/json');
+    }
     if (!p.startsWith('api/house/bakes/')) { bad.push(p); return answer(404, '{"detail":"Not Found"}', 'application/json'); }
     let m = p.match(/^api\/house\/bakes\/([0-9a-f]{16,64})\/lease$/);
     if (m && method === 'POST') {   // services/twin_bakes.lease (Ruling B17); no clock: leases only end by release
@@ -360,9 +364,10 @@ check('stale_lights_are_only_the_changed_ones', async () => {
   assert.ok(compare(lightSamples(packed,'h1',before,key),lightSamples(packed,'h1',server.pages,key)).mean>=3);
   // An entry's fill is the bake's output (the room fill beside its shadowmask), so a rebake may
   // change it; the key, location, pages and channel are what a refresh must keep.
-  const placement=lights=>Object.fromEntries(Object.entries(lights).map(([id,{fill,forceRound,...e}])=>[id,e]));
+  const placement=lights=>Object.fromEntries(Object.entries(lights).map(([id,{fill,forceRound,cheap,...e}])=>[id,e]));
   for (const id of ['k1','k2','h1','c1']) {
     assert.equal(manifest.lights[id].input,undefined,'freshness uses the physical viewer key');
+    assert.ok(KEY_RE.test(manifest.lights[id].cheap),'chip signature is separate from the unchanged physical key');
     for(const page of manifest.lights[id].pages)assert.ok(manifest.pageIntegrity[page].size>0 && manifest.pageIntegrity[page].digest,'published pages carry integrity metadata');
   }
   assert.deepEqual(placement(server.manifests.get(key).lights),placement(manifest.lights),'forced refresh retains every key and entry');

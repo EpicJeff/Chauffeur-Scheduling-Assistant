@@ -16,6 +16,10 @@ const { reachLights, lightSource } = await import(file('static/twin/bake/reach.j
 const { assignChannels, CHANNEL_FALLBACK } = await import(file('static/twin/bake/atlas.js'));
 const { chartLightmapUniforms, chartAddress, setLightTint, patchLightmaps, setLightSource, setChartFill } = await import(file('static/twin/bake/lightmap_material.js'));
 const { occluders, roomFills, renderPage, filterCharts, dilateCharts } = await import(file('static/twin/bake/bake_pass.js'));
+const { cheapSignatures } = await import(file('static/twin/bake/freshness.js'));
+// Fix-round-three signatures track the whole ownership set. Keep the original
+// physical-entry and texel preservation assertions, and check that new metadata.
+const physicalEntry = ({cheap, ...entry}) => entry;
 const FT = gen.FT, options = {room: {density: 2, page: 128, gutter: 2}};
 function house(wall = false, wallX = 10, remote = 100) {
   const plan = { buildings: [{ id: 'b', position: [0,0], levels: [{id:'L1', elevation:0, ceiling:10}],
@@ -279,7 +283,9 @@ await check('an_isolated_move_rebakes_only_it_and_preserves_other_texels', async
   const oldPixels=await samples(),next=make(after);
   assert.deepEqual(await next.staleLights(),['remote'],'only the isolated moved light goes stale');
   assert.equal(await next.bakeNext(),'remote');assert.equal(await next.bakeNext(),null);
-  assert.deepEqual(server.manifests.get(ctx.atlas.key).lights.lamp,saved,'untouched manifest entry is identical');
+  const published=server.manifests.get(ctx.atlas.key);
+  assert.deepEqual(physicalEntry(published.lights.lamp),physicalEntry(saved),'untouched physical entry is identical');
+  assert.equal(published.lights.lamp.cheap,cheapSignatures(after,published.ownership,published.lights).lamp);
   const newPixels=await samples();
   assert.ok(oldPixels.length&&oldPixels.some(x=>x>0));
   assert.ok(oldPixels.every((x,i)=>Math.abs(x-newPixels[i])<=2),'unchanged owned channels survive compressed page updates');
@@ -347,7 +353,11 @@ await check('a_seventh_light_reuses_only_its_evicted_members_slot_across_reload'
   for(const id of survivors) {
     const after=await pixels(next,id);assert.ok(oldPixels.get(id).every((x,i)=>Math.abs(x-after[i])<=2),'unchanged slot texels survive the eviction');
   }
-  for(const id of firstLights.map(l=>l.device).filter(id=>!changed.includes(id))) assert.deepEqual(published.lights[id],manifest.lights[id]);
+  const cheap=cheapSignatures(moved,published.ownership,published.lights);
+  for(const id of firstLights.map(l=>l.device).filter(id=>!changed.includes(id))) {
+    assert.deepEqual(physicalEntry(published.lights[id]),physicalEntry(manifest.lights[id]));
+    assert.equal(published.lights[id].cheap,cheap[id],'signature adopts the new ownership without rendering this light');
+  }
   const {decodeSlots}=await import(file('static/twin/bake/slots.js'));
   assert.throws(()=>decodeSlots({...published.ownership,charts:-1},ctx.atlas.room.charts.length),/ownership history/);
   assert.throws(()=>decodeSlots({version:1,charts:1,lights:{bad:btoa(String.fromCharCode(15))}},1),/ownership history/);
@@ -520,6 +530,8 @@ u.lmRegions.value.dispose();u.lmTints.value.dispose();
 
 HARNESS_DRIVER = B.DRIVER[:B.DRIVER.index('// --- the house, the lights')]
 HARNESS_DRIVER += r"""
+const {cheapSignatures}=await import(file('static/twin/bake/freshness.js'));
+const physicalEntry=({cheap,...entry})=>entry;
 const out=gen.buildTwin(job.plan,job.kit,'high');await out.ready;
 const atlas=buildAtlas(out.root,job.plan,job.layout),atlasKey=atlas.key;
 """
@@ -558,8 +570,11 @@ for(const [device,at] of [['dev-k-ceiling',hostAt(ids[0],.35,.3,10)],['dev-hall-
   const actual=await bakeAll(baker);
   assert.deepEqual(actual,expected,'actual bake calls equal moved + changed ownership');
   assert.equal(atlas.key,atlasKey,'movement leaves the geometry namespace unchanged');
-  for(const id of names.filter(id=>!expected.includes(id)))
-    assert.deepEqual(server.manifests.get(atlasKey).lights[id],before.lights[id],'untouched stored entry stays identical');
+  const published=server.manifests.get(atlasKey),cheap=cheapSignatures(nextLights,published.ownership,published.lights);
+  for(const id of names.filter(id=>!expected.includes(id))) {
+    assert.deepEqual(physicalEntry(published.lights[id]),physicalEntry(before.lights[id]),'untouched physical entry stays identical');
+    assert.equal(published.lights[id].cheap,cheap[id]);
+  }
   console.log(JSON.stringify({moved:device,sharedCharts:shared,predicted:expected,rebaked:actual}));
   lights=nextLights;previous=next;
 }

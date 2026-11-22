@@ -5,7 +5,7 @@ DRIVER = R.DRIVER[:R.DRIVER.index("await check(")] + R.DRIVER[R.DRIVER.index("as
 const output = d => d.host.querySelectorAll('output')[0];
 const buttons = d => d.host.querySelectorAll('button');
 const opts = extra => ({mode:'manual',display:false,poll:0,host:new Node('div'),...extra});
-const ready = d => until(()=>d.controller.state().key && /^Lighting /.test(output(d)?.textContent),'editor inspection ready');
+const ready = d => until(()=>/^Lighting /.test(output(d)?.textContent),'editor inspection ready');
 const event = (type,id=71)=>Object.assign(new Event(type),{pointerId:id});
 await check('1_press_waits_for_the_deferred_yard_before_keying_or_baking',async()=>{
  const d=await context('high',null,null,opts({view:{yardSettling:true}}));
@@ -48,7 +48,7 @@ await check('2_impossible_desks_do_no_atlas_work_and_edits_wait_for_idle_without
    document.dispatchEvent(event('pointerdown'));releaseLive();await sleep(100);
    assert.equal(neutral,0,'a gesture starting during the live fetch also defers generation');
    document.dispatchEvent(event('pointerup'));await ready(d);
-   assert.equal(neutral,1);assert.equal(physical,1,'physical viewer keys are computed after idle');assert.equal(transcodes,0);assert.equal(d.controller.held(),null);
+   assert.equal(neutral,0);assert.equal(physical,0,'round three: idle never prepares geometry');assert.equal(transcodes,0);assert.equal(d.controller.held(),null);
    await d.controller.start();assert.equal(physical,1);assert.equal(transcodes,0);assert.equal(d.controller.held(),null);
    const key=d.controller.state().key;assert.ok(d.server.manifests.get(key).lights.k1.key);assert.equal(d.server.manifests.get(key).lights.k1.input,undefined);
    await d.controller.refresh();assert.equal(d.controller.fresh().length,4);
@@ -80,7 +80,7 @@ await check('3_unsaved_saving_and_history_gates_disable_every_action_and_stop_a_
 });
 await check('4_poll_failure_after_a_completed_press_never_starts_a_bake_or_offers_resume',async()=>retryClock(async advance=>{
  let broken=false;const log=console.error;console.error=()=>{};
- const d=await context('high',null,null,opts({poll:50,api:(path,init,next)=>broken&&/^api\/house\/bakes\/[^/]+$/.test(path)?Promise.reject(new Error('poll read failed')):next(path,init)}));
+ const d=await context('high',null,null,opts({poll:50,api:(path,init,next)=>broken&&/^api\/house\/bakes(?:\/[^/]+)?$/.test(path)?Promise.reject(new Error('poll read failed')):next(path,init)}));
  try {
   await ready(d);await d.controller.start();const before=d.server.calls.length;
   broken=true;
@@ -97,8 +97,8 @@ await check('4_poll_failure_after_a_completed_press_never_starts_a_bake_or_offer
 await check('5_first_read_has_no_stale_flash_and_publications_refresh_both_statuses',async()=>{
  let release;const held=new Promise(r=>release=r);
  const seed=await context('high',null,null,opts());await ready(seed);await seed.controller.start();
- const desk=await context('high',seed.server,null,opts({api:async(path,init,next)=>{if(/^api\/house\/bakes\/[^/]+$/.test(path))await held;return next(path,init);}}));
- const viewer=await context('high',seed.server,null,{mode:'readonly',parent:true,poll:0,host:new Node('div'),api:async(path,init,next)=>{if(/^api\/house\/bakes\/[^/]+$/.test(path))await held;return next(path,init);}});
+ const desk=await context('high',seed.server,null,opts({api:async(path,init,next)=>{if(/^api\/house\/bakes(?:\/[^/]+)?$/.test(path))await held;return next(path,init);}}));
+ const viewer=await context('high',seed.server,null,{mode:'readonly',parent:true,poll:0,host:new Node('div'),api:async(path,init,next)=>{if(/^api\/house\/bakes(?:\/[^/]+)?$/.test(path))await held;return next(path,init);}});
  try {
   await sleep(2300);assert.doesNotMatch(output(desk)?.textContent||'',/out of date/);assert.equal(viewer.host.querySelectorAll('a').length,0);
   release();await until(()=>desk.controller.fresh().length===4,'editor adopts manifest');await until(()=>viewer.controller.fresh().length===4,'viewer adopts manifest');
@@ -122,6 +122,7 @@ await check('7_document_library_and_splitter_drags_pause_render_to_texture',asyn
  try {
   await ready(d);document.dispatchEvent(event('pointerdown'));const run=d.controller.start();
   await until(()=>d.controller.state().baking,'pressed run waiting on dock gesture');await sleep(2100);
+  assert.equal(output(d).textContent,'Baking lights 0 of 4','pressed preparation keeps whole-house progress visible');
   assert.equal(d.renderer.log.renders,0);assert.equal(d.controller.state().paused,true);
   document.dispatchEvent(event('pointercancel'));await run;assert.equal(d.controller.fresh().length,4);
  }finally{d.controller.stop();}

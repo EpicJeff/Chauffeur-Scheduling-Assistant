@@ -151,6 +151,32 @@ class Ctx:
 
 # ---------------------------------------------------------------- tests
 
+def test_latest_manifest_is_parent_only_metadata_and_signatures_stay_bounded():
+    from pathlib import Path
+    key = key_of(0xf333)
+    body = manifest()
+    body.update(round=43, complete=True)
+    for entry in body['lights'].values():
+        entry['cheap'] = 'a' * 32
+    with Ctx() as c:
+        check(auth.resolve('GET', '/api/house/bakes') == auth.PARENTS, 'latest metadata has its own parent rule')
+        check(c.put_manifest(key, body).status_code == 200, 'publish signed entries')
+        original = Path.read_bytes
+        def metadata_only(path):
+            check(path.name == 'manifest.json', 'latest lookup never reads page or atlas bytes')
+            return original(path)
+        with patch.object(Path, 'read_bytes', metadata_only):
+            r = c.client.get('/api/house/bakes', headers=c.mum)
+        check(r.status_code == 200 and r.json() == {'key': key, 'manifest': body}, r.text)
+        for who in (c.kid, c.panel, {}):
+            check(c.client.get('/api/house/bakes', headers=who).status_code in (401, 403), 'metadata stays parent-only')
+        for bad in ('x' * 32, '', 1, ['a' * 32]):
+            body['lights']['dev-k-light']['cheap'] = bad
+            check(c.put_manifest(key, body).status_code == 400, 'invalid signature rejected')
+        body['lights']['dev-k-light']['cheap'] = 'b' * 32
+        body['padding'] = 'x' * (1024 * 1024)
+        check(c.put_manifest(key, body).status_code == 400, 'the 1 MiB cap is unchanged')
+
 def test_force_round_tokens_round_trip_and_reject_invalid_values():
     key = key_of(0xbac)
     body = manifest()
@@ -688,6 +714,7 @@ def test_conditional_page_reads_stat_without_opening_and_detects_damage():
 
 
 TESTS = (
+    test_latest_manifest_is_parent_only_metadata_and_signatures_stay_bounded,
     test_conditional_page_reads_stat_without_opening_and_detects_damage,
     test_viewer_bake_status_parent_flag_uses_authenticated_identity,
     test_live_other_owner_fences_page_and_manifest_writes,

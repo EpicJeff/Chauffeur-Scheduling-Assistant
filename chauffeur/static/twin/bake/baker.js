@@ -3,7 +3,7 @@ import { renderPage, roomFills, dilateCharts, encodeSumPages, filterCharts } fro
 import { withBakeLease, bakeHTTPError } from './bake_lock.js';
 import { reachLights } from './reach.js';
 import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
-import { matchesEntry } from './freshness.js';
+import { matchesEntry, cheapSignatures } from './freshness.js';
 
 export { encodePage, decodePage } from './codec.js';
 
@@ -83,8 +83,9 @@ async function exists(api, url) {
 }
 
 export function createBaker(view, { renderer, atlas, layout, lights, api: request, codec, force = false, forceRound = null,
-  round = view.round ?? null, owner = null }) {
+  round = view.round ?? null, owner = null, damaged = [], inspectLegacy = false }) {
   const plan = view.bakePlan || view.plan, enabled = ['high', 'max'].includes(view.tier);
+  const inputLights = lights; // reachLights adds derived, metre-valued ranges.
   const bakeView = Object.create(view); bakeView.plan = plan;
   let packed, assignmentHistory;
   const path = `api/house/bakes/${atlas.key}`;
@@ -105,6 +106,18 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
     return r;
   };
   const unavailable = new Set();
+  const damagedPages = new Set(damaged);
+  const legacyPages = new Map();
+  const signatures = m => cheapSignatures(inputLights, m.ownership, m.lights);
+  const signed = m => {
+    const cheap = signatures(m);
+    return { ...m, lights: Object.fromEntries(Object.entries(m.lights).map(([id, e]) =>
+      [id, matchesEntry(packed.entries[id], e) ? { ...e, cheap: cheap[id] } : e])) };
+  };
+  const unsigned = m => {
+    const cheap = signatures(m);
+    return lights.some(l => packed.entries[l.device] && m.lights[l.device]?.cheap !== cheap[l.device]);
+  };
   // Re-bake all lighting re-bakes every light, but each keeps its stored entry
   // (same key) until its new bake lands, so panels never drop to real-time mid-run (M6).
   let activeForce = forceRound || (force ? [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('') : null);
@@ -132,8 +145,23 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
       const ids = new Set(Object.values(m.lights).flatMap(e => e.pages || [e.page]));
       const missing = new Set();
       for (const p of ids) if (!(await exists(api, `${path}/${p}.png`))) missing.add(p);
+      // Only a pressed baker validates unsigned legacy bytes. A valid page can
+      // be republished under the lease to record stat-backed integrity, without
+      // re-rendering its lights; damaged legacy pages need their channels back.
+      for (const p of ids) if (inspectLegacy && !missing.has(p) && !m.pageIntegrity?.[p]) {
+        const r = await api(`${path}/${p}.png`);
+        if (!r.ok) throw new Error(`Could not read the lightmap (HTTP ${r.status}).`);
+        const bytes = new Uint8Array(await r.arrayBuffer());
+        try {
+          const decoded = await codec.decode(bytes);
+          if (decoded.width !== layout.room.page || decoded.height !== layout.room.page) throw new Error('A lightmap page does not fit its array.');
+          legacyPages.set(p, bytes);
+        } catch { damagedPages.add(p); missing.add(p); }
+      }
       manifest = { ...manifest, lights: { ...manifest.lights } };
-      for (const [id, e] of Object.entries(manifest.lights)) if ((e.pages || [e.page]).some(p => missing.has(p))) { unavailable.add(id); delete manifest.lights[id]; }
+      for (const [id, e] of Object.entries(manifest.lights)) if ((e.pages || [e.page]).some(p => damagedPages.has(p) || missing.has(p))) {
+        unavailable.add(id); delete manifest.lights[id];
+      }
     }
   }) : Promise.resolve();
   async function staleLights() {
@@ -151,7 +179,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
         // PUT failed. Decode those channels and preserve finished-light work.
         const decoded = await codec.decode(bytes);
         if (decoded.width === size && decoded.height === size) return decoded.channels;
-      } catch (error) { if (!activeForce) throw error; }
+      } catch (error) { if (!activeForce && !damagedPages.has(page)) throw error; }
     } else if (r.status !== 404) throw new Error(`Could not read the lightmap (HTTP ${r.status}).`);
     return Array.from({ length: count }, () => new Uint8Array(size * size));
   }
@@ -272,6 +300,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
       (!activeForce || next.lights[l.device]?.forceRound === activeForce));
     if (next.complete) delete next.forceRound;
     next.pageIntegrity = { ...manifest.pageIntegrity };
+    for (const [page, bytes] of legacyPages) if (!uploads.some(u => u.page === page)) uploads.push({ page, bytes });
     for (const { page, bytes } of uploads) {
       if (!valid()) return null;
       const r = await api(`${path}/${page}.png`, { method: 'POST', headers: { 'Content-Type': 'image/ktx2' }, body: bytes });
@@ -281,9 +310,10 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
         ...(saved.version ? { version: saved.version } : {}) };
     }
     if (!valid()) return null;
-    const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
+    const published = signed(next);
+    const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(published) });
     if (!r.ok) throw new Error('Could not save the bake manifest.');
-    manifest = next; assignmentHistory=packed.ownership; packed.ownershipReset=false;
+    manifest = published; assignmentHistory=packed.ownership; packed.ownershipReset=false; legacyPages.clear();
     unavailable.delete(id);
     return id;
   }
@@ -303,15 +333,25 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
   async function settle() {
     await ready;
     if (!enabled || !valid() || lights.some(l => isStale(l.device))) return false;
-    if (manifest.round === round && manifest.complete === true) return false;
+    if (manifest.round === round && manifest.complete === true && !unsigned(manifest) && !legacyPages.size) return false;
     return withBakeLease(request, path, who, valid, async check => {
       await check();
       const latest = await readManifest();
-      if (!latest || !valid() || (latest.round === round && latest.complete === true)) return false;
+      if (!latest || !valid() || (latest.round === round && latest.complete === true && !unsigned(latest) && !legacyPages.size)) return false;
       const whole = lights.every(l => !packed.entries[l.device] || matchesEntry(packed.entries[l.device], latest.lights[l.device]) &&
         (!latest.forceRound || latest.lights[l.device]?.forceRound === latest.forceRound));
       if (!whole) return false;
-      const next = { ...latest, round, complete: true }; delete next.forceRound;
+      const next = signed({ ...latest, round, complete: true }); delete next.forceRound;
+      next.pageIntegrity = { ...latest.pageIntegrity };
+      for (const [page, bytes] of legacyPages) {
+        // A concurrent desk may already have published this page's metadata.
+        if (next.pageIntegrity[page]) continue;
+        const r = await api(`${path}/${page}.png`, { method: 'POST', headers: { 'Content-Type': 'image/ktx2' }, body: bytes });
+        if (!r.ok) throw new Error('Could not save the lightmap.');
+        const saved = await r.json();
+        next.pageIntegrity[page] = {size: bytes.length, digest: saved.digest || saved.etag,
+          ...(saved.version ? {version: saved.version} : {})};
+      }
       await check();
       const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(next) });

@@ -8008,6 +8008,12 @@ async def house_atlas_put(key: str, request: Request):
     return {'etag': etag}
 
 
+@app.get('/api/house/bakes')
+def house_bake_latest():
+    from services import twin_bakes
+    return twin_bakes.latest_manifest()
+
+
 @app.post('/api/house/bakes/{key}/{page}.png')
 async def house_bake_page_post(key: str, page: str, request: Request):
     from services import twin_bakes
@@ -9094,7 +9100,7 @@ def house_editor_state(have_round: int | None = None):
                 'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint(),
                          'estimate': twin_build.remaining_estimate(latest) if latest else None},
                 'build': latest,
-                # Ruling B15: the editor never bakes; its chip says when lights wait to re-bake.
+                # Manual editor baking supersedes B15; retain the poll summary.
                 'bake': twin_bakes.status(current_round), 'current_round': current_round}
 
 

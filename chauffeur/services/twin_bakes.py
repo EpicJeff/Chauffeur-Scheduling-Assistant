@@ -205,6 +205,8 @@ def _check_manifest(body):
                 raise ValueError('Bake reach pages must be unique, in range, and start with page.')
     for entry in lights.values():
         check_key(entry.get('key'))
+        if 'cheap' in entry:
+            check_key(entry['cheap'])
     # Force intent and completed-light receipts survive reloads. Bounded tokens
     # keep the existing manifest byte cap and legacy manifests unchanged.
     for value in [body, *lights.values()]:
@@ -285,9 +287,8 @@ def _prune_older(current):
         shutil.rmtree(path, ignore_errors=True)
 
 
-def status(current_round):
-    """{'waiting': bool} from the most recently saved manifest that names its round,
-    or None when no desk has recorded a bake (Ruling B15)."""
+def latest_manifest():
+    """Small editor metadata read; never generates an atlas or opens page bytes."""
     root = Path(twin_store.DATA_DIR) / 'bakes'
     with _LOCK:
         if not root.is_dir():
@@ -309,6 +310,13 @@ def status(current_round):
             body = json.loads(latest[1].read_bytes())
         except (OSError, ValueError):
             return None
+    return {'key': latest[1].parent.name, 'manifest': body}
+
+
+def status(current_round):
+    """Legacy editor-poll summary, kept for callers of the shared snapshot."""
+    latest = latest_manifest()
+    body = latest['manifest'] if latest else {}
     if body.get('round') is None:
         return None
     return {'waiting': body['round'] != current_round or body.get('complete') is not True}

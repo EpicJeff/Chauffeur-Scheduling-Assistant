@@ -20,7 +20,8 @@ Two kinds of page:
 
 Hooks the page must give under ?test=1 (beyond the real-lights ones):
   window.__twin.bake.state() -> {key, baking, paused, done, total, baked, stale}
-      key     the atlas key of the house drawn (null until the atlas is ready);
+      key     viewer atlas key; in an idle editor, the last manifest's candidate
+              key (or null); a pressed editor run computes its actual atlas key;
       baking  true while a bake run has work left (also while paused);
       paused  true while that work waits for the person to stop (pointer down or
               camera moving, then 2 s still);
@@ -118,7 +119,8 @@ def open_editor(page, served):
     page.wait_for_function('() => window.__editor && window.__editor.ready === true', timeout=90000)
     page.wait_for_function('() => window.__twin && window.__twin.ready === true', timeout=90000)
     wait_bake_hook(page)
-    page.wait_for_function('() => !!window.__twin.bake.state().key', timeout=90000)
+    # Round three: cold editor status is cheap; there is no atlas before a press.
+    page.wait_for_function("() => /^Lighting /.test(document.querySelector('#twin-bake-controls output')?.textContent || '')", timeout=90000)
 
 
 def start_editor_bake(page):
@@ -980,6 +982,8 @@ def scenario_editor_bakes_and_viewer_is_status_only():
         wait_until(page, lambda: 'Lighting out of date:' in chip.text_content(), 120, 'editor shows stale count')
         page.wait_for_timeout(8000)
         check(not state(page)['baking'] and writes(seen) == [], 'editor never starts by itself')
+        check(page.evaluate('() => window.__twin.bake.packing() === null && window.__twin.bake.held() === null'),
+              'idle editor prepares no atlas or page arrays')
         start_editor_bake(page)
         wait_until(page, lambda: bool(PROGRESS.search(chip.text_content())), 120, 'chip counts the whole house')
         box = page.locator('#editor-scene canvas').bounding_box()

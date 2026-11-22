@@ -14,7 +14,7 @@ import { covered } from './atlas_transport.js';
 import { sameSlots } from './slots.js';
 import { invalidateMaterialReach } from './reach.js';
 import { releaseBakeSource, bakeReceiverRoots } from './source.js';
-import { matchesEntry, pageDamage } from './freshness.js';
+import { matchesEntry, pageDamage, cheapSignatures } from './freshness.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Every tier lays its atlas out at the desk's 8 texels/ft, so a wall that opens before
@@ -163,7 +163,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
   let dragging = false, stillAt = performance.now(), generation = 0;
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
   let failure = '', failureSource = null, errorReason = null, manifestText = null, initialized = false, mounting = null, manifestRead = false;
-  let checkingKeys = false;
+  let editorKey = null, editorManifest = null, editedRound = false, materialDirty = false;
   let blockReason = blocked();
   let authPaused = false, manualWait = false, retryAt = null, retryTimer = null, retryAttempts = 0;
   let hiddenSince = document.hidden ? Date.now() : null, forceIntent = null, resumePending = false;
@@ -305,15 +305,15 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       if (!message && !running) status.textContent = !['high', 'max'].includes(view.tier) ? 'Baking needs High or Max quality'
         : disabledReason ? disabledReason
         : !permissionChecked ? 'Checking baked lighting…' : !allowed ? 'Only a parent can bake lighting'
-        : !manifestRead || checkingKeys ? 'Checking baked lighting…' : !lights.length ? 'Lighting is up to date'
-        : stale.length ? `Lighting out of date: ${stale.length} lights` : 'Lighting is up to date';
+        : !manifestRead ? 'Checking baked lighting…' : !lights.length ? 'Lighting is up to date'
+        : stale.length || inspectOnly && editorManifest?.complete !== true ? editedRound ? 'Lighting out of date since your edits' : `Lighting out of date: ${stale.length} lights` : 'Lighting is up to date';
       if (blockReason) status.textContent = blockReason;
       meter.hidden = !running || !progress.total; meter.max = progress.total || 1; meter.value = progress.done;
-      startButton.hidden = !allowed || !stale.length || running || !!failure || resumePending;
+      startButton.hidden = !allowed || !(stale.length || inspectOnly && lights.length && editorManifest?.complete !== true) || running || !!failure || resumePending;
       startButton.disabled = !manifestRead || authPaused || layerOverflow || !!blockReason;
       button.hidden = !allowed;
     }
-    if (button) button.disabled = !allowed || !(atlas || inspectOnly && pending) || running || authPaused || !!blockReason;
+    if (button) button.disabled = !allowed || !(atlas || inspectOnly && manifestRead) || running || authPaused || !!blockReason;
     if (resumeButton) { resumeButton.hidden = !(failure && (failureSource === 'bake' || authPaused)) && !resumePending || layerOverflow; resumeButton.disabled = running || !!blockReason; }
   }
   async function idle() {
@@ -566,52 +566,54 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     if (!r.ok) throw bakeHTTPError('Could not read the bake manifest', r.status);
     return r.text();
   }
-  async function loadEditorPages(text = undefined) {
-    if (text === undefined) text = await readManifest(atlas?.key || pending.key);
-    await idle();
+  async function loadEditorPages() {
+    let latest;
+    if (atlas) {
+      // A pressed run has already discovered this plan's exact key. Another
+      // desk publishing an older key must not hide its completed manifest.
+      const text = await readManifest(atlas.key);
+      latest = typeof text === 'string' ? {key: atlas.key, manifest: JSON.parse(text)} : null;
+    } else {
+      const response = await api('api/house/bakes');
+      if (!response.ok) throw bakeHTTPError('Could not read the bake manifest', response.status);
+      latest = await response.json();
+    }
     if (!valid()) return;
     const mine = generation;
-    const m = typeof text === 'string' ? JSON.parse(text) : null;
-    if (!atlas) { atlas = pending.apply(); pending = null; }
-    // The same physical layout and ownership history the viewer uses. No round
-    // shortcut or authored-input receipt can substitute for these keys.
-    packed = bakeLayout(atlas, layout, lights, m?.ownership, m?.lights);
-    lightsKey = JSON.stringify(lights);
+    const m = latest?.manifest, text = JSON.stringify(latest);
+    editorKey = latest?.key || null; editorManifest = m;
     if (text !== manifestText || !manifestRead) {
       present.clear(); pageErrors.clear();
       for (const p of new Set(Object.values(m?.lights || {}).flatMap(e => e.pages || [e.page]))) {
         const saved = m?.pageIntegrity?.[p];
-        const r = await api(`api/house/bakes/${atlas.key}/${p}.png`, saved ? { headers: { 'If-None-Match': '*' } } : {});
+        // Unsigned legacy pages remain conservatively stale until a press.
+        // Even those checks never download/decode/transcode page bytes here.
+        if (!saved) continue;
+        const r = await api(`api/house/bakes/${editorKey}/${p}.png`, { headers: { 'If-None-Match': '*' } });
         if (!valid() || mine !== generation) return;
         if (r.status !== 304 && !r.ok && r.status !== 404) throw bakeHTTPError('Could not read the lightmap page', r.status);
         if (r.status === 404) continue;
         const header = r.headers.get('X-Bake-Size');
-        let damage = pageDamage(m, p, r.headers.get('X-Bake-Digest') || r.headers.get('etag'), header == null ? null : Number(header));
-        // Legacy pages have no integrity receipt. Validate them once per changed
-        // manifest with the same decoder as the viewer, never a GPU transcode.
-        if (!saved && !damage) {
-          try {
-            codec ||= workerCodec();
-            const decoded = await codec.decode(new Uint8Array(await r.arrayBuffer()));
-            if (decoded.width !== layout.room.page || decoded.height !== layout.room.page)
-              throw new Error('A lightmap page does not fit its array.');
-          }
-          catch (error) { damage = `Lightmap page ${p}: ${error.message || error}`; }
-        }
-        if (!valid() || mine !== generation) return;
+        const damage = pageDamage(m, p, r.headers.get('X-Bake-Digest') || r.headers.get('etag'), header == null ? null : Number(header));
         if (damage) pageErrors.set(p, damage); else present.add(p);
       }
     }
+    editorFreshness(m);
+    manifestText = text; manifestRead = true; showProgress();
+  }
+  function editorFreshness(m) {
+    const cheap = cheapSignatures(lights, m?.ownership, m?.lights);
+    editedRound = !!m && m.round !== (view.round ?? null);
     fresh.clear();
     for (const l of lights) {
-      const e = packed.entries[l.device];
-      if (!packed.ownershipReset && (l.kind !== 3 || e?.scale > 0) && matchesEntry(e, m?.lights?.[l.device]) &&
-          e.pages.every(p => present.has(p))) fresh.add(l.device);
+      const e = m?.lights?.[l.device];
+      if (!editedRound && !materialDirty && e?.cheap === cheap[l.device] && (l.kind !== 3 || e.scale > 0) &&
+          (e.pages || [e.page]).every(p => present.has(p))) fresh.add(l.device);
     }
     resumePending = !!m?.forceRound;
     stale = lights.filter(l => !fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound).map(l => l.device);
     if (!running) progress = { done: lights.length - stale.length, total: lights.length };
-    manifestText = text; manifestRead = true; checkingKeys = false; showProgress();
+    showProgress();
   }
   async function loadPages() {
     if (inspectOnly) return loadEditorPages();
@@ -712,13 +714,13 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     if (mode === 'manual' && paused()) return;
     const layoutNow = view.live?.layout?.() || (mode === 'manual' ? await (await api('api/house/live')).json() : null);
     if (mode === 'manual') await idle();
-    if (!layoutNow || !(atlas || pending)) return;
+    if (!layoutNow || !(atlas || pending || inspectOnly)) return;
     const next = bakeLights(layoutNow, root, round);
     if (JSON.stringify(next) === lightsKey) return;
     ++generation;
     if (running) { pendingRun = automatic; baker?.cancel(); }
     if (!automatic) { requested = false; clearRetry(); }
-    if (inspectOnly) { lights = next; lightsKey = JSON.stringify(next); await loadPages(); return; }
+    if (inspectOnly) { lights = next; lightsKey = JSON.stringify(next); return; }
     const text=await readManifest(atlas.key);if(!valid())return;
     const manifest=typeof text==='string'?JSON.parse(text):null;
     prepare(next,manifest?.ownership || packed?.ownership,manifest);
@@ -731,11 +733,12 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     if (blockReason) { requested = false; return; }
     if (!valid() || !requested) return;
     if (!initialized) await initialize();
-    if (!allowed || !valid() || !(atlas || pending) || layerOverflow || authPaused || manualWait || !requested || blockReason) return;
+    if (!allowed || !valid() || !lights.length || !(atlas || pending || inspectOnly) || layerOverflow || authPaused || manualWait || !requested || blockReason) return;
     if (running) { pendingForce ||= force; return; }
     clearRetry();
     if (force) forceIntent = [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
-    failure = ''; failureSource = null; errorReason = null; progress = { done: 0, total: 0 };
+    failure = ''; failureSource = null; errorReason = null;
+    progress = inspectOnly ? {done: force ? 0 : progress.done, total: lights.length} : {done: 0, total: 0};
     running = true; showProgress();
     const mine = generation, input = lightsKey;
     try {
@@ -744,18 +747,30 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
         if (!valid() || !requested || blockReason || mine !== generation) return;
       }
       if (inspectOnly && !atlas) {
+        pending ||= await loadAtlas(root, round, layout, { signal: halt.signal, apply: false });
+        await idle();
+        if (!valid() || !requested || blockReason || mine !== generation) return;
         atlas = pending.apply(); pending = null;
       }
+      let damaged = [];
       if (inspectOnly) {
+        if (materialDirty) {
+          controller.refreshMaterials(Object.keys(view.materialManifest || {}));
+          invalidateMaterialReach(atlas.room);
+        }
         const text = await readManifest(atlas.key);
         await idle();
         if (!valid() || !requested || blockReason || mine !== generation) return;
         const manifest = typeof text === 'string' ? JSON.parse(text) : null;
+        // A different desk may have repaired a page since the chip inspected
+        // it. Only carry damage forward for the same published page version.
+        if (editorKey === atlas.key) damaged = [...pageErrors.keys()].filter(p =>
+          JSON.stringify(editorManifest?.pageIntegrity?.[p]) === JSON.stringify(manifest?.pageIntegrity?.[p]));
         prepare(lights, manifest?.ownership, manifest);
         if (layerOverflow) return;
         codec ||= workerCodec();
       }
-      baker = createBaker(view, { renderer: view.renderer3, atlas, layout, lights, api, codec, forceRound: forceIntent, owner });
+      baker = createBaker(view, { renderer: view.renderer3, atlas, layout, lights, api, codec, forceRound: forceIntent, owner, damaged, inspectLegacy: inspectOnly });
       const initialStale = await baker.staleLights();
       if (!baker.forcePending()) forceIntent = null;
       if (!valid() || mine !== generation || input !== lightsKey) return;
@@ -771,7 +786,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       // Publish completion for the current house round.
       if (valid() && mine === generation && input === lightsKey && !(await baker.staleLights()).length) {
         await baker.settle(); forceIntent = null; retryAttempts = 0;
-        if (inspectOnly) await loadPages();
+        if (inspectOnly) { materialDirty = false; await loadPages(); }
         if (!automatic) requested = false;
         if (!authPaused) { clearRetry(); manualWait = false; clearFailure(); }
       }
@@ -801,7 +816,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     if (!valid() || needsResume() && (authPaused || manualWait)) return;
     if (mode === 'manual' && blockReason) return;
     if (!initialized) { await initialize(); clearFailure('refresh'); return; }
-    if (inspectOnly && pending) { await idle(); await relight(); await loadPages(); clearFailure('refresh'); return; }
+    if (inspectOnly) { await idle(); await relight(); if (!running) await loadPages(); clearFailure('refresh'); return; }
     if (pending) {
       // A wall that opened before any bake applies the atlas when one lands (I1, M1).
       const text = await readManifest(pending.key);
@@ -809,13 +824,14 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       return;
     }
     if (!atlas) { clearFailure('refresh'); return; }
-    if (inspectOnly) await idle();
     await relight();
     if (!running) await loadPages();
     clearFailure('refresh');
   }
   const controller = {
     syncBlocked() {
+      if (inspectOnly && manifestRead && editorManifest && editedRound !== (editorManifest.round !== (view.round ?? null)))
+        editorFreshness(editorManifest);
       const next = blocked();
       if (next === blockReason) return;
       blockReason = next;
@@ -823,14 +839,14 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       showProgress();
     },
     active: valid,
-    state: () => ({ key: atlas?.key || pending?.key || null, baking: running, paused: authPaused || manualWait || running && paused(), retryAt, retryAttempts,
+    state: () => ({ key: atlas?.key || pending?.key || editorKey, baking: running, paused: authPaused || manualWait || running && paused(), retryAt, retryAttempts,
       ...progress, baked: [...baked], stale: [...stale], error: errorReason || pageReason() }),
     // Members of a fresh shared channel are fresh: the live layer asks by its own lamp ids.
     fresh: () => valid() ? [...fresh].flatMap(id => [id, ...(lights.find(l => l.device === id)?.members || [])]) : [], light, idle, refresh,
     occlusionRoot: () => atlas?.sourceRoot || root,
     snapshot: () => atlas && pages ? {key:atlas.key,layers,bankBase,banks:pages.banks,present:[...present],etags:[...etags],manifest:pageManifest} : null,
     refreshMaterials(ids) {
-      if (inspectOnly && !atlas) return;
+      if (inspectOnly && (!running || !atlas)) return;
       const known = view.materialManifest;
       if (known) for (const receivers of bakeReceiverRoots(root)) if (receivers !== root) receivers.traverse(mesh => {
         for (const material of [].concat(mesh.material || [])) {
@@ -843,9 +859,8 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     },
     materialsChanged(ids = null) {
       if (inspectOnly) {
-        if (atlas) { if (ids) controller.refreshMaterials(ids); invalidateMaterialReach(atlas.room, ids); }
         ++generation; baker?.cancel(); requested = false; clearRetry();
-        checkingKeys = true; fresh.clear(); showProgress();
+        materialDirty = true; fresh.clear(); stale = lights.map(l => l.device); showProgress();
         controller.refresh().catch(reportError); return true;
       }
       if (!valid() || !atlas || layerOverflow) return false;
@@ -926,7 +941,13 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       if (mode === 'manual') await idle();
       if (!valid()) return;
       lights = bakeLights(liveLayout, root, round);
+      lightsKey = JSON.stringify(lights);
       stale = lights.map(l => l.device);
+      if (inspectOnly) {
+        await loadEditorPages();
+        if (valid()) { initialized = true; showProgress(); }
+        return;
+      }
       // The worker lays the atlas out; it is applied to the meshes only once a bake
       // exists or this desk will make one (M1).
       if (!atlas && !pending) pending = await loadAtlas(root, round, layout, { signal: halt.signal, apply: false });
@@ -944,8 +965,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       permissionChecked = true;
       if (!valid()) return;
       failure = ''; errorReason = null;
-      if (inspectOnly) { lightsKey = JSON.stringify(lights); await loadEditorPages(text); }
-      else if (typeof text === 'string' || allowed) { manifestRead = true; await begin(text); }
+      if (typeof text === 'string' || allowed) { manifestRead = true; await begin(text); }
       else manifestRead = true;
       if (!valid()) return;
       initialized = true; showProgress();
