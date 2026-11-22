@@ -191,8 +191,8 @@ await test('instance rim count, jitter and heights vary; dielectric faces stay c
  assert.equal(m.depthWrite,false);assert.equal(m.blending,THREE.NormalBlending);
  console.log('CLEAR_WATER_OPTICS',JSON.stringify({face:alpha(1,.00065,0),grazing:alpha(.05,.00065,0),sunCore:highlight(0)}));p.dispose();
 });
-await test('resolved Pouring sun peaks stay below the wet deck and clear sky; distant flicks remain unchanged',async()=>{
- const {previewWeather,weatherHaze}=await import(file('static/twin/sky/weather.js'));
+await test('Pouring sun peaks follow shared sun-disc visibility at every distance; clear small flicks remain unchanged',async()=>{
+ const {previewWeather,sunDiscVisibility}=await import(file('static/twin/sky/weather.js'));
  const {WEATHER_GLSL}=await import(file('static/twin/sky/weather_surface.js'));
  const p=createPrecipitation(new THREE.Scene()),fs=p.objects.splash.material.fragmentShader;
  const smoothstep=(a,b,v)=>{let t=Math.max(0,Math.min(1,(v-a)/(b-a)));return t*t*(3-2*t);};
@@ -213,21 +213,26 @@ await test('resolved Pouring sun peaks stay below the wet deck and clear sky; di
   const rough=Math.max(.0525,roughness(.85,1,puddle,0,mix));
   return F(.04,1,1,x=>2**x)*V(sq(rough),1,1,sq,Math.sqrt,Math.max,1e-6)*D(sq(rough),1,sq,1/Math.PI);
  };
- const clear=1-weatherHaze(previewWeather('clear')),pouring=(1-weatherHaze(previewWeather('pouring')))*.2;
- const peaks=[];
+ const clear=sunDiscVisibility(previewWeather('clear'),1),partly=sunDiscVisibility({clouds:{coverage:.4}},.6),pouring=sunDiscVisibility(previewWeather('pouring'),.045);
+ assert.equal(clear,1);assert.ok(partly>.2&&partly<.7,'partly cloudy keeps partial sun visibility');assert.ok(pouring<clear/20,'pouring sun disc hidden');
  for(const coverage of [.02,.035,.8])for(const sun of [.01,1,3,7])for(const raw of [.01,2.451,100,10000])for(const pixels of [28,32,64]){
   const output=evaluate(raw,pouring,coverage,sun,pixels)*sun/coverage;
   const sunny=evaluate(raw,clear,coverage,sun,pixels)*sun/coverage;
-  for(const puddle of [0,1])assert.ok(output<=wetPeak(puddle)*sun*pouring,'same-light splash peak <= real wet-deck GGX peak');
-  assert.ok(output<=1&&output<sunny*.00001,'no close HDR; Pouring much lower than clear sky');
+  for(const puddle of [0,1])assert.ok(output<=wetPeak(puddle)*sun*pouring+1e-12,'same-light splash peak <= real wet-deck GGX peak');
+  assert.ok(output<=1&&output<=sunny/20,'no close HDR; Pouring at least 20x lower than clear sky');
   assert.equal(evaluate(raw,0,coverage,sun,64),0);
-  for(const pixels of [3,8,16,24])assert.equal(evaluate(raw,pouring,coverage,sun,pixels),raw,'round 3 small sun/fleck response unchanged');
+  for(const small of [3,8,16,24]){
+   assert.equal(evaluate(raw,clear,coverage,sun,small),raw,'clear small splash sun response unchanged');
+   assert.ok(Math.abs(evaluate(raw,partly,coverage,sun,small)-raw*partly)<1e-12,'small splashes scale directly with shared sun visibility');
+   assert.ok(evaluate(raw,pouring,coverage,sun,small)<=raw/20,'Pouring removes bright sun from distant/mid splashes too');
+  }
  }
+ assert.ok(fs.includes('dot(splashSunColour,vec3(.2126,.7152,.0722))*splashSunVisibility'),'sunShare follows sun visibility so overcast flecks stay soft');
  for(const pixels of [3,16,24])assert.equal(energy(20,pixels,mix,Math.min,smoothstep),20);
  assert.equal(energy(20,64,mix,Math.min,smoothstep),1,'resolved total RGB energy also has no HDR blow-out');
  p.update(0,weather(),splashCamera(),{sunVisibility:pouring});
  assert.ok(p.splashes.every(r=>r.lods.every(o=>o.material.uniforms.splashSunVisibility.value===pouring)));
- console.log('CLOSE_SUN_LIMIT',JSON.stringify({clearVisibility:clear,pouringVisibility:pouring,wetDeckGGXPeak:wetPeak(0),clearPeak:evaluate(100,clear,.035,3,64)*3/.035,pouringPeak:evaluate(100,pouring,.035,3,64)*3/.035}));p.dispose();
+ console.log('CLOSE_SUN_LIMIT',JSON.stringify({clearVisibility:clear,partlyVisibility:partly,pouringVisibility:pouring,wetDeckGGXPeak:wetPeak(0),clearPeak:evaluate(100,clear,.035,3,64)*3/.035,pouringPeak:evaluate(100,pouring,.035,3,64)*3/.035}));p.dispose();
 });
 await test('natural and debug jets require real standing water, including pool and exact puddle mask',async()=>{
  const {standingWaterAt}=await import(file('static/twin/sky/weather_surface.js'));
@@ -657,13 +662,13 @@ await test('real household mount: previews, editor neutral/Live, Unlit, captures
   }
   v.levels.go({level:'house'},{immediate:true});v.render();assert.equal(v.precipitation.objects.rain.visible,true);
   e.setLiveWeather(true);e.setView(e.levelKeys()[0]);e.render();assert.equal(e.precipitation.objects.rain.visible,true,'an editor floor view orbits outside, so it keeps the rain');e.setView('ext');
-  const {weatherHaze}=await import(file('static/twin/sky/weather.js'));
+  const {sunDiscVisibility}=await import(file('static/twin/sky/weather.js'));
   let clearVisibility=0,pouringVisibility=1;
   for(const name of ['clear','rain','pouring','snow','fog','thunderstorm']){
    v.setWeatherPreview(name);assert.equal(v.precipitation.objects.snow.visible,name==='snow');
-   const expected=v.cloudShadow.centre()*(1-weatherHaze(v.weather));
+   const expected=sunDiscVisibility(v.weather,v.cloudShadow.centre());
    const visibility=v.precipitation.uniforms.splashSunVisibility.value;
-   assert.ok(Math.abs(visibility-expected)<1e-10,'mounted sun visibility includes current clouds and post haze');
+   assert.ok(Math.abs(visibility-expected)<1e-10,'mounted sun visibility follows sunDiscVisibility (cloud cover, transmittance and haze)');
    if(name==='clear')clearVisibility=visibility;if(name==='pouring')pouringVisibility=visibility;
   }
   assert.ok(clearVisibility>.99&&pouringVisibility<clearVisibility*.00001);
@@ -717,6 +722,94 @@ await test('1920x1080 household low-tier frustum census uses identical seeds bef
   }
   assert.equal(seed.version,version);assert.deepEqual(seed.array,copy);
  }finally{p?.dispose();v?.dispose();}
+});
+await test('hiding under cover and resuming outside is never sticky across repeated cycles, and low pose beside a 2 ft pit is uncovered',async()=>{
+ const {createSkyCover}=await import(file('static/twin/sky/sky_cover.js'));
+ const {installWeatherSurface}=await import(file('static/twin/sky/weather_surface.js'));
+ const {createPost}=await import(file('static/twin/post.js'));
+ const idleQueue=[];let nextIdle=1;
+ const prevRic=globalThis.requestIdleCallback,prevCic=globalThis.cancelIdleCallback;
+ globalThis.requestIdleCallback=cb=>{const id=nextIdle++;idleQueue.push({id,cb});return id;};
+ globalThis.cancelIdleCallback=id=>{const i=idleQueue.findIndex(x=>x.id===id);if(i>=0)idleQueue.splice(i,1);};
+ const drainIdle=(max=100)=>{let n=0;while(idleQueue.length&&n<max){idleQueue.shift().cb({timeRemaining:()=>4,didTimeout:false});n++;}return n;};
+ const syntheticPlan={
+  buildings:[{id:'house',position:[0,0],levels:[{id:'L1',elevation:0,ceiling:10,outline:[[0,0],[20,0],[20,20],[0,20]]}],
+   rooms:[],walls:[],roof:{sections:[{id:'r',kind:'flat',rect:[0,0,20,20],plate:10}]}}],
+  site:{hardscape:[{id:'deck',polygon:[[22,-4],[52,-4],[52,24],[22,24]]}],
+   furniture:[{id:'fire-pit',kind:'fire_pit',at:[36,10],radius:2,height:2}]},
+ };
+ const scene=new THREE.Scene(),renderer=new Renderer(),camera=splashCamera();
+ const ws=installWeatherSurface(scene),p=createPrecipitation(scene,{tier:'high'});
+ const post=createPost(renderer,scene,camera,{tier:'high'});
+ post.setWetGround({weatherSurface:ws.uniforms.weatherSurface,...p.uniforms});
+ const pouring={precip:'rain',rate:1,wetness:1,puddles:1,windMps:3,windToDeg:90,neutral:false};
+ let t=10;
+ try{
+  const synCover=createSkyCover(syntheticPlan);
+  p.setPlan(syntheticPlan,null,synCover);
+  assert.equal(p.uniforms.precipEdge.value,null,'setPlan clears stale edge texture until fresh field finishes');
+  assert.ok(drainIdle()>0,'idle callback incrementally bakes wet edge field');
+  assert.ok(p.uniforms.precipEdge.value,'uploadEdge populates precipEdge after idle bake');
+  assert.ok(p.uniforms.precipCoverBounds.value.z>p.uniforms.precipCoverBounds.value.x,'uploadEdge syncs precipCoverBounds immediately');
+  ws.update(pouring,t);
+  // Low pose 0.4 m above the open deck, 0.9 m beside the 2 ft fire pit is NOT covered.
+  const pitX=36*.3048,pitZ=-10*.3048,deckY=.3*.3048;
+  camera.position.set(pitX-.9,deckY+.4,pitZ);camera.lookAt(pitX,deckY+.2,pitZ);camera.updateMatrixWorld();
+  assert.equal(synCover.coverTop(camera.position.x,camera.position.z),-Infinity,'open deck beside 2 ft fire pit has no roof cover');
+  for(let i=0;i<10;i++){t+=.05;ws.update(pouring,t);p.update(t,pouring,camera,{target:new THREE.Vector3(pitX,deckY,pitZ)});post.wetReflections.update();}
+  assert.equal(p.objects.rain.visible,true,'rain draws at 0.4 m beside 2 ft fire pit');
+  assert.equal(p.objects.rain.geometry.instanceCount,8000);
+  assert.ok(p.splashes.some(r=>r.lods.some(o=>o.visible)),'splashes draw beside low fire pit');
+  assert.equal(post.wetReflections.enabled,true,'SSR active beside low fire pit');
+  // Repeatedly enter cover (under roof) and return outside across 5 cycles.
+  let edgeBefore=p.uniforms.precipEdge.value;
+  for(let cycle=0;cycle<5;cycle++){
+   camera.position.set(3,1.6,-3);camera.lookAt(4,1.0,-4);camera.updateMatrixWorld();
+   assert.ok(Number.isFinite(synCover.coverTop(camera.position.x,camera.position.z))&&camera.position.y<synCover.coverTop(camera.position.x,camera.position.z));
+   t+=.05;ws.update(pouring,t);p.update(t,pouring,camera);post.wetReflections.update();
+   assert.equal(p.objects.rain.visible,false,`cycle ${cycle}: rain hidden under cover`);
+   assert.equal(p.objects.rain.geometry.instanceCount,0,`cycle ${cycle}: rain count 0 under cover`);
+   assert.ok(p.splashes.every(r=>r.lods.every(o=>!o.visible)),`cycle ${cycle}: splashes hidden under cover`);
+   assert.equal(ws.uniforms.weatherSurface.value.x,1,`cycle ${cycle}: wetness stays intact under cover`);
+   assert.equal(ws.uniforms.weatherSurface.value.z,1,`cycle ${cycle}: puddles stay intact under cover`);
+   assert.equal(p.uniforms.precipEdge.value,edgeBefore,`cycle ${cycle}: precipEdge intact under cover`);
+   assert.equal(post.wetReflections.enabled,true,`cycle ${cycle}: SSR reflection field intact under cover`);
+   // Also exercise a plan refresh + idle completion while covered on cycle 2.
+   if(cycle===2){
+    p.setPlan(syntheticPlan,null,synCover);drainIdle();
+    t+=.05;ws.update(pouring,t);p.update(t,pouring,camera);post.wetReflections.update();
+    assert.equal(p.objects.rain.visible,false,'still hidden under cover after refresh');
+    assert.ok(p.uniforms.precipEdge.value&&post.wetReflections.enabled,'idle upload works while covered');
+    edgeBefore=p.uniforms.precipEdge.value;
+   }
+   camera.position.set(pitX-.9,deckY+.4,pitZ);camera.lookAt(pitX,deckY+.2,pitZ);camera.updateMatrixWorld();
+   for(let f=0;f<8;f++){t+=.05;ws.update(pouring,t);p.update(t,pouring,camera,{target:new THREE.Vector3(pitX,deckY,pitZ)});post.wetReflections.update();}
+   assert.equal(p.objects.rain.visible,true,`cycle ${cycle}: rain resumes after leaving cover`);
+   assert.equal(p.objects.rain.geometry.instanceCount,8000,`cycle ${cycle}: full rain count resumes`);
+   assert.ok(p.splashes.some(r=>r.lods.some(o=>o.visible)),`cycle ${cycle}: splashes resume after leaving cover`);
+   assert.equal(ws.uniforms.weatherSurface.value.x,1,`cycle ${cycle}: wetness intact after leaving cover`);
+   assert.ok(p.uniforms.precipEdge.value&&p.uniforms.precipCover.value,`cycle ${cycle}: fields intact after leaving cover`);
+   assert.equal(post.wetReflections.enabled,true,`cycle ${cycle}: SSR enabled after leaving cover`);
+  }
+  // Real household fire pit: exact close pose (0.9 m away, 0.4 m above deck) + full 360-degree ring.
+  const hhCover=createSkyCover(input.plan);
+  p.setPlan(input.plan,null,hhCover);drainIdle(200);
+  const pit=[18.112871651337194,.0974,-39.503949940810244];
+  for(let k=0;k<12;k++){
+   const a=k*Math.PI/6,cx=pit[0]+Math.cos(a)*.9,cz=pit[2]+Math.sin(a)*.9;
+   assert.equal(hhCover.coverTop(cx,cz),-Infinity,`household pit ring angle ${k*30}deg uncovered`);
+  }
+  camera.position.set(17.224,pit[1]+.4,-39.360);camera.lookAt(pit[0],pit[1],pit[2]);camera.updateMatrixWorld();
+  for(let f=0;f<10;f++){t+=.05;ws.update(pouring,t);p.update(t,pouring,camera,{target:new THREE.Vector3(...pit)});post.wetReflections.update();}
+  assert.equal(p.objects.rain.visible,true,'household pit close pose draws rain');
+  assert.equal(p.objects.rain.geometry.instanceCount,8000);
+  assert.ok(p.splashes.some(r=>r.lods.some(o=>o.visible)),'household pit close pose draws splashes');
+  assert.equal(post.wetReflections.enabled,true,'household pit close pose keeps wet SSR active');
+ }finally{
+  post.dispose();p.dispose();ws.dispose();
+  if(prevRic===undefined)delete globalThis.requestIdleCallback;else globalThis.requestIdleCallback=prevRic;
+  if(prevCic===undefined)delete globalThis.cancelIdleCallback;else globalThis.cancelIdleCallback=prevCic;
+ }
 });
 finish();
 """

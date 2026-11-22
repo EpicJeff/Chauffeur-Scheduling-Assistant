@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { groundAt, inPolygon, buildingBase, buildingFootprint, poolDatum } from '../twin_ground.js';
+import { groundAt, inPolygon, edgeDistance, buildingBase, buildingFootprint, poolDatum } from '../twin_ground.js';
 import { heightAt } from '../twin_roof.js';
 import { allPorches } from '../twin_generator.js';
 import { pathSurfacePolygons } from '../path_shapes.js';
@@ -87,6 +87,122 @@ export function bakeWetGroundField(plan={},cover=createSkyCover(plan),hard=colle
     }
   }
   return {cell,width,height,bounds:[x0,z0,x0+width*cell,z0+height*cell],data};
+}
+
+function polygonEdgeDistance(poly,x,y) {
+  let best=Infinity;
+  for(let i=0;i<poly.length;i++){
+    const a=poly[i],b=poly[(i+1)%poly.length];
+    const d=edgeDistance([x,y],a,b);
+    if(d<best)best=d;
+  }
+  return best;
+}
+
+// Incremental builder for the smooth signed-distance + dilated-height SSR field.
+// Matches bakeWetGroundField's exact world bounds at finer resolution with
+// LinearFilter so curved walkways, straight edges and rotated roof drip lines
+// never stair-step on 0.3 m nearest-neighbour texels.
+// R: signed distance outside sky cover (m, clamped [-1,1]; <0 covered, >0 open)
+// G: signed distance inside hardscape minus pool/beds (m, clamped [-1,1]; >0 inside)
+// B: dilated cover ceiling height (m; valid across the drip line, HEIGHT_NONE far out)
+// A: dilated hardscape top height (m; valid across polygon edges, HEIGHT_NONE far out)
+// Hardscape is rasterized first; cover SDF runs only on cells near hardscape
+// (where SSR can ever accept a pixel), avoiding ~90% of empty-lot work.
+export function createWetSurfaceBaker(plan={},cover=createSkyCover(plan),hard=collectHardSurfaces(plan),{cell=.15}={}) {
+  const f=cover.heightField(),baseCell=f.cell||.3;
+  let [x0,z0,x1,z1]=f.bounds;
+  for(const h of hard){
+    x0=Math.min(x0,h.bounds[0]*FT);z0=Math.min(z0,-h.bounds[3]*FT);
+    x1=Math.max(x1,h.bounds[2]*FT);z1=Math.max(z1,-h.bounds[1]*FT);
+  }
+  x0=f.bounds[0]+Math.floor((x0-f.bounds[0])/baseCell)*baseCell;
+  z0=f.bounds[1]+Math.floor((z0-f.bounds[1])/baseCell)*baseCell;
+  const spanX=Math.max(1,Math.ceil((x1-x0)/baseCell))*baseCell;
+  const spanZ=Math.max(1,Math.ceil((z1-z0)/baseCell))*baseCell;
+  const width=Math.max(1,Math.round(spanX/cell)),height=Math.max(1,Math.round(spanZ/cell));
+  const actualCellX=spanX/width,actualCellZ=spanZ/height;
+  const data=new Float32Array(width*height*4);
+  for(let k=0;k<data.length;k+=4){data[k]=1;data[k+1]=-1;data[k+2]=HEIGHT_NONE;data[k+3]=HEIGHT_NONE;}
+  const site=plan.site||{},margin=.6,marginFt=margin/FT;
+  const excluded=[...waterPolygons(site),...(site.beds||[]).map(b=>b.polygon).filter(Boolean)].map(polygon=>({
+    polygon,bounds:[Math.min(...polygon.map(p=>p[0])),Math.min(...polygon.map(p=>p[1])),
+      Math.max(...polygon.map(p=>p[0])),Math.max(...polygon.map(p=>p[1]))],
+  }));
+  const hardBoxes=hard.map(h=>({
+    h,
+    i0:Math.max(0,Math.floor((h.bounds[0]*FT-margin-x0)/actualCellX)),
+    i1:Math.min(width-1,Math.floor((h.bounds[2]*FT+margin-x0)/actualCellX)),
+    j0:Math.max(0,Math.floor((-h.bounds[3]*FT-margin-z0)/actualCellZ)),
+    j1:Math.min(height-1,Math.floor((-h.bounds[1]*FT+margin-z0)/actualCellZ)),
+  }));
+  const cb=cover.bounds,hasCover=!!(cb&&Number.isFinite(cb.x0)&&cover.coverSignedDistance);
+  const ci0=hasCover?Math.max(0,Math.floor((cb.x0-1-x0)/actualCellX)):0;
+  const ci1=hasCover?Math.min(width-1,Math.floor((cb.x1+1-x0)/actualCellX)):-1;
+  const cj0=hasCover?Math.max(0,Math.floor((cb.z0-1-z0)/actualCellZ)):0;
+  const cj1=hasCover?Math.min(height-1,Math.floor((cb.z1+1-z0)/actualCellZ)):-1;
+  let phase=0,hIdx=0,row=hardBoxes[0]?.j0??0,done=false;
+  const result={cell:actualCellX,width,height,bounds:[x0,z0,x0+spanX,z0+spanZ],data};
+  function step(budgetMs=Infinity) {
+    if(done)return true;
+    const deadline=Number.isFinite(budgetMs)?performance.now()+Math.max(0,budgetMs):Infinity;
+    while(phase===0){
+      if(hIdx>=hardBoxes.length){phase=1;row=cj0;break;}
+      const box=hardBoxes[hIdx],{h,i0,i1,j1}=box;
+      while(row<=j1){
+        const y=-(z0+(row+.5)*actualCellZ)/FT;
+        for(let i=i0;i<=i1;i++){
+          const x=(x0+(i+.5)*actualCellX)/FT;
+          const insideH=inPolygon(h.polygon,x,y);
+          const d=Math.min(1,polygonEdgeDistance(h.polygon,x,y)*FT);
+          let signed=insideH?d:-d;
+          if(signed>-margin){
+            for(const ex of excluded){
+              if(x<ex.bounds[0]-marginFt||x>ex.bounds[2]+marginFt||y<ex.bounds[1]-marginFt||y>ex.bounds[3]+marginFt)continue;
+              const inEx=inPolygon(ex.polygon,x,y),dEx=Math.min(1,polygonEdgeDistance(ex.polygon,x,y)*FT);
+              signed=Math.min(signed,inEx?-dEx:dEx);
+            }
+          }
+          const idx=(row*width+i)*4;
+          if(signed>data[idx+1]){
+            data[idx+1]=signed;
+            if(signed>-.45)data[idx+3]=((h.flat??groundAt(plan,x,y))+h.elevation)*FT;
+          }
+        }
+        row++;
+        if(performance.now()>=deadline)return false;
+      }
+      hIdx++;row=hardBoxes[hIdx]?.j0??0;
+    }
+    if(phase===1){
+      if(!hasCover||ci0>ci1||cj0>cj1){done=true;return true;}
+      while(row<=cj1){
+        const wz=z0+(row+.5)*actualCellZ;
+        for(let i=ci0;i<=ci1;i++){
+          const idx=(row*width+i)*4;
+          if(data[idx+1]<=-.45)continue;
+          const wx=x0+(i+.5)*actualCellX;
+          const res=cover.coverSignedDistance(wx,wz);
+          data[idx]=res.distance;data[idx+2]=res.top;
+        }
+        row++;
+        if(performance.now()>=deadline)return false;
+      }
+      done=true;
+    }
+    return true;
+  }
+  return {step,finish(){step(Infinity);return result;},get done(){return done;},result};
+}
+
+export function bakeWetSurfaceField(plan={},cover=createSkyCover(plan),hard=collectHardSurfaces(plan),options={}) {
+  return createWetSurfaceBaker(plan,cover,hard,options).finish();
+}
+
+function packHalfFloatRGBA(data) {
+  const half=new Uint16Array(data.length);
+  for(let i=0;i<data.length;i++)half[i]=THREE.DataUtils.toHalfFloat(data[i]);
+  return half;
 }
 
 export function createSplashSampler(plan={},roofs=new Map(),cover=createSkyCover(plan,roofs)) {
@@ -267,19 +383,50 @@ export function createPrecipitation(scene,{tier='high',random=Math.random,debugC
     precipClock:{value:0},splashTime:{value:0},
     touchLight:{value:new THREE.Vector3(1,1,1)},splashEnvironment:{value:null},splashEnvironmentGain:{value:1},
     splashSunDirection:{value:new THREE.Vector3(0,1,0)},splashSunColour:{value:new THREE.Color(1,1,1)},splashSunVisibility:{value:1},
-    precipCover:{value:null},precipCoverBounds:{value:new THREE.Vector4(0,0,1,1)},precipCutaway:{value:0}};
-  let coverTexture=null,coverFor=null;
+    precipCover:{value:null},precipEdge:{value:null},precipCoverBounds:{value:new THREE.Vector4(0,0,1,1)},precipCutaway:{value:0}};
+  let coverTexture=null,edgeTexture=null,coverFor=null,edgeFor=null,edgeBaker=null,edgeIdle=null;
+  const cancelEdgeIdle=()=>{if(edgeIdle!==null){globalThis.cancelIdleCallback?.(edgeIdle);edgeIdle=null;}};
+  function uploadEdge(e){
+    edgeTexture?.dispose();
+    // RGBA16F (HalfFloatType) is mandatorily filterable in WebGL2 without
+    // OES_texture_float_linear; -1e4 is exact and heights retain ~2 mm accuracy.
+    edgeTexture=new THREE.DataTexture(packHalfFloatRGBA(e.data),e.width,e.height,THREE.RGBAFormat,THREE.HalfFloatType);
+    edgeTexture.minFilter=edgeTexture.magFilter=THREE.LinearFilter;edgeTexture.generateMipmaps=false;edgeTexture.needsUpdate=true;
+    uniforms.precipEdge.value=edgeTexture;uniforms.precipCoverBounds.value.fromArray(e.bounds);edgeFor=cover;edgeBaker=null;
+  }
+  function scheduleEdgeIdle(){
+    if(disposed||edgeFor===cover||edgeIdle!==null||typeof globalThis.requestIdleCallback!=='function')return;
+    edgeIdle=globalThis.requestIdleCallback(deadline=>{
+      edgeIdle=null;
+      if(disposed||edgeFor===cover)return;
+      if(!edgeBaker)edgeBaker=createWetSurfaceBaker(plan,cover,collectHardSurfaces(plan));
+      const budget=Math.max(1,Math.min(6,deadline?.timeRemaining?.()??4));
+      if(edgeBaker.step(budget))uploadEdge(edgeBaker.result);
+      else scheduleEdgeIdle();
+    },{timeout:500});
+  }
   // Bake once per plan/cover while falling OR still wet after the rain stops.
-  function bakeCover(){
-    if(coverFor===cover)return;coverFor=cover;
-    const f=bakeWetGroundField(plan,cover);
-    coverTexture?.dispose();
-    coverTexture=new THREE.DataTexture(f.data,f.width,f.height,THREE.RGFormat,THREE.FloatType);
-    coverTexture.minFilter=coverTexture.magFilter=THREE.NearestFilter;coverTexture.generateMipmaps=false;coverTexture.needsUpdate=true;
-    uniforms.precipCover.value=coverTexture;uniforms.precipCoverBounds.value.fromArray(f.bounds);
+  // In a browser, the finer SSR SDF field runs off-frame via requestIdleCallback
+  // (or at most 2 ms per wet frame) so it never hitches a live frame.
+  function bakeCover(syncEdge=false){
+    const hard=coverFor!==cover||(edgeFor!==cover&&!edgeBaker)?collectHardSurfaces(plan):null;
+    if(coverFor!==cover){
+      coverFor=cover;
+      const f=bakeWetGroundField(plan,cover,hard);
+      coverTexture?.dispose();
+      coverTexture=new THREE.DataTexture(f.data,f.width,f.height,THREE.RGFormat,THREE.FloatType);
+      coverTexture.minFilter=coverTexture.magFilter=THREE.NearestFilter;coverTexture.generateMipmaps=false;coverTexture.needsUpdate=true;
+      uniforms.precipCover.value=coverTexture;uniforms.precipCoverBounds.value.fromArray(f.bounds);
+    }
+    if(edgeFor!==cover){
+      if(!edgeBaker)edgeBaker=createWetSurfaceBaker(plan,cover,hard);
+      const budget=syncEdge||typeof globalThis.requestIdleCallback!=='function'?Infinity:2;
+      if(edgeBaker.step(budget)){cancelEdgeIdle();uploadEdge(edgeBaker.result);}
+      else scheduleEdgeIdle();
+    }
   }
   const objects={},travels={},countScratch={},velocityScratch=[0,0,0],noWeather={};let last=null,clock=0,disposed=false,sample=()=>null,plan={},cover=createSkyCover(),credit=0,wasRaining=false;
-  bakeCover();
+  bakeCover(true);
   const motion=globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)');
   function mesh(name,g,vs,fs,own={}) {
     const material=new THREE.ShaderMaterial({name:'weather-'+name,uniforms:{...uniforms,...own},vertexShader:vs,fragmentShader:fs,
@@ -429,7 +576,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random,debugC
       return splashes[0].count+splashes[1].count+splashes[2].count;
     },
     setStage({centre,radius}){if(centre?.every(Number.isFinite))uniforms.precipCentre.value.fromArray(centre);if(Number.isFinite(radius)&&radius>0)uniforms.precipRadius.value=radius;},
-    setPlan(value,roofs,skyCover){plan=value;cover=skyCover||createSkyCover(plan,roofs);coverFor=null;sample=createSplashSampler(plan,roofs,cover);clearSplashes();credit=0;focusReady=false;debug=null;},
+    setPlan(value,roofs,skyCover){plan=value;cover=skyCover||createSkyCover(plan,roofs);coverFor=null;edgeFor=null;edgeBaker=null;cancelEdgeIdle();edgeTexture?.dispose();edgeTexture=null;uniforms.precipEdge.value=null;sample=createSplashSampler(plan,roofs,cover);clearSplashes();credit=0;focusReady=false;debug=null;scheduleEdgeIdle();},
     update(now,weather,camera,{target=camera.position,bearing=180,level='house',unlit=false,colour=DEFAULT_COLOUR,light,sunDirection,sunColour,sunVisibility=1,environment=scene.environment,environmentGain=scene.environmentIntensity ?? 1,reduced=motion?.matches}={}){
       if(disposed)return;
       splashWeather=weather||noWeather;lastCamera=camera;
@@ -486,7 +633,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random,debugC
       }
       showSplashes(now);
     },
-    dispose(){if(disposed)return;disposed=true;group.removeFromParent();coverTexture?.dispose();for(const o of Object.values(objects)){o.geometry.dispose();o.material.dispose();}},
+    dispose(){if(disposed)return;disposed=true;cancelEdgeIdle();edgeBaker=null;group.removeFromParent();coverTexture?.dispose();edgeTexture?.dispose();for(const o of Object.values(objects)){o.geometry.dispose();o.material.dispose();}},
   };
   return api;
 }

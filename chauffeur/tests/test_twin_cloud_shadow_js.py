@@ -298,6 +298,84 @@ await test('GPU-noise CPU fill cost, cache reuse and bounded 250 ms cadence',()=
  console.log('FILL_COST',JSON.stringify({firstMs:timings[0],meanMs:mean,maxMs:Math.max(...timings),averagePer60HzFrameMs:mean/15,cacheBytes:(128**3+32**3)*5}));
  assert.ok(mean/15<1,'CPU fill under 1 ms per frame on average');shadow.dispose();
 });
+await test('real r187 unrolled two-directional-light programs keep unique declarations per brace scope',()=>{
+ const renderer=new Renderer(),scene=new THREE.Scene();renderer.toneMapping=THREE.ACESFilmicToneMapping;
+ const haze=installStageHaze(scene,{}),shadow=installCloudShadow(scene,{uniforms:createCloudUniforms()});
+ scene.fog=new THREE.FogExp2(0x8899aa,0.001);scene.environment=new THREE.Texture();
+ const cache=programs(renderer),lights=makeLights();
+ lights.directional=[{},{}];lights.directionalShadowMap=[{}];lights.hemi=[{}];
+ const baked=new THREE.MeshStandardMaterial();
+ const lm=lightmapUniforms(1,4);
+ patchLightmaps([baked],{banks:[new THREE.DataArrayTexture(new Uint8Array(64),4,4,1)]},lm);
+ const underwater=underwaterMaterial(new THREE.MeshStandardMaterial(),{height:0}).material;
+ const materials=[
+  ['standard',new THREE.MeshStandardMaterial()],
+  ['physical-clearcoat',new THREE.MeshPhysicalMaterial({clearcoat:1})],
+  ['phong',new THREE.MeshPhongMaterial()],
+  ['lambert',new THREE.MeshLambertMaterial()],
+  ['toon',new THREE.MeshToonMaterial()],
+  ['underwater',underwater],
+  ['lightmap',baked],
+ ];
+ // Parse local variable declarations inside void main() per lexical brace depth.
+ // Catches GLSL redefinition bugs when Three.js unrolls #pragma unroll_loop without braces.
+ const TYPES='(?:float|int|uint|bool|vec[234]|ivec[234]|uvec[234]|bvec[234]|mat[234](?:x[234])?|IncidentLight|DirectionalLight|PointLight|SpotLight|RectAreaLight|PhysicalMaterial|BlinnPhongMaterial|LambertMaterial|ToonMaterial)';
+ const declRe=new RegExp(`^\\s*(?:const\\s+)?(?:(?:highp|mediump|lowp)\\s+)?${TYPES}\\s+([A-Za-z_]\\w*)(?:\\s*\\[[^\\]]*\\])?\\s*(?:=|,|;)`);
+ function checkScopes(src,label){
+  const clean=src.replace(/\/\*[\s\S]*?\*\//g,'').replace(/\/\/.*/g,'');
+  const mainAt=clean.search(/void\s+main\s*\(\s*\)\s*\{/);
+  assert.ok(mainAt>=0,label+' has main()');
+  let i=clean.indexOf('{',mainAt),depth=0;
+  const scopes=[];
+  let stmt='';
+  for(;i<clean.length;i++){
+   const ch=clean[i];
+   if(ch==='{'){
+    if(stmt.trim().startsWith('for')){
+     scopes.push(new Set());
+     const m=stmt.match(/\(\s*([^;]*);/);
+     if(m){const dm=m[1].match(declRe);if(dm)scopes.at(-1).add(dm[1]);}
+    }else scopes.push(new Set());
+    depth++;stmt='';
+   }else if(ch==='}'){
+    scopes.pop();depth--;stmt='';
+    if(depth===0)break;
+   }else if(ch===';'){
+    const s=stmt.trim();
+    const m=s.match(declRe);
+    if(m&&!s.startsWith('for')){
+     const cur=scopes.at(-1);
+     assert.ok(!cur.has(m[1]),`${label}: duplicate declaration '${m[1]}' at brace depth ${depth}`);
+     cur.add(m[1]);
+     // Also handle comma-separated declarations: float a = 1.0, b = 2.0;
+     let rest=s.slice(m[0].length-(m[0].endsWith(',')?1:0)),paren=0;
+     let tok='',inComma=m[0].endsWith(',');
+     for(let k=0;k<rest.length;k++){
+      const c=rest[k];
+      if(c==='('||c==='[')paren++;else if(c===')'||c===']')paren--;
+      else if(c===','&&paren===0){inComma=true;tok='';continue;}
+      if(inComma&&paren===0)tok+=c;
+      if(inComma&&paren===0&&(c==='='||k===rest.length-1)){
+       const nm=tok.replace(/=.*$/,'').trim().match(/^([A-Za-z_]\w*)/);
+       if(nm){assert.ok(!cur.has(nm[1]),`${label}: duplicate comma declaration '${nm[1]}' at depth ${depth}`);cur.add(nm[1]);}
+       inComma=false;tok='';
+      }
+     }
+    }
+    stmt='';
+   }else stmt+=ch;
+  }
+  assert.equal(depth,0,label+' balanced braces in main()');
+ }
+ for(const [label,mat] of materials){
+  const o=new THREE.Mesh(new THREE.BoxGeometry(),mat);scene.add(o);haze.prepare();shadow.prepare();
+  const src=preprocess(programSource(renderer,cache,scene,o,lights)[2]);
+  assert.equal((src.match(/vec3 cloudSpecBefore\s*=/g)||[]).length,2,label+' unrolls both directional lights');
+  checkScopes(src,label);
+  scene.remove(o);mat.dispose();
+ }
+ shadow.dispose();haze.dispose();
+});
 finish();
 """
 

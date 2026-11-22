@@ -1026,7 +1026,28 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   writeWeatherOpen(root, skyCover, FT);
   if (!bakeSource) {
     const neutral = await buildYard(withoutSurfaceMaterials(plan), {...kit,manifest:{}}, tier, {viewing, stage, skyCover, bakeSource: true});
-    registerBakeSource(root, () => neutral.group, {extras:false});
+    // Keep the neutral bake copy clipped to the same roof drip line whenever
+    // a roof edit reuses the drawn yard and re-runs writeWeatherOpen.
+    root.userData.syncBakeCover = (nextCover, scale, matrixWorld) => {
+      const prevAuto = neutral.group.matrixAutoUpdate, prevMatrix = neutral.group.matrix.clone();
+      neutral.group.matrixAutoUpdate = false;
+      neutral.group.matrix.copy(matrixWorld);
+      neutral.group.matrixWorldNeedsUpdate = true;
+      writeWeatherOpen(neutral.group, nextCover, scale);
+      neutral.group.matrix.copy(prevMatrix);
+      neutral.group.matrixAutoUpdate = prevAuto;
+      neutral.group.matrixWorldNeedsUpdate = true;
+      neutral.group.updateWorldMatrix(true, true);
+    };
+    // Hand bakeSource a fresh geometry clone so atlas preparation and
+    // releaseBakeSource never mutate or dispose neutral.group across roof edits.
+    const cloneNeutral = node => {
+      const copy = node.clone(false);
+      if (copy.geometry) copy.geometry = copy.geometry.clone();
+      for (const child of node.children) copy.add(cloneNeutral(child));
+      return copy;
+    };
+    registerBakeSource(root, () => cloneNeutral(neutral.group), {extras:false});
   }
   return { group: root, triangles };
 }

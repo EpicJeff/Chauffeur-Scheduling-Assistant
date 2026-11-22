@@ -72,6 +72,75 @@ for(const mode of ['default','finished']){
 assert.ok(charts.default.yard>0,'yard charts exist');
 assert.deepEqual(charts.default,charts.finished,'a finish changes no chart; the clone path charts the yard once');
 console.log('PASS yard binds under the site group on both bake-source paths');
+
+// Roof-only edit reusing the drawn yard: writeWeatherOpen(yard, newCover) must
+// re-clip the neutral bake copy identically so every yard triangle still binds
+// cleanly with identical pre-atlas topology and zero unbound area.
+{
+  const {bakeSource}=await import(file('static/twin/bake/source.js'));
+  const {writeWeatherOpen}=await import(file('static/twin/sky/sky_cover.js'));
+  const plan1=structuredClone(input.plan);
+  const room=plan1.buildings[0].rooms.find(r=>r.polygon?.length>=3);
+  room.floor_material={id:input.finish};
+  const h1=buildTwin(plan1,input.kit,'low',{viewing:true});await h1.ready;
+  const y=await buildYard(plan1,input.kit,'low',{viewing:true,skyCover:h1.skyCover});
+  h1.groups.site.add(y.group);h1.root.updateMatrixWorld(true);
+
+  const plan2=structuredClone(plan1);
+  for(const sec of plan2.buildings[0].roof?.sections||[])sec.overhang=(sec.overhang??1.5)+3;
+  const h2=buildTwin(plan2,input.kit,'low',{viewing:true});await h2.ready;
+  assert.notEqual(h2.skyCover.staticKey,h1.skyCover.staticKey,'roof overhang edit changes static cover key');
+  y.group.removeFromParent();h2.groups.site.add(y.group);h2.root.updateMatrixWorld(true);
+  const yardVertsBefore=[];y.group.traverse(o=>{if(atlasMesh(o))yardVertsBefore.push(o.geometry.attributes.position.count);});
+  writeWeatherOpen(y.group,h2.skyCover);
+  const yardVertsAfter=[];y.group.traverse(o=>{if(atlasMesh(o))yardVertsAfter.push(o.geometry.attributes.position.count);});
+  assert.notDeepEqual(yardVertsAfter,yardVertsBefore,'roof overhang edit actually re-clipped drawn yard meshes');
+  // Before buildAtlas runs, the neutral yard copy must have bit-for-bit
+  // identical positions to the drawn yard on every receiver mesh (same clip).
+  const srcRoot=bakeSource(h2.root);
+  const drawnPos=[],neutralPos=[];
+  y.group.traverse(o=>{if(atlasMesh(o))drawnPos.push(Array.from(o.geometry.attributes.position.array));});
+  srcRoot.traverse(o=>{if(atlasMesh(o)){let inYard=false;for(let p=o;p;p=p.parent)if(p.name==='yard')inYard=true;if(inYard)neutralPos.push(Array.from(o.geometry.attributes.position.array));}});
+  assert.equal(neutralPos.length,drawnPos.length,'same number of yard receiver meshes in drawn and neutral copies');
+  for(let k=0;k<drawnPos.length;k++)assert.deepEqual(neutralPos[k],drawnPos[k],`yard receiver ${k} clipped identically in drawn and neutral bake copy`);
+  const atlas2=buildAtlas(h2.root,plan2,options);
+  assert.ok(atlas2.sourceRoot && atlas2.sourceRoot!==h2.root);
+  let unbound=0,yardTris=0;
+  y.group.traverse(o=>{
+    if(!atlasMesh(o))return;
+    const a=o.geometry.attributes.lmRoom,pos=o.geometry.attributes.position;
+    assert.ok(a,'roof-edit yard mesh carries lmRoom');
+    const tri=new THREE.Triangle(),pts=[0,1,2].map(()=>new THREE.Vector3());
+    for(let i=0;i<a.count;i+=3){
+      yardTris++;
+      pts.forEach((v,k)=>v.fromBufferAttribute(pos,i+k).applyMatrix4(o.matrixWorld));
+      if(a.getX(i)<-0.5 && tri.set(...pts).getArea()>1e-9)unbound++;
+    }
+  });
+  assert.equal(unbound,0,'roof-only edit leaves zero unbound yard triangles');
+  // Also verify a subsequent roof edit after releaseBakeSource still re-clips
+  // the retained neutral yard cleanly with zero unbound triangles.
+  releaseBakeSource(h2.root);
+  const plan3=structuredClone(plan1);
+  for(const sec of plan3.buildings[0].roof?.sections||[])sec.overhang=(sec.overhang??1.5)+6;
+  const h3=buildTwin(plan3,input.kit,'low',{viewing:true});await h3.ready;
+  y.group.removeFromParent();h3.groups.site.add(y.group);h3.root.updateMatrixWorld(true);
+  writeWeatherOpen(y.group,h3.skyCover);
+  buildAtlas(h3.root,plan3,options);
+  let unbound3=0;
+  y.group.traverse(o=>{
+    if(!atlasMesh(o))return;
+    const a=o.geometry.attributes.lmRoom,pos=o.geometry.attributes.position;
+    const tri=new THREE.Triangle(),pts=[0,1,2].map(()=>new THREE.Vector3());
+    for(let i=0;i<a.count;i+=3){
+      pts.forEach((v,k)=>v.fromBufferAttribute(pos,i+k).applyMatrix4(o.matrixWorld));
+      if(a.getX(i)<-0.5 && tri.set(...pts).getArea()>1e-9)unbound3++;
+    }
+  });
+  assert.equal(unbound3,0,'second roof edit after releaseBakeSource leaves zero unbound yard triangles');
+  console.log(`PASS roof-only edit re-clipped drawn & neutral yard identically (${drawnPos.length} meshes, ${yardTris} tris, 0 unbound)`);
+  releaseBakeSource(h3.root);
+}
 process.exit(0);
 """
 

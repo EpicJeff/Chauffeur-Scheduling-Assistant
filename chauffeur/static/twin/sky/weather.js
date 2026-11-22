@@ -95,6 +95,23 @@ export function weatherExtinction(weather={}) {
 export function weatherHaze(weather={},distanceM=10000) {
   return 1-Math.exp(-weatherExtinction(weather)*Math.max(0,finite(distanceM)?distanceM:0));
 }
+const smooth=(a,b,v)=>{const t=clamp((v-a)/Math.max(b-a,1e-6));return t*t*(3-2*t);};
+// Scalar visibility of the unscattered solar/lunar disc through haze and solid
+// overcast cloud decks. Clear/partly cloudy keep the disc (clouds modulate it
+// spatially); solid overcast, rain and fog scatter it away into the sky dome.
+export function sunAirVisibility(weather={}) {
+  if(weather?.neutral)return 1;
+  const air=1-weatherHaze(weather);
+  const cover=clamp(weather?.clouds?.coverage);
+  return clamp(air*(1-smooth(.55,.92,cover)));
+}
+// Combined direct-disc visibility (cloud ray transmittance + air/overcast).
+// Shared by lit wet specular attenuation and raindrop splash sun lobes.
+export function sunDiscVisibility(weather={},cloudTransmittance=1) {
+  if(weather?.neutral)return 1;
+  const t=clamp(cloudTransmittance);
+  return clamp(t*smooth(.15,.85,t)*sunAirVisibility(weather));
+}
 const previews={clear:'sunny',rain:'rainy',pouring:'pouring',snow:'snowy',fog:'fog',thunderstorm:'lightning-rainy'};
 export function previewWeather(name,elapsed=0) {
   if (!Object.hasOwn(previews,name)) return null;

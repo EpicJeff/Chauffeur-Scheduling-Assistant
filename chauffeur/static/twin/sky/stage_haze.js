@@ -81,14 +81,16 @@ varying vec3 vStageWorld;
 #endif`;
   THREE.ShaderChunk.fog_pars_fragment = `
 #ifdef USE_FOG
+#define STAGE_HAZE_RING
 uniform vec2 stageCentre;
 uniform float stageRadius, stageEnabled, stageCanvas, stageExposure;
 // The sky's colour on a ring of directions (8 azimuths x 5 depressions), not a
 // cube sampler: a sampler here cost every lit material one texture unit, and
 // water, glass and lamp-shadowed materials ran past the 16 units ANGLE gives
 // (owner's console, 2026-11-18). Haze is a smooth gradient; 40 colours hold it.
-// vec3 array entries already cost one vector each. Their padded w lanes now
-// carry extinction and fog RGB; vector and sampler totals are unchanged.
+// vec3 array entries already cost one vector each. Their padded w lanes carry
+// extinction (0), fog RGB (1..3) and sun-disc obscuration (4); vector and
+// sampler totals are unchanged.
 uniform vec4 stageRing[40];
 varying vec3 vStageWorld;
 // Callers supply azimuths 0..9 (the interpolated neighbour can cross 8).
@@ -195,11 +197,13 @@ export function installStageHaze(scene, sky) {
     walk();
   };
   return {prepare, refresh,
-    set({centre, radius, enabled, extinction, fogColour} = {}) {
+    set({centre, radius, enabled, extinction, fogColour, sunAirVisibility} = {}) {
       if (centre?.every(Number.isFinite)) uniforms.stageCentre.value.fromArray(centre);
       if (Number.isFinite(radius) && radius > 0) uniforms.stageRadius.value = radius;
       if (Number.isFinite(extinction)) ring[3]=Math.max(0,extinction);
       if (fogColour?.every(Number.isFinite)) for(let i=0;i<3;i++)ring[(i+1)*4+3]=guard(fogColour[i]);
+      // Stored as obscuration (1 - visibility) so zero-initialised rings default to clear sky.
+      if (Number.isFinite(sunAirVisibility)) ring[19]=1-Math.max(0,Math.min(1,sunAirVisibility));
       if (enabled !== undefined) uniforms.stageEnabled.value = enabled ? 1 : 0;
     },
     dispose() { scene.onBeforeRender = previous; },
