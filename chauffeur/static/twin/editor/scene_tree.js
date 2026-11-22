@@ -206,6 +206,10 @@ export function createSceneTree({ host, getPlan, getSelection, selection = null,
       };
       const row = createSceneRow({ name: r.name, select: choose, hidden: () => hidden(r), locked: () => locked(r),
         toggleHidden: () => {
+          const members = selection?.members?.() || [];
+          if (members.length > 1 && members.some(ref => ref.pieceId === r.id && (ref.buildingId ?? null) === (r.building ?? null))) {
+            visibility?.setMembers(members, { hidden: !hidden(r) }); return;
+          }
           if (r.kind === 'level' && floors) {
             const show = hidden(r);
             if (show) for (let p = r; p; p = p.parent) visibility?.show(p.id);
@@ -216,6 +220,10 @@ export function createSceneTree({ host, getPlan, getSelection, selection = null,
           if (hidden(r)) { for (let p = r; p; p = p.parent) { visibility?.show(p.id); visibility?.showKind(p.visibilityKind || p.kind); if (p.kind === 'level' && floors?.hidden(p)) floors.toggle(p); } }
           else visibility?.hide(r.id);
         }, toggleLocked: () => {
+          const members = selection?.members?.() || [];
+          if (members.length > 1 && members.some(ref => ref.pieceId === r.id && (ref.buildingId ?? null) === (r.building ?? null))) {
+            visibility?.setMembers(members, { locked: !locked(r) }); return;
+          }
           if (r.kind === 'group') {
             const action = locked(r) ? 'unlock' : 'lock';
             for (const c of rows) for (let p = c.parent; p; p = p.parent) if (p === r) { visibility?.[action](c.id); if (action === 'unlock') visibility?.unlockKind(c.visibilityKind || c.kind); break; }

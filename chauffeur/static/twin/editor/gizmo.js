@@ -9,18 +9,24 @@ import { HANDLE_HIT_PX, DRAG_THRESHOLD_PX } from './picking.js';
 import { snapValue } from './snap.js';
 import { createTypedValue } from './typed_value.js';
 import { applyLocal } from './local_ops.js';
+import { groupTransform, transformOperations, previewTransforms } from './group_transform.js';
 
 const FT = .3048, clamp = v => Math.max(.05, Math.min(20, v));
 const wrap = v => (v % 360 + 360) % 360;
 const same = (a, b) => typeof a === 'number' && typeof b === 'number' ? Math.abs(a - b) < 1e-8
   : a && b && typeof a === 'object' && typeof b === 'object' ? Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(k => same(a[k], b[k])) : a === b;
 // One handle source for placed things. Structural controls stay in handles.js.
-export function createGizmo({ getPlan, getSelection, getTool, view, layer, op, typed = createTypedValue(layer), canEdit = () => true, onPreview }) {
+export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPickable = () => true, getTool, view, layer, op, applyBatch = (ops, options) => op({ op: 'batch', ops }, options), typed = createTypedValue(layer), canEdit = () => true, onPreview }) {
   const canvas = view.renderer3.domElement, raycaster = new THREE.Raycaster();
   const root = document.createElement('div'); root.className = 'editor-handles'; layer.append(root);
   let rows = [], lines = [], gesture = null, preview = null, ring = [], lastFrameMs = null;
   function record() {
     if (!canEdit()) return null;
+    const members = getMembers();
+    if (members.length > 1) {
+      const group = groupTransform(getPlan(), members, getTool(), { boxes: view.selectionWorldBounds?.() || [], isPickable });
+      return group && { group, piece: { id: '__selection__' } };
+    }
     const plan = getPlan(), selected = getSelection(); if (!selected?.id || !plan) return null;
     if (selected.kind === 'light_fixture') {
       const entity_id = selected.entity_id || Object.keys(plan.light_fixtures || {}).find(id => plan.light_fixtures[id].some(f => f.id === selected.id));
@@ -64,6 +70,7 @@ export function createGizmo({ getPlan, getSelection, getTool, view, layer, op, t
     return ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -g.centre[2]), new THREE.Vector3())?.toArray();
   }
   function centre(r, plan = getPlan()) {
+    if (r.group) return gesture?.previewCentre || r.group.centre;
     const p = r.piece;
     if (r.fixture) return [p.at[0], p.at[1], p.at[2] + fixtureReference(plan, p, p.at) + (p.offset_ft || 0)];
     if (r.building) { const at = hostPoint(r.building, p.host, p.offset || 0); at[2] += p.elevation || 0; return at; }
@@ -77,7 +84,7 @@ export function createGizmo({ getPlan, getSelection, getTool, view, layer, op, t
     const r = gesture?.record || record(), tool = gesture?.tool || getTool();
     if (!r || !['move', 'rotate', 'scale'].includes(tool) || r.fixture && tool === 'scale'
       || view.groups?.levels?.[`${r.building?.id || r.piece.building}:${r.level}`]?.visible === false) { clear(); return; }
-    let c; try { c = preview ? centre({ ...r, piece: pieceIn(preview, r) }, preview) : centre(r); } catch { clear(); return; }
+    let c; try { c = r.group ? centre(r) : preview ? centre({ ...r, piece: pieceIn(preview, r) }, preview) : centre(r); } catch { clear(); return; }
     const middle = project(r.building, c); if (!middle) { clear(); return; }
     const radius = [0, 1].map(i => {
       const p = project(r.building, c.map((v, k) => v + (i === k ? 1 : 0)));
@@ -85,7 +92,7 @@ export function createGizmo({ getPlan, getSelection, getTool, view, layer, op, t
     });
     const specs = tool === 'move' ? [['gizmo_move_x', radius[0], 0], ['gizmo_move_y', 0, radius[1]], ['gizmo_move_free', 0, 0]]
       : tool === 'rotate' ? [['gizmo_turn', radius[0], 0]]
-      : [['gizmo_scale', radius[0], radius[1]], ['gizmo_scale_x', radius[0], 0], ['gizmo_scale_y', 0, radius[1]]];
+      : r.group ? [['gizmo_scale', radius[0], radius[1]]] : [['gizmo_scale', radius[0], radius[1]], ['gizmo_scale_x', radius[0], 0], ['gizmo_scale_y', 0, radius[1]]];
     let count = 0;
     for (const [kind, x, y] of specs) {
       const at = [c[0] + x, c[1] + y, c[2]], pixel = project(r.building, at); if (!pixel) continue;
@@ -158,6 +165,39 @@ export function createGizmo({ getPlan, getSelection, getTool, view, layer, op, t
     const r = g.record, piece = r.piece, kind = g.handle.kind, c = g.centre;
     const axis = kind.endsWith('_x') ? 0 : kind.endsWith('_y') ? 1 : null;
     const a = g.start.slice(0, 2).map((v, i) => v - c[i]), b = p.slice(0, 2).map((v, i) => v - c[i]);
+    if (r.group) {
+      let value, transform;
+      if (g.tool === 'move') {
+        let by = p.slice(0, 2).map((v, i) => axis !== null && axis !== i ? 0 : v - g.start[i]);
+        if (Number.isFinite(exact)) {
+          const length = Math.hypot(...by);
+          by = by.map((v, i) => axis !== null ? (axis === i ? exact : 0) : exact * (length ? v / length : i === 0 ? 1 : 0));
+        } else by = by.map(v => snapValue('move', v, free));
+        transform = { by }; value = axis === null ? Math.hypot(...by) : by[axis];
+      } else if (g.tool === 'rotate') {
+        const angle = (Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0])) * 180 / Math.PI;
+        value = Number.isFinite(exact) ? exact : snapValue('angle', (angle + 540) % 360 - 180, free);
+        transform = { angle: value };
+      } else {
+        value = clamp(Number.isFinite(exact) ? exact : snapValue('scale', Math.hypot(...b) / Math.max(.01, Math.hypot(...a)), free));
+        transform = { factor: value };
+      }
+      try {
+        g.operation = { op: 'batch', ops: transformOperations(r.group, transform) };
+        preview = applyLocal(g.source, g.operation)?.plan;
+      } catch (error) {
+        g.changed = false; g.operation = null;
+        document.getElementById('editor-status').textContent = error.message;
+        lastFrameMs = Math.max(.001, performance.now() - started); return;
+      }
+      g.changed = Math.abs(value - (g.tool === 'scale' ? 1 : 0)) > 1e-8;
+      g.previewCentre = g.tool === 'move' ? c.map((v, i) => v + (transform.by[i] || 0)) : c;
+      typed.show(g.tool === 'move' ? 'length' : g.tool === 'rotate' ? 'angle' : 'factor', value, [event.clientX, event.clientY]);
+      // Reuse selected rendered outlines; no geometry rebuild or network work
+      // occurs in a frame. Cached records/bounds keep cost linear in the set.
+      if (preview) view.previewSelectionGroup?.(previewTransforms(r.group, transform, preview));
+      draw(); lastFrameMs = Math.max(.001, performance.now() - started); return;
+    }
     let change, live, valueKind;
     if (g.tool === 'move') {
       let by = p.slice(0, 2).map((v, i) => axis !== null && axis !== i ? 0 : v - g.start[i]);
@@ -219,8 +259,10 @@ export function createGizmo({ getPlan, getSelection, getTool, view, layer, op, t
     const g = gesture; if (!g) return;
     if (!cancel && Number.isFinite(exact)) update(g.event, { free: true, typed: exact });
     gesture = null; preview = null; typed.hide();
+    view.previewSelectionBox?.(null);
     document.getElementById('editor-drag-outline')?.setAttribute('points', '');
-    try { if (!cancel && canEdit() && g.changed) await op(g.operation, { drag: true,
+    try { if (!cancel && canEdit() && g.changed && g.operation?.op === 'batch') await applyBatch(g.operation.ops, { drag: true, local: applyLocal(getPlan(), g.operation)?.plan });
+      else if (!cancel && canEdit() && g.changed) await op(g.operation, { drag: true,
       ...(g.operation.op === 'move_site_item' ? { local: applyLocal(getPlan(), g.operation)?.plan } : {}) }); }
     finally {
       if (g.record.building) view.rebuildLevel(g.record.building.id, g.record.level, getPlan(), { [g.record.list]: [g.record.piece.id] });

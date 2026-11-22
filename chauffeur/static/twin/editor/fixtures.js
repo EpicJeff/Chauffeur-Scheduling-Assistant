@@ -34,7 +34,7 @@ function button(root, text, action, locked) {
   node.addEventListener('click', action); root.append(node); return node;
 }
 
-export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onAddEffect, onMove, onAim, onReattach, report = reportError }) {
+export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onAddEffect, onMove, onAim, onReattach, removeSelection, report = reportError }) {
   const root = element('section'); root.dataset.fixtureEntity = entity_id;
   root.append(element('h3', `Fixtures · ${entity_id}`));
   let pending = Promise.resolve();
@@ -129,6 +129,7 @@ export function fixtureCard({ entity_id, getPlan, canEdit, op, onAdd, onAddEffec
       return op({ op: 'add_light_fixture', entity_id, fixture: copy });
     }), !canEdit());
     button(rowActions, 'Delete', () => save(async () => {
+      const removed = removeSelection?.(f.id); if (removed) return removed;
       if (await window.promptConfirm('Delete this fixture?', 'Undo restores the fixture.', 'Delete', 'Cancel') && canEdit())
         await op({ op: 'delete_light_fixture', entity_id, id: f.id });
     }), !canEdit());
@@ -149,6 +150,10 @@ export function cameraView(plan, marker) {
 }
 
 export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit, signal, prepare = () => {}, report = reportError, getCameraMarker, bindCancel = true, dock }) {
+  const removeSelection = id => {
+    const refs = tools.selectedMembers?.() || [];
+    return refs.length > 1 && refs.some(r => r.pieceId === id) ? tools.deleteSelected() : null;
+  };
   const canvas = view.renderer3.domElement, root = new THREE.Group(), el = id => document.getElementById(id);
   const ray = new THREE.Raycaster(); ray.params.Line.threshold = .08; view.scene.add(root); root.name = 'editor-light-fixtures';
   const handleLayer = element('div'); handleLayer.className = 'editor-handles'; canvas.parentElement.append(handleLayer);
@@ -297,10 +302,10 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       view: { aim: value.aim, fov_deg: value.cone_deg } }), true);
   }
   function drawFixtures(host, device) {
-    for (const entity_id of entities(device)) host.append(fixtureCard({ entity_id, getPlan, canEdit, op, onAdd: add, onAddEffect: addEffect, onMove: move, onAim: aim, onReattach: reattach, report }));
+    for (const entity_id of entities(device)) host.append(fixtureCard({ entity_id, getPlan, canEdit, op, onAdd: add, onAddEffect: addEffect, onMove: move, onAim: aim, onReattach: reattach, removeSelection, report }));
     const linked = effectEntities(device);
     if (!entities(device).length && linked.length) button(actions(host), 'Add effect', () => addEffect(linked[0]).catch(report), !canEdit());
-    for (const f of getPlan().effect_fixtures || []) if (linked.includes(f.entity)) host.append(effectCard({ id: f.id, getPlan, canEdit, op, onMove: moveEffect, report, helpers }));
+    for (const f of getPlan().effect_fixtures || []) if (linked.includes(f.entity)) host.append(effectCard({ id: f.id, getPlan, canEdit, op, onMove: moveEffect, removeSelection, report, helpers }));
     if (device.kind === 'camera' || device.entity_id?.startsWith('camera.')) {
       const marker = getCameraMarker?.(device);
       if (marker) {
@@ -373,7 +378,7 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     button(host, 'Close', backToDevice, false);
     if (cardEffect) {
       if (!getPlan().effect_fixtures?.some(f => f.id === cardEffect)) { releaseCard(); host.hidden = true; return; }
-      host.append(effectCard({ id: cardEffect, getPlan, canEdit, op, onMove: moveEffect, report, helpers }));
+      host.append(effectCard({ id: cardEffect, getPlan, canEdit, op, onMove: moveEffect, removeSelection, report, helpers }));
     } else {
       host.prepend(element('h3', cardDevice.name));
       if (deviceParent) host.append(tools.haLink.anchorSection({ device: cardDevice.device_id }));

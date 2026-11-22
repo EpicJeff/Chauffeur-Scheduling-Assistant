@@ -770,6 +770,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     screenOfFloor: projectFloor,
     selectionFloor() { const room = selectionStyle?.room; return room ? `${room.building}:${room.level}` : state.view; },
     selectionBounds() { return projectSelectionBoxes(currentSelectionBoxes({ fresh: true }).list, camera, renderer3.domElement.getBoundingClientRect()); },
+    selectionWorldBounds() { return currentSelectionBoxes({ fresh: true }).list.map(row => ({ ...row, box: row.box.clone() })); },
     refreshSelection() {
       invalidateSelectionBounds();
       if (selectionStyle) paintSelection();
@@ -778,6 +779,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (!id) {
         let restored = false;
         for (const line of selectionLines) {
+          if (line.userData.groupBase) {
+            const base = line.userData.groupBase;
+            line.matrix.copy(base.matrix); line.matrixAutoUpdate = base.auto;
+            if (base.box) line.box.copy(base.box);
+            delete line.userData.groupBase; restored = true;
+          }
           if (line instanceof THREE.Box3Helper && line.userData.baseBox) {
             line.box.copy(line.userData.baseBox);
             delete line.userData.baseBox;
@@ -796,6 +803,26 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         helper.box.copy(spec.box);
       }
       render();
+    },
+    previewSelectionGroup(specs) {
+      const members = new Map(specs.map(r => [JSON.stringify([r.buildingId ?? null, r.pieceId]), r.matrix]));
+      for (const line of selectionLines) {
+        const matrix = members.get(JSON.stringify([line.userData.buildingId ?? null, line.userData.pieceId]));
+        if (line.userData.isHover || !matrix) continue;
+        if (!line.userData.groupBase) {
+          line.updateWorldMatrix(true, false);
+          line.userData.groupBase = { matrix: line.matrix.clone(), world: line.matrixWorld.clone(), auto: line.matrixAutoUpdate,
+            ...(line instanceof THREE.Box3Helper ? { box: line.box.clone() } : {}) };
+        }
+        const base = line.userData.groupBase;
+        if (base.box) line.box.copy(base.box).applyMatrix4(matrix);
+        else {
+          line.matrixAutoUpdate = false;
+          line.matrix.copy(line.parent.matrixWorld).invert().multiply(matrix).multiply(base.world);
+          line.matrixWorldNeedsUpdate = true;
+        }
+      }
+      if (!view.looping) render();
     },
     setSelection(value) {
       const sameMaterials = selectionStyle && JSON.stringify([selectionStyle.selected, selectionStyle.members, selectionStyle.room])

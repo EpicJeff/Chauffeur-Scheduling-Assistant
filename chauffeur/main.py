@@ -8966,7 +8966,11 @@ def house_editor_op(request: Request, body: dict = Body(default={})):
         try:
             result = twin_edit.save(body.get('op'), parent['id'], reason=body.get('reason', ''))
         except ValueError as exc:
-            return twin_timing.response({'error': str(exc)}, timing, status_code=400)
+            error = {'error': str(exc)}
+            from services.twin_model_ops import BatchRefused
+            if isinstance(exc, BatchRefused):
+                error.update(member=exc.member, reason=exc.reason)
+            return twin_timing.response(error, timing, status_code=400)
         with twin_timing.span('read'):
             model = result['model']
             plan = twin_model_bridge.flatten(model)

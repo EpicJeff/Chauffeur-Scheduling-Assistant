@@ -415,6 +415,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
     tools.select(null); chosen = { kind, id }; menu = false; drawing = null; signature = ''; refresh(); tools.revealSelection?.();
   }
   async function remove() {
+    if (tools.selectedMembers?.().length > 1) return tools.deleteSelected();
     const piece = current(); if (!piece || !canEdit() || busy) return;
     if (!await window.promptConfirm(`Delete ${words[chosen.kind]}?`, 'Undo restores it.', 'Delete', 'Cancel')) return;
     await save({ op: 'delete_pad', id: piece.id });

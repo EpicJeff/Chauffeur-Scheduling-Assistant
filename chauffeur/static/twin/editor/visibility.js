@@ -31,6 +31,17 @@ export function createVisibility({ houseId = 'current', storage } = {}) {
     lock: id => toggle('locked', id, true), unlock: id => toggle('locked', id, false),
     hideKind: kind => toggle('hiddenKinds', kind, true), showKind: kind => toggle('hiddenKinds', kind, false),
     lockKind: kind => toggle('lockedKinds', kind, true), unlockKind: kind => toggle('lockedKinds', kind, false),
+    setMembers(refs, values) {
+      let dirty = false;
+      for (const field of ['hidden', 'locked']) if (typeof values[field] === 'boolean') for (const ref of refs) {
+        const id = ref.pieceId ?? ref.id;
+        if (!values[field] && state[field + 'Kinds'].delete(visibilityKind(ref.visibilityKind || ref.kind))) dirty = true;
+        if (!id || state[field].has(id) === values[field]) continue;
+        if (values[field]) state[field].add(id); else state[field].delete(id);
+        dirty = true;
+      }
+      if (dirty) changed();
+    },
     showAll() { state.hidden.clear(); state.hiddenKinds.clear(); changed(); },
     isHidden, isLocked,
     isPickable(candidate) {

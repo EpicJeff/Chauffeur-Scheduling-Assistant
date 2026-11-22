@@ -221,15 +221,66 @@ function splitWall(plan, operation) {
 }
 
 export function applyLocal(plan, operation) {
+  if (operation.op !== 'batch') return applyOne(plan, operation);
+  // A batch owns one private copy, so 200 plants never clone the whole house
+  // 200 times. An unsupported/refused member discards the entire preview.
+  let result = { plan: structuredClone(plan), building: null, level: null, touched: null };
+  for (const member of operation.ops) {
+    const next = applyOne(result.plan, member, true);
+    if (!next) return null;
+    result = { ...next, building: null, level: null, touched: null };
+  }
+  return result;
+}
+
+function applyOne(plan, operation, mutable = false) {
+  const copy = () => mutable ? plan : structuredClone(plan);
+  if (operation.op === 'move_joints') {
+    const preview = copy(), b = preview.buildings.find(b => b.id === operation.building);
+    if (!b) throw new LocalMissing(`Missing building: ${operation.building}`);
+    for (const { joint, to } of operation.joints) {
+      const p = b.joints.find(p => p.id === joint);
+      if (!p) throw new LocalMissing(`Missing joint: ${joint}`);
+      p.at = [...to];
+    }
+    // Rebuild the flat geometry once, carrying each shared joint only once.
+    const positions = new Map(b.joints.map(j => [j.id, j.at]));
+    for (const wall of b.walls) {
+      const [from, to] = wall.joints.map(id => positions.get(id));
+      if (wall.footprint) wall.footprint = wall.footprint.map((p, i) => shifted(p,
+        delta(i === 0 || i === 3 ? from : to, i === 0 || i === 3 ? wall.from : wall.to)));
+      wall.from = [...from]; wall.to = [...to];
+    }
+    for (const room of b.rooms) if (room.joints?.every(id => positions.has(id))) room.polygon = room.joints.map(id => [...positions.get(id)]);
+    for (const level of b.levels) if (level.footprint?.every(id => positions.has(id))) level.outline = level.footprint.map(id => [...positions.get(id)]);
+    for (const p of [...(b.items || []), ...(b.anchors || [])]) if (p.host) {
+      try { p.position = hostPoint(b, p.host, p.offset || 0); } catch { /* The server judges it. */ }
+    }
+    return { plan: preview, building: b.id, level: null, touched: null };
+  }
+  if (operation.op === 'update_pad' || operation.op === 'update_pool_feature') {
+    const preview = copy(), pieces = operation.op === 'update_pad' ? preview.site.terraces : preview.site.pool?.features;
+    const p = pieces?.find(p => p.id === operation.id);
+    if (!p) throw new LocalMissing(`Missing piece: ${operation.id}`);
+    for (const [k, v] of Object.entries(operation)) if (!['op', 'id'].includes(k)) p[k] = structuredClone(v);
+    return { plan: preview, building: null, level: null, touched: null };
+  }
+  if (operation.op === 'resize_opening' || operation.op === 'move_hosted' && !operation.host) {
+    const preview = copy(), b = preview.buildings.find(b => b.id === operation.building), p = b?.openings?.find(p => p.id === operation.id);
+    if (!p) throw new LocalMissing(`Missing opening: ${operation.id}`);
+    for (const k of ['at', 'width', 'sill', 'head']) if (k in operation) p[k] = operation[k];
+    return { plan: preview, building: b.id, level: b.walls.find(w => w.id === p.wall)?.level, touched: { openings: [p.id] } };
+  }
   if (operation.op === 'split_wall') return splitWall(plan, operation);
   if (operation.op === 'set_object' || operation.op === 'move_hosted') {
     // Opening slides use {at}, not a replacement object host.
     if (operation.op === 'move_hosted' && !operation.host) return null;
     const properties = operation.op === 'move_hosted' ? { host: operation.host } : operation.properties;
     if (!properties || Object.keys(properties).some(k => !['rotation', 'scale', 'scale_axes', 'mirror_x', 'mirror_y', 'host'].includes(k))) return null;
-    const preview = structuredClone(plan), building = preview.buildings.find(b => b.id === operation.building);
+    const preview = copy(), building = preview.buildings.find(b => b.id === operation.building);
     const list = building && ['items', 'anchors', 'openings'].find(name => building[name]?.some(p => p.id === operation.id));
-    const piece = list ? building[list].find(p => p.id === operation.id) : !operation.building && sitePieces(preview.site?.[operation.list])[operation.index];
+    const site = !operation.building && sitePieces(preview.site?.[operation.list]);
+    const piece = list ? building[list].find(p => p.id === operation.id) : site && (operation.id ? site.find(p => p.id === operation.id) : site[operation.index]);
     if (!piece || piece.device) throw new LocalMissing(`Missing object: ${operation.id || operation.list}`);
     Object.assign(piece, structuredClone(properties));
     for (const key of ['mirror_x', 'mirror_y']) if (properties[key] === false) delete piece[key];
@@ -241,19 +292,20 @@ export function applyLocal(plan, operation) {
       touched: list ? { [list]: [piece.id] } : { site: [operation.list] } };
   }
   if (operation.op === 'update_site_shape') {
-    if (Object.keys(operation).some(k => !['op', 'list', 'index', 'id', 'polygon', 'points', 'polyline', 'at', 'radius', 'rotation', 'features'].includes(k))) return null;
-    const preview = structuredClone(plan);
+    if (Object.keys(operation).some(k => !['op', 'list', 'index', 'id', 'polygon', 'points', 'polyline', 'at', 'radius', 'width', 'rotation', 'features'].includes(k))) return null;
+    const preview = copy();
     const pieces = sitePieces(preview.site?.[operation.list]);
     const index = operation.id ? pieces.findIndex(p => p.id === operation.id) : operation.index ?? 0, piece = pieces[index];
     if (!piece) throw new LocalMissing(`Missing site shape: ${operation.id || operation.list}`);
     for (const [key, value] of Object.entries(operation)) if (!['op', 'list', 'index', 'id'].includes(key)) piece[key] = structuredClone(value);
     return { plan: preview, building: null, level: null, touched: { site: [operation.list] } };
   }
-  if (operation.op === 'update_light_fixture') {
-    if (Object.keys(operation.change).some(k => !['at', 'aim', 'rotation_deg'].includes(k))) return null;
-    const preview = structuredClone(plan), piece = preview.light_fixtures?.[operation.entity_id]?.find(f => f.id === operation.id);
+  if (['update_light_fixture', 'update_effect_fixture'].includes(operation.op)) {
+    if (Object.keys(operation.change).some(k => !['at', 'aim', 'rotation_deg', 'path', 'snap', 'anchors', 'facing'].includes(k))) return null;
+    const preview = copy(), piece = (operation.op === 'update_effect_fixture' ? preview.effect_fixtures : preview.light_fixtures?.[operation.entity_id])?.find(f => f.id === operation.id);
     if (!piece) throw new LocalMissing(`Missing light fixture: ${operation.id}`);
     Object.assign(piece, structuredClone(operation.change));
+    for (const k of ['snap', 'anchors']) if (piece[k] === null) delete piece[k];
     return { plan: preview, building: null, level: null, touched: { light_fixtures: [operation.id] } };
   }
   const kind = operation.op === 'move_wall' ? 'wall' : operation.op === 'move_joint' ? 'joint'
@@ -274,7 +326,7 @@ export function applyLocal(plan, operation) {
   const index = operation.id ? pieces.findIndex(p => p.id === operation.id) : operation.index ?? (singleton ? 0 : null);
   if (!Number.isInteger(index) || index < 0 || index >= pieces.length) throw new LocalMissing(`Missing site item: ${name}`);
   if (!('by' in operation) && !('at' in pieces[index])) return null;
-  const preview = structuredClone(plan), piece = singleton ? preview.site[name] : preview.site[name][index];
+  const preview = copy(), piece = singleton ? preview.site[name] : preview.site[name][index];
   if ('by' in operation) {
     // As the server does: plan x and y only.
     const by = p => [p[0] + operation.by[0], p[1] + operation.by[1]];

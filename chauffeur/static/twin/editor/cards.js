@@ -71,7 +71,7 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getModel = () => null, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials }) {
+export function createCards({ getPlan, getModel = () => null, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials, removeSelection }) {
   let namesAsked = false;
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
@@ -385,6 +385,8 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     host.append(button('Delete', remove));
   }
   async function remove() {
+    const setRemoval = removeSelection?.();
+    if (setRemoval) return setRemoval;
     const record = selection && findPiece(getPlan(), selection.pieceId, selection.buildingId);
     if (!record) return;
     const { kind, piece, building } = record;

@@ -14,7 +14,7 @@ export function effectPathOperation(fixture, path, index) {
     ...(fixture.anchors ? { anchors: fixture.anchors.map((anchor, i) => i === index ? null : anchor) } : {}) } };
 }
 
-export function effectCard({ id, getPlan, canEdit, op, onMove, report, helpers }) {
+export function effectCard({ id, getPlan, canEdit, op, onMove, removeSelection, report, helpers }) {
   const { element, field, actions, button, numeric } = helpers;
   const finite = value => numeric(value, -Number.MAX_VALUE, Number.MAX_VALUE);
   const root = element('section'); root.dataset.effectId = id;
@@ -85,6 +85,7 @@ export function effectCard({ id, getPlan, canEdit, op, onMove, report, helpers }
   const row = actions(root);
   button(row, f.shape === 'line' ? 'Redraw' : 'Move', () => { if (canEdit()) onMove?.(current()); }, !canEdit());
   button(row, 'Delete', () => save(async () => {
+    const removed = removeSelection?.(id); if (removed) return removed;
     if (await window.promptConfirm('Delete this effect?', 'Undo restores the effect.', 'Delete', 'Cancel') && canEdit()) await op({ op: 'delete_effect_fixture', id });
   }), !canEdit());
   return root;

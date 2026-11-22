@@ -593,7 +593,7 @@ def _apply_legacy(plan, edit, ha_catalogue=None):
 
 
 @_edit_timed('apply')
-def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=None):
+def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=None, _batch_site=False):
     """Translate the old editor vocabulary at the connected-model boundary."""
     from services import twin_model_ops as ops, twin_model_bridge as bridge
     from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_model, twin_objects
@@ -601,6 +601,9 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
     if not isinstance(edit, dict):
         raise ValueError('An edit must be an object.')
     op = edit.get('op')
+    if op == 'batch':
+        return ops.apply_batch(model, edit, ha_catalogue=ha_catalogue,
+                               _normalized=_normalized, apply_member=apply_model)
     if (op == 'set' and edit.get('field') == 'ha_area' or op == 'place_device'
             or edit.get('list') == 'yard_rooms' and 'ha_area' in edit) and ha_catalogue is None:
         from services import twin_ha
@@ -614,9 +617,9 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
     if (op in ops.MORE_OPS and (op not in ('set', 'add_opening') or 'id' in edit
                                 or op == 'set' and edit.get('field') == 'flag_ok'
                                 or op == 'add_opening' and any(field in edit for field in twin_objects.SCHEMA['opening']))
-            or op in ('move_joint', 'move_wall', 'move_room', 'split_wall', 'draw_room', 'split_room')
+            or op in ('move_joint', 'move_joints', 'move_wall', 'move_room', 'split_wall', 'draw_room', 'split_room')
             or op == 'delete' and 'id' in edit):
-        return ops.apply(model, edit, ha_catalogue=ha_catalogue, _normalized=_normalized)
+        return ops.apply(model, edit, ha_catalogue=ha_catalogue, _normalized=_normalized, _batch_site=_batch_site)
 
     flat = bridge.flatten(model)
     checked = deepcopy(edit)
@@ -890,9 +893,13 @@ def save(edit, actor_id, reason=''):
     if not isinstance(edit, dict):
         raise ValueError('An edit must be an object.')
     edit = deepcopy(edit)
+    members = edit.get('ops') if edit.get('op') == 'batch' else [edit]
+    members = members if isinstance(members, list) else []
     ha_catalogue = None
-    if (edit.get('op') == 'set' and edit.get('field') == 'ha_area' or edit.get('op') == 'place_device'
-            or edit.get('list') == 'yard_rooms' and 'ha_area' in edit):
+    if any(isinstance(member, dict) and (
+            member.get('op') == 'set' and member.get('field') == 'ha_area'
+            or member.get('op') == 'place_device'
+            or member.get('list') == 'yard_rooms' and 'ha_area' in member) for member in members):
         from services import twin_ha
         ha_catalogue = twin_ha.safe_catalogue()
     # Same lock order as update_current/start_over. Keep the snapshot, new round,
@@ -903,12 +910,18 @@ def save(edit, actor_id, reason=''):
         if current is None:
             raise ValueError('Build a house before editing it.')
         before = twin_store.current(model=current)
-        if edit.get('op') == 'registration':
-            edit['from_reg'] = twin_store.registration(edit.get('source'), edit.get('page'), edit.get('level'))
-            if edit['from_reg'] is None:
-                raise ValueError('No registration on file for this sheet yet')
-            edit['reg'] = _registration(edit.get('reg'))
-            twin_store._source_page(twin_store._state(), edit.get('source'), edit.get('page'))
+        for index, member in enumerate(members):
+            if isinstance(member, dict) and member.get('op') == 'registration':
+                try:
+                    member['from_reg'] = twin_store.registration(member.get('source'), member.get('page'), member.get('level'))
+                    if member['from_reg'] is None:
+                        raise ValueError('No registration on file for this sheet yet')
+                    member['reg'] = _registration(member.get('reg'))
+                    twin_store._source_page(twin_store._state(), member.get('source'), member.get('page'))
+                except ValueError as exc:
+                    if edit.get('op') == 'batch':
+                        raise twin_model_ops.BatchRefused(index, member, exc) from exc
+                    raise
         # A model update_model just published is already normalized: skip the second pass.
         preserve_polygons = twin_model_ops.preserves_room_geometry(edit)
         normalized = ((deepcopy(current), []) if twin_store.current_is_normalized()
@@ -922,20 +935,41 @@ def save(edit, actor_id, reason=''):
         logged_before = (deepcopy(before) if normalized[0] == current
                          else twin_model_bridge.flatten(normalized[0]))
         place_row = None
-        if edit.get('op') == 'set' and edit.get('field') == 'name':
-            kind, piece, building, _ = _find(after, edit.get('piece', edit.get('id')), edit.get('building'))
+        for index, member in enumerate(members):
+            if not isinstance(member, dict) or member.get('op') != 'set' or member.get('field') != 'name':
+                continue
+            # A later selected deletion can remove a renamed room or piece.
+            # Only building names have registry metadata to publish; identify
+            # that kind on the same original used by batch preflight.
+            kind, piece, building, _ = _find(before if edit.get('op') == 'batch' else after,
+                                            member.get('piece', member.get('id')), member.get('building'))
             if kind == 'building':
+                if edit.get('op') == 'batch':
+                    try:
+                        # Check this member's own value against the original
+                        # registry, even when a later rename overwrites it.
+                        twin_store._update_place_building(twin_store._state(), building['id'], {'name': member.get('value')})
+                        kind, piece, building, _ = _find(after, member.get('piece', member.get('id')), member.get('building'))
+                    except ValueError as exc:
+                        raise twin_model_ops.BatchRefused(index, member, exc) from exc
                 # Validate the registry name before publishing, and carry the
                 # private snapshot into this same edit's metadata save.
-                place_row = twin_store._state()
-                record = twin_store._update_place_building(place_row, building['id'], {'name': piece['name']})
+                if place_row is None:
+                    place_row = twin_store._state()
+                try:
+                    record = twin_store._update_place_building(place_row, building['id'], {'name': piece['name']})
+                except ValueError as exc:
+                    if edit.get('op') == 'batch':
+                        raise twin_model_ops.BatchRefused(index, member, exc) from exc
+                    raise
                 piece['name'] = record['name']
                 old_name = next(b['name'] for b in before['buildings'] if b['id'] == building['id'])
-                summary = f'Renamed {old_name} to {piece["name"]}'
+                if len(members) == 1:
+                    summary = f'Renamed {old_name} to {piece["name"]}'
         deletion_after = (_apply_legacy(before, edit)[0]
                           if edit.get('op') == 'delete' and 'piece' in edit else after)
         tombstones = ([_tombstone(*entry) for entry in _removed(before, deletion_after)]
-                      if edit.get('op') == 'delete' else [])
+                      if any(isinstance(member, dict) and member.get('op') == 'delete' for member in members) else [])
         changes = [{'path': path, 'kind': twin_store._fix_kind(path),
                     'before': twin_store._leaf(logged_before, path), 'after': twin_store._leaf(after, path),
                     'reason': reason.strip() or summary, 'actor_id': actor_id}
@@ -950,8 +984,9 @@ def save(edit, actor_id, reason=''):
             return_model=True, preserve_room_polygons=preserve_polygons)
         for tombstone in tombstones:
             twin_store.add_tombstone({**tombstone, 'round': round_id})
-        if edit.get('op') == 'registration':
-            edit['reg']['source'] = 'person'
-            twin_store.set_registration(edit['source'], edit['page'], edit['level'], edit['reg'])
+        for member in members:
+            if isinstance(member, dict) and member.get('op') == 'registration':
+                member['reg']['source'] = 'person'
+                twin_store.set_registration(member['source'], member['page'], member['level'], member['reg'])
         return {'round': round_id, 'lighting': twin_store.round_lighting(round_id),
                 'summary': summary, 'model': written_model}

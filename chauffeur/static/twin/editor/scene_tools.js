@@ -20,13 +20,14 @@ import { icon } from './icons.js';
 import { createSceneTree } from './scene_tree.js';
 import { createLayers } from './dock.js';
 import { shapeOperation, shapeCentre, transformShape } from './site_shapes.js';
+import { deleteOperations, groupTransform, transformOperations } from './group_transform.js';
 
 const rotatePoint = (p, angle) => {
   const a = angle * Math.PI / 180;
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
 
-export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, visibility, library, api, onDrawFeature, dock, openHouseMaterials }) {
+export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, applyBatch = (ops, options) => op({ op: 'batch', ops }, options), panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, visibility, library, api, onDrawFeature, dock, openHouseMaterials }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   const measureLayer = document.createElement('div'); measureLayer.className = 'editor-measure'; canvas.parentElement.append(measureLayer);
   const measure = createMeasure({ view, getPlan, layer: measureLayer });
@@ -281,13 +282,13 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let linkReadAt = 0;
   const cards = createCards({ getPlan, getModel, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    dock, op, addDormer, canEdit, select, library, haLink, onDrawFeature, openHouseMaterials, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
+    dock, op, addDormer, canEdit, select, library, haLink, onDrawFeature, openHouseMaterials, removeSelection: () => selectionStore.members().length > 1 ? removeSelected() : null, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   signal?.addEventListener('abort', () => cards.dispose(), { once: true });
   const handleSelection = () => isPickable(roomSelection.current()) ? roomSelection.current() : {};
-  handles = createHandles({ view, getPlan, getSelection: handleSelection, getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
+  handles = createHandles({ view, getPlan, getSelection: () => selectionStore.members().length > 1 ? {} : handleSelection(), getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
     onPreview: drawDimensions, onClick: cards.showRoofEdge, signal });
   const gizmoLayer = document.createElement('div'); gizmoLayer.className = 'editor-handles'; canvas.parentElement.append(gizmoLayer);
-  gizmo = createGizmo({ view, layer: gizmoLayer, getPlan, getSelection: handleSelection, getTool: () => tool, canEdit,
+  gizmo = createGizmo({ view, layer: gizmoLayer, getPlan, getSelection: handleSelection, getMembers: () => selectionStore.members(), isPickable, getTool: () => tool, canEdit, applyBatch,
     onPreview: plan => delegate?.preview?.(plan),
     op: (operation, options) => op(operation, { ...options, selection: selection?.buildingId ? selection : { kind: selection?.kind, id: selection?.pieceId } }) });
   view.controls.addEventListener('change', gizmo.draw);
@@ -388,6 +389,11 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // under the pointer in the exterior view instead of its navigation parent.
   const contextMenu = createContextMenu({ signal, items(target) {
     if (target.empty) return [{ label: 'Show all hidden', run: () => visibility?.showAll() }];
+    const members = selectionStore.members();
+    if (members.length > 1 && members.some(ref => ref.pieceId === target.id && (ref.buildingId ?? null) === (target.building ?? null))) {
+      return [...[['Move', 'move'], ['Turn', 'rotate'], ['Scale', 'scale']].map(([label, tool]) => ({ label, disabled: !canEdit(), run: () => setTool(tool) })),
+        { label: 'Delete', disabled: !canEdit(), run: removeSelected }, ...visibilityActions(target.id, target.kind)];
+    }
     if (target.floor) {
       const row = levels().find(row => row.key === target.floor); if (!row) return [];
       const visible = () => !!view.groups?.levels[row.key]?.visible && !visibility?.isHidden(row.level.id);
@@ -437,11 +443,25 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   } });
   function visibilityActions(id, kind) {
     if (!visibility || !id) return [];
+    const refs = selectionStore.members(), members = refs.length > 1 && refs.some(r => r.pieceId === id) ? refs : null;
     return [{ label: visibility.isHidden(id, kind) ? 'Show' : 'Hide', run: () => {
+      if (members) { visibility.setMembers(members, { hidden: !visibility.isHidden(id, kind) }); return; }
       if (visibility.isHidden(id, kind)) { visibility.show(id); visibility.showKind(kind); } else visibility.hide(id);
     } }, { label: visibility.isLocked(id, kind) ? 'Unlock' : 'Lock', run: () => {
+      if (members) { visibility.setMembers(members, { locked: !visibility.isLocked(id, kind) }); return; }
       if (visibility.isLocked(id, kind)) { visibility.unlock(id); visibility.unlockKind(kind); } else visibility.lock(id);
     } }];
+  }
+  async function removeSelected() {
+    if (!canEdit()) return;
+    const refs = selectionStore.members();
+    if (refs.length < 2) return cards.remove();
+    if (!await window.promptConfirm(`Delete ${refs.length} selected pieces?`, 'Attached doors or windows may also be removed. Undo restores the whole selection.', 'Delete', 'Cancel')) return;
+    return cards.queue(async () => {
+      if (!canEdit()) return;
+      await applyBatch(deleteOperations(getPlan(), refs));
+      selectionStore.clear();
+    });
   }
   listen(canvas, 'contextmenu', event => {
     event.preventDefault();
@@ -453,7 +473,8 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // Each source exposes hit(event) and begin(event, handle); its existing
   // pointerMove/pointerUp methods keep ownership through release or cancel.
   function handleHit(event) {
-    for (const source of new Set([gizmo, handles, ...(delegate?.handleSources || [])])) {
+    const sources = selectionStore.members().length > 1 ? [gizmo] : [gizmo, handles, ...(delegate?.handleSources || [])];
+    for (const source of new Set(sources)) {
       const handle = source?.hit?.(event);
       if (handle) return { source, handle };
     }
@@ -681,11 +702,18 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       canvas.setPointerCapture(event.pointerId); event.stopImmediatePropagation(); return;
     }
     let body = null;
-    if (['move', 'rotate'].includes(tool)) {
+    if (['move', 'rotate', ...(selectionStore.members().length > 1 ? ['scale'] : [])].includes(tool)) {
       const current = roomSelection.current();
       let picked = picker.at(event.clientX, event.clientY)[0];
       if (picked?.building && view.state.view === 'ext' && current.kind === 'building')
         picked = { ...picked, id: picked.building, kind: 'building' };
+      if (!(event.ctrlKey || event.metaKey) && selectionStore.members().length > 1 && picked && selectionStore.members().some(ref => ref.pieceId === picked.id && (ref.buildingId ?? null) === (picked.building ?? null))) {
+        const handle = { kind: tool === 'move' ? 'gizmo_move_free' : tool === 'rotate' ? 'gizmo_turn' : 'gizmo_scale' };
+        const started = gizmo.begin(event, handle);
+        gesture = { x: event.clientX, y: event.clientY, pointerId, dragging: true, source: gizmo, started, enabled: controlsBeforePress };
+        ownsGesture = true; onInteract?.(); view.controls.enabled = false;
+        canvas.setPointerCapture(event.pointerId); event.stopImmediatePropagation(); return;
+      }
       // Check the nearest shared pick before a body delegate can claim a
       // building through a yard item, or select and move in one press.
       if (!current.id || !picked || picked.id !== current.id || picked.building !== current.building || picked.kind !== current.kind) {
@@ -693,7 +721,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       }
       body = { ...picked, pieceId: picked.id, buildingId: picked.building };
     }
-    if (delegate?.pointerDown?.(event)) {
+    if (selectionStore.members().length < 2 && delegate?.pointerDown?.(event)) {
       gesture = { delegated: true, enabled: controlsBeforePress };
       ownsGesture = true; event.stopImmediatePropagation(); return;
     }
@@ -891,8 +919,22 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       if (ownsGesture || event.target.isContentEditable) return;
       const selected = delegate?.visibilitySelection?.() || selection;
       if (event.shiftKey) { event.preventDefault(); visibility.showAll(); }
+      else if (selectionStore.members().length > 1) { event.preventDefault(); visibility.setMembers(selectionStore.members(), { hidden: true }); }
       else if (selected) { event.preventDefault(); visibility.hide(selected.pieceId ?? selected.id); }
       return;
+    }
+    if (selectionStore.members().length > 1) {
+      if (event.key === 'Delete') { event.preventDefault(); removeSelected().catch(report); return; }
+      const key = event.key.toLowerCase(), arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
+      const action = arrows[event.key] ? 'move' : key === 'r' ? 'rotate' : ['[', ']'].includes(key) ? 'scale' : null;
+      if (!action) return;
+      event.preventDefault();
+      cards.queue(() => {
+        if (!canEdit()) return;
+        const group = groupTransform(getPlan(), selectionStore.members(), action, { boxes: view.selectionWorldBounds?.() || [], isPickable });
+        if (group) return applyBatch(transformOperations(group, arrows[event.key] ? { by: arrows[event.key] }
+          : action === 'rotate' ? { angle: event.shiftKey ? -15 : 15 } : { factor: key === '[' ? 1 / 1.1 : 1.1 }));
+      }).catch(report); return;
     }
     const record = selection && findPiece(getPlan(), selection.pieceId, selection.buildingId);
     if (!record || !isObject(record) && record.kind !== 'opening' && record.building) return;
@@ -986,7 +1028,8 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     openContextMenu: (event, target) => contextMenu.open(event, target),
     pointerArmedDown,
     haLink,
-    deleteSelected: () => cards.remove(),
+    deleteSelected: removeSelected,
+    applyBatch,
     select, pick, selected: () => selection, selection: roomSelection.current,
     selectionStore, selectedMembers: () => selectionStore.members(),
     dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,

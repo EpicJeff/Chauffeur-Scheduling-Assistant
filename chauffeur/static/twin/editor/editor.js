@@ -166,7 +166,7 @@ export async function boot() {
   const currentRound = () => [...snapshot.rounds].reverse().find(row => !row.stale)?.id ?? null;
   const roundOf = state => state.current_round ?? state.round ?? [...(state.rounds || [])].reverse().find(row => !row.stale)?.id ?? null;
   const opInfo = new WeakMap();
-  let pushing = false, optimistic = 0, sceneWork = Promise.resolve(), refusedSelection = null, queueSignedOut = false, rollback = false;
+  let pushing = false, optimistic = 0, sceneWork = Promise.resolve(), refusedSelection = null, refusedMembers = null, queueSignedOut = false, rollback = false;
   const queueOptions = {
     async send(operation) {
       const info = opInfo.get(operation);
@@ -178,6 +178,7 @@ export async function boot() {
         error.shown = true;
         if (info.ready && [400, 409, 422].includes(error.status)) {
           if (!rollback && refusedSelection === null) refusedSelection = info.selection;
+          if (info.members) refusedMembers = info.members;
           rollback = true;
         }
         throw error;
@@ -212,7 +213,10 @@ export async function boot() {
         let text = first ? `${first.label} was not saved: ${first.reason}` : '';
         if (change.dropped.length) text += `${text ? '\n' : ''}Also undone because it needed that change: ${change.dropped.join(', ')}.`;
         window.showGlobalAlert(text);
-        tools?.select(refusedSelection); refusedSelection = null;
+        el('editor-status').textContent = text;
+        if (refusedMembers) tools?.selectionStore?.set(refusedMembers);
+        else tools?.select(refusedSelection);
+        refusedSelection = null; refusedMembers = null;
       }
     },
     onSignedOut() { queueSignedOut = true; api.noticeSignedOut(); },
@@ -252,6 +256,7 @@ export async function boot() {
     saved.catch(() => {});
     return history.perform(() => { release(); return saved; }, { step: () => step });
   };
+  const applyBatch = (ops, options = {}) => applyOp({ op: 'batch', ops }, { label: 'The selected pieces', ...options });
   async function editNow(change) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
     let result;
@@ -281,6 +286,7 @@ export async function boot() {
     label ||= labels[operation.op] || 'That change';
     selection ||= tools?.selected?.() || null;
     info.selection = selection;
+    if (operation.op === 'batch') info.members = tools?.selectedMembers?.();
     const kept = !!local;
     // Missing local targets are judged by the queue, which drops dependencies.
     if (!local) {
@@ -307,7 +313,7 @@ export async function boot() {
       // A shape's vertex, turn or size drag also draws only an outline: without
       // this settle an equal answer never redrew it (owner, 2026-11-18: pavers
       // stayed put after moving a path point).
-      if (!kept || ['move_site_item', 'update_site_shape'].includes(operation.op)) await settleView(queue.shown(), { selection });
+      if (!kept || ['move_site_item', 'update_site_shape', 'batch'].includes(operation.op)) await settleView(queue.shown(), { selection });
       view?.syncBake?.();
       lastScene = JSON.stringify(queue.shown());
       frame = api.observeEditFrame(view, timing);
@@ -842,7 +848,7 @@ export async function boot() {
       siteHits: (x, y) => library?.siteHits(x, y) || [],
       padHits: (x, y) => terrain?.padHits?.(x, y) || [], fixtureHits: (x, y) => devices?.fixtureHits?.(x, y) || [],
       library: slotLibrary, onDrawFeature: kind => terrain?.startDrawing(kind),
-      edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
+      edit, op: applyOp, applyBatch, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
     library = createLibrary({ dock, dialogs, createMenu: createContextMenu, view, kit, getPlan: () => timeline?.preview() || shownPlan(), tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
     flags = createFlags({ view, getModel: () => snapshot.model, getPlan: shownPlan,
@@ -916,7 +922,7 @@ export async function boot() {
     if (new URLSearchParams(location.search).get('test') === '1') window.__twinEditor = {
       haLink: tools.haLink,
       selection: tools.selection, selectionStore: tools.selectionStore, members: tools.selectedMembers,
-      handles: () => [...tools.handles(), ...lot.handles()], op: applyOp,
+      handles: () => [...tools.handles(), ...lot.handles()], op: applyOp, applyBatch,
       terrain,
       underlay: lot.underlay, lotHandles: lot.lotHandles, lotSuggestions: lot.lotSuggestions,
       flags: flags.flags, proposals: flags.proposals,

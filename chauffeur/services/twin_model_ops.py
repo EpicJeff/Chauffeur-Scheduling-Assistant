@@ -11,10 +11,73 @@ _EPS = 1e-9
 _CROSS = 'That would cross another wall.'
 _SHORT = 'A wall must be at least 1 ft long.'
 _NARROW = 'That would leave the door narrower than its wall.'
+_SITE_OPS = ('move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape')
 
 
 class Refused(ValueError):
     """An edit that cannot preserve the model's invariants."""
+
+
+class BatchRefused(Refused):
+    """A refused member, with its zero-based position in the submitted batch."""
+
+    def __init__(self, member, operation, reason):
+        self.member, self.reason = member, str(reason)
+        label = (operation.get('piece') or operation.get('id') or operation.get('joint')
+                 or operation.get('op')) if isinstance(operation, dict) else 'operation'
+        super().__init__(f'Batch member {member + 1} ({label}) refused: {self.reason}')
+
+
+def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=None, apply_member=None):
+    """Check each member on the original, then compose privately; publish nowhere."""
+    members = op.get('ops')
+    if not isinstance(members, list) or not members:
+        raise Refused('A batch needs a non-empty list of operations.')
+    apply_member = apply_member or (lambda value, member, **kwargs: apply(value, member, actor, **kwargs))
+    original = (twin_model.normalize(model, preserve_room_polygons=preserves_room_geometry(op))
+                if _normalized is None else _normalized)
+
+    def checked(value, member, index, normalized):
+        try:
+            if not isinstance(member, dict) or member.get('op') == 'batch':
+                raise Refused('Choose a single operation; batches cannot be nested.')
+            return apply_member(value, member, ha_catalogue=ha_catalogue, _normalized=normalized,
+                                _batch_site=member.get('op') in _SITE_OPS)
+        except ValueError as exc:
+            raise BatchRefused(index, member, exc) from exc
+
+    first = None
+    for index, member in enumerate(members):
+        result = checked(model, member, index, original)
+        if index == 0:
+            first = result
+    # In particular, preserve the single op's model, words and no-op refusal.
+    if len(members) == 1:
+        return deepcopy(first)
+    result, _ = first
+
+    def owners(value, pid, scope):
+        return {building['id'] for building in value['buildings']
+                if (scope is None or building['id'] == scope) and (
+                    building['id'] == pid or any(
+                        isinstance(piece, dict) and piece.get('id') == pid
+                        for pieces in building.values() if isinstance(pieces, list) for piece in pieces))}
+
+    deleted = members[0].get('op') == 'delete'
+    for index, member in enumerate(members[1:], 1):
+        if deleted and member.get('op') == 'delete':
+            pid, scope = member.get('piece', member.get('id')), member.get('building')
+            original_owners = owners(original[0], pid, scope)
+            # Its single-op deletion already passed against the original. An
+            # earlier room/wall deletion may have removed this selected member
+            # as a dependant; deleting it again is already fulfilled.
+            if len(original_owners) == 1 and not owners(result, pid, next(iter(original_owners))):
+                continue
+        result, _ = checked(result, member, index, (result, []))
+        deleted |= member.get('op') == 'delete'
+    # One piece can contribute several members (for example turn + move),
+    # while a joint-set member can move several walls. Do not count ops as pieces.
+    return deepcopy(result), 'Applied the changes.'
 
 
 def _find(building, collection, pid):
@@ -274,6 +337,45 @@ def _weld_move(building, moved):
 
 def _promote_crossings(building, op, actor):
     kind = op['op']
+    if kind == 'move_joints':
+        moves = op.get('joints')
+        if not isinstance(moves, list) or not moves:
+            raise Refused('Choose the corners to move.')
+        positions = _positions(building)
+        targets = {}
+        for move in moves:
+            if not isinstance(move, dict):
+                raise Refused('Choose a corner and its destination.')
+            targets[move.get('joint')] = _point(move.get('to'))
+        # Read walls can still be whole at a derived crossing. Every selected
+        # wall has both endpoints in this set; its new crossing must undergo
+        # the same transform, rather than staying behind when we split it.
+        whole = [deepcopy(wall) for wall in building['walls'] if wall.get('state') != 'ghost'
+                 and all(joint in targets for joint in wall['joints'])]
+        for move in moves:
+            single = {'op': 'move_joint', 'joint': move.get('joint')}
+            _promote_crossings(building, single, actor)
+            move['joint'] = single['joint']
+        for joint in building['joints']:
+            if joint['id'] in positions:
+                continue
+            candidates = []
+            for wall in whole:
+                if wall['level'] != joint['level']:
+                    continue
+                a, b = (positions[jid] for jid in wall['joints'])
+                t = graph._interior_parameter(joint['at'], a, b)
+                if t is not None:
+                    start, end = (targets[jid] for jid in wall['joints'])
+                    candidates.append([start[i] + t * (end[i] - start[i]) for i in (0, 1)])
+            if candidates:
+                if any(math.dist(candidates[0], point) > _EPS for point in candidates[1:]):
+                    raise Refused('A shared corner must have one destination.')
+                # An overshoot can have remapped an endpoint to this promoted
+                # joint. Its rigid destination supersedes that pruned tail.
+                moves[:] = [move for move in moves if move['joint'] != joint['id']]
+                moves.append({'joint': joint['id'], 'to': candidates[0]})
+        return []
     if kind == 'move_room':
         piece = _find(building, 'rooms', op.get('room'))
         moved = set(piece['joints'])
@@ -334,7 +436,15 @@ def _promote_crossings(building, op, actor):
 
 def _move(building, op, before, wall_ids=None):
     kind = op['op']
-    if kind == 'move_joint':
+    if kind == 'move_joints':
+        destinations = {}
+        for move in op['joints']:
+            joint = _find(building, 'joints', move.get('joint'))
+            target = _point(move.get('to'))
+            if joint['id'] in destinations and destinations[joint['id']] != target:
+                raise Refused('A shared corner must have one destination.')
+            destinations[joint['id']] = target
+    elif kind == 'move_joint':
         joint = _find(building, 'joints', op.get('joint'))
         destinations = {joint['id']: _point(op.get('to'))}
     else:
@@ -1279,7 +1389,9 @@ def _porch_outline(building, op):
 
 def _site_op(model, op, actor):
     from services import twin_plan
-    before = deepcopy(model)
+    # Compose provenance depends only on the site. Do not copy the entire
+    # connected wall/roof graph twice for every plant in a selection.
+    before = {'site': deepcopy(model['site'])}
     words = 'Changed the site item.'
     name = op.get('list')
     if name not in ('planting', 'furniture', 'beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence', 'yard_rooms'):
@@ -1384,7 +1496,8 @@ def _site_op(model, op, actor):
                 twin_site_shapes.yard_device_point(model['site'], device)
             except ValueError as exc:
                 raise Refused('That outline would leave a device outside its yard room. Move or unplace it first.') from exc
-    return twin_plan.record_compose_overrides(before, model), words
+    model['site'] = twin_plan.record_compose_overrides(before, {'site': model['site']})['site']
+    return model, words
 
 
 def _follow_roof_extensions(building, previous):
@@ -1518,6 +1631,8 @@ def material_only(op):
     """Slot writes cannot change connected room geometry."""
     if not isinstance(op, dict):
         return False
+    if op.get('op') == 'batch':
+        return bool(op.get('ops')) and isinstance(op['ops'], list) and all(material_only(member) for member in op['ops'])
     if op.get('op') == 'set_material':
         return True
     keys = {'op', 'id', 'materials'} if op.get('op') == 'update_pool_feature' else (
@@ -1527,12 +1642,17 @@ def material_only(op):
 
 def preserves_room_geometry(op):
     """A rename, like a slot write, must not re-derive cached room polygons."""
+    if isinstance(op, dict) and op.get('op') == 'batch':
+        return bool(op.get('ops')) and isinstance(op['ops'], list) and all(preserves_room_geometry(member) for member in op['ops'])
     return material_only(op) or isinstance(op, dict) and op.get('op') == 'set' and op.get('field') == 'name'
 
 
-def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None) -> tuple[dict, str]:
+def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None, _batch_site=False) -> tuple[dict, str]:
+    if isinstance(op, dict) and op.get('op') == 'batch':
+        return apply_batch(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized)
     from services import twin_fixtures
-    result, words = _apply(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized)
+    result, words = _apply(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized,
+                           _batch_site=_batch_site)
     # A source is scoped to its building, even if another roof shares its id.
     source = result.get('solar_source_roof')
     owner = result.get('solar_source_building')
@@ -1547,19 +1667,29 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normali
     return result, words
 
 
-def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None) -> tuple[dict, str]:
+def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None, _batch_site=False) -> tuple[dict, str]:
     """Return an edited model and plain words, leaving the input untouched."""
     if not isinstance(op, dict):
         raise Refused('Choose an operation.')
     kind = op.get('op')
     from services import twin_effect_fixtures
-    if kind not in MORE_OPS + twin_effect_fixtures.OPS + ('move_joint', 'move_wall', 'move_room', 'add_wall',
+    if kind not in MORE_OPS + twin_effect_fixtures.OPS + ('move_joint', 'move_joints', 'move_wall', 'move_room', 'add_wall',
                     'split_wall', 'draw_room', 'split_room', 'delete'):
         raise Refused('That operation is not available.')
     op = deepcopy(op)
     # save() also needs the normalized pre-edit model for its fix log. Reuse
     # that exact input's result, but keep our mutable working copy private.
-    model, notes = twin_model.normalize(model, preserve_room_polygons=preserves_room_geometry(op)) if _normalized is None else deepcopy(_normalized)
+    if _batch_site and kind in _SITE_OPS and _normalized is not None:
+        # A batch owns its snapshots and copies the finished result once.
+        # Site validators never write buildings; fixture following writes only
+        # its own root collections. Share the read-only graph for this member.
+        source, notes = _normalized
+        model, notes = dict(source), list(notes)
+        for key in ('site', 'light_fixtures', 'effect_fixtures'):
+            if key in source:
+                model[key] = deepcopy(source[key])
+    else:
+        model, notes = twin_model.normalize(model, preserve_room_polygons=preserves_room_geometry(op)) if _normalized is None else deepcopy(_normalized)
     if kind in twin_effect_fixtures.OPS:
         try:
             return model, twin_effect_fixtures.apply_op(model, op)
@@ -1666,7 +1796,8 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
         if op.get('list') in ('planting', 'furniture'):
             name = op['list']
             pieces = model.get('site', {}).get(name, [])
-            index = op.get('index')
+            index = (next((index for index, piece in enumerate(pieces) if piece.get('id') == op['id']), -1)
+                     if 'id' in op else op.get('index'))
             if type(index) is not int or not 0 <= index < len(pieces):
                 raise Refused('That site item is missing.')
             piece = pieces[index]
@@ -1824,7 +1955,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
             deleted_words = _more(building, op, ha_catalogue)
         except ValueError as exc:
             raise Refused(str(exc)) from exc
-    elif kind in ('move_joint', 'move_wall', 'move_room'):
+    elif kind in ('move_joint', 'move_joints', 'move_wall', 'move_room'):
         wall_ids = _promote_crossings(building, op, actor)
         if wall_ids is not None:
             notes.extend(hosts.follow(building, before))
@@ -1931,7 +2062,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
                 _place_device(model, placement, 'auto')
             except Refused:
                 continue
-    words = {'move_joint': 'Moved the corner.', 'move_wall': 'Moved the wall.',
+    words = {'move_joint': 'Moved the corner.', 'move_joints': 'Moved the corners.', 'move_wall': 'Moved the wall.',
              'move_room': 'Moved the room.', 'add_wall': 'Added the wall.',
              'split_wall': 'Split the wall.', 'draw_room': 'Drew the room.',
              'split_room': 'Split the room.', 'delete': 'Deleted the piece.'}.get(kind, deleted_words)
