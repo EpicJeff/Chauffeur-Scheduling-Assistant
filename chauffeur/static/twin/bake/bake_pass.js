@@ -157,7 +157,8 @@ export function occluders(view) {
   return scene;
 }
 
-export async function renderPage(view, renderer, charts, size, light, layout, atlas, { deferBounce = false, deferSumEncoding = false } = {}) {
+export async function renderPage(view, renderer, charts, size, light, layout, atlas,
+  { deferBounce = false, deferSumEncoding = false, checkpoint = async () => {} } = {}) {
   const target = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false, type: THREE.HalfFloatType });
   const scene = proxies(charts, size, atlas), blockers = occluders(view);
   const saved = { target: renderer.getRenderTarget(), color: renderer.getClearColor(new THREE.Color()),
@@ -168,9 +169,11 @@ export async function renderPage(view, renderer, charts, size, light, layout, at
     renderer.toneMapping = saved.tone; renderer.autoClear = saved.auto; renderer.xr.enabled = saved.xr;
   };
   const nextFrame = async () => {
+    await checkpoint();
     if (!controller?.idle) return;
     restore();
     await controller.idle();
+    await checkpoint();
     renderer.toneMapping = THREE.NoToneMapping; renderer.xr.enabled = false;
   };
   const camera = new THREE.Camera();

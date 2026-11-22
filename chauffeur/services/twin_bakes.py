@@ -68,13 +68,31 @@ def _write(path, data):
             os.unlink(temp_path)
 
 
-def save_page(key, page, data):
+class BakeLeaseConflict(Exception):
+    """A different desk owns the live lease; no bake bytes may be changed."""
+
+
+def _write_lease(key, owner):
+    """Caller holds _LOCK through this check and the write (including pruning)."""
+    if not isinstance(owner, str) or not _OWNER.fullmatch(owner):
+        raise ValueError('A bake write needs a lease owner.')
+    now = _now()
+    held = _LEASES.get(key)
+    if held and held[1] > now and held[0] != owner:
+        raise BakeLeaseConflict('Another desk holds the bake lease.')
+    # An expired, unclaimed lease can safely continue. A write also renews an
+    # owner's live lease, so the next desk cannot enter during publication.
+    _LEASES[key] = (owner, now + LEASE_SECONDS)
+
+
+def save_page(key, page, data, owner):
     path = _directory(key) / f'{check_page(page)}.png'
     if len(data) > MAX_PAGE_BYTES:
         raise ValueError('Bake page exceeds 16 MiB.')
     if not data.startswith((PNG_SIGNATURE, KTX2_SIGNATURE)):
         raise ValueError('Bake page must be a PNG or KTX2.')
     with _LOCK:
+        _write_lease(key, owner)
         _write(path, data)
     return _etag(data)
 
@@ -144,6 +162,12 @@ def _check_manifest(body):
                 raise ValueError('Bake reach pages must be unique, in range, and start with page.')
     for entry in lights.values():
         check_key(entry.get('key'))
+    # Force intent and completed-light receipts survive reloads. Bounded tokens
+    # keep the existing manifest byte cap and legacy manifests unchanged.
+    for value in [body, *lights.values()]:
+        if 'forceRound' in value and (not isinstance(value['forceRound'], str) or
+                                      not _OWNER.fullmatch(value['forceRound'])):
+            raise ValueError('Bake force round must be a bounded round token.')
     # Old PNG manifests remain readable and writable during the transition.
     if 'formats' in body:
         formats = body['formats']
@@ -164,13 +188,14 @@ def _check_manifest(body):
         raise ValueError('Bake complete must be true or false.')
 
 
-def save_manifest(key, body):
+def save_manifest(key, body, owner):
     path = _directory(key) / 'manifest.json'
     _check_manifest(body)
     data = json.dumps(body, allow_nan=False).encode('utf-8')
     if len(data) > MAX_MANIFEST_BYTES:
         raise ValueError('Bake manifest exceeds 1 MiB.')
     with _LOCK:
+        _write_lease(key, owner)
         _write(path, data)
         _prune_older(key)
     return body

@@ -89,7 +89,8 @@
     #twin-controls button[aria-pressed="true"] { background:var(--twinSelected); color:var(--twinSelectedText); border-color:var(--twinBorder); }
     #twin-controls button:hover, #twin-controls button:focus-visible { background:var(--twinHover); outline:2px solid var(--twinSelected); outline-offset:2px; }
     #twin-controls button[aria-pressed="true"]:is(:hover, :focus-visible) { background:var(--twinSelected); color:var(--twinSelectedText); }
-    #twin-bake-controls output { align-self:center; padding:0 10px 0 4px; font-weight:500; white-space:nowrap; }
+    #twin-bake-controls { max-width:100%; box-sizing:border-box; }
+    #twin-bake-controls output { align-self:center; padding:0 10px 0 4px; font-weight:500; white-space:normal; overflow-wrap:anywhere; min-width:0; }
     /* A floor holding something that wants attention (an unlocked lock, an open door) wears the
        marker's attention colour, so it shows whichever floor is on screen. */
     #twin-views button[data-attention]::after { content:''; display:inline-block; width:9px; height:9px; margin-left:6px; border-radius:50%; background:var(--twinAttention); box-shadow:0 0 0 2px var(--twinAttentionRing); vertical-align:middle; }

@@ -166,7 +166,7 @@ function fakeServer({ leaseRequired = false } = {}) {
   };
   const api = async (path, options = {}) => {
     const method = String(options.method || 'GET').toUpperCase(), p = String(path).split('?')[0];
-    const call = { method, path: p, step: STEP.n, inm: header(options, 'If-None-Match') || null, full: false };
+    const call = { method, path: p, step: STEP.n, owner: header(options, 'X-Bake-Owner') || null, inm: header(options, 'If-None-Match') || null, full: false };
     calls.push(call);
     const injected = fail?.(method, p);
     if (injected) return answer(injected, '{"detail":"injected"}', 'application/json');
@@ -182,7 +182,7 @@ function fakeServer({ leaseRequired = false } = {}) {
       return answer(200, '{"held":true,"seconds":60}', 'application/json');
     }
     const guard = () => {
-      if (!leaseRequired || lease.holder) return null;
+      if (!leaseRequired || lease.holder && lease.holder === call.owner) return null;
       bad.push(`${method} ${p} without the lease`);
       return answer(409, '{"detail":"no lease"}', 'application/json');
     };
@@ -357,11 +357,14 @@ check('stale_lights_are_only_the_changed_ones', async () => {
   assert.ok(compare(lightSamples(packed,'h1',before,key),lightSamples(packed,'h1',server.pages,key)).mean>=3);
   // An entry's fill is the bake's output (the room fill beside its shadowmask), so a rebake may
   // change it; the key, location, pages and channel are what a refresh must keep.
-  const placement=lights=>Object.fromEntries(Object.entries(lights).map(([id,{fill,...e}])=>[id,e]));
+  const placement=lights=>Object.fromEntries(Object.entries(lights).map(([id,{fill,forceRound,...e}])=>[id,e]));
   assert.deepEqual(placement(server.manifests.get(key).lights),placement(manifest.lights),'forced refresh retains every key and entry');
   assert.ok(Object.values(server.manifests.get(key).lights).every(e=>e.fill&&typeof e.fill==='object'),'every baked entry carries its room fill');
   const ownPages=new Set(manifest.lights.h1.pages);
   for(const [path,bytes] of before) if(!ownPages.has(Number(path.split('/').pop()))) assert.deepEqual(server.pages.get(path),bytes);
+  assert.ok(server.manifests.get(key).forceRound, 'partial force persists its intent');
+  await bakeAll(forced);
+  assert.equal(server.manifests.get(key).forceRound, undefined, 'finish the force before testing an independent move');
 
   const moved={...h1,at:[h1.at[0]+2,h1.at[1],h1.at[2]]},nextLights=[moved,k1,k2,c1];
   const next=B.bakeLayout(ctx.atlas,LAYOUT,nextLights,manifest.ownership);

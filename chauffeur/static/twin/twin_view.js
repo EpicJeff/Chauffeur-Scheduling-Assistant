@@ -544,8 +544,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       seasonTouches.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);
       precipitation.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;precipitationCover=twin?.skyCover;
     }
+    splashSunDirection.copy(sun.position).sub(sun.target.position).normalize();
+    splashSunColour.copy(sun.color).multiplyScalar(sun.intensity);
     precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
-      level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,colour:timeLook?.skyColor});
+      level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,colour:timeLook?.skyColor,
+      light:leafLight(),sunDirection:splashSunDirection,sunColour:splashSunColour,
+      sunVisibility:(timeLook?.sunClear>0?timeLook.sun/timeLook.sunClear:0)*(1-weatherHaze(view.weather))});
     const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext'&&(!view.levels||view.levels.snapshot().level==='house');
     const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
     const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
@@ -597,13 +601,15 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   // Irradiance on a leaf card, scene-linear: hemisphere sky plus a little over half of
   // the sun and moon (a tumbling card faces them at random), over pi as for Lambert.
-  const leafScratch = new THREE.Color();
+  const leafScratch = new THREE.Color(), leafIrradiance = [0,0,0];
+  const splashSunDirection = new THREE.Vector3(), splashSunColour = new THREE.Color();
   function leafLight() {
     leafScratch.copy(ambient.color).multiplyScalar(ambient.intensity);
     leafScratch.r += (sun.color.r * sun.intensity + moon.color.r * moon.intensity) * .6;
     leafScratch.g += (sun.color.g * sun.intensity + moon.color.g * moon.intensity) * .6;
     leafScratch.b += (sun.color.b * sun.intensity + moon.color.b * moon.intensity) * .6;
-    return [leafScratch.r / Math.PI, leafScratch.g / Math.PI, leafScratch.b / Math.PI];
+    leafIrradiance[0]=leafScratch.r/Math.PI;leafIrradiance[1]=leafScratch.g/Math.PI;leafIrradiance[2]=leafScratch.b/Math.PI;
+    return leafIrradiance;
   }
   function resize() {
     const width = Math.max(1, el.clientWidth), height = Math.max(1, el.clientHeight);

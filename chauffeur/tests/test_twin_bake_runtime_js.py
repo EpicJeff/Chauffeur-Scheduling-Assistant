@@ -395,7 +395,12 @@ await check('controller_auto_bakes_loads_and_forces_a_second_run', async () => {
     assert.ok(covered(c.out.root).some(m => m.material.userData.lmBefore), 'the runtime actually patched materials');
     await c.controller.now();
     assert.equal(c.controller.state().baked.length, 8, 'force bakes all four room lights again');
-    assert.deepEqual(c.server.manifests.get(key).lights, before.lights, 'keys and slots stay the same');
+    const forced = c.server.manifests.get(key);
+    const receipts = Object.values(forced.lights).map(e => e.forceRound);
+    assert.ok(receipts.every(r => typeof r === 'string' && r === receipts[0]), 'every light completed the same force');
+    assert.equal(forced.forceRound, undefined, 'completed force has no pending marker');
+    const withoutReceipts = Object.fromEntries(Object.entries(forced.lights).map(([id, {forceRound, ...e}]) => [id, e]));
+    assert.deepEqual(withoutReceipts, before.lights, 'keys, slots and baked output stay the same');
     assert.deepEqual(c.server.bad, []);
     assert.ok(c.renderer.log.renders && c.renderer.log.reads, 'the controller ran the GPU entry point');
     const meshes = covered(c.out.root), material = meshes[0].material;
@@ -854,6 +859,200 @@ await check('five_mixed_entries_become_fresh_and_force_bake_again',async()=>{
     } finally {FILL.value=oldFill;}
   }finally{desk.controller.stop();}
 });
+
+// Control just the retry clock; GPU/worker/frame scheduling still runs normally.
+async function retryClock(work) {
+  const nativeSet = globalThis.setTimeout, nativeClear = globalThis.clearTimeout, now = Date.now;
+  const tasks = new Map(); let offset = 0;
+  globalThis.setTimeout = (fn, ms, ...args) => {
+    if (ms !== 1000) return nativeSet(fn, ms, ...args);
+    const token = {}; tasks.set(token, () => fn(...args)); return token;
+  };
+  globalThis.clearTimeout = token => { if (!tasks.delete(token)) nativeClear(token); };
+  Date.now = () => now() + offset;
+  try { await work(async ms => {
+    offset += ms;
+    const callbacks = [...tasks.values()]; tasks.clear(); callbacks.forEach(fn => fn());
+    await sleep(10);
+  }); } finally { globalThis.setTimeout = nativeSet; globalThis.clearTimeout = nativeClear; Date.now = now; }
+}
+const outputOf = desk => desk.host.querySelectorAll('output')[0];
+const buttonsOf = desk => desk.host.querySelectorAll('button');
+const signedOut = 'Home Assistant signed this tab out. Open Chauffeur in Home Assistant (or use your usual app address), then press Resume.';
+await check('failed_third_light_retries_plain_and_keeps_finished_lights', async () => retryClock(async advance => {
+  const server = fakeServer({leaseRequired:true}); let failed = false;
+  server.fail = (method,path) => {
+    if (!failed && method === 'POST' && path.endsWith('.png') && Object.keys([...server.manifests.values()][0]?.lights || {}).length === 2) {
+      failed = true; return 503;
+    }
+  };
+  const desk = await context('high',server,null,{poll:0,host:new Node('div')});
+  try {
+    await until(()=>!!desk.controller.state().error&&!desk.controller.state().baking,'failure on third light');
+    const key=desk.controller.state().key, saved=structuredClone(server.manifests.get(key).lights);
+    assert.equal(Object.keys(saved).length,2);
+    assert.equal(desk.controller.state().done,2); assert.equal(desk.controller.state().total,4);
+    assert.match(outputOf(desk).textContent,/Could not bake lighting \(Could not save the lightmap\.\)\. Retrying in 5 s/);
+    assert.equal(buttonsOf(desk)[0].textContent,'Re-bake all lighting');
+    assert.equal(buttonsOf(desk)[1].textContent,'Resume'); assert.equal(buttonsOf(desk)[1].hidden,false);
+    await advance(5000);
+    await until(()=>!desk.controller.state().baking&&desk.controller.state().done===4,'retry finishes');
+    assert.deepEqual(desk.controller.state().baked,['k1','k2','h1','c1'],'finished lights never re-render');
+    for(const id of Object.keys(saved))assert.deepEqual(server.manifests.get(key).lights[id],saved[id]);
+    assert.equal(server.manifests.get(key).forceRound,undefined,'retry was plain');
+    assert.equal(desk.controller.state().retryAt,null);
+    const before=desk.controller.state().baked.length;
+    buttonsOf(desk)[0].dispatchEvent(new Event('click'));
+    await until(()=>!desk.controller.state().baking&&desk.controller.state().baked.length===before+4,'force button re-bakes all');
+    assert.equal(server.manifests.get(key).forceRound,undefined,'completed force clears intent');
+  } finally {desk.controller.stop();}
+}));
+await check('lease_401_pauses_until_resume_and_progress_counts_whole_house', async () => {
+  const server=fakeServer(); let denied=false, hold=null, release=null;
+  const desk=await context('high',server,[k1,k2,k3,h1,c1],{poll:10,host:new Node('div'),api:async(path,init,next)=>{
+    if(path.endsWith('/lease')&&JSON.parse(init.body).action==='acquire') {
+      if(Object.keys([...server.manifests.values()][0]?.lights||{}).length===3&&!denied) {denied=true;return new Response('',{status:401});}
+      if(hold){await hold;hold=null;}
+    }
+    return next(path,init);
+  }});
+  try {
+    await until(()=>desk.controller.state().paused&&!desk.controller.state().baking&&!!desk.controller.state().error,'401 pauses');
+    assert.equal(outputOf(desk).textContent,signedOut); assert.equal(desk.controller.state().retryAt,null);
+    assert.equal(desk.controller.state().done,3);assert.equal(desk.controller.state().total,5);
+    const count=server.calls.length;await sleep(150);assert.equal(server.calls.length,count,'poll does not retry a signed-out tab');
+    hold=new Promise(resolve=>{release=resolve;});
+    const resumed=desk.controller.resume();
+    await until(()=>desk.controller.state().baking&&outputOf(desk).textContent==='Baking lights 3 of 5','three completed, two left');
+    assert.equal(desk.controller.state().done,3);assert.equal(desk.controller.state().total,5);
+    release();await resumed;
+    assert.deepEqual(desk.controller.state().baked,['k1','k2','k3','h1','c1']);
+  } finally {release?.();desk.controller.stop();}
+});
+await check('initial_permission_check_401_offers_resume_without_bypassing_child_refusal', async()=>{
+  let denied=true;
+  const desk=await context('high',null,null,{poll:10,host:new Node('div'),api:(path,init,next)=>
+    denied&&path.endsWith('/lease')?Promise.resolve(new Response('',{status:401})):next(path,init)});
+  try {
+    await until(()=>desk.controller.state().paused,'permission check pauses');
+    assert.equal(outputOf(desk).textContent,signedOut);assert.equal(buttonsOf(desk)[1].hidden,false);
+    denied=false;buttonsOf(desk)[1].dispatchEvent(new Event('click'));
+    await until(()=>desk.controller.state().done===4&&!desk.controller.state().baking,'resume rechecks permission and bakes');
+  }finally{desk.controller.stop();}
+});
+await check('interrupted_force_retries_same_round_and_survives_reload', async()=>retryClock(async advance=>{
+  const desk=await context('high',null,null,{poll:0,host:new Node('div')});let reopened;
+  try {
+    await until(()=>desk.controller.state().done===4&&!desk.controller.state().baking,'initial bake');
+    const key=desk.controller.state().key,server=desk.server;let failed=false;
+    server.fail=(method,path)=>{
+      const m=server.manifests.get(key);
+      if(!failed&&method==='POST'&&path.endsWith('.png')&&m.forceRound&&Object.values(m.lights).filter(e=>e.forceRound===m.forceRound).length===2){failed=true;return 500;}
+    };
+    await desk.controller.now();
+    const marker=server.manifests.get(key).forceRound;assert.ok(marker);
+    assert.equal(desk.controller.state().done,2);assert.equal(desk.controller.state().total,4);
+    await advance(5000);
+    await until(()=>desk.controller.state().done===4&&!desk.controller.state().baking,'force retries remaining two');
+    assert.deepEqual(desk.controller.state().baked.slice(4),['k1','k2','h1','c1']);
+    assert.ok(Object.values(server.manifests.get(key).lights).every(e=>e.forceRound===marker));
+    failed=false;await desk.controller.now();
+    const interrupted=structuredClone(server.manifests.get(key));assert.ok(interrupted.forceRound);
+    assert.notEqual(interrupted.forceRound,marker);
+    desk.controller.stop();server.fail=null;
+    reopened=await context('high',server,null,{poll:0,host:new Node('div')});
+    await until(()=>reopened.controller.state().done===4&&!reopened.controller.state().baking,'reload finishes force');
+    assert.deepEqual(reopened.controller.state().baked,['h1','c1'],'only unfinished force lights render after reload');
+    for(const id of ['k1','k2'])assert.deepEqual(server.manifests.get(key).lights[id],interrupted.lights[id]);
+    assert.equal(server.manifests.get(key).forceRound,undefined);
+    assert.ok(Object.values(server.manifests.get(key).lights).every(e=>e.forceRound===interrupted.forceRound));
+    let signedOutOnce=false;
+    server.fail=(method,path)=>{
+      const m=server.manifests.get(key);
+      if(!signedOutOnce&&method==='POST'&&path.endsWith('.png')&&m.forceRound&&Object.values(m.lights).filter(e=>e.forceRound===m.forceRound).length===2){signedOutOnce=true;return 401;}
+    };
+    await reopened.controller.now();
+    const manualRound=server.manifests.get(key).forceRound;
+    assert.ok(reopened.controller.state().paused);assert.equal(outputOf(reopened).textContent,signedOut);
+    assert.equal(reopened.controller.state().retryAt,null);
+    await reopened.controller.resume();
+    assert.deepEqual(reopened.controller.state().baked.slice(2),['k1','k2','h1','c1'],'Resume also continues a force without redoing its finished two');
+    assert.ok(Object.values(server.manifests.get(key).lights).every(e=>e.forceRound===manualRound));
+
+  }finally{desk.controller.stop();reopened?.controller.stop();}
+}));
+
+await check('bake_reads_uploads_and_manifest_401_pause_until_resume',async()=>{
+  for(const target of ['read','upload','manifest']){
+    const server=fakeServer();let failed=false;
+    const desk=await context('high',server,null,{poll:10,host:new Node('div'),api:(path,init,next)=>{
+      const method=init?.method||'GET',isPage=path.endsWith('.png'),isManifest=/bakes\/[0-9a-f]+$/.test(path);
+      if(!failed&&Object.keys([...server.manifests.values()][0]?.lights||{}).length===2&&
+        (target==='read'&&method==='GET'&&isPage||target==='upload'&&method==='POST'&&isPage||target==='manifest'&&method==='PUT'&&isManifest)){
+        failed=true;return Promise.resolve(new Response('',{status:401}));
+      }
+      return next(path,init);
+    }});
+    try {
+      await until(()=>desk.controller.state().paused&&!desk.controller.state().baking,'401 on '+target);
+      assert.equal(outputOf(desk).textContent,signedOut);assert.equal(desk.controller.state().retryAt,null);
+      assert.equal(Object.keys([...server.manifests.values()][0].lights).length,2,'failed light is never marked saved');
+      const count=server.calls.length;await sleep(100);assert.equal(server.calls.length,count);
+      await desk.controller.resume();
+      assert.deepEqual(desk.controller.state().baked,['k1','k2','h1','c1'],target+' resumes just the unfinished lights');
+    }finally{desk.controller.stop();}
+  }
+});
+await check('heartbeat_401_stops_before_upload_and_resume_keeps_saved_light',async()=>{
+  const nativeSet=globalThis.setInterval,nativeClear=globalThis.clearInterval;
+  const callbacks=new Map();globalThis.setInterval=(fn,ms)=>{if(ms!==20000)return nativeSet(fn,ms);const token={};callbacks.set(token,fn);return token;};
+  globalThis.clearInterval=token=>{if(!callbacks.delete(token))nativeClear(token);};
+  let expired=false,triggered=false,atFailure=0,rendersAtFailure=0;
+  const server=fakeServer();let desk;
+  try {
+    const expire=()=>{
+      if(!triggered&&Object.keys([...server.manifests.values()][0]?.lights||{}).length===1){
+        triggered=true;expired=true;atFailure=server.calls.length;rendersAtFailure=desk.renderer.log.renders;for(const fn of callbacks.values())fn();
+      }
+    };
+    desk=await context('high',server,null,{poll:0,host:new Node('div'),api:(path,init,next)=>
+      expired&&path.endsWith('/lease')&&JSON.parse(init.body).action==='acquire'?Promise.resolve(new Response('',{status:401})):next(path,init)});
+    const idle=desk.controller.idle;desk.controller.idle=async()=>{await idle();expire();};
+    await until(()=>desk.controller.state().paused&&!desk.controller.state().baking,'heartbeat pauses current step');
+    assert.ok(triggered);assert.equal(outputOf(desk).textContent,signedOut);
+    const key=desk.controller.state().key;
+    assert.equal(Object.keys(server.manifests.get(key).lights).length,1,'unsaved light has no manifest receipt');
+    assert.ok(!server.writes(atFailure).length,'no upload after expired renewal');
+    assert.equal(desk.renderer.log.renders,rendersAtFailure,'next sample does not render after expired renewal');
+    assert.equal(callbacks.size,0,'heartbeat cleared');assert.equal(server.lease.holder,null,'lease released');
+    expired=false;observeEncode=null;await desk.controller.resume();
+    assert.deepEqual(desk.controller.state().baked,['k1','k2','h1','c1']);
+  }finally{observeEncode=null;desk?.controller.stop();globalThis.setInterval=nativeSet;globalThis.clearInterval=nativeClear;}
+});
+await check('retry_backoff_cap_and_hidden_timeout_wait_for_person',async()=>retryClock(async advance=>{
+  const server=fakeServer();server.fail=(method,path)=>path.endsWith('/lease')&&server.calls.some(c=>c.path.endsWith('/lease'))?500:null;
+  // Let the authorization check pass; only acquisition fails.
+  const desk=await context('high',server,null,{poll:0,host:new Node('div'),api:(path,init,next)=>
+    path.endsWith('/lease')&&JSON.parse(init.body).action==='check'?Promise.resolve(new Response('{}')):next(path,init)});
+  try {
+    for(let attempt=1;attempt<=8;attempt++){
+      await until(()=>!desk.controller.state().baking&&desk.controller.state().retryAttempts===attempt,'retry '+attempt+' scheduled');
+      const delay=[5000,15000,60000][attempt-1]||120000;
+      const remaining=desk.controller.state().retryAt-Date.now();assert.ok(remaining<=delay&&remaining>delay-2000);
+      await advance(delay);
+    }
+    await until(()=>!desk.controller.state().baking&&desk.controller.state().retryAt===null,'retry cap');
+    assert.ok(desk.controller.state().paused);assert.match(outputOf(desk).textContent,/Press Resume/);
+    server.fail=null;await desk.controller.resume();assert.equal(desk.controller.state().done,4);
+    server.fail=(method,path)=>path.endsWith('/lease')?500:null;await desk.controller.now();
+    assert.ok(desk.controller.state().retryAt);
+    document.hidden=true;document.dispatchEvent(new Event('visibilitychange'));
+    await advance(60001);
+    assert.equal(desk.controller.state().retryAt,null);assert.ok(desk.controller.state().paused);
+    document.hidden=false;document.dispatchEvent(new Event('visibilitychange'));
+    assert.equal(desk.controller.state().retryAt,null,'becoming visible does not auto-restart after timeout');
+  }finally{document.hidden=false;desk.controller.stop();}
+}));
 console.log(`${passed}/${ran} passed`); process.exit(passed === ran ? 0 : 1);
 """
 

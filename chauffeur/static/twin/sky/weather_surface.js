@@ -4,6 +4,20 @@ import { bindEnvironmentMaterial, oncePerFrame, frameObjects } from './stage_haz
 let installed=false;
 const unit=v=>Number.isFinite(v)?Math.max(0,Math.min(1,v)):0;
 
+const smooth=(a,b,v)=>{const t=unit((v-a)/(b-a));return t*t*(3-2*t);};
+const fract=v=>v-Math.floor(v);
+const wetHash=(x,y)=>fract(Math.sin(x*127.1+y*311.7)*43758.5453);
+function wetNoise(x,y){
+  const ix=Math.floor(x),iy=Math.floor(y);let u=fract(x),v=fract(y);u=u*u*(3-2*u);v=v*v*(3-2*v);
+  const a=wetHash(ix,iy),b=wetHash(ix+1,iy),c=wetHash(ix,iy+1),d=wetHash(ix+1,iy+1);
+  return (a+(b-a)*u)*(1-v)+(c+(d-c)*u)*v;
+}
+export function standingWaterAt(x,z,up,weather={}) {
+  if(weather.neutral||up<=.9)return 0;
+  const edge=wetNoise(x*.35,z*.35)*.67+wetNoise(x*.7+19.1,z*.7+7.7)*.33;
+  return smooth(edge-.08,edge+.08,unit(weather.puddles)*.72)*smooth(0,.12,unit(weather.puddles))*smooth(.35,.7,unit(weather.wetness));
+}
+
 // xyz: wetness, snow cover (0..8 cm), puddles. w: an 8-bit rain rate in
 // the integer part, plus a four-second repeating clock in the fractional part.
 // No sampler and exactly one fragment vector, even on the full pool program.
@@ -43,7 +57,9 @@ float weatherFilm(float wet) {
   return smoothstep(.35,.7,wet);
 }
 float weatherGloss(float wet, float spot) {
-  return mix(spot*.75,1.0,smoothstep(.35,.9,wet));
+  // One coverage for absorption and gloss. The broad, gradual film darkens
+  // between arrivals and keeps darkening while puddle reflections strengthen.
+  return mix(spot*.5,1.0,wet);
 }
 float weatherLawnPuddle(float amount) {
   return smoothstep(.8,1.0,amount)*.35;
@@ -57,19 +73,58 @@ float weatherRingBand(float d, float age) {
 float weatherRingSupport(float d, float age) {
   return 1.0-smoothstep(.14,.18,abs(d-age*.46));
 }
-// Three-centimetre impact marks. Integrating unresolved discs avoids glitter
-// at distance, while resolved spots keep their own hashed arrival threshold.
-float weatherDrops(vec2 world, float wet, vec2 dx, vec2 dy) {
-  vec2 p=world/.03,id=floor(p);
-  float radius=mix(.26,.42,weatherHash(id+17.3));
-  vec2 jitter=(vec2(weatherHash(id+3.1),weatherHash(id+41.7))-.5)*2.0*(.5-radius);
-  vec2 local=fract(p)-.5-jitter;
+// Polynomial vector hash: no transcendentals for drops or ripple arrivals.
+vec3 weatherRingHash(vec2 p) {
+  vec3 q=fract(vec3(p.x,p.y,p.x)*vec3(.1031,.1030,.0973));
+  q+=dot(q,q.yxz+33.33);
+  return fract((q.xxy+q.yzz)*q.zyx);
+}
+float weatherDropRadius(float seed) {
+  // Metres: 97% are 2.5-7.5 mm; a few coalesced stains reach 10.5 mm.
+  return .0025+.005*seed*seed*seed+.003*step(.97,seed);
+}
+float weatherDropDensity(float up) {
+  return mix(.18,.8,smoothstep(.3,.8,abs(up)));
+}
+float weatherDropTone(float wet, float arrival, float seed) {
+  // Fresh stains are darker, then relax into the general film. This also
+  // removes all resolved dots before full saturation, without extra noise.
+  return mix(.35,1.0,seed)*max(.3,1.0-4.0*max(0.0,wet-arrival*.35-.02))*(1.0-smoothstep(.3,.7,wet));
+}
+vec4 weatherDropCell(vec2 id, float cellSize, float up) {
+  vec3 random=weatherRingHash(id);
+  float radius=weatherDropRadius(random.z)/cellSize;
+  vec2 centre=vec2(radius)+random.xy*(1.0-2.0*radius);
+  float arrival=fract(random.x*13.71+random.y*7.17);
+  return vec4(centre,radius,fract(random.y*19.19)>weatherDropDensity(up)?2.0:arrival);
+}
+float weatherDropLayer(vec2 world, float wet, vec2 dx, vec2 dy, float cellSize, float up) {
+  vec2 p=world/cellSize,id=floor(p);
+  vec4 spot=weatherDropCell(id,cellSize,up);
+  float radius=spot.z;
+  vec2 local=fract(p)-spot.xy;
   float d=length(local);vec2 direction=local/max(d,.001);
-  float aa=max((abs(dot(direction,dx))+abs(dot(direction,dy)))/.03,.001);
-  float disc=1.0-smoothstep(radius-aa,radius+aa,d);
-  float footprint=max(abs(dx.x)+abs(dy.x),abs(dx.y)+abs(dy.y))/.03;
+  float aa=max((abs(dot(direction,dx))+abs(dot(direction,dy)))/cellSize,.001);
+  // A soft physical edge survives close inspection; derivatives integrate
+  // unresolved stains to their area rather than aliasing into hard dots.
+  float edge=max(aa,radius*.3);
+  float disc=1.0-smoothstep(radius-edge,radius+edge,d);
+  float footprint=max(abs(dx.x)+abs(dy.x),abs(dx.y)+abs(dy.y))/cellSize;
   disc=mix(disc,3.14159*radius*radius,smoothstep(.25,1.0,footprint));
-  return weatherSpot(wet,weatherHash(id),disc);
+  float tone=weatherDropTone(wet,spot.w,spot.w);
+  return spot.w>1.0?0.0:weatherSpot(wet,spot.w,disc)*tone;
+}
+// Two bounded, incommensurate layers, no neighbour stencil or new texture.
+float weatherDrops(vec2 world, float wet, vec2 dx, vec2 dy, float up) {
+  // The face projection's second axis is world Y. Compress its coordinates
+  // to stretch stains downwards, while preserving derivative filtering.
+  float vertical=1.0-smoothstep(.3,.8,abs(up));
+  vec2 stretch=vec2(1.0,1.0-.35*vertical);
+  world*=stretch;dx*=stretch;dy*=stretch;
+  mat2 rotation=mat2(.8,.6,-.6,.8);
+  float a=weatherDropLayer(world,wet,dx,dy,.031,up);
+  float b=weatherDropLayer(rotation*world+vec2(1.731,4.913),wet,rotation*dx,rotation*dy,.047,up);
+  return a+b-a*b;
 }
 float weatherSnow(float up, float cover, float edge) {
   return smoothstep(.55,.85,up)*smoothstep(edge-.12,edge+.12,cover)*smoothstep(0.0,.12,cover);
@@ -83,11 +138,6 @@ float weatherRoughness(float original, float wet, float puddle, float snow) {
 // One impact per .6 m cell, 3 cycles/s: still 8.33 hits/m2/s at pouring.
 // A polynomial vector hash supplies arrival and centre together, without the
 // old four sine hashes per contribution. Keep the surface/puddle noise intact.
-vec3 weatherRingHash(vec2 p) {
-  vec3 q=fract(vec3(p.x,p.y,p.x)*vec3(.1031,.1030,.0973));
-  q+=dot(q,q.yxz+33.33);
-  return fract((q.xxy+q.yzz)*q.zyx);
-}
 float weatherRingCount(float distanceSq) {
   return distanceSq>=1296.0?0.0:distanceSq>=324.0?4.0:9.0;
 }
@@ -104,11 +154,10 @@ vec2 weatherRipple(vec2 world) {
   float farFade=1.0-smoothstep(784.0,1296.0,distanceSq);
   float nearFade=1.0-smoothstep(144.0,324.0,distanceSq);
   float clock=fract(weatherSurface.w)*4.0;
-  // A puddle's rings are a third the size of the pool's, with a finer wave.
-  float ringScale=.35;
-  #ifdef WEATHER_SURFACE_WATER
-    ringScale=1.0;
-  #endif
+  // Water has the same impact slope and wavelength on a puddle or the pool.
+  // The former .35 scale cut ring area to 12% and tripled the AA footprint,
+  // suppressing puddle rings even when their normal amplitude matched.
+  float ringScale=1.0;
   #ifdef WEATHER_SURFACE_POOL
     clock=waterTime;
   #endif
@@ -162,18 +211,18 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
     vec2 weatherPlane=abs(weatherUp)>.5?vWeatherWorld.xz:(abs(weatherFace.x)>abs(weatherFace.z)?vWeatherWorld.zy:vWeatherWorld.xy);
     vec2 weatherDx=abs(weatherUp)>.5?weatherWorldDx.xz:(abs(weatherFace.x)>abs(weatherFace.z)?weatherWorldDx.zy:weatherWorldDx.xy);
     vec2 weatherDy=abs(weatherUp)>.5?weatherWorldDy.xz:(abs(weatherFace.x)>abs(weatherFace.z)?weatherWorldDy.zy:weatherWorldDy.xy);
-    float weatherDrop=weatherSurface.x>0.0&&weatherSurface.x<.9?weatherDrops(weatherPlane,weatherSurface.x,weatherDx,weatherDy):0.0;
+    float weatherDrop=weatherSurface.x>0.0&&weatherSurface.x<.9?weatherDrops(weatherPlane,weatherSurface.x,weatherDx,weatherDy,weatherUp):0.0;
     #ifdef WEATHER_SURFACE_LAWN
       weatherDrop=0.0;
     #endif
     float weatherFilmValue=weatherFilm(weatherSurface.x);
-    float weatherGlossValue=weatherExposure(weatherGloss(weatherSurface.x,weatherDrop),vWeatherOpen);
+    weatherWet=weatherExposure(weatherGloss(weatherSurface.x,weatherDrop),vWeatherOpen);
+    float weatherGlossValue=weatherWet;
     #ifdef WEATHER_SURFACE_ROOF
       weatherGlossValue*=mix(.65,1.0,weatherNoise(weatherPlane*vec2(12.0,.7)));
     #else
       if(abs(weatherUp)<.5)weatherGlossValue*=mix(.45,1.0,weatherNoise(weatherPlane*vec2(12.0,.7)));
     #endif
-    weatherWet=weatherExposure(weatherFilmValue,vWeatherOpen);
     bool weatherNeedsEdge=weatherSurface.y>0.0&&weatherUp>.55;
     #ifndef WEATHER_SURFACE_ROOF
       weatherNeedsEdge=weatherNeedsEdge||(weatherSurface.z>0.0&&weatherUp>.9&&weatherFilmValue>0.0);
@@ -193,7 +242,7 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
     #ifdef WEATHER_SURFACE_LAWN
       weatherLum=max(weatherLum,.35);
     #endif
-    diffuseColor.rgb *= weatherWetScale(weatherLum,weatherMetal,weatherWet)-weatherExposure(.25*weatherDrop*(1.0-weatherFilmValue),vWeatherOpen);
+    diffuseColor.rgb *= weatherWetScale(weatherLum,weatherMetal,weatherWet);
     diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.85,.87,.9),weatherS);
     #ifdef STANDARD
       #ifdef WEATHER_SURFACE_LAWN
@@ -216,8 +265,10 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
   normal=weatherNormal/max(length(weatherNormal),.0001);
   #if !defined(WEATHER_SURFACE_WATER)&&!defined(WEATHER_SURFACE_ROOF)
     vec3 weatherReflected=inverseTransformDirection(reflect(normalize(vViewPosition),normal),viewMatrix);
-    // Any wet gloss already strengthens grazing reflection; damp it fully from a third on.
-    weatherHorizonDamp=weatherHorizon(weatherReflected.y,smoothstep(0.0,.35,max(weatherGlossValue,weatherP))*(1.0-weatherS));
+    // Wet surroundings occlude the grazing sky. Keep attenuating with the
+    // shared coverage after the horizon mask fills, so late Fresnel gains
+    // cannot outrun absorption on partially exposed ground.
+    weatherHorizonDamp=weatherHorizon(weatherReflected.y,smoothstep(0.0,.35,max(weatherGlossValue,weatherP))*(1.0-weatherS))*(1.0-.25*weatherWet*(1.0-weatherS));
   #endif
 }
 #endif

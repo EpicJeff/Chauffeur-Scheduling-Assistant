@@ -1,6 +1,6 @@
 import { assignChannels, CHANNEL_FALLBACK, CHART_STATS, fingerprint } from './atlas.js';
 import { renderPage, roomFills, dilateCharts, encodeSumPages, filterCharts } from './bake_pass.js';
-import { withBakeLease } from './bake_lock.js';
+import { withBakeLease, bakeHTTPError } from './bake_lock.js';
 import { reachLights } from './reach.js';
 import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
 
@@ -81,17 +81,32 @@ async function exists(api, url) {
   throw new Error(`Could not read the lightmap (HTTP ${r.status}).`);
 }
 
-export function createBaker(view, { renderer, atlas, layout, lights, api, codec, force = false,
+export function createBaker(view, { renderer, atlas, layout, lights, api: request, codec, force = false, forceRound = null,
   round = view.round ?? null, owner = null }) {
   const plan = view.plan, enabled = ['high', 'max'].includes(view.tier);
   let packed, assignmentHistory;
   const path = `api/house/bakes/${atlas.key}`;
   const who = owner || [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
-  let cancelled = false, manifest = null, done = 0, total = 0, busy = false;
+  let cancelled = false, manifest = null, busy = false;
+  let checkpoint = async () => {};
+  const api = async (url, init) => {
+    await checkpoint();
+    const writing = ['POST', 'PUT'].includes(init?.method);
+    if (writing) {
+      const headers = new Headers(init.headers); headers.set('X-Bake-Owner', who);
+      init = { ...init, headers };
+    }
+    const r = await request(url, init);
+    if (r.status === 401) throw bakeHTTPError('Could not access the bake', 401);
+    if (writing && r.status === 409) throw bakeHTTPError('Lost the bake lease', 409);
+    await checkpoint();
+    return r;
+  };
   const unavailable = new Set();
-  // Bake lighting now re-bakes every light, but each keeps its stored entry
+  // Re-bake all lighting re-bakes every light, but each keeps its stored entry
   // (same key) until its new bake lands, so panels never drop to real-time mid-run (M6).
-  const redo = new Set();
+  let activeForce = forceRound || (force ? [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('') : null);
+  let forcePending = !!activeForce;
   const valid = () => !cancelled && view.plan === plan;
   const readManifest = async () => {
     const response = await api(path);
@@ -101,14 +116,15 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
   };
   const isStale = device => packed.entries[device] && (
     lights.find(l => l.device === device)?.kind === 3 && !(packed.entries[device].scale > 0) ||
-    redo.has(device) || manifest.lights[device]?.key !== packed.entries[device].key ||
+    (activeForce && manifest.lights[device]?.forceRound !== activeForce) || manifest.lights[device]?.key !== packed.entries[device].key ||
     manifest.lights[device]?.location !== packed.entries[device].location ||
     manifest.lights[device]?.scale !== packed.entries[device].scale);
   const ready = enabled ? readManifest().then(async m => {
     assignmentHistory=m?.ownership;
     packed=bakeLayout(atlas,layout,lights,assignmentHistory,m?.lights);
     lights=packed.lights;
-    if(force) for(const l of lights) if(packed.entries[l.device]) redo.add(l.device);
+    if (m?.forceRound === activeForce) forcePending = false;
+    if (!forcePending) activeForce = m?.forceRound || null;
     manifest = m && !packed.ownershipReset ? m : { pages: packed.pages, lights: {} };
     if (m && !packed.ownershipReset) {
       const ids = new Set(Object.values(m.lights).flatMap(e => e.pages || [e.page]));
@@ -117,7 +133,6 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
       manifest = { ...manifest, lights: { ...manifest.lights } };
       for (const [id, e] of Object.entries(manifest.lights)) if ((e.pages || [e.page]).some(p => missing.has(p))) { unavailable.add(id); delete manifest.lights[id]; }
     }
-    total = lights.filter(l => isStale(l.device)).length;
   }) : Promise.resolve();
   async function staleLights() {
     await ready;
@@ -142,14 +157,27 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
       packed=bakeLayout(atlas,layout,lights,assignmentHistory,latest?.lights);
       lights=packed.lights;
     }
+    // A reload or another desk can have advanced this same force while we waited.
+    if (!forcePending) activeForce = latest?.forceRound || null;
     if (packed.ownershipReset) manifest = { ...manifest, lights: {} };
     if (latest && !packed.ownershipReset) {
       for (const [id, entry] of Object.entries(packed.entries)) if (lights.find(l => l.device === id)?.kind === 3)
         entry.scale = Number.isFinite(latest.lights[id]?.scale) && latest.lights[id].scale > 0
           ? latest.lights[id].scale : undefined;
       for (const [device, e] of Object.entries(latest.lights))
-        if (!unavailable.has(device) && !redo.has(device)) manifest.lights[device] = e;
+        if (!unavailable.has(device)) manifest.lights[device] = e;
     }
+    if (activeForce) manifest.forceRound = activeForce;
+    else delete manifest.forceRound;
+    if (forcePending && latest?.forceRound !== activeForce && lights.some(l => isStale(l.device))) {
+      // Persist intent under the lease BEFORE GPU work, including the first light.
+      const start = { ...(latest || manifest), lights: { ...manifest.lights },
+        ...(packed.ownershipReset ? { ownership: packed.ownership } : {}), forceRound: activeForce, complete: false };
+      const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(start) });
+      if (!r.ok) throw new Error('Could not save the bake manifest.');
+      manifest = start;
+    }
+    forcePending = false;
     const stale = lights.filter(l => isStale(l.device)).map(l => l.device), id = stale[0];
     if (!id) return null;
     const light = lights.find(l => l.device === id), s = packed.slots[id];
@@ -165,7 +193,8 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     for (const p of pages) {
       const page = p;
       const mine = charts.filter(c => c.page === p);
-      const pixels = await renderPage(view, renderer, mine, size, light, layout, atlas, {deferBounce:true, deferSumEncoding:true});
+      const pixels = await renderPage(view, renderer, mine, size, light, layout, atlas, {deferBounce:true, deferSumEncoding:true, checkpoint});
+      await checkpoint();
       if (!valid()) return null;
       rendered.push({page, charts:mine, ...(light.kind === 3 ? pixels : {bytes:pixels})});
     }
@@ -211,7 +240,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
         if (!r.ok) throw new Error('Could not preserve the later light bank.');
         moves.set(page, new Uint8Array(await r.arrayBuffer()));
       }
-      next.lights[device] = { ...expected, ...(entry.fill ? { fill: entry.fill } : {}) };
+      next.lights[device] = { ...expected, ...(entry.forceRound ? { forceRound: entry.forceRound } : {}), ...(entry.fill ? { fill: entry.fill } : {}) };
     }
     for (const [page, bytes] of moves) uploads.push({ page, bytes });
     // Bank zero reserves unlit rooms too. Publish any missing reserved pages
@@ -224,13 +253,14 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
       uploads.push({ page, bytes: empty });
     }
     delete next.sky; // Ignore legacy sky metadata when publishing room lights.
-    next.lights[id] = { ...packed.entries[id], fill };
+    next.lights[id] = { ...packed.entries[id], fill, ...(activeForce ? { forceRound: activeForce } : {}) };
     // Which round this desk baked and whether it is whole (Ruling B15: the editor's chip).
-    const left = new Set(redo); left.delete(id);
     next.round = round;
-    next.complete = !left.size && lights.every(l => !packed.entries[l.device] ||
+    next.complete = lights.every(l => !packed.entries[l.device] ||
       next.lights[l.device]?.key === packed.entries[l.device].key &&
-      next.lights[l.device]?.scale === packed.entries[l.device].scale);
+      next.lights[l.device]?.scale === packed.entries[l.device].scale &&
+      (!activeForce || next.lights[l.device]?.forceRound === activeForce));
+    if (next.complete) delete next.forceRound;
     for (const { page, bytes } of uploads) {
       if (!valid()) return null;
       const r = await api(`${path}/${page}.png`, { method: 'POST', headers: { 'Content-Type': 'image/ktx2' }, body: bytes });
@@ -239,7 +269,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     if (!valid()) return null;
     const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
     if (!r.ok) throw new Error('Could not save the bake manifest.');
-    manifest = next; assignmentHistory=packed.ownership; packed.ownershipReset=false; redo.delete(id); done++;
+    manifest = next; assignmentHistory=packed.ownership; packed.ownershipReset=false;
     unavailable.delete(id);
     return id;
   }
@@ -248,25 +278,37 @@ export function createBaker(view, { renderer, atlas, layout, lights, api, codec,
     if (!enabled || !valid() || busy) return null;
     if (!lights.some(l => isStale(l.device))) return null;
     busy = true;
-    try { return await withBakeLease(api, path, who, valid, bakeStep); } finally { busy = false; }
+    try {
+      return await withBakeLease(request, path, who, valid, async check => {
+        checkpoint = check;
+        try { return await bakeStep(); } finally { checkpoint = async () => {}; }
+      });
+    } finally { busy = false; }
   }
   // Record that this round's bake is whole when nothing was left to bake (B15).
   async function settle() {
     await ready;
     if (!enabled || !valid() || lights.some(l => isStale(l.device))) return false;
     if (manifest.round === round && manifest.complete === true) return false;
-    return withBakeLease(api, path, who, valid, async () => {
+    return withBakeLease(request, path, who, valid, async check => {
+      await check();
       const latest = await readManifest();
       if (!latest || !valid() || (latest.round === round && latest.complete === true)) return false;
       const whole = lights.every(l => !packed.entries[l.device] || latest.lights[l.device]?.key === packed.entries[l.device].key &&
-        latest.lights[l.device]?.scale === packed.entries[l.device].scale);
+        latest.lights[l.device]?.scale === packed.entries[l.device].scale &&
+        (!latest.forceRound || latest.lights[l.device]?.forceRound === latest.forceRound));
       if (!whole) return false;
+      const next = { ...latest, round, complete: true }; delete next.forceRound;
+      await check();
       const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...latest, round, complete: true }) });
+        body: JSON.stringify(next) });
       if (!r.ok) throw new Error('Could not save the bake manifest.');
-      manifest = { ...latest, round, complete: true };
+      manifest = next;
       return true;
     });
   }
-  return { staleLights, bakeNext, settle, cancel() { cancelled = true; }, progress: () => ({ done, total }) };
+  return { staleLights, bakeNext, settle, forcePending: () => forcePending, cancel() { cancelled = true; }, progress: () => ({
+    done: packed && manifest ? lights.length - lights.filter(l => isStale(l.device)).length : 0,
+    total: enabled ? lights.length : 0,
+  }) };
 }

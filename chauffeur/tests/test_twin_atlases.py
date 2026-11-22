@@ -56,7 +56,7 @@ def test_prune():
         # Both bake cleanup entry points also bound the atlas folder. Input keys
         # are independent from bake output keys and are not filtered by live_keys.
         for cleanup in (lambda: twin_bakes.prune([]),
-                        lambda: twin_bakes.save_manifest(key_of(301), manifest())):
+                        lambda: twin_bakes.save_manifest(key_of(301), manifest(), 'atlas-test')):
             extra = key_of(204)
             (root / extra).write_bytes(b'old')
             os.utime(root / extra, (1, 1))
