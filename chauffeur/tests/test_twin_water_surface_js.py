@@ -146,7 +146,8 @@ await test('pool_and_inset_spas_have_independent_chop_without_splitting_shared_f
   const yard=await Y.buildYard(p,kit(),tier),water=yard.group.userData.water,fx=buildEffects(p,{tier});
   water.update(fx.fixtures,0);water.update(fx.fixtures,30);
   near(rowFor(water).chop.target,1);near(rowFor(water,'flush').chop.target,0);near(rowFor(water,'raised').chop.target,0);
-  assert.equal(poolDraws(yard.group),poolDraws((await old.buildYard(p,kit(),tier)).group));
+  // Coping keeps its solid paving material so rain wets it.
+  assert.equal(poolDraws(yard.group),poolDraws((await old.buildYard(p,kit(),tier)).group)+1);
   for(const row of water.submerged){
    const shader=compile(row.material);
    for(const [key,u] of Object.entries(row.uniforms))assert.equal(shader.uniforms[key],u);
@@ -384,7 +385,8 @@ await test('pool_part_draw_counts_against_head_for_raised_flush_and_sources',asy
   const p=plan(raised,sourced),before=poolDraws((await old.buildYard(p,kit(),tier)).group),after=poolDraws((await Y.buildYard(p,kit(),tier)).group);
   console.log(`POOL_DRAWS tier=${tier} raised=${raised} sources=${sourced} before=${before} after=${after}`);
   const extra=(raised?2:0)+(sourced&&['high','max'].includes(tier)?2:0);
-  assert.ok(after<=before+extra,'at most two material splits per raised level or isolated simulation field');
+  // Coping keeps its solid paving material so rain wets it.
+  assert.ok(after<=before+extra+1,'at most two material splits per raised level or isolated simulation field');
  }
 });
 finish();

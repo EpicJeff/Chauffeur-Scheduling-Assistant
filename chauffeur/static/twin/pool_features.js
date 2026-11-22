@@ -54,9 +54,12 @@ export function cutSurface(outline, cutters, z0, z1 = z0, holes = []) {
   return result;
 }
 
-export function offsetOutline(poly, distance) {
+export function outlineNormal(poly) {
   const sign = Math.sign(area(poly));
-  const normal = (a, b) => { const l = Math.hypot(b[0] - a[0], b[1] - a[1]); return [sign * (b[1] - a[1]) / l, -sign * (b[0] - a[0]) / l]; };
+  return (a, b) => { const l = Math.hypot(b[0] - a[0], b[1] - a[1]); return [sign * (b[1] - a[1]) / l, -sign * (b[0] - a[0]) / l]; };
+}
+export function offsetOutline(poly, distance) {
+  const normal = outlineNormal(poly);
   return poly.map((p, i) => {
     const a = normal(poly[(i + poly.length - 1) % poly.length], p), b = normal(p, poly[(i + 1) % poly.length]);
     const f = distance / Math.max(.1, 1 + a[0] * b[0] + a[1] * b[1]);
@@ -135,6 +138,18 @@ export const waterlineMaterial = (slot, { mat, plain }) => slot ? mat('paving', 
 const touches = (a, b) => [[a, b], [b, a]].some(([p, q]) => p.some(v => inPolygon(q, ...v)
   || q.some((c, i) => edgeDistance(v, c, q[(i + 1) % q.length]) < .1)));
 
+// Shared by the drawn spa and the wet receiver bake (including flush shared edges).
+export function spaCopingLayout(pool, f, height) {
+  const poly = f.polygon, raised = (f.mode ?? 'raised') === 'raised';
+  const rise = raised ? (f.raise_in ?? 12) / 12 : 0;
+  const wallWidth = (pool.coping ?? 1) > 0 ? pool.coping ?? 1 : .3;
+  const shared = poly.map((a, i) => !raised && onEdge(a, poly[(i + 1) % poly.length], pool.polygon || []));
+  const inner = basinOutline(poly, wallWidth, shared.some(Boolean) ? shared : null);
+  const tops = !shared.some(Boolean) ? [{polygon:poly, holes:[inner]}]
+    : poly.flatMap((a, i) => shared[i] ? [] : [{polygon:[a, poly[(i + 1) % poly.length], inner[(i + 1) % poly.length], inner[i]]}]);
+  return {raised, rise, shared, inner, tops, wallTop:height + .3 + rise, copingTop:height + .45 + rise};
+}
+
 export function buildPoolFeatures(group, pool, height, { mat, plain, water, copingRole = 'paving', spaWater = () => water,
   finish = null, surfaceMesh = null, waterRef = () => null }) {
   const interior = slot => slot ? mat('paving', slot) : plain('pool tile', '#5fa8c4', { roughness: .35 });
@@ -211,14 +226,11 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
         slabs.forEach(g => g.dispose());
       }
     } else if (f.kind === 'spa') {
-      const raised = (f.mode ?? 'raised') === 'raised', rise = raised ? (f.raise_in ?? 12) / 12 : 0;
-      const wallTop = height + .3 + rise, copingTop = height + .45 + rise;
+      const {raised, rise, shared, inner, tops, wallTop, copingTop} = spaCopingLayout(pool, f, height);
       const waterHeight = raised ? copingTop - 2 / 12 : height - .25;
       // The wall and its coping are as wide as the pool's coping. Where a flush spa's edge lies
       // on the pool's edge it has neither: the pool's own wall and coping stand there already.
-      const wallWidth = (pool.coping ?? 1) > 0 ? pool.coping ?? 1 : .3;
-      const shared = poly.map((a, i) => !raised && onEdge(a, poly[(i + 1) % poly.length], pool.polygon || []));
-      const floor = waterHeight - (f.depth_in ?? 36) / 12, inner = basinOutline(poly, wallWidth, shared.some(Boolean) ? shared : null);
+      const floor = waterHeight - (f.depth_in ?? 36) / 12;
       const poolFloor = height - depth, wallBottom = Math.min(floor, poolFloor);
       const spaInterior = partFinish('interior', f.materials?.interior), spaTile = spaInterior.material;
       featureMesh(polygon(inner, floor > poolFloor ? poolFloor : floor - .2, floor), spaTile, f.id, spaInterior.ref, 'interior');
@@ -251,8 +263,7 @@ export function buildPoolFeatures(group, pool, height, { mat, plain, water, copi
       if (!shared.some(Boolean)) featureMesh(polygon(poly, wallTop, copingTop, [inner]), cap.material, undefined, cap.ref, 'coping');
       else if (!shared.every(Boolean)) {
         // One mitred piece per walled edge: a ring whose hole touches its outline cannot be cut.
-        const pieces = poly.flatMap((a, i) => shared[i] ? []
-          : [polygon([a, poly[(i + 1) % poly.length], inner[(i + 1) % poly.length], inner[i]], wallTop, copingTop)]);
+        const pieces = tops.map(t => polygon(t.polygon, wallTop, copingTop));
         featureMesh(mergeGeometries(pieces), cap.material, undefined, cap.ref, 'coping');
         pieces.forEach(g => g.dispose());
       }

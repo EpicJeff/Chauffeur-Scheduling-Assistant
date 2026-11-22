@@ -1,0 +1,19 @@
+{
+  "site": {
+    "hardscape": [
+      {"id":"curved-walk","kind":"path","points":[[0,0],[6,12],[3,24]],"width":4,"smooth":true},
+      {"id":"deck","polygon":[[18,-4],[58,-4],[58,28],[18,28]]},
+      {"id":"seat-pad-deck","polygon":[[60,0],[70,0],[70,12],[60,12]]}
+    ],
+    "beds": [{"id":"under-walk","polygon":[[-4,-4],[10,-4],[10,28],[-4,28]]}],
+    "pool": {"id":"pool","polygon":[[24,2],[48,2],[48,22],[24,22]],"coping":1,
+      "features":[
+        {"id":"raised-spa","kind":"spa","polygon":[[40,14],[48,14],[48,22],[40,22]],"mode":"raised","raise_in":18},
+        {"id":"flush-spa","kind":"spa","polygon":[[24,2],[32,2],[32,10],[24,10]],"mode":"flush"},
+        {"id":"ledge","kind":"ledge","polygon":[[34,3],[38,3],[38,7],[34,7]],"depth_in":10,"materials":{"coping":{"color":"#e5d6b5"}}}
+      ]},
+    "terraces": [{"id":"seat-pad","polygon":[[60,0],[70,0],[70,12],[60,12]],"height":2,"blend":0,
+      "edges":[{"edge":"sharp","wall":{"material":"block","above_in":30,"thickness_in":8,"cap":{"thickness_in":2,"overhang_in":1}}},
+        {"edge":"sharp","stair":{"riser_in":7,"tread_in":11}}, {"edge":"sharp"},{"edge":"sharp"}]}]
+  }
+}

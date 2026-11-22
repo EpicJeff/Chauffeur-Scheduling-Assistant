@@ -8,6 +8,7 @@ import { paverSettings } from '../paver_layout.js';
 import { standingWaterAt } from './weather_surface.js';
 import { weatherExtinction } from './weather.js';
 import { createSkyCover, HEIGHT_NONE } from './sky_cover.js';
+import { collectCapSurfaces, createCapBaker } from './wet_caps.js';
 import { SPLASH_VARIANTS, splashProjectedPixels, splashGeometry, splashVertex, splashFragment } from './splash_shapes.js';
 
 const FT=.3048, BOX=[128,96,128];
@@ -57,13 +58,22 @@ export function collectHardSurfaces(plan={}) {
 }
 
 const waterPolygons=site=>[site.pool?.polygon,...(site.pool?.features||[]).filter(f=>f.kind==='spa').map(f=>f.polygon)].filter(Boolean);
+// Ordinary mulch is at +.12 ft, below +.3 ft paving. Only an authored raised
+// bed which actually covers this slab can cut its receiver (also level pavers).
+const raisedBeds=(site,h)=>(site.beds||[]).filter(b=>b.polygon?.length>=3&&
+  (h.flat!==null||finite(b.elevation)+.12>h.elevation));
+const bedAbove=(plan,b,h,x,y)=>groundAt(plan,x,y)+finite(b.elevation)+.12>(h.flat??groundAt(plan,x,y))+h.elevation;
 
 // Keep the cover grid's origin and cell size: expanding it cannot shift the
 // rain's existing nearest-texel eave boundary. R retains the old cover height;
 // G is the highest hardscape top (including the pad/grade underneath), metres.
-export function bakeWetGroundField(plan={},cover=createSkyCover(plan),hard=collectHardSurfaces(plan)) {
+export function bakeWetGroundField(plan={},cover=createSkyCover(plan),hard=collectHardSurfaces(plan),caps=collectCapSurfaces(plan)) {
   const f=cover.heightField(),cell=f.cell||.3;
   let [x0,z0,x1,z1]=f.bounds;
+  for(const c of caps){
+    x0=Math.min(x0,c.bounds[0]*FT-.3);z0=Math.min(z0,-c.bounds[3]*FT-.3);
+    x1=Math.max(x1,c.bounds[2]*FT+.3);z1=Math.max(z1,-c.bounds[1]*FT+.3);
+  }
   for(const h of hard){
     x0=Math.min(x0,h.bounds[0]*FT);z0=Math.min(z0,-h.bounds[3]*FT);
     x1=Math.max(x1,h.bounds[2]*FT);z1=Math.max(z1,-h.bounds[1]*FT);
@@ -72,16 +82,17 @@ export function bakeWetGroundField(plan={},cover=createSkyCover(plan),hard=colle
   z0=f.bounds[1]+Math.floor((z0-f.bounds[1])/cell)*cell;
   const width=Math.max(1,Math.ceil((x1-x0)/cell)),height=Math.max(1,Math.ceil((z1-z0)/cell));
   const data=new Float32Array(width*height*2).fill(HEIGHT_NONE),site=plan.site||{};
-  const excluded=[...waterPolygons(site),...(site.beds||[]).map(b=>b.polygon).filter(Boolean)];
+  const excluded=waterPolygons(site);
   // Copy, rather than resample, the old cover texels bit-for-bit.
   const ox=Math.round((f.bounds[0]-x0)/cell),oz=Math.round((f.bounds[1]-z0)/cell);
   for(let j=0;j<f.height;j++)for(let i=0;i<f.width;i++)data[((j+oz)*width+i+ox)*2]=f.data[j*f.width+i];
   for(const h of hard){
+    const beds=raisedBeds(site,h);
     const i0=Math.max(0,Math.floor((h.bounds[0]*FT-x0)/cell)),i1=Math.min(width-1,Math.floor((h.bounds[2]*FT-x0)/cell));
     const j0=Math.max(0,Math.floor((-h.bounds[3]*FT-z0)/cell)),j1=Math.min(height-1,Math.floor((-h.bounds[1]*FT-z0)/cell));
     for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){
       const x=(x0+(i+.5)*cell)/FT,y=-(z0+(j+.5)*cell)/FT;
-      if(!inPolygon(h.polygon,x,y)||excluded.some(p=>inPolygon(p,x,y)))continue;
+      if(!inPolygon(h.polygon,x,y)||excluded.some(p=>inPolygon(p,x,y))||beds.some(b=>inPolygon(b.polygon,x,y)&&bedAbove(plan,b,h,x,y)))continue;
       const top=((h.flat??groundAt(plan,x,y))+h.elevation)*FT,index=(j*width+i)*2+1;
       data[index]=Math.max(data[index],top);
     }
@@ -104,14 +115,18 @@ function polygonEdgeDistance(poly,x,y) {
 // LinearFilter so curved walkways, straight edges and rotated roof drip lines
 // never stair-step on 0.3 m nearest-neighbour texels.
 // R: signed distance outside sky cover (m, clamped [-1,1]; <0 covered, >0 open)
-// G: signed distance inside hardscape minus pool/beds (m, clamped [-1,1]; >0 inside)
+// G: signed distance inside hardscape minus pool/spa (m, clamped [-1,1]; >0 inside)
 // B: dilated cover ceiling height (m; valid across the drip line, HEIGHT_NONE far out)
 // A: dilated hardscape top height (m; valid across polygon edges, HEIGHT_NONE far out)
 // Hardscape is rasterized first; cover SDF runs only on cells near hardscape
 // (where SSR can ever accept a pixel), avoiding ~90% of empty-lot work.
-export function createWetSurfaceBaker(plan={},cover=createSkyCover(plan),hard=collectHardSurfaces(plan),{cell=.15}={}) {
+export function createWetSurfaceBaker(plan={},cover=createSkyCover(plan),hard=collectHardSurfaces(plan),{cell=.15,caps=collectCapSurfaces(plan)}={}) {
   const f=cover.heightField(),baseCell=f.cell||.3;
   let [x0,z0,x1,z1]=f.bounds;
+  for(const c of caps){
+    x0=Math.min(x0,c.bounds[0]*FT-.3);z0=Math.min(z0,-c.bounds[3]*FT-.3);
+    x1=Math.max(x1,c.bounds[2]*FT+.3);z1=Math.max(z1,-c.bounds[1]*FT+.3);
+  }
   for(const h of hard){
     x0=Math.min(x0,h.bounds[0]*FT);z0=Math.min(z0,-h.bounds[3]*FT);
     x1=Math.max(x1,h.bounds[2]*FT);z1=Math.max(z1,-h.bounds[1]*FT);
@@ -125,12 +140,12 @@ export function createWetSurfaceBaker(plan={},cover=createSkyCover(plan),hard=co
   const data=new Float32Array(width*height*4);
   for(let k=0;k<data.length;k+=4){data[k]=1;data[k+1]=-1;data[k+2]=HEIGHT_NONE;data[k+3]=HEIGHT_NONE;}
   const site=plan.site||{},margin=.6,marginFt=margin/FT;
-  const excluded=[...waterPolygons(site),...(site.beds||[]).map(b=>b.polygon).filter(Boolean)].map(polygon=>({
+  const excluded=waterPolygons(site).map(polygon=>({
     polygon,bounds:[Math.min(...polygon.map(p=>p[0])),Math.min(...polygon.map(p=>p[1])),
       Math.max(...polygon.map(p=>p[0])),Math.max(...polygon.map(p=>p[1]))],
   }));
   const hardBoxes=hard.map(h=>({
-    h,
+    h,excluded:[...excluded,...raisedBeds(site,h).map(b=>({polygon:b.polygon,bed:b,bounds:[Math.min(...b.polygon.map(p=>p[0])),Math.min(...b.polygon.map(p=>p[1])),Math.max(...b.polygon.map(p=>p[0])),Math.max(...b.polygon.map(p=>p[1]))]}))],
     i0:Math.max(0,Math.floor((h.bounds[0]*FT-margin-x0)/actualCellX)),
     i1:Math.min(width-1,Math.floor((h.bounds[2]*FT+margin-x0)/actualCellX)),
     j0:Math.max(0,Math.floor((-h.bounds[3]*FT-margin-z0)/actualCellZ)),
@@ -143,6 +158,8 @@ export function createWetSurfaceBaker(plan={},cover=createSkyCover(plan),hard=co
   const cj1=hasCover?Math.min(height-1,Math.floor((cb.z1+1-z0)/actualCellZ)):-1;
   let phase=0,hIdx=0,row=hardBoxes[0]?.j0??0,done=false;
   const result={cell:actualCellX,width,height,bounds:[x0,z0,x0+spanX,z0+spanZ],data};
+  const capBaker=createCapBaker(caps,result);
+  result.caps=capBaker.result;
   function step(budgetMs=Infinity) {
     if(done)return true;
     const deadline=Number.isFinite(budgetMs)?performance.now()+Math.max(0,budgetMs):Infinity;
@@ -157,8 +174,9 @@ export function createWetSurfaceBaker(plan={},cover=createSkyCover(plan),hard=co
           const d=Math.min(1,polygonEdgeDistance(h.polygon,x,y)*FT);
           let signed=insideH?d:-d;
           if(signed>-margin){
-            for(const ex of excluded){
+            for(const ex of box.excluded){
               if(x<ex.bounds[0]-marginFt||x>ex.bounds[2]+marginFt||y<ex.bounds[1]-marginFt||y>ex.bounds[3]+marginFt)continue;
+              if(ex.bed&&!bedAbove(plan,ex.bed,h,x,y))continue;
               const inEx=inPolygon(ex.polygon,x,y),dEx=Math.min(1,polygonEdgeDistance(ex.polygon,x,y)*FT);
               signed=Math.min(signed,inEx?-dEx:dEx);
             }
@@ -175,12 +193,16 @@ export function createWetSurfaceBaker(plan={},cover=createSkyCover(plan),hard=co
       hIdx++;row=hardBoxes[hIdx]?.j0??0;
     }
     if(phase===1){
+      if(!capBaker.step(Number.isFinite(deadline)?Math.max(0,deadline-performance.now()):Infinity))return false;
+      phase=2;
+    }
+    if(phase===2){
       if(!hasCover||ci0>ci1||cj0>cj1){done=true;return true;}
       while(row<=cj1){
         const wz=z0+(row+.5)*actualCellZ;
         for(let i=ci0;i<=ci1;i++){
           const idx=(row*width+i)*4;
-          if(data[idx+1]<=-.45)continue;
+          if(data[idx+1]<=-.45&&result.caps.data[(row*width+i)*2]<=-.3)continue;
           const wx=x0+(i+.5)*actualCellX;
           const res=cover.coverSignedDistance(wx,wz);
           data[idx]=res.distance;data[idx+2]=res.top;
@@ -383,15 +405,20 @@ export function createPrecipitation(scene,{tier='high',random=Math.random,debugC
     precipClock:{value:0},splashTime:{value:0},
     touchLight:{value:new THREE.Vector3(1,1,1)},splashEnvironment:{value:null},splashEnvironmentGain:{value:1},
     splashSunDirection:{value:new THREE.Vector3(0,1,0)},splashSunColour:{value:new THREE.Color(1,1,1)},splashSunVisibility:{value:1},
-    precipCover:{value:null},precipEdge:{value:null},precipCoverBounds:{value:new THREE.Vector4(0,0,1,1)},precipCutaway:{value:0}};
-  let coverTexture=null,edgeTexture=null,coverFor=null,edgeFor=null,edgeBaker=null,edgeIdle=null;
+    precipCover:{value:null},precipEdge:{value:null},precipCaps:{value:null},precipCoverBounds:{value:new THREE.Vector4(0,0,1,1)},precipCutaway:{value:0}};
+  let coverTexture=null,edgeTexture=null,capsTexture=null,coverFor=null,edgeFor=null,edgeBaker=null,edgeIdle=null,capSources=null;
   const cancelEdgeIdle=()=>{if(edgeIdle!==null){globalThis.cancelIdleCallback?.(edgeIdle);edgeIdle=null;}};
+  const getCaps=()=>capSources??(capSources=collectCapSurfaces(plan));
   function uploadEdge(e){
     edgeTexture?.dispose();
+    capsTexture?.dispose();
     // RGBA16F (HalfFloatType) is mandatorily filterable in WebGL2 without
     // OES_texture_float_linear; -1e4 is exact and heights retain ~2 mm accuracy.
     edgeTexture=new THREE.DataTexture(packHalfFloatRGBA(e.data),e.width,e.height,THREE.RGBAFormat,THREE.HalfFloatType);
     edgeTexture.minFilter=edgeTexture.magFilter=THREE.LinearFilter;edgeTexture.generateMipmaps=false;edgeTexture.needsUpdate=true;
+    capsTexture=new THREE.DataTexture(packHalfFloatRGBA(e.caps.data),e.width,e.height,THREE.RGFormat,THREE.HalfFloatType);
+    capsTexture.minFilter=capsTexture.magFilter=THREE.LinearFilter;capsTexture.generateMipmaps=false;capsTexture.needsUpdate=true;
+    uniforms.precipCaps.value=capsTexture;
     uniforms.precipEdge.value=edgeTexture;uniforms.precipCoverBounds.value.fromArray(e.bounds);edgeFor=cover;edgeBaker=null;
   }
   function scheduleEdgeIdle(){
@@ -399,7 +426,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random,debugC
     edgeIdle=globalThis.requestIdleCallback(deadline=>{
       edgeIdle=null;
       if(disposed||edgeFor===cover)return;
-      if(!edgeBaker)edgeBaker=createWetSurfaceBaker(plan,cover,collectHardSurfaces(plan));
+      if(!edgeBaker)edgeBaker=createWetSurfaceBaker(plan,cover,collectHardSurfaces(plan),{caps:getCaps()});
       const budget=Math.max(1,Math.min(6,deadline?.timeRemaining?.()??4));
       if(edgeBaker.step(budget))uploadEdge(edgeBaker.result);
       else scheduleEdgeIdle();
@@ -412,14 +439,14 @@ export function createPrecipitation(scene,{tier='high',random=Math.random,debugC
     const hard=coverFor!==cover||(edgeFor!==cover&&!edgeBaker)?collectHardSurfaces(plan):null;
     if(coverFor!==cover){
       coverFor=cover;
-      const f=bakeWetGroundField(plan,cover,hard);
+      const f=bakeWetGroundField(plan,cover,hard,getCaps());
       coverTexture?.dispose();
       coverTexture=new THREE.DataTexture(f.data,f.width,f.height,THREE.RGFormat,THREE.FloatType);
       coverTexture.minFilter=coverTexture.magFilter=THREE.NearestFilter;coverTexture.generateMipmaps=false;coverTexture.needsUpdate=true;
       uniforms.precipCover.value=coverTexture;uniforms.precipCoverBounds.value.fromArray(f.bounds);
     }
     if(edgeFor!==cover){
-      if(!edgeBaker)edgeBaker=createWetSurfaceBaker(plan,cover,hard);
+      if(!edgeBaker)edgeBaker=createWetSurfaceBaker(plan,cover,hard,{caps:getCaps()});
       const budget=syncEdge||typeof globalThis.requestIdleCallback!=='function'?Infinity:2;
       if(edgeBaker.step(budget)){cancelEdgeIdle();uploadEdge(edgeBaker.result);}
       else scheduleEdgeIdle();
@@ -576,7 +603,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random,debugC
       return splashes[0].count+splashes[1].count+splashes[2].count;
     },
     setStage({centre,radius}){if(centre?.every(Number.isFinite))uniforms.precipCentre.value.fromArray(centre);if(Number.isFinite(radius)&&radius>0)uniforms.precipRadius.value=radius;},
-    setPlan(value,roofs,skyCover){plan=value;cover=skyCover||createSkyCover(plan,roofs);coverFor=null;edgeFor=null;edgeBaker=null;cancelEdgeIdle();edgeTexture?.dispose();edgeTexture=null;uniforms.precipEdge.value=null;sample=createSplashSampler(plan,roofs,cover);clearSplashes();credit=0;focusReady=false;debug=null;scheduleEdgeIdle();},
+    setPlan(value,roofs,skyCover){capSources=null;plan=value;cover=skyCover||createSkyCover(plan,roofs);coverFor=null;edgeFor=null;edgeBaker=null;cancelEdgeIdle();edgeTexture?.dispose();edgeTexture=null;uniforms.precipEdge.value=null;capsTexture?.dispose();capsTexture=null;uniforms.precipCaps.value=null;sample=createSplashSampler(plan,roofs,cover);clearSplashes();credit=0;focusReady=false;debug=null;scheduleEdgeIdle();},
     update(now,weather,camera,{target=camera.position,bearing=180,level='house',unlit=false,colour=DEFAULT_COLOUR,light,sunDirection,sunColour,sunVisibility=1,environment=scene.environment,environmentGain=scene.environmentIntensity ?? 1,reduced=motion?.matches}={}){
       if(disposed)return;
       splashWeather=weather||noWeather;lastCamera=camera;
@@ -633,7 +660,7 @@ export function createPrecipitation(scene,{tier='high',random=Math.random,debugC
       }
       showSplashes(now);
     },
-    dispose(){if(disposed)return;disposed=true;cancelEdgeIdle();edgeBaker=null;group.removeFromParent();coverTexture?.dispose();edgeTexture?.dispose();for(const o of Object.values(objects)){o.geometry.dispose();o.material.dispose();}},
+    dispose(){if(disposed)return;disposed=true;cancelEdgeIdle();edgeBaker=null;group.removeFromParent();coverTexture?.dispose();edgeTexture?.dispose();capsTexture?.dispose();for(const o of Object.values(objects)){o.geometry.dispose();o.material.dispose();}},
   };
   return api;
 }

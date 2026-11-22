@@ -289,7 +289,7 @@ await test('r187 final post sources assemble; no lit uniform, sampler, chunk or 
   for(const quad of [pass.gather,pass.composite]){
    const source=programSource(r,cache,scene,quad._mesh,lights);
    assert.ok(source[1]&&!source[2].includes('#include'));const budget=uniformBudget(source[2]);
-   assert.ok(budget.samplers.length<=6);console.log(quad.material.name,budget);
+   assert.equal(budget.samplers.length,quad===pass.gather?6:7);console.log(quad.material.name,budget);
   }
   for(const [wet,puddle] of [[0,0],[1,0],[0,1],[1,1],[0,0]]){
    weather.uniforms.weatherSurface.value.set(wet,0,puddle,0);post.render();

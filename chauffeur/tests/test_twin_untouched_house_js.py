@@ -109,7 +109,8 @@ async function compare(p,k){
  now.root.add(newYard.group);old.root.add(oldYard.group);
  assert.deepEqual(signature(now),signature(old));
  assert.equal(meshes(now).length,meshes(old).length);
- assert.equal(new Set(meshes(now).map(o=>o.material.uuid)).size,new Set(meshes(old).map(o=>o.material.uuid)).size);
+ // Coping keeps its solid paving material so rain wets it.
+ assert.equal(new Set(meshes(now).map(o=>o.material.uuid)).size,new Set(meshes(old).map(o=>o.material.uuid)).size-1);
  for(const b of p.buildings)assert.equal(JSON.stringify(G.buildingKeyParts(p,b,k,'low')),JSON.stringify(main.buildingKeyParts(p,b,k,'low')));
  assert.equal(Y.yardMaterialKey(p,k,'low'),oldY.yardMaterialKey(p,k,'low'));
  assert.deepEqual(Y.yardPartKeys(p,k,'low'),oldY.yardPartKeys(p,k,'low'));

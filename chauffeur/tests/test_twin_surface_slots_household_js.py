@@ -59,9 +59,10 @@ if __name__ == '__main__':
         # 24 culled tile InstancedMeshes -> +23 draws and +23 duplicate 'yard blades' per-mesh entries in `materials`;
         # collapsing those 24 entries back to 1 yields the exact pre-28621a71 SHA-256 aae1cf53...), v2.499.964
         # (reach-atlas-12 4/ft outdoor bake density, ff4d70a7), and wet-sun-edges (exact projected roof drip-line
-        # clipping on horizontal ground/hardscape/porch faces; every house rebakes once). Material hashes, instance
-        # counts (41/45), and draw calls (121/182) are unchanged.
-        expected = [{'tier': 'low', 'geometry': 'f7b20165a11daed68b2caed2f83af9a6050d201f8abd453fad989c9fcbeda045', 'materials': 'c162c8f191543da51e92072e571eae47cc03ab692dcab86e982e2f35740807e5', 'instances': 41, 'draws': 121, 'atlas': '11b94f3e77326b4770a28fb6b75625323e1310aa424533b6426c8ff2b0650e65', 'atlasKey': '92b09def5efa52ed9bba71c998fc12d5'}, {'tier': 'high', 'geometry': '449f3cfa715a88c9d2ed25b3a693a9dbb0e2db3e3d08cda1403d7b5cd3786df2', 'materials': '450ceadb54c14262070e0d605bc073f5889953875b09423a3fe8c01c49a8d667', 'instances': 45, 'draws': 182, 'atlas': '6e521697002af84c6fc884078128e7d54b19fe6c12febebfbef242a930cb32c1', 'atlasKey': '92b09def5efa52ed9bba71c998fc12d5'}]
+        # clipping on horizontal ground/hardscape/porch faces; every house rebakes once). Material hashes and
+        # draw calls (121/182) are unchanged. Wet receivers reuses the ordinary coping
+        # material rather than an underwater clone: instances drop 41/45 -> 40/44; atlas is unchanged.
+        expected = [{'tier': 'low', 'geometry': 'f7b20165a11daed68b2caed2f83af9a6050d201f8abd453fad989c9fcbeda045', 'materials': 'c162c8f191543da51e92072e571eae47cc03ab692dcab86e982e2f35740807e5', 'instances': 40, 'draws': 121, 'atlas': '11b94f3e77326b4770a28fb6b75625323e1310aa424533b6426c8ff2b0650e65', 'atlasKey': '92b09def5efa52ed9bba71c998fc12d5'}, {'tier': 'high', 'geometry': '449f3cfa715a88c9d2ed25b3a693a9dbb0e2db3e3d08cda1403d7b5cd3786df2', 'materials': '450ceadb54c14262070e0d605bc073f5889953875b09423a3fe8c01c49a8d667', 'instances': 44, 'draws': 182, 'atlas': '6e521697002af84c6fc884078128e7d54b19fe6c12febebfbef242a930cb32c1', 'atlasKey': '92b09def5efa52ed9bba71c998fc12d5'}]
         # The editor's cheap freshness compares BAKE_GENERATOR_VERSION, not the atlas key. When the
         # pinned keys move, the generator stamp must move with them, or the editor chip says up to date
         # while every viewer 404s on the new key. Re-pin both together.
