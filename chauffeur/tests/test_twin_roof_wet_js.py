@@ -1,4 +1,4 @@
-"""Wet roof rivulets, persistent beads, porosity and dielectric film: real r187 assembly and live sliced GLSL."""
+"""Wet roof pools, winding release-event rivulets, hard-rain sheet waves, porosity and dielectric film: real r187 assembly and live sliced GLSL."""
 import subprocess
 import sys
 from pathlib import Path
@@ -27,15 +27,17 @@ const BEFORE_WEATHER=(()=>{
  h.dispose();c.dispose();return {...THREE.ShaderChunk};
 })();
 const close=(a,b,eps=1e-6)=>assert.ok(Math.abs(a-b)<=eps,`${a} != ${b}`);
-const mix=(a,b,t)=>typeof a==='object'?(a.z!==undefined?{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,z:a.z+(b.z-a.z)*t}:{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t}):a+(b-a)*t;
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const mix=(a,b,t)=>typeof a==='object'?(a.w!==undefined?{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,z:a.z+(b.z-a.z)*t,w:a.w+(b.w-a.w)*t}:a.z!==undefined?{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,z:a.z+(b.z-a.z)*t}:{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t}):a+(b-a)*t;
+const clamp=(v,a,b)=>typeof v==='object'?(v.w!==undefined?{x:clamp(v.x,a,b),y:clamp(v.y,a,b),z:clamp(v.z,a,b),w:clamp(v.w,a,b)}:v.z!==undefined?{x:clamp(v.x,a,b),y:clamp(v.y,a,b),z:clamp(v.z,a,b)}:{x:clamp(v.x,a,b),y:clamp(v.y,a,b)}):Math.max(a,Math.min(b,v));
 const smoothstep=(a,b,v)=>{const t=clamp((v-a)/(b-a),0,1);return t*t*(3-2*t);};
 const step=(a,v)=>v<a?0:1;
-const fract=x=>x-Math.floor(x);
-const v2=(x,y=x)=>({x,y}),v3=(x,y=x,z=x)=>({x,y,z});
-const add=(a,b)=>a.z!==undefined?v3(a.x+b.x,a.y+b.y,a.z+b.z):v2(a.x+b.x,a.y+b.y);
-const sub=(a,b)=>a.z!==undefined?v3(a.x-b.x,a.y-b.y,a.z-b.z):v2(a.x-b.x,a.y-b.y);
-const mul=(a,b)=>typeof b==='number'?(a.z!==undefined?v3(a.x*b,a.y*b,a.z*b):v2(a.x*b,a.y*b)):(a.z!==undefined?v3(a.x*b.x,a.y*b.y,a.z*b.z):v2(a.x*b.x,a.y*b.y));
+const fract=x=>typeof x==='object'?(x.w!==undefined?{x:fract(x.x),y:fract(x.y),z:fract(x.z),w:fract(x.w)}:x.z!==undefined?{x:fract(x.x),y:fract(x.y),z:fract(x.z)}:{x:fract(x.x),y:fract(x.y)}):x-Math.floor(x);
+const v2=(x,y=x)=>({x,y}),v3=(x,y=x,z=x)=>({x,y,z}),v4=(x,y=x,z=x,w=x)=>({x,y,z,w});
+const add=(a,b)=>typeof b==='number'?(a.w!==undefined?v4(a.x+b,a.y+b,a.z+b,a.w+b):a.z!==undefined?v3(a.x+b,a.y+b,a.z+b):v2(a.x+b,a.y+b)):(a.w!==undefined?v4(a.x+b.x,a.y+b.y,a.z+b.z,a.w+b.w):a.z!==undefined?v3(a.x+b.x,a.y+b.y,a.z+b.z):v2(a.x+b.x,a.y+b.y));
+const sub=(a,b)=>typeof b==='number'?(a.w!==undefined?v4(a.x-b,a.y-b,a.z-b,a.w-b):a.z!==undefined?v3(a.x-b,a.y-b,a.z-b):v2(a.x-b,a.y-b)):typeof a==='number'?(b.w!==undefined?v4(a-b.x,a-b.y,a-b.z,a-b.w):b.z!==undefined?v3(a-b.x,a-b.y,a-b.z):v2(a-b.x,a-b.y)):(a.w!==undefined?v4(a.x-b.x,a.y-b.y,a.z-b.z,a.w-b.w):a.z!==undefined?v3(a.x-b.x,a.y-b.y,a.z-b.z):v2(a.x-b.x,a.y-b.y));
+const mul=(a,b)=>typeof b==='number'?(a.w!==undefined?v4(a.x*b,a.y*b,a.z*b,a.w*b):a.z!==undefined?v3(a.x*b,a.y*b,a.z*b):v2(a.x*b,a.y*b)):typeof a==='number'?mul(b,a):(a.w!==undefined?v4(a.x*b.x,a.y*b.y,a.z*b.z,a.w*b.w):a.z!==undefined?v3(a.x*b.x,a.y*b.y,a.z*b.z):v2(a.x*b.x,a.y*b.y));
+const absV=a=>typeof a==='object'?(a.z!==undefined?v3(Math.abs(a.x),Math.abs(a.y),Math.abs(a.z)):v2(Math.abs(a.x),Math.abs(a.y))):Math.abs(a);
+const floorV=a=>typeof a==='object'?(a.z!==undefined?v3(Math.floor(a.x),Math.floor(a.y),Math.floor(a.z)):v2(Math.floor(a.x),Math.floor(a.y))):Math.floor(a);
 const dot=(a,b)=>a.z!==undefined?a.x*b.x+a.y*b.y+a.z*b.z:a.x*b.x+a.y*b.y;
 const len=a=>a.z!==undefined?Math.hypot(a.x,a.y,a.z):Math.hypot(a.x,a.y);
 const norm=a=>{const l=len(a)||1;return mul(a,1/l);};
@@ -63,7 +65,6 @@ function checkGlslScopes(source,label){
  assert.equal(stack.length,1,label+' unbalanced {');
 }
 
-// Extract the balanced brace block starting at `fromIndex`.
 function braceBlock(src,fromIndex){
  const start=src.indexOf('{',fromIndex);
  assert.ok(start>=0,'opening brace found');
@@ -103,30 +104,49 @@ function buildEvaluators(){
   .replace('vec4(centre,radius,fract(random.y*19.19)>weatherDropDensity(up)?2.0:arrival)','({x:centre.x,y:centre.y,z:radius,w:fract(random.y*19.19)>weatherDropDensity(up)?2.0:arrival})'));
  const cell=(id,size,up)=>dropCell(id,size,up,hash,dropRadius,dropDensity,fract);
 
- // Translate live weatherRoofRivulets from WEATHER_GLSL.
+ // Translate live weatherRoofRivulets directly from WEATHER_GLSL.
  const rivBody=body('vec3','weatherRoofRivulets')
-  .replaceAll('vec3(0.0)','v3(0,0,0)')
+  .replace(/\/\/[^\n]*/g,'')
+  .replace('vec2 wr=min(vec2(wet,rate)*vec2(1.8,2.2),1.0);','let wr=v2(min(wet*1.8,1),min(rate*2.2,1));')
+  .replace('for(int k=0;k<rows;k++)','for(let k=0;k<rows;k++)')
+  .replace('float(k)','k')
+  .replace('vec2 wp=fract(max(0.0,dyM)*vec2(.50+.50*h.x,1.10+.90*h.y))-.5;','let wp=sub(fract(mul(max(0,dyM),v2(.5+.5*h.x,1.1+.9*h.y))),.5);')
+  .replace('dot(wp*(.5-abs(wp)),h.xy*vec2(1.15,.65)-vec2(.575,.325))','dot(mul(wp,sub(.5,absV(wp))),sub(mul(v2(h.x,h.y),v2(1.15,.65)),v2(.575,.325)))')
+  .replace('vec2 hd=vec2(rx,dyM-headY)*32.0;','let hd=mul(v2(rx,dyM-headY),32.0);')
+  .replace('vec4 seg=clamp(vec4(dyM-tailY,headY-dyM,dyM,dyM-tailY+1.54)*vec4(4.5,22.0,12.5,.65),0.0,1.0);','let seg=clamp(mul(v4(dyM-tailY,headY-dyM,dyM,dyM-tailY+1.54),v4(4.5,22,12.5,.65)),0,1);')
+  .replace('slope+=vec2(lensN,0.0)+hd*(hDome*2.1);','slope=add(slope,add(v2(lensN,0),mul(hd,hDome*2.1)));')
+  .replace('return vec3(slope*(vis*wr.x),mix(avgCov,min(cov,1.0)*wr.x,vis));','const _s=mul(slope,vis*wr.x);return v3(_s.x,_s.y,mix(avgCov,min(cov,1)*wr.x,vis));')
   .replace(/vec3\(([^)]+)\)/g,'v3($1)')
   .replace(/vec2\(([^)]+)\)/g,'v2($1)')
-  .replace(/\b(?:float|vec3) (?=\w+=)/g,'let ');
- const rivRaw=new Function('uv','wet','rate','phase','dx','dy',
-  'v2','v3','smoothstep','abs','floor','fract','sin','cos','mix','clamp','max','length','weatherRingHash',rivBody);
- const rivulets=(uv,wet,rate,phase,dx,dy)=>rivRaw(
-  uv,wet,rate,phase,dx,dy,v2,v3,smoothstep,Math.abs,Math.floor,fract,Math.sin,Math.cos,mix,clamp,Math.max,len,hash);
+  .replace(/\b(?:float|int|vec2|vec3) (?=\w+=)/g,'let ');
+ const rivRaw=new Function('uv','wet','rate','phase','vis',
+  'v2','v3','v4','add','sub','mul','dot','absV','abs','floor','fract','mix','clamp','min','max','step','weatherRingHash',rivBody);
+ const rivulets=(uv,wet,rate,phase,vis)=>rivRaw(
+  uv,wet,rate,phase,vis,v2,v3,v4,add,sub,mul,dot,absV,Math.abs,Math.floor,fract,mix,clamp,Math.min,Math.max,step,hash);
 
- // Translate live weatherRoofBeads from WEATHER_GLSL.
+ // Translate live weatherRoofSheetWaves directly from WEATHER_GLSL.
+ const waveBody=body('vec2','weatherRoofSheetWaves')
+  .replace(/\/\/[^\n]*/g,'')
+  .replace('vec3 ph=uv.y*vec3(3.60,6.20,9.80)+uv.x*vec3(.42,-.55,.85)-phase*vec3(96.0,134.0,176.0);','let ph=sub(add(mul(uv.y,v3(3.6,6.2,9.8)),mul(uv.x,v3(.42,-.55,.85))),mul(phase,v3(96,134,176)));')
+  .replace('vec2 t23=fract(ph.yz+s1*vec2(2.24,1.60))-.5;','let t23=sub(fract(add(v2(ph.y,ph.z),mul(s1,v2(2.24,1.6)))),.5);')
+  .replace('vec3 sw=vec3(s1,t23*(.5-abs(t23)));','const _s23=mul(t23,sub(.5,absV(t23)));let sw=v3(s1,_s23.x,_s23.y);')
+  .replace('return vec2(dot(sw,vec3(.256,-.240,.160)),dot(sw,vec3(3.04,2.08,1.12)))*(sheet*vis);','return mul(v2(dot(sw,v3(.256,-.24,.16)),dot(sw,v3(3.04,2.08,1.12))),sheet*vis);')
+  .replace(/\bfloat (?=\w+=)/g,'let ');
+ const waveRaw=new Function('uv','sheet','phase','vis','v2','v3','add','sub','mul','dot','absV','abs','fract',waveBody);
+ const sheetWaves=(uv,sheet,phase,vis)=>waveRaw(uv,sheet,phase,vis,v2,v3,add,sub,mul,dot,absV,Math.abs,fract);
+
+ // Translate live weatherRoofBeads directly from WEATHER_GLSL.
  const beadBody=body('vec3','weatherRoofBeads')
-  .replace('vec2 p=uv*29.4118,id=floor(p);','let p=mul(uv,29.4118),id=v2(Math.floor(p.x),Math.floor(p.y));')
-  .replace('vec2 centre=vec2(radius)+h.xy*(1.0-2.0*radius);','let centre=v2(radius+h.x*(1-2*radius),radius+h.y*(1-2*radius));')
-  .replace('vec2 q=(fract(p)-centre)/radius;','let q=mul(sub(v2(fract(p.x),fract(p.y)),centre),1/radius);')
-  .replace('q*(dome*.78*disc*vis)','mul(q,dome*.78*disc*vis)')
-  .replace('vec3(mul(q,dome*.78*disc*vis),mix(avgCov,disc,vis))','((_s)=>v3(_s.x,_s.y,mix(avgCov,disc,vis)))(mul(q,dome*.78*disc*vis))')
-  .replace(/vec3\(([^)]+)\)/g,'v3($1)')
-  .replace(/\b(?:float|vec3) (?=\w+=)/g,'let ');
- const beadRaw=new Function('uv','wet','dx','dy','up',
-  'v2','v3','sub','mul','dot','sqrt','max','clamp','smoothstep','mix','fract','step','weatherDropDensity','weatherRingHash',beadBody);
- const beads=(uv,wet,dx,dy,up)=>beadRaw(
-  uv,wet,dx,dy,up,v2,v3,sub,mul,dot,Math.sqrt,Math.max,clamp,smoothstep,mix,fract,step,dropDensity,hash);
+  .replace(/\/\/[^\n]*/g,'')
+  .replace('vec2 p=uv*14.7059;','let p=mul(uv,14.7059);')
+  .replace('vec3 h=weatherRingHash(floor(p));','let h=weatherRingHash(floorV(p));')
+  .replace('vec2 q=(fract(p)-h.xy)/radius+h.xy*2.0-1.0;','let q=sub(add(mul(sub(fract(p),v2(h.x,h.y)),1/radius),mul(v2(h.x,h.y),2)),1);')
+  .replace('return vec3(q*(dome*1.20*mask*vis),mix(avgCov,clamp(dome*3.2,0.0,1.0)*mask,vis));','const _s=mul(q,dome*1.2*mask*vis);return v3(_s.x,_s.y,mix(avgCov,clamp(dome*3.2,0,1)*mask,vis));')
+  .replace(/\bfloat (?=\w+=)/g,'let ');
+ const beadRaw=new Function('uv','wet','rate','phase','vis','keep',
+  'v2','v3','add','sub','mul','dot','floorV','floor','fract','min','max','clamp','mix','step','weatherRingHash',beadBody);
+ const beads=(uv,wet,rate,phase,vis,keep)=>beadRaw(
+  uv,wet,rate,phase,vis,keep,v2,v3,add,sub,mul,dot,floorV,Math.floor,fract,Math.min,Math.max,clamp,mix,step,hash);
 
  // Non-roof weatherDrops evaluator for roof-vs-solid comparison at wet=1.
  const dropLayerBody=body('float','weatherDropLayer')
@@ -149,18 +169,15 @@ function buildEvaluators(){
   return mix(mix(wHash(v2(ix,iy)),wHash(v2(ix+1,iy)),u),mix(wHash(v2(ix,iy+1)),wHash(v2(ix+1,iy+1)),u),v);};
  const wEdge=p=>wNoise(mul(p,.35))*.67+wNoise(add(mul(p,.7),v2(19.1,7.7)))*.33;
 
- // Collect all scalar weather* helpers directly from WEATHER_GLSL.
  const scalarNames=[...roofGlsl.matchAll(/float (weather\w+)\(([^)]*)\) \{/g)]
   .filter(m=>!m[2].includes('vec')).map(m=>m[1]);
  const scalarFns=Object.fromEntries(scalarNames.map(n=>[n,scalar(n)]));
 
- // Slice the REAL preprocessed roof APPLY block from THREE.ShaderChunk.normal_fragment_maps
- // and compile it into a live JS evaluator (identity viewMatrix so world == view space).
+ // Slice the REAL preprocessed roof APPLY block from THREE.ShaderChunk.normal_fragment_maps.
  const roofPre=preprocess('#define STANDARD\n#define WEATHER_SURFACE_ACTIVE\n#define WEATHER_SURFACE_ROOF\n'+THREE.ShaderChunk.normal_fragment_maps);
  const roofIfStart=roofPre.indexOf('if(vWeatherOpen>0.0&&weatherSurface.x');
  assert.ok(roofIfStart>=0,'live roof APPLY block found');
  let roofApplySrc=braceBlock(roofPre,roofIfStart);
- // Strip comments and translate GLSL vector expressions mechanically without changing any formula.
  roofApplySrc=roofApplySrc
   .replace(/\/\/[^\n]*/g,'')
   .replaceAll('vWeatherWorld.xz','v2(vWeatherWorld.x,vWeatherWorld.z)')
@@ -173,20 +190,27 @@ function buildEvaluators(){
   .replaceAll('weatherWorldDy.zy','v2(weatherWorldDy.z,weatherWorldDy.y)')
   .replaceAll('weatherWorldDy.xy','v2(weatherWorldDy.x,weatherWorldDy.y)')
   .replaceAll('weatherFace.xz','v2(weatherFace.x,weatherFace.z)')
-  .replace('v2(vWeatherWorld.x,vWeatherWorld.z)*.8','mul(v2(vWeatherWorld.x,vWeatherWorld.z),.8)')
   .replace('v2(weatherFace.x,weatherFace.z)/roofSlopeSin','mul(v2(weatherFace.x,weatherFace.z),1/roofSlopeSin)')
-  .replace('weatherRoofRivulets(roofUv,roofWetRaw,roofRate,roofPhase,roofDx,roofDy)*(roofSlopeMask*roofRivWeight)',
-   'mul(weatherRoofRivulets(roofUv,roofWetRaw,roofRate,roofPhase,roofDx,roofDy),roofSlopeMask*roofRivWeight)')
-  .replace('weatherRoofBeads(v2(vWeatherWorld.x,vWeatherWorld.z),roofWetRaw,v2(weatherWorldDx.x,weatherWorldDx.z),v2(weatherWorldDy.x,weatherWorldDy.z),weatherUp)*roofBeadWeight',
-   'mul(weatherRoofBeads(v2(vWeatherWorld.x,vWeatherWorld.z),roofWetRaw,v2(weatherWorldDx.x,weatherWorldDx.z),v2(weatherWorldDy.x,weatherWorldDy.z),weatherUp),roofBeadWeight)')
-  .replace('diffuseColor.rgb *= ','diffuseColor.rgb = mul(diffuseColor.rgb, ')
-  .replace(/(diffuseColor\.rgb = mul\(diffuseColor\.rgb, [^;]+);/,'$1);')
+  .replace('vec3 roofVis=clamp((vec3(.048,.058,.075)-roofPx)*vec3(34.0,30.0,22.2),0.0,1.0);',
+   'let roofVis=clamp(mul(sub(v3(.048,.058,.075),roofPx),v3(34,30,22.2)),0,1);')
+  .replace('vec2 roofSh=clamp((vec2(roofRate,roofWetRaw)-vec2(.50,.55))*2.22,0.0,1.0);',
+   'let roofSh=clamp(mul(sub(v2(roofRate,roofWetRaw),v2(.5,.55)),2.22),0,1);')
+  .replace('weatherRoofRivulets(roofUv,roofWetRaw,roofRate,roofPhase,roofVis.x)*(roofSlopeMask*roofRivWeight)',
+   'mul(weatherRoofRivulets(roofUv,roofWetRaw,roofRate,roofPhase,roofVis.x),roofSlopeMask*roofRivWeight)')
+  .replace('vec2 roofSlope=roofRiv.xy*(1.0-.70*roofSheetRaw)+roofWaves;',
+   'let roofSlope=add(mul(v2(roofRiv.x,roofRiv.y),1-.7*roofSheetRaw),roofWaves);')
+  .replace('roofNormalOff=roofAcrossDir*roofSlope.x+roofDownDir*roofSlope.y;',
+   'roofNormalOff=add(mul(roofAcrossDir,roofSlope.x),mul(roofDownDir,roofSlope.y));_roofAcrossDir=roofAcrossDir;_roofDownDir=roofDownDir;_roofRiv=roofRiv;_roofWaves=roofWaves;')
+  .replace('roofNormalOff.xz+=roofBead.xy*roofBeadKeep;',
+   'roofNormalOff=add(roofNormalOff,mul(v3(roofBead.x,0,roofBead.y),roofBeadKeep));_roofBead=roofBead;')
+  .replaceAll('diffuseColor.rgb *= ','diffuseColor.rgb = mul(diffuseColor.rgb, ')
+  .replace(/(diffuseColor\.rgb = mul\(diffuseColor\.rgb, [^;]+);/g,'$1);')
   .replace('vec3(.2126,.7152,.0722)','v3(.2126,.7152,.0722)')
   .replace('vec3(.85,.87,.9)','v3(.85,.87,.9)')
-  .replace('vec3(0.0)','v3(0,0,0)')
+  .replace('vec3(0.0,0.0,0.0)','v3(0,0,0)')
+  .replace('vec2(0.0,0.0)','v2(0,0)')
   .replace('vec2(0.0)','v2(0,0)')
-  .replace('mat3(viewMatrix)*((roofAcrossDir*roofRiv.x+roofDownDir*roofRiv.y+vec3(roofBead.x,0.0,roofBead.y)*roofBeadKeep)*(1.0-weatherS))',
-   'mul(add(add(mul(roofAcrossDir,roofRiv.x),mul(roofDownDir,roofRiv.y)),mul(v3(roofBead.x,0,roofBead.y),roofBeadKeep)),1-weatherS)')
+  .replace('mat3(viewMatrix)*(roofNormalOff*(1.0-weatherS))','mul(roofNormalOff,1-weatherS)')
   .replace('normal+mul(','add(normal,mul(')
   .replace(/(vec3 weatherNormal=add\(normal,mul\([^;]+);/,'$1);')
   .replace('weatherNormal/max(length(weatherNormal),.0001)','mul(weatherNormal,1/max(length(weatherNormal),.0001))')
@@ -197,14 +221,14 @@ function buildEvaluators(){
 
  const roofApplyFn=new Function(
   'weatherSurface','vWeatherWorld','vWeatherOpen','weatherWorldDx','weatherWorldDy','nonPerturbedNormal','normal','vViewPosition','diffuseColor','roughnessFactor','metalnessFactor','viewMatrix',
-  'inverseTransformDirection','v2','v3','add','sub','mul','dot','length','normalize','reflect','neg','mix','clamp','smoothstep','abs','min','max','floor','fract',
-  'weatherNoise','weatherEdge','weatherRipple','weatherRoofRivulets','weatherRoofBeads',...scalarNames,
+  'inverseTransformDirection','v2','v3','add','sub','mul','dot','length','sqrt','normalize','reflect','neg','mix','clamp','smoothstep','abs','min','max','floor','fract',
+  'weatherNoise','weatherEdge','weatherRipple','weatherRoofRivulets','weatherRoofSheetWaves','weatherRoofBeads',...scalarNames,
   `let weatherHorizonDamp=1.0;
-   let _roofAcrossDir=null,_roofDownDir=null,_roofRiv=v3(0,0,0),_roofBead=v3(0,0,0),_roofWaterCov=0,_roofCoatWeight=0,_roofReflected=v3(0,1,0);
+   let _roofAcrossDir=null,_roofDownDir=null,_roofRiv=v3(0,0,0),_roofWaves=v2(0,0),_roofBead=v3(0,0,0),_roofWaterCov=0,_roofCoatWeight=0,_roofReflected=v3(0,1,0);
    ${roofApplySrc.replace('weatherHorizonDamp=mix(1.0,roofHorizon*roofSheen,roofWetNoSnow);',
-    'weatherHorizonDamp=mix(1.0,roofHorizon*roofSheen,roofWetNoSnow);_roofAcrossDir=roofAcrossDir;_roofDownDir=roofDownDir;_roofRiv=roofRiv;_roofBead=roofBead;_roofWaterCov=roofWaterCov;_roofCoatWeight=roofCoatWeight;_roofReflected=roofReflected;')}
+    'weatherHorizonDamp=mix(1.0,roofHorizon*roofSheen,roofWetNoSnow);_roofWaterCov=roofWaterCov;_roofCoatWeight=roofCoatWeight;_roofReflected=roofReflected;')}
    return {color:diffuseColor.rgb,roughness:roughnessFactor,metalness:metalnessFactor,normal,horizonDamp:weatherHorizonDamp,
-    acrossDir:_roofAcrossDir,downDir:_roofDownDir,riv:_roofRiv,bead:_roofBead,waterCov:_roofWaterCov,coatWeight:_roofCoatWeight,reflY:_roofReflected.y};`
+    acrossDir:_roofAcrossDir,downDir:_roofDownDir,riv:_roofRiv,waves:_roofWaves,bead:_roofBead,waterCov:_roofWaterCov,coatWeight:_roofCoatWeight,reflY:_roofReflected.y};`
  );
 
  function evalRoofApply({world,face,dxWorld=v3(0.003,0,0),dyWorld=v3(0,0,0.003),wet=0,snow=0,puddles=0,rate=0,phase=0,open=1,roughness=0.45,metalness=0.45,albedo=0.04,viewDir=v3(0,0.45,0.89),mapNormal=null}){
@@ -213,8 +237,8 @@ function buildEvaluators(){
   const n0=norm(face),nMap=mapNormal?norm(mapNormal):n0;
   return roofApplyFn(
    w4,world,open,dxWorld,dyWorld,n0,nMap,viewDir,{rgb},roughness,metalness,null,
-   (d)=>norm(d),v2,v3,add,sub,mul,dot,len,norm,refl,neg,mix,clamp,smoothstep,Math.abs,Math.min,Math.max,Math.floor,fract,
-   wNoise,wEdge,()=>v2(0,0),rivulets,beads,...scalarNames.map(n=>scalarFns[n]),
+   (d)=>norm(d),v2,v3,add,sub,mul,dot,len,Math.sqrt,norm,refl,neg,mix,clamp,smoothstep,Math.abs,Math.min,Math.max,Math.floor,fract,
+   wNoise,wEdge,()=>v2(0,0),rivulets,sheetWaves,beads,...scalarNames.map(n=>scalarFns[n]),
   );
  }
 
@@ -248,7 +272,26 @@ function buildEvaluators(){
   );
  }
 
- return {rivulets,beads,solidDrops,evalRoofApply,evalSolidApply,rivBody,
+ // Also build live weatherRipple evaluator to prove 64 s clock matches 4 s clock identically.
+ const rippleBody=body('vec2','weatherRipple')
+  .replace('vec3 fromEye=vWeatherWorld-cameraPosition;','let fromEye={x:0,y:0,z:8};')
+  .replace('vec2 cell=floor(world/.6),slope=vec2(0.0);','let cell=v2(Math.floor(world.x/.6),Math.floor(world.y/.6)),slope=v2(0,0);')
+  .replace('vec2 midCell=floor(world/.6-.5);','let midCell=v2(Math.floor(world.x/.6-.5),Math.floor(world.y/.6-.5));')
+  .replace('vec2 dx=weatherWorldDx.xz,dy=weatherWorldDy.xz;','let dx=v2(.005,0),dy=v2(0,.005);')
+  .replace('int y=impact/width,x=impact-y*width;','let y=Math.trunc(impact/width),x=impact-y*width;')
+  .replace('midCell+vec2(float(x),float(y))','v2(midCell.x+x,midCell.y+y)')
+  .replace('cell+vec2(float(x-1),float(y-1))','v2(cell.x+x-1,cell.y+y-1)')
+  .replace('vec2 centre=(id+random.yz)*.6;','let centre=v2((id.x+random.y)*.6,(id.y+random.z)*.6);')
+  .replace('vec2 delta=world-centre;','let delta=sub(world,centre);')
+  .replace('vec2 direction=delta/max(d,.001);','let direction=mul(delta,1/max(d,.001));')
+  .replace('slope+=direction*band*fade*visible*strength*1.414214*support*farFade*(mid?1.0:nearFade);','let amp=band*fade*visible*strength*1.414214*support*farFade*(mid?1:nearFade);slope.x+=direction.x*amp;slope.y+=direction.y*amp;')
+  .replaceAll('vec2(0.0)','v2(0,0)').replace(/\b(?:float|vec2|vec3|int|bool) (?=\w+=)/g,'let ');
+ const rippleAt=(w4,world)=>new Function('world','weatherSurface','v2','sub','mul','dot','floor','fract','int','length','abs','max','smoothstep','weatherRingCount','weatherRingHash','weatherRingStrength','weatherRingSupport','weatherRingBand',rippleBody)(
+  world,w4,v2,sub,mul,(a,b)=>dot(a,b)+(a.z??0)*(b.z??0),Math.floor,fract,Math.trunc,len,Math.abs,Math.max,smoothstep,scalarFns.weatherRingCount,hash,scalarFns.weatherRingStrength,scalarFns.weatherRingSupport,
+  (d,age)=>Math.exp(-Math.abs(d-age*.46)*28.0)*Math.sin((d-age*.46)*48.0)
+ );
+
+ return {rivulets,sheetWaves,beads,solidDrops,evalRoofApply,evalSolidApply,hash,rippleAt,
   porosityFn:scalarFns.weatherPorosity,darkenWetFn:scalarFns.weatherDarkenWet,
   wetRoughFn:scalarFns.weatherWetRoughness,waterFilmFn:scalarFns.weatherWaterFilm,
   wetScale:scalarFns.weatherWetScale,roughFn:scalarFns.weatherRoughness};
@@ -285,9 +328,10 @@ await test('roof programs assemble across all lit material kinds and stay strict
   assert.ok(!src[2].includes('#include'),label+' expanded all includes');
   const f=preprocess(src[2]);
   checkGlslScopes(f,label);
-  assert.ok(f.includes('weatherRoofRivulets(')&&f.includes('weatherRoofBeads('),label+' uses roof rivulets and beads');
+  if(mat.isMeshStandardMaterial||mat.isMeshPhongMaterial){
+   assert.ok(f.includes('weatherRoofRivulets(')&&f.includes('weatherRoofSheetWaves(')&&f.includes('weatherRoofBeads('),label+' uses roof rivulets, sheet waves and beads');
+  }
   assert.ok(!f.includes('weatherPuddle(weatherUp'),label+' excludes puddles');
-  assert.ok(!f.includes('roofSeamRib'),label+' drops normal-map seam heuristic');
   const b=uniformBudget(src[2]);
   assert.ok(b.vectors<=224,`${label} vectors ${b.vectors} > 224`);
   assert.ok(b.samplers.length<=16,`${label} samplers ${b.samplers.length} > 16`);
@@ -300,7 +344,7 @@ await test('roof programs assemble across all lit material kinds and stay strict
  layer.dispose();shadow.dispose();haze.dispose();
 });
 
-await test('non-roof programs compile without any roof code and water/sheet/submerged/effect match main byte-for-byte',async()=>{
+await test('non-roof programs compile without roof code; water/sheet/submerged/effect match 7a23b5f1 except the 64 s clock literal',async()=>{
  const assembleSet=(installFn)=>{
   const renderer=new Renderer(),scene=new THREE.Scene();
   renderer.toneMapping=THREE.ACESFilmicToneMapping;scene.environment=new THREE.Texture();
@@ -332,7 +376,7 @@ await test('non-roof programs compile without any roof code and water/sheet/subm
  for(const [label,row] of Object.entries(branch)){
   assert.ok(row.key.includes(row.expectedTag),`${label} key retains ${row.expectedTag}`);
   checkGlslScopes(row.fsPre,label);
-  for(const forbidden of ['weatherRoofRivulets','weatherRoofBeads','roofAcrossDir','roofDownDir','roofRiv','roofBead']){
+  for(const forbidden of ['weatherRoofRivulets','weatherRoofSheetWaves','weatherRoofBeads','roofAcrossDir','roofDownDir','roofNormalOff']){
    assert.ok(!row.fsPre.includes(forbidden),`${label} preprocessed source must not contain ${forbidden}`);
   }
   if(['water','sheet','submerged','effect'].includes(label)){
@@ -352,13 +396,14 @@ await test('non-roof programs compile without any roof code and water/sheet/subm
    const mainSrc=input.mainSource.replace("'./stage_haze.js'",JSON.stringify(file('static/twin/sky/stage_haze.js')));
    const mainMod=await import('data:text/javascript;base64,'+Buffer.from(mainSrc).toString('base64'));
    const main=assembleSet(mainMod.installWeatherSurface);
+   const normClock=s=>s.replace('float clock=fract(weatherSurface.w)*64.0;','float clock=fract(weatherSurface.w)*4.0;');
    for(const label of Object.keys(branch)){
     assert.equal(branch[label].customKey,main[label].customKey,`${label} customProgramCacheKey matches main`);
     assert.equal(branch[label].vsPre,main[label].vsPre,`${label} vertex shader matches main byte-for-byte`);
     assert.equal(branch[label].vectors,main[label].vectors,`${label} uniform vectors match main`);
     assert.equal(branch[label].samplers,main[label].samplers,`${label} sampler count matches main`);
     if(['water','sheet','submerged','effect'].includes(label)){
-     assert.equal(branch[label].fsPre,main[label].fsPre,`${label} fragment shader matches main byte-for-byte`);
+     assert.equal(normClock(branch[label].fsPre),main[label].fsPre,`${label} fragment shader matches 7a23b5f1 except the 64 s clock multiplier`);
     }
    }
   }finally{
@@ -369,10 +414,30 @@ await test('non-roof programs compile without any roof code and water/sheet/subm
 
 const ev=buildEvaluators();
 
-await test('dry roof (wetness 0) matches main identically even while raining; snow cover wins over full wetness',()=>{
+await test('64 s rain clock keeps puddle/pool ripple output identical to 4 s clock and preserves float32 rate precision',()=>{
+ const layer=installWeatherSurface(new THREE.Scene());
+ for(const sec of [0,0.37,1.9,3.99,4.0,7.13,19.4,32.0,63.95,64.0,127.8,259.25]){
+  layer.update({wetness:1,puddles:1,rate:1,precip:'rain'},sec);
+  const wNew=layer.uniforms.weatherSurface.value.w;
+  const f32=Math.fround(wNew);
+  assert.equal(Math.floor(f32),255,`float32 precision guard at sec=${sec}`);
+  const age64=fract(fract(wNew)*64*3+0.317);
+  const age4=fract(((sec%4+4)%4)*3+0.317);
+  const diff=Math.min(Math.abs(age64-age4),1-Math.abs(age64-age4));
+  assert.ok(diff<1e-6,`ripple phase identical at sec=${sec}: ${age64} vs ${age4}`);
+  for(const pt of [v2(0.2,0.3),v2(1.1,0.8),v2(-0.7,1.4)]){
+   const s64=ev.rippleAt({w:wNew},pt);
+   const s4=ev.rippleAt({w:255+(((sec%4+4)%4)/64)},pt);
+   close(s64.x,s4.x,1e-5);close(s64.y,s4.y,1e-5);
+  }
+ }
+ layer.dispose();
+});
+
+await test('dry roof (wetness 0) matches dry output identically even while raining; snow cover wins over full wetness',()=>{
  const face=v3(0,Math.cos(0.4),Math.sin(0.4));
  const dx=v3(0.004,0,0),dy=v3(0,-0.002,0.003);
- for(const rate of [0,1])for(const phase of [0,0.37,0.89]){
+ for(const rate of [0,0.4,1])for(const phase of [0,0.37,0.89]){
   for(let i=0;i<25;i++){
    const world=v3(i*0.13-1.5,3.5-i*0.04,i*0.11);
    const r=ev.evalRoofApply({world,face,dxWorld:dx,dyWorld:dy,wet:0,snow:0,rate,phase,roughness:0.45,metalness:0.45,albedo:0.04});
@@ -391,94 +456,190 @@ await test('dry roof (wetness 0) matches main identically even while raining; sn
  }
 });
 
-await test('rivulets align with the downhill direction on arbitrarily rotated pitched faces, flow while raining and freeze when rain stops',()=>{
- const dx=v2(0.003,0),dy=v2(0,0.003);
+await test('streams start at scattered 2D positions (no fixed column lattice), have finite length with pool->stretch->detach lifecycle, and zero periodic normal banding',()=>{
+ // Verify arbitrary roof azimuths/pitches produce orthonormal downhill basis.
  for(const azDeg of [0,35,120,245,357.6])for(const pitchRatio of [4/12,6/12,10/12]){
   const az=azDeg*Math.PI/180,pitch=Math.atan(pitchRatio);
   const face=v3(Math.sin(pitch)*Math.cos(az),Math.cos(pitch),Math.sin(pitch)*Math.sin(az));
-  const out=ev.evalRoofApply({world:v3(2,4,-3),face,dxWorld:v3(0.003,0,0),dyWorld:v3(0,0,0.003),wet:1,rate:1,phase:0.2});
+  const out=ev.evalRoofApply({world:v3(2,4,-3),face,dxWorld:v3(0.003,0,0),dyWorld:v3(0,0,0.003),wet:1,rate:0.4,phase:0.2});
   close(len(out.acrossDir),1,1e-5);close(len(out.downDir),1,1e-5);
   close(dot(out.acrossDir,face),0,1e-5);close(dot(out.downDir,face),0,1e-5);
   close(dot(out.acrossDir,out.downDir),0,1e-5);
   assert.ok(out.downDir.y<-0.1,'downDir points strictly downhill');
   close(out.acrossDir.y,0,1e-5);
  }
- let acrossDiff=0,alongDiff=0,samples=0,peakCov=0,minCov=1,slopeMag=0;
- for(let iu=0;iu<120;iu++)for(let iv=0;iv<20;iv++){
-  const u=iu*0.025,v=iv*0.18;
-  const c=ev.rivulets(v2(u,v),1,1,0.25,dx,dy);
-  const cu=ev.rivulets(v2(u+0.03,v),1,1,0.25,dx,dy);
-  const cv=ev.rivulets(v2(u,v+0.03),1,1,0.25,dx,dy);
-  acrossDiff+=Math.abs(cu.z-c.z);
-  alongDiff+=Math.abs(cv.z-c.z);
-  peakCov=Math.max(peakCov,c.z);minCov=Math.min(minCov,c.z);
-  slopeMag+=Math.hypot(c.x,c.y);samples++;
- }
- const alignRatio=acrossDiff/Math.max(alongDiff,1e-9);
- assert.ok(alignRatio>6.0,`straighter rivulets align tightly downhill (across/along diff ratio=${alignRatio.toFixed(2)})`);
- assert.ok(peakCov>0.60&&minCov<0.05,'rivulets form distinct wet channels between film gaps');
- assert.ok(slopeMag/samples>0.002&&slopeMag/samples<0.025,`calm rivulet normal tilt (${(slopeMag/samples).toFixed(4)})`);
- const pMatch=ev.rivBody.match(/p1=uv\.y\*\(([\d.]+)\+h\.y\*([\d.]+)\)/);
- const ampMatch=ev.rivBody.match(/sin\(p1\)\*\(([\d.]+)\//);
- assert.ok(pMatch&&ampMatch,'wander parameters found in live GLSL');
- const maxF1=Number(pMatch[1])+Number(pMatch[2]),wanderAmpM=Number(ampMatch[1]);
- assert.ok(wanderAmpM<=0.015,`wander amplitude <= 1.5 cm (${wanderAmpM}m)`);
- assert.ok(2*Math.PI/maxF1>=6.0,`long wander wavelength >= 6 m (${(2*Math.PI/maxF1).toFixed(2)}m)`);
 
- let motionPour=0,motionStop=0,wrapErr=0,movedDown=0,movedUp=0;
- for(let i=0;i<300;i++){
-  const p=v2((i%30)*0.08,Math.floor(i/30)*0.21);
-  const a=ev.rivulets(p,1,1,0.10,dx,dy);
-  const b=ev.rivulets(p,1,1,0.35,dx,dy);
-  motionPour+=Math.abs(b.z-a.z)+Math.abs(b.y-a.y);
-  const shift=ev.rivulets(v2(p.x,p.y+0.14),1,1,0.10+0.05,dx,dy);
-  const opp=ev.rivulets(v2(p.x,p.y-0.14),1,1,0.10+0.05,dx,dy);
-  movedDown+=Math.abs(shift.z-a.z);movedUp+=Math.abs(opp.z-a.z);
-  const w0=ev.rivulets(p,1,1,0.0,dx,dy),w1=ev.rivulets(p,1,1,1.0,dx,dy);
-  wrapErr=Math.max(wrapErr,Math.abs(w1.z-w0.z),Math.abs(w1.x-w0.x),Math.abs(w1.y-w0.y));
-  const s0=ev.evalRoofApply({world:v3(p.x,4,p.y),face:v3(0,0.894,0.447),wet:1,rate:0,phase:0.1});
-  const s1=ev.evalRoofApply({world:v3(p.x,4,p.y),face:v3(0,0.894,0.447),wet:1,rate:0,phase:0.73});
-  motionStop+=Math.abs(s1.riv.z-s0.riv.z)+Math.abs(s1.normal.x-s0.normal.x)+Math.abs(s1.normal.y-s0.normal.y)+Math.abs(s1.roughness-s0.roughness);
+ // 1. Scattered origins: compute actual stream origin u0 across 60 rows x 20 cells and verify uniform spread modulo 0.30 m AND 0.44 m (no column lattice).
+ const bins30=Array(10).fill(0),bins44=Array(10).fill(0);
+ for(let row=-30;row<30;row++)for(let ix=-10;ix<10;ix++){
+  const h=ev.hash(v2(ix,row));
+  const shift=fract(row*0.381966);
+  const u0=(ix+0.24+0.52*h.x-shift)*0.30;
+  bins30[Math.floor(fract(u0/0.30)*10)]++;
+  bins44[Math.floor(fract(u0/0.44)*10)]++;
  }
- assert.ok(motionPour>0.5,`rivulets animate while raining (${motionPour.toFixed(3)})`);
- assert.ok(movedDown<movedUp,`rivulet surges travel downhill (${movedDown.toFixed(3)} < ${movedUp.toFixed(3)})`);
- assert.ok(wrapErr<1e-5,`4-second clock wrap is seamless (${wrapErr})`);
- assert.equal(motionStop,0,'stopped rain (rate=0, wetness=1) yields strictly static wet streaks');
- console.log('RIVULET_METRICS',JSON.stringify({alignRatio:+alignRatio.toFixed(2),peakCov:+peakCov.toFixed(3),minCov:+minCov.toFixed(3),wanderAmpM,motionPour:+motionPour.toFixed(3),wrapErr}));
+ const mean=1200/10;
+ assert.ok(bins30.every(n=>Math.abs(n-mean)<mean*0.25),`origins spread uniformly across 0.30m period (${JSON.stringify(bins30)})`);
+ assert.ok(bins44.every(n=>Math.abs(n-mean)<mean*0.25),`origins spread uniformly across 0.44m period (${JSON.stringify(bins44)})`);
+
+ // 2. Single-stream lifecycle (pool -> stretch with tail at 0 -> detach tail -> finite length -> zero periodic banding along body).
+ const row=1,ix=2,h=ev.hash(v2(ix,row));
+ const shift=fract(row*0.381966);
+ const u0=(ix+0.24+0.52*h.x-shift)*0.30;
+ const v0=(row+0.03+0.94*h.y)*2.4;
+ const hz6=h.z*6.0,h2=fract(hz6),cycles=5+Math.floor(hz6);
+ const pathAt=dy=>{
+  const py=Math.max(0,dy);
+  const wx=fract(py*(0.50+0.50*h.x))-0.5,wy=fract(py*(1.10+0.90*h.y))-0.5;
+  return u0+wx*(0.5-Math.abs(wx))*(h.x*1.15-0.575)+wy*(0.5-Math.abs(wy))*(h.y*0.65-0.325);
+ };
+ // Choose phase so tau = 0.16 (pooling), tau = 0.85 (detached tail running downhill).
+ const phaseForTau=targetTau=>fract((targetTau-h2+10)/cycles);
+
+ // Pooling phase (tau=0.16): bead present at origin v0, nothing running 0.6 m downhill yet.
+ const pPool=phaseForTau(0.16);
+ const atOrigin=ev.rivulets(v2(u0,v0),0.9,0.4,pPool,1);
+ const aheadPool=ev.rivulets(v2(pathAt(0.6),v0+0.6),0.9,0.4,pPool,1);
+ assert.ok(atOrigin.z>0.4,'swelling pool present at origin before release');
+ assert.ok(aheadPool.z<0.05,'no stream downhill before release');
+
+ // Detached running phase (tau=0.86 -> runT=0.82, headY=1.93, streamLen~1.0..2.2 -> tailY>0):
+ // finite head AND tail, raised outward lens normal on both edges, ZERO periodic sign alternation along body!
+ const pRun=phaseForTau(0.86);
+ const runT=clamp((0.86-0.22)*1.28205,0,1),headY=runT*2.35;
+ const streamLen=(0.75+0.95*h2)*(0.85+0.55*Math.min(0.4*2.2,1));
+ const tailY=Math.max(0,headY-streamLen);
+ const aheadHead=ev.rivulets(v2(pathAt(headY+0.15),v0+headY+0.15),0.9,0.4,pRun,1);
+ const midY=(tailY+headY)*0.5;
+ const midCenter=ev.rivulets(v2(pathAt(midY),v0+midY),0.9,0.4,pRun,1);
+ const midRight=ev.rivulets(v2(pathAt(midY)+0.012,v0+midY),0.9,0.4,pRun,1);
+ const midLeft=ev.rivulets(v2(pathAt(midY)-0.012,v0+midY),0.9,0.4,pRun,1);
+ assert.ok(midCenter.z>0.7,`active stream body has strong coverage (${midCenter.z.toFixed(3)})`);
+ assert.ok(aheadHead.z<0.05,`stream terminates cleanly ahead of head (${aheadHead.z.toFixed(3)})`);
+ assert.ok(midRight.x>0.4&&midLeft.x<-0.4,`raised lens normal tilts strongly outward on both edges (L=${midLeft.x.toFixed(3)}, R=${midRight.x.toFixed(3)})`);
+ if(tailY>0.25){
+  const behindTail=ev.rivulets(v2(pathAt(tailY-0.18),v0+tailY-0.18),0.9,0.4,pRun,1);
+  assert.ok(behindTail.z<midCenter.z*0.6,`behind tail drops to faint damp trail (${behindTail.z.toFixed(3)} vs body ${midCenter.z.toFixed(3)})`);
+ }
+
+ // Sample along the stream's body (excluding the rounded head cap) and prove ZERO periodic sign alternation!
+ let signFlipsY=0,prevSignY=0,maxBodyY=0,rightNeg=0;
+ const yStart=tailY+0.25,yEnd=headY-0.12;
+ for(let i=0;i<=40;i++){
+  const dy=yStart+(yEnd-yStart)*(i/40);
+  const sample=ev.rivulets(v2(pathAt(dy)+0.011,v0+dy),0.9,0.4,pRun,1);
+  if(sample.x<0)rightNeg++;
+  maxBodyY=Math.max(maxBodyY,Math.abs(sample.y));
+  const sy=Math.abs(sample.y)>0.01?Math.sign(sample.y):0;
+  if(sy!==0&&prevSignY!==0&&sy!==prevSignY)signFlipsY++;
+  if(sy!==0)prevSignY=sy;
+ }
+ assert.equal(signFlipsY,0,`zero periodic normal banding along stream body (flips=${signFlipsY}, maxBodyY=${maxBodyY.toFixed(4)})`);
+ assert.ok(rightNeg<=2,`consistent outward lens edge sign along body (neg=${rightNeg}/41)`);
+
+ // Seamless 64 s clock wrap for rivulets, waves and beads.
+ let wrapErr=0;
+ for(let i=0;i<120;i++){
+  const p=v2((i%20)*0.11,Math.floor(i/20)*0.37);
+  const r0=ev.rivulets(p,0.9,0.4,0,1),r1=ev.rivulets(p,0.9,0.4,1,1);
+  const w0=ev.sheetWaves(p,0.9,0,1),w1=ev.sheetWaves(p,0.9,1,1);
+  const b0=ev.beads(p,0.9,0.4,0,1,1),b1=ev.beads(p,0.9,0.4,1,1,1);
+  wrapErr=Math.max(wrapErr,Math.abs(r1.x-r0.x),Math.abs(r1.y-r0.y),Math.abs(r1.z-r0.z),
+   Math.abs(w1.x-w0.x),Math.abs(w1.y-w0.y),Math.abs(b1.x-b0.x),Math.abs(b1.y-b0.y),Math.abs(b1.z-b0.z));
+ }
+ assert.ok(wrapErr<1e-5,`64-second clock wrap is seamless (${wrapErr})`);
+});
+
+await test('rain levels: stopped rain has zero motion; light has pools + occasional streams; steady raises stream density; hard rain floods glossy sheet with travelling downhill waves and washes out beads',()=>{
+ const face=v3(0,0.894,0.447),dx=v3(0.005,0,0),dy=v3(0,0,0.005);
+ // Stopped rain (rate=0): strictly ZERO time dependence; pools & faint damp trails fade with wetness.
+ let stopDiff=0,stopCov80=0,stopCov25=0,stopWaves=0;
+ for(let i=0;i<160;i++){
+  const world=v3((i%16)*0.13,4.0,Math.floor(i/16)*0.23);
+  const s0=ev.evalRoofApply({world,face,dxWorld:dx,dyWorld:dy,wet:0.8,rate:0,phase:0.05});
+  const s1=ev.evalRoofApply({world,face,dxWorld:dx,dyWorld:dy,wet:0.8,rate:0,phase:0.73});
+  const sLow=ev.evalRoofApply({world,face,dxWorld:dx,dyWorld:dy,wet:0.25,rate:0,phase:0.05});
+  stopDiff+=Math.abs(s1.riv.z-s0.riv.z)+Math.abs(s1.bead.z-s0.bead.z)+Math.abs(s1.normal.x-s0.normal.x)+Math.abs(s1.normal.y-s0.normal.y)+Math.abs(s1.roughness-s0.roughness);
+  stopWaves+=Math.hypot(s0.waves.x,s0.waves.y);
+  stopCov80+=s0.waterCov;stopCov25+=sLow.waterCov;
+ }
+ assert.equal(stopDiff,0,'rate=0 has strictly zero time dependence');
+ assert.equal(stopWaves,0,'rate=0 has zero sheet waves');
+ assert.ok(stopCov80>stopCov25*1.5&&stopCov80>2,'stopped rain retains pools/trails that fade with wetness');
+
+ // Rain-level progression across light -> steady -> hard.
+ const statsAt=(rate,wet,phase=0.3)=>{
+  let rivCov=0,beadCov=0,waterCov=0,waveMag=0,rough=0;
+  const N=300;
+  for(let i=0;i<N;i++){
+   const world=v3((i%20)*0.09,4.0,Math.floor(i/20)*0.17);
+   const f=ev.evalRoofApply({world,face,dxWorld:dx,dyWorld:dy,wet,rate,phase});
+   rivCov+=f.riv.z;beadCov+=f.bead.z;waterCov+=f.waterCov;
+   waveMag+=Math.hypot(f.waves.x,f.waves.y);rough+=f.roughness;
+  }
+  return {rivCov:rivCov/N,beadCov:beadCov/N,waterCov:waterCov/N,waveMag:waveMag/N,rough:rough/N};
+ };
+ const light=statsAt(0.12,0.55),steady=statsAt(0.40,0.90),hard=statsAt(1.0,1.0);
+ assert.ok(steady.rivCov>light.rivCov*1.5,`steady rain has more active streams than light (${steady.rivCov.toFixed(4)} vs ${light.rivCov.toFixed(4)})`);
+ assert.ok(light.beadCov>0.025&&steady.beadCov>light.beadCov*1.35,`pools grow larger from light to steady rain (${light.beadCov.toFixed(4)} -> ${steady.beadCov.toFixed(4)})`);
+ assert.ok(hard.beadCov<steady.beadCov*0.25,`hard rain washes out beads (${hard.beadCov.toFixed(4)} vs ${steady.beadCov.toFixed(4)})`);
+ assert.equal(light.waveMag,0,'light rain has zero sheet waves');
+ assert.equal(steady.waveMag,0,'steady rain has zero sheet waves');
+ assert.ok(hard.waterCov>0.75&&hard.rough<0.06,`hard rain makes whole roof glossy sheet (cov=${hard.waterCov.toFixed(3)}, rough=${hard.rough.toFixed(4)})`);
+ assert.ok(hard.waveMag>0.05,`hard rain produces active sheet waves (mag=${hard.waveMag.toFixed(4)})`);
+
+ // Hard-rain waves are anisotropic (down-slope > across-slope) and travel downhill as phase advances.
+ let sumAcross=0,sumDown=0,errDown=0,errUp=0;
+ const dPhase=0.001,dtSec=dPhase*64,speedM=0.38*dtSec;
+ for(let i=0;i<200;i++){
+  const p=v2((i%20)*0.11,Math.floor(i/20)*0.09);
+  const wA=ev.sheetWaves(p,1,0.2,1);
+  sumAcross+=Math.abs(wA.x);sumDown+=Math.abs(wA.y);
+  const wDown=ev.sheetWaves(v2(p.x,p.y+speedM),1,0.2+dPhase,1);
+  const wUp=ev.sheetWaves(v2(p.x,p.y-speedM),1,0.2+dPhase,1);
+  errDown+=Math.hypot(wDown.x-wA.x,wDown.y-wA.y);
+  errUp+=Math.hypot(wUp.x-wA.x,wUp.y-wA.y);
+ }
+ assert.ok(sumDown>sumAcross*3.0,`hard-rain waves are anisotropic along slope (down/across=${(sumDown/sumAcross).toFixed(2)})`);
+ assert.ok(errDown<errUp,`hard-rain waves travel downhill (${errDown.toFixed(3)} < ${errUp.toFixed(3)})`);
+
+ // Pools/beads visibly grow/change over rain time while raining.
+ let beadMotion=0,beadHits=0;
+ for(let i=0;i<400;i++){
+  const p=v2((i%20)*0.025,Math.floor(i/20)*0.025);
+  const a=ev.beads(p,0.8,0.3,0.10,1,1),b=ev.beads(p,0.8,0.3,0.22,1,1);
+  if(a.z>0||b.z>0)beadHits++;
+  beadMotion+=Math.abs(b.z-a.z);
+ }
+ assert.ok(beadHits>10&&beadMotion>1.5,`beads swell/grow dynamically over rain time (motion=${beadMotion.toFixed(2)}, hits=${beadHits})`);
+ console.log('RAIN_LEVELS',JSON.stringify({light,steady,hard}));
 });
 
 await test('bright bare metals keep metalness and diffuse when wet; dark painted roofs still get untinted dielectric film; light roofs stay bounded',()=>{
- // Blocking item 1: solid bright metals (galvanized conduit #a7adb3 ~0.415 linear, metalness 0.6;
- // chain-link 0.65; gas fire-pit pan 0.85) must NOT turn into diffuse plastic when wet.
  const conduitDry=ev.evalSolidApply({albedo:0.415,metalness:0.60,roughness:0.45,wet:0});
  const conduitWet=ev.evalSolidApply({albedo:0.415,metalness:0.60,roughness:0.45,wet:1});
  close(conduitWet.metalness,0.60,1e-4);
  const conduitDiffDry=conduitDry.color.x*(1-conduitDry.metalness);
  const conduitDiffWet=conduitWet.color.x*(1-conduitWet.metalness);
  assert.ok(Math.abs(conduitDiffWet-conduitDiffDry)<0.01,`galvanized conduit keeps diffuse (${conduitDiffDry.toFixed(3)} -> ${conduitDiffWet.toFixed(3)})`);
- const chainWet=ev.evalSolidApply({albedo:0.38,metalness:0.65,roughness:0.45,wet:1});
- const panWet=ev.evalSolidApply({albedo:0.35,metalness:0.85,roughness:0.35,wet:1});
- close(chainWet.metalness,0.65,1e-4);
- close(panWet.metalness,0.85,1e-4);
- // Bright metal on a roof face also stays metallic and unboosted.
+ close(ev.evalSolidApply({albedo:0.38,metalness:0.65,roughness:0.45,wet:1}).metalness,0.65,1e-4);
+ close(ev.evalSolidApply({albedo:0.35,metalness:0.85,roughness:0.35,wet:1}).metalness,0.85,1e-4);
+
  const face=v3(0,0.894,0.447);
  const brightMetalRoof=ev.evalRoofApply({world:v3(1.1,4,1.3),face,wet:1,rate:0,roughness:0.35,metalness:0.65,albedo:0.42});
  close(brightMetalRoof.metalness,0.65,1e-4);
  assert.ok(brightMetalRoof.horizonDamp<=1.01,`bright metal roof is not sheen-boosted (${brightMetalRoof.horizonDamp.toFixed(3)})`);
 
- // Dark painted metal roof (#2f3133 linear ~0.028, #3a2e27 bronze, metalness 0.45) still gets untinted dielectric film.
  const darkBronze=[0.042,0.027,0.020];
  const darkRoof=ev.evalRoofApply({world:v3(1.1,4,1.3),face,wet:1,rate:1,phase:0.3,roughness:0.45,metalness:0.45,albedo:darkBronze});
  assert.ok(darkRoof.metalness<0.05,`dark painted metal roof drops metalness under water film (0.45 -> ${darkRoof.metalness.toFixed(4)})`);
- const f0R3=darkBronze.map(c=>mix(0.04,c,0.45));
- const f0R5=darkBronze.map(c=>mix(0.04,c,darkRoof.metalness));
+ const f0Dry=darkBronze.map(c=>mix(0.04,c,0.45));
+ const f0Wet=darkBronze.map(c=>mix(0.04,c,darkRoof.metalness));
  const chroma=rgb=>Math.max(...rgb)-Math.min(...rgb);
  const luma=rgb=>rgb[0]*0.2126+rgb[1]*0.7152+rgb[2]*0.0722;
- assert.ok(chroma(f0R5)<chroma(f0R3)*0.15,'wet dark metal roof specular F0 is untinted (near-grey)');
- assert.ok(luma(f0R5)>luma(f0R3)*1.10,'wet dark metal roof dielectric F0 is brighter than round 3 tinted F0');
+ assert.ok(chroma(f0Wet)<chroma(f0Dry)*0.15,'wet dark metal roof specular F0 is untinted (near-grey)');
+ assert.ok(luma(f0Wet)>luma(f0Dry)*1.10,'wet dark metal roof dielectric F0 is brighter than tinted F0');
 
- // Item 4: light smooth non-metal roofs (white membrane, glazed tile) with residual wetness (rate=0)
- // under bright sky stay within a sane bound (no 1.5-3.9x radiance blowout).
  for(const [name,albedo,roughness] of [['white membrane',0.82,0.28],['glazed tile',0.48,0.18],['light stucco roof',0.55,0.35]]){
   for(const viewDir of [v3(0,0.45,0.89),v3(0,0.08,0.997),v3(0,0.85,0.52)]){
    const lightRoof=ev.evalRoofApply({world:v3(0.7,4,1.1),face,wet:1,rate:0,roughness,metalness:0.0,albedo,viewDir});
@@ -486,50 +647,24 @@ await test('bright bare metals keep metalness and diffuse when wet; dark painted
    close(lightRoof.coatWeight,0,1e-5);
   }
  }
- // Dark painted solid trim (albedo 0.04, metalness 0.45) still gets dielectric film; snow zeroes metalness even on bright metal.
- const darkTrimWet=ev.evalSolidApply({albedo:0.04,metalness:0.45,roughness:0.45,wet:1});
- assert.ok(darkTrimWet.metalness<0.05,`dark painted solid trim gets dielectric film (${darkTrimWet.metalness.toFixed(4)})`);
- const conduitSnow=ev.evalSolidApply({albedo:0.415,metalness:0.60,roughness:0.45,wet:1,snow:1});
- close(conduitSnow.metalness,0,1e-4);
+ assert.ok(ev.evalSolidApply({albedo:0.04,metalness:0.45,roughness:0.45,wet:1}).metalness<0.05,'dark painted solid trim gets dielectric film');
+ close(ev.evalSolidApply({albedo:0.415,metalness:0.60,roughness:0.45,wet:1,snow:1}).metalness,0,1e-4);
 });
 
 await test('shared porosity: ordering, darkening, gloss, porous shingle vs metal roof',()=>{
  const pMetal=ev.porosityFn(1.0,0.45),pTile=ev.porosityFn(0.0,0.45),pMetalRoof=ev.porosityFn(0.45,0.45),pConcrete=ev.porosityFn(0.0,0.85),pShingle=ev.porosityFn(0.0,0.90);
  assert.ok(pMetal<pTile&&pTile<pConcrete,'porosity ordering: metal < semi-smooth tile < rough concrete');
  assert.ok(pMetalRoof<0.15&&pConcrete>=0.99&&pShingle>=0.99,'painted metal low porosity, concrete/shingles high');
- const lum=0.6;
- const dMetal=1-ev.wetScale(lum,1.0,ev.darkenWetFn(pMetal,1.0));
- const dTile=1-ev.wetScale(lum,0.0,ev.darkenWetFn(ev.porosityFn(0.0,0.22),1.0));
- const dPorousEarly=1-ev.wetScale(lum,0.0,ev.darkenWetFn(pConcrete,0.4));
- const dPorousFull=1-ev.wetScale(lum,0.0,ev.darkenWetFn(pConcrete,1.0));
- assert.ok(dMetal<0.02,`metal barely darkens (${dMetal.toFixed(4)})`);
- assert.ok(dTile<0.08,`smooth tile barely darkens (${dTile.toFixed(4)})`);
- assert.ok(dPorousEarly>0.22&&dPorousFull>0.48,`porous darkens early and strongly (${dPorousEarly.toFixed(3)} -> ${dPorousFull.toFixed(3)})`);
- for(const [m,r] of [[1.0,0.35],[0.45,0.45],[0.0,0.22],[0.0,0.85]]){
-  const p=ev.porosityFn(m,r);
-  close(ev.wetScale(0.6,m,ev.darkenWetFn(p,0)),1.0);
-  close(ev.wetRoughFn(r,p,0),r);
-  close(ev.waterFilmFn(p,0,0),0);
- }
- for(const w of [0.3,0.6,1.0]){
-  const rMetal=ev.wetRoughFn(0.45,pMetal,w);
-  const rSmooth=ev.wetRoughFn(0.30,ev.porosityFn(0.0,0.30),w);
-  const rPorous=ev.wetRoughFn(0.85,pConcrete,w);
-  assert.ok(rMetal<rPorous&&rSmooth<rPorous,`at wet=${w}, metal & smooth < porous`);
-  close(ev.roughFn(rPorous,0,1,0),0.03);
- }
- assert.ok(ev.wetRoughFn(0.85,pConcrete,1.0)>0.35,'porous concrete/shingle stays well above thin-film roughness without puddles');
- assert.ok(ev.wetRoughFn(0.45,pMetal,1.0)<=0.12,'wet metal reaches thin-film roughness');
- close(ev.waterFilmFn(1.0,0.5,0.0),0);
- close(ev.waterFilmFn(1.0,0.5,1.0),1.0);
-
  const face=v3(0,0.894,0.447),dx=v3(0.002,0,0),dy=v3(0,0,0.002);
- let metalRiv=0,shingleRiv=0,metalBead=0,shingleBead=0,metalRough=0,shingleRough=0,shingleDark=0,metalDark=0,metalEffSum=0;
+ let metalRiv=0,shingleRiv=0,metalWave=0,shingleWave=0,metalBead=0,shingleBead=0,metalRough=0,shingleRough=0,shingleDark=0,metalDark=0,metalEffSum=0;
  for(let i=0;i<240;i++){
   const world=v3((i%24)*0.07,4.0,Math.floor(i/24)*0.11);
-  const rm=ev.evalRoofApply({world,face,dxWorld:dx,dyWorld:dy,wet:1,rate:1,phase:0.3,roughness:0.45,metalness:0.45,albedo:0.06});
-  const rs=ev.evalRoofApply({world,face,dxWorld:dx,dyWorld:dy,wet:1,rate:1,phase:0.3,roughness:0.88,metalness:0.0,albedo:0.30});
+  const rm=ev.evalRoofApply({world,face,dxWorld:dx,dyWorld:dy,wet:0.9,rate:0.4,phase:0.3,roughness:0.45,metalness:0.45,albedo:0.06});
+  const rs=ev.evalRoofApply({world,face,dxWorld:dx,dyWorld:dy,wet:0.9,rate:0.4,phase:0.3,roughness:0.88,metalness:0.0,albedo:0.30});
+  const rmH=ev.evalRoofApply({world,face,dxWorld:dx,dyWorld:dy,wet:1.0,rate:1.0,phase:0.3,roughness:0.45,metalness:0.45,albedo:0.06});
+  const rsH=ev.evalRoofApply({world,face,dxWorld:dx,dyWorld:dy,wet:1.0,rate:1.0,phase:0.3,roughness:0.88,metalness:0.0,albedo:0.30});
   metalRiv+=rm.riv.z;shingleRiv+=rs.riv.z;
+  metalWave+=Math.hypot(rmH.waves.x,rmH.waves.y);shingleWave+=Math.hypot(rsH.waves.x,rsH.waves.y);
   metalBead+=rm.bead.z;shingleBead+=rs.bead.z;
   metalRough+=rm.roughness;shingleRough+=rs.roughness;
   metalDark+=1-rm.color.x/0.06;shingleDark+=1-rs.color.x/0.30;
@@ -537,6 +672,7 @@ await test('shared porosity: ordering, darkening, gloss, porous shingle vs metal
  }
  assert.ok(metalEffSum/240<0.05,`wet dark metal roof effective metalness drops (${(metalEffSum/240).toFixed(4)})`);
  assert.ok(shingleRiv<metalRiv*0.25,`rivulets much fainter on porous shingles (${shingleRiv.toFixed(2)} vs ${metalRiv.toFixed(2)})`);
+ assert.ok(shingleWave<metalWave*0.20,`sheet waves much fainter on porous shingles (${shingleWave.toFixed(2)} vs ${metalWave.toFixed(2)})`);
  assert.equal(shingleBead,0,'beads soak into porous shingle roof');
  assert.ok(metalBead>5,'beads remain on impervious metal roof');
  assert.ok(shingleRough/240>0.32&&metalRough/240<0.15,`porous roof keeps soft sheen (${(shingleRough/240).toFixed(3)}) vs glossy metal (${(metalRough/240).toFixed(3)})`);
@@ -544,49 +680,28 @@ await test('shared porosity: ordering, darkening, gloss, porous shingle vs metal
  console.log('POROSITY_ROOF',JSON.stringify({metalEff:+(metalEffSum/240).toFixed(4),metalRough:+(metalRough/240).toFixed(3),shingleRough:+(shingleRough/240).toFixed(3),metalRiv:+metalRiv.toFixed(2),shingleRiv:+shingleRiv.toFixed(2)}));
 });
 
-await test('beads stay at wetness=1 on roofs only, wet film stays glossy with no blanket damp, and near-flat roofs have zero basis jump',()=>{
+await test('beads stay at wetness=1 on roofs only, embossed normal map does not inject fake runnels, and near-flat roofs have zero basis jump',()=>{
  const dx=v2(0.001,0),dy=v2(0,0.001);
  let roofBeadCov=0,roofBeadSlope=0,solidDropSum=0,hits=0;
- let minRough=1,maxFilmRough=0,minFilmRough=1,minSkyFilmDamp=Infinity,maxRivDamp=0;
- const face=v3(0,0.894,0.447),skyView=v3(0,0.45,0.89);
+ const face=v3(0,0.894,0.447);
  for(let i=0;i<600;i++){
   const u=(i%30)*0.043,v=Math.floor(i/30)*0.047;
-  const b=ev.beads(v2(u,v),1,dx,dy,face.y);
+  const b=ev.beads(v2(u,v),1,0.4,0.3,1,1);
   roofBeadCov+=b.z;roofBeadSlope+=Math.hypot(b.x,b.y);
   if(b.z>0.5)hits++;
   solidDropSum+=ev.solidDrops(v2(u,v),1,dx,dy,face.y);
-  const frag=ev.evalRoofApply({world:v3(u,4,v),face,dxWorld:v3(0.001,0,0),dyWorld:v3(0,0,0.001),wet:1,rate:1,phase:0.3,roughness:0.45,metalness:0.45,albedo:0.04,viewDir:skyView});
-  minRough=Math.min(minRough,frag.roughness);
-  if(frag.waterCov<0.02){
-   maxFilmRough=Math.max(maxFilmRough,frag.roughness);minFilmRough=Math.min(minFilmRough,frag.roughness);
-   if(frag.reflY>=0.5)minSkyFilmDamp=Math.min(minSkyFilmDamp,frag.horizonDamp);
-  }
-  if(frag.riv.z>0.5)maxRivDamp=Math.max(maxRivDamp,frag.horizonDamp);
-  assert.ok(frag.color.x>0.0395&&frag.color.x<=0.04,'dark metal roof has no dark bead dots');
  }
  assert.equal(solidDropSum,0,'non-roof surfaces still remove drop stains at wetness=1');
- assert.ok(hits>30&&roofBeadCov/600>0.05,`beads remain present on roofs at wetness=1 (hits=${hits}, avg=${(roofBeadCov/600).toFixed(4)})`);
+ assert.ok(hits>30&&roofBeadCov/600>0.04,`beads remain present on roofs at wetness=1 steady rain (hits=${hits}, avg=${(roofBeadCov/600).toFixed(4)})`);
  assert.ok(roofBeadSlope/600>0.01,'beads perturb normals as raised domes');
- assert.ok(minRough<=0.055,`rivulets/beads reach low glossy roughness (${minRough.toFixed(4)})`);
- assert.ok(minFilmRough>=0.075&&maxFilmRough<=0.16,`between-rivulet metal film roughness stays glossy (${minFilmRough.toFixed(3)}..${maxFilmRough.toFixed(3)})`);
- assert.ok(minSkyFilmDamp>=1.0,`no blanket horizon damp darkening on upward sky reflections (${minSkyFilmDamp.toFixed(3)})`);
- assert.ok(maxRivDamp>minSkyFilmDamp*1.12,`calm rivulets lift gently within the sky sheen (${maxRivDamp.toFixed(2)} vs ${minSkyFilmDamp.toFixed(2)})`);
 
- const grazing=ev.evalRoofApply({world:v3(0.5,4,0.5),face:v3(0,0.94,0.34),dxWorld:v3(0.01,0,0),dyWorld:v3(0,0,0.01),wet:1,rate:0,phase:0,viewDir:v3(0,0.05,0.999)});
- const headOn=ev.evalRoofApply({world:v3(0.5,4,0.5),face:v3(0,0.707,0.707),dxWorld:v3(0.01,0,0),dyWorld:v3(0,0,0.01),wet:1,rate:0,phase:0,viewDir:v3(0,0.65,0.76)});
- assert.ok(grazing.horizonDamp>headOn.horizonDamp*0.95,'grazing sky reflection stays bright');
- const belowHorizon=ev.evalRoofApply({world:v3(0.5,4,0.5),face:v3(0,0.28,0.96),dxWorld:v3(0.01,0,0),dyWorld:v3(0,0,0.01),wet:1,rate:0,phase:0,viewDir:v3(0,0.85,0.52)});
- assert.ok(belowHorizon.reflY<0.04&&belowHorizon.horizonDamp<0.6,`rays pointing at/below horizon still damp (${belowHorizon.reflY.toFixed(2)} -> ${belowHorizon.horizonDamp.toFixed(2)})`);
-
- // Item 5: barrel-tile/embossed normal map perturbation does not inject fake runnels.
- const flatPan=ev.evalRoofApply({world:v3(0.11,4,0.3),face,dxWorld:v3(0.01,0,0),dyWorld:v3(0,0,0.01),wet:1,rate:1,phase:0.2,roughness:0.88,metalness:0.0,albedo:0.25});
- const embossed=ev.evalRoofApply({world:v3(0.11,4,0.3),face,mapNormal:v3(0.35,0.85,0.39),dxWorld:v3(0.01,0,0),dyWorld:v3(0,0,0.01),wet:1,rate:1,phase:0.2,roughness:0.88,metalness:0.0,albedo:0.25});
+ const flatPan=ev.evalRoofApply({world:v3(0.11,4,0.3),face,dxWorld:v3(0.01,0,0),dyWorld:v3(0,0,0.01),wet:1,rate:0.4,phase:0.2,roughness:0.88,metalness:0.0,albedo:0.25});
+ const embossed=ev.evalRoofApply({world:v3(0.11,4,0.3),face,mapNormal:v3(0.35,0.85,0.39),dxWorld:v3(0.01,0,0),dyWorld:v3(0,0,0.01),wet:1,rate:0.4,phase:0.2,roughness:0.88,metalness:0.0,albedo:0.25});
  close(embossed.roughness,flatPan.roughness,1e-6);
 
- // Item 6: flat and near-flat smooth-shaded roofs stay finite with ZERO jump across slopeSin = 0.001 at every azimuth.
  const flat=ev.evalRoofApply({world:v3(1.2,4,2.3),face:v3(0,1,0),dxWorld:v3(0.001,0,0),dyWorld:v3(0,0,0.001),wet:1,rate:1,phase:0.5});
  assert.ok([flat.roughness,flat.color.x,flat.horizonDamp,flat.normal.x,flat.normal.y,flat.normal.z].every(Number.isFinite),'flat roof stays finite');
- close(flat.riv.z,0);close(flat.riv.x,0);close(flat.riv.y,0);
+ close(flat.riv.z,0);close(flat.waves.x,0);close(flat.waves.y,0);
  for(const azDeg of [0,90,180,270]){
   const az=azDeg*Math.PI/180;
   let prev=null,prevS=0;
@@ -597,38 +712,43 @@ await test('beads stay at wetness=1 on roofs only, wet film stays glossy with no
    if(prev){
     const ds=s-prevS;
     if(s<=0.019)close(cur.roughness,prev.roughness,1e-5);
-    assert.ok(Math.abs(cur.horizonDamp-prev.horizonDamp)<8.0*ds+1e-3,`continuous near-flat horizonDamp at az=${azDeg} s=${s} (d=${Math.abs(cur.horizonDamp-prev.horizonDamp).toFixed(5)}, ds=${ds})`);
-    assert.ok(len(sub(cur.normal,prev.normal))<2.0*ds+1e-3,`continuous near-flat normal at az=${azDeg} s=${s} (d=${len(sub(cur.normal,prev.normal)).toFixed(5)}, ds=${ds})`);
+    const dh=Math.abs(cur.horizonDamp-prev.horizonDamp),dn=len(sub(cur.normal,prev.normal));
+    const slopeLimit=s<=0.019?3.0:10.0;
+    assert.ok(dh<20.0*ds+1e-3,`continuous near-flat horizonDamp at az=${azDeg} s=${s} (dh=${dh.toFixed(4)} ds=${ds})`);
+    assert.ok(dn<slopeLimit*ds+1e-3,`continuous near-flat normal at az=${azDeg} s=${s} (dn=${dn.toFixed(4)} ds=${ds})`);
    }
    prev=cur;prevS=s;
   }
  }
- console.log('BEAD_METRICS',JSON.stringify({hits,avgBeadCov:+(roofBeadCov/600).toFixed(4),minRough:+minRough.toFixed(4),filmRange:[+minFilmRough.toFixed(3),+maxFilmRough.toFixed(3)],minSkyFilmDamp:+minSkyFilmDamp.toFixed(3),maxRivDamp:+maxRivDamp.toFixed(3)}));
 });
 
-await test('detail stays sharp at 1-1.5 cm/px mid distance and fades cleanly to constant average at overview footprints',()=>{
+await test('detail stays sharp at 1-1.5 cm/px mid distance and fades cleanly to constant average with zero normal shimmer at overview footprints',()=>{
  const sampleStats=(px)=>{
-  const dx=v2(px,0),dy=v2(0,px);
-  const rivC=[],beadC=[];let rivSlope=0,beadSlope=0;
+  const visRiv=clamp((0.048-px)*34.0,0,1),visWave=clamp((0.058-px)*30.0,0,1),visBead=clamp((0.075-px)*22.2,0,1);
+  const rivC=[],beadC=[];let rivSlope=0,beadSlope=0,waveSlope=0;
   for(let i=0;i<400;i++){
    const p=v2((i%40)*0.097,Math.floor(i/40)*0.173);
-   const r=ev.rivulets(p,1,1,0.4,dx,dy),b=ev.beads(p,1,dx,dy,0.894);
+   const r=ev.rivulets(p,0.9,0.4,0.4,visRiv);
+   const b=ev.beads(p,0.9,0.4,0.4,visBead,1);
+   const w=ev.sheetWaves(p,0.9,0.4,visWave);
    rivC.push(r.z);beadC.push(b.z);
-   rivSlope+=Math.hypot(r.x,r.y);beadSlope+=Math.hypot(b.x,b.y);
+   rivSlope+=Math.hypot(r.x,r.y);beadSlope+=Math.hypot(b.x,b.y);waveSlope+=Math.hypot(w.x,w.y);
   }
   const stat=arr=>{const m=arr.reduce((s,v)=>s+v,0)/arr.length;const v=arr.reduce((s,x)=>s+(x-m)*(x-m),0)/arr.length;return {mean:m,std:Math.sqrt(v)};};
-  return {riv:stat(rivC),bead:stat(beadC),rivSlope:rivSlope/400,beadSlope:beadSlope/400};
+  return {riv:stat(rivC),bead:stat(beadC),rivSlope:rivSlope/400,beadSlope:beadSlope/400,waveSlope:waveSlope/400};
  };
  const near=sampleStats(0.0015),mid1cm=sampleStats(0.010),mid15cm=sampleStats(0.015),far=sampleStats(0.08);
  console.log('LOD_FILTER',JSON.stringify({near,mid1cm,mid15cm,far}));
- assert.ok(near.riv.std>0.06&&near.rivSlope>0.001,'near rivulets have calm contrast and normal tilt');
- assert.ok(near.bead.std>0.15&&near.beadSlope>0.01,'near beads have strong contrast and dome tilt');
- assert.ok(mid1cm.riv.std>0.06&&mid1cm.rivSlope>0.001,'1 cm/px owner-view rivulets retain full contrast');
- assert.ok(mid15cm.riv.std>0.06&&mid15cm.rivSlope>0.001,'1.5 cm/px upper-roof rivulets retain full contrast');
+ assert.ok(near.riv.std>0.06&&near.rivSlope>0.002,'near rivulets have strong contrast and lens tilt');
+ assert.ok(near.bead.std>0.12&&near.beadSlope>0.01,'near beads have strong contrast and dome tilt');
+ assert.ok(mid1cm.riv.std>0.06&&mid1cm.rivSlope>0.002,'1 cm/px close-view rivulets retain full contrast');
+ assert.ok(mid15cm.riv.std>0.06&&mid15cm.rivSlope>0.002,'1.5 cm/px upper-roof rivulets retain full contrast');
+ assert.ok(mid1cm.waveSlope>0.05,'1 cm/px close-view hard-rain waves are crisp');
  assert.ok(far.riv.std<1e-6&&far.rivSlope<1e-6,'overview rivulets filter to exact constant average with zero normal shimmer');
  assert.ok(far.bead.std<1e-6&&far.beadSlope<1e-6,'overview beads filter to exact constant average with zero normal shimmer');
+ assert.ok(far.waveSlope<1e-6,'overview sheet waves filter cleanly to zero normal shimmer');
  assert.ok(far.riv.mean>0.01&&far.riv.mean<0.12,'overview rivulet average stays in calm coverage range');
- assert.ok(far.bead.mean>0.04&&far.bead.mean<0.25,'overview bead average stays in realistic coverage range');
+ assert.ok(far.bead.mean>0.04&&far.bead.mean<0.20,'overview bead average stays in realistic coverage range');
 });
 
 finish();

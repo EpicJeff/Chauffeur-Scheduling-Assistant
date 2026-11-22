@@ -215,7 +215,7 @@ function ripple(water,rate,clock,world,footprint){
   .replace('slope+=direction*band*fade*visible*strength*1.414214*support*farFade*(mid?1.0:nearFade);','let amp=band*fade*visible*strength*1.414214*support*farFade*(mid?1:nearFade);slope.x+=direction.x*amp;slope.y+=direction.y*amp;')
   .replaceAll('vec2(0.0)','v2(0)').replace(/\b(?:float|vec2|vec3|int|bool) (?=\w+=)/g,'let ');
  const fn=new Function('world','weatherSurface','footprint','v2','sub','div','dot','floor','fract','int','length','abs','max','smoothstep','weatherRingCount','weatherRingHash','weatherRingStrength','weatherRingSupport','weatherRingBand',body);
- return point=>fn(point,{w:Math.round(rate*255)+clock/4},footprint,v2,sub,div,(a,b)=>dot(a,b)+(a.z??0)*(b.z??0),Math.floor,fract,Math.trunc,p=>Math.hypot(p.x,p.y),Math.abs,Math.max,smoothstep,scalar('weatherRingCount'),hash,scalar('weatherRingStrength'),scalar('weatherRingSupport'),scalar('weatherRingBand'));
+ return point=>fn(point,{w:Math.round(rate*255)+clock/64},footprint,v2,sub,div,(a,b)=>dot(a,b)+(a.z??0)*(b.z??0),Math.floor,fract,Math.trunc,p=>Math.hypot(p.x,p.y),Math.abs,Math.max,smoothstep,scalar('weatherRingCount'),hash,scalar('weatherRingStrength'),scalar('weatherRingSupport'),scalar('weatherRingBand'));
 }
 await test('executed puddle and pool rain slopes match at equal rates and screen footprints',()=>{
  for(const rate of [.1,.45,1])for(const footprint of [.001,.01,.03]){
@@ -236,17 +236,17 @@ await test('one packed vector: ground units, bounded rate/phase, neutral and rai
  const layer=installWeatherSurface(new THREE.Scene());
  assert.deepEqual(Object.keys(layer.uniforms),['weatherSurface']);
  for(const precip of ['none','snow','hail','rain','mix']){
-  layer.update({wetness:1,snow_cm:8,puddles:1,rate:1,precip},2);
+  layer.update({wetness:1,snow_cm:8,puddles:1,rate:1,precip},32);
   const u=layer.uniforms.weatherSurface.value;
   assert.deepEqual(u.toArray().slice(0,3),[1,1,1]);
   assert.equal(Math.floor(u.w)/255,['rain','mix'].includes(precip)?1:0);
   close(u.w-Math.floor(u.w),.5);
  }
- for(const seconds of [0,3.999,4,1e10,NaN]){
+ for(const seconds of [0,3.999,4,63.999,64,1e10,NaN]){
   layer.update({wetness:NaN,snow_cm:Infinity,puddles:-1,rate:Infinity,precip:'rain'},seconds);
   assert.ok(layer.uniforms.weatherSurface.value.toArray().every(Number.isFinite));
  }
- for(const seconds of [3.999999999,4,7.999999999]){
+ for(const seconds of [3.999999999,4,7.999999999,63.999999999,64,127.999999999]){
   layer.update({precip:'rain',rate:1},seconds);
   const uploaded=new Float32Array(layer.uniforms.weatherSurface.value.toArray());
   assert.equal(Math.floor(uploaded[3]),255,'GPU float rounding never spills phase into rain rate');
@@ -438,7 +438,7 @@ await test('built house and household: every lit kind, grass, baked lamps, water
    if(m.name==='roof'||m.userData.materialRole==='roof'){
     // A 4:12 roof has normal.y=.949 and passes .9; slope alone cannot exclude it.
     assert.ok(!f.includes('weatherPuddle(weatherUp'),row.label+' roof never collects puddles');
-    assert.ok(f.includes('weatherGlossValue*=mix(.65,1.0,weatherNoise'),row.label+' streaky roof gloss');
+    assert.ok(f.includes('weatherRoofRivulets(')&&f.includes('weatherRoofSheetWaves('),row.label+' roof rivulets and sheet waves');
    }
    if(row.label==='grass'){
     assert.ok(f.indexOf('roughnessFactor = mix(.96, .53, vGrass.x)')<f.indexOf('roughnessFactor=weatherRoughness'),'weather follows grass roughness override');

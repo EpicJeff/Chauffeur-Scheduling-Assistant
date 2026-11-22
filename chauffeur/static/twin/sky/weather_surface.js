@@ -19,7 +19,8 @@ export function standingWaterAt(x,z,up,weather={}) {
 }
 
 // xyz: wetness, snow cover (0..8 cm), puddles. w: an 8-bit rain rate in
-// the integer part, plus a four-second repeating clock in the fractional part.
+// the integer part, plus a 64-second repeating clock in the fractional part
+// (multiple of 4 s so 3 Hz puddle/pool ripples are unchanged).
 // No sampler and exactly one fragment vector, even on the full pool program.
 export const WEATHER_GLSL=`
 uniform vec4 weatherSurface;
@@ -158,54 +159,74 @@ float weatherDrops(vec2 world, float wet, vec2 dx, vec2 dy, float up) {
   return a+b-a*b;
 }
 #ifdef WEATHER_SURFACE_ROOF
-// Roof wet rivulets and raised beads (ALU only, zero new uniforms/samplers).
-// Rivulets use metric (across-slope, downhill-slope); beads use world XZ.
-vec3 weatherRoofRivulets(vec2 uv, float wet, float rate, float phase, vec2 dx, vec2 dy) {
-  float wetScale=clamp(wet*5.5556,0.0,1.0);
-  float density=.78*smoothstep(.08,.65,wet);
-  // True Euclidean pixel width across slope (rotation-invariant); fade is for
-  // overview distance (~2.1-5.5 cm/px), keeping full contrast at ~1-1.8 cm/px.
-  float pxAcross=length(vec2(dx.x,dy.x));
-  float vis=1.0-smoothstep(.85,2.2,pxAcross*40.0);
-  float avgCov=density*(.05/.44)*.48*wetScale;
+// Roof water: growing pools/beads, scattered release-event winding rivulets
+// with finite head/tail and lens normals, and hard-rain travelling roll waves.
+// ALU only, zero new uniforms/samplers, zero transcendentals/divides in roof helpers.
+vec3 weatherRoofRivulets(vec2 uv, float wet, float rate, float phase, float vis) {
+  vec2 wr=min(vec2(wet,rate)*vec2(1.8,2.2),1.0);
+  float isRain=rate>0.0?1.0:0.0;
+  float activeProb=wr.x*(rate>0.0?min(wr.y,.95):.35);
+  float avgCov=activeProb*.08;
   if(vis<=.001) return vec3(0.0,0.0,avgCov);
-  float cellX=uv.x*(1.0/.44),id=floor(cellX),localX=fract(cellX);
-  vec3 h=weatherRingHash(vec2(id,11.7));
-  if(fract(h.z*7.13+h.x*3.17)>=density) return vec3(0.0,0.0,mix(avgCov,0.0,vis));
-  // Nearly straight downhill tracks: gentle <=1.2 cm lateral drift over 6-11 m;
-  // cos(p1) shares the same sincos for gentle along-track swell.
-  float p1=uv.y*(.55+h.y*.45)+h.z*6.2831853;
-  float centre=.18+h.x*.64+sin(p1)*(.012/.44);
-  float swell=.5+.5*cos(p1);
-  float activeFlow=clamp(rate*2.857,0.0,1.0);
-  float surgePhi=6.2831853*(uv.y*mix(.56,.87,h.y)-2.0*phase+h.z);
-  float surge=.5+.5*sin(surgePhi);
-  float fullness=clamp(mix(.54,1.0,swell)*mix(.78,.52+.72*surge*surge,activeFlow),0.0,1.0);
-  float invHalfW=mix(55.5556,31.25,h.y)*mix(1.2195,.8929,fullness);
-  float s=(localX-centre)*.44*invHalfW;
-  float aa=max(pxAcross*invHalfW*.82,.22);
-  float mask=clamp((1.0-abs(s))/(2.0*aa)+.5,0.0,1.0);
-  float cs=clamp(s,-1.0,1.0),crown=1.0-cs*cs;
-  float strength=mask*vis*wetScale;
-  return vec3(cs*crown*.55*strength,-cos(surgePhi)*.20*activeFlow*crown*strength,mix(avgCov,mask*fullness*wetScale,vis));
+  float baseRow=floor(uv.y*.416667),lenScale=.85+.55*wr.y,cov=0.0;
+  vec2 slope=vec2(0.0,0.0);
+  // Two golden-ratio staggered rows cover 2.4 m of unclipped downhill travel with no lattice.
+  int rows=rate>0.0?2:1;
+  for(int k=0;k<rows;k++) {
+    float row=baseRow-float(k);
+    float cellX=uv.x*3.333333+fract(row*.381966);
+    vec3 h=weatherRingHash(vec2(floor(cellX),row));
+    float dyM=uv.y-(row+.03+.94*h.y)*2.4;
+    if(fract(h.z*9.37)<activeProb) {
+      float dxM=(fract(cellX)-(.24+.52*h.x))*.30;
+      float hz6=h.z*6.0,h2=fract(hz6);
+      // Smooth per-stream random winding path (zero at pool dyM=0, two random polynomial waves).
+      vec2 wp=fract(max(0.0,dyM)*vec2(.50+.50*h.x,1.10+.90*h.y))-.5;
+      float rx=dxM-dot(wp*(.5-abs(wp)),h.xy*vec2(1.15,.65)-vec2(.575,.325));
+      // Seamless per-stream release cycle over the 64 s clock (integer 5..10 cycles).
+      float tau=fract(phase*(5.0+floor(hz6))+h2);
+      float runT=clamp((tau-.22)*1.28205,0.0,1.0);
+      float headY=runT*2.35;
+      // Tail stays at the pool until water is spent, then travels downhill.
+      float tailY=rate>0.0?max(0.0,headY-(.75+.95*h2)*lenScale):(.65+1.10*h2);
+      float lifeFade=clamp(5.5-runT*5.5,0.0,1.0)*isRain;
+      // Unified origin pool -> bulbous leading head bead (grows at dyM=0, then launches).
+      float beadAmp=min(tau*4.5455,lifeFade);
+      vec2 hd=vec2(rx,dyM-headY)*32.0;
+      float hDome=max(0.0,beadAmp-dot(hd,hd));
+      // Longitudinal masks: tail taper, head cap, damp trail start & downhill fade.
+      vec4 seg=clamp(vec4(dyM-tailY,headY-dyM,dyM,dyM-tailY+1.54)*vec4(4.5,22.0,12.5,.65),0.0,1.0);
+      float s=rx*44.0,crown=max(0.0,1.0-s*s),bodyMask=seg.x*seg.y*lifeFade;
+      float lensN=s*crown*2.8*bodyMask;
+      float trailMask=seg.z*(1.0-seg.x)*seg.w*(.42*wet);
+      cov=max(cov,max(clamp(crown*2.4,0.0,1.0)*max(bodyMask,trailMask),hDome*2.6));
+      slope+=vec2(lensN,0.0)+hd*(hDome*2.1);
+    }
+  }
+  return vec3(slope*(vis*wr.x),mix(avgCov,min(cov,1.0)*wr.x,vis));
 }
-vec3 weatherRoofBeads(vec2 uv, float wet, vec2 dx, vec2 dy, float up) {
-  vec2 p=uv*29.4118,id=floor(p);
-  float footprint=sqrt(max(dot(dx,dx),dot(dy,dy)))*29.4118;
-  float vis=1.0-smoothstep(.45,1.15,footprint*3.0909);
-  float dens=weatherDropDensity(up);
-  float avgCov=dens*.0822*clamp(wet*2.7027,0.0,1.0);
-  if(vis<=.001) return vec3(0.0,0.0,avgCov);
-  vec3 h=weatherRingHash(id);
-  if(fract(h.y*19.19)>dens) return vec3(0.0,0.0,mix(avgCov,0.0,vis));
-  float arrived=step(fract(h.x*13.71+h.y*7.17)*.35+.0001,wet);
-  float radius=.092+.185*h.z*h.z;
-  vec2 centre=vec2(radius)+h.xy*(1.0-2.0*radius);
-  vec2 q=(fract(p)-centre)/radius;
-  float r2=dot(q,q);
-  float disc=clamp((1.25-r2)*1.67,0.0,1.0)*arrived;
-  float dome=max(0.0,1.0-r2);
-  return vec3(q*(dome*.78*disc*vis),mix(avgCov,disc,vis));
+// Hard-rain glossy sheet-flow ripples and roll waves running downhill.
+// Three cross-skewed, domain-warped C1 polynomial wave slopes with exact integer 64 s cycles.
+vec2 weatherRoofSheetWaves(vec2 uv, float sheet, float phase, float vis) {
+  vec3 ph=uv.y*vec3(3.60,6.20,9.80)+uv.x*vec3(.42,-.55,.85)-phase*vec3(96.0,134.0,176.0);
+  float t1=fract(ph.x)-.5,s1=t1*(.5-abs(t1));
+  vec2 t23=fract(ph.yz+s1*vec2(2.24,1.60))-.5;
+  vec3 sw=vec3(s1,t23*(.5-abs(t23)));
+  return vec2(dot(sw,vec3(.256,-.240,.160)),dot(sw,vec3(3.04,2.08,1.12)))*(sheet*vis);
+}
+vec3 weatherRoofBeads(vec2 uv, float wet, float rate, float phase, float vis, float keep) {
+  // Varied coalesced beads (6.8 cm row-staggered cells, ~1 to 4.9 cm diameter)
+  // that visibly grow with wetness, rate and slow per-bead cycles; freeze when rate=0.
+  float avgCov=.085*wet*keep;
+  vec2 p=uv*14.7059;
+  p.x+=floor(p.y)*.381966;
+  vec3 h=weatherRingHash(floor(p));
+  float mask=(h.x*.35<=wet&&h.y<=.72)?keep:0.0;
+  float growth=clamp(wet*(.4+rate+fract(phase*4.0+h.x)),0.0,1.0);
+  float radius=(.092+.185*h.z*h.z)*(.75+.55*growth);
+  vec2 q=(fract(p)-h.xy)/radius+h.xy*2.0-1.0;
+  float dome=max(0.0,1.0-dot(q,q));
+  return vec3(q*(dome*1.20*mask*vis),mix(avgCov,clamp(dome*3.2,0.0,1.0)*mask,vis));
 }
 #endif
 float weatherSnow(float up, float cover, float edge) {
@@ -235,7 +256,7 @@ vec2 weatherRipple(vec2 world) {
   vec2 dx=weatherWorldDx.xz,dy=weatherWorldDy.xz;
   float farFade=1.0-smoothstep(784.0,1296.0,distanceSq);
   float nearFade=1.0-smoothstep(144.0,324.0,distanceSq);
-  float clock=fract(weatherSurface.w)*4.0;
+  float clock=fract(weatherSurface.w)*64.0;
   // Water has the same impact slope and wavelength on a puddle or the pool.
   // The former .35 scale cut ring area to 12% and tripled the AA footprint,
   // suppressing puddle rings even when their normal amplitude matched.
@@ -311,41 +332,42 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
     float weatherGlossValue=weatherWet;
     #ifdef WEATHER_SURFACE_ROOF
       float roofSlopeSin=length(weatherFace.xz);
-      float roofUpMask=smoothstep(.05,.25,weatherUp);
-      float roofSlopeMask=smoothstep(.02,.12,roofSlopeSin)*roofUpMask;
-      vec3 roofAcrossDir=vec3(0.0,0.0,-1.0);
-      vec3 roofDownDir=vec3(1.0,0.0,0.0);
-      vec2 roofNoiseUv=vWeatherWorld.xz*.8;
+      float roofUpMask=clamp((weatherUp-.05)*5.0,0.0,1.0);
+      float roofSlopeMask=clamp((roofSlopeSin-.02)*10.0,0.0,1.0)*roofUpMask;
       float roofWetRaw=weatherWet*roofUpMask;
       float roofImpervious=1.0-weatherPorosityValue;
       // Impervious roofs (metal, smooth tile) form rivulets and beads; porous
       // roofs (asphalt/wood shingles) absorb water so beads soak in and rivulets stay faint.
       float roofRivWeight=mix(.12,1.0,roofImpervious*roofImpervious);
       float roofBeadWeight=clamp(roofImpervious*2.0-.5,0.0,1.0);
-      vec3 roofRiv=vec3(0.0);
-      if(roofSlopeMask>0.0){
-        vec2 roofHoriz=weatherFace.xz/roofSlopeSin;
-        roofAcrossDir=vec3(roofHoriz.y,0.0,-roofHoriz.x);
-        roofDownDir=vec3(roofHoriz.x*weatherUp,-roofSlopeSin,roofHoriz.y*weatherUp);
-        vec2 roofUv=vec2(dot(vWeatherWorld,roofAcrossDir),dot(vWeatherWorld,roofDownDir));
-        roofNoiseUv=mix(roofNoiseUv,vec2(roofUv.x*2.2,roofUv.y*.3),roofSlopeMask);
-        if(roofWetRaw>0.0){
-          vec2 roofDx=vec2(dot(weatherWorldDx,roofAcrossDir),dot(weatherWorldDx,roofDownDir));
-          vec2 roofDy=vec2(dot(weatherWorldDy,roofAcrossDir),dot(weatherWorldDy,roofDownDir));
-          float roofRate=floor(weatherSurface.w)/255.0;
-          float roofPhase=roofRate>0.0?fract(weatherSurface.w):0.0;
-          roofRiv=weatherRoofRivulets(roofUv,roofWetRaw,roofRate,roofPhase,roofDx,roofDy)*(roofSlopeMask*roofRivWeight);
+      vec3 roofNormalOff=vec3(0.0,0.0,0.0);
+      float roofWaterCov=0.0,roofRivCov=0.0,roofSheet=0.0;
+      #if defined(STANDARD)||defined(PHONG)
+      if(roofWetRaw>0.0){
+        float roofRate=floor(weatherSurface.w)/255.0;
+        float roofPhase=roofRate>0.0?fract(weatherSurface.w):0.0;
+        float roofPx=sqrt(max(dot(weatherWorldDx,weatherWorldDx),dot(weatherWorldDy,weatherWorldDy)));
+        vec3 roofVis=clamp((vec3(.048,.058,.075)-roofPx)*vec3(34.0,30.0,22.2),0.0,1.0);
+        vec2 roofSh=clamp((vec2(roofRate,roofWetRaw)-vec2(.50,.55))*2.22,0.0,1.0);
+        float roofSheetRaw=roofSh.x*roofSh.y;
+        roofSheet=roofSheetRaw*roofSlopeMask*roofRivWeight;
+        if(roofSlopeMask>0.0){
+          vec2 roofHoriz=weatherFace.xz/roofSlopeSin;
+          vec3 roofAcrossDir=vec3(roofHoriz.y,0.0,-roofHoriz.x);
+          vec3 roofDownDir=vec3(roofHoriz.x*weatherUp,-roofSlopeSin,roofHoriz.y*weatherUp);
+          vec2 roofUv=vec2(dot(vWeatherWorld,roofAcrossDir),dot(vWeatherWorld,roofDownDir));
+          vec3 roofRiv=weatherRoofRivulets(roofUv,roofWetRaw,roofRate,roofPhase,roofVis.x)*(roofSlopeMask*roofRivWeight);
+          vec2 roofWaves=weatherRoofSheetWaves(roofUv,roofSheet,roofPhase,roofVis.y);
+          vec2 roofSlope=roofRiv.xy*(1.0-.70*roofSheetRaw)+roofWaves;
+          roofNormalOff=roofAcrossDir*roofSlope.x+roofDownDir*roofSlope.y;
+          roofRivCov=roofRiv.z;
         }
+        vec3 roofBead=weatherRoofBeads(vWeatherWorld.xz,roofWetRaw,roofRate,roofPhase,roofVis.z,(1.0-.94*roofSheetRaw)*roofBeadWeight);
+        float roofBeadKeep=1.0-roofRivCov;
+        roofNormalOff.xz+=roofBead.xy*roofBeadKeep;
+        roofWaterCov=min(max(roofRivCov+roofBead.z*roofBeadKeep,roofSheet*.88),1.0);
       }
-      vec3 roofBead=vec3(0.0);
-      if(roofWetRaw>0.0&&roofBeadWeight>0.0){
-        roofBead=weatherRoofBeads(vWeatherWorld.xz,roofWetRaw,weatherWorldDx.xz,weatherWorldDy.xz,weatherUp)*roofBeadWeight;
-      }
-      float roofBeadKeep=1.0-roofRiv.z;
-      float roofWaterCov=clamp(roofRiv.z+roofBead.z*roofBeadKeep,0.0,1.0);
-      weatherGlossValue=1.0;
-      weatherGlossValue*=mix(.65,1.0,weatherNoise(roofNoiseUv));
-      float roofFilmVar=(weatherGlossValue-.65)*(1.0/.35);
+      #endif
     #else
       if(abs(weatherUp)<.5)weatherGlossValue*=mix(.45,1.0,weatherNoise(weatherPlane*vec2(12.0,.7)));
     #endif
@@ -369,15 +391,18 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
       weatherLum=max(weatherLum,.35);
     #endif
     diffuseColor.rgb *= weatherWetScale(weatherLum,weatherMetal,weatherDarkenWet(weatherPorosityValue,weatherWet));
+    #ifdef WEATHER_SURFACE_ROOF
+      float roofCoatWeight=clamp((.4-weatherLum)*3.3333,0.0,1.0)*roofImpervious;
+      diffuseColor.rgb *= 1.0-.22*roofRivCov*roofCoatWeight;
+    #endif
     diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.85,.87,.9),weatherS);
     #ifdef STANDARD
       #ifdef WEATHER_SURFACE_LAWN
         roughnessFactor=weatherRoughness(mix(roughnessFactor,.42,weatherGlossValue),0.0,weatherP,weatherS);
       #elif defined(WEATHER_SURFACE_ROOF)
         float roofBaseWet=weatherWetRoughness(roughnessFactor,weatherPorosityValue,roofWetRaw);
-        float roofTarget=mix(min(roofBaseWet,mix(.14,.08,roofFilmVar)),clamp(roofBaseWet*mix(.82,1.12,roofFilmVar),.045,1.0),weatherPorosityValue);
-        float roofRough=mix(roofBaseWet,roofTarget,roofWetRaw);
-        roofRough=mix(roofRough,min(roofRough,.045),roofWaterCov*roofWetRaw);
+        float roofPanelRough=min(max(roofBaseWet,.15-.15*roofSheet),roughnessFactor);
+        float roofRough=mix(roofPanelRough,min(roofBaseWet,.025),roofWaterCov);
         roughnessFactor=mix(roofRough,.7,weatherS);
       #else
         roughnessFactor=weatherRoughness(weatherWetRoughness(roughnessFactor,weatherPorosityValue,weatherGlossValue),0.0,weatherP,weatherS);
@@ -387,7 +412,7 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
       // metallic so they do not turn into light-grey diffuse plastic when wet.
       float weatherWaterFilmCov=weatherWaterFilm(weatherPorosityValue,weatherWet,weatherP);
       #ifdef WEATHER_SURFACE_ROOF
-        weatherWaterFilmCov=max(weatherWaterFilmCov,roofWaterCov*roofWetRaw);
+        weatherWaterFilmCov=max(weatherWaterFilmCov,roofWaterCov);
       #endif
       metalnessFactor=mix(metalnessFactor,0.0,max(weatherWaterFilmCov*(1.0-smoothstep(.06,.20,weatherLum*weatherMetal)),weatherS));
     #endif
@@ -401,7 +426,7 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
   vec2 weatherSlope=vec2(0.0);
   if(weatherRingWeight>0.0)weatherSlope=weatherRipple(vWeatherWorld.xz)*weatherRingWeight;
   #ifdef WEATHER_SURFACE_ROOF
-    vec3 weatherNormal=normal+mat3(viewMatrix)*((roofAcrossDir*roofRiv.x+roofDownDir*roofRiv.y+vec3(roofBead.x,0.0,roofBead.y)*roofBeadKeep)*(1.0-weatherS));
+    vec3 weatherNormal=normal+mat3(viewMatrix)*(roofNormalOff*(1.0-weatherS));
   #else
   vec3 weatherNormal=normal+mat3(viewMatrix)*vec3(weatherSlope.x,0.0,weatherSlope.y);
   #endif
@@ -422,10 +447,9 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
     float roofHorizon=weatherHorizon(roofReflected.y,roofWetNoSnow);
     float roofNoV=clamp(dot(normal,roofViewDir),0.0,1.0);
     float roofGrazing=(1.0-roofNoV)*(1.0-roofNoV);
-    float roofSkyGrad=smoothstep(.15,.95,roofReflected.y);
-    float roofCoatWeight=(1.0-smoothstep(.1,.4,weatherLum))*roofImpervious;
-    float roofFilmSheen=mix(1.50,2.25,clamp(roofGrazing*.75+roofSkyGrad*.45,0.0,1.0))*mix(.90,1.08,roofFilmVar);
-    float roofWaterGlint=roofWaterCov*1.35*(.70+.45*roofSkyGrad);
+    float roofSkyGrad=clamp((roofReflected.y-.15)*1.25,0.0,1.0);
+    float roofFilmSheen=mix(1.30,2.00,clamp(roofGrazing*.75+roofSkyGrad*.45,0.0,1.0));
+    float roofWaterGlint=(roofWaterCov*1.35+roofRivCov*.55)*(.72+.55*roofSkyGrad);
     float roofSheen=mix(1.0,roofFilmSheen+roofWaterGlint,roofCoatWeight);
     weatherHorizonDamp=mix(1.0,roofHorizon*roofSheen,roofWetNoSnow);
   #endif
@@ -512,7 +536,7 @@ export function installWeatherSurface(scene) {
       const rate=['rain','mix'].includes(weather.precip)?unit(weather.rate):0;
       // Leave one float32 ULP before the next integer at maximum rate, so
       // uploading a phase just before wrap cannot increment the rain rate.
-      const phase=Number.isFinite(seconds)?Math.min(((seconds%4+4)%4)/4,1-1/32768):0;
+      const phase=Number.isFinite(seconds)?Math.min(((seconds%64+64)%64)/64,1-1/32768):0;
       u.set(unit(weather.wetness),unit(weather.snow_cm/8),unit(weather.puddles),Math.round(rate*255)+phase);
     },
     dispose(){if(disposed)return;disposed=true;scene.onBeforeRender=previous;},
