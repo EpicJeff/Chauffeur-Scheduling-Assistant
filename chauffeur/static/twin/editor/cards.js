@@ -6,6 +6,9 @@ import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
 import { createSlotRow, idleLibrary } from './slot_row.js';
 import { keepPlace } from './keep_place.js';
+import { drawSelectionCard, drawMaterialsList, selectionSubject, selectionCardLayout } from './selection_card.js';
+import { feetInches, parseLength } from './selection_fields.js';
+export { feetInches, parseLength } from './selection_fields.js';
 import { createEquipmentShelf } from './equipment_shelf.js';
 import { foundationShelf } from './foundation_shelf.js';
 import { houseMaterialsShelf } from './house_materials.js';
@@ -34,26 +37,19 @@ const labels = { low_side: 'Low side', at: 'Distance along the wall', ridge: 'Ri
   offset: 'Distance from surface', floor_offset_ft: 'Floor height (relative to this floor)' };
 const hostedLabels = { rotation: 'Turn', scale: 'Size' };
 const units = { pitch: 'in 12', rotation: '°', scale: '%' };
-export function feetInches(value) {
-  const inches = Math.round(Math.abs(value) * 12);
-  return `${value < 0 ? '-' : ''}${Math.floor(inches / 12)}'-${inches % 12}"`;
-}
-export function parseLength(text) {
-  text = text.trim().replace(/[′’]/g, "'").replace(/[″“”]/g, '"');
-  const decimal = '(?:\\d+(?:\\.\\d*)?|\\.\\d+)';
-  const match = text.match(new RegExp(`^(-?)(${decimal})\\s*(?:'|ft|feet|foot)\\s*-?\\s*(?:(${decimal})\\s*(?:"|in|inches|inch)?)?$`, 'i'));
-  const simple = text.match(new RegExp(`^(-?${decimal})\\s*("|in|inches|inch)?$`, 'i'));
-  const value = match ? (match[1] ? -1 : 1) * (Number(match[2]) + Number(match[3] || 0) / 12)
-    : simple ? Number(simple[1]) / (simple[2] ? 12 : 1) : NaN;
-  if (!text || !Number.isFinite(value)) throw new Error('Use feet and inches, such as 11\'-0", or a number of feet.');
-  return value;
-}
-
-export function createCards({ getPlan, getModel = () => null, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials, removeSelection }) {
-  let namesAsked = false;
+export function createCards({ getPlan, getModel = () => null, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials, removeSelection, selectionStore, applyBatch = ops => op({ op: 'batch', ops }), visibility, view }) {
+  let namesAsked = false, namesRead = null;
+  function loadNames(onReady) {
+    if (!loadMaterialNames) return;
+    if (!namesAsked) {
+      namesAsked = true;
+      namesRead = Promise.resolve(loadMaterialNames()).finally(() => { namesRead = null; });
+    }
+    namesRead?.then(onReady, () => { namesAsked = false; });
+  }
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
-  let edgeIndex = null;
+  let edgeIndex = null, cardSubject = null;
   let haSection = null;
   const slots = [];
   const ownSlot = row => slots.push(row);
@@ -96,10 +92,25 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
   }
   // A field that shows or hides other fields rebuilds the card: keep the person's place.
   function draw(next = selection) {
-    const same = !!next && !!selection && next.pieceId === selection.pieceId && next.buildingId === selection.buildingId;
+    const members = selectionStore?.members() || (next ? [next] : []);
+    const subject = selectionSubject(members.map(ref => ref.kind ? ref : { ...ref, kind: findPiece(getPlan(), ref.pieceId, ref.buildingId)?.kind }));
+    const same = !!subject && subject === cardSubject;
+    cardSubject = subject;
     return same ? keepPlace(host, () => drawCard(next)) : drawCard(next);
   }
   function drawCard(next = selection) {
+    const members = selectionStore?.members() || (next ? [next] : []);
+    const materialOptions = refs => ({ refs, getPlan, getModel, getKit, getFieldLabels, selectionStore, applyBatch, canEdit, library, ownSlot, queue, report, view, visibility, loadNames, onSaved: () => { layout = null; draw(); } });
+    if (members.length > 1) {
+      const signature = 'set:' + selectionCardLayout(getPlan(), members, { getModel, getFieldLabels, getKit, canEdit });
+      if (layout === signature) { selection = next; slots.forEach(row => row.refresh()); return; }
+      host.dispatchEvent(new Event('fixturecardrelease'));
+      selection = next; layout = signature; edgeIndex = null; disposeSlots(); host.replaceChildren(); inputs = new Map(); haSection = null;
+      host.hidden = false;
+      dock?.properties.render(host, { crumbs: ['Selected pieces'], reveal: false });
+      drawSelectionCard(host, { ...materialOptions(members), removeSelection });
+      return;
+    }
     if (!next && host.dataset.fixtureCard) return;
     if (next || host.dataset.stairDraft) host.dispatchEvent(new Event('fixturecardrelease'));
     // The two-click add tool temporarily owns the same card surface. Polling
@@ -119,8 +130,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     // One catalogue read per session names household materials on the lines.
     if ((materials.length && canEdit() || record?.kind === 'building') && loadMaterialNames && !namesAsked) {
-      namesAsked = true;
-      Promise.resolve(loadMaterialNames()).then(() => { layout = null; draw(); }, () => { namesAsked = false; });
+      loadNames(() => { layout = null; draw(); });
     }
     const flags = roofFlags(record);
     const roomFeatures = record?.kind === 'yard_rooms' ? yardRoomFeatures(getPlan(), record.piece) : [];
@@ -128,7 +138,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
       ? JSON.stringify([record.piece.foundation, porchShelfOnGrade(getPlan(), record.building, record.piece), canEdit()]) : '';
     const garageLayout = record?.kind === 'opening' && record.piece.kind === 'garage'
       ? JSON.stringify([record.building.devices, haLink?.state()?.devices?.map(d => [d.device_id, d.kind, d.entity_id])]) : '';
-    const nextLayout = JSON.stringify([roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
+    const nextLayout = JSON.stringify([members.map(ref => ref.slots), roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
     // save must not detach Turn while the person is typing the next edit.
@@ -168,6 +178,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
         await op({ op: 'update_stair', building: building.id, id: piece.id, [field]: value });
         layout = null; draw();
       }) });
+    if (selectionStore) drawMaterialsList(host, materialOptions(members));
     for (const material of materials) {
       const save = ref => queue(async () => {
         if (!canEdit()) return;
@@ -434,7 +445,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     pending = run.catch(() => {});
     return run;
   }
-  return { draw, queue, remove, dispose: disposeSlots, showRoofEdge(handle) {
+  return { draw, queue, remove, loadNames, dispose: disposeSlots, showRoofEdge(handle) {
     const next = { pieceId: handle.id, buildingId: handle.building };
     selection = next; edgeIndex = handle.edge; layout = null; draw(next);
   } };

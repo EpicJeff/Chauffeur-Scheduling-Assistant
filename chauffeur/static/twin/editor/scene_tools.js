@@ -3,7 +3,7 @@ import { isObject } from './object_shelf.js';
 import { report, idleInterval } from './api.js';
 import { createCards, findPiece, feetInches } from './cards.js';
 import { createHaLink } from './ha_link.js';
-import { readMaterialNames } from './material_catalog.js';
+import { readMaterialNames, materialName } from './material_catalog.js';
 import { snapPoint, snapRotation } from './snap.js';
 import { sheetMaster, localCentre } from './words.js';
 import { createSelection, createRoomSelection } from './selection.js';
@@ -17,6 +17,8 @@ import { createPicker, DRAG_THRESHOLD_PX } from './picking.js';
 import { createMeasure } from './measure.js';
 import { createContextMenu } from './context_menu.js';
 import { icon } from './icons.js';
+import { drawMaterialsList, materialSelectionActions } from './selection_card.js';
+import { pieceMaterialSlots, materialIdForSurface } from './selection_materials.js';
 import { createSceneTree } from './scene_tree.js';
 import { createLayers } from './dock.js';
 import { shapeOperation, shapeCentre, transformShape } from './site_shapes.js';
@@ -27,7 +29,7 @@ const rotatePoint = (p, angle) => {
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
 
-export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, applyBatch = (ops, options) => op({ op: 'batch', ops }, options), panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, visibility, library, api, onDrawFeature, dock, openHouseMaterials }) {
+export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, applyBatch = (ops, options) => op({ op: 'batch', ops }, options), panel, canEdit, signal, onInteract, addDormer, siteHits, pickSite, padHits, fixtureHits, isPickable = () => true, visibility, library, api, onDrawFeature, dock, openHouseMaterials, surfaceAt }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   const measureLayer = document.createElement('div'); measureLayer.className = 'editor-measure'; canvas.parentElement.append(measureLayer);
   const measure = createMeasure({ view, getPlan, layer: measureLayer });
@@ -148,7 +150,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     selection = state.id ? { pieceId: state.id, buildingId: state.building, kind: state.kind, room: state.room } : null;
     if (!selection) panel.clearSelection();
     if (state.level) levelKey = `${state.building}:${state.level}`;
-    if (primaryRef && isDelegateKind(primaryRef.kind)) {
+    if (selectionStore.members().length > 1) {
+      delegate?.selectionChanged?.({ ...state, id: '__selection_set__' });
+      cards.draw(selection);
+    } else if (primaryRef && isDelegateKind(primaryRef.kind)) {
       if (primaryRef.kind === 'terraces') {
         const cardEl = el('piece-card');
         if (cardEl?.dataset.fixtureCard) {
@@ -282,7 +287,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let linkReadAt = 0;
   const cards = createCards({ getPlan, getModel, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    dock, op, addDormer, canEdit, select, library, haLink, onDrawFeature, openHouseMaterials, removeSelection: () => selectionStore.members().length > 1 ? removeSelected() : null, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
+    dock, op, applyBatch, selectionStore, visibility, view, addDormer, canEdit, select, library, haLink, onDrawFeature, openHouseMaterials, removeSelection: () => selectionStore.members().length > 1 ? removeSelected() : null, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   signal?.addEventListener('abort', () => cards.dispose(), { once: true });
   const handleSelection = () => isPickable(roomSelection.current()) ? roomSelection.current() : {};
   handles = createHandles({ view, getPlan, getSelection: () => selectionStore.members().length > 1 ? {} : handleSelection(), getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
@@ -388,10 +393,16 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // Context actions use the same ranked picker, but retain the actual piece
   // under the pointer in the exterior view instead of its navigation parent.
   const contextMenu = createContextMenu({ signal, items(target) {
+    const surface = target.materialSurface;
+    const fallbackRef = toSelectionRef(target);
+    const slots = !surface && fallbackRef ? pieceMaterialSlots(getPlan(), fallbackRef, getKit()) : [];
+    const id = surface ? materialIdForSurface(getPlan(), surface, getKit()) : (slots.find(slot => slot.key === target.part) || (slots.length === 1 ? slots[0] : null))?.current?.id;
+    const material = id && (typeof id === 'string' ? { id, name: materialName(id) } : id);
+    const materialActions = material ? materialSelectionActions({ material, refs: selectionStore.members().length ? selectionStore.members() : [fallbackRef].filter(Boolean), selectionStore, getPlan, getKit, view, visibility }) : [];
     if (target.empty) return [{ label: 'Show all hidden', run: () => visibility?.showAll() }];
     const members = selectionStore.members();
     if (members.length > 1 && members.some(ref => ref.pieceId === target.id && (ref.buildingId ?? null) === (target.building ?? null))) {
-      return [...[['Move', 'move'], ['Turn', 'rotate'], ['Scale', 'scale']].map(([label, tool]) => ({ label, disabled: !canEdit(), run: () => setTool(tool) })),
+      return [...materialActions, ...[['Move', 'move'], ['Turn', 'rotate'], ['Scale', 'scale']].map(([label, tool]) => ({ label, disabled: !canEdit(), run: () => setTool(tool) })),
         { label: 'Delete', disabled: !canEdit(), run: removeSelected }, ...visibilityActions(target.id, target.kind)];
     }
     if (target.floor) {
@@ -404,7 +415,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
         { label: 'Choose', run: () => chooseFloor(row.key) }, ...visibilityActions(row.level.id, 'level').slice(1)];
     }
     const visibilityActionsForTarget = visibilityActions(target.id, target.visibilityKind || target.kind);
-    if (['light_fixture', 'effect_fixture', 'terraces', 'device'].includes(target.kind)) return [
+    if (['light_fixture', 'effect_fixture', 'terraces', 'device'].includes(target.kind)) return [...materialActions,
       { label: 'Select', run: () => selectTreeRow(target) }, ...visibilityActionsForTarget];
     const record = findPiece(getPlan(), target.id, target.building); if (!record) return [];
     const action = (label, run) => ({ label, disabled: !canEdit(), run: () => {
@@ -417,7 +428,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       }
       onInteract?.(); return run();
     } });
-    const result = [action('Select', () => {})];
+    const result = [...materialActions, action('Select', () => {})];
     if (record.kind === 'wall') {
       result.push(action('Split wall here', () => splitAt({ building: target.building, wall: target.id }, target, target)));
       for (const kind of ['door', 'window']) result.push(action(`Add ${kind} here`, () => {
@@ -468,7 +479,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (ownsGesture) return;
     contextPicking = true;
     let target; try { target = picker.at(event.clientX, event.clientY)[0]; } finally { contextPicking = false; }
-    contextMenu.open(event, target ? { ...target, clientX: event.clientX, clientY: event.clientY } : { empty: true });
+    contextMenu.open(event, target ? { ...target, materialSurface: surfaceAt?.(event, target), clientX: event.clientX, clientY: event.clientY } : { empty: true });
   });
   // Each source exposes hit(event) and begin(event, handle); its existing
   // pointerMove/pointerUp methods keep ownership through release or cancel.
@@ -1030,6 +1041,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     haLink,
     deleteSelected: removeSelected,
     applyBatch,
+    drawMaterialsList(host, options) { return drawMaterialsList(host, { getPlan, getKit, selectionStore, applyBatch, canEdit, library, queue: cards.queue, loadNames: cards.loadNames, report, view, visibility, ...options }); },
     select, pick, selected: () => selection, selection: roomSelection.current,
     selectionStore, selectedMembers: () => selectionStore.members(),
     dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,

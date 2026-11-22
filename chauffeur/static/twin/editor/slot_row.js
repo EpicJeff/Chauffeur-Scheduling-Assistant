@@ -62,11 +62,12 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
   });
   const resetButton = reset && button(reset.label, actions, 'slotReset');
   if (resetButton) listen(resetButton, 'click', () => run(reset.run));
-  let tintInput, tintClear;
+  let tintInput, tintClear, tintMixed;
   if (tint) {
     const tintLabel = document.createElement('label'); tintLabel.textContent = 'Override tint';
     tintInput = document.createElement('input'); tintInput.type = 'color'; tintInput.setAttribute('aria-label', `${label} override tint`);
     tintLabel.append(tintInput); row.insertBefore(tintLabel, words);
+    if (tint.mixed) { tintMixed = document.createElement('span'); tintMixed.textContent = 'Mixed'; tintLabel.append(tintMixed); }
     listen(tintInput, 'change', () => { const value = tintInput.value; return run(() => tint.set(value)); });
     if (tint.clear) { tintClear = button('Clear override', actions); listen(tintClear, 'click', () => run(tint.clear)); }
   }
@@ -84,7 +85,15 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
     for (const value of [0, 90, 180, 270]) {
       const option = document.createElement('option'); option.value = String(value); option.textContent = `${value}°`; rotationInput.append(option);
     }
-    const change = () => {
+    const change = event => {
+      if (offset.setField) {
+        const key = event.target === uInput ? 'u' : event.target === vInput ? 'v' : 'rot';
+        const text = event.target.value, value = Number(text);
+        if (!text.trim() || !Number.isFinite(value) || key === 'rot' && ![0, 90, 180, 270].includes(value)) {
+          report(new Error('Use finite U and V offsets and a quarter-turn rotation.')); refresh(); return;
+        }
+        return run(() => offset.setField(key, key === 'rot' ? value : Number(((value % 1 + 1) % 1).toFixed(10)) % 1));
+      }
       const u = Number(uInput.value), v = Number(vInput.value), rot = Number(rotationInput.value);
       if (!uInput.value.trim() || !vInput.value.trim() || !Number.isFinite(u) || !Number.isFinite(v) || ![0, 90, 180, 270].includes(rot)) {
         report(new Error('Use finite U and V offsets and a quarter-turn rotation.')); refresh(); return;
@@ -133,6 +142,7 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
       tintInput.value = typeof tint.value === 'function' ? tint.value() : tint.value;
       tintInput.parentElement.hidden = !!tint.enabled && !tint.enabled();
       tintInput.disabled = busy || locked() || tintInput.parentElement.hidden;
+      if (tintMixed) tintMixed.hidden = !tint.mixed();
       if (tintClear) {
         tintClear.disabled = busy || locked();
         tintClear.hidden = tintInput.parentElement.hidden || !!tint.hasOverride && !tint.hasOverride();
@@ -141,6 +151,15 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
     if (offsetControls) {
       const value = offset.effective?.() || offset.value() || { u: 0, v: 0, rot: 0 };
       uInput.value = String(value.u); vInput.value = String(value.v); rotationInput.value = String(value.rot);
+      for (const [key, input] of [['u', uInput], ['v', vInput], ['rot', rotationInput]]) {
+        if (!offset.mixed?.(key)) continue;
+        if (input === rotationInput) {
+          if (!input.querySelector('[data-slot-mixed]')) {
+            const option = document.createElement('option'); option.dataset.slotMixed = ''; option.value = ''; option.textContent = 'Mixed'; input.append(option);
+          }
+        } else { input.type = 'text'; input.placeholder = 'Mixed'; }
+        input.value = '';
+      }
       for (const input of [uInput, vInput, rotationInput]) input.disabled = busy || locked();
       offsetReset.disabled = busy || locked() || !offset.value();
     }

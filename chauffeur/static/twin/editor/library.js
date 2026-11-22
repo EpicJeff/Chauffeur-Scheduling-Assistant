@@ -5,7 +5,8 @@ import { applyLocal } from './local_ops.js';
 import { DRAG_THRESHOLD_PX } from './picking.js';
 import * as THREE from 'three';
 import { svgIcon } from '../live/glance_icons.js';
-import { contains, FT, allPorches } from '../twin_generator.js';
+import { contains, FT, allPorches, PICK_LAYER } from '../twin_generator.js';
+import { findPiece } from './piece_operations.js';
 import { ITEM_PARTS, kindRow } from '../surface_kinds.js';
 import { groundAt, buildingGround, inPolygon, edgeDistance } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
@@ -28,6 +29,76 @@ export function wallFace(building, wall, side) {
     (a[1] + b[1]) / 2 + sign * (b[0] - a[0]) / length * offset];
   const room = building.rooms?.find(r => r.level === wall.level && r.state !== 'ghost' && contains(r.polygon, point));
   return { room, role: wall.exterior && !room ? 'siding' : 'interior_wall' };
+}
+
+// Context material commands need the drawn triangle, rather than the larger
+// selection proxy. mergeStatic retains its owner/receiving part in snapRanges.
+// Keep this separate from surfaceAt: material drops retain their scope menu.
+export function contextSurfaceForHit(plan, hit) {
+  const object = hit?.object;
+  if (!object) return null;
+  const ranges = object.userData.snapRanges || object.geometry?.userData?.snapRanges;
+  const offset = (hit.faceIndex ?? 0) * 3;
+  let data = ranges?.find(range => offset >= range.start && offset < range.start + range.count);
+  if (!data && hit.instanceId !== undefined) data = object.userData.instances?.[hit.instanceId]
+    || object.userData.instancePiece?.(hit.instanceId);
+  if (!data) for (let node = object; node && !data; node = node.parent)
+    if (node.userData.kind && node.userData.pieceId) data = node.userData;
+  if (!data || data.ghost || data.terrain || !data.pieceId) return null;
+  const aliases = { bed: 'beds', edge: 'edges', retaining_wall: 'terraces', pad: 'terraces', yard_room: 'yard_rooms' };
+  let kind = aliases[data.kind] || data.kind;
+  const bid = data.buildingId || data.building;
+  const building = plan.buildings?.find(b => b.id === bid);
+  const id = data.pieceId;
+  const record = findPiece(plan, id, bid);
+  const piece = kind === 'terraces' ? plan.site?.terraces?.find(p => p.id === id) : record?.piece;
+  if (!piece) return null;
+  const material = Array.isArray(object.material) ? object.material[hit.face?.materialIndex || 0] : object.material;
+  const renderedMaterialId = material?.userData?.materialId || material?.userData?.bakeMaterialId;
+  const point = hit.point?.toArray ? hit.point.toArray() : hit.point;
+  let localPoint = point;
+  if (building && point) {
+    const angle = -(building.rotation || 0) * Math.PI / 180;
+    const x = point[0] / FT - (building.position?.[0] || 0), y = -point[2] / FT - (building.position?.[1] || 0);
+    localPoint = [x * Math.cos(angle) - y * Math.sin(angle), x * Math.sin(angle) + y * Math.cos(angle),
+      point[1] / FT - (building.base || 0) - buildingGround(plan, building)];
+  }
+  let slot = data.bakePart || data.part || '';
+  if (kind === 'terraces') {
+    const match = slot.match(/^edge:(\d+):(face|cap|riser|tread|rail)$/);
+    if (match) {
+      const edge = piece.edges?.[Number(match[1])], receiver = edge?.wall ? 'wall' : edge?.stair ? 'stair' : null;
+      slot = receiver ? `edge:${match[1]}:${receiver}:${match[2] === 'rail' ? 'rail:rail' : match[2]}` : '';
+    }
+  } else if (kind === 'hardscape') slot = slot === 'pavers' ? 'surface' : slot.startsWith('curb:') ? 'edging' : slot;
+  else if (kind === 'wall' && localPoint) {
+    const dx = piece.to[0] - piece.from[0], dy = piece.to[1] - piece.from[1];
+    if (!['left', 'right'].includes(slot)) {
+      if (hit.face?.normal) {
+        const normal = hit.face.normal.clone().transformDirection(object.matrixWorld);
+        const angle = -(building.rotation || 0) * Math.PI / 180;
+        const nx = normal.x * Math.cos(angle) + normal.z * Math.sin(angle);
+        const ny = normal.x * Math.sin(angle) - normal.z * Math.cos(angle);
+        slot = dx * ny - dy * nx >= 0 ? 'left' : 'right';
+      } else slot = dx * (localPoint[1] - piece.from[1]) - dy * (localPoint[0] - piece.from[0]) >= 0 ? 'left' : 'right';
+    }
+  } else if (kind === 'room') slot = slot.includes('ceiling') ? 'ceiling' : 'floor';
+  else if (kind === 'roof') {
+    if (building?.dormers?.some(p => p.id === id)) { kind = 'dormer'; slot = 'roof'; }
+    else {
+      const section = building?.roof?.sections?.find(p => p.id === id) || piece;
+      if (section.rect && localPoint) {
+        const [x, y] = localPoint;
+        const plane = planes(section).reduce((best, candidate) => !best
+          || candidate[0] * x + candidate[1] * y + candidate[2] < best[0] * x + best[1] * y + best[2] ? candidate : best, null);
+        slot = plane?.edge != null ? `plane:${plane.edge}` : 'roof';
+      } else slot = 'roof';
+    }
+  } else if (kind === 'porch') slot = ({ foundation: 'foundation:solid', 'foundation-posts': 'foundation:posts', 'foundation-skirt': 'foundation:skirt' })[slot] || slot;
+  // Some authored models retain only material identity, not named subparts.
+  // That identity still names the exact drawn look; the inventory/resolver
+  // remains responsible for selecting owning pieces and matched editable slots.
+  return { kind, piece, building, slot: slot || undefined, point: localPoint, renderedMaterialId };
 }
 
 // Each line names its material and where it comes from. `clear` is set when the
@@ -404,6 +475,32 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     }
     return point && { building, kind, piece, point: point.toArray(), side, room, role, surface, level: piece.level };
   }
+  function contextSurfaceAt(event, target = null) {
+    const matchesTarget = surface => {
+      if (!target) return true;
+      const id = target.id || target.pieceId, bid = target.building || target.buildingId;
+      if (target.kind === 'building') return surface.building?.id === (bid || id);
+      return (surface.piece.id === id || surface.piece.roof === id)
+        && (surface.building?.id || null) === (bid || null);
+    };
+    const meshes = [];
+    function visit(node) {
+      const data = node.userData || {};
+      if (node.visible === false || node.layers?.isEnabled(PICK_LAYER) || node.isHelper
+        || data.preview || data.helper || data.marker || data.ghost || data.emitter || data.fireFlame || data.effectFixture
+        || /^(editor-|sky|sun|stars|marker|preview|helper)/i.test(node.name || '')) return;
+      if (node.isMesh && node.geometry && [].concat(node.material || []).some(material => material.visible !== false && material.opacity !== 0)) meshes.push(node);
+      for (const child of node.children || []) visit(child);
+    }
+    view.scene.updateMatrixWorld(true); ray(event);
+    visit(view.scene);
+    for (const hit of raycaster.intersectObjects(meshes, false)) {
+      const surface = contextSurfaceForHit(getPlan(), hit);
+      if (surface && matchesTarget(surface)) return surface;
+    }
+    const fallback = surfaceAt(event);
+    return fallback && matchesTarget(fallback) ? fallback : null;
+  }
   // In the floor cutaway the ceiling has no rendered slab to raycast. An
   // explicit ceiling placement still uses its real plane and room boundary.
   function ceilingAt(event, fromBelow = false) {
@@ -745,7 +842,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
         : null;
       view.previewSelectionBox?.(selected.id, { box: siteBox(record.piece, record.kind), delta });
     },
-    siteHits, pickSite, surfaceAt, ceilingAt, ground, pointerDown, pointerMove, pointerUp, refresh, pick,
+    siteHits, pickSite, surfaceAt, contextSurfaceAt, ceilingAt, ground, pointerDown, pointerMove, pointerUp, refresh, pick,
     selected: () => selection, select, reveal,
     onSelect(fn) { selectionListeners.add(fn); return () => selectionListeners.delete(fn); } };
 }

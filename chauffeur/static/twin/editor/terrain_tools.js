@@ -313,6 +313,7 @@ export function createTerrainTools({ view, tools, getPlan, op, canEdit, signal, 
       return;
     }
     card.append(node('h3', words[chosen.kind]));
+    tools.drawMaterialsList?.(card, { refs: [{ kind: chosen.kind, pieceId: piece.id }], ownSlot, onSaved: drawCard });
     if (chosen.kind === 'terraces') {
       const pads = getPlan().site.terraces, index = pads.findIndex(p => p.id === piece.id);
       card.append(node('p', `Layer ${index + 1} of ${pads.length}`));

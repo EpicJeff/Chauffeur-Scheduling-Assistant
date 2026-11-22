@@ -81,27 +81,42 @@ export function drawObjectShelf(host, record, { canEdit, queue, op, report, getR
     && devices.some(device => device.device_id === placed.device && device.kind === 'garage' && device.entity_id?.startsWith('cover.')))) {
     const hint = document.createElement('p'); hint.textContent = 'Opens and closes with the garage door device placed on it.'; section.append(hint);
   }
-  const expected = piece.kind === 'window' ? 'window' : 'door';
-  let entries = [], currentId = piece.model || null, disposed = false;
+  drawOpeningModelSlot(section, record, { canEdit, queue, op, report, library, ownSlot });
+}
+
+// Single and set Properties share the same Library acceptance/reveal path.
+// The set card supplies one assignment that batches all of its per-piece ops.
+export function drawOpeningModelSlot(host, record, { canEdit, queue, op, report,
+  library = idleLibrary, ownSlot = () => {}, records = [record], assign }) {
+  const expected = record.piece.kind === 'window' ? 'window' : 'door';
+  let entries = [], currentId = record.piece.model || null, disposed = false;
+  let mixed = records.some(row => (row.piece.model || null) !== currentId);
   const current = () => {
+    if (mixed) return { name: 'Mixed' };
     if (!currentId) return { name: 'Generated' };
     const entry = entries.find(entry => entry.id === currentId) || window.twinManifest?.[currentId];
     return { id: currentId, kind: expected, name: entry?.name || currentId,
       thumb: entry?.thumb || entry?.thumbnail_url || (entry?.thumbnail ? libUrl(currentId, entry.thumbnail) : null) };
   };
-  const assign = async id => { await queue(() => canEdit() && op(objectOperation(record, { model: id }))); currentId = id; };
+  const assignModel = async id => {
+    if (!canEdit()) return;
+    if (assign) await assign(id);
+    else await queue(() => canEdit() && op(objectOperation(record, { model: id })));
+    currentId = id; mixed = false;
+  };
   const row = createSlotRow({ label: 'Model', subject: `${expected} model`, library,
     readOnly: () => !canEdit(), current,
     accepts: entry => entry.kind === expected || entry.kind === 'furniture' && (entry.object_kind === expected || entry.category === expected),
     apply: entry => {
       const previous = entries.find(row => row.id === entry.id) || window.twinManifest?.[entry.id];
       entries = [...entries.filter(row => row.id !== entry.id), { ...previous, ...entry }];
-      return assign(entry.id);
-    }, clear: () => assign(null) });
-  section.append(row.element);
+      return assignModel(entry.id);
+    }, clear: () => assignModel(null) });
+  host.append(row.element);
   ownSlot({ ...row, dispose() { disposed = true; row.dispose(); } });
   request('imports', 'GET', undefined, 'twin').then(imports => {
     if (disposed) return;
     entries = [...imports.filter(entry => !entry.archived && !entries.some(row => row.id === entry.id)), ...entries]; row.refresh();
   }).catch(report);
+  return row;
 }
