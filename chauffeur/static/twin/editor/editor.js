@@ -224,6 +224,8 @@ export async function boot() {
     el('editor-save-state').textContent = state.saved ? 'Saved'
       : `${state.unsaved ? '' : 'Saving '}${count} ${count === 1 ? 'change' : 'changes'}${state.unsaved ? ' not saved' : ''}`;
     el('editor-toolbar-save-state').textContent = el('editor-save-state').textContent;
+    if (view) view.round = currentRound();
+    view?.bake?.syncBlocked?.();
   }
   async function settleView(plan, info) {
     const selection = info.selection ?? tools?.selected?.() ?? null;
@@ -451,6 +453,7 @@ export async function boot() {
   }
   async function renderScene(timing = null) {
     if (view) view.round = currentRound();
+    view?.bake?.syncBlocked?.();
     view?.setSite?.(snapshot.site);
     if (tools?.dragging() || lot?.dragging()) return;
     await view?.setStage?.(snapshot.stage);
@@ -802,7 +805,10 @@ export async function boot() {
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
     houseKit = kit;
     view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true,
-      bake: { host: statusChip.bakeHost }, stage:snapshot.stage });
+      bake: { host: statusChip.bakeHost, blocked: () => previewing ? 'Back to now to bake'
+        : queue.pending() || JSON.stringify(previewPlan()) !== JSON.stringify(snapshot.plan || emptyPlan()) ||
+          view?.bakePlan && JSON.stringify(view.bakePlan) !== JSON.stringify(snapshot.plan || emptyPlan())
+          ? 'Saving edits; bake when they land' : '' }, stage:snapshot.stage });
     view.isPiecePickable = isPickable;
     const hiddenState = visibility.snapshot(); view.setHiddenPieces?.(hiddenState.hidden, hiddenState.hiddenKinds);
     mountLighting(view, el('editor-lighting'), { signal: lifecycle.signal });
@@ -888,7 +894,8 @@ export async function boot() {
       canScrub: () => !menuBusy && !directing,
       log(summary) { const line = document.createElement('li'); line.textContent = summary; el('editor-log').append(line); lastSummary = summary; },
       onPreview(value) {
-        previewing = value; terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.cancel(); tools.select(null); pauses.dismiss(); panel.readOnly(value);
+        previewing = value; view?.bake?.syncBlocked?.();
+        terrain.cancel(); devices.cancel(); roofTools.cancel(); draw.cancel(); tools.select(null); pauses.dismiss(); panel.readOnly(value);
         tools.refreshCard(); syncBuildButton();
         for (const id of ['move', 'rotate', 'scale', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-level', 'delete', 'roof']) el(`rail-${id}`).disabled = value;
         if (!value) pauses.resume();

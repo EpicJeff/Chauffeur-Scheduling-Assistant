@@ -3,6 +3,7 @@ import { renderPage, roomFills, dilateCharts, encodeSumPages, filterCharts } fro
 import { withBakeLease, bakeHTTPError } from './bake_lock.js';
 import { reachLights } from './reach.js';
 import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
+import { bakeInputs } from './inputs.js';
 
 export { encodePage, decodePage } from './codec.js';
 
@@ -84,6 +85,7 @@ async function exists(api, url) {
 export function createBaker(view, { renderer, atlas, layout, lights, api: request, codec, force = false, forceRound = null,
   round = view.round ?? null, owner = null }) {
   const plan = view.bakePlan || view.plan, enabled = ['high', 'max'].includes(view.tier);
+  const inputs = bakeInputs(plan, lights, view.materialManifest);
   const bakeView = Object.create(view); bakeView.plan = plan;
   let packed, assignmentHistory;
   const path = `api/house/bakes/${atlas.key}`;
@@ -121,6 +123,8 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
     manifest.lights[device]?.location !== packed.entries[device].location ||
     manifest.lights[device]?.scale !== packed.entries[device].scale);
   const ready = enabled ? readManifest().then(async m => {
+    await view.bake?.idle?.();
+    if (!valid()) return;
     assignmentHistory=m?.ownership;
     packed=bakeLayout(atlas,layout,lights,assignmentHistory,m?.lights);
     lights=packed.lights;
@@ -245,7 +249,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
         if (!r.ok) throw new Error('Could not preserve the later light bank.');
         moves.set(page, new Uint8Array(await r.arrayBuffer()));
       }
-      next.lights[device] = { ...expected, ...(entry.forceRound ? { forceRound: entry.forceRound } : {}), ...(entry.fill ? { fill: entry.fill } : {}) };
+      next.lights[device] = { ...expected, input: inputs[device], ...(entry.forceRound ? { forceRound: entry.forceRound } : {}), ...(entry.fill ? { fill: entry.fill } : {}) };
     }
     for (const [page, bytes] of moves) uploads.push({ page, bytes });
     // Bank zero reserves unlit rooms too. Publish any missing reserved pages
@@ -258,7 +262,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
       uploads.push({ page, bytes: empty });
     }
     delete next.sky; // Ignore legacy sky metadata when publishing room lights.
-    next.lights[id] = { ...packed.entries[id], fill, ...(activeForce ? { forceRound: activeForce } : {}) };
+    next.lights[id] = { ...packed.entries[id], input: inputs[id], fill, ...(activeForce ? { forceRound: activeForce } : {}) };
     // Which house round was baked and whether it is whole.
     next.round = round;
     next.complete = lights.every(l => !packed.entries[l.device] ||
@@ -294,16 +298,18 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
   async function settle() {
     await ready;
     if (!enabled || !valid() || lights.some(l => isStale(l.device))) return false;
-    if (manifest.round === round && manifest.complete === true) return false;
+    const receipted = m => lights.every(l => !packed.entries[l.device] || m.lights[l.device]?.input === inputs[l.device]);
+    if (manifest.round === round && manifest.complete === true && receipted(manifest)) return false;
     return withBakeLease(request, path, who, valid, async check => {
       await check();
       const latest = await readManifest();
-      if (!latest || !valid() || (latest.round === round && latest.complete === true)) return false;
+      if (!latest || !valid() || (latest.round === round && latest.complete === true && receipted(latest))) return false;
       const whole = lights.every(l => !packed.entries[l.device] || latest.lights[l.device]?.key === packed.entries[l.device].key &&
         latest.lights[l.device]?.scale === packed.entries[l.device].scale &&
         (!latest.forceRound || latest.lights[l.device]?.forceRound === latest.forceRound));
       if (!whole) return false;
-      const next = { ...latest, round, complete: true }; delete next.forceRound;
+      const next = { ...latest, round, complete: true, lights: Object.fromEntries(Object.entries(latest.lights)
+        .map(([id, entry]) => [id, inputs[id] ? { ...entry, input: inputs[id] } : entry])) }; delete next.forceRound;
       await check();
       const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(next) });

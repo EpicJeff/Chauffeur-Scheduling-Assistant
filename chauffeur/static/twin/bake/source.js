@@ -43,7 +43,7 @@ export function cloneBakeGeometry(root,children=root.children) {
   for(const child of new Set(children))if(child.parent===root && !providers.has(child))group.add(cloneWithoutProviders(child));
   return group;
 }
-export function registerBakeSource(root, make, {extras=true,children=root.children,receiverRoots=null,dispose=null}={}) { providers.set(root, {make,extras,receiverRoots,dispose,children:new Set(children)}); }
+export function registerBakeSource(root, make, {extras=true,children=root.children,receiverRoots=null,alphaRoots=null,dispose=null}={}) { providers.set(root, {make,extras,receiverRoots,alphaRoots,dispose,children:new Set(children)}); }
 export function bakeSource(root) {
   const entries = [];
   root.updateMatrixWorld(true);
@@ -65,7 +65,7 @@ export function bakeSource(root) {
     }
   }
   source.updateMatrixWorld(true);
-  for (const receivers of bakeReceiverRoots(root)) filterAlphaSource(source,receivers);
+  for (const receivers of providers.get(root)?.alphaRoots?.() || bakeReceiverRoots(root)) filterAlphaSource(source,receivers);
   sources.set(root, {source,signature});
   return source;
 }

@@ -98,7 +98,8 @@ await check('manual_tier_and_child_rules',async()=>{
  for(const mode of ['low','medium','child']){
   const desk=await context(mode==='child'?'high':mode,null,null,{mode:'manual',deny:mode==='child',poll:0,host:new Node('div')});
   try {
-   await until(()=>desk.controller.state().key&&outputOf(desk)?.textContent!=='Checking baked lighting…','permission status');
+   await until(()=>outputOf(desk)?.textContent===(mode==='child'?'Only a parent can bake lighting':'Baking needs High or Max quality'),'permission status');
+   assert.equal(desk.controller.state().key,null,'disallowed desks do no atlas work');
    assert.equal(outputOf(desk).textContent,mode==='child'?'Only a parent can bake lighting':'Baking needs High or Max quality');
    assert.ok(desk.host.querySelectorAll('button').every(b=>b.hidden));
    await desk.controller.start();await desk.controller.now();await desk.controller.resume();

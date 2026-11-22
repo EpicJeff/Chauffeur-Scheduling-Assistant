@@ -1414,6 +1414,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         return { path: 'rebuild', selection };
       }
       const version = ++revision;
+      view.yardSettling = false; view.yardError = null;
       // Each level compares against the same shown plan; rebuildLevel updates
       // plan itself, so restore that baseline between synchronous deforms.
       for (const change of changed) {
@@ -1438,6 +1439,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     rebuild(nextPlan, { preserveYard = false, timing = null, yardLater = false, force = false } = {}) {
       const work = (async () => {
       const version = ++revision; view.ready = false;
+      view.yardSettling = false; view.yardError = null;
       try {
       const detail = timing?.detail;
       const stopBake = editSpan(detail, 'bake_stop');
@@ -1601,8 +1603,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       view.ready = true;
       pieceVisibility?.apply(scene);
       reflections.request();
-      startBake();
       if (yardLater && !reuseYard) deferYard(nextPlan, version, timing);
+      startBake();
       el.dispatchEvent(new CustomEvent('twinrebuilt', { detail: view }));
       } finally { if (version === revision) view.ready = !disposed && !!twin; }
       })();
@@ -1647,7 +1649,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   function deferYard(nextPlan, version, timing = null) {
     // A task boundary lets the accepted house paint before synchronous yard
     // builders run. The complete old yard stays attached until adoption.
+    view.yardSettling = true; view.yardError = null;
     setTimeout(async () => {
+      try {
       if (disposed || version !== revision || yardGroup?.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan) })) return;
       const previous = yardGroup, materials = new Map(previous?.userData.materials);
       const retained = () => new Set([...(twin?.materials.values() || []), ...(yardGroup?.userData.materials?.values() || [])]);
@@ -1686,7 +1690,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         sun.shadow.needsUpdate = true; reflections.request();
         if (selectionStyle) paintSelection(); else render();
         el.dispatchEvent(new CustomEvent('twinyardrebuilt', { detail: view }));
-      } catch (error) { el.dispatchEvent(new CustomEvent('twinerror', { detail: error })); }
+      } catch (error) { if (version === revision) view.yardError = error; el.dispatchEvent(new CustomEvent('twinerror', { detail: error })); }
+      } finally { if (version === revision) view.yardSettling = false; }
     }, 0);
   }
   function release(model, keepMaterials = new Set()) {
@@ -1777,15 +1782,15 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       // scene: it contains sheets, handles and temporarily ghosted finishes.
       // The viewer's full-wall topology preserves its existing atlas keys.
       const bakePlan = plan;
-      let physical = null, physicalYard = null;
+      let physical = null, physicalYard = null, alphaHouse = null;
       const yardMaterials = new Set();
-      const copyReceivers = node => {
+      const copyReceivers = (node, alpha = false) => {
         const original = selectedMaterials.get(node) || faded.get(node) || node.material;
         const shown = node.material;
         node.material = original;
-        const receives = atlasMesh(node);
+        const receives = atlasMesh(node) || alpha && node.isMesh && node.userData.merged && !Array.isArray(original);
         node.material = shown;
-        const children = node.children.map(copyReceivers).filter(Boolean);
+        const children = node.children.map(child => copyReceivers(child, alpha)).filter(Boolean);
         if (!receives && !children.length) return null;
         // Skip trees, grass instances, props and editor layers entirely. Only
         // receiving buffers are copied; authored materials remain shared.
@@ -1798,6 +1803,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       };
       registerBakeSource(twin.root, () => buildTwin(withoutSurfaceMaterials(bakePlan), { ...kit, manifest: {} }, tier,
         { viewing: true, bakeSource: true }).root, { extras: false,
+          // Classification needs only the existing authored alpha faces. Full
+          // viewer-shaped physical receivers are generated only for a run.
+          alphaRoots: () => {
+            alphaHouse ||= copyReceivers(twin.root, true) || new THREE.Group();
+            alphaHouse.updateMatrixWorld(true);
+            return [alphaHouse];
+          },
           receiverRoots: () => {
             physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true });
             if (!physicalYard && yardGroup) {
@@ -1809,7 +1821,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           dispose: () => {
             if (physical) release(physical);
             if (physicalYard) disposeObject(physicalYard, { keepMaterials: yardMaterials });
-            physical = physicalYard = null; yardMaterials.clear();
+            if (alphaHouse) disposeObject(alphaHouse, { keepMaterials: yardMaterials });
+            physical = physicalYard = alphaHouse = null; yardMaterials.clear();
           } });
     }
     const host = document.getElementById('twin-controls');

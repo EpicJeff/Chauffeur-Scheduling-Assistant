@@ -192,7 +192,8 @@ if (which === 'chip_words_follow_state') {
     text = await say({state, pause: null, cost: 1.5, estimate: null});
     assert.doesNotMatch(text, /\bWorking\b|Waiting on you/, `nothing else: a ${state} build says neither word: ` + text);
     assert.equal(stops().length, 0, `no Stop when no build is running (${state})`);
-    assert.match(text, /\$1\.50 so far/, 'the spend stays in view with no build: ' + text);
+    if (state) assert.match(text, /\$1\.50 so far/, 'completed build keeps its spend: ' + text);
+    else assert.doesNotMatch(text, /so far|about \$/, 'no build has no spend pill: ' + text);
   }
   console.log('  ok chip_words_follow_state');
  } else if (which === 'chip_preserves_manual_bake_controls') {

@@ -90,6 +90,7 @@
     #twin-controls button:hover, #twin-controls button:focus-visible { background:var(--twinHover); outline:2px solid var(--twinSelected); outline-offset:2px; }
     #twin-controls button[aria-pressed="true"]:is(:hover, :focus-visible) { background:var(--twinSelected); color:var(--twinSelectedText); }
     #twin-bake-status { pointer-events:auto; flex-basis:100%; max-width:fit-content; font-weight:400; white-space:normal; overflow-wrap:anywhere; }
+    #twin-bake-status a { color:inherit; }
     /* A floor holding something that wants attention (an unlocked lock, an open door) wears the
        marker's attention colour, so it shows whichever floor is on screen. */
     #twin-views button[data-attention]::after { content:''; display:inline-block; width:9px; height:9px; margin-left:6px; border-radius:50%; background:var(--twinAttention); box-shadow:0 0 0 2px var(--twinAttentionRing); vertical-align:middle; }

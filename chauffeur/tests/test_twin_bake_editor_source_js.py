@@ -6,7 +6,12 @@ from test_twin_yard_reuse_js import PREFIX
 from twin_editor_dom import run_node
 import test_twin_baker_js as B
 ROOT = Path(__file__).resolve().parents[1]
-DRIVER = PREFIX.replace("url.startsWith('file:') && url.endsWith('.js')", "url.startsWith('file:') && url.endsWith('.js') && !/basis/i.test(url)") + r"""
+DRIVER = PREFIX.replace("return url.startsWith('file:')", r"""if (url.endsWith('/twin_yard.js')) {
+    const loaded=next(url,{...ctx,format:'module'}),source=String(loaded.source);
+    return {...loaded,format:'module',source:source.replace('export async function buildYard(', 'async function buildYardImpl(')+
+      '\nexport async function buildYard(...args){if(globalThis.__holdYard && !args[3]?.bakeSource)await globalThis.__holdYard;return buildYardImpl(...args);}'};
+  }
+  return url.startsWith('file:')""").replace("url.startsWith('file:') && url.endsWith('.js')", "url.startsWith('file:') && url.endsWith('.js') && !/basis/i.test(url)") + r"""
 import {createRequire} from 'node:module';
 const THREE = await import('three');
 Object.assign(Renderer.prototype,{getDrawingBufferSize:v=>v.set(1440,900),getViewport:v=>v.set(0,0,1440,900),setViewport(){},getScissor:v=>v.set(0,0,1440,900),setScissor(){},getScissorTest:()=>false,setScissorTest(){}});
@@ -19,6 +24,7 @@ const {materialParts}=await import(file('static/twin/bake/bindings.js'));
 const {createBaker,bakeLayout,encodePage,decodePage}=await import(file('static/twin/bake/baker.js'));
 const host=editor=>{const h=new Element();if(editor){const shell=new Element();shell.className='editor-shell';shell.append(h);}return h;};
 location.search='?test=1';
+globalThis.requestIdleCallback=fn=>setImmediate(fn);
 globalThis.fetch=async()=>new Promise(()=>{});
 const plan=input.plan, kit=input.kit;
 plan.site ||= {};plan.site.hardscape ||= [];plan.site.hardscape.push({id:'bake-editor-pad',polygon:[[0,0],[10,0],[10,10],[0,10]],material:'concrete'});
@@ -87,6 +93,28 @@ DRIVER += r"""
    assert.equal(server.manifests.get(e.key).lights[k1.device].key,ep.entries[k1.device].key);
    assert.ok(server.pages.size);assert.deepEqual(server.bad,[]);
   }finally{editor.bake=original;}
+ });
+ await test('deferred_yard_adoption_precedes_the_editor_key_and_matches_the_viewer',async()=>{
+  let release;globalThis.__holdYard=new Promise(resolve=>release=resolve);
+  const next=structuredClone(editor.plan);
+  next.site.hardscape[0].polygon=next.site.hardscape[0].polygon.map(([x,y])=>[x+3,y]);
+  await editor.settle(next,{});assert.equal(editor.yardSettling,true);
+  let keyed=false;
+  const key=editor.bake.idle().then(()=>{roots();keyed=true;return buildAtlas(er,editor.plan,layout).key;});
+  await new Promise(r=>setTimeout(r,2100));assert.equal(keyed,false,'no key for a house with the old yard');
+  release();globalThis.__holdYard=null;
+  const editorKey=await key;assert.equal(editor.yardSettling,false);
+  await viewer.rebuild(structuredClone(next));roots();
+  assert.equal(editorKey,buildAtlas(vr,viewer.plan,layout).key);
+ });
+ await test('authored_alpha_faces_keep_editor_and_viewer_neutral_keys_equal',async()=>{
+  kit.manifest['editor-alpha']={household:true,kind:'material',revision:1,params:{alpha_mode:'cutout'},maps:{}};
+  const next=structuredClone(editor.plan),wall=next.buildings.find(b=>b.id===input.pool).walls[0];
+  wall.faces={left:{id:'editor-alpha'},right:{id:'editor-alpha'}};
+  await editor.rebuild(next);await viewer.rebuild(structuredClone(next));roots();
+  const a=atlasJob(er,editor.plan,layout),b=atlasJob(vr,viewer.plan,layout);
+  assert.equal(a.cacheKey,b.cacheKey,'classification uses authored alpha faces without a physical generation');
+  assert.equal(buildAtlas(er,editor.plan,layout).key,buildAtlas(vr,viewer.plan,layout).key);
  });
 } finally {editor.dispose();viewer.dispose();}
 finish();

@@ -357,7 +357,11 @@ check('stale_lights_are_only_the_changed_ones', async () => {
   assert.ok(compare(lightSamples(packed,'h1',before,key),lightSamples(packed,'h1',server.pages,key)).mean>=3);
   // An entry's fill is the bake's output (the room fill beside its shadowmask), so a rebake may
   // change it; the key, location, pages and channel are what a refresh must keep.
-  const placement=lights=>Object.fromEntries(Object.entries(lights).map(([id,{fill,forceRound,...e}])=>[id,e]));
+  const placement=lights=>Object.fromEntries(Object.entries(lights).map(([id,{fill,forceRound,input,...e}])=>[id,e]));
+  for (const id of ['k1','k2','h1','c1']) {
+    assert.ok(KEY_RE.test(manifest.lights[id].input),'editor freshness receipt is a bounded fingerprint');
+    assert.equal(server.manifests.get(key).lights[id].input,manifest.lights[id].input,'a force refresh preserves identical physical inputs');
+  }
   assert.deepEqual(placement(server.manifests.get(key).lights),placement(manifest.lights),'forced refresh retains every key and entry');
   assert.ok(Object.values(server.manifests.get(key).lights).every(e=>e.fill&&typeof e.fill==='object'),'every baked entry carries its room fill');
   const ownPages=new Set(manifest.lights.h1.pages);

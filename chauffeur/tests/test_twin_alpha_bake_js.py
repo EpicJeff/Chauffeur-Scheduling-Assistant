@@ -100,7 +100,7 @@ await test('flipping_alpha_mode_changes_the_atlas_key_and_drops_the_stored_bake'
    assert.equal(alpha.count,opaque.count-opaque.siding,'only siding receivers leave the atlas');
    const server=stored(old),view={plan,ready:true,tier:'low',controls:new THREE.EventDispatcher(),
     renderer3:new Renderer(),render(){}};
-   controller=mountBake(view,next.out.root,{layout,poll:0,api:server.api});await controller.refresh();
+   controller=mountBake(view,next.out.root,{mode:'readonly',layout,poll:0,api:server.api});await controller.refresh();
    assert.equal(controller.state().key,next.atlas.key);assert.equal(controller.state().error,null);
    assert.deepEqual(controller.fresh(),[]);assert.deepEqual(controller.state().baked,[]);
    assert.equal(controller.held(),null,'unbaked runtime allocates no shadowmask arrays');

@@ -969,7 +969,7 @@ def scenario_editor_bakes_and_viewer_is_status_only():
         seen = bake_requests(page)
         open_desk(page, s)
         wait_until(page, lambda: page.locator('#twin-bake-status').count() == 1, 120, 'parent gets stale lighting link')
-        link = page.locator('#twin-bake-status')
+        link = page.locator('#twin-bake-status a')
         check(link.text_content() == 'Lighting is out of date. Bake it in the house editor.', link.text_content())
         check(not link.get_attribute('href').startswith('/'), 'editor link is ingress safe')
         page.wait_for_timeout(12000)

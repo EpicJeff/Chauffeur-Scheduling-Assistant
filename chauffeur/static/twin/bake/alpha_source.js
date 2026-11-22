@@ -5,7 +5,7 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
 
 function domain(mesh) {
-  const names=[];for(let p=mesh;p;p=p.parent)if(p.name && !p.isScene)names.push(p.name);
+  const names=[];for(let p=mesh;p;p=p.parent)if(p.name && !p.isScene && !p.userData.viewingWalls)names.push(p.name);
   return JSON.stringify([mesh.userData.yardPart||null,names]);
 }
 const owner=(d,r)=>d+':'+JSON.stringify([r?.buildingId||null,r?.pieceId||null,r?.bakePart||r?.part||null]);
