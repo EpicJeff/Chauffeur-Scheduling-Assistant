@@ -7,7 +7,7 @@ const vertex='varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0
 // imported verbatim; unused ripple/drop functions disappear at shader link.
 const common=`
 varying vec2 vUv;
-uniform sampler2D image,ssrDepth,ssrNormal,ssrBeautyDepth,wetGround;
+uniform sampler2D image,ssrDepth,ssrNormal,ssrBeautyDepth,wetEdge;
 uniform vec4 wetGroundBounds;
 uniform mat4 ssrProjection,ssrInverseProjection,ssrWorld;
 uniform vec3 ssrCamera;
@@ -43,12 +43,17 @@ float ssrReceiver(vec3 position,vec3 normal) {
   if(up<=.9)return 0.0;
   vec2 uv=(world.xz-wetGroundBounds.xy)/max(wetGroundBounds.zw-wetGroundBounds.xy,vec2(.0001));
   if(any(lessThan(uv,vec2(0.0)))||any(greaterThanEqual(uv,vec2(1.0))))return 0.0;
-  vec2 heights=texture2D(wetGround,uv).rg;
-  if(world.y<heights.r||heights.g<=-9999.0||abs(world.y-heights.g)>=.15)return 0.0;
+  // Bilinear signed-distance + dilated-height field: r=cover SDF, g=hardscape SDF,
+  // b=dilated cover height, a=dilated hardscape height. Smooth along curves and drip lines.
+  vec4 field=texture2D(wetEdge,uv);
+  float hard=smoothstep(-.015,.015,field.g);
+  if(hard<=0.0||field.a<=-9999.0||abs(world.y-field.a)>=.15)return 0.0;
+  float open=world.y<field.b?clamp(field.r/.6,0.0,1.0):1.0;
+  if(open<=0.0)return 0.0;
   // Reject lawn/roof/cover before paying for the procedural puddle edge.
   float edge=weatherSurface.y>0.0||weatherSurface.z>0.0?weatherEdge(world.xz):.5;
-  ssrPuddle=weatherPuddle(up,weatherSurface.z,edge);
-  return ssrMask(up,world.y,heights.r,heights.g,weatherSurface.x,weatherSurface.z,weatherSurface.y,edge);
+  ssrPuddle=weatherPuddle(up,weatherSurface.z,edge)*open;
+  return ssrMask(up,world.y,-1e4,field.a,weatherSurface.x*open,weatherSurface.z*open,weatherSurface.y*open,edge)*hard;
 }
 // Rain rings bend the reflection exactly as they bend the lit surface's normal.
 vec3 ssrRippled(vec3 position,vec3 normal) {
@@ -111,7 +116,7 @@ export class WetReflectionPass extends Pass {
     this.target=new THREE.WebGLRenderTarget(1,1,{type:THREE.HalfFloatType,depthBuffer:false,
       minFilter:THREE.NearestFilter,magFilter:THREE.NearestFilter});
     this.uniforms={image:{value:null},ssrDepth:{value:occlusion.depthTexture},ssrNormal:{value:occlusion.normalTexture},ssrBeautyDepth:{value:null},
-      weatherSurface:{value:new THREE.Vector4()},wetGround:{value:null},wetGroundBounds:{value:new THREE.Vector4(0,0,1,1)},
+      weatherSurface:{value:new THREE.Vector4()},wetGround:{value:null},wetEdge:{value:null},wetGroundBounds:{value:new THREE.Vector4(0,0,1,1)},
       ssrProjection:{value:new THREE.Matrix4()},ssrInverseProjection:{value:new THREE.Matrix4()},ssrWorld:{value:new THREE.Matrix4()},
       ssrCamera:{value:new THREE.Vector3()},ssrHits:{value:this.target.texture}};
     const material=(name,fragmentShader)=>new THREE.ShaderMaterial({name,uniforms:this.uniforms,vertexShader:vertex,
@@ -156,17 +161,19 @@ void main(){
 }`);
     this.materials=[gather,composite];this.gather=new FullScreenQuad(gather);this.composite=new FullScreenQuad(composite);
   }
-  bind({weatherSurface,precipCover,precipCoverBounds}) {
+  bind({weatherSurface,precipCover,precipCoverBounds,precipEdge}) {
+    const edge=precipEdge||{value:null};
     for(const material of this.materials){
       material.uniforms.weatherSurface=weatherSurface;
       material.uniforms.wetGround=precipCover;
+      material.uniforms.wetEdge=edge;
       material.uniforms.wetGroundBounds=precipCoverBounds;
     }
     this.update();
   }
   update(){
     const u=this.uniforms.weatherSurface.value;
-    this.enabled=!!this.uniforms.wetGround.value&&(u.x>0||u.z>0);
+    this.enabled=!!this.uniforms.wetEdge.value&&(u.x>0||u.z>0);
   }
   setSize(w,h){this.target.setSize(Math.max(1,Math.ceil(w*.5)),Math.max(1,Math.ceil(h*.5)));}
   warm(renderer,destination){

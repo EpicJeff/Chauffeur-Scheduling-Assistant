@@ -13,7 +13,7 @@ const THREE=await import('three');
 const {createPost}=await import(file('static/twin/post.js'));
 const {WetReflectionPass,SSR_MARCH_GLSL}=await import(file('static/twin/wet_reflections.js'));
 const {createSkyCover,HEIGHT_NONE}=await import(file('static/twin/sky/sky_cover.js'));
-const {createPrecipitation,collectHardSurfaces,bakeWetGroundField,createSplashSampler}=await import(file('static/twin/sky/precipitation.js'));
+const {createPrecipitation,collectHardSurfaces,bakeWetGroundField,bakeWetSurfaceField,createWetSurfaceBaker,createSplashSampler}=await import(file('static/twin/sky/precipitation.js'));
 const {installWeatherSurface,WEATHER_GLSL}=await import(file('static/twin/sky/weather_surface.js'));
 const {groundAt,inPolygon}=await import(file('static/twin/twin_ground.js'));
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
@@ -62,7 +62,7 @@ await test('warm both programs on creation while dry, wait for readiness and res
   assert.deepEqual(warm.filter(([n])=>n?.startsWith('wet-reflections')).map(([n])=>n),['wet-reflections-march','wet-reflections-composite']);
   assert.equal(warm.find(([n])=>n==='wet-reflections-march')[1],pass.target);
   assert.equal(warm.find(([n])=>n==='wet-reflections-composite')[1],post.target);
-  pass.uniforms.weatherSurface.value.x=1;pass.uniforms.wetGround.value=new THREE.Texture();pass.update();
+  pass.uniforms.weatherSurface.value.x=1;pass.uniforms.wetGround.value=new THREE.Texture();pass.uniforms.wetEdge.value=new THREE.Texture();pass.update();
   const calls=[],draw=r.render;r.render=function(s,c){calls.push(s.material?.name);return draw.call(this,s,c);};
   post.render();assert.equal(calls.filter(n=>n?.startsWith('wet-reflections')).length,0);
   resolvers.forEach(resolve=>resolve());await Promise.resolve();await Promise.resolve();
@@ -197,6 +197,59 @@ await test('mounted high-tier view shares weather and field references; raw capt
   v.setUnlit(true);assert.equal(count.value,0);v.setUnlit(false);assert.ok(count.value>0);
   v.setWeatherPreview('clear');v.render();assert.equal(pass.enabled,false);
  }finally{v.dispose();}
+});
+await test('smooth bilinear wetEdge SDF fills curved walkways and follows rotated roof drip lines within 0.15 m',()=>{
+ const sampleBilinear=(f,wx,wz)=>{
+  const [x0,z0,x1,z1]=f.bounds,u=(wx-x0)/(x1-x0)*f.width-.5,v=(wz-z0)/(z1-z0)*f.height-.5;
+  const i0=Math.max(0,Math.min(f.width-1,Math.floor(u))),j0=Math.max(0,Math.min(f.height-1,Math.floor(v)));
+  const i1=Math.min(f.width-1,i0+1),j1=Math.min(f.height-1,j0+1),fx=Math.max(0,Math.min(1,u-i0)),fy=Math.max(0,Math.min(1,v-j0));
+  return [0,1,2,3].map(c=>{
+   const a=f.data[(j0*f.width+i0)*4+c],b=f.data[(j0*f.width+i1)*4+c],d=f.data[(j1*f.width+i0)*4+c],e=f.data[(j1*f.width+i1)*4+c];
+   return (a+(b-a)*fx)*(1-fy)+(d+(e-d)*fx)*fy;
+  });
+ };
+ // Curved 4 ft walkway (like the front walkway): reflection fills width without 0.3 m stair steps.
+ const curved={site:{hardscape:[{id:'walk',kind:'path',width:4,smooth:true,points:[[0,0],[10,0],[18,4],[22,12],[22,22]]}]}};
+ const hard=collectHardSurfaces(curved),cover=createSkyCover(curved),surf=bakeWetSurfaceField(curved,cover,hard);
+ assert.equal(surf.data.length,surf.width*surf.height*4);
+ let inside=0,missed=0,spilled=0;
+ for(let x=-2;x<26;x+=.15)for(let y=-4;y<24;y+=.15){
+  const onWalk=hard.some(h=>inPolygon(h.polygon,x,y)),s=sampleBilinear(surf,x*FT,-y*FT);
+  const accepts=s[1]>=-.015&&Math.abs(.3*FT-s[3])<.15;
+  if(onWalk){inside++;if(!accepts)missed++;}else if(s[1]>.015)spilled++;
+ }
+ assert.ok(inside>1000&&missed/inside<.02&&spilled===0,`curved walkway SSR fills width cleanly: missed=${missed}/${inside} spilled=${spilled}`);
+ // Rotated roof edge over a paved walkway: drip line within 0.15 m everywhere.
+ for(const rot of [357.6,20,45]){
+  const p={buildings:[{id:'b',position:[10,10],rotation:rot,levels:[{id:'L1',elevation:0,ceiling:10,outline:[[0,0],[20,0],[20,10],[0,10]]}],
+   rooms:[],walls:[],roof:{sections:[{id:'r',kind:'gable',rect:[0,0,20,10],plate:10,pitch:4,overhang:2,ridge:'x'}]}}],
+   site:{hardscape:[{id:'walk',kind:'path',points:[[4,6],[36,6]],width:6}]}};
+  const c=createSkyCover(p),f=bakeWetSurfaceField(p,c);
+  let maxErrM=0;
+  for(let x=4;x<=36;x+=.25)for(let y=3;y<=9;y+=.25){
+   const wx=x*FT,wz=-y*FT,wy=.3*FT,s=sampleBilinear(f,wx,wz);
+   const ssrOpen=wy<s[2]?Math.max(0,Math.min(1,s[0]/.6)):1,exact=c.open(wx,wy,wz);
+   maxErrM=Math.max(maxErrM,Math.abs(ssrOpen-exact)*.6);
+  }
+  assert.ok(maxErrM<.15,`SSR cover boundary within 0.15 m at rot=${rot}: ${maxErrM.toFixed(4)}m`);
+ }
+ // Incremental baker produces identical data to synchronous bakeWetSurfaceField.
+ const baker=createWetSurfaceBaker(curved,cover,hard);let steps=0;
+ while(!baker.step(0.05)&&steps<5000)steps++;
+ assert.ok(baker.done&&steps>0,'incremental baker finishes in bounded slices');
+ assert.deepEqual(baker.result.data,surf.data,'incremental baker matches synchronous bake bit-for-bit');
+ // Live texture uses HalfFloatType + LinearFilter (always filterable in WebGL2);
+ // missing precipEdge falls back to null (never reads 2-channel precipCover).
+ const scene=new THREE.Scene(),eye=new THREE.PerspectiveCamera(),p=createPrecipitation(scene),post=createPost(new Renderer(),scene,eye);
+ try{
+  p.setPlan(curved,null,cover);p.update(0,{precip:'rain',rate:1,wetness:1,puddles:1},eye);
+  const edgeTex=p.uniforms.precipEdge.value;
+  assert.equal(edgeTex.format,THREE.RGBAFormat);assert.equal(edgeTex.type,THREE.HalfFloatType);
+  assert.equal(edgeTex.minFilter,THREE.LinearFilter);assert.ok(edgeTex.image.data instanceof Uint16Array);
+  post.wetReflections.bind({weatherSurface:{value:new THREE.Vector4(1,0,1,0)},precipCover:p.uniforms.precipCover,precipCoverBounds:p.uniforms.precipCoverBounds});
+  assert.equal(post.wetReflections.uniforms.wetEdge.value,null,'missing precipEdge never falls back to 2-channel precipCover');
+  assert.equal(post.wetReflections.enabled,false,'pass stays disabled when wetEdge is null');
+ }finally{post.dispose();p.dispose();}
 });
 finish();
 """

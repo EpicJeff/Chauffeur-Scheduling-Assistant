@@ -29,6 +29,10 @@ float cloudShadowForLight(vec3 direction) {
   vec3 luminary=mat3(viewMatrix)*cloudShadowLight;
   return dot(luminary,direction)>0.99999 ? cloudShadowValue : 1.0;
 }
+float cloudSpecForLight(vec3 direction, float airVisibility) {
+  vec3 luminary=mat3(viewMatrix)*cloudShadowLight;
+  return dot(luminary,direction)>0.99999 ? smoothstep(.15,.85,cloudShadowValue)*clamp(airVisibility,0.0,1.0) : 1.0;
+}
 `;
 
 function installChunks() {
@@ -52,9 +56,31 @@ vCloudWorld=(modelMatrix*cloudWorld).xyz;`;
   // Cache outside three's unrolled light loops: the receiver is identical for
   // every directional light. This temporary adds no uniform or sampler.
   THREE.ShaderChunk.lights_fragment_begin='#if NUM_DIR_LIGHTS > 0 || NUM_SUN_LIGHTS > 0\ncloudShadowValue=cloudShadowAt(vCloudWorld.xz);\n#endif\n'+THREE.ShaderChunk.lights_fragment_begin;
+  const directCall='RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );';
+  const wrappedDirect=`{
+  vec3 cloudSpecBefore = reflectedLight.directSpecular;
+  #ifdef USE_CLEARCOAT
+  vec3 cloudClearcoatBefore = clearcoatSpecularDirect;
+  #endif
+  ${directCall}
+  #if defined( USE_FOG ) && defined( STAGE_HAZE_RING )
+  float cloudSpecScale = cloudSpecForLight( directLight.direction, 1.0 - stageRing[4].w );
+  #else
+  float cloudSpecScale = cloudSpecForLight( directLight.direction, 1.0 );
+  #endif
+  reflectedLight.directSpecular = mix( cloudSpecBefore, reflectedLight.directSpecular, cloudSpecScale );
+  #ifdef USE_CLEARCOAT
+  clearcoatSpecularDirect = mix( cloudClearcoatBefore, clearcoatSpecularDirect, cloudSpecScale );
+  #endif
+  }`;
   for(const anchor of ['getDirectionalLightInfo( directionalLight, directLight );','getSunLightInfo( sunLight, directLight );']) {
-    if(!THREE.ShaderChunk.lights_fragment_begin.includes(anchor))throw new Error('Cloud shadow missing r187 light anchor: '+anchor);
-    THREE.ShaderChunk.lights_fragment_begin=THREE.ShaderChunk.lights_fragment_begin.replace(anchor,
+    let chunk=THREE.ShaderChunk.lights_fragment_begin;
+    const at=chunk.indexOf(anchor);
+    if(at<0)throw new Error('Cloud shadow missing r187 light anchor: '+anchor);
+    const callAt=chunk.indexOf(directCall,at);
+    if(callAt<0)throw new Error('Cloud shadow missing r187 RE_Direct anchor after: '+anchor);
+    chunk=chunk.slice(0,callAt)+wrappedDirect+chunk.slice(callAt+directCall.length);
+    THREE.ShaderChunk.lights_fragment_begin=chunk.replace(anchor,
       anchor+'\n directLight.color *= cloudShadowForLight(directLight.direction);');
   }
 }
@@ -131,10 +157,12 @@ export function installCloudShadow(scene,clouds) {
       if(Number.isFinite(span)&&span>0)radius=span;
       if(sunDir?.every(Number.isFinite))sun=[...sunDir];
       if(moonDir?.every(Number.isFinite))moon=[...moonDir];
+      if(sun[1]>0||moon[1]>0)uniforms.cloudShadowLight.value.fromArray(sun[1]>0?sun:moon).normalize();
       if(active!==undefined)enabled=!!active;
     },
     frame(now) {
       if(disposed||!Number.isFinite(now))return false;
+      if(sun[1]>0||moon[1]>0)uniforms.cloudShadowLight.value.fromArray(sun[1]>0?sun:moon).normalize();
       const coverage=source.cloudCoverage.value,type=source.cloudType.value,fade=held(source.cloudFade.value);
       const active=enabled&&coverage>0&&type>.5&&fade>0&&(sun[1]>0||moon[1]>0);
       // Clear/editor/Unlit must stop an old shadow immediately, even between fills.

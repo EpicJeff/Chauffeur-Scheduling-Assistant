@@ -28,7 +28,7 @@ import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from '
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
 import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/atmosphere.js';
 import { createCloudPass } from './sky/cloud_pass.js';
-import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction, weatherLightingKey } from './sky/weather.js';
+import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction, weatherLightingKey, sunAirVisibility, sunDiscVisibility } from './sky/weather.js';
 import { installPlantWind } from './sky/wind.js';
 import { installStageHaze, startEnvironmentFrame } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
@@ -553,7 +553,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
       level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,colour:timeLook?.skyColor,
       light:leafLight(),sunDirection:splashSunDirection,sunColour:splashSunColour,
-      sunVisibility:(timeLook?.sunClear>0?timeLook.sun/timeLook.sunClear:0)*(1-weatherHaze(view.weather))});
+      sunVisibility:timeLook?.sunClear>0?sunDiscVisibility(view.weather,timeLook.sun/timeLook.sunClear):0});
     const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext'&&(!view.levels||view.levels.snapshot().level==='house');
     const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
     const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
@@ -1705,7 +1705,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const seasonNow=clockNow(),seasonSite=resolveSite(site,seasonNow);
     view.season=seasonState(seasonNow,seasonSite.lat,groundWeather,{neutral:editor&&!state.liveWeather,preview:seasonPreview.get()});
     seasons.update(view.season);
-    stageHaze.set({enabled:!state.unlit,extinction:weatherExtinction(view.weather)});
+    stageHaze.set({enabled:!state.unlit,extinction:weatherExtinction(view.weather),sunAirVisibility:sunAirVisibility(view.weather)});
     cloudShadow.set({enabled:!state.unlit});
     sky.setEnabled(!state.unlit);
     if (state.unlit) {

@@ -216,13 +216,11 @@ float splashGlintCoverage(float specular, float sunPeak, float environmentPeak, 
   return 1.0-exp(-1.5*(specular*sunPeak+max(0.0,environmentPeak-1.0)*fresnel));
 }
 float splashCloseSun(float specular, float visibility, float coverage, float sunPeak, float pixels) {
-  // The centre cloud transmittance is the scene's scalar sun visibility;
-  // haze is the same transmittance used by post.setSun. Keep the approved
-  // <=24px flicks intact. A resolved sheet cannot amplify sun into HDR bars:
-  // after coverage division its peak is <= min(.25*sunPeak,1)*visibility.
+  // Every splash's direct sun lobe follows the same sun-disc visibility as lit
+  // wet surfaces; resolved sheets (>24 px) also keep the wet-deck HDR cap.
   float close=smoothstep(24.0,28.0,pixels);
   float cap=min(.25,1.0/max(sunPeak,.0001))*coverage;
-  return mix(specular,min(specular,cap)*visibility,close);
+  return mix(specular,min(specular,cap),close)*visibility;
 }
 float splashCloseEnergy(float energy, float pixels) {
   return mix(energy,min(energy,1.0),smoothstep(24.0,28.0,pixels));
@@ -260,7 +258,7 @@ void main(){
   vec3 dark=splashTransmittedColour(reflection,splashThickness,cosine)*touchLight;
   vec3 light=reflection*fresnel+dark*max(0.0,cover-fresnel)+splashSunColour*directSpecular;
   float irradiance=dot(touchLight,vec3(.2126,.7152,.0722));
-  float sun=dot(splashSunColour,vec3(.2126,.7152,.0722));
+  float sun=dot(splashSunColour,vec3(.2126,.7152,.0722))*splashSunVisibility;
   float sunShare=sun/max(sun+irradiance,.0001);
   float bounce=splashDistanceCoverage(splashPixels,splashFeature,irradiance);
   float pulse=sin(3.141593*clamp(splashAge/max(splashLife,.001),0.0,1.0));

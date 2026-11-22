@@ -243,6 +243,51 @@ await test('inPolygon answers exactly as before, on edges, vertices and near mis
  }
  assert.ok(checked>1600);
 });
+await test('paved walkway under a rotated roof edge follows the projected drip line within 0.15 m with bounded vertices',async()=>{
+ const {terrainSlabGeometry}=await import(file('static/twin/twin_terrain_mesh.js'));
+ const {pathSurfacePolygons}=await import(file('static/twin/path_shapes.js'));
+ for(const rot of [0,357.6,20,45]){
+  const p={buildings:[{id:'b',position:[10,10],rotation:rot,levels:[{id:'L1',elevation:0,ceiling:10,outline:[[0,0],[20,0],[20,10],[0,10]]}],
+   rooms:[],walls:[],roof:{sections:[{id:'r',kind:'gable',rect:[0,0,20,10],plate:10,pitch:4,overhang:2,ridge:'x'}]}}],
+   site:{hardscape:[{id:'walk',kind:'path',points:[[4,6],[36,6]],width:6}]}};
+  const cover=createSkyCover(p),poly=pathSurfacePolygons(p.site.hardscape[0])[0];
+  const geo=terrainSlabGeometry(p,poly,'high',0,.3),before=geo.attributes.position.count;
+  const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial()),root=new THREE.Group();
+  root.scale.setScalar(FT);root.add(mesh);writeWeatherOpen(root,cover,1);
+  const after=mesh.geometry.attributes.position.count;
+  assert.ok(after-before<before*.5,`bounded vertex growth at rot=${rot}: ${before}->${after}`);
+  const pos=mesh.geometry.attributes.position,norm=mesh.geometry.attributes.normal,open=mesh.geometry.attributes.weatherOpen;
+  const tri=[new THREE.Vector3(),new THREE.Vector3(),new THREE.Vector3()];
+  let maxErr=0,maxUnderLeak=0;
+  for(let i=0;i<pos.count;i+=3){
+   if(norm.getY(i)<.9)continue;
+   const ov=[open.getX(i),open.getX(i+1),open.getX(i+2)];
+   for(let k=0;k<3;k++)tri[k].fromBufferAttribute(pos,i+k).multiplyScalar(FT);
+   for(let a=0;a<=4;a++)for(let b=0;b<=4-a;b++){
+    const wa=a/4,wb=b/4,wc=(4-a-b)/4;
+    const x=wa*tri[0].x+wb*tri[1].x+wc*tri[2].x,y=wa*tri[0].y+wb*tri[1].y+wc*tri[2].y,z=wa*tri[0].z+wb*tri[1].z+wc*tri[2].z;
+    const interp=wa*ov[0]+wb*ov[1]+wc*ov[2],exact=cover.open(x,y,z);
+    maxErr=Math.max(maxErr,Math.abs(interp-exact));
+    if(exact===0)maxUnderLeak=Math.max(maxUnderLeak,interp);
+   }
+  }
+  assert.ok(maxUnderLeak<1e-4,`no under-roof wetting leak at rot=${rot}: ${maxUnderLeak}`);
+  assert.ok(maxErr*.6<.15,`wet/open boundary within 0.15 m of projected drip line at rot=${rot}: ${(maxErr*.6).toFixed(4)}m`);
+  // Repeated roof edit re-clips cleanly from the base mesh without accumulating vertices.
+  const grown=structuredClone(p);grown.buildings[0].roof.sections[0].overhang=4;
+  const grownCover=createSkyCover(grown);
+  writeWeatherOpen(root,grownCover,1);
+  assert.ok(mesh.geometry.attributes.position.count-before<before*.6,'roof edit does not accumulate split vertices');
+  // In-place editor deformation updates weatherOpen without reverting to unclipped geometry.
+  const deformedGeo=mesh.geometry,dpos=deformedGeo.attributes.position;
+  for(let i=0;i<dpos.count;i++)dpos.setZ(i,dpos.getZ(i)+40);
+  dpos.needsUpdate=true;
+  writeWeatherOpen(root,grownCover,1);
+  assert.equal(mesh.geometry,deformedGeo,'in-place deformation keeps deformed geometry');
+  assert.ok(Array.from(mesh.geometry.attributes.weatherOpen.array).every(v=>v===1),'deformed open mesh resamples weatherOpen to 1');
+  mesh.geometry.dispose();
+ }
+});
 finish();
 """
 

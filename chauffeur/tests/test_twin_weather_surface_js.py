@@ -508,6 +508,45 @@ await test('mounted view reads replacement weather at render time and neutral re
   editor.setWeatherPreview(null);assert.deepEqual(editor.weatherSurface.uniforms.weatherSurface.value.toArray(),[0,0,0,0]);
  }finally{viewer?.dispose();editor?.dispose();location.search=prior;Date.now=realNow;}
 });
+await test('overcast sun specular drops >=20x under Pouring while diffuse stays on the cloud model and lamps stay full',async()=>{
+ const {sunAirVisibility,sunDiscVisibility,previewWeather,weatherState}=await import(file('static/twin/sky/weather.js'));
+ const {CLOUD_SHADOW_GLSL}=await import(file('static/twin/sky/cloud_shadow.js'));
+ const specBody=CLOUD_SHADOW_GLSL.match(/float cloudSpecForLight\([^)]*\) \{([\s\S]*?)\n\}/)[1]
+  .replace('vec3 luminary=mat3(viewMatrix)*cloudShadowLight;','const luminary=cloudShadowLight;');
+ const specFn=new Function('direction','airVisibility','cloudShadowLight','cloudShadowValue','dot','smoothstep','clamp',specBody);
+ const dot3=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+ const sunDir=[0,Math.SQRT1_2,Math.SQRT1_2],lampDir=[1,0,0];
+ const evalDirect=(weather,cloudT,dir=sunDir)=>{
+  const air=sunAirVisibility(weather);
+  const diffuse=dot3(dir,sunDir)>.99999?cloudT:1;
+  const specScale=specFn(dir,air,sunDir,cloudT,dot3,smoothstep,clamp);
+  return {diffuse,specular:diffuse*specScale,disc:sunDiscVisibility(weather,cloudT)};
+ };
+ const clear=evalDirect(previewWeather('clear'),1);
+ const partlyGap=evalDirect(weatherState({state:'partlycloudy',attributes:{}}),1);
+ const partlyEdge=evalDirect(weatherState({state:'partlycloudy',attributes:{}}),.6);
+ const cloudy=evalDirect(weatherState({state:'cloudy',attributes:{}}),.045);
+ const pouring=evalDirect(previewWeather('pouring'),.045);
+ const lampUnderPouring=evalDirect(previewWeather('pouring'),.045,lampDir);
+ assert.equal(clear.diffuse,1);assert.equal(clear.specular,1);
+ assert.equal(partlyGap.specular,1,'clear gap in partly cloudy keeps full sun highlight');
+ assert.ok(partlyEdge.specular>.2&&partlyEdge.specular<clear.specular,'partly cloudy keeps partial highlight');
+ assert.ok(cloudy.specular<clear.specular/20,'heavy cloudy suppresses sharp sun highlight');
+ assert.ok(pouring.specular<=clear.specular/20,'Pouring sun specular is at least 20x smaller than clear sky');
+ assert.equal(pouring.diffuse,.045,'Pouring diffuse stays strictly on the existing cloud shadow model');
+ assert.equal(pouring.specular,pouring.disc,'lit specular multiplier matches shared sunDiscVisibility exactly');
+ assert.equal(partlyEdge.specular,partlyEdge.disc,'partly cloudy lit specular matches shared sunDiscVisibility');
+ assert.equal(lampUnderPouring.specular,1,'non-sun lights keep full specular during Pouring');
+ // Verify mounted view writes sun obscuration into the packed stageRing[4].w lane with no extra uniform.
+ const el=new Element(),v=await mountTwin(el,{plan:structuredClone(input.plan),kit:{materials:{}},tier:'low',bake:false});
+ try{
+  const ringOf=()=>{v.scene.onBeforeRender(v.renderer3,v.scene,v.camera);let found=null;v.scene.traverse(o=>{for(const m of [].concat(o.material||[])){if(m.fog&&m.isMeshStandardMaterial&&!found){const s={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};m.onBeforeCompile(s,{});found=s.uniforms.stageRing?.value;}}});return found;};
+  v.setWeatherPreview('clear');v.render();const ring=ringOf();assert.ok(ring);
+  close(1-ring[19],1);
+  v.setWeatherPreview('pouring');v.render();close(1-ring[19],0);
+  v.setWeatherPreview('fog');v.render();close(1-ring[19],0);
+ }finally{v.dispose();}
+});
 dummyShadow.dispose();finish();
 """
 
