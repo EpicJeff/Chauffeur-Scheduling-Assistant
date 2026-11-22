@@ -450,7 +450,11 @@ def scenario_moving_a_light_rebakes_only_it():
             check(m_after['lights']['dev-hall-light']['key'] != m_before['lights']['dev-hall-light']['key'],
                   ('the Hall light has a new key', m_before['lights']['dev-hall-light'], m_after['lights']['dev-hall-light']))
             for did in ('dev-k-ceiling', 'dev-k-lamp', 'dev-changing-light'):
-                check(m_after['lights'][did] == m_before['lights'][did], ('the other lights keep their entries', did))
+                # The cheap editor signature covers the whole light set, so a press re-stamps it on
+                # every entry; the baked identity (key, pages, scale) must not move.
+                keep = lambda e: {k: v for k, v in e.items() if k != 'cheap'}
+                check(keep(m_after['lights'][did]) == keep(m_before['lights'][did]),
+                      ('the other lights keep their baked entries', did, m_before['lights'][did], m_after['lights'][did]))
             files_after = page_files(key)
             changed = sorted(n for n in files_after if files_after.get(n) != files_before.get(n))
             # With reach a light spans several pages (its 'pages'); only those may be rewritten.
@@ -947,7 +951,11 @@ def scenario_terraces_foundation_and_heavy_import_share_the_wall_bake():
                 check(desk_models and not wall_models, 'High fetches the model; Low keeps its stand-in')
                 terrain_count = """() => {let n=0; window.__twin.groups.site.traverse(m=>{
                     if(m.userData.terrain) n+=m.geometry.attributes.position.count;}); return n;}"""
-                check(desk.evaluate(terrain_count) > wall.evaluate(terrain_count), 'lawn render grids still differ by tier')
+                # Compare the rendered lawn on a High viewer (the editor scene draws its own site).
+                open_desk(desk, s)
+                wait_baked(desk)  # the yard builds in idle slices; count once the bake has loaded
+                check(desk.evaluate(terrain_count) > wall.evaluate(terrain_count),
+                      ('lawn render grids still differ by tier', desk.evaluate(terrain_count), wall.evaluate(terrain_count)))
             finally:
                 context.close()
             wait_until(wall, lambda: set(BAKED) <= fresh(wall), 120, 'wall picks up terrain/import bake')
