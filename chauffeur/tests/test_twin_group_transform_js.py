@@ -226,6 +226,7 @@ def check_editor_batch_path():
  const error=await hooks.applyBatch([ops[0],{...ops[1],id:'missing'}]).then(()=>assert.fail('must refuse'),e=>e);
  assert.equal(error.member,1);assert.equal(error.reason,'This window no longer fits.');
  assert.match(document.getElementById('editor-status').textContent,/missing.*window no longer fits/);
+ assert.match(document.getElementById('editor-status').textContent,/The selected pieces were not saved:/);
  assert.equal(alerts.length,1);assert.deepEqual(plan.site.furniture.map(p=>p.at),[[2,0],[12,0]]);
  assert.deepEqual(domErrors,[]);assert.deepEqual(escaped,[]);
  window.dispatchEvent(new Event('pagehide'));console.log('PASS real editor applyBatch queue, single undo/redo, refusal member and status');process.exit(0);

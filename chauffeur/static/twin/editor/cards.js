@@ -1,6 +1,8 @@
+import { findPiece, deleteOperation } from './piece_operations.js';
+export { findPiece } from './piece_operations.js';
 import { drawObjectShelf, isObject } from './object_shelf.js';
 import { solarLayout } from '../twin_solar.js';
-import { contains, allPorches } from '../twin_generator.js';
+import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
 import { createSlotRow, idleLibrary } from './slot_row.js';
 import { keepPlace } from './keep_place.js';
@@ -9,7 +11,7 @@ import { foundationShelf } from './foundation_shelf.js';
 import { houseMaterialsShelf } from './house_materials.js';
 import { porchFoundationShelf, porchShelfOnGrade } from './porch_foundation_shelf.js';
 import { stairShelf } from './stair_shelf.js';
-import { siteRecord, siteShapeKinds, siteShapeLabels } from '../objects.js';
+import { siteShapeKinds, siteShapeLabels } from '../objects.js';
 import { drawSiteShapeShelf, yardRoomFeatures } from './site_shape_shelf.js';
 import { propertyPath } from './dock.js';
 
@@ -45,30 +47,6 @@ export function parseLength(text) {
     : simple ? Number(simple[1]) / (simple[2] ? 12 : 1) : NaN;
   if (!text || !Number.isFinite(value)) throw new Error('Use feet and inches, such as 11\'-0", or a number of feet.');
   return value;
-}
-export function findPiece(plan, pieceId, buildingId) {
-  const site = !buildingId && siteRecord(plan, pieceId);
-  if (site) return site;
-  if (!buildingId) {
-    const feature = plan?.site?.pool?.features?.find(f => f.id === pieceId);
-    if (feature) return { piece: feature, kind: feature.kind, building: null, poolId: plan.site.pool.id };
-  }
-  const building = plan?.buildings.find(b => b.id === buildingId);
-  if (!building) return null;
-  if (building.id === pieceId) return { piece: building, building, kind: 'building' };
-  for (const [list, kind] of [['solar_zones', 'solar_zone'], ['levels', 'level'], ['walls', 'wall'], ['openings', 'opening'], ['rooms', 'room'], ['stairs', 'stair'], ['anchors', 'anchor'], ['items', 'item'], ['fixtures', 'fixture'], ['lights', 'light']]) {
-    const piece = building[list]?.find(p => p.id === pieceId);
-    if (piece) return { piece, building, kind };
-  }
-  const porch = allPorches(building).find(p => p.id === pieceId);
-  if (porch) return { piece: porch, building, kind: 'porch' };
-  const section = building.roof?.sections?.find(p => p.id === pieceId);
-  const dormer = building.dormers?.find(p => p.id === pieceId);
-  if (dormer) return { piece: section || dormer, building, kind: 'dormer' };
-  const piece = section || building.roofs?.find(p => p.id === pieceId);
-  if (piece) return { piece, building, kind: 'roof' };
-  const proposal = building.proposals?.find(p => (p.id || p.piece.id) === pieceId);
-  return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
 export function createCards({ getPlan, getModel = () => null, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials, removeSelection }) {
@@ -390,26 +368,16 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     const record = selection && findPiece(getPlan(), selection.pieceId, selection.buildingId);
     if (!record) return;
     const { kind, piece, building } = record;
-    const roof = kind === 'roof' && building.roofs?.find(r => r.id === piece.id);
       if (!canEdit()) return;
       const count = kind === 'yard_rooms' ? (getPlan().site?.devices || []).filter(d => d.host?.yard_room === piece.id).length : 0;
       if (!await window.promptConfirm(`Delete ${getLabel(selection)}?`, kind === 'yard_rooms'
         ? `${count} device${count === 1 ? '' : 's'} will be unplaced and remain in Home Assistant. Undo restores the room and its placements.`
         : 'Attached doors or windows may also be removed. The timeline keeps the earlier house.', 'Delete', 'Cancel')) return;
       await pending;
-      if (record.poolId) await op({ op: 'delete_pool_feature', id: piece.id });
-      else if (!building) await op({ op: 'delete_site_item', list: kind, index: record.index });
-      // Anything the model holds is deleted by the model operation; the legacy edit only
-      // knows the flattened snapshot, so a just-placed item there is 'unknown' (owner 2026-11-19).
-      else if ((inModel(building.id, piece.id) || kind==='solar_zone' || kind === 'porch' || kind === 'room' && piece.kind === 'porch' || roof && !piece.rect) && op) await op({ op: 'delete', building: building.id, id: piece.id });
-      else await edit({ op: 'delete', building: building.id, piece: piece.id });
+      const operation = deleteOperation(getPlan(), selection, getModel?.());
+      await (operation.piece || !op ? edit : op)(operation);
       select(null);
 
-  }
-  const MODEL_LISTS = ['walls', 'joints', 'rooms', 'openings', 'anchors', 'items', 'roofs', 'dormers', 'extensions', 'stairs', 'solar_zones'];
-  function inModel(buildingId, id) {
-    const building = getModel?.()?.buildings?.find(b => b.id === buildingId);
-    return !!building && MODEL_LISTS.some(list => (building[list] || []).some(piece => piece.id === id));
   }
   function drawEdge(next, record, roof) {
     const edge = roof.edges[edgeIndex];

@@ -129,7 +129,7 @@ def normalize(model, notes):
     model['effect_fixtures'] = kept
 
 
-def apply_op(model, op):
+def apply_op(model, op, *, _defer_resolve=False):
     """Apply one editor operation; its store wrapper owns the undo round."""
     kind = op.get('op')
     if kind not in OPS:
@@ -170,7 +170,8 @@ def apply_op(model, op):
         value = validate(candidate)
     p = placement(value)
     fixtures._in_lot(model, p)
-    fixtures._resolve(model, p)
+    if not _defer_resolve:
+        fixtures._resolve(model, p)
     fixtures._in_lot(model, p)
     set_placement(value, p)
     if kind == 'add_effect_fixture':

@@ -19,15 +19,20 @@ const same = (a, b) => typeof a === 'number' && typeof b === 'number' ? Math.abs
 export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPickable = () => true, getTool, view, layer, op, applyBatch = (ops, options) => op({ op: 'batch', ops }, options), typed = createTypedValue(layer), canEdit = () => true, onPreview }) {
   const canvas = view.renderer3.domElement, raycaster = new THREE.Raycaster();
   const root = document.createElement('div'); root.className = 'editor-handles'; layer.append(root);
-  let rows = [], lines = [], gesture = null, preview = null, ring = [], lastFrameMs = null;
-  function record() {
+  let rows = [], lines = [], gesture = null, preview = null, ring = [], lastFrameMs = null, groupCache = null;
+  function record(tool = getTool()) {
     if (!canEdit()) return null;
-    const members = getMembers();
+    const plan = getPlan(), members = getMembers();
     if (members.length > 1) {
-      const group = groupTransform(getPlan(), members, getTool(), { boxes: view.selectionWorldBounds?.() || [], isPickable });
-      return group && { group, piece: { id: '__selection__' } };
+      const keys = JSON.stringify(members.map(r => [r.kind, r.buildingId ?? r.building ?? null, r.pieceId ?? r.id, r.entity_id ?? null, !!isPickable(r)]));
+      if (!groupCache || groupCache.plan !== plan || groupCache.keys !== keys || groupCache.tool !== tool) {
+        const group = groupTransform(plan, members, tool, { boxes: view.selectionWorldBounds?.() || [], isPickable });
+        groupCache = { plan, keys, tool, record: group && { group, piece: { id: '__selection__' } } };
+      }
+      return groupCache.record;
     }
-    const plan = getPlan(), selected = getSelection(); if (!selected?.id || !plan) return null;
+    groupCache = null;
+    const selected = getSelection(); if (!selected?.id || !plan) return null;
     if (selected.kind === 'light_fixture') {
       const entity_id = selected.entity_id || Object.keys(plan.light_fixtures || {}).find(id => plan.light_fixtures[id].some(f => f.id === selected.id));
       const piece = plan.light_fixtures?.[entity_id]?.find(f => f.id === selected.id);
@@ -81,8 +86,10 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
     : r.fixture ? plan.light_fixtures[r.entity_id].find(f => f.id === r.piece.id) : sitePieces(plan.site[r.kind])[r.index];
   function clear() { root.replaceChildren(); rows = []; lines = []; ring = []; }
   function draw() {
-    const r = gesture?.record || record(), tool = gesture?.tool || getTool();
-    if (!r || !['move', 'rotate', 'scale'].includes(tool) || r.fixture && tool === 'scale'
+    const tool = gesture?.tool || getTool();
+    if (!['move', 'rotate', 'scale'].includes(tool)) { clear(); return; }
+    const r = gesture?.record || record(tool);
+    if (!r || r.fixture && tool === 'scale'
       || view.groups?.levels?.[`${r.building?.id || r.piece.building}:${r.level}`]?.visible === false) { clear(); return; }
     let c; try { c = r.group ? centre(r) : preview ? centre({ ...r, piece: pieceIn(preview, r) }, preview) : centre(r); } catch { clear(); return; }
     const middle = project(r.building, c); if (!middle) { clear(); return; }

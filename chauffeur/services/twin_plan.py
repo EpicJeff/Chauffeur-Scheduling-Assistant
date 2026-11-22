@@ -840,7 +840,7 @@ def _compose_overrides(value, notes):
     return result
 
 
-def record_compose_overrides(before: dict, after: dict) -> dict:
+def record_compose_overrides(before: dict, after: dict, *, _inplace=False) -> dict:
     """Copy an edit and remember removed and repositioned compose items.
 
     Existing overrides from either snapshot survive subsequent edits. Geometry
@@ -853,7 +853,8 @@ def record_compose_overrides(before: dict, after: dict) -> dict:
     if any(not isinstance(plan.get('site', {}).get(name, []), list)
            for plan in (before, after) for name in ('planting', 'beds', 'edges')):
         return after
-    result = deepcopy(after)
+    # Atomic batches already own an isolated working model.
+    result = after if _inplace else deepcopy(after)
     site = result.setdefault('site', {})
     overrides = _compose_overrides(before.get('site', {}).get('compose_overrides'), [])
     latest = _compose_overrides(site.get('compose_overrides'), [])

@@ -28,8 +28,141 @@ class BatchRefused(Refused):
         super().__init__(f'Batch member {member + 1} ({label}) refused: {self.reason}')
 
 
+def _batch_preflight(model, members):
+    """Only existence is checked here; validators run on the composed state."""
+    buildings = {b['id']: b for b in model['buildings']}
+    ids = {bid: {bid} | {p['id'] for rows in b.values() if isinstance(rows, list)
+                          for p in rows if isinstance(p, dict) and 'id' in p}
+           for bid, b in buildings.items()}
+    legacy_ids = None
+
+    def present(pid, scope=None):
+        nonlocal legacy_ids
+        if not isinstance(pid, str):
+            raise Refused('Choose a piece id.')
+        if any(pid in values for bid, values in ids.items() if scope is None or scope == bid):
+            return True
+        # Flat-only roofs/porches retain the same hand path as single Delete.
+        if legacy_ids is None:
+            from services.twin_model_bridge import flatten
+            from services.twin_edit import _entries
+            flat = flatten(model)
+            legacy_ids = {b['id']: {b['id']} | {p['id'] for _, p, owner, _ in
+                          _entries(flat)
+                          if owner['id'] == b['id'] and 'id' in p} for b in flat['buildings']}
+        return any(pid in values for bid, values in legacy_ids.items() if scope is None or scope == bid)
+
+    def fixture_targets(value):
+        if not isinstance(value, dict):
+            return
+        scope = value.get('building')
+        if scope is not None and scope not in buildings:
+            raise Refused('Choose an existing fixture building and level.')
+        if value.get('level') is not None and not present(value['level'], scope):
+            raise Refused('Choose an existing fixture building and level.')
+        anchors = value.get('anchors') or []
+        attachments = [a.get('host') for a in anchors if isinstance(a, dict)]
+        if isinstance(value.get('snap'), dict):
+            attachments.append(value['snap'].get('host'))
+        site_lists = {'terrace': 'terraces', 'retaining_wall': 'terraces', 'hardscape': 'hardscape', 'fence': 'fence'}
+        for host in attachments:
+            if not isinstance(host, dict):
+                continue  # The member's own validator reports malformed data.
+            kind, pid, owner = host.get('kind'), host.get('id'), host.get('building')
+            if kind in site_lists:
+                rows = model['site'].get(site_lists[kind], [])
+                rows = rows if isinstance(rows, list) else [rows] if isinstance(rows, dict) else []
+                found = any(p.get('id') == pid for p in rows)
+            elif kind in ('pool', 'spa', 'ledge', 'steps'):
+                pool = model['site'].get('pool') or {}
+                found = pid == pool.get('id', 'pool:0') if kind == 'pool' else any(p.get('id') == pid for p in pool.get('features', []))
+            else:
+                if kind == 'floor' and isinstance(pid, str):
+                    pid = pid.removeprefix('floor:')
+                if kind == 'building' and pid == 'structure':
+                    pid = owner
+                found = present(pid, owner)
+            if not found:
+                raise Refused(f'That attachment host is missing: {pid}.')
+
+    for index, member in enumerate(members):
+        try:
+            if not isinstance(member, dict) or member.get('op') == 'batch':
+                raise Refused('Choose a single operation; batches cannot be nested.')
+            kind, scope = member.get('op'), member.get('building')
+            if not isinstance(kind, str):
+                raise Refused('Choose an operation.')
+            if scope is not None and scope not in buildings:
+                raise Refused('That building is missing.')
+            name = member.get('list')
+            if name is not None and kind in (*_SITE_OPS, 'set_object', 'make_yard_room'):
+                if kind not in ('add_site_item', 'add_site_shape'):
+                    value = model['site'].get(name, [])
+                    rows = value if isinstance(value, list) else [value] if isinstance(value, dict) else []
+                    found = (any(p.get('id') == member['id'] for p in rows) if 'id' in member
+                             else type(member.get('index', 0)) is int and 0 <= member.get('index', 0) < len(rows))
+                    if not found:
+                        raise Refused('That site item is missing.')
+                continue
+            if kind in ('update_light_fixture', 'delete_light_fixture'):
+                if not any(f['id'] == member.get('id') for f in model.get('light_fixtures', {}).get(member.get('entity_id'), [])):
+                    raise Refused('That light fixture is missing.')
+                fixture_targets(member.get('change'))
+                continue
+            if kind in ('update_effect_fixture', 'delete_effect_fixture'):
+                if not any(f['id'] == member.get('id') for f in model.get('effect_fixtures', [])):
+                    raise Refused('That effect fixture is missing.')
+                fixture_targets(member.get('change'))
+                continue
+            if kind in ('add_light_fixture', 'add_effect_fixture'):
+                fixture_targets(member.get('fixture'))
+                continue
+            if kind in ('update_pad', 'delete_pad', 'reorder_pad'):
+                _find(model['site'], 'terraces', member.get('id'))
+                continue
+            if kind in ('update_pool_feature', 'delete_pool_feature'):
+                _find(model['site'].get('pool') or {}, 'features', member.get('id'))
+                continue
+            if kind == 'add_pool_feature' and not isinstance(model['site'].get('pool'), dict):
+                raise Refused('Draw a pool first.')
+            if kind == 'unplace_device':
+                rows = model['site'].get('devices', []) + [p for b in buildings.values()
+                       for name in ('devices', 'anchors') for p in b.get(name, [])]
+                if not any(member.get('device') in (p.get('device'), p.get('device_id')) for p in rows):
+                    raise Refused('Nothing changed.')
+                continue
+            targets = [member[k] for k in ('piece', 'joint', 'wall', 'room', 'roof', 'level', 'to_level', 'anchor')
+                       if member.get(k) is not None]
+            if 'id' in member and not kind.startswith(('add_', 'draw_')):
+                targets.append(member['id'])
+            targets.extend(member.get('pieces') or [])
+            if kind == 'roof_over':
+                targets.extend(member.get('rooms') or [])
+            if kind == 'move_joints':
+                targets.extend(j.get('joint') for j in member.get('joints', []) if isinstance(j, dict))
+            for source in (member.get('host'), member.get('target')):
+                if isinstance(source, dict):
+                    targets.extend(source[k] for k in ('wall', 'roof', 'floor', 'ceiling', 'room', 'porch', 'stair', 'item', 'opening', 'level', 'dormer', 'building') if isinstance(source.get(k), str))
+            host = member.get('host')
+            if isinstance(host, dict) and 'yard_room' in host:
+                _find(model['site'], 'yard_rooms', host['yard_room'])
+            for pid in targets:
+                if not present(pid, scope):
+                    raise Refused(f'That piece is missing: {pid}.')
+        except (ValueError, TypeError, KeyError) as exc:
+            raise BatchRefused(index, member, exc) from exc
+
+
+def _batch_owners(value, pid, scope):
+    return {building['id'] for building in value['buildings']
+            if (scope is None or building['id'] == scope) and (
+                building['id'] == pid or any(
+                    isinstance(piece, dict) and piece.get('id') == pid
+                    for pieces in building.values() if isinstance(pieces, list) for piece in pieces))}
+
+
 def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=None, apply_member=None):
-    """Check each member on the original, then compose privately; publish nowhere."""
+    """Compose in one private copy; publish nowhere and finalize only once."""
     members = op.get('ops')
     if not isinstance(members, list) or not members:
         raise Refused('A batch needs a non-empty list of operations.')
@@ -37,47 +170,59 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
     original = (twin_model.normalize(model, preserve_room_polygons=preserves_room_geometry(op))
                 if _normalized is None else _normalized)
 
-    def checked(value, member, index, normalized):
+    def checked(value, member, index, normalized, inplace=False):
         try:
             if not isinstance(member, dict) or member.get('op') == 'batch':
                 raise Refused('Choose a single operation; batches cannot be nested.')
             return apply_member(value, member, ha_catalogue=ha_catalogue, _normalized=normalized,
-                                _batch_site=member.get('op') in _SITE_OPS)
-        except ValueError as exc:
+                                _batch_inplace=inplace)
+        except (ValueError, TypeError, KeyError) as exc:
             raise BatchRefused(index, member, exc) from exc
 
-    first = None
-    for index, member in enumerate(members):
-        result = checked(model, member, index, original)
-        if index == 0:
-            first = result
-    # In particular, preserve the single op's model, words and no-op refusal.
+    # Preserve exactly the single operation's result, words and no-op refusal.
     if len(members) == 1:
-        return deepcopy(first)
-    result, _ = first
+        return checked(model, members[0], 0, original)
+    _batch_preflight(original[0], members)
 
-    def owners(value, pid, scope):
-        return {building['id'] for building in value['buildings']
-                if (scope is None or building['id'] == scope) and (
-                    building['id'] == pid or any(
-                        isinstance(piece, dict) and piece.get('id') == pid
-                        for pieces in building.values() if isinstance(pieces, list) for piece in pieces))}
+    references = {}
 
-    deleted = members[0].get('op') == 'delete'
-    for index, member in enumerate(members[1:], 1):
-        if deleted and member.get('op') == 'delete':
-            pid, scope = member.get('piece', member.get('id')), member.get('building')
-            original_owners = owners(original[0], pid, scope)
-            # Its single-op deletion already passed against the original. An
-            # earlier room/wall deletion may have removed this selected member
-            # as a dependant; deleting it again is already fulfilled.
-            if len(original_owners) == 1 and not owners(result, pid, next(iter(original_owners))):
-                continue
-        result, _ = checked(result, member, index, (result, []))
-        deleted |= member.get('op') == 'delete'
-    # One piece can contribute several members (for example turn + move),
-    # while a joint-set member can move several walls. Do not count ops as pieces.
-    return deepcopy(result), 'Applied the changes.'
+    def compose(inplace):
+        from services import twin_fixtures
+        work = deepcopy(original[0]) if inplace else original[0]
+        deleted = False
+        for index, member in enumerate(members):
+            if deleted and member.get('op') == 'delete':
+                pid, scope = member.get('piece', member.get('id')), member.get('building')
+                owners = _batch_owners(original[0], pid, scope)
+                # A selected dependant removed by an earlier delete is fulfilled.
+                if len(owners) == 1 and not _batch_owners(work, pid, next(iter(owners))):
+                    continue
+            work, _ = checked(work, member, index, (work, []), inplace)
+            if inplace:
+                twin_fixtures.remember_batch_references(work, member, references)
+            deleted |= member.get('op') == 'delete'
+        return work
+
+    work = compose(True)
+    try:
+        from services import twin_plan, twin_terrain
+        twin_plan.record_compose_overrides(original[0], work, _inplace=True)
+        _finish_model(original[0], work, _references=references)
+        from services import twin_fixtures, twin_effect_fixtures
+        edited = {m.get('id') for m in members if m.get('op') in ('update_light_fixture', 'update_effect_fixture')}
+        for rows in [*work.get('light_fixtures', {}).values(), work.get('effect_fixtures', [])]:
+            for fixture in rows:
+                if fixture['id'] in edited:
+                    twin_fixtures._in_lot(work, twin_effect_fixtures.placement(fixture) if fixture['id'].startswith('effect:') else fixture)
+        error = twin_terrain.crossing_error(work)
+        if error:
+            raise Refused(error)
+    except ValueError as exc:
+        # The normal path does no repeated whole-house checks. On refusal only,
+        # replay the old validator path to name the first offending member.
+        compose(False)
+        raise BatchRefused(len(members) - 1, members[-1], exc) from exc
+    return work, 'Applied the changes.'
 
 
 def _find(building, collection, pid):
@@ -1387,11 +1532,11 @@ def _porch_outline(building, op):
     return polygon, max(candidates, key=lambda row: row[0])[1]
 
 
-def _site_op(model, op, actor):
+def _site_op(model, op, actor, *, _batch_inplace=False):
     from services import twin_plan
     # Compose provenance depends only on the site. Do not copy the entire
     # connected wall/roof graph twice for every plant in a selection.
-    before = {'site': deepcopy(model['site'])}
+    before = None if _batch_inplace else {'site': deepcopy(model['site'])}
     words = 'Changed the site item.'
     name = op.get('list')
     if name not in ('planting', 'furniture', 'beds', 'hardscape', 'edges', 'pool', 'fire_pit', 'fence', 'yard_rooms'):
@@ -1496,7 +1641,8 @@ def _site_op(model, op, actor):
                 twin_site_shapes.yard_device_point(model['site'], device)
             except ValueError as exc:
                 raise Refused('That outline would leave a device outside its yard room. Move or unplace it first.') from exc
-    model['site'] = twin_plan.record_compose_overrides(before, {'site': model['site']})['site']
+    if not _batch_inplace:
+        model['site'] = twin_plan.record_compose_overrides(before, {'site': model['site']})['site']
     return model, words
 
 
@@ -1647,12 +1793,18 @@ def preserves_room_geometry(op):
     return material_only(op) or isinstance(op, dict) and op.get('op') == 'set' and op.get('field') == 'name'
 
 
-def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None, _batch_site=False) -> tuple[dict, str]:
+def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None, _batch_inplace=False) -> tuple[dict, str]:
     if isinstance(op, dict) and op.get('op') == 'batch':
         return apply_batch(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized)
-    from services import twin_fixtures
     result, words = _apply(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized,
-                           _batch_site=_batch_site)
+                           _batch_inplace=_batch_inplace)
+    if not _batch_inplace:
+        _finish_model(_normalized[0] if _normalized is not None else model, result)
+    return result, words
+
+
+def _finish_model(before, result, *, _references=None):
+    from services import twin_fixtures
     # A source is scoped to its building, even if another roof shares its id.
     source = result.get('solar_source_roof')
     owner = result.get('solar_source_building')
@@ -1660,14 +1812,14 @@ def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normali
                           if owner is None or b['id'] == owner for r in b.get('roofs', [])):
         result['solar_source_roof'] = result['solar_source_building'] = None
     if result.get('light_fixtures') or result.get('effect_fixtures'):
-        twin_fixtures.follow_host_moves(_normalized[0] if _normalized is not None else model, result)
+        twin_fixtures.follow_host_moves(before, result, _references=_references)
         twin_fixtures.normalize(result, [])
         from services import twin_effect_fixtures
         twin_effect_fixtures.normalize(result, [])
-    return result, words
+    return result
 
 
-def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None, _batch_site=False) -> tuple[dict, str]:
+def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None, _batch_inplace=False) -> tuple[dict, str]:
     """Return an edited model and plain words, leaving the input untouched."""
     if not isinstance(op, dict):
         raise Refused('Choose an operation.')
@@ -1679,20 +1831,13 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     op = deepcopy(op)
     # save() also needs the normalized pre-edit model for its fix log. Reuse
     # that exact input's result, but keep our mutable working copy private.
-    if _batch_site and kind in _SITE_OPS and _normalized is not None:
-        # A batch owns its snapshots and copies the finished result once.
-        # Site validators never write buildings; fixture following writes only
-        # its own root collections. Share the read-only graph for this member.
-        source, notes = _normalized
-        model, notes = dict(source), list(notes)
-        for key in ('site', 'light_fixtures', 'effect_fixtures'):
-            if key in source:
-                model[key] = deepcopy(source[key])
+    if _batch_inplace:
+        notes = []
     else:
         model, notes = twin_model.normalize(model, preserve_room_polygons=preserves_room_geometry(op)) if _normalized is None else deepcopy(_normalized)
     if kind in twin_effect_fixtures.OPS:
         try:
-            return model, twin_effect_fixtures.apply_op(model, op)
+            return model, twin_effect_fixtures.apply_op(model, op, _defer_resolve=_batch_inplace)
         except ValueError as exc:
             raise Refused(str(exc)) from exc
     if kind == 'set_material' and isinstance(op.get('target'), dict) and 'site' in op['target']:
@@ -1701,7 +1846,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     from services import twin_fixtures
     if kind in twin_fixtures.OPS:
         try:
-            words = twin_fixtures.apply_op(model, op)
+            words = twin_fixtures.apply_op(model, op, _defer_resolve=_batch_inplace)
         except ValueError as exc:
             raise Refused(str(exc)) from exc
         if kind == 'set_camera_view':
@@ -1787,7 +1932,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
                     raise Refused(error)
                 if actor == 'person':
                     pad['src'] = {'person': True}
-        error = twin_terrain.crossing_error(model)
+        error = None if _batch_inplace else twin_terrain.crossing_error(model)
         if error:
             raise Refused(error)
         return model, 'Changed the foundation.' if kind == 'set_foundation' else 'Changed the terrace pad.'
@@ -1808,7 +1953,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
             name = None
             if piece_kind not in ('item', 'opening', 'anchor') or piece_kind == 'anchor' and piece.get('device'):
                 raise Refused('Choose a placed object without a linked device.')
-        before_object = deepcopy(model)
+        before_object = None if _batch_inplace else deepcopy(model)
         try:
             twin_objects.update(piece, op.get('properties'), name, opening=piece_kind == 'opening')
             if piece_kind == 'anchor' and (reason := twin_model.equipment_error(piece)):
@@ -1817,7 +1962,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
             raise Refused(str(exc)) from exc
         if actor == 'person':
             piece.setdefault('src', {})['person'] = True
-        return twin_plan.record_compose_overrides(before_object, model), 'Changed the object.'
+        return (model if _batch_inplace else twin_plan.record_compose_overrides(before_object, model)), 'Changed the object.'
     if kind == 'set_solar_source':
         roof = op.get('roof')
         if roof is not None and not any(r['id'] == roof for b in model['buildings'] for r in b.get('roofs', [])):
@@ -1905,7 +2050,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
             values = twin_site_shapes.room_from_feature(name, piece, op.get('feature'))
         except ValueError as exc:
             raise Refused(str(exc)) from exc
-        return _site_op(model, {'op': 'add_site_shape', 'list': 'yard_rooms', **values}, actor)
+        return _site_op(model, {'op': 'add_site_shape', 'list': 'yard_rooms', **values}, actor, _batch_inplace=_batch_inplace)
     if kind in ('move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape'):
         if op.get('list') == 'yard_rooms' and 'ha_area' in op and op['ha_area'] is not None:
             from services import twin_edit
@@ -1913,7 +2058,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
                 op = {**op, 'ha_area': twin_edit._ha_area(op['ha_area'], ha_catalogue)}
             except ValueError as exc:
                 raise Refused(str(exc)) from exc
-        return _site_op(model, op, actor)
+        return _site_op(model, op, actor, _batch_inplace=_batch_inplace)
     building = _find(model, 'buildings', op.get('building'))
     before = hosts.snapshot(building)
     _roof_offsets(building, before)
@@ -2047,7 +2192,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     _follow_dormers(building, before)
     solar_clear(building, previous)
     from services import twin_terrain
-    terrain_error = twin_terrain.crossing_error(model)
+    terrain_error = None if _batch_inplace else twin_terrain.crossing_error(model)
     if terrain_error:
         raise Refused(terrain_error)
     twin_model.filter_checked_flags(building)

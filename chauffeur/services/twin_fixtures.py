@@ -574,7 +574,7 @@ def validate_climate_zone(entity, value):
     return result if value['scope'] is not None else None
 
 
-def apply_op(model, op):
+def apply_op(model, op, *, _defer_resolve=False):
     """Mutate the private editor model; validation errors abort its one round."""
     kind = op['op']
     if kind == 'set_climate_zone':
@@ -634,7 +634,8 @@ def apply_op(model, op):
             candidate.pop('anchors', None)
         value = validate(candidate)
     _in_lot(model, value)
-    _resolve(model, value)
+    if not _defer_resolve:
+        _resolve(model, value)
     _in_lot(model, value)
     if kind == 'add_light_fixture':
         fixtures.append(value)
@@ -933,7 +934,44 @@ def _follow_roof_anchor(before, after, fixture, anchor, index, old_frame, new_fr
     return True
 
 
-def _follow_anchors(before, after, fixture, cache):
+def remember_batch_references(model, op, references):
+    """Snapshot only explicitly authored attachments in their composed frame."""
+    kind = op.get('op')
+    if kind not in ('add_light_fixture', 'update_light_fixture', 'add_effect_fixture', 'update_effect_fixture'):
+        return
+    effect = 'effect' in kind
+    rows = model.get('effect_fixtures', []) if effect else model.get('light_fixtures', {}).get(op.get('entity_id'), [])
+    fid = op.get('id') if kind.startswith('update_') else op.get('fixture', {}).get('id')
+    # Generated fixture ids identify the last newly appended row.
+    fixture = next((f for f in rows if f['id'] == fid), None) if fid else next(iter(rows[-1:]), None)
+    if fixture is None:
+        return
+    change = op.get('change', op.get('fixture', {}))
+    saved = references.setdefault(fixture['id'], {})
+    if 'anchors' in change:
+        frames = {}
+        for i, anchor in enumerate(fixture.get('anchors', [])):
+            if anchor is None:
+                continue
+            host = anchor['host']
+            frame = _anchor_frame(model, host)
+            reference = _anchor_reference(model, fixture, fixture['path'][i])
+            # Roof projection needs its one building's pre-edit surface too.
+            roof_model = None
+            if host['kind'] in ('roof', 'solar_zone'):
+                roof_model = {'buildings': deepcopy([b for b in model['buildings'] if not host.get('building') or b['id'] == host['building']]),
+                              'site': {'terraces': deepcopy(model.get('site', {}).get('terraces', []))}}
+            frames[i] = (frame, reference, roof_model)
+        saved['anchors'] = frames
+    if 'snap' in change:
+        snap = fixture.get('snap')
+        host = snap and snap['host']
+        building = next((b for b in model['buildings'] if host and any(p['id'] == host['id']
+                        for p in b.get('walls' if host['kind'] == 'wall' else 'stairs', []))), None)
+        saved['snap'] = (_host_edges(model, host), {k: deepcopy(building[k]) for k in ('id', 'position', 'rotation')} if building else None) if host else (None, None)
+
+
+def _follow_anchors(before, after, fixture, cache, references=None):
     for i, anchor in enumerate(fixture.get('anchors', [])):
         if anchor is None:
             continue
@@ -942,7 +980,11 @@ def _follow_anchors(before, after, fixture, cache):
         if key not in cache:
             cache[key] = _anchor_frame(before, host), _anchor_frame(after, host)
         old, new = cache[key]
-        if _follow_roof_anchor(before, after, fixture, anchor, i, old, new, cache):
+        explicit = (references or {}).get(i)
+        if explicit is not None:
+            old = explicit[0]
+        prior_roof = explicit[2] if explicit and explicit[2] else before
+        if _follow_roof_anchor(prior_roof, after, fixture, anchor, i, old, new, {} if explicit else cache):
             continue
         if old is None or new is None or old[0] != new[0]:
             fixture['anchors'][i] = None
@@ -950,7 +992,7 @@ def _follow_anchors(before, after, fixture, cache):
             # or reshaped. Preserve the last absolute position on detachment.
             point = fixture['path'][i]
             try:
-                height = point[2] + _anchor_reference(before, fixture, point)
+                height = point[2] + (explicit[1] if explicit else _anchor_reference(before, fixture, point))
                 fixture['path'][i] = [*point[:2], height - _anchor_reference(after, fixture, point)]
             except (ValueError, StopIteration):
                 pass
@@ -967,7 +1009,7 @@ def _follow_anchors(before, after, fixture, cache):
         fixture['path'][i] = [*point[:2], point[2]-new_ref]
 
 
-def follow_host_moves(before, after):
+def follow_host_moves(before, after, *, _references=None):
     """Carry endpoint references through rigid host moves before re-resolution.
 
     Match the old endpoints first. Only a verified whole-host translation or
@@ -979,18 +1021,20 @@ def follow_host_moves(before, after):
     anchor_frames = {}
     for rows in rows_by_owner:
         for f in rows:
-            _follow_anchors(before, after, f, anchor_frames)
+            explicit = (_references or {}).get(f['id'], {})
+            _follow_anchors(before, after, f, anchor_frames, explicit.get('anchors'))
             snap = f.get('snap')
             if not snap or f.get('detached'):
                 continue
-            old = _host_edges(before, snap['host'])
+            snap_frame = explicit.get('snap')
+            old = snap_frame[0] if snap_frame else _host_edges(before, snap['host'])
             new = _host_edges(after, snap['host'])
             if not old or not new or _match(old, snap) is None:
                 continue
             transform = None
             if snap['host']['kind'] in ('wall', 'step'):
                 collection = 'walls' if snap['host']['kind'] == 'wall' else 'stairs'
-                b = next((b for b in before['buildings'] if any(p['id'] == snap['host']['id'] for p in b.get(collection, []))), None)
+                b = snap_frame[1] if snap_frame else next((b for b in before['buildings'] if any(p['id'] == snap['host']['id'] for p in b.get(collection, []))), None)
                 a = next((a for a in after['buildings'] if b and a['id'] == b['id']), None)
                 if a and any(a.get(k, 0) != b.get(k, 0) for k in ('position', 'rotation')):
                     from services.twin_register import to_local

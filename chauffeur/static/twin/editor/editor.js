@@ -31,6 +31,7 @@ import { houseMaterialsShelf } from './house_materials.js';
 import { createVisibility } from './visibility.js';
 
 const el = id => document.getElementById(id);
+const notSaved = label => `${label} ${label === 'The selected pieces' ? 'were' : 'was'} not saved`;
 const STREAM_ONLY = new Set(['piece', 'stage', 'stream_reset', 'log']);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
 
@@ -210,7 +211,7 @@ export async function boot() {
       }
       if (change.refused.length || change.dropped.length) {
         const first = change.refused[0];
-        let text = first ? `${first.label} was not saved: ${first.reason}` : '';
+        let text = first ? `${notSaved(first.label)}: ${first.reason}` : '';
         if (change.dropped.length) text += `${text ? '\n' : ''}Also undone because it needed that change: ${change.dropped.join(', ')}.`;
         window.showGlobalAlert(text);
         el('editor-status').textContent = text;
@@ -301,7 +302,7 @@ export async function boot() {
     const queued = ready ? queue.push({ op: operation, label, selection, local }) : {
       saved: queueOptions.send(operation).then(result => { queue.base(result); return result; }).catch(error => {
         if ([401, 403].includes(error.status)) queueOptions.onSignedOut();
-        else report({ message: `${label} was not saved: ${error.message}` });
+        else report({ message: `${notSaved(label)}: ${error.message}` });
         throw error;
       }),
     };
@@ -324,6 +325,7 @@ export async function boot() {
     try { result = await queued.saved; }
     catch (error) {
       error.shown = true;
+      if (operation.op === 'batch' && error.refused) error.editorStatus = `${notSaved(label)}: ${error.message}`;
       await sceneWork;
       if (local) --optimistic;
       throw error;
@@ -826,7 +828,10 @@ export async function boot() {
     const onInteract = () => { checks?.dismiss(); pauses?.dismiss(); syncBuildButton(); };
     history = createHistory({ getRound: currentRound, getBuild: () => currentBuild,
       canEdit, signal: lifecycle.signal, latest: () => polling.refreshState(),
-      onError: error => setStatus(error.message || 'Could not save this change. Try again.'),
+      onError: error => {
+        if ((error.refused || error.dropped) && !queue.pending()) return;
+        setStatus(error.editorStatus || error.message || 'Could not save this change. Try again.');
+      },
       refresh: async () => { draw?.cancel(); await polling.refreshState(); await loadSheets(); await renderScene(); } });
     houses = mountHouses({ history, signal: lifecycle.signal, dialogs, createMenu: createContextMenu, onClose: syncBuildButton,
       canLoad: () => canEdit() && !active(currentBuild),

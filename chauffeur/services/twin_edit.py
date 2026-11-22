@@ -593,7 +593,7 @@ def _apply_legacy(plan, edit, ha_catalogue=None):
 
 
 @_edit_timed('apply')
-def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=None, _batch_site=False):
+def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=None, _batch_inplace=False):
     """Translate the old editor vocabulary at the connected-model boundary."""
     from services import twin_model_ops as ops, twin_model_bridge as bridge
     from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_model, twin_objects
@@ -612,14 +612,14 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
         anchors = [(b, a) for b in model['buildings'] for a in b.get('anchors', [])
                    if a['id'] == edit['piece'] and (not edit.get('building') or b['id'] == edit['building'])]
         if len(anchors) == 1:
-            return ops.apply(model, {**edit, 'building': anchors[0][0]['id'], 'id': edit['piece']}, _normalized=_normalized)
+            return ops.apply(model, {**edit, 'building': anchors[0][0]['id'], 'id': edit['piece']}, _normalized=_normalized, _batch_inplace=_batch_inplace)
     # A flag_ok set names a building's check, not a piece, so it carries no id.
     if (op in ops.MORE_OPS and (op not in ('set', 'add_opening') or 'id' in edit
                                 or op == 'set' and edit.get('field') == 'flag_ok'
                                 or op == 'add_opening' and any(field in edit for field in twin_objects.SCHEMA['opening']))
             or op in ('move_joint', 'move_joints', 'move_wall', 'move_room', 'split_wall', 'draw_room', 'split_room')
             or op == 'delete' and 'id' in edit):
-        return ops.apply(model, edit, ha_catalogue=ha_catalogue, _normalized=_normalized, _batch_site=_batch_site)
+        return ops.apply(model, edit, ha_catalogue=ha_catalogue, _normalized=_normalized, _batch_inplace=_batch_inplace)
 
     flat = bridge.flatten(model)
     checked = deepcopy(edit)
@@ -644,21 +644,21 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
             else:
                 translated.update(op='move_' + kind)
                 translated[kind] = pid
-            result, _ = ops.apply(model, translated, _normalized=_normalized)
+            result, _ = ops.apply(model, translated, _normalized=_normalized, _batch_inplace=_batch_inplace)
             return result, summary
         if op == 'rotate':
             translated.update(op='rotate_building', rotation=edit.get('to'))
             if 'about' in edit:
                 translated['about'] = twin_register.to_world(flat_building, edit['about'])
-            result, _ = ops.apply(model, translated, _normalized=_normalized)
+            result, _ = ops.apply(model, translated, _normalized=_normalized, _batch_inplace=_batch_inplace)
             return result, summary
         if op in ('add_wall', 'add_opening') or op == 'set' and kind != 'roof':
-            result, _ = ops.apply(model, translated, ha_catalogue=ha_catalogue, _normalized=_normalized)
+            result, _ = ops.apply(model, translated, ha_catalogue=ha_catalogue, _normalized=_normalized, _batch_inplace=_batch_inplace)
             return result, summary
         if op == 'delete' and kind in ('wall', 'room', 'opening', 'roof'):
             # The legacy delete explicitly removes its dependants. New model
             # deletes retain lost hosts as ghosts, preserving the new UI's path.
-            result, words = ops.apply(model, translated, _normalized=_normalized)
+            result, words = ops.apply(model, translated, _normalized=_normalized, _batch_inplace=_batch_inplace)
             if kind == 'roof' and words.startswith('Deleted the roof and its solar zones.'):
                 summary = words
             building = next(b for b in result['buildings'] if b['id'] == bid)
@@ -674,11 +674,12 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
 
     # Registration and legacy section operations already have validated geometry.
     # Apply only their changed pieces; never re-read over person-owned geometry.
-    result = deepcopy(model)
+    result = model if _batch_inplace else deepcopy(model)
     rebuilt, _ = bridge.assemble(legacy)
     remaining_buildings = {b['id'] for b in legacy['buildings']}
     result['buildings'] = [b for b in result['buildings'] if b['id'] in remaining_buildings]
     for building in result['buildings']:
+        prior = deepcopy(building) if _batch_inplace else next(b for b in model['buildings'] if b['id'] == building['id'])
         old_flat = next(b for b in comparison['buildings'] if b['id'] == building['id'])
         new_flat = next(b for b in legacy['buildings'] if b['id'] == building['id'])
         fresh = next(b for b in rebuilt['buildings'] if b['id'] == building['id'])
@@ -757,12 +758,12 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
                 piece['state'] = 'settled'
                 _mark(piece)
         ops._follow_dormers(building, before)
-        prior = next(b for b in model['buildings'] if b['id'] == building['id'])
         ops._follow_roof_points(building, prior)
         ops._follow_roof_extensions(building, prior)
         ops.solar_clear(building, prior)
     from services import twin_fixtures
-    twin_fixtures.follow_host_moves(model, result)
+    if not _batch_inplace:
+        twin_fixtures.follow_host_moves(model, result)
     return result, summary
 
 

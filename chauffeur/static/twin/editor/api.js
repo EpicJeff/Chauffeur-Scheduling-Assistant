@@ -87,7 +87,6 @@ export async function request(path, method = 'GET', body, area = 'editor', timin
       throw Object.assign(new Error('Stopped at the spending checkpoint.'), { cancelled: true });
     }
     throw Object.assign(new Error(typeof data?.error === 'string' ? plain(data.error)
-      : typeof data?.member === 'number' && typeof data?.reason === 'string' ? `Member ${data.member + 1}: ${plain(data.reason)}`
       : typeof data?.detail === 'string' ? plain(data.detail) : 'The house request could not finish.'), {
       status: response.status, detail: data?.detail, member: data?.member, reason: data?.reason,
     });

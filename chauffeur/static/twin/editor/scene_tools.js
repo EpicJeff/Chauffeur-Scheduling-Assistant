@@ -459,7 +459,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (!await window.promptConfirm(`Delete ${refs.length} selected pieces?`, 'Attached doors or windows may also be removed. Undo restores the whole selection.', 'Delete', 'Cancel')) return;
     return cards.queue(async () => {
       if (!canEdit()) return;
-      await applyBatch(deleteOperations(getPlan(), refs));
+      await applyBatch(deleteOperations(getPlan(), refs, getModel?.()));
       selectionStore.clear();
     });
   }

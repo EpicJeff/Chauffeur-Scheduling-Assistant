@@ -770,7 +770,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     screenOfFloor: projectFloor,
     selectionFloor() { const room = selectionStyle?.room; return room ? `${room.building}:${room.level}` : state.view; },
     selectionBounds() { return projectSelectionBoxes(currentSelectionBoxes({ fresh: true }).list, camera, renderer3.domElement.getBoundingClientRect()); },
-    selectionWorldBounds() { return currentSelectionBoxes({ fresh: true }).list.map(row => ({ ...row, box: row.box.clone() })); },
+    selectionWorldBounds() { return currentSelectionBoxes().list.map(row => ({ ...row, box: row.box.clone() })); },
     refreshSelection() {
       invalidateSelectionBounds();
       if (selectionStyle) paintSelection();

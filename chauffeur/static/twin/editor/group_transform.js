@@ -1,3 +1,6 @@
+import { pointAnchor } from './point_snap.js';
+import { applyLocal } from './local_ops.js';
+import { deleteOperation } from './piece_operations.js';
 import { hostPoint } from '../twin_hosts.js';
 import { Matrix4 } from 'three';
 import { openingFloor } from '../twin_floors.js';
@@ -110,18 +113,38 @@ export function transformOperations(g, { by = [0, 0], angle = 0, factor = 1 } = 
   const transform = p => g.tool === 'move' ? [p[0] + by[0], p[1] + by[1]]
     : g.tool === 'rotate' ? [c[0] + (p[0] - c[0]) * Math.cos(a) - (p[1] - c[1]) * Math.sin(a), c[1] + (p[0] - c[0]) * Math.sin(a) + (p[1] - c[1]) * Math.cos(a)]
       : [c[0] + (p[0] - c[0]) * factor, c[1] + (p[1] - c[1]) * factor];
+  // Move the connected geometry first, exactly as the server will. Hosts on
+  // floors/ceilings and adjacent unselected walls use these new coordinates.
+  for (const r of g.records.filter(r => r.kind === 'wall')) {
+    if (!joints.has(r.building.id)) joints.set(r.building.id, new Map());
+    for (const id of r.piece.joints) {
+      const joint = r.building.joints.find(j => j.id === id);
+      joints.get(r.building.id).set(id, { joint: id, to: toLocal(r, transform(toWorld(r, joint.at))) });
+    }
+  }
+  for (const [building, values] of joints) ops.push({ op: 'move_joints', building, joints: [...values.values()] });
+  const geometry = ops.length ? applyLocal(g.plan, { op: 'batch', ops }).plan : g.plan;
+  const onGeometry = r => ({ ...r, building: geometry.buildings.find(b => b.id === r.building.id) });
+  const rigidWall = host => {
+    if (host?.kind !== 'wall') return false;
+    const matches = g.plan.buildings.filter(b => !host.building || b.id === host.building)
+      .flatMap(building => building.walls.filter(w => w.id === host.id).map(piece => ({ building, piece })));
+    if (matches.length !== 1) return false;
+    const r = matches[0], next = onGeometry(r).building.walls.find(w => w.id === host.id);
+    return next && ['from', 'to'].every(k => {
+      const want = transform(toWorld(r, r.piece[k])), actual = toWorld(r, next[k]);
+      return Math.hypot(...want.map((v, i) => v - actual[i])) < 1e-6;
+    });
+  };
   for (const r of g.records) {
     const p = r.piece, position = points(r)[0];
-    if (r.kind === 'wall') {
-      if (!joints.has(r.building.id)) joints.set(r.building.id, new Map());
-      for (const id of p.joints) {
-        const joint = r.building.joints.find(j => j.id === id);
-        joints.get(r.building.id).set(id, { joint: id, to: toLocal(r, transform(toWorld(r, joint.at))) });
-      }
-    } else if (r.kind === 'opening') {
+    if (r.kind === 'wall') continue;
+    if (r.kind === 'opening') {
       const w = r.building.walls.find(w => w.id === p.wall), d = w.to.map((v, i) => v - w.from[i]), length = Math.hypot(...d);
       const mid = w.from.map((v, i) => v + d[i] * p.at / length), moved = toLocal(r, transform(toWorld(r, mid)));
-      const at = moved.reduce((n, v, i) => n + (v - w.from[i]) * d[i] / length, 0);
+      const targetWall = onGeometry(r).building.walls.find(w => w.id === p.wall);
+      const targetD = targetWall.to.map((v, i) => v - targetWall.from[i]), targetLength = Math.hypot(...targetD);
+      const at = moved.reduce((n, v, i) => n + (v - targetWall.from[i]) * targetD[i] / targetLength, 0);
       if (g.tool === 'move') {
         // If its wall is moving, the existing host-follow path already carries it.
         if (g.records.some(w => w.kind === 'wall' && w.building === r.building && w.piece.id === p.wall)) continue;
@@ -130,7 +153,12 @@ export function transformOperations(g, { by = [0, 0], angle = 0, factor = 1 } = 
     } else if (r.fixture) {
       const placed = q => [...transform(q), q[2]];
       const change = p.path ? { path: p.path.map(placed) } : { at: placed(p.at) };
-      if (p.path) { if (p.snap) change.snap = null; if (p.anchors) change.anchors = null; }
+      if (p.path) {
+        if (p.snap) change.snap = rigidWall(p.snap.host)
+          ? { ...p.snap, edge: Object.fromEntries(Object.entries(p.snap.edge).map(([k, v]) => [k, transform(v)])) } : null;
+        if (p.anchors) change.anchors = p.anchors.map((anchor, i) => anchor && rigidWall(anchor.host)
+          ? pointAnchor(geometry, anchor.host, [...transform(p.path[i]), p.path[i][2] + fixtureReference(g.plan, p, p.path[i])]) : null);
+      }
       if (p.aim) change.aim = placed(p.aim);
       if (!r.effect && !p.path && g.tool === 'rotate') change.rotation_deg = wrap((p.rotation_deg || 0) + angle);
       if (Array.isArray(p.facing) && g.tool === 'rotate') {
@@ -148,11 +176,10 @@ export function transformOperations(g, { by = [0, 0], angle = 0, factor = 1 } = 
       if (g.tool !== 'move') ops.push({ ...objectOperation(r, g.tool === 'rotate' ? { rotation: wrap((p.rotation || 0) + angle) } : { scale: (p.scale ?? 1) * factor }), id: p.id });
       if (r.building) {
         if (!g.records.some(w => w.kind === 'wall' && w.building === r.building && w.piece.id === p.host?.wall))
-          ops.push({ op: 'move_hosted', building: r.building.id, id: p.id, host: hosted(r, target) });
+          ops.push({ op: 'move_hosted', building: r.building.id, id: p.id, host: hosted(onGeometry(r), target) });
       } else ops.push({ op: 'move_site_item', list: r.kind, id: p.id, index: r.index, at: target });
     }
   }
-  for (const [building, values] of joints) ops.unshift({ op: 'move_joints', building, joints: [...values.values()] });
   return ops;
 }
 
@@ -194,18 +221,11 @@ export function previewTransforms(g, transform, preview) {
   return specs;
 }
 
-export function deleteOperations(plan, refs) {
-  const ops = refs.map(ref => {
-    const r = groupRecord(plan, ref), id = ref.pieceId;
-    if (r?.fixture) return { op: r.effect ? 'delete_effect_fixture' : 'delete_light_fixture', id, ...(!r.effect ? { entity_id: r.entity_id } : {}) };
-    if (r?.kind === 'device') return { op: 'unplace_device', device: r.piece.device || r.piece.device_id };
-    if (ref.kind === 'terraces') return { op: 'delete_pad', id };
-    if (r?.pool) return { op: 'delete_pool_feature', id };
-    if (!ref.buildingId) return { op: 'delete_site_item', list: ref.kind, id };
-    return { op: 'delete', building: ref.buildingId, id };
-  });
+export function deleteOperations(plan, refs, model = null) {
+  const ops = refs.map(ref => deleteOperation(plan, ref, model));
   // Children before hosts: all still exist when their own delete is applied.
   const priority = op => op.op === 'unplace_device' ? 0 : op.op === 'delete_site_item' && ['pool', 'yard_rooms'].includes(op.list) ? 3
-    : op.op === 'delete' && ['walls', 'rooms'].some(list => plan.buildings.find(p => p.id === op.building)?.[list].some(p => p.id === op.id)) ? 2 : 1;
+    : op.op === 'delete' && ['walls', 'rooms'].some(list => plan.buildings.find(p => p.id === op.building)?.[list]?.some(p => p.id === (op.id ?? op.piece))) ? 2
+      : op.op === 'delete' && plan.buildings.some(b => b.id === op.piece) ? 4 : 1;
   return ops.sort((a, b) => priority(a) - priority(b));
 }
