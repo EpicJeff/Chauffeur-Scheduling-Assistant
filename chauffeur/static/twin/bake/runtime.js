@@ -158,6 +158,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
   const inspectOnly = mode === 'manual' && !display;
   let requested = automatic;
   const owner = [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
+  let parentProbed = false;
   let stopped = false, allowed = false, permissionChecked = false, atlas = null, pending = null, layout = requestedLayout || options(8);
   let lights = [], lightsKey = '', packed = null, uniforms = null, pages = null;
   let layers = [], bankBase = [], layerOverflow = false, baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
@@ -976,6 +977,15 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       if (typeof text === 'string' || allowed) { manifestRead = true; await begin(text); }
       else manifestRead = true;
       if (!valid()) return;
+      if (mode === 'readonly' && host && interactive && !parent && !parentProbed) {
+        // The page HTML carries no member token (it lives in localStorage), so the
+        // server-rendered flag cannot see a signed-in parent. Ask once through the
+        // page's authenticated fetch: latest bake metadata is PARENTS-only and
+        // touches no lease. Panels and kiosks never ask.
+        parentProbed = true;
+        try { parent = (await api('api/house/bakes')).ok; } catch { parent = false; }
+        if (!valid()) return;
+      }
       initialized = true; showProgress();
     })().finally(() => { mounting = null; });
     return mounting;

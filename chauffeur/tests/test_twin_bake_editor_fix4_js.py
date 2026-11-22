@@ -127,6 +127,32 @@ await check('all_unreached_lights_publish_first_manifest_on_settle_and_reopen_cu
   next=await context('high',d.server,list,opts());await ready(next);assert.equal(output(next).textContent,'Lighting is up to date');
  }finally{next?.controller.stop();d.controller.stop();}
 });
+// The page HTML has no member token, so the server flag is false for a signed-in
+// parent. The viewer asks the PARENTS-only latest metadata once, never a lease.
+for(const [name,status,link] of [['parent',200,true],['child',403,false]]){
+ await check('viewer_without_server_flag_asks_once_and_'+name+(link?'_gets':'_gets_no')+'_stale_link',async()=>{
+  const asked=[];let viewer;
+  try{
+   viewer=await context('high',null,null,{mode:'readonly',parent:false,poll:0,host:new Node('div'),view:{round:42},
+     api:(path,init,next)=>{asked.push(path);if(path==='api/house/bakes')return Promise.resolve(new Response('{}',{status}));return next(path,init);}});
+   await until(()=>asked.includes('api/house/bakes'),'viewer asks who is looking');
+   await until(()=>viewer.controller.state().stale.length===4,'stale with no bake');
+   await viewer.controller.refresh();
+   assert.equal(/Lighting is out of date/.test(viewer.host.textContent),link);
+   assert.equal(asked.filter(p=>p==='api/house/bakes').length,1,'asked once');
+   assert.ok(!asked.some(p=>p.endsWith('/lease')),'viewer never checks or takes a lease');
+  }finally{viewer?.controller.stop();}
+ });
+}
+await check('viewer_with_server_parent_flag_does_not_ask',async()=>{
+ const asked=[];let viewer;
+ try{
+  viewer=await context('high',null,null,{mode:'readonly',parent:true,poll:0,host:new Node('div'),view:{round:42},
+    api:(path,init,next)=>{asked.push(path);return next(path,init);}});
+  await until(()=>/Lighting is out of date/.test(viewer.host.textContent),'server-flagged parent sees the link');
+  assert.ok(!asked.includes('api/house/bakes'));
+ }finally{viewer?.controller.stop();}
+});
 console.log(`${passed}/${ran} passed`);process.exit(passed===ran?0:1);
 """
 if __name__ == '__main__':
