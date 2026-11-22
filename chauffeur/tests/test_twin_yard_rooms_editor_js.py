@@ -106,7 +106,8 @@ const deletePrompts=[];window.promptConfirm=async (...args)=>{deletePrompts.push
 plan.site.devices=[{id:'placed-lamp',device:'lamp',host:{yard_room:'yard',u:.2,v:.3},offset:1.75}];
 const beforeDelete=cardOps.length;buttonNamed(host,'Delete').click();await settle();
 assert.equal(cardOps.length,beforeDelete+1);
-assert.deepEqual(cardOps.at(-1),{op:'delete_site_item',list:'yard_rooms',index:0});assert.equal(selected.at(-1),null);
+// The shared delete builder (v2.499.976) names the room by id as well; the server resolves the id first.
+assert.deepEqual(cardOps.at(-1),{op:'delete_site_item',list:'yard_rooms',id:'yard',index:0});assert.equal(selected.at(-1),null);
 assert.match(deletePrompts.at(-1)[1],/1 device will be unplaced/);
 assert.match(deletePrompts.at(-1)[1],/remain in Home Assistant/);
 assert.match(deletePrompts.at(-1)[1],/Undo restores the room and its placements/);
