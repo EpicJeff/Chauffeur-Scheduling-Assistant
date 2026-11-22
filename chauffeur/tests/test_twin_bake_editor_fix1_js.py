@@ -134,7 +134,9 @@ await check('8_viewer_parents_keep_damage_and_gpu_overflow_information_without_a
   const bytes=seed.server.pages.get(key+'/'+page);seed.server.pages.set(key+'/'+page,new Uint8Array([0,1,2]));
   for(const who of ['parent','child','panel','kiosk']){
    location.search=['panel','kiosk'].includes(who)?'?'+who+'=true':'';
-   const d=await context('high',seed.server,null,{mode:'readonly',parent:who!=='child',poll:0,host:new Node('div')});location.search='';
+   const d=await context('high',seed.server,null,{mode:'readonly',parent:who!=='child',poll:0,host:new Node('div'),
+     // The real PARENTS rule refuses a child's latest-metadata read (the viewer's one parent check).
+     api:(path,init,next)=>who==='child'&&path==='api/house/bakes'?Promise.resolve(new Response('{"detail":"Requires parent"}',{status:403})):next(path,init)});location.search='';
    try {
     await until(()=>!!d.controller.state().error,'damaged page reported');
     assert.equal(d.host.querySelectorAll('button').length,0);

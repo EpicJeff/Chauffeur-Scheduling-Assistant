@@ -113,7 +113,9 @@ await check('viewer_has_no_lease_or_actions_and_only_parent_gets_ingress_safe_li
   for(const who of ['parent','child','panel','kiosk']){
    location.search=['panel','kiosk'].includes(who)?'?'+who+'=true':'';
    const since=seed.server.calls.length;
-   const reader=await context('high',seed.server,null,{mode:'readonly',parent:who==='parent'||who==='panel'||who==='kiosk',poll:50,host:new Node('div')});
+   // The server flag is false for a page load; the real PARENTS rule refuses a child's metadata read.
+   const reader=await context('high',seed.server,null,{mode:'readonly',parent:who==='panel'||who==='kiosk',poll:50,host:new Node('div'),
+     api:(path,init,next)=>who==='child'&&path==='api/house/bakes'?Promise.resolve(new Response('{"detail":"Requires parent"}',{status:403})):next(path,init)});
    location.search='';
    try {
     await until(()=>reader.controller.state().key,'viewer atlas read');await sleep(200);
