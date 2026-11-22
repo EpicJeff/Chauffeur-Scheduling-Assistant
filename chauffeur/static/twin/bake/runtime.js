@@ -692,14 +692,16 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     // An unchanged manifest and every page 304: nothing to rebuild, upload or redraw (I2).
     if (!changed || !valid()) return;
     const previous = [...fresh]; fresh.clear();
-    const currentInputs = !m.keyInputs || sameKeyInputs(m.keyInputs, keyInputs(view));
+    // The viewer is exact: entries at its own atlas key already carry every key
+    // input. Cheap key-input stamps are evidence for the editor chip only; a
+    // stamp-only difference must never drop valid baked channels here.
     const cheap = cheapSignatures(lights, m.ownership, m.lights);
     for (const l of lights) {
       const e = packed.entries[l.device], stored = m.lights[l.device];
-      if (currentInputs && e && (l.kind !== 3 || e.scale > 0) && matchesEntry(e, stored) && e.pages.every(p => present.has(p))) fresh.add(l.device);
+      if (e && (l.kind !== 3 || e.scale > 0) && matchesEntry(e, stored) && e.pages.every(p => present.has(p))) fresh.add(l.device);
     }
     resumePending = !!m.forceRound;
-    stale = lights.filter(l => !(currentInputs && !packed.entries[l.device] && realtimeCurrent(m, l.device, cheap[l.device], realtimeReason(packed, l.device))) &&
+    stale = lights.filter(l => !(!packed.entries[l.device] && realtimeCurrent(m, l.device, cheap[l.device], realtimeReason(packed, l.device))) &&
       (!fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound)).map(l => l.device);
     if (mode === 'manual' && !running) progress = { done: lights.length - stale.length, total: lights.length };
     showProgress();

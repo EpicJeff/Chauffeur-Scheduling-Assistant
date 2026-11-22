@@ -14,9 +14,10 @@ export function keyInputs(view) {
   const materials = Object.entries(view.materialManifest || {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
     .map(([id, e]) => [id, e.revision ?? null, e.params?.tint ?? null, e.params?.alpha_mode || 'opaque',
       e.params?.opacity ?? null, e.params?.alpha_cutoff ?? null]);
+  // Site (lat/lon/bearing) only drives sun and sky; it never feeds the atlas key.
   const stage = view.stage;
   return { atlas: ATLAS_VERSION, worker: ATLAS_WORKER_VERSION, generator: BAKE_GENERATOR_VERSION,
     planGenerator: plan?.generatorVersion ?? null, materials: hash(materials),
-    stage: hash([stage?.centre ?? null, stage?.radius ?? null, view.site ?? null]) };
+    stage: hash([stage?.centre ?? null, stage?.radius ?? null]) };
 }
 export const sameKeyInputs = (a, b) => !!a && !!b && JSON.stringify(a) === JSON.stringify(b);

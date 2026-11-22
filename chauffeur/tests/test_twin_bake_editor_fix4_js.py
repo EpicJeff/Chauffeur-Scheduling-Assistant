@@ -9,8 +9,8 @@ const output=d=>d.host.querySelectorAll('output')[0];
 const opts=extra=>({mode:'manual',display:false,poll:0,parent:true,host:new Node('div'),view:{round:42},...extra});
 const ready=d=>until(()=>/^Lighting /.test(output(d)?.textContent),'cheap editor status');
 async function seed(){const d=await context('high',null,null,opts());await ready(d);await d.controller.start();return d;}
-for(const change of ['atlas version','generator version','material alpha','material reach','stage','site']){
- await check('cheap_inputs_'+change.replaceAll(' ','_')+'_stale_both_desks_same_round',async()=>{
+for(const change of ['atlas version','generator version','material alpha','material reach','stage']){
+ await check('cheap_inputs_'+change.replaceAll(' ','_')+'_stale_editor_chip_viewer_stays_exact',async()=>{
   const d=await seed();let editor,viewer;
   try{
    const key=d.controller.state().key,m=d.server.manifests.get(key),v={round:42};
@@ -20,22 +20,53 @@ for(const change of ['atlas version','generator version','material alpha','mater
    if(change==='material alpha')v.materialManifest={library:{revision:1,params:{alpha_mode:'cutout'}}};
    if(change==='material reach')v.materialManifest={library:{revision:2,params:{tint:'#112233'}}};
    if(change==='stage')v.stage={centre:[0,0],radius:400};
-   if(change==='site')v.site={revision:2};
    const since=d.server.calls.length;
    editor=await context('high',d.server,null,opts({view:{...v}}));await ready(editor);
    assert.equal(output(editor).textContent,'Lighting out of date: 4 lights');
    assert.equal(editor.controller.packing(),null);assert.equal(editor.renderer.log.renders,0);
    assert.ok(d.server.calls.slice(since).filter(c=>c.path.endsWith('.png')).every(c=>c.inm==='*'&&!c.full));
+   // The viewer decides exactly from the entries at its own key. A stamp-only
+   // difference (same key, same entries) must keep every baked channel.
    viewer=await context('high',d.server,null,{mode:'readonly',parent:true,poll:0,host:new Node('div'),view:{...v}});
    await until(()=>!!viewer.controller.packing(),'viewer layout');await viewer.controller.refresh();
-   assert.equal(viewer.controller.state().stale.length,4);assert.equal(viewer.controller.fresh().length,0);
-   assert.match(viewer.host.textContent,/Lighting is out of date/);
+   assert.equal(viewer.controller.state().stale.length,0);assert.equal(viewer.controller.fresh().length,4);
+   assert.ok(!viewer.host.textContent.includes('Lighting is out of date'));
    // A press validates the exact key even when only conservative stamps differ.
    const renders=editor.renderer.log.renders;await editor.controller.start();
    assert.equal(editor.renderer.log.renders,renders);assert.equal(output(editor).textContent,'Lighting is up to date');
   }finally{editor?.controller.stop();viewer?.controller.stop();d.controller.stop();}
  });
 }
+await check('site_change_leaves_both_desks_current',async()=>{
+ const d=await seed();let editor,viewer;
+ try{
+  const v={round:42,site:{lat:1,lon:2,tz:'UTC',bearing:90,revision:2}};
+  editor=await context('high',d.server,null,opts({view:{...v}}));await ready(editor);
+  assert.equal(output(editor).textContent,'Lighting is up to date');
+  viewer=await context('high',d.server,null,{mode:'readonly',parent:true,poll:0,host:new Node('div'),view:{...v}});
+  await until(()=>!!viewer.controller.packing(),'viewer layout');await viewer.controller.refresh();
+  assert.equal(viewer.controller.state().stale.length,0);assert.equal(viewer.controller.fresh().length,4);
+ }finally{editor?.controller.stop();viewer?.controller.stop();d.controller.stop();}
+});
+await check('addon_key_change_stales_both_desks_until_a_real_rebake',async()=>{
+ const d=await seed();let editor,viewer;
+ try{
+  // The previous add-on published under another exact key with its own stamp.
+  const key=d.controller.state().key,old=d.server.manifests.get(key);d.server.manifests.delete(key);
+  old.keyInputs.atlas='reach-atlas-11';d.server.manifests.set('a'.repeat(32),old);
+  editor=await context('high',d.server,null,opts());await ready(editor);
+  assert.equal(output(editor).textContent,'Lighting out of date: 4 lights');
+  // No manifest at the viewer's own key: it builds no layout and keeps every light real-time.
+  viewer=await context('high',d.server,null,{mode:'readonly',parent:true,poll:0,host:new Node('div'),view:{round:42}});
+  await until(()=>/Lighting is out of date/.test(viewer.host.textContent),'viewer reads the missing key');
+  assert.equal(viewer.controller.state().stale.length,4);assert.equal(viewer.controller.fresh().length,0);
+  const renders=editor.renderer.log.renders;await editor.controller.start();
+  assert.ok(editor.renderer.log.renders>renders,'a real key change rebakes');
+  assert.equal(output(editor).textContent,'Lighting is up to date');
+  await viewer.controller.refresh();
+  await until(()=>viewer.controller.state().stale.length===0&&viewer.controller.fresh().length===4,'viewer adopts the rebake');
+ }finally{editor?.controller.stop();viewer?.controller.stop();d.controller.stop();}
+});
 function oneChart(d){
  d.out.root.clear();
  const m=new THREE.Mesh(new THREE.PlaneGeometry(.4,.4).rotateX(-Math.PI/2),new THREE.MeshStandardMaterial({name:'floor'}));
