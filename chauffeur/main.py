@@ -9091,7 +9091,7 @@ def house_editor_state(have_round: int | None = None):
         house = ({'plan': twin_store.current(), 'model': twin_store.current_model()}
                  if have_round is None or have_round != current_round else {})
         return {**house, 'rounds': twin_store.rounds(), 'site': twin_site.site(),
-                'stage': twin_stage.read(house.get('plan')),
+                'stage': twin_stage.read(house.get('plan'), round_id=current_round),
                 'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint(),
                          'estimate': twin_build.remaining_estimate(latest) if latest else None},
                 'build': latest,

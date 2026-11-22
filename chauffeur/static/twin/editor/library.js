@@ -54,7 +54,7 @@ export function materialLines(record, plan, kit) {
         : building.materials?.[role] ? { target: { building: building.id, role }, label: 'Clear for the building' } : null;
     const result = { label, get current() { return description().current; }, get text() { return description().text; },
       get inherited() { return description().inherited; }, get ref() { return override; }, get resolved() { return description().ref; },
-      target, clear: !!override, reset: target.part ? null : reset };
+      target, get clear() { return !!override; }, reset: target.part ? null : reset };
     // Not enumerable: the card compares lines as text, never whole buildings.
     Object.defineProperty(result, 'surface', { value: { building, piece, kind, role, level: level?.id || piece.level, ...surface } });
     Object.defineProperty(result, 'setRef', { value: ref => { override = ref; } });

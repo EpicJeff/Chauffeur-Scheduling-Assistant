@@ -278,19 +278,27 @@ registerHooks({resolve(spec, ctx, next) {
   return url.startsWith('file:') && url.endsWith('.js') ? {...next(url, {...ctx, format: 'module'}), format: 'module'} : next(url, ctx);
 }});
 class Element {
-  constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.value = ''; }
-  append(...nodes) { this.children.push(...nodes); }
-  replaceChildren() { this.children = []; }
+  constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.value = ''; this.dataset = {}; this.style = {}; this.parentElement = null;
+    this.classList = { toggle() {}, add() {}, remove() {}, contains: () => false }; }
+  append(...nodes) { for (const n of nodes) { if (n && typeof n === 'object') n.parentElement = this; this.children.push(n); } }
+  insertBefore(node, ref) { const i = this.children.indexOf(ref); if (node && typeof node === 'object') node.parentElement = this;
+    if (i < 0) this.children.push(node); else this.children.splice(i, 0, node); return node; }
+  after(...nodes) { const p = this.parentElement; if (!p) return; const i = p.children.indexOf(this) + 1;
+    for (const n of nodes) { if (n && typeof n === 'object') n.parentElement = p; p.children.splice(i, 0, n); } }
+  remove() { const p = this.parentElement; if (!p) return; const i = p.children.indexOf(this); if (i >= 0) p.children.splice(i, 1); this.parentElement = null; }
+  replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
   setAttribute() {}
+  closest() { return null; }
   addEventListener(name, fn) { this.listeners[name] = fn; }
-  querySelectorAll(tag) { return this.children.flatMap(c => [...(c.tag === tag ? [c] : []), ...c.querySelectorAll(tag)]); }
+  dispatchEvent() {}
+  querySelectorAll(tag) { return this.children.flatMap(c => [...(c?.tag === tag ? [c] : []), ...(c?.querySelectorAll ? c.querySelectorAll(tag) : [])]); }
 }
 const host = new Element('aside');
 globalThis.document = { getElementById: () => host, createElement: tag => new Element(tag), activeElement: null };
 globalThis.window = { showGlobalAlert: message => { throw new Error(message); } };
 const { createCards } = await import(pathToFileURL(process.argv[2]).href);
 const block = [20, 0, 40, 30], text = 'The right roof: its right end was not visible in the photos; I made it a gable.';
-const section = { id: 'r', kind: 'gable', ridge: 'x', pitch: 8, plate: 10, overhang: 1, block, state: 'settled' };
+const section = { id: 'r', kind: 'gable', ridge: 'x', rect: block, pitch: 8, plate: 10, overhang: 1, block, state: 'settled' };
 const roof = { sections: [section], flags: [{ block_rect: [20.5, 0, 40, 30], text }] };
 const plan = { buildings: [{ id: 'b', roof }] }, edits = [];
 let editable = true;

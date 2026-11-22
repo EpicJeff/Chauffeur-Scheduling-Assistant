@@ -30,6 +30,7 @@ _MASTER_LOCKS = weakref.WeakValueDictionary()  # Only active page readers retain
 _READ_KEY = None
 _READ_MODEL = _READ_PLAN = None
 _READ_NORMALIZED = False
+_READ_EPOCH = 0
 build_running = lambda: False  # Task 8 supplies the build runner's predicate.
 stop_builds_for_start_over = lambda: None
 _KINDS = {'draft', 'director', 'hand', 'revert', 'build', 'edit', 'start_over', 'load'}
@@ -68,10 +69,11 @@ def _save(row):
 def _invalidate_reads():
     # Every store write funnels through _save, including metadata-only writes.
     # Callers hold the existing store lock; no lock scopes change for caching.
-    global _READ_KEY, _READ_MODEL, _READ_PLAN, _READ_NORMALIZED
+    global _READ_KEY, _READ_MODEL, _READ_PLAN, _READ_NORMALIZED, _READ_EPOCH
     _READ_KEY = None
     _READ_MODEL = _READ_PLAN = None
     _READ_NORMALIZED = False
+    _READ_EPOCH += 1
 
 
 def _write_through(row, text, normalized=False):
@@ -411,7 +413,12 @@ def set_lot(lot: dict) -> None:
 
 def generation() -> int:
     with _LOCK:
-        return _state()['generation']
+        return (storage.get_settings().get('house_twin') or {}).get('generation', 0)
+
+
+def read_epoch() -> int:
+    with _LOCK:
+        return _READ_EPOCH
 
 
 def start_over() -> None:

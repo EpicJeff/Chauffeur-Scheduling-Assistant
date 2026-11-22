@@ -55,5 +55,9 @@ if __name__ == '__main__':
     got = census()
     print(json.dumps(got, indent=2))
     if '--census' not in sys.argv:
-        expected = [{'tier': 'low', 'geometry': '184ef725d2464417baca1c367a0bc6068239ae4997420bec0a76b36dae9ed829', 'materials': 'c162c8f191543da51e92072e571eae47cc03ab692dcab86e982e2f35740807e5', 'instances': 41, 'draws': 121, 'atlas': '9ba00a98728dcada69dbaa3716e06d0be8f601273d011dde3f2dfd7f4cc727b3', 'atlasKey': '55d528571f293e8d97987b59b95182f5'}, {'tier': 'high', 'geometry': 'e8860eef3846cfd2f30de466437eddaf94c3298d893d79749f231c898687ad54', 'materials': 'aae1cf5346b5c2f5aa578b7ae05cbd1841031589173ca6c89fac36080cb61b93', 'instances': 45, 'draws': 159, 'atlas': '14c5246b13c15d1e1cc63c832de76e4f2eb29d602928bb6198ccf921ea137f77', 'atlasKey': '55d528571f293e8d97987b59b95182f5'}]
+        # Updated for v2.499.949 (weatherOpen vertex attr, 029da6d5), v2.499.953 (28621a71: high lawn split into
+        # 24 culled tile InstancedMeshes -> +23 draws and +23 duplicate 'yard blades' per-mesh entries in `materials`;
+        # collapsing those 24 entries back to 1 yields the exact pre-28621a71 SHA-256 aae1cf53...), and v2.499.964
+        # (reach-atlas-12 4/ft outdoor bake density, ff4d70a7). Material instance counts (41/45) and low draws (121) unchanged.
+        expected = [{'tier': 'low', 'geometry': '6a31aca5eb39eae83b1c17848d66bc2757d2c20c3a50e41e1cc6b89d8b7f247e', 'materials': 'c162c8f191543da51e92072e571eae47cc03ab692dcab86e982e2f35740807e5', 'instances': 41, 'draws': 121, 'atlas': '6b9fa710b152a9a5e3ffb031b4255636527963216fbf4ead94e5a2d47c397f3b', 'atlasKey': '338dbe846d1552fe5b2440cab4edcac6'}, {'tier': 'high', 'geometry': 'dea8dff346fc0786def394d72841d47512c6b648becd2bec9f6f0f8e369ebaf4', 'materials': '450ceadb54c14262070e0d605bc073f5889953875b09423a3fe8c01c49a8d667', 'instances': 45, 'draws': 182, 'atlas': 'bd44d9539fbe17f0c2b5cb5a3c05a4d05af981ec023eac92a510334bc22115d6', 'atlasKey': '338dbe846d1552fe5b2440cab4edcac6'}]
         assert got == expected, 'household geometry/material/batch/atlas differs from main'

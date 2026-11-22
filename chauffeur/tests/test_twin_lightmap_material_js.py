@@ -479,9 +479,12 @@ check('fresh_bake_frees_the_pool_slot', async () => {
     assert.deepEqual(lastCall(bake, 'a1'), { device: 'a1', rgb: [0, 255, 0], intensity: 1 }, 'the colour follows live');
     assert.equal(pool(view).length, count, 'the pool keeps its size');
 
+    // Commit 3a3ad654 (2026-11-12): All shows every visualization, lights included; Security drops lighting.
     live.setMode(null);
-    for (const id of ['a1', 'a2']) assert.equal(lastCall(bake, id).intensity, 0, `All mode: ${id}'s bake is dark`);
-    assert.ok(pool(view).every(l => l.intensity === 0), 'All mode: the pool is dark');
+    assert.deepEqual(lastCall(bake, 'a1'), { device: 'a1', rgb: [0, 255, 0], intensity: 1 }, 'All mode keeps baked lights on');
+    live.setMode('security');
+    for (const id of ['a1', 'a2']) assert.equal(lastCall(bake, id).intensity, 0, `Security mode: ${id}'s bake is dark`);
+    assert.ok(pool(view).every(l => l.intensity === 0), 'Security mode: the pool is dark');
 
     live.setMode('lights');
     bake.set.clear(); await live.refresh();

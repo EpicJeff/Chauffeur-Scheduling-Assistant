@@ -32,7 +32,15 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
   caption.textContent = label; caption.id = `editor-slot-label-${++nextLabel}`; caption.dataset.slotLabel = '';
   name.dataset.slotName = ''; words.append(caption, name); row.append(words);
   const actions = document.createElement('div'); actions.className = 'editor-material-actions'; row.append(actions);
-  const use = button('Use selected', actions, 'slotUse'), remove = clear && button('Clear', actions, 'slotClear');
+  const clearFn = typeof clear === 'function' ? clear : clear?.run;
+  const clearEnabled = typeof clear === 'function' ? null : clear?.enabled;
+  const use = button('Use selected', actions, 'slotUse');
+  let remove = null;
+  if (clearFn) {
+    remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Clear';
+    remove.dataset.slotClear = '';
+    if (!clearEnabled) actions.append(remove);
+  }
   use.setAttribute('aria-describedby', caption.id); remove?.setAttribute('aria-label', `Clear the ${subject}`);
   async function run(fn) {
     if (busy || disposed || locked()) return;
@@ -43,7 +51,11 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
   listen(use, 'click', () => {
     const entry = library.selected(); if (entry && accepts(entry)) return run(() => apply(entry));
   });
-  if (remove) listen(remove, 'click', () => run(clear));
+  let clearFocused = false;
+  if (remove) listen(remove, 'click', () => {
+    clearFocused = document.activeElement === remove;
+    return run(clearFn);
+  });
   listen(swatch, 'click', async () => {
     const entry = current();
     if (entry?.id) try { await library.reveal(entry.kind || 'material', entry.id); } catch (error) { report(error); }
@@ -103,7 +115,19 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
     if (entry?.thumb) { const image = document.createElement('img'); image.src = entry.thumb; image.alt = ''; swatch.append(image); }
     use.disabled = busy || locked() || !valid; use.textContent = valid ? `Use ${selected.name}` : 'Use selected';
     use.setAttribute('aria-label', use.textContent);
-    if (remove) remove.disabled = busy || locked();
+    if (remove) {
+      if (clearEnabled) {
+        const showClear = !!clearEnabled();
+        if (showClear && !remove.parentElement) (use.after ? use.after(remove) : actions.append(remove));
+        else if (!showClear && remove.parentElement) {
+          const hadFocus = document.activeElement === remove || clearFocused;
+          clearFocused = false;
+          remove.remove();
+          if (hadFocus) use.focus?.();
+        } else if (!busy) clearFocused = false;
+      }
+      remove.disabled = busy || locked();
+    }
     if (resetButton) resetButton.disabled = busy || locked();
     if (tintInput) {
       tintInput.value = typeof tint.value === 'function' ? tint.value() : tint.value;

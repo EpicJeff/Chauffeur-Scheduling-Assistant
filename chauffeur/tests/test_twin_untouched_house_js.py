@@ -1,4 +1,4 @@
-"""Byte-level scene, material, reuse and atlas comparison against pre-arc main."""
+"""Byte-level scene, material, reuse and atlas comparison against anchored main."""
 import posixpath
 import re
 import subprocess
@@ -9,7 +9,10 @@ from twin_editor_dom import run_node
 from test_twin_yard_reuse_js import PREFIX
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE = 'e8b20515'
+# Re-anchored to main v2.499.969 after deliberate changes through v2.499.969:
+# poolFinish (c21296c9), the circular stage (faaae672), local rebake (72ac45fb),
+# and reach-atlas-12 (ff4d70a7). Guards against future accidental changes to an untouched house.
+BASELINE = '243d2738'
 
 
 def baseline_sources():
@@ -27,142 +30,6 @@ def baseline_sources():
                 read(child)
     for path in ('static/twin/twin_generator.js', 'static/twin/twin_yard.js', 'static/twin/bake/atlas.js'):
         read(path)
-    # Existing spas intentionally gain a bench and a shell down to the pool floor.
-    # Refresh only the spa shell/seat and its inset helper; every other baseline byte,
-    # including the pool floor, batching, house meshes, reuse keys and atlas, stays pinned.
-    path = 'static/twin/pool_features.js'
-    old = sources[path]
-    replacements = [
-        ('function basinOutline(poly)', 'function basinOutline(poly, requestedWidth = .3)'),
-        ('let width = .3;', 'let width = requestedWidth;'),
-        ('const spaTile = interior(', 'const poolFloor = height - depth, wallBottom = Math.min(floor, poolFloor);\n      const spaTile = interior('),
-        ('addMesh(group, polygon(inner, floor - .2, floor), spaTile);',
-         '''addMesh(group, polygon(inner, floor > poolFloor ? poolFloor : floor - .2, floor), spaTile);
-      const benchWidth = (f.bench_width_in ?? 18) / 12, seatTop = waterHeight - (f.bench_in ?? 18) / 12;
-      if (benchWidth > 0 && seatTop > floor) {
-        const footwell = basinOutline(inner, benchWidth);
-        addMesh(group, polygon(inner, floor, seatTop, [footwell]), spaTile);
-      }'''),
-        ('Math.max(floor, raised ?', 'Math.max(wallBottom, raised ?'),
-        ('if (split > floor) addMesh(group, polygon([a, b, middleB, middleA], floor, split), tile);',
-         'if (split > wallBottom) addMesh(group, polygon([a, b, middleB, middleA], wallBottom, split), tile);'),
-    ]
-    for before, after in replacements:
-        assert old.count(before) == 1, before
-        old = old.replace(before, after)
-    # The spa wall is now as wide as the pool coping and a flush spa shares the pool wall.
-    # Take the inset helpers and the spa branch from today's file; the cutters, the
-    # waterline band, the ledge and the steps between them stay baseline bytes.
-    now = (ROOT / path).read_text(encoding='utf-8').replace('\r\n', '\n')
-    old = old.replace('\r\n', '\n')
-    helpers, shared, spa = 'function basinOutline(', 'function sharedSegments(', "    } else if (f.kind === 'spa') {"
-    for marker in (helpers, shared, spa):
-        assert old.count(marker) == 1 and now.count(marker) == 1, marker
-    first = '// Inset each edge by its own width.'
-    assert now.count(first) == 1
-    # The baseline builder predates per-spa water: its spa takes the pool's water.
-    per_spa = 'const waterMaterial = spaWater(f);'
-    assert now.count(per_spa) == 1
-    old = (old[:old.index(helpers)] + now[now.index(first):now.index(shared)]
-           + old[old.index(shared):old.index(spa)]
-           + now[now.index(spa):].replace(per_spa, 'const waterMaterial = water;')
-           # Today's builder names the feature on each mesh; the baseline has no such helper.
-           .replace('featureMesh(', 'addMesh(group, '))
-    sources[path] = old
-    # Paving no longer takes a spa inside the pool as a hole, so it stands no slab edge on
-    # the pool wall. Take the filter and its three call sites; the rest stays baseline bytes.
-    path = 'static/twin/twin_yard.js'
-    old, now = sources[path].replace('\r\n', '\n'), (ROOT / path).read_text(encoding='utf-8').replace('\r\n', '\n')
-    start, end = '  // A spa is a hole in paving only where it reaches into that paving.', '  const builders = {\n'
-    assert now.count(start) == 1 and now.count(end) == 1 and old.count(end) == 1
-    old = old.replace(end, now[now.index(start):now.index(end)] + end)
-    for before, after in [
-        ("(h.elevation || 0), spas), mat(role,", "(h.elevation || 0), spasIn(poly)), mat(role,"),
-        ("(h.elevation || 0), spas), mat('patio_concrete',", "(h.elevation || 0), spasIn(poly)), mat('patio_concrete',"),
-        ("? [pool] : []), ...spas];", "? [pool] : []), ...spasIn(h.polygon)];"),
-    ]:
-        assert old.count(before) == 1 and now.count(after) == 1, before
-        old = old.replace(before, after)
-    # The pool coping gains a fill under its overhang, so over lawn it sits on the ground.
-    before = "import { buildPoolFeatures, cutSurface, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';"
-    assert old.count(before) == 1
-    old = old.replace(before, before.replace('cutSurface,', 'cutSurface, offsetOutline,'))
-    # Today's builder names the pool on each mesh through poolMesh; the baseline has no such helper.
-    fill = next(line for line in now.splitlines() if 'if (coping > 0.25) poolMesh(' in line).replace('poolMesh(', 'surfaceMesh(group, ')
-    before = next(line for line in old.splitlines() if 'if (coping > 0) surfaceMesh(' in line)
-    assert old.count(before) == 1
-    old = old.replace(before, before + '\n' + fill)
-    # A pool with a coping is seated into the ground so its coping top meets the paving.
-    for before, after in [
-        ("import { groundAt, buildingBase,", "import { groundAt, poolDatum, POOL_SEAT, buildingBase,"),
-        ("const poolHeight = groundAt(plan, ...pool[0]) + (site.pool.elevation || 0);", "const poolHeight = poolDatum(plan, site.pool);"),
-    ]:
-        assert old.count(before) == 1 and now.count(after) == 1, before
-        old = old.replace(before, after)
-    sources[path] = old
-    for path, before, after in [
-        ('static/twin/effects/water_ripples.js', "const base = groundAt(plan, ...pool.polygon[0]) + (pool.elevation || 0);", "const base = poolDatum(plan, pool);"),
-        ('static/twin/effects/water_ripples.js', "import { groundAt, inPolygon,", "import { groundAt, poolDatum, inPolygon,"),
-    ]:
-        if path in sources:
-            assert sources[path].count(before) == 1, before
-            sources[path] = sources[path].replace(before, after)
-    path = 'static/twin/twin_ground.js'
-    old, now = sources[path].replace('\r\n', '\n'), (ROOT / path).read_text(encoding='utf-8').replace('\r\n', '\n')
-    start, end = "// A pool's datum.", 'export function buildingFootprint(b) {'
-    assert now.count(start) == 1 and now.count(end) == 1 and old.count(end) == 1
-    sources[path] = old.replace(end, now[now.index(start):now.index(end)] + end)
-    # Slice D intentionally replaces only the garage's glazed infill with an
-    # overhead panel door. Keep its fixed frame/casing and every other opening
-    # byte pinned. The moving door is excluded from static merging and the bake.
-    path = 'static/twin/twin_generator.js'
-    old = sources[path]
-    old = "import { buildGarageDoor } from './garage_door.js';\n" + old
-    before = "o.userData.fireFlame ||"
-    assert old.count(before) == 1
-    old = old.replace(before, "o.userData.garageDoor || " + before)
-    before = """        } else {
-          for (let i = 1; i < (h.panels || 1); i++) localBox(h.u0 + width * i / h.panels, cv, fw, height, 0.22, mat('window_frame'));"""
-    after = """        } else if (h.kind === 'garage') {
-          if (profile.cutaway) continue;
-          const door = buildGarageDoor({ ...h, width, head: height, sill: 0 }, {
-            material: part => part === 'garage_door' ? mat('door') : part === 'pane' ? glass : mat('window_frame'),
-            inward: -sign, setback: thickness / 2 + .16,
-          });
-          door.userData.garageOpening.building = b.id;
-          const placement = new THREE.Group();
-          placement.applyMatrix4(matrix.clone().multiply(new THREE.Matrix4().makeTranslation(cu, h.v0, offset)));
-          const doorLevel = h.level || b.walls.find(w => w.id === h.wall)?.level;
-          placement.add(door); (local[doorLevel] || group).add(placement);
-          door.updateWorldMatrix(true, true);
-          for (const object of door.children) mesh(group, object.geometry, object.material, object);
-        } else {
-          for (let i = 1; i < (h.panels || 1); i++) localBox(h.u0 + width * i / h.panels, cv, fw, height, 0.22, mat('window_frame'));"""
-    assert old.count(before) == 1
-    sources[path] = old.replace(before, after)
-    sources['static/twin/garage_door.js'] = (ROOT / 'static/twin/garage_door.js').read_text(encoding='utf-8')
-    # Water optics intentionally change only the pool's material batches. Keep
-    # the rest of the yard and every house byte pinned to the original baseline.
-    path = 'static/twin/pool_features.js'
-    now = (ROOT / path).read_text(encoding='utf-8')
-    start = 'export function buildPoolFeatures('
-    sources[path] = sources[path][:sources[path].index(start)] + now[now.index(start):]
-    path = 'static/twin/twin_yard.js'
-    now = (ROOT / path).read_text(encoding='utf-8')
-    old = sources[path]
-    imports = [line for line in now.splitlines() if any(ref in line for ref in
-               ("from './effects/water_ripples.js'", "from './effects/water_surface.js'",
-                "from './effects/underwater.js'", "from './effects/water_sim.js'"))]
-    assert len(imports) == 4
-    old = '\n'.join(imports) + '\n' + old
-    start, end = '    pool: async group => {', '    fire_pits: async group => {'
-    assert start in old and end in old and start in now and end in now
-    old = old[:old.index(start)] + now[now.index(start):now.index(end)] + old[old.index(end):]
-    start = "    if (name === 'pool') {\n      root.userData.waterSurfaces = [];"
-    end = "    const stop = part('batch');"
-    assert start in now and end in old
-    old = old.replace(end, now[now.index(start):now.index(end)] + end)
-    sources[path] = old
     return sources
 
 

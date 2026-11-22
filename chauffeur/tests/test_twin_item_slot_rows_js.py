@@ -106,14 +106,18 @@ await test('every_card_slot_preserves_the_old_assignment_clear_and_reset_operati
    assert.equal(swatch.querySelector('img').src,'test.jpg');
    click(swatch);await wait();assert.deepEqual(revealed.at(-1),{kind:'material',id:'choice'},covered.at(-1)+' reveals current asset');
    assert.equal(row.querySelector('[data-slot-use]').getAttribute('aria-label'),'Use Family finish');
+   // Before choosing, Clear appears only where this row already has a local override (roof slopes inherit).
+   assert.equal(!!row.querySelector('[data-slot-clear]'),!!line.clear,covered.at(-1)+' Clear only where set');
    const before=operations.length;click(row.querySelector('[data-slot-use]'));await wait();
    assert.equal(operations.length,before+1,covered.at(-1)+' applies once');
    assert.deepEqual(operations.at(-1),L.surfaceOperation(line.surface,'face',material),covered.at(-1)+' old choose payload');
-   // Clear appears exactly where this row is set (roof slope rows inherit the roof's choice).
-   const clearHere=row.querySelector('[data-slot-clear]');assert.equal(!!clearHere,!!line.clear,covered.at(-1)+' Clear only where set');
-   if(!clearHere)continue;
+   // After choosing a material on this row, Clear becomes available; clicking a focused Clear returns focus to Use.
+   const clearHere=row.querySelector('[data-slot-clear]');assert.ok(clearHere,covered.at(-1)+' Clear appears once set');
+   clearHere.focus();
    click(clearHere);await wait();
    assert.deepEqual(operations.at(-1),{op:'set_material',building:b.id,target:line.target,material:null},covered.at(-1)+' old Clear payload');
+   assert.equal(row.querySelector('[data-slot-clear]'),null,covered.at(-1)+' Clear hides after clearing');
+   assert.equal(document.activeElement,row.querySelector('[data-slot-use]'),covered.at(-1)+' detaching focused Clear moves focus to Use');
   }
  }
  for(const site of ['wall:left','wall:right','room:floor','room:ceiling','room:walls','roof:Roof','dormer:Roof',
