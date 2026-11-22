@@ -640,6 +640,18 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   }
   // Capture before OrbitControls so a floor drag never turns into a camera drag.
   listen(canvas, 'pointerdown', event => {
+    // Alt-drag belongs to the camera even over handles. Defer the existing
+    // corner-removal shortcut until release proves this was only an Alt-click.
+    if (view.editorCamera && event.pointerType !== 'touch' && event.button === 0 && event.altKey) {
+      if (pointerId === null && canEdit()) {
+        const hit = handleHit(event), h = hit?.handle;
+        if (h?.kind === 'site_vertex' || h && !h.kind && !h.insert && Number.isInteger(h.index)) {
+          pointers.add(event.pointerId); pointerId = event.pointerId;
+          gesture = { altOrbit: true, hit, press: event, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
+        }
+      }
+      return;
+    }
     pointers.add(event.pointerId);
     if (pointerId !== null) {
       if (ownsGesture) event.stopImmediatePropagation();
@@ -708,6 +720,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   listen(canvas, 'pointermove', event => {
     if (!pointers.size && !event.buttons && tool === 'select' && canEdit()) roomSelection.hover(pick(event.clientX, event.clientY));
     if (event.pointerId !== pointerId) return;
+    if (gesture?.altOrbit) {
+      gesture.moved ||= Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= DRAG_THRESHOLD_PX;
+      return;
+    }
     if (gesture?.marquee) { marquee.pointerMove(event); return; }
     if (gesture?.dragging && gesture.source !== handles) {
       if (gesture.started) gesture.source.pointerMove?.(event, { free: !!event.shiftKey });
@@ -764,6 +780,20 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     pointerId = null; ownsGesture = false; gesture = null;
     el('editor-drag-hint').hidden = true;
     el('editor-drag-outline').setAttribute('points', '');
+    if (g?.altOrbit) {
+      if (cancel || g.moved || Math.hypot(event.clientX - g.x, event.clientY - g.y) >= DRAG_THRESHOLD_PX || !canEdit()) return;
+      const enabled = view.controls.enabled;
+      try {
+        if (g.hit.source.begin(g.press, g.hit.handle)) {
+          if (g.hit.source === handles) handles.finish(false, true).catch(report);
+          else g.hit.source.pointerUp?.(event, false);
+        }
+      } finally {
+        view.controls.enabled = enabled;
+        if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      }
+      return;
+    }
     if (typedOwner) {
       view.controls.enabled = g?.enabled ?? controlsBeforePress;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
@@ -898,6 +928,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     }
     if (split && event.key === 'Escape' && !event.defaultPrevented) {
       cancelSplit(); event.preventDefault(); event.stopImmediatePropagation(); return;
+    }
+    if (gesture?.altOrbit && canEscape(event)) {
+      gesture.moved = true; event.preventDefault(); event.stopImmediatePropagation(); return;
     }
     if ((marquee.active() || gesture?.marquee) && canEscape(event)) {
       const g = gesture, pid = pointerId;

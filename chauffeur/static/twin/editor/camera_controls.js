@@ -2,12 +2,13 @@ import * as THREE from 'three';
 import { groundAt } from '../twin_ground.js';
 
 const FT = .3048, EASE = .1;
+const LOOK_RADIANS = .15 * Math.PI / 180, LOOK_PITCH = 89 * Math.PI / 180;
 const FLY_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e']);
 const SPEED_KEY = 'chauffeur_editor_fly_speed';
 let sessionSpeed = null;
 
-// Mounted only by the editor view. OrbitControls still owns mouse orbit/pan,
-// wheel dolly and all touch gestures; this owns the right-button fly chord.
+// Mounted only by the editor view. OrbitControls owns Alt-orbit, pan, wheel
+// dolly and touch; this owns right-button mouselook and the fly chord.
 export function mountEditorCamera(view, host) {
   if (sessionSpeed === null) {
     sessionSpeed = 12;
@@ -17,12 +18,14 @@ export function mountEditorCamera(view, host) {
     } catch { /* Session storage can be unavailable in private/embedded views. */ }
   }
   const { controls, renderer3 } = view, canvas = renderer3.domElement;
-  controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+  controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.PAN, RIGHT: null };
   controls.screenSpacePanning = true;
+  const orbitMin = controls.minPolarAngle, orbitMax = controls.maxPolarAngle;
   const lifecycle = new AbortController(), keys = new Set();
   const listen = (node, type, fn, options = {}) => node.addEventListener(type, fn, { ...options, signal: lifecycle.signal });
   const forward = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3(), delta = new THREE.Vector3();
   let held = false, dragged = false, pressX = 0, pressY = 0, pointer = null, pendingMenu = null;
+  let lastX = 0, lastY = 0;
   let previous = null, vx = 0, vy = 0, vz = 0, hideTimer = null, ignoreRepeats = false;
   const readout = document.createElement('output');
   readout.className = 'editor-camera-speed'; readout.hidden = true;
@@ -34,32 +37,51 @@ export function mountEditorCamera(view, host) {
   }
   function stop() { keys.clear(); vx = vy = vz = 0; previous = null; }
   function reset() { held = false; pointer = null; pendingMenu = null; ignoreRepeats = false; stop(); }
-  function moved(event) {
-    if (held && event.pointerId === pointer && Math.hypot(event.clientX - pressX, event.clientY - pressY) >= 4) dragged = true;
+  function moved(event, look = true) {
+    if (!held || event.pointerId !== pointer) return;
+    if (Math.hypot(event.clientX - pressX, event.clientY - pressY) >= 4) dragged = true;
+    const dx = event.clientX - lastX, dy = event.clientY - lastY;
+    lastX = event.clientX; lastY = event.clientY;
+    const camera = view.camera;
+    if (!look || (!dx && !dy) || !controls.enabled || blocked() || camera.isOrthographicCamera) return;
+    const distance = camera.position.distanceTo(controls.target);
+    camera.getWorldDirection(forward);
+    const yaw = Math.atan2(forward.x, -forward.z) + dx * LOOK_RADIANS;
+    const pitch = THREE.MathUtils.clamp(Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1)) - dy * LOOK_RADIANS, -LOOK_PITCH, LOOK_PITCH);
+    forward.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+    controls.target.copy(camera.position).addScaledVector(forward, distance);
+    // Keep subsequent wheel/fly/render updates from snapping this view back
+    // into the orbit cone. Alt-orbit and touch restore their original limits.
+    controls.minPolarAngle = 0;
+    controls.maxPolarAngle = Math.PI;
+    controls.update();
   }
   // OrbitControls swaps rotate/pan when a modifier is down. Preserve these
   // editor bindings under Shift/Ctrl too, without changing its touch handling.
   listen(canvas, 'pointerdown', event => {
-    if (event.pointerType === 'touch' || (event.button !== 1 && event.button !== 2)) return;
+    if (event.pointerType === 'touch') {
+      controls.minPolarAngle = orbitMin; controls.maxPolarAngle = orbitMax; return;
+    }
     const modified = event.ctrlKey || event.metaKey || event.shiftKey;
+    controls.mouseButtons.LEFT = event.button === 0 && event.altKey && !blocked()
+      ? (modified ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE) : null;
     controls.mouseButtons.MIDDLE = modified ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
-    controls.mouseButtons.RIGHT = modified ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+    if (event.button === 0 && event.altKey && controls.enabled && !blocked()) {
+      controls.minPolarAngle = orbitMin; controls.maxPolarAngle = orbitMax;
+    }
   }, { capture: true });
-  listen(canvas, 'pointerdown', () => {
-    controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
-    controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
-  });
   listen(canvas, 'pointerdown', event => {
     if (event.pointerType === 'touch' || event.button !== 2) return;
     stop(); held = true; dragged = false; pendingMenu = null; ignoreRepeats = false;
-    pressX = event.clientX; pressY = event.clientY; pointer = event.pointerId;
+    pressX = lastX = event.clientX; pressY = lastY = event.clientY; pointer = event.pointerId;
   }, { capture: true });
   listen(window, 'pointermove', moved, { capture: true });
   listen(document, 'pointermove', moved, { capture: true });
   listen(canvas, 'pointermove', moved, { capture: true });
   function release(event) {
+    controls.mouseButtons.LEFT = null; controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
     if (!held || event.pointerId !== pointer) return;
-    moved(event);
+    moved(event, false);
     const menu = pendingMenu;
     held = false; pointer = null; pendingMenu = null; ignoreRepeats = false; stop();
     // Some platforms emit contextmenu on press. Defer it until we know this

@@ -114,16 +114,16 @@ def _item(page, collection, item_id):
     return next(p for p in _plan(page)['site'][collection] if p['id'] == item_id)
 
 
-def _look(page, at, orbit=False):
-    """Lot-space feet; an oblique eye makes orbit displacement measurable."""
+def _look(page, at, oblique=False):
+    """Lot-space feet; use an oblique eye for perspective navigation checks."""
     x, y = at[:2]
-    page.evaluate("""([x,y,orbit]) => {
+    page.evaluate("""([x,y,oblique]) => {
         const v = window.__twin, ft = .3048;
         v.setCamera('front');
-        v.setCameraState({position:[x*ft,70*ft,-(y-(orbit?45:.01))*ft],
+        v.setCameraState({position:[x*ft,70*ft,-(y-(oblique?45:.01))*ft],
                           target:[x*ft,0,-y*ft]});
         v.camera.updateMatrixWorld(true);
-    }""", [x, y, orbit])
+    }""", [x, y, oblique])
     H.settle(page)
 
 
@@ -182,7 +182,7 @@ def _saved_drag(page, start, end, posted, expected_op):
 def _right_drag(page, start, end):
     for point in (start, end):
         H._on_canvas(page, *point)
-    assert math.dist(start, end) >= 4, 'Orbit must exceed the context-menu click threshold'
+    assert math.dist(start, end) >= 4, 'Look must exceed the context-menu click threshold'
     page.mouse.move(*start)
     page.mouse.down(button='right')
     try:
@@ -195,14 +195,17 @@ def _right_drag(page, start, end):
 
 
 def _navigate_over_tree(page, tree, posted):
-    _look(page, tree['at'], orbit=True)
+    _look(page, tree['at'], oblique=True)
     start = _pixel(page, tree['at'])
     before = _plan(page)
     camera = page.evaluate('window.__twin.camera.position.toArray()')
+    direction = page.evaluate('window.__twin.controls.target.clone().sub(window.__twin.camera.position).normalize().toArray()')
     _right_drag(page, start, [start[0] + 120, start[1]])
     _quiet(page)
     after_camera = page.evaluate('window.__twin.camera.position.toArray()')
-    assert math.dist(camera, after_camera) > .1, (camera, after_camera)
+    assert math.dist(camera, after_camera) < 1e-8, (camera, after_camera)
+    after_direction = page.evaluate('window.__twin.controls.target.clone().sub(window.__twin.camera.position).normalize().toArray()')
+    assert math.dist(direction, after_direction) > .1, (direction, after_direction)
     assert _plan(page) == before, 'Navigation changed the house plan'
     assert posted == [], posted
     assert H.editor_state(page, 'selection')['id'] is None
@@ -215,7 +218,7 @@ def right_drag_over_a_tree_only_turns_the_camera():
         posted = _posted(page)
         _navigate_over_tree(page, tree, posted)
         # The same body gesture with the left button draws a marquee instead.
-        _look(page, tree['at'], orbit=True)
+        _look(page, tree['at'], oblique=True)
         start = _pixel(page, tree['at'])
         before = _plan(page)
         camera = page.evaluate('window.__twin.camera.position.toArray()')
@@ -346,11 +349,12 @@ def esc_mid_drag_restores():
         _quiet(page)
         assert _plan(page) == before, 'Escape committed the cancelled preview'
         assert posted == [], posted
-        # Also prove a subsequent unowned mouse drag can navigate again.
-        camera = page.evaluate('window.__twin.camera.position.toArray()')
+        # Also prove a subsequent unowned mouse drag can navigate again. A right-drag
+        # looks around in place (owner 2026-11-21), so the view target moves, not the camera.
+        target = page.evaluate('window.__twin.controls.target.toArray()')
         _right_drag(page, [start[0] + 160, start[1]], [start[0] + 220, start[1] - 50])
         _quiet(page)
-        assert math.dist(camera, page.evaluate('window.__twin.camera.position.toArray()')) > .1
+        assert math.dist(target, page.evaluate('window.__twin.controls.target.toArray()')) > .1
         assert _plan(page) == before and posted == [], posted
         _selected(page, 'planting', tree['id'])
 

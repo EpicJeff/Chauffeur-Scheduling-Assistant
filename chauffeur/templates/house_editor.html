@@ -132,7 +132,7 @@
       {% for camera in ['Top', 'Front', 'Back', 'Orbit'] %}
       <button type="button" data-editor-camera="{{ camera | lower }}">{{ camera }}</button>
       {% endfor %}
-      <p id="editor-camera-help">Right-drag orbit · Middle-drag pan · Right + WASD/QE fly · Right + wheel speed</p>
+      <p id="editor-camera-help">Right-drag look · WASD/QE fly while right is held · Right + wheel speed · Middle-drag pan · Alt + left-drag orbit</p>
       <div id="editor-lighting" role="group" aria-label="Lighting" aria-describedby="editor-lighting-help">
         <span>Lighting</span>
         <div>{% for mode, label in [('day', 'Day'), ('night', 'Night'), ('now', 'Now'), ('unlit', 'Unlit (fast)'), ('live', 'Live weather')] %}

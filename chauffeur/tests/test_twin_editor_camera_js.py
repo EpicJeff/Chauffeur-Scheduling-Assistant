@@ -91,7 +91,7 @@ const travel=(k,seconds,hz)=>{
   const d=sameDelta(p,t);release();return d;
 };
 await test('editor_mouse_map_and_screen_plane_pan',()=>{
-  assert.deepEqual(ctl.mouseButtons,{LEFT:null,MIDDLE:THREE.MOUSE.PAN,RIGHT:THREE.MOUSE.ROTATE});assert.equal(ctl.screenSpacePanning,true);
+  assert.deepEqual(ctl.mouseButtons,{LEFT:null,MIDDLE:THREE.MOUSE.PAN,RIGHT:null});assert.equal(ctl.screenSpacePanning,true);
   pose();const q=view.camera.quaternion.clone(),p=view.camera.position.clone();ptr('pointerdown',700,400,1);ptr('pointermove',750,430,1);ptr('pointerup',750,430,1);
   assert.ok(view.camera.position.distanceTo(p)>.01);assert.ok(view.camera.quaternion.angleTo(q)<1e-7);
 });
@@ -107,13 +107,73 @@ await test('right_click_under_four_pixels_opens_existing_menu',()=>{
   pose();down();ptr('pointermove',703,400);ptr('pointerup',703,400);ev(canvas,'contextmenu',{button:2,clientX:703,clientY:400});
   assert.equal(document.getElementById('editor-context-menu').hidden,false);closeMenu();
 });
-await test('right_drag_orbits_and_suppresses_menu_even_after_returning',()=>{
-  pose();const q=view.camera.quaternion.clone();down();ptr('pointermove',730,400);assert.ok(view.camera.quaternion.angleTo(q)>.01);
+await test('right_drag_looks_right_in_place_and_suppresses_menu_even_after_returning',()=>{
+  pose();const p=view.camera.position.clone(),distance=p.distanceTo(ctl.target);down();ptr('pointermove',730,400);
+  const f=view.camera.getWorldDirection(new THREE.Vector3());near(Math.atan2(f.x,-f.z),30*.15*Math.PI/180);
+  assert.ok(view.camera.position.distanceTo(p)<1e-8);near(ctl.target.distanceTo(p),distance);
+  assert.ok(ctl.target.clone().sub(p).normalize().distanceTo(f)<1e-8);
   ptr('pointermove',700,400);release();ev(canvas,'contextmenu',{button:2,clientX:700,clientY:400});assert.equal(document.getElementById('editor-context-menu').hidden,true);
 });
-await test('modifier_keys_keep_right_orbit_and_middle_pan',()=>{
+await test('look_up_and_down_clamp_at_89_degrees_and_survive_updates_zoom_and_fly',()=>{
+  for(const sign of [-1,1]) {
+    pose();const p=view.camera.position.clone(),distance=p.distanceTo(ctl.target),pitch=Math.asin(view.camera.getWorldDirection(new THREE.Vector3()).y);down();ptr('pointermove',700,400-sign*100);
+    let f=view.camera.getWorldDirection(new THREE.Vector3());near(Math.asin(f.y),pitch+sign*15*Math.PI/180);
+    ptr('pointermove',700,400-sign*2000);frame(16);f=view.camera.getWorldDirection(new THREE.Vector3());
+    near(Math.asin(f.y),sign*89*Math.PI/180);assert.ok(view.camera.position.distanceTo(p)<1e-8);near(ctl.target.distanceTo(p),distance);
+    assert.ok(ctl.target.clone().sub(p).normalize().distanceTo(f)<1e-8);
+    near(new THREE.Vector3(1,0,0).applyQuaternion(view.camera.quaternion).y,0);
+    key('keydown','w');const before=view.camera.position.clone(),target=ctl.target.clone();frame(100);
+    assert.ok(sameDelta(before,target).normalize().distanceTo(f)<1e-8);release();
+    ev(canvas,'wheel',{deltaY:-100,deltaMode:0});frame(16);assert.ok(view.camera.getWorldDirection(new THREE.Vector3()).distanceTo(f)<1e-8);
+  }
+});
+await test('look_deltas_are_independent_of_event_and_frame_rate_and_w_follows_new_view',()=>{
+  pose();down();ptr('pointermove',820,340);const expected=view.camera.getWorldDirection(new THREE.Vector3());release();
+  pose();down();for(let i=1;i<=12;i++){ptr('pointermove',700+i*10,400-i*5);frame(1000/144);}
+  assert.ok(view.camera.getWorldDirection(new THREE.Vector3()).distanceTo(expected)<1e-8);
+  const p=view.camera.position.clone(),t=ctl.target.clone();key('keydown','w');frame(100);
+  assert.ok(sameDelta(p,t).normalize().distanceTo(expected)<1e-8);release();
+});
+await test('alt_left_orbits_fixed_pivot_without_marquee_selection_or_edit',()=>{
+  for(const extra of [{},{ctrlKey:true},{metaKey:true},{shiftKey:true}]) {
+    pose();down();ptr('pointermove',700,0);release(); // Look above the old orbit limit first.
+    const p=view.camera.position.clone(),target=ctl.target.clone(),members=tools.selectionStore.members();
+    ptr('pointerdown',-2000,-2000,0,{altKey:true,...extra});ptr('pointermove',-1900,-1950,0,{altKey:true,...extra});
+    assert.equal(ctl.enabled,true);assert.equal(document.getElementById('editor-drag-outline').getAttribute('points')||'','');
+    ptr('pointerup',-1900,-1950,0,{altKey:true,...extra});
+    assert.ok(view.camera.position.distanceTo(p)>.01);assert.ok(ctl.target.distanceTo(target)<1e-8);
+    assert.ok(ctl.getPolarAngle()<=Math.PI*.49+1e-8);assert.deepEqual(tools.selectionStore.members(),members);
+    // An Alt-click on a real piece must also bypass selection and handles.
+    view.setPlanCamera('pool-house:L1');const item=view.selectionBounds().find(r=>r.kind==='wall'&&r.buildingId==='pool-house');assert.ok(item);
+    const x=(item.bounds.left+item.bounds.right)/2,y=(item.bounds.top+item.bounds.bottom)/2;
+    ptr('pointerdown',x,y,0,{altKey:true});ptr('pointerup',x,y,0,{altKey:true});assert.deepEqual(tools.selectionStore.members(),members);
+  }
+});
+await test('alt_left_bypasses_armed_tools_including_measure_clicks',()=>{
+  for(const tool of ['move','rotate','scale','measure','draw-wall']) {
+    pose();tools.setTool(tool);const p=view.camera.position.clone(),target=ctl.target.clone();
+    ptr('pointerdown',700,400,0,{altKey:true});ptr('pointermove',760,420,0,{altKey:true});ptr('pointerup',760,420,0,{altKey:true});
+    assert.ok(view.camera.position.distanceTo(p)>.01);assert.ok(ctl.target.distanceTo(target)<1e-8);assert.equal(ctl.enabled,true);
+    ptr('pointerdown',700,400,0,{altKey:true});ptr('pointerup',700,400,0,{altKey:true});
+    if(tool==='measure')assert.ok(document.getElementById('editor-status').textContent.includes('Click the first point'));
+    assert.equal(host.querySelector('.editor-measure').children.length,0);assert.deepEqual(tools.selectionStore.members(),[]);
+  }
+});
+await test('look_respects_inputs_dialogs_disabled_controls_and_pointer_identity',()=>{
+  for(const guard of ['input','dialog','disabled','other-pointer']) {
+    pose();let node;
+    if(guard==='input'){node=new Element('input');shell.append(node);node.focus();}
+    if(guard==='dialog'){node=new Element();node.setAttribute('role','dialog');document.body.append(node);}
+    if(guard==='disabled')ctl.enabled=false;
+    const p=view.camera.position.clone(),target=ctl.target.clone(),q=view.camera.quaternion.clone();down();
+    ptr('pointermove',780,340,2,guard==='other-pointer'?{pointerId:11}:{});frame(16);
+    assert.ok(view.camera.position.distanceTo(p)<1e-8);assert.ok(ctl.target.distanceTo(target)<1e-8);assert.ok(view.camera.quaternion.angleTo(q)<1e-7);
+    release();node?.remove();document.activeElement=null;ctl.enabled=true;
+  }
+});
+await test('modifier_keys_keep_right_look_and_middle_pan',()=>{
   for(const modifier of ['ctrlKey','metaKey','shiftKey']) {
-    pose();let q=view.camera.quaternion.clone();ptr('pointerdown',700,400,2,{[modifier]:true});ptr('pointermove',750,430,2,{[modifier]:true});ptr('pointerup',750,430,2);assert.ok(view.camera.quaternion.angleTo(q)>.01);
+    pose();let q=view.camera.quaternion.clone();const before=view.camera.position.clone();ptr('pointerdown',700,400,2,{[modifier]:true});ptr('pointermove',750,430,2,{[modifier]:true});ptr('pointerup',750,430,2);assert.ok(view.camera.quaternion.angleTo(q)>.01);assert.ok(view.camera.position.distanceTo(before)<1e-8);
     pose();q=view.camera.quaternion.clone();const p=view.camera.position.clone();ptr('pointerdown',700,400,1,{[modifier]:true});ptr('pointermove',750,430,1,{[modifier]:true});ptr('pointerup',750,430,1);assert.ok(view.camera.position.distanceTo(p)>.01);assert.ok(view.camera.quaternion.angleTo(q)<1e-7);
   }
 });
@@ -207,7 +267,10 @@ await test('ground_clamp_uses_real_pad_height_and_translates_target',()=>{
   view.setCameraState({position:[0,8*FT+.21,0],target:[0,8*FT+.21,-10]});down();const p=view.camera.position.clone(),t=ctl.target.clone();key('keydown','q');frame(1000);sameDelta(p,t);near(view.camera.position.y,8*FT+.2);view.plan.site=saved;release();
 });
 await test('top_right_drag_cannot_rotate_and_middle_drag_pans',()=>{
-  pose();view.setPlanCamera('pool-house:L1');assert.ok(view.camera.isOrthographicCamera);const q=view.camera.quaternion.clone(),p=view.camera.position.clone();down();ptr('pointermove',770,450);ptr('pointerup',770,450);assert.ok(view.camera.quaternion.angleTo(q)<1e-7);assert.ok(view.camera.position.distanceTo(p)<1e-8);
+  pose();down();ptr('pointermove',700,0);release();view.setPlanCamera('pool-house:L1');assert.ok(view.camera.isOrthographicCamera);
+  assert.ok(view.camera.getWorldDirection(new THREE.Vector3()).distanceTo(new THREE.Vector3(0,-1,0))<.00001);
+  const q=view.camera.quaternion.clone(),p=view.camera.position.clone();down();ptr('pointermove',770,450);ptr('pointerup',770,450);assert.ok(view.camera.quaternion.angleTo(q)<1e-7);assert.ok(view.camera.position.distanceTo(p)<1e-8);
+  ptr('pointerdown',700,400,0,{altKey:true});ptr('pointermove',770,450,0,{altKey:true});ptr('pointerup',770,450,0,{altKey:true});assert.ok(view.camera.quaternion.angleTo(q)<1e-7);assert.ok(view.camera.position.distanceTo(p)<1e-8);assert.equal(document.getElementById('editor-drag-outline').getAttribute('points')||'','');
   ptr('pointerdown',700,400,1);ptr('pointermove',740,420,1);ptr('pointerup',740,420,1);assert.ok(view.camera.position.distanceTo(p)>.01);assert.ok(view.camera.quaternion.angleTo(q)<1e-7);
 });
 await test('top_wasd_pan_screen_axes_and_qe_zoom',()=>{
